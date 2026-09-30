@@ -8,7 +8,7 @@ knows about a device is reachable from here.
 | Gate | Grants |
 |---|---|
 | `assets:read` | see the page |
-| `assets:write` | edit rows, bulk-monitor, mass-pin |
+| `assets:write` | edit rows, bulk-monitor, bulk tags, mass-pin |
 | `assets:fullwrite` | **deploy the Polaris Agent** (install / retry / reinstall / upgrade / uninstall), delete others' saved filters |
 
 Agent deployment sits at `fullwrite` on purpose ([rule 43](Business-Rules#rule-43)):
@@ -20,13 +20,37 @@ serial — describes.
 
 ## The list
 
-**Columns:** Hostname · IP Address · Serial Number · Type · State · **Status** ·
-**Sources** · Description · Asset Tag · Manufacturer · Model · OS / Firmware ·
+**Columns:** Hostname · IP Address · Network · Serial Number · Type · State · **Status** ·
+**Sources** · Description · Tags · Asset Tag · Manufacturer · Model · OS / Firmware ·
 MAC Address · Assigned To · Purchase Order · DNS Name · Latitude · Longitude ·
 Last Seen.
 
 Columns are sortable, inline-filterable, resizable and hideable. **Column order
 is per view tab; widths and visibility are per screen.**
+
+**IP Address** filters by network, not by text. Type the first one, two or
+three octets (`10`, `10.1`, `10.1.2`) to see every device in that range —
+`10.1` never matches `10.10.x.x` — or a network in CIDR form (`10.1.16.0/20`,
+`192.168.5.128/25`) to see just the devices inside it. A full address matches
+that one device. The **+** beside the box adds another box, as many as you
+like, and a device shows when it is in **any** of them; **×** removes one. A
+box that isn't a valid prefix or CIDR is outlined red and ignored. The **▾**
+menu still offers *Is empty* / *Is not empty*. The filter looks at each
+device's primary IP.
+
+**Network** (hidden by default — turn it on from the column gear) names the
+IPAM network the device's primary IP sits in: the most specific
+non-deprecated network that contains it, the same one **View Lease** opens.
+Hover it for the CIDR; a device whose IP is in no recorded network shows `-`.
+
+**Tags** lists the asset's tags. Its filter matches any single tag containing
+the text (case doesn't matter), so `prod` finds `Production`; **Is empty** finds
+untagged assets. Clicking the filter box lists every tag in use, and the list
+narrows as you type; click one (or pick it with the arrow keys and Enter) to
+filter by it. A picked tag is still matched as text, so picking `prod` also
+shows assets tagged `production`, and a leading `!` (exclude) is kept. Sorting
+orders by each asset's alphabetically-first tag, and untagged assets sit at the
+bottom whichever way you sort.
 
 ### Two columns worth explaining
 
@@ -81,10 +105,18 @@ Select rows to raise the bulk bar:
 
 | Action | Needs | Does |
 |---|---|---|
-| **Compare** | `assets:read` | overlays telemetry charts for several devices, after a metric picker |
-| **Merge** | admin, exactly **two** selected | opens the merge modal with the target pre-selected |
-| **Deploy Agent** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, and ineligible assets come back as skips **with reasons** |
+| **Compare** | `assets:read` | overlays telemetry charts for two to ten devices, after a metric picker; with more than ten selected the button greys out in yellow |
+| **Merge** | Assets **full read-write**, exactly **two** selected | opens the merge modal with the target pre-selected |
+| **Deploy Agent** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried, and other ineligible assets come back as skips **with reasons** |
 | **Maintenance** | `maintenanceManagement` | opens the schedules modal with the selection pinned as explicit asset ids |
+| **Tags** | `assets:write` | pick tags, then **Add** them (each asset keeps its own tags), **Remove** them (from the assets that have them), or **Replace all tags** (each asset ends up with exactly the picked set) |
+
+**Replace keeps two kinds of tag** on every asset: Device Map `region:` tags
+and the discovery breadcrumbs `prev-entra:` / `prev-ad:`. Wiping region tags
+across a large selection would silently drop those devices out of every
+region-scoped user's and alert rule's view. To take a region tag off, pick it
+and use **Remove**. Replace with nothing picked clears every other tag, and asks
+first.
 
 A selection past the 500-id cap is refused **with the count**, rather than
 400-ing after you have filled in the form.
@@ -106,6 +138,39 @@ Two tabs are conditional:
 
 Three are device-type specific: **Wireless** on a monitored access point, **MAC
 Table** on a switch, **ARP Table** on a firewall.
+
+### Copy and Screenshot
+
+The slide-over header carries **Copy** and **Screenshot**, and both act on the
+tab you are reading — not on the whole asset.
+
+**Copy** writes the tab out as plain text: labelled values, tables as rows,
+headings kept. It is the form to paste into a ticket, a change record or a
+chat.
+
+**Screenshot** opens a picker first. Every section of the tab gets an include
+checkbox (your choices are remembered per tab), chart sections get a time-range
+choice that starts on whatever range the chart is currently showing, and the
+Interfaces section can be told to include the interfaces it is hiding. On
+**Capture**, Polaris renders the tab at a fixed width — so the image looks the
+same whether your window is wide or narrow, or the panel has been dragged to a
+new size — and copies it to the clipboard as a PNG. Charts, badges, colours and
+your theme all come across as they appear on screen. On the **Events** tab the
+button gives way to an **Export** dropdown instead (CSV or PDF, this page or
+every event for the asset).
+
+Individual tables and charts have their own camera buttons: for a table, beside
+its column-chooser gear, and for a chart, in its corner. A table's camera
+captures just that table exactly as it is drawn for you — the columns you have
+visible, in the order and widths you have set, with the status dots, health-check
+chips and coloured per-scrape strips intact — titled with the table name and
+the device. Rows hidden underneath a collapsed parent are left out, and the
+image says how many, so it cannot be mistaken for the full list: expand them
+first if you want them in.
+
+Copying to the clipboard needs a browser clipboard permission, and on most
+browsers an **HTTPS** page (or `localhost`). On a plain-HTTP install the
+capture still runs but the copy is refused, and the toast says so.
 
 ### Snapshot tabs: Wireless, MAC Table, ARP Table
 
@@ -204,13 +269,79 @@ asset whose only remaining entries are ranges correctly shows no primary MAC.
 Live telemetry and history: response time, CPU, memory, temperature,
 interfaces, storage, IPsec tunnels, SD-WAN.
 
-**CPU and Memory are two charts under one range selector** — a percentage and
-a byte scale cannot share an axis, but they are two readings of the same
-sample, so picking a range (or dragging a window on either) moves both. On a
-host running the [Polaris Agent](Polaris-Agent#per-core-cpu-and-the-memory-breakdown)
-the CPU chart draws one coloured line per logical core and the Memory chart
-stacks processes, buffers and cache against the installed total; every other
-transport draws a single line in each.
+**The Response time chart also draws packet loss.** A dashed purple line reads
+against a second axis on the right, 0–100 %. It counts packets from every probe
+Polaris sends the device — the response-time poll and the ICMP packet-loss
+sweep — so on a device the sweep reaches it is much finer than the missed polls
+on the response-time line. Each point covers a short bucket (two minutes on a
+one-hour view, longer on longer ranges; the tooltip names it), and the line
+breaks where nothing was probed rather than dropping to 0 %. The **Packet
+loss** figure above the chart is the same measurement over the whole window.
+Hovering a response-time point still says whether *that poll* was missed.
+
+**An interface name opens the interface — or the network its address is in.**
+Click a name in the Interfaces table to open that interface's history panel.
+When the interface's address sits inside a network Polaris knows, the click
+offers **Open interface** or **Open network** instead; *Open network* slides
+that network's address table in over the asset, scrolled to the address. The
+choice appears only for roles that can read networks, and only when a network
+actually contains the address.
+
+**CPU & Memory is one chart, or two, depending on what is collecting it.**
+Two sources report CPU per core and memory as a composition, and on those the
+section splits into a CPU chart and a Memory chart:
+
+| Source | CPU chart | Memory chart |
+|---|---|---|
+| [Polaris Agent](Polaris-Agent#per-core-cpu-and-the-memory-breakdown) | one line per logical core | processes / buffers / cache against installed RAM |
+| [vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) — VM | one line per vCPU | private / shared / ballooned / host-swapped / compressed against configured RAM |
+| [vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) — ESXi host | one line per physical core | consumed / ballooned / host-swapped against installed RAM |
+
+A percentage and a byte scale cannot share an axis, but they are two readings
+of the same sample, so the two charts keep one range selector — picking a
+range, or dragging a window on either, moves both.
+
+Every other transport — FortiGate REST, SNMP, WinRM, SSH — reports one CPU
+figure and one memory figure per sample, and keeps the single combined chart:
+both series on one 0–100% axis, with a memory reading in bytes shown as a
+percentage of the total. There is nothing a second chart could add.
+
+The two memory vocabularies are **not** translations of each other and never
+appear in one stack. The agent reports how the guest's own OS is spending its
+RAM; vCenter reports how the hypervisor is backing it. Ballooning and host
+swap are invisible from inside a guest, which is why an agent on the same VM
+cannot show them — and why, on a VM that is being squeezed, the vCenter chart
+is the one that says so.
+
+**Click a legend chip to switch that series off**, on either chart — a memory
+band, the swap line, a CPU core, or the cross-core average. A switched-off
+chip stays in the legend with a line through it; click it again to bring the
+series back. On the CPU chart, **double-click a core to show only that one**,
+and a **Show all** link appears whenever anything is hidden.
+
+The two charts remember your choice differently, on purpose. Memory bands are
+**saved to your account** and follow you between hosts and browsers — the
+bands mean the same thing everywhere, so which of them you want to see is a
+setting. Hidden CPU cores last only as long as the panel is open: core 5 of
+one server has nothing to do with core 5 of another, so carrying the choice
+across would hide a different core each time.
+
+### Cache starts switched off
+
+On an agent host the **Cache** band is hidden until you turn it on, and the
+legend says so.
+
+Page cache is memory the OS has filled with recently-read files because the
+RAM was otherwise idle — it is handed straight back the moment a program
+wants it. Counted in the stack it makes a perfectly healthy machine look
+nearly full, which is the most common way this chart gets misread. With it
+off, the stack answers *how much memory is actually spoken for*, and the gap
+above it is headroom you can rely on.
+
+Turn it on when you want the whole picture. While any band is hidden the
+legend reminds you that the gap above the stack includes it, and the tooltip
+keeps reporting every figure the host actually measured, hidden ones marked —
+so nothing is lost, only undrawn.
 
 Below the response-time section sits the **Polaris Agent** card: the installed
 agent's version, platform, last heartbeat, WebSocket state and privilege tier,
@@ -220,6 +351,66 @@ agent over a stored SSH or WinRM credential
 ([Polaris Agent](Polaris-Agent#installing)). Deploying needs
 `assets:fullwrite`; at `assets:read` the card still shows what is installed,
 without the buttons.
+
+#### Firmware
+
+Under the agent card, a **switch or access point** gets a **Firmware** card
+([rule 87](Business-Rules#rule-87)) — the answer to whether the
+[Repository](Server-Settings#repository) holds something newer for this
+device. It is one of:
+
+- **Not supported** — no upgrade engine for this manufacturer (Fortinet only,
+  over HTTPS to the device's own web UI). Images can still be stored.
+- **No image** — nothing in the repository for this device's platform, with a
+  link to the Repository.
+- **Current** — nothing newer than what it runs.
+- **No login bound** — an image is available but no device login is bound at
+  the model, device-type or manufacturer level.
+- **Blocked** — an image is available but the device is down, warning,
+  recovering, behind a parent that is down, or has no address.
+- **Upgrade available** — the running version, the image on offer (its
+  version, platform and which model node it came from), the login that will be
+  used and where it is inherited from.
+
+**Upgrade firmware to …** needs **Read-Write on Assets**: whoever may edit an
+asset may upgrade it. The card itself shows to anyone who can open the asset;
+below Read-Write the facts stay and the button is withheld. Access to the
+Repository is not needed to upgrade a device, and Repository Read-Write
+alone does not allow it. It opens an **approval dialog** naming the device
+(host, serial, running version, login) and the exact image — version, build,
+platform, file name, SHA-256, where it is filed, who uploaded it — and, when
+the model's backup image is also newer than the device, lets you choose that
+instead. Nothing is pushed until you tick that you checked the version and
+platform and click **Approve and upgrade**.
+
+While it runs the card shows the stage and, on a switch, the erase / write /
+verify percentages, then *Rebooting*, *Verifying new version* and *Waiting
+for monitoring to answer*. The device is in a maintenance window for the
+duration
+([Maintenance Windows](Maintenance-Windows#windows-polaris-opens-for-itself)),
+so everything behind a switch is suppressed with it. The last stage is the
+window staying open after the device has confirmed its new version: its web
+interface, which the upgrade uses, usually answers before the SNMP agent
+Polaris monitors it with. The run finishes when monitoring gets its first
+answer, or after 10 minutes if it never does. A failed run ends the window
+straight away.
+
+**How the version is confirmed.** The upgrade never takes the device's word
+from before the reboot. It waits for the device's old web session to be
+refused, which only happens once it has restarted, then signs in afresh and
+reads the running version. That can succeed while the device's monitoring
+still shows missed polls; the two use different services on the device. Polaris does not offer a
+cancel — a flash mid-write must finish — and **you must not power-cycle the
+device while it is writing.**
+
+A run ends *succeeded* (the device came back reporting the image's version),
+*unverified* (it came back but Polaris could not confirm the version — check
+it on the device) or *failed* (the transcript says at which stage). The
+asset's OS/firmware field is not rewritten by the run: the next discovery
+reads the new version, and until it does the card says *Flashed*. **Run
+history** lists every attempt with a **View log**. No bulk upgrade exists; it
+is this device, from this card. On the phone the upgrade lives in the
+asset's OS row instead — see [Mobile and Dash](Mobile-and-Dash#assets-and-networks).
 
 **Managed by** names the integration that owns this asset's monitoring
 configuration — whose class settings and stored credential it inherits, whose
@@ -247,6 +438,14 @@ Charts carry:
   resolver**, so the shading cannot disagree with what actually fires.
 - **Grey, not red, for a suppressed miss** — a failure the upstream explains is
   drawn grey ([rule 38b](Business-Rules#rule-38)). Same dive, no accusation.
+- **Outages on CPU / memory / storage / interface charts** — those streams
+  record nothing for a missed poll, so the chart borrows the response-time
+  probe's record: wherever every probe failed, the line dives to the baseline
+  and climbs back out, at every range from 1h to 30d. A hole in the line with
+  no probe failure behind it — the device answered pings but a CPU poll failed
+  — is bridged, not dived: Polaris has no evidence of an outage there. A
+  window the series kept reporting through (a Polaris Agent host that pushed
+  readings while the probe could not reach it) is not dived either.
 
 The colour of **Down** is not fixed: it is drawn in the covering automation's
 own severity ([rule 36](Business-Rules#rule-36)). Red is what `critical` looks
@@ -258,18 +457,54 @@ A merged unit and process inventory — systemd units / Windows services with
 state, and (with *Include processes* ticked) the per-program process inventory
 in the same table. Read-only: start/stop/restart control was removed.
 
+**CPU %** and **Memory** on a service row come from the agent (0.22.0+ for
+CPU, and for memory on Windows):
+
+- **CPU %** is the mean since the agent's previous inventory scrape, five
+  minutes by default. 100 means one full core, the same scale the process rows
+  use, so a busy service on a multi-core host can read above 100. It stays
+  **—** until the agent's second scrape after it starts, after the service
+  restarts, and while the service is stopped.
+- **Memory** is the unit's cgroup on Linux and the service process's working
+  set on Windows.
+- A **process** row's CPU % is measured the same way from agent 0.22.1: the
+  mean since the previous scrape. Older agents showed each process's average
+  since it started, so a long-running process that had just started spinning
+  read low.
+- On Windows several services can share one `svchost.exe`. Each of them then
+  shows that **whole process's** figures, marked **shared**. Hover the tag for
+  the process and how many services it holds. Polaris does not split the
+  figure between them.
+
 Two pin columns:
 
-- **Monitor** — a service's journal tailing, or a process's CPU/RAM history and
-  logs.
+- **Monitor** — a service's log, or a process's CPU/RAM history and logs. On
+  Linux a service's log is its journal. On Windows it is the service's
+  **Event Log** entries (agent 0.22.0+): the Service Control Manager entries
+  that name it in System (started, stopped, crashed, failed to start, startup
+  type changed), plus anything it logs under its own name in System or
+  Application. Ticking it on Windows brings in the newest 50 entries from each
+  log, then new ones as they happen.
 - **Map** — include it on the [Application Map](Application-Map).
+
+Click a service's name to open its detail panel. It shows the display name,
+the **description** (Windows), state, **startup type** in the Services
+console's wording (*Automatic (Delayed Start)*, *Manual*, …; the enablement
+state on Linux), main process, CPU, memory, the other services sharing its
+process, its ports and connections, and its log.
 
 Mapping implies monitoring, one way. There is no Alert column, because
 [Automations](Automations) own alerting.
 
 ### Alerts
 
-This asset's active alerts, above the automations whose scope matches it.
+This asset's active alerts, above the automations that can trigger for it.
+That list leaves out any automation a more-specific one over the same trigger
+has carved this device out of ([rule 18](Business-Rules#rule-18), see
+[Automations](Automations)) — with **High CPU utilization** on all assets and
+**Server High CPU utilization** on servers, a server lists only the second,
+because the first never evaluates it. The **Scope** column spells out a
+condition-built scope (`Device type equals server`) rather than showing `—`.
 **The tab itself strobes** in the colour of the worst of them, so the operator
 who opened the panel from a strobing row can see which tab it was about.
 
@@ -296,7 +531,7 @@ note at all.
 The second table lists matching automations: **Name · Trigger · Scope**, where
 Trigger is the automation's plain-English sentence — every severity tier
 included, which is why there is no separate Severity column. The name opens the
-automation in the wizard in place, for `automationManagement:fullwrite`.
+automation in the wizard in place, for `automationManagement:write`.
 
 ### Wireless (access points)
 
@@ -370,18 +605,52 @@ toggle on its integration. Three sections: **SD-WAN Members** (the WAN members
 and overlays, grouped by zone, with per-health-check state), **SD-WAN Rules**
 (the service rules in the gate's own priority order, selected member
 highlighted) and **Performance SLA** (latency, jitter and packet-loss charts per
-health check).
+health check). One member legend above the Performance SLA charts drives all
+three: click a member to hide or show it, double-click to show only that
+member, and **Show all** brings everything back.
+
+Each member's **Health Check Status** strip covers the **last 30 minutes**, one
+segment per SD-WAN poll. Each segment is one colour:
+
+- **Red** — a health check reported the member dead at that poll, **or** the
+  member was alive but its latency, jitter or loss was above that health
+  check's own SLA target.
+- **A severity colour** — the member was alive and within its SLA targets, but
+  the reading crosses a severity level of one of your SD-WAN
+  [automations](Automation-Triggers#sd-wan). The colour is that severity's.
+  Automations filtered to other health checks or members do not colour it.
+- **Green** — alive, within its SLA targets, and no automation level crossed.
+
+Hover a segment for its time and state: *down*, *out of SLA*, or
+*up — warning by automation*. A poll that never ran leaves no segment.
 
 Each section states **where its data came from and how old it is** — the polling
 method, transport and cadence, then `updated 8m ago`, amber with a ⚠ once the
 reading is older than one cadence, exactly as on the snapshot tabs above. Each
 states its **own** age rather than the device's last poll: the rules table and
 the health-check metrics are separate reads on the same pass, and one can land
-while the other fails. A section that has never been collected says so instead
-of showing nothing.
+while the other fails. A failed rules read keeps the rules table as it was
+rather than emptying it. A section that has never been collected says so
+instead of showing nothing.
 
-There is no Refresh button here — SD-WAN is read on the system-info pass, and
-the tab is showing you what that pass last brought back.
+SD-WAN has its own polling pass, separate from interfaces: every 60 seconds by
+default, set per integration by the SD-WAN tab's **Polling Interval** (see
+[Integration-Fortinet](Integration-Fortinet)). There is no Refresh button on
+this tab. An on-demand poll (the mobile asset sheet's refresh, or
+`POST /assets/:id/probe-now` over the [API](API)) re-reads SD-WAN along with the
+probe; the snapshot tabs' **Refresh** (which re-reads system info) does not.
+
+### Path Monitor (hosts with the Polaris Agent)
+
+Shown on a host that runs at least one [path check](Path-Monitor).
+A table lists every check the host runs; click one to see its **Latency**
+(with optional DNS / Connect / TLS / TTFB lines and any automation SLA shaded),
+**Availability**, **HTTP status**, the **Latest result** (body fingerprint and
+size, TLS issuer and days to expiry, error text, and a body excerpt when one
+was kept) and the **Path** — the traceroute, each hop linked to the device
+Polaris monitors at that address, with changed hops marked against the previous
+trace. These results describe the path from this host; they never change the
+host's own Up / Down.
 
 ### Sources
 
@@ -434,6 +703,26 @@ reports; it never writes.
 A section your role cannot read says **"Not shown"**, never "none found".
 
 ---
+
+### If the address is already in use
+
+Saving an asset with an IP — on create, or when you change the IP in the edit
+form — first checks whether another network-present asset already records that
+address. If one does, a dialog names it (type, status, when its address was last
+confirmed, whether it is pinned) and asks how to proceed:
+
+- **Save & submit for conflict review** saves your record and raises a
+  [Duplicate IP conflict](Conflict-Resolution#checked-when-you-save-not-just-every-ten-minutes)
+  immediately, so it is in the queue — and alerting — without waiting for the
+  ten-minute sweep.
+- **Save & review merge with …** appears only if you hold Assets **full
+  read-write** and exactly one other asset currently holds the address. It saves,
+  then opens the merge review between the two records — for when the "other
+  asset" is the same device recorded twice.
+- **Cancel** writes nothing.
+
+A record whose address claim has gone stale is listed for information but does
+not count as a collision. Re-saving an asset without changing its IP asks nothing.
 
 ## Deleting an asset
 

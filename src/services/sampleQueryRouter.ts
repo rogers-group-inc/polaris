@@ -39,6 +39,19 @@ export interface TierPick {
 const SECONDS_PER_DAY = 86400;
 
 /**
+ * Slack on each tier boundary. The preset ranges are exactly as long as the
+ * default windows (7d = detailDays, 30d = hourlyDays), and the route computes
+ * `since = now − range` BEFORE this function reads its own `Date.now()` —
+ * across an await on the retention settings. With no slack the pick hinged on
+ * whether those two clocks landed in the same millisecond: a warm settings
+ * cache (charts loaded together) read hourly, a cold one (the periodic
+ * refresh, > 5 s later) read daily, so a 30-day chart redrew at a coarser
+ * resolution a few minutes after opening. Five minutes also absorbs a client
+ * that computes its own from/to for a preset.
+ */
+const TIER_BOUNDARY_GRACE_MS = 5 * 60 * 1000;
+
+/**
  * Tier defaults matching the SolarWinds-style tiering. Used as a fallback
  * when the asset-aware resolver isn't applicable (e.g. tests, fixture
  * data). Production endpoints route through `pickSampleTierForAsset`
@@ -67,7 +80,9 @@ export function pickSampleTier(
   // Encoding: FOREVER (-1) → tier covers all of history; 0 → tier off (no data,
   // fall through to the next tier); positive → covers the last N days.
   const covers = (days: number) =>
-    days === FOREVER ? true : sinceMs >= now - days * SECONDS_PER_DAY * 1000;
+    days === FOREVER ? true
+      : days === 0 ? false
+      : sinceMs >= now - days * SECONDS_PER_DAY * 1000 - TIER_BOUNDARY_GRACE_MS;
 
   if (covers(retention.detailDays)) return { tier: "detail", bucketSeconds: 0 };
   if (covers(retention.hourlyDays)) return { tier: "hourly", bucketSeconds: 3600 };

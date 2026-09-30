@@ -20,7 +20,7 @@
 - `fortinetTopology` is written WHOLESALE by the switch/AP sync blocks — `deviceDescription` must ride every `swTopology`/`apTopology` object or it's silently dropped on the next cycle.
 - Discovery must never write `Asset.notes` on an existing asset — notes are operator-only (the description→notes sync was removed 2026-07; boilerplate at creation is the sole exception).
 - Synthetic nodes (`isLocGroup`, `isPortal`) must stay out of: position persistence, the column solver input (hulls are added after layout), `computeLocationGroups` membership, asset-open tap handling, and dragfree saves. Portals are the ONLY interactive synthetic nodes.
-- descriptionSyncService interplay (rule 14): with `syncDescriptions` ON, description codes are Polaris-primary — a code edited in Polaris pushes to the device; device-side code edits are overwritten unless the Polaris description is empty (adopt). Maintain codes in Polaris.
+- descriptionSyncService interplay (rule 14): with description sync ON for the device class, description codes are Polaris-primary — a code edited in Polaris pushes to the device; device-side code edits are overwritten unless the Polaris description is empty (adopt). Maintain codes in Polaris.
 
 **When changing this:**
 - Adding a code key (e.g. `ra:` rack)? Extend `TOKEN_RE` + `KEY_TO_FIELD` in locationCodes.ts (longest-match order!), the `LocationCodes` type, `locationData()` stamps, `LOC_GROUP_KINDS` (shape/padding tier), the legend `locations` section, and the parser tests.

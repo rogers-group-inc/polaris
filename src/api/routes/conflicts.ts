@@ -42,6 +42,10 @@ import {
   mergeDuplicateIpAssets,
   DUPLICATE_IP_COLLISION_REASON,
 } from "../../services/duplicateIpConflictService.js";
+import {
+  mergeDuplicateSerialAssets,
+  DUPLICATE_SERIAL_COLLISION_REASON,
+} from "../../services/duplicateSerialConflictService.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -183,9 +187,13 @@ router.post("/:id/accept", async (req, res, next) => {
 
 // POST /api/v1/conflicts/:id/merge — asset conflicts only. TWO bodies, chosen
 // by the conflict's flavour:
-//   • duplicate-IP  → { survivorAssetId, absorbAssetIds: [...] } — the records
-//     are one device; absorb the duplicates into the survivor via the operator
-//     merge engine. Needs `assets:write` on top of discoveryConflicts:write.
+//   • duplicate-IP      → { survivorAssetId, absorbAssetIds: [...] } — the
+//     records are one device; absorb the duplicates into the survivor via the
+//     operator merge engine. Needs `assets:fullwrite` on top of
+//     discoveryConflicts:write.
+//   • duplicate-serial  → the same body, the same gate, the same engine
+//     (business rule 83). The contested-serial flavour has NO merge: it is one
+//     asset and two gates, not two assets.
 //   • everything else → per-field winner selection, below.
 // Body: { fieldWinners: { hostname: "existing"|"proposed", ... } }.
 // Fields not present in fieldWinners fall back to the default accept logic
@@ -208,8 +216,12 @@ router.post("/:id/merge", async (req, res, next) => {
     // Same chained gate as /reassign-ip — it deletes asset rows.
     const proposedKind = (conflict.proposedAssetFields || {}) as Record<string, unknown>;
     if (proposedKind.collisionReason === DUPLICATE_IP_COLLISION_REASON) {
-      if (!hasPermission(req, "assets", "write")) {
-        throw new AppError(403, "You do not have permission to merge assets");
+      // Merging is editing one asset AND deleting another, so it takes the
+      // assets key's destructive tier — the same level `POST /assets/:id/merge`
+      // requires, and the level the merge modal is gated on client-side. The
+      // reassign verb below stays at `write`: it edits, it deletes nothing.
+      if (!hasPermission(req, "assets", "fullwrite")) {
+        throw new AppError(403, "Merging assets requires full read-write on Assets");
       }
       const survivorAssetId =
         typeof req.body?.survivorAssetId === "string" ? req.body.survivorAssetId : "";
@@ -219,6 +231,31 @@ router.post("/:id/merge", async (req, res, next) => {
         : [];
 
       const outcome = await mergeDuplicateIpAssets(
+        conflict,
+        survivorAssetId,
+        absorbAssetIds,
+        requestActor(req),
+      );
+
+      res.json({ ok: true, ...outcome });
+      return;
+    }
+
+    // Duplicate-serial conflicts take the same body for the same reason: one
+    // device recorded twice, and the operator names which record survives.
+    // Same chained `assets:fullwrite` gate — it deletes asset rows.
+    if (proposedKind.collisionReason === DUPLICATE_SERIAL_COLLISION_REASON) {
+      if (!hasPermission(req, "assets", "fullwrite")) {
+        throw new AppError(403, "Merging assets requires full read-write on Assets");
+      }
+      const survivorAssetId =
+        typeof req.body?.survivorAssetId === "string" ? req.body.survivorAssetId : "";
+      if (!survivorAssetId) throw new AppError(400, "survivorAssetId is required");
+      const absorbAssetIds = Array.isArray(req.body?.absorbAssetIds)
+        ? req.body.absorbAssetIds.filter((v: unknown): v is string => typeof v === "string")
+        : [];
+
+      const outcome = await mergeDuplicateSerialAssets(
         conflict,
         survivorAssetId,
         absorbAssetIds,

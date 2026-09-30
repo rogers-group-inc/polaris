@@ -1111,13 +1111,15 @@
   }
 
   function sourceBadge(src) {
+    // "Address" is a pill the picker rebuilt for a typed address no pane lists.
     var label = src === "user" ? "Polaris user"
       : src === "contact" ? "Contact"
-        : src === "entra" ? "Entra"
-          : src === "region" ? "Region"
-            : src === "tag" ? "Tag"
-              : (src === "deviceRegion" || src === "deviceRegionLevel" || src === "assetContacts") ? "Dynamic"
-                : "Directory";
+        : src === "address" ? "Address"
+          : src === "entra" ? "Entra"
+            : src === "region" ? "Region"
+              : src === "tag" ? "Tag"
+                : (src === "deviceRegion" || src === "deviceRegionLevel" || src === "assetContacts") ? "Dynamic"
+                  : "Directory";
     return '<span class="badge" style="font-size:0.7rem">' + escapeHtml(label) + "</span>";
   }
 
@@ -1132,10 +1134,68 @@
     return e.email ? String(e.email).toLowerCase() : e.source + "|" + e.id;
   }
 
+  // ─── Recipients the action already holds ──────────────────────────────────
+  //
+  // The wizard hands the picker the pills already in the action's To/Cc/Bcc
+  // (`opts.current`, each { kind, value, label, field }), so the operator
+  // opening the book sees who is already on it before hunting for who isn't.
+  // Those rows float to the top of their pane, ticked. Unticking one takes that
+  // recipient OFF the action when the picker is confirmed (the result's
+  // `removed` list, which the wizard applies to its pills) — so the checkbox
+  // means the same thing on every row: ticked = on the action.
+
+  /** Pill kinds that live in the People pane; everything else is a Tags row. */
+  var PEOPLE_PILL_KINDS = { user: true, address: true, assetContacts: true };
+
+  /** Does this pill name this picker row? Mirrors pickerEntryToPill in the wizard. */
+  function pillMatchesEntry(p, en) {
+    var v = String(p.value || "").toLowerCase();
+    switch (p.kind) {
+      case "user": return en.source === "user" && String(en.id).toLowerCase() === v;
+      // The same mailbox reached as a contact, a directory hit or a user's
+      // address is one recipient — pickKey already treats it that way.
+      case "address": return !!en.email && String(en.email).toLowerCase() === v;
+      case "region":
+      case "tag": return en.source === p.kind && String(en.id).toLowerCase() === v;
+      case "deviceRegion":
+      case "assetContacts": return en.source === p.kind;
+      case "deviceRegionLevel": return en.source === "deviceRegionLevel" && String(en.level) === String(p.value);
+      default: return false; // roles are not listed in the picker at all
+    }
+  }
+
+  /**
+   * A row for a pill no pane lists — a person the empty-term search didn't
+   * return, a tag since removed from the registry. Built from what the pill
+   * itself carries, so the "already on this action" set is complete rather
+   * than whatever happened to come back from the server.
+   */
+  function entryFromPill(p) {
+    var label = p.label || p.value;
+    switch (p.kind) {
+      case "user":
+        return { source: "user", id: p.value, name: label, email: "", description: "Polaris user account" };
+      case "address": {
+        // Labels read "Name <address>" when the pill came from a named entry.
+        var m = /^(.*) <[^>]+>$/.exec(label);
+        return { source: "address", id: p.value, email: p.value, name: m ? m[1] : "", description: "" };
+      }
+      case "region":
+      case "tag":
+        return { source: p.kind, id: p.value, name: p.value + " Users", description: "" };
+      case "deviceRegionLevel":
+        return { source: "deviceRegionLevel", id: "deviceRegionLevel:" + p.value, level: Number(p.value), name: label, description: "" };
+      default:
+        return null;
+    }
+  }
+
   /**
    * Address-book picker. `field` is the recipient field it was opened from
    * ("to" | "cc" | "bcc") and comes back on the result so the caller knows
-   * where to drop the entries. Resolves { field, entries } or null.
+   * where to drop the entries. Resolves { field, entries, removed } or null:
+   * `entries` are the NEW picks (for `field`), `removed` the `opts.current`
+   * pills the operator unticked, which the caller takes off wherever they sit.
    */
   function openPicker(opts) {
     var field = (opts && opts.field) || "to";
@@ -1153,8 +1213,11 @@
     // /automations/recipient-users payload it loaded to build the pills.
     var isPush = !!(opts && opts.mode === "push");
     var pushDevices = (opts && opts.pushDevices) || {};
+    var current = ((opts && opts.current) || []).filter(function (p) { return p && p.kind && p.value; });
     return new Promise(function (resolve) {
-      var chosen = {};       // pickKey → entry
+      var chosen = {};       // pickKey → entry (new picks)
+      var dropped = {};      // pickKey → entry (current recipients unticked)
+      var extras = { people: [], tags: [] }; // rows rebuilt from pills no pane lists
       var settled = null;
       var entries = [];       // People pane (search results)
       var tagEntries = [];    // Tags pane (one row per map region + registry tag)
@@ -1205,20 +1268,76 @@
           : '<span style="color:var(--color-text-tertiary)">no Polaris account</span>';
       }
 
+      /** The fields ("to" / "cc" / "bcc") this row already sits in on the action. */
+      function currentFields(en) {
+        var out = [];
+        current.forEach(function (p) {
+          if (pillMatchesEntry(p, en) && out.indexOf(p.field) === -1) out.push(p.field);
+        });
+        return out;
+      }
+
+      /** Stable partition: rows already on the action first, each group in its own order. */
+      function currentFirst(list) {
+        var on = [], off = [];
+        list.forEach(function (en) { (currentFields(en).length ? on : off).push(en); });
+        return on.concat(off);
+      }
+
+      /**
+       * The pills of one pane that no row in `listed` stands for, as rows —
+       * narrowed by the People search term, so typing still narrows the list.
+       */
+      function unlistedCurrent(people, listed, term) {
+        var needle = String(term || "").toLowerCase();
+        var out = [];
+        current.forEach(function (p) {
+          if (!!PEOPLE_PILL_KINDS[p.kind] !== people) return;
+          var all = listed.concat(out);
+          for (var i = 0; i < all.length; i++) if (pillMatchesEntry(p, all[i])) return;
+          var en = entryFromPill(p);
+          if (!en) return;
+          if (needle && (String(en.name) + " " + String(en.email || "")).toLowerCase().indexOf(needle) === -1) return;
+          out.push(en);
+        });
+        // Kept per pane so the change handler can resolve a tick on one.
+        extras[people ? "people" : "tags"] = out;
+        return out;
+      }
+
       function pickCols() {
         var cols = [
           {
             width: "36px",
             cell: function (en) {
+              var key = pickKey(en);
+              // Already on the action: ticked unless the operator unticked it,
+              // and tracked in `dropped` rather than `chosen`, so confirming
+              // never adds it a second time.
+              if (currentFields(en).length) {
+                return '<input type="checkbox" data-ab-pick="' + escapeHtml(key) + '" data-ab-current-pick' +
+                  (dropped[key] ? "" : " checked") +
+                  ' title="Already a recipient — untick to remove it from this action">';
+              }
               // No checkbox on a row push cannot reach — refusing the pick is
               // honest where a warning after the fact is not.
               if (isPush && !pushReachable(en)) return "";
-              var key = pickKey(en);
               return '<input type="checkbox" data-ab-pick="' + escapeHtml(key) + '"' +
                 (chosen[key] ? " checked" : "") + ">";
             },
           },
-          AB_CELLS.name,
+          {
+            label: AB_CELLS.name.label,
+            width: AB_CELLS.name.width,
+            cell: function (en) {
+              var on = currentFields(en);
+              return AB_CELLS.name.cell(en) + (on.length
+                ? ' <span class="badge" style="font-size:0.7rem" data-ab-current>In ' +
+                  escapeHtml(on.map(function (f) { return f.charAt(0).toUpperCase() + f.slice(1); }).join(", ")) +
+                  "</span>"
+                : "");
+            },
+          },
           AB_CELLS.email,
           AB_CELLS.description,
           AB_CELLS.source,
@@ -1242,7 +1361,7 @@
        *  behind them and so reaches nobody over push. */
       function peopleHead() { return isPush ? [] : PEOPLE_DYNAMIC; }
 
-      function render() {
+      function render(term) {
         var box = q("#ab-pick-results");
         // The dynamic entry heads the list unconditionally — it is not a search
         // result, so a query that matches nobody must not hide it.
@@ -1252,7 +1371,8 @@
             'contacts and directory hits are listed but not selectable — there is no browser subscription behind ' +
             'an address. A user showing <strong>none</strong> has not turned push on in any browser yet.</p>';
         }
-        box.innerHTML = abTable(pickCols(), peopleHead().concat(entries), hint);
+        var listed = peopleHead().concat(entries);
+        box.innerHTML = abTable(pickCols(), currentFirst(unlistedCurrent(true, listed, term).concat(listed)), hint);
       }
 
       /**
@@ -1263,9 +1383,10 @@
       function renderTags() {
         var box = q("#ab-pick-tags");
         if (!box) return;
+        var listed = regionDynamicEntries(regionMaxLevel).concat(tagEntries);
         box.innerHTML = abTable(
           pickCols(),
-          regionDynamicEntries(regionMaxLevel).concat(tagEntries),
+          currentFirst(unlistedCurrent(false, listed, "").concat(listed)),
           tagEntries.length
             ? ""
             : '<p class="hint" style="margin:8px 0 0">No tags or map regions are defined yet — draw regions on ' +
@@ -1282,7 +1403,7 @@
             escapeHtml((err && err.message) || "Search failed") + "</p>";
           return;
         }
-        render();
+        render(term);
       }
 
       // Tab switching. Both panes stay in the DOM, so the People search term and
@@ -1312,9 +1433,15 @@
         var key = cb.getAttribute("data-ab-pick");
         // Both panes' pools, so a selection survives switching tabs — every
         // paint re-reads the checkbox state from `chosen`.
-        var pool = entries.concat(peopleHead(), regionDynamicEntries(regionMaxLevel), tagEntries);
+        var pool = entries.concat(peopleHead(), regionDynamicEntries(regionMaxLevel), tagEntries,
+          extras.people, extras.tags);
         var entry = null;
         for (var i = 0; i < pool.length; i++) if (pickKey(pool[i]) === key) entry = pool[i];
+        if (cb.hasAttribute("data-ab-current-pick")) {
+          if (cb.checked) delete dropped[key];
+          else if (entry) dropped[key] = entry;
+          return;
+        }
         if (cb.checked && entry) chosen[key] = entry;
         else delete chosen[key];
       });
@@ -1349,8 +1476,13 @@
         if (!btn) return; // push mode renders To alone
         btn.addEventListener("click", function () {
           var picked = Object.keys(chosen).map(function (k) { return chosen[k]; });
-          if (!picked.length) { showToast("Select at least one recipient", "error"); return; }
-          settled = { field: f, entries: picked };
+          var gone = Object.keys(dropped).map(function (k) { return dropped[k]; });
+          var removed = current.filter(function (p) {
+            return gone.some(function (en) { return pillMatchesEntry(p, en); });
+          });
+          // Unticking alone is a change worth confirming, so it needs no new pick.
+          if (!picked.length && !removed.length) { showToast("Select at least one recipient", "error"); return; }
+          settled = { field: f, entries: picked, removed: removed };
           ui.close();
         });
       });

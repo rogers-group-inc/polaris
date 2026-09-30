@@ -59,6 +59,70 @@ import {
   getOnboardingState,
   type SshOnboardingPlatform,
 } from "./windowsSshOnboardingService.js";
+import {
+  openMaintenanceHold,
+  releaseMaintenanceHold,
+  type MaintenanceHoldKind,
+} from "./maintenanceScheduleService.js";
+
+// ─── Maintenance holds ────────────────────────────────────────────────
+//
+// Every operation here stops the agent service on the host, which drops the
+// WebSocket and writes `agent.disconnected` at warning level — an alert about
+// downtime the operator asked for, and the seeded baseline automation watches
+// exactly that (business rule 80). The asset is held in maintenance for the
+// duration instead, which suppresses it the same way a maintenance schedule
+// does, because the event path honours `assetCanTrigger` like every other
+// trigger.
+//
+// Failures release immediately: an agent that is down because its upgrade
+// failed is a real problem, and the alert about it is the point. The success
+// paths do NOT release — the agent reattaching does (agentChannelService), or
+// the hold's own expiry, because the WS teardown can lag the service stop by a
+// heartbeat interval and releasing on "the script returned" lets the disconnect
+// through by seconds.
+
+/**
+ * Best-effort: resolve the agent's asset and hold it. A hold failure is logged
+ * and swallowed — it must never be the reason an upgrade does not run.
+ */
+async function takeAgentHold(managedAgentId: string, kind: MaintenanceHoldKind): Promise<void> {
+  try {
+    const row = await prisma.managedAgent.findUnique({
+      where:  { id: managedAgentId },
+      select: { assetId: true },
+    });
+    if (!row) return;
+    await openMaintenanceHold({ assetId: row.assetId, kind, actor: "system:agent" });
+  } catch (err) {
+    logger.warn({ err, managedAgentId, kind }, "Could not hold the asset in maintenance for an agent operation");
+  }
+}
+
+/**
+ * hostname || ipAddress, for an Event's `resourceName`.
+ *
+ * An `asset` Event that names no resource gives any automation watching it an
+ * empty subject (`alertSubject.eventSubjectLabel`), so the alert row, the
+ * widget entry and the email all come out unable to say WHICH device the agent
+ * belongs to. The runners hold the asset already and pass it straight through;
+ * this is for the failure helpers, which are handed an id and nothing else.
+ */
+async function assetLabel(assetId: string): Promise<string | undefined> {
+  const asset = await prisma.asset
+    .findUnique({ where: { id: assetId }, select: { hostname: true, ipAddress: true } })
+    .catch(() => null);
+  return asset?.hostname || asset?.ipAddress || undefined;
+}
+
+/** The mirror of takeAgentHold, by assetId — the caller already has the row. */
+async function dropAgentHold(assetId: string, kind: MaintenanceHoldKind): Promise<void> {
+  try {
+    await releaseMaintenanceHold({ assetId, kind });
+  } catch (err) {
+    logger.warn({ err, assetId, kind }, "Could not release the agent maintenance hold (it will expire on its own)");
+  }
+}
 
 // ─── Public entry points ──────────────────────────────────────────────
 
@@ -66,6 +130,14 @@ export interface StartInstallInput {
   managedAgentId: string;
   credentialId:   string;
   hostOverride?:  string; // optional — defaults to Asset.ipAddress / dnsName / hostname
+  /**
+   * Set by the REINSTALL route only (business rule 80). A reinstall stops an
+   * agent that is currently running and connected, so the asset is held in
+   * maintenance until it comes back; a first install and a retry of a failed
+   * one have no agent to disconnect and take no hold — suppressing alerts
+   * there would silence a host that is still telling the truth.
+   */
+  holdKind?:      MaintenanceHoldKind;
   /** Path-resolution hooks for tests; pass nothing in production. */
   testOverrides?: TestOverrides;
 }
@@ -97,6 +169,11 @@ interface TestOverrides {
  * loop. Failures land in installStatus="failed" with installError set.
  */
 export async function startInstall(input: StartInstallInput): Promise<void> {
+  // Awaited, not fire-and-forget: the hold has to be in place before the
+  // installer stops the running agent, and the reconcile it triggers is what
+  // parks the status. Never fatal — a hold that could not be taken is a noisier
+  // upgrade, not a reason to refuse one.
+  if (input.holdKind) await takeAgentHold(input.managedAgentId, input.holdKind);
   setImmediate(() => runInstall(input).catch((err) => {
     // Defensive — runInstall already captures errors into installError,
     // but anything escaping that path lands here.
@@ -110,6 +187,7 @@ export async function startInstall(input: StartInstallInput): Promise<void> {
  * the remote cleanup.
  */
 export async function startUninstall(input: StartUninstallInput): Promise<void> {
+  await takeAgentHold(input.managedAgentId, "agent-uninstall");
   setImmediate(() => runUninstall(input).catch((err) => {
     logger.error({ err, managedAgentId: input.managedAgentId }, "Agent uninstall crashed unexpectedly");
   }));
@@ -308,6 +386,7 @@ export async function startUpgrade(input: StartUpgradeInput): Promise<{ fromVers
     action:       "agent.upgrade_kickoff",
     resourceType: "asset",
     resourceId:   row.assetId,
+    resourceName: row.asset.hostname || row.asset.ipAddress || undefined,
     actor:        input.actor,
     level:        "info",
     message:      resolved.adopted
@@ -324,6 +403,8 @@ export async function startUpgrade(input: StartUpgradeInput): Promise<{ fromVers
       binaryFilename: binaryName,
     },
   });
+
+  await takeAgentHold(row.id, "agent-upgrade");
 
   setImmediate(() =>
     runUpgrade({
@@ -384,7 +465,12 @@ export async function upgradeAllOutdated(actor: string): Promise<UpgradeAllResul
       installStatus: { in: [...UPGRADEABLE_INSTALL_STATUSES] },
       NOT: { agentVersion: currentVersion },
     },
-    select: { id: true, assetId: true, agentVersion: true },
+    // The asset's name rides along so a skip Event can say WHICH host it
+    // skipped — a fan-out that reports N nameless failures is not a report.
+    select: {
+      id: true, assetId: true, agentVersion: true,
+      asset: { select: { hostname: true, ipAddress: true } },
+    },
   });
   const perAsset: UpgradeAllResult["perAsset"] = [];
   const POOL_SIZE = 4;
@@ -405,6 +491,7 @@ export async function upgradeAllOutdated(actor: string): Promise<UpgradeAllResul
         action:       "agent.upgrade_skipped",
         resourceType: "asset",
         resourceId:   e.assetId,
+        resourceName: e.asset?.hostname || e.asset?.ipAddress || undefined,
         actor,
         level:        "warning",
         message:      `Polaris Agent upgrade skipped (still on ${e.agentVersion ?? "an unknown version"}): ${error}`,
@@ -445,7 +532,10 @@ export interface BulkInstallInput {
 
 export interface BulkInstallResult {
   requested: number;
+  /** Installs handed to the pool — fresh rows AND retried failed ones. */
   kicked:    number;
+  /** Of `kicked`, how many were a retry of an install that had failed. */
+  retried:   number;
   skipped:   Array<{ assetId: string; hostname: string | null; reason: string }>;
 }
 
@@ -453,20 +543,39 @@ export interface BulkInstallResult {
  * Operator-initiated bulk agent install — the assets-page bulk bar's "Deploy
  * Agent" action. Applies the same eligibility rules as the manual
  * POST /assets/:id/agent/install route per asset (source-kind compatibility,
- * no hypervisors, no existing ManagedAgent row, reachable host) but resolves
- * OS platform + transport automatically the way discovery auto-deploy does:
- * inferAgentPlatform(asset.os), Windows → WinRM credential (SSH fallback),
- * linux/darwin → SSH credential. Ineligible assets are reported back as
- * skipped with a reason — never an error for the whole batch.
+ * no hypervisors, reachable host) but resolves OS platform + transport
+ * automatically the way discovery auto-deploy does: inferAgentPlatform(asset.os),
+ * Windows → WinRM credential (SSH fallback), linux/darwin → SSH credential.
+ * Ineligible assets are reported back as skipped with a reason — never an
+ * error for the whole batch.
  *
- * ManagedAgent rows are created synchronously (the UI immediately shows
- * "pending" on every kicked asset); the remote installs then run in a
+ * An asset whose agent row is `installStatus="failed"` is RETRIED, not
+ * skipped — the same reset the per-asset POST /assets/:id/agent/retry route
+ * performs, folded into the batch. Before this, a selection that included a
+ * host whose first install had died (host asleep, WinRM off, wrong password)
+ * came back "agent already installed (status=failed)", and the operator had
+ * to open every such asset and press Retry by hand — the one case where
+ * "deploy the agent to these" most obviously means "try again". The retry
+ * keeps the row's identity (`osPlatform`, `arch` — the host has not changed,
+ * and a wrong guess there is corrected through reinstall / force-remove) and
+ * takes this batch's policy (credential + transport re-picked for that
+ * platform, install-script variant, privilege tier). When the batch's
+ * credentials do not cover the row's platform, the credential the failed
+ * install was started with is reused if it still exists, exactly as the
+ * per-asset Retry does; otherwise the asset is skipped with that reason.
+ * Like the per-asset retry, no maintenance hold is taken (rule 80): a failed
+ * install left no running agent to disconnect. Rows in any other state —
+ * in-flight, active, upgrade_failed, uninstall_failed, revoked — stay skipped:
+ * those have work running on the host or an agent to preserve.
+ *
+ * ManagedAgent rows are created / reset synchronously (the UI immediately
+ * shows "pending" on every kicked asset); the remote installs then run in a
  * background pool of BULK_INSTALL_POOL so a large selection can't fan out
  * hundreds of simultaneous SSH/SFTP sessions. Per-row failures land as
  * installStatus="failed" + installError via the normal state machine.
  *
- * Scale note: one findMany bounded by the route's ids cap + one create per
- * eligible asset. A one-shot operator action, not a ticking job.
+ * Scale note: one findMany bounded by the route's ids cap + one create or
+ * update per eligible asset. A one-shot operator action, not a ticking job.
  */
 export async function bulkInstallAgents(input: BulkInstallInput): Promise<BulkInstallResult> {
   const arch = input.arch ?? "amd64";
@@ -517,7 +626,12 @@ export async function bulkInstallAgents(input: BulkInstallInput): Promise<BulkIn
     where: { id: { in: input.assetIds } },
     select: {
       id: true, hostname: true, dnsName: true, ipAddress: true, os: true, assetType: true,
-      managedAgent: { select: { installStatus: true } },
+      managedAgent: {
+        select: {
+          id: true, installStatus: true, osPlatform: true, arch: true,
+          installCredentialId: true, installTransport: true,
+        },
+      },
       discoveredByIntegration: { select: { type: true } },
     },
   });
@@ -525,18 +639,83 @@ export async function bulkInstallAgents(input: BulkInstallInput): Promise<BulkIn
 
   const skipped: BulkInstallResult["skipped"] = [];
   const queue: Array<{ managedAgentId: string; credentialId: string }> = [];
+  let retried = 0;
 
   for (const assetId of input.assetIds) {
     const a = byId.get(assetId);
     if (!a) { skipped.push({ assetId, hostname: null, reason: "asset not found" }); continue; }
     const skip = (reason: string) => skipped.push({ assetId, hostname: a.hostname, reason });
 
-    if (a.managedAgent) { skip(`agent already installed (status=${a.managedAgent.installStatus})`); continue; }
+    const failedRow = a.managedAgent?.installStatus === "failed" ? a.managedAgent : null;
+    if (a.managedAgent && !failedRow) { skip(`agent already installed (status=${a.managedAgent.installStatus})`); continue; }
     const sourceKind = assetSourceKindFromIntegrationType(a.discoveredByIntegration?.type ?? null);
     if (!isPollingMethodCompatible(sourceKind, "agent")) { skip(`Polaris Agent is not compatible with ${sourceKind} sources`); continue; }
     if (a.assetType === "hypervisor") { skip("agent cannot be installed on a hypervisor (ESXi) host"); continue; }
     const host = a.ipAddress || a.dnsName || a.hostname || "";
     if (!host) { skip("no IP / DNS / hostname to reach the device"); continue; }
+
+    if (failedRow) {
+      // ── Retry of a failed install (see the doc comment) ──
+      const osPlatform = failedRow.osPlatform as AgentOsPlatform;
+      const rowArch = failedRow.arch;
+      let target = pickTransportAndCredential(osPlatform, deployCfg);
+      if ("skip" in target) {
+        // The batch's credentials do not cover this platform: fall back to the
+        // credential the failed install was started with, as the per-asset
+        // Retry does — a transient failure (host asleep) is worth one more go
+        // with the same key. A deleted credential leaves nothing to retry with.
+        const priorId = failedRow.installCredentialId;
+        const prior = priorId ? await getCredential(priorId).catch(() => null) : null;
+        if (!prior) {
+          skip(`last install failed and cannot be retried: ${target.skip}, and the credential it was started with ` +
+               (priorId ? "no longer exists" : "is not on file"));
+          continue;
+        }
+        target = {
+          osPlatform,
+          transport:    (failedRow.installTransport === "winrm" ? "winrm" : "ssh"),
+          credentialId: prior.id,
+        };
+      }
+      if (!manifest.binaries[`${osPlatform}-${rowArch}`]) { skip(`no agent binary built for ${osPlatform}-${rowArch}`); continue; }
+
+      try {
+        // Same reset as POST /:id/agent/retry, plus this batch's policy. The
+        // runner refreshes the cert pin itself, but stamping it here keeps the
+        // row honest between the reset and the pool reaching it.
+        await prisma.managedAgent.update({
+          where: { id: failedRow.id },
+          data: {
+            installStatus:         "pending",
+            installError:          null,
+            installedBy:           actor,
+            serverCertFingerprint: fingerprint,
+            installCredentialId:   target.credentialId,
+            installTransport:      target.transport,
+            installScriptId:       input.scriptIds?.[osPlatform] ?? null,
+            privilegeTier:         osPlatform === "linux" ? normalizePrivilegeTier(input.privilegeTier) : "unprivileged",
+          },
+        });
+        queue.push({ managedAgentId: failedRow.id, credentialId: target.credentialId });
+        retried++;
+        await logEvent({
+          action:       "agent.install_retry",
+          resourceType: "asset",
+          resourceId:   a.id,
+          resourceName: a.hostname || host,
+          actor,
+          level:        "info",
+          message:      `Polaris Agent install retried (bulk, ${osPlatform}/${rowArch}, ${target.transport})`,
+          details:      { managedAgentId: failedRow.id, credentialId: target.credentialId, transport: target.transport, bulk: true },
+        }).catch(() => {});
+      } catch (err: any) {
+        // The row vanished (force-removed between findMany and update) or the
+        // update failed — a skip, not a batch error.
+        skip(err?.message || "failed to reset the failed agent record");
+        logger.warn({ err, assetId: a.id, managedAgentId: failedRow.id }, "bulk agent install retry reset failed");
+      }
+      continue;
+    }
 
     const osPlatform = inferAgentPlatform(a.os);
     const target = pickTransportAndCredential(osPlatform, deployCfg);
@@ -591,7 +770,7 @@ export async function bulkInstallAgents(input: BulkInstallInput): Promise<BulkIn
     });
   }
 
-  return { requested: input.assetIds.length, kicked: queue.length, skipped };
+  return { requested: input.assetIds.length, kicked: queue.length, retried, skipped };
 }
 
 // ─── Install runner ───────────────────────────────────────────────────
@@ -739,6 +918,7 @@ async function runInstall(input: StartInstallInput): Promise<void> {
     action:       "agent.installed",
     resourceType: "asset",
     resourceId:   row.assetId,
+    resourceName: row.asset.hostname || row.asset.ipAddress || undefined,
     level:        "info",
     message:      "Polaris Agent installer completed on host — awaiting agent enrollment",
     details:      { managedAgentId },
@@ -747,6 +927,8 @@ async function runInstall(input: StartInstallInput): Promise<void> {
 }
 
 async function failInstall(managedAgentId: string, assetId: string, reason: string): Promise<void> {
+  // Only a reinstall ever took one; releasing an absent hold is a no-op.
+  await dropAgentHold(assetId, "agent-reinstall");
   await prisma.managedAgent.update({
     where: { id: managedAgentId },
     data: { installStatus: "failed", installError: reason },
@@ -755,6 +937,7 @@ async function failInstall(managedAgentId: string, assetId: string, reason: stri
     action:       "agent.install_failed",
     resourceType: "asset",
     resourceId:   assetId,
+    resourceName: await assetLabel(assetId),
     level:        "error",
     message:      `Agent install failed: ${reason}`,
     details:      { managedAgentId },
@@ -861,10 +1044,15 @@ async function runUninstall(input: StartUninstallInput): Promise<void> {
     }),
     prisma.assetProcessConnection.deleteMany({ where: { assetId: row.assetId } }),
   ]);
+  // Unlike upgrade/reinstall, nothing is coming back to reattach and release
+  // this one — the agent is gone by design, so the uninstall completing IS the
+  // end of the hold. The disconnect it caused already landed inside the window.
+  await dropAgentHold(row.assetId, "agent-uninstall");
   await logEvent({
     action:       "agent.uninstalled",
     resourceType: "asset",
     resourceId:   row.assetId,
+    resourceName: row.asset.hostname || row.asset.ipAddress || undefined,
     level:        "info",
     message:      "Polaris Agent uninstalled cleanly",
     details:      { managedAgentId, osPlatform: row.osPlatform },
@@ -872,6 +1060,7 @@ async function runUninstall(input: StartUninstallInput): Promise<void> {
 }
 
 async function failUninstall(managedAgentId: string, assetId: string, reason: string): Promise<void> {
+  await dropAgentHold(assetId, "agent-uninstall");
   await prisma.managedAgent.update({
     where: { id: managedAgentId },
     data: { installStatus: "uninstall_failed", installError: reason },
@@ -880,6 +1069,7 @@ async function failUninstall(managedAgentId: string, assetId: string, reason: st
     action:       "agent.uninstall_failed",
     resourceType: "asset",
     resourceId:   assetId,
+    resourceName: await assetLabel(assetId),
     level:        "warning",
     message:      `Agent uninstall failed: ${reason}`,
     details:      { managedAgentId },
@@ -1012,6 +1202,7 @@ async function runUpgrade(input: RunUpgradeInput): Promise<void> {
     action:       "agent.upgrade_succeeded",
     resourceType: "asset",
     resourceId:   row.assetId,
+    resourceName: row.asset.hostname || row.asset.ipAddress || undefined,
     actor:        input.actor,
     level:        "info",
     message:      input.resolved.adopted
@@ -1031,6 +1222,8 @@ async function runUpgrade(input: RunUpgradeInput): Promise<void> {
 }
 
 async function failUpgrade(managedAgentId: string, assetId: string, reason: string, actor: string): Promise<void> {
+  // The agent may be down and staying down. Let it alert.
+  await dropAgentHold(assetId, "agent-upgrade");
   await prisma.managedAgent.update({
     where: { id: managedAgentId },
     data:  { installStatus: "upgrade_failed", installError: reason },
@@ -1039,6 +1232,7 @@ async function failUpgrade(managedAgentId: string, assetId: string, reason: stri
     action:       "agent.upgrade_failed",
     resourceType: "asset",
     resourceId:   assetId,
+    resourceName: await assetLabel(assetId),
     actor,
     level:        "warning",
     message:      `Agent upgrade failed: ${reason}`,

@@ -40,7 +40,21 @@ import {
   type ProfileFull,
 } from "./manufacturerProfileService.js";
 import { applyModelParse } from "../utils/modelParse.js";
+import { clampRegexSubject } from "../utils/regexSafety.js";
 import { normalizeAssetTypeName } from "../utils/assetTypes.js";
+import { metricRowTransforms, type TransformKind } from "../utils/symbolTransforms.js";
+
+/**
+ * The unary transform the temperature collector should apply for this pick,
+ * or undefined. Filtered through `metricRowTransforms` rather than trusted:
+ * a row stored before the write path narrowed (a Celsius→Fahrenheit value,
+ * or any transform on a table row) must not start doing something now that
+ * the collector reads the field.
+ */
+function temperatureTransform(pick: DbMetricPick): TransformKind | undefined {
+  const allowed = metricRowTransforms("temperature", pick.type);
+  return allowed.find((k) => k === pick.transform);
+}
 
 /** Manufacturer → cached profile. Injected so tests run without a database. */
 export type ProfileLookup = (manufacturer: string | null | undefined) => ProfileFull | null;
@@ -107,7 +121,7 @@ export function resolveDbMetric(metric: MetricRow | undefined, model: string | n
     // pre-swap resolver does not read; `pickDbProfile` does. Skip, don't match.
     if (!o.modelPattern) continue;
     try {
-      if (new RegExp(o.modelPattern, "i").test(modelStr)) return pickFromOverride(o);
+      if (new RegExp(o.modelPattern, "i").test(clampRegexSubject(modelStr))) return pickFromOverride(o);
     } catch { /* malformed regex; skip — write-path validates so this is defensive only */ }
   }
   if (metric.defaultSymbol || metric.defaultSymbolB) return pickFromRowDefaults(metric);
@@ -215,7 +229,12 @@ export function pickVendorProfileMerged(
     // table (e.g. fgHwSensorTable) instead of a single scalar GET — the
     // operator-facing "Hardware Sensors" metric. `scalar` keeps the
     // single-reading path (FortiAP fapTemperature).
-    merged.temperature = { symbol: tempPick.symbol, mode: tempPick.type === "table" ? "table" : "scalar" };
+    const transform = temperatureTransform(tempPick);
+    merged.temperature = {
+      symbol: tempPick.symbol,
+      mode: tempPick.type === "table" ? "table" : "scalar",
+      ...(transform ? { transform } : {}),
+    };
   }
   if (diskPick) {
     // The operator-facing "Storage" metric. It feeds the vendor disk fallback
@@ -317,7 +336,12 @@ export function findDbProfile(
   const keyed = lookup(subject.manufacturer);
   if (keyed) return keyed;
 
-  const haystack = [subject.manufacturer, subject.os, subject.mibModule].filter(Boolean).join(" ").trim();
+  // Device-supplied SNMP text, matched against an operator's regex once per
+  // asset per poll — clamped so subject length can never be the thing that
+  // makes a pattern expensive. See utils/regexSafety.ts.
+  const haystack = clampRegexSubject(
+    [subject.manufacturer, subject.os, subject.mibModule].filter(Boolean).join(" ").trim(),
+  );
   if (!haystack) return null;
   for (const p of list()) {
     if (!p.matchPattern) continue;
@@ -371,7 +395,7 @@ export function resolveScopedMetric(
 function matchesModel(o: MetricOverrideRow, modelHaystack: string): boolean {
   if (!o.modelPattern) return false;
   const re = compiled(o.modelPattern);
-  return !!re && re.test(modelHaystack);
+  return !!re && re.test(clampRegexSubject(modelHaystack));
 }
 
 /**
@@ -485,10 +509,12 @@ export function pickDbProfile(
   }
 
   if (tempPick?.symbol) {
+    const transform = temperatureTransform(tempPick);
     out.temperature = {
       symbol: tempPick.symbol,
       mode: tempPick.type === "table" ? "table" : "scalar",
       ...(tempPick.label ? { sensorName: tempPick.label } : {}),
+      ...(transform ? { transform } : {}),
     };
   }
 

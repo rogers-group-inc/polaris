@@ -1186,6 +1186,13 @@
       goToStep(step + 1, { validate: true });
     });
     document.getElementById("nd-back").addEventListener("click", function () { goToStep(step - 1); });
+    // → / ← walk the steps and Enter advances while Next is showing, submitting
+    // only on the last one (app.js § Stepped-modal keyboard navigation). The
+    // submit is absent on a draft this operator can't edit; the helper takes
+    // that as "Enter has nothing to submit here".
+    if (typeof wireModalStepKeys === "function") {
+      wireModalStepKeys({ back: "nd-back", next: "nd-next", submit: "nd-save" });
+    }
     document.getElementById("nd-stepper").addEventListener("click", function (ev) {
       var el = ev.target.closest ? ev.target.closest(".stepper-step") : null;
       if (!el) return;

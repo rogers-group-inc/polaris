@@ -2,19 +2,22 @@
 //
 // Cross-platform via gopsutil: works the same on Linux (/proc/stat +
 // /proc/meminfo), macOS (host_statistics + sysctl), and Windows
-// (GetSystemTimes + GlobalMemoryStatusEx). Each call captures one
-// instantaneous reading; the server stores them in a time-series and
-// the System tab renders the chart.
+// (GetSystemTimes + GlobalMemoryStatusEx). Memory and temperatures are read
+// instantaneously; CPU covers the span since the previous pass (below). The
+// server stores each row in a time-series and the System tab renders the
+// chart.
 //
-// CPU% is sampled over a ~1s window and reported TWICE: the cross-core
-// average (cpuPct, which every other transport also reports and which every
-// threshold and automation reads) and the per-logical-core vector
-// (cpuCorePcts, agent-only). One gopsutil call produces both — Percent(d,
-// true) returns the per-core slice, and the aggregate is its mean, which is
-// exactly what Percent(d, false) computes internally. Calling both would
-// block two seconds instead of one and, worse, sample two different windows,
-// so the aggregate a threshold fires on would not be the mean of the cores
-// drawn beside it.
+// CPU% is measured across the WHOLE cadence — the delta of the kernel's
+// cumulative per-core counters since the previous pass — and reported TWICE:
+// the cross-core aggregate (cpuPct, which every other transport also reports
+// and which every threshold and automation reads) and the per-logical-core
+// vector (cpuCorePcts, agent-only). One counter read produces both, so the
+// aggregate a threshold fires on always describes the same span as the cores
+// drawn beside it. The span, the fallbacks and why this is NOT a 1-second
+// blocking window any more are in cputimes.go — the short version is that a
+// 1 s slice of every 60 measured the agent's own collectors rather than the
+// host whenever one of them overran into it, which on a single-vCPU VM is
+// the difference between 3% and 100%.
 //
 // Memory: the plain used/total pair every source sends, PLUS the four-band
 // breakdown (process / buffers / cache / free) and swap. The per-OS
@@ -32,7 +35,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/host"
 	"github.com/shirou/gopsutil/v3/mem"
 
@@ -64,25 +66,20 @@ func TelemetryOnce() *transport.TelemetrySample {
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 
-	// CPU% — 1-second sampling window for a meaningful number. Two
-	// consecutive Percent(0, ...) calls would give 0 most of the time
-	// (no time elapsed between samples). gopsutil's Percent(interval,
-	// true) blocks `interval` and returns one delta per logical core
-	// over that span.
-	if per, err := cpu.Percent(1*time.Second, true); err == nil && len(per) > 0 {
-		sum := 0.0
+	// CPU% — one non-blocking counter read covering everything since the
+	// previous pass. The aggregate comes back computed over EVERY core,
+	// including any past the report cap, so it keeps meaning "this host's
+	// CPU" no matter how the vector below is truncated.
+	if per, agg, ok := hostCPUPercents(); ok && len(per) > 0 {
 		cores := make([]float64, 0, len(per))
 		for i, v := range per {
-			sum += v
-			if i < maxReportedCores {
-				cores = append(cores, round1(v))
+			if i >= maxReportedCores {
+				break
 			}
+			cores = append(cores, round1(v))
 		}
-		// The aggregate is the mean over EVERY core, including any past the
-		// report cap — it has to keep meaning "this host's CPU" no matter
-		// how the vector was truncated.
-		avg := round1(sum / float64(len(per)))
-		sample.CPUPct = &avg
+		a := round1(agg)
+		sample.CPUPct = &a
 		sample.CPUCorePcts = cores
 	}
 

@@ -509,12 +509,17 @@ const FortiManagerConfigSchema = z.object({
   // opt in explicitly because quarantine push requires write access to the
   // FortiGate's address-group configuration.
   pushQuarantine: z.boolean().optional().default(false),
-  // When true, each system-info pass for FortiGates owned by this integration
-  // also pulls SD-WAN data: Performance SLA health-check metrics
+  // When true, FortiGates owned by this integration are polled for SD-WAN data
+  // on their own cadence: Performance SLA health-check metrics
   // (/api/v2/monitor/virtual-wan/health-check) and SD-WAN service-rule member
   // selection (/api/v2/cmdb/system/sdwan). Surfaced on the asset's SD-WAN tab.
   // FortiOS-only; default off. Mirrored on FortiGateConfigSchema for parity.
   pullSdwan: z.boolean().optional().default(false),
+  // How often that SD-WAN poll runs, in seconds (default 60). Its own cadence
+  // since 2026-09 — it used to ride the interface scrape (10 min default).
+  // Absent = 60; the monitor clamps to 60..86400 at read time as well
+  // (sdwanIntervalFromConfig), because the PUT path merges config unvalidated.
+  sdwanIntervalSeconds: z.number().int().min(60).max(86400).optional(),
   // ARP presence sweep. When true, right before each discovery cycle reads a
   // FortiGate's ARP table, Polaris fires one fire-and-forget UDP datagram at
   // every active dhcp_reservation IP on that device's subnets — forcing the
@@ -558,7 +563,16 @@ const FortiManagerConfigSchema = z.object({
   // (audited). Transport follows useProxy, same as pushReservations. Default
   // off; requires device-config write access on the FMG admin profile / API
   // token. Mirrored on FortiGateConfigSchema for parity.
+  //
+  // Gated per device class: syncFortigateDescriptions (FortiGate alias +
+  // interface comments), syncSwitchDescriptions (FortiSwitch + port
+  // descriptions), syncApDescriptions (FortiAP location). No defaults on the
+  // three — an unset key inherits the legacy `syncDescriptions` master toggle
+  // (utils/descriptionSyncFlags.ts), which is kept only for that fallback.
   syncDescriptions: z.boolean().optional().default(false),
+  syncFortigateDescriptions: z.boolean().optional(),
+  syncSwitchDescriptions: z.boolean().optional(),
+  syncApDescriptions: z.boolean().optional(),
   // Interface name to read for a managed FortiSwitch's management-access
   // (allowaccess) during the Phase 13.6 read. Defaults to "internal" at read
   // time when unset. The firewall's own management interface reuses
@@ -621,9 +635,10 @@ const FortiGateConfigSchema = z.object({
   // FortiManagerConfigSchema.pushQuarantine for shape + semantics. Default off.
   pushQuarantine: z.boolean().optional().default(false),
   // Pull SD-WAN Performance SLA health-check metrics + service-rule member
-  // selection on each system-info pass. See FortiManagerConfigSchema.pullSdwan
-  // for shape + semantics. FortiOS-only; default off.
+  // selection on their own cadence. See FortiManagerConfigSchema.pullSdwan /
+  // sdwanIntervalSeconds for shape + semantics. FortiOS-only; default off.
   pullSdwan: z.boolean().optional().default(false),
+  sdwanIntervalSeconds: z.number().int().min(60).max(86400).optional(),
   // ARP presence sweep — see FortiManagerConfigSchema.arpPresenceSweep for
   // shape + semantics. Default off.
   arpPresenceSweep: z.boolean().optional().default(false),
@@ -636,8 +651,12 @@ const FortiGateConfigSchema = z.object({
   // Requires pushReservations. Default off.
   adoptDiscoveredMac: z.boolean().optional().default(false),
   // Description sync (Polaris-primary) — see FortiManagerConfigSchema
-  // .syncDescriptions for shape + semantics. Default off.
+  // .syncDescriptions for shape + semantics (incl. the three per-class
+  // toggles and their legacy fallback). Default off.
   syncDescriptions: z.boolean().optional().default(false),
+  syncFortigateDescriptions: z.boolean().optional(),
+  syncSwitchDescriptions: z.boolean().optional(),
+  syncApDescriptions: z.boolean().optional(),
   // Interface name to read for a managed FortiSwitch's management-access
   // (allowaccess) during the Phase 13.6 read. Defaults to "internal" when
   // unset. See FortiManagerConfigSchema.switchManagementInterface.

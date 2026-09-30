@@ -565,10 +565,19 @@ code {
 }
 
 /* ─── Layout ───────────────────────────────────────────────────────────────── */
+/* How wide the shell may grow — the account menu's Layout row sets
+   data-layout on <html> (app.js, per browser). 16:9 is the default and what
+   a page without app.js (Dash) always gets. .layout and .slideover both read
+   this one token, so the slide-over stays on the column's right edge in every
+   layout and on the window edge in Auto. */
+:root { --layout-max-width: calc(100vh * 16 / 9); }
+:root[data-layout="16x10"] { --layout-max-width: calc(100vh * 16 / 10); }
+:root[data-layout="auto"] { --layout-max-width: 100vw; }
+
 .layout {
   display: flex;
   min-height: 100vh;
-  max-width: calc(100vh * 16 / 9);
+  max-width: var(--layout-max-width);
   width: 100%;
   margin: 0 auto;
 }
@@ -2439,6 +2448,30 @@ body.sf-resizing * { user-select: none !important; }
   background: var(--color-bg-primary);
 }
 .sf-filter-text .sf-filter { flex: 1; min-width: 0; }
+/* IP network filter (data-sf-filter="ipnet"): one row per network, "+" adds. */
+.sf-filter-ipnet { display: flex; flex-direction: column; gap: 2px; position: relative; }
+.sf-ipnet-row { display: flex; align-items: stretch; gap: 2px; }
+.sf-ipnet-row .sf-filter { flex: 1; min-width: 0; }
+.sf-ipnet-spacer { flex-shrink: 0; width: 18px; }
+.sf-ipnet-add,
+.sf-ipnet-remove {
+  flex-shrink: 0;
+  width: 18px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-tertiary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.sf-ipnet-add:hover:not(:disabled),
+.sf-ipnet-remove:hover { color: var(--color-text-primary); border-color: var(--color-accent); }
+.sf-ipnet-add:disabled { opacity: 0.4; cursor: default; }
+.sf-filter.sf-filter-invalid { border-color: var(--color-danger); }
 .sf-filter-readonly {
   font-style: italic;
   color: var(--color-text-tertiary);
@@ -2454,6 +2487,11 @@ body.sf-resizing * { user-select: none !important; }
   color: var(--color-text-primary);
 }
 .sf-op-row:hover { background: var(--color-bg-secondary); }
+/* Text-filter suggestion list (TableSF.setColumnSuggestions) — same rows as the
+   mode popover; the keyboard-highlighted row reads like a hovered one. */
+.sf-suggest-popover { padding: 2px 0; max-width: 320px; }
+.sf-suggest-row { overflow: hidden; text-overflow: ellipsis; }
+.sf-suggest-row.sf-suggest-active { background: var(--color-bg-secondary); }
 
 /* ─── Date-range filter ───────────────────────────────────────────────────── */
 .sf-filter-date { position: relative; }
@@ -2709,6 +2747,20 @@ th.fav-col, td.fav-col { width: 20px; min-width: 20px; text-align: center; paddi
   font-size: 0.72rem;
   color: var(--color-text-tertiary);
   margin-top: 3px;
+}
+/* Integration modal tabs: a hint outside a form-group (tab intros, bullet
+   lists, calloutHTML bodies) inherited full body size, so the feature tabs
+   rendered their prose larger than General's info box and field hints. That
+   prose is explanatory paragraphs, not a one-line field hint, so it takes the
+   infoBox() size (0.82rem) and a field hint keeps its 0.72rem — two tiers,
+   the same on every tab. Scoped to the integration panels (`intg-*` prefixes)
+   rather than made global because ~360 other `.hint`s were laid out against
+   the unscoped behaviour. Declared before `.hint-error` so that colour still
+   wins at equal specificity. */
+.page-tab-panel[id^="intg-"] .hint:not(.form-group .hint) {
+  font-size: 0.82rem;
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
 }
 /* A hint that has turned into a refusal — the field's own value is now outside
    what the server will accept (the reservation-notes budget counter is the
@@ -3401,6 +3453,50 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 /* The shared `word-break: break-word` is for the comparison table's two value
    columns; here it hyphenates "access_point" down the Type column. */
 .conflict-table-dupip td { word-break: normal; }
+
+/* Serial conflicts (business rule 83) — two more column counts the
+   three-column comparison rules above are wrong for. Same failure the
+   duplicate-IP block documents: the nth-child(2)/(3) half-width rule hands two
+   columns half the table each and starves everything after them, so each
+   variant declares its own widths and carries its own min-width + scroll
+   wrapper rather than crushing a column in a narrowed panel.
+
+   Contested serial (renderSerialClaimConflictCard): FIVE columns, no controls
+   — the card is report-only, so the width goes to the gate's name and to the
+   two timestamps that tell a completed move from a stale roster entry. */
+.conflict-table-serial-claim { overflow-x: auto; }
+.conflict-table-serial-claim table { min-width: 720px; }
+.conflict-table-serial-claim .conflict-field { width: auto; } /* Controller FortiGate — takes the remainder */
+.conflict-table-serial-claim th:nth-child(2),
+.conflict-table-serial-claim td:nth-child(2) { width: 170px; } /* Chassis serial */
+.conflict-table-serial-claim th:nth-child(3),
+.conflict-table-serial-claim td:nth-child(3) { width: 150px; } /* Integration */
+.conflict-table-serial-claim th:nth-child(4),
+.conflict-table-serial-claim td:nth-child(4) { width: 120px; } /* First claimed */
+.conflict-table-serial-claim th:nth-child(5),
+.conflict-table-serial-claim td:nth-child(5) { width: 120px; } /* Last confirmed */
+.conflict-table-serial-claim td { word-break: normal; }
+
+/* Duplicate serial (renderDuplicateSerialConflictCard): SIX columns, the last
+   holding the Merge control. Its own block rather than borrowing the
+   duplicate-IP one: the columns line up by count only — that card's 240px
+   column holds an address field beside a button, this one holds a timestamp —
+   and a variant that borrows another's widths drifts the moment either card
+   gains a column. */
+.conflict-table-dupserial { overflow-x: auto; }
+.conflict-table-dupserial table { min-width: 800px; }
+.conflict-table-dupserial .conflict-field { width: auto; }     /* Asset — takes the remainder */
+.conflict-table-dupserial th:nth-child(2),
+.conflict-table-dupserial td:nth-child(2) { width: 100px; }    /* Type */
+.conflict-table-dupserial th:nth-child(3),
+.conflict-table-dupserial td:nth-child(3) { width: 100px; }    /* Status */
+.conflict-table-dupserial th:nth-child(4),
+.conflict-table-dupserial td:nth-child(4) { width: 130px; }    /* IP */
+.conflict-table-dupserial th:nth-child(5),
+.conflict-table-dupserial td:nth-child(5) { width: 120px; }    /* Last seen */
+.conflict-table-dupserial th:nth-child(6),
+.conflict-table-dupserial td:nth-child(6) { width: 150px; }    /* Same device */
+.conflict-table-dupserial td { word-break: normal; }
 .conflict-table .conflict-action-cell { white-space: nowrap; }
 .conflict-inline-controls {
   display: flex;
@@ -4030,6 +4126,157 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   border-bottom: 1px solid var(--color-border);
 }
 
+/* ─── Firmware repository (Server Settings → Repository) ─────────────────────
+   A three-level accordion — manufacturer › device type › model — in the
+   Manufacturer Profiles idiom (a bordered row, a caret, a delegated click),
+   nested. Depth is an indent, never a column. Everything here rests inside
+   a .settings-card, so no surface takes a glass token of its own; the amber
+   states mix off --color-warning the way the restore card does. The
+   .fw-stage / .fw-progress rows are shared with the asset slide-over's
+   Firmware card, which is why they live in styles.css rather than inline. */
+.fw-node {
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
+.fw-node[data-fw-depth="0"] { background: var(--color-bg-secondary, rgba(0, 0, 0, 0.04)); }
+.fw-node[data-fw-depth="1"], .fw-node[data-fw-depth="2"] { margin-left: 1.4rem; }
+.fw-node.is-orphaned { border-left: 3px solid var(--color-warning, #d68910); }
+.fw-node-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+.fw-node-caret { font-family: var(--font-mono); font-size: 0.75rem; width: 14px; }
+.fw-node-title { font-weight: 600; }
+.fw-node-meta { font-size: 0.74rem; color: var(--color-text-secondary); }
+.fw-node-spacer { flex: 1; }
+.fw-node-body { border-top: 1px solid var(--color-border); padding: 8px 12px 12px; }
+.fw-pill {
+  display: inline-block;
+  font-size: 0.72rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+.fw-binding-pill.is-own { border-color: var(--color-success); color: var(--color-success); }
+.fw-binding-pill.is-inherited { color: var(--color-text-secondary); }
+.fw-binding-pill.is-none,
+.fw-orphan-pill,
+.fw-warn-pill {
+  border-color: var(--color-warning, #d68910);
+  color: var(--color-warning, #d68910);
+  background: color-mix(in srgb, var(--color-warning, #d68910) 12%, transparent);
+}
+.fw-role-pill.is-primary { border-color: var(--color-success); color: var(--color-success); }
+.fw-role-pill.is-backup { color: var(--color-text-tertiary); }
+.fw-images tr.fw-row-flash { animation: fw-row-flash 2.4s ease-out; }
+@keyframes fw-row-flash { from { background: color-mix(in srgb, var(--color-success) 22%, transparent); } to { background: transparent; } }
+.fw-engine-pill { color: var(--color-text-tertiary); }
+/* A node's "N assets" is a button that opens the device-list slide-in. It
+   reads as the meta text it replaced until hovered, so the header stays calm. */
+.fw-asset-count {
+  background: none; border: 0; padding: 0; font: inherit; color: inherit;
+  cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px;
+}
+.fw-asset-count:hover, .fw-asset-count:focus-visible { color: var(--color-accent); text-decoration-style: solid; }
+.fw-asset-row {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.5rem 0.6rem; margin-bottom: 0.4rem; cursor: pointer;
+  border: 1px solid var(--color-border); border-radius: 0.35rem; background: var(--color-surface);
+}
+.fw-asset-row:hover, .fw-asset-row:focus-visible { border-color: var(--color-accent); }
+.fw-asset-row-main { flex: 1; min-width: 0; }
+.fw-asset-row-name { font-weight: 500; color: var(--color-accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fw-asset-row-sub { font-size: 0.78rem; color: var(--color-text-secondary); margin-top: 0.1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fw-asset-row-fw { display: flex; flex-direction: column; align-items: flex-end; gap: 0.2rem; flex-shrink: 0; }
+.fw-asset-row-version { font-family: var(--font-mono); font-size: 0.74rem; color: var(--color-text-secondary); }
+.fw-images td { font-size: 0.82rem; }
+.fw-images .fw-file { font-family: var(--font-mono); font-size: 0.76rem; }
+.fw-binding-editor {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 6px 0 0;
+}
+.fw-binding-editor select { max-width: 320px; }
+.fw-upload-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.fw-upload-status { font-size: 0.8rem; color: var(--color-text-secondary); min-width: 160px; }
+.fw-upload-status.is-error { color: var(--color-danger); }
+.fw-upload-status.is-warn { color: var(--color-warning, #d68910); }
+/* Both halves are <span>s in the markup, so both need a display of their own:
+   an inline element ignores width and height, and the fill drew at 0x0 —
+   every erase / write / verify bar, the reboot "working" bar and the upload
+   bar were invisible while their tracks showed as empty grooves. The track is
+   inline-block so it still sits in a line of text (the upload status span); a
+   grid cell (the card's stage rows) blockifies it either way. */
+.fw-progress {
+  display: inline-block;
+  vertical-align: middle;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-bg-tertiary);
+  overflow: hidden;
+  min-width: 160px;
+  flex: 1;
+}
+.fw-progress-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--color-accent);
+  transition: width 0.2s;
+}
+.fw-progress.is-indeterminate .fw-progress-fill {
+  width: 40%;
+  animation: fw-indeterminate 1.4s infinite ease-in-out;
+}
+@keyframes fw-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(260%); }
+}
+.fw-stage {
+  display: grid;
+  grid-template-columns: 9rem 1fr 3rem;
+  gap: 0.6rem;
+  align-items: center;
+  font-size: 0.82rem;
+  margin: 4px 0;
+}
+.fw-stage .fw-stage-label { color: var(--color-text-secondary); }
+.fw-stage.is-active .fw-stage-label { color: var(--color-text-primary); font-weight: 600; }
+.fw-stage.is-done .fw-progress-fill { background: var(--color-success); }
+.fw-stage .fw-stage-pct { text-align: right; font-family: var(--font-mono); font-size: 0.76rem; }
+.fw-approve-block {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+}
+.fw-approve-block dl {
+  display: grid;
+  grid-template-columns: 8rem 1fr;
+  gap: 0.2rem 0.75rem;
+  margin: 0.4rem 0 0;
+}
+.fw-approve-block dt { color: var(--color-text-secondary); }
+.fw-approve-block dd { margin: 0; word-break: break-all; }
+.fw-approve-block code { font-size: 0.74rem; }
+.fw-approve-block.is-selected { border-color: var(--color-accent); }
+
 .cert-list { list-style: none; }
 .cert-item {
   display: flex;
@@ -4264,7 +4511,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 }
 .slideover {
   position: fixed;
-  right: max(0px, calc((100vw - 100vh * 16 / 9) / 2));
+  right: max(0px, calc((100vw - var(--layout-max-width)) / 2));
   top: 0;
   height: 100vh;
   width: clamp(520px, 42vw, 1100px);
@@ -4392,6 +4639,22 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .slideover-meta code {
   font-size: 0.8rem;
 }
+/* Frozen tab strip in a slide-over header (asset details: openViewModal moves
+   #asset-view-tabs here out of the scrolling body). The header's bottom border
+   is the strip's rule, so the strip drops its own and the header drops its
+   bottom padding — the active tab's underline then sits on the header edge.
+   Too many tabs for the panel width scroll sideways rather than wrap, like
+   the sticky modal strip. */
+.slideover-tabs:empty { display: none; }
+.slideover-header:has(> .slideover-tabs:not(:empty)) { padding-bottom: 0; }
+.slideover-tabs .page-tabs {
+  border-bottom: none;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.slideover-tabs .page-tab { flex-shrink: 0; white-space: nowrap; }
 .slideover-body {
   flex: 1;
   overflow-y: auto;
@@ -6125,6 +6388,89 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   color: var(--color-text-secondary);
   flex: 0 0 auto;
 }
+
+/* Automation wizard, Actions step — the card stack of the 2026-09-21 mockup.
+   `.aw5-card` is a bordered card (In-app Alert, Trigger Action, Escalation
+   Action, Reset Action); `.aw5-row` is a checkbox row whose bold title carries
+   the box and whose help text hangs under it (Require Acknowledgement,
+   Dependency-Down Bypass — business rule 78). Tokens only, so the three themes
+   need nothing of their own. */
+.aw5-card {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.75rem;
+  margin-top: 0.5rem;
+}
+/* A card's name is a SECTION HEADER, not a field label. Both selectors are
+   doubled with .form-group to outrank `.form-group label` (0.8rem / 500 /
+   secondary colour), which is what these titles were silently inheriting —
+   "In-app Alert" rendered at 11.2px beside a 16.4px step heading and read as
+   the caption of the input under it. 1rem/600 in the primary ink sits clearly
+   under the step heading and clearly above the help text. */
+.aw5-card-title,
+.aw5-head-title,
+.form-group .aw5-card-title,
+.form-group .aw5-head-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0 0 6px;
+  display: block;
+}
+.aw5-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.aw5-head .aw5-head-title { margin: 0; }
+/* In-app Alert example (actions step): one of the selected devices, rendered
+   the way the Alerts tab will show it. */
+.aw-msg-example { margin-top: 8px; }
+.aw-msg-example-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 0.78rem; margin-bottom: 4px; }
+.aw-msg-example-label { font-weight: 600; color: var(--color-text-secondary); }
+.aw-msg-example-asset { width: auto; max-width: 260px; font-size: 0.78rem; padding: 1px 4px; }
+.aw-msg-example-alert {
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 6px;
+  background: var(--color-surface);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.aw5-help {
+  font-size: 0.78rem;
+  color: var(--color-text-tertiary);
+  margin: 0 0 6px;
+}
+.aw5-row {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+/* Doubled with .form-group for the same reason the card titles are: the rows
+   live inside the severity section, which IS a .form-group, so `.form-group
+   label` (0.8rem / 500 / secondary) outranks a bare `.aw5-row-title` and the
+   weight declared here never applied. Size is deliberately left alone — these
+   are rows, not section headers — but they carry the primary ink and the bold
+   the card titles do, so a row reads as a statement about the alert rather than
+   as the caption of a field. */
+.aw5-row-title,
+.form-group .aw5-row-title {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.aw5-row-help {
+  font-size: 0.78rem;
+  color: var(--color-text-tertiary);
+  margin: 2px 0 0 1.6rem;
+}
+/* A non-collapsible card's body (single-severity automations) — the collapse
+   machinery never touches it, so it only needs to exist as a hook. */
+.aw5-body { display: block; }
+.aw5-sev { margin-bottom: 0; }
 .aw-collapse:hover,
 .aw-collapse:focus-visible { color: var(--color-text-primary); }
 .aw-drop-before { box-shadow: inset 0 3px 0 0 var(--color-accent); }

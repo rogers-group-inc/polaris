@@ -43,8 +43,8 @@ describe("buildManifest", () => {
     expect(m.orientation).toBe("portrait");
     // Must equal mobile.html's <meta name="theme-color"> or Android's
     // task-switcher chrome flickers.
-    expect(m.theme_color).toBe("#1d2024");
-    expect(m.background_color).toBe("#111418");
+    expect(m.theme_color).toBe("#1d2244");
+    expect(m.background_color).toBe("#141427");
   });
 
   it("takes name, short_name and description from branding", () => {
@@ -71,7 +71,7 @@ describe("buildManifest", () => {
   it("offers in-scope hash shortcuts only", () => {
     const shortcuts = m.shortcuts as Array<{ name: string; url: string }>;
     expect(shortcuts.map((s) => s.url)).toEqual([
-      "/mobile.html#assets", "/mobile.html#map", "/mobile.html#reservations",
+      "/mobile.html#assets", "/mobile.html#map", "/mobile.html#networks",
     ]);
   });
 

@@ -64,6 +64,12 @@ export interface SparklineOptions {
    */
   alarmSpans?: Array<{ from: number; to: number }>;
   /**
+   * The centred note on a chart with NO points but with `alarmSpans` — the
+   * bands still draw (see sparklineSvg). Defaults to "no readings in this
+   * window".
+   */
+  emptyNote?: string;
+  /**
    * Spans (epoch ms) where the device's polls FAILED. Rendered as the DIVE:
    * the line drops to the chart baseline in red across the span and climbs
    * back out, each transition fading between the series color and red, with a
@@ -129,6 +135,30 @@ export interface SparklineOptions {
    * chart drawn without a resolved automation.
    */
   downColor?: string;
+  /**
+   * A PROJECTION drawn after the history, dashed in the series colour — the
+   * storage forecast's trend line carried forward to the automation's horizon.
+   * Its points may run past `now`; the axis range folds them in, the caption's
+   * numbers do not (they describe what was measured). The last point is marked,
+   * red when it reaches `ceiling` — that dot IS the projected full date.
+   */
+  projection?: SparkPoint[];
+  /**
+   * Where "now" sits on the x-axis, when the window runs past it (a
+   * projection). The axis then reads "-30 d … now … +7 d" with a faint marker
+   * at now, instead of the usual "-60 min … now" at the right edge. Omitted, or
+   * not before `to`, keeps the usual labels.
+   */
+  now?: number;
+  /**
+   * A hard limit drawn as a solid grey rule labelled "full" — a filesystem's
+   * capacity (100% on a percent axis). Unlike `threshold` it is not anybody's
+   * choice, so it is drawn differently from the automation's dashed red line.
+   */
+  ceiling?: number | null;
+  /** Replace the "now · avg · peak" caption with this text. A projection chart
+   *  states its growth and fill date instead, which is what the alert is about. */
+  caption?: string;
 }
 
 /** The missed-poll red. Shared with the in-app charts' _CHART_FAIL_COLOR so
@@ -193,6 +223,15 @@ export function niceCeil(v: number): number {
 export function timeAxisLabel(spanMs: number): string {
   const mins = Math.round(spanMs / 60_000);
   if (mins < 90) return `${mins} min`;
+  // Days from 72 h on — a storage forecast spans weeks, and "720 h" makes the
+  // reader do arithmetic. Below that hours still read better ("24 h", "48 h").
+  if (mins >= 72 * 60) {
+    // Whole days from 10 on: a month of daily points measured from midday
+    // otherwise reads "-29.5 d", a precision the axis does not have.
+    const raw = mins / 1440;
+    const days = raw >= 10 ? Math.round(raw) : Math.round(raw * 10) / 10;
+    return `${Number.isInteger(days) ? days.toFixed(0) : days.toFixed(1)} d`;
+  }
   const hours = Math.round((mins / 60) * 10) / 10;
   return `${Number.isInteger(hours) ? hours.toFixed(0) : hours.toFixed(1)} h`;
 }
@@ -245,6 +284,32 @@ export function sparklineSvg(points: SparkPoint[], opts: SparklineOptions): stri
     `<text x="4" y="14" font-family="Helvetica,Arial,sans-serif" font-size="12" font-weight="bold" fill="#1f2430">${esc(opts.label)}</text>`;
 
   const stats = seriesStats(points);
+  // Nothing measured, but the device SAID something about the window: draw the
+  // frame and its alarm bands with no line. This is a dead SD-WAN member —
+  // FortiOS stops reporting latency / jitter / loss for a member it has
+  // declared dead, so an outage older than the window leaves all three series
+  // empty while the health check's own verdict covers every sample. A "no data"
+  // card there reads as Polaris failing to chart; the band says "down all
+  // along", which is the finding.
+  if (!stats && opts.alarmSpans?.length && opts.from !== undefined && opts.to !== undefined && opts.to > opts.from) {
+    const from = opts.from;
+    const tSpan = opts.to - from;
+    const baseY = PAD_T + plotH;
+    const bands = opts.alarmSpans
+      .map((s) => {
+        const x1 = Math.max(PAD_L, Math.min(PAD_L + ((s.from - from) / tSpan) * plotW, PAD_L + plotW));
+        const x2 = Math.max(PAD_L, Math.min(PAD_L + ((s.to - from) / tSpan) * plotW, PAD_L + plotW));
+        return `<rect x="${x1.toFixed(1)}" y="${PAD_T}" width="${Math.max(2, x2 - x1).toFixed(1)}" height="${plotH}" fill="#dc2626" fill-opacity="0.13"/>`;
+      })
+      .join("");
+    return (
+      head +
+      bands +
+      `<line x1="${PAD_L}" y1="${baseY}" x2="${width - PAD_R}" y2="${baseY}" stroke="#e5e7eb" stroke-width="1"/>` +
+      `<text x="${PAD_L + plotW / 2}" y="${PAD_T + plotH / 2 + 4}" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#6b7280">${esc(opts.emptyNote ?? "no readings in this window")}</text>` +
+      `</svg>`
+    );
+  }
   if (!stats) {
     return (
       head +
@@ -256,8 +321,13 @@ export function sparklineSvg(points: SparkPoint[], opts: SparklineOptions): stri
   // Axis range. Percentages pin 0–100 so two messages are comparable; an
   // open-ended metric gets 10% headroom, and a flat line still gets a band so
   // it renders as a line rather than sitting on the axis.
-  let yMin = opts.yMin ?? Math.min(stats.min, opts.threshold ?? Infinity);
-  let yMax = opts.yMax ?? Math.max(stats.max, opts.threshold ?? -Infinity);
+  // A projection and a ceiling are part of the picture, so the range has to
+  // hold them too — but not the caption, which states only what was measured.
+  const projection = opts.projection ?? [];
+  const projMin = projection.reduce((m, p) => Math.min(m, p.v), Infinity);
+  const projMax = projection.reduce((m, p) => Math.max(m, p.v), -Infinity);
+  let yMin = opts.yMin ?? Math.min(stats.min, projMin, opts.threshold ?? Infinity);
+  let yMax = opts.yMax ?? Math.max(stats.max, projMax, opts.threshold ?? -Infinity, opts.ceiling ?? -Infinity);
   if (opts.yMin === undefined && opts.yMax === undefined) {
     const span = yMax - yMin;
     if (span <= 0) {
@@ -274,7 +344,7 @@ export function sparklineSvg(points: SparkPoint[], opts: SparklineOptions): stri
   const ySpan = yMax - yMin || 1;
 
   const from = opts.from ?? points[0]!.t;
-  const to = opts.to ?? points[points.length - 1]!.t;
+  const to = opts.to ?? (projection.length ? projection[projection.length - 1]!.t : points[points.length - 1]!.t);
   const tSpan = to - from || 1;
 
   const x = (t: number) => PAD_L + ((t - from) / tSpan) * plotW;
@@ -449,15 +519,46 @@ export function sparklineSvg(points: SparkPoint[], opts: SparklineOptions): stri
       ? `<line x1="${PAD_L}" y1="${y(opts.threshold).toFixed(1)}" x2="${width - PAD_R}" y2="${y(opts.threshold).toFixed(1)}" stroke="#dc2626" stroke-width="1" stroke-dasharray="4 3"/>`
       : "";
 
+  // The capacity rule: solid grey, labelled inside the plot just under the
+  // line (the caption owns the row above the plot, so a label there collides).
+  const ceilingLine =
+    opts.ceiling != null && opts.ceiling >= yMin && opts.ceiling <= yMax
+      ? `<line x1="${PAD_L}" y1="${y(opts.ceiling).toFixed(1)}" x2="${width - PAD_R}" y2="${y(opts.ceiling).toFixed(1)}" stroke="#6b7280" stroke-width="1"/>` +
+        `<text x="${PAD_L + 4}" y="${(y(opts.ceiling) + 10).toFixed(1)}" font-family="Helvetica,Arial,sans-serif" font-size="9" fill="#6b7280">full</text>`
+      : "";
+
+  // The projection: dashed, in the series colour, from its first point to its
+  // last, with the end marked — red when it reached the ceiling, since that
+  // point is the projected full date.
+  let projectionSvg = "";
+  if (projection.length >= 2) {
+    const pp = projection.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
+    const end = projection[projection.length - 1]!;
+    const hitsCeiling = opts.ceiling != null && end.v >= opts.ceiling;
+    projectionSvg =
+      `<polyline fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="5 4" stroke-linecap="round" opacity="0.85" points="${pp}"/>` +
+      `<circle cx="${x(end.t).toFixed(1)}" cy="${y(end.v).toFixed(1)}" r="3.5" fill="${hitsCeiling ? "#dc2626" : color}"/>`;
+  }
+
   const captionAvg = opts.avgOverride ?? stats.avg;
+  const captionText = opts.caption ??
+    `now ${formatReading(stats.last, unit)} · avg ${formatReading(captionAvg, unit)} · peak ${formatReading(stats.max, unit)}`;
   const caption =
     `<text x="${width - PAD_R}" y="14" text-anchor="end" font-family="Helvetica,Arial,sans-serif" font-size="11" fill="#4b5563">` +
-    `now ${esc(formatReading(stats.last, unit))} · avg ${esc(formatReading(captionAvg, unit))} · peak ${esc(formatReading(stats.max, unit))}</text>`;
+    `${esc(captionText)}</text>`;
 
   const axis = `<line x1="${PAD_L}" y1="${PAD_T + plotH}" x2="${width - PAD_R}" y2="${PAD_T + plotH}" stroke="#d1d5db" stroke-width="1"/>`;
-  const xLabels =
-    `<text x="${PAD_L}" y="${height - 5}" font-family="Helvetica,Arial,sans-serif" font-size="9" fill="#9ca3af">-${esc(timeAxisLabel(tSpan))}</text>` +
-    `<text x="${width - PAD_R}" y="${height - 5}" text-anchor="end" font-family="Helvetica,Arial,sans-serif" font-size="9" fill="#9ca3af">now</text>`;
+  const label = (lx: number, anchor: "start" | "middle" | "end", text: string) =>
+    `<text x="${lx.toFixed(1)}" y="${height - 5}"${anchor === "start" ? "" : ` text-anchor="${anchor}"`} font-family="Helvetica,Arial,sans-serif" font-size="9" fill="#9ca3af">${esc(text)}</text>`;
+  // A window that runs past now (a projection) labels both halves and marks
+  // now; every other chart keeps "-60 min … now" at the edges.
+  const nowAt = opts.now != null && opts.now > from && opts.now < to ? opts.now : null;
+  const xLabels = nowAt != null
+    ? label(PAD_L, "start", `-${timeAxisLabel(nowAt - from)}`) +
+      label(x(nowAt), "middle", "now") +
+      label(width - PAD_R, "end", `+${timeAxisLabel(to - nowAt)}`) +
+      `<line x1="${x(nowAt).toFixed(1)}" y1="${PAD_T}" x2="${x(nowAt).toFixed(1)}" y2="${PAD_T + plotH}" stroke="#d1d5db" stroke-width="1" stroke-dasharray="2 2"/>`
+    : label(PAD_L, "start", `-${timeAxisLabel(tSpan)}`) + label(width - PAD_R, "end", "now");
 
-  return head + defsBlock + alarmBands + grid + area + line + dot + thresholdLine + axis + xLabels + caption + `</svg>`;
+  return head + defsBlock + alarmBands + grid + area + line + dot + projectionSvg + ceilingLine + thresholdLine + axis + xLabels + caption + `</svg>`;
 }

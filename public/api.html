@@ -229,6 +229,7 @@
       <a href="#assets">Assets &amp; inventory</a>
       <a href="#quarantine">Quarantine (SIEM)</a>
       <a href="#dashboard">Dashboard &amp; NOC feeds</a>
+      <a href="#path-monitor">Path Monitor</a>
       <a href="#search">Search</a>
       <a href="#ipam-blocks">IPAM: IP blocks</a>
       <a href="#ipam-subnets">IPAM: Networks</a>
@@ -358,6 +359,11 @@
                 <code>dnsName</code>, <code>description</code>) plus an optional
                 <code>&lt;column&gt;Op</code> of <code>contains</code> (default),
                 <code>not_contains</code>, <code>empty</code>, <code>is_not_empty</code>.</li>
+            <li><code>ipAddress</code> also takes <code>ipAddressOp=in_networks</code>: a
+                comma-separated list of IPv4 networks, matched when the primary IP falls in
+                <em>any</em> of them. Each entry is a partial address (<code>10.1</code> =
+                10.1.0.0/16), a full address (exact) or a CIDR (<code>10.1.16.0/20</code>); at
+                most 50, and an invalid entry is a <code>400</code>.</li>
             <li><code>department</code> (contains match), <code>lastSeenFrom</code> /
                 <code>lastSeenTo</code> (<code>YYYY-MM-DD</code>).</li>
             <li><code>sortBy</code> (whitelisted column names; an unknown value is a
@@ -413,6 +419,23 @@
         </p>
 
         <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /assets/ip-check
+            <span class="gate">assets:read</span></div>
+          <p>Ask, before creating or re-addressing a device, whether an address is already in use.
+            Query: <code>ip</code> (required), <code>excludeAssetId</code> (the asset being edited,
+            so it is not reported as colliding with itself), and optionally <code>assetType</code>
+            and <code>macAddress</code> for the incoming device. Returns
+            <code>{ ip, holders[], wouldConflict, qualifiedBy, canMerge }</code>: every
+            network-present asset already recording the address (each with
+            <code>claimCurrent</code> &mdash; a stale record is listed but does not collide),
+            whether saving would raise a Duplicate IP conflict, and whether the caller may merge
+            assets (<code>assets:fullwrite</code>). The answer is computed with the same rules the
+            save applies, so a <code>wouldConflict: true</code> here is a conflict the write will
+            raise. <code>400</code> on an invalid address.</p>
+          <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN"   "<span class="js-base-url">/api/v1</span>/assets/ip-check?ip=10.20.30.4&amp;assetType=switch"</code></pre>
+        </div>
+
+        <div class="endpoint">
           <div class="endpoint-head"><span class="method m-post">POST</span> /assets
             <span class="gate">assets:write</span></div>
           <p>Create a device. Body (all optional, but give it at least an address or a hostname):
@@ -421,7 +444,11 @@
             department?, assignedTo?, os?, acquiredAt?, warrantyExpiry?, purchaseOrder?, notes?,
             description?, tags? }</code>. <code>assetType</code> defaults to <code>other</code> and
             <code>status</code> to <code>active</code>.
-            <code>201</code> with the created record.</p>
+            <code>201</code> with the created record, plus <code>ipConflict</code>: when the new
+            device's address is already recorded by another network-present asset, Polaris raises
+            a Duplicate IP conflict on the spot (rather than on its ten-minute sweep) and returns
+            it as <code>{ conflictId, ip, qualifiedBy, members[] }</code>; otherwise
+            <code>null</code>. Ask before writing with <code>GET /assets/ip-check</code> below.</p>
           <p><strong>Monitoring fields are not accepted here</strong> &mdash;
             <code>monitored</code> and every <code>*CredentialId</code> belong to the PUT below.
             A device created by this endpoint is a manual-source asset: only response time gets a
@@ -442,7 +469,11 @@
             disabled</code>), and the per-stream credentials
             <code>{ responseTimeCredentialId?, cpuMemoryCredentialId?,
             temperatureCredentialId?, interfacesCredentialId?, lldpCredentialId? }</code>.
-            <code>null</code> clears a slot and falls back to the next settings tier.</p>
+            <code>null</code> clears a slot and falls back to the next settings tier.
+            When the update <em>changes</em> <code>ipAddress</code>, the response carries
+            <code>ipConflict</code> exactly as <code>POST /assets</code> does &mdash; the conflict on
+            the new address, or <code>null</code> &mdash; and a conflict the device just moved off
+            is closed in the same call.</p>
           <p>Refusals worth coding against:</p>
           <ul>
             <li><code>400</code> &mdash; <code>Credential … not found</code>, naming the id.
@@ -477,6 +508,21 @@
             rest of the batch still applies. An unknown <code>monitorCredentialId</code> is the
             exception and fails the whole call with <code>400</code> &mdash; it applies to every id
             in the batch, so nothing would be written correctly.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /assets/bulk-tags
+            <span class="gate">assets:write</span></div>
+          <p>Add, remove or replace tags on many devices at once:
+            <code>{ ids: [uuid, …], mode: "add" | "remove" | "replace", tags: [string, …] }</code>
+            → <code>{ updated, unchanged, notFound: [uuid, …], tags }</code>.
+            <code>add</code> keeps each device's own tags and appends the new ones;
+            <code>remove</code> strips them from the devices that carry them;
+            <code>replace</code> leaves each device with exactly <code>tags</code>, except that
+            <code>region:</code>, <code>prev-entra:</code> and <code>prev-ad:</code> tags are kept.
+            Unknown ids come back in <code>notFound</code> with HTTP 200. An empty <code>tags</code>
+            is a <code>400</code> for add and remove (replace with none clears), as is adding a
+            <code>region:</code> tag that names no map region.</p>
         </div>
 
         <div class="endpoint">
@@ -659,6 +705,244 @@
         </div>
       </section>
 
+      <section id="path-monitor">
+        <h2>Path Monitor</h2>
+        <p>
+          A <strong>path check</strong> is an HTTP / HTTPS request, a TCP connect or a ping that
+          the <strong>Polaris Agent</strong> (0.21.0 or later) runs from each host it is pointed
+          at, with an optional traceroute of the path. A check's hosts are its Sources filter
+          plus any pinned assets, <em>intersected with hosts running an active agent</em>. A
+          check has no threshold of its own and never changes a host's Up / Down status: alert
+          on it with an automation on the <code>path*</code> metrics (<code>pathOk</code>,
+          <code>pathLatencyMs</code>, <code>pathFailurePct</code>, <code>pathHttpStatus</code>,
+          <code>pathHopCount</code>, <code>pathTlsDaysLeft</code>) or on the
+          <code>path_check.path_changed</code> event. Check endpoints gate on the
+          <code>pathChecks</code> key; the per-host readings under <code>/assets/:id</code> gate on
+          <code>assets:read</code>, because they describe that asset.
+        </p>
+        <p>
+          A check can also run from <strong>the Polaris server itself</strong>
+          (<code>runOnServer: true</code>), alone or beside agent hosts. The server is not an
+          asset: its results come back as the first <code>/results</code> row
+          (<code>server: true</code>, <code>assetId: null</code>) and through the three
+          <code>/path-checks/:id/server…</code> readings, and they raise no automation alert.
+          <strong>Pointing the server at a target also needs <code>networkScan:write</code></strong>
+          — creating a server-run check, turning the server on, changing what a server-run check
+          sends, or re-enabling one returns <code>403</code> without it. Turning the server off,
+          renaming a check or changing its agent hosts does not need it.
+        </p>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks
+            <span class="gate">pathChecks:read</span></div>
+          <p><code>{ checks: [...] }</code>, by name. Each check carries its definition (below)
+            plus a fleet summary: <code>sourceCount</code> (hosts running it),
+            <code>okCount</code> / <code>failCount</code> (hosts whose latest run passed / failed
+            — a host with no result yet is in neither) and <code>lastRunAt</code>.</p>
+          <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN" \
+  "<span class="js-base-url">/api/v1</span>/path-checks"</code></pre>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks/:id
+            <span class="gate">pathChecks:read</span></div>
+          <p>One check, same shape as a list row. <code>404</code> when it does not exist.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks/:id/results
+            <span class="gate">pathChecks:read</span></div>
+          <p><code>{ results: [...] }</code> — every host running the check with its latest
+            result, by hostname, after the Polaris server's own row when it runs there
+            (<code>server: true</code>, <code>assetId: null</code>, <code>hostname: "Polaris
+            server"</code>; every host row has <code>server: false</code>): <code>assetId, hostname, ipAddress, os, explicit</code> (pinned
+            rather than matched), <code>lastOk, lastSampleAt, lastLatencyMs, lastHttpStatus,
+            lastError, lastResolvedIp, lastFailAt, lastHopCount, lastTracerouteComplete,
+            lastTracerouteAt</code>, and the agent's <code>agentVersion, online,
+            supported</code> (<code>false</code> below 0.21.0 — the host is a member but cannot run
+            it).</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /path-checks
+            <span class="gate">pathChecks:write</span></div>
+          <p>Create a check; <code>201</code> with the stored check. Body:</p>
+          <ul>
+            <li><code>name</code> (required, ≤120, unique — <code>409</code> on a duplicate),
+              <code>description?</code>, <code>enabled?</code> (default <code>true</code>).</li>
+            <li><code>kind</code>: <code>http</code> | <code>https</code> | <code>tcp</code> |
+              <code>icmp</code>. <code>target</code>: a full URL for HTTP / HTTPS (no credentials
+              in it), <code>host:port</code> for TCP, a bare host for ICMP. IPv4 only. Refused
+              with <code>400</code>: loopback, link-local, cloud-metadata and multicast addresses,
+              and this Polaris server itself.</li>
+            <li><code>intervalSec?</code> — whole minutes, 60–3600, default 60.
+              <code>timeoutMs?</code> — 500–30000, default 5000, and at most half the
+              interval.</li>
+            <li><code>http?</code> (HTTP / HTTPS only): <code>{ expectStatus?</code> — e.g.
+              <code>"200,204,300-399"</code>, empty = any 2xx; <code>bodyMatch?: { mode:
+              "contains" | "regex" | "exact", pattern (≤1024), caseSensitive? }</code>;
+              <code>verifyTls?</code> (default <code>true</code>), <code>method?</code>
+              (<code>"GET"</code> | <code>"HEAD"</code> — nothing that writes is ever sent),
+              <code>hostHeader?</code> (sent as Host and used for TLS),
+              <code>followRedirects?</code> (≤5 hops, default off) <code>}</code>;
+              <code>bodyMatch.negate?</code> makes it "must NOT". A regex must be
+              RE2-compatible (no look-around or back-references) — the agent runs it. A check
+              using <code>method</code> HEAD, <code>hostHeader</code>,
+              <code>followRedirects</code> or <code>negate</code> needs agent 0.23.0; older agents
+              are listed <code>supported: false</code> and run nothing.</li>
+            <li><code>credentialId?</code> (HTTP / HTTPS only) — an <code>http</code> credential
+              (Bearer, Basic or Digest) to authenticate with. It makes the check
+              <strong>server-only</strong>: it sets <code>runOnServer</code>, agent
+              <code>scope</code> / <code>assetIds</code> are refused with <code>400</code>, and the
+              secret is never sent to an agent. Using it — for a check or a test run — needs at
+              least <code>credentials:read</code> (<code>403</code> otherwise); changing the
+              credential is the <code>/credentials</code> routes' business. A credential in use cannot be deleted
+              (<code>409</code>).</li>
+            <li><code>traceroute?: { enabled?</code> (default <code>true</code>),
+              <code>everyNRuns?</code> (1–100, default 5), <code>maxHops?</code> (1–64, default 30),
+              <code>probesPerHop?</code> (1–5, default 3), <code>probeTimeoutMs?</code> (100–5000,
+              default 1000) <code>}</code>. A trace also runs whenever a passing check starts
+              failing.</li>
+            <li><code>keepBodyExcerpt?</code> — keep the first 4&nbsp;KB of the response on every
+              run, not only on failures.</li>
+            <li><code>scope?</code> — the automation device-filter tree
+              (<code>{ "allAssets": true }</code> for every agent host), and
+              <code>assetIds?</code> (≤2000) to pin hosts regardless of the filter.</li>
+            <li><code>runOnServer?</code> (default <code>false</code>) — also run the check from
+              the Polaris server. Needs <code>networkScan:write</code>, else <code>403</code>. At
+              least one of <code>scope</code>, <code>assetIds</code> and <code>runOnServer</code>
+              must select something.</li>
+          </ul>
+          <p><code>409</code> when the new check would be the 51st enabled one. A host runs at
+            most 20 checks, the oldest first; past that, the newer ones stay listed as members but
+            are not run, and a <code>path_check.agent_over_cap</code> event is written.</p>
+          <pre class="curl"><code>curl -X POST -H "Authorization: Bearer $POLARIS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"ERP web","kind":"https","target":"https://erp.example.com/health","http":{"expectStatus":"200"},"scope":{"allAssets":true}}' \
+  "<span class="js-base-url">/api/v1</span>/path-checks"</code></pre>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-put">PUT</span> /path-checks/:id
+            <span class="gate">pathChecks:write</span></div>
+          <p>Replace a check — the full body <code>POST</code> takes, not a patch. Agents pick the
+            new definition up on their next heartbeat; the server on its next run.
+            <code>403</code> without <code>networkScan:write</code> when it turns
+            <code>runOnServer</code> on, or changes what a server-run check sends (anything but
+            its name, description and hosts), or re-enables one.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /path-checks/:id/enabled
+            <span class="gate">pathChecks:write</span></div>
+          <p><code>{ enabled: boolean }</code>. A disabled check keeps its hosts and their last
+            results; agents and the server stop running it. Re-enabling a server-run check needs
+            <code>networkScan:write</code>.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-delete">DELETE</span> /path-checks/:id
+            <span class="gate">pathChecks:write</span></div>
+          <p><code>204</code>. Removes the check and its host list.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /path-checks/preview-sources
+            <span class="gate">pathChecks:write</span></div>
+          <p>Dry-run a Sources selection without saving: body <code>{ scope?, assetIds? }</code>.
+            Returns <code>{ total, pinned, matchedWithoutAgent, agents[], pinnedWithoutAgent[],
+            minAgentVersion }</code>; <code>agents</code> (first 100) is <code>{ assetId, hostname,
+            ipAddress, os, agentVersion, online, supported, pinned, pinnedOnly }</code>.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /path-checks/test
+            <span class="gate">pathChecks:write + networkScan:write</span></div>
+          <p>Run a <em>draft</em> check once from the Polaris server and return what came back —
+            the body <code>POST /path-checks</code> takes, with <code>name</code> and the sources
+            optional. Nothing is stored except a <code>path_check.tested</code> audit event.
+            Returns <code>{ source: "server", sample, headers, httpVersion, body }</code>:
+            <code>sample</code> is one run's result fields (the verdict under the draft's
+            expectations, timings, <code>httpStatus</code>, TLS facts, <code>error</code>);
+            <code>headers</code> (≤60, lower-cased, <code>Set-Cookie</code> values redacted) and
+            <code>body</code> (the first 64&nbsp;KB it was judged on) are HTTP / HTTPS only, else
+            <code>null</code>. The same target refusals as a save (<code>400</code>);
+            <code>429</code> past 10 test runs a minute per caller.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks/filter-schema
+            <span class="gate">pathChecks:read</span></div>
+          <p>The fields, operators and option lists the <code>scope</code> filter accepts — the
+            same vocabulary as an automation's device filter.</p>
+        </div>
+
+        <h3>The Polaris server's readings</h3>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks/:id/server
+            <span class="gate">pathChecks:read</span></div>
+          <p>The server source in the <code>/assets/:id/path-checks</code> shape:
+            <code>{ checks: [ check + latest + latestSample ] }</code>, or
+            <code>{ checks: [] }</code> when the check does not run on the server.
+            <code>404</code> when the check does not exist.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks/:id/server/history
+            <span class="gate">pathChecks:read</span></div>
+          <p>The server's series for the check — the same <code>range=</code> / <code>from=</code>
+            + <code>to=</code> and the same response as
+            <code>/assets/:id/path-check-history</code>.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks/:id/server/traceroutes
+            <span class="gate">pathChecks:read</span></div>
+          <p>The newest traceroutes the server ran for the check, newest first
+            (<code>limit=</code> 1–50, default 10) — the same shape as
+            <code>/assets/:id/path-check-traceroutes</code>.</p>
+        </div>
+
+        <h3>Per-host readings</h3>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /assets/:id/path-checks
+            <span class="gate">assets:read</span></div>
+          <p><code>{ checks: [...] }</code> — the checks this host runs, each with its definition,
+            <code>latest</code> (the result fields listed under <code>/results</code>) and
+            <code>latestSample</code> (the newest run in full, including <code>bodyMatched,
+            bodySha256, bodyBytes, bodyExcerpt, tlsNotAfter, tlsIssuer</code>). Empty when the host
+            runs none.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /assets/:id/path-check-history?checkId=
+            <span class="gate">assets:read</span></div>
+          <p>One check's series from this host. <code>checkId</code> is required;
+            <code>range=</code> <code>1h | 12h | 24h | 7d | 30d</code> (default 24h), or
+            <code>from=</code> + <code>to=</code> (ISO, ≤1 year). Returns <code>{ range, checkId,
+            since, until, tier, bucketSeconds, samples }</code>. On the <code>detail</code> tier a
+            sample is one run: <code>{ timestamp, ok, latencyMs, dnsMs, connectMs, tlsMs, ttfbMs,
+            httpStatus, hopCount, error }</code>, with a timing field <code>null</code> when it was
+            not measured. On <code>hourly</code> / <code>daily</code> each sample is a bucket
+            carrying averages plus <code>okCount, failCount, sampleCount, minLatencyMs,
+            maxLatencyMs</code>.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /assets/:id/path-check-traceroutes?checkId=
+            <span class="gate">assets:read</span></div>
+          <p>The newest traceroutes this host ran for one check, newest first:
+            <code>limit=</code> 1–50, default 10. Returns <code>{ checkId, traceroutes }</code>;
+            each is <code>{ timestamp, destinationIp, complete, hopCount, pathHash, reason</code>
+            (<code>scheduled</code> or <code>transition</code> — taken because the check started
+            failing), <code>note, hops }</code>. A hop is <code>{ ttl, ip, rdns, rttMs[] }</code>
+            (<code>ip: null</code> and <code>-1</code> RTTs for probes that got no reply), plus
+            <code>assetId, hostname, monitorStatus, interfaceName, subnetCidr</code> when the
+            address belongs to something Polaris knows, as it stood when the trace was stored.</p>
+        </div>
+      </section>
+
       <section id="search">
         <h2>Search</h2>
         <div class="endpoint">
@@ -717,8 +1001,9 @@
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-delete">DELETE</span> /blocks/:id
             <span class="gate">ipBlocks:write</span></div>
-          <p><code>204</code> on success; <code>409</code> while any subnet in the block holds
-            active reservations.</p>
+          <p><code>204</code> on success; <code>409</code> while the block contains any
+            network, whatever its status. Move networks out with
+            <code>POST /subnets/:id/move</code>, archive or delete them first.</p>
         </div>
       </section>
 
@@ -767,12 +1052,16 @@
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-post">POST</span> /subnets
             <span class="gate">subnets:write</span></div>
-          <p>Body: <code>{ blockId, cidr, name, purpose?, vlan? (1–4094), tags? }</code>.
+          <p>Body: <code>{ blockId?, cidr, name, purpose?, vlan? (1–4094), tags? }</code>.
+            Omit <code>blockId</code> and the network is placed in the most specific block whose
+            range contains the CIDR; name one and it is used as given. The response carries
+            <code>block: { id, name, cidr }</code> — where it landed.
             <code>201</code>; <code>409</code> on overlap or duplicate; <code>400</code> when the
-            CIDR is invalid, outside the block, or the wrong IP version.</p>
+            CIDR is invalid, outside the block, the wrong IP version, or (no
+            <code>blockId</code>) inside no block at all.</p>
           <pre class="curl"><code>curl -X POST -H "Authorization: Bearer $POLARIS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"blockId":"'$BLOCK_ID'","cidr":"10.20.30.0/24","name":"branch-30","vlan":30}' \
+  -d '{"cidr":"10.20.30.0/24","name":"branch-30","vlan":30}' \
   "<span class="js-base-url">/api/v1</span>/subnets"</code></pre>
         </div>
         <div class="endpoint">
@@ -803,7 +1092,12 @@
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-delete">DELETE</span> /subnets/:id
             <span class="gate">subnets:write (own rows) / fullwrite</span></div>
-          <p><code>204</code>; <code>409</code> while the network holds active reservations.</p>
+          <p><code>204</code>; <code>409</code> while the network holds active reservations
+            (the gate's own <code>interface_ip</code> reservation does not count).
+            <code>?force=true</code> deletes it anyway, reservations included, and is
+            accepted only from an admin-equivalent role (users + roles fullwrite) —
+            <code>403</code> otherwise. A forced delete removes Polaris records only;
+            nothing is unpushed from a FortiGate.</p>
         </div>
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-post">POST</span> /subnets/:id/refresh
@@ -811,6 +1105,30 @@
           <p>Re-pull one discovered network's addresses from its FortiGate now:
             <code>{ lastDiscoveredAt, created, updated, released, skipped }</code>.
             <code>400</code> for manually-created networks or non-Fortinet integrations.</p>
+        </div>
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /subnets/resolve-block?cidr=
+            <span class="gate">subnets:read</span></div>
+          <p>The block a new network with this CIDR would be placed in:
+            <code>{ block: { id, name, cidr } }</code>, or <code>{ block: null }</code> when no
+            block contains it (or the CIDR is invalid).</p>
+        </div>
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /subnets/:id/move-targets
+            <span class="gate">subnets:read</span></div>
+          <p>Blocks other than the current one whose range contains this network's CIDR:
+            <code>[{ id, name, cidr, overlaps }]</code>. <code>overlaps</code> is the CIDR of
+            the network in that block that would collide, or <code>null</code> when the move
+            is allowed.</p>
+        </div>
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /subnets/:id/move
+            <span class="gate">subnets:write</span></div>
+          <p>Body <code>{ blockId }</code>. Re-parents the network onto another block and
+            returns the updated row; reservations and history stay with it.
+            Ownership-scoped like <code>PUT</code>. <code>400</code> when the block does not
+            contain the CIDR, the IP version differs, or it is already the network's block;
+            <code>409</code> when a network in the destination overlaps.</p>
         </div>
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-post">POST</span> /subnets/:id/archive

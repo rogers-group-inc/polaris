@@ -92,6 +92,17 @@ describe("_sdwanSectionHeaderHTML", () => {
     expect(html).not.toContain("var(--color-warning)");
   });
 
+  it("hands the badge SD-WAN's own cadence, not the Interfaces stream's", () => {
+    // The badge read "every 10m" (the Interfaces cadence SD-WAN rode until
+    // 2026-09) over a table the stamp correctly aged against 60s.
+    const calls: unknown[][] = [];
+    g._streamSourceBadgeHTML = (...args: unknown[]) => { calls.push(args); return BADGE; };
+    g._sdwanSectionHeaderHTML({ id: "a1" }, "SD-WAN Members", ago(30), 60, "never collected");
+    g._sdwanSectionHeaderHTML({ id: "a1" }, "SD-WAN Rules", ago(30), null, "never collected");
+    expect(calls[0]).toEqual([{ id: "a1" }, "interfaces", { intervalSec: 60 }]);
+    expect(calls[1]).toEqual([{ id: "a1" }, "interfaces", { intervalSec: null }]);
+  });
+
   it("places extra header content (the health-check selector) before the badge", () => {
     const html = g._sdwanSectionHeaderHTML(
       { id: "a1" }, "Performance SLA", ago(60), 600, "never collected",

@@ -16,7 +16,7 @@ Companion pages: [Polling methods](Polling-Methods) ·
 | Stream | Collects |
 |---|---|
 | **responseTime** | is it answering, and how fast — the liveness probe |
-| **cpuMemory** | CPU and memory utilisation. On a host running the [Polaris Agent](Polaris-Agent) this also carries **per-logical-core CPU** and a **memory breakdown** (processes / buffers / cache / free, plus swap or page file); no other transport can report either |
+| **cpuMemory** | CPU and memory utilisation. Two transports also carry **per-core CPU** and a **memory breakdown**, and the System tab splits CPU & Memory into two charts on those: the [Polaris Agent](Polaris-Agent) (per logical core; processes / buffers / cache / free, plus swap or page file, as the guest OS accounts for it) and [vCenter](Integration-vCenter) (per vCPU or physical core; the hypervisor's own bands — ballooned and host-swapped among them). FortiOS, SNMP, WinRM and SSH report one CPU figure and one memory figure and keep the combined chart |
 | **temperature** | hardware sensors and their alarm bits |
 | **interfaces** | per-port state, counters, PoE, IP, LLDP-adjacent data |
 | **lldp** | LLDP neighbours |
@@ -26,6 +26,11 @@ Companion pages: [Polling methods](Polling-Methods) ·
 
 Each has its own cadence, its own queue and its own worker pool. A slow stream
 cannot starve a fast one.
+
+SD-WAN on a FortiGate is not a stream of its own. It is read only where the
+interfaces stream resolves to FortiOS REST, but it has its own cadence, queue
+and worker pool. The interval is set per integration, 60 seconds by default
+(see [Integration-Fortinet](Integration-Fortinet)), not by the interface scrape.
 
 ---
 
@@ -151,12 +156,21 @@ vendors, and where to get each MIB, are in the install guide's *"A vendor's SNMP
 CPU / memory / storage is empty"* section — and the shipped Cisco profile is a
 worked example to copy, which is half of why it ships.
 
+**The Transform column only appears where Polaris applies it.** Today that is a
+scalar **Temperature** row, which offers **Tenths → Units** for a sensor that
+reports tenths of a degree (MikroTik's temperature objects report 315 for
+31.5 °C). Other metric rows show "—" instead of a dropdown. Double-scalar rows
+still offer their combiner, because it says which two readings the row's
+symbols are. Custom widgets offer the full list. There is no Celsius ↔
+Fahrenheit transform: Polaris always stores and alerts in Celsius, and the
+install's temperature-unit setting converts only what you see.
+
 **Both shipped pieces are yours to delete.** Removing a shipped MIB leaves its
 profile's rows reading *unresolved* and names the module to re-upload; removing a
 shipped profile falls back to the generic MIBs. Either way the device keeps being
 monitored — you lose the vendor-specific figures, not the monitoring.
 
-Two things worth knowing when you build one:
+Three things worth knowing when you build one:
 
 - **FortiGate MIBs come from the FortiGate.** System → SNMP has download links
   for the FortiGate and Fortinet Core MIB files, so no support account is needed.
@@ -166,6 +180,14 @@ Two things worth knowing when you build one:
   FortiSwitches often arrive with an empty model. Adding the same row again
   scoped to a device type covers those. Where both exist, a stated model wins —
   so an asset that discovery typed wrongly still routes by what it says it is.
+- **A pattern that repeats a repeat is refused on save.** The profile's "also
+  applies when" pattern, a row's model pattern and a model parse pattern run
+  against every device's SNMP text on every poll, and a pattern such as
+  `(.+)+` can take effectively forever on some inputs — stalling monitoring
+  rather than slowing it. Polaris refuses any pattern that puts `+`, `*` or
+  `{n,}` on a group already containing one, and names the part to rewrite.
+  The check is deliberately cautious, so it also refuses a few patterns that
+  would have been fine (`(v\d+)+`); write those without the outer repeat.
 
 A profile row that cannot resolve says so: its MIB cell reads *unresolved* and
 names the module still missing, the profile header shows **N UNRESOLVED**, and

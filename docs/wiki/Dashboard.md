@@ -191,7 +191,7 @@ Clicking a schedule offers:
   the window's open sessions end, held devices leave maintenance and resume
   polling, and the schedule stops firing until it is re-enabled.
 
-Both need `maintenanceManagement:fullwrite` — the level the Maintenance modal
+Both need `maintenanceManagement:write` — the level the Maintenance modal
 itself needs. A role that can only *read* maintenance still sees the widget;
 its rows simply do nothing. Neither verb is offered on the Dash wallboard,
 which has no session to act with. See

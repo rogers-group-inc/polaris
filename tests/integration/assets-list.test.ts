@@ -323,3 +323,168 @@ d("GET /api/v1/assets — favorites-first ordering", () => {
     expect(hostnames(page2.body)).toEqual(["alpha-srv", "beta-sw"]);
   });
 });
+
+// ─── tags column ─────────────────────────────────────────────────────────────
+
+d("GET /api/v1/assets — tags column", () => {
+  async function seedTags() {
+    await seedAssets();
+    const tagsByHost: Record<string, string[]> = {
+      "alpha-srv": ["Production", "dc1"],
+      "beta-sw": ["lab"],
+      "gamma-fw": ["edge", "100%_real"],
+    };
+    for (const [hostname, tags] of Object.entries(tagsByHost)) {
+      await prisma.asset.updateMany({ where: { hostname }, data: { tags } });
+    }
+  }
+
+  it("list rows carry their tags", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    const resp = await agent.get("/api/v1/assets?limit=100");
+    const alpha = (resp.body.assets as Array<{ hostname: string; tags: string[] }>).find((a) => a.hostname === "alpha-srv");
+    expect(alpha?.tags).toEqual(["Production", "dc1"]);
+  });
+
+  it("contains matches any single tag, case-insensitively", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    const resp = await agent.get("/api/v1/assets?tags=PROD&sortBy=hostname&sortDir=asc");
+    expect(resp.status).toBe(200);
+    expect(hostnames(resp.body)).toEqual(["alpha-srv"]);
+    expect(resp.body.total).toBe(1);
+  });
+
+  it("LIKE wildcards in the term are literal", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    const resp = await agent.get("/api/v1/assets?tags=" + encodeURIComponent("0%_r"));
+    expect(hostnames(resp.body)).toEqual(["gamma-fw"]);
+    const none = await agent.get("/api/v1/assets?tags=" + encodeURIComponent("%"));
+    expect(hostnames(none.body)).toEqual(["gamma-fw"]);
+  });
+
+  it("not_contains keeps untagged rows and rows whose tags miss the term", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    const resp = await agent.get("/api/v1/assets?tags=lab&tagsOp=not_contains&sortBy=hostname&sortDir=asc");
+    expect(hostnames(resp.body)).toEqual(["alpha-srv", "delta-srv", "epsilon-srv", "gamma-fw", "zeta-wks"]);
+  });
+
+  it("empty / is_not_empty", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    const empty = await agent.get("/api/v1/assets?tagsOp=empty&sortBy=hostname&sortDir=asc");
+    expect(hostnames(empty.body)).toEqual(["delta-srv", "epsilon-srv", "zeta-wks"]);
+    const set = await agent.get("/api/v1/assets?tagsOp=is_not_empty&sortBy=hostname&sortDir=asc");
+    expect(hostnames(set.body)).toEqual(["alpha-srv", "beta-sw", "gamma-fw"]);
+  });
+
+  it("combines with the other column filters", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    const resp = await agent.get("/api/v1/assets?tagsOp=is_not_empty&assetType=server");
+    expect(hostnames(resp.body)).toEqual(["alpha-srv"]);
+  });
+
+  it("sortBy=tags orders by first tag with untagged rows last, and pages", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    // First tags (lowercased): alpha "dc1", beta "lab", gamma "100%_real".
+    const asc = await agent.get("/api/v1/assets?sortBy=tags&sortDir=asc&limit=100");
+    expect(asc.status).toBe(200);
+    expect(hostnames(asc.body).slice(0, 3)).toEqual(["gamma-fw", "alpha-srv", "beta-sw"]);
+    expect(asc.body.total).toBe(6);
+    const desc = await agent.get("/api/v1/assets?sortBy=tags&sortDir=desc&limit=100");
+    expect(hostnames(desc.body).slice(0, 3)).toEqual(["beta-sw", "alpha-srv", "gamma-fw"]);
+    const page2 = await agent.get("/api/v1/assets?sortBy=tags&sortDir=asc&limit=2&offset=2");
+    expect(hostnames(page2.body)[0]).toBe("beta-sw");
+    expect(page2.body.assets).toHaveLength(2);
+    expect(page2.body.total).toBe(6);
+  });
+
+  it("sortBy=tags honours favorites-first and the active filter", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    const all = await agent.get("/api/v1/assets?limit=100");
+    const byName = Object.fromEntries(
+      (all.body.assets as Array<{ id: string; hostname: string }>).map((a) => [a.hostname, a.id]),
+    );
+    const resp = await agent.get(
+      "/api/v1/assets?sortBy=tags&sortDir=asc&tagsOp=is_not_empty&limit=100&favoriteIds=" + byName["beta-sw"],
+    );
+    expect(hostnames(resp.body)).toEqual(["beta-sw", "gamma-fw", "alpha-srv"]);
+    expect(resp.body.total).toBe(3);
+  });
+});
+
+// ─── IP Address column: network filter (in_networks) + Network column ────────
+
+d("GET /api/v1/assets — IP network filter", () => {
+  const IPS: Record<string, string | null> = {
+    "alpha-srv": "10.1.2.3",
+    "beta-sw": "10.10.2.3",
+    "gamma-fw": "10.1.20.9",
+    "delta-srv": "192.168.5.200",
+    "epsilon-srv": "not-an-ip",
+    "zeta-wks": null,
+  };
+  async function seedIps() {
+    await seedAssets();
+    for (const [hostname, ipAddress] of Object.entries(IPS)) {
+      await prisma.asset.updateMany({ where: { hostname }, data: { ipAddress } });
+    }
+  }
+  const get = async (qs: string) => {
+    const { agent } = await authedAgent(app);
+    return agent.get("/api/v1/assets?sortBy=hostname&sortDir=asc&ipAddressOp=in_networks&" + qs);
+  };
+
+  it("a partial address matches by whole octets, never a longer octet", async () => {
+    await seedIps();
+    const resp = await get("ipAddress=10.1");
+    expect(resp.status).toBe(200);
+    expect(hostnames(resp.body)).toEqual(["alpha-srv", "gamma-fw"]);
+  });
+
+  it("a CIDR off an octet boundary selects exactly its range", async () => {
+    await seedIps();
+    expect(hostnames((await get("ipAddress=" + encodeURIComponent("10.1.16.0/20"))).body)).toEqual(["gamma-fw"]);
+    expect(hostnames((await get("ipAddress=" + encodeURIComponent("192.168.5.128/25"))).body)).toEqual(["delta-srv"]);
+  });
+
+  it("several networks OR together, and a malformed stored IP never breaks the query", async () => {
+    await seedIps();
+    const resp = await get("ipAddress=" + encodeURIComponent("10.10,192.168.5.0/24"));
+    expect(resp.status).toBe(200);
+    expect(hostnames(resp.body)).toEqual(["beta-sw", "delta-srv"]);
+    expect(resp.body.total).toBe(2);
+  });
+
+  it("an invalid term is a 400, not a silently wider filter", async () => {
+    await seedIps();
+    const resp = await get("ipAddress=" + encodeURIComponent("10.1,10.1.300"));
+    expect(resp.status).toBe(400);
+  });
+
+  it("list rows name the IPAM network the IP sits in (most specific)", async () => {
+    await seedIps();
+    const block = await prisma.ipBlock.create({ data: { name: "t-in-networks", cidr: "10.1.0.0/16", ipVersion: "v4" } });
+    try {
+      await prisma.subnet.create({ data: { blockId: block.id, cidr: "10.1.0.0/16", name: "Plant wide" } });
+      await prisma.subnet.create({ data: { blockId: block.id, cidr: "10.1.2.0/24", name: "Scale house" } });
+      const { agent } = await authedAgent(app);
+      const resp = await agent.get("/api/v1/assets?limit=100");
+      const ctx = Object.fromEntries(
+        (resp.body.assets as Array<{ hostname: string; ipContext: { subnetName: string } | null }>)
+          .map((a) => [a.hostname, a.ipContext?.subnetName ?? null]),
+      );
+      expect(ctx["alpha-srv"]).toBe("Scale house");
+      expect(ctx["gamma-fw"]).toBe("Plant wide");
+      expect(ctx["beta-sw"]).toBeNull();
+    } finally {
+      await prisma.ipBlock.delete({ where: { id: block.id } }); // cascades its subnets
+    }
+  });
+});

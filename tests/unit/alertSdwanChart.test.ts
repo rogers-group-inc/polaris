@@ -29,7 +29,14 @@ const { perfSlaRows, sdwanRule, calls } = vi.hoisted(() => ({
 vi.mock("../../src/db.js", () => ({
   prisma: {
     assetPerfSlaSample: {
-      findMany: vi.fn(async (args: { where?: { healthCheck?: { in?: string[] } } }) => {
+      findMany: vi.fn(async (args: { where?: { healthCheck?: { in?: string[] }; link?: string } }) => {
+        // A WAN-member read (an interface alert) is keyed on the LINK, not a
+        // health-check list, and must say so: it is the only thing stopping
+        // the fold from borrowing a sibling member.
+        if (args?.where?.link) {
+          calls.push(`perfSlaLink:${args.where.link}`);
+          return (perfSlaRows.rows as SdwanSampleRow[]).filter((r) => r.link === args.where!.link);
+        }
         calls.push(`perfSla:${(args?.where?.healthCheck?.in ?? []).join(",")}`);
         return perfSlaRows.rows;
       }),
@@ -67,9 +74,11 @@ import {
   resolveSdwanTarget,
   sdwanSeriesFrom,
   sdwanChartLabel,
+  wanMemberTarget,
   type SdwanSampleRow,
   type ChartToken,
 } from "../../src/services/alertChartService.js";
+import { sparklineSvg } from "../../src/utils/sparklineSvg.js";
 
 const T0 = Date.parse("2026-09-09T10:00:00Z");
 
@@ -378,5 +387,124 @@ describe("the swap, end to end", () => {
     }
     expect(calls).not.toContain("perfSla:VPN-SLA");
     expect(calls).toContain("telemetry");
+  });
+});
+
+describe("a member that has been dead for the whole window", () => {
+  // FortiOS stops reporting latency / jitter / loss for a member it has
+  // declared dead — only the verdict survives. A "WAN is down" email for an
+  // outage older than the chart window therefore had three EMPTY series, every
+  // SD-WAN chart rendered away, and the email arrived with no graphs at all.
+  const dead = (min: number) => row({ min, state: "down", latencyMs: null, jitterMs: null, packetLoss: null });
+
+  beforeEach(() => {
+    calls.length = 0;
+    sdwanRule.row = null;
+    perfSlaRows.rows = [dead(0), dead(1), dead(2), dead(3)];
+  });
+
+  it("still draws all three SD-WAN charts, as the down band", async () => {
+    const charts = await buildAlertCharts("a1", ALL_TOKENS, {
+      now: new Date(T0 + 10 * 60_000),
+      metric: "sdwanMemberState",
+      dimension: "VPN-SLA|wan1",
+    });
+    for (const t of ["chart.sdwanLatency", "chart.sdwanJitter", "chart.sdwanLoss", "chart.trigger"] as ChartToken[]) {
+      const c = charts.get(t)!;
+      expect(c.hasData).toBe(true);
+      expect(c.attachment).not.toBeNull();
+      expect(c.summary).toContain("VPN-SLA / wan1");
+      expect(c.summary).toContain("no readings — the health check reported this member down");
+    }
+  });
+
+  it("draws the band with no line, rather than the 'no data' card", () => {
+    const svg = sparklineSvg([], {
+      label: "SD-WAN latency",
+      from: T0 - 50 * 60_000,
+      to: T0 + 10 * 60_000,
+      alarmSpans: [{ from: T0, to: T0 + 10 * 60_000 }],
+      emptyNote: "no readings — the health check reported this member down",
+    });
+    expect(svg).toContain("<rect");
+    expect(svg).toContain('fill="#dc2626"');
+    expect(svg).toContain("reported this member down");
+    expect(svg).not.toContain("no data in this window");
+  });
+
+  it("still renders a chart away when nothing was measured AND nothing was down", async () => {
+    // A member that is up but reports no gauges (a health check with no
+    // probes configured) has neither a line nor a band — nothing to draw.
+    perfSlaRows.rows = [row({ min: 0, latencyMs: null, jitterMs: null, packetLoss: null })];
+    const charts = await buildAlertCharts("a1", ALL_TOKENS, {
+      now: new Date(T0 + 10 * 60_000),
+      metric: "sdwanMemberState",
+      dimension: "VPN-SLA|wan1",
+    });
+    expect(charts.get("chart.sdwanLatency")!.hasData).toBe(false);
+  });
+});
+
+describe("an interface alert on a WAN member", () => {
+  beforeEach(() => {
+    calls.length = 0;
+    perfSlaRows.rows = [
+      row({ min: 0, latencyMs: 30 }),
+      row({ min: 1, latencyMs: 250, state: "down" }),
+      row({ min: 1, link: "wan2", latencyMs: 12 }),
+    ];
+    sdwanRule.row = null;
+  });
+
+  it("charts the port's health check and nothing about the device", async () => {
+    const charts = await buildAlertCharts("a1", ALL_TOKENS, {
+      now: new Date(T0 + 10 * 60_000),
+      metric: "ifOperStatus",
+      dimension: "wan1",
+    });
+    expect([...charts.keys()].sort()).toEqual(["chart.sdwanJitter", "chart.sdwanLatency", "chart.sdwanLoss"]);
+    expect(charts.get("chart.sdwanLatency")!.summary).toContain("VPN-SLA / wan1");
+    expect(calls).toEqual(["perfSlaLink:wan1"]);
+  });
+
+  it("leaves the rate metrics on the device graphs, WAN member or not", async () => {
+    // Error rate and throughput plausibly correlate with the device's load,
+    // so they keep CPU / memory / response time / loss and get no SD-WAN swap.
+    const charts = await buildAlertCharts("a1", ALL_TOKENS, {
+      now: new Date(T0 + 10 * 60_000),
+      metric: "ifInErrorRate",
+      dimension: "wan1",
+    });
+    const keys = [...charts.keys()];
+    expect(keys).toEqual(expect.arrayContaining(["chart.cpu", "chart.memory", "chart.responseTime", "chart.probeLoss"]));
+    expect(keys).not.toContain("chart.sdwanLatency");
+    expect(calls).not.toContain("perfSlaLink:wan1");
+    expect(calls).toContain("telemetry");
+  });
+
+  it("draws nothing for a port no health check probes through", async () => {
+    const charts = await buildAlertCharts("a1", ALL_TOKENS, {
+      now: new Date(T0 + 10 * 60_000),
+      metric: "ifOperStatus",
+      dimension: "port7",
+    });
+    expect(charts.size).toBe(0);
+    expect(calls).toEqual(["perfSlaLink:port7"]);
+  });
+
+  it("draws nothing on a test alert — the invented device has no WAN to look up", async () => {
+    const charts = await buildAlertCharts(null, ALL_TOKENS, { sampleData: true, metric: "ifOperStatus", dimension: "wan1" });
+    expect(charts.size).toBe(0);
+    expect(calls).toEqual([]);
+  });
+
+  it("leads with the freshest health check and pins the link to the port", () => {
+    const target = wanMemberTarget([
+      { healthCheck: "DC-SLA", timestamp: new Date(T0) },
+      { healthCheck: "Internet", timestamp: new Date(T0 + 60_000) },
+      { healthCheck: "DC-SLA", timestamp: new Date(T0 + 30_000) },
+    ], "wan1");
+    expect(target).toEqual({ healthChecks: ["Internet", "DC-SLA"], link: "wan1" });
+    expect(wanMemberTarget([], "wan1")).toBeNull();
   });
 });

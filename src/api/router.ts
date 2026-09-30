@@ -18,6 +18,7 @@ import notificationRulesRouter from "./routes/notificationRules.js";
 import automationScriptsRouter from "./routes/automationScripts.js";
 import alertGroupsRouter from "./routes/alertGroups.js";
 import maintenanceSchedulesRouter from "./routes/maintenanceSchedules.js";
+import pathChecksRouter from "./routes/pathChecks.js";
 import contactsRouter from "./routes/contacts.js";
 import networkScansRouter from "./routes/networkScans.js";
 import notificationChannelsRouter from "./routes/notificationChannels.js";
@@ -27,6 +28,7 @@ import serverSettingsRouter from "./routes/serverSettings.js";
 import proxySettingsRouter from "./routes/proxySettings.js";
 import mibsRouter from "./routes/mibs.js";
 import manufacturerProfilesRouter from "./routes/manufacturerProfiles.js";
+import { firmwareRouter, firmwareAssetRouter } from "./routes/firmware.js";
 import deviceIconsRouter from "./routes/deviceIcons.js";
 import searchRouter from "./routes/search.js";
 import mapRouter from "./routes/map.js";
@@ -169,6 +171,11 @@ router.use("/integrations", requirePermission("integrations", "read"), integrati
 // in the default role matrix). Custom-type CRUD lives here; the eight
 // built-ins are seeded as isProtected=true and reject rename/delete.
 router.use("/asset-types", assetTypesRouter);
+// The per-asset firmware upgrade surface (business rule 87) mounted BEFORE
+// /assets so "firmware-upgrade" is never read as a sub-resource of the assets
+// router. Gated on the `firmware` key per route: read for availability and
+// run history, fullwrite to start a flash.
+router.use("/assets/:id/firmware-upgrade", firmwareAssetRouter);
 router.use("/assets", assetsRouter);
 router.use("/log-flag-rules", logFlagRulesRouter);
 router.use("/events", eventsRouter);
@@ -197,6 +204,9 @@ router.use("/notification-rules", deprecatedAlias("/api/v1/automations"), notifi
 // Maintenance schedules (Assets page → Maintenance modal); per-route gates
 // on the maintenanceManagement function key.
 router.use("/maintenance-schedules", maintenanceSchedulesRouter);
+// Agent-run path checks (Path Monitor page (/path-monitor.html)); per-route
+// gates on the pathChecks function key.
+router.use("/path-checks", pathChecksRouter);
 // Address book (Automations → Address Book tab + the recipient picker's
 // typeahead); per-route gates on the ownership-dimensioned contacts key.
 router.use("/contacts", contactsRouter);
@@ -244,7 +254,9 @@ router.use("/application-map", applicationMapRouter);
 router.use("/weather", weatherRouter);
 router.use("/conflicts", conflictsRouter);
 router.use("/credentials", credentialsRouter);
-router.use("/manufacturer-aliases", requirePermission("manufacturerAliases", "read"), manufacturerAliasesRouter);
+// The alias map rides manufacturerProfiles: an alias decides which profile a
+// device matches, so it is the same grant (business rule 43(f)).
+router.use("/manufacturer-aliases", requirePermission("manufacturerProfiles", "read"), manufacturerAliasesRouter);
 // monitor-settings: reads open to any auth caller (asset-modal tier badges
 // need them); writes guarded per-route by requirePermission(assetMonitorSettings, write).
 router.use("/monitor-settings", monitorSettingsRouter);
@@ -260,10 +272,15 @@ router.use("/server-settings/mibs", mibsRouter);
 // write on edits). Mounted before the blanket so reads reach roles that
 // have manufacturerProfiles=read but not serverSettingsSystem.
 router.use("/server-settings/manufacturer-profiles", manufacturerProfilesRouter);
+// Same precedent for the firmware repository (business rule 87): its own
+// `firmware` key per route (read on the tree / images / bindings / runs,
+// write on uploads, deletes and bindings), mounted before the blanket so a
+// role holding only `firmware` reaches the Repository tab.
+router.use("/server-settings/firmware", firmwareRouter);
 // nginx GUI surface mounted BEFORE /server-settings so the proxy-mode gate
-// and explicit per-route serverSettingsSystem guards (read on GET, fullwrite
+// and explicit per-route serverSettingsSystem guards (read on GET, write
 // on PUT/apply/rotate/adopt) apply. Apply + rotate are high-blast-radius —
-// they can lock out the operator from the UI if mis-set — so fullwrite is
+// they can lock out the operator from the UI if mis-set — so write (the top rung) is
 // the right floor regardless of the blanket gate's read level.
 router.use("/server-settings/proxy", proxySettingsRouter);
 // The tag REGISTRY's picker-shaped read, declared above the blanket
@@ -285,7 +302,7 @@ router.get("/server-settings/tags/catalog", async (_req, res, next) => {
 });
 // Blanket /server-settings gate: serverSettingsSystem read floor for the
 // whole surface. Mutating routes inside additionally carry per-route
-// requirePermission escalations (serverSettingsSystem fullwrite for the
+// requirePermission escalations (serverSettingsSystem write for the
 // system cards, serverSettingsData read/fullwrite for backup download /
 // backup-restore / queue-mode / security tokens / restart / updates) —
 // so a Data-scoped role still needs serverSettingsSystem read to reach

@@ -132,7 +132,12 @@ function _mergeFieldIsEmpty(key, v) {
 // `opts.onMerged(result)` is the host page's post-merge refresh — see the
 // host contract in this file's header.
 async function openAssetMergeModal(assetId, preselectOtherId, opts) {
-  if (!isAdmin()) return;
+  // Merging edits one asset and deletes another, so it is gated on the assets
+  // key's full read-write level — the level `POST /assets/:id/merge` requires.
+  // Read off the permission MATRIX rather than the role name, so a custom role
+  // granted that level gets the modal and an admin-named role without it does
+  // not; the two used to disagree (UI: admin-only, API: any assets:write).
+  if (typeof permAtLeast !== "function" || !permAtLeast("assets", "fullwrite")) return;
   _mergeThisAsset = null; _mergeOtherAsset = null;
   _mergeThisSources = []; _mergeOtherSources = [];
   _mergeThisHistory = null; _mergeOtherHistory = null;

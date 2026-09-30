@@ -86,7 +86,7 @@ automationScriptsRouter.get("/:id", requirePermission("automationScripts", "read
   } catch (err) { next(err); }
 });
 
-automationScriptsRouter.post("/", requirePermission("automationScripts", "fullwrite"), async (req, res, next) => {
+automationScriptsRouter.post("/", requirePermission("automationScripts", "write"), async (req, res, next) => {
   try {
     const input = scriptInputSchema.parse(req.body);
     const script = await createScript(input, req.session?.username);
@@ -94,7 +94,7 @@ automationScriptsRouter.post("/", requirePermission("automationScripts", "fullwr
   } catch (err) { next(err); }
 });
 
-automationScriptsRouter.put("/:id", requirePermission("automationScripts", "fullwrite"), async (req, res, next) => {
+automationScriptsRouter.put("/:id", requirePermission("automationScripts", "write"), async (req, res, next) => {
   try {
     const input = scriptInputSchema.parse(req.body);
     const script = await updateScript(req.params.id as string, input, req.session?.username);
@@ -102,7 +102,7 @@ automationScriptsRouter.put("/:id", requirePermission("automationScripts", "full
   } catch (err) { next(err); }
 });
 
-automationScriptsRouter.delete("/:id", requirePermission("automationScripts", "fullwrite"), async (req, res, next) => {
+automationScriptsRouter.delete("/:id", requirePermission("automationScripts", "write"), async (req, res, next) => {
   try {
     await deleteScript(req.params.id as string, req.session?.username);
     res.status(204).end();
@@ -113,7 +113,7 @@ automationScriptsRouter.delete("/:id", requirePermission("automationScripts", "f
 // on a production asset; run those through a real automation deliberately).
 // Enqueues the run and returns immediately; the runner job (5s tick) executes
 // it and the client polls GET /runs/:id for exitCode/stdout/stderr.
-automationScriptsRouter.post("/:id/test-run", requirePermission("automationScripts", "fullwrite"), async (req, res, next) => {
+automationScriptsRouter.post("/:id/test-run", requirePermission("automationScripts", "write"), async (req, res, next) => {
   try {
     const input = testRunSchema.parse(req.body ?? {});
     const { runId } = await requestScriptRun({

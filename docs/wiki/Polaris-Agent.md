@@ -74,7 +74,7 @@ else's host over a stored credential and leaves a service behind.
 | Route | |
 |---|---|
 | **Per asset** | the asset slide-over's **System** tab carries a Polaris Agent card with an **Install Agent** button on every server and workstation that could take one — no need to pick "Polaris Agent" as a polling method first. Any other device type shows the card once an agent exists or a stream is set to the agent method. The edit modal's Monitoring tab has the same button. Neither appears on a FortiManager- or FortiGate-discovered asset or on an ESXi host: FortiOS and ESXi take no agent. On a Windows host the modal adds a **Transport** choice — **SSH** (preselected; needs OpenSSH Server running on the host) or **WinRM** — and shows the credential picker for whichever is chosen. Linux and macOS are SSH-only, and the row is hidden |
-| **Bulk** | the Assets bulk bar's **Deploy Agent** — one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, and ineligible assets come back as **skips with reasons** |
+| **Bulk** | the Assets bulk bar's **Deploy Agent** — one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried with the credentials you pick, and other ineligible assets come back as **skips with reasons** |
 | **Auto-deploy** | a per-class toggle on the AD / Entra / Arc integrations, off by default — pushes to newly discovered agent-less devices during discovery, bounded and paced |
 
 Enabling an integration's auto-deploy checkbox is **the same grant, chained**
@@ -110,7 +110,7 @@ There is no escrow — recovery is regenerate and re-run the script, which is wh
 the scripts are idempotent. The public key is deliberately non-secret so the
 script can be re-rendered without rotating the key.
 
-Generating it carries a **chained** gate: `serverSettingsSystem:fullwrite`
+Generating it carries a **chained** gate: `serverSettingsSystem:write`
 **and** `credentials:write`, since it mints a fleet-wide admin credential.
 
 Settings are **per platform**, and Polaris maintains one managed credential per
@@ -127,6 +127,29 @@ meaningless on Linux.
 **Pairing them under an Intune Remediation or an SCCM Configuration Baseline is
 what makes rollout self-healing** — a plain platform script runs once per device
 and never retries.
+
+#### When sshd is installed but will not start
+
+The remediation installs OpenSSH Server only when Windows reports it missing.
+It never checks the version, and it never reinstalls. A machine can report
+OpenSSH Server as **Installed** while its `sshd.exe` is years out of date. The
+service then times out on start (error 1053), and the script stops before it
+reaches the account and key steps.
+
+When that happens, both scripts name the cause in the Intune output columns:
+
+| Script | Output |
+|---|---|
+| Detection | `remediate: sshd not running (sshd.exe OpenSSH_7.7p1 for Windows; last SCM event 7009 at …: A timeout was reached …)` |
+| Remediation | `error: sshd failed to start - …`, then the same version and Service Control Manager event, and exit 1 |
+
+An `sshd.exe` version far older than a healthy machine on the same Windows
+build means a stale install. Remove and reinstall the capability on that
+endpoint (`Remove-WindowsCapability`, then `Add-WindowsCapability`, with a
+reboot between them if Windows asks for one). The next remediation run then
+finishes on its own. A current version together with a timeout points instead
+at something stopping `sshd.exe`, such as endpoint security or application
+control.
 
 Platform differences that matter:
 
@@ -161,8 +184,22 @@ What the remediation script does about it depends on **Polaris server address**:
 
 **Public is deliberately never added.** Reachable-from-Domain is the problem
 being solved; an any-source TCP/22 rule on the profile a laptop picks up in an
-airport is not. Both paths are idempotent, and the detection script does not
-judge the firewall — it is not told which of the two shapes to expect.
+airport is not. Both paths are idempotent.
+
+**The detection script checks the firewall too**, against whichever of the two
+states the same **Polaris server address** produces:
+
+| Server address | Detection reports "needs remediation" when |
+|---|---|
+| **set** | `Polaris SSH (TCP 22)` is missing, disabled, not on every profile, or allows a different address; or `OpenSSH-Server-In-TCP` is still enabled |
+| **blank** | `OpenSSH-Server-In-TCP` does not cover the Domain profile. Whether it is enabled is not checked, because the remediation never turns back on a rule you turned off |
+
+Before this check, a machine set up some other way (by hand, or by an older
+script) passed detection and was never remediated. On a domain network that
+meant sshd was listening and nothing could reach it, and the first sign was an
+agent install timing out while waiting for the SSH handshake. Detection and
+remediation are built from the same saved address, so change the address and
+re-publish **both**.
 
 > **The script does not decide who may use SSH.** It never writes `sshd_config`,
 > so stock Windows OpenSSH rules apply: no `AllowUsers`/`AllowGroups`, and
@@ -302,24 +339,139 @@ single-pin key, so a downgrade to an older binary keeps working.
 |---|---|
 | responseTime | its own heartbeat |
 | cpuMemory, temperature, interfaces, storage | host telemetry |
-| — *per-core CPU and the memory breakdown* | **agent only** — see below |
+| — *per-core CPU and the memory breakdown* | the agent's own accounting — see below. [vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) reports both too, in its own vocabulary |
 | **processes** | **agent-default-ON** — an installed agent collects its process inventory automatically |
+| services | the unit / service inventory for the asset's [Services tab](Assets#services), with per-service CPU and memory (agent 0.22.0+ on Windows). Ticking a service's Monitor box also collects its log: the journal on Linux, its Event Log entries on Windows (0.22.0+) |
 | eventLog | opt-in, behind a global master switch (PII and volume) |
 | Application Map connections | needs the **`ptrace`** tier on Linux |
+| [Path checks](Path-Monitor) | agent **0.21.0+**; runs only the checks an operator created and pointed at this host. HTTP / HTTPS / TCP / ICMP plus traceroute, **no extra privilege** on any tier |
+
+> **Windows Event Log levels before agent 0.21.1** were stored one step too
+> severe: an Error came in as *critical*, a Warning as *error* and an
+> Information entry as *warning*. From 0.21.1 each keeps its own level.
+> Entries already stored keep the label they arrived with.
 
 The storage and interface collectors run under a 30-second guard, because
 `statfs` and interface ioctls can **block indefinitely** on a hung filesystem or
 an unresponsive NIC — without it the whole push loop freezes while the heartbeat
 keeps running and the agent looks connected.
 
+### When the host stops reporting
+
+A dead host sends nothing, so Polaris treats the agent's silence as the missed
+poll. Once an agent that finished deploying has been silent for two polling
+intervals, each further miss counts toward your down-detection automation, and
+the asset goes **Down** and raises **Asset down** just as a host that stopped
+answering pings would. Restarts and updates of Polaris itself, and agent
+upgrades, do not count. See [rule 86](Business-Rules#rule-86).
+
+### Host identity — hostname, OS, make, model, serial
+
+Alongside the telemetry streams the agent reports what the machine *is*:
+hostname, OS and version, manufacturer, model, BIOS version and serial
+number. Because it runs on the host, this beats what a directory or MDM
+holds — those describe the machine as it was when it enrolled.
+
+The serial comes from the firmware: `/sys/class/dmi/id/product_serial` on
+Linux, the IORegistry on macOS, and the SMBIOS table on Windows.
+
+> **Windows hosts and agent versions before 0.20.1.** Windows publishes no
+> serial number in the registry, and older agents fell back to the system
+> **SKU** — a model code, identical on every unit of that model (a PowerEdge
+> R740 would report `SKU=NotProvided;ModelName=PowerEdge R740`). From 0.20.1
+> the agent reads the firmware table directly and reports the real serial,
+> the same value `Get-CimInstance Win32_BIOS` shows. **Upgrade the agent, and
+> the serial corrects itself on the next check-in.** Two things you may see
+> when it does: a serial that changes on a Windows asset for no other reason,
+> and — where the firmware has no serial to give — one that clears instead,
+> which is deliberate. Both are recorded in Events.
+
+On a hardened Linux host `product_serial` is often root-only, so an agent on
+the **unprivileged** tier reports no serial and Polaris falls back to another
+source. A serial the hardware never had programmed (`To Be Filled By O.E.M.`
+and friends) is reported as no serial at all rather than passed on — see
+[Business Rules](Business-Rules#rule-83).
+
+### The collections are spread across the minute
+
+Each collection runs on its own cadence, and each one starts at a different
+offset inside the minute — so they never run at the same instant.
+
+That matters more than it sounds. Several collections share a cadence: four
+of them run every five minutes, and on Windows two of those shell out, one to
+`tasklist` and one to PowerShell. **Before agent 0.19.0 they all fired
+together**, which on a small host was a visible CPU spike every five minutes
+— and because the agent measures its own response time by timing a round trip
+to Polaris, the spike landed on that measurement too. Both charts on the
+System tab grew a five-minute sawtooth that was describing the agent rather
+than the host.
+
+If you are looking at an agent host with that pattern, **check the agent
+version**: an installed agent keeps running its old schedule until it is
+upgraded.
+
+Each agent also picks a small random offset of its own at startup, so a fleet
+deployed in one batch does not arrive at the server in lockstep.
+
+The offsets stagger when each collection **starts**. They cannot control how
+long one takes, and on a small or busy host a collection often overruns into
+the next one's slot — which is why nothing the agent measures is allowed to
+depend on having a quiet instant to itself. See the CPU reading below.
+
+### What the CPU number measures
+
+**Every CPU figure the agent reports is an average over the whole gap since
+its previous sample** — by default the last 60 seconds, whatever
+`telemetry_interval_sec` is set to. The agent reads the kernel's running CPU
+counters and reports the difference; it does not sample a moment and it does
+not pause to watch.
+
+That matters on small hosts. **Before agent 0.20.0 the reading was a single
+1-second window once a minute**, so it described 1 second in 60 and said
+nothing about the other 59. On a **single-vCPU VM** that was actively
+misleading: if one of the agent's own collections was still running when the
+window opened, it held the only core, and the sample reported ~100% CPU for a
+host that was otherwise idle. The chart was describing the agent, not the
+machine. Spreading the collections across the minute (0.19.0) did not fix it,
+because a collection that starts in its own slot can still be running when
+the window opens 11 seconds later.
+
+Two things follow from the current behaviour, both worth knowing before you
+read a chart or set a threshold:
+
+- **The agent's own overhead can no longer dominate a sample.** It now shows
+  up as what it actually costs — a few percent of the interval — instead of
+  as the entire reading on the ticks where it collided.
+- **The cadence is the smoothing.** A brief spike is averaged across the
+  whole interval rather than caught or missed at random, so the chart is
+  flatter than it was before 0.20.0 and **CPU thresholds fire on a sustained
+  average rather than on a lucky sample**. If you want a sharper chart on a
+  particular host, shorten `telemetry_interval_sec`; that shortens the
+  averaging window with it.
+
+Upgrading the agent is what applies this — an installed agent keeps its old
+behaviour until it is upgraded.
+
 ### Per-core CPU and the memory breakdown
 
-An agent-monitored host is the only kind whose **CPU** chart on the Assets →
-System tab draws **one coloured line per logical core** alongside the
-cross-core average, and whose **Memory** chart is a **stacked area in bytes**
-rather than a single percentage line. No other transport — FortiOS, SNMP,
-WinRM, vCenter, SSH — can report either, so on those assets the two charts
-fall back to a single line each.
+An agent-monitored host's Assets → System tab splits **CPU & Memory into two
+charts**: a **CPU** chart drawing **one coloured line per logical core**
+alongside the cross-core average, and a **Memory** chart that is a **stacked
+area in bytes**. FortiOS, SNMP, WinRM and SSH can report neither, so those
+assets keep the single combined CPU & Memory chart on one 0–100% axis.
+[vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) splits
+too, in its own vocabulary — it measures the same host from outside.
+
+The split follows the **CPU/Memory stream's polling method**, not the presence
+of an agent: a host with the agent installed but that stream still pointed at
+SNMP is collecting one CPU figure per sample, and gets the combined chart.
+
+What the agent sees and vCenter does not, and the reverse, is the point of
+running both on one VM. The agent reports the guest's own accounting —
+buffers and page cache, and which processes hold the rest. It cannot see
+ballooning or host swap at all: those are the hypervisor reclaiming memory
+from underneath the guest, and to the guest they simply look like memory it
+never had.
 
 On the CPU chart:
 
@@ -386,6 +538,26 @@ an explicit credentialId on the request
 **Upgrade only.** Install, reinstall and uninstall still require a credential on
 file; force-remove is the escape hatch.
 
+### The device goes quiet while it runs
+
+An upgrade stops the agent service, which drops the agent's connection and
+raises `agent.disconnected` — so Polaris puts the asset into a **maintenance
+window** for the duration and the built-in disconnect automation stays quiet
+([rule 80](Business-Rules#rule-80)). The same applies to a reinstall and an
+uninstall. A first install and a retry take no window: there is no agent running
+to disconnect.
+
+The device reads **maintenance** while it runs, and its Maintenance tab names
+the operation. The window ends when the agent reconnects — or immediately if the
+upgrade fails, because an agent that is down for that reason is worth an alert.
+Nothing can leave it open: it expires after 20 minutes (30 for a reinstall)
+whatever happened to the operation, and the suppressed alert then fires late
+rather than never.
+
+It silences the whole device for that minute or two, not just the agent —
+[Maintenance Windows](Maintenance-Windows#windows-polaris-opens-for-itself) has
+the detail.
+
 ---
 
 ## Building agent binaries in-app
@@ -409,7 +581,7 @@ Each rule has a **mode**:
 | Mode | |
 |---|---|
 | **Monitor + map** | Application Map **and** telemetry — mapping implies monitoring |
-| **Monitor only** | per-program CPU/RAM and logs, per-unit journal tailing; never touches map pins |
+| **Monitor only** | per-program CPU/RAM and logs, per-unit log collection (journal / Event Log); never touches map pins |
 
 A four-step wizard: name → devices → items → summary. The **item step is
 scope-driven** — it lists only what the selected devices report, which is what
@@ -438,4 +610,9 @@ separate **Unmap everywhere** action does the actual strip.
 | TLS handshake fails after a certificate rotation | the pin. Stage the new pin **before** rotating |
 | Samples stop but the heartbeat continues | a hung filesystem or NIC in a collector — the 30 s guard bounds this on current builds |
 | Upgrade silently skips a host | check for `agent.upgrade_skipped` Events; on older builds this was completely silent |
+| An ICMP path check fails with `icmp unsupported on this host (ping_group_range)` | Linux only. The agent opens ICMP without privilege, which needs the service's group inside `net.ipv4.ping_group_range`. Modern distributions allow every group; RHEL 8 does not. Fix it on the host: `echo 'net.ipv4.ping_group_range = 0 2147483647' \| sudo tee /etc/sysctl.d/90-polaris-ping.conf && sudo sysctl --system`. HTTP, TCP and traceroute are unaffected |
+| A path check never produces results | the agent version (0.21.0+ runs checks — upgrade it), and whether the host is listed on the check's **Results** view. A host that is not listed does not match the check's Sources |
+| Every traceroute hop after the first shows `*` | the network drops ICMP errors (Time Exceeded) on the way back. The check result itself is unaffected |
+| An agent host is powered off but the asset still reads Up | whether an automation covers it (no automation means **Passive**, [rule 36](Business-Rules#rule-36)); whether the agent is revoked or not yet **active**; and, with a single agent, whether Polaris just restarted. The agent gets a full window from boot ([rule 86](Business-Rules#rule-86)) |
+| A burst of `agent.disconnected` alerts right after an in-app update or restart | older Polaris builds only. When every agent redialed the restarted server at once, one that retried could have its new connection closed by its old one, which raised a disconnect for an agent that was fine. Current builds ignore the old connection. The **reason** at the end of each Event's message tells you which case you have: `socket closed` just after an `agent.connected` is this; `heartbeat timeout` is a server too busy to answer |
 | `agent.disconnected` alerts never clear | the counterpart reset — an event automation should clear on `agent.connected`, scoped to the same subject ([rule 32e](Business-Rules#rule-32)) |

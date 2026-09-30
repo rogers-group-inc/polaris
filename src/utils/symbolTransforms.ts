@@ -5,9 +5,9 @@
  * Two registries live here:
  *
  *   1. Unary transforms (`TransformKind`) — applied to a single scalar reading
- *      before persistence. Pairs with `type="scalar"` on a metric row. Used
- *      when the device's units don't match what Polaris stores natively
- *      (Celsius vs Fahrenheit; bytes vs MB; ratio vs percent).
+ *      before persistence. Used when the device's units don't match what
+ *      Polaris stores natively (bytes vs MB; ratio vs percent; a DISPLAY-HINT
+ *      "d-1" integer carrying one implied decimal place).
  *
  *   2. Binary combiners (`CombinerKind`) — applied to two scalar readings
  *      (`a` and `b`) to produce one number. Pairs with `type="double_scalar"`
@@ -21,32 +21,36 @@
 
 // ─── Unary transforms ────────────────────────────────────────────────────
 //
-// **Where these are actually applied.** `applyTransform` has ONE call site in
-// `src/`: the custom-widget collector in `monitoringService`. A unary transform
-// set on a ManufacturerProfile METRIC row (cpu / memory / temperature /
-// storage) is stored, shown in the profile table's Transform column, and never
-// applied to a reading. Found 2026-09-16 on the owner's production install,
-// where a FortiAP temperature row had carried `celsius_to_fahrenheit` for
-// months without converting anything.
+// **Where these are actually applied.** Two call sites, accepting different
+// lists:
+//   - The custom-widget collector in `monitoringService` applies any
+//     `TransformKind` set on a widget.
+//   - A ManufacturerProfile METRIC row applies only what `METRIC_ROW_TRANSFORMS`
+//     below names for its metric key — today `tenths_to_units` on a scalar
+//     temperature row, applied by the hardware-sensor collector's
+//     profile-scalar path. The write path refuses anything else on a metric
+//     row, and the profile page hides the Transform select where the list is
+//     empty.
 //
-// Two consequences before reaching for one of these on a metric row:
-//   - It will not do what the column implies. Either wire the stream to apply
-//     it, or solve the problem where it is actually solved.
-//   - For temperature specifically, converting units before storage is WRONG
-//     regardless: Polaris stores and alerts in Celsius and converts at render
-//     (`public/js/temp-unit.js`, `branding.temperatureUnit`). Rewriting stored
-//     values would silently re-point every temperature automation's threshold
-//     and step each sensor's history mid-series. SCALING a raw integer into its
-//     canonical unit (a DISPLAY-HINT "d-1" sensor, say) is a different and
-//     legitimate operation — it just has no implementation yet.
+// The split exists because metric rows used to accept the whole list and
+// apply none of it: found 2026-09-16 on the owner's production install, where
+// a FortiAP temperature row had carried a Celsius→Fahrenheit transform for
+// months without converting anything. Wiring a transform for another metric
+// means the collector applies it AND it lands in METRIC_ROW_TRANSFORMS, in the
+// same change — that list is what the UI offers.
+//
+// There is deliberately no Celsius↔Fahrenheit transform (removed 2026-09-23).
+// Polaris stores and alerts in Celsius and converts at render
+// (`public/js/temp-unit.js`, `branding.temperatureUnit`); converting before
+// storage would silently re-point every temperature automation's threshold and
+// step each sensor's history mid-series. SCALING a raw integer into its
+// canonical unit (`tenths_to_units`) is the legitimate operation.
 //
 // `applyCombiner` below has NO call site at all. A double-scalar row's combiner
 // is read as a STATEMENT OF SHAPE — which two of used/total/free the symbols
 // are — by `profileResolver` and the disk/memory collectors, not executed here.
 
 export type TransformKind =
-  | "celsius_to_fahrenheit"
-  | "fahrenheit_to_celsius"
   | "bytes_to_mb"
   | "bytes_to_gb"
   | "mb_to_bytes"
@@ -57,8 +61,6 @@ export type TransformKind =
   | "tenths_to_units";
 
 export const TRANSFORM_KINDS: TransformKind[] = [
-  "celsius_to_fahrenheit",
-  "fahrenheit_to_celsius",
   "bytes_to_mb",
   "bytes_to_gb",
   "mb_to_bytes",
@@ -70,9 +72,7 @@ export const TRANSFORM_KINDS: TransformKind[] = [
 ];
 
 export const TRANSFORM_LABELS: Record<TransformKind, string> = {
-  celsius_to_fahrenheit: "Celsius → Fahrenheit",
-  fahrenheit_to_celsius: "Fahrenheit → Celsius",
-  bytes_to_mb:           "Bytes → MB",
+  bytes_to_mb:          "Bytes → MB",
   bytes_to_gb:           "Bytes → GB",
   mb_to_bytes:           "MB → Bytes",
   ticks_to_seconds:      "TimeTicks → Seconds",
@@ -87,6 +87,24 @@ export function isTransformKind(value: unknown): value is TransformKind {
 }
 
 /**
+ * The unary transforms a collector actually applies on a ManufacturerProfile
+ * metric row, by metric key. Scalar rows only — a table walk and a
+ * double-scalar pair never pass through a unary transform. A metric absent
+ * here takes none, and its row shows no Transform select.
+ */
+export const METRIC_ROW_TRANSFORMS: Readonly<Record<string, readonly TransformKind[]>> = {
+  // DISPLAY-HINT "d-1" sensor scalars (MikroTik's Temperature convention and
+  // the like), scaled into °C by the hardware-sensor collector.
+  temperature: ["tenths_to_units"],
+};
+
+/** The unary transforms a metric row of this key and type may carry; [] = none. */
+export function metricRowTransforms(metricKey: string, type: string): readonly TransformKind[] {
+  if (type !== "scalar") return [];
+  return METRIC_ROW_TRANSFORMS[metricKey] ?? [];
+}
+
+/**
  * Apply the named unary transform to a raw numeric value. Returns the input
  * unchanged when `kind` is null/undefined or the value isn't a finite
  * number — null/non-numeric inputs flow through so an upstream "no data"
@@ -97,8 +115,6 @@ export function applyTransform(value: number | null | undefined, kind: Transform
   if (!Number.isFinite(value)) return null;
   if (!kind) return value;
   switch (kind) {
-    case "celsius_to_fahrenheit": return value * 9 / 5 + 32;
-    case "fahrenheit_to_celsius": return (value - 32) * 5 / 9;
     case "bytes_to_mb":           return value / (1024 * 1024);
     case "bytes_to_gb":           return value / (1024 * 1024 * 1024);
     case "mb_to_bytes":           return value * 1024 * 1024;

@@ -11,7 +11,8 @@
  * Gated on `automationManagement` exactly as the automations themselves are:
  * a group decides who gets paged about every one of its members, which is at
  * least as sensitive as editing one of them. Reads take `read`, writes take
- * `fullwrite` — the same ladder notificationRules.ts uses.
+ * `write` — the top of this key's shorter ladder (none / read / write),
+ * the same gate notificationRules.ts uses.
  */
 
 import { Router } from "express";
@@ -101,21 +102,21 @@ alertGroupsRouter.get("/:id/removal-impact", requirePermission("automationManage
   } catch (err) { next(err); }
 });
 
-alertGroupsRouter.post("/", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+alertGroupsRouter.post("/", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const input = groupInputSchema.parse(req.body);
     res.status(201).json(await createGroup(input, req.session?.username));
   } catch (err) { next(err); }
 });
 
-alertGroupsRouter.put("/:id", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+alertGroupsRouter.put("/:id", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const input = groupInputSchema.parse(req.body);
     res.json(await updateGroup(req.params.id as string, input, req.session?.username));
   } catch (err) { next(err); }
 });
 
-alertGroupsRouter.delete("/:id", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+alertGroupsRouter.delete("/:id", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     await deleteGroup(req.params.id as string, req.session?.username);
     res.status(204).end();

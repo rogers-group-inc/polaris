@@ -40,10 +40,10 @@ import { fileURLToPath } from "node:url";
 
 import pg from "pg";
 import { prisma } from "../db.js";
-import { getMonitorSettings, RETENTION_PRUNE_INTERVAL_MS, type MonitorSettings } from "./monitoringService.js";
+import { getMonitorSettings, RETENTION_PRUNE_INTERVAL_MS, SDWAN_INTERVAL_DEFAULT_SEC, type MonitorSettings } from "./monitoringService.js";
 import { isTimescaleAvailable, isHypertable, ALL_HYPERTABLE_CANDIDATES, getEffectiveCompressAfterDays } from "./timescaleService.js";
 import { getTableSizes, getDatabaseSizeBreakdown, type DatabaseSizeBreakdown } from "./dbSizeService.js";
-import { getSampleRetention, SELECTION_AWARE_ENTITIES, UNSELECTED_DETAIL_HOURS, type RetentionEntity, type RetentionTier, type SampleRetention } from "./sampleRetentionService.js";
+import { getSampleRetention, SELECTION_AWARE_ENTITIES, UNSELECTED_DETAIL_HOURS, type RetentionEntity, type RetentionTier, type SampleRetention, type FlatRetentionEntity } from "./sampleRetentionService.js";
 import { isPgbossInstalled, getBootTimeMode, getQueueMode } from "./queueService.js";
 import { dbIsLocal, getDeploymentContext } from "../utils/deploymentContext.js";
 import { BACKUP_DIR, STATE_DIR } from "../utils/paths.js";
@@ -398,6 +398,8 @@ export interface CapacitySnapshot {
      * asset.
      */
     monitoredStorageCount: number;
+    /** Installed Polaris agents (every `ManagedAgent` row). */
+    agentCount: number;
     cadences: { responseTimeSec: number; telemetrySec: number; systemInfoSec: number };
     retention: { monitorDays: number; telemetryDays: number; systemInfoDays: number };
     /**
@@ -450,6 +452,9 @@ export const SAMPLE_TABLES: Array<{
   entity: RetentionEntity;
   tier:   RetentionTier;
   countKey: "all" | "telemetry" | "systemInfo" | null;
+  /** Set when the table's retention is a FLAT window rather than a tier —
+   *  the projection then multiplies by `retention[flatEntity].days`. */
+  flatEntity?: FlatRetentionEntity;
 }> = [
   // Source (detail) tables
   { name: "asset_monitor_samples",       entity: "assets",      tier: "detail", countKey: "all"        },
@@ -458,11 +463,15 @@ export const SAMPLE_TABLES: Array<{
   { name: "asset_interface_samples",     entity: "interfaces",  tier: "detail", countKey: "systemInfo" },
   { name: "asset_storage_samples",       entity: "storage",     tier: "detail", countKey: "systemInfo" },
   { name: "asset_ipsec_tunnel_samples",  entity: "ipsec",       tier: "detail", countKey: "systemInfo" },
-  // SD-WAN streams ride the system-info cadence but only emit on FortiGate
-  // firewalls with pullSdwan enabled — countKey "systemInfo" overestimates on
-  // mixed fleets; learned avg bytes/row + actual row counts take over as soon
-  // as the tables are non-empty.
-  { name: "asset_perf_sla_samples",      entity: "perfSla",     tier: "detail", countKey: "systemInfo" },
+  // SD-WAN SLA samples run on their own per-INTEGRATION cadence
+  // (config.sdwanIntervalSeconds, default 60s) and only on FortiGates whose
+  // integration has pullSdwan on — neither is a fleet-wide input the workload
+  // model has. Priced against every system-info asset at 60s, the no-history
+  // guess would add ~5,760 rows/asset/day to installs that never enable SD-WAN,
+  // so the detail tier is measured-only (countKey null): its real byte-rate
+  // once rows exist, zero when the stream is off. The fixed-bucket rollups
+  // below keep their model.
+  { name: "asset_perf_sla_samples",      entity: "perfSla",     tier: "detail", countKey: null         },
   // Process telemetry is opt-in PER PINNED PROGRAM (Asset.monitoredProcesses) —
   // most assets pin zero, so countKey "telemetry" over-projects on mixed
   // fleets; learned row counts take over once the table is non-empty (same
@@ -479,6 +488,12 @@ export const SAMPLE_TABLES: Array<{
   { name: "asset_process_log_samples",   entity: "process",     tier: "detail", countKey: null         },
   { name: "asset_custom_widget_samples", entity: "interfaces",  tier: "detail", countKey: null         },
   { name: "asset_state_samples",         entity: "interfaces",  tier: "detail", countKey: null         },
+  // Agent-run path checks. countKey null for the same reason as the
+  // standalone tables: rows are per (agent host × check), which no per-asset
+  // cadence multiplier models honestly — measured-only. The traceroutes ride
+  // their own FLAT window (pathCheckTraceroutes), not a tier.
+  { name: "asset_path_check_samples",  entity: "pathCheck", tier: "detail", countKey: null        },
+  { name: "asset_path_check_traceroutes", entity: "pathCheck", tier: "detail", countKey: null, flatEntity: "pathCheckTraceroutes" },
   // (asset_sdwan_rules is current-state, not a sample table — excluded from the projection.)
   // Hourly rollups
   { name: "asset_monitor_samples_hourly",       entity: "assets",      tier: "hourly", countKey: "all"        },
@@ -489,6 +504,7 @@ export const SAMPLE_TABLES: Array<{
   { name: "asset_ipsec_tunnel_samples_hourly",  entity: "ipsec",       tier: "hourly", countKey: "systemInfo" },
   { name: "asset_perf_sla_samples_hourly",      entity: "perfSla",     tier: "hourly", countKey: "systemInfo" },
   { name: "asset_process_samples_hourly",       entity: "process",     tier: "hourly", countKey: "telemetry"  },
+  { name: "asset_path_check_samples_hourly",  entity: "pathCheck", tier: "hourly", countKey: null      },
   // Daily rollups
   { name: "asset_monitor_samples_daily",        entity: "assets",      tier: "daily",  countKey: "all"        },
   { name: "asset_telemetry_samples_daily",      entity: "cpuMem",      tier: "daily",  countKey: "telemetry"  },
@@ -498,6 +514,7 @@ export const SAMPLE_TABLES: Array<{
   { name: "asset_ipsec_tunnel_samples_daily",   entity: "ipsec",       tier: "daily",  countKey: "systemInfo" },
   { name: "asset_perf_sla_samples_daily",       entity: "perfSla",     tier: "daily",  countKey: "systemInfo" },
   { name: "asset_process_samples_daily",        entity: "process",     tier: "daily",  countKey: "telemetry"  },
+  { name: "asset_path_check_samples_daily",   entity: "pathCheck", tier: "daily",  countKey: null      },
 ];
 
 // Cadence intervals consumed by the rows-per-asset-per-day calc. Source
@@ -561,7 +578,10 @@ const DEFAULT_ROWS_PER_ASSET_PER_DAY: Record<string, (c: WorkloadModelInputs) =>
   asset_interface_samples:     (c) => ((86400 / c.systemInfo) + (86400 / c.sample)) * c.pinnedIfacesPerAsset,
   asset_storage_samples:       (c) => (86400 / c.systemInfo) * 3,   // ~3 mounts
   asset_ipsec_tunnel_samples:  (c) => (86400 / c.systemInfo) * 1,   // ~1 tunnel
-  asset_perf_sla_samples:      (c) => (86400 / c.systemInfo) * 4,   // ~2 health-checks × 2 WAN members (SD-WAN FortiGates only)
+  // Not consulted today — the detail tier is measured-only (countKey null, see
+  // SAMPLE_TABLES) — but every tiered table keeps a row model so flipping it
+  // back can't throw inside the snapshot. Priced at the SD-WAN default cadence.
+  asset_perf_sla_samples:      () => (86400 / SDWAN_INTERVAL_DEFAULT_SEC) * 4,   // ~2 health-checks × 2 WAN members (SD-WAN FortiGates only)
   asset_process_samples:       (c) => (86400 / c.telemetry)  * 1,   // ~1 pinned program (opt-in; most assets pin zero)
   // Hourly rollups — 24 buckets/day × extra-key multiplier
   asset_monitor_samples_hourly:       () => 24,
@@ -584,6 +604,13 @@ const DEFAULT_ROWS_PER_ASSET_PER_DAY: Record<string, (c: WorkloadModelInputs) =>
   asset_ipsec_tunnel_samples_daily:   () => 1,
   asset_perf_sla_samples_daily:       () => 4,
   asset_process_samples_daily:        () => 1,
+  // Path checks project measured-only (countKey null), so these are
+  // never multiplied by an asset count; they exist because the map is
+  // dereferenced without a fallback for every tiered table. Per agent host ×
+  // one check at the 60 s floor.
+  asset_path_check_samples:         () => 1440,
+  asset_path_check_samples_hourly:  () => 24,
+  asset_path_check_samples_daily:   () => 1,
 };
 
 // Defaults used only when a table has zero rows (so avg bytes/row is unknown).
@@ -593,14 +620,17 @@ const DEFAULT_ROWS_PER_ASSET_PER_DAY: Record<string, (c: WorkloadModelInputs) =>
 const DEFAULT_BYTES_PER_ROW: Record<string, number> = {
   asset_monitor_samples:       310,
   // The one table whose row size depends on WHO is monitoring the asset.
-  // A Polaris Agent fills five memory-band columns and the `cpuCorePcts`
-  // jsonb vector (~10-12 bytes per logical core, so ~100 bytes at 8 cores and
-  // ~700 at 64); every other transport leaves all six null and the row stays
-  // the pre-2026-09 size. This figure is therefore a mixed-fleet guess and is
-  // only ever used while the table is EMPTY — the moment it has rows the
-  // measured `bytes / total` above replaces it, which is what makes an
-  // agent-heavy or a core-dense fleet self-correct rather than needing a
-  // constant nobody would remember to update.
+  // Two transports fill the wide columns: a Polaris Agent writes five memory
+  // bands, and vCenter writes its own five or six — and both write the
+  // `cpuCorePcts` jsonb vector (~10-12 bytes per core, so ~100 bytes at 8
+  // cores and ~700 at 64, and an ESXi host is routinely at the top of that
+  // range). FortiOS, SNMP, WinRM and SSH leave every one of them null and
+  // the row stays the pre-2026-09 size. This figure is therefore a
+  // mixed-fleet guess and is only ever used while the table is EMPTY — the
+  // moment it has rows the measured `bytes / total` above replaces it, which
+  // is what makes an agent-heavy, vCenter-heavy or core-dense fleet
+  // self-correct rather than needing a constant nobody would remember to
+  // update.
   asset_telemetry_samples:     400,
   asset_hardware_sensor_samples: 330,
   asset_interface_samples:     395,
@@ -627,6 +657,10 @@ const DEFAULT_BYTES_PER_ROW: Record<string, number> = {
   asset_perf_sla_samples_daily:      360,
   asset_process_samples_hourly:      340,
   asset_process_samples_daily:       340,
+  asset_path_check_samples:        380,
+  asset_path_check_samples_hourly: 360,
+  asset_path_check_samples_daily:  360,
+  asset_path_check_traceroutes:    2048,
 };
 
 const APP_DIR = dirname(fileURLToPath(import.meta.url));
@@ -846,8 +880,16 @@ const MIN_MEASURABLE_CHUNK_DAYS = 0.25;
  * footprint, so mixing them in understates the rate at which the table lays
  * bytes down. Median over several chunks tolerates a single
  * decompression-bloated outlier.
+ *
+ * Why `fillSpanCapDays`: a tier whose prune row-deletes expired rows
+ * (`prunesExpiredRows`) stops growing a chunk once it holds `retention + prune`
+ * days — new inserts reuse the freed space. Dividing that chunk's bytes by its
+ * whole elapsed span would spread a capped footprint over more days than it
+ * holds and under-read the rate; the span is capped at what the chunk can hold.
  */
-async function measureDetailDailyBytes(): Promise<Record<string, number>> {
+async function measureDetailDailyBytes(
+  fillSpanCapDays: Record<string, number> = {},
+): Promise<Record<string, number>> {
   // One query per detail/standalone hypertable, fanned out: the per-table rates
   // are independent, and the list is a fixed 13 tables regardless of fleet size
   // (each capped at 8 chunks), so this is bounded at both 100 and 2000 monitored
@@ -867,11 +909,12 @@ async function measureDetailDailyBytes(): Promise<Record<string, number>> {
             LIMIT 8`,
           name,
         );
+        const spanCap = fillSpanCapDays[name] ?? Number.POSITIVE_INFINITY;
         const dailyRates = rows
           .map((r) => {
             const bytes = Number(r.bytes ?? 0);
             const elapsedDays = Number(r.elapsed_secs ?? 0) / 86400;
-            return elapsedDays >= MIN_MEASURABLE_CHUNK_DAYS ? bytes / elapsedDays : 0;
+            return elapsedDays >= MIN_MEASURABLE_CHUNK_DAYS ? bytes / Math.min(elapsedDays, spanCap) : 0;
           })
           .filter((v) => v > 0);
         return dailyRates.length > 0 ? { name, rate: median(dailyRates) } : null;
@@ -953,56 +996,166 @@ export function effectiveRetentionDays(opts: {
   return retentionDays + Math.max(0, chunkIntervalDays) + Math.max(0, pruneCadenceDays);
 }
 
+/** A table's retention setting: its tier, or its FLAT window when it has one. */
+function tierRetentionDays(def: (typeof SAMPLE_TABLES)[number], retention: SampleRetention): number {
+  return def.flatEntity ? retention[def.flatEntity].days : retention[def.entity][def.tier];
+}
+
 /**
- * Bytes for a single DETAIL tier. Prefers the measured uncompressed daily rate
- * (× effective retention) when the tier genuinely never compresses (retention ≤
- * compress-after, or compression disabled) — that's the accurate on-disk
- * footprint. Otherwise (no measurement, or retention reaches past the frontier
- * so part of the data IS compressed and the uncompressed rate would
- * over-project) falls back to the supplied fallback estimate.
+ * May a DETAIL tier be projected from its MEASURED uncompressed daily rate?
+ * Only when the tier genuinely never compresses (retention ≤ compress-after, or
+ * compression disabled) — then that rate is the accurate on-disk density.
+ * Otherwise (no measurement, or retention reaches past the frontier so part of
+ * the data IS compressed and the uncompressed rate would over-project) the
+ * caller falls back to a flat estimate.
  *
- * Two DIFFERENT retention numbers are in play here, and conflating them is a
- * live trap:
- *   - `retentionDays` is the EFFECTIVE window (`effectiveRetentionDays()`) and is
- *     the MULTIPLIER — chunk-granularity slack is real footprint, and leaving it
- *     out is what made this projection read below the live database size (2026-09).
- *   - `configuredRetentionDays` is the operator's setting and is the GATE. Whether
- *     a chunk is ever compressed is decided by the compression policy and the
- *     retention policy racing on the SAME clock: both fire off the chunk's
- *     `range_end` plus their own window, so a tier with retention ≤ compress-after
- *     is dropped before compression ever reaches it and its chunks are pure
- *     uncompressed density. Chunk size shifts how long the data sits on disk but
- *     not which policy wins, so the gate must not see the slack. (Prod bears this
- *     out: the 7d-retention / 7d-compress detail tables report 0 compressed bytes.)
- *
- * `fallbackBytes` is the workload-model estimate for the tiered tables. The
- * standalone tables (log lines, widget and state probes) have no cadence row
- * model to build one from, so their caller passes the table's CURRENT on-disk
- * size: neutral in the projection — it cancels the same table's contribution to
- * `sampleBytesNow` — rather than a fabricated number or a silent zero. Pure for
- * unit testing.
+ * The gate reads the operator's CONFIGURED window, never the chunk-widened one.
+ * Whether a chunk is ever compressed is decided by the compression policy and
+ * the retention policy racing on the SAME clock: both fire off the chunk's
+ * `range_end` plus their own window, so a tier with retention ≤ compress-after
+ * is dropped before compression ever reaches it and its chunks are pure
+ * uncompressed density. Chunk size shifts how long the data sits on disk but
+ * not which policy wins, so the gate must not see the slack. (Prod bears this
+ * out: the 7d-retention / 7d-compress detail tables report 0 compressed bytes.)
+ * Gating on the widened number would kick every 7d/7d detail table onto the
+ * workload fallback. Pure.
  */
-export function projectDetailBytes(opts: {
-  measuredDailyBytes: number | null;
-  /** Days of data actually kept on disk — the multiplier. */
-  retentionDays: number;
-  /** The operator's configured window — decides whether compression ever
-   *  reaches this tier's chunks. Defaults to `retentionDays` for callers with no
-   *  slack to distinguish. */
-  configuredRetentionDays?: number;
+export function measuredRateUsable(opts: {
+  measuredDailyBytes: number | null | undefined;
+  configuredRetentionDays: number;
   compressAfterDays: number;
-  fallbackBytes: number;
-}): number {
-  const { measuredDailyBytes, retentionDays, compressAfterDays, fallbackBytes } = opts;
-  const configuredRetentionDays = opts.configuredRetentionDays ?? retentionDays;
-  if (
+}): boolean {
+  const { measuredDailyBytes, configuredRetentionDays, compressAfterDays } = opts;
+  return (
     measuredDailyBytes != null &&
     measuredDailyBytes > 0 &&
     (compressAfterDays <= 0 || configuredRetentionDays <= compressAfterDays)
-  ) {
-    return measuredDailyBytes * retentionDays;
+  );
+}
+
+/**
+ * Does the retention prune row-DELETE a tier's expired rows at the cutoff, or
+ * leave them all to `drop_chunks`?
+ *
+ * It matters because the two shapes hold very different amounts of disk. A
+ * drop-only tier keeps up to `retention + chunk + prune` days (see
+ * `effectiveRetentionDays`). A row-deleting tier frees its expired rows every
+ * prune, and the chunk still taking inserts reuses that space — so the chunk's
+ * file stops growing at `retention + prune` days of data even when the chunk
+ * interval is longer. Treating a 3-day tier on 7-day chunks as drop-only is
+ * what put the prod steady-state figure ~30 GB above anything the database ever
+ * reached (2026-09: hardware sensors modelled at 11 days, real peak ~8).
+ *
+ * Mirrors the prune layer: the selection-aware DETAIL tiers always delete their
+ * fast rows (`pruneSelectionAwareDetail`); every other tier deletes only the
+ * uncompressed residue, which exists exactly when the cutoff is newer than the
+ * compression frontier or compression is off (`tieredPruneWindow`). Pure.
+ */
+export function prunesExpiredRows(opts: {
+  entity: string;
+  tier: RetentionTier;
+  retentionDays: number;
+  compressAfterDays: number;
+}): boolean {
+  if (opts.tier === "detail" && (SELECTION_AWARE_ENTITIES as readonly string[]).includes(opts.entity)) return true;
+  return opts.compressAfterDays <= 0 || opts.retentionDays < opts.compressAfterDays;
+}
+
+/** One sample table's on-disk footprint as a function of time — the input to
+ *  `peakCombinedBytes`. */
+export interface SampleFootprint {
+  /** Bytes the table lays down per day of data. */
+  dailyBytes: number;
+  /** The operator's configured window (days, > 0). */
+  retentionDays: number;
+  /** TimescaleDB chunk interval (days); 0 for a plain table. */
+  chunkIntervalDays: number;
+  /** From `prunesExpiredRows`. */
+  rowDelete: boolean;
+}
+
+/**
+ * Days' worth of `dailyBytes` a table holds on disk at time `t` (days on the
+ * shared chunk-boundary axis — TimescaleDB aligns every hypertable's chunks to
+ * multiples of its interval from one epoch, so two tables with the same
+ * interval open and close chunks together).
+ *
+ * Each chunk grows while it takes inserts, capped at `retention + prune` days
+ * when the tier row-deletes (freed space is reused), and is dropped `retention
+ * + prune` days after its range ends. The prune lag is taken at its worst (a
+ * full cadence) everywhere, as `effectiveRetentionDays` does. A plain table has
+ * no chunks and holds a flat `retention + prune`.
+ *
+ * `beforeT` returns the limit from the left — the footprint an instant before
+ * `t`, so a chunk dropping exactly at `t` still counts. That is the instant a
+ * peak happens. Pure.
+ */
+export function footprintDaysAt(f: SampleFootprint, t: number, pruneCadenceDays: number, beforeT = false): number {
+  const life = f.retentionDays + pruneCadenceDays;
+  const C = f.chunkIntervalDays;
+  if (C <= 0) return life;
+  const cap = f.rowDelete ? life : Number.POSITIVE_INFINITY;
+  const current = Math.floor(t / C);
+  const back = Math.ceil(life / C) + 1;
+  let days = 0;
+  for (let k = 0; k <= back; k++) {
+    const s = (current - k) * C;
+    const before = (edge: number) => (beforeT ? t <= edge : t < edge);
+    if (before(s + C)) days += Math.min(t - s, cap);
+    else if (before(s + C + life)) days += Math.min(C, cap);
   }
-  return fallbackBytes;
+  return days;
+}
+
+/** Longest window over which the combined footprint repeats, in days. Chunk
+ *  intervals in practice are 1 and 7 days (LCM 7); an odd operator-set interval
+ *  could make the exact period enormous, so the scan stops here — every drop
+ *  event inside it is still visited. */
+const MAX_PEAK_SCAN_DAYS = 366;
+
+/**
+ * The largest TOTAL the given tables reach at any one moment.
+ *
+ * Summing each table's own peak over-states the disk needed: tables with
+ * different retentions peak on different days of the chunk cycle (a 7-day tier
+ * peaks just before its oldest chunk drops, a 3-day tier on the same 7-day
+ * chunks three days later, when the 7-day tier has just dropped). Every table
+ * only grows between drops, so the combined maximum sits just before one of the
+ * drops — those instants are the only candidates evaluated. Pure.
+ */
+export function peakCombinedBytes(
+  footprints: SampleFootprint[],
+  pruneCadenceDays: number = RETENTION_PRUNE_INTERVAL_MS / 86_400_000,
+): number {
+  const live = footprints.filter((f) => f.dailyBytes > 0 && f.retentionDays > 0);
+  if (live.length === 0) return 0;
+  const total = (t: number, beforeT: boolean) =>
+    live.reduce((sum, f) => sum + f.dailyBytes * footprintDaysAt(f, t, pruneCadenceDays, beforeT), 0);
+
+  // Period of the combined sawtooth: LCM of the chunk intervals, in hours.
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+  let periodHours = 1;
+  for (const f of live) {
+    const h = Math.max(1, Math.round(f.chunkIntervalDays * 24));
+    if (f.chunkIntervalDays > 0) periodHours = (periodHours / gcd(periodHours, h)) * h;
+    if (periodHours > MAX_PEAK_SCAN_DAYS * 24) { periodHours = MAX_PEAK_SCAN_DAYS * 24; break; }
+  }
+  const period = periodHours / 24;
+
+  let peak = total(0, false);
+  for (const f of live) {
+    const C = f.chunkIntervalDays;
+    if (C <= 0) continue;
+    // Drops land at s + C + life for every chunk start s = n·C; visit the ones
+    // falling in [0, period].
+    const offset = C + f.retentionDays + pruneCadenceDays;
+    for (let n = Math.floor(-offset / C); n * C + offset <= period + C; n++) {
+      const tDrop = n * C + offset;
+      if (tDrop <= 0) continue;
+      peak = Math.max(peak, total(tDrop, true));
+    }
+  }
+  return peak;
 }
 
 export function projectSteadyStateSize(args: {
@@ -1024,9 +1177,10 @@ export function projectSteadyStateSize(args: {
   /** Effective compress-after window (days) per table; gates the measured-rate
    *  path (only trusted when retention ≤ this). */
   compressAfterByTable?: Record<string, number>;
-  /** Chunk interval (days) per table, from `getChunkIntervalDays()`. Drives the
-   *  drop_chunks granularity slack in `effectiveRetentionDays` — a table absent
-   *  here is treated as a plain table pruned at the exact cutoff (0 slack). */
+  /** Chunk interval (days) per table, from `getChunkIntervalDays()`. Drives
+   *  each table's sawtooth in `peakCombinedBytes` (and the fallback's
+   *  `effectiveRetentionDays` slack) — a table absent here is treated as a
+   *  plain table pruned at the exact cutoff (0 slack). */
   chunkIntervalByTable?: Record<string, number>;
   /** Fleet-wide sum of `Asset.monitoredInterfaces` lengths. Drives the
    *  interface tables' row rate, which since the pinned-only cutover scales
@@ -1063,7 +1217,14 @@ export function projectSteadyStateSize(args: {
         : 2,
   };
 
-  let projectedSampleBytes = 0;
+  // Two kinds of contribution. A table whose daily byte-rate is known becomes a
+  // time-varying footprint, and those are combined at their joint peak rather
+  // than summed peak-by-peak (see peakCombinedBytes). A table projected from a
+  // fallback estimate — the workload model for a compressing detail tier, the
+  // current size for an unmeasurable standalone one — is a flat number, added
+  // as is.
+  let flatSampleBytes = 0;
+  const footprints: SampleFootprint[] = [];
   for (const def of SAMPLE_TABLES) {
     const t = sampleTables.find((s) => s.name === def.name);
     if (!t) continue;
@@ -1076,24 +1237,39 @@ export function projectSteadyStateSize(args: {
     // disk. FOREVER (-1) has no finite steady state, so effectiveRetentionDays
     // returns 0 (an unbounded tier can't be projected); 0 = tier off = 0.
     // The configured number is kept alongside it: it is the compression gate,
-    // while the widened one is the multiplier. See projectDetailBytes.
-    const configuredRetentionDays = Math.max(0, retention[def.entity][def.tier]);
+    // while the widened one is the multiplier. See measuredRateUsable.
+    // A table on a FLAT window (the path-check traceroutes) reads that one
+    // number instead of a tier.
+    const tierDays = tierRetentionDays(def, retention);
+    const configuredRetentionDays = Math.max(0, tierDays);
+    const chunkIntervalDays = chunkIntervalByTable?.[def.name] ?? 0;
     const fullRetentionDays = effectiveRetentionDays({
-      retentionDays: retention[def.entity][def.tier],
-      chunkIntervalDays: chunkIntervalByTable?.[def.name] ?? 0,
+      retentionDays: tierDays,
+      chunkIntervalDays,
     });
+    const compressAfterDays = compressAfterByTable?.[def.name] ?? 0;
+    const footprintOf = (dailyBytes: number): SampleFootprint => ({
+      dailyBytes,
+      retentionDays: configuredRetentionDays,
+      chunkIntervalDays,
+      rowDelete: prunesExpiredRows({ entity: def.entity, tier: def.tier, retentionDays: configuredRetentionDays, compressAfterDays }),
+    });
+    // The measured-rate path (see measuredRateUsable). An unbounded (FOREVER) or OFF tier contributes nothing,
+    // matching effectiveRetentionDays' 0.
+    const measured = measuredDetailDailyBytes?.[def.name] ?? 0;
+    const measuredUsable =
+      def.tier === "detail" &&
+      measuredRateUsable({ measuredDailyBytes: measured, configuredRetentionDays, compressAfterDays });
 
     // The standalone hypertables have no per-asset cadence row model. They are
     // measured-only: projected from their real daily byte-rate, and otherwise
     // left at their current size rather than guessed at.
     if (def.countKey === null) {
-      projectedSampleBytes += projectDetailBytes({
-        measuredDailyBytes: measuredDetailDailyBytes?.[def.name] ?? null,
-        retentionDays: fullRetentionDays,
-        configuredRetentionDays,
-        compressAfterDays: compressAfterByTable?.[def.name] ?? 0,
-        fallbackBytes: t.bytes,
-      });
+      if (measuredUsable) {
+        if (fullRetentionDays > 0) footprints.push(footprintOf(measured));
+      } else {
+        flatSampleBytes += t.bytes;
+      }
       continue;
     }
 
@@ -1137,22 +1313,21 @@ export function projectSteadyStateSize(args: {
         });
         fallbackRetentionDays = Math.min(fullRetentionDays || unselectedCapDays, unselectedCapDays);
       }
-      projectedSampleBytes += projectDetailBytes({
-        measuredDailyBytes: measuredDetailDailyBytes?.[def.name] ?? null,
-        retentionDays: fullRetentionDays,
-        configuredRetentionDays,
-        compressAfterDays: compressAfterByTable?.[def.name] ?? 0,
-        fallbackBytes: count * rowsPerAssetPerDay * fallbackRetentionDays * bytesPerRow,
-      });
+      if (measuredUsable) {
+        if (fullRetentionDays > 0) footprints.push(footprintOf(measured));
+      } else {
+        flatSampleBytes += count * rowsPerAssetPerDay * fallbackRetentionDays * bytesPerRow;
+      }
     } else {
       // Rollup tiers (hourly/daily) are bucket-fixed (24/day, 1/day) and mostly
       // COMPRESSED at steady state, so the measured-uncompressed approach would
-      // over-project — keep the stable workload model.
-      projectedSampleBytes += count * rowsPerAssetPerDay * fullRetentionDays * bytesPerRow;
+      // over-project — keep the stable workload model, as a daily rate so the
+      // rollups join the combined peak like everything else.
+      if (fullRetentionDays > 0) footprints.push(footprintOf(count * rowsPerAssetPerDay * bytesPerRow));
     }
   }
 
-  return baseBytes + projectedSampleBytes;
+  return baseBytes + flatSampleBytes + peakCombinedBytes(footprints);
 }
 
 function formatBytes(b: number): string {
@@ -1864,6 +2039,7 @@ export async function getCapacitySnapshot(opts: {
     sampleTables,
     connRow,
     dbIoState,
+    agentCount,
   ] = await Promise.all([
     getMonitorSettings(),
     getSampleRetention(),
@@ -1900,6 +2076,9 @@ export async function getCapacitySnapshot(opts: {
     getSampleTableStats(),
     readPgStatActivity(),
     computeDbIoState(),
+    // Every installed agent streams samples whether or not its asset is
+    // monitored, so the workload counts them all.
+    prisma.managedAgent.count(),
   ]);
   // Pull the rollup-job lastSuccess markers separately so the failure mode of
   // a missing Setting row stays simple to reason about (parallel fetch on the
@@ -1956,14 +2135,26 @@ export async function getCapacitySnapshot(opts: {
   // indexes, overhead, and the true pinned-interface/cadence mix — instead of
   // the hardcoded workload multipliers. Per-table compress-after gates which
   // detail tiers can trust the measurement (only those that never compress).
+  // Rollups get a compress-after too: it decides whether their prune
+  // row-deletes (prunesExpiredRows), though only detail tiers gate on it.
+  const compressAfterByTable: Record<string, number> = {};
+  const fillSpanCapDays: Record<string, number> = {};
+  const pruneCadenceDays = RETENTION_PRUNE_INTERVAL_MS / 86_400_000;
+  for (const def of SAMPLE_TABLES) {
+    const compressAfterDays = getEffectiveCompressAfterDays(def.name);
+    compressAfterByTable[def.name] = compressAfterDays;
+    const retentionDays = tierRetentionDays(def, sampleRetention);
+    if (
+      def.tier === "detail" && retentionDays > 0 &&
+      prunesExpiredRows({ entity: def.entity, tier: def.tier, retentionDays, compressAfterDays })
+    ) {
+      fillSpanCapDays[def.name] = retentionDays + pruneCadenceDays;
+    }
+  }
   const [measuredDetailDailyBytes, chunkIntervalByTable] = await Promise.all([
-    measureDetailDailyBytes(),
+    measureDetailDailyBytes(fillSpanCapDays),
     getChunkIntervalDays(),
   ]);
-  const compressAfterByTable: Record<string, number> = {};
-  for (const def of SAMPLE_TABLES) {
-    if (def.tier === "detail") compressAfterByTable[def.name] = getEffectiveCompressAfterDays(def.name);
-  }
 
   const steadyStateSizeBytes = projectSteadyStateSize({
     currentDbBytes: dbSizeBytes,
@@ -2027,6 +2218,7 @@ export async function getCapacitySnapshot(opts: {
       monitoredAssetCount: monitoredCount,
       monitoredInterfaceCount,
       monitoredStorageCount,
+      agentCount,
       cadences,
       retention,
       steadyStateSizeBytes,

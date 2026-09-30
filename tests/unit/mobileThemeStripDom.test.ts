@@ -110,7 +110,7 @@ const STRIP_HTML =
 
 /** happy-dom has no layout, so the two widths the painter measures are stubbed. */
 function mountStrip() {
-  document.body.innerHTML = STRIP_HTML + '<meta name="theme-color" content="#1d2024">';
+  document.body.innerHTML = STRIP_HTML + '<meta name="theme-color" content="#1d2244">';
   const win = document.querySelector<HTMLElement>(".theme-strip")!;
   win.getBoundingClientRect = () => ({ width: WIN_W }) as DOMRect;
   document.querySelectorAll<HTMLElement>(".theme-strip-track img").forEach((img) => {
@@ -219,7 +219,7 @@ describe("PolarisTheme.set", () => {
     api.api.set("noon");
     expect(document.querySelector('meta[name="theme-color"]')!.getAttribute("content")).toBe("#eef0f7");
     api.api.set("nightfall");
-    expect(document.querySelector('meta[name="theme-color"]')!.getAttribute("content")).toBe("#1d2024");
+    expect(document.querySelector('meta[name="theme-color"]')!.getAttribute("content")).toBe("#1d2244");
   });
 
   it("arms the crossfade only for a real change", () => {

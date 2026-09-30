@@ -181,7 +181,7 @@ document.getElementById("btn-demo-setup").addEventListener("click", function () 
 });
 
 // Passkey sign-in. The button appears only when the install allows passkeys
-// for login AND this page can actually run a ceremony (HTTPS or localhost,
+// for login AND at least one local account has registered one AND this page can actually run a ceremony (HTTPS or localhost,
 // browser support) — see PolarisWebAuthn.supported() — AND the RP the server
 // derived actually covers this page's own host, which a reverse proxy that
 // rewrites the Host header breaks (PolarisWebAuthn.unavailableHere). An
@@ -193,6 +193,10 @@ document.getElementById("btn-demo-setup").addEventListener("click", function () 
     if (!window.PolarisWebAuthn || !PolarisWebAuthn.supported()) return;
     var cfg = await PolarisAuthFlow.fetchPasskeyConfig();
     if (!cfg.loginEnabled) return;
+    // Nobody on this install has registered a passkey yet, so the button
+    // could only fail. The first one is set up from the account menu after a
+    // password login, and the button appears from then on.
+    if (!cfg.anyRegistered) return;
     if (PolarisWebAuthn.unavailableHere(cfg.rpId)) return;
     document.getElementById("passkey-section").style.display = "";
   } catch (_) {}

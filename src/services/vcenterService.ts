@@ -421,6 +421,13 @@ interface SoapSession {
   rootFolder: string;
   propertyCollector: string;
   viewManager: string;
+  /**
+   * PerformanceManager moref. Null when ServiceContent did not publish one —
+   * every perf read then degrades to nulls, exactly as the other SOAP
+   * surfaces do, rather than failing the quickStats fetch it rides along
+   * with. Not in the required set of soapLogin for that reason.
+   */
+  perfManager: string | null;
 }
 
 function soapEnvelope(inner: string): string {
@@ -468,6 +475,7 @@ async function soapLogin(config: VcenterConfig, signal?: AbortSignal): Promise<S
   const propertyCollector = scRes.body.match(/<propertyCollector[^>]*>([^<]+)<\/propertyCollector>/)?.[1];
   const viewManager = scRes.body.match(/<viewManager[^>]*>([^<]+)<\/viewManager>/)?.[1];
   const sessionManager = scRes.body.match(/<sessionManager[^>]*>([^<]+)<\/sessionManager>/)?.[1];
+  const perfManager = scRes.body.match(/<perfManager[^>]*>([^<]+)<\/perfManager>/)?.[1] ?? null;
   if (!rootFolder || !propertyCollector || !viewManager || !sessionManager) {
     throw new AppError(502, "vCenter SOAP service content missing expected manager references");
   }
@@ -483,7 +491,7 @@ async function soapLogin(config: VcenterConfig, signal?: AbortSignal): Promise<S
   const cookieHeader = Array.isArray(setCookie) ? setCookie[0] : setCookie;
   const cookie = cookieHeader?.match(/vmware_soap_session="?[^";]+"?/)?.[0];
   if (!cookie) throw new AppError(502, "vCenter SOAP login did not return a session cookie");
-  return { cookie, rootFolder, propertyCollector, viewManager };
+  return { cookie, rootFolder, propertyCollector, viewManager, perfManager };
 }
 
 async function soapLogout(config: VcenterConfig, session: SoapSession): Promise<void> {
@@ -591,6 +599,248 @@ function parsePropXml(block: string, name: string): string | null {
   return block.match(re)?.[1] ?? null;
 }
 
+// ─── SOAP: PerformanceManager (per-core CPU, host memory bands) ─────────────
+//
+// quickStats cannot answer either of these. It publishes one aggregate CPU
+// figure per entity, and for an ESXi host one memory figure; the per-vCPU /
+// per-physical-core breakdown and a host's balloon and swap live only in the
+// PerformanceManager.
+//
+// Two things about this surface decide its whole shape:
+//
+//   * REAL-TIME ONLY. Per-INSTANCE data (the "0", "1", "2"… series that are
+//     the individual cores) is collected at the 20-second real-time interval
+//     regardless of configuration, but the historical rollups are gated on
+//     the vCenter statistics level — 1 on a default install, which keeps the
+//     aggregate alone. Querying a historical interval would therefore return
+//     one series on most installs and look like a code bug. `intervalId` is
+//     pinned to 20 and `maxSample` to 1: we want the newest reading, not a
+//     window, because the caller already has its own cadence.
+//   * COUNTER IDS ARE PER-VCENTER. `cpu.usage.average` is not a fixed number
+//     across versions, so the id has to be resolved from the counter table
+//     and cached. The table is immutable for a given vCenter build, which is
+//     why the memo below has a long TTL and is keyed by host rather than by
+//     integration — two integrations pointed at one vCenter share it.
+//
+// Degrades to nulls independently of everything else, per the file header: a
+// vCenter that refuses QueryPerf (an account without the Performance
+// privilege is the common case) still yields full quickStats.
+
+/** Resolved counter ids for the metrics we read. Null = this vCenter did not publish it. */
+interface VcenterPerfCounters {
+  cpuUsage: number | null;      // cpu.usage.average — hundredths of a percent, per instance
+  memBalloon: number | null;    // mem.vmmemctl.average — KB
+  memSwapUsed: number | null;   // mem.swapused.average — KB
+}
+
+/** One entity's perf reading. Every field independently null when unavailable. */
+export interface VcenterPerfSample {
+  /**
+   * Per-core utilisation, 0-100, INDEX = the instance id vCenter reported
+   * (vCPU number for a VM, physical core for a host). Null when the entity
+   * published no per-instance series — which is the honest answer for a
+   * powered-off VM or a host with no real-time provider — never `[]`.
+   */
+  corePcts: number[] | null;
+  balloonedBytes: number | null;
+  swappedBytes: number | null;
+}
+
+const PERF_COUNTER_TTL_MS = 6 * 60 * 60 * 1000;
+const perfCounterMemo = new Map<string, { at: number; counters: VcenterPerfCounters }>();
+
+/** QueryPerf entity chunk size. See the scale note on fetchVcenterPerfSamples. */
+const PERF_CHUNK = 200;
+
+/** Real-time provider interval, seconds. The only interval carrying per-instance series. */
+const PERF_REALTIME_INTERVAL = 20;
+
+function perfMemoKey(config: VcenterConfig): string {
+  return `${config.host}:${config.port ?? 443}`;
+}
+
+/**
+ * Pick the counter ids out of a QueryPerfCounterByLevel response. Exported
+ * for tests — the parse is the part that breaks when VMware reorders the
+ * elements inside a PerfCounterInfo, and it must not depend on that order.
+ */
+export function parsePerfCounterIds(xml: string): VcenterPerfCounters {
+  const out: VcenterPerfCounters = { cpuUsage: null, memBalloon: null, memSwapUsed: null };
+  const re = /<returnval>([\s\S]*?)<\/returnval>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    const entry = m[1];
+    const key = Number(entry.match(/<key>(\d+)<\/key>/)?.[1]);
+    if (!Number.isFinite(key)) continue;
+    // nameInfo and groupInfo each carry their OWN <key>, and both come after
+    // the counter's key — so read them from their own element, not from the
+    // first match in the block.
+    const nameKey = entry.match(/<nameInfo>[\s\S]*?<key>([^<]+)<\/key>[\s\S]*?<\/nameInfo>/)?.[1];
+    const groupKey = entry.match(/<groupInfo>[\s\S]*?<key>([^<]+)<\/key>[\s\S]*?<\/groupInfo>/)?.[1];
+    const rollup = entry.match(/<rollupType>([^<]+)<\/rollupType>/)?.[1];
+    if (rollup !== "average") continue;
+    if (groupKey === "cpu" && nameKey === "usage") out.cpuUsage = key;
+    else if (groupKey === "mem" && nameKey === "vmmemctl") out.memBalloon = key;
+    else if (groupKey === "mem" && nameKey === "swapused") out.memSwapUsed = key;
+  }
+  return out;
+}
+
+/** Resolve (and memoize) the counter ids for this vCenter. Null when the perf surface is unusable. */
+async function resolvePerfCounters(
+  config: VcenterConfig,
+  session: SoapSession,
+  signal?: AbortSignal,
+): Promise<VcenterPerfCounters | null> {
+  if (!session.perfManager) return null;
+  const key = perfMemoKey(config);
+  const hit = perfCounterMemo.get(key);
+  if (hit && Date.now() - hit.at < PERF_COUNTER_TTL_MS) return hit.counters;
+  // Level 4 returns the whole table. It is ~150 KB, which is why this is
+  // memoized for hours rather than fetched beside every 30-second warm-cache
+  // refresh — the table cannot change without a vCenter upgrade.
+  const res = await soapCall(
+    config,
+    `<vim25:QueryPerfCounterByLevel><vim25:_this type="PerformanceManager">${xmlEscape(session.perfManager)}</vim25:_this>` +
+      `<vim25:level>4</vim25:level></vim25:QueryPerfCounterByLevel>`,
+    { cookie: session.cookie, signal },
+  );
+  const counters = parsePerfCounterIds(res.body);
+  perfCounterMemo.set(key, { at: Date.now(), counters });
+  return counters;
+}
+
+/** Drop the memoized counter table (tests, and a config change that repoints the host). */
+export function _resetPerfCounterMemo(): void {
+  perfCounterMemo.clear();
+}
+
+/**
+ * Parse a QueryPerf response into per-entity readings. Exported for tests.
+ *
+ * `cpu.usage.average` is in HUNDREDTHS of a percent (2534 = 25.34%) and the
+ * memory counters are in KB — the scaling lives here rather than at the call
+ * site so there is one place to be wrong.
+ *
+ * The AGGREGATE series (empty instance) is deliberately discarded: the
+ * caller already has a better aggregate from quickStats, computed against
+ * the entity's real clock rate, and two aggregates that disagree by a
+ * rounding step would be visible as the average line missing its own cores.
+ */
+export function parsePerfResponse(xml: string, counters: VcenterPerfCounters): Map<string, VcenterPerfSample> {
+  const out = new Map<string, VcenterPerfSample>();
+  const re = /<returnval[^>]*>([\s\S]*?)<\/returnval>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    const entry = m[1];
+    const entity = entry.match(/<entity[^>]*>([^<]+)<\/entity>/)?.[1];
+    if (!entity) continue;
+    const byCore = new Map<number, number>();
+    let balloonedBytes: number | null = null;
+    let swappedBytes: number | null = null;
+
+    const vre = /<value[^>]*>([\s\S]*?)<\/value>\s*(?=<value|$)/g;
+    let vm2: RegExpExecArray | null;
+    while ((vm2 = vre.exec(entry)) !== null) {
+      const series = vm2[1];
+      const counterId = Number(series.match(/<counterId>(\d+)<\/counterId>/)?.[1]);
+      if (!Number.isFinite(counterId)) continue;
+      // An absent <instance> and an empty one both mean the aggregate.
+      const instance = series.match(/<instance>([^<]*)<\/instance>/)?.[1] ?? "";
+      // The LAST <value> in the series is the newest sample; maxSample=1
+      // makes that the only one, but a provider is free to return more.
+      const nums = [...series.matchAll(/<value>(-?\d+)<\/value>/g)].map((x) => Number(x[1]));
+      const raw = nums.length ? nums[nums.length - 1] : NaN;
+      if (!Number.isFinite(raw) || raw < 0) continue;
+
+      if (counterId === counters.cpuUsage) {
+        if (instance === "") continue; // aggregate — see the doc comment
+        const idx = Number(instance);
+        if (!Number.isInteger(idx) || idx < 0) continue;
+        byCore.set(idx, Math.min(100, raw / 100));
+      } else if (counterId === counters.memBalloon) {
+        balloonedBytes = raw * 1024;
+      } else if (counterId === counters.memSwapUsed) {
+        swappedBytes = raw * 1024;
+      }
+    }
+
+    let corePcts: number[] | null = null;
+    if (byCore.size > 0) {
+      // Index IS the core id, so the array is as long as the highest instance
+      // reported. A hole (a core that answered with nothing this sample) is a
+      // 0 rather than a gap only because a jsonb array cannot carry a hole —
+      // vCenter does not skip cores in practice, and a sparse response would
+      // be a provider fault worth seeing as a flat line.
+      const width = Math.max(...byCore.keys()) + 1;
+      corePcts = Array.from({ length: width }, (_, i) => Number((byCore.get(i) ?? 0).toFixed(1)));
+    }
+    out.set(entity, { corePcts, balloonedBytes, swappedBytes });
+  }
+  return out;
+}
+
+/**
+ * QueryPerf for a list of entities, chunked.
+ *
+ * SCALE. This is ONE call per chunk per warm-cache refresh, not one per asset
+ * — the same "ask vCenter once, serve the whole fleet" shape as the
+ * quickStats fetch it rides with. At 2000 VMs that is 10 round trips every 30
+ * seconds (the cache TTL), each carrying one sample per core; at 100 it is
+ * one. The chunking exists because a single querySpec array covering
+ * thousands of entities is what makes vCenter itself slow, not because the
+ * caller is per-asset. Chunks run SEQUENTIALLY: a vCenter is a single
+ * appliance and the existing fetches are all serial against it, so firing ten
+ * concurrent QueryPerf calls would be the one place in this file that treats
+ * it as a parallel service.
+ *
+ * `wantMemory` is off for VMs: their balloon and swap figures come from
+ * quickStats, which is already being fetched, so asking perf for them would
+ * be a second answer to a question we have.
+ */
+export async function fetchVcenterPerfSamples(
+  config: VcenterConfig,
+  session: SoapSession,
+  entityType: "VirtualMachine" | "HostSystem",
+  morefs: string[],
+  opts: { wantMemory: boolean },
+  signal?: AbortSignal,
+): Promise<Map<string, VcenterPerfSample>> {
+  const out = new Map<string, VcenterPerfSample>();
+  if (morefs.length === 0) return out;
+  const counters = await resolvePerfCounters(config, session, signal);
+  if (!counters || counters.cpuUsage === null) return out;
+
+  const metricIds = [`<vim25:metricId><vim25:counterId>${counters.cpuUsage}</vim25:counterId><vim25:instance>*</vim25:instance></vim25:metricId>`];
+  if (opts.wantMemory) {
+    for (const id of [counters.memBalloon, counters.memSwapUsed]) {
+      if (id !== null) {
+        metricIds.push(`<vim25:metricId><vim25:counterId>${id}</vim25:counterId><vim25:instance></vim25:instance></vim25:metricId>`);
+      }
+    }
+  }
+  const metricXml = metricIds.join("");
+
+  for (let i = 0; i < morefs.length; i += PERF_CHUNK) {
+    const chunk = morefs.slice(i, i + PERF_CHUNK);
+    const specs = chunk
+      .map(
+        (moref) =>
+          `<vim25:querySpec><vim25:entity type="${entityType}">${xmlEscape(moref)}</vim25:entity>` +
+          `<vim25:maxSample>1</vim25:maxSample>${metricXml}` +
+          `<vim25:intervalId>${PERF_REALTIME_INTERVAL}</vim25:intervalId></vim25:querySpec>`,
+      )
+      .join("");
+    const res = await soapCall(
+      config,
+      `<vim25:QueryPerf><vim25:_this type="PerformanceManager">${xmlEscape(session.perfManager!)}</vim25:_this>${specs}</vim25:QueryPerf>`,
+      { cookie: session.cookie, signal },
+    );
+    for (const [moref, sample] of parsePerfResponse(res.body, counters)) out.set(moref, sample);
+  }
+  return out;
+}
+
 // ─── SOAP: VM quickStats ────────────────────────────────────────────────────
 
 export interface VcenterVmQuickStats {
@@ -601,6 +851,25 @@ export interface VcenterVmQuickStats {
   guestMemUsageMB: number | null;
   hostMemUsageMB: number | null;
   memTotalMB: number | null;
+  /**
+   * How the hypervisor is backing this guest's configured RAM, in BYTES
+   * (the MB/KB difference between the quickStats fields is resolved here so
+   * nothing downstream has to know it). The five partition memTotalMB, the
+   * remainder being guest RAM the host has never had to touch. Null when the
+   * VM is off or vCenter withheld the field — never 0, which would claim a
+   * measured absence of ballooning.
+   */
+  memPrivateBytes: number | null;
+  memSharedBytes: number | null;
+  memBalloonedBytes: number | null;
+  memSwappedBytes: number | null;
+  memCompressedBytes: number | null;
+  /**
+   * Per-vCPU utilisation from the PerformanceManager, index = vCPU number.
+   * Null when the perf surface was unavailable or the VM is powered off.
+   * See fetchVcenterPerfSamples.
+   */
+  cpuCorePcts: number[] | null;
   powerState: string | null;
   /** Guest uptime in whole seconds (VMware Tools); null when Tools is absent. */
   uptimeSec: number | null;
@@ -638,6 +907,16 @@ const QUICKSTATS_PATHS = [
   "summary.quickStats.hostMemoryUsage",
   "summary.quickStats.uptimeSeconds",
   "summary.runtime.maxCpuUsage",
+  // The memory BREAKDOWN. Five more scalars on a call already being made —
+  // no extra round trip, which is why the VM side needs no perf query for
+  // memory the way the host side does. Units are MB except compressedMemory,
+  // which VMware documents in KB; the parse below is the only place that
+  // knows which is which.
+  "summary.quickStats.privateMemory",
+  "summary.quickStats.sharedMemory",
+  "summary.quickStats.balloonedMemory",
+  "summary.quickStats.swappedMemory",
+  "summary.quickStats.compressedMemory",
   // Guest-reported inventory. Both ride the SAME batched fetch the CPU/RAM
   // figures come from — the monitor loop needs no per-VM call to fill the
   // System tab's interface + storage tables.
@@ -716,6 +995,16 @@ export function parseGuestNics(block: string): VcenterGuestNic[] | null {
   return out;
 }
 
+/** MB → bytes, preserving the null that means "vCenter did not report this". */
+function mbToBytes(mb: number | null): number | null {
+  return mb === null ? null : mb * 1024 * 1024;
+}
+
+/** KB → bytes, same null contract. */
+function kbToBytes(kb: number | null): number | null {
+  return kb === null ? null : kb * 1024;
+}
+
 /** Parse one RetrievePropertiesEx object block into quickStats. Exported for tests. */
 export function parseQuickStatsBlock(block: string): VcenterVmQuickStats | null {
   const moref = parseObjRef(block);
@@ -728,6 +1017,16 @@ export function parseQuickStatsBlock(block: string): VcenterVmQuickStats | null 
     guestMemUsageMB: parsePropNumber(block, "summary.quickStats.guestMemoryUsage"),
     hostMemUsageMB: parsePropNumber(block, "summary.quickStats.hostMemoryUsage"),
     memTotalMB: parsePropNumber(block, "config.hardware.memoryMB"),
+    memPrivateBytes:  mbToBytes(parsePropNumber(block, "summary.quickStats.privateMemory")),
+    memSharedBytes:   mbToBytes(parsePropNumber(block, "summary.quickStats.sharedMemory")),
+    memBalloonedBytes: mbToBytes(parsePropNumber(block, "summary.quickStats.balloonedMemory")),
+    memSwappedBytes:  mbToBytes(parsePropNumber(block, "summary.quickStats.swappedMemory")),
+    // KB, not MB — the one field in this group VMware documents differently.
+    memCompressedBytes: kbToBytes(parsePropNumber(block, "summary.quickStats.compressedMemory")),
+    // Filled by the perf pass in fetchVcenterQuickStats, which runs after
+    // the property collector on the same session. Absent from a discovery
+    // fetch, which asks for no perf at all.
+    cpuCorePcts: null,
     powerState: parsePropValue(block, "runtime.powerState"),
     uptimeSec: parsePropNumber(block, "summary.quickStats.uptimeSeconds"),
     guestDisks: parseGuestDisks(block),
@@ -744,6 +1043,7 @@ export function parseQuickStatsBlock(block: string): VcenterVmQuickStats | null 
 export async function fetchVcenterQuickStats(
   config: VcenterConfig,
   signal?: AbortSignal,
+  opts: { withPerCoreCpu?: boolean } = {},
 ): Promise<VcenterVmQuickStats[]> {
   const session = await soapLogin(config, signal);
   try {
@@ -753,9 +1053,56 @@ export async function fetchVcenterQuickStats(
       const parsed = parseQuickStatsBlock(block);
       if (parsed) out.push(parsed);
     }
+    // Per-core is OPT-IN, and discovery does not opt in. Discovery wants a
+    // usage snapshot for the inventory it is writing; paying for a QueryPerf
+    // over every VM in the vCenter to fill a column the discovery path never
+    // reads would be the most expensive no-op in the file.
+    if (opts.withPerCoreCpu) {
+      await attachPerCoreCpu(config, session, "VirtualMachine", out, signal);
+    }
     return out;
   } finally {
     await soapLogout(config, session);
+  }
+}
+
+/**
+ * Run the perf pass over rows already parsed from the property collector and
+ * stamp `cpuCorePcts` onto each. Shared by the VM and host fetches.
+ *
+ * Swallows its own failure by design — the file header's rule that every SOAP
+ * surface degrades to nulls independently. QueryPerf is the surface most
+ * likely to be refused on a real install (a read-only service account often
+ * lacks the Performance privilege), and losing CPU, memory, power state and
+ * the whole interface table over a missing per-core vector would be a far
+ * worse trade than charting the aggregate alone.
+ */
+async function attachPerCoreCpu(
+  config: VcenterConfig,
+  session: SoapSession,
+  entityType: "VirtualMachine" | "HostSystem",
+  rows: { moref: string; cpuCorePcts: number[] | null }[],
+  signal?: AbortSignal,
+): Promise<void> {
+  if (rows.length === 0) return;
+  try {
+    const perf = await fetchVcenterPerfSamples(
+      config,
+      session,
+      entityType,
+      rows.map((r) => r.moref),
+      { wantMemory: false },
+      signal,
+    );
+    for (const row of rows) {
+      const sample = perf.get(row.moref);
+      if (sample?.corePcts) row.cpuCorePcts = sample.corePcts;
+    }
+  } catch (err) {
+    logger.debug(
+      { host: config.host, entityType, err: (err as Error)?.message },
+      "vCenter per-core CPU unavailable — charting the aggregate alone",
+    );
   }
 }
 
@@ -904,6 +1251,21 @@ export interface VcenterHostStats {
   cpuTotalMhz: number | null;
   memUsageBytes: number | null;
   memTotalBytes: number | null;
+  /**
+   * Per-physical-core utilisation from the PerformanceManager, index = the
+   * core number ESXi reports. Null when the perf surface was unavailable or
+   * the host is disconnected (no real-time provider).
+   */
+  cpuCorePcts: number[] | null;
+  /**
+   * The two host memory bands quickStats does not publish, in bytes, also
+   * from the PerformanceManager. `memUsageBytes` above is the third —
+   * machine memory consumed — and the three plus free partition installed
+   * RAM. Host "shared" is deliberately not collected: it is a SUBSET of
+   * consumed, so stacking both would count the same pages twice.
+   */
+  memBalloonedBytes: number | null;
+  memSwappedBytes: number | null;
   /**
    * Physical + VMkernel NICs. `null` means the property was absent — a
    * disconnected host publishes no config — and must never be read as "this
@@ -1125,6 +1487,11 @@ export function parseHostStatsBlock(block: string): VcenterHostStats | null {
     cpuTotalMhz: cpuMhz !== null && cores !== null ? cpuMhz * cores : null,
     memUsageBytes: memUsageMB !== null ? memUsageMB * 1024 * 1024 : null,
     memTotalBytes: parsePropNumber(block, "summary.hardware.memorySize"),
+    // Filled by the perf pass in fetchVcenterHostSnapshot; absent from the
+    // discovery fetch, which asks for no perf.
+    cpuCorePcts: null,
+    memBalloonedBytes: null,
+    memSwappedBytes: null,
     pnics: parseHostPnics(block),
     vnics: parseHostVnics(block),
     vswitches: mergeVswitchLists(parseHostVswitches(block), parseHostProxySwitches(block)),
@@ -1172,6 +1539,7 @@ export interface VcenterHostSnapshot {
 export async function fetchVcenterHostSnapshot(
   config: VcenterConfig,
   signal?: AbortSignal,
+  opts: { withPerCoreCpu?: boolean } = {},
 ): Promise<VcenterHostSnapshot> {
   const session = await soapLogin(config, signal);
   try {
@@ -1182,6 +1550,34 @@ export async function fetchVcenterHostSnapshot(
       for (const b of hostBlocks) {
         const parsed = parseHostStatsBlock(b);
         if (parsed) hosts.push(parsed);
+      }
+      // Opt-in, for the same reason as the VM side: discovery reads none of
+      // these columns. The host pass DOES ask perf for memory — unlike a VM,
+      // a host's balloon and swap are nowhere in quickStats.
+      if (opts.withPerCoreCpu && hosts.length > 0) {
+        try {
+          const perf = await fetchVcenterPerfSamples(
+            config,
+            session,
+            "HostSystem",
+            hosts.map((h) => h.moref),
+            { wantMemory: true },
+            signal,
+          );
+          for (const h of hosts) {
+            const sample = perf.get(h.moref);
+            if (!sample) continue;
+            if (sample.corePcts) h.cpuCorePcts = sample.corePcts;
+            h.memBalloonedBytes = sample.balloonedBytes;
+            h.memSwappedBytes = sample.swappedBytes;
+          }
+        } catch (err: any) {
+          if (signal?.aborted) throw err;
+          logger.debug(
+            { host: config.host, err: err?.message },
+            "vCenter host perf unavailable — charting aggregate CPU and consumed memory alone",
+          );
+        }
       }
     } catch (err: any) {
       if (signal?.aborted) throw err;

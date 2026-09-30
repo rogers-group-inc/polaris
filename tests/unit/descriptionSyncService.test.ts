@@ -415,4 +415,53 @@ describe("runDescriptionSyncForIntegration", () => {
     expect(summary.pushed).toBe(0);        // nothing to push device-side
     expect(summary.fmgMirrored).toBe(1);   // but FMG's stale copy got healed
   });
+
+  // The toggle is per device class: with FortiSwitch sync on and FortiAP sync
+  // off, the AP is never read, pushed or mirrored — even under central AP
+  // management — while the switch still syncs.
+  it("skips a device class whose own toggle is off", async () => {
+    vi.mocked(prisma.asset.findMany).mockResolvedValue([
+      {
+        id: "sw1", hostname: "idf-sw", serialNumber: "S108EN0000000001", description: "IDF switch",
+        descriptionSync: null, fortinetTopology: { role: "fortiswitch", controllerFortigate: "FG-1" },
+      },
+      {
+        id: "ap1", hostname: "lobby-ap", serialNumber: "FP231FTF00000001", description: "lobby AP",
+        descriptionSync: { status: "synced", value: "lobby AP" },
+        fortinetTopology: { role: "fortiap", controllerFortigate: "FG-1" },
+      },
+    ] as any);
+    vi.mocked(prisma.assetInterfaceOverride.findMany).mockResolvedValue([] as any);
+    vi.mocked(prisma.asset.update).mockResolvedValue({} as any);
+    callMock.mockImplementation(async (_t, method, path) => {
+      if (method === "GET" && path === "/api/v2/cmdb/switch-controller/managed-switch") {
+        return [{ "switch-id": "S108EN0000000001", description: "IDF switch", ports: [] }];
+      }
+      throw new Error(`unexpected FortiOS call: ${method} ${path}`);
+    });
+
+    const summary = await runDescriptionSyncForIntegration({
+      id: "intg-1", type: "fortimanager",
+      config: {
+        syncDescriptions: true, // legacy key — the explicit per-class keys win
+        syncFortigateDescriptions: false, syncSwitchDescriptions: true, syncApDescriptions: false,
+        adom: "root", centralManagement: { wtp: true, fsw: false },
+      },
+      name: "FMG",
+    });
+
+    expect(summary.devices).toBe(1);
+    expect(callMock.mock.calls.map((c) => c[2])).toEqual(["/api/v2/cmdb/switch-controller/managed-switch"]);
+    expect(fmgQueryMock).not.toHaveBeenCalled(); // no wtp mirror with AP sync off
+  });
+
+  it("does nothing when every class is off", async () => {
+    const summary = await runDescriptionSyncForIntegration({
+      id: "intg-1", type: "fortigate",
+      config: { syncFortigateDescriptions: false, syncSwitchDescriptions: false, syncApDescriptions: false },
+      name: "FG",
+    });
+    expect(summary.devices).toBe(0);
+    expect(prisma.asset.findMany).not.toHaveBeenCalled();
+  });
 });

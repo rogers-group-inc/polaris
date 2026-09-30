@@ -8,7 +8,12 @@ import * as subnetService from "../../services/subnetService.js";
 import { refreshSubnet } from "../../services/subnetRefreshService.js";
 import * as subnetArchiveService from "../../services/subnetArchiveService.js";
 import * as subnetExclusionService from "../../services/subnetExclusionService.js";
-import { requirePermission, requireOwnership, assertOwnership } from "../middleware/permissions.js";
+import {
+  requirePermission,
+  requireOwnership,
+  assertOwnership,
+  callerIsAdminEquivalent,
+} from "../middleware/permissions.js";
 import { AppError } from "../../utils/errors.js";
 
 const router = Router();
@@ -16,7 +21,9 @@ const router = Router();
 // ─── Zod Schemas ──────────────────────────────────────────────────────────────
 
 const CreateSubnetSchema = z.object({
-  blockId:     z.string().uuid(),
+  // Optional: omitted, the network lands in the most specific block containing
+  // its CIDR (subnetService.resolveBlockForCidr). The Add Network dialog omits it.
+  blockId:     z.string().uuid().optional(),
   cidr:        z.string().min(1, "CIDR is required"),
   name:        z.string().min(1, "Subnet name is required"),
   purpose:     z.string().optional(),          // description / what it's for
@@ -73,6 +80,10 @@ const UpdateSubnetSchema = z.object({
   tags:    z.array(z.string()).optional(),
   convertToManual: z.boolean().optional(),
   mergeIntegration: z.boolean().optional(),
+});
+
+const MoveSubnetSchema = z.object({
+  blockId: z.string().uuid(),
 });
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -219,6 +230,20 @@ router.delete("/exclusions/:id", requirePermission("subnets", "fullwrite"), asyn
 // two reads are the review surface; they MUST stay declared before `/:id`, or
 // `/subnets/archived` is captured as a subnet id.
 
+// GET /subnets/resolve-block?cidr= — the block a new network with this CIDR
+// would be placed in (the most specific containing block), or `{ block: null }`.
+// Feeds the Add Network dialog's read-only Block field. MUST stay declared
+// before `GET /subnets/:id`, or "resolve-block" is captured as a subnet id.
+router.get("/resolve-block", requirePermission("subnets", "read"), async (req, res, next) => {
+  try {
+    const cidr = typeof req.query.cidr === "string" ? req.query.cidr.trim() : "";
+    const block = cidr ? await subnetService.resolveBlockForCidr(cidr) : null;
+    res.json({ block: block ? { id: block.id, name: block.name, cidr: block.cidr } : null });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /subnets/archived?cidr=&blockId=&fortigateSerial=&limit=&offset=
 router.get("/archived", requirePermission("subnets", "read"), async (req, res, next) => {
   try {
@@ -336,15 +361,46 @@ router.put("/:id", requireOwnership("subnets"), async (req, res, next) => {
   }
 });
 
-// DELETE /subnets/:id
+// GET /subnets/:id/move-targets — blocks whose range can hold this network,
+// each flagged with the sibling that would overlap (null = the move is allowed).
+router.get("/:id/move-targets", requirePermission("subnets", "read"), async (req, res, next) => {
+  try {
+    res.json(await subnetService.listMoveTargets(req.params.id as string));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /subnets/:id/move — re-parent the network onto another block. Same
+// gate as an edit: write-level callers move only networks they created.
+router.post("/:id/move", requireOwnership("subnets"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const { blockId } = MoveSubnetSchema.parse(req.body);
+    const before = await subnetService.getSubnet(id);
+    assertOwnership(req, before.createdBy, "move networks");
+    res.json(await subnetService.moveSubnet(id, blockId, req.session?.username));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /subnets/:id[?force=true]
+// `force` deletes a network that still holds active reservations. It is an
+// admin-equivalent override (users + roles fullwrite), not a subnets rung: a
+// subnets:fullwrite network operator still gets the 409.
 router.delete("/:id", requireOwnership("subnets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
+    const force = req.query.force === "true" || req.query.force === "1";
+    if (force && !callerIsAdminEquivalent(req)) {
+      throw new AppError(403, "Only an administrator can delete a network that holds active reservations");
+    }
     if (req.permissionLevel !== "fullwrite") {
       const existing = await subnetService.getSubnet(id);
       assertOwnership(req, existing.createdBy, "delete networks");
     }
-    await subnetService.deleteSubnet(id, req.session?.username);
+    await subnetService.deleteSubnet(id, req.session?.username, { force });
     res.status(204).send();
   } catch (err) {
     next(err);

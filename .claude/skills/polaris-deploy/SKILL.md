@@ -56,6 +56,14 @@ conflict, or `main` behind `origin/main`.
 3. **Verify**: `npm run check:docs && npm run typecheck && npx vitest run tests/unit
    --no-file-parallelism`, plus `npm run check:versions` when a pin moved. A failure stops
    the pipeline; report the output.
+   **The unit suite is not the gate.** `docker-publish.yml` runs `tests/unit` in its `test`
+   job and `npx vitest run tests/integration --no-file-parallelism` in a SEPARATE `integration`
+   job, and `build` is `needs: [test, integration]` — so one red integration case publishes no
+   image, silently, for every merge that follows. Run the integration suite too whenever the
+   branch touched a route, a service or a contract a test could pin; it needs a real database
+   (`polaris-worktree-workflow` → dev-environment.md, then `DATABASE_URL=… npx prisma migrate
+   deploy`), and without one every case SKIPS and the green is worthless. If no database can be
+   had, say so in the step 7 report rather than calling the branch verified.
 4. **End-of-work commit**: `rm WORKLOCK`, commit everything pending (one logical change per
    commit). A `DEVLOCK` means a dev stack is up: `podman compose -f compose.dev.yml -p
    polaris-<slug> down -v`, delete the lock, then commit.

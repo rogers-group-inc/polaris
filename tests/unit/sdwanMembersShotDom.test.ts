@@ -2,12 +2,15 @@
  * tests/unit/sdwanMembersShotDom.test.ts — the SD-WAN Members table's up/down
  * signals have to survive the table screenshot (public/js/assets.js).
  *
- * The per-table camera button is a CANVAS RE-DRAW of each cell's flattened text
- * (_shotCellText) painted in one resolved color (_shotCellColor) — not a DOM
- * rasterization. So a cell whose entire meaning is a color with no text in it
- * comes out BLANK in the image while looking correct on screen, which is exactly
- * what happened here: the member status dot and the whole Health Check Status
- * strip vanished from every screenshot of this table.
+ * The per-table camera button rasterizes the live table now
+ * (tests/unit/tableShotCaptureDom.test.ts), but it still falls back to a CANVAS
+ * RE-DRAW of each cell's flattened text (_shotCellText) painted in one resolved
+ * color (_shotCellColor) when html-to-image didn't load or its rasterization
+ * failed. In that composer a cell whose entire meaning is a color with no text
+ * in it comes out BLANK while looking correct on screen, which is exactly what
+ * happened here: the member status dot and the whole Health Check Status strip
+ * vanished from every screenshot of this table. This file pins the stand-ins
+ * that keep the fallback honest.
  *
  * What's pinned:
  *  - every column that means "up or down" flattens to a glyph, so the state
@@ -39,6 +42,7 @@ function fnSrc(name: string): string {
 }
 
 const FN_NAMES = [
+  "_sdwanStripSegment",
   "_sdwanStatusStripHTML",
   "_sdwanMembersTableHTML",
   "_shotCellText",
@@ -126,6 +130,39 @@ describe("SD-WAN Members table — screenshot legibility", () => {
     expect(shotText("Overlay-1", "hcstatus")).toBe("▼ 3/4 up");
     expect(shotColor("wan1", "hcstatus")).toBe(UP);
     expect(shotColor("Overlay-1", "hcstatus")).toBe(DOWN);
+  });
+
+  it("paints an out-of-SLA scrape red and an automation-tiered one in its severity", () => {
+    (win as any).PolarisChartSeverity = {
+      SEV_ORDER: ["notice", "informational", "warning", "serious", "critical"],
+      downColorOf: (s: string) => ({ warning: "#f9a825", serious: "#e65100" } as Record<string, string>)[s] ?? "#d32f2f",
+    };
+    const ts = "2026-08-20T12:00:00.000Z";
+    const span = doc.createElement("div");
+    span.innerHTML = g._sdwanStatusStripHTML([
+      { timestamp: ts, up: true, outOfSla: false, severity: null },
+      { timestamp: ts, up: true, outOfSla: true, severity: null },
+      { timestamp: ts, up: true, outOfSla: false, severity: "warning" },
+      { timestamp: ts, up: true, outOfSla: false, severity: "serious" },
+    ]);
+    const segs = Array.from(span.querySelectorAll("span[title]")) as HTMLElement[];
+    expect(segs.map((s) => s.getAttribute("style")!.match(/background:([^;"]+)/)![1])).toEqual(["#2ecc40", "#e02020", "#f9a825", "#e65100"]);
+    expect(segs[1]!.getAttribute("title")).toContain("out of SLA");
+    // Out of SLA is not "up" for the count; the tiered ones still are, and
+    // the summary names the worst severity beside it.
+    expect(g._shotCellText(span)).toBe("▼ 3/4 up · serious");
+  });
+
+  it("colours an all-up strip's summary by the worst severity it carries", () => {
+    (win as any).PolarisChartSeverity = { SEV_ORDER: ["warning", "serious"], downColorOf: () => "#f9a825" };
+    const ts = "2026-08-20T12:00:00.000Z";
+    const span = doc.createElement("div");
+    span.innerHTML = g._sdwanStatusStripHTML([
+      { timestamp: ts, up: true, outOfSla: false, severity: null },
+      { timestamp: ts, up: true, outOfSla: false, severity: "warning" },
+    ]);
+    expect(g._shotCellText(span)).toBe("▲ 2/2 up · warning");
+    expect(g._shotCellColor(span)).toBe("#f9a825");
   });
 
   it("keeps the '—' fallback when no scrapes are in the window", () => {

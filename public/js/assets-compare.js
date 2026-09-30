@@ -95,8 +95,11 @@ function openCompareModal() {
     showToast("Select at least two assets on this page to compare", "error");
     return;
   }
-  var capped = false;
-  if (selected.length > _CMP_MAX_ASSETS) { selected = selected.slice(0, _CMP_MAX_ASSETS); capped = true; }
+  // Hard cap, matching the Compare button that greys out (dim yellow) above it.
+  if (selected.length > _CMP_MAX_ASSETS) {
+    showToast("Compare supports up to " + _CMP_MAX_ASSETS + " assets — deselect some and try again", "error");
+    return;
+  }
 
   var metricRows = _CMP_METRICS.map(function (m) {
     var checked = (m.key === "response" || m.key === "cpu" || m.key === "memory") ? " checked" : "";
@@ -114,7 +117,6 @@ function openCompareModal() {
       '<div>' +
         '<div style="font-weight:600;margin-bottom:4px">Assets (' + selected.length + ')</div>' +
         '<div style="font-size:0.82rem;color:var(--color-text-secondary)">' + assetList + '</div>' +
-        (capped ? '<div style="font-size:0.78rem;color:var(--color-warning,#e0a800);margin-top:4px">Comparing the first ' + _CMP_MAX_ASSETS + ' selected assets (capped for readability).</div>' : '') +
       '</div>' +
       '<div>' +
         '<div style="font-weight:600;margin-bottom:4px">Metrics</div>' +
@@ -398,6 +400,7 @@ async function openComparePanel(opts) {
       '<div id="cmp-charts"></div>' +
     '</div>';
 
+  raiseSlideover(document.getElementById("compare-panel-overlay"));   // DOM order is stacking order
   revealOverlay(document.getElementById("compare-panel-overlay"));
 
   body.querySelectorAll(".cmp-range-btn").forEach(function (b) {
@@ -780,11 +783,6 @@ function _renderCompareChart(container, spec) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var yMin = 0, yMax;
   if (spec.pct) { yMax = 100; }
@@ -801,14 +799,7 @@ function _renderCompareChart(container, spec) {
       '<line x1="' + padL + '" y1="' + ty + '" x2="' + (W - padR) + '" y2="' + ty + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (ty + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _cmpFmtY(tv, unit) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
 
   // clipId is built BEFORE the series loop because it seeds the per-render
   // gradient id prefix the failure-aware renderer needs — several cards share

@@ -6,8 +6,10 @@
  */
 
 import { it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import request from "supertest";
 import { app } from "../../src/app.js";
 import { prisma } from "../../src/db.js";
+import { hashPassword } from "../../src/utils/password.js";
 import { authedAgent, dbDescribe, dbReachable, ensureTestUser, waitForEventCount } from "./_helpers.js";
 
 const d = dbDescribe;
@@ -98,6 +100,60 @@ d("POST /api/v1/subnets", () => {
       .send({ blockId: block.id, cidr: "10.14.0.0/25", name: "Sib-2" });
     expect(overlap.status).toBe(409);
     expect(String(overlap.body?.error || "")).toMatch(/overlap/i);
+  });
+});
+
+// ─── Placement: no block named ──────────────────────────────────────────────
+
+d("POST /api/v1/subnets without a blockId", () => {
+  it("places the network in the most specific block containing it and says which", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    await createBlock(agent, csrf, "Corp", "10.0.0.0/8");
+    const site = await createBlock(agent, csrf, "Site", "10.90.0.0/16");
+    const resp = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ cidr: "10.90.4.0/24", name: "Floor 4" });
+    expect(resp.status).toBe(201);
+    expect(resp.body.blockId).toBe(site.id);
+    expect(resp.body.block).toEqual({ id: site.id, name: "Site", cidr: "10.90.0.0/16" });
+  });
+
+  it("falls back to the wider block for a CIDR outside every nested one", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const corp = await createBlock(agent, csrf, "Corp", "10.0.0.0/8");
+    await createBlock(agent, csrf, "Site", "10.90.0.0/16");
+    const resp = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ cidr: "10.91.0.0/24", name: "Elsewhere" });
+    expect(resp.status).toBe(201);
+    expect(resp.body.blockId).toBe(corp.id);
+  });
+
+  it("400s when no block contains the network", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    await createBlock(agent, csrf, "Corp", "10.0.0.0/8");
+    const resp = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ cidr: "172.16.0.0/24", name: "Nowhere" });
+    expect(resp.status).toBe(400);
+    expect(resp.body.error).toMatch(/No IP block contains 172\.16\.0\.0\/24/);
+  });
+
+  it("still honours an explicit blockId", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const corp = await createBlock(agent, csrf, "Corp", "10.0.0.0/8");
+    await createBlock(agent, csrf, "Site", "10.90.0.0/16");
+    const resp = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: corp.id, cidr: "10.90.5.0/24", name: "Pinned" });
+    expect(resp.status).toBe(201);
+    expect(resp.body.blockId).toBe(corp.id);
+  });
+
+  it("GET /subnets/resolve-block previews the same answer, and null for no match", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    await createBlock(agent, csrf, "Corp", "10.0.0.0/8");
+    const site = await createBlock(agent, csrf, "Site", "10.90.0.0/16");
+    const hit = await agent.get("/api/v1/subnets/resolve-block?cidr=" + encodeURIComponent("10.90.7.9/24"));
+    expect(hit.status).toBe(200);
+    expect(hit.body.block).toEqual({ id: site.id, name: "Site", cidr: "10.90.0.0/16" });
+    const miss = await agent.get("/api/v1/subnets/resolve-block?cidr=" + encodeURIComponent("172.16.0.0/24"));
+    expect(miss.body).toEqual({ block: null });
+    const junk = await agent.get("/api/v1/subnets/resolve-block?cidr=not-a-cidr");
+    expect(junk.status).toBe(200);
+    expect(junk.body).toEqual({ block: null });
   });
 });
 
@@ -389,6 +445,133 @@ d("DELETE /api/v1/subnets/:id", () => {
       .send({ subnetId: sub.body.id, ipAddress: "10.81.1.5", hostname: "h01" });
     const resp = await agent.delete(`/api/v1/subnets/${sub.body.id}`).set("X-CSRF-Token", csrf);
     expect(resp.status).toBe(409);
+  });
+
+  it("does not let the interface IP reservation block the delete", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const block = await createBlock(agent, csrf, "Parent", "10.82.0.0/16");
+    const sub = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: block.id, cidr: "10.82.1.0/24", name: "S" });
+    await prisma.reservation.create({
+      data: { subnetId: sub.body.id, ipAddress: "10.82.1.1", hostname: "fgt-port1", sourceType: "interface_ip" },
+    });
+    const resp = await agent.delete(`/api/v1/subnets/${sub.body.id}`).set("X-CSRF-Token", csrf);
+    expect(resp.status).toBe(204);
+    expect(await prisma.reservation.count({ where: { subnetId: sub.body.id } })).toBe(0);
+  });
+
+  it("lets an admin force-delete over active reservations and logs a warning", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const block = await createBlock(agent, csrf, "Parent", "10.83.0.0/16");
+    const sub = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: block.id, cidr: "10.83.1.0/24", name: "S" });
+    await agent.post("/api/v1/reservations").set("X-CSRF-Token", csrf).send({ subnetId: sub.body.id, ipAddress: "10.83.1.5", hostname: "h01" });
+    const resp = await agent.delete(`/api/v1/subnets/${sub.body.id}?force=true`).set("X-CSRF-Token", csrf);
+    expect(resp.status).toBe(204);
+    expect(await prisma.subnet.findUnique({ where: { id: sub.body.id } })).toBeNull();
+    await waitForEventCount("subnet.deleted", 1, sub.body.id);
+    const ev = await prisma.event.findFirst({ where: { action: "subnet.deleted", resourceId: sub.body.id } });
+    expect(ev?.level).toBe("warning");
+    expect((ev?.details as any)?.forced).toBe(true);
+  });
+
+  it("refuses ?force=true from a non-admin role holding subnets:fullwrite", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const block = await createBlock(agent, csrf, "Parent", "10.85.0.0/16");
+    const sub = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: block.id, cidr: "10.85.1.0/24", name: "S" });
+    await agent.post("/api/v1/reservations").set("X-CSRF-Token", csrf).send({ subnetId: sub.body.id, ipAddress: "10.85.1.5", hostname: "h01" });
+
+    const netRole = await prisma.role.findUniqueOrThrow({ where: { name: "networkadmin" } });
+    const username = "polaris-subnet-force-netadmin";
+    const password = "test-password-do-not-use-in-prod";
+    await prisma.user.upsert({
+      where: { username },
+      update: { roleId: netRole.id },
+      create: { username, passwordHash: await hashPassword(password), roleId: netRole.id, authProvider: "local" },
+    });
+    try {
+      const net = request.agent(app);
+      await net.get("/api/v1/auth/me");
+      const login = await net.post("/api/v1/auth/login").send({ username, password }).set("Content-Type", "application/json");
+      expect(login.status).toBe(200);
+      await net.get("/api/v1/auth/me");
+      const cookies = (net.jar as any).getCookies({ domain: "127.0.0.1", path: "/", secure: false, script: false });
+      const netCsrf = (cookies.find((c: any) => c.name === "polaris_csrf") || {}).value || "";
+
+      const forced = await net.delete(`/api/v1/subnets/${sub.body.id}?force=true`).set("X-CSRF-Token", netCsrf);
+      expect(forced.status).toBe(403);
+      const plain = await net.delete(`/api/v1/subnets/${sub.body.id}`).set("X-CSRF-Token", netCsrf);
+      expect(plain.status).toBe(409);
+      expect(await prisma.subnet.findUnique({ where: { id: sub.body.id } })).not.toBeNull();
+    } finally {
+      await prisma.user.deleteMany({ where: { username } });
+    }
+  });
+});
+
+// ─── Move to another block ───────────────────────────────────────────────────
+
+d("POST /api/v1/subnets/:id/move", () => {
+  it("re-parents the network and keeps its reservations, then frees the old block for deletion", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const from = await createBlock(agent, csrf, "Old", "10.84.0.0/16");
+    const to = await createBlock(agent, csrf, "New", "10.84.0.0/15");
+    const sub = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: from.id, cidr: "10.84.1.0/24", name: "S" });
+    await agent.post("/api/v1/reservations").set("X-CSRF-Token", csrf).send({ subnetId: sub.body.id, ipAddress: "10.84.1.5", hostname: "h01" });
+
+    const resp = await agent.post(`/api/v1/subnets/${sub.body.id}/move`).set("X-CSRF-Token", csrf).send({ blockId: to.id });
+    expect(resp.status).toBe(200);
+    expect(resp.body.id).toBe(sub.body.id);
+    expect(resp.body.blockId).toBe(to.id);
+    expect(await prisma.reservation.count({ where: { subnetId: sub.body.id, status: "active" } })).toBe(1);
+    expect(await waitForEventCount("subnet.moved", 1, sub.body.id)).toBe(1);
+
+    const del = await agent.delete(`/api/v1/blocks/${from.id}`).set("X-CSRF-Token", csrf);
+    expect(del.status).toBe(204);
+  });
+
+  it("refuses a block that does not contain the CIDR (rule 2)", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const from = await createBlock(agent, csrf, "Old", "10.85.0.0/16");
+    const other = await createBlock(agent, csrf, "Elsewhere", "10.86.0.0/16");
+    const sub = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: from.id, cidr: "10.85.1.0/24", name: "S" });
+    const resp = await agent.post(`/api/v1/subnets/${sub.body.id}/move`).set("X-CSRF-Token", csrf).send({ blockId: other.id });
+    expect(resp.status).toBe(400);
+    expect((await prisma.subnet.findUnique({ where: { id: sub.body.id } }))?.blockId).toBe(from.id);
+  });
+
+  it("refuses a destination holding an overlapping network (rule 1)", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const from = await createBlock(agent, csrf, "Old", "10.87.0.0/16");
+    const to = await createBlock(agent, csrf, "New", "10.87.0.0/15");
+    await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: to.id, cidr: "10.87.0.0/22", name: "Wide" });
+    const sub = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: from.id, cidr: "10.87.1.0/24", name: "S" });
+    const resp = await agent.post(`/api/v1/subnets/${sub.body.id}/move`).set("X-CSRF-Token", csrf).send({ blockId: to.id });
+    expect(resp.status).toBe(409);
+    expect(resp.body.error).toMatch(/10\.87\.0\.0\/22/);
+  });
+
+  it("refuses a move into the block it is already in", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const from = await createBlock(agent, csrf, "Old", "10.88.0.0/16");
+    const sub = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: from.id, cidr: "10.88.1.0/24", name: "S" });
+    const resp = await agent.post(`/api/v1/subnets/${sub.body.id}/move`).set("X-CSRF-Token", csrf).send({ blockId: from.id });
+    expect(resp.status).toBe(400);
+  });
+
+  it("lists move targets: containing blocks only, overlapping ones flagged", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const from = await createBlock(agent, csrf, "Old", "10.89.0.0/16");
+    const wide = await createBlock(agent, csrf, "Wide", "10.88.0.0/14");
+    const busy = await createBlock(agent, csrf, "Busy", "10.89.0.0/20");
+    await createBlock(agent, csrf, "Unrelated", "10.200.0.0/16");
+    await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: busy.id, cidr: "10.89.0.0/23", name: "In the way" });
+    const sub = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: from.id, cidr: "10.89.1.0/24", name: "S" });
+
+    const resp = await agent.get(`/api/v1/subnets/${sub.body.id}/move-targets`);
+    expect(resp.status).toBe(200);
+    const byId = Object.fromEntries(resp.body.map((t: any) => [t.id, t]));
+    expect(Object.keys(byId).sort()).toEqual([busy.id, wide.id].sort());
+    expect(byId[wide.id].overlaps).toBeNull();
+    expect(byId[busy.id].overlaps).toBe("10.89.0.0/23");
   });
 });
 

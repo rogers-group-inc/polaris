@@ -62,6 +62,7 @@ import { startMetricsOnlyServer } from "./utils/metricsServer.js";
 import { recordDbConnectionMode, setDbPoolRoleCapacity } from "./metrics.js";
 import { startFmgActivityHeartbeat } from "./services/fmgActivityService.js";
 import { rememberLoginTarget } from "./utils/loginRedirect.js";
+import { isPhoneUserAgent, resolveAssetOpenTarget } from "./utils/assetOpenLink.js";
 
 // Fail-fast environment validation runs BEFORE any listener binds, before
 // pg-boss init, before sample buffers start. Throws on misconfiguration
@@ -604,26 +605,45 @@ app.use(async (req, res, next) => {
 // the desktop UI directly when they need to. The `?desktop=1` query param
 // is the escape hatch the mobile app uses on its "Desktop view" link.
 //
-// `Mobile` covers Chrome/Firefox on phones (including every Android phone
-// browser — Android phone UAs always carry the `Mobile` token, which is
-// also why the old `Android.*Mobile` alternative was redundant and a
-// polynomial-ReDoS hazard on attacker-supplied UA strings), and
-// `iPhone`/`iPod` covers Safari on iPhone. iPad is intentionally excluded —
-// modern iPad Safari requests desktop layouts by default, and the desktop
-// UI works fine on a tablet-class screen.
-const PHONE_UA_REGEX = /(Mobile|iPhone|iPod)/i;
+// The phone-class test itself (`Mobile` / `iPhone` / `iPod`, iPad excluded —
+// the reasoning is on PHONE_UA_REGEX) lives in utils/assetOpenLink.ts, shared
+// with the asset landing route below so "is this a phone" has one answer.
 app.use((req, res, next) => {
   if (req.path !== "/" && req.path !== "/index.html") return next();
   if (req.query.desktop === "1") return next();
-  const ua = req.get("user-agent") || "";
-  if (PHONE_UA_REGEX.test(ua)) {
+  if (isPhoneUserAgent(req.get("user-agent"))) {
     return res.redirect("/mobile.html");
   }
   return next();
 });
 
+// Asset landing route — the surface-neutral device link an alert email, the
+// `{asset.link}` token and a web push's "Open device" button carry. The link
+// is composed once for every reader (business rule 25), so it cannot name a
+// front end; this hop picks one per request from the user-agent: a phone goes
+// to the mobile SPA's asset detail, anything else to the desktop assets page.
+// Before this route the email embedded the desktop URL, and the redirect
+// above — which only watches "/" — let it render the full desktop page on a
+// phone. `?desktop=1` is honoured for the same reason it is above. The two
+// targets carry their own login gates (protectedPages for the desktop page,
+// the SPA's in-app login, which keeps the hash, for the phone), so this needs
+// none — a gate here would cost the phone reader its fragment across sign-in.
+// UA-dependent, so never cacheable; an id that is not a UUID falls through to
+// the static handler's 404 rather than redirecting anywhere.
+app.get("/assets/:id", (req, res, next) => {
+  const target = resolveAssetOpenTarget({
+    id: req.params.id,
+    userAgent: req.get("user-agent"),
+    desktop: req.query.desktop,
+  });
+  if (!target) return next();
+  res.set("Cache-Control", "no-store");
+  res.set("Vary", "User-Agent");
+  return res.redirect(target);
+});
+
 // Protect dashboard pages — redirect unauthenticated users to login
-const protectedPages = ["/", "/index.html", "/ipam.html", "/blocks.html", "/subnets.html", "/reservations.html", "/users.html", "/integrations.html", "/assets.html", "/events.html", "/notifications.html", "/automations.html", "/server-settings.html", "/map.html", "/appmap.html", "/alert-ack.html"];
+const protectedPages = ["/", "/index.html", "/ipam.html", "/blocks.html", "/subnets.html", "/reservations.html", "/users.html", "/integrations.html", "/assets.html", "/events.html", "/notifications.html", "/automations.html", "/server-settings.html", "/map.html", "/appmap.html", "/path-monitor.html", "/alert-ack.html"];
 
 // Page-level gating — each protected page requires at least `read` on the
 // matching function key. Maps to the same matrix the API guards use, so
@@ -643,7 +663,12 @@ type PagePermission =
   | { key: string; level: "read" | "write" }
   | { anyOf: { key: string; level: "read" | "write" }[] };
 const pageRequiredPermission: Record<string, PagePermission> = {
-  "/users.html":           { key: "users",                level: "read" },
+  // The Authentication settings live on this page (a modal off its header), so
+  // a role granted `authentication` alone must be able to reach it — otherwise
+  // the key would be ungrantable in practice without also handing over the
+  // user list. The page's own sections each gate themselves; an authentication
+  // -only caller gets the Authentication button and an empty user table.
+  "/users.html":           { anyOf: [{ key: "users", level: "read" }, { key: "authentication", level: "read" }] },
   "/integrations.html":    { key: "integrations",         level: "read" },
   // /notifications.html stays gated forever — already-delivered web-push
   // payloads deep-link to it (Automations rename, 2026-07). Both pages gate on
@@ -652,12 +677,17 @@ const pageRequiredPermission: Record<string, PagePermission> = {
   // widget lives).
   "/notifications.html":   { key: "automationManagement", level: "read" },
   "/automations.html":     { key: "automationManagement", level: "read" },
+  // Agent-run path checks. Its own page (sidebar: under Application
+  // Map), gated on its own key — in lockstep with the NAV_ITEMS entry.
+  "/path-monitor.html":     { key: "pathChecks",   level: "read" },
   // `credentials=write` joins the floor with the ownership dimension on that
   // key (2026-09-04): a role granted "add credentials, edit your own" has to
   // be able to REACH the Credentials tab, and it lives on this page. The page
   // JS already hides every other tab from a non-admin, so this widens the
   // door to exactly the tab the grant is about.
-  "/server-settings.html": { anyOf: [{ key: "serverSettingsSystem", level: "read" }, { key: "credentials", level: "write" }] },
+  // `firmware=read` joins it for the same reason (2026-09-25): the Repository
+  // tab lives here and is the whole point of that grant (business rule 87).
+  "/server-settings.html": { anyOf: [{ key: "serverSettingsSystem", level: "read" }, { key: "credentials", level: "write" }, { key: "firmware", level: "read" }] },
   "/appmap.html":          { key: "applicationMap",       level: "read" },
   // Added 2026-08 alongside the deviceMap=read floor on the /map API mount.
   // Without it a deviceMap=none role could still load the page shell (the nav
@@ -1136,6 +1166,10 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // while collecting nothing. Not marker-guarded — the answer changes as
       // collectors land and as operators edit settings. See its header.
       "./jobs/auditPollingCapability.js",
+      // Not marker-guarded: a firmware upgrade run this process was driving
+      // when it died can never finish — mark it failed and release its hold.
+      // Web / all role only, which is where the runs execute. See its header.
+      "./jobs/failOrphanedFirmwareRuns.js",
     ]) await importJob(p);
   }
 
@@ -1173,6 +1207,12 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // recording one IP. Scheduler role only: one grouped scan for the
       // fleet, not one per monitor replica.
       "./jobs/detectDuplicateIpAssets.js",
+      // Serial sweep (business rule 83) — raises/closes the
+      // `serial-two-controllers` flavour (one managed device on two
+      // FortiGates' rosters) and the `duplicate-serial` flavour (one serial on
+      // two asset records). Scheduler role only, same reasoning: one grouped
+      // scan for the fleet.
+      "./jobs/detectSerialConflicts.js",
       // IP-keyed upstream sweep: MAC-less assets get their Last Seen Switch /
       // AP derived through the owning gate's ARP cache, since every MAC-keyed
       // writer of those columns can never reach them. Scheduler role only.
@@ -1191,6 +1231,14 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       "./jobs/reconcileTagAssignments.js",
       "./jobs/reconcileAppMapAutoMap.js",
       "./jobs/reconcileDnsResolvedReservations.js",
+      // Path-check membership: re-resolves each check's Sources
+      // filter as agents enroll / leave and hosts change. Scheduler role only
+      // — one fleet pass.
+      "./jobs/reconcilePathCheckSources.js",
+      // Path checks whose Sources include this Polaris server, run from the
+      // server itself. Scheduler role only: "the server" must be one vantage
+      // point, not one per monitor replica.
+      "./jobs/runServerPathChecks.js",
       "./jobs/runSampleRollup.js",
       "./jobs/reclaimBloatedChunks.js",
       "./jobs/autoBuildAgents.js",

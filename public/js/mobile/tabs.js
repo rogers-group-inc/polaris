@@ -55,8 +55,8 @@
   // of the list. IPs is first because typing an IP is the strongest
   // signal ("the user knows the exact IP and wants to see what's
   // there"). Page-aware hoisting: when the operator was on a specific
-  // page before they started typing (Reservations / Networks / Assets /
-  // Map / Blocks), that page's section is moved to the top so they see
+  // page before they started typing (Networks / Assets / Map / Blocks),
+  // that page's section is moved to the top so they see
   // matches from the surface they were already working on first.
   var SEARCH_GROUP_ORDER = ["sites", "ips", "assets", "subnets", "reservations", "blocks"];
 
@@ -76,10 +76,9 @@
   function groupForOriginRoute(route) {
     var n = route && route.name;
     var p = (route && route.parts) || [];
-    if (n === "reservations")                       return "reservations";
     if (n === "assets" || n === "asset")            return "assets";
     if (n === "map" || n === "site" || n === "topology") return "sites";
-    if (n === "subnet")                             return "subnets";
+    if (n === "networks" || n === "subnet")         return "subnets";
     if (n === "block")                              return "blocks";
     if (n === "more") {
       if (p[0] === "subnets") return "subnets";
@@ -391,13 +390,15 @@
     render: function (body) { body.innerHTML = placeholder("Assets module not loaded", "PolarisAssetsTab is missing — check script load order."); },
   };
 
-  // ─── Reservations ──────────────────────────────────────────────────────
-  // Real spec lives in /js/mobile/reservations-tab.js.
-  var Reservations = (window.PolarisReservationsTab && window.PolarisReservationsTab.spec) || {
-    title: "Reservations",
-    icon: "#i-bookmark",
+  // ─── Networks ──────────────────────────────────────────────────────────
+  // Real spec lives in /js/mobile/networks-tab.js. It took the slot the
+  // Reservations tab held: a reservation is now seen and acted on in its
+  // network's IP sheet.
+  var Networks = (window.PolarisNetworksTab && window.PolarisNetworksTab.spec) || {
+    title: "Networks",
+    icon: "#i-subnet",
     renderTopbar: function () { return ''; },
-    render: function (body) { body.innerHTML = placeholder("Reservations module not loaded", "PolarisReservationsTab is missing."); },
+    render: function (body) { body.innerHTML = placeholder("Networks module not loaded", "PolarisNetworksTab is missing — check script load order."); },
   };
 
   // ─── More ──────────────────────────────────────────────────────────────
@@ -416,7 +417,7 @@
     { id: "search",  spec: Search },
     { id: "map",     spec: Map },
     { id: "assets",  spec: Assets },
-    { id: "reservations", spec: Reservations },
+    { id: "networks", spec: Networks },
     { id: "more",    spec: More },
   ];
 

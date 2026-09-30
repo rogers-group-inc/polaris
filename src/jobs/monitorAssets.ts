@@ -5,7 +5,7 @@
  * loops so a slow heavy collection (telemetry / systemInfo) on a wedged host
  * can't hold up per-minute probe polling for the rest of the fleet:
  *
- *   - Light loop  (probe + fastFiltered): ticks every 5 s
+ *   - Light loop  (probe + fastFiltered + sdwan + loss sweep): ticks every 5 s
  *   - Heavy loop  (telemetry + systemInfo): ticks every 30 s, also runs the
  *                 daily sample-retention prune
  *
@@ -42,6 +42,8 @@ import {
   runRetentionPrune,
   resolveMonitorSettings,
   resolveProbeIntervalSec,
+  resolveSdwanIntervalSec,
+  sdwanShouldQueue,
   MONITOR_CANDIDATE_WHERE,
   type MonitorCadence,
 } from "../services/monitoringService.js";
@@ -160,6 +162,8 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
       monitoredProcesses: true, mappedProcesses: true,
       // Agentless event-log cadence due-calc inputs.
       lastEventLogAt: true, eventLogPolling: true,
+      // SD-WAN cadence anchor (interval from the integration sidecar).
+      lastSdwanAt: true,
       probeTimeoutMs: true,
       responseTimePolling: true,
       cpuMemoryPolling:    true,
@@ -396,6 +400,16 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
         isDue(a.lastEventLogAt, eff.eventLogIntervalSeconds)) {
       queueJob("eventLog", a.id, { transport: eff.eventLogPolling, assetType, verboseDebug });
     }
+    // SD-WAN cadence (FortiOS SLA + rule selection), published on the light
+    // tick so a 60s interval lands on time. Read after resolveMonitorSettings
+    // above, which warms the sidecar the interval lives in. Keep in sync with
+    // computeDueWork — both call sdwanShouldQueue.
+    const sdwanIntervalSec = resolveSdwanIntervalSec(a);
+    if (isUp && enabled.has("sdwan") &&
+        sdwanShouldQueue(a, eff, sdwanIntervalSec) &&
+        isDue(a.lastSdwanAt, sdwanIntervalSec)) {
+      queueJob("sdwan", a.id, { transport: "rest_api", assetType, verboseDebug });
+    }
     // ICMP loss sweep: a uniform burst at EVERY eligible asset, whatever state
     // it is in. Deliberately NOT gated on isUp like the cadences above, and
     // deliberately not gated on monitorStatus either — the old sampler ran only
@@ -448,13 +462,13 @@ async function probeTick(): Promise<void> {
   try {
     await runInstrumentedJob("monitorAssets.probe", async () => {
       if (getBootTimeMode() === "pgboss") {
-        await publishDueWork(["probe", "fastFiltered", "lossSample"]);
+        await publishDueWork(["probe", "fastFiltered", "sdwan", "lossSample"]);
       } else {
         const stats = await runMonitorPass({
-          cadences: ["probe", "fastFiltered", "lossSample"],
+          cadences: ["probe", "fastFiltered", "sdwan", "lossSample"],
           concurrency: PROBE_CONCURRENCY,
         });
-        if (stats.probed > 0 || stats.fastFiltered.collected > 0 || stats.lossSample.collected > 0) {
+        if (stats.probed > 0 || stats.fastFiltered.collected > 0 || stats.sdwan.collected > 0 || stats.lossSample.collected > 0) {
           logger.debug({ stats }, "Light monitor pass complete");
         }
       }

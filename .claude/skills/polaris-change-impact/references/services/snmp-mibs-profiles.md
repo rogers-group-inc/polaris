@@ -10,7 +10,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** None (consumed by routes and jobs).
 
-**Used by:** `src/api/routes/manufacturerAliases.ts — admin CRUD endpoints`, `src/jobs/normalizeManufacturers.ts — startup seeding and backfill`, `src/db.ts — Prisma extension normalizer hook`.
+**Used by:** `src/api/routes/manufacturerAliases.ts — CRUD endpoints (gated on `manufacturerProfiles`, rule 43(f))`, `src/jobs/normalizeManufacturers.ts — startup seeding and backfill`, `src/db.ts — Prisma extension normalizer hook`.
 
 **Invariants:**
 - In-memory map (`setAliasMap()` in `manufacturerNormalize.ts`) must be refreshed after every mutation.
@@ -42,7 +42,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:** `src/api/routes/manufacturerProfiles.ts` (full CRUD), `src/api/routes/assets.ts` (profile read + the Custom MIB tab's state rows), `src/services/monitoringService.ts` (metric resolver + the state-probe collector), `src/services/notificationDimensionService.ts` + `src/api/routes/notificationRules.ts` (`listStateProbes` — probe names/labels for the automation builder), `src/jobs/seedManufacturerProfiles.ts` + `src/jobs/backfillManufacturerProfileMemoryComposition.ts`, `src/app.ts` (the every-role boot warm + the staleness interval), `src/services/profileResolver.ts` (`getProfileFor` + `listCachedProfiles` as `pickDbProfile`'s default lookups).
 
 **Invariants:**
-- Metric row type gates transform validity (scalar/table take a unary transform; double_scalar takes a combiner); override rows always carry a symbol while metric rows may be unconfigured (null = use built-in seed).
+- Metric row type gates transform validity (double_scalar takes a combiner; scalar takes a unary transform only when `symbolTransforms.ts → metricRowTransforms(metricKey, type)` lists it — today `tenths_to_units` on temperature — and table takes none; widgets take the whole unary registry). Wiring a transform for another metric = the collector applies it AND it joins `METRIC_ROW_TRANSFORMS`, in one change; override rows always carry a symbol while metric rows may be unconfigured (null = use built-in seed).
 - `defaultMibId` and `defaultMibStdKey` are mutually exclusive; `modelPattern` is operator regex (validated + length-capped).
 - The cache `getProfileFor` reads is keyed by normalized-lowercase manufacturer and returns null until the boot warm-up completes.
 - **State-probe fields track the EFFECTIVE widgetType, both directions.** `stateFieldsForWrite` requires a valid `stateMap` on a `widgetType="state"` write (a probe with no mapping has no definition of true and would silently record nothing) and forces both columns to NULL on every non-state write — so flipping a probe to a gauge clears the mapping rather than leaving a stale one for a later flip back to resurrect. On a PARTIAL update the type comes from the posted value else the stored one, so an edit that doesn't mention `widgetType` keeps the probe's mapping.
@@ -73,11 +73,13 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `matchPattern` is consulted ONLY when no profile is keyed by the asset's canonical manufacturer, so a profile's "also applies when" can never steal an asset from the profile keyed by its manufacturer.
 - `fortinetClassHint` is still carried into the model haystack by `pickDbProfile` — for compatibility with a hand-made Fortinet profile whose model patterns the Phase 4 migration's `IN ('FortiSwitch','FortiAP')` backfill did not recognize, NOT because the resolver needs it. The device-type tier is its general replacement.
 - Regexes are compiled once per pattern TEXT into a module-level cache, so an edited pattern is a new key and a stale entry can never be read; nothing invalidates it in production (a service → resolver import would be a cycle). `listCachedProfiles` returns the cached array itself — read-only, rebuilt per `refreshProfileCache`.
+- **Every subject an operator pattern is matched against is clamped** through `clampRegexSubject` (utils/regexSafety.ts, 1024 chars). The patterns are operator-typed and the subjects are device-supplied SNMP text, matched once per asset per poll; a JS regex cannot be interrupted, so a pattern that backtracks catastrophically parks the worker rather than slowing it. The clamp bounds the polynomial cases; the exponential shape is refused at the WRITE path by `findUnsafeRegexConstruct`, called from manufacturerProfileService's `assertValidModelPattern` and modelParse's `validateModelParse`. Neither is a proof — a pattern stored before the guard existed still runs here.
 
 **When changing this:**
 - Any change to what a tuple resolves to must appear in `profileResolver.test.ts` (before the swap) or `profileResolverParity.test.ts` (after) as an explicit expectation — this module decides which OIDs 2000 assets walk every tick.
 - A new tier, or a change to tier precedence, changes what a mis-typed or modelless asset walks. Add the tuple to the parity table; do not rely on the unit cases alone.
 - Anything added to the per-asset path here runs once per asset per pass at 2000 assets. Precompute per refresh (as `listCachedProfiles` does), never per call.
+- A NEW place that compiles or runs an operator-supplied pattern gets both halves: clamp the subject with `clampRegexSubject`, and make sure the write path that stores the pattern runs `findUnsafeRegexConstruct`. Adding one without the other is how a field becomes the one that hangs the monitor role.
 
 ## services/mibParserUtils.ts
 

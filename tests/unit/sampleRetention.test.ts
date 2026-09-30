@@ -32,8 +32,8 @@ import { prisma } from "../../src/db.js";
 const daysAgo = (d: number) => new Date(Date.now() - d * 24 * 3600 * 1000);
 
 describe("sampleRetentionService — entity model + encoding", () => {
-  it("exposes the eight entities, three of them selection-aware", () => {
-    expect(RETENTION_ENTITIES).toEqual(["assets", "cpuMem", "hardware", "interfaces", "storage", "ipsec", "perfSla", "process"]);
+  it("exposes the nine entities, three of them selection-aware", () => {
+    expect(RETENTION_ENTITIES).toEqual(["assets", "cpuMem", "hardware", "interfaces", "storage", "ipsec", "perfSla", "pathCheck", "process"]);
     expect(SELECTION_AWARE_ENTITIES).toEqual(["interfaces", "storage", "ipsec"]);
     expect(FOREVER).toBe(-1);
     expect(UNSELECTED_DETAIL_HOURS).toBe(24);
@@ -57,10 +57,12 @@ describe("sampleRetentionService — entity model + encoding", () => {
   it("exposes the FLAT entities, each defaulting to 30 days", () => {
     // Flat = one window instead of detail/hourly/daily, for the two
     // accumulate+age tables (Application Map sockets, ARP neighbour cache)
-    // rather than tiered time-series.
-    expect(FLAT_RETENTION_ENTITIES).toEqual(["appMapConnections", "arpEntries"]);
+    // and the path-check traceroute snapshots — none of them tiered
+    // time-series.
+    expect(FLAT_RETENTION_ENTITIES).toEqual(["appMapConnections", "arpEntries", "pathCheckTraceroutes"]);
     expect(defaultSampleRetention().appMapConnections).toEqual({ days: 30 });
     expect(defaultSampleRetention().arpEntries).toEqual({ days: 30 });
+    expect(defaultSampleRetention().pathCheckTraceroutes).toEqual({ days: 30 });
   });
 });
 
@@ -152,5 +154,29 @@ describe("pickSampleTier — FOREVER / off encoding", () => {
 
   it("FOREVER hourly covers an old query when detail doesn't", () => {
     expect(pickSampleTier(daysAgo(50), { detailDays: 7, hourlyDays: FOREVER }).tier).toBe("hourly");
+  });
+});
+
+// The 30d preset equals hourlyDays and 7d equals detailDays. The route
+// computes `since` a few ms before the picker reads the clock, so without
+// slack a 30-day chart read hourly on a warm settings cache and daily on a
+// cold one — the chart redrew coarser minutes after opening.
+describe("pickSampleTier — preset range on the tier boundary", () => {
+  const msAgo = (days: number, extraMs: number) => new Date(Date.now() - days * 86400_000 - extraMs);
+
+  it("a 30d range computed moments earlier still reads hourly", () => {
+    expect(pickSampleTier(msAgo(30, 250), { detailDays: 7, hourlyDays: 30 }).tier).toBe("hourly");
+  });
+
+  it("a 7d range computed moments earlier still reads detail", () => {
+    expect(pickSampleTier(msAgo(7, 250), { detailDays: 7, hourlyDays: 30 }).tier).toBe("detail");
+  });
+
+  it("a range well past the window still drops a tier", () => {
+    expect(pickSampleTier(msAgo(30, 60 * 60_000), { detailDays: 7, hourlyDays: 30 }).tier).toBe("daily");
+  });
+
+  it("the grace never turns a tier that is off back on", () => {
+    expect(pickSampleTier(new Date(Date.now() - 1000), { detailDays: 0, hourlyDays: 0 }).tier).toBe("daily");
   });
 });

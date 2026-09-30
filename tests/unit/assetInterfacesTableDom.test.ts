@@ -18,7 +18,7 @@
  *    applied to the DOM afterwards.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
@@ -49,6 +49,8 @@ const FN_NAMES = [
   "_renderInterfacesTable",
   "_buildInterfacesTableDOM",
   "_wireInterfacesTable",
+  "_ifaceIpForLookup",
+  "_openInterfaceOrNetwork",
 ];
 
 /** A FortiSwitch-ish device: PoE ports, an aggregate + member, VLAN, tunnels. */
@@ -90,12 +92,20 @@ let win: Window;
 let doc: Window["document"];
 let putCalls: Record<string, any>[];
 let openedIface: string | null;
+/** What the interface-name click's network fork sees: the viewer's networks grant,
+ *  what GET /assets/ip-context answers, and the row menus it opened. */
+let canReadNetworks: boolean;
+let ipContextResult: Record<string, any> | null;
+let menuCalls: { anchor: Element; items: { label: string; onSelect: () => void }[]; opts: any }[];
 
 function setup(): void {
   win = new Window();
   doc = win.document;
   putCalls = [];
   openedIface = null;
+  canReadNetworks = false;
+  ipContextResult = null;
+  menuCalls = [];
 
   g.window = win;
   g.document = doc;
@@ -117,7 +127,15 @@ function setup(): void {
   g.openInterfaceDetailPanel = (_a: unknown, n: string) => { openedIface = n; };
   g.openIpsecTunnelDetailPanel = () => {};
   g.openViewModal = () => {};
-  g.api = { assets: { update: (_id: string, body: Record<string, any>) => { putCalls.push(body); return Promise.resolve({}); } } };
+  g.permAtLeast = (key: string) => key === "subnets" ? canReadNetworks : true;
+  g.showRowMenu = (anchor: Element, items: any[], opts: any) => { menuCalls.push({ anchor, items, opts }); };
+  g.PolarisPanels = { openNetwork: vi.fn(async () => true) };
+  g.api = {
+    assets: {
+      update: (_id: string, body: Record<string, any>) => { putCalls.push(body); return Promise.resolve({}); },
+      ipContext: vi.fn(async () => ipContextResult),
+    },
+  };
 
   (0, eval)(tableSfSrc);
   // table-sf.js publishes this on `window`, which IS the global in a browser.
@@ -462,5 +480,91 @@ describe("a member port belongs to its aggregate", () => {
     await settle();
     expect(putCalls[0].monitoredInterfaces).not.toContain("port9");
     expect(putCalls[0].monitoredInterfaces).toContain("lag1");
+  });
+});
+
+// An interface name is a link to its history panel — and, when its address
+// sits in a Polaris network, a fork between the interface and that network's
+// slide-over. The network is looked up on click (one ip-context request), so
+// the fork appears only when there is somewhere to go.
+describe("interface name → interface or network", () => {
+  const SUBNET = { id: "S1", cidr: "10.0.0.0/24", name: "Servers" };
+  const clickName = (name: string) => click(rowFor(name).querySelector(".asset-iface-link"));
+  const menuLabels = () => menuCalls[0].items.map((i) => i.label);
+  const pick = (label: string) => menuCalls[0].items.find((i) => i.label === label)!.onSelect();
+
+  it("reads the lookup address off a row the way devices report it", () => {
+    expect(g._ifaceIpForLookup("10.0.0.5")).toBe("10.0.0.5");
+    expect(g._ifaceIpForLookup("10.0.0.5/24")).toBe("10.0.0.5");
+    expect(g._ifaceIpForLookup("10.0.0.5 255.255.255.0")).toBe("10.0.0.5");
+    expect(g._ifaceIpForLookup("10.0.0.5, 10.0.0.6")).toBe("10.0.0.5");
+    expect(g._ifaceIpForLookup("fd00::1/64")).toBe("fd00::1");
+    // The unconfigured placeholders a FortiGate / Linux host reports are not addresses.
+    expect(g._ifaceIpForLookup("0.0.0.0 0.0.0.0")).toBeNull();
+    expect(g._ifaceIpForLookup("::")).toBeNull();
+    expect(g._ifaceIpForLookup(null)).toBeNull();
+    expect(g._ifaceIpForLookup("")).toBeNull();
+    expect(g._ifaceIpForLookup("dhcp")).toBeNull();
+  });
+
+  it("offers Open interface / Open network when the address is in a network, and the pick lands on that address", async () => {
+    canReadNetworks = true;
+    ipContextResult = { ip: "10.0.0.5", subnet: SUBNET };
+    clickName("port1");
+    await settle();
+    expect(g.api.assets.ipContext).toHaveBeenCalledWith("10.0.0.5");
+    expect(openedIface).toBeNull();                       // a menu, not the panel
+    expect(menuLabels()).toEqual(["Open interface", "Open network"]);
+    expect(menuCalls[0].anchor).toBe(rowFor("port1").querySelector(".asset-iface-link"));
+    pick("Open network");
+    expect(g.PolarisPanels.openNetwork).toHaveBeenCalledWith("S1", { focusIp: "10.0.0.5", subnetCidr: "10.0.0.0/24" });
+    pick("Open interface");
+    expect(openedIface).toBe("port1");
+  });
+
+  it("opens the interface straight away when the address is in no network", async () => {
+    canReadNetworks = true;
+    ipContextResult = { ip: "10.0.0.5", subnet: null };
+    clickName("port1");
+    await settle();
+    expect(openedIface).toBe("port1");
+    expect(menuCalls).toHaveLength(0);
+  });
+
+  it("never looks up an interface with no address", async () => {
+    canReadNetworks = true;
+    ipContextResult = { ip: "x", subnet: SUBNET };
+    clickName("port2");
+    await settle();
+    expect(g.api.assets.ipContext).not.toHaveBeenCalled();
+    expect(openedIface).toBe("port2");
+  });
+
+  it("never looks up for a viewer who cannot read networks", async () => {
+    canReadNetworks = false;
+    ipContextResult = { ip: "10.0.0.5", subnet: SUBNET };
+    clickName("port1");
+    await settle();
+    expect(g.api.assets.ipContext).not.toHaveBeenCalled();
+    expect(openedIface).toBe("port1");
+  });
+
+  it("opens the interface when the lookup fails, or lands after the table re-rendered", async () => {
+    canReadNetworks = true;
+    g.api.assets.ipContext = vi.fn(async () => { throw new Error("503"); });
+    clickName("port1");
+    await settle();
+    expect(openedIface).toBe("port1");
+    // Re-render between click and answer: the anchor is gone, so no menu.
+    openedIface = null;
+    ipContextResult = { ip: "10.0.0.5", subnet: SUBNET };
+    let answer: (v: unknown) => void = () => {};
+    g.api.assets.ipContext = vi.fn(() => new Promise((r) => { answer = r; }));
+    clickName("port1");
+    render();
+    answer(ipContextResult);
+    await settle();
+    expect(menuCalls).toHaveLength(0);
+    expect(openedIface).toBe("port1");
   });
 });

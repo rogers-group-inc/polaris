@@ -684,6 +684,11 @@
       goToStep(step + 1, { validate: true });
     });
     document.getElementById("apr-back").addEventListener("click", function () { goToStep(step - 1); });
+    // → / ← walk the steps and Enter advances while Next is showing, submitting
+    // only on step 4 (app.js § Stepped-modal keyboard navigation).
+    if (typeof wireModalStepKeys === "function") {
+      wireModalStepKeys({ back: "apr-back", next: "apr-next", submit: "apr-save" });
+    }
     document.getElementById("apr-stepper").addEventListener("click", function (ev) {
       var el = ev.target.closest ? ev.target.closest(".stepper-step") : null;
       if (!el) return;

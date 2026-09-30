@@ -59,7 +59,28 @@ export function attachAgentWsUpgradeHandler(httpServer: HttpServer): void {
       const rawBearer = tokenProto.slice(SUBPROTOCOL_PREFIX.length);
       const callerIp = req.socket.remoteAddress ?? null;
 
-      const verified = await verifyBearer(rawBearer, callerIp);
+      // The verify is an argon2 check on the libuv pool, and after a server
+      // restart every agent's WS and REST calls queue on it at once — long
+      // enough to outlast the agent's 10s handshake timeout. An agent that gave
+      // up has already redialed; finishing ITS abandoned upgrade would attach a
+      // dead socket that displaces the live retry. Watch the socket while we
+      // wait and drop the upgrade if it went away.
+      let abandoned = false;
+      const markAbandoned = () => { abandoned = true; };
+      socket.once("close", markAbandoned);
+      socket.once("end", markAbandoned);
+      let verified: Awaited<ReturnType<typeof verifyBearer>>;
+      try {
+        verified = await verifyBearer(rawBearer, callerIp);
+      } finally {
+        socket.off("close", markAbandoned);
+        socket.off("end", markAbandoned);
+      }
+      if (upgradeAbandoned(socket, abandoned)) {
+        logger.info({ callerIp }, "Agent WS upgrade abandoned by the agent during bearer verify — dropped");
+        try { socket.destroy(); } catch { /* already gone */ }
+        return;
+      }
       if (!verified) {
         rejectUpgrade(socket, 401, "Invalid or revoked agent bearer");
         return;
@@ -78,6 +99,14 @@ export function attachAgentWsUpgradeHandler(httpServer: HttpServer): void {
       try { rejectUpgrade(socket, 500, "Internal error"); } catch { /* socket already gone */ }
     }
   });
+}
+
+/** True when the agent hung up on this upgrade before we could answer it. */
+export function upgradeAbandoned(
+  socket: Pick<Socket, "destroyed" | "readable" | "writable">,
+  sawCloseOrEnd: boolean,
+): boolean {
+  return sawCloseOrEnd || socket.destroyed || !socket.readable || !socket.writable;
 }
 
 function rejectUpgrade(socket: Socket, status: number, reason: string): void {

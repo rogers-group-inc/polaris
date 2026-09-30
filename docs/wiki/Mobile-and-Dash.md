@@ -7,10 +7,73 @@ unauthenticated NOC wallboard.
 
 # The mobile app
 
-![The Polaris mobile web app: a scoped search screen with a bottom tab bar for Search, Device Map, Assets, Reservations and More.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/mobile-noon-mobile.png)
+![The Polaris mobile web app: a scoped search screen with a bottom tab bar.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/mobile-noon-mobile.png)
 
 An installable **PWA** with push notifications. Phones hitting `/` are
-redirected to it; `?desktop=1` escapes.
+redirected to it; `?desktop=1` escapes. The **Open device** link in an alert
+email or push (and the `{asset.link}` token) lands here too when opened on a
+phone — the link is one address for everyone, and Polaris picks the phone app
+or the desktop page when it is opened. Add `?desktop=1` to that link to force
+the desktop page.
+
+The tab bar is **Search · Device Map · Assets · Networks · More**.
+
+## Assets and Networks
+
+Both lists carry a **filter field** and a **sort chip** above their chips. The
+chip opens a *Sort & filter* sheet; a choice applies as soon as you tap it, and
+tapping the selected column again flips its direction. Your sort (and on Assets,
+the status filter) is remembered on that phone; the filter text is not.
+
+On Assets you can pick **several statuses at once** — Down and Missed together,
+say — and the list shows assets in any of them. The statuses you pick move to the
+front of the row, right after **Any**, in the order you picked them. Tap one
+again to drop it, or tap **Any** to clear them all.
+
+| | Filter | Sort by | Extra filter |
+|---|---|---|---|
+| **Assets** | hostname, DNS name, IP, MAC, asset tag, assigned-to | Recently added, Name, IP address, Status, Type, Last seen | monitor **Status** (Down, Missed, Dep. Down, …), one or several — named on the sort chip while it applies |
+| **Networks** | name, network, purpose, VLAN, FortiGate, block, tags — every word must match | Name, Network (address order), Utilization, Reservations, VLAN | the **All / Available / Reserved / Deprecated** chips |
+
+**Tapping a network opens its addresses in a sheet over the list**, so your
+filter and scroll position are still there when you close it. A reserved address
+expands to its details and verbs — **Reserve** (a DHCP lease), **Edit**,
+**Release / Revoke**, **Open asset**; a free one opens the Reserve form. A
+FortiGate **VIP** or **interface address** belongs to the device's own config
+and offers no Edit or Release. The **+ Reserve** button on the Networks tab
+takes any address and finds its network for you.
+
+**Tapping an asset opens its detail sheet.** Under the status pill, a device
+with a table to read carries a button for it, below **View SD-WAN** on a
+firewall that reports SD-WAN:
+
+| Device | Button | What it shows |
+|---|---|---|
+| Firewall | **View ARP Table** | the neighbour cache by interface, with the same **Current / Last hour … Last 30 days** range as the desktop tab (ranges past retention are greyed) and a filter over IP, MAC, interface and hostname |
+| Switch | **View MAC Table** | the forwarding database by port, each port marked access port or uplink / trunk; entries on trunk / LAG pseudo-ports are hidden until you tap **Show** |
+| Monitored access point | **View Wireless** | each radio (band, channel, width), the SSIDs it broadcasts, and the clients on each. Clients that match no broadcast SSID are listed under their own heading, not dropped |
+
+A client or neighbour Polaris matched to a known device links to it, and tapping
+it opens that asset. The sheets are read-only; the reload button re-reads what
+Polaris has stored, not the device itself.
+
+**A switch or access point can be upgraded from its sheet.** When the
+[Repository](Server-Settings#repository) holds newer firmware for the device,
+its **OS** row under *General* carries **Upgrade to &lt;version&gt;**. Tapping it
+opens a confirm sheet naming the device, its serial, what it runs now, the
+image it will get and the login it will use. **Upgrade** starts it; the phone
+says *Upgrade started*, and the row then follows the run — signing in,
+uploading, erasing / writing / verifying with a percent on a switch,
+rebooting, verifying, waiting for monitoring to answer — and ends on the
+result. The button needs **Read-Write on Assets**; below that the row says
+the version is available. The phone offers the model's **primary** image
+only: picking its backup, the run history and its log are on the desktop's
+Firmware card, and the Repository itself is desktop-only. See
+[Assets → Firmware](Assets#firmware).
+
+Networks replaced the old **Reservations** tab: a reservation is now seen and
+changed in its network. An old home-screen shortcut or bookmark to Reservations
+opens Networks.
 
 ## Installing it
 
@@ -46,8 +109,15 @@ Push enrollment is reconciled **at boot**, not only when the More tab is opened
 — the point of storing the preference on the account is that a device you never
 touch again still honours a choice made somewhere else.
 
-It **never prompts** on boot (a page load has no user activation), so a browser
-that has never been asked stays un-enrolled until you pick the preference there.
+It **never prompts** on boot (a page load has no user activation), so it can only
+enroll a phone that has already granted notification permission. A phone that has
+never been asked is instead **asked once**, on the first sign-in while your
+account prefers push: a sheet offering **Enable** or **Not now**. Dismissing it —
+either button, or a tap outside — is final on that phone, and the More tab's
+Notifications row is the way back.
+
+On **iPhone and iPad outside the installed app** you are not asked at all, for
+the reason above: add Polaris to your Home Screen first and the offer follows.
 
 ## Alerts reach the phone in four places
 

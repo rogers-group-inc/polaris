@@ -240,6 +240,47 @@
   --md-warning:                 #c05a00;
   --md-error:                   #9e1a14;
 }
+/* Nightfall — indigo ground, sky-blue accent: the desktop's nightfall hues
+   (styles.css). Without this block the phone painted the neutral Material
+   greys of :root, which read as grey beside the desktop's blues.
+   Not a straight copy of the daylight mapping above: that table sends
+   --color-bg-secondary (the darkest ground) to cont-high, which is right
+   when "higher" means darker and inverts every raised surface in a dark
+   palette. The container ladder keeps :root's lightness order and takes its
+   hues from the desktop set — lowest ← --color-bg-secondary, surface ←
+   --color-bg-primary, low ← --color-surface, high ← --color-bg-elevated —
+   with cont and highest interpolated on the same hue. Text, accent and
+   status colours are the desktop tokens as they stand. */
+[data-theme="nightfall"] {
+  --md-primary:                 #4bbcee;
+  --md-on-primary:              #00293d;
+  --md-primary-container:       #0f4d6e;
+  --md-on-primary-container:    #cdeeff;
+  --md-secondary:               #b4bce6;
+  --md-on-secondary:            #1f2547;
+  --md-secondary-container:     #343c6c;
+  --md-on-secondary-container:  #dde2ff;
+  --md-error:                   #f71341;
+  --md-on-error:                #ffffff;
+  --md-error-container:         #5c0a1d;
+  --md-on-error-container:      #ffd9df;
+
+  --md-surface:                 #141427;
+  --md-surface-cont-lowest:     #0d0d1c;
+  --md-surface-cont-low:        #181c39;
+  --md-surface-cont:            #1d2244;
+  --md-surface-cont-high:       #22284d;
+  --md-surface-cont-highest:    #2b3260;
+  --md-on-surface:              #e4e7f6;
+  --md-on-surface-variant:      #9aa0c6;
+  --md-outline:                 #6f759e;
+  --md-outline-variant:         #353d6e;
+  --md-inverse-surface:         #e4e7f6;
+  --md-inverse-on-surface:      #1f2547;
+
+  --md-success:                 #3ddc97;
+  --md-warning:                 #f2c14e;
+}
 
 * { box-sizing: border-box; }
 
@@ -1472,6 +1513,28 @@ button, .list-item, .chip { touch-action: manipulation; }
   color: var(--md-on-surface-variant);
   pointer-events: none;
 }
+/* Maintenance-band labels (charts.js lineChart `maintenance`). The layer sits
+   exactly over the SVG plot box — the chart-wrap padding is the gutters. */
+.chart-wrap .chart-maint-labels {
+  position: absolute;
+  top: 4px;     /* TOP_GUTTER */
+  bottom: 18px; /* BOTTOM_GUTTER */
+  left: 36px;   /* LEFT_GUTTER */
+  right: 8px;   /* RIGHT_GUTTER */
+  pointer-events: none;
+}
+.chart-wrap .chart-maint-label {
+  position: absolute;
+  bottom: 2px;
+  padding-left: 4px;
+  box-sizing: border-box;
+  font-size: 9px;
+  letter-spacing: .2px;
+  color: #9575cd;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .chart-wrap .chart-empty {
   position: absolute;
   inset: 0;
@@ -1887,4 +1950,144 @@ html[data-theme-fading="out"] .theme-strip-track { transition-timing-function: c
   html[data-theme-fading] *:not(.theme-strip-track),
   html[data-theme-fading] *:not(.theme-strip-track)::before,
   html[data-theme-fading] *:not(.theme-strip-track)::after { transition: none; }
+}
+
+/* ─── List toolbar (Assets + Networks) ────────────────────────────────────
+   Filter field + "Sort & filter" chip on one row above a list's chips —
+   mobile/list-controls.js. The field is a list-scoped filter, deliberately
+   styled lighter than the app-wide search bar above it so the two don't
+   read as the same control twice. */
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 0;
+}
+.list-filter {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 0 12px;
+  border-radius: var(--shape-full);
+  background: var(--md-surface-cont);
+  border: 1px solid var(--md-outline-variant);
+  color: var(--md-on-surface-variant);
+}
+.list-filter:focus-within { border-color: var(--md-primary); }
+.list-filter > svg { width: 20px; height: 20px; fill: currentColor; flex: 0 0 20px; }
+.list-filter-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--md-on-surface);
+  font: inherit;
+  font-size: 15px;
+  letter-spacing: .25px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.list-filter-input::placeholder { color: var(--md-on-surface-variant); }
+/* The browser's own clear button duplicates ours. */
+.list-filter-input::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
+.list-filter-clear {
+  width: 32px; height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+}
+.list-filter-clear svg { width: 18px; height: 18px; fill: currentColor; }
+.list-sort-chip { flex: 0 1 auto; max-width: 48%; }
+.list-sort-chip span { overflow: hidden; text-overflow: ellipsis; }
+.list-sort-chip.selected { padding-left: 12px; }
+/* #i-down-arrow points down; flipped for ascending so the arrow shows the
+   direction the values climb. */
+.list-sort-dir { transform: rotate(180deg); transition: transform .15s ease; }
+.list-sort-dir.desc { transform: none; }
+
+.chip-row.wrap { flex-wrap: wrap; overflow-x: visible; }
+.sort-options .list-item { min-height: 48px; padding-left: 0; padding-right: 0; }
+.sort-option.selected .headline { color: var(--md-primary); font-weight: 500; }
+.sort-option .trailing { color: var(--md-primary); }
+
+.list-count {
+  text-align: center;
+  padding: 16px 16px 96px; /* clears the Reserve FAB */
+  color: var(--md-on-surface-variant);
+  font-size: 12px;
+  letter-spacing: .5px;
+}
+
+/* ─── Networks list ─────────────────────────────────────────────────────── */
+.network-row .headline { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.network-status {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .4px;
+  text-transform: capitalize;
+  padding: 1px 8px;
+  border-radius: var(--shape-full);
+  background: var(--md-surface-cont-highest);
+  color: var(--md-on-surface-variant);
+}
+.network-status.reserved { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.network-util .pct {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--md-on-surface-variant);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Network IP sheet ──────────────────────────────────────────────────
+   Opened from a Networks row (PolarisNetworkSheet in subnet-detail.js).
+   Below the asset sheet (900) so "Open asset" lands on top of it, below the
+   generic .sheet (1000) so the Reserve / Edit sheets it opens stack over it,
+   and anchored above the navbar like the asset sheet so the tabs stay
+   reachable. */
+.network-scrim { z-index: 890; }
+.sheet.network-sheet {
+  z-index: 891;
+  max-height: 80vh;
+  bottom: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px));
+  padding-left: 16px;
+  padding-right: 16px;
+}
+.network-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.network-sheet-head .sheet-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.network-sheet-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.network-sheet-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+.network-sheet-sub {
+  color: var(--md-on-surface-variant);
+  font-size: 13px;
+  letter-spacing: .25px;
+  word-break: break-word;
+}
+.network-sheet .list-item { padding-left: 4px; padding-right: 4px; }
+
+.icon-btn.spinning svg { animation: icon-spin .9s linear infinite; }
+@keyframes icon-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .icon-btn.spinning svg { animation: none; }
 }

@@ -42,32 +42,24 @@
 
 import { prisma } from "../db.js";
 import type { SampleTier } from "./sampleQueryRouter.js";
+import { coreVector } from "../utils/cpuCores.js";
+import { sdwanSegmentVerdict, type SdwanStripMetric, type SdwanStripSample, type SdwanStripTier } from "../utils/sdwanDimensions.js";
+import { severityRank } from "./notificationTypes.js";
+import { probeLossSeriesFrom } from "./alertChartService.js";
 
 function bn(v: bigint | null | undefined): number | null {
   if (v == null) return null;
   return Number(v);
 }
 
-/**
- * Narrow `AssetTelemetrySample.cpuCorePcts` (jsonb, therefore `JsonValue` to
- * Prisma) to the number vector the chart wants.
- *
- * jsonb is schemaless from the database's point of view, so this is the
- * boundary where the shape is actually checked rather than asserted — an
- * older agent, a hand-written row or a future shape change reaches here as
- * whatever it is, and anything that is not a finite-number array becomes
- * null (charted as "no per-core data") instead of reaching the browser as a
- * ragged array that renders as NaN coordinates in an SVG path.
- */
-function coreVector(v: unknown): number[] | null {
-  if (!Array.isArray(v) || v.length === 0) return null;
-  const out: number[] = [];
-  for (const x of v) {
-    if (typeof x !== "number" || !Number.isFinite(x)) return null;
-    out.push(x);
-  }
-  return out;
-}
+// `coreVector` (utils/cpuCores) narrows `AssetTelemetrySample.cpuCorePcts`
+// (jsonb, therefore `JsonValue` to Prisma) to the number vector the chart
+// wants. jsonb is schemaless from the database's point of view, so that is the
+// boundary where the shape is actually checked rather than asserted — anything
+// that is not a finite-number array becomes null (charted as "no per-core
+// data") instead of reaching the browser as a ragged array that renders as NaN
+// coordinates in an SVG path. The cpuCorePct automation metric reads through
+// the same narrowing.
 
 /**
  * Counter-rate helper. `first` and `last` are cumulative counter values at
@@ -103,8 +95,40 @@ export interface MonitorHistoryRow {
   maxResponseTimeMs?: number | null;
 }
 
+/**
+ * The packet-loss line the response-time chart overlays on its right-hand axis.
+ *
+ * PACKETS, NOT POLL OUTCOMES, and every probe kind — the ICMP burst sweep's
+ * rows are the reason this series has any resolution, and they are exactly
+ * what the `samples` beside it exclude (their RTTs are a different transport's).
+ * Detail tier buckets the raw rows through `probeLossSeriesFrom`, the same
+ * arithmetic the alert email's loss chart draws, so the device page and the
+ * email cannot disagree about one window. Rollup tiers read the bucket's own
+ * columns, which split the same way the detail rows do: `sampleCount` /
+ * `successCount` are the response-time poll's (one packet each) and
+ * `packetsSent` / `packetsReceived` are the sweep's — added together they are
+ * the same total the detail tier counts.
+ *
+ * `ratioPct` covers the VISIBLE window only (the lookback overflow feeds the
+ * line's continuity, not the figure), and is what the chart's "Packet loss"
+ * stat prints so the number beside the chart is the one its line averages to.
+ * Null when the window held nothing countable.
+ */
+export interface MonitorLossSeries {
+  bucketMs: number;
+  points: Array<{ t: number; v: number }>;
+  ratioPct: number | null;
+}
+
+/** 2-minute floor (finer only draws 0 %/100 % spikes between sweeps), scaled so
+ *  a long detail window still plots ~120 points. Exported for tests. */
+export function monitorLossBucketMs(windowMs: number): number {
+  return Math.max(2 * 60 * 1000, Math.round(windowMs / 120));
+}
+
 export interface MonitorHistoryResult {
   samples: MonitorHistoryRow[];
+  loss: MonitorLossSeries;
   stats: {
     total: number;
     failed: number;
@@ -126,22 +150,38 @@ export async function readMonitorHistory(
   const queryFrom = fetchSince ?? since;
   const sinceMs = since.getTime();
   if (tier === "detail") {
-    const rows = await prisma.assetMonitorSample.findMany({
-      // Response-time poll only, matching the hourly/daily rollups this same
-      // function reads at coarser tiers — otherwise the panel's packet-loss
-      // and sample counts would change meaning as the operator widened the
-      // range. The dense ICMP sampler rows serve the probeLossPct metric, the
-      // NOC Packet Loss widget and the alert-email loss chart.
-      where: { assetId, timestamp: { gte: queryFrom, lte: until }, OR: [{ probeKind: null }, { probeKind: "primary" }] },
+    // EVERY probe kind in one read, split below: the ICMP sweep's rows feed the
+    // `loss` line only, and `samples` / `stats` stay response-time poll only,
+    // matching the hourly/daily rollups this same function reads at coarser
+    // tiers — otherwise the sample counts would change meaning as the operator
+    // widened the range.
+    const allRows = await prisma.assetMonitorSample.findMany({
+      where: { assetId, timestamp: { gte: queryFrom, lte: until } },
       orderBy: { timestamp: "asc" },
-      select: { timestamp: true, success: true, responseTimeMs: true, error: true, dependencyDown: true },
+      select: {
+        timestamp: true, success: true, responseTimeMs: true, error: true, dependencyDown: true,
+        probeKind: true, packetsSent: true, packetsReceived: true,
+      },
     });
+    const bucketMs = monitorLossBucketMs(until.getTime() - sinceMs);
+    const loss: MonitorLossSeries = {
+      bucketMs,
+      points: probeLossSeriesFrom(allRows, bucketMs).points,
+      ratioPct: probeLossSeriesFrom(allRows.filter((r) => r.timestamp.getTime() >= sinceMs), bucketMs).ratioPct,
+    };
+    const rows = allRows
+      .filter((r) => r.probeKind == null || r.probeKind === "primary")
+      .map((r) => ({
+        timestamp: r.timestamp, success: r.success, responseTimeMs: r.responseTimeMs,
+        error: r.error, dependencyDown: r.dependencyDown,
+      }));
     const visible = rows.filter((s) => s.timestamp.getTime() >= sinceMs);
     const total = visible.length;
     const failed = visible.filter((s) => !s.success).length;
     const ok = visible.filter((s) => s.success && typeof s.responseTimeMs === "number").map((s) => s.responseTimeMs as number);
     return {
       samples: rows,
+      loss,
       stats: {
         total,
         failed,
@@ -164,10 +204,13 @@ export async function readMonitorHistory(
     avgResponseTimeMs: number | null;
     minResponseTimeMs: number | null;
     maxResponseTimeMs: number | null;
+    packetsSent: number | null;
+    packetsReceived: number | null;
   }>>(
     `SELECT "bucketStart", "sampleCount", "successCount", "failureCount",
             "dependencyFailureCount",
-            "avgResponseTimeMs", "minResponseTimeMs", "maxResponseTimeMs"
+            "avgResponseTimeMs", "minResponseTimeMs", "maxResponseTimeMs",
+            "packetsSent", "packetsReceived"
      FROM "${table}"
      WHERE "assetId" = $1 AND "bucketStart" >= $2 AND "bucketStart" <= $3
      ORDER BY "bucketStart" ASC`,
@@ -189,6 +232,7 @@ export async function readMonitorHistory(
     if (r.maxResponseTimeMs != null) maxMs = maxMs == null ? r.maxResponseTimeMs : Math.max(maxMs, r.maxResponseTimeMs);
   }
   return {
+    loss: rollupLossSeries(rows, sinceMs, tier === "hourly" ? 3_600_000 : 86_400_000),
     samples: rows.map((r) => ({
       timestamp:         r.bucketStart,
       responseTimeMs:    r.avgResponseTimeMs,
@@ -208,6 +252,43 @@ export async function readMonitorHistory(
       minMs,
       maxMs,
     },
+  };
+}
+
+/**
+ * A rollup tier's loss line: one point per bucket. The poll columns count one
+ * packet per row and the sweep columns count their own packets, so the two sum
+ * to what `probeLossSeriesFrom` counts on the detail tier. NULL sweep columns
+ * (no sweep ran in that bucket) add nothing rather than reading as zero sent.
+ * A bucket with nothing sent is skipped, never plotted as 0 % — a gap in
+ * polling is not a period of perfect health. Pure; exported for tests.
+ */
+export function rollupLossSeries(
+  rows: Array<{
+    bucketStart: Date;
+    sampleCount: number;
+    successCount: number;
+    packetsSent: number | null;
+    packetsReceived: number | null;
+  }>,
+  sinceMs: number,
+  bucketMs: number,
+): MonitorLossSeries {
+  const points: Array<{ t: number; v: number }> = [];
+  let sent = 0;
+  let recv = 0;
+  for (const r of rows) {
+    const s = (r.sampleCount || 0) + (r.packetsSent ?? 0);
+    if (s <= 0) continue;
+    const v = Math.min((r.successCount || 0) + (r.packetsReceived ?? 0), s);
+    const t = r.bucketStart.getTime();
+    points.push({ t, v: Math.round(((s - v) / s) * 1000) / 10 });
+    if (t >= sinceMs) { sent += s; recv += v; }
+  }
+  return {
+    bucketMs,
+    points,
+    ratioPct: sent ? Math.round(((sent - recv) / sent) * 1000) / 10 : null,
   };
 }
 
@@ -260,6 +341,17 @@ export interface TelemetryHistoryRow {
   memFreeBytes?:    number | null;
   swapUsedBytes?:   number | null;
   swapTotalBytes?:  number | null;
+  // The vCenter band set, also on every tier. Disjoint from the agent's
+  // above: a VM partitions its configured RAM into private / shared /
+  // ballooned / swapped / compressed, an ESXi host partitions installed RAM
+  // into consumed / ballooned / swapped. A row carries one set or neither,
+  // and the chart picks its band table from whichever arrived.
+  memPrivateBytes?:    number | null;
+  memSharedBytes?:     number | null;
+  memBalloonedBytes?:  number | null;
+  memSwappedBytes?:    number | null;
+  memCompressedBytes?: number | null;
+  memConsumedBytes?:   number | null;
   // FortiGate active session count (null for other sources). On detail tier
   // this is the raw value; on rollup tiers it's the bucket average, with
   // min/max alongside.
@@ -302,6 +394,8 @@ export async function readTelemetryHistory(
         memPct: true, memUsedBytes: true, memTotalBytes: true,
         memBuffersBytes: true, memCachedBytes: true, memFreeBytes: true,
         swapUsedBytes: true, swapTotalBytes: true,
+        memPrivateBytes: true, memSharedBytes: true, memBalloonedBytes: true,
+        memSwappedBytes: true, memCompressedBytes: true, memConsumedBytes: true,
         sessionCount: true,
       },
     });
@@ -317,6 +411,12 @@ export async function readTelemetryHistory(
       memFreeBytes:    bn(s.memFreeBytes),
       swapUsedBytes:   bn(s.swapUsedBytes),
       swapTotalBytes:  bn(s.swapTotalBytes),
+      memPrivateBytes:    bn(s.memPrivateBytes),
+      memSharedBytes:     bn(s.memSharedBytes),
+      memBalloonedBytes:  bn(s.memBalloonedBytes),
+      memSwappedBytes:    bn(s.memSwappedBytes),
+      memCompressedBytes: bn(s.memCompressedBytes),
+      memConsumedBytes:   bn(s.memConsumedBytes),
       sessionCount:  s.sessionCount,
     }));
     const visible = rows.filter((r) => r.timestamp.getTime() >= sinceMs);
@@ -349,6 +449,12 @@ export async function readTelemetryHistory(
     avgMemFreeBytes: bigint | null;
     avgSwapUsedBytes: bigint | null;
     lastSwapTotalBytes: bigint | null;
+    avgMemPrivateBytes: bigint | null;
+    avgMemSharedBytes: bigint | null;
+    avgMemBalloonedBytes: bigint | null;
+    avgMemSwappedBytes: bigint | null;
+    avgMemCompressedBytes: bigint | null;
+    avgMemConsumedBytes: bigint | null;
     avgSessionCount: number | null; minSessionCount: number | null; maxSessionCount: number | null;
   }>>(
     `SELECT "bucketStart", "sampleCount",
@@ -357,6 +463,8 @@ export async function readTelemetryHistory(
             "avgMemUsedBytes", "maxMemUsedBytes", "lastMemTotalBytes",
             "avgMemBuffersBytes", "avgMemCachedBytes", "avgMemFreeBytes",
             "avgSwapUsedBytes", "lastSwapTotalBytes",
+            "avgMemPrivateBytes", "avgMemSharedBytes", "avgMemBalloonedBytes",
+            "avgMemSwappedBytes", "avgMemCompressedBytes", "avgMemConsumedBytes",
             "avgSessionCount", "minSessionCount", "maxSessionCount"
      FROM "${table}"
      WHERE "assetId" = $1 AND "bucketStart" >= $2 AND "bucketStart" <= $3
@@ -390,6 +498,12 @@ export async function readTelemetryHistory(
       memFreeBytes:    bn(r.avgMemFreeBytes),
       swapUsedBytes:   bn(r.avgSwapUsedBytes),
       swapTotalBytes:  bn(r.lastSwapTotalBytes),
+      memPrivateBytes:    bn(r.avgMemPrivateBytes),
+      memSharedBytes:     bn(r.avgMemSharedBytes),
+      memBalloonedBytes:  bn(r.avgMemBalloonedBytes),
+      memSwappedBytes:    bn(r.avgMemSwappedBytes),
+      memCompressedBytes: bn(r.avgMemCompressedBytes),
+      memConsumedBytes:   bn(r.avgMemConsumedBytes),
       sessionCount:  r.avgSessionCount,
       sampleCount:   r.sampleCount,
       minCpuPct:     r.minCpuPct,
@@ -981,6 +1095,89 @@ export async function readPerfSlaHistory(
   };
 }
 
+// ─── Agent-run path checks ───────────────────────────────────────────
+//
+// One (agent host, check) series. Detail rows carry the per-run verdict; rollup
+// rows translate back to the SAME field names (latencyMs = the bucket average,
+// ok = the bucket's majority verdict) plus the counts the availability chart
+// and the status strip need: okCount / failCount / sampleCount.
+
+export interface PathCheckHistoryRow {
+  timestamp:  Date;
+  ok:         boolean;
+  latencyMs:  number | null;
+  dnsMs:      number | null;
+  connectMs:  number | null;
+  tlsMs:      number | null;
+  ttfbMs:     number | null;
+  httpStatus: number | null;
+  hopCount:   number | null;
+  error?:     string | null;
+  // Rollup-tier extras; omitted on the detail tier.
+  minLatencyMs?: number | null;
+  maxLatencyMs?: number | null;
+  okCount?:      number;
+  failCount?:    number;
+  sampleCount?:  number;
+}
+
+export async function readPathCheckHistory(
+  assetId: string,
+  since: Date,
+  until: Date,
+  tier: SampleTier,
+  checkId: string,
+  fetchSince?: Date,
+): Promise<{ samples: PathCheckHistoryRow[] }> {
+  const queryFrom = fetchSince ?? since;
+  if (tier === "detail") {
+    const samples = await prisma.assetPathCheckSample.findMany({
+      where: { assetId, checkId, timestamp: { gte: queryFrom, lte: until } },
+      orderBy: { timestamp: "asc" },
+      select: {
+        timestamp: true, ok: true, latencyMs: true, dnsMs: true, connectMs: true,
+        tlsMs: true, ttfbMs: true, httpStatus: true, hopCount: true, error: true,
+      },
+    });
+    return { samples };
+  }
+  const table = tier === "hourly" ? "asset_path_check_samples_hourly" : "asset_path_check_samples_daily";
+  const rows = await prisma.$queryRawUnsafe<Array<{
+    bucketStart: Date;
+    sampleCount: number; okCount: number; failCount: number;
+    avgLatencyMs: number | null; minLatencyMs: number | null; maxLatencyMs: number | null;
+    avgDnsMs: number | null; avgConnectMs: number | null; avgTlsMs: number | null; avgTtfbMs: number | null;
+    avgHopCount: number | null; modeHttpStatus: number | null;
+  }>>(
+    `SELECT "bucketStart", "sampleCount", "okCount", "failCount",
+            "avgLatencyMs", "minLatencyMs", "maxLatencyMs",
+            "avgDnsMs", "avgConnectMs", "avgTlsMs", "avgTtfbMs",
+            "avgHopCount", "modeHttpStatus"
+     FROM "${table}"
+     WHERE "assetId" = $1 AND "checkId" = $2 AND "bucketStart" >= $3 AND "bucketStart" <= $4
+     ORDER BY "bucketStart" ASC`,
+    assetId, checkId, queryFrom, until,
+  );
+  return {
+    samples: rows.map((r) => ({
+      timestamp:    r.bucketStart,
+      ok:           r.okCount >= r.failCount,
+      latencyMs:    r.avgLatencyMs,
+      dnsMs:        r.avgDnsMs,
+      connectMs:    r.avgConnectMs,
+      tlsMs:        r.avgTlsMs,
+      ttfbMs:       r.avgTtfbMs,
+      httpStatus:   r.modeHttpStatus,
+      hopCount:     r.avgHopCount === null ? null : Math.round(r.avgHopCount),
+      minLatencyMs: r.minLatencyMs,
+      maxLatencyMs: r.maxLatencyMs,
+      okCount:      r.okCount,
+      failCount:    r.failCount,
+      sampleCount:  r.sampleCount,
+    })),
+  };
+}
+
 // ─── Polling-history summary (merge comparison) ──────────────────────────────
 //
 // "How much polling history does this asset have?" for the asset-merge
@@ -1085,6 +1282,9 @@ export async function readPollingHistorySummary(assetId: string): Promise<Pollin
 
 // ─── SD-WAN members (per-interface health-check summary) ─────────────────────
 
+/** How far back the SD-WAN Members table's Health Check Status strip reaches. */
+export const SDWAN_STATUS_STRIP_MINUTES = 30;
+
 export interface SdwanMemberHealthCheck {
   healthCheck: string;
   state:       string;        // "up" | "down"
@@ -1102,15 +1302,35 @@ export interface SdwanMemberRow {
   txBytes:      number | null; // interface outOctets (cumulative)
   rxBytes:      number | null; // interface inOctets (cumulative)
   healthChecks: SdwanMemberHealthCheck[];
-  recent:       Array<{ timestamp: Date; up: boolean }>; // recent per-scrape up/down for the status strip
+  recent:       SdwanStripSegment[]; // recent per-scrape verdicts for the status strip
 }
+
+/** One scrape of one member on the Health Check Status strip. */
+export interface SdwanStripSegment {
+  timestamp: Date;
+  /** Alive in every health check it belongs to. */
+  up:        boolean;
+  /** Alive, but some health check read it over that check's own SLA target. */
+  outOfSla:  boolean;
+  /** Worst severity tier an SD-WAN automation would fire at on these readings
+   *  (latency / jitter / loss); only for an alive, in-SLA scrape, else null. */
+  severity:  string | null;
+}
+
+/** The tier lookup readSdwanMembers colours the strip with — the route hands
+ *  in notificationRuleService.getMetricSeverityTierResolver so this module
+ *  takes no dependency on the automation layer. Absent = no severity shading. */
+export type SdwanStripTiersFor = (metric: SdwanStripMetric, healthCheck: string, link: string) => SdwanStripTier[];
 
 /**
  * Per-member SD-WAN health summary for the asset modal's "SD-WAN Members" table.
  * Aggregates the perfSla stream by WAN member (a member can appear in several
  * health-checks) and joins the latest interface sample for IP / link / byte
- * counters. `recent` powers the green/red health-check status strip — one entry
- * per scrape over the last ~90 min, `up` = up in every health-check at that time.
+ * counters. `recent` powers the health-check status strip — one entry per
+ * scrape over the last SDWAN_STATUS_STRIP_MINUTES (30), judged by
+ * utils/sdwanDimensions → sdwanSegmentVerdict: `up` = up in every health-check
+ * at that time, `outOfSla` = a reading over its health check's own SLA target,
+ * `severity` = the worst tier `tiersFor` says an automation would fire at.
  * Reads the `perfSla` (+ `interfaces`) retention entities; current values come
  * from the latest rows, the strip from recent detail samples.
  *
@@ -1119,6 +1339,7 @@ export interface SdwanMemberRow {
  */
 export async function readSdwanMembers(
   assetId: string,
+  tiersFor?: SdwanStripTiersFor,
 ): Promise<{ members: SdwanMemberRow[]; collectedAt: Date | null }> {
   // A: latest sample per (member, health-check). `timestamp` comes back too:
   // the newest of these IS the SD-WAN scrape stamp, and the tab's freshness
@@ -1144,13 +1365,30 @@ export async function readSdwanMembers(
     if (r.timestamp && (!collectedAt || r.timestamp > collectedAt)) collectedAt = r.timestamp;
   }
 
-  // B: recent per-(member, scrape) aggregated up/down for the status strip.
-  const recentRows = await prisma.$queryRawUnsafe<Array<{ link: string; timestamp: Date; up: boolean }>>(
-    `SELECT "link", "timestamp", bool_and("state" = 'up') AS up
+  // B: recent per-(member, health check, scrape) readings for the status
+  // strip, folded per (member, scrape) below. The window alone bounds the
+  // strip: the SD-WAN cadence floors at 60s, so 30 minutes is at most ~30
+  // scrapes (plus any Poll Now reads) × the gate's handful of pairs. It used to
+  // be 90 minutes cut to the newest 48 readings — which, once SD-WAN moved to
+  // its own 60s cadence, meant the strip spanned "the last 48 minutes", a
+  // figure nobody chose. Raw rows rather than a bool_and: a segment is now
+  // judged on its VALUES too (SLA targets, automation tiers), not liveness alone.
+  // `timestamp` is naive UTC (Prisma DateTime), so the cutoff must be naive
+  // UTC too. Bare now() is compared in the server's TimeZone: on a UTC-5
+  // database the 30-minute strip reached 5h30m back and painted a recovered
+  // morning outage red across a healthy member.
+  const recentRows = await prisma.$queryRawUnsafe<Array<{
+    link: string; healthCheck: string; timestamp: Date; state: string;
+    latencyMs: number | null; jitterMs: number | null; packetLoss: number | null;
+    latencyThresholdMs: number | null; jitterThresholdMs: number | null; packetLossThreshold: number | null;
+  }>>(
+    `SELECT "link", "healthCheck", "timestamp", "state", "latencyMs", "jitterMs", "packetLoss",
+            "latencyThresholdMs", "jitterThresholdMs", "packetLossThreshold"
      FROM "asset_perf_sla_samples"
-     WHERE "assetId" = $1 AND "timestamp" > now() - interval '90 minutes'
-     GROUP BY "link", "timestamp" ORDER BY "link", "timestamp" ASC`,
+     WHERE "assetId" = $1 AND "timestamp" > (now() AT TIME ZONE 'UTC') - make_interval(mins => $2::int)
+     ORDER BY "link", "timestamp" ASC`,
     assetId,
+    SDWAN_STATUS_STRIP_MINUTES,
   );
 
   // C: current interface state per member ifName (IP / speed / link state /
@@ -1167,10 +1405,24 @@ export async function readSdwanMembers(
     },
   });
   const ifaceByName = new Map(ifaceRows.map((r) => [r.ifName, r]));
-  const recentByLink = new Map<string, Array<{ timestamp: Date; up: boolean }>>();
+  // Fold per (member, scrape): rows arrive ordered by link then timestamp, so
+  // each scrape's health checks are adjacent.
+  const recentByLink = new Map<string, SdwanStripSegment[]>();
+  const stripGroups: Array<{ link: string; timestamp: Date; samples: SdwanStripSample[] }> = [];
   for (const r of recentRows) {
-    if (!recentByLink.has(r.link)) recentByLink.set(r.link, []);
-    recentByLink.get(r.link)!.push({ timestamp: r.timestamp, up: r.up });
+    const last = stripGroups[stripGroups.length - 1];
+    const sample: SdwanStripSample = {
+      healthCheck: r.healthCheck, state: r.state,
+      latencyMs: r.latencyMs, jitterMs: r.jitterMs, packetLoss: r.packetLoss,
+      latencyThresholdMs: r.latencyThresholdMs, jitterThresholdMs: r.jitterThresholdMs, packetLossThreshold: r.packetLossThreshold,
+    };
+    if (last && last.link === r.link && last.timestamp.getTime() === r.timestamp.getTime()) last.samples.push(sample);
+    else stripGroups.push({ link: r.link, timestamp: r.timestamp, samples: [sample] });
+  }
+  for (const g of stripGroups) {
+    const v = sdwanSegmentVerdict(g.samples, (metric, hc) => (tiersFor ? tiersFor(metric, hc, g.link) : []), severityRank);
+    if (!recentByLink.has(g.link)) recentByLink.set(g.link, []);
+    recentByLink.get(g.link)!.push({ timestamp: g.timestamp, up: v.up, outOfSla: v.outOfSla, severity: v.severity });
   }
 
   const hcByLink = new Map<string, SdwanMemberHealthCheck[]>();
@@ -1184,7 +1436,7 @@ export async function readSdwanMembers(
   const members: SdwanMemberRow[] = links.map((link) => {
     const hcs = hcByLink.get(link) ?? [];
     const iface = ifaceByName.get(link) ?? null;
-    const recent = (recentByLink.get(link) ?? []).slice(-48);
+    const recent = recentByLink.get(link) ?? [];
     return {
       link,
       zone:         zoneByLink.get(link) ?? null,

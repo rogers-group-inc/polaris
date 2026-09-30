@@ -36,6 +36,16 @@
 //     stretches during which every response-time probe failed. The heavy
 //     cadences do not run while an asset is down, so that probe stream is the
 //     only record that the poll was missed at all.
+//
+// Maintenance windows draw as labelled lavender bands, the phone half of
+// `_maintenanceBandLayer` in public/js/assets.js: pass `maintenance` (the
+// `windows` array GET /assets/:id/maintenance-windows serves) plus `from` /
+// `to` (the requested range, ms). Server-driven polling stops for the whole
+// window, so the series simply has no rows there — the band says why. The
+// time axis stretches over the in-range part of every window, because a
+// window still open at the right-hand edge would otherwise fall off the end
+// of an axis that stops at the last sample, and a range spent entirely in
+// maintenance draws the band instead of "No data".
 
 (function () {
   // Gutter widths chosen so axis labels fit without crowding the plot at
@@ -99,8 +109,8 @@
   // asset sheet's DOM (response time, CPU/memory, three SD-WAN charts).
   var _chartSeq = 0;
 
-  // Median sampling cadence of a time-ordered series (ms); sizes the collision
-  // guard in outageMarkers below. Port of `_medianCadenceMs` in
+  // Median sampling cadence of a time-ordered series (ms); sizes the hole test
+  // in seriesReportedThrough below. Port of `_medianCadenceMs` in
   // public/js/assets.js — keep the two in step.
   function medianCadenceMs(timestampsMs) {
     if (!timestampsMs || timestampsMs.length < 3) return 0;
@@ -131,20 +141,36 @@
   function outageMarkers(outages, sampleTimesMs) {
     if (!outages || !outages.length) return [];
     var times = (sampleTimesMs || []).slice().sort(function (a, b) { return a - b; });
-    var guardMs = medianCadenceMs(times) / 2;
+    var cadenceMs = medianCadenceMs(times);
     var markers = [];
     outages.forEach(function (o) {
       var from = +new Date(o.from);
       var to   = +new Date(o.to);
       var dep = o.kind === "dependency";
       if (!isFinite(from) || !isFinite(to)) return;
-      // Skip the WHOLE window when the series has data anywhere in it, not
-      // merely at its edges — see _outageMarkers in public/js/assets.js.
-      if (guardMs > 0 && times.some(function (t) { return t > from - guardMs && t < to + guardMs; })) return;
+      // Skip the WHOLE window when the series kept reporting through it, not
+      // merely its edges — see _outageMarkers in public/js/assets.js.
+      if (seriesReportedThrough(times, cadenceMs, from, to)) return;
       markers.push({ t: from, dep: dep });
       if (to > from) markers.push({ t: to, dep: dep });
     });
     return markers.sort(function (a, b) { return a.t - b.t; });
+  }
+
+  // A sample strictly inside the window, or no hole around it (the neighbours
+  // at-or-before `from` and at-or-after `to` within 1.5x cadence). Port of
+  // `_seriesReportedThrough` in public/js/assets.js, which carries the reasoning
+  // — keep the two in step.
+  function seriesReportedThrough(times, cadenceMs, from, to) {
+    var prev = null, next = null;
+    for (var i = 0; i < times.length; i++) {
+      var t = times[i];
+      if (t > from && t < to) return true;
+      if (t <= from) prev = t;
+      if (t >= to && next === null) next = t;
+    }
+    if (!(cadenceMs > 0) || prev === null || next === null) return false;
+    return next - prev <= cadenceMs * 1.5;
   }
 
   // Normalize one series' `values` into time-ordered { ts (ms), v, ok } points:
@@ -177,7 +203,7 @@
   // use. Union rather than per-series because CPU and memory ride the same
   // telemetry row: shared markers keep both lines diving at the same x instead
   // of drawing two offset red notches, and the union is also the right input to
-  // the collision guard (a sample on EITHER series proves the host was
+  // the reported-through test (a sample on EITHER series proves the host was
   // reporting).
   function applySharedOutageMarkers(prepared, outages) {
     var seen = {};
@@ -251,6 +277,29 @@
     }).join("");
   }
 
+  // Same lavender as the desktop band and the phone's `.dot.maint`.
+  var MAINT_FILL   = "rgba(149,117,205,0.14)";
+  var MAINT_STROKE = "rgba(149,117,205,0.45)";
+  // A band narrower than this share of the plot carries no label — the
+  // mobile counterpart of the desktop's 46px floor.
+  var MAINT_LABEL_MIN_FRAC = 0.15;
+
+  // Maintenance windows → [{ from, to, name }] (ms) clamped to [lo, hi]. An
+  // open window (`endedAt` null) runs to `nowMs`. Windows outside the range,
+  // or with an unparseable start, are dropped.
+  function maintenanceSpans(windows, lo, hi, nowMs) {
+    if (!windows || !windows.length || !(hi > lo)) return [];
+    var out = [];
+    windows.forEach(function (w) {
+      if (!w) return;
+      var ws = +new Date(w.startedAt);
+      var we = w.endedAt ? +new Date(w.endedAt) : nowMs;
+      if (!isFinite(ws) || !isFinite(we) || we <= lo || ws >= hi) return;
+      out.push({ from: Math.max(ws, lo), to: Math.min(we, hi), name: w.scheduleName || "Maintenance" });
+    });
+    return out.sort(function (a, b) { return a.from - b.from; });
+  }
+
   function lineChart(opts) {
     opts = opts || {};
     var series = opts.series || [];
@@ -278,7 +327,26 @@
         if (opts.yMax == null && p.v > yMax) yMax = p.v;
       });
     });
-    if (!anyPoints) {
+    // Time axis from the union of all series, then widened over the in-range
+    // part of every maintenance window. Without an explicit range there is
+    // nothing to widen TO, so bands are clipped to the samples' own span.
+    var tMin = Infinity, tMax = -Infinity;
+    prepared.forEach(function (e) {
+      e.pts.forEach(function (p) {
+        if (p.ts < tMin) tMin = p.ts;
+        if (p.ts > tMax) tMax = p.ts;
+      });
+    });
+    var nowMs = Date.now();
+    var hasRange = opts.from != null && opts.to != null && isFinite(+opts.from) && isFinite(+opts.to);
+    var bands = hasRange
+      ? maintenanceSpans(opts.maintenance, +opts.from, +opts.to, nowMs)
+      : (anyPoints ? maintenanceSpans(opts.maintenance, tMin, tMax, nowMs) : []);
+    bands.forEach(function (b) {
+      if (b.from < tMin) tMin = b.from;
+      if (b.to > tMax) tMax = b.to;
+    });
+    if (!anyPoints && !bands.length) {
       return ''
         + '<div class="chart-wrap" style="height:' + totalHeight + 'px;">'
         + '  <div class="chart-empty">No data</div>'
@@ -294,14 +362,6 @@
     if (yMin === yMax) { yMin -= 1; yMax += 1; }
     if (opts.yMin == null) yMin = Math.min(yMin, 0);
 
-    // Time axis from the union of all series.
-    var tMin = Infinity, tMax = -Infinity;
-    prepared.forEach(function (e) {
-      e.pts.forEach(function (p) {
-        if (p.ts < tMin) tMin = p.ts;
-        if (p.ts > tMax) tMax = p.ts;
-      });
-    });
     if (tMin === tMax) tMax = tMin + 1;
 
     // Plot area in viewBox space — leave gutters at top/bottom for breathing
@@ -320,6 +380,23 @@
 
     // Faint y midline so the eye has something to anchor on.
     body.push('<line x1="0" x2="' + viewWidth + '" y1="' + (plotHeight / 2).toFixed(1) + '" y2="' + (plotHeight / 2).toFixed(1) + '" stroke="var(--md-outline-variant)" stroke-width="0.5" stroke-dasharray="2,2" opacity="0.5"/>');
+
+    // Maintenance bands sit under the series so the line stays on top. Their
+    // labels are HTML (see the header note on text in a stretched SVG),
+    // placed by percentage of the plot width.
+    var maintLabels = "";
+    var plotW = viewWidth - 2 * pad;
+    bands.forEach(function (b) {
+      var x0 = x(b.from), x1 = x(b.to);
+      if (x1 - x0 < 1) x1 = x0 + 1;   // a sliver window stays visible
+      body.push('<rect class="maintenance-band" x="' + x0.toFixed(1) + '" y="0" width="' + (x1 - x0).toFixed(1) + '" height="' + plotHeight +
+        '" fill="' + MAINT_FILL + '" stroke="' + MAINT_STROKE + '" stroke-width="1" stroke-dasharray="2,3" vector-effect="non-scaling-stroke"/>');
+      var frac = (x1 - x0) / plotW;
+      if (frac >= MAINT_LABEL_MIN_FRAC) {
+        maintLabels += '<span class="chart-maint-label" style="left:' + ((x0 / viewWidth) * 100).toFixed(2) + '%;max-width:' + (frac * 100).toFixed(2) + '%;">'
+          + escapeAttr(b.name) + '</span>';
+      }
+    });
 
     prepared.forEach(function (e, si) {
       var color = e.s.color || "var(--md-primary)";
@@ -343,7 +420,8 @@
     });
 
     var svgParts = [];
-    svgParts.push('<svg class="chart-svg" viewBox="0 0 ' + viewWidth + ' ' + plotHeight + '" preserveAspectRatio="none" role="img" aria-label="' + escapeAttr(opts.ariaLabel || "Chart") + '">');
+    var aria = (opts.ariaLabel || "Chart") + (bands.length ? " (includes maintenance — polling paused)" : "");
+    svgParts.push('<svg class="chart-svg" viewBox="0 0 ' + viewWidth + ' ' + plotHeight + '" preserveAspectRatio="none" role="img" aria-label="' + escapeAttr(aria) + '">');
     if (defs) svgParts.push('<defs>' + defs + '</defs>');
     svgParts.push(body.join(""));
     svgParts.push('</svg>');
@@ -358,16 +436,18 @@
       + '</div>';
 
     // X-axis labels — start time at left, end time at right.
+    var crossesDay = new Date(tMin).toDateString() !== new Date(tMax).toDateString();
     var xLabels = ''
       + '<div class="chart-x-labels">'
-      + '  <span class="chart-x-tick">' + formatX(tMin, tMax - tMin) + '</span>'
-      + '  <span class="chart-x-tick">' + formatX(tMax, tMax - tMin) + '</span>'
+      + '  <span class="chart-x-tick">' + formatX(tMin, tMax - tMin, crossesDay) + '</span>'
+      + '  <span class="chart-x-tick">' + formatX(tMax, tMax - tMin, crossesDay) + '</span>'
       + '</div>';
 
     return ''
       + '<div class="chart-wrap" style="height:' + totalHeight + 'px;padding:' + TOP_GUTTER + 'px ' + RIGHT_GUTTER + 'px ' + BOTTOM_GUTTER + 'px ' + LEFT_GUTTER + 'px;">'
       +   yLabels
       +   svgParts.join("")
+      +   (maintLabels ? '<div class="chart-maint-labels">' + maintLabels + '</div>' : '')
       +   xLabels
       + '</div>';
   }
@@ -386,11 +466,16 @@
 
   // Picks an appropriate label format based on the total window duration:
   // sub-day windows show HH:MM, sub-month show "MMM D", larger show "MMM YYYY".
-  function formatX(ts, spanMs) {
+  // A sub-day window that crosses midnight (every 24h window does) prefixes the
+  // date — otherwise both ends of a 24h chart read the same "14:05".
+  function formatX(ts, spanMs, crossesDay) {
     if (ts == null || !isFinite(ts)) return "";
     var d = new Date(ts);
     if (isNaN(d.getTime())) return "";
     if (spanMs < 36 * 3600 * 1000) {
+      if (crossesDay) {
+        return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      }
       return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
     if (spanMs < 31 * 86400 * 1000) {
@@ -406,5 +491,6 @@
     _medianCadenceMs: medianCadenceMs,
     _seriesPoints: seriesPoints,
     _applySharedOutageMarkers: applySharedOutageMarkers,
+    _maintenanceSpans: maintenanceSpans,
   };
 })();

@@ -95,4 +95,17 @@ describe("the band and the strip read the same clock", () => {
     expect(APP_JS).toContain("while (forward <= 0) forward += 1;");
     expect(MOBILE_APP_JS).toContain("while (forward <= 0) forward += 1;");
   });
+
+  it("gives every theme on the strip its own mobile palette", () => {
+    // A theme with no block in mobile.css falls back to :root's neutral
+    // Material greys and still "works", which is how nightfall shipped grey
+    // on the phone beside the desktop's indigo.
+    const css = readFileSync(join(process.cwd(), "public", "css", "mobile.css"), "utf-8");
+    for (const id of Object.keys(PHONE)) {
+      const start = css.indexOf(`[data-theme="${id}"] {`);
+      expect(start, `no [data-theme="${id}"] block in mobile.css`).toBeGreaterThan(-1);
+      const block = css.slice(start, css.indexOf("}", start));
+      expect(block, `${id} block sets no --md-surface`).toMatch(/--md-surface:\s*#/);
+    }
+  });
 });

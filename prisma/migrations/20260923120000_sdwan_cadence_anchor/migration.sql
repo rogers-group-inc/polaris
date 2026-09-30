@@ -1,0 +1,12 @@
+-- Cadence anchor for the SD-WAN stream (FortiOS Performance SLA health-checks
+-- + SD-WAN service-rule selection).
+--
+-- SD-WAN used to be collected as a side effect of the system-info pass, so a
+-- gate's SLA readings arrived only as often as its interfaces did — 10 minutes
+-- at the default. It is now its own cadence (Integration.config.
+-- sdwanIntervalSeconds, default 60s) with its own queue, and this is the
+-- anchor that cadence's due-check reads. It mirrors lastEventLogAt.
+--
+-- Nullable with no default: NULL means "never collected", which is precisely
+-- what isDue() should read as immediately-due on the first tick.
+ALTER TABLE "assets" ADD COLUMN "lastSdwanAt" TIMESTAMP(3);

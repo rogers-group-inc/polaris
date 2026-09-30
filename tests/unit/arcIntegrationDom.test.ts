@@ -234,7 +234,8 @@ describe("arcScriptPublishingFormHTML RBAC guidance", () => {
   });
 
   it("keeps the no-inert-state warning — the review gate for this vehicle", () => {
-    expect(html()).toContain("A run command executes immediately.");
+    expect(html()).toContain("A run command executes immediately");
+    expect(html()).toContain("no unassigned");
   });
 });
 

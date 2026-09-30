@@ -20,6 +20,7 @@ import {
   resolveTierLadder,
   severityRank,
   hwSensorFilterMatches,
+  pathCheckFilterMatches,
   deviceFilterMatch,
   CHANGE_TYPE_ACTIONS,
   legacyMirrorOfV2,
@@ -28,6 +29,10 @@ import {
   allRuleActionRefs,
   notifyChannelIds,
   evaluateScopeCondition,
+  buildShadowIndex,
+  isAssetShadowed,
+  triggerSignature,
+  scopeRank,
 } from "./notificationTypes.js";
 import { isBlockedOutboundHost } from "../utils/netGuard.js";
 import { listRegions, REGION_TAG_CATEGORY } from "./mapRegionService.js";
@@ -35,6 +40,7 @@ import { regionLevelIndex } from "./regionHierarchyService.js";
 import { ipInCidr } from "../utils/cidr.js";
 import { invalidateDownDetectionCache } from "./downDetectionService.js";
 import { scopeMatchesAsset } from "./notificationTypes.js";
+import { sdwanFilterSelects } from "../utils/sdwanDimensions.js";
 
 /**
  * Scope membership (ScopeAsset + scopeMatchesAsset) now lives in
@@ -51,15 +57,25 @@ export { scopeMatchesAsset, type ScopeAsset } from "./notificationTypes.js";
  * asset-details Alerts tab's "automations that can trigger for this asset"
  * table. One findMany + in-memory filter (rule counts are small).
  *
+ * `carveOut` applies the engine's specificity precedence (business rule 18): a
+ * rule a more-specific same-signature peer has taken this asset from never
+ * evaluates for it, so it cannot trigger here — the Alerts tab listed
+ * "High CPU utilization" (all assets) beside "Server High CPU utilization"
+ * (servers) until this. Off by default because `getMetricSeverityTiers`
+ * deliberately wants the superseded rules too.
+ *
  * Rows go out through `withV2` like every other read path: clicking a name in
  * that table opens the SAME edit wizard the Automations page uses, and a
  * pre-v2 row handed over with NULL reset/actions would open with its actions
  * missing and save them away.
  */
-export async function findRulesMatchingAsset(assetId: string) {
+export async function findRulesMatchingAsset(assetId: string, opts: { carveOut?: boolean } = {}) {
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
-    select: { id: true, assetType: true, tags: true, discoveredByIntegrationId: true, manufacturer: true, model: true, ipAddress: true, hostname: true, os: true, status: true },
+    // managedAgent: the `agentInstalled` condition field reads it on this
+    // single-asset path (a 1:1 row, so joining it unconditionally is cheaper
+    // than walking every rule's tree first).
+    select: { id: true, assetType: true, tags: true, discoveredByIntegrationId: true, manufacturer: true, model: true, ipAddress: true, hostname: true, os: true, status: true, managedAgent: { select: { installStatus: true } } },
   });
   if (!asset) return [];
 
@@ -68,11 +84,18 @@ export async function findRulesMatchingAsset(assetId: string) {
     orderBy: { name: "asc" },
   });
 
+  const views = rules.map((r) => ({ id: r.id, trigger: r.trigger as unknown as Trigger, scope: (r.scope ?? {}) as RuleScope }));
+  // Indexed over the whole enabled set, as the engine does — a peer need not
+  // be listed to supersede.
+  const shadowIndex = opts.carveOut ? buildShadowIndex(views) : null;
   return rules
-    .filter((r) => {
-      const trigger = r.trigger as unknown as Trigger;
-      if (!isAssetScopedTrigger(trigger)) return false;
-      return scopeMatchesAsset((r.scope ?? {}) as RuleScope, asset);
+    .filter((_r, i) => {
+      const v = views[i];
+      if (!isAssetScopedTrigger(v.trigger)) return false;
+      if (!scopeMatchesAsset(v.scope, asset)) return false;
+      if (!shadowIndex) return true;
+      const sig = triggerSignature(v.trigger);
+      return !(sig && isAssetShadowed(shadowIndex, v, sig, scopeRank(v.scope), asset));
     })
     .map(withV2);
 }
@@ -118,10 +141,33 @@ function orderedOperator(op: string): MetricSeverityTier["operator"] | null {
 export async function getMetricSeverityTiers(
   assetId: string,
   metric: string,
-  dimension?: { sensorName?: string; sensorClass?: string },
+  dimension?: MetricSeverityDimension,
 ): Promise<MetricSeverityTier[]> {
+  return (await getMetricSeverityTierResolver(assetId))(metric, dimension);
+}
+
+/** The concrete thing a chart (or strip segment) draws — see getMetricSeverityTiers. */
+export interface MetricSeverityDimension {
+  sensorName?: string;
+  sensorClass?: string;
+  checkId?: string;
+  /** SD-WAN pair (sdwan* metrics): a rule filtered to other health checks /
+   *  members must not shade this one. */
+  healthCheck?: string;
+  link?: string;
+}
+
+/**
+ * getMetricSeverityTiers with the rule + asset reads hoisted: load once, then
+ * ask for any number of (metric, dimension) pairs. The SD-WAN Members strip
+ * asks for three metrics across every (health check, member) pair of a gate —
+ * a dozen pairs — and one `findRulesMatchingAsset` per ask would be 36 reads
+ * for one table.
+ */
+export async function getMetricSeverityTierResolver(
+  assetId: string,
+): Promise<(metric: string, dimension?: MetricSeverityDimension) => MetricSeverityTier[]> {
   const rules = await findRulesMatchingAsset(assetId);
-  const collected: MetricSeverityTier[] = [];
   // A trigger carrying device-identifier dimensions (hostname / IP / MAC /
   // manufacturer / model) only evaluates devices it matches — shading this
   // asset's chart with a rule that filters it out would paint thresholds that
@@ -136,46 +182,60 @@ export async function getMetricSeverityTiers(
     : null;
   const deviceFilterSelects = (df: Parameters<typeof deviceFilterMatch>[0]): boolean =>
     deviceFilterMatch(df, asset ?? {});
+  // An SD-WAN chart / strip segment is ONE (health check, member) pair, and the
+  // pair filter is any-of ("|"-joined terms, utils/sdwanDimensions).
+  const sdwanSelects = (metric: string, df: unknown, dimension?: MetricSeverityDimension): boolean =>
+    !metric.startsWith("sdwan") || !dimension?.healthCheck || !dimension.link
+      || sdwanFilterSelects(df as { healthCheck?: string; link?: string } | undefined, { healthCheck: dimension.healthCheck, link: dimension.link });
 
-  for (const row of rules) {
-    const v2 = normalizeRuleToV2(row as Parameters<typeof normalizeRuleToV2>[0]);
-    const trigger = row.trigger as unknown as Trigger;
-    const ruleSeverity = String(row.severity) as Severity;
-    const push = (op: string, threshold: unknown, severity: Severity) => {
-      const operator = orderedOperator(op);
-      if (!operator || typeof threshold !== "number" || !Number.isFinite(threshold)) return;
-      collected.push({ severity, operator, threshold, ruleId: row.id, ruleName: row.name });
-    };
+  return (metric, dimension) => {
+    const collected: MetricSeverityTier[] = [];
+    for (const row of rules) {
+      const v2 = normalizeRuleToV2(row as Parameters<typeof normalizeRuleToV2>[0]);
+      const trigger = row.trigger as unknown as Trigger;
+      const ruleSeverity = String(row.severity) as Severity;
+      const push = (op: string, threshold: unknown, severity: Severity) => {
+        const operator = orderedOperator(op);
+        if (!operator || typeof threshold !== "number" || !Number.isFinite(threshold)) return;
+        collected.push({ severity, operator, threshold, ruleId: row.id, ruleName: row.name });
+      };
 
-    if (trigger.type === "asset_metric" && trigger.metric === metric) {
-      if (!deviceFilterSelects(trigger.dimensionFilter)) continue;
-      if (metric === "hwSensorValue" && dimension && !hwSensorFilterMatches(trigger.dimensionFilter, dimension)) continue;
-      for (const tier of resolveTierLadder(trigger.operator, trigger.threshold, ruleSeverity, trigger.forDurationSec ?? 0, v2.severityBands)) {
-        push(tier.operator, tier.threshold, tier.severity as Severity);
+      if (trigger.type === "asset_metric" && trigger.metric === metric) {
+        if (!deviceFilterSelects(trigger.dimensionFilter)) continue;
+        if (metric === "hwSensorValue" && dimension && !hwSensorFilterMatches(trigger.dimensionFilter, dimension)) continue;
+        // A path-check chart is ONE check's series: a rule filtered to another
+        // check must not shade it.
+        if (metric.startsWith("path") && dimension?.checkId && !pathCheckFilterMatches(trigger.dimensionFilter, dimension)) continue;
+        if (!sdwanSelects(metric, trigger.dimensionFilter, dimension)) continue;
+        for (const tier of resolveTierLadder(trigger.operator, trigger.threshold, ruleSeverity, trigger.forDurationSec ?? 0, v2.severityBands)) {
+          push(tier.operator, tier.threshold, tier.severity as Severity);
+        }
+        continue;
       }
-      continue;
+
+      if (trigger.type === "composite") {
+        for (const leaf of collectCompositeMetricLeaves(trigger)) {
+          if (leaf.type !== "asset_metric" || leaf.metric !== metric) continue;
+          if (!deviceFilterSelects(leaf.dimensionFilter)) continue;
+          if (metric === "hwSensorValue" && dimension && !hwSensorFilterMatches(leaf.dimensionFilter, dimension)) continue;
+          if (metric.startsWith("path") && dimension?.checkId && !pathCheckFilterMatches(leaf.dimensionFilter, dimension)) continue;
+          if (!sdwanSelects(metric, leaf.dimensionFilter, dimension)) continue;
+          push(leaf.operator, leaf.threshold, ruleSeverity);
+        }
+      }
     }
 
-    if (trigger.type === "composite") {
-      for (const leaf of collectCompositeMetricLeaves(trigger)) {
-        if (leaf.type !== "asset_metric" || leaf.metric !== metric) continue;
-        if (!deviceFilterSelects(leaf.dimensionFilter)) continue;
-        if (metric === "hwSensorValue" && dimension && !hwSensorFilterMatches(leaf.dimensionFilter, dimension)) continue;
-        push(leaf.operator, leaf.threshold, ruleSeverity);
-      }
+    // One tier per severity: keep the most sensitive threshold in its direction.
+    const bySeverity = new Map<string, MetricSeverityTier>();
+    for (const t of collected) {
+      const key = `${t.severity}|${t.operator === ">" || t.operator === ">=" ? "up" : "down"}`;
+      const prev = bySeverity.get(key);
+      if (!prev) { bySeverity.set(key, t); continue; }
+      const moreSensitive = key.endsWith("up") ? t.threshold < prev.threshold : t.threshold > prev.threshold;
+      if (moreSensitive) bySeverity.set(key, t);
     }
-  }
-
-  // One tier per severity: keep the most sensitive threshold in its direction.
-  const bySeverity = new Map<string, MetricSeverityTier>();
-  for (const t of collected) {
-    const key = `${t.severity}|${t.operator === ">" || t.operator === ">=" ? "up" : "down"}`;
-    const prev = bySeverity.get(key);
-    if (!prev) { bySeverity.set(key, t); continue; }
-    const moreSensitive = key.endsWith("up") ? t.threshold < prev.threshold : t.threshold > prev.threshold;
-    if (moreSensitive) bySeverity.set(key, t);
-  }
-  return Array.from(bySeverity.values()).sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
+    return Array.from(bySeverity.values()).sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
+  };
 }
 
 /** Flatten a composite trigger's tree to its leaves (groups nest ≤3 deep).

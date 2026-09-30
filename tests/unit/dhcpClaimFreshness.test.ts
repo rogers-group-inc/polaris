@@ -10,7 +10,9 @@ import { describe, it, expect } from "vitest";
 import {
   scoreDhcpClaim,
   claimBeats,
+  createDhcpClaimState,
   type DhcpClaimEvidence,
+  type DhcpClaimState,
 } from "../../src/utils/dhcpClaimFreshness.js";
 
 const beats = (a: DhcpClaimEvidence, b: DhcpClaimEvidence) =>
@@ -99,5 +101,76 @@ describe("scoreDhcpClaim / claimBeats", () => {
   it("missing/NaN evidence scores as zero rather than poisoning the comparison", () => {
     const s = scoreDhcpClaim({ type: "dhcp-lease", inventorySeenMs: NaN, expireTime: undefined });
     expect(s).toEqual([0, 0, 0, 1]);
+  });
+});
+
+/**
+ * Run scope. In FortiManager mode `syncDhcpSubnets` runs once per managed
+ * gate, so the ranking only arbitrates if the state outlives a single call.
+ * These model that: each "gate pass" is one call's worth of arbitration, and
+ * the assertion is that the outcome does not depend on which gate finished
+ * last. Prod 2026-09-22: a never-claimed static reservation took an endpoint's
+ * address from the gate holding its live lease, purely by finishing 10s later.
+ */
+describe("createDhcpClaimState — arbitration spans the per-gate syncs of one run", () => {
+  const LIVE_LEASE_GATE = {
+    gate: "HOPAGGEMPBLDG-61F-1",
+    evidence: { type: "dhcp-reservation", seenLeased: true } as DhcpClaimEvidence,
+  };
+  const STALE_RESERVATION_GATE = {
+    gate: "HOPKINSVILLE-101F-1",
+    evidence: { type: "dhcp-reservation", seenLeased: false } as DhcpClaimEvidence,
+  };
+
+  /** One gate's sync pass: stage the address only when its claim wins. */
+  const gatePass = (
+    state: DhcpClaimState,
+    assetId: string,
+    entry: { gate: string; evidence: DhcpClaimEvidence },
+    staged: { gate: string | null },
+  ) => {
+    const score = scoreDhcpClaim(entry.evidence);
+    const incumbent = state.bestIpClaimByAsset.get(assetId);
+    if (!incumbent || claimBeats(score, incumbent)) {
+      state.bestIpClaimByAsset.set(assetId, score);
+      staged.gate = entry.gate;
+    }
+  };
+
+  it("the live-lease gate wins whichever gate syncs last", () => {
+    for (const order of [
+      [LIVE_LEASE_GATE, STALE_RESERVATION_GATE],
+      [STALE_RESERVATION_GATE, LIVE_LEASE_GATE],
+    ]) {
+      const state = createDhcpClaimState();
+      const staged = { gate: null as string | null };
+      for (const entry of order) gatePass(state, "asset-1", entry, staged);
+      expect(staged.gate).toBe(LIVE_LEASE_GATE.gate);
+    }
+  });
+
+  it("a state created per gate instead of per run is what made it last-gate-wins", () => {
+    // The pre-fix shape, kept as the counter-example the fix is defined
+    // against: a fresh state each pass means every gate wins uncontested.
+    const staged = { gate: null as string | null };
+    for (const entry of [LIVE_LEASE_GATE, STALE_RESERVATION_GATE]) {
+      gatePass(createDhcpClaimState(), "asset-1", entry, staged);
+    }
+    expect(staged.gate).toBe(STALE_RESERVATION_GATE.gate);
+  });
+
+  it("starts empty and keys every map by asset, so size tracks fleet not gate count", () => {
+    const state = createDhcpClaimState();
+    expect(state.bestIpClaimByAsset.size).toBe(0);
+    expect(state.bestGateClaimMsByAsset.size).toBe(0);
+    expect(state.bestInvIpSeenByAsset.size).toBe(0);
+
+    const staged = { gate: null as string | null };
+    for (const assetId of ["asset-1", "asset-2"]) {
+      for (const entry of [LIVE_LEASE_GATE, STALE_RESERVATION_GATE]) {
+        gatePass(state, assetId, entry, staged);
+      }
+    }
+    expect(state.bestIpClaimByAsset.size).toBe(2);
   });
 });

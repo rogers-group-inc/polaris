@@ -33,6 +33,7 @@ import type { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { triggerDimensionApplicable, type RuleScope } from "./notificationTypes.js";
 import { poeIsFault } from "../utils/poePorts.js";
+import { sdwanDimensionTerms } from "../utils/sdwanDimensions.js";
 import { loadScopeAssetIds } from "./notificationEngine.js";
 import { listStateProbes } from "./manufacturerProfileService.js";
 
@@ -141,7 +142,7 @@ interface DimensionSource {
   /** Builds a value→display-name lookup, for dimensions whose stored value is an
    *  opaque id. Called once per request (not per value) so the implementation can
    *  index a registry up front. */
-  labelOf?: () => (value: string) => string | undefined;
+  labelOf?: () => ((value: string) => string | undefined) | Promise<(value: string) => string | undefined>;
 }
 
 /**
@@ -296,17 +297,23 @@ const DIMENSION_SOURCES: Record<string, DimensionSource> = {
     noun: "SD-WAN WAN members",
     strict: false,
     candidateWhere: { assetType: "firewall" },
-    narrowLabel: (n) => (n.healthCheck ? ` for health check ${n.healthCheck}` : ""),
-    pairs: async (ids, since, narrow) =>
-      (await prisma.assetPerfSlaSample.groupBy({
+    narrowLabel: (n) => {
+      const terms = sdwanDimensionTerms(n.healthCheck);
+      return terms.length === 0 ? "" : terms.length === 1 ? ` for health check ${terms[0]}` : ` for health checks ${terms.join(" or ")}`;
+    },
+    pairs: async (ids, since, narrow) => {
+      // Any-of substring over the "|"-joined health checks, mirroring how the
+      // engine filters it (utils/sdwanDimensions → sdwanDimensionMatch).
+      const terms = sdwanDimensionTerms(narrow.healthCheck);
+      return (await prisma.assetPerfSlaSample.groupBy({
         by: ["link", "assetId"],
         where: {
           assetId: { in: ids },
           timestamp: { gte: since },
-          // substringMatch semantics, mirroring how the engine filters it.
-          ...(narrow.healthCheck ? { healthCheck: { contains: narrow.healthCheck, mode: "insensitive" as const } } : {}),
+          ...(terms.length ? { OR: terms.map((t) => ({ healthCheck: { contains: t, mode: "insensitive" as const } })) } : {}),
         },
-      })).map((r) => ({ value: r.link, assetId: r.assetId })),
+      })).map((r) => ({ value: r.link, assetId: r.assetId }));
+    },
   },
   tunnelName: {
     // The pin set (`Asset.monitoredIpsecTunnels`), mirroring ifNamePattern:
@@ -377,6 +384,29 @@ const DIMENSION_SOURCES: Record<string, DimensionSource> = {
           ...(narrow.stateProbeId ? { probeId: narrow.stateProbeId } : {}),
         },
       })).map((r) => ({ value: r.rowLabel, assetId: r.assetId })),
+  },
+  // Which agent-run path check (path* metrics). Strict like
+  // stateProbeId — an exact registry id, so free text could only be a typo —
+  // and labelled by the check's name. Pairs come from MEMBERSHIP
+  // (path_check_sources), not the samples: the pin-set reasoning — a
+  // host is a source the moment it is reconciled, before its first result,
+  // and the membership is exactly what the engine's readings can come from.
+  checkId: {
+    noun: "path checks",
+    strict: true,
+    candidateWhere: { managedAgent: { is: { installStatus: "active" } } },
+    labelOf: async () => {
+      const rows = await prisma.pathCheck.findMany({ select: { id: true, name: true, kind: true } });
+      const byId = new Map(rows.map((r) => [r.id, `${r.name} (${r.kind.toUpperCase()})`]));
+      return (value: string) => byId.get(value);
+    },
+    pairs: async (ids) =>
+      (await prisma.pathCheckSource.findMany({
+        where: { assetId: { in: ids } },
+        select: { assetId: true, checkId: true },
+      // `in: ids` never matches the server's own row (assetId NULL) — it is
+      // no asset an automation can scope.
+      })).map((r) => ({ value: r.checkId, assetId: r.assetId as string })),
   },
 };
 
@@ -526,7 +556,7 @@ export async function listDimensionValues(
   }
 
   // Built once per request, not per value.
-  const labelOf = source.labelOf?.();
+  const labelOf = source.labelOf ? await source.labelOf() : undefined;
 
   const ids = sorted.slice(0, ASSET_SAMPLE_CAP);
   const sampledAssets = exhaustive ? scopedIds.length : ids.length;

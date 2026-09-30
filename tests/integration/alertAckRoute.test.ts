@@ -10,6 +10,8 @@
  *     sibling POST paths /acknowledge and /clear
  *   - it answers 404, NOT 403, for an alert outside the caller's region scope —
  *     which alerts exist elsewhere is not something this route should confirm
+ *   - ...except to an admin-equivalent caller, whom region scope never narrows
+ *     on the alert reads (the widget that opens the card is unscoped)
  *   - `requireAckNote` rides the payload flat, so the page knows how to ask
  *   - acknowledging through it records the caller, the note, and the `source`
  *     provenance, and `source` is a CLOSED set (it lands in an audit Event)
@@ -28,12 +30,31 @@ import { authedAgent, dbDescribe, dbReachable, ensureTestUser } from "./_helpers
 const d = dbDescribe;
 
 const SCOPED_USERNAME = "polaris-ack-scoped";
+const SCOPED_ADMIN_USERNAME = "polaris-ack-scoped-admin";
 const SCOPED_PASSWORD = "test-password-do-not-use-in-prod";
 const RULE_NAME = "polaris-ack-test-rule";
 
 let admin: { agent: ReturnType<typeof request.agent>; csrf: string };
-/** An operator scoped to one region — the 404-not-403 case. */
+/** A non-admin operator scoped to one region — the 404-not-403 case. */
 let scoped: { agent: ReturnType<typeof request.agent>; csrf: string };
+/** An ADMIN carrying the same region tag — who the scope must not narrow. */
+let scopedAdmin: { agent: ReturnType<typeof request.agent>; csrf: string };
+
+async function upsertScopedUser(username: string, roleId: string) {
+  await prisma.user.upsert({
+    where: { username },
+    // regionTags on the USER, so the effective scope is one region and an
+    // alert tagged with a different one is out of reach.
+    update: { roleId, regionTags: ["north"] },
+    create: {
+      username,
+      passwordHash: await hashPassword(SCOPED_PASSWORD),
+      roleId,
+      regionTags: ["north"],
+      authProvider: "local",
+    },
+  });
+}
 
 async function login(username: string, password: string) {
   const agent = request.agent(app);
@@ -81,27 +102,19 @@ beforeAll(async () => {
 
   const adminRole = await prisma.role.findUnique({ where: { name: "admin" } });
   if (!adminRole) throw new Error("built-in 'admin' Role missing — run prisma migrate deploy on the test DB");
-  await prisma.user.upsert({
-    where: { username: SCOPED_USERNAME },
-    // regionTags on the USER, so the effective scope is one region and the
-    // alert below (tagged with a different one) is out of reach.
-    update: { roleId: adminRole.id, regionTags: ["north"] },
-    create: {
-      username: SCOPED_USERNAME,
-      passwordHash: await hashPassword(SCOPED_PASSWORD),
-      roleId: adminRole.id,
-      regionTags: ["north"],
-      authProvider: "local",
-    },
-  });
+  const netRole = await prisma.role.findUnique({ where: { name: "networkadmin" } });
+  if (!netRole) throw new Error("built-in 'networkadmin' Role missing — run prisma migrate deploy on the test DB");
+  await upsertScopedUser(SCOPED_USERNAME, netRole.id);
+  await upsertScopedUser(SCOPED_ADMIN_USERNAME, adminRole.id);
   scoped = await login(SCOPED_USERNAME, SCOPED_PASSWORD);
+  scopedAdmin = await login(SCOPED_ADMIN_USERNAME, SCOPED_PASSWORD);
 });
 
 afterAll(async () => {
   if (!dbReachable) return;
   await prisma.notification.deleteMany({ where: { assetHostname: "ACK-TEST-SWITCH" } });
   await prisma.notificationRule.deleteMany({ where: { name: { startsWith: RULE_NAME } } });
-  await prisma.user.deleteMany({ where: { username: SCOPED_USERNAME } });
+  await prisma.user.deleteMany({ where: { username: { in: [SCOPED_USERNAME, SCOPED_ADMIN_USERNAME] } } });
   await prisma.$disconnect();
 });
 
@@ -149,6 +162,31 @@ d("GET /alerts/:id — the acknowledge page's read", () => {
     // above is the region predicate rather than a broken fixture.
     const shared = await makeAlert();
     expect((await scoped.agent.get(`/api/v1/alerts/${shared.id}`)).status).toBe(200);
+  });
+
+  it("does not region-scope an admin-equivalent caller — on the card or the list", async () => {
+    // The Active Alerts widget is unscoped, so an admin who picked up a region
+    // tag (user, role or SSO group) saw the alert there and then got "not here
+    // any more" from its acknowledge card.
+    const n = await makeAlert({ regionTags: ["south"] });
+    const one = await scopedAdmin.agent.get(`/api/v1/alerts/${n.id}`);
+    expect(one.status).toBe(200);
+    expect(one.body.id).toBe(n.id);
+
+    const list = await scopedAdmin.agent.get("/api/v1/alerts?search=ACK-TEST-SWITCH");
+    expect(list.status).toBe(200);
+    expect(list.body.notifications.map((r: { id: string }) => r.id)).toContain(n.id);
+
+    // ...and the non-admin on the same region tag is still narrowed by it.
+    const narrowed = await scoped.agent.get("/api/v1/alerts?search=ACK-TEST-SWITCH");
+    expect(narrowed.body.notifications.map((r: { id: string }) => r.id)).not.toContain(n.id);
+
+    const ack = await scopedAdmin.agent
+      .post("/api/v1/alerts/acknowledge")
+      .set("X-CSRF-Token", scopedAdmin.csrf)
+      .send({ ids: [n.id] });
+    expect(ack.status).toBe(200);
+    expect(ack.body.acknowledged).toBe(1);
   });
 
   it("does not capture the sibling POST routes", async () => {

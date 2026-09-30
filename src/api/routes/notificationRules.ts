@@ -9,6 +9,8 @@
  *   POST /poll-cadence      automationManagement:read  (how often those devices
  *        take the reading — the wizard counts its holds in polls)
  *   POST /preview  automationManagement:fullwrite  (dry-run a draft)
+ *   POST /message-example  automationManagement:write  (the In-app Alert
+ *        card's example: the draft's message rendered for one of its devices)
  *   POST / PUT/:id / DELETE/:id   automationManagement:fullwrite  (CRUD)
  *
  * Validation via ruleInputSchema (notificationTypes); business logic in
@@ -23,11 +25,12 @@ import { AppError } from "../../utils/errors.js";
 import { ruleInputSchema, previewInputSchema, buildSchemaCatalog, allRuleActionRefs, scopeSchema, type RuleInput } from "../../services/notificationTypes.js";
 import { listRules, createRule, updateRule, deleteRule, listScopeOptions } from "../../services/notificationRuleService.js";
 import { previewDownDetectionRemoval } from "../../services/downDetectionService.js";
-import { previewRule } from "../../services/notificationEngine.js";
+import { previewRule, previewAlertMessage } from "../../services/notificationEngine.js";
 import { listDimensionValues, dimensionPickerMeta } from "../../services/notificationDimensionService.js";
 import { resolveScopeCadence } from "../../services/notificationCadenceService.js";
 import { listRecipientUsers } from "../../services/notificationRecipientService.js";
 import { listStateProbes } from "../../services/manufacturerProfileService.js";
+import { listCheckCatalog } from "../../services/pathCheckService.js";
 import { runTestDelivery } from "../../services/automationTestService.js";
 
 export const notificationRulesRouter = Router();
@@ -52,6 +55,9 @@ notificationRulesRouter.get("/schema", requirePermission("automationManagement",
       ...buildSchemaCatalog(),
       dimensionPickers: dimensionPickerMeta(),
       stateProbes: listStateProbes(),
+      // Same reason as stateProbes: a path* condition's `checkId` is an id, and
+      // the builder's sentences must name the check, never the id.
+      pathChecks: await listCheckCatalog(),
     });
   } catch (err) { next(err); }
 });
@@ -76,10 +82,26 @@ notificationRulesRouter.get("/recipient-users", requirePermission("automationMan
 
 // Preview accepts partial drafts: `{scope}`-only (wizard Step 2 device list)
 // and `{trigger, scope}` (Step 3 current-values check) — name is defaulted.
-notificationRulesRouter.post("/preview", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+notificationRulesRouter.post("/preview", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const input = previewInputSchema.parse(req.body);
     res.json(await previewRule(input));
+  } catch (err) { next(err); }
+});
+
+// The In-app Alert card's example: the draft's message rendered against ONE of
+// its own devices (`assetId`, or a random pick when absent / out of scope), plus
+// every token's value for that device so the variable chips can show it on
+// hover. Same gate as /preview — it is the same dry run, read-only.
+const messageExampleSchema = z.object({
+  rule: previewInputSchema,
+  assetId: z.string().max(100).nullish(),
+});
+
+notificationRulesRouter.post("/message-example", requirePermission("automationManagement", "write"), async (req, res, next) => {
+  try {
+    const body = messageExampleSchema.parse(req.body);
+    res.json(await previewAlertMessage(body.rule, body.assetId ?? null));
   } catch (err) { next(err); }
 });
 
@@ -107,7 +129,7 @@ const testDeliverySchema = z.object({
   // rather than 400ing it.
 });
 
-notificationRulesRouter.post("/test-delivery", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+notificationRulesRouter.post("/test-delivery", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const userId = req.session?.userId;
     const username = req.session?.username;
@@ -142,7 +164,7 @@ const dimensionValuesSchema = z.object({
   // health-check) so the picker can't offer a value that matches nothing.
   narrow: z.object({
     sensorClass: z.string().max(100).optional(),
-    healthCheck: z.string().max(200).optional(),
+    healthCheck: z.string().max(1000).optional(), // "|"-joined any-of, like the dimensionFilter
     // State-probe rows belong to one probe (the row list for "PSU alarm" is not
     // the row list for "fan tray OK").
     stateProbeId: z.string().max(200).optional(),
@@ -185,17 +207,20 @@ notificationRulesRouter.post("/poll-cadence", requirePermission("automationManag
 
 /**
  * Script actions are RCE-equivalent, so saving a rule that carries any
- * (top-level or in an escalation tier) requires automationScripts=fullwrite
- * ON TOP of automationManagement=fullwrite. Editing a rule without script
+ * (top-level or in an escalation tier) requires automationScripts=write
+ * ON TOP of automationManagement=write. Editing a rule without script
  * actions never needs the key — including edits that REMOVE script actions.
+ * Both keys top out at write (their fourth rung was never routed); the
+ * protection is that automationScripts is granted to almost nobody, not
+ * that its top rung is spelled differently from every other key's.
  */
 function assertScriptActionPermission(req: Request, input: RuleInput): void {
   // allRuleActionRefs is the canonical walk over every place actions live —
   // top-level (+ per-action escalation tiers), rule-level escalation tiers,
   // severity-band actions (+ their tiers), band-level tiers, resolved actions.
   const hasScript = allRuleActionRefs(input).some((r) => r.action.type === "script");
-  if (hasScript && !hasPermission(req, "automationScripts", "fullwrite")) {
-    throw new AppError(403, "Attaching script actions requires Full Read-Write on Automation Scripts (automationScripts)");
+  if (hasScript && !hasPermission(req, "automationScripts", "write")) {
+    throw new AppError(403, "Attaching script actions requires Read-Write on Automation Scripts (automationScripts)");
   }
 }
 
@@ -216,7 +241,7 @@ notificationRulesRouter.get("/:id/removal-impact", requirePermission("automation
   }
 });
 
-notificationRulesRouter.post("/", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+notificationRulesRouter.post("/", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const input = ruleInputSchema.parse(req.body);
     assertScriptActionPermission(req, input);
@@ -225,7 +250,7 @@ notificationRulesRouter.post("/", requirePermission("automationManagement", "ful
   } catch (err) { next(err); }
 });
 
-notificationRulesRouter.put("/:id", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+notificationRulesRouter.put("/:id", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const input = ruleInputSchema.parse(req.body);
     assertScriptActionPermission(req, input);
@@ -237,7 +262,7 @@ notificationRulesRouter.put("/:id", requirePermission("automationManagement", "f
   }
 });
 
-notificationRulesRouter.delete("/:id", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+notificationRulesRouter.delete("/:id", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     await deleteRule(req.params.id as string, req.session?.username);
     res.status(204).end();

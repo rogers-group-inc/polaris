@@ -48,6 +48,19 @@ function fnSrc(name: string): string {
   return assetsLines.slice(start, end + 1).join("\n");
 }
 
+/** The two app.js helpers the panel's keyboard gates run through — the real
+ *  ones, not stubs, so the "yields to a nested drilldown / a modal" cases
+ *  exercise the stacking rule the page actually uses. */
+const appLines = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8").split(/\r?\n/);
+function appFnSrc(name: string): string {
+  const start = appLines.findIndex((l) => l.startsWith(`function ${name}(`));
+  if (start < 0) throw new Error(`app.js: function ${name} not found`);
+  const end = appLines.findIndex((l, i) => i > start && l === "}");
+  return appLines.slice(start, end + 1).join("\n");
+}
+const APP_SRC = ["isTopmostSlideover", "wireSlideoverEscape"].map(appFnSrc).join("\n") +
+  "\nglobalThis.isTopmostSlideover = isTopmostSlideover;\nglobalThis.wireSlideoverEscape = wireSlideoverEscape;";
+
 const FN_NAMES = [
   "_assetHistoryOpen",
   "_assetHistoryTarget",
@@ -99,6 +112,8 @@ const navWrap = () => document.getElementById("asset-panel-nav") as HTMLElement;
 beforeEach(() => {
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function(APP_SRC)();
   g.ASSET_HISTORY_MAX = HISTORY_MAX;
   resetState();
   // Shell hooks _ensureAssetPanelDOM reaches for.

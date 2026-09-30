@@ -1,30 +1,20 @@
-// public/js/mobile/reservations-tab.js — Reservations tab.
+// public/js/mobile/reservation-actions.js — reservation verbs shared by the
+// Networks tab's IP sheet.
 //
-// Lists active reservations. Each row collapses to IP (headline) +
-// MAC / hostname (subtitle). Tapping the row expands it inline to
-// show owner/subnet/source/notes plus role-gated action buttons:
-//   • Edit  — opens an inline edit sheet (PUT /reservations/:id).
-//             Visible to admin/networkadmin always; user/assetsadmin
-//             only when r.createdBy === user.username.
-//   • Free  — releases the reservation (DELETE /reservations/:id).
-//             Same role gating as Edit.
-//   • Reserve — only on `sourceType="dhcp_lease"` rows. Opens the
-//             standard reserve sheet (subnet-detail.js global helper)
-//             pre-populated with IP / MAC / hostname. On submit, the
-//             helper releases the lease first then creates a manual
-//             reservation that pushes to the FortiGate when the
-//             subnet's integration has DHCP push enabled.
-//             Visible to any role with create access
-//             (admin/networkadmin/assetsadmin/user).
-//
-// Only one row stays expanded at a time. Tapping the same row again
-// collapses it.
+// The phone used to carry a Reservations tab: a flat list of the first 200
+// active reservations with these verbs on each row. That tab is gone — the
+// Networks tab took its navbar slot, and a network's IP sheet is where a
+// reservation is seen and acted on — but the verbs outlived it:
+//   • Edit    — the edit sheet (PUT /reservations/:id).
+//   • Free    — Release a reservation / Revoke a lease (DELETE).
+//   • Reserve — promote a DHCP lease through the shared reserve sheet
+//               (PolarisReserveSheet in subnet-detail.js).
+//   • Reserve an IP — type an address, Polaris finds its network
+//               (the Networks tab's "+ Reserve" FAB).
+// Every verb takes an onSuccess callback so the caller refreshes its own
+// list; nothing here owns a list any more.
 
 (function () {
-  var LIST_LIMIT = 200;
-
-  var _state = { rows: [], expandedId: null, user: null };
-
   // Gate on the permission matrix (reservations level), NOT the role name —
   // custom/renamed roles that grant reservations=write must pass, exactly
   // like the desktop's permAtLeast / canEditReservation. See app.js.
@@ -46,220 +36,8 @@
     return !!(row && row.createdBy && user.username && row.createdBy === user.username);
   }
 
-  var Reservations = {
-    title: "Reservations",
-    icon: "#i-bookmark",
-    renderTopbar: function (ctx) {
-      // Add action moved to a floating "+ Reserve" FAB in the body —
-      // matches the Networks page's Reserve FAB so the same primary
-      // create gesture lands in the same spot on both screens.
-      return ""
-        + '<div class="m3-topbar">'
-        + '  <div class="leading"></div>'
-        + '  <div class="title">Reservations</div>'
-        + '  <div class="trailing">'
-        + '    <button class="icon-btn" id="reservations-refresh-btn" aria-label="Refresh"><svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>'
-        + '  </div>'
-        + '</div>';
-    },
-    render: function (body, ctx) {
-      _state.user = (ctx && ctx.user) || null;
-      _state.expandedId = null;
-      var user = _state.user;
-      body.innerHTML = ''
-        + '<div id="reservations-host"></div>'
-        + (canCreate(user)
-          ? '<button class="fab-ext" id="reservations-fab" style="position:fixed;right:16px;bottom:calc(var(--navbar-h) + 16px);z-index:30;"><svg viewBox="0 0 24 24"><use href="#i-add"/></svg>Reserve</button>'
-          : '');
-      load();
-
-      var btn = document.getElementById("reservations-refresh-btn");
-      if (btn) btn.addEventListener("click", function () {
-        btn.disabled = true;
-        load().finally(function () { btn.disabled = false; });
-      });
-
-      var fab = document.getElementById("reservations-fab");
-      if (fab) fab.addEventListener("click", function () {
-        openCreateByIpSheet();
-      });
-    },
-    onPullToRefresh: function () {
-      return load();
-    },
-  };
-
-  function load() {
-    var host = document.getElementById("reservations-host");
-    if (!host) return Promise.resolve();
-    host.innerHTML = '<div class="loading-screen" style="padding:48px 0;"><div class="spinner"></div></div>';
-
-    return api.reservations.list({ status: "active", limit: LIST_LIMIT }).then(function (resp) {
-      _state.rows = (resp && resp.reservations) || [];
-      _state.total = (resp && resp.total) || _state.rows.length;
-      renderList();
-    }).catch(function (err) {
-      host.innerHTML = ""
-        + '<div class="empty-state" style="padding-top:48px;">'
-        + '  <div class="icon" style="background:var(--md-error-container);color:var(--md-on-error-container);"><svg viewBox="0 0 24 24"><use href="#i-warn"/></svg></div>'
-        + '  <div class="ttl">Couldn’t load</div>'
-        + '  <div class="desc">' + escapeHtml(err && err.message ? err.message : "error") + '</div>'
-        + '</div>';
-    });
-  }
-
-  function renderList() {
-    var host = document.getElementById("reservations-host");
-    if (!host) return;
-    var rs = _state.rows;
-    if (rs.length === 0) {
-      host.innerHTML = ""
-        + '<div class="empty-state" style="padding-top:48px;">'
-        + '  <div class="icon"><svg viewBox="0 0 24 24"><use href="#i-bookmark"/></svg></div>'
-        + '  <div class="ttl">No reservations</div>'
-        + '  <div class="desc">No active reservations on file.</div>'
-        + '</div>';
-      return;
-    }
-
-    var html = ""
-      + '<div class="section-head">Active<span class="count">'
-      + escapeHtml(String(rs.length))
-      + (_state.total > rs.length ? " of " + escapeHtml(String(_state.total)) : "")
-      + '</span></div>';
-
-    rs.forEach(function (r, i) {
-      var expanded = _state.expandedId === r.id;
-      var subtitleBits = [];
-      if (r.macAddress) subtitleBits.push('<span class="mono">' + escapeHtml(r.macAddress) + '</span>');
-      if (r.hostname) subtitleBits.push(escapeHtml(r.hostname));
-      if (subtitleBits.length === 0 && r.subnet) {
-        // Nothing identifying the device — fall back to the subnet label
-        // so the row still has a useful second line.
-        if (r.subnet.name) subtitleBits.push(escapeHtml(r.subnet.name));
-        else if (r.subnet.cidr) subtitleBits.push('<span class="mono">' + escapeHtml(r.subnet.cidr) + '</span>');
-      }
-      var subtitle = subtitleBits.join(" · ") || '<span style="color:var(--md-on-surface-variant);">—</span>';
-
-      var chevHref = expanded ? "#i-chev-down" : "#i-chev-right";
-      var ip = r.ipAddress || "—";
-
-      html += ""
-        + '<button class="list-item two-line" data-id="' + escapeHtml(r.id) + '"' + (expanded ? ' aria-expanded="true"' : '') + '>'
-        + '  <span class="leading"><svg viewBox="0 0 24 24"><use href="#i-bookmark"/></svg></span>'
-        + '  <div class="content">'
-        + '    <div class="headline"><span class="mono">' + escapeHtml(ip) + '</span></div>'
-        + '    <div class="supporting">' + subtitle + '</div>'
-        + '  </div>'
-        + '  <div class="trailing"><svg viewBox="0 0 24 24"><use href="' + chevHref + '"/></svg></div>'
-        + '</button>'
-        + (expanded ? renderExpandedPanel(r) : '')
-        + (i < rs.length - 1 ? '<div class="list-divider"></div>' : "");
-    });
-    host.innerHTML = html;
-
-    wireRowHandlers();
-  }
-
-  function renderExpandedPanel(r) {
-    var detailRows = [];
-    if (r.hostname) detailRows.push(detailRow("Hostname", escapeHtml(r.hostname)));
-    if (r.owner)    detailRows.push(detailRow("Owner", escapeHtml(r.owner)));
-    if (r.subnet) {
-      var subnetText = r.subnet.name
-        ? escapeHtml(r.subnet.name) + (r.subnet.cidr ? ' <span class="mono" style="color:var(--md-on-surface-variant);font-size:12px;">' + escapeHtml(r.subnet.cidr) + '</span>' : '')
-        : (r.subnet.cidr ? '<span class="mono">' + escapeHtml(r.subnet.cidr) + '</span>' : '—');
-      detailRows.push(detailRow("Network", subnetText));
-    }
-    if (r.sourceType) detailRows.push(detailRow("Source", escapeHtml(String(r.sourceType).replace(/_/g, " "))));
-    if (r.notes)    detailRows.push(detailRow("Notes", escapeHtml(r.notes)));
-    if (r.expiresAt) detailRows.push(detailRow("Expires", escapeHtml(formatDate(r.expiresAt))));
-    if (r.createdBy) detailRows.push(detailRow("Created by", escapeHtml(r.createdBy)));
-
-    var user = _state.user;
-    var buttons = [];
-    var isLease = r.sourceType === "dhcp_lease";
-    if (isLease && canCreate(user)) {
-      // Green when push-eligible so the operator sees that confirming
-      // also writes the reservation to the FortiGate.
-      var reserveCls = r.pushEligible ? "btn-success" : "btn-filled";
-      var reserveTitle = r.pushEligible ? "Reserve on Gate" : "Reserve in Polaris";
-      buttons.push('<button class="btn ' + reserveCls + '" data-act="reserve" data-id="' + escapeHtml(r.id) + '" title="' + reserveTitle + '">Reserve</button>');
-    }
-    // A FortiGate VIP and a statically-configured interface address are owned
-    // by the DEVICE's config, not by Polaris: no Edit, no Release. The server
-    // refuses both (409) — this keeps the buttons off a row that can't use
-    // them. Matches the desktop IP panel, where the same two source types
-    // render read-only with a purple status dot.
-    var isDeviceOwned = r.sourceType === "vip" || r.sourceType === "interface_ip";
-    if (canModify(user, r) && !isDeviceOwned) {
-      buttons.push('<button class="btn btn-tonal" data-act="edit" data-id="' + escapeHtml(r.id) + '">Edit</button>');
-      // Leases → Revoke (forgets the current lease, client can re-acquire);
-      // reservations → Release (gives up the reservation).
-      var freeLabel = isLease ? "Revoke" : "Release";
-      var freeTitle = isLease ? "Revoke Lease" : "Release Reservation";
-      buttons.push('<button class="btn btn-error" data-act="free" data-id="' + escapeHtml(r.id) + '" title="' + freeTitle + '">' + freeLabel + '</button>');
-    }
-    if (r.subnetId) {
-      buttons.push('<button class="btn btn-text" data-act="open-subnet" data-subnet="' + escapeHtml(r.subnetId) + '">Open network</button>');
-    }
-
-    var btnBar = buttons.length
-      ? '<div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:12px;">' + buttons.join("") + '</div>'
-      : '';
-
-    var emptyHint = (detailRows.length === 0 && buttons.length === 0)
-      ? '<div style="color:var(--md-on-surface-variant);font-size:13px;">No additional details.</div>'
-      : '';
-
-    return ''
-      + '<div class="reservation-expand" style="background:var(--md-surface-cont-low);padding:12px 16px 16px;border-radius:0 0 var(--shape-md) var(--shape-md);">'
-      +   detailRows.join('')
-      +   emptyHint
-      +   btnBar
-      + '</div>';
-  }
-
-  function detailRow(label, valueHtml) {
-    return ''
-      + '<div style="display:flex;justify-content:space-between;gap:12px;padding:4px 0;font-size:13px;">'
-      + '  <span style="color:var(--md-on-surface-variant);flex-shrink:0;">' + escapeHtml(label) + '</span>'
-      + '  <span style="text-align:right;word-break:break-word;">' + valueHtml + '</span>'
-      + '</div>';
-  }
-
-  function wireRowHandlers() {
-    var host = document.getElementById("reservations-host");
-    if (!host) return;
-
-    // Action buttons inside an expanded panel — bound first so the
-    // row-collapse handler doesn't swallow them via stopPropagation.
-    host.querySelectorAll(".reservation-expand button[data-act]").forEach(function (btn) {
-      btn.addEventListener("click", function (e) {
-        e.stopPropagation();
-        var act = btn.dataset.act;
-        var id = btn.dataset.id;
-        var row = _state.rows.find(function (r) { return r.id === id; });
-        if (act === "edit"          && row) openEditSheet(row);
-        if (act === "free"          && row) confirmFree(row);
-        if (act === "reserve"       && row) startReserveFromLease(row);
-        if (act === "open-subnet")          PolarisRouter.go("subnet/" + btn.dataset.subnet);
-      });
-    });
-
-    // Row click → toggle expansion.
-    host.querySelectorAll(".list-item[data-id]").forEach(function (row) {
-      row.addEventListener("click", function () {
-        var id = row.dataset.id;
-        _state.expandedId = (_state.expandedId === id) ? null : id;
-        renderList();
-      });
-    });
-  }
-
   // ─── Reserve-from-lease ────────────────────────────────────────────────
   function startReserveFromLease(row, user, onSuccess) {
-    user = user || _state.user;
     if (!row.subnetId) {
       PolarisTabs.showSnackbar("Lease has no subnet — can't promote.", { error: true });
       return;
@@ -271,10 +49,7 @@
       notes: row.notes,
     }, {
       existingLeaseId: row.id,
-      onSuccess: onSuccess || function () {
-        _state.expandedId = null;
-        load();
-      },
+      onSuccess: onSuccess,
     });
   }
 
@@ -287,7 +62,6 @@
     api.reservations.release(row.id).then(function () {
       PolarisTabs.showSnackbar(verb + "d " + label);
       if (typeof onSuccess === "function") onSuccess();
-      else { _state.expandedId = null; load(); }
     }).catch(function (err) {
       PolarisTabs.showSnackbar(err && err.message ? err.message : (verb + " failed"), { error: true });
     });
@@ -447,7 +221,6 @@
       closeEditSheet();
       PolarisTabs.showSnackbar("Saved");
       if (typeof onSuccess === "function") onSuccess();
-      else load();
     }).catch(function (err) {
       btn.disabled = false;
       btn.innerHTML = "Save";
@@ -477,7 +250,7 @@
   // via /search, then either create the reservation, navigate to a more
   // specific error toast (no network / IP in use as VIP / DHCP lease /
   // existing reservation), or surface the server's create error inline.
-  function openCreateByIpSheet() {
+  function openCreateByIpSheet(user, onSuccess) {
     closeCreateByIpSheet();
 
     var scrim = document.createElement("div");
@@ -524,7 +297,7 @@
     PolarisTabs.attachSwipeToDismiss(sheet, closeCreateByIpSheet);
     document.getElementById("create-rsv-form").addEventListener("submit", function (e) {
       e.preventDefault();
-      submitCreateByIp();
+      submitCreateByIp(user, onSuccess);
     });
     setTimeout(function () {
       var ipInput = document.getElementById("c-ip");
@@ -532,7 +305,8 @@
     }, 50);
   }
 
-  function submitCreateByIp() {
+  function submitCreateByIp(user, onSuccess) {
+    var done = function () { if (typeof onSuccess === "function") onSuccess(); };
     clearCreateError();
     var ip       = (document.getElementById("c-ip").value || "").trim();
     var hostname = (document.getElementById("c-hostname").value || "").trim();
@@ -572,17 +346,17 @@
           // the typed-IP path and the row button behaving identically. Any
           // other hold (manual reservation, VIP, dhcp_reservation, …) is not
           // taken over — it falls through to the explanatory toast below.
-          if (src === "dhcp_lease" && canCreate(_state.user)) {
+          if (src === "dhcp_lease" && canCreate(user)) {
             closeCreateByIpSheet();
             PolarisTabs.showSnackbar(ip + " is leased — promote it to a reservation");
-            window.PolarisReserveSheet.open(ctx.subnetId, _state.user, {
+            window.PolarisReserveSheet.open(ctx.subnetId, user, {
               ip: ip,
               hostname: hostname || (existing && existing.hostname) || "",
               mac: mac || (existing && existing.macAddress) || "",
               notes: notes,
             }, {
               existingLeaseId: ctx.reservationId,
-              onSuccess: function () { load(); },
+              onSuccess: done,
             });
             return;
           }
@@ -613,7 +387,7 @@
         closeCreateByIpSheet();
         var where = ctx.subnetName || ctx.subnetCidr || "network";
         PolarisTabs.showSnackbar("Reserved " + ip + " in " + where);
-        load();
+        done();
       }).catch(function (err) {
         restore();
         showCreateError(err && err.message ? err.message : "Reservation failed");
@@ -650,17 +424,20 @@
 
   // escapeHtml is the canonical global from api.js (loaded first on every page).
 
-  window.PolarisReservationsTab = { spec: Reservations };
+  // A FortiGate VIP and a statically-configured interface address are owned
+  // by the DEVICE's config, not by Polaris: no Edit, no Release. The server
+  // refuses both (409); this keeps the buttons off a row that can't use them,
+  // matching the desktop IP panel, which renders the same two source types
+  // read-only.
+  function isDeviceOwned(row) {
+    return !!row && (row.sourceType === "vip" || row.sourceType === "interface_ip");
+  }
 
-  // Cross-page reservation action helpers. Used by subnet-detail.js so
-  // the IP-list rows on the Networks page can reuse the same Edit /
-  // Free / Reserve-from-lease flows without duplicating modal markup
-  // or backend wiring. Each action accepts an optional onSuccess
-  // callback so the caller can refresh its own list rather than the
-  // Reservations tab's.
   window.PolarisReservationActions = {
     canCreate: canCreate,
     canModify: canModify,
+    isDeviceOwned: isDeviceOwned,
+    reserveByIp:      function (user, onSuccess) { openCreateByIpSheet(user, onSuccess); },
     edit:             function (row, user, onSuccess) { openEditSheet(row, onSuccess); },
     free:             function (row, user, onSuccess) { confirmFree(row, onSuccess); },
     reserveFromLease: function (row, user, onSuccess) { startReserveFromLease(row, user, onSuccess); },

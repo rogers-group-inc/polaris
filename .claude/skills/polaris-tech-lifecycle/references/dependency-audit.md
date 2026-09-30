@@ -39,6 +39,18 @@ Three things that cost time if you don't know them:
   as a false positive, check whether its presence is suppressing the finding you'd actually want.
   Prefer rewriting into an idiom the analyzer recognizes over dismissing — a dismissal is invisible
   in the source, and the next reader re-litigates it.
+- **CodeQL does not follow our HTML escaper** (`esc()` → `escapeHtml()` in `public/js/`), so
+  every `innerHTML = … esc(x) …` whose `x` came from the DOM or an exception reads as
+  `js/xss-through-dom` / `js/xss-through-exception`. Don't dismiss those: set operator text with
+  `textContent` after the markup lands, or build the element. It is the idiom the analyzer
+  recognizes, and it drops the dependence on every caller remembering `esc()`. The 2026-09-28
+  sweep cleared the firmware tab that way (`renderAssetList` in `server-settings-firmware.js`).
+- **Check whether the "incomplete" sanitizer is reachable at all.** The 2026-09-28
+  `js/incomplete-sanitization` on the firmware tab escaped `"` but not `\` in a selector built
+  from a node key, but `nodeKey()` URI-encodes every part, so neither character can occur. The
+  first regression test written for it passed against the old code. Proving a finding means
+  reverting the fix and watching the test fail. If it doesn't fail, the finding is a false
+  positive: say so, and remove the fragile idiom anyway (compare the value, don't splice it).
 - **A behaviour-preserving rewrite of a sanitizer or a guard regex needs a differential test, not
   a green suite.** Both 2026-09-11 regex fixes were proven by running old and new over a generated
   corpus and diffing the output. For `scripts/check-versions.mjs` this was the only possible proof:
@@ -195,6 +207,18 @@ An incremental `npm install` papers over it; `npm ci` fails with ERESOLVE. **Sam
 unmergeable. Lift the ignore when typescript-eslint's peer range opens past 6.1.0, and move the
 whole group in one commit. The hold is recorded on the `typescript` row of
 `src/data/dependencyTargets.json` as well, which is where `check:deps` will point a future reader.
+
+**A `vitest`-group PR can change how an integration test's server lives, and only the
+`integration` job notices.** supertest 7.3.0 (PR #158, 2026-09-28) shares the server it
+auto-starts for `request.agent(app)` across that agent's requests and **closes it once none is
+in flight**. An agent kept past that point — `tests/integration/networkScans.test.ts` cached one
+logged-in agent per user across tests, to stay under the login rate limiter — then gets
+`ECONNREFUSED`, and every image build on `main` was red until the file was changed. The PR's own
+checks were green: pull requests run only `Check docs`, never the `integration` job. A test that
+reuses an agent across tests must hand supertest an `http.Server` it started itself (`listen(0)`
+in `beforeAll`, `close()` in `afterAll`): supertest never closes a server it did not start. Before
+merging a `vitest`-group PR, run `npx vitest run tests/integration --no-file-parallelism` against a
+real database.
 
 **gomod at `/agent`**, monthly, limit 3. See above.
 

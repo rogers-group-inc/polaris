@@ -23,6 +23,7 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
 import { publishCommandWake } from "./agentCommandWake.js";
+import { versionAtLeast } from "../utils/version.js";
 import {
   normalizeRuleToV2,
   SCRIPT_INTERPRETERS,
@@ -35,20 +36,9 @@ export const SCRIPT_RUN_TARGET_VALUES = ["server", "agent", "either"] as const;
 /** First agent version whose command loop understands action="run_script". */
 export const MIN_AGENT_SCRIPT_VERSION = "0.13.0";
 
-/** Dotted-numeric version compare: is `version` >= `min`? Non-numeric
- *  segments compare as 0; null/empty is never enough. Pure — unit-tested. */
-export function versionAtLeast(version: string | null | undefined, min: string): boolean {
-  if (!version) return false;
-  const parse = (v: string) => v.trim().replace(/^v/i, "").split(".").map((p) => parseInt(p, 10) || 0);
-  const a = parse(version);
-  const b = parse(min);
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const x = a[i] ?? 0;
-    const y = b[i] ?? 0;
-    if (x !== y) return x > y;
-  }
-  return true;
-}
+/** Moved to utils/version.ts so every agent-version gate shares one compare;
+ *  re-exported here for the existing importers. */
+export { versionAtLeast };
 
 export const MAX_SCRIPT_BODY_BYTES = 64 * 1024;
 /**

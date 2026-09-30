@@ -442,6 +442,20 @@ function makeAutomationSentences(s) {
   function leafDeclaresDownCount(leaf) {
     return isDownDetectionLeaf(leaf) && leaf.missedPolls != null;
   }
+  // ── Dependency-down alerting (business rule 78) ─────────────────────────
+  // A down automation may opt to still alert about a device that is
+  // dependency-suppressed (Dep. Down), naming the upstream device. The key
+  // rides the trigger like `missedPolls`, and its NAME comes from the catalog:
+  // a pre-upgrade server (no `dependencyDownKey`) renders no control at all,
+  // rather than one whose key the API would refuse.
+  function dependencyDownMeta() {
+    var dd = downDetectionMeta();
+    return dd && dd.dependencyDownKey ? dd : null;
+  }
+  function leafAlertsWhenDependencyDown(leaf) {
+    var dd = dependencyDownMeta();
+    return !!(dd && isDownDetectionLeaf(leaf) && leaf[dd.dependencyDownKey] === true);
+  }
   // ── State (0/1) metrics ────────────────────────────────────────────────
   // A state metric's reading is a flag, so its threshold is 0 or 1 and the
   // number is meaningless to read back: the automation is about "Alarm", not
@@ -525,7 +539,7 @@ function makeAutomationSentences(s) {
       // The probe is the subject when it resolved to a name; an unresolved one
       // still shows as a clause so the filter is never invisible.
       if (k === "stateProbeId" && m.name) return;
-      if (df[k]) out += " " + (DIM_PHRASE[k] || k + " = {value}").replace("{value}", df[k]);
+      if (df[k]) out += " " + dimPhrase(k, df[k]);
     });
     return out;
   }
@@ -550,7 +564,23 @@ function makeAutomationSentences(s) {
     // the factory reads correctly against a partial /schema payload, the same as
     // every other dimension above.
     stateProbeId: "for probe {value}", stateRowPattern: "on rows matching {value}",
+    checkId: "for check {value}",
   }, s.dimensionPhrases || {});
+
+  /** A path check's NAME for its id — the id must never reach a
+   *  sentence. Resolved off /schema's `pathChecks` registry. */
+  function checkNameOf(id) {
+    var list = s.pathChecks || [];
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return "«" + list[i].name + "»";
+    return id + " (not found)";
+  }
+  /** One dimension clause: the DIM_PHRASE template with its value. */
+  function dimPhrase(k, value) {
+    var v = k === "checkId" && value && value !== "…" ? checkNameOf(value) : value;
+    // A multi value reads as a list: "for health check Microsoft or Primary WAN".
+    if (awDimIsMulti(k) && value && value !== "…") v = awDimTerms(value).join(" or ");
+    return (DIM_PHRASE[k] || k + " = {value}").replace("{value}", v);
+  }
 
   // Windowed-ratio metrics: the window is the measurement, mirrored from the
   // server's `windowedRatioMetrics` with the same built-in fallback the other
@@ -581,7 +611,7 @@ function makeAutomationSentences(s) {
     // Defensive: a filter row from an UNCOMPILED UI tree (the stored trigger
     // never carries one — tgFilterCompile folds them away before save).
     if (leaf.type === "asset_filter") {
-      return (DIM_PHRASE[leaf.dim] || leaf.dim + " = {value}").replace("{value}", String(leaf.value || "…"));
+      return dimPhrase(leaf.dim, String(leaf.value || "…"));
     }
     if (leaf.type === "asset_state") {
       // A down-detection leaf is not a status comparison to read back — it is a
@@ -592,7 +622,7 @@ function makeAutomationSentences(s) {
         var dOut = "the device misses " + dMiss + " poll" + (dMiss === 1 ? "" : "s") + " in a row";
         var dDf = leaf.dimensionFilter || {};
         Object.keys(dDf).forEach(function (k) {
-          if (dDf[k]) dOut += " " + (DIM_PHRASE[k] || k + " = {value}").replace("{value}", dDf[k]);
+          if (dDf[k]) dOut += " " + dimPhrase(k, dDf[k]);
         });
         return dOut;
       }
@@ -614,7 +644,7 @@ function makeAutomationSentences(s) {
       // same way a metric leaf does, or the filter is invisible in the sentence.
       var sDf = leaf.dimensionFilter || {};
       Object.keys(sDf).forEach(function (k) {
-        if (sDf[k]) sOut += " " + (DIM_PHRASE[k] || k + " = {value}").replace("{value}", sDf[k]);
+        if (sDf[k]) sOut += " " + dimPhrase(k, sDf[k]);
       });
       return sOut;
     }
@@ -633,7 +663,7 @@ function makeAutomationSentences(s) {
     var out = (leaf.type === "host_metric" ? "the Polaris host's " : "") + metricLabel(leaf.metric) + agg + " " + (CMP_PHRASE[leaf.operator] || leaf.operator) + " " + thr + unit;
     var df = leaf.dimensionFilter || {};
     Object.keys(df).forEach(function (k) {
-      if (df[k]) out += " " + (DIM_PHRASE[k] || k + " = {value}").replace("{value}", df[k]);
+      if (df[k]) out += " " + dimPhrase(k, df[k]);
     });
     return out;
   }
@@ -737,7 +767,7 @@ function makeAutomationSentences(s) {
       out = "When <strong>" + escapeHtml(subject) + agg + " " + escapeHtml(CMP_PHRASE[tr.operator] || tr.operator) + " " + escapeHtml(String(thr)) + escapeHtml(unit) + "</strong>";
       var df = tr.dimensionFilter || {};
       Object.keys(df).forEach(function (k) {
-        if (df[k]) out += " " + escapeHtml((DIM_PHRASE[k] || k + " = {value}").replace("{value}", df[k]));
+        if (df[k]) out += " " + escapeHtml(dimPhrase(k, df[k]));
       });
     } else if (tr.type === "asset_state") {
       var trVal = tr.value == null || tr.value === "" ? "…"
@@ -747,7 +777,7 @@ function makeAutomationSentences(s) {
       // filter by interface / tunnel / hostname and the sentence must say so.
       var sdf = tr.dimensionFilter || {};
       Object.keys(sdf).forEach(function (k) {
-        if (sdf[k]) out += " " + escapeHtml((DIM_PHRASE[k] || k + " = {value}").replace("{value}", sdf[k]));
+        if (sdf[k]) out += " " + escapeHtml(dimPhrase(k, sdf[k]));
       });
     } else if (tr.type === "event") {
       // The detail conditions are named here, not summarised as "with filters":
@@ -770,6 +800,12 @@ function makeAutomationSentences(s) {
     }
     if ((tr.type === "asset_metric" || tr.type === "host_metric" || tr.type === "asset_state") && tr.forDurationSec > 0) {
       out += ", sustained for <strong>" + holdPhrase(tr) + "</strong>";
+    }
+    // Business rule 78 — the one thing this automation does that a plain down
+    // automation does not, so the sentence has to say it: a reader comparing
+    // two down automations in the list is otherwise looking at identical prose.
+    if (leafAlertsWhenDependencyDown(tr)) {
+      out += " — and still when the device is <strong>dependency-down</strong>, naming the upstream device";
     }
     return out + tail + ".";
   }
@@ -806,7 +842,7 @@ function makeAutomationSentences(s) {
     sensorClass: "class=", sensorNamePattern: "name~", ifNamePattern: "if~",
     mountPathPattern: "mount~", sdwanRulePattern: "rule~", healthCheck: "health=", link: "member=",
     tunnelName: "tunnel=", widgetId: "widget=", processNamePattern: "process~",
-    stateProbeId: "probe=", stateRowPattern: "row~", hostnamePattern: "host~",
+    stateProbeId: "probe=", stateRowPattern: "row~", hostnamePattern: "host~", checkId: "check=",
     ipPattern: "ip~", macPattern: "mac~", manufacturerPattern: "mfr~", modelPattern: "model~",
   }, s.formulaDimensions || {});
 
@@ -831,6 +867,7 @@ function makeAutomationSentences(s) {
         var p = stateProbeOf(v);
         if (p && p.name) v = p.name;
       }
+      if (k === "checkId") v = checkNameOf(v).replace(/[«»]/g, "");
       parts.push((FORMULA_DIM[k] || (k + "=")) + '"' + v + '"');
     });
     return parts.length ? "[" + parts.join(", ") + "]" : "";
@@ -1105,6 +1142,7 @@ function makeAutomationSentences(s) {
     isDownDetectionLeaf: isDownDetectionLeaf, isDownDetectionTrigger: isDownDetectionTrigger,
     missedPollsOf: missedPollsOf, downDetectionMeta: downDetectionMeta,
     leafDeclaresDownCount: leafDeclaresDownCount,
+    dependencyDownMeta: dependencyDownMeta, leafAlertsWhenDependencyDown: leafAlertsWhenDependencyDown,
     tgLeafPhrase: tgLeafPhrase, tgTreePhrase: tgTreePhrase,
     triggerSentence: triggerSentence, severityLadderPhrase: severityLadderPhrase, resetSentence: resetSentence,
     invertedLeaf: invertedLeaf, invertedTree: invertedTree, resetCaveat: resetCaveat,
@@ -1191,12 +1229,87 @@ function awMacDimensionMatch(mac, pattern) {
   return strip(mac).indexOf(needle) !== -1;
 }
 
+/** The SD-WAN pair takes SEVERAL values — "these two health checks", "wan1 and
+ *  wan2" — stored joined by "|" (FortiOS object names admit no "|"), any-of,
+ *  each term a substring. Mirror of the server's utils/sdwanDimensions; keep
+ *  the two in lockstep. A plain function test rather than a lookup table so the
+ *  sentence factory above can call it before this part of the file has run. */
+function awDimIsMulti(dim) { return dim === "healthCheck" || dim === "link"; }
+
+/** The "|"-separated terms of a multi value — trimmed, blanks dropped. */
+function awDimTerms(value) {
+  return String(value == null ? "" : value).split("|").map(function (t) { return t.trim(); }).filter(Boolean);
+}
+
+/** Canonical stored form: de-duplicated case-insensitively (first spelling
+ *  kept), joined by "|" with no padding. */
+function awDimJoinTerms(terms) {
+  var seen = {};
+  var out = [];
+  (terms || []).forEach(function (t) {
+    var v = String(t == null ? "" : t).trim();
+    if (!v || seen[v.toLowerCase()]) return;
+    seen[v.toLowerCase()] = true;
+    out.push(v);
+  });
+  return out.join("|");
+}
+
+/** What the input shows for a stored value — the terms spaced out, so the
+ *  list reads as a list. Single-value dims are shown as stored. */
+function awDimDisplayValue(dim, stored) {
+  return awDimIsMulti(dim) ? awDimTerms(stored).join(" | ") : String(stored == null ? "" : stored);
+}
+
+/** What a dim control's text is stored as — canonical for a multi dim. */
+function awDimStoredValue(dim, text) {
+  return awDimIsMulti(dim) ? awDimJoinTerms(awDimTerms(text)) : String(text == null ? "" : text).trim();
+}
+
+/** Mirror of the server's `sdwanDimensionMatch`: any term a case-insensitive
+ *  substring. No terms = match. */
+function awSdwanDimensionMatch(value, pattern) {
+  var terms = awDimTerms(pattern);
+  if (!terms.length) return true;
+  return terms.some(function (t) { return awDimSubstringMatch(value, t); });
+}
+
+/**
+ * A multi dim's text split into what is PICKED and what is still being TYPED.
+ * Every term before the last "|" is picked. The last term is the fragment
+ * being typed — unless the text ends with "|", or the last term is exactly a
+ * reported value (it was clicked, or typed out in full), in which case it is
+ * picked too and the fragment is empty. The fragment is what the suggestion
+ * list filters by, so after a pick the whole list is back on offer.
+ */
+function awDimMultiState(res, text) {
+  var raw = String(text == null ? "" : text);
+  var terms = awDimTerms(raw);
+  var reported = {};
+  ((res && res.values) || []).forEach(function (v) { reported[String(v.value).toLowerCase()] = true; });
+  var fragment = "";
+  if (terms.length && !/\|\s*$/.test(raw) && !reported[terms[terms.length - 1].toLowerCase()]) fragment = terms.pop();
+  return { picked: terms, fragment: fragment };
+}
+
+/** Clicking a suggestion on a multi dim: toggle it. Already picked → removed;
+ *  otherwise added in place of whatever fragment was being typed. Returns the
+ *  new display text. */
+function awDimTogglePick(res, text, value) {
+  var st = awDimMultiState(res, text);
+  var lc = String(value).toLowerCase();
+  var had = st.picked.some(function (t) { return t.toLowerCase() === lc; });
+  var next = had ? st.picked.filter(function (t) { return t.toLowerCase() !== lc; }) : st.picked.concat([value]);
+  return awDimTerms(awDimJoinTerms(next)).join(" | ");
+}
+
 /** Which matcher selects readings for a dimension — the two identity dims with
- *  value shapes substring can't honestly serve get their own; everything else
- *  is the shared substring the engine uses. */
+ *  value shapes substring can't honestly serve get their own, the SD-WAN pair
+ *  is any-of; everything else is the shared substring the engine uses. */
 function awDimMatcher(dim) {
   if (dim === "ipPattern") return awIpDimensionMatch;
   if (dim === "macPattern") return awMacDimensionMatch;
+  if (awDimIsMulti(dim)) return awSdwanDimensionMatch;
   return awDimSubstringMatch;
 }
 
@@ -1223,6 +1336,7 @@ function awDimSuggestHtml(res, query, dim) {
     return '<div class="aw-suggest-empty">The selected devices report no ' + escapeHtml(noun + (res.narrowLabel || "")) + '.</div>';
   }
   var q = String(query == null ? "" : query).trim();
+  if (awDimIsMulti(dim)) return awDimMultiSuggestHtml(res, query, noun);
   var hits = awDimHits(res, q, dim);
   if (!hits.length) {
     return '<div class="aw-suggest-empty">None of the ' + res.values.length + ' reported ' + escapeHtml(noun) +
@@ -1232,6 +1346,32 @@ function awDimSuggestHtml(res, query, dim) {
     var count = v.assetCount ? ' <span style="color:var(--color-text-tertiary)">(' + v.assetCount + ')</span>' : "";
     return '<div class="aw-suggest-item" data-val="' + escapeHtml(v.value) + '" title="' + escapeHtml(v.value) + '">' +
       escapeHtml(v.value) + count + '</div>';
+  }).join("");
+  if (hits.length > AW_DIM_SUGGEST_CAP) {
+    html += '<div class="aw-suggest-empty">+' + (hits.length - AW_DIM_SUGGEST_CAP) + ' more — keep typing to narrow.</div>';
+  }
+  return html;
+}
+
+/** The pick-several list for a multi dim: every reported value (filtered by
+ *  the fragment being typed), each ticked when it is picked, clicking one
+ *  toggles it and the list stays open for the next. */
+function awDimMultiSuggestHtml(res, text, noun) {
+  var st = awDimMultiState(res, text);
+  var picked = {};
+  st.picked.forEach(function (t) { picked[t.toLowerCase()] = true; });
+  var hits = res.values.filter(function (v) { return awDimSubstringMatch(v.value, st.fragment); });
+  if (!hits.length) {
+    return '<div class="aw-suggest-empty">None of the ' + res.values.length + ' reported ' + escapeHtml(noun) +
+      ' contain “' + escapeHtml(st.fragment) + '”.</div>';
+  }
+  var html = '<div class="aw-suggest-empty">Click to add or remove — pick as many as you need.</div>';
+  html += hits.slice(0, AW_DIM_SUGGEST_CAP).map(function (v) {
+    var on = !!picked[String(v.value).toLowerCase()];
+    var count = v.assetCount ? ' <span style="color:var(--color-text-tertiary)">(' + v.assetCount + ')</span>' : "";
+    return '<div class="aw-suggest-item' + (on ? ' aw-suggest-picked' : '') + '" data-val="' + escapeHtml(v.value) + '" title="' + escapeHtml(v.value) + '"' +
+      ' aria-selected="' + (on ? "true" : "false") + '">' +
+      '<span style="display:inline-block;width:1.1em">' + (on ? "✓" : "") + '</span>' + escapeHtml(v.value) + count + '</div>';
   }).join("");
   if (hits.length > AW_DIM_SUGGEST_CAP) {
     html += '<div class="aw-suggest-empty">+' + (hits.length - AW_DIM_SUGGEST_CAP) + ' more — keep typing to narrow.</div>';
@@ -1251,6 +1391,14 @@ function awDimMatchCue(res, value, dim) {
   var hits = awDimHits(res, q, dim);
   if (!hits.length) {
     return { text: "✕ matches none of the " + res.values.length + " reported " + noun + " — this condition would never fire", warn: true };
+  }
+  // Any-of: the list as a whole can match while one entry in it is a typo
+  // that selects nothing. Name it — the condition still fires, on the rest.
+  if (awDimIsMulti(dim)) {
+    var dead = awDimTerms(q).filter(function (t) { return !awDimHits(res, t, dim).length; });
+    if (dead.length) {
+      return { text: "✕ “" + dead.join("”, “") + "” matches none of the reported " + noun + " — the rest still apply", warn: true };
+    }
   }
   if (hits.length === 1 && hits[0].value.toLowerCase() === q.toLowerCase()) {
     return { text: "✓ exact match", warn: false };
@@ -1409,6 +1557,8 @@ if (typeof window !== "undefined") {
   window.PolarisAutomationDimensions = {
     optionsHtml: awDimOptionsHtml, suggestHtml: awDimSuggestHtml, matchCue: awDimMatchCue,
     substringMatch: awDimSubstringMatch, ipMatch: awIpDimensionMatch, macMatch: awMacDimensionMatch,
+    sdwanMatch: awSdwanDimensionMatch, isMulti: awDimIsMulti, terms: awDimTerms, joinTerms: awDimJoinTerms,
+    displayValue: awDimDisplayValue, storedValue: awDimStoredValue, multiState: awDimMultiState, togglePick: awDimTogglePick,
     note: awDimNote, narrow: awDimNarrow,
   };
   window.PolarisTriggerFilters = { compile: tgFilterCompile, lift: tgFilterLift };
@@ -1578,9 +1728,10 @@ async function openAutomationWizard(existing, opts) {
       isDownDetectionLeaf = _sent.isDownDetectionLeaf, missedPollsOf = _sent.missedPollsOf,
       isDownDetectionTrigger = _sent.isDownDetectionTrigger,
       downDetectionMeta = _sent.downDetectionMeta,
+      dependencyDownMeta = _sent.dependencyDownMeta, leafAlertsWhenDependencyDown = _sent.leafAlertsWhenDependencyDown,
       monStatusWord = _sent.monStatusWord,
       CMP_PHRASE = _sent.CMP_PHRASE, INV_CMP = _sent.INV_CMP;
-  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick, or type to filter", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick", link: "any WAN member — click to pick", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter" };
+  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick, or type to filter", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick one or more", link: "any WAN member — click to pick one or more", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter", checkId: "which path check — click to pick" };
   // The same placeholders when the dimension is INTEGRAL to the condition (see
   // tgIntegralDimOf): the row is about ONE component, so the hint asks which
   // and says what blank does instead of describing an optional narrowing.
@@ -2069,9 +2220,111 @@ async function openAutomationWizard(existing, opts) {
     var vars = s.templateVariables || [];
     if (!vars.length) return "";
     return vars.map(function (v) {
-      return '<button type="button" class="btn btn-sm btn-secondary tpl-token" data-token="' + escapeHtml(v.token) + '" title="' + escapeHtml(v.description) + '" style="margin:2px 4px 2px 0;font-family:var(--font-mono);font-size:0.72rem;padding:1px 6px">' + escapeHtml(v.token) + '</button>';
+      return '<button type="button" class="btn btn-sm btn-secondary tpl-token" data-token="' + escapeHtml(v.token) + '" title="' + escapeHtml(tokenChipTitle(v.token, v.description)) + '" style="margin:2px 4px 2px 0;font-family:var(--font-mono);font-size:0.72rem;padding:1px 6px">' + escapeHtml(v.token) + '</button>';
     }).join("");
   }
+  // ── In-app Alert example ───────────────────────────────────────────────
+  // The last /message-example answer: which of the draft's devices the example
+  // is about and what every token renders to for it. It survives re-renders of
+  // the actions step (and feeds the chips on later steps too), so the chosen
+  // device stays chosen until the operator picks another.
+  var _awExample = null;
+  var _awExampleAssetId = null;
+  var _awExampleTimer = null;
+  var _awExampleSeq = 0;
+  /** The chip tooltip: the token's description, then what it is for the example device. */
+  function tokenChipTitle(token, description) {
+    var ex = _awExample;
+    if (!ex) return description || "";
+    var name = token.replace(/^\{|\}$/g, "");
+    var who = ex.asset ? (ex.asset.hostname || "the example device") : "this example";
+    var line;
+    if (!Object.prototype.hasOwnProperty.call(ex.values || {}, name)) line = "Filled in when the alert is sent";
+    else if (ex.values[name] === "") line = "(blank)";
+    else line = ex.values[name];
+    return (description || "") + "\n\nFor " + who + ": " + line;
+  }
+  function refreshTokenChipTitles() {
+    var byToken = {};
+    (s.templateVariables || []).forEach(function (v) { byToken[v.token] = v.description; });
+    document.querySelectorAll(".tpl-token").forEach(function (chip) {
+      var tok = chip.getAttribute("data-token");
+      chip.setAttribute("title", tokenChipTitle(tok, byToken[tok]));
+    });
+  }
+  function scheduleMessageExample(delay) {
+    if (_awExampleTimer) clearTimeout(_awExampleTimer);
+    _awExampleTimer = setTimeout(runMessageExample, delay == null ? 400 : delay);
+  }
+  function messageExampleHtml(ex, state) {
+    var head = '<span class="aw-msg-example-label">Example</span>';
+    if (state) return '<div class="aw-msg-example-head">' + head + '<span class="aw-preview-muted">' + escapeHtml(state) + '</span></div>';
+    var picker = "";
+    var cands = ex.candidates || [];
+    if (ex.asset && cands.length) {
+      picker = '<select id="aw-msg-example-asset" class="aw-msg-example-asset" title="Show the example for another of the selected devices">' +
+        cands.map(function (c) {
+          return '<option value="' + escapeHtml(c.id) + '"' + (c.id === ex.asset.id ? " selected" : "") + '>' + escapeHtml(c.hostname || c.id) + '</option>';
+        }).join("") +
+        '</select>' +
+        (cands.length > 1 ? '<button type="button" class="btn btn-sm btn-secondary" id="aw-msg-example-shuffle" title="Pick another of the selected devices at random">Random</button>' : "") +
+        (ex.truncated ? '<span class="aw-preview-muted">first ' + cands.length + ' devices</span>' : "");
+    } else if (!ex.asset) {
+      picker = '<span class="aw-preview-muted">' + (draft.trigger && (draft.trigger.type === "host_metric" || (draft.trigger.type === "composite" && draft.trigger.kind === "host")) ? "About the Polaris server" : "No monitored devices match the Devices step") + '</span>';
+    }
+    return '<div class="aw-msg-example-head">' + head + picker + '</div>' +
+      '<div class="aw-msg-example-alert" style="border-left-color:' + sevColor(ex.severity) + '">' +
+        '<span class="badge badge-level-' + escapeHtml(ex.severity) + '">' + escapeHtml(String(ex.severity || "").toUpperCase()) + '</span> ' +
+        '<span class="aw-msg-example-text">' + escapeHtml(ex.message) + '</span>' +
+      '</div>' +
+      (ex.noReading ? '<p class="aw5-help" style="margin:4px 0 0">This device has no current reading for the trigger, so {value} shows n/a.</p>' : "");
+  }
+  async function runMessageExample() {
+    var box = document.getElementById("aw-msg-example");
+    if (!box) return;
+    var seq = ++_awExampleSeq;
+    var msgEl = document.getElementById("aw-msg");
+    // Only what the message is built from: sending the half-built action list
+    // too would let an unfinished Notify row 400 the example.
+    var body = {
+      name: draft.name || "Untitled automation",
+      description: draft.description,
+      severity: draft.severity,
+      trigger: draft.trigger,
+      scope: isTriggerScoped(draft.trigger) ? draft.scope : {},
+      reset: draft.reset || undefined,
+      // Bands carry only what picks the severity — never their action lists.
+      severityBands: bandsApplicable(draft.trigger) && draft.severityBands && draft.severityBands.length
+        ? draft.severityBands.map(function (b) { return { threshold: b.threshold, severity: b.severity, operator: b.operator || undefined }; })
+        : undefined,
+      messageTemplate: msgEl ? msgEl.value : (draft.messageTemplate || ""),
+    };
+    var ex;
+    try {
+      ex = await api.automations.messageExample({ rule: body, assetId: _awExampleAssetId });
+    } catch (err) {
+      if (seq !== _awExampleSeq) return;
+      box.innerHTML = messageExampleHtml(null, err.message || "Example unavailable");
+      return;
+    }
+    // A newer request (typing, a device pick) owns the box now.
+    if (seq !== _awExampleSeq || !document.getElementById("aw-msg-example")) return;
+    _awExample = ex;
+    _awExampleAssetId = ex.asset ? ex.asset.id : null;
+    box = document.getElementById("aw-msg-example");
+    box.innerHTML = messageExampleHtml(ex);
+    refreshTokenChipTitles();
+    var sel = box.querySelector("#aw-msg-example-asset");
+    if (sel) sel.addEventListener("change", function () { _awExampleAssetId = sel.value; scheduleMessageExample(0); });
+    var shuffle = box.querySelector("#aw-msg-example-shuffle");
+    if (shuffle) shuffle.addEventListener("click", function () {
+      var others = (ex.candidates || []).filter(function (c) { return !ex.asset || c.id !== ex.asset.id; });
+      if (!others.length) return;
+      _awExampleAssetId = others[Math.floor(Math.random() * others.length)].id;
+      scheduleMessageExample(0);
+    });
+  }
+
   function tokenPaletteHtml(id) {
     var chips = tokenChipsHtml();
     if (!chips) return "";
@@ -2083,7 +2336,7 @@ async function openAutomationWizard(existing, opts) {
   // needs the registry to be readable + the fullwrite key to attach.
   function availableActionTypes() {
     return (s.actionTypes || [{ type: "notify", label: "Send a notification" }]).filter(function (t) {
-      if (t.type === "script") return Array.isArray(_awScripts) && permAtLeast("automationScripts", "fullwrite");
+      if (t.type === "script") return Array.isArray(_awScripts) && permAtLeast("automationScripts", "write");
       return true;
     });
   }
@@ -2176,6 +2429,7 @@ async function openAutomationWizard(existing, opts) {
       roles: (_awScopeOptions && _awScopeOptions.roles) || [],
       regions: (_awScopeOptions && _awScopeOptions.regions) || [],
       stateProbes: (s && s.stateProbes) || [],
+      pathChecks: (s && s.pathChecks) || [],
       tags: _ruleTagList || [],
       assetTypes: _ruleAssetTypes || [],
       assets: [],
@@ -2245,7 +2499,7 @@ async function openAutomationWizard(existing, opts) {
       : "";
     // Import is offered when CREATING only \u2014 replacing the automation an
     // operator opened to edit would be a data-loss trap, not a feature.
-    var importRow = (!editing && !cloning && portability() && permAtLeast("automationManagement", "fullwrite"))
+    var importRow = (!editing && !cloning && portability() && permAtLeast("automationManagement", "write"))
       ? '<div style="display:flex;align-items:center;gap:0.5rem;margin:0 0 1rem;flex-wrap:wrap">' +
           '<button class="btn btn-secondary" id="aw-import-btn" type="button">Import from file\u2026</button>' +
           '<span style="font-size:0.8rem;color:var(--color-text-tertiary);flex:1 1 16rem">Start from an exported automation. The file\u2019s name becomes this automation\u2019s name.</span>' +
@@ -2311,6 +2565,7 @@ async function openAutomationWizard(existing, opts) {
       // one and paint the old draft's device count into it.
       if (scopePreviewTimer) { clearTimeout(scopePreviewTimer); scopePreviewTimer = null; }
       if (trigPreviewTimer) { clearTimeout(trigPreviewTimer); trigPreviewTimer = null; }
+      if (_awExampleTimer) { clearTimeout(_awExampleTimer); _awExampleTimer = null; }
 
       // Reopen rather than mutate: steps 1-3 were rendered once at open, so
       // swapping `draft` underneath them would leave stale DOM. openModal
@@ -2649,7 +2904,7 @@ async function openAutomationWizard(existing, opts) {
   // the values the scoped devices report, or type a pattern); anything else stays
   // the plain text box it always was.
   function dimControlHtml(d, df, metric, state) {
-    var value = (df && df[d]) || "";
+    var value = awDimDisplayValue(d, (df && df[d]) || "");
     var meta = DIM_PICKERS[d];
     // An INTEGRAL dimension's hint says what the row is about and what leaving
     // it blank means, rather than the generic "any interface" a filter row's
@@ -2696,7 +2951,7 @@ async function openAutomationWizard(existing, opts) {
     var df = {};
     if (!row) return df;
     row.querySelectorAll(".tgl-dim").forEach(function (el) {
-      var v = (el.value || "").trim();
+      var v = awDimStoredValue(el.getAttribute("data-dim"), el.value || "");
       if (v) df[el.getAttribute("data-dim")] = v;
     });
     return df;
@@ -2792,6 +3047,17 @@ async function openAutomationWizard(existing, opts) {
    *  once per panel (guarded) so tier rows and re-rendered condition rows are
    *  covered without re-binding — a panel's innerHTML being replaced doesn't
    *  drop panel-level listeners. */
+  /** A suggestion was clicked (or Entered). A single-value dim takes it and
+   *  closes; a multi dim (the SD-WAN pair) TOGGLES it and stays open for the
+   *  next pick. Notify first, close second — the input event reopens the
+   *  list, so closing before it would leave the picked-and-still-open state. */
+  function pickDimValue(input, val) {
+    var d = input.getAttribute("data-dim");
+    var multi = awDimIsMulti(d);
+    input.value = multi ? awDimTogglePick(dimResultOf(input), input.value, val) : val;
+    fireInputChange(input);
+    if (!multi) scCloseSuggest(dimSuggestOf(input));
+  }
   function wireDimCombo(panel) {
     if (!panel || panel._dimComboWired) return;
     panel._dimComboWired = true;
@@ -2828,11 +3094,7 @@ async function openAutomationWizard(existing, opts) {
       var input = combo && combo.querySelector("input.tgl-dim");
       if (!input) return;
       e.preventDefault(); // keep focus on the input
-      input.value = item.getAttribute("data-val");
-      // Notify first, close second — the input event reopens the list, so
-      // closing before it would leave the picked-and-still-open state.
-      fireInputChange(input);
-      scCloseSuggest(dimSuggestOf(input));
+      pickDimValue(input, item.getAttribute("data-val"));
     });
     panel.addEventListener("keydown", function (e) {
       var input = e.target;
@@ -2855,9 +3117,7 @@ async function openAutomationWizard(existing, opts) {
         if (items[next].scrollIntoView) items[next].scrollIntoView({ block: "nearest" });
       } else if (e.key === "Enter" && idx >= 0) {
         e.preventDefault();
-        input.value = items[idx].getAttribute("data-val");
-        fireInputChange(input);
-        scCloseSuggest(dimSuggestOf(input)); // after, for the same reason as the click path
+        pickDimValue(input, items[idx].getAttribute("data-val"));
       }
     });
   }
@@ -2896,6 +3156,24 @@ async function openAutomationWizard(existing, opts) {
       }));
       els.forEach(applyDimOptions);
     }
+  }
+  /**
+   * "Skip unused ports" — offered on the conditions the server lists
+   * (skipUnusedPortTargets: SD-WAN member state / latency / jitter / loss and
+   * interface oper status). Absent list (a pre-upgrade server) = no checkbox.
+   * Collected by tgCollectLeaf; a row whose condition changes to one that does
+   * not offer it simply stops rendering it, so the flag is dropped on the next
+   * collect rather than riding along inert (the server would refuse it).
+   */
+  function tgSkipUnusedOffered(target) {
+    return !!target && Array.isArray(s.skipUnusedPortTargets) && s.skipUnusedPortTargets.indexOf(target) !== -1;
+  }
+  function tgSkipUnusedHtml(target, leaf) {
+    if (!tgSkipUnusedOffered(target)) return "";
+    return '<label style="flex-basis:100%;display:flex;gap:6px;align-items:center;font-size:0.8rem;cursor:pointer" ' +
+      'title="A port that reports 0.0.0.0 and has had no address in the last 30 days is treated as never connected (an unused WAN from a deployment template) and never alerts. A port that had an address recently — a DHCP WAN that just lost its lease, a static WAN that went down — still alerts. Tunnels are never skipped.">' +
+      '<input type="checkbox" class="tgl-skip-unused"' + (leaf && leaf.skipUnusedPorts ? " checked" : "") + '> ' +
+      'Skip unused ports (no address in the last 30 days)</label>';
   }
   function tgLeafRowHtml(leaf, kind) {
     leaf = leaf || tgDefaultLeaf(kind);
@@ -2982,12 +3260,14 @@ async function openAutomationWizard(existing, opts) {
       // comparison is about.
       var fDims = kind === "host" ? [] : tgInlineDims((s.fieldDimensions && s.fieldDimensions[leaf.field]) || [], leaf.dimensionFilter, leaf);
       var isDD = ddMeta && isDownDetectionLeaf(leaf);
-      if (fDims.length || isDD) {
+      var fSkip = kind === "host" ? "" : tgSkipUnusedHtml(leaf.field, leaf);
+      if (fDims.length || isDD || fSkip) {
         var fDf = leaf.dimensionFilter || {};
         line2 =
           '<div class="tgl-line2" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0 0 22px;font-size:0.8rem;color:var(--color-text-tertiary)">' +
             fDims.map(function (d) { return dimControlHtml(d, fDf, leaf.field, awDimStateOfLeaf(leaf)); }).join("") +
             (fDims.some(function (d) { return DIM_PICKERS[d]; }) ? '<span class="tgl-dim-note" style="flex-basis:100%;font-size:0.78rem"></span>' : "") +
+            fSkip +
             // Both painted asynchronously (syncDownDetection) and rendered
             // rather than omitted, so there is somewhere to paint into: the
             // coverage line depends on the carve-out preview, and the
@@ -3029,9 +3309,11 @@ async function openAutomationWizard(existing, opts) {
           aggControl +
           dimInputs +
           (dims.some(function (d) { return DIM_PICKERS[d]; }) ? '<span class="tgl-dim-note" style="flex-basis:100%;font-size:0.78rem"></span>' : "") +
+          (kind === "host" ? "" : tgSkipUnusedHtml(leaf.metric, leaf)) +
         '</div>';
     }
-    return '<div class="scr-row"' + (ratio ? ' data-ratio="1"' : "") + ' style="margin:4px 0;padding:4px;border:1px solid var(--color-border);border-radius:6px">' + line1 + line2 + '</div>';
+    var ceiling = !isState && !!leaf && isCeilingMetric(leaf.metric);
+    return '<div class="scr-row"' + (ratio ? ' data-ratio="1"' : "") + (ceiling ? ' data-ceiling="1"' : "") + ' style="margin:4px 0;padding:4px;border:1px solid var(--color-border);border-radius:6px">' + line1 + line2 + '</div>';
   }
   function tgGroupHtml(group, depth, kind) {
     group = group || { op: "and", children: [] };
@@ -3064,8 +3346,10 @@ async function openAutomationWizard(existing, opts) {
       var vEl = rowEl.querySelector(".tgl-value");
       var sLeaf = { type: "asset_state", field: what.slice(2), operator: op, value: vEl ? vEl.value : "" };
       var sDf = {};
-      rowEl.querySelectorAll(".tgl-dim").forEach(function (el) { var v = el.value.trim(); if (v) sDf[el.getAttribute("data-dim")] = v; });
+      rowEl.querySelectorAll(".tgl-dim").forEach(function (el) { var v = awDimStoredValue(el.getAttribute("data-dim"), el.value); if (v) sDf[el.getAttribute("data-dim")] = v; });
       if (Object.keys(sDf).length) sLeaf.dimensionFilter = sDf;
+      var sSkip = rowEl.querySelector(".tgl-skip-unused");
+      if (sSkip && sSkip.checked) sLeaf.skipUnusedPorts = true;
       // No missed-poll count is read here any more: the row no longer states
       // one. On a sole down condition it comes off the trigger's "Sustained
       // for" field, stamped in collectStep3 once the tree is known to be that
@@ -3085,8 +3369,10 @@ async function openAutomationWizard(existing, opts) {
     };
     if (kind !== "host") {
       var df = {};
-      rowEl.querySelectorAll(".tgl-dim").forEach(function (el) { var v = el.value.trim(); if (v) df[el.getAttribute("data-dim")] = v; });
+      rowEl.querySelectorAll(".tgl-dim").forEach(function (el) { var v = awDimStoredValue(el.getAttribute("data-dim"), el.value); if (v) df[el.getAttribute("data-dim")] = v; });
       if (Object.keys(df).length) leaf.dimensionFilter = df;
+      var mSkip = rowEl.querySelector(".tgl-skip-unused");
+      if (mSkip && mSkip.checked) leaf.skipUnusedPorts = true;
     }
     return leaf;
   }
@@ -3430,7 +3716,7 @@ async function openAutomationWizard(existing, opts) {
    * syncDurationRequirement can toggle it live as the metric changes.
    */
   function ratioCeilingFieldHtml(tr) {
-    var ratio = triggerIsWindowedRatio(tr);
+    var ratio = triggerHasCeiling(tr);
     var stored = tr && typeof tr.ignoreAtOrAbove === "number" ? tr.ignoreAtOrAbove : null;
     var val = stored === null ? "" : String(stored);
     return '<div class="form-group aw-ratio-ceiling"' + (ratio ? "" : ' style="display:none"') + '>' +
@@ -3465,6 +3751,8 @@ async function openAutomationWizard(existing, opts) {
     temperature: "hardware-sensor",
     systemInfo: "interface/system",
     storage: "storage",
+    sdwan: "SD-WAN",
+    pathCheck: "path-check",
   };
 
   /** The metric whose cadence the poll fields are counted in: the first metric
@@ -3694,11 +3982,45 @@ async function openAutomationWizard(existing, opts) {
   // the spread behind it is. Before that lookup existed this caption had no
   // source at all and always fell back to "unavailable".
 
-  /** Drop every missedPolls in a trigger tree (see the call site in collectStep3). */
+  /** Drop every missedPolls — and the dependency-down toggle, which has the
+   *  same bare-trigger-only rule (business rule 78) — in a trigger tree (see
+   *  the call site in collectStep3). */
   function stripMissedPolls(node) {
     if (!node) return;
     if (node.missedPolls != null) delete node.missedPolls;
+    var dd = dependencyDownMeta();
+    if (dd && node[dd.dependencyDownKey] != null) delete node[dd.dependencyDownKey];
     (node.children || []).forEach(stripMissedPolls);
+  }
+  /**
+   * "Dependency-Down Bypass" (business rule 78) — the Actions step's row under
+   * the In-app Alert card, beside "Require Acknowledgement". It was rendered on
+   * the Trigger step as well while the placement was undecided (2026-09-21);
+   * the operator chose the Actions step, so this is the ONE copy, bound to
+   * `draft.trigger.alertWhenDependencyDown`. Only a bare `monitor status is
+   * down` trigger has the row, and only when the server catalog carries the
+   * key — a pre-upgrade server renders no control rather than one whose key
+   * the API would refuse. The step re-renders from the draft on entry, so a
+   * trigger edited away from "down" simply stops offering it.
+   */
+  function dependencyDownRowHtml(tr) {
+    var dd = dependencyDownMeta();
+    if (!dd || !isDownDetectionLeaf(tr)) return "";
+    return '<div class="aw5-row aw-dep-down">' +
+      '<label class="aw5-row-title">' +
+        '<input type="checkbox" id="aw-dep-down"' + (leafAlertsWhenDependencyDown(tr) ? " checked" : "") + '> ' +
+        'Dependency-Down Bypass' +
+      '</label>' +
+      '<p class="aw5-row-help">' + escapeHtml(dd.dependencyDownHelp || "") + '</p>' +
+    '</div>';
+  }
+  /** Read the row and write the key onto the (bare down) trigger — absent
+   *  when off, so an untouched automation's payload is byte-identical. */
+  function collectDependencyDown(el) {
+    var dd = dependencyDownMeta();
+    if (!dd || !el || !draft.trigger || !isDownDetectionLeaf(draft.trigger)) return;
+    if (el.checked) draft.trigger[dd.dependencyDownKey] = true;
+    else delete draft.trigger[dd.dependencyDownKey];
   }
   function syncDownDetection(panel) {
     var rows = panel.querySelectorAll('.scr-row');
@@ -4010,8 +4332,9 @@ async function openAutomationWizard(existing, opts) {
         setPollFieldSec(input, RATIO_WINDOW_MIN_SEC);
       }
     }
+    // The ceiling is packet loss's alone, not every ratio's (business rule 85).
     var ceilingWrap = panel.querySelector(".aw-ratio-ceiling");
-    if (ceilingWrap) ceilingWrap.style.display = ratio ? "" : "none";
+    if (ceilingWrap) ceilingWrap.style.display = root && root.querySelector('.scr-row[data-ceiling="1"]') ? "" : "none";
     // THE SECOND FIELD serves both windows that leave room for a hold beside
     // them: a ratio's History (the hold rides on top of the measurement) and a
     // count window (the hold counts recalculations of it). A TIME-windowed
@@ -4303,6 +4626,12 @@ async function openAutomationWizard(existing, opts) {
         // aggregate has no hold at all — its period is the measurement window —
         // while a ratio and a count window each leave the hold axis free.
         var holdPolls = aggregated ? (secondField ? pollFieldCount(sEl) : 0) : pollFieldCount(dEl);
+        // The dependency-down toggle (business rule 78) has NO editor on this
+        // step — it lives on the Actions step — so the rebuilt trigger below
+        // would drop a stored key every time this step is collected (the
+        // wizard-step-collector-strips trap). Carry it across by hand.
+        var ddMeta = dependencyDownMeta();
+        var prevDepDown = !!(ddMeta && draft.trigger && draft.trigger[ddMeta.dependencyDownKey] === true);
         draft.trigger = tgCollapse({
           type: "composite", kind: kind, op: tree.op, children: tree.children,
           forDurationSec: aggregated ? (secondField ? sustainSec : 0) : holdSec,
@@ -4327,6 +4656,8 @@ async function openAutomationWizard(existing, opts) {
           else delete draft.trigger.missedPolls;
           draft.trigger.forPolls = 0;
           draft.trigger.forDurationSec = 0;
+          // Still a bare down trigger: the Actions-step answer stands.
+          if (prevDepDown && ddMeta) draft.trigger[ddMeta.dependencyDownKey] = true;
         }
       }
     } else if (cat === "event") {
@@ -4373,6 +4704,21 @@ async function openAutomationWizard(existing, opts) {
     if (!tr) return false;
     if (tr.type === "composite") return (tgLeaves(tr) || []).some(tgLeafWindowedRatio);
     return tgLeafWindowedRatio(tr);
+  }
+  /** The saturation ceiling ("ignore readings at or above") is packet loss's
+   *  alone — the server's `saturationCeilingMetrics`. A path check's failure
+   *  rate is a windowed ratio too, but 100% there is the alert, not an outage
+   *  some other automation owns (business rule 85). */
+  function isCeilingMetric(m) {
+    return (s.saturationCeilingMetrics || ["probeLossPct"]).indexOf(m) !== -1;
+  }
+  function tgLeafCeiling(leaf) {
+    return !!(leaf && leaf.type !== "asset_state" && isCeilingMetric(leaf.metric));
+  }
+  function triggerHasCeiling(tr) {
+    if (!tr) return false;
+    if (tr.type === "composite") return (tgLeaves(tr) || []).some(tgLeafCeiling);
+    return tgLeafCeiling(tr);
   }
   /** True when this leaf measures over a period rather than reading the latest
    *  sample — the case that needs a window, and so needs the duration field.
@@ -4482,7 +4828,7 @@ async function openAutomationWizard(existing, opts) {
     (function walk(n) {
       if (!n) return;
       if (n.type === undefined && Array.isArray(n.children)) { n.children.forEach(walk); return; }
-      if (tgLeafWindowedRatio(n)) {
+      if (tgLeafCeiling(n)) {
         if (pct === null) delete n.ignoreAtOrAbove;
         else n.ignoreAtOrAbove = pct;
       } else if (n.type !== "asset_state") {
@@ -5292,7 +5638,7 @@ async function openAutomationWizard(existing, opts) {
    * duplicated id would silently wire every section's checkbox to the first
    * section's state.
    */
-  function followUpBlockHtml(cfg, live) {
+  function followUpBlockHtml(cfg, live, sevLabel) {
     cfg = cfg || {};
     // `live` marks a block whose contents are the SECTION's own answer rather
     // than a seed of the rule's — see the collect note in collectStep5. It has
@@ -5300,16 +5646,42 @@ async function openAutomationWizard(existing, opts) {
     // known: a band section rendered while the per-severity toggle was off
     // shows the base's values, and reads back as the band's only if nothing
     // remembers where they came from.
-    return '<div class="aw-followup"' + (live ? ' data-fu-live="1"' : "") +
-        ' style="border-top:1px solid var(--color-border);margin-top:0.6rem;padding-top:0.5rem">' +
-      // A property of the ALERT record — who may close it out and on what
-      // terms — enforced on every acknowledge path (the Alerts tab, the phone,
-      // the emailed link, the push button), not just the ones that send email.
-      '<label style="display:block;margin:0;font-weight:400">' +
+    // A property of the ALERT record — who may close it out and on what terms —
+    // enforced on every acknowledge path (the Alerts tab, the phone, the emailed
+    // link, the push button), not just the ones that send email. Rendered as a
+    // checkbox ROW (the 2026-09-21 mockup) above the severity's action list:
+    // it describes the alert being raised, not what is sent about it.
+    return '<div class="aw-followup aw5-row"' + (live ? ' data-fu-live="1"' : "") + '>' +
+      '<label class="aw5-row-title">' +
         '<input type="checkbox" class="aw-require-ack-note"' + (cfg.requireAckNote ? " checked" : "") + '> ' +
-        'Require a note when acknowledging' +
+        'Require Acknowledgement' +
+        (sevLabel ? ' <span class="aw-tier-qual">at <span style="color:' + sevColor(sevLabel) + '">' + escapeHtml(sevLabel) + '</span></span>' : "") +
       '</label>' +
-      '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 1.4rem">Acknowledging asks what the problem was and what the fix was, and won’t go through empty. Escalation still stops on acknowledge.</p>' +
+      '<p class="aw5-row-help">Acknowledging asks what the problem was and what the fix was, and won’t go through empty. Escalation still stops on acknowledge.</p>' +
+    '</div>';
+  }
+  /**
+   * One card on the Actions step (the 2026-09-21 mockup): a header line —
+   * title, the tier's condition, and the summary a folded card shows — over a
+   * body.
+   *
+   * A `key` makes the card COLLAPSIBLE: the card is then the collapse
+   * container (so applyCollapsed finds its body as a direct child), it carries
+   * the fold glyph, and `closed` seeds the state once through wireCollapsibles.
+   * A null key renders the same card with no glyph and an always-open body,
+   * which is what a single-severity automation gets — there is nothing to
+   * choose between, so a chevron would be an affordance for nothing.
+   */
+  function actionCardHtml(key, closed, titleHtml, condText, summaryText, bodyHtml) {
+    return '<div class="aw5-card"' + (key ? ' data-collapse-key="' + escapeHtml(key) + '"' : "") +
+        (key && closed ? ' data-collapse-default="closed"' : "") + '>' +
+      '<div class="' + (key ? "aw-collapse-head " : "") + 'aw5-head">' +
+        (key ? collapseBtnHtml(key) : "") +
+        '<label class="aw-tier-label aw5-head-title">' + titleHtml + '</label>' +
+        (condText ? '<span class="aw-tier-cond">' + escapeHtml(condText) + '</span>' : "") +
+        (key && summaryText ? '<span class="aw-collapse-summary" style="margin:0;display:none">' + escapeHtml(summaryText) + '</span>' : "") +
+      '</div>' +
+      '<div class="' + (key ? "aw-collapse-body" : "aw5-body") + '">' + bodyHtml + '</div>' +
     '</div>';
   }
 
@@ -5679,10 +6051,17 @@ async function openAutomationWizard(existing, opts) {
     // it: every delivery row hangs off the Notification id, as do the
     // escalation sweep, acknowledge/clear and the rule state machine. The Event
     // moved out to a removable "Create an Event" action in the list below.
-    var cardTitle = "Create an in-app alert (always happens)";
+    var cardTitle = "In-app Alert";
     var cardHelp = isEC
       ? "Every fire creates an in-app alert (the Alerts tab). This is built in and can’t be removed — notifications, API calls and scripts all hang off it. The message template below customizes the alert text — {value} is the source event’s own message; leave blank for the default."
       : "Every fire creates an in-app alert (the Alerts tab). This is built in and can’t be removed — notifications, API calls and scripts all hang off it. The message template below customizes what the alert and the audit Event say; leave blank for the default.";
+    // The step is a stack of CARDS (the 2026-09-21 mockup): the alert record
+    // first — In-app Alert, then the two rows that describe it (Require
+    // Acknowledgement, Dependency-Down Bypass) — then, per severity, the Trigger
+    // Action list and its Escalation Action chain, and last the Reset Action
+    // list. The two rows sit ABOVE the action list because they are facts about
+    // the alert being raised rather than about what is sent, and outside every
+    // collapse body so a folded severity still states them.
     var html = '<h3 style="margin:0 0 0.25rem">What should happen?</h3>' +
       // DELIVERED BY A GROUP (business rule 75). While this automation belongs
       // to an AlertGroup the group does the telling — its recipients, its
@@ -5694,9 +6073,9 @@ async function openAutomationWizard(existing, opts) {
       // is told.
       groupDeliveryBannerHtml() +
       '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">Notifications route through Delivery-tab channels; API calls POST to your systems; scripts run on the Polaris server or the triggering asset’s agent.</p>' +
-      '<div class="form-group" id="aw-inapp-card" style="border:1px solid var(--color-border);border-radius:6px;padding:0.75rem">' +
-        '<label style="font-weight:600;margin:0 0 4px;display:block">' + cardTitle + '</label>' +
-        '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0 0 6px">' + cardHelp + '</p>' +
+      '<div class="form-group aw5-card" id="aw-inapp-card">' +
+        '<label class="aw5-card-title">' + cardTitle + '</label>' +
+        '<p class="aw5-help">' + cardHelp + '</p>' +
         tokenPaletteHtml("aw-token-palette") +
         '<input type="text" id="aw-msg" class="tpl-field" value="' + escapeHtml(draft.messageTemplate || "") + '" placeholder="' + (isEC ? "{rule}: {value}" : "{asset} {metric} = {value} (threshold {threshold})") + '" style="width:100%;margin-top:4px">' +
         // The follow-up pair ("require a note" / "repeat this notification")
@@ -5708,6 +6087,10 @@ async function openAutomationWizard(existing, opts) {
         // RECORD rather than of a severity: that block is cloned per band, and
         // "how many alerts exist" cannot have a different answer per tier.
         groupByAssetHtml() +
+        // One of the selected devices, picked at random, rendered through the
+        // server's own message path (/message-example) — hover a variable chip
+        // to see what it is for this device.
+        '<div id="aw-msg-example" class="aw-msg-example">' + (_awExample ? messageExampleHtml(_awExample) : messageExampleHtml(null, "Loading…")) + '</div>' +
       '</div>';
 
     // Per-severity action sections: with severity bands, each tier CAN get its
@@ -5723,43 +6106,34 @@ async function openAutomationWizard(existing, opts) {
         '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 1.4rem">Leave this off to run the same actions whenever the alert changes severity.</p></div>';
     }
     // Same shape the trigger step's tiers use: heading, then the tier's own
-    // condition in the shared summary style. The base tier showed no condition at
-    // all here, which made it read as a different kind of block from the ones
-    // below it — the exact mismatch the trigger step already fixed.
+    // condition in the shared summary style.
     var basePhrase = tierConditionPhrase(
       draft.trigger && draft.trigger.operator,
       draft.trigger && draft.trigger.threshold,
       baseHoldPhrase(draft.trigger),
     );
     var baseLabel = perSev
-      ? 'Actions at <span style="color:' + sevColor(draft.severity) + '">' + escapeHtml(draft.severity) + '</span> <span class="aw-tier-qual">(base severity)</span>'
-      : "Actions when this fires";
-    // Folded on arrival: with a severity ladder this step is three or four action
-    // lists, and the summary line on each header says enough to choose between
-    // them. Step 3's tiers stay OPEN by contrast — their content is the condition
-    // being edited, not a list to skim.
-    html += '<div class="form-group"' + (perSev ? ' data-collapse-key="t5:base" data-collapse-default="closed"' : "") + ' style="' + (perSev ? "border-left:3px solid " + sevColor(draft.severity) + ";padding-left:0.6rem" : "") + '">' +
-      '<div class="aw-collapse-head" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
-        (perSev ? collapseBtnHtml("t5:base") : "") +
-        '<label class="aw-tier-label" style="margin:0">' + baseLabel + '</label>' +
-        (perSev && basePhrase ? '<span class="aw-tier-cond">' + escapeHtml(basePhrase) + '</span>' : "") +
-      '</div>' +
-      '<div class="aw-collapse-body">' +
-      (perSev ? '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 6px">These actions also run at higher severities that don’t define their own.</p>'
-        : bands.length ? '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 6px">These run at every severity level — each time the alert climbs or eases into a new one.</p>' : "") +
-      '<div id="aw-actions"></div>' +
-      '<button type="button" class="btn btn-sm btn-secondary" id="aw-add-action" style="margin-top:6px">+ Add action</button>' +
-      // Escalation belongs to the SEVERITY, not to one action inside it: "if
-      // this alert stays unhandled, do more" is a fact about the alert at this
-      // severity, and hanging it off a single Notify row made it read as "if
-      // this email goes unanswered" while the same chain fired for the whole
-      // tier. The base section's chain IS the rule-level `escalation` — which is
-      // what the engine resolves for an alert sitting at the base severity.
-      escSectionHtml() +
-      '</div>' +
-      // Outside the collapsible body: folded, a section still has to say
-      // whether it repeats and whether closing it out needs a note.
-      followUpBlockHtml({ requireAckNote: draft.requireAckNote, repeat: draft.repeat }, true) +
+      ? 'Trigger Action at <span style="color:' + sevColor(draft.severity) + '">' + escapeHtml(draft.severity) + '</span> <span class="aw-tier-qual">(base severity)</span>'
+      : "Trigger Action";
+    // Folded on arrival only with a severity ladder: then this step is three or
+    // four action lists, and the summary line on each header says enough to
+    // choose between them. A single list opens.
+    html += '<div class="form-group aw5-sev" id="aw-base-sec" style="' + (perSev ? "border-left:3px solid " + sevColor(draft.severity) + ";padding-left:0.6rem" : "") + '">' +
+      followUpBlockHtml({ requireAckNote: draft.requireAckNote }, true, perSev ? draft.severity : null) +
+      // Business rule 78 — the one place the dependency-down toggle lives.
+      dependencyDownRowHtml(draft.trigger) +
+      actionCardHtml(perSev ? "t5:base" : null, perSev, baseLabel, perSev && basePhrase ? basePhrase : "", "",
+        (perSev ? '<p class="aw5-help">These actions also run at higher severities that don’t define their own.</p>'
+          : bands.length ? '<p class="aw5-help">These run at every severity level — each time the alert climbs or eases into a new one.</p>' : "") +
+        '<div id="aw-actions"></div>' +
+        '<button type="button" class="btn btn-sm btn-secondary" id="aw-add-action" style="margin-top:6px">+ Add action</button>' +
+        // Escalation belongs to the SEVERITY, not to one action inside it: "if
+        // this alert stays unhandled, do more" is a fact about the alert at this
+        // severity, and hanging it off a single Notify row made it read as "if
+        // this email goes unanswered" while the same chain fired for the whole
+        // tier. The base card's chain IS the rule-level `escalation` — which is
+        // what the engine resolves for an alert sitting at the base severity.
+        escSectionHtml()) +
     '</div>';
     bands.forEach(function (b, i) {
       // A tier may override the comparison and the hold; both belong in the
@@ -5774,54 +6148,47 @@ async function openAutomationWizard(existing, opts) {
         bandHoldPhrase(draft.trigger, b),
       );
       var bandCount = ((b.actions || []).length);
-      html += '<div class="form-group aw-band-actions" data-band-idx="' + i + '" data-collapse-key="t5:' + escapeHtml(b.severity) + '" data-collapse-default="closed" style="border-left:3px solid ' + sevColor(b.severity) + ';padding-left:0.6rem' + (perSev ? "" : ";display:none") + '">' +
-        '<div class="aw-collapse-head" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
-          collapseBtnHtml("t5:" + b.severity) +
-          '<label class="aw-tier-label" style="margin:0">Actions at <span style="color:' + sevColor(b.severity) + '">' + escapeHtml(b.severity) + '</span></label>' +
-          '<span class="aw-tier-cond">' + escapeHtml(bandPhrase) + '</span>' +
-          // A folded section still says how much is inside it, so "no actions
+      html += '<div class="form-group aw5-sev aw-band-actions" data-band-idx="' + i + '" style="border-left:3px solid ' + sevColor(b.severity) + ';padding-left:0.6rem' + (perSev ? "" : ";display:none") + '">' +
+        followUpBlockHtml(bandFollowUpOf(b), perSev, b.severity) +
+        actionCardHtml("t5:" + b.severity, true,
+          'Trigger Action at <span style="color:' + sevColor(b.severity) + '">' + escapeHtml(b.severity) + '</span>',
+          bandPhrase,
+          // A folded card still says how much is inside it, so "no actions
           // here" (which falls back to the base) is visible without unfolding.
-          '<span class="aw-collapse-summary" style="margin:0;display:none">' +
-            (bandCount ? bandCount + " action" + (bandCount === 1 ? "" : "s") : "no actions of its own") +
-          '</span>' +
-        '</div>' +
-        '<div class="aw-collapse-body">' +
-        '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 6px">' + escapeHtml((s.bandMeta && s.bandMeta.emptyBandNote) || "Leave empty to run the base actions at this severity.") + '</p>' +
-        '<div class="ba-actions"></div>' +
-        '<button type="button" class="btn btn-sm btn-secondary ba-add" style="margin-top:6px">+ Add action</button>' +
-        // The band's own chain (severityBands[i].escalation) — the one the sweep
-        // resolves while the alert sits in THIS band.
-        escSectionHtml() +
-        '</div>' +
-        followUpBlockHtml(bandFollowUpOf(b), perSev) +
+          bandCount ? bandCount + " action" + (bandCount === 1 ? "" : "s") : "no actions of its own",
+          '<p class="aw5-help">' + escapeHtml((s.bandMeta && s.bandMeta.emptyBandNote) || "Leave empty to run the base actions at this severity.") + '</p>' +
+          '<div class="ba-actions"></div>' +
+          '<button type="button" class="btn btn-sm btn-secondary ba-add" style="margin-top:6px">+ Add action</button>' +
+          // The band's own chain (severityBands[i].escalation) — the one the
+          // sweep resolves while the alert sits in THIS band.
+          escSectionHtml()) +
       '</div>';
     });
-    // ── When this resets ────────────────────────────────────────────────
+    // ── Reset Action ──────────────────────────────────────────────────────
     // Every clear path today writes cleared/clearedBy and nothing else, so
     // "tell the NOC it came back" wasn't expressible. The list starts mirroring
     // the trigger's Notify actions (see mirroredResetActions) so the recovery
     // reaches the same people without configuring them twice.
-    // The toggle is its OWN state, not "is the list non-empty": a re-render
-    // between an operator ticking it and adding a row would otherwise silently
-    // untick it. On a new automation it starts on (the list seeds from the
-    // trigger's notify actions); a stored rule reflects what it saved.
-    if (draft.resetOn === undefined) {
-      draft.resetOn = draft.resetActions === undefined
-        ? true
-        : !!(draft.resetActions && draft.resetActions.length);
-    }
-    var resetOn = draft.resetOn;
-    html += '<div class="form-group" id="aw-reset-card" style="border:1px solid var(--color-border);border-radius:6px;padding:0.75rem;margin-top:0.5rem">' +
-      '<label style="font-weight:600;margin:0 0 4px;display:block">' +
-        '<input type="checkbox" id="aw-reset-actions-on"' + (resetOn ? " checked" : "") + '> When this resets' +
-      '</label>' +
-      '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0 0 6px">' +
-        'Runs when the alert ends — it recovered, its timer ran out, or someone cleared it. ' +
-        '<span id="aw-reset-mirror-note"></span></p>' +
-      '<div id="aw-reset-wrap"' + (resetOn ? "" : ' style="display:none"') + '>' +
-        '<div id="aw-reset-actions"></div>' +
-        '<button type="button" class="btn btn-sm btn-secondary" id="aw-reset-add" style="margin-top:6px">+ Add action</button>' +
-      '</div>' +
+    // A header and an Add action button (2026-09-21) — no enable checkbox.
+    // The box gated the list behind a control that had to be reasoned about
+    // ("is it ticked AND is there a row?"), and it could disagree with the
+    // list: a ticked box over an empty list saves as null and comes back
+    // unticked. THE LIST IS THE STATE now. An empty list is "no reset
+    // behaviour", which is exactly what collectStep5 stores (null), so there
+    // is nothing left for a second control to say. `draft.resetOn` went with
+    // it; the seed still distinguishes a NEW automation (mirror the trigger's
+    // notify actions) from a stored one (show what it saved) through
+    // `draft.resetActions === undefined`, which is where that fact always lived.
+    html += '<div class="form-group aw5-card" id="aw-reset-card">' +
+      '<label class="aw5-head-title">Reset Action</label>' +
+      // The mirror note IS the card's help: it says what the list does with
+      // nothing in it ("Nothing here yet — add an action, or add a Notify above
+      // and it will appear here") and how it is tracking the trigger's notify
+      // actions once there is. A static sentence above it only repeated the
+      // header.
+      '<p class="aw5-help"><span id="aw-reset-mirror-note"></span></p>' +
+      '<div id="aw-reset-actions"></div>' +
+      '<button type="button" class="btn btn-sm btn-secondary" id="aw-reset-add" style="margin-top:6px">+ Add action</button>' +
     '</div>';
 
     panel.innerHTML = html;
@@ -5830,10 +6197,10 @@ async function openAutomationWizard(existing, opts) {
     // One chain per severity section: the base section carries the rule-level
     // chain, each band section its own.
     var baseSec = panel.querySelector("#aw-actions") && panel.querySelector("#aw-actions").closest(".form-group");
-    if (baseSec) wireEscSection(baseSec.querySelector(":scope > .aw-collapse-body > .aw-esc-sec, :scope > .aw-esc-sec"), esc);
+    if (baseSec) wireEscSection(baseSec.querySelector(".aw-esc-sec"), esc);
     panel.querySelectorAll(".aw-band-actions").forEach(function (sec, i) {
       var band = (draft.severityBands || [])[i] || {};
-      wireEscSection(sec.querySelector(":scope > .aw-collapse-body > .aw-esc-sec, :scope > .aw-esc-sec"), band.escalation || null);
+      wireEscSection(sec.querySelector(".aw-esc-sec"), band.escalation || null);
     });
 
     var host = panel.querySelector("#aw-actions");
@@ -5875,32 +6242,13 @@ async function openAutomationWizard(existing, opts) {
       foldActionRow(addActionRow(resetHost, null), false);
       refreshMirrorNote(panel);
     });
-    // Removing the LAST reset action IS "no reset behavior", so say it on the
-    // toggle instead of leaving a ticked box over an empty list — collectStep5
-    // saves an empty list as null anyway, so the box would come back unticked
-    // on the next open. Delegated (rows come and go with the mirror); the
-    // timeout lets the row's own remove handler detach it first.
+    // Removing the LAST reset action IS "no reset behaviour", and the empty
+    // list says so on its own now — all that is left is to re-word the note.
+    // Delegated (rows come and go with the mirror); the timeout lets the row's
+    // own remove handler detach it first.
     resetHost.addEventListener("click", function (e) {
       if (!(e.target && e.target.classList && e.target.classList.contains("aw-action-remove"))) return;
-      setTimeout(function () {
-        if (resetHost.querySelector(".aw-action")) return;
-        var cb = panel.querySelector("#aw-reset-actions-on");
-        if (cb) cb.checked = false;
-        draft.resetOn = false;
-        var wrap = panel.querySelector("#aw-reset-wrap");
-        if (wrap) wrap.style.display = "none";
-        refreshMirrorNote(panel);
-      }, 0);
-    });
-    panel.querySelector("#aw-reset-actions-on").addEventListener("change", function () {
-      draft.resetOn = this.checked;
-      panel.querySelector("#aw-reset-wrap").style.display = this.checked ? "" : "none";
-      // Turning it back on re-seeds from the trigger rather than leaving the
-      // operator with an empty list they have to rebuild by hand.
-      if (this.checked && !resetHost.querySelector(".aw-action")) {
-        renderResetRows(panel, mirroredResetActions(collectActionsFrom(host), [{ type: "event" }]));
-      }
-      refreshMirrorNote(panel);
+      setTimeout(function () { refreshMirrorNote(panel); }, 0);
     });
 
     // One follow-up block per severity section — just the ack-note checkbox
@@ -5913,6 +6261,10 @@ async function openAutomationWizard(existing, opts) {
       var ack = block.querySelector(".aw-require-ack-note");
       if (ack) ack.addEventListener("change", function () { collectStep5(); });
     });
+    // The Dependency-Down Bypass row (business rule 78): onto the draft at
+    // once, like the ack-note box above it.
+    var depAw = panel.querySelector("#aw-dep-down");
+    if (depAw) depAw.addEventListener("change", function () { collectStep5(); });
     var perSevCb = panel.querySelector("#aw-band-actions-multi");
     if (perSevCb) {
       perSevCb.addEventListener("change", function () {
@@ -5926,6 +6278,9 @@ async function openAutomationWizard(existing, opts) {
     }
     wireTokenPalette(panel);
     wireCollapsibles(panel);
+    var msgInput = panel.querySelector("#aw-msg");
+    if (msgInput) msgInput.addEventListener("input", function () { scheduleMessageExample(); });
+    scheduleMessageExample(0);
   }
   /** Whether the per-severity action sections are in play. Explicit once the
    *  operator touches the toggle; inferred from the record otherwise, so an
@@ -5950,7 +6305,7 @@ async function openAutomationWizard(existing, opts) {
       '<div class="aesc-config" style="display:none;margin-bottom:4px"><label style="font-size:0.78rem">Stop escalating when</label> ' +
         '<select class="aesc-stopon" style="width:auto"><option value="acknowledge">Acknowledged (or cleared)</option><option value="clear">Cleared only — acknowledging does not stop it</option></select></div>' +
       '<div class="aesc-tiers"></div>' +
-      '<button type="button" class="btn btn-sm btn-secondary aesc-add" style="margin-top:4px">+ Escalate if unhandled…</button>' +
+      '<button type="button" class="btn btn-sm btn-secondary aesc-add" style="margin-top:4px">+ Escalation Action</button>' +
     '</div>';
   }
   function wireEscSection(sec, esc) {
@@ -6111,9 +6466,6 @@ async function openAutomationWizard(existing, opts) {
       : mirroredResetActions(draft.actions, []);
     if (!adopted.length) return;
     draft.resetActions = adopted;
-    // The toggle carries its OWN state (see the Actions step) — set it too, or a
-    // re-render would untick it out from under the rows it just adopted.
-    draft.resetOn = true;
   }
   // Severity colors (mirror styles.css .sev-select palette) for the accent.
   var SEV_COLORS = { notice: "var(--color-sev-notice)", informational: "var(--color-accent)", warning: "var(--color-warning)", serious: "var(--color-sev-serious)", critical: "var(--color-danger)" };
@@ -6609,7 +6961,7 @@ async function openAutomationWizard(existing, opts) {
     var viewBtn = document.getElementById('aw-view-code');
     if (viewBtn) {
       viewBtn.addEventListener('click', function () {
-        var canSave = permAtLeast('automationManagement', 'fullwrite');
+        var canSave = permAtLeast('automationManagement', 'write');
         P.openCodeModal({
           title: 'Automation code',
           body: buildPayload({ nameFallback: 'Untitled automation' }),
@@ -6657,7 +7009,7 @@ async function openAutomationWizard(existing, opts) {
       '</div>' +
       // Test delivery — omitted entirely (not disabled) without fullwrite, the
       // way the Delivery tab drops its buttons: the endpoint would 403 anyway.
-      (permAtLeast("automationManagement", "fullwrite")
+      (permAtLeast("automationManagement", "write")
         ? '<div class="form-group" id="aw-test-delivery" style="border:1px solid var(--color-border);border-radius:6px;padding:0.75rem">' +
             '<label style="font-weight:600;margin:0 0 6px;display:block">Test delivery</label>' +
             '<div id="aw-test-body"></div>' +
@@ -6666,7 +7018,7 @@ async function openAutomationWizard(existing, opts) {
     renderSummary();
     renderAffectedDevices();
     wireCodeButtons();
-    if (permAtLeast("automationManagement", "fullwrite")) renderTestDelivery();
+    if (permAtLeast("automationManagement", "write")) renderTestDelivery();
   }
 
   /**
@@ -7474,12 +7826,34 @@ async function openAutomationWizard(existing, opts) {
         // since this file already holds them.
         var srcBox = book.closest(".na-recip-row").querySelector(".na-recip-box");
         var bookMode = boxMode(srcBox);
+        // Every pill already on THIS action, tagged with its field, so the
+        // picker can head each pane with the recipients the operator has.
+        var current = [];
+        host.querySelectorAll(".na-recip-box").forEach(function (b) {
+          var f = b.getAttribute("data-field");
+          pillsOf(b).forEach(function (p) { current.push({ kind: p.kind, value: p.value, label: p.label, field: f }); });
+        });
         var res = await window.PolarisAddressBook.openPicker(
           bookMode === "push"
-            ? { field: "to", mode: "push", pushDevices: pushDeviceMap() }
-            : { field: "to" },
+            ? { field: "to", mode: "push", pushDevices: pushDeviceMap(), current: current }
+            : { field: "to", current: current },
         );
         if (!res) return;
+        // Current recipients the operator unticked come off wherever they sit —
+        // matched on kind + value, the same identity addPill dedupes on.
+        var removedAny = false;
+        (res.removed || []).forEach(function (r) {
+          var box = host.querySelector('.na-recip-box[data-field="' + r.field + '"]');
+          if (!box) return;
+          box.querySelectorAll(":scope > .tag-chip").forEach(function (chip) {
+            if (chip.getAttribute("data-kind") === r.kind &&
+                String(chip.getAttribute("data-value")).toLowerCase() === String(r.value).toLowerCase()) {
+              chip.remove();
+              removedAny = true;
+            }
+          });
+        });
+        if (removedAny) onChange();
         var dest = host.querySelector('.na-recip-box[data-field="' + res.field + '"]');
         if (!dest) return;
         var added = 0, refused = 0;
@@ -7620,7 +7994,8 @@ async function openAutomationWizard(existing, opts) {
               '<code>{ack}</code> becomes the recipient’s one-click acknowledge link — blank, and pruned away with its button, on an email announcing the alert is over — <code>{asset.link}</code> opens the device, and ' +
               '<code>{chart.cpu}</code> / <code>{chart.memory}</code> / <code>{chart.responseTime}</code> embed the last hour as charts, ' +
               '<code>{chart.sdwanLatency}</code> / <code>{chart.sdwanJitter}</code> / <code>{chart.sdwanLoss}</code> chart the SD-WAN health check an SD-WAN alert fired on (and replace the three above on one), and ' +
-              '<code>{interface.lldp}</code> lists what LLDP saw on the port an interface alert fired on. ' +
+              '<code>{interface.lldp}</code> lists what LLDP saw on the port an interface alert fired on, and ' +
+              '<code>{processes.top}</code> lists the five programs using the most CPU or memory on a CPU or memory alert (which keeps only the CPU and memory charts). ' +
               '<button type="button" class="na-comp-reset" style="background:none;border:0;padding:0;color:var(--color-primary);cursor:pointer;font:inherit;text-decoration:underline">Reset to the default</button></p>' +
             '<div class="form-group" style="margin-bottom:6px"><label style="font-size:0.8rem">Subject</label><input type="text" class="na-subject tpl-field" value="' + escapeHtml(compValue(comp, "subjectTemplate")) + '" placeholder="[{severity.upper}] {asset} — {metric} = {value}"></div>' +
             // ONE body editor with a view toggle. Both bodies are still stored
@@ -8209,11 +8584,16 @@ async function openAutomationWizard(existing, opts) {
     // refuses, and get a 400 pointing at a checkbox no longer rendered.
     var groupEl = panel.querySelector("#aw-group-by-asset");
     draft.groupByAsset = groupEl ? !!groupEl.checked : false;
+    // Business rule 78 — only when its box is on screen: the control renders
+    // for a bare down trigger alone, and a hidden control must never post (or
+    // strip) a key the operator did not touch.
+    var depEl = panel.querySelector("#aw-dep-down");
+    if (depEl) collectDependencyDown(depEl);
     // The BASE severity section's chain is the rule-level escalation (the engine
     // resolves it for an alert sitting at the base severity).
     var baseSecC = panel.querySelector("#aw-actions") && panel.querySelector("#aw-actions").closest(".form-group");
     draft.escalation = baseSecC
-      ? collectEscSection(baseSecC.querySelector(":scope > .aw-collapse-body > .aw-esc-sec, :scope > .aw-esc-sec"))
+      ? collectEscSection(baseSecC.querySelector(".aw-esc-sec"))
       : null;
     draft.actions = collectActionsFrom(host);
     // MIGRATE-ON-EDIT. Every notify row on this step has just written its own
@@ -8236,7 +8616,7 @@ async function openAutomationWizard(existing, opts) {
       var band = (draft.severityBands || [])[i];
       if (!band) return;
       band.actions = collectActionsFrom(sec.querySelector(".ba-actions"));
-      var bandEsc = collectEscSection(sec.querySelector(":scope > .aw-collapse-body > .aw-esc-sec, :scope > .aw-esc-sec"));
+      var bandEsc = collectEscSection(sec.querySelector(".aw-esc-sec"));
       if (bandEsc) band.escalation = bandEsc; else delete band.escalation;
       // The band's own follow-up pair — written whenever it matches what a band
       // says, including when that equals the rule's, because "same as the base"
@@ -8264,10 +8644,10 @@ async function openAutomationWizard(existing, opts) {
     });
     var resetHost = panel.querySelector("#aw-reset-actions");
     if (resetHost) {
-      var resetToggle = panel.querySelector("#aw-reset-actions-on");
-      if (resetToggle) draft.resetOn = resetToggle.checked;
-      draft.resetActions = draft.resetOn === false ? null : collectActionsFrom(resetHost);
-      if (draft.resetActions && draft.resetActions.length === 0) draft.resetActions = null;
+      // An empty list is "no reset behaviour" — the one state the retired
+      // enable checkbox used to express.
+      var resetRows = collectActionsFrom(resetHost);
+      draft.resetActions = resetRows.length ? resetRows : null;
     }
   }
 
@@ -8311,8 +8691,7 @@ async function openAutomationWizard(existing, opts) {
   /** Re-mirror after the TRIGGER action list changes (add / remove / channel). */
   function syncResetMirror(panel) {
     var host = panel.querySelector("#aw-reset-actions");
-    var on = panel.querySelector("#aw-reset-actions-on");
-    if (!host || !on || !on.checked) return;
+    if (!host) return;
     var current = collectActionsFrom(host);
     // Rows the operator has touched are kept verbatim; the rest re-derive.
     renderResetRows(panel, mirroredResetActions(collectActionsFrom(panel.querySelector("#aw-actions")), current));
@@ -8625,6 +9004,11 @@ async function openAutomationWizard(existing, opts) {
     var ackNoteRow = ackNoteLines.length
       ? '<dt>Acknowledging</dt><dd>' + ackNoteLines.join("<br>") + '</dd>'
       : "";
+    // Business rule 78 — only when ON, like the ack-note row: off is what
+    // every automation authored before the toggle does.
+    var depDownRow = leafAlertsWhenDependencyDown(draft.trigger)
+      ? '<dt>Dependency down</dt><dd>still alerts, naming the upstream device that is down</dd>'
+      : "";
     // Reminders are per ACTION now, so the row names the action it belongs to
     // — a reader checking "will this chase me" needs to know which of two
     // notifies does. The quiet time rides the same line rather than a row of
@@ -8681,6 +9065,7 @@ async function openAutomationWizard(existing, opts) {
       '<dt>Reset</dt><dd>' + resetSentence(draft.reset, draft.trigger) + '</dd>' +
       msgRow +
       ackNoteRow +
+      depDownRow +
       repeatRow +
       '<dt>Actions</dt><dd>' + (actionLines.length ? actionLines.join("<br>") : '<span style="color:var(--color-text-tertiary)">in-app alert only</span>') + '</dd>' +
       resetRow +
@@ -8707,6 +9092,7 @@ async function openAutomationWizard(existing, opts) {
         } else {
           el.value += tok;
         }
+        el.dispatchEvent(new Event("input", { bubbles: true }));
         el.focus();
       });
     });
@@ -8762,6 +9148,12 @@ async function openAutomationWizard(existing, opts) {
 
   document.getElementById("aw-next").addEventListener("click", function () { goToStep(step + 1, { validate: true }); });
   document.getElementById("aw-back").addEventListener("click", function () { goToStep(step - 1); });
+  // → / ← walk the steps and Enter advances while Next is showing, submitting
+  // only on step 6 (app.js § Stepped-modal keyboard navigation). Guarded on the
+  // global because the wizard is standalone and loads on five pages.
+  if (typeof wireModalStepKeys === "function") {
+    wireModalStepKeys({ back: "aw-back", next: "aw-next", submit: "aw-save" });
+  }
   document.querySelectorAll("#aw-stepper .stepper-step").forEach(function (el) {
     el.addEventListener("click", function () {
       var n = Number(el.getAttribute("data-step"));

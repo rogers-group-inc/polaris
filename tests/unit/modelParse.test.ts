@@ -13,6 +13,7 @@
 
 import { describe, it, expect } from "vitest";
 import { applyModelParse, validateModelParse, templatePrefix } from "../../src/utils/modelParse.js";
+import { MAX_REGEX_SUBJECT } from "../../src/utils/regexSafety.js";
 
 // The FortiSwitch seed, exactly as the seed job stamps it.
 const FORTISWITCH = {
@@ -81,6 +82,34 @@ describe("validateModelParse", () => {
     expect(validateModelParse("^S\\d+", "FortiSwitch $1")).toMatch(/capture group/);
     expect(validateModelParse("(.+)", "FortiSwitch")).toMatch(/\$1/);
     expect(validateModelParse("([", null)).toMatch(/valid regex/);
+  });
+
+  it("refuses a pattern that could hang the monitor, and says how to fix it", () => {
+    // The operator types this and Polaris runs it per asset per poll against
+    // whatever the device returned; a JS regex cannot be interrupted, so the
+    // refusal has to happen here, at save time. See utils/regexSafety.ts.
+    const err = validateModelParse("^((.+)+)-v", "FortiSwitch $1");
+    expect(err).toMatch(/may never finish/);
+    expect(err).toMatch(/Rewrite it so only one of the two repeats/);
+    expect(validateModelParse("(a*)*", null)).toMatch(/may never finish/);
+  });
+
+  it("still accepts the ordinary shapes an operator actually writes", () => {
+    expect(validateModelParse(String.raw`^(\w+)-v[\d.]+-build`, "Cisco $1")).toBeNull();
+    expect(validateModelParse("(ab)+(c)", null)).toBeNull();
+  });
+});
+
+describe("applyModelParse — the subject cap", () => {
+  it("returns null rather than matching a scalar longer than the cap", () => {
+    // Rule 2's "unrecognized, never a guess" covers a scalar too long to be a
+    // model string. The cap is what keeps subject length from being the thing
+    // that makes an operator's pattern expensive (utils/regexSafety.ts).
+    const parse = { pattern: String.raw`^(.+?)-v\d`, template: null };
+    const long = "S548DF".padEnd(MAX_REGEX_SUBJECT + 1, "x") + "-v7";
+    expect(long.length).toBeGreaterThan(MAX_REGEX_SUBJECT);
+    expect(applyModelParse(long, parse)).toBeNull();
+    expect(applyModelParse("S548DF-v7", parse)).toBe("S548DF");
   });
 });
 

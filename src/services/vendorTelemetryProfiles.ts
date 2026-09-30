@@ -195,17 +195,16 @@ export const VENDOR_TELEMETRY_PROFILES: VendorTelemetryProfile[] = [
     // The one thing MIKROTIK-MIB adds is the mtxrHealth sensor group, which no
     // standard MIB covers — and it is NOT claimed here, deliberately.
     // `mtxrHlCpuTemperature`'s `Temperature` textual convention is
-    // DISPLAY-HINT "d-1", TENTHS of a degree, so a raw 315 means 31.5 °C. That
-    // needs scaling to the canonical unit AT COLLECTION, and nothing does it:
-    // `applyTransform` has exactly one call site in `src/`, the custom-widget
-    // collector, so a unary transform on a profile METRIC row is stored and
-    // never applied. A `temperature` block here would have charted 315.
+    // DISPLAY-HINT "d-1", TENTHS of a degree, so a raw 315 means 31.5 °C. A
+    // scalar temperature row now applies `tenths_to_units` at collection
+    // (METRIC_ROW_TRANSFORMS, 2026-09-23), so an operator can point one at a
+    // MikroTik sensor with that transform set. It is still not seeded here:
+    // the mtxrHl* symbols are not in the built-in OID registry, so the row
+    // would read as unresolved until MIKROTIK-MIB is uploaded.
     //
-    // Note this is not the same lever as Celsius→Fahrenheit, which must NEVER
-    // happen before storage — Polaris stores and alerts in Celsius and converts
-    // at render (`public/js/temp-unit.js`). Scaling a d-1 integer INTO Celsius
-    // is legitimate; converting Celsius to another unit is not. Wiring the
-    // first without enabling the second is what a MikroTik sensor row needs.
+    // Celsius→Fahrenheit is not the same lever and must NEVER happen before
+    // storage — Polaris stores and alerts in Celsius and converts at render
+    // (`public/js/temp-unit.js`); that transform no longer exists.
   },
   {
     // FortiSwitch sits BEFORE the generic Fortinet entry so FortiSwitches

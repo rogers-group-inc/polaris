@@ -185,6 +185,21 @@ else
   warn "  interval to suit. To fix later:  apt-get install -y fping"
 fi
 
+# ─── 1e. Install traceroute (OPTIONAL — path checks from this server) ─────
+# A path check whose Sources include "This Polaris server" traces the route
+# from here with the system traceroute (src/utils/serverTraceroute.ts — UDP
+# probes, no privilege needed). Without it Polaris falls back to iputils'
+# tracepath, and failing that records the trace with no hops and a note. In
+# the base repositories; best-effort and never fatal.
+if command -v traceroute &>/dev/null; then
+  info "traceroute already installed"
+elif apt-get install -y traceroute &>/dev/null; then
+  info "traceroute installed"
+else
+  warn "traceroute not installed — server-run path checks trace with tracepath if present."
+  warn "  To fix later:  apt-get install -y traceroute"
+fi
+
 # ─── 2. Install PostgreSQL 17 (PGDG, not the distro metapackage) ─────────────
 # This used to be `apt-get install -y postgresql postgresql-contrib` — the
 # distro metapackage, whose major is whatever the release froze on: PostgreSQL
@@ -279,6 +294,10 @@ fi
 # build subprocess). Create both with the right ownership upfront.
 mkdir -p "$APP_DIR/data/agents" "$APP_DIR/.cache/go-build"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/agents" "$APP_DIR/.cache"
+# The firmware repository (Server Settings → Repository) stores switch / AP
+# images under $APP_DIR/data/firmware/ — same posture as data/agents.
+mkdir -p "$APP_DIR/data/firmware"
+chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/firmware"
 
 # ─── 3c. Java 25 + jsign (agent code signing — optional at runtime) ─────────
 # Used by the agent code-signing feature (Integrations → Polaris Agents →

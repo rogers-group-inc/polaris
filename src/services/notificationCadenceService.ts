@@ -29,28 +29,39 @@
  */
 
 import { prisma } from "../db.js";
-import { resolveMonitorSettings, type ResolvedMonitorSettings } from "./monitoringService.js";
+import { resolveMonitorSettings, resolveSdwanIntervalSec, sdwanShouldQueue, type ResolvedMonitorSettings } from "./monitoringService.js";
 import { loadScopeAssetIds } from "./notificationEngine.js";
 import type { RuleScope } from "./notificationTypes.js";
 
-/** The five cadences a metric can ride. */
-export type CadenceStream = "responseTime" | "cpuMemory" | "temperature" | "systemInfo" | "storage";
+/** The seven cadences a metric can ride. Two do NOT resolve through the
+ *  monitor-settings hierarchy: `pathCheck` is the intervalSec of the path
+ *  checks the matched agent hosts run (resolveScopeCadence returns early for
+ *  it), and `sdwan` is per INTEGRATION (below). */
+export type CadenceStream = "responseTime" | "cpuMemory" | "temperature" | "systemInfo" | "storage" | "sdwan" | "pathCheck";
 
-/** Which resolved settings fields carry each stream's cadence + collector timeout. */
-const STREAM_FIELDS: Record<CadenceStream, { interval: keyof ResolvedMonitorSettings; timeout: keyof ResolvedMonitorSettings }> = {
+/**
+ * Which resolved settings fields carry each stream's cadence + collector
+ * timeout. `sdwan` has no settings-hierarchy interval — it is per INTEGRATION
+ * (config.sdwanIntervalSeconds) and read from the resolver's sidecar in
+ * resolveScopeCadence — so `interval` is null there; its collector shares the
+ * system-info timeout. `pathCheck` has no entry at all: its cadence and timeout
+ * are the checks' own.
+ */
+const STREAM_FIELDS: Record<Exclude<CadenceStream, "pathCheck">, { interval: keyof ResolvedMonitorSettings | null; timeout: keyof ResolvedMonitorSettings }> = {
   responseTime: { interval: "intervalSeconds",            timeout: "probeTimeoutMs" },
   cpuMemory:    { interval: "cpuMemoryIntervalSeconds",   timeout: "cpuMemoryTimeoutMs" },
   temperature:  { interval: "temperatureIntervalSeconds", timeout: "temperatureTimeoutMs" },
   systemInfo:   { interval: "systemInfoIntervalSeconds",  timeout: "systemInfoTimeoutMs" },
   storage:      { interval: "storageIntervalSeconds",     timeout: "storageTimeoutMs" },
+  sdwan:        { interval: null,                         timeout: "systemInfoTimeoutMs" },
 };
 
 /**
  * Metric / state field → the collector whose cadence produces it. Mirrors the
  * metric dispatch in `resolveAssetMetricReadings` (which table each reading is
  * read from), because the table and the cadence are two halves of one fact: the
- * telemetry sample table is written by the cpuMemory pass, the interface and
- * SD-WAN tables by the systemInfo pass, and so on. A metric absent from this
+ * telemetry sample table is written by the cpuMemory pass, the interface
+ * tables by the systemInfo pass, the SD-WAN tables by the SD-WAN pass, and so on. A metric absent from this
  * map falls back to the probe cadence, which is the one every monitored asset
  * has.
  */
@@ -66,6 +77,7 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   status: "responseTime",
   // Telemetry pass (assetTelemetrySample).
   cpuPct: "cpuMemory",
+  cpuCorePct: "cpuMemory",
   memPct: "cpuMemory",
   memUsedBytes: "cpuMemory",
   sessionCount: "cpuMemory",
@@ -88,16 +100,31 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   ifAdminStatus: "systemInfo",
   ifIpAddress: "systemInfo",
   poeStatus: "systemInfo",
-  sdwanLatencyMs: "systemInfo",
-  sdwanJitterMs: "systemInfo",
-  sdwanPacketLoss: "systemInfo",
-  sdwanRuleStatus: "systemInfo",
-  sdwanSelectedMember: "systemInfo",
-  sdwanMemberState: "systemInfo",
+  // SD-WAN pass — its own cadence since 2026-09 (runSdwanFor, the integration's
+  // sdwanIntervalSeconds, default 60s); it rode system-info before that.
+  sdwanLatencyMs: "sdwan",
+  sdwanJitterMs: "sdwan",
+  sdwanPacketLoss: "sdwan",
+  sdwanRuleStatus: "sdwan",
+  sdwanSelectedMember: "sdwan",
+  sdwanMemberState: "sdwan",
   ipsecThroughputBps: "systemInfo",
   ipsecStatus: "systemInfo",
   customWidgetValue: "systemInfo",
   customStateValue: "systemInfo",
+  // Agent-run path checks — each check's own intervalSec. Without
+  // these entries a `forPolls` hold would be converted at the probe cadence.
+  pathLatencyMs: "pathCheck",
+  pathHttpStatus: "pathCheck",
+  pathOk: "pathCheck",
+  pathFailurePct: "pathCheck",
+  pathTlsDaysLeft: "pathCheck",
+  // Traceroutes run every Nth check run, so a hold counted in polls over this
+  // metric counts traceroutes; the caption still reports the check interval.
+  pathHopCount: "pathCheck",
+  // Firmware vs the Repository primary (business rule 87): osVersion is refreshed by
+  // discovery and the system-info pass, never by the probe tick.
+  firmwareVsPrimary: "systemInfo",
 };
 
 /**
@@ -156,11 +183,29 @@ function modalOf(values: number[]): number | null {
  */
 export async function resolveScopeCadence(scope: RuleScope, metric: string | null | undefined): Promise<ScopeCadence> {
   const stream = streamForMetric(metric);
-  const fields = STREAM_FIELDS[stream];
   const ids = await loadScopeAssetIds(scope, { monitoredOnly: true });
   if (!ids.length) {
     return { stream, mode: 0, min: 0, max: 0, timeoutMs: 0, assetCount: 0 };
   }
+  if (stream === "pathCheck") {
+    // One interval per (host, enabled check) pair the scope covers, so a check
+    // run from 400 hosts outweighs one run from 3 — the same "modal across the
+    // matched devices" the monitor streams report.
+    const pairs = await prisma.pathCheckSource.findMany({
+      where: { assetId: { in: ids }, check: { enabled: true } },
+      select: { assetId: true, check: { select: { intervalSec: true, timeoutMs: true } } },
+    });
+    const s = summarizeIntervals(pairs.map((p) => p.check.intervalSec));
+    return {
+      stream,
+      mode: s?.mode ?? 0,
+      min: s?.min ?? 0,
+      max: s?.max ?? 0,
+      timeoutMs: modalOf(pairs.map((p) => p.check.timeoutMs)) ?? 0,
+      assetCount: new Set(pairs.map((p) => p.assetId)).size,
+    };
+  }
+  const fields = STREAM_FIELDS[stream];
   const assets = await prisma.asset.findMany({
     where: { id: { in: ids } },
     select: {
@@ -176,6 +221,7 @@ export async function resolveScopeCadence(scope: RuleScope, metric: string | nul
   });
 
   const intervals: number[] = [];
+  let sdwanPolled = 0;
   const timeouts: number[] = [];
   for (const a of assets) {
     try {
@@ -183,7 +229,18 @@ export async function resolveScopeCadence(scope: RuleScope, metric: string | nul
         ...a,
         discoveredByIntegrationType: a.discoveredByIntegration?.type ?? null,
       } as Parameters<typeof resolveMonitorSettings>[0]);
-      const iv = eff[fields.interval];
+      let iv: unknown;
+      if (fields.interval) {
+        iv = eff[fields.interval];
+      } else {
+        // SD-WAN: the interval lives in the sidecar the resolve above warmed,
+        // and a device the SD-WAN pass never polls (toggle off, not on REST)
+        // has no cadence to report — the same exclusion the scheduler applies.
+        const sdwanSec = resolveSdwanIntervalSec(a);
+        if (!sdwanShouldQueue(a, eff, sdwanSec)) continue;
+        sdwanPolled++;
+        iv = sdwanSec;
+      }
       const to = eff[fields.timeout];
       if (typeof iv === "number" && iv > 0) intervals.push(iv);
       if (typeof to === "number" && to > 0) timeouts.push(to);
@@ -199,6 +256,8 @@ export async function resolveScopeCadence(scope: RuleScope, metric: string | nul
     min: s?.min ?? 0,
     max: s?.max ?? 0,
     timeoutMs: modalOf(timeouts) ?? 0,
-    assetCount: assets.length,
+    // For SD-WAN, only the gates the SD-WAN pass actually polls — the caption
+    // says how many devices it is speaking for.
+    assetCount: fields.interval ? assets.length : sdwanPolled,
   };
 }

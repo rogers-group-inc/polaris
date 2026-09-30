@@ -69,12 +69,26 @@ export const SAMPLE_ALERT_DEVICE: AssetTemplateDetail = {
 /** The sensor a test of a hardware-sensor automation is "about". */
 export const SAMPLE_SENSOR_NAME = "EXAMPLE-TMP1";
 
+/** The upstream device a test of a dependency-down-alerting automation
+ *  (business rule 78) blames — the switch the sample device hangs off. */
+export const SAMPLE_UPSTREAM_HOSTNAME = "EXAMPLE-CORE-01";
+
 /** The health check / WAN member pair a test of an SD-WAN automation charts. */
 export const SAMPLE_SDWAN_HEALTH_CHECK = "Example-SLA";
 export const SAMPLE_SDWAN_LINK = "wan1";
 
 /** The interface a test of a port-scoped automation names. */
 export const SAMPLE_INTERFACE_NAME = "port12";
+
+/** The filesystem a test of a storage* automation names. */
+export const SAMPLE_MOUNT_PATH = "/data";
+/** The cores a TEST of a per-core CPU automation names. Core numbers only — a
+ *  percentage beside them would read as a measurement of a real device. */
+export const SAMPLE_CPU_CORES = "Core 3, Core 7";
+
+/** The path check a test of a path* automation names (a made-up check,
+ *  business rule 65 — never one from this install). */
+export const SAMPLE_PATH_CHECK = "Example-Intranet-Check";
 
 /**
  * The `Notification.dimension` a test alert should carry for `metric`.
@@ -91,5 +105,10 @@ export function sampleDimensionFor(metric: string | null | undefined): string | 
   if (metric === "hwSensorValue" || metric === "hwSensorAlarm") return SAMPLE_SENSOR_NAME;
   if (metric.startsWith("sdwan")) return `${SAMPLE_SDWAN_HEALTH_CHECK}|${SAMPLE_SDWAN_LINK}`;
   if (metric.startsWith("if") || metric === "poeStatus") return SAMPLE_INTERFACE_NAME;
+  if (metric.startsWith("path")) return SAMPLE_PATH_CHECK;
+  if (metric.startsWith("storage")) return SAMPLE_MOUNT_PATH;
+  // A per-core CPU alert is keyed per device, but its component row names the
+  // cores over the line — so a test names some, or the row would vanish.
+  if (metric === "cpuCorePct") return SAMPLE_CPU_CORES;
   return null;
 }

@@ -80,4 +80,14 @@ describe("asset_state field vocabulary", () => {
     expect(FIELD_META.monitorStatus!.values).not.toContain("fortilink_down");
     expect(ASSET_STATE_FIELDS).toContain("fortilinkStatus");
   });
+
+  it("firmwareVsPrimary is a closed three-word enum (business rule 87)", () => {
+    // Polaris makes the comparison from parsed versions, so these three are
+    // the only readings that exist; a free-text box would let an operator
+    // author `== 7.6.8` and get a rule that can never match.
+    expect(ASSET_STATE_FIELDS).toContain("firmwareVsPrimary");
+    const meta = FIELD_META.firmwareVsPrimary!;
+    expect(meta.kind).toBe("enum");
+    expect(meta.values).toEqual(["current", "older", "newer"]);
+  });
 });

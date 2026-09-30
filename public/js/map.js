@@ -2092,6 +2092,15 @@
         positions[id] = { x: columns[id].depth * TOPO_COL_SPACING, y: columns[id].lane * TOPO_ROW_SPACING };
       });
       cyInstance.layout({ name: "preset", positions: positions, fit: true, padding: 30 }).run();
+      // Fan-out links (a switch to its non-spine child switches, a mesh root
+      // to its leaves) route orthogonally through the gutter instead of
+      // slicing diagonally across the AP column between them — geometry the
+      // solver reserved cells for. Stamped from the grid, so it holds under
+      // saved positions and drags too (the turn is a fixed 1.5 columns).
+      window.PolarisTopologyRender.markFanOutEdges(cyInstance, columns, {
+        colSpacing: TOPO_COL_SPACING,
+        orientation: "horizontal",
+      });
     } else {
       cyInstance.layout({
         name: "dagre",

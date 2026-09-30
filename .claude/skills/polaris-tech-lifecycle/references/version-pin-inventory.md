@@ -260,7 +260,6 @@ the way `docker-compose.yml` does (business rule 50).
 | `deploy/ha/setup-rhel-ha.sh` | its own single-stanza copy of the same repo file | pin (repo) |
 | `deploy/migrate-to-nginx.sh` | parses the running version for its own gate (`$NGINX_MINOR -lt 30`) | accept-range |
 | `docker-compose.yml` | `image: nginx:stable` | floating |
-| `deploy/nginx/README-scan-harness.md` | `docker.io/library/nginx:stable` in the DAST harness `podman run` | floating (dev only, ships nowhere) |
 | `docs/INSTALL.md` | "nginx ≥ 1.30" and the stable-branch phrasing — five occurrences plus the table row | prose |
 | `public/js/server-settings.js` | "Requires nginx 1.30+" help text beside the HTTP/3 toggle | prose |
 

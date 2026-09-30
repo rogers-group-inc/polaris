@@ -49,6 +49,7 @@ import {
   isValidIpAddress,
   cidrContains,
   cidrOverlaps,
+  mostSpecificContaining,
   findNextAvailableSubnet,
   detectIpVersion,
   enumerateSubnetIps,
@@ -167,6 +168,8 @@ export async function createSubnetRowChecked(
 export interface IpContext {
   subnetId: string;
   subnetCidr: string;
+  /** The network's IPAM name — the Assets list's Network column. */
+  subnetName: string;
   reservation: { id: string; createdBy: string | null; sourceType: string } | null;
 }
 
@@ -184,6 +187,7 @@ export async function buildIpContexts(ips: string[]): Promise<Map<string, IpCont
     ip: string;
     subnet_id: string;
     subnet_cidr: string;
+    subnet_name: string;
     reservation_id: string | null;
     reservation_created_by: string | null;
     reservation_source_type: string | null;
@@ -193,6 +197,7 @@ export async function buildIpContexts(ips: string[]): Promise<Map<string, IpCont
       i.ip                  AS ip,
       s.id                  AS subnet_id,
       s.cidr                AS subnet_cidr,
+      s.name                AS subnet_name,
       r.id                  AS reservation_id,
       r."createdBy"         AS reservation_created_by,
       r."sourceType"::text  AS reservation_source_type
@@ -211,6 +216,7 @@ export async function buildIpContexts(ips: string[]): Promise<Map<string, IpCont
     out.set(row.ip, {
       subnetId: row.subnet_id,
       subnetCidr: row.subnet_cidr,
+      subnetName: row.subnet_name,
       reservation: row.reservation_id
         ? { id: row.reservation_id, createdBy: row.reservation_created_by, sourceType: row.reservation_source_type as string }
         : null,
@@ -220,7 +226,12 @@ export async function buildIpContexts(ips: string[]): Promise<Map<string, IpCont
 }
 
 export interface CreateSubnetInput {
-  blockId: string;
+  /**
+   * Omit to place the network in the most specific block containing its CIDR
+   * (`resolveBlockForCidr`) — what the Add Network dialog does. When given, it
+   * is honoured and validated as before (API callers that name a block).
+   */
+  blockId?: string;
   cidr: string;
   name: string;
   purpose?: string;
@@ -360,6 +371,22 @@ export async function getSubnet(id: string) {
   return subnet;
 }
 
+// ─── Block resolution ─────────────────────────────────────────────────────────
+
+/**
+ * The most specific block whose range contains `cidr` (same IP version), or
+ * null when none does. Blocks may nest (a /8 holding a site /16), and a new
+ * network belongs to the narrowest of them. An invalid CIDR resolves to null.
+ */
+export async function resolveBlockForCidr(cidr: string) {
+  if (!isValidCidr(cidr)) return null;
+  const normalized = normalizeCidr(cidr);
+  const blocks = await prisma.ipBlock.findMany({
+    where: { ipVersion: detectIpVersion(normalized) },
+  });
+  return mostSpecificContaining(blocks, normalized);
+}
+
 // ─── Create ───────────────────────────────────────────────────────────────────
 
 export async function createSubnet(input: CreateSubnetInput) {
@@ -368,9 +395,16 @@ export async function createSubnet(input: CreateSubnetInput) {
 
   const normalizedCidr = normalizeCidr(input.cidr);
 
-  // Load parent block
-  const block = await prisma.ipBlock.findUnique({ where: { id: input.blockId } });
-  if (!block) throw new AppError(404, `IP Block ${input.blockId} not found`);
+  // Load parent block — the named one, or the most specific one containing the CIDR
+  let block;
+  if (input.blockId) {
+    block = await prisma.ipBlock.findUnique({ where: { id: input.blockId } });
+    if (!block) throw new AppError(404, `IP Block ${input.blockId} not found`);
+  } else {
+    block = await resolveBlockForCidr(normalizedCidr);
+    if (!block)
+      throw new AppError(400, `No IP block contains ${normalizedCidr} — create a block that covers it first`);
+  }
 
   // Subnet must be within the parent block
   if (!cidrContains(block.cidr, normalizedCidr))
@@ -392,7 +426,7 @@ export async function createSubnet(input: CreateSubnetInput) {
   // concurrent requests both pass (see the overlap-invariant note at the top
   // of this file). It throws 409 on overlap or on the unique-index violation.
   const created = await createSubnetRowChecked({
-    blockId: input.blockId,
+    blockId: block.id,
     cidr: normalizedCidr,
     name: input.name,
     purpose: input.purpose,
@@ -411,7 +445,8 @@ export async function createSubnet(input: CreateSubnetInput) {
       ? `Subnet "${input.name}" (${created.cidr}) auto-allocated`
       : `Subnet "${input.name}" (${input.cidr}) created`,
   });
-  return created;
+  // `block` says where the network landed — the caller may not have named one.
+  return { ...created, block: { id: block.id, name: block.name, cidr: block.cidr } };
 }
 
 // ─── Auto-allocate next available ────────────────────────────────────────────
@@ -820,6 +855,123 @@ export async function updateSubnet(id: string, input: UpdateSubnetInput) {
   return updated;
 }
 
+// ─── Move to another block ───────────────────────────────────────────────────
+//
+// Re-parents a network onto a different block without touching anything it
+// holds: the row keeps its id, so reservations, conflicts and the IP panel's
+// history follow it. The destination must pass the same checks a create does —
+// it contains the CIDR (rule 2), matches the IP version, and holds no
+// overlapping sibling (rule 1) — and the overlap test runs under the
+// destination's subnet write lock (rule 20a). The SOURCE block is locked too,
+// so a concurrent deleteBlock cannot count this network as present and then
+// find it gone mid-transaction; the two locks are taken in id order so two
+// moves in opposite directions cannot deadlock.
+//
+// Discovery keys existing networks by CIDR, not by block, so a moved
+// integration-managed network stays the row its integration updates.
+
+export interface MoveTargetBlock {
+  id: string;
+  name: string;
+  cidr: string;
+  /** Sibling network in that block that would overlap, or null when the move is allowed. */
+  overlaps: string | null;
+}
+
+/** Every block (other than the current one) whose range can hold this network. */
+export async function listMoveTargets(id: string): Promise<MoveTargetBlock[]> {
+  const subnet = await prisma.subnet.findUnique({
+    where: { id },
+    select: { cidr: true, blockId: true },
+  });
+  if (!subnet) throw new AppError(404, `Subnet ${id} not found`);
+  const version = detectIpVersion(subnet.cidr);
+  const blocks = await prisma.ipBlock.findMany({
+    where: { ipVersion: version, id: { not: subnet.blockId } },
+    select: { id: true, name: true, cidr: true, subnets: { select: { cidr: true } } },
+    orderBy: { cidr: "asc" },
+  });
+  return blocks
+    .filter((b) => cidrContains(b.cidr, subnet.cidr))
+    .map((b) => ({
+      id: b.id,
+      name: b.name,
+      cidr: b.cidr,
+      overlaps: b.subnets.find((s) => cidrOverlaps(s.cidr, subnet.cidr))?.cidr ?? null,
+    }));
+}
+
+export async function moveSubnet(id: string, targetBlockId: string, actor?: string) {
+  const subnet = await prisma.subnet.findUnique({
+    where: { id },
+    include: { block: { select: { id: true, name: true, cidr: true } } },
+  });
+  if (!subnet) throw new AppError(404, `Subnet ${id} not found`);
+  if (subnet.blockId === targetBlockId)
+    throw new AppError(400, `Subnet ${subnet.cidr} is already in block ${subnet.block.cidr}`);
+
+  const target = await prisma.ipBlock.findUnique({ where: { id: targetBlockId } });
+  if (!target) throw new AppError(404, `IP Block ${targetBlockId} not found`);
+  if (detectIpVersion(subnet.cidr) !== target.ipVersion)
+    throw new AppError(
+      400,
+      `Subnet IP version does not match block IP version (${target.ipVersion})`,
+    );
+  if (!cidrContains(target.cidr, subnet.cidr))
+    throw new AppError(400, `Subnet ${subnet.cidr} is not within block ${target.cidr}`);
+
+  let moved;
+  try {
+    moved = await prisma.$transaction(async (tx) => {
+      for (const blockId of [subnet.blockId, targetBlockId].sort()) {
+        await lockBlockForSubnetWrites(tx, blockId);
+      }
+      // Re-read under the locks: the network may have been moved or deleted,
+      // and the destination deleted, since the pre-checks above.
+      const current = await tx.subnet.findUnique({ where: { id }, select: { blockId: true } });
+      if (!current) throw new AppError(404, `Subnet ${id} not found`);
+      if (current.blockId !== subnet.blockId)
+        throw new AppError(409, `Subnet ${subnet.cidr} was moved by another request — reload and try again`);
+      const stillThere = await tx.ipBlock.findUnique({ where: { id: targetBlockId }, select: { id: true } });
+      if (!stillThere) throw new AppError(404, `IP Block ${targetBlockId} not found`);
+
+      const siblings = await tx.subnet.findMany({
+        where: { blockId: targetBlockId },
+        select: { cidr: true },
+      });
+      const overlap = siblings.find((s) => cidrOverlaps(s.cidr, subnet.cidr));
+      if (overlap)
+        throw new AppError(
+          409,
+          `Subnet ${subnet.cidr} overlaps with existing subnet ${overlap.cidr} in block ${target.cidr}`,
+        );
+      return tx.subnet.update({ where: { id }, data: { blockId: targetBlockId } });
+    });
+  } catch (err: any) {
+    if (err?.code === "P2002")
+      throw new AppError(409, `Subnet ${subnet.cidr} already exists in block ${target.cidr}`);
+    throw err;
+  }
+
+  void logEvent({
+    action: "subnet.moved",
+    resourceType: "subnet",
+    resourceId: id,
+    resourceName: subnet.name,
+    actor,
+    message: `Subnet "${subnet.name}" (${subnet.cidr}) moved from block "${subnet.block.name}" (${subnet.block.cidr}) to "${target.name}" (${target.cidr})`,
+    details: {
+      changes: {
+        block: {
+          from: { id: subnet.block.id, name: subnet.block.name, cidr: subnet.block.cidr },
+          to: { id: target.id, name: target.name, cidr: target.cidr },
+        },
+      },
+    },
+  });
+  return moved;
+}
+
 // ─── IP Enumeration ──────────────────────────────────────────────────────────
 
 /** One full Reservation row, as the IP panel's DTO builder takes it. */
@@ -1052,41 +1204,66 @@ export async function getSubnetIps(id: string, page: number, pageSize: number) {
 
 // ─── Delete ───────────────────────────────────────────────────────────────────
 
-export async function deleteSubnet(id: string, actor?: string) {
+/**
+ * Delete a network and (by cascade) every reservation it holds.
+ *
+ * Refused (409) while the network holds an active reservation — except its
+ * `interface_ip` rows: the gate's own address on the network belongs to the
+ * network rather than claiming space in it, so it never blocks (rule 4).
+ * `force` — which the route admits for admin-equivalent callers only — skips
+ * the refusal. It removes Polaris records only; nothing is unpushed from a
+ * FortiGate, so the Event records every active reservation it overrode.
+ */
+export async function deleteSubnet(
+  id: string,
+  actor?: string,
+  opts: { force?: boolean } = {},
+) {
   const subnet = await prisma.subnet.findUnique({
     where: { id },
     include: {
       reservations: {
-        select: { id: true, ipAddress: true, hostname: true, owner: true, status: true },
+        select: {
+          id: true, ipAddress: true, hostname: true, owner: true, status: true, sourceType: true,
+        },
       },
     },
   });
 
   if (!subnet) throw new AppError(404, `Subnet ${id} not found`);
 
-  const activeCount = await prisma.reservation.count({
-    where: { subnetId: id, status: "active" },
-  });
-  if (activeCount > 0)
+  const blocking = subnet.reservations.filter(
+    (r) => r.status === "active" && r.sourceType !== "interface_ip",
+  );
+  if (blocking.length > 0 && !opts.force)
     throw new AppError(
       409,
-      `Cannot delete subnet ${subnet.cidr} — it has ${activeCount} active reservation(s)`
+      `Cannot delete subnet ${subnet.cidr} — it has ${blocking.length} active reservation(s)`
     );
 
   const deletedReservations = subnet.reservations;
   await prisma.subnet.delete({ where: { id } });
 
   const resCount = deletedReservations.length;
+  const forced = blocking.length > 0;
   void logEvent({
     action: "subnet.deleted",
+    level: forced ? "warning" : undefined,
     resourceType: "subnet",
     resourceId: id,
     resourceName: subnet.name,
     actor,
-    message: resCount > 0
-      ? `Subnet "${subnet.name}" (${subnet.cidr}) deleted with ${resCount} reservation(s)`
-      : `Subnet "${subnet.name}" (${subnet.cidr}) deleted`,
-    details: resCount > 0 ? { deletedReservations } : undefined,
+    message: forced
+      ? `Subnet "${subnet.name}" (${subnet.cidr}) force-deleted with ${blocking.length} active reservation(s)`
+      : resCount > 0
+        ? `Subnet "${subnet.name}" (${subnet.cidr}) deleted with ${resCount} reservation(s)`
+        : `Subnet "${subnet.name}" (${subnet.cidr}) deleted`,
+    details: resCount > 0
+      ? {
+          deletedReservations,
+          ...(forced ? { forced: true, overriddenActiveReservations: blocking.length } : {}),
+        }
+      : undefined,
   });
   return { ...subnet, deletedReservations };
 }

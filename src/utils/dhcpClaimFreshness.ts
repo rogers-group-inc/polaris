@@ -53,3 +53,50 @@ export function claimBeats(candidate: DhcpClaimScore, incumbent: DhcpClaimScore)
   }
   return false;
 }
+
+/**
+ * Run-scoped claim state. The three maps below decide which FortiGate speaks
+ * for an asset's address this run, and they only mean anything when every
+ * competing gate lands in the SAME set.
+ *
+ * That is not automatic. `syncDhcpSubnets` runs ONCE PER MANAGED GATE in
+ * FortiManager mode (the `onDeviceComplete` streaming callback), so maps
+ * declared inside it start empty for every gate — each gate then wins its own
+ * map unconditionally and the asset's ipAddress / ipSource / learnedLocation
+ * become last-gate-to-finish-wins, which is the exact failure the ranking
+ * above exists to prevent. The FMG run's closing `syncDhcpSubnets` call does
+ * not repair it either: that one uses mode "finalize", and Phases 3-7 are
+ * gated to "full" | "skip-deprecation".
+ *
+ * Prod 2026-09-22: an endpoint whose live-lease gate scored 1 on `seenLeased`
+ * lost its address to a gate holding a never-claimed static reservation
+ * (score 0) that finished 10 seconds later.
+ *
+ * So the state is created once per discovery RUN and threaded through every
+ * per-gate sync — the same shape `AdoptionBudget` uses, for the same reason.
+ * Single-call paths (standalone FortiGate, Windows Server, the directory and
+ * cloud integrations) may omit it: one call is already run scope.
+ *
+ * Keyed by assetId, so size tracks fleet size, not gate count.
+ */
+export interface DhcpClaimState {
+  /** Phase 6: best DHCP claim score per asset. */
+  bestIpClaimByAsset: Map<string, DhcpClaimScore>;
+  /**
+   * Freshness (ms epoch) of the sighting naming each asset's
+   * fortigate-endpoint gate — shared by the Phase 6 DHCP path and the Phase 7
+   * inventory path so the latest LOCAL sighting names the gate regardless of
+   * which pathway or gate carried it.
+   */
+  bestGateClaimMsByAsset: Map<string, number>;
+  /** Phase 7: freshest per-gate inventory last_seen backing an IP claim. */
+  bestInvIpSeenByAsset: Map<string, number>;
+}
+
+export function createDhcpClaimState(): DhcpClaimState {
+  return {
+    bestIpClaimByAsset: new Map(),
+    bestGateClaimMsByAsset: new Map(),
+    bestInvIpSeenByAsset: new Map(),
+  };
+}

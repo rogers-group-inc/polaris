@@ -102,6 +102,29 @@ const downDetectionUnavailable = new Counter({
   registers: [registry],
 });
 
+// Agent-run path checks. `outcome` ∈ ok | fail | rejected (a sample
+// naming a check the pushing host is not a source of).
+const pathCheckSamplesTotal = new Counter({
+  name: "polaris_agent_path_check_samples_total",
+  help: "Path-check results ingested from Polaris Agents, by outcome.",
+  labelNames: ["outcome"] as const,
+  registers: [registry],
+});
+
+const pathCheckPathChangesTotal = new Counter({
+  name: "polaris_path_check_path_changes_total",
+  help: "Traceroute path changes detected on path checks (path_check.path_changed Events written).",
+  registers: [registry],
+});
+
+export function recordPathCheckSamples(outcome: "ok" | "fail" | "rejected", n: number): void {
+  if (n > 0) pathCheckSamplesTotal.inc({ outcome }, n);
+}
+
+export function recordPathCheckPathChange(): void {
+  pathCheckPathChangesTotal.inc();
+}
+
 const pgbossQueueJobs = new Gauge({
   name: "polaris_pgboss_queue_jobs",
   help: "pg-boss job counts by queue and state (pg-boss mode only).",
@@ -217,7 +240,7 @@ const dbSizeBytes = new Gauge({
 
 const dbSteadyStateSizeBytes = new Gauge({
   name: "polaris_db_steady_state_size_bytes",
-  help: "Projected PEAK steady-state DB size at current cadences, retention, and monitored asset count — what the database grows to if nothing changes. Computed by capacityService from each sample table's measured daily byte-rate × its EFFECTIVE retention (configured window + one TimescaleDB chunk interval + one prune cycle, since drop_chunks reclaims a whole chunk at a time). Legitimately exceeds polaris_db_size_bytes while tables are still filling; it read BELOW it before the 2026-09 fix.",
+  help: "Projected PEAK steady-state DB size at current cadences, retention, and monitored asset count — what the database grows to if nothing changes. Computed by capacityService from each sample table's measured daily byte-rate, modelled over the TimescaleDB chunk cycle (drop_chunks reclaims a whole chunk at a time; tiers shorter than the compression window also row-delete at the cutoff), and taken at the largest SIMULTANEOUS total across tables rather than the sum of each table's own peak. Legitimately exceeds polaris_db_size_bytes while tables are still filling.",
   registers: [registry],
 });
 
@@ -376,7 +399,7 @@ const fortilinkTransitionTotal = new Counter({
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-export type Cadence = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "lldp" | "storage" | "processes" | "eventLog" | "lossSample";
+export type Cadence = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "lldp" | "storage" | "processes" | "eventLog" | "sdwan" | "lossSample";
 export type WorkOutcome = "success" | "failure" | "crash";
 export type ProbeOutcome = "success" | "failure";
 
@@ -451,6 +474,7 @@ export function setQueueDepth(depths: Partial<Record<Cadence, number>>): void {
   if (depths.lldp         !== undefined) monitorQueueDepth.set({ cadence: "lldp" }, depths.lldp);
   if (depths.storage      !== undefined) monitorQueueDepth.set({ cadence: "storage" }, depths.storage);
   if (depths.processes    !== undefined) monitorQueueDepth.set({ cadence: "processes" }, depths.processes);
+  if (depths.sdwan        !== undefined) monitorQueueDepth.set({ cadence: "sdwan" }, depths.sdwan);
   if (depths.lossSample   !== undefined) monitorQueueDepth.set({ cadence: "lossSample" }, depths.lossSample);
 }
 
@@ -478,6 +502,7 @@ export function setMonitorWorkers(
   if (counts.lldp         !== undefined) monitorWorkers.set({ queue: "lldp" },         counts.lldp);
   if (counts.storage      !== undefined) monitorWorkers.set({ queue: "storage" },      counts.storage);
   if (counts.processes    !== undefined) monitorWorkers.set({ queue: "processes" },    counts.processes);
+  if (counts.sdwan        !== undefined) monitorWorkers.set({ queue: "sdwan" },        counts.sdwan);
   if (counts.floating     !== undefined) monitorWorkers.set({ queue: "floating" },     counts.floating);
 }
 

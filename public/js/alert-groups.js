@@ -39,7 +39,7 @@
    *  the caller may actually hold is recoverable, showing one they do not is a
    *  403 they cannot explain. */
   function canEdit() {
-    return typeof permAtLeast === "function" && permAtLeast("automationManagement", "fullwrite");
+    return typeof permAtLeast === "function" && permAtLeast("automationManagement", "write");
   }
 
   // ── List ───────────────────────────────────────────────────────────────────

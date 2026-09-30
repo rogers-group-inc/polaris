@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { pickVendorProfileMerged, resolveDbMetric } from "../../src/services/profileResolver.js";
+import { pickDbProfile, pickVendorProfileMerged, resolveDbMetric } from "../../src/services/profileResolver.js";
 import type { ProfileFull, MetricRow, MetricOverrideRow } from "../../src/services/manufacturerProfileService.js";
 
 function ov(modelPattern: string, symbol: string, extra: Partial<MetricOverrideRow> = {}): MetricOverrideRow {
@@ -115,6 +115,40 @@ describe("pickVendorProfileMerged — today's merge", () => {
     const p = pickVendorProfileMerged("Aruba", "ArubaOS-Switch", "2930F", "switch", lookup)!;
     expect(p.cpu?.symbol).toBe("hpSwitchCpuStat");
     expect(lookup("Aruba")).toBeNull();
+  });
+});
+
+describe("temperature transform — only what the collector applies reaches it", () => {
+  // A MikroTik-shaped profile: one scalar sensor row whose raw integer is
+  // tenths of a degree (DISPLAY-HINT "d-1").
+  const mikrotik = (extra: Partial<MetricRow>): ProfileFull => ({
+    id: "p-mikrotik", manufacturer: "MikroTik", matchPattern: null, createdBy: "admin", createdAt: "", updatedAt: "", widgets: [],
+    metrics: [row("temperature", { defaultSymbol: "mtxrHlTemperature", ...extra })],
+  });
+  const subject = { manufacturer: "MikroTik", os: null, model: "CCR2004", assetType: "router" };
+  const pick = (p: ProfileFull) => pickDbProfile(subject, () => p, () => [p]);
+
+  it("carries tenths_to_units from a scalar row onto the temperature query", () => {
+    expect(pick(mikrotik({ defaultTransform: "tenths_to_units" }))?.temperature)
+      .toMatchObject({ symbol: "mtxrHlTemperature", mode: "scalar", transform: "tenths_to_units" });
+  });
+
+  it("drops a transform stored before the write path narrowed — Celsius→Fahrenheit converts nothing", () => {
+    // The 2026-09-16 prod row. Now that the collector reads the field, a stale
+    // value must not suddenly start rewriting stored temperatures.
+    expect(pick(mikrotik({ defaultTransform: "celsius_to_fahrenheit" }))?.temperature?.transform).toBeUndefined();
+    expect(pick(mikrotik({ defaultTransform: "bytes_to_mb" }))?.temperature?.transform).toBeUndefined();
+  });
+
+  it("drops a transform on a table row — the sensor-table walk takes none", () => {
+    expect(pick(mikrotik({ defaultType: "table", defaultTransform: "tenths_to_units" }))?.temperature)
+      .toMatchObject({ mode: "table" });
+    expect(pick(mikrotik({ defaultType: "table", defaultTransform: "tenths_to_units" }))?.temperature?.transform).toBeUndefined();
+  });
+
+  it("the retired merge resolver agrees, so the parity table stays honest", () => {
+    const p = mikrotik({ defaultTransform: "tenths_to_units" });
+    expect(pickVendorProfileMerged("MikroTik", null, "CCR2004", "router", () => p)?.temperature?.transform).toBe("tenths_to_units");
   });
 });
 

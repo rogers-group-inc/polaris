@@ -100,6 +100,70 @@ function _setStorageViewPref(view) {
   } catch (_) {}
 }
 
+// ─── Telemetry chart series visibility (legend toggles) ────────────────────
+//
+// Both CPU & Memory charts let an operator click a legend chip to take a
+// series out of the drawing. The two halves keep their state in different
+// places, on purpose:
+//
+//   memory bands   PERSISTED per user, here. The bands are named and mean
+//                  the same thing on every host, so a way of reading memory
+//                  is an opinion an operator holds, not a per-visit whim.
+//   cpu cores      NOT persisted — see _cpuHiddenCores, which keeps them on
+//                  the container. Core 5 of one host has nothing to do with
+//                  core 5 of another, so carrying the choice between assets
+//                  would hide a different core every time.
+//
+// CACHE SHIPS OFF. Page cache is reclaimable: the OS fills whatever RAM the
+// processes are not using and hands it straight back when they want it. Drawn
+// in the stack it makes a perfectly healthy host look nearly full, which is
+// the single most common misreading of this chart — so the default answers
+// "how much memory is actually spoken for" and the chip is right there,
+// visibly off, for anyone who wants the whole picture.
+var _MEM_BANDS_OFF_BY_DEFAULT = ["cache"];
+
+function _memBandVisible(key) {
+  var fallback = _MEM_BANDS_OFF_BY_DEFAULT.indexOf(key) === -1;
+  if (!currentUsername) return fallback;
+  try {
+    var raw = localStorage.getItem("polaris-prefs-series-" + currentUsername);
+    var p = raw ? JSON.parse(raw) : null;
+    var v = p && p["mem:" + key];
+    // Absent means "never touched this chip", which is the default — not
+    // false. Only an explicit boolean overrides.
+    return typeof v === "boolean" ? v : fallback;
+  } catch (_) { return fallback; }
+}
+
+function _setMemBandVisible(key, on) {
+  if (!currentUsername) return;
+  try {
+    var raw = localStorage.getItem("polaris-prefs-series-" + currentUsername);
+    var p = raw ? (JSON.parse(raw) || {}) : {};
+    p["mem:" + key] = !!on;
+    localStorage.setItem("polaris-prefs-series-" + currentUsername, JSON.stringify(p));
+  } catch (_) {}
+}
+
+// Which cores the operator has hidden on THIS chart, as a Set of core index
+// strings (plus "avg" for the aggregate line). Kept on the container's
+// dataset rather than in a module variable because the resize observer and
+// the 60-second silent refresh both re-render — state held anywhere else is
+// lost on every tick, which makes hiding a core useless for the one job it
+// has, watching the others.
+function _cpuHiddenCores(container) {
+  var raw = (container && container.dataset ? container.dataset.coresOff : "") || "";
+  var out = {};
+  raw.split(",").forEach(function (k) { if (k !== "") out[k] = true; });
+  return out;
+}
+
+function _setCpuHiddenCores(container, hidden) {
+  var keys = Object.keys(hidden).filter(function (k) { return hidden[k]; });
+  if (keys.length === 0) delete container.dataset.coresOff;
+  else container.dataset.coresOff = keys.join(",");
+}
+
 // Per-(asset, mount) forecast-overlay visibility. Default on; only stored
 // when the operator explicitly toggles it off (or back on after toggling
 // off) — absent entry = default on.
@@ -273,6 +337,15 @@ var _CHART_MISS_COLOR = "#ffc107";
 // either one read the other.
 var _CHART_RECOVER_COLOR = "#0288d1";
 
+// The packet-loss line the response-time chart overlays on its right-hand
+// 0–100 % axis. Every other hue on that chart is spoken for — up green, miss
+// amber, recovering blue, the severity ladder's reds and oranges, dependency
+// grey, maintenance lavender — so it takes a saturated magenta-purple, drawn
+// DASHED so it cannot be read as the reachability series it shares a plot with
+// even where the two cross. Never red: a 100 % loss bucket is a reading, and
+// red on this chart is the verdict.
+var _CHART_LOSS_COLOR = "#ab47bc";
+
 /**
  * "#rrggbb" + alpha → "rgba(r,g,b,a)". Exists because the Last-30-min strip
  * paints its cells at a fixed translucency while the colour ITSELF is now a
@@ -364,8 +437,8 @@ function _failureDotsSVG(pts) {
 }
 
 // Median sampling cadence of a time-ordered series, in ms. Needs >= 3
-// timestamps to have a meaningful middle. Sizes the collision guard in
-// _outageMarkers below.
+// timestamps to have a meaningful middle. Sizes the hole test in
+// _seriesReportedThrough below.
 function _medianCadenceMs(timestampsMs) {
   if (!timestampsMs || timestampsMs.length < 3) return 0;
   var dts = [];
@@ -409,31 +482,68 @@ function _medianCadenceMs(timestampsMs) {
 // changes. Markers come back as { t, dep } objects rather than bare timestamps
 // for exactly that reason.
 //
-// `sampleTimesMs` is the series' OWN good timestamps, and a marker landing on
-// top of real data is dropped: the Polaris Agent pushes on its own schedule
-// and is not gated on monitorStatus, so an agent host can keep reporting CPU
-// straight through an outage of the server-side probe transport. Diving a line
-// that has data would misreport the data we are actually holding.
+// `sampleTimesMs` is the series' OWN good timestamps, and a window the series
+// kept reporting through is dropped: the Polaris Agent pushes on its own
+// schedule and is not gated on monitorStatus, so an agent host can keep
+// reporting CPU straight through an outage of the server-side probe transport.
+// Diving a line that has data would misreport the data we are actually holding.
+// See _seriesReportedThrough for what "kept reporting" means.
 function _outageMarkers(outages, sampleTimesMs) {
   if (!outages || !outages.length) return [];
   var times = (sampleTimesMs || []).slice().sort(function (a, b) { return a - b; });
-  var guardMs = _medianCadenceMs(times) / 2;
+  var cadenceMs = _medianCadenceMs(times);
   var markers = [];
   outages.forEach(function (o) {
     var from = +new Date(o.from);
     var to   = +new Date(o.to);
     var dep  = o.kind === "dependency";
     if (!isFinite(from) || !isFinite(to)) return;
-    // Skip the WHOLE window when the series has data anywhere in it (padded by
-    // the guard), not merely at its edges. Dropping just the end markers would
-    // still leave any interior samples in place, and the line would dive at the
-    // window's start, climb back for each of them, and dive again — a zigzag
-    // that claims an outage and shows readings through it at the same time.
-    if (guardMs > 0 && times.some(function (t) { return t > from - guardMs && t < to + guardMs; })) return;
+    // Skip the WHOLE window, not merely its edges. Dropping just the end
+    // markers would still leave any interior samples in place, and the line
+    // would dive at the window's start, climb back for each of them, and dive
+    // again — a zigzag that claims an outage and shows readings through it at
+    // the same time.
+    if (_seriesReportedThrough(times, cadenceMs, from, to)) return;
     markers.push({ t: from, dep: dep });
     if (to > from) markers.push({ t: to, dep: dep });
   });
   return markers.sort(function (a, b) { return a.t - b.t; });
+}
+
+// Did the series keep reporting through the outage [from, to]? Two pieces of
+// evidence, either one enough:
+//
+//   • a sample strictly INSIDE the window — the agent case, where the host
+//     pushed readings while the probe transport could not reach it;
+//   • NO HOLE around the window — the last sample at or before `from` and the
+//     first at or after `to` sit no further apart than the series' normal
+//     cadence (1.5x, for jitter). That is a blip shorter than the series'
+//     own interval whose neighbouring polls both succeeded: nothing is missing.
+//
+// This replaced a guard that padded the window by half the cadence on each
+// side and discarded it when ANY sample fell in the padding. The last good
+// poll before a device drops and the first one after it recovers land right
+// next to the outage's edges almost every time — telemetry runs every 5-10
+// minutes against a probe every minute — so that guard threw away most real
+// outages and the line bridged straight across them. On the hourly and daily
+// tiers the padding grew to 30 minutes and 12 hours and swallowed nearly
+// every window, which is why wider ranges showed no misses at all.
+//
+// The hole test is the old gap heuristic used only as a VETO: a hole never
+// creates a marker (only the probe's record does), it can only prove there
+// was no hole to mark. `to` on a rollup tier is the END of the last failed
+// bucket, i.e. the next bucket's start, so the neighbour lookups are
+// inclusive and the interior test is strict.
+function _seriesReportedThrough(times, cadenceMs, from, to) {
+  var prev = null, next = null;
+  for (var i = 0; i < times.length; i++) {
+    var t = times[i];
+    if (t > from && t < to) return true;
+    if (t <= from) prev = t;
+    if (t >= to && next === null) next = t;
+  }
+  if (!(cadenceMs > 0) || prev === null || next === null) return false;
+  return next - prev <= cadenceMs * 1.5;
 }
 
 // The three things every chart does with those markers, kept together so a new
@@ -638,6 +748,12 @@ document.addEventListener("DOMContentLoaded", async function () {
   // Server-side mode: never call sf.apply(). Any filter/sort change resets to
   // page 1 and re-fetches with the new state translated into API params.
   _assetsSF = new TableSF("assets-tbody", assetsApplyFilterState);
+  // Tags is a finite set, so its filter box lists every tag in use and narrows
+  // as the operator types. Fetched on first open, refreshed when stale.
+  _assetsSF.setColumnSuggestions("tags", async function () {
+    var r = await api.assets.tags();
+    return (r && r.tags) || [];
+  });
   var assetsTable = document.querySelector("#assets-tbody").closest("table");
   // Widths + hidden columns persist per browser in the prefs blob; the column
   // ORDER additionally rides the active view tab (assets-tabs.js), so the
@@ -665,6 +781,8 @@ document.addEventListener("DOMContentLoaded", async function () {
   if (bAgent) bAgent.addEventListener("click", openBulkAgentDeployModal);
   var bMaint = document.getElementById("assets-bulk-maint-btn");
   if (bMaint) bMaint.addEventListener("click", bulkMaintenanceSelectedAssets);
+  var bTags = document.getElementById("assets-bulk-tags-btn");
+  if (bTags) bTags.addEventListener("click", openBulkTagsModal);
   _wireBulkBarDropdowns();
   var bQuarantine   = document.getElementById("assets-bulk-quarantine-btn");
   var bUnquarantine = document.getElementById("assets-bulk-unquarantine-btn");
@@ -946,7 +1064,7 @@ function _buildAssetsQuery() {
 
   // Operator-aware text columns. Param name == column key, except _server→server.
   var textCols = ["hostname", "ipAddress", "serialNumber", "assetTag", "manufacturer",
-    "model", "os", "macAddress", "assignedTo", "purchaseOrder", "dnsName", "description"];
+    "model", "os", "macAddress", "assignedTo", "purchaseOrder", "dnsName", "description", "tags"];
   textCols.forEach(function (key) { _pushAssetText(params, key, filters[key]); });
   _pushAssetText(params, "server", filters._server);
 
@@ -997,6 +1115,12 @@ function _pushAssetText(params, paramKey, raw) {
       if (!q) return;
       params[paramKey] = q;
       params[paramKey + "Op"] = "not_contains";
+    } else if (raw.op === "in-networks") {
+      // IP Address column: any-of IPv4 prefixes / CIDRs (TableSF ipnet filter).
+      var terms = (raw.terms || []).map(function (t) { return String(t).trim(); }).filter(Boolean);
+      if (!terms.length) return;
+      params[paramKey] = terms.join(",");
+      params[paramKey + "Op"] = "in_networks";
     }
   }
 }
@@ -1064,7 +1188,7 @@ async function fetchAssetsPage() {
     _assetsData = all.map(_mapAsset);
     renderAssetsPage();
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="22" class="empty-state">Error: ' + escapeHtml(err.message) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="24" class="empty-state">Error: ' + escapeHtml(err.message) + '</td></tr>';
   }
 }
 
@@ -1622,8 +1746,8 @@ function renderAssetsPage() {
   if (_assetsData.length === 0) {
     var hasFilters = _assetsSF && _assetsSF._filters && Object.keys(_assetsSF._filters).length > 0;
     tbody.innerHTML = hasFilters
-      ? '<tr><td colspan="22" class="empty-state">No results match the current filters.</td></tr>'
-      : '<tr><td colspan="22" class="empty-state">No assets found. Add one to get started.</td></tr>';
+      ? '<tr><td colspan="24" class="empty-state">No results match the current filters.</td></tr>'
+      : '<tr><td colspan="24" class="empty-state">No assets found. Add one to get started.</td></tr>';
     _renderAssetsPageControls();
     _assetsUpdateSelectAll();
     return;
@@ -1646,6 +1770,7 @@ function renderAssetsPage() {
         (a.assetTag ? '<br><span class="asset-tag-label">' + escapeHtml(a.assetTag) + '</span>' : '') +
       '</td>' +
       '<td class="mono">' + ipCellHTML(a) + '</td>' +
+      '<td>' + assetNetworkCellHTML(a) + '</td>' +
       '<td>' + _copyableCell(a.serialNumber) + '</td>' +
       '<td>' + assetTypeBadge(a.assetType, a) + '</td>' +
       '<td>' + assetStatusBadge(a) + '</td>' +
@@ -1653,6 +1778,7 @@ function renderAssetsPage() {
       '<td>' + assetMonitoredViaCell(a) + '</td>' +
       '<td>' + escapeHtml(a.location || a.learnedLocation || "-") + '</td>' +
       '<td>' + escapeHtml(a.description || "-") + '</td>' +
+      '<td>' + escapeHtml((a.tags || []).join(", ") || "-") + '</td>' +
       '<td>' + _copyableCell(a.assetTag) + '</td>' +
       '<td>' + escapeHtml(a.manufacturer || "-") + '</td>' +
       '<td>' + escapeHtml(a.model || "-") + '</td>' +
@@ -1706,7 +1832,7 @@ function _assetsUpdateBulkBar() {
   if (el) el.textContent = count === 0 ? "No assets selected" : (count + " selected");
   // Disable every bulk action while nothing is selected.
   ["assets-bulk-deselect-btn", "assets-bulk-type-btn", "assets-bulk-state-btn",
-   "assets-bulk-monitor-btn", "assets-bulk-delete-btn",
+   "assets-bulk-monitor-btn", "assets-bulk-tags-btn", "assets-bulk-delete-btn",
    "assets-bulk-merge-btn", "assets-bulk-agent-btn",
    "assets-bulk-maint-btn",
    "assets-bulk-quarantine-btn", "assets-bulk-unquarantine-btn"
@@ -1715,13 +1841,21 @@ function _assetsUpdateBulkBar() {
   // Compare needs at least two assets to overlay, so it stays VISIBLE and greys
   // out below two — a button that only appears once the right number of rows is
   // ticked is a verb nobody discovers. Available to any role that can view
-  // assets — comparing telemetry is read-only.
+  // assets — comparing telemetry is read-only. Above _CMP_MAX_ASSETS it greys
+  // out too, but dim YELLOW rather than plain grey, so "too many" reads apart
+  // from "not enough" (red is taken by Delete).
   var bCompare = document.getElementById("assets-bulk-compare-btn");
   if (bCompare) {
-    bCompare.disabled = count < 2;
+    var cmpMax = typeof _CMP_MAX_ASSETS === "number" ? _CMP_MAX_ASSETS : 10;
+    var overCap = count > cmpMax;
+    bCompare.disabled = count < 2 || overCap;
+    bCompare.classList.toggle("btn-warning", overCap);
+    bCompare.classList.toggle("btn-secondary", !overCap);
     bCompare.title = count < 2
       ? "Select two or more assets to compare their telemetry"
-      : "Compare telemetry of the selected assets";
+      : overCap
+        ? "Compare supports up to " + cmpMax + " assets — " + count + " selected"
+        : "Compare telemetry of the selected assets";
   }
 
   // Edit opens the single-asset edit modal, so it stays visible but greys out
@@ -1778,6 +1912,16 @@ function _assetsUpdateBulkBar() {
 // "Open in Networks" button is the escape hatch when they want the full
 // subnet IP table. Hidden when the asset has no IP or no non-deprecated
 // containing subnet — there is nothing to look at.
+// Network column (hidden by default): the IPAM network the primary IP sits in
+// — the same most-specific containing subnet ipContext resolves for View
+// Lease. Name first, CIDR on hover; a network with no name shows its CIDR.
+function assetNetworkCellHTML(a) {
+  var ctx = a && a.ipContext;
+  if (!ctx || !ctx.subnetCidr) return "-";
+  var name = (ctx.subnetName || "").trim();
+  return '<span title="' + escapeHtml(ctx.subnetCidr) + '">' + escapeHtml(name || ctx.subnetCidr) + '</span>';
+}
+
 function _viewLeaseActionHTML(a) {
   if (!a.ipAddress) return '';
   var ctx = a.ipContext;
@@ -1853,11 +1997,13 @@ async function openLeasePanel(asset) {
   footerEl.innerHTML =
     openInNetworks +
     ' <button class="btn btn-sm btn-secondary" id="btn-lease-close">Close</button>';
+  raiseSlideover(document.getElementById("lease-panel-overlay"));   // DOM order is stacking order
   revealOverlay(document.getElementById("lease-panel-overlay"));
   document.getElementById("btn-lease-close").addEventListener("click", closeLeasePanel);
+  // The network slide-over, in place and scrolled to this address
+  // (PolarisPanels loads ip-panel.js here on demand).
   document.getElementById("btn-lease-open-networks").addEventListener("click", function () {
-    var hash = '#ip=' + encodeURIComponent(ctx.subnetId) + '@' + encodeURIComponent(asset.ipAddress);
-    window.location.href = '/subnets.html' + hash;
+    PolarisPanels.openNetwork(ctx.subnetId, { focusIp: asset.ipAddress, subnetCidr: ctx.subnetCidr || undefined });
   });
 
   if (!ctx.reservation || !ctx.reservation.id) {
@@ -2307,8 +2453,10 @@ function bulkMaintenanceSelectedAssets() {
 // One modal collects the SSH / WinRM credentials + arch; the server resolves
 // OS platform + transport per asset (Windows → WinRM with SSH fallback,
 // everything else → SSH) and reports ineligible assets back as skips
-// (existing agent, hypervisor, Fortinet source, unreachable, no matching
-// credential). Backend: POST /assets/bulk-agent-install (agentInstallService.
+// (agent in any state but "failed", hypervisor, Fortinet source, unreachable,
+// no matching credential). An asset whose agent install FAILED is retried in
+// place with this batch's credentials — the per-asset Retry, folded into the
+// bulk verb. Backend: POST /assets/bulk-agent-install (agentInstallService.
 // bulkInstallAgents) — installs run in a bounded server-side pool; progress
 // shows per-asset on each System tab exactly like a manual install.
 function openBulkAgentDeployModal() {
@@ -2343,7 +2491,8 @@ function openBulkAgentDeployModal() {
       '<p style="color:var(--color-text-secondary)">Install the Polaris Agent on the <strong>' + ids.length +
         '</strong> selected asset' + (ids.length === 1 ? '' : 's') + '. Each asset\'s OS is inferred from its ' +
         'discovered OS field: Windows hosts use the WinRM credential (SSH as fallback), everything else uses the SSH credential. ' +
-        'Assets that already have an agent, hypervisors, Fortinet-discovered devices, and assets with no reachable address are skipped automatically.</p>' +
+        'An asset whose last agent install <strong>failed</strong> is retried with the credentials chosen here. ' +
+        'Assets with an agent in any other state, hypervisors, Fortinet-discovered devices, and assets with no reachable address are skipped automatically.</p>' +
       '<div class="form-group" style="margin-top:0.75rem">' +
         '<label for="bulk-agent-cred-ssh">SSH credential (Linux / macOS, Windows fallback)</label>' +
         '<select id="bulk-agent-cred-ssh">' + credOptions(sshOpts, "— None (skip SSH-only hosts) —") + '</select>' +
@@ -2419,11 +2568,16 @@ function openBulkAgentDeployModal() {
 }
 
 // Replace the deploy modal's content with the outcome summary: how many
-// installs kicked off + a per-asset table of skips with the server's reason.
+// installs kicked off (naming how many of those were retries of a failed
+// install) + a per-asset table of skips with the server's reason.
 function _renderBulkAgentDeployResult(r) {
+  var retried = r.retried || 0;
+  var retriedNote = retried > 0
+    ? ' (' + retried + ' of them ' + (retried === 1 ? 'a retry' : 'retries') + ' of a failed install)'
+    : '';
   var kickedLine = r.kicked > 0
     ? '<p style="margin:0 0 0.75rem"><strong>' + r.kicked + '</strong> install' + (r.kicked === 1 ? '' : 's') +
-      ' started — progress shows on each asset\'s System tab as the pool works through them.</p>'
+      ' started' + retriedNote + ' — progress shows on each asset\'s System tab as the pool works through them.</p>'
     : '<p style="margin:0 0 0.75rem">No installs were started.</p>';
   var skippedHTML = '';
   if (r.skipped && r.skipped.length) {
@@ -2669,6 +2823,92 @@ async function bulkChangeState(nextStatus) {
   loadAssets();
 }
 
+// Bulk-bar Tags: pick tags from the registry picker (the edit form's
+// tagFieldHTML) and one of three modes. Add is the default because a
+// selection usually mixes assets whose tags differ. The work happens server-
+// side (POST /assets/bulk-tags) — the selection spans pages, so the browser
+// doesn't hold most rows' current tags. Replace keeps region: and discovery
+// breadcrumb tags; the hint says so (assetBulkTagService).
+var BULK_TAG_MODE_HINTS = {
+  add:     "The selected tags are added to every asset. Tags an asset already has are kept.",
+  remove:  "The selected tags are removed from every asset that has them. Other tags are kept.",
+  replace: "Every asset ends up with exactly the selected tags — all other tags are removed, except Device Map region tags and discovery breadcrumbs (prev-entra:, prev-ad:). Selecting no tags clears them.",
+};
+
+async function openBulkTagsModal() {
+  var ids = Array.from(_assetsSelected);
+  if (!ids.length) return;
+  await _ensureTagCache();
+  var n = ids.length + " asset" + (ids.length === 1 ? "" : "s");
+
+  function modeRadio(value, label, checked) {
+    return '<label style="display:flex;align-items:center;gap:0.35rem;font-weight:normal;cursor:pointer">' +
+      '<input type="radio" name="bulk-tags-mode" value="' + value + '"' + (checked ? " checked" : "") + '> ' + label +
+    '</label>';
+  }
+  var body =
+    '<div class="form-group">' +
+      '<label>Action</label>' +
+      '<div style="display:flex;gap:1rem;align-items:center;padding:0.25rem 0">' +
+        modeRadio("add", "Add tags", true) +
+        modeRadio("remove", "Remove tags", false) +
+        modeRadio("replace", "Replace all tags", false) +
+      '</div>' +
+      '<p class="hint" id="bulk-tags-mode-hint">' + escapeHtml(BULK_TAG_MODE_HINTS.add) + '</p>' +
+    '</div>' +
+    tagFieldHTML([]);
+  var footer =
+    '<button class="btn btn-secondary" id="bulk-tags-cancel">Cancel</button>' +
+    '<button class="btn btn-primary" id="bulk-tags-go">Add Tags</button>';
+  openModal("Tags — " + n, body, footer);
+  wireTagPicker();
+
+  var goLabels = { add: "Add Tags", remove: "Remove Tags", replace: "Replace Tags" };
+  function currentMode() {
+    var r = document.querySelector('input[name="bulk-tags-mode"]:checked');
+    return r ? r.value : "add";
+  }
+  document.querySelectorAll('input[name="bulk-tags-mode"]').forEach(function (r) {
+    r.addEventListener("change", function () {
+      var mode = currentMode();
+      document.getElementById("bulk-tags-mode-hint").textContent = BULK_TAG_MODE_HINTS[mode];
+      document.getElementById("bulk-tags-go").textContent = goLabels[mode];
+      // Creating a registry tag to then remove it from assets makes no sense.
+      var addRow = document.getElementById("f-tags-add-row");
+      if (addRow) addRow.style.display = mode === "remove" ? "none" : "flex";
+    });
+  });
+  document.getElementById("bulk-tags-cancel").onclick = closeModal;
+  document.getElementById("bulk-tags-go").onclick = async function () {
+    var mode = currentMode();
+    var tags = getTagFieldValue();
+    if (!tags.length && mode !== "replace") {
+      showToast("Select at least one tag", "error");
+      return;
+    }
+    if (mode === "replace") {
+      var what = tags.length ? "exactly " + tags.join(", ") : "no tags";
+      var ok = await showConfirm("Replace the tags on " + n + " with " + what + "? Their other tags are removed (region tags and discovery breadcrumbs are kept).");
+      if (!ok) return;
+    }
+    var btn = document.getElementById("bulk-tags-go");
+    btn.disabled = true;
+    try {
+      var r = await api.assets.bulkTags(ids, mode, tags);
+      var msg = (mode === "add" ? "Added tags to " : mode === "remove" ? "Removed tags from " : "Replaced tags on ") +
+        r.updated + " asset" + (r.updated === 1 ? "" : "s");
+      if (r.unchanged) msg += " (" + r.unchanged + " already matched)";
+      showToast(msg);
+      closeModal();
+      _assetsSelected.clear();
+      loadAssets();
+    } catch (e) {
+      showToast((e && e.message) || "Tag update failed", "error");
+      btn.disabled = false;
+    }
+  };
+}
+
 async function bulkDeleteAssets() {
   var ids = Array.from(_assetsSelected);
   if (!ids.length) return;
@@ -2689,8 +2929,8 @@ async function bulkDeleteAssets() {
 }
 
 // Bulk-bar Edit: the edit modal is single-asset, so this only acts when exactly
-// one row is selected (the button hides otherwise). Tags are edited there like
-// any other field — the old bulk tag-mode modal was retired in favor of it.
+// one row is selected (the button hides otherwise). Multi-asset tag edits go
+// through the bulk bar's Tags button (openBulkTagsModal) instead.
 function bulkEditSelectedAsset() {
   var ids = Array.from(_assetsSelected);
   if (ids.length !== 1) return;
@@ -3255,6 +3495,69 @@ function descriptionFieldValue() {
   var v = el.value;
   var max = parseInt(el.getAttribute("maxlength") || "", 10);
   return (max > 0 && v.length > max) ? v.slice(0, max) : v;
+}
+
+// Business rule 40(i): before a save puts an asset on an address, ask the
+// server who else is there. Resolves { proceed, mergeWith }: `proceed=false`
+// means the operator cancelled; `mergeWith` names the one current holder to
+// open the merge review against after the save lands (only offered when the
+// server says the caller may merge, and only when there is exactly ONE
+// current holder — with several, "merge with which one" is the conflict
+// card's question, not a dialog button's).
+//
+// The save itself is what raises the conflict card (the route re-evaluates the
+// address and returns `ipConflict`); this dialog exists so the person about to
+// cause the collision is told BEFORE it lands and can choose the path. A failed
+// check never blocks the save — the sweep re-derives the answer within ten
+// minutes, and a pre-flight that could refuse a save on a network blip would be
+// worse than no pre-flight.
+async function _preflightDuplicateIp(ip, excludeAssetId, formData) {
+  ip = (ip || "").trim();
+  if (!ip) return { proceed: true, mergeWith: null };
+  var check;
+  try {
+    check = await api.assets.ipCheck({
+      ip: ip,
+      excludeAssetId: excludeAssetId || undefined,
+      assetType: (formData && formData.assetType) || undefined,
+      macAddress: (formData && formData.macAddress) || undefined,
+    });
+  } catch (_) {
+    return { proceed: true, mergeWith: null };
+  }
+  if (!check || !check.wouldConflict || !Array.isArray(check.holders) || !check.holders.length) {
+    return { proceed: true, mergeWith: null };
+  }
+  var current = check.holders.filter(function (h) { return h.claimCurrent; });
+  var describe = function (h) {
+    var bits = [h.hostname || h.assetId, h.assetType || "unknown type", h.status || ""];
+    var seen = h.ipLastSeen || h.lastSeen;
+    if (h.pinned) bits.push("address pinned by an operator");
+    else if (seen && typeof timeAgo === "function") bits.push("address confirmed " + timeAgo(seen));
+    return "  • " + bits.filter(Boolean).join(" · ");
+  };
+  var msg = [
+    ip + " is already recorded on " + (current.length === 1 ? "another asset:" : current.length + " other assets:"),
+    current.map(describe).join("\n"),
+    "",
+    "Saving keeps your address and raises a Duplicate IP conflict for review — two devices on one " +
+      "address is a fault, and the conflict card is where it gets resolved (move one of them, or merge " +
+      "them if they are the same device).",
+  ].join("\n");
+  var choices = [{ id: "review", label: "Save & submit for conflict review", kind: "primary" }];
+  if (check.canMerge && current.length === 1) {
+    msg += "\n\nIf this IS the same device recorded twice, you can go straight to the merge review instead.";
+    choices.push({
+      id: "merge",
+      label: "Save & review merge with " + (current[0].hostname || "the other asset"),
+      kind: "secondary",
+    });
+  }
+  var picked = typeof showChoice === "function"
+    ? await showChoice(msg, { title: "Address already in use", choices: choices })
+    : (window.confirm(msg) ? "review" : null);
+  if (!picked) return { proceed: false, mergeWith: null };
+  return { proceed: true, mergeWith: picked === "merge" ? current[0].assetId : null };
 }
 
 function getAssetFormData() {
@@ -4424,10 +4727,20 @@ async function openCreateModal() {
     var btn = this;
     btn.disabled = true;
     try {
-      await api.assets.create(getAssetFormData());
+      var formData = getAssetFormData();
+      // Rule 40(i): a typed address that another asset already holds is a
+      // collision the operator should hear about before, not after, the save.
+      var pre = await _preflightDuplicateIp(formData.ipAddress, null, formData);
+      if (!pre.proceed) return;
+      var created = await api.assets.create(formData);
       closeModal();
-      showToast("Asset created");
+      showToast(created && created.ipConflict
+        ? "Asset created — duplicate IP submitted for conflict review"
+        : "Asset created");
       loadAssets();
+      if (pre.mergeWith && created && created.id && typeof openAssetMergeModal === "function") {
+        openAssetMergeModal(created.id, pre.mergeWith, { onMerged: loadAssets });
+      }
     } catch (err) {
       showToast(err.message, "error");
     } finally {
@@ -4538,7 +4851,17 @@ async function openEditModal(id, opts) {
         var maint = _readAdhocMaintenanceRequest();
         if (maint.error) { _setMaintFormError(maint.error); throw new Error(maint.error); }
         _setMaintFormError("");
-        await api.assets.update(id, getAssetFormData());
+        var formData = getAssetFormData();
+        // Rule 40(i): only a CHANGED address is a new claim worth asking
+        // about — re-saving the form with the same IP is not.
+        var ipChanged = typeof formData.ipAddress === "string" &&
+          formData.ipAddress.trim() !== "" &&
+          formData.ipAddress.trim() !== (asset.ipAddress || "");
+        var pre = ipChanged
+          ? await _preflightDuplicateIp(formData.ipAddress, id, formData)
+          : { proceed: true, mergeWith: null };
+        if (!pre.proceed) return;
+        var updated = await api.assets.update(id, formData);
         var maintApplied = false;
         if (maint.requested) {
           if (typeof window.maintCreateAdhoc !== "function") {
@@ -4558,12 +4881,21 @@ async function openEditModal(id, opts) {
         else if (maint.requested) {
           showToast("Asset updated and schedule created, but the asset did not enter maintenance " +
             "(only monitored assets can).", "error");
-        } else showToast("Asset updated");
+        } else showToast(updated && updated.ipConflict
+          ? "Asset updated — duplicate IP submitted for conflict review"
+          : "Asset updated");
         loadAssets();
-        // The details panel can still be open behind this modal (locked
-        // slide-over, or the monitoring-pill path that never closes it) —
-        // re-render it so it doesn't sit on the pre-save values.
-        if (_isCurrentAsset(id)) openViewModal(id);
+        if (pre.mergeWith && typeof openAssetMergeModal === "function") {
+          // The operator chose the merge review over the conflict card: open
+          // it now, over the list, instead of re-rendering the details panel
+          // for a record they are about to fold into another one.
+          openAssetMergeModal(id, pre.mergeWith, { onMerged: loadAssets });
+        } else if (_isCurrentAsset(id)) {
+          // The details panel can still be open behind this modal (locked
+          // slide-over, or the monitoring-pill path that never closes it) —
+          // re-render it so it doesn't sit on the pre-save values.
+          openViewModal(id);
+        }
       } catch (err) {
         showToast(err.message, "error");
       } finally {
@@ -4826,6 +5158,12 @@ function _ensureAssetPanelDOM() {
           '<button class="btn-icon" id="asset-panel-close" title="Close" aria-label="Close asset details">&times;</button>' +
         '</div>' +
         '<div class="slideover-meta" id="asset-panel-meta"></div>' +
+        // The tab strip is rendered into the body by tabbedBodyHTML and then
+        // moved here by openViewModal, so it stays frozen in the header while
+        // the tab content scrolls. Every reader finds it by id
+        // (#asset-view-tabs), never by container, so the move is invisible
+        // to them.
+        '<div class="slideover-tabs" id="asset-panel-tabs"></div>' +
       '</div>' +
       '<div class="slideover-body" id="asset-panel-body"><p class="empty-state">Loading...</p></div>' +
       '<div class="slideover-footer" id="asset-panel-footer"></div>' +
@@ -4851,22 +5189,18 @@ function _ensureAssetPanelDOM() {
   // keeps Escape from closing the whole asset panel out from under an open
   // nested panel. Not a hard focus trap: the asset panel is a resizable side
   // panel meant to coexist with the page, so role="dialog" without aria-modal.
-  document.addEventListener("keydown", function (e) {
-    if (e.key !== "Escape") return;
-    if (!overlay.classList.contains("open")) return;
-    if (document.querySelector(".slideover-overlay.slideover-nested.open")) return;
-    if (document.getElementById("modal-overlay") && document.getElementById("modal-overlay").classList.contains("open")) return;
-    closeAssetPanel();
-  });
+  // wireSlideoverEscape (app.js) gates on isTopmostSlideover, which covers
+  // both the nested drilldowns and a network or block slide-over opened from
+  // inside this panel: every slide-over stacks by DOM order (raiseSlideover),
+  // so whichever was opened last owns the key.
+  wireSlideoverEscape(overlay, closeAssetPanel);
 
   // Alt+Left / Alt+Right walk the panel history, mirroring the browser chord.
   // Gated exactly like Escape above: only while the asset panel is the topmost
   // layer, so an open drilldown or a stacked modal keeps the keys for itself.
   document.addEventListener("keydown", function (e) {
     if (!e.altKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
-    if (!overlay.classList.contains("open")) return;
-    if (document.querySelector(".slideover-overlay.slideover-nested.open")) return;
-    if (document.getElementById("modal-overlay") && document.getElementById("modal-overlay").classList.contains("open")) return;
+    if (!isTopmostSlideover(overlay)) return;
     e.preventDefault();
     _assetPanelGo(e.key === "ArrowLeft" ? -1 : 1);
   });
@@ -4942,11 +5276,18 @@ async function openViewModal(id, opts) {
   var actionsEl = document.getElementById("asset-panel-actions");
   titleEl.textContent = "Asset Details";
   metaEl.innerHTML = "";
+  // Cleared with the body so a walk to another asset doesn't leave the
+  // previous device's tabs on screen over its loading state.
+  var tabsSlot = document.getElementById("asset-panel-tabs");
+  if (tabsSlot) tabsSlot.innerHTML = "";
   bodyEl.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">Loading...</p>';
   footerEl.innerHTML = "";
   // Cleared alongside the footer so a walk to another asset can't leave the
   // previous device's Open HTTPS / Open SSH buttons on screen while it loads.
   if (actionsEl) actionsEl.innerHTML = "";
+  // A closed panel re-opened from inside another slide-over (an IP row in the
+  // network panel) has to paint over it — DOM order is stacking order.
+  raiseSlideover(document.getElementById("asset-panel-overlay"));
   requestAnimationFrame(function () {
     var ov = document.getElementById("asset-panel-overlay");
     ov.classList.add("open");
@@ -4985,6 +5326,17 @@ async function openViewModal(id, opts) {
     var customWidgetsP = assetP.then(function (asset) {
       if (!asset.manufacturer) return null;
       return api.assets.customWidgets(asset.id).catch(function (err) { console.warn("Failed to load custom widgets", err); return null; });
+    });
+
+    // Firmware upgrade availability (business rule 87) — switches and access
+    // points only. The card is part of the asset, so it is read at
+    // assets:read like the rest of the slide-over (flashing is assets:write);
+    // the Repository key only decides whether the card links to the tab.
+    // Errors become a card line rather than a failed wave.
+    var firmwareP = assetP.then(function (asset) {
+      if (!_assetFirmwareEligible(asset)) return null;
+      if (!(typeof permAtLeast === "function" && permAtLeast("assets", "read"))) return null;
+      return api.assets.firmwareUpgrade(asset.id).catch(function (err) { return { error: (err && err.message) || "request failed" }; });
     });
 
     // SD-WAN trio — FortiGate firewalls discovered via FortiManager/FortiGate
@@ -5048,9 +5400,14 @@ async function openViewModal(id, opts) {
       canProbeAssets() ? _ensureCredentials() : Promise.resolve(null),
       customWidgetsP,
       sdwanP,
+      firmwareP,
+      // Path checks this host runs — prefetched so the tab is present
+      // on first paint or absent, never flashing in and out.
+      api.assets.pathChecks(id).catch(function () { return null; }),
     ]);
 
     var a = wave[0];
+    var firmwareAvail = wave[12];
     if (wave[1]) _monitorSettingsCache = wave[1];
     var sources             = wave[3] || [];
     var dependencies        = wave[4];
@@ -5063,6 +5420,7 @@ async function openViewModal(id, opts) {
     var sdwanLinks   = wave[11].links;
     var sdwanMembers = wave[11].members;
     var sdwanMeta    = wave[11].meta || {};
+    var pathPayload  = wave[13];
 
     _currentAssetForRefresh = a;
     // Name the entry now that the hostname is known, so the tooltips read
@@ -5074,13 +5432,21 @@ async function openViewModal(id, opts) {
     var monitoringHTML = assetMonitoringViewHTML(a);
     var agentSubpanelHTML = assetAgentSubpanelHTML(a, managedAgent);
     var agentMountHTML = '<div data-shot-section="agent" data-shot-label="Polaris Agent"><div id="asset-agent-panel-mount"></div></div>';
+    // The Firmware card sits directly under the Polaris Agent card: the same
+    // "Polaris acts on this device and shows polled progress" surface. Only a
+    // switch / access point gets the mount at all.
+    var firmwareMountHTML = _assetFirmwareEligible(a)
+      ? '<div data-shot-section="firmware" data-shot-label="Firmware"><div id="asset-firmware-panel-mount"></div></div>'
+      : '';
     var systemHTML     = a.monitored
       ? monitoringHTML +
         '<hr style="margin:1.5rem 0;border:none;border-top:1px solid var(--color-border)">' +
         agentMountHTML +
+        firmwareMountHTML +
         assetSystemViewHTML(a)
       : monitoringHTML +
-        agentMountHTML; // unmonitored assets still see the panel when an agent is mid-install
+        agentMountHTML + // unmonitored assets still see the panel when an agent is mid-install
+        firmwareMountHTML;
     var tabs = [
       { key: "general", label: "General", html: generalHTML },
       { key: "system",  label: "System",  html: systemHTML },
@@ -5100,6 +5466,10 @@ async function openViewModal(id, opts) {
     // above so the tab is present + pre-populated on first paint.
     if (sdwanRules.length || sdwanLinks.length || sdwanMembers.length) {
       tabs.push({ key: "sdwan", label: "SD-WAN", html: _assetSdwanTabHTML(a, sdwanRules, sdwanLinks, sdwanMembers, sdwanMeta) });
+    }
+    // Paths tab — agent-run path checks this host runs.
+    if (_pathTabEligible(pathPayload)) {
+      tabs.push({ key: "pathCheck", label: "Paths", html: _assetPathCheckTabHTML(a, pathPayload) });
     }
     // MAC Table tab — the switch's layer-2 forwarding database. Switch-class
     // only, mirroring where the collector spends the walk; lazy-loaded on
@@ -5182,6 +5552,15 @@ async function openViewModal(id, opts) {
     tabs.push({ key: "sources", label: "Sources", html: _assetSourcesTabHTML(sources, a.id, sightings, ipHistory) });
     var tabsHTML = tabbedBodyHTML("asset-view", tabs);
     bodyEl.innerHTML = '<div class="asset-panel-content">' + tabsHTML + '</div>';
+    // Lift the strip into the header slot so it doesn't scroll away with the
+    // tab content. tabbedBodyHTML stamps an inline margin-bottom meant for a
+    // strip sitting above its panels; in the header the header's own border
+    // is the divider.
+    var tabBar = bodyEl.querySelector("#asset-view-tabs");
+    if (tabsSlot && tabBar) {
+      tabBar.style.marginBottom = "0";
+      tabsSlot.appendChild(tabBar);
+    }
 
     titleEl.innerHTML = 'Asset Details' + (a.hostname
       ? ' <span style="color:var(--color-text-secondary);font-weight:400;margin-left:6px">— ' + escapeHtml(a.hostname) + '</span>'
@@ -5245,12 +5624,13 @@ async function openViewModal(id, opts) {
     if (showSnmpWalkTab) _wireSnmpWalkTab(a);
     if (canQuarantineAssets()) _wireQuarantineTab(a);
     if (sdwanRules.length || sdwanLinks.length || sdwanMembers.length) _wireSdwanTab(a, sdwanRules, sdwanLinks, sdwanMembers);
+    if (_pathTabEligible(pathPayload)) _wireAssetPathCheckTab(a, pathPayload);
     if (a.assetType === "switch") _wireAssetMacTableTab(a.id);
     if (a.assetType === "firewall") _wireAssetArpTableTab(a.id);
     if (!isInfraProc) _wireAssetServicesTab(a);
     if (permAtLeast("events", "read")) _wireAssetEventsTab(a.id);
     if (permAtLeast("alerts", "read")) _loadAssetNotificationsTab(a.id);
-    _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML);
+    _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML, firmwareAvail);
     _wireHoverTriggersIn(bodyEl);
     bodyEl.addEventListener("click", _handleCopyClick);
     document.getElementById("btn-asset-copy").addEventListener("click", _copyAssetDetails);
@@ -5386,7 +5766,7 @@ function _assetGeneralTabHTML(a) {
 
 // Async section mounts on the General/System tabs: dependency tree, directory
 // activity, last-seen firewall, MCLAG peers, virtualization, agent sub-panel.
-function _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML) {
+function _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML, firmwareAvail) {
     // Mount the dependency tree into its placeholder div on the General tab.
     var depMount = document.getElementById("asset-dep-tree-mount-" + a.id);
     if (depMount) {
@@ -5528,6 +5908,8 @@ function _mountAssetViewAsyncSections(a, dependencies, sources, sightings, manag
       agentMount.innerHTML = agentSubpanelHTML;
       _wireAgentSubpanel(a, managedAgent);
     }
+    // Firmware card (switch / AP only; the mount exists only for those).
+    _rerenderFirmwarePanel(a, firmwareAvail);
 }
 
 // Footer Refresh button + the Events-tab Export dropdown.
@@ -5812,9 +6194,12 @@ function _wireAssetChartRangeControls(a) {
       }, fromIso, toIso);
       _loadSystemTabFor(a.id, { from: fromIso, to: toIso }, a, { chartOnly: true });
     };
-    // Both charts drive the SAME window, so a drag on either applies to both.
+    // Split section: both charts drive the SAME window, so a drag on either
+    // applies to both. Combined section: only the one container exists, and
+    // _wireChartDragSelect no-ops on the nulls.
     _wireChartDragSelect(document.getElementById("asset-cpu-chart"), systemDragApply);
     _wireChartDragSelect(document.getElementById("asset-memory-chart"), systemDragApply);
+    _wireChartDragSelect(document.getElementById("asset-system-chart"), systemDragApply);
     _wireChartDragSelect(document.getElementById("asset-system-sessions-chart"), function (fromIso, toIso) {
       _applyCustomRangeSelection({
         btnClass: "asset-sessions-range-btn", customBtnId: "btn-asset-sessions-custom",
@@ -6207,6 +6592,348 @@ function _rerenderAgentSubpanel(a, agent) {
   _wireAgentSubpanel(a, agent);
 }
 
+// ─── Firmware card (business rule 87) ────────────────────────────────────────
+// A card on the System tab under the Polaris Agent card, for switches and
+// access points: what the Repository can offer this device, the approval
+// dialog that names the exact image before anything is pushed, live progress
+// polled from the run row while a flash is in flight, and the run history.
+// The server owns every state word and reason (`fw.state`, `fw.reason`); the
+// card never regexes a sentence to decide what to draw.
+
+function _assetFirmwareEligible(a) {
+  return !!a && (a.assetType === "switch" || a.assetType === "access_point");
+}
+
+var _FW_STAGE_LABELS = {
+  preflight:  "Signing in",
+  staging:    "Uploading image",
+  compat:     "Checking compatibility",
+  deploying:  "Deploying",
+  rebooting:  "Rebooting",
+  verifying:  "Verifying new version",
+  recovering: "Waiting for monitoring to answer",
+};
+
+function _fwBadge(text, color) {
+  return '<span style="font-size:0.75rem;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,0.06);color:' + color + '">' + escapeHtml(text) + '</span>';
+}
+
+function _fwImageLine(img) {
+  if (!img) return "";
+  return '<strong>' + escapeHtml(img.versionLabel) + '</strong>' +
+    (img.platform ? ' <span style="color:var(--color-text-tertiary)">(' + escapeHtml(img.platform) + ')</span>' : '');
+}
+
+function _fwRunResultHTML(run) {
+  if (!run) return "";
+  var when = run.finishedAt ? timeAgo(run.finishedAt) : (run.startedAt ? timeAgo(run.startedAt) : "");
+  if (run.status === "succeeded") {
+    return '<div style="font-size:0.85rem;color:var(--color-success);margin:0.4rem 0">' +
+      (run.result === "already-current" ? "Already at " : "Upgraded to ") + escapeHtml(run.verifiedVersion || run.toVersion) + ', ' + escapeHtml(when) + '</div>';
+  }
+  if (run.status === "unverified") {
+    return '<div style="font-size:0.85rem;color:var(--color-warning);margin:0.4rem 0">The device rebooted but Polaris couldn’t confirm the version — check it on the device. ' +
+      (run.error ? '<span style="color:var(--color-text-secondary)">' + escapeHtml(run.error) + '</span>' : '') + '</div>';
+  }
+  if (run.status === "failed") {
+    return '<div style="margin:0.5rem 0;padding:0.5rem 0.75rem;background:rgba(255,80,80,0.08);' +
+      'border-left:3px solid var(--color-danger);border-radius:4px;font-family:monospace;font-size:0.8rem;' +
+      'color:var(--color-danger);white-space:pre-wrap;word-break:break-word">' +
+      'Upgrade to ' + escapeHtml(run.toVersion) + ' failed' + (run.stage ? ' at ' + escapeHtml(_FW_STAGE_LABELS[run.stage] || run.stage).toLowerCase() : '') + ': ' +
+      escapeHtml(run.error || "unknown error") + '</div>';
+  }
+  return "";
+}
+
+function _fwStageRow(label, pct, state) {
+  var cls = "fw-stage" + (state ? " " + state : "");
+  // A step with no percentage (reboot, verify, the monitoring wait) slides
+  // while it runs and reads FULL once done — an empty track under a finished
+  // step looked like one that never ran.
+  var bar = pct === null
+    ? (state === "is-done"
+        ? '<span class="fw-progress"><span class="fw-progress-fill" style="width:100%"></span></span>'
+        : '<span class="fw-progress' + (state === "is-active" ? " is-indeterminate" : "") + '"><span class="fw-progress-fill"></span></span>')
+    : '<span class="fw-progress"><span class="fw-progress-fill" style="width:' + Math.max(0, Math.min(100, pct)) + '%"></span></span>';
+  return '<div class="' + cls + '"><span class="fw-stage-label">' + escapeHtml(label) + '</span>' + bar +
+    '<span class="fw-stage-pct">' + (pct === null ? '' : Math.round(pct) + '%') + '</span></div>';
+}
+
+function _fwProgressHTML(run) {
+  var p = (run && run.progress) || {};
+  var stage = run && run.stage;
+  var order = ["preflight", "staging", "compat", "deploying", "rebooting", "verifying", "recovering"];
+  var idx = order.indexOf(stage);
+  var rows = "";
+  // The switch reports percentages for erase / write / verify while deploying.
+  var hasPct = typeof p.erase === "number" || typeof p.write === "number" || typeof p.verify === "number";
+  if (hasPct) {
+    var eraseDone = (p.erase || 0) >= 100;
+    var writeDone = (p.write || 0) >= 100;
+    rows += _fwStageRow("Erasing flash", p.erase || 0, eraseDone ? "is-done" : "is-active");
+    rows += _fwStageRow("Writing image", p.write || 0, writeDone ? "is-done" : (eraseDone ? "is-active" : ""));
+    rows += _fwStageRow("Verifying image", p.verify || 0, (p.verify || 0) >= 100 ? "is-done" : (writeDone ? "is-active" : ""));
+  }
+  if (idx >= order.indexOf("rebooting")) rows += _fwStageRow("Rebooting", null, stage === "rebooting" ? "is-active" : "is-done");
+  if (idx >= order.indexOf("verifying")) rows += _fwStageRow("Verifying new version", null, stage === "verifying" ? "is-active" : "is-done");
+  // The device answered its web UI; the maintenance window stays open until
+  // Polaris's own monitoring probe answers too (the runner's last stage).
+  if (idx >= order.indexOf("recovering")) rows += _fwStageRow("Waiting for monitoring to answer", null, "is-active");
+  // No "step N of M": the switch's counter sat at 6/40 for an entire flash on
+  // prod (and in fortiupgrade's capture) — it only ever misled.
+  var step = '';
+  return '<div id="asset-fw-progress">' +
+    '<div style="font-size:0.85rem;margin:0.3rem 0 0.5rem">Stage: <strong>' + escapeHtml(_FW_STAGE_LABELS[stage] || stage || "starting") + '</strong>' + escapeHtml(step) +
+      (run && run.startedAt ? ' <span style="color:var(--color-text-tertiary)">· started ' + escapeHtml(timeAgo(run.startedAt)) + '</span>' : '') + '</div>' +
+    rows +
+    '<p class="hint" style="margin:0.5rem 0 0">Do not power-cycle the device while it is flashing. Polaris holds its alerts until the run finishes.</p>' +
+  '</div>';
+}
+
+function _fwRunHistoryHTML(a) {
+  return '<div style="margin-top:0.6rem">' +
+    '<button type="button" class="btn btn-link btn-sm" id="btn-fw-history" style="padding:0">Run history ▸</button>' +
+    '<div id="asset-fw-history" style="display:none;margin-top:0.4rem"></div>' +
+  '</div>';
+}
+
+function assetFirmwarePanelHTML(a, fw) {
+  if (!fw || !_assetFirmwareEligible(a)) return "";
+  var badge = "";
+  var body = "";
+  // Whoever may edit an asset may upgrade it (operator decision, 2026-09-26).
+  var canFlash = typeof permAtLeast === "function" && permAtLeast("assets", "write");
+  var repoLink = (typeof permAtLeast === "function" && permAtLeast("firmware", "read"))
+    ? ' <a href="/server-settings.html?tab=firmware">Open the Repository</a>'
+    : '';
+  if (fw.error) {
+    body = '<p style="color:var(--color-text-tertiary);font-size:0.85rem;margin:0">Couldn’t read upgrade status: ' + escapeHtml(fw.error) + '</p>';
+  } else if (fw.state === "running" && fw.activeRun) {
+    badge = _fwBadge("Upgrading", "var(--color-warning)");
+    body = '<div style="font-size:0.85rem">' + escapeHtml(fw.activeRun.fromVersion || fw.current || "?") + ' → ' + escapeHtml(fw.activeRun.toVersion) + '</div>' + _fwProgressHTML(fw.activeRun);
+  } else if (fw.state === "unsupported") {
+    badge = _fwBadge("Not supported", "var(--color-text-tertiary)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + '</p>';
+  } else if (fw.state === "up-to-date") {
+    badge = _fwBadge("Current", "var(--color-success)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">Running ' + escapeHtml(fw.current || "?") + '. ' + escapeHtml(fw.reason || "") + '</p>';
+  } else if (fw.state === "pending-discovery") {
+    badge = _fwBadge("Flashed", "var(--color-success)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + '</p>';
+  } else if (fw.state === "no-image" || fw.state === "no-serial" || fw.state === "no-version") {
+    badge = _fwBadge("No image", "var(--color-text-tertiary)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + repoLink + '</p>';
+  } else if (fw.state === "no-credential") {
+    badge = _fwBadge("No login bound", "var(--color-warning)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + repoLink + '</p>';
+  } else if (fw.state === "blocked") {
+    badge = _fwBadge("Blocked", "var(--color-text-tertiary)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + '</p>';
+  } else if (fw.state === "available" && fw.image) {
+    badge = _fwBadge("Upgrade available", "var(--color-accent)");
+    body =
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem 1.25rem;margin:0.5rem 0;font-size:0.85rem">' +
+        '<div>Current: <strong>' + escapeHtml(fw.current || "?") + '</strong></div>' +
+        '<div>Available: ' + _fwImageLine(fw.image) + '</div>' +
+        '<div>Model image: <strong>' + escapeHtml(fw.image.model) + '</strong> · ' + escapeHtml(fw.image.role) + '</div>' +
+        '<div>Login: <strong>' + escapeHtml(fw.credential ? fw.credential.credentialName : "—") + '</strong>' +
+          (fw.credential ? ' <span style="color:var(--color-text-tertiary)">(' + escapeHtml(fw.credential.scope) + ' binding)</span>' : '') + '</div>' +
+        (fw.backupImage ? '<div style="grid-column:1 / -1;color:var(--color-text-secondary)">Also eligible: ' + _fwImageLine(fw.backupImage) + ' (the model’s backup)</div>' : '') +
+      '</div>' +
+      (canFlash
+        ? '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem"><button type="button" class="btn btn-primary" id="btn-fw-upgrade">Upgrade firmware to ' + escapeHtml(fw.image.versionLabel) + '…</button></div>'
+        : '<p class="hint" style="margin:0">Starting an upgrade needs Read-Write on Assets — ask an administrator.</p>');
+  }
+  if (!fw.error && fw.state !== "running" && fw.lastRun) body += _fwRunResultHTML(fw.lastRun);
+  return '<div id="asset-firmware-panel" data-asset-id="' + escapeHtml(a.id) + '" style="margin:0 0 1.5rem;padding:1rem;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface)">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.5rem">' +
+      '<h4 style="margin:0;display:flex;align-items:baseline;gap:0.5rem">Firmware ' + badge + '</h4>' +
+    '</div>' +
+    body +
+    (fw.error ? '' : _fwRunHistoryHTML(a)) +
+  '</div>';
+}
+
+function _fwApprovalBlockHTML(img, checked, withRadio) {
+  var id = "fw-approve-" + img.id;
+  return '<label class="fw-approve-block' + (checked ? " is-selected" : "") + '" for="' + id + '" style="display:block;cursor:' + (withRadio ? "pointer" : "default") + '">' +
+    (withRadio
+      ? '<input type="radio" name="fw-approve-image" id="' + id + '" value="' + escapeHtml(img.id) + '" data-version="' + escapeHtml(img.versionLabel) + '"' + (checked ? " checked" : "") + '> '
+      : '<input type="radio" name="fw-approve-image" id="' + id + '" value="' + escapeHtml(img.id) + '" data-version="' + escapeHtml(img.versionLabel) + '" checked style="display:none">') +
+    '<strong>' + escapeHtml(img.versionLabel) + '</strong> · ' + escapeHtml(img.role === "backup" ? "the model’s backup image" : "the model’s primary image") +
+    '<dl>' +
+      '<dt>Platform</dt><dd>' + escapeHtml(img.platform || "unknown") + '</dd>' +
+      '<dt>File</dt><dd>' + escapeHtml(img.filename) + ' (' + escapeHtml(typeof formatBytes === "function" ? formatBytes(img.sizeBytes) : img.sizeBytes + " bytes") + ')</dd>' +
+      '<dt>SHA-256</dt><dd><code>' + escapeHtml(img.sha256) + '</code></dd>' +
+      '<dt>Filed under</dt><dd>' + escapeHtml(img.manufacturer) + ' › ' + escapeHtml(img.assetType === "access_point" ? "access point" : img.assetType) + ' › ' + escapeHtml(img.model) + '</dd>' +
+      '<dt>Uploaded</dt><dd>' + escapeHtml(img.uploadedBy || "—") + (img.uploadedAt ? ', ' + escapeHtml(new Date(img.uploadedAt).toLocaleString()) : '') + '</dd>' +
+    '</dl>' +
+  '</label>';
+}
+
+/** The approval dialog's body — pure, so the DOM test can render it. */
+function _fwApprovalModalHTML(a, fw) {
+  var withRadio = !!fw.backupImage;
+  return '<div class="fw-approve-block">' +
+      '<strong>Device</strong>' +
+      '<dl>' +
+        '<dt>Host</dt><dd>' + escapeHtml(a.hostname || "—") + (a.ipAddress ? ' (' + escapeHtml(a.ipAddress) + ')' : '') + '</dd>' +
+        '<dt>Serial</dt><dd>' + escapeHtml(a.serialNumber || "—") + '</dd>' +
+        '<dt>Running</dt><dd>' + escapeHtml(fw.current || "unknown") + '</dd>' +
+        '<dt>Login</dt><dd>' + escapeHtml(fw.credential ? fw.credential.credentialName : "—") + (fw.credential ? ' (' + escapeHtml(fw.credential.scope) + ' binding)' : '') + '</dd>' +
+      '</dl>' +
+    '</div>' +
+    '<p style="font-size:0.85rem;margin:0 0 0.4rem"><strong>Firmware to push</strong>' +
+      (withRadio ? ' <span style="color:var(--color-text-secondary)">— the primary image is offered by default; the backup is this model’s previous image.</span>' : '') + '</p>' +
+    _fwApprovalBlockHTML(fw.image, true, withRadio) +
+    (withRadio ? _fwApprovalBlockHTML(fw.backupImage, false, true) : '') +
+    '<div class="alert alert-warning" style="padding:0.6rem 0.75rem;border-radius:6px;background:rgba(214,137,16,0.12);border:1px solid var(--color-warning,#d68910);font-size:0.82rem;margin:0.5rem 0 0.75rem">' +
+      'The device reboots during the upgrade and will be unreachable for a few minutes — everything behind a switch goes with it. ' +
+      'Polaris holds its alerts for this device while it works on it. A flash that fails partway can leave a device unbootable; do not power-cycle it while it is writing.' +
+    '</div>' +
+    '<label style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:pointer">' +
+      '<input type="checkbox" id="fw-approve-ack"> I have checked the version and platform above' +
+    '</label>';
+}
+
+function _fwSelectedApproval() {
+  var r = document.querySelector('input[name="fw-approve-image"]:checked');
+  return r ? { imageId: r.value, version: r.getAttribute("data-version") } : null;
+}
+
+function _openFirmwareApprovalModal(a, fw) {
+  var footer =
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn btn-primary" id="btn-fw-approve" disabled>Approve and upgrade to ' + escapeHtml(fw.image.versionLabel) + '</button>';
+  openModal("Approve firmware upgrade — " + (a.hostname || a.ipAddress || "device"), _fwApprovalModalHTML(a, fw), footer);
+  var ack = document.getElementById("fw-approve-ack");
+  var btn = document.getElementById("btn-fw-approve");
+  function sync() {
+    var sel = _fwSelectedApproval();
+    btn.disabled = !(ack && ack.checked && sel);
+    if (sel) btn.textContent = "Approve and upgrade to " + sel.version;
+    document.querySelectorAll(".fw-approve-block").forEach(function (b) {
+      var r = b.querySelector('input[name="fw-approve-image"]');
+      if (r) b.classList.toggle("is-selected", r.checked);
+    });
+  }
+  if (ack) ack.addEventListener("change", sync);
+  document.querySelectorAll('input[name="fw-approve-image"]').forEach(function (r) { r.addEventListener("change", sync); });
+  btn.addEventListener("click", function () {
+    var sel = _fwSelectedApproval();
+    if (!sel) return;
+    btn.disabled = true;
+    api.assets.startFirmwareUpgrade(a.id, { imageId: sel.imageId }).then(function () {
+      closeModal();
+      showToast("Upgrade started", "success");
+      return api.assets.firmwareUpgrade(a.id).then(function (next) { _rerenderFirmwarePanel(a, next); });
+    }).catch(function (err) {
+      btn.disabled = false;
+      showToast((err && err.message) || "Could not start the upgrade", "error");
+    });
+  });
+  sync();
+}
+
+async function _loadFirmwareHistory(a) {
+  var box = document.getElementById("asset-fw-history");
+  if (!box) return;
+  box.innerHTML = '<p class="hint" style="margin:0">Loading…</p>';
+  try {
+    var res = await api.assets.firmwareUpgradeRuns(a.id);
+    var runs = (res && res.runs) || [];
+    if (runs.length === 0) { box.innerHTML = '<p class="hint" style="margin:0">No upgrade runs for this device.</p>'; return; }
+    var rows = runs.map(function (r) {
+      var dur = (r.startedAt && r.finishedAt) ? Math.round((new Date(r.finishedAt) - new Date(r.startedAt)) / 1000) + " s" : "";
+      var color = r.status === "succeeded" ? "var(--color-success)" : r.status === "failed" ? "var(--color-danger)" : r.status === "unverified" ? "var(--color-warning)" : "var(--color-text-secondary)";
+      return '<tr>' +
+        '<td title="' + escapeHtml(r.startedAt ? new Date(r.startedAt).toLocaleString() : "") + '">' + escapeHtml(r.startedAt ? timeAgo(r.startedAt) : "") + '</td>' +
+        '<td>' + escapeHtml(r.fromVersion || "?") + ' → ' + escapeHtml(r.toVersion) + '</td>' +
+        '<td><span style="color:' + color + '">' + escapeHtml(r.status) + '</span></td>' +
+        '<td>' + escapeHtml(dur) + '</td>' +
+        '<td style="text-align:right"><button type="button" class="btn btn-sm btn-secondary fw-history-view" data-id="' + escapeHtml(r.id) + '">View log</button></td>' +
+      '</tr>';
+    }).join("");
+    box.innerHTML = '<table class="data-table" style="font-size:0.82rem"><thead><tr><th>Started</th><th>Version</th><th>Result</th><th>Duration</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+    box.querySelectorAll(".fw-history-view").forEach(function (b) {
+      b.addEventListener("click", function () { _openFwRunLogModal(a.id, b.getAttribute("data-id")); });
+    });
+  } catch (err) {
+    box.innerHTML = '<p class="hint" style="margin:0;color:var(--color-danger)">' + escapeHtml((err && err.message) || "Could not load run history") + '</p>';
+  }
+}
+
+// The per-asset run read (assets:read), not the Repository's (firmware:read):
+// a role that may flash a device need not hold the Repository key.
+async function _openFwRunLogModal(assetId, runId) {
+  try {
+    var res = await api.assets.firmwareUpgradeRun(assetId, runId);
+    var run = res.run;
+    var lines = (run.log || []).map(function (l) { return "[" + l.t + "] " + (l.level || "info").toUpperCase() + " " + l.msg; }).join("\n");
+    openModal("Firmware upgrade — " + run.toVersion,
+      '<p style="margin-bottom:0.5rem"><strong>' + escapeHtml(run.status) + '</strong>' + (run.error ? ' — ' + escapeHtml(run.error) : '') + '</p>' +
+      '<pre style="max-height:60vh;overflow:auto;font-size:0.76rem;white-space:pre-wrap">' + escapeHtml(lines || "(no log lines)") + '</pre>',
+      '<button class="btn btn-secondary" onclick="closeModal()">Close</button>');
+  } catch (err) {
+    showToast((err && err.message) || "Could not load the run", "error");
+  }
+}
+
+function _wireFirmwarePanel(a, fw) {
+  var up = document.getElementById("btn-fw-upgrade");
+  if (up) up.addEventListener("click", function () { _openFirmwareApprovalModal(a, fw); });
+  var hist = document.getElementById("btn-fw-history");
+  if (hist) {
+    hist.addEventListener("click", function () {
+      var box = document.getElementById("asset-fw-history");
+      if (!box) return;
+      var open = box.style.display !== "none";
+      box.style.display = open ? "none" : "";
+      hist.textContent = open ? "Run history ▸" : "Run history ▾";
+      if (!open && !box.__loaded) { box.__loaded = true; _loadFirmwareHistory(a); }
+    });
+  }
+  if (fw && fw.activeRun && fw.activeRun.id) _startFirmwarePoll(a, fw.activeRun.id);
+}
+
+function _rerenderFirmwarePanel(a, fw) {
+  var mount = document.getElementById("asset-firmware-panel-mount");
+  if (!mount) return;
+  mount.innerHTML = assetFirmwarePanelHTML(a, fw);
+  _wireFirmwarePanel(a, fw);
+}
+
+// One poll per (asset, run): the sentinel is the panel itself — the tick
+// bails when it is gone or shows another asset, exactly like _startAgentPoll.
+var _fwPollKey = null;
+
+function _startFirmwarePoll(a, runId) {
+  var key = a.id + ":" + runId;
+  if (_fwPollKey === key) return;
+  _fwPollKey = key;
+  var tick = function () {
+    var panel = document.getElementById("asset-firmware-panel");
+    if (!panel || panel.getAttribute("data-asset-id") !== a.id || _fwPollKey !== key) { if (_fwPollKey === key) _fwPollKey = null; return; }
+    api.assets.firmwareUpgradeRun(a.id, runId).then(function (res) {
+      var run = res && res.run;
+      var panel2 = document.getElementById("asset-firmware-panel");
+      if (!panel2 || panel2.getAttribute("data-asset-id") !== a.id || _fwPollKey !== key) { if (_fwPollKey === key) _fwPollKey = null; return; }
+      if (run && (run.status === "queued" || run.status === "running")) {
+        var box = document.getElementById("asset-fw-progress");
+        if (box) box.outerHTML = _fwProgressHTML(run);
+        setTimeout(tick, 3000);
+        return;
+      }
+      _fwPollKey = null;
+      // Terminal: re-read availability and redraw the whole card.
+      api.assets.firmwareUpgrade(a.id).then(function (next) { _rerenderFirmwarePanel(a, next); }).catch(function () { /* next open re-reads */ });
+    }).catch(function () {
+      setTimeout(tick, 5000);
+    });
+  };
+  setTimeout(tick, 3000);
+}
+
 function _openInstallAgentModal(a) {
   // OS pre-fill: best-effort from Asset.os. Treat empty / unknown as
   // Linux since that's the most common case operators install agents on;
@@ -6455,6 +7182,34 @@ function _confirmUninstallAgent(a, force) {
 // monitored — the not-monitored case is handled by the monitoring section
 // above. The early-return below is defensive.
 
+// Whether the CPU & Memory section renders as TWO charts or one.
+//
+// The split is a consequence of what the SOURCE reports, never of what the
+// asset is. Two transports carry the two things that cannot share one
+// 0-100% axis — per-core CPU (as many lines as the entity has cores) and a
+// memory COMPOSITION in bytes:
+//
+//   agent   — the host's own logical cores, and buffers / cache / free as
+//             the OS accounts for them.
+//   vcenter — a VM's vCPUs or an ESXi host's physical cores from the
+//             PerformanceManager, and vSphere's own memory bands.
+//
+// FortiOS REST, SNMP, WinRM and SSH report one CPU figure and one memory
+// figure per sample, and two of those on two stacked 200px charts is the
+// pre-2026-09 combined chart with twice the height and half the
+// comparability. They keep the combined chart.
+//
+// Resolved, not read off the column: `cpuMemoryPolling` is stamped "agent"
+// at enrollment (agentTokenService / the agents route) and defaults to
+// "vcenter" on a vCenter-discovered asset, but a class or integration tier
+// can carry either method too, and _resolvedStreamPolling is the same walk
+// the section badge and the stale banner use.
+var _SPLIT_CHART_METHODS = ["agent", "vcenter"];
+
+function _telemetrySplitsCpuMemory(a) {
+  return _SPLIT_CHART_METHODS.indexOf(_resolvedStreamPolling(a, "telemetry")) >= 0;
+}
+
 function assetSystemViewHTML(a) {
   if (!a) return '<p class="empty-state">No data.</p>';
   if (!a.monitored) {
@@ -6523,6 +7278,7 @@ function assetSystemViewHTML(a) {
       (rangeBtnsHTML ? ('<div style="display:flex;gap:6px">' + rangeBtnsHTML + '</div>') : '') +
     '</div>';
   }
+  var splitCharts = _telemetrySplitsCpuMemory(a);
   var sessionsRangeBtns = a.assetType === "firewall"
     ? _chartRangeBtnsHTML("asset-sessions-range-btn", [
         { value: "1h",  label: "1h" },
@@ -6541,25 +7297,42 @@ function assetSystemViewHTML(a) {
       '<label style="display:flex;align-items:center;gap:4px">To <input type="datetime-local" id="asset-system-to" class="form-input" style="padding:2px 6px"></label>' +
       '<button class="btn btn-sm btn-primary" id="btn-asset-system-custom-apply">Apply</button>' +
     '</div>' +
-    // TWO charts under ONE range selector. CPU is a percentage and memory is
-    // a byte stack, so they cannot share an axis; they DO share a window,
-    // because they are two readings of one sample row and putting them on
-    // different ranges would only invite comparing them wrongly. Each chart
-    // owns its own stats line, per the chart canon.
-    '<div style="font-size:0.78rem;font-weight:600;color:var(--color-text-secondary);margin-bottom:0.15rem">CPU</div>' +
-    '<div id="asset-cpu-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
-      '<span>Loading…</span>' +
-    '</div>' +
-    '<div id="asset-cpu-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
-      'Loading samples…' +
-    '</div>' +
-    '<div style="font-size:0.78rem;font-weight:600;color:var(--color-text-secondary);margin:0.75rem 0 0.15rem">Memory</div>' +
-    '<div id="asset-mem-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
-      '<span>Loading…</span>' +
-    '</div>' +
-    '<div id="asset-memory-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
-      'Loading samples…' +
-    '</div>' +
+    // ONE chart or TWO, decided by _telemetrySplitsCpuMemory. The split
+    // exists for the two things only the agent and vCenter send — per-core
+    // CPU and a memory breakdown in BYTES — and neither survives a source
+    // that reports a pair of percentages. On a FortiGate or an SNMP switch
+    // the two charts would be a single line each, stacked, on a tab that is
+    // already long: one shared 0-100% axis says the same thing in half the
+    // height.
+    //
+    // Split: CPU is a percentage and memory is a byte stack, so they cannot
+    // share an axis; they DO share a window, because they are two readings of
+    // one sample row and putting them on different ranges would only invite
+    // comparing them wrongly. Each chart owns its own stats line, per the
+    // chart canon.
+    (splitCharts
+      ? '<div style="font-size:0.78rem;font-weight:600;color:var(--color-text-secondary);margin-bottom:0.15rem">CPU</div>' +
+        '<div id="asset-cpu-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
+          '<span>Loading…</span>' +
+        '</div>' +
+        '<div id="asset-cpu-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
+          'Loading samples…' +
+        '</div>' +
+        '<div style="font-size:0.78rem;font-weight:600;color:var(--color-text-secondary);margin:0.75rem 0 0.15rem">Memory</div>' +
+        '<div id="asset-mem-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
+          '<span>Loading…</span>' +
+        '</div>' +
+        '<div id="asset-memory-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
+          'Loading samples…' +
+        '</div>'
+      // Combined: no sub-heading above the chart — the section header already
+      // reads "CPU & Memory" and the SVG carries its own two-key legend.
+      : '<div id="asset-system-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
+          '<span>Loading…</span>' +
+        '</div>' +
+        '<div id="asset-system-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
+          'Loading samples…' +
+        '</div>') +
     '</div>' +
     // Active Sessions chart — FortiGate firewalls only. Starts hidden;
     // _renderSessionsChart reveals it once the telemetry history carries
@@ -6651,9 +7424,10 @@ function _renderPhysicalEntities(entities) {
 }
 
 function _currentSystemTabRange() {
-  // The CPU container is the canonical carrier of the shared selection —
-  // both it and the memory container are stamped, and either would do.
-  var chart = document.getElementById("asset-cpu-chart");
+  // Split section: the CPU container is the canonical carrier of the shared
+  // selection — both it and the memory container are stamped, and either
+  // would do. Combined section: there is only the one container.
+  var chart = document.getElementById("asset-cpu-chart") || document.getElementById("asset-system-chart");
   if (!chart) return "24h";
   if (chart.dataset.from && chart.dataset.to) {
     return { from: chart.dataset.from, to: chart.dataset.to };
@@ -6714,10 +7488,18 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
   // re-fetch + their re-render and reuse the cached si for the chart's
   // stale banner and the latest-reading rows.
   var chartOnly = !!(opts && opts.chartOnly) && _assetSystemSiCache;
-  var chart   = document.getElementById("asset-cpu-chart");
-  var memChart = document.getElementById("asset-memory-chart");
-  var summary = document.getElementById("asset-cpu-summary");
-  var memSummary = document.getElementById("asset-mem-summary");
+  // Two DOM shapes, decided at render time by _telemetrySplitsCpuMemory: a
+  // CPU container beside a memory one, or the single combined container. The
+  // loader reads whichever is mounted rather than re-deriving the gate — the
+  // markup is the one authority, and an asset whose polling method changes
+  // under an open panel would otherwise render into containers that are gone.
+  var combined = document.getElementById("asset-system-chart");
+  var chart   = combined || document.getElementById("asset-cpu-chart");
+  var memChart = combined ? null : document.getElementById("asset-memory-chart");
+  var summary = combined
+    ? document.getElementById("asset-system-summary")
+    : document.getElementById("asset-cpu-summary");
+  var memSummary = combined ? null : document.getElementById("asset-mem-summary");
   var ifaces  = document.getElementById("asset-system-interfaces");
   var storage = document.getElementById("asset-system-storage");
   var temps   = document.getElementById("asset-system-temps");
@@ -6771,8 +7553,12 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
       _assetSystemSiCache = si;
     }
 
-    _renderCpuChart(chart, tel, asset, si);
-    if (memChart) _renderMemoryChart(memChart, tel, asset, si);
+    if (combined) {
+      _renderSystemChart(chart, tel, asset, si);
+    } else {
+      _renderCpuChart(chart, tel, asset, si);
+      if (memChart) _renderMemoryChart(memChart, tel, asset, si);
+    }
     var sessionsChart = document.getElementById("asset-system-sessions-chart");
     if (sessionsChart) {
       var sessionsSel = _currentSessionsRange();
@@ -6785,8 +7571,12 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
         await _loadSessionsChartFor(assetId, sessionsSel, asset, { tel: sameWindow ? tel : null, silent: silent });
       }
     }
-    _renderCpuSummary(summary, tel);
-    _renderMemorySummary(memSummary, tel);
+    if (combined) {
+      _renderSystemSummary(summary, tel);
+    } else {
+      _renderCpuSummary(summary, tel);
+      _renderMemorySummary(memSummary, tel);
+    }
     if (!chartOnly) {
       _renderInterfacesTable(ifaces, si, asset);
       _renderStorageTable(storage, si, asset);
@@ -6826,6 +7616,31 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
   var refAsset = asset || _currentAssetForRefresh;
   var ms = _refreshIntervalMs(refAsset && refAsset.cpuMemoryIntervalSec, settings.cpuMemoryIntervalSeconds, 60);
   _scheduleAssetSystemRefresh(assetId, refAsset, ms);
+}
+
+// Renders the COMBINED chart's window summary — the shape a non-agent asset
+// gets, where CPU and memory are two readings on one chart and so share one
+// stats line. The container below the chart gets the canonical
+// "<count> samples · <Label>: <value> · ..." shape via _renderChartStats.
+// The split section's per-chart counterparts are _renderCpuSummary /
+// _renderMemorySummary below.
+function _renderSystemSummary(container, tel) {
+  if (!container) return;
+  if (!tel || !tel.stats || !tel.stats.total) {
+    container.textContent = "No telemetry samples in this range yet.";
+    delete container.dataset.summary;
+    return;
+  }
+  var s = tel.stats;
+  var telParts = [
+    { label: "CPU avg", value: s.avgCpuPct != null ? s.avgCpuPct.toFixed(1) + "%" : "—" },
+    { label: "CPU max", value: s.maxCpuPct != null ? s.maxCpuPct.toFixed(1) + "%" : "—" },
+    { label: "Mem avg", value: s.avgMemPct != null ? s.avgMemPct.toFixed(1) + "%" : "—" },
+    { label: "Mem max", value: s.maxMemPct != null ? s.maxMemPct.toFixed(1) + "%" : "—" },
+  ];
+  var telTierPart = _tierStatsPart(tel);
+  if (telTierPart) telParts.unshift(telTierPart);
+  _renderChartStats(container, s.total, telParts);
 }
 
 // Window summaries for the two telemetry charts. Each chart owns its own
@@ -8069,16 +8884,17 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
       return;
     }
 
-    // Interface name click — opens the per-interface history panel. The
-    // already-loaded row rides along so the slide-over can surface
-    // current-state fields (VLAN config in particular) that the
-    // interface-history endpoint doesn't carry.
+    // Interface name click — opens the per-interface history panel, or, when
+    // the interface's address sits in a Polaris network, offers that network
+    // too (_openInterfaceOrNetwork). The already-loaded row rides along so the
+    // slide-over can surface current-state fields (VLAN config in particular)
+    // that the interface-history endpoint doesn't carry.
     var ifLink = t.closest(".asset-iface-link");
     if (ifLink) {
       e.preventDefault();
       var ifn = ifLink.getAttribute("data-ifname");
       var row = rows.find(function (r) { return r.ifName === ifn; }) || null;
-      openInterfaceDetailPanel(asset, ifn, row);
+      _openInterfaceOrNetwork(asset, ifn, row, ifLink);
       return;
     }
 
@@ -8098,6 +8914,58 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
       var id = lldpLink.getAttribute("data-asset-id");
       if (id) openViewModal(id);
     }
+  });
+}
+
+// The address an interface row carries, in the form GET /assets/ip-context
+// takes: the first address when a row lists several, without a prefix length
+// or a mask ("10.4.12.1/24", "10.4.12.1 255.255.255.0"), and null for the
+// unconfigured placeholders a device reports (0.0.0.0, ::). Display parsing
+// only — the containment maths stays server-side.
+function _ifaceIpForLookup(raw) {
+  if (raw == null) return null;
+  var first = String(raw).trim().split(/[\s,;]+/)[0] || "";
+  first = first.split("/")[0];
+  if (!first) return null;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(first)) return first === "0.0.0.0" ? null : first;
+  if (first.indexOf(":") !== -1 && /^[0-9a-f:.]+$/i.test(first)) return first === "::" ? null : first;
+  return null;
+}
+
+// An interface name is a link to its history panel — and, when the address it
+// carries sits inside a Polaris network, a fork: the operator may want the
+// interface OR the network that address lives in (the network slide-over,
+// scrolled to that row). The fork is offered only when the network exists,
+// resolved on click through GET /assets/ip-context — one small request, only
+// for an interface that has an address, only for a viewer who can read
+// networks — so a table of 48 ports costs nothing to render, and an address in
+// no network opens the interface straight away, as before. The row menu
+// anchors on the name the operator clicked (showRowMenu, app.js); a lookup
+// that fails, or lands after the table re-rendered under it, opens the
+// interface rather than nothing.
+function _openInterfaceOrNetwork(asset, ifName, row, anchor) {
+  var ip = _ifaceIpForLookup(row && row.ipAddress);
+  var canReadNetworks = typeof permAtLeast === "function" && permAtLeast("subnets", "read");
+  var canLookup = typeof api !== "undefined" && api.assets && typeof api.assets.ipContext === "function";
+  if (!ip || !canReadNetworks || !canLookup) {
+    openInterfaceDetailPanel(asset, ifName, row);
+    return;
+  }
+  api.assets.ipContext(ip).then(function (ctx) {
+    var subnet = ctx && ctx.subnet;
+    if (!subnet || !subnet.id || !anchor || !document.body.contains(anchor)) {
+      openInterfaceDetailPanel(asset, ifName, row);
+      return;
+    }
+    var where = subnet.cidr + (subnet.name ? " · " + subnet.name : "");
+    showRowMenu(anchor, [
+      { label: "Open interface", onSelect: function () { openInterfaceDetailPanel(asset, ifName, row); } },
+      { label: "Open network", title: ip + " is in " + where, onSelect: function () {
+        PolarisPanels.openNetwork(subnet.id, { focusIp: ip, subnetCidr: subnet.cidr });
+      } },
+    ], { label: ifName });
+  }, function () {
+    openInterfaceDetailPanel(asset, ifName, row);
   });
 }
 
@@ -9124,19 +9992,105 @@ function _formatNumber(n) {
 // window is supplied.
 // --- Shared chart scaffolding (2026-08 consolidation) ---
 // The byte-identical closures every SVG chart renderer used to re-declare:
-// zero-padded time parts, the span-aware X-tick label formatter, and the
-// linear time->x / value->y scales. Renderers keep their own paddings, tick
-// loops, and series drawing -- those genuinely differ per chart.
+// zero-padded time parts, the calendar-aligned X-axis ticks, and the linear
+// time->x / value->y scales. Renderers keep their own paddings, Y ticks, and
+// series drawing -- those genuinely differ per chart.
 // assets-compare.js (loaded after this file on assets.html) shares them.
 function _chartPad2(n) { return n < 10 ? "0" + n : String(n); }
-// Span-aware tick label: HH:MM inside one day, M/D beyond.
-function _chartTickFmt(t0, t1) {
-  var spanMs = t1 - t0, oneDayMs = 86400000;
-  return function (ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return _chartPad2(d.getHours()) + ":" + _chartPad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  };
+// X-axis ticks on CALENDAR boundaries, not on fifths of the window. The fifths
+// every chart used to draw landed at arbitrary instants (a 7-day window ticked
+// every 1.4 days: 9/17 18:36, 9/19 04:12 …), so a date-only label named a day
+// it sat in the middle of, skipped whole days (9/18 and 9/22 never appeared),
+// and never lined up with the dashed midnight lines _dateChangeMarkers draws.
+// Now the step is the smallest "nice" one that keeps labels ≥ ~80px apart, and
+// every tick is aligned to local time: a multiple of the step past local
+// midnight for sub-day steps, local midnight itself (via setDate, so DST cannot
+// drift it) for day steps — which puts a day tick exactly on its dashed line.
+// Returns [{ ts, label }], each strictly inside [t0, t1].
+var _CHART_TICK_STEPS_MS = [
+  60e3, 2 * 60e3, 5 * 60e3, 10 * 60e3, 15 * 60e3, 30 * 60e3,
+  3600e3, 2 * 3600e3, 3 * 3600e3, 6 * 3600e3, 12 * 3600e3,
+];
+var _CHART_TICK_STEPS_DAYS = [1, 2, 3, 7, 14, 30];
+function _chartTimeTicks(t0, t1, innerW) {
+  var span = t1 - t0;
+  if (!(span > 0)) return [];
+  var maxTicks = Math.max(2, Math.floor((innerW || 600) / 80));
+  var dayMs = 86400000;
+  var out = [];
+  var stepMs = null;
+  // HH:MM labels only while _dateChangeMarkers still names each midnight line
+  // (≤ 4 days); past that an hour label could belong to any of the days.
+  if (span <= 4 * dayMs) {
+    for (var i = 0; i < _CHART_TICK_STEPS_MS.length; i++) {
+      // +1: a window that starts ON a boundary holds one more tick than intervals.
+      if (Math.floor(span / _CHART_TICK_STEPS_MS[i]) + 1 <= maxTicks) { stepMs = _CHART_TICK_STEPS_MS[i]; break; }
+    }
+  }
+  if (stepMs != null) {
+    var mid = new Date(t0);
+    mid.setHours(0, 0, 0, 0);
+    var base = mid.getTime();
+    var ts = base + Math.ceil((t0 - base) / stepMs) * stepMs;
+    for (var guard = 0; ts <= t1 && guard < 200; guard++, ts += stepMs) {
+      var d = new Date(ts);
+      // A multi-day window names its midnights by date, not "00:00".
+      var atMidnight = d.getHours() === 0 && d.getMinutes() === 0;
+      out.push({
+        ts: ts,
+        label: atMidnight && span > dayMs
+          ? (d.getMonth() + 1) + "/" + d.getDate()
+          : _chartPad2(d.getHours()) + ":" + _chartPad2(d.getMinutes()),
+      });
+    }
+    return out;
+  }
+  var stepDays = _CHART_TICK_STEPS_DAYS[_CHART_TICK_STEPS_DAYS.length - 1];
+  for (var k = 0; k < _CHART_TICK_STEPS_DAYS.length; k++) {
+    if (Math.floor(span / (_CHART_TICK_STEPS_DAYS[k] * dayMs)) + 1 <= maxTicks) { stepDays = _CHART_TICK_STEPS_DAYS[k]; break; }
+  }
+  var day = new Date(t0);
+  day.setHours(0, 0, 0, 0);
+  if (day.getTime() < t0) day.setDate(day.getDate() + 1);
+  for (var g2 = 0; day.getTime() <= t1 && g2 < 200; g2++) {
+    out.push({ ts: day.getTime(), label: (day.getMonth() + 1) + "/" + day.getDate() });
+    day.setDate(day.getDate() + stepDays);
+  }
+  return out;
+}
+// The tick marks + labels for _chartTimeTicks, in the markup every renderer
+// used to inline. A label within half its width of either end of the plot is
+// anchored to that end instead of centred on it — a centred label on the last
+// tick overhung the 10px right padding and was clipped by the SVG edge.
+// `opts.dateLine` adds the M/D under the first tick and wherever the day
+// changes (the response-time chart on a ≤24h window, whose labels are HH:MM).
+function _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH, opts) {
+  opts = opts || {};
+  var ticks = _chartTimeTicks(t0, t1, innerW);
+  var right = padL + innerW;
+  var out = "";
+  var prevDay = null;
+  for (var i = 0; i < ticks.length; i++) {
+    var t = ticks[i];
+    var x = padL + ((t.ts - t0) / (t1 - t0)) * innerW;
+    var half = t.label.length * 3; // ~6px per glyph at font-size 10
+    var anchor = "middle";
+    if (x + half > right + 6) anchor = "end";
+    else if (x - half < padL - 6) anchor = "start";
+    out +=
+      '<line x1="' + x + '" y1="' + (padT + innerH) + '" x2="' + x + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
+      '<text x="' + x + '" y="' + (padT + innerH + 14) + '" text-anchor="' + anchor + '" font-size="10" fill="currentColor">' + t.label + '</text>';
+    if (opts.dateLine) {
+      var d = new Date(t.ts);
+      var key = d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate();
+      if (key !== prevDay) {
+        out +=
+          '<text x="' + x + '" y="' + (padT + innerH + 26) + '" text-anchor="' + anchor + '" font-size="10" fill="currentColor" opacity="0.7">' + (d.getMonth() + 1) + "/" + d.getDate() + '</text>';
+        prevDay = key;
+      }
+    }
+  }
+  return out;
 }
 function _chartXScale(padL, innerW, t0, t1) {
   return function (ts) { return padL + ((new Date(ts).getTime() - t0) / (t1 - t0)) * innerW; };
@@ -9270,6 +10224,7 @@ function _loadMetricSeverityTiers(assetId, metric, dim) {
   var params = { metric: metric };
   if (dim && dim.sensorName)  params.sensorName  = dim.sensorName;
   if (dim && dim.sensorClass) params.sensorClass = dim.sensorClass;
+  if (dim && dim.checkId)     params.checkId     = dim.checkId;
   return api.assets.metricThresholds(assetId, params)
     .then(function (res) { return (res && res.tiers) || []; })
     .catch(function () { return []; }); // no shading rather than no chart
@@ -9324,7 +10279,7 @@ function _ensureSensorPanelDOM() {
   var overlay = document.createElement("div");
   overlay.id = "sensor-panel-overlay";
   overlay.className = "slideover-overlay slideover-nested";
-  overlay.style.zIndex = "1099";
+  // Stacks by DOM order like every slide-over — raiseSlideover on open.
   overlay.innerHTML =
     '<div class="slideover" id="sensor-panel" style="z-index:1100">' +
       '<div class="slideover-resize-handle"></div>' +
@@ -9343,6 +10298,7 @@ function _ensureSensorPanelDOM() {
     if (e.target === overlay) closeSensorPanel();
   });
   document.getElementById("sensor-panel-close").addEventListener("click", closeSensorPanel);
+  wireSlideoverEscape(overlay, closeSensorPanel);
   initSlideoverResize(document.getElementById("sensor-panel"), "polaris.panel.width.sensor");
 }
 
@@ -9364,6 +10320,7 @@ async function openSensorDetailPanel(asset, sensorName) {
   bodyEl.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>';
   footerEl.innerHTML =
     '<button class="btn btn-sm btn-secondary" id="btn-sensor-panel-close-btn">Close</button>';
+  raiseSlideover(document.getElementById("sensor-panel-overlay"));
   requestAnimationFrame(function () {
     document.getElementById("sensor-panel-overlay").classList.add("open");
   });
@@ -9609,11 +10566,6 @@ function _renderSensorChart(container, samples, opts) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var allC = samples.map(function (s) { return s.value; });
   var minC = Math.min.apply(null, allC);
@@ -9646,14 +10598,7 @@ function _renderSensorChart(container, samples, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 6) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _hwFmtNum(v) + unitTickSuffix + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
 
   var titleY = 14;
   var xLabelY = padT + innerH + 38;
@@ -9989,9 +10934,58 @@ function _observeChartResize(container, rerender) {
   container._chartResizeObs = obs;
 }
 
-// Rasterize the SVG inside `container` to a PNG blob via Image+Canvas. The
-// rasterizer can't resolve currentColor or var(--color-*), so we substitute
-// the resolved values into the serialized SVG before drawing. The hit-target
+// Serialize a live chart SVG into a standalone document an <img> can paint.
+// Loaded as an image the SVG sees NO page stylesheet and NO custom property,
+// so everything it inherited from the page has to be written into it:
+//   - every var(--token[, fallback]) is replaced by the value the live SVG
+//     resolves it to — not just the accent: the response-time chart's normal
+//     samples are var(--color-success), which the rasterizer painted black
+//     while only --color-accent was substituted;
+//   - currentColor becomes the SVG's computed color;
+//   - the root gets the computed font stack (with a sans tail, since page
+//     webfonts don't load inside an image), or every tick label falls back to
+//     the renderer's default serif.
+// Hit targets and in-SVG axis titles are stripped (the canvas wrapper redraws
+// the titles in its margins). Returns the serialized string.
+function _serializeChartSvgForRaster(svgEl, width, height) {
+  var cs = getComputedStyle(svgEl);
+  var rootCs = getComputedStyle(document.documentElement);
+  var resolvedText = cs.color || rootCs.getPropertyValue("--color-text-primary").trim() || "#111111";
+  var fontStack = (cs.fontFamily || "").trim();
+  fontStack = (fontStack ? fontStack + ", " : "") + "system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+  var clone = svgEl.cloneNode(true);
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+  clone.setAttribute("width", width);
+  clone.setAttribute("height", height);
+  clone.removeAttribute("style");
+  clone.setAttribute("font-family", fontStack);
+  if (!clone.getAttribute("viewBox")) {
+    clone.setAttribute("viewBox", "0 0 " + width + " " + height);
+  }
+  Array.prototype.forEach.call(clone.querySelectorAll(".chart-hit, .monitor-hit, .chart-axis-title"), function (n) {
+    n.parentNode.removeChild(n);
+  });
+
+  var serialized = new XMLSerializer().serializeToString(clone);
+  serialized = serialized.replace(/currentColor/g, resolvedText);
+  // Innermost var() first, looping so a fallback that is itself a var()
+  // resolves too. An unresolvable token with no fallback becomes the text
+  // colour rather than staying a var() the image renders as black.
+  var varRe = /var\(\s*(--[A-Za-z0-9_-]+)\s*(?:,\s*([^()]*))?\)/g;
+  for (var guard = 0; guard < 5 && serialized.indexOf("var(") !== -1; guard++) {
+    serialized = serialized.replace(varRe, function (_m, name, fallback) {
+      var v = cs.getPropertyValue(name).trim() || rootCs.getPropertyValue(name).trim();
+      if (v) return v;
+      return fallback != null && fallback.trim() ? fallback.trim() : resolvedText;
+    });
+  }
+  return serialized;
+}
+
+// Rasterize the SVG inside `container` to a PNG blob via Image+Canvas, using
+// _serializeChartSvgForRaster to make the SVG self-contained. The hit-target
 // circles and tooltip element are stripped — they're interactive scaffolding,
 // not part of the visual. `meta` adds a header (title / subject / asset) and
 // axis labels (xAxis / yAxis) drawn in canvas margins around the chart so the
@@ -10021,29 +11015,10 @@ function _captureChartAsPng(container, meta, callback) {
   // Uses --color-bg-primary — the same token the chart panels and the
   // slide-over surface render, so the capture matches what's on screen.
   var bgPrimary  = pickVar("--color-bg-primary", "#ffffff");
-  var accent     = pickVar("--color-accent", "#4fc3f7");
   var textSec    = pickVar("--color-text-secondary", "#666666");
   var resolvedText = getComputedStyle(svgEl).color || pickVar("--color-text-primary", "#111111");
 
-  var clone = svgEl.cloneNode(true);
-  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-  clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
-  clone.setAttribute("width", width);
-  clone.setAttribute("height", height);
-  clone.removeAttribute("style");
-  if (!clone.getAttribute("viewBox")) {
-    clone.setAttribute("viewBox", "0 0 " + width + " " + height);
-  }
-  // Drop transparent hit targets — they don't affect the picture but inflate it.
-  // Also strip in-SVG axis titles: the canvas wrapper redraws them in the margins,
-  // so leaving them in produces duplicates in the screenshot.
-  Array.prototype.forEach.call(clone.querySelectorAll(".chart-hit, .monitor-hit, .chart-axis-title"), function (n) {
-    n.parentNode.removeChild(n);
-  });
-
-  var serialized = new XMLSerializer().serializeToString(clone);
-  serialized = serialized.replace(/currentColor/g, resolvedText);
-  serialized = serialized.replace(/var\(--color-accent\)/g, accent);
+  var serialized = _serializeChartSvgForRaster(svgEl, width, height);
 
   var blob = new Blob([serialized], { type: "image/svg+xml;charset=utf-8" });
   var url = URL.createObjectURL(blob);
@@ -10214,9 +11189,8 @@ function _addChartScreenshotButton(container, label, axisOpts) {
 }
 
 // Rasterize the SVG inside `container` to a fully-loaded HTMLImageElement at
-// native size. Mirrors the SVG-prep logic in _captureChartAsPng (strips hit
-// targets, substitutes resolved CSS-variable colors) but stops short of
-// drawing to canvas — the caller composites multiple images together.
+// native size. Shares _serializeChartSvgForRaster with _captureChartAsPng
+// but stops short of drawing to canvas — the caller composites multiple images together.
 // Calls back with `{ img, width, height, url }` (caller revokes `url`) or null.
 function _rasterizeChartSvgToImage(container, callback) {
   var svgEl = null;
@@ -10232,30 +11206,7 @@ function _rasterizeChartSvgToImage(container, callback) {
   var height = Math.ceil(rect.height);
   if (!width || !height) { callback(null); return; }
 
-  var rootCs = getComputedStyle(document.documentElement);
-  var pickVar = function (name, fallback) {
-    var v = rootCs.getPropertyValue(name).trim();
-    return v || fallback;
-  };
-  var accent = pickVar("--color-accent", "#4fc3f7");
-  var resolvedText = getComputedStyle(svgEl).color || pickVar("--color-text-primary", "#111111");
-
-  var clone = svgEl.cloneNode(true);
-  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-  clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
-  clone.setAttribute("width", width);
-  clone.setAttribute("height", height);
-  clone.removeAttribute("style");
-  if (!clone.getAttribute("viewBox")) {
-    clone.setAttribute("viewBox", "0 0 " + width + " " + height);
-  }
-  Array.prototype.forEach.call(clone.querySelectorAll(".chart-hit, .monitor-hit, .chart-axis-title"), function (n) {
-    n.parentNode.removeChild(n);
-  });
-
-  var serialized = new XMLSerializer().serializeToString(clone);
-  serialized = serialized.replace(/currentColor/g, resolvedText);
-  serialized = serialized.replace(/var\(--color-accent\)/g, accent);
+  var serialized = _serializeChartSvgForRaster(svgEl, width, height);
 
   var blob = new Blob([serialized], { type: "image/svg+xml;charset=utf-8" });
   var url = URL.createObjectURL(blob);
@@ -10439,23 +11390,228 @@ function _composeInterfaceScreenshot(parts) {
   }, "image/png");
 }
 
-// ─── CPU & Memory: two charts, one range selector ──────────────────────────
+// ─── CPU & Memory: one chart, or two under one range selector ──────────────
 //
-// Split in 2026-09. They used to share one 0–100% axis — a CPU line and a
-// memory line — and two things made that untenable at once:
+// Which shape an asset gets is decided by `_telemetryIsAgentSourced` at
+// render time, and the section is a SPLIT only under the Polaris Agent.
 //
-//   * the Polaris Agent now reports PER-CORE CPU, which turns one line into
-//     as many as there are logical cores. A memory line drawn through that
-//     thicket cannot be followed.
-//   * memory is now a STACK IN BYTES — processes, buffers and cache adding
-//     up to what is actually in use, against the installed total. Bytes do
-//     not share an axis with a percentage.
+// Split in 2026-09, because two things the agent reports could not share the
+// one 0–100% axis the section used to have:
 //
-// They keep ONE range selector, one custom-window panel and one fetch: both
-// read the same telemetry rows, so a second selector would only let an
-// operator put two halves of one reading on two different windows. Both
-// containers are stamped with the selection (`_loadSystemTabFor`), and both
-// are wired to the same drag-select handler.
+//   * PER-CORE CPU, which turns one line into as many as there are logical
+//     cores. A memory line drawn through that thicket cannot be followed.
+//   * memory as a STACK IN BYTES — processes, buffers and cache adding up to
+//     what is actually in use, against the installed total. Bytes do not
+//     share an axis with a percentage.
+//
+// Narrowed to the agent in 2026-09 as well: every other transport (FortiOS
+// REST, SNMP, WinRM, SSH, vCenter) reports ONE CPU percentage and one memory
+// figure per sample, so the split gave those assets two single-line charts
+// where one had been, on a tab that is already long. They keep the combined
+// chart (`_renderSystemChart`) — the same one the section had before the
+// split, unchanged.
+//
+// The two charts keep ONE range selector, one custom-window panel and one
+// fetch: both read the same telemetry rows, so a second selector would only
+// let an operator put two halves of one reading on two different windows.
+// Both containers are stamped with the selection (`_loadSystemTabFor`), and
+// both are wired to the same drag-select handler — as is the combined
+// container, which is the only one mounted in the other shape.
+
+// The NON-AGENT shape: one chart, CPU and memory on a single 0–100% y-axis.
+// Every transport but the agent reports exactly these two percentages per
+// sample, so there is nothing for a second chart to carry — a bytes-only
+// source (SNMP / WinRM / vCenter) is converted here rather than given the
+// byte stack, which needs the agent's band breakdown to say anything the
+// one line does not.
+//
+// CPU stays anchored at 0–100 so spikes remain meaningful; memory plots over
+// the same axis as a percentage (computed from bytes when only bytes were
+// sampled). One hit target per timestamp drives a unified tooltip naming
+// both values.
+function _renderSystemChart(container, data, asset, si) {
+  var samples = (data && data.samples) || [];
+  if (samples.length === 0) {
+    if (_isRestApiManagedNetworkDevice(asset, "telemetry")) {
+      var telPolling = _assetMonitorStreamSource(asset, "telemetry").polling || "REST API";
+      container.innerHTML = _notAvailableViaPollingHTML("Telemetry", telPolling);
+    } else {
+      // An empty window is exactly when the stale banner matters most: the
+      // chart has nothing to say, so "last successful update 7h ago" is the
+      // only thing that explains the gap. The banner is emitted inside this
+      // container on the data path below, so this early return used to swallow
+      // it — CPU & Memory stayed silent while every other section on the tab
+      // flagged the same stalled collection.
+      container.innerHTML =
+        _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt) +
+        '<div style="text-align:center">No telemetry samples in this range yet.</div>';
+      container.style.flexDirection = "column";
+      container.style.alignItems = "stretch";
+      container.style.justifyContent = "center";
+    }
+    return;
+  }
+
+  function memPctFromSample(s) {
+    if (typeof s.memPct === "number") return s.memPct;
+    if (typeof s.memUsedBytes === "number" && typeof s.memTotalBytes === "number" && s.memTotalBytes > 0) {
+      return (s.memUsedBytes / s.memTotalBytes) * 100;
+    }
+    return null;
+  }
+
+  var since = data && data.since;
+  var until = data && data.until;
+  var W = container.clientWidth || 600;
+  var H = 200;
+  var padL = 50, padR = 10, padT = 14, padB = 28;
+  var innerW = W - padL - padR;
+  var innerH = H - padT - padB;
+
+  var bounds = _chartTimeBounds(samples, since, until);
+  var t0 = bounds.t0, t1 = bounds.t1;
+  var spanMs = t1 - t0, oneDayMs = 86400000;
+  var pad2 = _chartPad2;
+
+  var cpuValues = samples.map(function (s) { return { s: s, v: typeof s.cpuPct === "number" ? s.cpuPct : null }; })
+                         .filter(function (e) { return typeof e.v === "number"; });
+  var memValues = samples.map(function (s) { return { s: s, v: memPctFromSample(s) }; })
+                         .filter(function (e) { return typeof e.v === "number"; });
+
+  var yMin = 0, yMax = 100;
+  var xFor = _chartXScale(padL, innerW, t0, t1);
+  var yFor = _chartYScale(padT, innerH, yMin, yMax);
+
+  // Missed polls (the telemetry stream has no per-sample success flag — a
+  // failed poll simply leaves no row) render the same way the response-time
+  // and interface charts render theirs: red dots at the baseline flanking the
+  // outage, with both lines fading into red across it instead of bridging it.
+  // The outage windows come from the response-time probe (payload `outages`,
+  // see _outageMarkers) rather than from the shape of the hole. Both lines
+  // dive together: CPU and memory ride the same telemetry row, so an outage is
+  // an outage for both, while a transport that reports CPU but not memory has
+  // no probe failure behind it and correctly bridges instead.
+  var unionTs = Object.keys(cpuValues.concat(memValues).reduce(function (acc, e) {
+    acc[+new Date(e.s.timestamp)] = true;
+    return acc;
+  }, {})).map(Number).sort(function (a, b) { return a - b; });
+  var gapMarkers = _outageMarkers(data && data.outages, unionTs);
+  var baselineY = padT + innerH;
+  function failAwarePts(list) {
+    if (!list.length) return [];
+    var pts = list.map(function (e) {
+      return { t: +new Date(e.s.timestamp), x: xFor(e.s.timestamp), y: yFor(e.v), ok: true };
+    });
+    _outagePts(gapMarkers, xFor, baselineY).forEach(function (mp) { pts.push(mp); });
+    pts.sort(function (a, b) { return a.t - b.t; });
+    return pts;
+  }
+  var failDots = _outageDotsSVG(gapMarkers, xFor, baselineY);
+  var missHits = _outageHitsSVG(gapMarkers, xFor, padT, innerH);
+
+  // Build one full-height vertical lane per timestamp so the tooltip fires
+  // anywhere in the sample's column — including over a flatlined CPU line at
+  // the bottom of a chart whose memory line dominates the visible space.
+  // Lane width is the Voronoi span (midpoint to each neighbor) so coverage is
+  // continuous across the chart with no dead zones between samples.
+  var byTs = {};
+  cpuValues.forEach(function (e) {
+    var k = String(e.s.timestamp);
+    if (!byTs[k]) byTs[k] = { ts: e.s.timestamp, sample: e.s };
+    byTs[k].cpu = e.v;
+  });
+  memValues.forEach(function (e) {
+    var k = String(e.s.timestamp);
+    if (!byTs[k]) byTs[k] = { ts: e.s.timestamp, sample: e.s };
+    byTs[k].mem = e.v;
+  });
+  var sortedHits = Object.keys(byTs).map(function (k) { return byTs[k]; })
+                         .sort(function (a, b) { return new Date(a.ts).getTime() - new Date(b.ts).getTime(); });
+  var hits = sortedHits.map(function (h, i) {
+    var x = xFor(h.ts);
+    var leftEdge  = i === 0 ? padL : (xFor(sortedHits[i - 1].ts) + x) / 2;
+    var rightEdge = i === sortedHits.length - 1 ? (W - padR) : (xFor(sortedHits[i + 1].ts) + x) / 2;
+    var s = h.sample;
+    return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
+      ' data-ts="' + escapeHtml(String(h.ts)) + '"' +
+      ' data-cpu="' + (h.cpu != null ? h.cpu : "") + '"' +
+      ' data-mem="' + (h.mem != null ? h.mem : "") + '"' +
+      ' data-mb="' + (typeof s.memUsedBytes === "number" ? s.memUsedBytes : "") + '"' +
+      ' data-mt="' + (typeof s.memTotalBytes === "number" ? s.memTotalBytes : "") + '"/>';
+  }).join("");
+
+  var ticks = "";
+  for (var i = 0; i <= 4; i++) {
+    var v = yMin + (yMax - yMin) * (i / 4);
+    var y = padT + innerH - (i / 4) * innerH;
+    ticks +=
+      '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
+      '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + v.toFixed(0) + '%</text>';
+  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
+  var cpuColor = "var(--color-accent)";
+  var memColor = "#f4a261";
+  var legend =
+    '<g font-size="10" fill="currentColor">' +
+      '<rect x="' + (padL + 4)  + '" y="2" width="10" height="10" fill="' + cpuColor + '"/>' +
+      '<text x="' + (padL + 18) + '" y="11">CPU</text>' +
+      '<rect x="' + (padL + 60) + '" y="2" width="10" height="10" fill="' + memColor + '"/>' +
+      '<text x="' + (padL + 74) + '" y="11">Memory</text>' +
+    '</g>';
+
+  var chartStaleBanner = _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt);
+  var clipId = _chartClipId("system");
+  var cpuLine = _failureAwareSeriesSVG(failAwarePts(cpuValues), cpuColor, clipId + "-cpu");
+  var memLine = _failureAwareSeriesSVG(failAwarePts(memValues), memColor, clipId + "-mem");
+  container.innerHTML =
+    chartStaleBanner +
+    '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
+      _chartClipDefs(clipId, padL, padT, innerW, innerH) +
+      '<defs>' + cpuLine.defs + memLine.defs + '</defs>' +
+      ticks + xTicks +
+      _dateChangeMarkers(t0, t1, padL, padT, innerW, innerH) +
+      _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
+      '<g ' + _chartClipAttr(clipId) + '>' +
+        cpuLine.segments +
+        memLine.segments +
+        cpuValues.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + cpuColor + '"/>'; }).join("") +
+        memValues.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + memColor + '"/>'; }).join("") +
+        failDots +
+        // After `hits`, not before: this chart's hit targets are full-height
+        // Voronoi lanes, and a gap sits inside the neighboring sample's lane —
+        // so the narrow missed-poll rect has to paint last to win the hover.
+        hits +
+        missHits +
+      '</g>' +
+      legend +
+    '</svg>' + CHART_TOOLTIP_HTML;
+  container.style.position = "relative";
+  container.style.alignItems = "stretch";
+  container.style.justifyContent = "flex-start";
+  container.style.flexDirection = "column";
+  _stashChartGeometry(container, t0, t1, padL, innerW, W);
+
+  _wireChartTooltip(container, function (target) {
+    var ts = target.getAttribute("data-ts");
+    if (target.getAttribute("data-miss") === "1") {
+      return _missTooltipHTML(target);
+    }
+    var cpuRaw = target.getAttribute("data-cpu");
+    var memRaw = target.getAttribute("data-mem");
+    var mb = target.getAttribute("data-mb");
+    var mt = target.getAttribute("data-mt");
+    var memLine = '<div>Memory: ' + (memRaw !== "" ? Number(memRaw).toFixed(1) + "%" : "—");
+    if (mb !== "" && mt !== "") {
+      memLine += " (" + _fmtBytes(Number(mb)) + " / " + _fmtBytes(Number(mt)) + ")";
+    }
+    memLine += "</div>";
+    return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(ts)) + '</div>' +
+      '<div>CPU: ' + (cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—") + '</div>' +
+      memLine;
+  });
+  _addChartScreenshotButton(container, "CPU & Memory", { yAxis: "Utilization (%)", getStats: _statsSummaryFrom("asset-system-summary") });
+  _observeChartResize(container, function (c) { _renderSystemChart(c, data, asset, si); });
+}
 
 // Per-core hues are spread across an arc that DELIBERATELY EXCLUDES RED.
 // Red is the missed-poll colour on every chart in this app (_CHART_FAIL_COLOR)
@@ -10507,17 +11663,6 @@ function _cpuCoreSeries(samples) {
   return series;
 }
 
-// Which core the operator has isolated, if any. Kept on the container's
-// dataset rather than in a module variable so it survives the re-renders the
-// resize observer and the silent refresh tick fire — losing the isolation
-// every 60 seconds would make it useless for watching one hot core.
-function _cpuFocusedCore(container) {
-  var raw = container && container.dataset ? container.dataset.coreFocus : "";
-  if (raw == null || raw === "") return null;
-  var n = parseInt(raw, 10);
-  return isNaN(n) ? null : n;
-}
-
 // CPU chart — aggregate line plus one line per logical core, 0–100%.
 function _renderCpuChart(container, data, asset, si) {
   var samples = (data && data.samples) || [];
@@ -10551,18 +11696,21 @@ function _renderCpuChart(container, data, asset, si) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var cpuValues = samples.map(function (s) { return { s: s, v: typeof s.cpuPct === "number" ? s.cpuPct : null }; })
                          .filter(function (e) { return typeof e.v === "number"; });
   var coreSeries = _cpuCoreSeries(samples);
   var coreCount = coreSeries ? coreSeries.length : 0;
-  var focus = _cpuFocusedCore(container);
-  if (focus != null && (focus < 0 || focus >= coreCount)) focus = null;
+  // Which series are switched off. A core index that no longer exists (the
+  // VM was resized down, or the operator moved to a smaller host with the
+  // panel open) is simply not consulted — the hidden set is not pruned,
+  // because growing back to that core count should restore the choice
+  // rather than silently re-showing a core they had put away.
+  var hidden = _cpuHiddenCores(container);
+  var coreVisible = function (c) { return !hidden[String(c)]; };
+  var avgVisible = !hidden.avg;
+  var visibleCores = 0;
+  for (var vc = 0; vc < coreCount; vc++) if (coreVisible(vc)) visibleCores++;
 
   var yMin = 0, yMax = 100;
   var xFor = _chartXScale(padL, innerW, t0, t1);
@@ -10613,14 +11761,7 @@ function _renderCpuChart(container, data, asset, si) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + v.toFixed(0) + '%</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
 
   var clipId = _chartClipId("cpu");
   var avgLine = _failureAwareSeriesSVG(failAwarePts(cpuValues), _CPU_AVG_COLOR, clipId + "-avg");
@@ -10635,30 +11776,27 @@ function _renderCpuChart(container, data, asset, si) {
   // threshold reads — is how much ink the cores behind it use. At 4 cores
   // they can be near-solid; at 64 the same opacity is a wall the aggregate
   // disappears into.
-  var restOpacity = coreCount <= 4 ? 0.85 : coreCount <= 16 ? 0.62 : coreCount <= 48 ? 0.45 : 0.32;
+  // Opacity keys off how many cores are actually DRAWN, not how many the
+  // host has — switching sixty-three of them off should leave the survivor
+  // solid, which is what makes hiding the rest worth doing.
+  var restOpacity = visibleCores <= 4 ? 0.85 : visibleCores <= 16 ? 0.62 : visibleCores <= 48 ? 0.45 : 0.32;
   var coreLinesSvg = "";
   if (coreSeries) {
     for (var c = 0; c < coreCount; c++) {
       var pts = coreSeries[c];
-      if (pts.length === 0) continue;
-      var dimmed = focus != null && focus !== c;
+      if (pts.length === 0 || !coreVisible(c)) continue;
       var d = pts.map(function (e) { return xFor(e.s.timestamp) + "," + yFor(e.v); }).join(" ");
       coreLinesSvg += '<polyline class="cpu-core-line" data-core="' + c + '" points="' + d +
         '" fill="none" stroke="' + _cpuCoreColor(c, coreCount) + '"' +
-        ' stroke-width="' + (focus === c ? 2 : 1) + '"' +
-        ' opacity="' + (dimmed ? 0.1 : (focus === c ? 1 : restOpacity)) + '"/>';
+        ' stroke-width="' + (visibleCores === 1 ? 2 : 1) + '"' +
+        ' opacity="' + restOpacity + '"/>';
     }
   }
-
-  // The aggregate goes ON TOP of the cores and gets the only dots, so it
-  // stays findable in the thicket. When a core is isolated the aggregate
-  // fades rather than disappearing — it is the number thresholds fire on.
-  var avgOpacity = focus != null ? 0.3 : 1;
 
   var chartStaleBanner = _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt);
   container.innerHTML =
     chartStaleBanner +
-    _cpuLegendHTML(coreCount, focus, data, asset) +
+    _cpuLegendHTML(coreCount, hidden, data, asset) +
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
       _chartClipDefs(clipId, padL, padT, innerW, innerH) +
       '<defs>' + avgLine.defs + '</defs>' +
@@ -10667,9 +11805,15 @@ function _renderCpuChart(container, data, asset, si) {
       _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
       '<g ' + _chartClipAttr(clipId) + '>' +
         coreLinesSvg +
-        '<g opacity="' + avgOpacity + '">' + avgLine.segments +
-          cpuValues.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + _CPU_AVG_COLOR + '"/>'; }).join("") +
-        '</g>' +
+        // The aggregate goes ON TOP of the cores and gets the only dots, so
+        // it stays findable in the thicket. It is also the only failure-aware
+        // line, so hiding it hides the outage markers with it — which is the
+        // operator's call to make, but is why it is not hidden by default.
+        (avgVisible
+          ? '<g>' + avgLine.segments +
+              cpuValues.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + _CPU_AVG_COLOR + '"/>'; }).join("") +
+            '</g>'
+          : "") +
         failDots +
         // After `hits`, not before: the hit targets are full-height Voronoi
         // lanes and a gap sits inside the neighbouring sample's lane, so the
@@ -10684,37 +11828,40 @@ function _renderCpuChart(container, data, asset, si) {
   container.style.flexDirection = "column";
   _stashChartGeometry(container, t0, t1, padL, innerW, W);
 
-  _wireCpuLegend(container, data, asset, si);
+  _wireCpuLegend(container, data, asset, si, coreCount);
 
   _wireChartTooltip(container, function (target) {
     if (target.getAttribute("data-miss") === "1") return _missTooltipHTML(target);
     var ts = target.getAttribute("data-ts");
     var cpuRaw = target.getAttribute("data-cpu");
-    var html = '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(ts)) + '</div>' +
-      '<div><strong>Average: ' + (cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—") + '</strong></div>';
+    var off = _cpuHiddenCores(container);
+    var html = '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(ts)) + '</div>';
+    if (!off.avg) {
+      html += '<div><strong>Average: ' + (cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—") + '</strong></div>';
+    }
     var coresRaw = target.getAttribute("data-cores");
     if (coresRaw) {
       var vals = coresRaw.split(",").map(Number);
-      var focused = _cpuFocusedCore(container);
-      var rows;
-      if (focused != null && focused < vals.length) {
-        // An isolated core is the one the operator asked about — naming the
-        // six busiest instead would answer a question they did not ask.
-        rows = [{ i: focused, v: vals[focused] }];
-      } else {
-        // Busiest first, capped: a 64-core tooltip taller than the panel is
-        // not a tooltip. The cap is what makes per-core hover usable at all
-        // on a big host.
-        rows = vals.map(function (v, i) { return { i: i, v: v }; })
-                   .sort(function (a, b) { return b.v - a.v; })
-                   .slice(0, 6);
-      }
+      // The tooltip names what is DRAWN. A hidden core listed here would
+      // put a reading on screen with no line to attach it to, which is the
+      // opposite of what switching it off was for.
+      var shown = vals.map(function (v, i) { return { i: i, v: v }; })
+                      .filter(function (r) { return !off[String(r.i)]; });
+      // Busiest first, capped: a 64-core tooltip taller than the panel is
+      // not a tooltip. The cap is what makes per-core hover usable at all
+      // on a big host.
+      var rows = shown.slice().sort(function (a, b) { return b.v - a.v; }).slice(0, 6);
       rows.forEach(function (r) {
         html += '<div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;background:' +
           _cpuCoreColor(r.i, vals.length) + '"></span>Core ' + r.i + ': ' + r.v.toFixed(1) + '%</div>';
       });
-      if (focused == null && vals.length > rows.length) {
-        html += '<div style="color:var(--color-text-tertiary)">+' + (vals.length - rows.length) + ' more (click a core in the legend)</div>';
+      if (shown.length > rows.length) {
+        html += '<div style="color:var(--color-text-tertiary)">+' + (shown.length - rows.length) + ' more</div>';
+      }
+      var hiddenCount = vals.length - shown.length;
+      if (hiddenCount > 0) {
+        html += '<div style="color:var(--color-text-tertiary)">' + hiddenCount + ' core' +
+          (hiddenCount === 1 ? "" : "s") + ' hidden</div>';
       }
     }
     return html;
@@ -10726,21 +11873,28 @@ function _renderCpuChart(container, data, asset, si) {
 // Legend for the CPU chart. Rendered as HTML above the SVG rather than as
 // <text> inside it because it has to WRAP — 64 core chips on one SVG line
 // run off the edge of the panel — and because the chips are interactive.
-function _cpuLegendHTML(coreCount, focus, data, asset) {
-  var chips = '<span class="cpu-legend-chip" data-core="avg" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px' +
-    (focus == null ? ';font-weight:600' : '') + '">' +
-    '<span style="width:10px;height:10px;border-radius:2px;background:' + _CPU_AVG_COLOR + '"></span>Average</span>';
+function _cpuLegendHTML(coreCount, hidden, data, asset) {
+  var anyHidden = Object.keys(hidden).length > 0;
+  var chips = _seriesChipHTML("avg", "Average", _CPU_AVG_COLOR, !hidden.avg,
+    "Click to hide the cross-core average", "cpu-legend-chip");
   for (var c = 0; c < coreCount; c++) {
-    chips += '<span class="cpu-legend-chip" data-core="' + c + '" title="Click to isolate core ' + c + '"' +
-      ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;opacity:' + (focus == null || focus === c ? 1 : 0.45) +
-      (focus === c ? ';font-weight:600' : '') + '">' +
-      '<span style="width:10px;height:10px;border-radius:2px;background:' + _cpuCoreColor(c, coreCount) + '"></span>' + c + '</span>';
+    chips += _seriesChipHTML(String(c), String(c), _cpuCoreColor(c, coreCount), !hidden[String(c)],
+      "Click to hide core " + c + " · double-click to show only this core", "cpu-legend-chip");
   }
-  // Why a range can show no cores even on an agent host: per-core data is
-  // kept on the DETAIL tier only. Saying so beats letting the operator
-  // conclude the agent stopped reporting them.
+  // Only offered once something is off. At 64 cores an isolate is one
+  // double-click and 63 chips of undoing, so the way back has to be one
+  // click too.
+  if (anyHidden) {
+    chips += '<span class="cpu-legend-all" title="Show every series again"' +
+      ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;color:var(--color-accent)">Show all</span>';
+  }
+  // Why a range can show no cores even on a source that reports them:
+  // per-core data is kept on the DETAIL tier only, on the agent and on
+  // vCenter alike. Saying so beats letting the operator conclude the source
+  // stopped reporting them. A source that never reports cores gets no note
+  // — "pick a shorter range" would send a FortiGate operator nowhere.
   var note = "";
-  if (coreCount === 0 && data && data.tier && data.tier !== "detail" && _resolvedStreamPolling(asset, "telemetry") === "agent") {
+  if (coreCount === 0 && data && data.tier && data.tier !== "detail" && _telemetrySplitsCpuMemory(asset)) {
     note = '<div style="font-size:0.72rem;color:var(--color-text-tertiary);margin-top:2px">' +
       'Per-core detail is not kept in ' + escapeHtml(data.tier) + ' buckets — showing the cross-core average. Pick a shorter range to see individual cores.' +
       '</div>';
@@ -10749,18 +11903,64 @@ function _cpuLegendHTML(coreCount, focus, data, asset) {
     chips + '</div>' + note;
 }
 
-// Click a chip to isolate that core (click again, or click Average, to clear).
-// Re-renders from the same payload — no refetch.
-function _wireCpuLegend(container, data, asset, si) {
+// Click a chip to switch that series off or back on; double-click a core to
+// show ONLY that core. One state either way — isolating is just a bulk edit
+// of the hidden set, which is what keeps "hidden" and "focused" from being
+// two overlapping models that can disagree.
+//
+// Re-renders from the same payload — never a refetch.
+function _wireCpuLegend(container, data, asset, si, coreCount) {
+  // A double-click also fires two clicks. Defer the single-click render just
+  // past the double-click window so an isolate does not first toggle the
+  // chip it was aimed at, which would leave the isolated core hidden.
+  var clickTimer = null;
   container.querySelectorAll(".cpu-legend-chip").forEach(function (chip) {
+    var key = chip.getAttribute("data-series");
     chip.addEventListener("click", function () {
-      var raw = chip.getAttribute("data-core");
-      var current = _cpuFocusedCore(container);
-      if (raw === "avg" || String(current) === raw) delete container.dataset.coreFocus;
-      else container.dataset.coreFocus = raw;
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      clickTimer = setTimeout(function () {
+        clickTimer = null;
+        var hidden = _cpuHiddenCores(container);
+        if (hidden[key]) delete hidden[key]; else hidden[key] = true;
+        _setCpuHiddenCores(container, hidden);
+        _renderCpuChart(container, data, asset, si);
+      }, 220);
+    });
+    chip.addEventListener("dblclick", function () {
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      if (key === "avg") return; // "only the average" is what hiding the cores is for
+      var hidden = {};
+      for (var c = 0; c < coreCount; c++) if (String(c) !== key) hidden[String(c)] = true;
+      _setCpuHiddenCores(container, hidden);
       _renderCpuChart(container, data, asset, si);
     });
   });
+  var all = container.querySelector(".cpu-legend-all");
+  if (all) {
+    all.addEventListener("click", function () {
+      _setCpuHiddenCores(container, {});
+      _renderCpuChart(container, data, asset, si);
+    });
+  }
+}
+
+// One legend chip, shared by both telemetry charts so a switched-off series
+// reads the same on either.
+//
+// THE STRIKETHROUGH CARRIES THE STATE, NOT THE DIMMING. A chip is a control,
+// and a switched-off one is the ONLY route back to its series — so it has to
+// stay readable. Dimming it to 0.4 measured 1.84:1 on the morning theme
+// (2.01 noon, 2.17 nightfall) against 6-8.5:1 for a live chip, which is
+// under the floor for non-text UI, never mind a click target. The label now
+// keeps most of its ink and the line through it says "off"; only the swatch
+// fades, and that is decoration — the colour is how the operator finds the
+// series again, so it does not fade far either.
+function _seriesChipHTML(key, label, color, on, title, cls) {
+  return '<span class="' + cls + '" data-series="' + escapeHtml(key) + '" title="' + escapeHtml(title) + '"' +
+    ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none' +
+    (on ? '' : ';opacity:0.8;text-decoration:line-through') + '">' +
+    '<span style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:' + color +
+    (on ? '' : ';opacity:0.45') + '"></span>' + escapeHtml(label) + '</span>';
 }
 
 // ─── Memory chart (stacked bands, bytes) ───────────────────────────────────
@@ -10773,44 +11973,107 @@ function _wireCpuLegend(container, data, asset, si) {
 // own dashed line on the same byte axis.
 //
 // None of these colours may be red (missed poll) or grey (dependency down).
-var _MEM_BANDS = [
-  { key: "processes", label: "Processes", color: "#f4a261" }, // the memory colour this chart has always used
+// Two band vocabularies, one chart. They are NOT translations of each other
+// and must never appear in one stack: the agent reports how the OS is
+// spending the machine's RAM, vSphere reports how the HYPERVISOR is backing
+// a guest's RAM. `_memBandsFor` picks the table from the columns the row
+// actually carries, and the source guarantees only one set is ever filled.
+//
+// The primary band takes the same orange in both tables — it is the memory
+// colour this chart has always used, and the two tables never co-occur, so
+// "the big one at the bottom" reads the same on any asset. No band may be
+// red (missed poll) or grey (dependency down).
+var _MEM_BANDS_AGENT = [
+  { key: "processes", label: "Processes", color: "#f4a261" },
   { key: "buffers",   label: "Buffers",   color: "#8ab17d" },
   { key: "cache",     label: "Cache",     color: "#2a9d8f" },
+];
+
+// vSphere. A VM fills private / shared / ballooned / swapped / compressed
+// against its CONFIGURED RAM; an ESXi host fills consumed / ballooned /
+// swapped against INSTALLED RAM. One table serves both because the two sets
+// are disjoint — a host publishes no private/shared/compressed and a VM
+// publishes no consumed — so the bands nobody reported simply drop out.
+//
+// Ballooned, swapped and compressed are the reason this vocabulary exists.
+// They are the hypervisor taking memory back from a guest under pressure,
+// and they are invisible to anything running inside that guest — an agent on
+// the same VM cannot see them and must not be made to guess.
+var _MEM_BANDS_VSPHERE = [
+  { key: "consumed",   label: "Consumed",   color: "#f4a261" },
+  { key: "private",    label: "Private",    color: "#f4a261" },
+  { key: "shared",     label: "Shared",     color: "#2a9d8f" },
+  { key: "ballooned",  label: "Ballooned",  color: "#e9c46a" },
+  { key: "swapped",    label: "Host-swapped", color: "#9c6ade" },
+  { key: "compressed", label: "Compressed", color: "#4d96d9" },
 ];
 var _MEM_SWAP_COLOR  = "#9c6ade";
 var _MEM_TOTAL_COLOR = "rgba(127,127,127,0.55)";
 
-// Shapes one sample into the band values the chart stacks.
-// Returns null when the sample carries no usable memory reading at all.
+function _numOrNull(v) {
+  return typeof v === "number" && isFinite(v) ? v : null;
+}
+
+// Shapes one sample into the band values the chart stacks, and says which
+// VOCABULARY those values are in.
 //
-// Three shapes reach here, and the chart degrades through them rather than
+// Four shapes reach here, and the chart degrades through them rather than
 // demanding the richest one:
-//   full     — agent: every band present, guaranteed to close on the total.
-//   bytes    — SNMP / WinRM / vCenter: used + total, no breakdown. One band.
+//   agent    — every OS band present, guaranteed to close on the total.
+//   vsphere  — the hypervisor's bands for a VM or an ESXi host.
+//   bytes    — SNMP / WinRM: used + total, no breakdown. One band.
 //   pctOnly  — FortiOS: a percentage and nothing else. Handled by the caller,
 //              which switches the whole chart to a 0–100% axis.
+//
+// `values` carries null for a band this source did not report, distinctly
+// from 0 for one it reported as empty — the renderer drops a band no row in
+// the window reported at all, which is what collapses a bytes-only source
+// to the single band it can honestly draw.
 function _memBandsFor(s) {
-  var total = typeof s.memTotalBytes === "number" ? s.memTotalBytes : null;
-  var used  = typeof s.memUsedBytes === "number" ? s.memUsedBytes : null;
-  if (total == null || used == null) return null;
-  var buffers = typeof s.memBuffersBytes === "number" ? s.memBuffersBytes : null;
-  var cache   = typeof s.memCachedBytes === "number" ? s.memCachedBytes : null;
-  var free    = typeof s.memFreeBytes === "number" ? s.memFreeBytes : null;
-  var detailed = buffers != null || cache != null || free != null;
+  var total = _numOrNull(s.memTotalBytes);
+  if (total == null) return null;
+
+  var vs = {
+    consumed:   _numOrNull(s.memConsumedBytes),
+    private:    _numOrNull(s.memPrivateBytes),
+    shared:     _numOrNull(s.memSharedBytes),
+    ballooned:  _numOrNull(s.memBalloonedBytes),
+    swapped:    _numOrNull(s.memSwappedBytes),
+    compressed: _numOrNull(s.memCompressedBytes),
+  };
+  var isVsphere = Object.keys(vs).some(function (k) { return vs[k] != null; });
+
+  var values, table;
+  if (isVsphere) {
+    values = vs;
+    table = _MEM_BANDS_VSPHERE;
+  } else {
+    var used = _numOrNull(s.memUsedBytes);
+    if (used == null) return null;
+    values = {
+      processes: used,
+      buffers:   _numOrNull(s.memBuffersBytes),
+      cache:     _numOrNull(s.memCachedBytes),
+    };
+    table = _MEM_BANDS_AGENT;
+  }
+
+  var sum = 0;
+  table.forEach(function (b) { sum += values[b.key] || 0; });
   return {
-    total:     total,
-    processes: used,
-    buffers:   buffers || 0,
-    cache:     cache || 0,
+    kind:   isVsphere ? "vsphere" : "agent",
+    table:  table,
+    values: values,
+    total:  total,
     // Free is DERIVED from the total rather than trusted from the row: it is
     // the one band the chart does not draw (it is the gap above the stack),
     // so a free figure that disagreed with total-minus-the-rest would show
-    // up in the tooltip contradicting the picture beside it.
-    free:      Math.max(0, total - used - (buffers || 0) - (cache || 0)),
-    detailed:  detailed,
-    swapUsed:  typeof s.swapUsedBytes === "number" ? s.swapUsedBytes : null,
-    swapTotal: typeof s.swapTotalBytes === "number" ? s.swapTotalBytes : null,
+    // up in the tooltip contradicting the picture beside it. The agent's own
+    // memFreeBytes and vSphere's untouched remainder are both this number.
+    free:      Math.max(0, total - sum),
+    inUse:     Math.min(total, sum),
+    swapUsed:  _numOrNull(s.swapUsedBytes),
+    swapTotal: _numOrNull(s.swapTotalBytes),
   };
 }
 
@@ -10866,11 +12129,6 @@ function _renderMemoryChart(container, data, asset, si) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var rows = samples.map(function (s) {
     var b = _memBandsFor(s);
@@ -10885,18 +12143,49 @@ function _renderMemoryChart(container, data, asset, si) {
     return;
   }
 
-  var anyDetailed = rows.some(function (r) { return r.b.detailed; });
-  var bands = anyDetailed ? _MEM_BANDS : [_MEM_BANDS[0]];
+  // The window's vocabulary, then the bands within it that some row actually
+  // reported. A source that changed mid-window (the only way two vocabularies
+  // land in one range) resolves to vSphere's, since its rows are the ones
+  // carrying bands the other table has no slot for.
+  var isVsphere = rows.some(function (r) { return r.b.kind === "vsphere"; });
+  var bandTable = isVsphere ? _MEM_BANDS_VSPHERE : _MEM_BANDS_AGENT;
+  // Two lists, and the difference matters everywhere below. `reported` is
+  // what the source measured — the legend offers a chip for each, and the
+  // tooltip names every one of them, because a number the host actually
+  // reported should not vanish just because its band is switched off.
+  // `bands` is what gets PAINTED.
+  var reported = bandTable.filter(function (b) {
+    return rows.some(function (r) { return r.b.values[b.key] != null; });
+  });
+  // A bytes-only source reports the primary band alone; never draw an empty
+  // stack if even that is missing.
+  if (reported.length === 0) reported = [bandTable[0]];
+  var bands = reported.filter(function (b) { return _memBandVisible(b.key); });
+  var anyDetailed = reported.length > 1;
+  var hiddenBands = reported.filter(function (b) { return !_memBandVisible(b.key); });
   var anySwap = rows.some(function (r) { return r.b.swapTotal != null && r.b.swapTotal > 0; });
+  var swapVisible = _memBandVisible("swap");
 
-  // Ceiling is the installed total, so the gap above the stack IS free
-  // memory and the axis does not rescale as usage moves. A window in which
-  // the total itself changed (a VM resized) takes the largest.
+  // THE CEILING IS THE INSTALLED TOTAL, AND NOTHING ELSE MAY RAISE IT.
+  // That is what makes the gap above the stack mean free memory, keeps the
+  // axis still while usage moves, and lets two hosts be compared by eye. A
+  // window in which the total itself changed (a VM resized) takes the
+  // largest.
+  //
+  // Swap used to be allowed to push it up, so the line would "stay on the
+  // canvas". That was the wrong trade: swap is backing store and can exceed
+  // installed RAM (trivially so on Windows, where the page file is routinely
+  // larger than RAM and a commit-charge-shaped reading is larger still), and
+  // when it did, the whole physical stack squashed into the bottom of the
+  // chart while the dashed Installed total line floated somewhere in the
+  // middle — an axis in units of nothing in particular. The bands are the
+  // subject; swap is an overlay. It is drawn inside the clip group, so the
+  // part above the ceiling clips at the top edge instead of rescaling
+  // everything else, and the legend says so when that happens.
   var maxTotal = 0;
   rows.forEach(function (r) { if (r.b.total > maxTotal) maxTotal = r.b.total; });
-  // Swap can exceed installed RAM; the line must stay on the canvas.
-  rows.forEach(function (r) { if (r.b.swapUsed != null && r.b.swapUsed > maxTotal) maxTotal = r.b.swapUsed; });
   var yMax = maxTotal > 0 ? maxTotal : 1;
+  var swapOverTop = rows.some(function (r) { return r.b.swapUsed != null && r.b.swapUsed > yMax; });
 
   var xFor = _chartXScale(padL, innerW, t0, t1);
   var yFor = _chartYScale(padT, innerH, 0, yMax);
@@ -10915,8 +12204,8 @@ function _renderMemoryChart(container, data, asset, si) {
       var topPts = [], botPts = [];
       run.forEach(function (r) {
         var below = 0;
-        for (var k = 0; k < bi; k++) below += r.b[bands[k].key] || 0;
-        var top = below + (r.b[band.key] || 0);
+        for (var k = 0; k < bi; k++) below += r.b.values[bands[k].key] || 0;
+        var top = below + (r.b.values[band.key] || 0);
         var x = xFor(r.ts);
         botPts.push(x + "," + yFor(below));
         topPts.push(x + "," + yFor(top));
@@ -10941,7 +12230,7 @@ function _renderMemoryChart(container, data, asset, si) {
   });
 
   var swapLine = "";
-  if (anySwap) {
+  if (anySwap && swapVisible) {
     runs.forEach(function (run) {
       var pts = run.filter(function (r) { return r.b.swapUsed != null; });
       if (pts.length < 2) return;
@@ -10957,13 +12246,19 @@ function _renderMemoryChart(container, data, asset, si) {
     var x = xFor(r.ts);
     var leftEdge  = i === 0 ? padL : (xFor(rows[i - 1].ts) + x) / 2;
     var rightEdge = i === rows.length - 1 ? (W - padR) : (xFor(rows[i + 1].ts) + x) / 2;
+    // One attribute per REPORTED band, indexed by its position in
+    // `reported`, so the tooltip walks that list and neither vocabulary
+    // needs its own hard-coded row set — and a switched-off band still has
+    // its measured figure available to print.
+    var bandAttrs = reported.map(function (b, bi2) {
+      var v = r.b.values[b.key];
+      return ' data-b' + bi2 + '="' + (v != null ? v : "") + '"';
+    }).join("");
     return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
-      ' data-ts="' + escapeHtml(String(r.ts)) + '"' +
-      ' data-pr="' + r.b.processes + '" data-bu="' + r.b.buffers + '" data-ca="' + r.b.cache + '"' +
+      ' data-ts="' + escapeHtml(String(r.ts)) + '"' + bandAttrs +
       ' data-fr="' + r.b.free + '" data-to="' + r.b.total + '"' +
       ' data-su="' + (r.b.swapUsed != null ? r.b.swapUsed : "") + '"' +
-      ' data-st="' + (r.b.swapTotal != null ? r.b.swapTotal : "") + '"' +
-      ' data-dt="' + (r.b.detailed ? "1" : "") + '"/>';
+      ' data-st="' + (r.b.swapTotal != null ? r.b.swapTotal : "") + '"/>';
   }).join("");
 
   var ticks = "";
@@ -10974,14 +12269,7 @@ function _renderMemoryChart(container, data, asset, si) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _fmtBytes(v) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
 
   function swatch(color, label, dashed) {
     return '<span style="display:inline-flex;align-items:center;gap:4px">' +
@@ -10990,13 +12278,42 @@ function _renderMemoryChart(container, data, asset, si) {
         : '<span style="width:10px;height:10px;border-radius:2px;background:' + color + '"></span>') +
       escapeHtml(label) + '</span>';
   }
-  var legendParts = bands.map(function (b) { return swatch(b.color, b.label, false); });
+  // Every band the source REPORTED gets a chip, switched off ones included —
+  // a chip that disappeared when you clicked it would be a one-way door.
+  var legendParts = reported.map(function (b) {
+    return _seriesChipHTML(b.key, b.label, b.color, _memBandVisible(b.key),
+      "Click to " + (_memBandVisible(b.key) ? "hide" : "show") + " " + b.label.toLowerCase(), "mem-legend-chip");
+  });
   legendParts.push(swatch(_MEM_TOTAL_COLOR, "Installed total", true));
-  if (anySwap) legendParts.push(swatch(_MEM_SWAP_COLOR, "Swap / page file", true));
+  // A swap line running along the ceiling is a reading, not a rendering
+  // fault — say which, or the flat line at the top reads as a stuck series.
+  if (anySwap) {
+    legendParts.push(_seriesChipHTML("swap",
+      "Swap / page file" + (swapVisible && swapOverTop ? " — above installed RAM, clipped" : ""),
+      _MEM_SWAP_COLOR, swapVisible,
+      "Click to " + (swapVisible ? "hide" : "show") + " the swap line", "mem-legend-chip"));
+  }
   // A source with no breakdown gets told so, in the legend, rather than
-  // being left to look like a host whose cache is permanently zero.
-  var legendNote = anyDetailed ? "" :
-    '<span style="color:var(--color-text-tertiary)">(this source reports a total only — no cache/buffer breakdown)</span>';
+  // being left to look like a host whose cache is permanently zero. The
+  // vSphere stack gets a note of its own instead: its bands are measured
+  // OUTSIDE the guest, and an operator comparing them against what the guest
+  // itself reports needs to know that before, not after.
+  var legendNote = "";
+  if (!anyDetailed) {
+    legendNote = '<span style="color:var(--color-text-tertiary)">(this source reports a total only — no ' +
+      (isVsphere ? "hypervisor breakdown" : "cache/buffer breakdown") + ')</span>';
+  } else if (isVsphere) {
+    legendNote = '<span style="color:var(--color-text-tertiary)">(as the hypervisor accounts for it — not the guest\'s own view)</span>';
+  }
+  // Switching a band off does not delete the memory. The gap above the stack
+  // stops meaning "free" and starts meaning "free, plus what you hid", and
+  // an operator reading headroom off this chart has to be told which —
+  // especially since Cache ships hidden and nobody chose that.
+  if (hiddenBands.length > 0) {
+    legendNote += '<span style="color:var(--color-text-tertiary)">(' +
+      escapeHtml(hiddenBands.map(function (b) { return b.label.toLowerCase(); }).join(" + ")) +
+      ' hidden — counted in the gap, not in the stack)</span>';
+  }
   var legend = '<div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:0.72rem;color:var(--color-text-secondary);margin-bottom:2px">' +
     legendParts.join("") + legendNote + '</div>';
 
@@ -11030,7 +12347,6 @@ function _renderMemoryChart(container, data, asset, si) {
       return raw === "" || raw == null ? null : Number(raw);
     }
     var total = num("data-to"), free = num("data-fr");
-    var detailed = target.getAttribute("data-dt") === "1";
     var used = total != null && free != null ? total - free : null;
     var html = '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + '</div>';
     function row(color, label, val) {
@@ -11039,12 +12355,14 @@ function _renderMemoryChart(container, data, asset, si) {
       return '<div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;background:' + color + '"></span>' +
         escapeHtml(label) + ': ' + _fmtBytes(val) + pct + '</div>';
     }
-    html += row(_MEM_BANDS[0].color, "Processes", num("data-pr"));
-    if (detailed) {
-      html += row(_MEM_BANDS[1].color, "Buffers", num("data-bu"));
-      html += row(_MEM_BANDS[2].color, "Cache", num("data-ca"));
-    }
-    html += row("transparent", "Free", free);
+    // Every reported band, drawn or not. The chart answers "what is the
+    // shape of this host's memory"; the tooltip answers "what exactly was
+    // measured here", and dropping a figure because its band is switched
+    // off would make the second question unanswerable from the panel.
+    reported.forEach(function (b, bi3) {
+      html += row(b.color, b.label + (_memBandVisible(b.key) ? "" : " (hidden)"), num("data-b" + bi3));
+    });
+    html += row("transparent", isVsphere ? "Untouched" : "Free", free);
     if (used != null) html += '<div style="margin-top:2px"><strong>In use: ' + _fmtBytes(used) + '</strong> of ' + _fmtBytes(total) + '</div>';
     var su = num("data-su"), st = num("data-st");
     if (su != null && st) {
@@ -11053,8 +12371,31 @@ function _renderMemoryChart(container, data, asset, si) {
     }
     return html;
   });
+  _wireMemLegend(container, data, asset, si);
   _addChartScreenshotButton(container, "Memory", { yAxis: "Memory (bytes)", getStats: _statsSummaryFrom("asset-mem-summary") });
   _observeChartResize(container, function (c) { _renderMemoryChart(c, data, asset, si); });
+}
+
+// Click a band chip to switch that band out of the stack, or the swap chip
+// to drop its line.
+//
+// Unlike the CPU chart's cores, this choice is PERSISTED per user
+// (_setMemBandVisible): the bands are named and mean the same thing on every
+// host, so which of them an operator wants to see is a standing preference
+// rather than a per-visit one. That is also what makes "cache off by
+// default" expressible at all — the default is just the stored value nobody
+// has overridden yet.
+//
+// Re-renders from the same payload; no refetch, and no reflow of the range
+// selector the two charts share.
+function _wireMemLegend(container, data, asset, si) {
+  container.querySelectorAll(".mem-legend-chip").forEach(function (chip) {
+    chip.addEventListener("click", function () {
+      var key = chip.getAttribute("data-series");
+      _setMemBandVisible(key, !_memBandVisible(key));
+      _renderMemoryChart(container, data, asset, si);
+    });
+  });
 }
 
 // Percentage-only fallback (FortiOS and anything else that reports memory as
@@ -11081,11 +12422,6 @@ function _renderMemoryPctChart(container, data, asset, si) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   var xFor = _chartXScale(padL, innerW, t0, t1);
   var yFor = _chartYScale(padT, innerH, 0, 100);
   var baselineY = padT + innerH;
@@ -11097,7 +12433,7 @@ function _renderMemoryPctChart(container, data, asset, si) {
   _outagePts(gapMarkers, xFor, baselineY).forEach(function (mp) { pts.push(mp); });
   pts.sort(function (a, b) { return a.t - b.t; });
 
-  var memColor = _MEM_BANDS[0].color;
+  var memColor = _MEM_BANDS_AGENT[0].color;
   var line = _failureAwareSeriesSVG(pts, memColor, _chartClipId("mempct") + "-l");
 
   var ticks = "";
@@ -11108,14 +12444,7 @@ function _renderMemoryPctChart(container, data, asset, si) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + v.toFixed(0) + '%</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var sorted = vals.slice().sort(function (a, b) { return new Date(a.s.timestamp).getTime() - new Date(b.s.timestamp).getTime(); });
   var hits = sorted.map(function (h, i) {
     var x = xFor(h.s.timestamp);
@@ -11193,11 +12522,6 @@ function _renderSessionsChart(container, data, asset) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   function fmtCount(n) {
     if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k";
     return String(Math.round(n));
@@ -11227,14 +12551,7 @@ function _renderSessionsChart(container, data, asset) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + fmtCount(v) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var color = "#2a9d8f";
   var clipId = _chartClipId("sessions");
   container.innerHTML =
@@ -11551,21 +12868,33 @@ function _streamBadgeText(asset, stream, resolvedRaw, provenanceTier, intervalSe
 // System tab open path fires _updateStreamSourceBadgesFromEffective()
 // right after to overwrite it with the authoritative provenance from
 // /effective-monitor-settings (covers class overrides + integration tier).
-function _streamSourceBadgeHTML(asset, stream) {
+//
+// `opts.intervalSec` (optional) states a cadence that is NOT the stream's own:
+// SD-WAN borrows the Interfaces stream's method + tier (it is only scheduled
+// when Interfaces is on FortiOS REST) but polls on the integration's
+// sdwanIntervalSeconds, so its badge read "every 10m" over a 60s table. The
+// figure rides the span as data-interval-sec so the async rewrite keeps it;
+// null states "no cadence" and drops the "every" slot.
+function _streamSourceBadgeHTML(asset, stream, opts) {
   var integration = asset.discoveredByIntegration;
   var sourceKind  = (integration && integration.type) || "manual";
   if (!_POLLING_COMPAT[sourceKind]) sourceKind = "manual";
   var assetField  = _streamFieldPrefix(stream) + "Polling";
   var resolvedRaw = asset[assetField] || _polarisSourceDefaultPolling(sourceKind, stream);
   if (!resolvedRaw) return "";
+  var hasOverride = !!opts && Object.prototype.hasOwnProperty.call(opts, "intervalSec");
   // Coarse interval guess for the sync render: per-asset override only.
   // The async path overwrites with the authoritative resolved value from
   // /effective-monitor-settings (covers class/integration/manual tiers).
   var intervalAssetField = _streamIntervalAssetField(stream);
-  var intervalSeconds = (intervalAssetField && asset[intervalAssetField] != null) ? asset[intervalAssetField] : null;
+  var intervalSeconds = hasOverride
+    ? (opts.intervalSec != null ? opts.intervalSec : null)
+    : ((intervalAssetField && asset[intervalAssetField] != null) ? asset[intervalAssetField] : null);
   var label = _streamBadgeText(asset, stream, resolvedRaw, null, intervalSeconds);
   var titleLabel = "Polling method · Where this setting comes from";
-  return '<span class="asset-stream-source-badge" data-asset-id="' + escapeHtml(asset.id) + '" data-stream="' + escapeHtml(stream) + '" title="' + escapeHtml(titleLabel) + '" style="font-size:0.75rem;padding:2px 6px;border-radius:10px;background:var(--color-bg-primary);border:1px solid var(--color-border);color:var(--color-text-secondary);white-space:nowrap">' +
+  return '<span class="asset-stream-source-badge" data-asset-id="' + escapeHtml(asset.id) + '" data-stream="' + escapeHtml(stream) + '"' +
+    (hasOverride ? ' data-interval-sec="' + escapeHtml(intervalSeconds != null ? String(intervalSeconds) : "") + '"' : "") +
+    ' title="' + escapeHtml(titleLabel) + '" style="font-size:0.75rem;padding:2px 6px;border-radius:10px;background:var(--color-bg-primary);border:1px solid var(--color-border);color:var(--color-text-secondary);white-space:nowrap">' +
     escapeHtml(label) +
   '</span>';
 }
@@ -11620,6 +12949,12 @@ async function _updateStreamSourceBadgesFromEffective(assetId, asset, effP) {
     var prov = eff.provenance && eff.provenance[prefix + "Polling"];
     var intervalField = _streamIntervalEffectiveField(stream);
     var intervalSeconds = intervalField ? eff.resolved[intervalField] : null;
+    // A caller-stated cadence (see _streamSourceBadgeHTML opts.intervalSec)
+    // wins: the resolver's figure is the borrowed stream's, not this table's.
+    if (span.hasAttribute("data-interval-sec")) {
+      var stated = Number(span.getAttribute("data-interval-sec"));
+      intervalSeconds = span.getAttribute("data-interval-sec") !== "" && isFinite(stated) ? stated : null;
+    }
     // Per-stream MIB id + provenance — only response-time / telemetry /
     // interfaces / lldp carry a *MibId column. The same provenance tier
     // (asset|class|integration|manual) feeds the tooltip so operators can
@@ -12185,7 +13520,12 @@ async function _loadMonitorHistoryFor(assetId, selection, callOpts) {
         { label: "Avg",         value: s.avgMs != null ? s.avgMs + " ms" : "—" },
         { label: "Min",         value: s.minMs != null ? s.minMs + " ms" : "—" },
         { label: "Max",         value: s.maxMs != null ? s.maxMs + " ms" : "—" },
-        { label: "Packet loss", value: s.packetLossRate != null ? (s.packetLossRate * 100).toFixed(1) + "%" : "—" },
+        // The loss line's own window ratio (every probe kind, packets counted)
+        // when the payload carries one, so the figure is what the dashed line
+        // averages to; the poll-outcome rate only for an older payload.
+        { label: "Packet loss", value: (data.loss && data.loss.ratioPct != null)
+            ? Number(data.loss.ratioPct).toFixed(1) + "%"
+            : s.packetLossRate != null ? (s.packetLossRate * 100).toFixed(1) + "%" : "—" },
       ];
       var monitorTierPart = _tierStatsPart(data);
       if (monitorTierPart) monitorParts.unshift(monitorTierPart);
@@ -12267,9 +13607,15 @@ function _renderMonitorChart(container, data, transitions) {
     return;
   }
   transitions = Array.isArray(transitions) ? transitions : [];
+  // Packet loss rides a right-hand axis of its own (see _CHART_LOSS_COLOR). An
+  // older payload without `loss`, or a window with nothing countable, keeps the
+  // single-axis chart and its narrow right gutter.
+  var lossSeries = (data && data.loss) || null;
+  var lossPoints = (lossSeries && Array.isArray(lossSeries.points)) ? lossSeries.points : [];
+  var hasLoss = lossPoints.length > 0;
   var W = container.clientWidth || 600;
   var H = 200;
-  var padL = 56, padR = 10, padT = 10, padB = 56;
+  var padL = 56, padR = hasLoss ? 46 : 10, padT = 10, padB = 56;
   var innerW = W - padL - padR;
   var innerH = H - padT - padB;
 
@@ -12278,19 +13624,6 @@ function _renderMonitorChart(container, data, transitions) {
   var spanMs = t1 - t0;
   var oneDayMs = 24 * 60 * 60 * 1000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
-  function fmtDate(ts) {
-    var d = new Date(ts);
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
-  function dayKey(ts) {
-    var d = new Date(ts);
-    return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate();
-  }
 
   // Tier-aware sample classification. The detail tier carries a per-sample
   // `success` boolean; the rollup tiers (hourly/daily) instead carry
@@ -12435,36 +13768,57 @@ function _renderMonitorChart(container, data, transitions) {
     ticks +=
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + Math.round(v) + '</text>';
+    // The loss axis shares the gridlines — quarters of 0–100 % land on the
+    // same five rows as the ms quarters — so it adds labels, never lines.
+    if (hasLoss) {
+      ticks += '<text x="' + (W - padR + 4) + '" y="' + (y + 3) + '" text-anchor="start" font-size="10" fill="' + _CHART_LOSS_COLOR + '">' + (25 * i) + '%</text>';
+    }
+  }
+
+  // The packet-loss layer: a dashed polyline per contiguous run of buckets,
+  // broken where buckets are missing (a gap in probing is not 0 % loss), plus a
+  // hover target per point. Drawn OVER the response series and its hit targets
+  // so a cursor landing on a loss point reads the loss.
+  var lossLayer = "";
+  var lossHits = "";
+  if (hasLoss) {
+    var yLoss = _chartYScale(padT, innerH, 0, 100);
+    var lossBucketMs = Number(lossSeries.bucketMs) || 0;
+    var runs = [];
+    var cur = [];
+    lossPoints.forEach(function (p, i) {
+      var prev = i > 0 ? lossPoints[i - 1] : null;
+      if (prev && lossBucketMs > 0 && (p.t - prev.t) > lossBucketMs * 2.5) { runs.push(cur); cur = []; }
+      cur.push(p);
+    });
+    if (cur.length) runs.push(cur);
+    lossLayer = runs.map(function (run) {
+      if (run.length === 1) {
+        return '<circle cx="' + xFor(run[0].t) + '" cy="' + yLoss(run[0].v) + '" r="2" fill="' + _CHART_LOSS_COLOR + '"/>';
+      }
+      return '<polyline fill="none" stroke="' + _CHART_LOSS_COLOR + '" stroke-width="1.5" stroke-dasharray="4,3" stroke-linejoin="round" points="' +
+        run.map(function (p) { return xFor(p.t) + ',' + yLoss(p.v); }).join(" ") + '"/>';
+    }).join("");
+    lossHits = lossPoints.map(function (p) {
+      return '<circle class="monitor-loss-hit" cx="' + xFor(p.t) + '" cy="' + yLoss(p.v) + '" r="6" fill="transparent" style="cursor:crosshair"' +
+        ' data-ts="' + escapeHtml(String(p.t)) + '" data-loss="' + escapeHtml(String(p.v)) + '"/>';
+    }).join("");
   }
 
   // X-axis tick labels. When the window is ≤24h the time-only label loses the
   // date — render the date underneath the first tick and any tick whose day
   // differs from the previous one, so a window that crosses midnight is
   // unambiguous.
-  var xTicks = "";
-  var xTickCount = 5;
-  var dateLabelMode = spanMs <= oneDayMs;
-  var prevDayKey = null;
-  for (var j = 0; j <= xTickCount; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / xTickCount);
-    var xPos = padL + (j / xTickCount) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-    if (dateLabelMode) {
-      var k = dayKey(tsTick);
-      if (k !== prevDayKey) {
-        xTicks +=
-          '<text x="' + xPos + '" y="' + (padT + innerH + 26) + '" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.7">' + fmtDate(tsTick) + '</text>';
-        prevDayKey = k;
-      }
-    }
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH, { dateLine: spanMs <= oneDayMs });
 
   // Axis titles
   var yTitleX = 14;
   var yTitleY = padT + innerH / 2;
   var yTitle = '<text class="chart-axis-title" x="' + yTitleX + '" y="' + yTitleY + '" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.85" transform="rotate(-90 ' + yTitleX + ' ' + yTitleY + ')">Response time (ms)</text>';
+  if (hasLoss) {
+    var y2TitleX = W - 8;
+    yTitle += '<text class="chart-axis-title" x="' + y2TitleX + '" y="' + yTitleY + '" text-anchor="middle" font-size="11" fill="' + _CHART_LOSS_COLOR + '" transform="rotate(90 ' + y2TitleX + ' ' + yTitleY + ')">Packet loss (%)</text>';
+  }
   var xTitle = '<text class="chart-axis-title" x="' + (padL + innerW / 2) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.85">Time</text>';
 
   // Polling-method transition markers — vertical amber dashed lines at
@@ -12507,6 +13861,8 @@ function _renderMonitorChart(container, data, transitions) {
         }).join("") +
         _failureDotsSVG(linePts) +
         hitTargets +
+        lossLayer +
+        lossHits +
       '</g>' +
     '</svg>' +
     '<div class="monitor-tooltip" style="position:absolute;pointer-events:none;display:none;background:var(--color-bg-primary);border:1px solid var(--color-border);border-radius:4px;padding:6px 8px;font-size:0.75rem;line-height:1.35;color:var(--color-text-primary);box-shadow:0 4px 12px rgba(0,0,0,0.25);white-space:nowrap;z-index:5"></div>';
@@ -12565,7 +13921,7 @@ function _renderMonitorChart(container, data, transitions) {
       tip.innerHTML =
         '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(fmtTooltipTs(ts)) + '</div>' +
         '<div>Response: ' + rRttLine + '</div>' +
-        '<div>Packet loss: ' + rLossLine + '</div>';
+        '<div>Missed polls: ' + rLossLine + '</div>';
       tip.style.display = "block";
       positionTip(evt);
       return;
@@ -12576,8 +13932,24 @@ function _renderMonitorChart(container, data, transitions) {
     tip.innerHTML =
       '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(fmtTooltipTs(ts)) + '</div>' +
       '<div>Response: ' + rttLine + '</div>' +
-      '<div>Packet loss: ' + lossLine + '</div>' +
+      '<div>Missed poll: ' + lossLine + '</div>' +
       errLine;
+    tip.style.display = "block";
+    positionTip(evt);
+  }
+  // Hover tooltip for a packet-loss point: the bucket's loss and how wide the
+  // bucket is, since on a long window one point covers many probes.
+  function showLossTip(target, evt) {
+    var ts = Number(target.getAttribute("data-ts"));
+    var v = parseFloat(target.getAttribute("data-loss") || "0");
+    var bMs = Number(lossSeries && lossSeries.bucketMs) || 0;
+    var span = bMs >= 86400000 ? Math.round(bMs / 86400000) + "-day"
+      : bMs >= 3600000 ? Math.round(bMs / 3600000) + "-hour"
+      : bMs > 0 ? Math.round(bMs / 60000) + "-min" : "";
+    tip.innerHTML =
+      '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(fmtTooltipTs(ts)) + '</div>' +
+      '<div>Packet loss: <span style="color:' + _CHART_LOSS_COLOR + ';font-weight:600">' + v.toFixed(1) + '%</span></div>' +
+      (span ? '<div style="color:var(--color-text-secondary)">' + span + ' bucket, all probes</div>' : '');
     tip.style.display = "block";
     positionTip(evt);
   }
@@ -12604,6 +13976,8 @@ function _renderMonitorChart(container, data, transitions) {
     // both a sample dot and a transition line.
     if (t.classList.contains("monitor-transition")) {
       showTransitionTip(t, evt);
+    } else if (t.classList.contains("monitor-loss-hit")) {
+      showLossTip(t, evt);
     } else if (t.classList.contains("monitor-hit")) {
       showTip(t, evt);
     } else {
@@ -12634,8 +14008,9 @@ function _ensureIfacePanelDOM() {
   var overlay = document.createElement("div");
   overlay.id = "iface-panel-overlay";
   overlay.className = "slideover-overlay slideover-nested";
-  // Sit above the asset panel (z-index 999/1000) so the inner panel is on top.
-  overlay.style.zIndex = "1099";
+  // No z-index of its own: every slide-over stacks by DOM order, and
+  // raiseSlideover (app.js) moves this one to the top when it opens. A
+  // pinned 1099 put it over a network or block panel opened after it.
   overlay.innerHTML =
     '<div class="slideover" id="iface-panel" style="z-index:1100">' +
       '<div class="slideover-resize-handle"></div>' +
@@ -12654,6 +14029,7 @@ function _ensureIfacePanelDOM() {
     if (e.target === overlay) closeIfacePanel();
   });
   document.getElementById("iface-panel-close").addEventListener("click", closeIfacePanel);
+  wireSlideoverEscape(overlay, closeIfacePanel);
   initSlideoverResize(document.getElementById("iface-panel"), "polaris.panel.width.iface");
 }
 
@@ -12702,6 +14078,7 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow) {
     '<button class="btn btn-sm btn-secondary" id="btn-iface-panel-screenshot">Screenshot</button>' +
     '<span style="flex:1"></span>' +
     '<button class="btn btn-sm btn-secondary" id="btn-iface-panel-close-btn">Close</button>';
+  raiseSlideover(document.getElementById("iface-panel-overlay"));
   requestAnimationFrame(function () {
     document.getElementById("iface-panel-overlay").classList.add("open");
   });
@@ -13282,11 +14659,6 @@ function _renderIfaceThroughputChart(container, derived, opts) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   var maxV = 0;
   inSeries.forEach (function (d) { if (d.inBps  > maxV) maxV = d.inBps;  });
   outSeries.forEach(function (d) { if (d.outBps > maxV) maxV = d.outBps; });
@@ -13342,14 +14714,7 @@ function _renderIfaceThroughputChart(container, derived, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _fmtBitsPerSecAxis(v) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var inColor  = "var(--color-accent)";
   var outColor = "#f4a261";
   var legend =
@@ -13413,11 +14778,6 @@ function _renderIfaceErrorChart(container, derived, opts) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   var maxE = 0;
   derived.forEach(function (d) {
     if (typeof d.inErr  === "number" && d.inErr  > maxE) maxE = d.inErr;
@@ -13464,14 +14824,7 @@ function _renderIfaceErrorChart(container, derived, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + Math.round(v) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var legend =
     '<g font-size="10" fill="currentColor">' +
       '<rect x="' + (padL + 10) + '" y="2" width="10" height="10" fill="' + inErrColor + '"/>' +
@@ -13531,7 +14884,7 @@ function _ensureIpsecPanelDOM() {
   var overlay = document.createElement("div");
   overlay.id = "ipsec-panel-overlay";
   overlay.className = "slideover-overlay slideover-nested";
-  overlay.style.zIndex = "1099";
+  // Stacks by DOM order like every slide-over — raiseSlideover on open.
   overlay.innerHTML =
     '<div class="slideover" id="ipsec-panel" style="z-index:1100">' +
       '<div class="slideover-resize-handle"></div>' +
@@ -13550,6 +14903,7 @@ function _ensureIpsecPanelDOM() {
     if (e.target === overlay) closeIpsecPanel();
   });
   document.getElementById("ipsec-panel-close").addEventListener("click", closeIpsecPanel);
+  wireSlideoverEscape(overlay, closeIpsecPanel);
   initSlideoverResize(document.getElementById("ipsec-panel"), "polaris.panel.width.ipsec");
 }
 
@@ -13571,6 +14925,7 @@ async function openIpsecTunnelDetailPanel(asset, tunnelName) {
   bodyEl.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>';
   footerEl.innerHTML =
     '<button class="btn btn-sm btn-secondary" id="btn-ipsec-panel-close-btn">Close</button>';
+  raiseSlideover(document.getElementById("ipsec-panel-overlay"));
   requestAnimationFrame(function () {
     document.getElementById("ipsec-panel-overlay").classList.add("open");
   });
@@ -13839,11 +15194,6 @@ function _renderIpsecStatusChart(container, samples, opts) {
     : 600000;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   function colorFor(s) {
     if (s === "up") return MONITOR_STATE_COLORS.up;
     if (s === "down") return MONITOR_STATE_COLORS.down;
@@ -13865,14 +15215,7 @@ function _renderIpsecStatusChart(container, samples, opts) {
       ' data-ts="' + escapeHtml(String(s.timestamp)) + '"' +
       ' data-status="' + escapeHtml(s.status) + '"/>';
   }).join("");
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var hasDynamic = samples.some(function (s) { return s.status === "dynamic"; });
   var legend =
     '<g font-size="10" fill="currentColor">' +
@@ -13921,11 +15264,6 @@ function _renderIpsecBpsChart(container, derived, side, opts) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   var maxV = Math.max.apply(null, values.map(function (e) { return e.v; }));
   if (maxV < 1000) maxV = 1000;
   function tidyCeil(n) {
@@ -13950,14 +15288,7 @@ function _renderIpsecBpsChart(container, derived, side, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _fmtBitsPerSec(v) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var color = side === "in" ? "var(--color-accent)" : "#f4a261";
   var clipId = _chartClipId("ipsecBps");
   container.innerHTML =
@@ -14001,24 +15332,53 @@ function _sdwanMemberColor(name, members) {
   return _SDWAN_MEMBER_COLORS[idx % _SDWAN_MEMBER_COLORS.length];
 }
 
-// Compact green/red "Health Check Status" strip — one segment per recent scrape.
+// Compact "Health Check Status" strip — one segment per recent scrape.
 //
-// The strip is pure color: its segments carry no text at all, which is invisible
-// to the table-screenshot renderer (a canvas re-draw of cell TEXT), so the
-// column came out blank in every image. data-shot-text/-color hand it the
-// summary the segments add up to instead.
+// A segment is judged server-side (readSdwanMembers → sdwanSegmentVerdict):
+//   red    — dead in some health check, or alive but over that health check's
+//            own SLA target (`outOfSla`): the FortiGate's verdict wins outright;
+//   severity colour — alive and in SLA, but an SD-WAN automation's severity
+//            tier would fire on the reading (`severity`), in the flat per-
+//            severity palette (PolarisChartSeverity.downColorOf) that holds on
+//            every theme;
+//   green  — alive, in SLA, and no automation tier crossed.
+//
+// The strip is pure color: its segments carry no text at all. The table
+// screenshot rasterizes the live DOM, so the strip reaches the image as it
+// looks here — but its FALLBACK composer (_screenshotTableElText) re-draws cell
+// TEXT, and there the column came out blank. data-shot-text/-color hand that
+// path the summary the segments add up to instead.
+function _sdwanStripSegment(r) {
+  var UP = "#2ecc40", DOWN = "#e02020";
+  if (!r.up) return { color: DOWN, label: "down" };
+  if (r.outOfSla) return { color: DOWN, label: "out of SLA" };
+  if (r.severity) {
+    var cs = window.PolarisChartSeverity;
+    return { color: cs && cs.downColorOf ? cs.downColorOf(r.severity) : DOWN, label: "up — " + r.severity + " by automation" };
+  }
+  return { color: UP, label: "up" };
+}
 function _sdwanStatusStripHTML(recent) {
   if (!recent || !recent.length) return '<span style="color:var(--color-text-tertiary)">—</span>';
+  // `up` counts alive, in-SLA scrapes — a severity-shaded one is still up, and
+  // the summary names the worst severity beside the count instead.
   var up = 0;
+  var worst = null;
+  var order = (window.PolarisChartSeverity && window.PolarisChartSeverity.SEV_ORDER) || [];
   var segs = recent.map(function (r) {
-    if (r.up) up++;
-    var c = r.up ? "#2ecc40" : "#e02020";
-    return '<span title="' + escapeHtml(_fmtTooltipTs(r.timestamp)) + (r.up ? ' — up' : ' — down') +
-      '" style="flex:1 1 auto;min-width:2px;height:16px;background:' + c + '"></span>';
+    var seg = _sdwanStripSegment(r);
+    if (r.up && !r.outOfSla) {
+      up++;
+      if (r.severity && (worst === null || order.indexOf(r.severity) > order.indexOf(worst))) worst = r.severity;
+    }
+    return '<span title="' + escapeHtml(_fmtTooltipTs(r.timestamp) + ' — ' + seg.label) +
+      '" style="flex:1 1 auto;min-width:2px;height:16px;background:' + seg.color + '"></span>';
   }).join("");
   var allUp = up === recent.length;
-  return '<span data-shot-text="' + (allUp ? '▲ ' : '▼ ') + up + '/' + recent.length + ' up"' +
-    ' data-shot-color="' + (allUp ? MONITOR_STATE_COLORS.up : MONITOR_STATE_COLORS.down) + '"' +
+  var shotColor = !allUp ? MONITOR_STATE_COLORS.down
+    : worst ? _sdwanStripSegment({ up: true, severity: worst }).color : MONITOR_STATE_COLORS.up;
+  return '<span data-shot-text="' + (allUp ? '▲ ' : '▼ ') + up + '/' + recent.length + ' up' + (worst ? ' · ' + worst : '') + '"' +
+    ' data-shot-color="' + shotColor + '"' +
     ' style="display:flex;gap:1px;align-items:stretch;min-width:120px;max-width:340px">' + segs + '</span>';
 }
 
@@ -14108,7 +15468,8 @@ function _sdwanMembersTableHTML(members) {
 // Provenance + freshness strip carried by all three SD-WAN sections.
 //
 // Every section on this tab is a SNAPSHOT of what the gate last answered, and
-// each is a separate write on the system-info pass: a rules scrape can land
+// each is a separate write on the SD-WAN pass (its own cadence, default 60s —
+// not the system-info pass it rode until 2026-09): a rules scrape can land
 // while the perf-SLA one fails, and vice versa. So each states its OWN stamp
 // rather than the asset's lastSystemInfoAt — otherwise an empty members table
 // reads "this gate has no WAN members" when it means "not answered since
@@ -14126,7 +15487,10 @@ function _sdwanMembersTableHTML(members) {
 // range buttons). Both empty for the two tables, which then render as a plain
 // left-aligned strip.
 function _sdwanSectionHeaderHTML(a, title, lastAt, cadenceSec, neverText, extraHTML, rightHTML) {
-  var badge = _streamSourceBadgeHTML(a, "interfaces");
+  // Method + tier are the Interfaces stream's (SD-WAN runs only when it is on
+  // FortiOS REST); the cadence is SD-WAN's own — the same figure the stamp
+  // ambers against, so the badge and the stamp never disagree.
+  var badge = _streamSourceBadgeHTML(a, "interfaces", { intervalSec: cadenceSec });
   return '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;margin:0 0 0.5rem">' +
       '<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">' +
         '<h4 style="margin:0">' + escapeHtml(title) + '</h4>' +
@@ -14151,7 +15515,7 @@ function _assetSdwanTabHTML(a, rules, links, members, meta) {
       '<div data-shot-section="sdwanMembers" data-shot-label="SD-WAN Members">' +
       '<section style="margin-bottom:1.25rem">' +
         _sdwanSectionHeaderHTML(a, "SD-WAN Members", meta.membersAt, meta.membersPollSec, "never collected") +
-        '<p class="hint" style="margin:0 0 0.5rem 0;color:var(--color-text-tertiary)">WAN members (interfaces + overlays) with per-health-check status. The Health Check Status strip shows recent up/down per scrape; IP / link / bytes come from the latest interface poll.</p>' +
+        '<p class="hint" style="margin:0 0 0.5rem 0;color:var(--color-text-tertiary)">WAN members (interfaces + overlays) with per-health-check status. The Health Check Status strip shows up/down per scrape over the last 30 minutes; IP / link / bytes come from the latest interface poll.</p>' +
         _sdwanMembersTableHTML(members) +
       '</section>' +
       ((rules.length || links.length) ? '<hr style="margin:1.25rem 0;border:none;border-top:1px solid var(--color-border)">' : '') +
@@ -14265,19 +15629,21 @@ function _assetSdwanTabHTML(a, rules, links, members, meta) {
     // Same header builder as the two tables above, so all three sections state
     // provenance and age the same way. The stamp is the perf-SLA stream's own
     // newest sample — the very `collectedAt` the members table states, both
-    // reading that one table — falling back to the asset's pass stamp only when
-    // the endpoint returned none. It used to read lastSystemInfoAt
-    // unconditionally, which reports a pass whose SD-WAN leg failed as a
-    // successful SD-WAN scrape. _wireSdwanTab upgrades the badge to
-    // authoritative provenance.
+    // reading that one table. No fallback: it used to fall back to the asset's
+    // lastSystemInfoAt, but SD-WAN has its own pass since 2026-09, so that
+    // stamp says nothing about SD-WAN — no sample means "never collected".
+    // _wireSdwanTab upgrades the badge to authoritative provenance.
     html +=
       '<section>' +
         _sdwanSectionHeaderHTML(
           a, "Performance SLA",
-          meta.membersAt || a.lastSystemInfoAt || null, meta.membersPollSec, "never collected",
+          meta.membersAt || null, meta.membersPollSec, "never collected",
           '<select id="sdwan-perfsla-select" class="form-input" style="padding:2px 6px;font-size:0.82rem">' + options + '</select>',
           rangeBtns
         ) +
+        // ONE legend for all three charts, above the stats line — hiding a
+        // member hides it on latency, jitter and loss together.
+        '<div id="sdwan-perfsla-legend"></div>' +
         '<div id="sdwan-perfsla-stats" style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">Loading…</div>' +
         '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Latency (ms)</h5>' +
         '<div id="sdwan-latency-chart" class="sdwan-chart-box"></div>' +
@@ -14379,8 +15745,10 @@ async function _loadPerfSlaForHealthCheck(assetId, hcName, members, range) {
   var jitEl  = document.getElementById("sdwan-jitter-chart");
   var lossEl = document.getElementById("sdwan-loss-chart");
   var stats  = document.getElementById("sdwan-perfsla-stats");
+  var legendEl = document.getElementById("sdwan-perfsla-legend");
   if (!latEl || !members || !members.length) return;
   latEl.textContent = jitEl.textContent = lossEl.textContent = "Loading samples…";
+  if (legendEl) legendEl.innerHTML = "";
   if (stats) stats.textContent = "Loading…";
   var opts = (typeof range === "string" || !range) ? { range: range || "24h" } : range;
   // Stash the active selection on each chart container (canonical convention)
@@ -14444,12 +15812,14 @@ function _renderPerfSlaStats(container, series, data, subject) {
   _renderChartStats(container, total, parts);
 }
 
-// Re-render all three Performance SLA charts from the stashed state (honors the
-// current per-member hidden set). Called on initial load + on legend toggle.
+// Re-render the shared legend and all three Performance SLA charts from the
+// stashed state (honors the current per-member hidden set). Called on initial
+// load + on legend toggle.
 function _renderAllPerfSlaCharts() {
   var st = _sdwanTabState;
   if (!st || !st.perfSla) return;
   var ps = st.perfSla;
+  _renderPerfSlaLegend(document.getElementById("sdwan-perfsla-legend"), ps.series);
   var latEl  = document.getElementById("sdwan-latency-chart");
   var jitEl  = document.getElementById("sdwan-jitter-chart");
   var lossEl = document.getElementById("sdwan-loss-chart");
@@ -14458,21 +15828,81 @@ function _renderAllPerfSlaCharts() {
   if (lossEl) _renderPerfSlaMultiChart(lossEl, ps.series, "packetLoss", { label: "Packet loss", unit: "%", threshold: ps.thr.packetLossThreshold }, ps.copts);
 }
 
-// Toggle one member's visibility across all three Performance SLA charts.
-function _togglePerfSlaMember(label) {
-  var st = _sdwanTabState;
-  if (!st) return;
-  if (!st.hiddenMembers) st.hiddenMembers = new Set();
-  if (st.hiddenMembers.has(label)) st.hiddenMembers.delete(label);
-  else st.hiddenMembers.add(label);
-  _renderAllPerfSlaCharts();
+// The one member legend above the stats line, driving all three charts. Same
+// chips and gestures as the CPU chart's legend (_cpuLegendHTML /
+// _wireCpuLegend): click to hide or show a member, double-click to show ONLY
+// that member, "Show all" once anything is off. A member with no samples in
+// the range gets no chip — there is nothing of it on any chart to toggle.
+function _renderPerfSlaLegend(el, series) {
+  if (!el) return;
+  var hidden = (_sdwanTabState && _sdwanTabState.hiddenMembers) || new Set();
+  var withData = series.filter(function (s) { return s.samples && s.samples.length; });
+  if (!withData.length) { el.innerHTML = ""; return; }
+  var chips = withData.map(function (s) {
+    return _seriesChipHTML(s.label, s.label, s.color, !hidden.has(s.label),
+      "Click to hide " + s.label + " · double-click to show only this member", "sdwan-legend-chip");
+  }).join("");
+  if (hidden.size) {
+    chips += '<span class="sdwan-legend-all" title="Show every member again"' +
+      ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;color:var(--color-accent)">Show all</span>';
+  }
+  el.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:4px 10px;font-size:0.72rem;color:var(--color-text-secondary);margin:0.25rem 0 0.35rem">' +
+    chips + '</div>';
+  // A double-click also fires two clicks — defer the single-click toggle just
+  // past the double-click window (as _wireCpuLegend does) so an isolate does
+  // not first hide the member it was aimed at.
+  var clickTimer = null;
+  el.querySelectorAll(".sdwan-legend-chip").forEach(function (chip) {
+    var key = chip.getAttribute("data-series");
+    chip.addEventListener("click", function () {
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      clickTimer = setTimeout(function () {
+        clickTimer = null;
+        var st = _sdwanTabState;
+        if (!st) return;
+        if (!st.hiddenMembers) st.hiddenMembers = new Set();
+        if (st.hiddenMembers.has(key)) st.hiddenMembers.delete(key);
+        else st.hiddenMembers.add(key);
+        _renderAllPerfSlaCharts();
+      }, 220);
+    });
+    chip.addEventListener("dblclick", function () {
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      var st = _sdwanTabState;
+      if (!st) return;
+      st.hiddenMembers = new Set(withData.map(function (s) { return s.label; }).filter(function (l) { return l !== key; }));
+      _renderAllPerfSlaCharts();
+    });
+  });
+  var all = el.querySelector(".sdwan-legend-all");
+  if (all) {
+    all.addEventListener("click", function () {
+      if (_sdwanTabState) _sdwanTabState.hiddenMembers = new Set();
+      _renderAllPerfSlaCharts();
+    });
+  }
 }
 
-// Multi-series gauge chart: one polyline per member (`series[].samples`), a
-// clickable per-member color legend (click to hide/show on every chart), and
-// the shared dashed SLA threshold line. The hidden set lives on
-// `_sdwanTabState.hiddenMembers` so it persists across resize re-renders and is
-// shared by all three charts.
+// Screenshot stats line for a Performance SLA chart. The legend lives outside
+// the chart SVG now, so the capture names the members it shows in the header
+// instead — otherwise the lines in a copied image are anonymous.
+function _perfSlaShotStats() {
+  var base = _statsSummaryFrom("sdwan-perfsla-stats")();
+  var st = _sdwanTabState;
+  if (!st || !st.perfSla) return base;
+  var hidden = st.hiddenMembers || new Set();
+  var shown = st.perfSla.series.filter(function (s) { return s.samples && s.samples.length && !hidden.has(s.label); })
+    .map(function (s) { return s.label; });
+  if (!shown.length) return base;
+  var line = "Members: " + shown.join(", ");
+  return base ? base + " · " + line : line;
+}
+
+// Multi-series gauge chart: one polyline per visible member
+// (`series[].samples`) and the shared dashed SLA threshold line. The legend is
+// NOT drawn here — _renderPerfSlaLegend draws one for all three charts. The
+// hidden set lives on `_sdwanTabState.hiddenMembers` so it persists across
+// resize re-renders and is shared by all three charts.
 function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   opts = opts || {};
   meta = meta || {};
@@ -14489,7 +15919,7 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   var hidden = (_sdwanTabState && _sdwanTabState.hiddenMembers) || new Set();
   var visible = drawn.filter(function (s) { return !hidden.has(s.label); });
   var W = container.clientWidth || 600, H = 160;
-  var padL = 52, padR = 10, padT = 10, padB = 40; // extra bottom pad for legend
+  var padL = 52, padR = 10, padT = 10, padB = 24; // legend is HTML above the stats line
   var innerW = W - padL - padR, innerH = H - padT - padB;
   var allTs = [];
   drawn.forEach(function (s) { s.values.forEach(function (e) { allTs.push({ timestamp: e.ts }); }); });
@@ -14497,7 +15927,6 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  var fmtTick = _chartTickFmt(t0, t1);
   var hasThreshold = typeof meta.threshold === "number" && meta.threshold > 0;
   // Scale the y-axis to the VISIBLE series so hiding a high member rescales the
   // rest (fall back to all members when everything is hidden).
@@ -14531,31 +15960,7 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + (Math.round(v * 100) / 100) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
-  // Legend row beneath the x-axis — one clickable swatch+label per member.
-  // Click toggles that member's visibility on every chart; hidden members grey
-  // out + strike through. Each item is a <g class="sdwan-legend-item"> with a
-  // transparent hit rect so the whole chip is the click target.
-  var legendY = padT + innerH + 30;
-  var lx = padL;
-  var legend = '<g font-size="10">' + drawn.map(function (s) {
-    var isHidden = hidden.has(s.label);
-    var w = 16 + s.label.length * 6.5;
-    var item = '<g class="sdwan-legend-item" data-member="' + escapeHtml(s.label) + '" style="cursor:pointer" opacity="' + (isHidden ? "0.4" : "1") + '">' +
-      '<rect x="' + lx + '" y="' + (legendY - 11) + '" width="' + w + '" height="14" fill="transparent"/>' +
-      '<rect x="' + lx + '" y="' + (legendY - 7) + '" width="10" height="6" fill="' + s.color + '"/>' +
-      '<text x="' + (lx + 14) + '" y="' + legendY + '" fill="currentColor"' + (isHidden ? ' text-decoration="line-through"' : '') + '>' + escapeHtml(s.label) + '</text>' +
-      '</g>';
-    lx += w + 8;
-    return item;
-  }).join("") + '</g>';
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var clipId = _chartClipId("sdwanGauge");
   container.innerHTML =
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
@@ -14567,7 +15972,6 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
         thresholdLine +
         seriesSvg +
       '</g>' +
-      legend +
     '</svg>' + CHART_TOOLTIP_HTML;
   container.style.position = "relative";
   container.style.alignItems = "stretch";
@@ -14578,11 +15982,7 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
       '<div>' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + '</div>' +
       '<div>' + escapeHtml(meta.label || metricKey) + ': ' + escapeHtml(target.getAttribute("data-v")) + ' ' + escapeHtml(meta.unit || "") + '</div>';
   });
-  _addChartScreenshotButton(container, "SD-WAN " + (meta.label || metricKey), { yAxis: (meta.label || "") + " (" + (meta.unit || "") + ")", subject: opts.subject, getStats: _statsSummaryFrom("sdwan-perfsla-stats") });
-  // Clickable legend → toggle the member across all three charts.
-  container.querySelectorAll(".sdwan-legend-item").forEach(function (g) {
-    g.addEventListener("click", function () { _togglePerfSlaMember(g.getAttribute("data-member")); });
-  });
+  _addChartScreenshotButton(container, "SD-WAN " + (meta.label || metricKey), { yAxis: (meta.label || "") + " (" + (meta.unit || "") + ")", subject: opts.subject, getStats: _perfSlaShotStats });
   _observeChartResize(container, function (c) { _renderPerfSlaMultiChart(c, series, metricKey, meta, opts); });
 }
 
@@ -14598,7 +15998,7 @@ function _ensureStoragePanelDOM() {
   var overlay = document.createElement("div");
   overlay.id = "storage-panel-overlay";
   overlay.className = "slideover-overlay slideover-nested";
-  overlay.style.zIndex = "1099";
+  // Stacks by DOM order like every slide-over — raiseSlideover on open.
   overlay.innerHTML =
     '<div class="slideover" id="storage-panel" style="z-index:1100">' +
       '<div class="slideover-resize-handle"></div>' +
@@ -14617,6 +16017,7 @@ function _ensureStoragePanelDOM() {
     if (e.target === overlay) closeStoragePanel();
   });
   document.getElementById("storage-panel-close").addEventListener("click", closeStoragePanel);
+  wireSlideoverEscape(overlay, closeStoragePanel);
   initSlideoverResize(document.getElementById("storage-panel"), "polaris.panel.width.storage");
 }
 
@@ -14651,6 +16052,7 @@ async function openStorageDetailPanel(asset, focusMountPath, storage) {
   bodyEl.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>';
   footerEl.innerHTML =
     '<button class="btn btn-sm btn-secondary" id="btn-storage-panel-close-btn">Close</button>';
+  raiseSlideover(document.getElementById("storage-panel-overlay"));
   requestAnimationFrame(function () {
     document.getElementById("storage-panel-overlay").classList.add("open");
   });
@@ -15158,11 +16560,6 @@ function _renderStorageChart(container, samples, opts) {
   }
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var ceil;
   if (view === "bytes") {
@@ -15194,14 +16591,7 @@ function _renderStorageChart(container, samples, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + label + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
 
   // Missed polls. The storage cadence doesn't run while an asset is down, so a
   // skipped scrape leaves no row — same as telemetry and the interface
@@ -16087,11 +17477,175 @@ function _shotVisible(el, view) {
   return !cs || (cs.display !== 'none' && cs.visibility !== 'hidden');
 }
 
+// Data rows the operator has hidden (the children of a collapsed parent).
+// They're left out of the image, but their count is noted under it so the
+// screenshot can't be mistaken for the full set — reveal them, then re-shoot.
+// Control rows don't count: a toggle-button row, or a full-width section /
+// grouping header that spans every column via colspan.
+function _shotHiddenRowCount(tableEl, view) {
+  var n = 0;
+  tableEl.querySelectorAll('tbody > tr').forEach(function (tr) {
+    if (_shotVisible(tr, view)) return;
+    if (tr.id && /toggle/i.test(tr.id)) return;
+    var tds = tr.querySelectorAll(':scope > td');
+    if (tds.length === 0) return;
+    if (tds.length === 1 && tds[0].hasAttribute('colspan')) return;
+    n++;
+  });
+  return n;
+}
+// Is a computed background color one that paints nothing? `transparent` and any
+// zero-alpha rgba() are see-through; everything else (including a keyword a
+// browser hands back unresolved) counts as painted.
+function _shotTransparentBg(bg) {
+  if (!bg || bg === 'transparent') return true;
+  var m = /^rgba?\(([^)]*)\)$/.exec(bg);
+  if (!m) return false;
+  var parts = m[1].split(/[\s,\/]+/).filter(function (p) { return p !== ''; });
+  return parts.length > 3 && parseFloat(parts[3]) === 0;
+}
+// The color to lay behind a captured table. A table declares no background of
+// its own — its rows are transparent over whatever card they sit in — so
+// composing on --color-bg-primary would put the wrong ground under the zebra
+// striping in every theme whose cards aren't the page color. Walk up to the
+// first ancestor that actually paints.
+function _shotBackdropColor(el, view, fallback) {
+  for (var n = el; n && n.nodeType === 1; n = n.parentElement) {
+    var bg = view.getComputedStyle(n).backgroundColor;
+    if (!_shotTransparentBg(bg)) return bg;
+  }
+  return fallback;
+}
+
 // Per-table screenshot (the camera button injected to the left of a table's
-// column-chooser gear by setupColumnLayout). Captures only that table — visible
-// columns + headers — titled with the table label and the current asset name,
-// then copies the PNG to the clipboard. Column widths auto-fit the content.
+// column-chooser gear by setupColumnLayout). Captures only that table, as it is
+// actually rendered — the operator's visible columns in their dragged order and
+// widths, the zebra striping, status dots, pills, and the green/red per-scrape
+// health-check strips — titled with the table label and the current asset name,
+// then copies the PNG to the clipboard.
+//
+// This is a DOM rasterization: html-to-image, the same library and the same
+// deep-clone → inlined computed styles → SVG <foreignObject> path
+// _runScreenshotCapture uses for a whole tab. It replaced a synthetic canvas
+// re-draw, which could only paint each cell's FLATTENED TEXT in one resolved
+// color — so everything a table says with shape or color reached the image as a
+// stand-in glyph at best and as nothing at all at worst: the SD-WAN Members
+// Health Check Status column arrived as the words "▼ 36/37 up" in place of 37
+// colored segments, its status dots as ▲/▼, and a health-check chip's colored
+// bullet as a bare triangle. That composer survives as _screenshotTableElText,
+// the fallback for a browser where the capture library didn't load or the
+// rasterization failed — it needs nothing but the DOM, and the data-shot-text /
+// data-shot-color stand-ins exist for it alone.
+//
+// The table is captured at its CURRENT rendered width, deliberately unlike the
+// tab capture's canonical 1100px: applyTableLayout stamps per-column pixel
+// widths under `table-layout: fixed`, so forcing the container wider would
+// leave every column where it is and only add dead space to the right.
 function _screenshotTableEl(tableEl, label, opts) {
+  if (!tableEl) { showToast("Nothing to screenshot", "error"); return; }
+  opts = opts || {};
+  if (typeof htmlToImage === "undefined") { _screenshotTableElText(tableEl, label, opts); return; }
+  var view = (tableEl.ownerDocument && tableEl.ownerDocument.defaultView) || window;
+  var hiddenNoun = opts.hiddenNoun || "row";
+
+  var bodyRows = Array.prototype.slice.call(tableEl.querySelectorAll('tbody > tr'));
+  var anyVisible = bodyRows.some(function (tr) { return _shotVisible(tr, view); });
+  if (!anyVisible) { showToast("Nothing to screenshot", "error"); return; }
+
+  var hiddenCount = _shotHiddenRowCount(tableEl, view);
+  var hiddenNote = hiddenCount > 0
+    ? "+ " + hiddenCount + " hidden " + hiddenNoun + (hiddenCount === 1 ? "" : "s") +
+      " not shown — reveal them before screenshotting to include"
+    : "";
+
+  var a = _currentAssetForRefresh;
+  var assetName = a ? (a.hostname || a.dnsName || a.ipAddress || a.id || "") : "";
+
+  var cs = getComputedStyle(document.documentElement);
+  var bgPrimary = cs.getPropertyValue("--color-bg-primary").trim() || "#ffffff";
+  var clrText   = cs.getPropertyValue("--color-text-primary").trim() || "#111";
+  var clrMuted  = cs.getPropertyValue("--color-text-tertiary").trim() || "#888";
+  var fontSans  = cs.getPropertyValue("--font-sans").trim() || "system-ui,-apple-system,sans-serif";
+  var backdrop  = _shotBackdropColor(tableEl, view, bgPrimary);
+
+  // Hide the scroll wrapper's scrollbar chrome for the duration: the class sets
+  // `scrollbar-width: none` on the LIVE nodes, and it's those computed styles
+  // html-to-image freezes into the clone. The wrapper is never the capture
+  // target — it's a bounded-height scroll container, so capturing it would clip
+  // every row below the fold (and every column right of the horizontal scroll);
+  // the table element itself is content-sized in both axes.
+  var wrap = tableEl.closest('.table-wrapper-sticky') || tableEl.parentElement;
+  if (wrap) wrap.classList.add('screenshot-hide-scrollbars');
+  function release() { if (wrap) wrap.classList.remove('screenshot-hide-scrollbars'); }
+
+  var scale = 2;
+  // Double-rAF clears the relayout hiding the scrollbars kicks off — on
+  // classic-scrollbar platforms it widens the scroll container by the bar width.
+  requestAnimationFrame(function () {
+    requestAnimationFrame(function () {
+      htmlToImage.toCanvas(tableEl, { pixelRatio: scale, backgroundColor: backdrop })
+        .then(function (capture) {
+          release();
+          var pad = 20;
+          var titleH = assetName ? 48 : 32;
+          var w = capture.width / scale;
+          var h = capture.height / scale;
+          var noteH = hiddenNote ? 24 : 0;
+          // The note can be wider than the table — widen the canvas for it.
+          var measure = document.createElement("canvas").getContext("2d");
+          measure.font = "italic 12px " + fontSans;
+          var noteW = hiddenNote ? measure.measureText(hiddenNote).width : 0;
+          var cw = Math.max(w, Math.ceil(noteW)) + pad * 2;
+          var ch = titleH + h + noteH + pad;
+          var canvas = document.createElement("canvas");
+          canvas.width = cw * scale;
+          canvas.height = ch * scale;
+          var ctx = canvas.getContext("2d");
+          ctx.scale(scale, scale);
+          ctx.fillStyle = bgPrimary;
+          ctx.fillRect(0, 0, cw, ch);
+          ctx.textBaseline = "alphabetic";
+          ctx.fillStyle = clrText;
+          ctx.font = "bold 15px " + fontSans;
+          ctx.fillText(label || "Table", pad, 22);
+          if (assetName) {
+            ctx.fillStyle = clrMuted;
+            ctx.font = "12px " + fontSans;
+            ctx.fillText(assetName, pad, 40);
+          }
+          // 1:1 device-pixel blit (w×h CSS px under the 2x transform), so the
+          // captured table is never resampled.
+          ctx.drawImage(capture, pad, titleH, w, h);
+          if (hiddenNote) {
+            ctx.fillStyle = clrMuted;
+            ctx.font = "italic 12px " + fontSans;
+            ctx.fillText(hiddenNote, pad, titleH + h + 16);
+          }
+          canvas.toBlob(function (blob) {
+            if (!blob) { showToast("Screenshot failed", "error"); return; }
+            copyPngToClipboard(blob).then(function (ok) {
+              showToast(ok ? (label || "Table") + " copied to clipboard" : "Screenshot failed — requires HTTPS or clipboard permission", ok ? "success" : "error");
+            });
+          }, "image/png");
+        })
+        .catch(function () {
+          release();
+          // A rasterization that fell over (a tainted canvas, a webfont fetch
+          // wedging the clone) still has a readable answer to give.
+          _screenshotTableElText(tableEl, label, opts);
+        });
+    });
+  });
+}
+
+// Fallback table screenshot: a synthetic canvas re-draw of each visible cell's
+// flattened text (_shotCellText) in one resolved color (_shotCellColor), with
+// auto-fit column widths. Used when html-to-image is unavailable or its
+// rasterization failed — see _screenshotTableEl for why it is no longer the
+// primary path, and polaris-ui-canon → canon-tables-lists.md for the
+// data-shot-text / data-shot-color contract that keeps a color-only cell from
+// coming out blank HERE.
+function _screenshotTableElText(tableEl, label, opts) {
   if (!tableEl) { showToast("Nothing to screenshot", "error"); return; }
   opts = opts || {};
   var hiddenNoun = opts.hiddenNoun || "row";
@@ -16106,20 +17660,9 @@ function _screenshotTableEl(tableEl, label, opts) {
   });
   var rows = [];
   var rowColors = [];   // parallel to rows: the per-cell color to draw with
-  // Count data rows the operator has hidden (the children of a collapsed
-  // parent). They're left out of the image but we note their count so
-  // the screenshot can't be mistaken for the full set — reveal them, then re-shoot.
-  var hiddenCount = 0;
+  var hiddenCount = _shotHiddenRowCount(tableEl, view);
   tableEl.querySelectorAll('tbody > tr').forEach(function (tr) {
-    if (!visible(tr)) {
-      // Skip control rows (toggle / section headers span all columns via colspan).
-      if (tr.id && /toggle/i.test(tr.id)) return;
-      var tds = tr.querySelectorAll(':scope > td');
-      if (tds.length === 0) return;
-      if (tds.length === 1 && tds[0].hasAttribute('colspan')) return;
-      hiddenCount++;
-      return;
-    }
+    if (!visible(tr)) return;
     var row = [];
     var colors = [];
     tr.querySelectorAll(':scope > td').forEach(function (td, i) {
@@ -18870,7 +20413,7 @@ var _assetEventsLoaded = false;     // lazy-load guard (first tab click)
 function _assetServicesTabHTML() {
   return '<div class="section-block">' +
     '<div class="filter-bar" style="justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:0.5rem">' +
-      '<p class="hint" style="margin:0;max-width:600px">systemd units (Linux) and Windows services reported by the Polaris Agent. Check <strong>Monitor</strong> to tail a service\'s journal — or, for a process, to collect its CPU/RAM history + logs — and <strong>Map</strong> to attribute connections on the <a href="/appmap.html">Application Map</a>. Click a row to open it.</p>' +
+      '<p class="hint" style="margin:0;max-width:600px">systemd units (Linux) and Windows services reported by the Polaris Agent. Check <strong>Monitor</strong> to collect a service\'s log (its journal on Linux, its Event Log entries on Windows) — or, for a process, to collect its CPU/RAM history + logs — and <strong>Map</strong> to attribute connections on the <a href="/appmap.html">Application Map</a>. Click a row to open it.</p>' +
       '<div style="display:flex;align-items:center;gap:0.75rem;flex:none">' +
         '<label style="display:flex;align-items:center;gap:5px;font-size:0.8rem;white-space:nowrap"><input type="checkbox" id="asset-view-svc-include-proc">Include processes</label>' +
         '<button class="btn btn-secondary btn-sm" id="asset-view-svc-refresh">Refresh</button>' +
@@ -18906,6 +20449,44 @@ function _svcStatePill(activeState) {
   var label = activeState ? escapeHtml(activeState) : "—";
   return '<span style="display:inline-flex;align-items:center;gap:5px">' +
     '<span style="width:8px;height:8px;border-radius:50%;background:' + color + ';flex:none"></span>' + label + '</span>';
+}
+
+// Startup type in the Windows Services console's own words; a systemd
+// enablement state (enabled/disabled/static/…) is shown as reported.
+var _WIN_START_MODE_LABELS = {
+  "auto": "Automatic",
+  "auto-delayed": "Automatic (Delayed Start)",
+  "manual": "Manual",
+  "disabled": "Disabled",
+  "boot": "Boot",
+  "system": "System",
+};
+function _svcStartupLabel(svc) {
+  var e = svc && svc.enabledState;
+  if (!e) return "—";
+  if (svc.platform === "windows" && _WIN_START_MODE_LABELS[e]) return _WIN_START_MODE_LABELS[e];
+  return e;
+}
+
+// mainPid → the units running in that process. On Windows several services
+// can share one svchost.exe, and each then reports the WHOLE process's CPU and
+// memory — the table and the slide-in mark those figures as shared rather than
+// letting a group's total read as each member's own.
+function _svcSharedProcessIndex(rows) {
+  var byPid = {};
+  (rows || []).forEach(function (s) {
+    if (!s.mainPid) return;
+    (byPid[s.mainPid] = byPid[s.mainPid] || []).push(s.unit);
+  });
+  return byPid;
+}
+
+function _svcSharedTagHTML(svc, byPid) {
+  var units = svc.mainPid ? (byPid[svc.mainPid] || []) : [];
+  if (units.length < 2) return "";
+  var proc = svc.mainProcess || "one process";
+  var title = "Shared: " + units.length + " services run in " + proc + " (PID " + svc.mainPid + "). The figure is the whole process, not this service alone.";
+  return ' <span title="' + escapeHtml(title) + '" style="font-size:0.7rem;color:var(--color-text-tertiary)">shared</span>';
 }
 
 function _sizeAssetSvcTableWrapper() {
@@ -18949,7 +20530,7 @@ function _wireAssetServicesTab(asset) {
         sortName: s.unit || "",
         typeLabel: "Service",
         stateSort: s.activeState || "",
-        cpuPct: null,
+        cpuPct: (s.cpuPct != null ? Number(s.cpuPct) : null),
         memSort: (s.memBytes != null ? Number(s.memBytes) : null),
       };
     });
@@ -19006,20 +20587,24 @@ function _wireAssetServicesTab(asset) {
     var svcMapTitle = svcUnitAttribution
       ? "Attribute this unit's connections on the Application Map"
       : "Requires the Polaris Agent — agentless SSH/WinRM collection can't attribute a socket to a unit";
+    var byPid = _svcSharedProcessIndex(svcRows);
     tbody.innerHTML = data.map(function (r) {
       if (r.kind === "service") {
         var s = r.raw;
         var u = escapeHtml(s.unit);
         var logsChecked = svcMonitored.has(s.unit) ? " checked" : "";
         var mapChecked = svcMapped.has(s.unit) ? " checked" : "";
-        var mem = (s.memBytes != null) ? _fmtBytes(Number(s.memBytes)) : "—";
+        var shared = _svcSharedTagHTML(s, byPid);
+        var mem = (s.memBytes != null) ? _fmtBytes(Number(s.memBytes)) + shared : "—";
+        var cpu = (s.cpuPct != null) ? fmtPct(s.cpuPct) + shared : "—";
+        var logsTitle = s.platform === "windows" ? "Collect this service\'s Event Log entries" : "Tail this unit\'s journal";
         return '<tr>' +
-          '<td class="svc-pin-col"><input type="checkbox" class="asset-svc-logs-toggle" data-svc-unit="' + u + '" title="Tail this unit\'s journal"' + logsChecked + disabled + '></td>' +
+          '<td class="svc-pin-col"><input type="checkbox" class="asset-svc-logs-toggle" data-svc-unit="' + u + '" title="' + logsTitle + '"' + logsChecked + disabled + '></td>' +
           '<td class="svc-pin-col"><input type="checkbox" class="asset-svc-map-toggle" data-svc-unit="' + u + '" title="' + escapeHtml(svcMapTitle) + '"' + mapChecked + svcMapDisabled + '></td>' +
           '<td title="' + escapeHtml(s.displayName || "") + '"><a href="#" class="asset-svc-unit-link" data-svc-unit="' + u + '">' + u + '</a></td>' +
           '<td>Service</td>' +
           '<td>' + _svcStatePill(s.activeState) + '</td>' +
-          '<td>—</td>' +
+          '<td>' + cpu + '</td>' +
           '<td>' + mem + '</td>' +
         '</tr>';
       }
@@ -19178,7 +20763,8 @@ function _wireAssetServicesTab(asset) {
         var unit = svcLink.getAttribute("data-svc-unit");
         if (!unit) return;
         var svcRow = svcRows.filter(function (r) { return r.unit === unit; })[0] || null;
-        openServiceDetailPanel(asset, svcRow);
+        var sharedUnits = svcRow && svcRow.mainPid ? (_svcSharedProcessIndex(svcRows)[svcRow.mainPid] || []) : [];
+        openServiceDetailPanel(asset, svcRow, sharedUnits);
         return;
       }
       var procLink = e.target.closest ? e.target.closest(".asset-proc-name-link") : null;
@@ -19226,9 +20812,11 @@ function _wireAssetServicesTab(asset) {
 }
 
 // Per-service detail slide-in — reuses the process detail nested slide-over
-// shell. Unit metadata + journalctl log viewer + ports/connections. (Start/stop/
-// restart control was removed — Satellite-posture change.)
-function openServiceDetailPanel(asset, svc) {
+// shell. Unit metadata + log viewer (the journal on Linux, the service's Event
+// Log entries on Windows) + ports/connections. (Start/stop/restart control was
+// removed — Satellite-posture change.) sharedUnits: every unit running in this
+// service's process, itself included (see _svcSharedProcessIndex).
+function openServiceDetailPanel(asset, svc, sharedUnits) {
   if (!asset || !svc) return;
   _ensureProcPanelDOM();
   var titleEl = document.getElementById("proc-panel-title");
@@ -19238,6 +20826,7 @@ function openServiceDetailPanel(asset, svc) {
   titleEl.textContent = "Service — " + svc.unit;
   metaEl.textContent = asset.hostname || asset.ipAddress || asset.id;
   _setProcPanelFooter(footerEl);
+  raiseSlideover(document.getElementById("proc-panel-overlay"));
   revealOverlay(document.getElementById("proc-panel-overlay"));
 
   function metaRow(label, value) {
@@ -19245,19 +20834,38 @@ function openServiceDetailPanel(asset, svc) {
       '<span style="color:var(--color-text-secondary)">' + label + '</span>' +
       '<span style="text-align:right">' + value + '</span></div>';
   }
+  // Long text: label above, text below, left-aligned — a right-aligned
+  // paragraph beside its label reads as ragged.
+  function blockRow(label, value) {
+    return '<div style="padding:0.3rem 0;border-bottom:1px solid var(--color-border)">' +
+      '<div style="color:var(--color-text-secondary);margin-bottom:0.15rem">' + label + '</div>' +
+      '<div style="white-space:pre-wrap">' + value + '</div></div>';
+  }
+  var isWin = svc.platform === "windows";
+  var others = (sharedUnits || []).filter(function (u) { return u !== svc.unit; });
+  var sharedNote = others.length ? ' <span style="font-size:0.72rem;color:var(--color-text-tertiary)">(whole process)</span>' : "";
   var pidVal = svc.mainPid ? (escapeHtml(svc.mainProcess || "") + " (PID " + svc.mainPid + ")") : "—";
-  var memVal = (svc.memBytes != null) ? _fmtBytes(Number(svc.memBytes)) : "—";
+  var memVal = (svc.memBytes != null) ? _fmtBytes(Number(svc.memBytes)) + sharedNote : "—";
+  // Null until the agent's second inventory scrape (it is a mean since the
+  // previous one), and for a stopped service.
+  var cpuVal = (svc.cpuPct != null) ? Number(svc.cpuPct).toFixed(1) + "%" + sharedNote : "—";
 
   bodyEl.innerHTML =
     '<div style="padding:1rem 1.25rem">' +
       '<div style="font-size:0.85rem">' +
         metaRow("Display name", escapeHtml(svc.displayName || "—")) +
+        (svc.description ? blockRow("Description", escapeHtml(svc.description)) : "") +
         metaRow("Platform", escapeHtml(svc.platform || "—")) +
         metaRow("State", _svcStatePill(svc.activeState)) +
         (svc.subState ? metaRow("Sub-state", escapeHtml(svc.subState)) : "") +
-        metaRow("Enabled", escapeHtml(svc.enabledState || "—")) +
+        metaRow(isWin ? "Startup type" : "Enabled", escapeHtml(_svcStartupLabel(svc))) +
         metaRow("Main process", pidVal) +
+        metaRow("CPU", cpuVal) +
         metaRow("Memory", memVal) +
+        (others.length
+          ? blockRow("Shares its process with", escapeHtml(others.join(", ")) +
+              '<div style="font-size:0.75rem;color:var(--color-text-tertiary);margin-top:0.2rem">CPU and memory are the whole process\'s, not this service\'s alone.</div>')
+          : "") +
       '</div>' +
       // Ports & Connections (Phase 3) — populated when the unit is pinned for
       // Map (mappedServices); the agent attributes its PIDs' sockets to the unit.
@@ -19268,38 +20876,39 @@ function openServiceDetailPanel(asset, svc) {
         '</div>' +
         '<div id="svc-conn-view" style="font-size:0.8rem;color:var(--color-text-secondary)">Loading…</div>' +
       '</div>' +
-      // Journalctl viewer (Phase 2) — Linux units only; populated when the unit
-      // is pinned for Logs (monitoredServices) and the agent has tailed it.
+      // Log viewer (Phase 2) — populated when the unit is pinned for Monitor
+      // (monitoredServices) and the agent has read it: the unit's journal on
+      // Linux, the service's Event Log entries on Windows.
       '<div style="margin-top:1rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
         '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:0.25rem;gap:8px;flex-wrap:wrap">' +
-          '<h4 style="margin:0">Logs <span style="font-weight:400;font-size:0.75rem;color:var(--color-text-tertiary)">journalctl</span></h4>' +
+          '<h4 style="margin:0">Logs <span style="font-weight:400;font-size:0.75rem;color:var(--color-text-tertiary)">' + (isWin ? "Event Log" : "journalctl") + '</span></h4>' +
           '<div style="display:flex;align-items:center;gap:10px">' +
             '<label style="font-size:0.78rem;display:flex;align-items:center;gap:4px"><input type="checkbox" id="svc-logs-flagged-only">Flagged only</label>' +
             '<button class="btn btn-sm btn-secondary" id="btn-svc-logs-export" title="Download the collected log lines as CSV">Export</button>' +
             '<button class="btn btn-sm btn-secondary" id="btn-svc-logs-refresh">Refresh</button>' +
           '</div>' +
         '</div>' +
-        (svc.platform === "windows"
-          ? '<p class="hint" style="font-size:0.76rem">Windows service logs are collected via the Event Log stream, not here.</p>'
-          : '<p class="hint" style="font-size:0.76rem">Pin this unit\'s <strong>Logs</strong> box in the Services tab to start tailing its journal — lines appear within a minute or two.</p>') +
+        (isWin
+          ? '<p class="hint" style="font-size:0.76rem">Tick this service\'s <strong>Monitor</strong> box in the Services tab to collect its Event Log entries: the Service Control Manager\'s entries naming it in System (start, stop, crash, failed start, startup-type change) and whatever it logs under its own name in System or Application. The newest 50 from each log arrive within a minute or two, then new ones as they happen. Needs agent 0.22.0 or later.</p>'
+          : '<p class="hint" style="font-size:0.76rem">Tick this unit\'s <strong>Monitor</strong> box in the Services tab to start tailing its journal — lines appear within a minute or two.</p>') +
         '<div id="svc-logs-view" style="max-height:300px;overflow:auto;background:var(--color-bg-primary);border:1px solid var(--color-border);border-radius:6px;padding:0.5rem;font-family:var(--font-mono);font-size:0.78rem;white-space:pre-wrap;color:var(--color-text-secondary)">Loading…</div>' +
       '</div>' +
     '</div>';
 
   var refreshLogs = document.getElementById("btn-svc-logs-refresh");
-  if (refreshLogs) refreshLogs.addEventListener("click", function () { _loadServiceLogsFor(asset.id, svc.unit); });
+  if (refreshLogs) refreshLogs.addEventListener("click", function () { _loadServiceLogsFor(asset.id, svc.unit, svc.platform); });
   var flaggedOnly = document.getElementById("svc-logs-flagged-only");
-  if (flaggedOnly) flaggedOnly.addEventListener("change", function () { _loadServiceLogsFor(asset.id, svc.unit); });
+  if (flaggedOnly) flaggedOnly.addEventListener("change", function () { _loadServiceLogsFor(asset.id, svc.unit, svc.platform); });
   var exportLogs = document.getElementById("btn-svc-logs-export");
   if (exportLogs) exportLogs.addEventListener("click", function () {
     var fl = document.getElementById("svc-logs-flagged-only");
     _exportPanelLogsCsv("service", asset, svc.unit, !!(fl && fl.checked), exportLogs);
   });
   _loadServiceConnectionsFor(asset.id, svc.unit);
-  _loadServiceLogsFor(asset.id, svc.unit);
+  _loadServiceLogsFor(asset.id, svc.unit, svc.platform);
 }
 
-async function _loadServiceLogsFor(assetId, unit) {
+async function _loadServiceLogsFor(assetId, unit, platform) {
   var el = document.getElementById("svc-logs-view");
   if (!el) return;
   var flaggedToggle = document.getElementById("svc-logs-flagged-only");
@@ -19310,7 +20919,9 @@ async function _loadServiceLogsFor(assetId, unit) {
     if (!logs.length) {
       el.textContent = flaggedOnly
         ? "No flagged log lines in this window."
-        : "No log lines collected yet. Pin this unit for Logs (Services tab) — journald tailing starts within a minute or two (Linux only).";
+        : (platform === "windows"
+          ? "No Event Log entries collected yet. Tick this service's Monitor box (Services tab); entries arrive within a minute or two. A service that has never started, stopped or failed may have none."
+          : "No log lines collected yet. Tick this unit's Monitor box (Services tab) — journald tailing starts within a minute or two.");
       return;
     }
     // Server returns newest-first; keep that order (newest at the top).
@@ -19340,7 +20951,7 @@ function _ensureProcPanelDOM() {
   var overlay = document.createElement("div");
   overlay.id = "proc-panel-overlay";
   overlay.className = "slideover-overlay slideover-nested";
-  overlay.style.zIndex = "1099";
+  // Stacks by DOM order like every slide-over — raiseSlideover on open.
   overlay.innerHTML =
     '<div class="slideover" id="proc-panel" style="z-index:1100">' +
       '<div class="slideover-resize-handle"></div>' +
@@ -19357,6 +20968,7 @@ function _ensureProcPanelDOM() {
   document.body.appendChild(overlay);
   overlay.addEventListener("click", function (e) { if (e.target === overlay) _closeProcPanel(); });
   document.getElementById("proc-panel-close").addEventListener("click", _closeProcPanel);
+  wireSlideoverEscape(overlay, _closeProcPanel);
   if (typeof initSlideoverResize === "function") {
     initSlideoverResize(document.getElementById("proc-panel"), "polaris.panel.width.process");
   }
@@ -19540,6 +21152,7 @@ async function openProcessDetailPanel(asset, name, cfg, procRow, isPinned) {
   titleEl.textContent = "Process — " + name;
   metaEl.textContent = asset.hostname || asset.ipAddress || asset.id;
   _setProcPanelFooter(footerEl);
+  raiseSlideover(document.getElementById("proc-panel-overlay"));
   requestAnimationFrame(function () {
     document.getElementById("proc-panel-overlay").classList.add("open");
   });
@@ -20018,7 +21631,10 @@ function _assetNotificationsTabHTML() {
       // tellable apart; the dimension had its own column until that turned out
       // to restate the sentence. A rule with a custom messageTemplate that
       // drops the label keeps it in this cell's title instead.
-      '<th>Alert</th>' +
+      // The only unsized column, so without a floor it absorbs every pixel the
+      // ~750px of fixed columns take from a narrow slide-over and shrinks to
+      // one character per line; with it the wrapper scrolls sideways instead.
+      '<th style="min-width:260px">Alert</th>' +
       // What the acknowledger wrote. requireAckNote exists to make an operator
       // say what the problem was and what the fix was, and until this column
       // the answer was stored on the row and rendered by nothing.
@@ -20027,7 +21643,7 @@ function _assetNotificationsTabHTML() {
     '</tr></thead><tbody id="asset-notif-active-tbody"><tr><td colspan="' + shape.colspan + '" class="empty-state">Loading…</td></tr></tbody></table></div>' +
     '<h4 style="margin:1rem 0 0.5rem">Automations that can trigger for this asset</h4>' +
     '<div class="table-wrapper"><table><thead><tr>' +
-      '<th style="width:200px">Name</th><th>Trigger</th><th style="width:180px">Scope</th>' +
+      '<th style="width:200px">Name</th><th style="min-width:260px">Trigger</th><th style="width:180px">Scope</th>' +
     '</tr></thead><tbody id="asset-notif-rules-tbody"><tr><td colspan="3" class="empty-state">Loading…</td></tr></tbody></table></div>' +
   '</div>';
 }
@@ -20089,7 +21705,7 @@ function _paintAssetDownDetectionPanel(assetId) {
     var dd = eff && eff.downDetection;
     if (!dd) { el2.textContent = "Could not resolve which automation decides Down for this device."; return; }
     if (dd.passive) {
-      var canEdit = permAtLeast("automationManagement", "fullwrite");
+      var canEdit = permAtLeast("automationManagement", "write");
       el2.innerHTML =
         '<strong style="color:var(--color-warning)">Passive</strong> — no down-detection automation covers this device. ' +
         'Polaris records its polls but will never declare it Missed or Down, and no alert will ever be raised about it going offline.' +
@@ -20184,9 +21800,15 @@ function _loadAssetNotificationsTab(assetId) {
         // "TMP1") could be several things — and they are the fallback for a
         // custom messageTemplate that renders no label at all.
         var alertTitle = [n.metric, n.dimension].filter(Boolean).join(" · ");
+        // Raised for this device while it was dependency-down (business rule
+        // 78): the same slate badge the Status pill wears, beside the
+        // severity, so the row reads as that state at a glance.
+        var depBadge = n.dependencyDown
+          ? ' <span class="badge badge-monitor-dep-down" title="Raised while this device was dependency-down — the message names the upstream device">Dep. Down</span>'
+          : "";
         return '<tr>' + sel +
           '<td style="font-family:var(--font-mono);font-size:0.82rem">' + escapeHtml(ts) + '</td>' +
-          '<td><span class="badge badge-level-' + escapeHtml(n.severity || "info") + '">' + escapeHtml((n.severity || "info").toUpperCase()) + '</span></td>' +
+          '<td><span class="badge badge-level-' + escapeHtml(n.severity || "info") + '">' + escapeHtml((n.severity || "info").toUpperCase()) + '</span>' + depBadge + '</td>' +
           '<td' + (alertTitle ? ' title="' + escapeHtml(alertTitle) + '"' : "") + '>' + escapeHtml(n.message || "") + '</td>' +
           '<td>' + ackCell + '</td>' +
           '<td><div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap">' + parts.join("") + '</div></td></tr>';
@@ -20422,14 +22044,51 @@ async function _bulkClearAssetAlerts(ids, assetId, btn) {
   }
 }
 
+/**
+ * The Scope cell's text. A builder-authored scope is a condition TREE, which
+ * the old types-and-tags join read as "—" — so the more-specific automation in
+ * a pair looked like the unscoped one. Labels come from the automation schema
+ * when _assetRuleSentences has cached it, raw field/operator names otherwise
+ * (the Automations page's condTooltipText does the same).
+ */
+function _assetRuleScopeText(sc) {
+  if (!sc || typeof sc !== "object" || sc.allAssets) return "All assets";
+  if (sc.condition && (sc.condition.children || []).length) {
+    var meta = (window._ruleSchema && window._ruleSchema.scopeCondition) || {};
+    var fields = meta.fields || [];
+    var opLabels = meta.operatorLabels || {};
+    var render = function (node) {
+      var parts = (node.children || []).map(function (c) {
+        if (c.op !== undefined && Array.isArray(c.children)) return "(" + render(c) + ")";
+        var fm = fields.find(function (f) { return f.field === c.field; });
+        return (fm ? fm.label : c.field) + " " + (opLabels[c.operator] || c.operator) + " " + c.value;
+      });
+      if (node.op === "or") return parts.join(" OR ");
+      if (node.op === "none") return "NOT(" + parts.join(" OR ") + ")";
+      if (node.op === "notAll") return "NOT(" + parts.join(" AND ") + ")";
+      return parts.join(" AND ");
+    };
+    return render(sc.condition);
+  }
+  var parts = [];
+  if (sc.assetTypes && sc.assetTypes.length) parts.push("types: " + sc.assetTypes.join("/"));
+  if (sc.tags && sc.tags.length) parts.push("tags: " + sc.tags.join("/"));
+  if (sc.manufacturers && sc.manufacturers.length) parts.push("mfr: " + sc.manufacturers.join("/"));
+  if (sc.models && sc.models.length) parts.push("model: " + sc.models.join("/"));
+  if (sc.subnetCidrs && sc.subnetCidrs.length) parts.push("subnets: " + sc.subnetCidrs.join("/"));
+  if (sc.assetIds && sc.assetIds.length) parts.push(sc.assetIds.length + " asset(s)");
+  if (sc.integrationIds && sc.integrationIds.length) parts.push(sc.integrationIds.length + " integration(s)");
+  // Nothing narrowed at all — `{}` means "any device" (scopeIsUnconstrained).
+  return parts.length ? parts.join("; ") : "All assets";
+}
+
 function _renderAssetRuleRows(rTbody, rules, sent, assetId) {
   // Clicking an automation's name opens the same edit modal the Automations
   // page uses — offered only to operators who could actually save it (the
   // wizard is an editor, not a viewer).
-  var canEdit = typeof openAutomationWizard === "function" && permAtLeast("automationManagement", "fullwrite");
+  var canEdit = typeof openAutomationWizard === "function" && permAtLeast("automationManagement", "write");
   rTbody.innerHTML = rules.length ? rules.map(function (r, i) {
-    var scope = r.scope && r.scope.allAssets ? "All assets"
-      : (r.scope && ((r.scope.assetTypes || []).concat(r.scope.tags || []).join(", "))) || "—";
+    var scope = _assetRuleScopeText(r.scope);
     // Trigger column: the plain-English summary from the top of the edit
     // modal, severity ladder included — a banded automation names every tier
     // it can raise, not just the first. Falls back to the raw trigger-type
@@ -22621,5 +24280,785 @@ async function _loadAssetArpTable(assetId, range) {
     render();
   } catch (err) {
     mount.innerHTML = '<span class="empty-state">Error: ' + escapeHtml(err.message || "failed to load") + '</span>';
+  }
+}
+
+// ─── Asset slide-over → Paths tab ───────────────────────────────────
+//
+// Agent-run path checks this host runs (path-checks.js owns
+// the definitions). Prefetched in openViewModal's wave so the tab never
+// appears and then vanishes. One check is "selected" at a time; its charts,
+// latest result and traceroute render below the summary table.
+//
+// A result describes the PATH from this host (business rule 85): nothing here
+// says anything about the host's own Up / Down.
+//
+// The same renderer draws a check's POLARIS SERVER source (Path Monitor →
+// Results → the "Polaris server" row, renderServerPathDetail below): the
+// subject id is then _PATH_SERVER_SUBJECT and _pathApi routes the two reads to
+// /path-checks/:id/server/*. The server raises no automation alerts, so its
+// latency chart draws no severity bands. The latency line follows the
+// canonical two-colour failure treatment (a failed run dives to the baseline
+// in red), NOT the five-verdict palette the response-time chart alone uses; no
+// DATA series is red or grey.
+
+var _pathTabState = null;
+var _PATH_PHASES = [
+  { key: "latencyMs", label: "Total", color: "#4f9dde" },
+  { key: "dnsMs",     label: "DNS",     color: "#9b7ede" },
+  { key: "connectMs", label: "Connect", color: "#e0a84f" },
+  { key: "tlsMs",     label: "TLS",     color: "#5bc0be" },
+  { key: "ttfbMs",    label: "TTFB",    color: "#c77dba" },
+];
+var _PATH_KIND_LABELS = { http: "HTTP", https: "HTTPS", tcp: "TCP", icmp: "ICMP" };
+/** Mirrors pathCheckService.POLARIS_SERVER_SUBJECT. */
+var _PATH_SERVER_SUBJECT = "polaris-server";
+
+/** Pure: the two per-source reads for an asset id, or for the server. */
+function _pathApi(subjectId) {
+  if (subjectId === _PATH_SERVER_SUBJECT) {
+    return {
+      history: function (checkId, opts) { return api.pathChecks.serverHistory(checkId, opts); },
+      traceroutes: function (checkId, limit) { return api.pathChecks.serverTraceroutes(checkId, limit); },
+    };
+  }
+  return {
+    history: function (checkId, opts) { return api.assets.pathCheckHistory(subjectId, checkId, opts); },
+    traceroutes: function (checkId, limit) { return api.assets.pathCheckTraceroutes(subjectId, checkId, limit); },
+  };
+}
+
+/**
+ * Draw one check's SERVER source into `mount` — the charts, latest result and
+ * path graph of the slide-over's Paths tab, for the source that has no
+ * slide-over. `payload` is GET /path-checks/:id/server ({checks: [...]}).
+ */
+function renderServerPathDetail(mount, payload) {
+  var checks = (payload && payload.checks) || [];
+  if (!checks.length) {
+    mount.innerHTML = '<p class="hint">This check does not run on the Polaris server.</p>';
+    return;
+  }
+  mount.innerHTML = '<div id="path-detail"></div>';
+  var server = { id: _PATH_SERVER_SUBJECT, hostname: "Polaris server" };
+  _pathTabState = { assetId: server.id, checks: checks, checkId: checks[0].id, hiddenPhases: _pathLoadHiddenPhases() };
+  _pathSelectCheck(server, checks[0].id);
+}
+
+/** Pure: does this host get a Paths tab? */
+function _pathTabEligible(payload) {
+  return !!(payload && Array.isArray(payload.checks) && payload.checks.length);
+}
+
+function _pathResultPill(latest) {
+  if (!latest || !latest.lastSampleAt || latest.lastOk === null || latest.lastOk === undefined) {
+    return '<span style="color:var(--color-text-tertiary)">no result yet</span>';
+  }
+  return '<span class="badge" style="background:' + (latest.lastOk ? MONITOR_STATE_COLORS.up : MONITOR_STATE_COLORS.down) + ';color:#fff">' +
+    (latest.lastOk ? "Reachable" : "Failing") + "</span>";
+}
+
+function _pathFmtWhen(v) {
+  if (!v) return "—";
+  var d = new Date(v);
+  return isNaN(d.getTime()) ? "—" : _fmtTooltipTs(d.toISOString());
+}
+
+function _assetPathCheckTabHTML(a, payload) {
+  var checks = (payload && payload.checks) || [];
+  var rows = checks.map(function (c, i) {
+    var l = c.latest || {};
+    return '<tr class="path-check-row' + (i === 0 ? " row-panel-active" : "") + '" data-check-id="' + escapeHtml(c.id) + '" style="cursor:pointer">' +
+      "<td>" + escapeHtml(c.name) + (c.enabled ? "" : ' <span class="hint">(disabled)</span>') + "</td>" +
+      '<td><span class="badge">' + escapeHtml(_PATH_KIND_LABELS[c.kind] || c.kind) + "</span></td>" +
+      '<td style="font-family:var(--font-mono,monospace);font-size:0.8rem" title="' + escapeHtml(c.target) + '">' + escapeHtml(c.target) + "</td>" +
+      "<td>" + _pathResultPill(l) + "</td>" +
+      "<td>" + (l.lastLatencyMs != null ? Math.round(l.lastLatencyMs) + " ms" : "—") + "</td>" +
+      "<td>" + escapeHtml(_pathFmtWhen(l.lastSampleAt)) + "</td>" +
+      "</tr>";
+  }).join("");
+  var manage = (typeof permAtLeast === "function" && permAtLeast("pathChecks", "read"))
+    ? '<a href="/path-monitor.html" class="btn btn-sm btn-secondary">Manage checks</a>' : "";
+  return '<div data-shot-section="pathChecks">' +
+      '<div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem">' +
+        '<p class="hint" style="margin:0">Checks the Polaris Agent on this host runs. They describe the path from this host — never its own Up / Down.</p>' +
+        '<span style="margin-left:auto">' + manage + "</span></div>" +
+      '<div class="table-wrapper"><table><thead><tr><th>Check</th><th style="width:70px">Kind</th><th>Target</th><th style="width:110px">Result</th><th style="width:80px">Latency</th><th style="width:140px">Last result</th></tr></thead>' +
+        "<tbody>" + rows + "</tbody></table></div>" +
+    "</div>" +
+    '<div id="path-detail" style="margin-top:1.25rem"></div>';
+}
+
+function _wireAssetPathCheckTab(a, payload) {
+  var checks = (payload && payload.checks) || [];
+  if (!checks.length) return;
+  _pathTabState = { assetId: a.id, checks: checks, checkId: checks[0].id, hiddenPhases: _pathLoadHiddenPhases() };
+  document.querySelectorAll(".path-check-row").forEach(function (tr) {
+    tr.addEventListener("click", function () {
+      document.querySelectorAll(".path-check-row").forEach(function (x) { x.classList.remove("row-panel-active"); });
+      tr.classList.add("row-panel-active");
+      _pathSelectCheck(a, tr.getAttribute("data-check-id"));
+    });
+  });
+  _pathSelectCheck(a, checks[0].id);
+}
+
+function _pathLoadHiddenPhases() {
+  var hidden = new Set(["dnsMs", "connectMs", "tlsMs", "ttfbMs"]);
+  try {
+    var raw = localStorage.getItem("polaris-prefs-series-" + (typeof currentUsername !== "undefined" ? currentUsername : "") + "-pathPhases");
+    if (raw) hidden = new Set(JSON.parse(raw));
+  } catch (_) { /* per-viewer convenience only */ }
+  return hidden;
+}
+
+function _pathSaveHiddenPhases(set) {
+  try {
+    localStorage.setItem("polaris-prefs-series-" + (typeof currentUsername !== "undefined" ? currentUsername : "") + "-pathPhases", JSON.stringify(Array.from(set)));
+  } catch (_) { /* ignore */ }
+}
+
+function _pathSelectCheck(a, checkId) {
+  var st = _pathTabState;
+  if (!st) return;
+  st.checkId = checkId;
+  var check = st.checks.find(function (c) { return c.id === checkId; });
+  var mount = document.getElementById("path-detail");
+  if (!check || !mount) return;
+  var l = check.latest || {};
+  var stale = l.lastSampleAt && (Date.now() - new Date(l.lastSampleAt).getTime()) > 3 * (check.intervalSec || 60) * 1000;
+  var isHttp = check.kind === "http" || check.kind === "https";
+  var isServer = a.id === _PATH_SERVER_SUBJECT;
+  mount.innerHTML =
+    '<div data-shot-section="pathDetail" data-shot-chart="assetPathCheck">' +
+      '<div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.5rem">' +
+        '<strong>' + escapeHtml(check.name) + "</strong>" +
+        '<span class="badge">' + escapeHtml(_PATH_KIND_LABELS[check.kind] || check.kind) + "</span>" +
+        _pathResultPill(l) +
+        '<span class="hint">' + (isServer ? "This Polaris server" : "Polaris Agent on this host") + " · every " + Math.round((check.intervalSec || 60) / 60) + " min</span>" +
+        _freshnessStampHTML(l.lastSampleAt || null, check.intervalSec || 60, "no results yet") +
+        '<span style="margin-left:auto;display:flex;gap:4px">' +
+          _chartRangeBtnsHTML("path-range-btn", [
+            { value: "1h", label: "1h" }, { value: "12h", label: "12h" }, { value: "24h", label: "24h" },
+            { value: "7d", label: "7d" }, { value: "30d", label: "30d" },
+          ], "assetPathCheck", "24h") +
+        "</span>" +
+      "</div>" +
+      (stale ? _staleBannerBoxHTML("⚠ Last result " + _pathFmtWhen(l.lastSampleAt) + (isServer
+        ? " — the server may have stopped running this check (is the check enabled, and is the scheduler role up?)"
+        : " — the agent may be offline or not running this check")) : "") +
+      '<div class="chart-label">Latency</div>' +
+      '<div class="chart-box" id="asset-path-latency-chart" style="min-height:170px">Loading samples…</div>' +
+      '<div class="chart-stats" id="asset-path-latency-stats"></div>' +
+      '<div class="chart-label" style="margin-top:0.75rem">Availability</div>' +
+      '<div class="chart-box" id="asset-path-avail-chart" style="min-height:120px">Loading…</div>' +
+      '<div class="chart-stats" id="asset-path-avail-stats"></div>' +
+      (isHttp
+        ? '<div class="chart-label" style="margin-top:0.75rem">HTTP status</div>' +
+          '<div class="chart-box" id="asset-path-status-chart" style="min-height:44px">Loading…</div>' +
+          '<div class="chart-stats" id="asset-path-status-stats"></div>'
+        : "") +
+    "</div>" +
+    '<div data-shot-section="pathLatest" id="path-latest" style="margin-top:1rem"></div>' +
+    '<div data-shot-section="pathTraceroute" id="path-traceroute" style="margin-top:1rem"></div>';
+
+  mount.querySelectorAll(".path-range-btn").forEach(function (b) {
+    b.addEventListener("click", function () {
+      mount.querySelectorAll(".path-range-btn").forEach(function (x) { x.classList.remove("btn-primary"); x.classList.add("btn-secondary"); });
+      b.classList.remove("btn-secondary"); b.classList.add("btn-primary");
+      _setChartRangePref("assetPathCheck", b.getAttribute("data-range"));
+      _loadPathCheckHistoryFor(a.id, check, b.getAttribute("data-range"));
+    });
+  });
+  ["asset-path-latency-chart", "asset-path-avail-chart"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) _wireChartDragSelect(el, function (fromIso, toIso) {
+      _applyCustomRangeSelection({ btnClass: "path-range-btn" }, fromIso, toIso);
+      _loadPathCheckHistoryFor(a.id, check, { from: fromIso, to: toIso });
+    });
+  });
+  _loadPathCheckHistoryFor(a.id, check, _getChartRangePref("assetPathCheck", "24h"));
+  _renderPathLatestCard(check);
+  _loadPathTraceroutes(a.id, check, a);
+  if (!st.tiers) st.tiers = {};
+  if (isServer) return; // no automation alerts on the server source — no bands to draw
+  _loadMetricSeverityTiers(a.id, "pathLatencyMs", { checkId: check.id }).then(function (tiers) {
+    st.tiers[check.id] = tiers;
+    if (st.lastData && st.checkId === check.id) _renderPathCharts(check, st.lastData);
+  });
+}
+
+async function _loadPathCheckHistoryFor(assetId, check, rangeOrOpts) {
+  var opts = (typeof rangeOrOpts === "string" || !rangeOrOpts) ? { range: rangeOrOpts || "24h" } : rangeOrOpts;
+  ["asset-path-latency-chart", "asset-path-avail-chart", "asset-path-status-chart"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (opts.from && opts.to) { el.dataset.from = opts.from; el.dataset.to = opts.to; delete el.dataset.range; }
+    else { el.dataset.range = opts.range; delete el.dataset.from; delete el.dataset.to; }
+  });
+  try {
+    var data = await _pathApi(assetId).history(check.id, opts);
+    var st = _pathTabState;
+    if (!st || st.assetId !== assetId || st.checkId !== check.id) return;
+    st.lastData = data;
+    _renderPathCharts(check, data);
+  } catch (err) {
+    var el = document.getElementById("asset-path-latency-chart");
+    if (el) el.textContent = "Error: " + (err.message || "failed to load");
+  }
+}
+
+function _renderPathCharts(check, data) {
+  var samples = (data && data.samples) || [];
+  var lat = document.getElementById("asset-path-latency-chart");
+  var av = document.getElementById("asset-path-avail-chart");
+  var stc = document.getElementById("asset-path-status-chart");
+  var copts = { since: data && data.since, until: data && data.until, subject: check.name, tier: data && data.tier };
+  if (lat) _renderPathLatencyChart(lat, samples, copts, check);
+  if (av) _renderPathAvailabilityChart(av, samples, copts);
+  if (stc) _renderPathStatusStrip(stc, samples, copts);
+  var ok = samples.filter(function (s) { return s.ok; });
+  var lats = samples.map(function (s) { return s.latencyMs; }).filter(function (v) { return typeof v === "number"; });
+  var avg = lats.length ? lats.reduce(function (x, y) { return x + y; }, 0) / lats.length : null;
+  var count = samples.reduce(function (n, s) { return n + (s.sampleCount || 1); }, 0);
+  var okCount = samples.reduce(function (n, s) { return n + (s.okCount != null ? s.okCount : (s.ok ? 1 : 0)); }, 0);
+  var parts = [
+    _tierStatsPart(data),
+    { label: "Avg latency", value: avg == null ? null : Math.round(avg) + " ms" },
+    { label: "Max", value: lats.length ? Math.round(Math.max.apply(null, lats)) + " ms" : null },
+  ].filter(Boolean);
+  _renderChartStats(document.getElementById("asset-path-latency-stats"), samples.length, parts);
+  _renderChartStats(document.getElementById("asset-path-avail-stats"), samples.length, [
+    { label: "Availability", value: count ? (Math.round((okCount / count) * 1000) / 10) + " %" : null },
+    { label: "Failed runs", value: String(count - okCount) },
+  ]);
+  void ok;
+}
+
+/** Pure: bucket detail samples into n availability ratios over [t0, t1]. */
+function _pathAvailabilityBuckets(samples, t0, t1, n) {
+  var out = [];
+  var span = (t1 - t0) / n;
+  for (var i = 0; i < n; i++) out.push({ t: t0 + i * span, ok: 0, total: 0 });
+  samples.forEach(function (s) {
+    var t = new Date(s.timestamp).getTime();
+    if (t < t0 || t > t1) return;
+    var idx = Math.min(n - 1, Math.floor((t - t0) / span));
+    var total = s.sampleCount != null ? s.sampleCount : 1;
+    var ok = s.okCount != null ? s.okCount : (s.ok ? 1 : 0);
+    out[idx].total += total;
+    out[idx].ok += ok;
+  });
+  return out;
+}
+
+function _pathChartFrame(container, H) {
+  var W = container.clientWidth || 600;
+  return { W: W, H: H, padL: 52, padR: 10, padT: 10, padB: 22 };
+}
+
+// The shared calendar-boundary ticks every chart draws (_chartXTicksSVG) — the
+// equal-fifths loop this replaced called _chartTickFmt, which main retired.
+function _pathXTicks(g, t0, t1, innerW, innerH) {
+  return _chartXTicksSVG(t0, t1, g.padL, g.padT, innerW, innerH);
+}
+
+function _renderPathLatencyChart(container, samples, opts, check) {
+  var st = _pathTabState || {};
+  var hidden = st.hiddenPhases || new Set();
+  if (!samples.length) { container.textContent = "No samples in this range yet."; return; }
+  var g = _pathChartFrame(container, 170);
+  var innerW = g.W - g.padL - g.padR, innerH = g.H - g.padT - g.padB;
+  var bounds = _chartTimeBounds(samples, opts.since, opts.until);
+  var t0 = bounds.t0, t1 = bounds.t1;
+  var phases = _PATH_PHASES.filter(function (p) {
+    return samples.some(function (s) { return typeof s[p.key] === "number"; });
+  });
+  var visible = phases.filter(function (p) { return !hidden.has(p.key) || p.key === "latencyMs" && phases.length === 1; });
+  var maxV = 1;
+  visible.forEach(function (p) { samples.forEach(function (s) { if (typeof s[p.key] === "number" && s[p.key] > maxV) maxV = s[p.key]; }); });
+  var tiers = (st.tiers && st.tiers[check.id]) || [];
+  tiers.forEach(function (t) { if (t.threshold > maxV) maxV = t.threshold * 1.05; });
+  var exp = Math.pow(10, Math.floor(Math.log10(maxV)));
+  var m = maxV / exp;
+  var ceil = (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * exp;
+  var xFor = _chartXScale(g.padL, innerW, t0, t1);
+  var yFor = _chartYScale(g.padT, innerH, 0, ceil);
+  var sev = _severityChartLayer("conn", tiers, 0, ceil, { padL: g.padL, padR: g.padR, padT: g.padT, innerH: innerH, W: g.W, yFor: yFor, unit: "ms" });
+  var ticks = "";
+  for (var i = 0; i <= 4; i++) {
+    var v = ceil * i / 4, y = g.padT + innerH - (i / 4) * innerH;
+    ticks += '<line x1="' + g.padL + '" y1="' + y + '" x2="' + (g.W - g.padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
+      '<text x="' + (g.padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + Math.round(v) + "</text>";
+  }
+  var lines = visible.map(function (p, idx) {
+    var pts = samples.filter(function (s) { return typeof s[p.key] === "number"; })
+      .map(function (s) { return xFor(s.timestamp) + "," + yFor(s[p.key]); }).join(" ");
+    var stroke = p.key === "latencyMs" && tiers.length ? sev.stroke : p.color;
+    return '<polyline points="' + pts + '" fill="none" stroke="' + stroke + '" stroke-width="' + (p.key === "latencyMs" ? 1.75 : 1.25) + '"/>';
+  }).join("");
+  // Failed runs dive to the baseline in the canonical failure red (a marker,
+  // not a data series).
+  var fails = samples.filter(function (s) { return s.ok === false || (s.failCount > 0 && s.okCount === 0); }).map(function (s) {
+    return '<circle cx="' + xFor(s.timestamp) + '" cy="' + (g.padT + innerH) + '" r="3" fill="' + _CHART_FAIL_COLOR + '"/>';
+  }).join("");
+  var hits = samples.map(function (s) {
+    var yv = typeof s.latencyMs === "number" ? yFor(s.latencyMs) : g.padT + innerH;
+    return '<circle class="chart-hit" cx="' + xFor(s.timestamp) + '" cy="' + yv + '" r="5" fill="transparent" style="cursor:crosshair" data-ts="' +
+      escapeHtml(String(s.timestamp)) + '" data-i="' + samples.indexOf(s) + '"/>';
+  }).join("");
+  var chips = phases.map(function (p) {
+    var off = hidden.has(p.key) && !(p.key === "latencyMs" && phases.length === 1);
+    return '<button type="button" class="btn btn-sm btn-secondary path-phase-chip" data-phase="' + p.key + '" style="opacity:' + (off ? 0.45 : 1) + '">' +
+      '<span style="display:inline-block;width:10px;height:6px;background:' + p.color + ';margin-right:4px"></span>' + escapeHtml(p.label) + "</button>";
+  }).join(" ");
+  var clipId = _chartClipId("conn");
+  container.innerHTML =
+    '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px">' + chips + "</div>" +
+    '<svg width="100%" height="' + g.H + '" viewBox="0 0 ' + g.W + " " + g.H + '" preserveAspectRatio="none" style="display:block">' +
+      sev.defs + _chartClipDefs(clipId, g.padL, g.padT, innerW, innerH) +
+      ticks + _pathXTicks(g, t0, t1, innerW, innerH) +
+      _dateChangeMarkers(t0, t1, g.padL, g.padT, innerW, innerH) +
+      _maintenanceBandLayer(t0, t1, g.padL, g.padT, innerW, innerH) +
+      "<g " + _chartClipAttr(clipId) + ">" + sev.lines + lines + fails + hits + "</g>" + sev.labels +
+    "</svg>" + CHART_TOOLTIP_HTML;
+  container.style.position = "relative";
+  _stashChartGeometry(container, t0, t1, g.padL, innerW, g.W);
+  _wireChartTooltip(container, function (target) {
+    var s = samples[Number(target.getAttribute("data-i"))] || {};
+    var row = function (label, v) { return typeof v === "number" ? "<div>" + label + ": " + Math.round(v) + " ms</div>" : ""; };
+    return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + "</div>" +
+      (s.ok === false ? '<div style="color:' + _CHART_FAIL_COLOR + '">Failed' + (s.error ? " — " + escapeHtml(s.error) : "") + "</div>" : "") +
+      row("Total", s.latencyMs) + row("DNS", s.dnsMs) + row("Connect", s.connectMs) + row("TLS", s.tlsMs) + row("TTFB", s.ttfbMs) +
+      (s.httpStatus != null ? "<div>HTTP " + s.httpStatus + "</div>" : "");
+  });
+  container.querySelectorAll(".path-phase-chip").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var key = b.getAttribute("data-phase");
+      if (hidden.has(key)) hidden.delete(key); else hidden.add(key);
+      _pathSaveHiddenPhases(hidden);
+      _renderPathLatencyChart(container, samples, opts, check);
+    });
+  });
+  _addChartScreenshotButton(container, "Path latency", { yAxis: "Latency (ms)", subject: opts.subject, getStats: _statsSummaryFrom("asset-path-latency-stats") });
+  _observeChartResize(container, function (c) { _renderPathLatencyChart(c, samples, opts, check); });
+}
+
+function _renderPathAvailabilityChart(container, samples, opts) {
+  if (!samples.length) { container.textContent = "No samples in this range yet."; return; }
+  var g = _pathChartFrame(container, 120);
+  var innerW = g.W - g.padL - g.padR, innerH = g.H - g.padT - g.padB;
+  var bounds = _chartTimeBounds(samples, opts.since, opts.until);
+  var t0 = bounds.t0, t1 = bounds.t1;
+  var n = Math.max(10, Math.min(120, Math.floor(innerW / 8)));
+  var buckets = _pathAvailabilityBuckets(samples, t0, t1, n);
+  var bw = innerW / n;
+  var yFor = _chartYScale(g.padT, innerH, 0, 100);
+  var bars = buckets.map(function (b, i) {
+    if (!b.total) return ""; // no run in this slot (agent offline) — a gap, not a failure
+    var pct = (b.ok / b.total) * 100;
+    var y = yFor(pct);
+    return '<rect class="chart-hit" x="' + (g.padL + i * bw + 0.5) + '" y="' + y + '" width="' + Math.max(1, bw - 1) + '" height="' + (g.padT + innerH - y) +
+      '" fill="' + _CHART_UP_COLOR + '" opacity="0.8" data-ts="' + new Date(b.t).toISOString() + '" data-v="' + (Math.round(pct * 10) / 10) + '" data-n="' + b.total + '"/>';
+  }).join("");
+  var ticks = [0, 50, 100].map(function (v) {
+    var y = yFor(v);
+    return '<line x1="' + g.padL + '" y1="' + y + '" x2="' + (g.W - g.padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
+      '<text x="' + (g.padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + v + "%</text>";
+  }).join("");
+  container.innerHTML =
+    '<svg width="100%" height="' + g.H + '" viewBox="0 0 ' + g.W + " " + g.H + '" preserveAspectRatio="none" style="display:block">' +
+      ticks + _pathXTicks(g, t0, t1, innerW, innerH) +
+      _maintenanceBandLayer(t0, t1, g.padL, g.padT, innerW, innerH) + bars +
+    "</svg>" + CHART_TOOLTIP_HTML;
+  container.style.position = "relative";
+  _stashChartGeometry(container, t0, t1, g.padL, innerW, g.W);
+  _wireChartTooltip(container, function (target) {
+    return "<div>" + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + "</div>" +
+      "<div>Available: " + escapeHtml(target.getAttribute("data-v")) + " % of " + escapeHtml(target.getAttribute("data-n")) + " runs</div>";
+  });
+  _addChartScreenshotButton(container, "Path availability", { yAxis: "Availability (%)", subject: opts.subject, getStats: _statsSummaryFrom("asset-path-avail-stats") });
+  _observeChartResize(container, function (c) { _renderPathAvailabilityChart(c, samples, opts); });
+}
+
+/** A verdict strip, not a data series: one cell per run (or rollup bucket),
+ *  green for a pass and red for a failure, the HTTP code in the tooltip. */
+function _renderPathStatusStrip(container, samples, opts) {
+  if (!samples.length) { container.textContent = "No samples in this range yet."; return; }
+  var W = container.clientWidth || 600, H = 26, padL = 52, padR = 10;
+  var innerW = W - padL - padR;
+  var bounds = _chartTimeBounds(samples, opts.since, opts.until);
+  var xFor = _chartXScale(padL, innerW, bounds.t0, bounds.t1);
+  var cellW = Math.max(2, innerW / Math.max(samples.length, 1));
+  var counts = {};
+  var cells = samples.map(function (s, i) {
+    var label = s.httpStatus != null ? String(s.httpStatus) : (s.ok ? "ok" : "error");
+    counts[label] = (counts[label] || 0) + (s.sampleCount || 1);
+    var partial = s.failCount > 0 && s.okCount > 0;
+    var color = partial ? "#f4a261" : (s.ok ? MONITOR_STATE_COLORS.up : MONITOR_STATE_COLORS.down);
+    return '<rect class="chart-hit" x="' + xFor(s.timestamp) + '" y="4" width="' + cellW + '" height="' + (H - 8) + '" fill="' + color + '" data-i="' + i + '"/>';
+  }).join("");
+  container.innerHTML = '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none" style="display:block">' + cells + "</svg>" + CHART_TOOLTIP_HTML;
+  container.style.position = "relative";
+  _wireChartTooltip(container, function (target) {
+    var s = samples[Number(target.getAttribute("data-i"))] || {};
+    return "<div>" + escapeHtml(_fmtTooltipTs(String(s.timestamp))) + "</div>" +
+      "<div>" + (s.httpStatus != null ? "HTTP " + s.httpStatus : (s.ok ? "Passed" : "Failed")) +
+      (s.sampleCount ? " · " + s.okCount + "/" + s.sampleCount + " passed" : "") + "</div>";
+  });
+  var summary = Object.keys(counts).sort().map(function (k) { return k + " ×" + counts[k]; }).join(" · ");
+  var statsEl = document.getElementById("asset-path-status-stats");
+  if (statsEl) statsEl.textContent = summary;
+  _observeChartResize(container, function (c) { _renderPathStatusStrip(c, samples, opts); });
+}
+
+function _renderPathLatestCard(check) {
+  var mount = document.getElementById("path-latest");
+  if (!mount) return;
+  var l = check.latest || {};
+  var row = function (k, v) { return '<div class="asset-view-row"><span class="asset-view-label">' + k + '</span><span class="asset-view-value">' + v + "</span></div>"; };
+  mount.innerHTML = '<div class="chart-label">Latest result</div><div class="asset-view-grid">' +
+    row("Result", _pathResultPill(l)) +
+    row("When", escapeHtml(_pathFmtWhen(l.lastSampleAt))) +
+    row("Latency", l.lastLatencyMs != null ? Math.round(l.lastLatencyMs) + " ms" : "—") +
+    (check.kind === "http" || check.kind === "https" ? row("HTTP status", l.lastHttpStatus != null ? String(l.lastHttpStatus) : "—") : "") +
+    row("Resolved IP", escapeHtml(l.lastResolvedIp || "—")) +
+    (l.lastOk === false && l.lastError ? row("Error", '<span style="color:' + _CHART_FAIL_COLOR + '">' + escapeHtml(l.lastError) + "</span>") : "") +
+    row("Last failure", escapeHtml(_pathFmtWhen(l.lastFailAt))) +
+    _pathSampleRows(check.latestSample, row) +
+    "</div>" +
+    _pathExcerptHTML(check.latestSample);
+}
+
+/** The newest sample's body / TLS facts (the source row carries only the verdict). */
+function _pathSampleRows(s, row) {
+  if (!s) return "";
+  var out = "";
+  var phases = ["dnsMs", "connectMs", "tlsMs", "ttfbMs"].filter(function (k) { return typeof s[k] === "number"; })
+    .map(function (k) { return k.replace("Ms", "").toUpperCase() + " " + Math.round(s[k]) + " ms"; });
+  if (phases.length) out += row("Phases", escapeHtml(phases.join(" · ")));
+  // bodyMatched = "the body expectation held" — which for a "must NOT contain"
+  // check means the text was absent, so the wording is neutral about direction.
+  if (s.bodyMatched != null) out += row("Body check", s.bodyMatched ? "as expected" : '<span style="color:' + _CHART_FAIL_COLOR + '">not as expected</span>');
+  if (s.bodySha256) out += row("Body SHA-256", '<code class="copy-cell" style="font-size:0.75rem;word-break:break-all">' + escapeHtml(s.bodySha256) + "</code>");
+  if (s.bodyBytes != null) out += row("Body size", s.bodyBytes + " bytes" + (s.bodyBytes >= 65536 ? " (first 64 KB read)" : ""));
+  if (s.tlsIssuer) out += row("TLS issuer", escapeHtml(s.tlsIssuer));
+  if (s.tlsNotAfter) out += row("TLS expires", _pathTlsExpiryHTML(s.tlsNotAfter));
+  return out;
+}
+
+/** Display bands only — the alerting threshold is an automation on pathTlsDaysLeft. */
+function _pathTlsExpiryHTML(notAfter) {
+  var d = new Date(notAfter);
+  if (isNaN(d.getTime())) return "—";
+  var days = Math.floor((d.getTime() - Date.now()) / 86400000);
+  var color = days <= 7 ? MONITOR_STATE_COLORS.down : days <= 30 ? MONITOR_STATE_COLORS.warning : MONITOR_STATE_COLORS.up;
+  return escapeHtml(formatDate(notAfter)) + ' <span style="color:' + color + ';font-weight:600">(' + (days < 0 ? "expired" : days + " days") + ")</span>";
+}
+
+function _pathExcerptHTML(s) {
+  if (!s || !s.bodyExcerpt) return "";
+  return '<div class="chart-label" style="margin-top:0.5rem">Response excerpt' + (s.ok ? "" : " (failed run)") + "</div>" +
+    '<pre style="max-height:160px;overflow:auto;white-space:pre-wrap;font-size:0.75rem;background:var(--color-bg-subtle,rgba(127,127,127,0.08));padding:0.5rem;border-radius:var(--radius-md)">' +
+    escapeHtml(String(s.bodyExcerpt).slice(0, 4096)) + "</pre>";
+}
+
+/** Pure: which TTLs differ between two traceroutes' hop lists. */
+function _trDiffHops(cur, prev) {
+  var out = new Set();
+  if (!prev) return out;
+  var byTtl = {};
+  (prev.hops || []).forEach(function (h) { byTtl[h.ttl] = h.ip || null; });
+  (cur.hops || []).forEach(function (h) {
+    var before = Object.prototype.hasOwnProperty.call(byTtl, h.ttl) ? byTtl[h.ttl] : undefined;
+    if (before === undefined || before !== (h.ip || null)) out.add(h.ttl);
+  });
+  return out;
+}
+
+/** Pure: avg / min / max of a hop's answered probes (−1 = timeout). */
+function _trHopRtt(rtts) {
+  var v = (rtts || []).filter(function (x) { return typeof x === "number" && x >= 0; });
+  if (!v.length) return null;
+  var sum = v.reduce(function (a, b) { return a + b; }, 0);
+  return { avg: sum / v.length, min: Math.min.apply(null, v), max: Math.max.apply(null, v) };
+}
+
+/**
+ * Pure: fold the fetched traceroutes (newest first) into one NetPath-style
+ * graph — column 0 is this host, column N the destination, one column per TTL
+ * between. A hop is a node per (ttl, ip); the same address at the same TTL in
+ * several traces is one node, so a route change reads as a branch. Each link
+ * counts the traces that took it; `sel` marks the selected trace's own route,
+ * with the latency each link ADDS (its hop's avg RTT minus the last answered
+ * hop's before it) so the slow segment is the one that lights up.
+ */
+function _trPathGraph(traces, sel) {
+  var nodes = {}, edges = {}, maxTtl = 0;
+  var selT = traces[sel] || traces[0];
+  var destIp = (selT && selT.destinationIp) || null;
+  traces.forEach(function (t) { if (!destIp && t.destinationIp) destIp = t.destinationIp; });
+  function keyOf(t, h, isLast) {
+    if (h.ip && ((isLast && t.complete) || h.ip === destIp)) return "dst";
+    return h.ttl + ":" + (h.ip || "*");
+  }
+  function ensure(key, h) {
+    var n = nodes[key] || (nodes[key] = { key: key, ttl: h ? h.ttl : 0, hop: null, traces: 0, onSel: false });
+    if (h && !n.hop) n.hop = h; // newest trace first, so the first sighting is the latest
+    return n;
+  }
+  function touch(key, ti, h) {
+    var n = ensure(key, h);
+    n.traces++;
+    if (ti === sel) { n.onSel = true; if (h) n.hop = h; }
+    return n;
+  }
+  function link(a, b, ti, extra) {
+    // A trace that stopped short gets its own link to the destination — merged
+    // with a completed trace's, the ✕ would land on a route that got through.
+    var k = a + ">" + b + (extra && extra.broken ? "!" : "");
+    var e = edges[k] || (edges[k] = { from: a, to: b, traces: 0, onSel: false, broken: false, delta: null, lossy: false, unanswered: false });
+    e.traces++;
+    if (extra && extra.broken) e.broken = true;
+    if (ti === sel) { e.onSel = true; if (extra) { e.delta = extra.delta; e.lossy = !!extra.lossy; e.unanswered = !!extra.unanswered; } }
+  }
+  ensure("src", null).onSel = true;
+  traces.forEach(function (t, ti) {
+    var hops = (t.hops || []).slice().sort(function (a, b) { return a.ttl - b.ttl; });
+    var prev = "src", lastAvg = 0;
+    hops.forEach(function (h, i) {
+      var key = keyOf(t, h, i === hops.length - 1);
+      if (key === prev) return; // the destination answering at two TTLs
+      touch(key, ti, h);
+      if (key !== "dst" && h.ttl > maxTtl) maxTtl = h.ttl;
+      var rtt = _trHopRtt(h.rttMs);
+      var lost = (h.rttMs || []).filter(function (x) { return !(typeof x === "number" && x >= 0); }).length;
+      link(prev, key, ti, { delta: rtt ? Math.max(0, rtt.avg - lastAvg) : null, lossy: rtt && lost > 0, unanswered: !rtt });
+      if (rtt) lastAvg = rtt.avg;
+      prev = key;
+    });
+    if (prev !== "dst") {
+      ensure("dst", null); // drawn even when no trace reached it
+      link(prev, "dst", ti, { broken: true });
+    }
+  });
+  nodes.src.traces = traces.length;
+  if (nodes.dst && !nodes.dst.hop) nodes.dst.hop = { ttl: 0, ip: destIp, rdns: null, rttMs: [] };
+  // Columns: TTL for a hop, one past the deepest hop for the destination.
+  var cols = [];
+  Object.keys(nodes).forEach(function (k) {
+    var n = nodes[k];
+    n.col = k === "src" ? 0 : k === "dst" ? maxTtl + 1 : n.ttl;
+    (cols[n.col] || (cols[n.col] = [])).push(n);
+  });
+  // Rows: most-travelled first, then by address — stable across selections, so
+  // picking another trace moves the highlight, never the nodes.
+  cols.forEach(function (list) {
+    if (!list) return;
+    list.sort(function (a, b) { return b.traces - a.traces || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0); });
+    list.forEach(function (n, i) { n.row = i; });
+  });
+  return { nodes: nodes, edges: Object.keys(edges).map(function (k) { return edges[k]; }), cols: maxTtl + 2, traces: traces.length, destIp: destIp };
+}
+
+/** Pure: a link's colour by the latency it adds — the NetPath reading. */
+function _trEdgeColor(e) {
+  if (e.broken) return "var(--color-danger)";
+  if (!e.onSel || e.delta == null) return "var(--color-text-tertiary)";
+  if (e.delta >= 50) return "var(--color-danger)";
+  if (e.delta >= 10 || e.lossy) return "var(--color-warning)";
+  return "var(--color-success)";
+}
+
+/** Pure: the path graph as SVG. `source` is this host ({hostname, ipAddress}). */
+function _trPathSVG(g, source, minWidth) {
+  // Columns shrink to fit the panel before the graph scrolls: source and
+  // destination on one screen is the point of the view.
+  var MINCOL = 76, MAXCOL = 130, ROWH = 74, PADX = 12, PADT = 22, R = 13;
+  var rows = 1;
+  Object.keys(g.nodes).forEach(function (k) { rows = Math.max(rows, g.nodes[k].row + 1); });
+  var colW = Math.max(MINCOL, Math.min(MAXCOL, ((minWidth || 0) - PADX * 2) / g.cols));
+  var W = Math.max(minWidth || 0, PADX * 2 + g.cols * colW);
+  var offX = (W - g.cols * colW) / 2;
+  var H = PADT + rows * ROWH + 4;
+  function pos(n) { return { x: offX + n.col * colW + colW / 2, y: PADT + R + n.row * ROWH }; }
+  function clip(s, px) { var max = Math.max(4, Math.floor(px / 6.2)); s = String(s || ""); return s.length > max ? s.slice(0, max - 1) + "…" : s; }
+  var edgeSvg = "", nodeSvg = "", hitSvg = "";
+  // Unselected routes first so the selected one paints on top.
+  g.edges.slice().sort(function (a, b) { return (a.onSel ? 1 : 0) - (b.onSel ? 1 : 0); }).forEach(function (e) {
+    var a = pos(g.nodes[e.from]), b = pos(g.nodes[e.to]);
+    var x1 = a.x + R, x2 = b.x - R, mx = (x1 + x2) / 2;
+    var w = (1.25 + 3 * (e.traces / Math.max(1, g.traces))).toFixed(2);
+    var dash = e.broken || e.unanswered ? ' stroke-dasharray="5 4"' : "";
+    edgeSvg += '<path d="M' + x1.toFixed(1) + "," + a.y + " C" + mx.toFixed(1) + "," + a.y + " " + mx.toFixed(1) + "," + b.y + " " + x2.toFixed(1) + "," + b.y +
+      '" fill="none" stroke="' + _trEdgeColor(e) + '" stroke-width="' + (e.onSel ? Math.max(2.5, +w) : w) + '"' + dash +
+      ' stroke-linecap="round" opacity="' + (e.onSel ? 1 : 0.35) + '"/>';
+    if (e.broken && e.onSel) {
+      var cx = (x1 + x2) / 2, cy = (a.y + b.y) / 2;
+      edgeSvg += '<g stroke="var(--color-danger)" stroke-width="2.5" stroke-linecap="round">' +
+        '<line x1="' + (cx - 5) + '" y1="' + (cy - 5) + '" x2="' + (cx + 5) + '" y2="' + (cy + 5) + '"/>' +
+        '<line x1="' + (cx - 5) + '" y1="' + (cy + 5) + '" x2="' + (cx + 5) + '" y2="' + (cy - 5) + '"/></g>';
+    }
+  });
+  Object.keys(g.nodes).forEach(function (k) {
+    var n = g.nodes[k], p = pos(n), h = n.hop || {};
+    var rtt = h.rttMs ? _trHopRtt(h.rttMs) : null;
+    var fill, stroke = "var(--color-text-secondary)", text = "var(--color-text-primary)", dash = "", glyph, name, sub;
+    if (k === "src") {
+      fill = "var(--color-accent)"; stroke = fill; text = "#fff"; glyph = "⌂";
+      name = (source && source.hostname) || "This host"; sub = "source";
+    } else if (k === "dst") {
+      fill = h.monitorStatus && MONITOR_STATE_COLORS[h.monitorStatus] ? MONITOR_STATE_COLORS[h.monitorStatus] : "var(--color-bg-primary)";
+      glyph = "◎"; if (fill.charAt(0) === "#") { stroke = fill; text = "#fff"; }
+      name = h.hostname || h.rdns || g.destIp || "Destination"; sub = rtt ? (Math.round(rtt.avg * 10) / 10) + " ms" : "destination";
+    } else if (!h.ip) {
+      fill = "none"; stroke = "var(--color-text-tertiary)"; dash = ' stroke-dasharray="3 3"'; text = "var(--color-text-tertiary)";
+      glyph = "*"; name = "no reply"; sub = "TTL " + n.ttl;
+    } else {
+      var sc = h.monitorStatus && MONITOR_STATE_COLORS[h.monitorStatus];
+      fill = sc || "var(--color-bg-primary)"; if (sc) { stroke = sc; text = "#fff"; }
+      glyph = String(n.ttl); name = h.hostname || h.rdns || h.ip; sub = rtt ? (Math.round(rtt.avg * 10) / 10) + " ms" : "—";
+    }
+    var op = n.onSel || k === "src" ? 1 : 0.45;
+    nodeSvg += '<g opacity="' + op + '">' +
+      '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y + '" r="' + R + '" fill="' + fill + '" stroke="' + stroke + '" stroke-width="' + (k === "dst" ? 3 : 1.5) + '"' + dash + "/>" +
+      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + 4) + '" text-anchor="middle" font-size="11" font-weight="600" fill="' + text + '">' + escapeHtml(glyph) + "</text>" +
+      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + R + 14) + '" text-anchor="middle" font-size="11" fill="var(--color-text-primary)">' + escapeHtml(clip(name, colW - 8)) + "</text>" +
+      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + R + 27) + '" text-anchor="middle" font-size="10" fill="var(--color-text-secondary)">' + escapeHtml(clip(sub, colW - 8)) + "</text>" +
+      "</g>";
+    hitSvg += '<circle class="chart-hit" data-k="' + escapeHtml(k) + '" cx="' + p.x.toFixed(1) + '" cy="' + p.y + '" r="' + (R + 5) + '" fill="transparent"' +
+      (h.assetId ? ' style="cursor:pointer"' : "") + "/>";
+  });
+  return '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" style="display:block;font-family:inherit">' + edgeSvg + nodeSvg + hitSvg + "</svg>";
+}
+
+function _trPathTooltipHTML(g, key, source) {
+  var n = g.nodes[key];
+  if (!n) return "";
+  var h = n.hop || {};
+  var rows = [];
+  var name = key === "src" ? ((source && source.hostname) || "This host") : (h.hostname || h.rdns || h.ip || "No reply");
+  rows.push("<strong>" + escapeHtml(name) + "</strong>" + (key === "src" ? " · source" : key === "dst" ? " · destination" : " · TTL " + n.ttl));
+  if (key === "src" && source && source.ipAddress) rows.push(escapeHtml(source.ipAddress));
+  if (key !== "src") {
+    if (h.ip && h.ip !== name) rows.push(escapeHtml(h.ip));
+    if (h.rdns && h.rdns !== name) rows.push(escapeHtml(h.rdns));
+    var rtt = _trHopRtt(h.rttMs);
+    if (rtt) rows.push("RTT " + (Math.round(rtt.avg * 10) / 10) + " ms avg · " + (Math.round(rtt.min * 10) / 10) + "–" + (Math.round(rtt.max * 10) / 10) + " ms");
+    var probes = (h.rttMs || []).length, lost = (h.rttMs || []).filter(function (x) { return !(typeof x === "number" && x >= 0); }).length;
+    if (probes && lost) rows.push(lost + " of " + probes + " probes unanswered");
+    if (!h.ip && key !== "dst") rows.push("No router answered at this hop — common where ICMP time-exceeded is filtered");
+    if (h.interfaceName) rows.push("Interface " + escapeHtml(h.interfaceName));
+    if (h.subnetCidr) rows.push("Subnet " + escapeHtml(h.subnetCidr));
+    if (h.assetId) rows.push('<span style="color:var(--color-text-secondary)">Click to open the asset</span>');
+  }
+  if (key !== "src" && g.traces > 1) rows.push('<span style="color:var(--color-text-secondary)">On ' + n.traces + " of " + g.traces + " traces" + (n.onSel ? "" : " · not on the selected one") + "</span>");
+  return rows.join("<br>");
+}
+
+var _TR_PATH_LEGEND_HTML =
+  '<div class="hint" style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;margin-top:0.35rem">' +
+    '<span>Latency added by each link:</span>' +
+    '<span><span style="display:inline-block;width:18px;height:3px;vertical-align:middle;background:var(--color-success)"></span> under 10 ms</span>' +
+    '<span><span style="display:inline-block;width:18px;height:3px;vertical-align:middle;background:var(--color-warning)"></span> 10–50 ms or probe loss</span>' +
+    '<span><span style="display:inline-block;width:18px;height:3px;vertical-align:middle;background:var(--color-danger)"></span> over 50 ms · ✕ destination not reached</span>' +
+    '<span>Faded branches are routes other recent traces took; thicker links were taken more often.</span>' +
+  "</div>";
+
+function _renderTrPathGraph(box, list, sel, source) {
+  var g = _trPathGraph(list, sel);
+  box.innerHTML = '<div style="overflow-x:auto">' +
+    _trPathSVG(g, source, Math.max(0, (box.clientWidth || 0) - 16)) + "</div>" + CHART_TOOLTIP_HTML;
+  _wireChartTooltip(box, function (t) { return _trPathTooltipHTML(g, t.getAttribute("data-k"), source); });
+  box.querySelector("svg").addEventListener("click", function (e) {
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains("chart-hit")) return;
+    var n = g.nodes[t.getAttribute("data-k")];
+    if (!n || !n.hop || !n.hop.assetId) return;
+    // Drawn inside Path Monitor → Results (the server source)? That detail
+    // shares the slide-over Paths tab's element ids — clear it first.
+    var serverDetail = document.getElementById("path-server-detail");
+    if (serverDetail && serverDetail.contains(box)) serverDetail.innerHTML = "";
+    openViewModal(n.hop.assetId);
+  });
+}
+
+async function _loadPathTraceroutes(assetId, check, source) {
+  var mount = document.getElementById("path-traceroute");
+  if (!mount) return;
+  if (!check.traceroute || check.traceroute.enabled === false) {
+    mount.innerHTML = '<div class="chart-label">Path</div><p class="hint">Traceroute is off for this check.</p>';
+    return;
+  }
+  mount.innerHTML = '<div class="chart-label">Path</div><p class="hint">Loading…</p>';
+  try {
+    var res = await _pathApi(assetId).traceroutes(check.id, 10);
+    if (!_pathTabState || _pathTabState.checkId !== check.id) return;
+    var list = (res && res.traceroutes) || [];
+    if (!list.length) {
+      mount.innerHTML = '<div class="chart-label">Path</div><p class="hint">No traceroute yet — one runs on the first run, every ' +
+        ((check.traceroute && check.traceroute.everyNRuns) || 5) + " runs after that, and whenever the check starts failing.</p>";
+      return;
+    }
+    var options = list.map(function (t, i) {
+      return '<option value="' + i + '">' + escapeHtml(_pathFmtWhen(t.timestamp)) + " · " + t.hopCount + " hops" +
+        (t.complete ? "" : " · incomplete") + (t.reason === "transition" ? " · on failure" : "") + "</option>";
+    }).join("");
+    mount.innerHTML = '<div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">' +
+        '<div class="chart-label" style="margin:0">Path</div>' +
+        '<select id="path-tr-select" style="width:auto">' + options + "</select>" +
+        '<span id="path-tr-diff" class="hint"></span></div>' +
+      '<div class="chart-box" id="path-tr-graph" style="margin-top:0.5rem;position:relative"></div>' +
+      _TR_PATH_LEGEND_HTML +
+      '<div class="table-wrapper" style="margin-top:0.75rem"><table id="path-tr-table"><thead><tr>' +
+        '<th style="width:50px">TTL</th><th style="width:140px">IP</th><th>Reverse DNS</th><th style="width:150px">RTT avg / min / max</th><th>Asset</th><th style="width:140px">Subnet</th>' +
+      '</tr></thead><tbody id="path-tr-body"></tbody></table></div>' +
+      '<p class="hint" id="path-tr-foot" style="margin-top:0.35rem"></p>';
+    var sel = document.getElementById("path-tr-select");
+    sel.value = "0";
+    var draw = function () {
+      var i = Number(sel.value) || 0;
+      var cur = list[i], prev = list[i + 1];
+      var changed = _trDiffHops(cur, prev);
+      var graphBox = document.getElementById("path-tr-graph");
+      if (graphBox) {
+        _renderTrPathGraph(graphBox, list, i, source);
+        _observeChartResize(graphBox, function (el) { _renderTrPathGraph(el, list, Number(sel.value) || 0, source); });
+      }
+      var diffEl = document.getElementById("path-tr-diff");
+      if (diffEl) diffEl.textContent = !prev ? "" : changed.size ? "Path changed vs the previous trace — " + changed.size + " hop" + (changed.size === 1 ? "" : "s") + " differ" : "Same path as the previous trace";
+      var prevIp = {};
+      (prev ? prev.hops : []).forEach(function (h) { prevIp[h.ttl] = h.ip; });
+      document.getElementById("path-tr-body").innerHTML = (cur.hops || []).map(function (h) {
+        var rtt = _trHopRtt(h.rttMs);
+        var fmt = function (x) { return (Math.round(x * 10) / 10) + " ms"; };
+        var assetCell = h.assetId
+          ? '<a href="#" class="dep-tree-link path-tr-asset" data-id="' + escapeHtml(h.assetId) + '" title="Status when the trace was taken">' +
+              '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background:' + (MONITOR_STATE_COLORS[h.monitorStatus] || "var(--color-text-tertiary)") + '"></span>' +
+              escapeHtml(h.hostname || h.ip) + (h.interfaceName ? " · " + escapeHtml(h.interfaceName) : "") + "</a>"
+          : "";
+        var isChanged = changed.has(h.ttl);
+        return '<tr' + (isChanged ? ' style="box-shadow:inset 3px 0 0 var(--color-accent)" title="was ' + escapeHtml(prevIp[h.ttl] || "* (no reply)") + '"' : "") + ">" +
+          "<td>" + h.ttl + "</td>" +
+          "<td>" + (h.ip ? escapeHtml(h.ip) : '<span class="hint">* * *</span>') + "</td>" +
+          "<td>" + escapeHtml(h.rdns || "") + "</td>" +
+          "<td>" + (rtt ? fmt(rtt.avg) + " / " + fmt(rtt.min) + " / " + fmt(rtt.max) : "—") + "</td>" +
+          "<td>" + assetCell + "</td>" +
+          "<td>" + (h.subnetCidr ? '<span class="tag-chip">' + escapeHtml(h.subnetCidr) + "</span>" : "") + "</td>" +
+          "</tr>";
+      }).join("");
+      var last = (cur.hops || [])[cur.hops.length - 1];
+      document.getElementById("path-tr-foot").textContent =
+        (cur.complete ? "Reached the destination (" + (cur.destinationIp || "") + ")." : "Incomplete — stopped at TTL " + (last ? last.ttl : 0) + ".") +
+        (cur.note ? " " + cur.note : "") +
+        " A path change is recorded on the Events tab as path_check.path_changed.";
+      document.querySelectorAll(".path-tr-asset").forEach(function (lnk) {
+        lnk.addEventListener("click", function (e) { e.preventDefault(); openViewModal(lnk.getAttribute("data-id")); });
+      });
+    };
+    sel.addEventListener("change", draw);
+    draw();
+  } catch (err) {
+    mount.innerHTML = '<div class="chart-label">Path</div><p class="hint">' + escapeHtml(err.message || "Failed to load traceroutes") + "</p>";
   }
 }

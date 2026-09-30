@@ -95,6 +95,8 @@ export function deviceFilterSelect(
     // one more place for a caller to forget it and get a silently
     // never-matching filter.
     ...(fields.has("ssid") ? { apVaps: { select: { ssid: true } } } : {}),
+    // The third relation-backed field, derived from the tree the same way.
+    ...(fields.has("agentInstalled") ? { managedAgent: { select: { installStatus: true } } } : {}),
   };
 }
 

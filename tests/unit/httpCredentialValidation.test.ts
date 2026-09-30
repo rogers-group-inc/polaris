@@ -43,6 +43,17 @@ describe("http CREDENTIAL — authentication only", () => {
     expect(cred({ authMode: "digest", username: "root", password: "pass" }).authMode).toBe("digest");
   });
 
+  // "form" is a device admin login for the firmware repository (business
+  // rule 87): the same two carriers, kept, and the token dropped.
+  it("accepts form (a device admin login) with both halves and drops a stray token", () => {
+    const c = cred({ authMode: "form", username: "admin", password: "pw", apiToken: "left over" });
+    expect(c).toEqual({ authMode: "form", username: "admin", password: "pw" });
+  });
+  it("rejects form with a half missing, naming it a login rather than an auth scheme", () => {
+    expect(() => cred({ authMode: "form", username: "admin" })).toThrow(/form login needs both a username and a password/);
+    expect(() => cred({ authMode: "form", password: "pw" })).toThrow(/form login needs/);
+  });
+
   // "none" is gone deliberately: a credential exists to authenticate, and an
   // unauthenticated check is a widget with no credential attached.
   it("rejects the none mode", () => {

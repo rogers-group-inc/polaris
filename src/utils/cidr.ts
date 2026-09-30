@@ -265,6 +265,25 @@ export function cidrOverlaps(a: string, b: string): boolean {
 }
 
 /**
+ * The narrowest candidate whose CIDR contains `inner`, or null when none does —
+ * where a new network is placed when no block is named. Every candidate that
+ * contains `inner` also overlaps every other one that does, and two CIDRs that
+ * overlap are nested, so the containing set is a chain and the narrowest is the
+ * one contained by all the others: no prefix-length arithmetic needed.
+ */
+export function mostSpecificContaining<T extends { cidr: string }>(
+  candidates: readonly T[],
+  inner: string,
+): T | null {
+  let best: T | null = null;
+  for (const c of candidates) {
+    if (!cidrContains(c.cidr, inner)) continue;
+    if (!best || cidrContains(best.cidr, c.cidr)) best = c;
+  }
+  return best;
+}
+
+/**
  * Return true if the given IP address is within the CIDR range.
  */
 export function ipInCidr(ip: string, cidr: string): boolean {
@@ -311,6 +330,79 @@ export function buildCidrMatcher(cidrs: string[]): (ip: string) => string | null
     }
     return null;
   };
+}
+
+/**
+ * One IPv4 "network" term from a list filter, reduced to what a string column
+ * can be matched against: exact addresses and dotted prefixes (each prefix
+ * ends in "." so "10.1." never matches 10.10.x.x).
+ */
+export interface Ipv4MatchPrefixes {
+  equals: string[];
+  startsWith: string[];
+}
+
+/**
+ * Parse a filter term — a partial address typed octet by octet ("10", "10.1",
+ * "10.1.2", a trailing "." tolerated), a full address ("10.1.2.3", exact), or a
+ * CIDR ("10.1.16.0/20", host bits ignored) — into exact addresses + prefixes
+ * that together select exactly the addresses in that network, or null when the
+ * term is not a valid IPv4 term.
+ *
+ * A partial address IS a network: "10.1" means 10.1.0.0/16. A CIDR that does
+ * not fall on an octet boundary expands its partial octet into every value it
+ * spans (a /20 → 16 three-octet prefixes, a /25 → 128 exact addresses), so the
+ * answer never exceeds 256 entries and never needs a SQL inet cast — which a
+ * single malformed Asset.ipAddress string would make throw for the whole query.
+ */
+export function ipv4TermToMatchPrefixes(raw: string): Ipv4MatchPrefixes | null {
+  const term = (raw || "").trim();
+  if (!term) return null;
+  let addrPart = term;
+  let len: number | null = null;
+  const slash = term.indexOf("/");
+  if (slash >= 0) {
+    addrPart = term.slice(0, slash);
+    const lenStr = term.slice(slash + 1);
+    if (!/^\d{1,2}$/.test(lenStr)) return null;
+    len = parseInt(lenStr, 10);
+    if (len > 32) return null;
+  }
+  if (addrPart.endsWith(".") && len == null) addrPart = addrPart.slice(0, -1);
+  const parts = addrPart.split(".");
+  if (parts.length < 1 || parts.length > 4) return null;
+  const octets: number[] = [];
+  for (const p of parts) {
+    if (!/^\d{1,3}$/.test(p)) return null;
+    const n = parseInt(p, 10);
+    if (n > 255) return null;
+    octets.push(n);
+  }
+  if (len == null) len = octets.length * 8;
+  else if (octets.length !== 4) return null; // a CIDR needs a full address
+  while (octets.length < 4) octets.push(0);
+
+  const full = Math.floor(len / 8);
+  const rem = len % 8;
+  if (rem === 0) {
+    if (full === 4) return { equals: [octets.join(".")], startsWith: [] };
+    if (full === 0) {
+      const all: string[] = [];
+      for (let v = 0; v < 256; v++) all.push(`${v}.`);
+      return { equals: [], startsWith: all };
+    }
+    return { equals: [], startsWith: [octets.slice(0, full).join(".") + "."] };
+  }
+  // Partial octet at index `full`: enumerate the 2^(8-rem) values it spans.
+  const span = 1 << (8 - rem);
+  const base = octets[full] & (0xff << (8 - rem)) & 0xff;
+  const head = octets.slice(0, full);
+  const values: string[] = [];
+  for (let v = base; v < base + span; v++) {
+    const prefix = [...head, v];
+    values.push(full === 3 ? prefix.join(".") : prefix.join(".") + ".");
+  }
+  return full === 3 ? { equals: values, startsWith: [] } : { equals: [], startsWith: values };
 }
 
 /**

@@ -72,6 +72,7 @@ Click your username, top right. What appears depends on your account:
 |---|---|
 | **Notifications: …** | always — names your current delivery preference and opens the three-way chooser |
 | **Timezone: …** | always |
+| **Layout: …** | always — names the page layout in force and opens the three-way chooser |
 | **Change password** | local accounts only |
 | **Set up two-factor auth** | local accounts only |
 | **Passkeys** | local accounts, where the install allows them and the browser can host one |
@@ -89,8 +90,17 @@ push" mean push on every device you use.
 Three things follow from that:
 
 - The boot-time reconcile **never prompts** — a page load has no user
-  activation — so a browser that has never been asked stays un-enrolled until
-  you pick the preference *on that browser*.
+  activation — so it can only enroll a browser that has already granted
+  notification permission. A browser that has never been asked is instead
+  **asked once**, the first time you sign in on it while your account prefers
+  push: a short dialog offering **Enable** or **Not now**. Enable raises the
+  browser's own permission prompt and enrolls that browser; dismissing it — by
+  either button, Escape or clicking away — is final on that browser, and this
+  row is the way back. You are asked separately on each browser, and a second
+  person signing in on the same browser is asked in their turn.
+- Polaris does not ask on **iPhone or iPad outside the installed app**. Apple
+  grants push only to a home-screen app, so add Polaris to your Home Screen
+  first (**More → Add to Home Screen**) and the offer follows.
 - The preference is **saved even if this browser refuses**, because it belongs
   to the account. Your phone may honour what this laptop cannot.
 - A preference **never deletes an alert**. If you prefer push but have no
@@ -113,6 +123,21 @@ Polaris server's clock and names that zone in its footer — "Times shown in CDT
 (America/Chicago)". Rendering per reader would mean a separate copy per zone,
 and a copy per zone is a To line that no longer shows you who else is on the
 alert.
+
+### Layout
+
+How wide Polaris may grow in your browser window:
+
+| Layout | What you get |
+|---|---|
+| **16:9** (default) | a 16:9 column centred in the window — on a wider monitor the sidebar, tables and slide-overs keep to that column and the sides stay empty |
+| **16:10** | the same idea with a slightly narrower column, since 16:10 is squarer than 16:9 — it fills a 16:10 monitor exactly and leaves a thin margin at each side of anything wider |
+| **Auto** | fills the window, however wide it is — on an ultrawide the sidebar sits at the far left, tables use the full width and slide-overs open at the far right edge |
+
+The choice applies straight away and is kept **per browser**, not per account.
+The right answer depends on the monitor, so you can use Auto on an ultrawide
+at your desk and 16:9 on a laptop. The Dash wallboard and the phone app ignore
+this setting.
 
 ### Change password
 
@@ -150,6 +175,10 @@ by the install, at Users → Authentication:
 Under any mode including `second-factor`, registering a passkey makes your
 login two-step, exactly as enrolling TOTP does.
 
+The login page's **Sign in with a passkey** button appears only once at least
+one local account has registered a passkey. Until then it could only fail. The
+first passkey is set up from this menu after signing in with a password.
+
 **Two deployment shapes cannot host passkeys at all** and say so rather than
 throwing a browser error: plain HTTP off localhost, and an install reached by IP
 address. Two more are misconfigured proxies wearing those refusals — TLS
@@ -179,6 +208,34 @@ Most detail in Polaris opens in a **slide-over** (a panel from the right) or a
   Alt+Left / Alt+Right). A dependency-tree row, an HA peer, an LLDP neighbour, a
   MAC-table match and the Application Map rail all pivot the *open* panel to
   another asset in place, and the arrows walk you back.
+- **Every slide-over opens on every page.** An asset, a network or a block opens
+  in place over the page you are on — from a search result, a dashboard row, an
+  Events conflict card, a credential's usage list, the network panel's
+  **View Asset** button, an interface's **Open network**, or a block's network
+  list — instead of taking you to the Assets or IPAM page. Panels stack: the one
+  opened last is on top, and **Escape** closes one panel at a time, top first.
+  Ctrl-click or middle-click a link to open it in a new tab instead.
+
+### Keyboard
+
+| Key | In a confirmation | In a stepped wizard |
+|---|---|---|
+| Enter | Confirm | **Next**, while there is a next step — it saves only on the last one |
+| Escape | Cancel | Close the wizard |
+| → / ← | — | Next / Back |
+| Tab | Moves between the buttons | Moves through the fields |
+
+A confirmation opens with **Confirm** focused, so Enter confirms it — but Tab to
+Cancel and Enter cancels instead, because the key belongs to the button you
+picked. Holding Enter down from whatever opened the dialog does nothing: the
+repeat is ignored so a held key cannot confirm something you have not read.
+
+In a wizard (New automation, New discovery, New map rule) Enter means *next*
+rather than *save*, so a form is never submitted from a step you are still
+filling in — on the last step, where there is no Next button, Enter saves. The
+arrows move between steps whenever you are not typing in a field; inside a text
+box or a dropdown they belong to the cursor and the options, so use Enter or Tab
+out first.
 
 ---
 

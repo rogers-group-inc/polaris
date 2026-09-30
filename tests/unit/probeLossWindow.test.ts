@@ -18,6 +18,7 @@ import {
   PROBE_LOSS_MIN_WINDOW_SEC,
   readingAtOrAboveCeiling,
   DEFAULT_READING_CEILING_PCT,
+  SATURATION_CEILING_METRICS,
 } from "../../src/services/notificationTypes.js";
 import { lossBucketMs, probeLossSeriesFrom } from "../../src/services/alertChartService.js";
 
@@ -409,6 +410,20 @@ describe("readingAtOrAboveCeiling", () => {
     expect(readingAtOrAboveCeiling({ type: "asset_state", ignoreAtOrAbove: 50 }, 100)).toBe(false);
     expect(readingAtOrAboveCeiling({ type: "host_metric" }, 100)).toBe(false);
     expect(readingAtOrAboveCeiling(null, 100)).toBe(false);
+  });
+
+  it("applies to packet loss only — a path check's failure rate is never saturated", () => {
+    // Both are windowed ratios; only loss has an owner at the top of its scale
+    // (the down automation, rule 29). 100% of a path check failing is the alert
+    // (rule 85), and a stored ceiling on any other metric is inert.
+    expect(SATURATION_CEILING_METRICS).toEqual(["probeLossPct"]);
+    const path = (ignoreAtOrAbove?: number) => ({
+      type: "asset_metric", metric: "pathFailurePct",
+      ...(ignoreAtOrAbove === undefined ? {} : { ignoreAtOrAbove }),
+    });
+    expect(readingAtOrAboveCeiling(path(), 100)).toBe(false);
+    expect(readingAtOrAboveCeiling(path(90), 95)).toBe(false);
+    expect(readingAtOrAboveCeiling({ type: "asset_metric", metric: "cpuPct", ignoreAtOrAbove: 50 }, 100)).toBe(false);
   });
 
   it("allows a ceiling of 0 to mean suppress everything", () => {

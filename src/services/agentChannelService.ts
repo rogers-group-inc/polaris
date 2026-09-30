@@ -44,15 +44,22 @@ import pg from "pg";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
+import { releaseMaintenanceHold } from "./maintenanceScheduleService.js";
 import { getDirectDatabaseUrl } from "../utils/dbConnections.js";
-import { CMD_WAKE_CHANNEL } from "./agentCommandWake.js";
+import { CMD_WAKE_CHANNEL, CFG_REFRESH_CHANNEL } from "./agentCommandWake.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const PROBE_NOW_DEFAULT_TIMEOUT_MS = 10_000;
 
-interface Session {
+export interface Session {
   ws:        WebSocket;
   assetId:   string;
+  /**
+   * hostname || ipAddress, resolved once at attach. Held here so `detach` can
+   * NAME the device without a database read on a teardown path that runs when
+   * a socket has already died — and so both events agree on the label.
+   */
+  assetName: string | null;
   attachedAt: number;
   // Pending probe-now requests awaiting a matching response.
   pending:   Map<string, { resolve: (v: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>;
@@ -67,6 +74,18 @@ const sessions = new Map<string, Session>();
 // ─── Lifecycle ────────────────────────────────────────────────────────
 
 export function attach(managedAgentId: string, assetId: string, ws: WebSocket): void {
+  // A socket that is no longer OPEN is an attempt the agent already abandoned
+  // (its 10s handshake timeout ran out while the bearer verify queued behind a
+  // restart's reconnect herd) and has since redialed. Registering it would
+  // write agent.connected, then displace the live retry below, then write a
+  // warning agent.disconnected when it finishes dying — so it is dropped
+  // before it can touch the map. 1 = WebSocket.OPEN (ws is a type-only import).
+  if (ws.readyState !== 1) {
+    logger.info({ managedAgentId, readyState: ws.readyState }, "Dropping agent WS that closed before attach");
+    try { ws.terminate(); } catch { /* already gone */ }
+    return;
+  }
+
   // Replace any existing session — the new attach wins. (Operator reinstall
   // on the same host stamps a fresh row; or a transient network blip caused
   // the agent to reconnect before our half noticed the drop.)
@@ -79,6 +98,7 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
   const session: Session = {
     ws,
     assetId,
+    assetName: null, // filled in below, before either event is written
     attachedAt: Date.now(),
     pending: new Map(),
     pingTimer: null,
@@ -93,14 +113,21 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
 
   // Wire incoming frames (only thing we expect at this layer is
   // probe-now-response; other frame types are forwarded to handlers).
+  //
+  // close / error / heartbeat are bound to THIS session, not to the agent id.
+  // A replaced socket's close event lands asynchronously — after the closing
+  // handshake, well after the new session took the map slot — and an id-keyed
+  // detach from it tore down the agent's live replacement and wrote a warning
+  // `agent.disconnected` for a connection that was fine. That fired for every
+  // agent that double-dialed during a server restart's reconnect herd.
   ws.on("message", (data) => onFrame(managedAgentId, data));
   ws.on("pong", () => { session.pongSeen = true; });
   ws.on("close", (code, reason) => {
-    detach(managedAgentId, `socket closed: ${code} ${reason.toString().slice(0, 80)}`);
+    detach(managedAgentId, `socket closed: ${code} ${reason.toString().slice(0, 80)}`, session);
   });
   ws.on("error", (err) => {
     logger.warn({ err, managedAgentId }, "Agent WS error");
-    detach(managedAgentId, "socket error");
+    detach(managedAgentId, "socket error", session);
   });
 
   // Heartbeat — ping every 30s; if no pong came back since the last ping,
@@ -108,7 +135,7 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
   // flips pongSeen=true when the agent replies.
   session.pingTimer = setInterval(() => {
     if (!session.pongSeen) {
-      detach(managedAgentId, "heartbeat timeout");
+      detach(managedAgentId, "heartbeat timeout", session);
       return;
     }
     session.pongSeen = false;
@@ -119,19 +146,53 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
     where: { id: managedAgentId },
     data:  { wsConnectedAt: new Date() },
   }).catch(() => { /* best-effort */ });
-  void logEvent({
-    action:       "agent.connected",
-    resourceType: "asset",
-    resourceId:   assetId,
-    level:        "info",
-    message:      "Polaris Agent WebSocket attached",
-    details:      { managedAgentId },
-  });
+
+  void (async () => {
+    // Name the device. An `asset` Event with no resourceName gives the alert no
+    // subject at all (alertSubject.eventSubjectLabel returns "" for one), so
+    // every automation on agent.connected/disconnected rendered a row and an
+    // email that never said WHICH agent — the one fact those alerts exist to
+    // carry.
+    const asset = await prisma.asset
+      .findUnique({ where: { id: assetId }, select: { hostname: true, ipAddress: true } })
+      .catch(() => null);
+    const name = asset?.hostname || asset?.ipAddress || null;
+    // The session may already be gone (a socket that died during this read),
+    // and a stale entry must not be re-stamped — check identity, not presence.
+    if (sessions.get(managedAgentId) === session) session.assetName = name;
+
+    await logEvent({
+      action:       "agent.connected",
+      resourceType: "asset",
+      resourceId:   assetId,
+      resourceName: name ?? undefined,
+      level:        "info",
+      message:      "Polaris Agent WebSocket attached",
+      details:      { managedAgentId },
+    });
+
+    // The agent is back, so whatever Polaris was doing to this host is over as
+    // far as its monitoring is concerned: release the upgrade/reinstall hold
+    // (business rule 80). Release here rather than when the installer returned
+    // — the reattach is the first moment the asset is genuinely being watched
+    // again, and a hold dropped earlier lets the lagging disconnect through.
+    // Not "agent-uninstall": that one ends with the uninstall, and an agent
+    // reattaching during one has not finished being removed.
+    for (const kind of ["agent-upgrade", "agent-reinstall"] as const) {
+      await releaseMaintenanceHold({ assetId, kind }).catch(() => { /* expiry covers it */ });
+    }
+  })();
 }
 
-export function detach(managedAgentId: string, reason: string): void {
+/**
+ * `only` scopes the detach to one session: when the map already holds a
+ * different one (this socket was replaced), nothing is torn down and no event
+ * is written — the replacement is the agent's live connection.
+ */
+export function detach(managedAgentId: string, reason: string, only?: Session): void {
   const session = sessions.get(managedAgentId);
   if (!session) return;
+  if (only && session !== only) return;
   sessions.delete(managedAgentId);
   teardown(session, reason);
   void prisma.managedAgent.update({
@@ -142,8 +203,13 @@ export function detach(managedAgentId: string, reason: string): void {
     action:       "agent.disconnected",
     resourceType: "asset",
     resourceId:   session.assetId,
+    // Without this the alert has no subject: an operator reading "a Polaris
+    // Agent disconnected" on the widget could not tell WHICH host it was.
+    resourceName: session.assetName ?? undefined,
     level:        reason === "replaced" || reason === "revoked" ? "info" : "warning",
-    message:      `Polaris Agent WebSocket detached (${reason})`,
+    message:      session.assetName
+      ? `Polaris Agent WebSocket detached from ${session.assetName} (${reason})`
+      : `Polaris Agent WebSocket detached (${reason})`,
     details:      { managedAgentId, reason },
   });
 }
@@ -300,7 +366,12 @@ async function connectWakeListener(): Promise<void> {
   }
   const client = new pg.Client({ connectionString: url });
   client.on("notification", (msg) => {
-    if (msg.payload) wakeCommands(msg.payload);
+    if (!msg.payload) return;
+    if (msg.channel === CFG_REFRESH_CHANNEL) {
+      for (const id of msg.payload.split(",")) if (id) refreshConfig(id);
+      return;
+    }
+    wakeCommands(msg.payload);
   });
   client.on("error", (err) => {
     logger.warn({ err: err.message }, "Agent command-wake listener error — reconnecting");
@@ -309,6 +380,7 @@ async function connectWakeListener(): Promise<void> {
   try {
     await client.connect();
     await client.query(`LISTEN ${CMD_WAKE_CHANNEL}`);
+    await client.query(`LISTEN ${CFG_REFRESH_CHANNEL}`);
     wakeClient = client;
     logger.info("Agent command-wake listener attached");
   } catch (err) {

@@ -10,6 +10,16 @@ import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
 import { mapWithConcurrency } from "../../utils/concurrency.js";
 import { requirePermission, hasPermission } from "../middleware/permissions.js";
+import {
+  checkIpForIncomingClaim,
+  reconcileDuplicateIpForAddresses,
+  repointDuplicateIpConflicts,
+  type WriteTimeIpConflict,
+} from "../../services/duplicateIpConflictService.js";
+import {
+  repointDuplicateSerialConflicts,
+  settleDuplicateSerialConflictsAfterMerge,
+} from "../../services/duplicateSerialConflictService.js";
 import { requestActor } from "../middleware/auth.js";
 import { machineApiLimiter } from "../middleware/rateLimits.js";
 import { logEvent, buildChanges } from "./events.js";
@@ -32,18 +42,21 @@ import {
   getQuarantinePushAvailability,
 } from "../../services/assetQuarantineService.js";
 import { syncDescriptionsOnSave } from "../../services/descriptionSyncService.js";
-import { cidrContains } from "../../utils/cidr.js";
+import { descriptionSyncEnabledForRole } from "../../utils/descriptionSyncFlags.js";
+import { cidrContains, isValidIpAddress, ipv4TermToMatchPrefixes } from "../../utils/cidr.js";
 import { buildIpContexts } from "../../services/subnetService.js";
 import { isKnownAssetType } from "../../utils/assetTypes.js";
 import { recomputeMonitorOverrideForAssets, getAddAsMonitoredFromConfig } from "../../services/monitorOverrideService.js";
 import { reconcileTagsForAsset, listAssetTags } from "../../services/tagAssignmentService.js";
 import { manualCoordPatchError } from "../../utils/geo.js";
 import { reconcileMapRegions, assertAddedRegionTagsNameARegion } from "../../services/mapRegionService.js";
+import { bulkEditAssetTags } from "../../services/assetBulkTagService.js";
 import { mergeAssets, MERGEABLE_FIELDS, type MergeableField, type FieldWinner } from "../../services/assetMergeService.js";
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { deriveAssetSourceState } from "../../utils/assetSourceState.js";
 import { resolvePendingIpOverrideConflicts } from "../../services/ipOverrideService.js";
 import { getDiscoveredHostnames, getDiscoveredHostname, findAssetIdsByDiscoveredHostname } from "../../services/discoveredHostnameService.js";
+import { buildTagFilter, findAssetIdsByTagSubstring, pageAssetIdsByTags, tagFilterNeedsLookup } from "../../services/assetTagListService.js";
 import { shapeMacRows, selectPrimaryMac, MAC_ROW_SELECT } from "../../utils/macAddresses.js";
 import { csvParam } from "../../utils/text.js";
 import { buildPrismaTextFilter, TEXT_FILTER_OPS } from "../../utils/prismaTextFilter.js";
@@ -52,6 +65,8 @@ import {
   collectTelemetry, recordTelemetryResult,
   collectHardwareSensors, recordHardwareSensorResult,
   collectSystemInfo, recordSystemInfoResult,
+  runSdwanFor,
+  resolveSdwanPollIntervalForAsset,
   snmpWalkRaw,
   resolveMonitorSettings,
   resolveMonitorSettingsWithProvenance,
@@ -66,6 +81,7 @@ import { resolveAssetVips } from "../../services/assetVipService.js";
 import { shapeManagementAccessForClient } from "../../services/fortinetManagementAccessService.js";
 import { propagateAfterStatusChange, FORTINET_INFRA_ASSET_TYPES } from "../../services/dependencyTreeService.js";
 import { pickSampleTierForAsset } from "../../services/sampleQueryRouter.js";
+import { resolveRange, extendSinceForLookback } from "../../utils/chartRange.js";
 import {
   readMonitorHistory,
   readLastMonitorSuccessAt,
@@ -78,10 +94,11 @@ import {
 } from "../../services/sampleHistoryService.js";
 import { evaluateLogFlags } from "../../services/logFlagRuleService.js";
 import { getAssetNotifications, activeAlertSummaryByAsset } from "../../services/notificationService.js";
-import { getMetricSeverityTiers, listScopeOptions } from "../../services/notificationRuleService.js";
+import { getMetricSeverityTiers, getMetricSeverityTierResolver, listScopeOptions } from "../../services/notificationRuleService.js";
 import { SCOPE_FIELD_OPS, scopeConditionMeta, scopeConditionSchema } from "../../services/notificationTypes.js";
 import { loadScopeAssetIds } from "../../services/notificationEngine.js";
 import { listAssetTypes } from "../../services/assetTypeService.js";
+import { getAssetChecks as getAssetPathChecks } from "../../services/pathCheckService.js";
 import {
   applyMassPins,
   getPinInventoryForAssets,
@@ -96,6 +113,7 @@ import { recordOperatorPinChanges, type OperatorPinChange } from "../../services
 import {
   readIpsecHistory,
   readPerfSlaHistory,
+  readPathCheckHistory,
   readSdwanMembers,
 } from "../../services/sampleHistoryService.js";
 import { readProbeOutages, serializeOutages } from "../../services/probeOutageService.js";
@@ -223,7 +241,7 @@ const CreateAssetSchema = z.object({
   purchaseOrder: z.string().optional(),
   notes:         z.string().optional(),
   // Operator-owned device description. On Fortinet assets whose originating
-  // integration has `syncDescriptions` on, the PUT handler mirrors it to the
+  // integration syncs this device class (utils/descriptionSyncFlags.ts), the PUT handler mirrors it to the
   // device (Polaris-primary; see descriptionSyncService). Device-side caps
   // are tighter for some targets (FortiGate alias ~35) — the push truncates.
   description:   z.string().max(255).optional(),
@@ -508,6 +526,9 @@ const ASSET_SORT_COLUMNS: Record<string, string> = {
   longitude: "longitude",
   lastSeen: "lastSeen",
   createdAt: "createdAt",
+  // String[] — Prisma cannot order by it; the list handler routes this key
+  // through pageAssetIdsByTags instead of buildAssetOrderBy.
+  tags: "tags",
 };
 
 // Operator-aware text-filter columns (column key → Asset column). Every one is
@@ -539,6 +560,39 @@ const csvToArray = csvParam;
  * fragments together.
  */
 const buildAssetTextFilter = buildPrismaTextFilter;
+
+// Cap on the IP Address column's network terms — each can expand to 256 match
+// entries (ipv4TermToMatchPrefixes), so this bounds the OR at ~12.8k arms.
+const IP_NETWORK_TERMS_MAX = 50;
+
+/**
+ * The IP Address column's `in_networks` op: `value` is a CSV of IPv4 terms —
+ * partial addresses ("10", "10.1.2"), full addresses, or CIDRs — and a row
+ * matches when its primary IP falls in ANY of them. Matched as exact values +
+ * dotted prefixes on the string column (never an inet cast: one malformed
+ * Asset.ipAddress would make the cast throw for the whole list). A term that
+ * is not valid IPv4 is a 400, not silently ignored — dropping it would widen
+ * the filter to more devices than the operator asked for.
+ */
+function buildIpNetworksFilter(value: string | undefined): Record<string, unknown> | undefined {
+  const terms = (value || "").split(",").map((t) => t.trim()).filter(Boolean);
+  if (!terms.length) return undefined;
+  if (terms.length > IP_NETWORK_TERMS_MAX) {
+    throw new AppError(400, `At most ${IP_NETWORK_TERMS_MAX} networks can be filtered at once`);
+  }
+  const equals = new Set<string>();
+  const startsWith = new Set<string>();
+  for (const t of terms) {
+    const m = ipv4TermToMatchPrefixes(t);
+    if (!m) throw new AppError(400, `Not an IPv4 address, prefix or CIDR: ${t}`);
+    m.equals.forEach((e) => equals.add(e));
+    m.startsWith.forEach((p) => startsWith.add(p));
+  }
+  const arms: Record<string, unknown>[] = [];
+  if (equals.size) arms.push({ ipAddress: { in: Array.from(equals) } });
+  startsWith.forEach((p) => arms.push({ ipAddress: { startsWith: p } }));
+  return arms.length === 1 ? arms[0] : { OR: arms };
+}
 
 /**
  * The `_server` column displays `location || learnedLocation`, so its filter
@@ -628,6 +682,8 @@ const ASSET_LIST_SELECT = {
   statusChangedBy: true,
   location: true,
   learnedLocation: true,
+  // Tags list column (sort + filter: assetTagListService).
+  tags: true,
   // Latitude / Longitude list columns (hidden by default) — the geographic pin
   // that places a firewall on the Device Map.
   latitude: true,
@@ -718,6 +774,19 @@ interface DiscoveredHostnameMatches {
 
 const NO_DISCOVERED_MATCHES: DiscoveredHostnameMatches = { hostnameIds: null, searchIds: null };
 
+/**
+ * Ids matching the Tags column's term (contains / not_contains), or null when
+ * the tags filter carries no term. Resolved before buildAssetListWhere for the
+ * same reason as the discovered-hostname ids: a substring inside a String[] is
+ * not expressible as a Prisma where.
+ */
+async function resolveTagMatches(raw: Record<string, unknown>): Promise<string[] | null> {
+  const value = typeof raw["tags"] === "string" ? (raw["tags"] as string) : undefined;
+  const op = typeof raw["tagsOp"] === "string" ? (raw["tagsOp"] as string) : undefined;
+  if (!tagFilterNeedsLookup(value, op)) return null;
+  return findAssetIdsByTagSubstring(value as string);
+}
+
 async function resolveDiscoveredHostnameMatches(
   q: z.infer<typeof AssetListQuerySchema>,
   raw: Record<string, unknown>,
@@ -753,6 +822,7 @@ function buildAssetListWhere(
   raw: Record<string, unknown>,
   sessionUsername: string | undefined,
   discovered: DiscoveredHostnameMatches = NO_DISCOVERED_MATCHES,
+  tagIds: string[] | null = null,
 ): Record<string, unknown> {
   const where: Record<string, unknown> = {};
   const and: Record<string, unknown>[] = [];
@@ -788,6 +858,11 @@ function buildAssetListWhere(
     const value = typeof raw[key] === "string" ? (raw[key] as string) : undefined;
     const op = typeof raw[key + "Op"] === "string" ? (raw[key + "Op"] as string) : undefined;
     if (value == null && op == null) continue;
+    if (key === "ipAddress" && op === "in_networks") {
+      const netFrag = buildIpNetworksFilter(value);
+      if (netFrag) and.push(netFrag);
+      continue;
+    }
     const frag = buildAssetTextFilter(column, value, op);
     if (!frag) continue;
     // The Hostname cell shows two names on a pinned row (the pin, plus the
@@ -807,6 +882,14 @@ function buildAssetListWhere(
   const serverOp = typeof raw["serverOp"] === "string" ? (raw["serverOp"] as string) : undefined;
   if (serverVal != null || serverOp != null) {
     const frag = buildServerFilter(serverVal, serverOp);
+    if (frag) and.push(frag);
+  }
+
+  // Tags column (Asset.tags is a String[]; see assetTagListService).
+  const tagsVal = typeof raw["tags"] === "string" ? (raw["tags"] as string) : undefined;
+  const tagsOp = typeof raw["tagsOp"] === "string" ? (raw["tagsOp"] as string) : undefined;
+  if (tagsVal != null || tagsOp != null) {
+    const frag = buildTagFilter(tagsVal, tagsOp, tagIds ?? []);
     if (frag) and.push(frag);
   }
 
@@ -1001,9 +1084,12 @@ router.get("/", requirePermission("assets", "read"), async (req, res, next) => {
     const limit = Math.min(q.limit ?? ASSET_LIST_DEFAULT_LIMIT, ASSET_LIST_MAX_LIMIT);
     const offset = q.offset ?? 0;
 
-    const discovered = await resolveDiscoveredHostnameMatches(q, req.query as Record<string, unknown>);
-    const where = buildAssetListWhere(q, req.query as Record<string, unknown>, requestActor(req), discovered);
-    const orderBy = buildAssetOrderBy(q.sortBy, q.sortDir);
+    const raw = req.query as Record<string, unknown>;
+    const [discovered, tagIds] = await Promise.all([
+      resolveDiscoveredHostnameMatches(q, raw),
+      resolveTagMatches(raw),
+    ]);
+    const where = buildAssetListWhere(q, raw, requestActor(req), discovered, tagIds);
 
     let favoriteIds = csvToArray(q.favoriteIds);
     if (favoriteIds && favoriteIds.length > ASSET_FAVORITES_MAX) {
@@ -1013,7 +1099,18 @@ router.get("/", requirePermission("assets", "read"), async (req, res, next) => {
     let assets: Array<Record<string, unknown>>;
     let total: number;
 
-    if (favoriteIds && favoriteIds.length) {
+    if (q.sortBy === "tags") {
+      // Tags sort: order the matching ids in memory (favorites first), then
+      // load the page's rows and put them back in that order.
+      const page = await pageAssetIdsByTags(where, q.sortDir ?? "asc", offset, limit, favoriteIds);
+      total = page.total;
+      const rows = page.ids.length
+        ? await prisma.asset.findMany({ where: { id: { in: page.ids } }, select: ASSET_LIST_SELECT })
+        : [];
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      assets = page.ids.map((id) => byId.get(id)).filter((r): r is (typeof rows)[number] => r != null);
+    } else if (favoriteIds && favoriteIds.length) {
+      const orderBy = buildAssetOrderBy(q.sortBy, q.sortDir);
       // Two-bucket ordering: favorites (matching the active filters, sorted)
       // occupy virtual positions [0, favTotal); non-favorites follow. The
       // requested window may straddle the boundary, so query each bucket with
@@ -1036,6 +1133,7 @@ router.get("/", requirePermission("assets", "read"), async (req, res, next) => {
       }
       assets = [...favPart, ...nonFavPart];
     } else {
+      const orderBy = buildAssetOrderBy(q.sortBy, q.sortDir);
       const [rows, totalCount] = await Promise.all([
         prisma.asset.findMany({ where, orderBy, skip: offset, take: limit, select: ASSET_LIST_SELECT }),
         prisma.asset.count({ where }),
@@ -1265,6 +1363,35 @@ router.post("/bulk-monitor", requirePermission("assets", "write"), async (req, r
   } catch (err) { next(err); }
 });
 
+// POST /api/v1/assets/bulk-tags — add / remove / replace tags on a set of
+// assets (Assets page bulk bar "Tags"). Body: { ids, mode, tags }. Same gate
+// as PUT /:id, which is the single-asset tag write. Semantics — including the
+// managed prefixes a replace keeps — live in assetBulkTagService.
+const BulkTagsSchema = z.object({
+  ids:  z.array(z.string().uuid()).min(1).max(10000),
+  mode: z.enum(["add", "remove", "replace"]),
+  tags: z.array(z.string().max(128)).max(200),
+});
+
+router.post("/bulk-tags", requirePermission("assets", "write"), async (req, res, next) => {
+  try {
+    const body = BulkTagsSchema.parse(req.body);
+    const result = await bulkEditAssetTags(body);
+    const verb = body.mode === "add" ? "Added" : body.mode === "remove" ? "Removed" : "Replaced";
+    const tagList = result.tags.length ? result.tags.join(", ") : "(none)";
+    logEvent({
+      action: "asset.bulk_tags",
+      resourceType: "asset",
+      actor: requestActor(req),
+      message: `${verb} tags [${tagList}] on ${result.updated} asset(s)` +
+        (result.unchanged ? `; ${result.unchanged} already matched` : "") +
+        (result.notFound.length ? `; ${result.notFound.length} not found` : ""),
+      details: { mode: body.mode, tags: result.tags, updated: result.updated, unchanged: result.unchanged, notFound: result.notFound },
+    });
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 // ─── Mass Pinning (Assets → Settings → Mass Pinning section) ─────────────────
 //
 // Manual bulk pin/unpin of fast-cadence targets (interfaces incl. IPsec
@@ -1421,6 +1548,41 @@ router.put("/sighting-settings", requirePermission("assetsQuarantine", "write"),
 });
 
 // GET /api/v1/assets/:id — get single asset (all authenticated users)
+// GET /api/v1/assets/ip-check?ip=&excludeAssetId=&assetType=&macAddress=
+//
+// The asset form's pre-save question (business rule 40(i)): who else is on
+// this address, and would saving raise a duplicate-ip conflict? Answered by
+// SIMULATING the incoming claim through the same grouping the sweep uses, so
+// what the dialog warns about is exactly what the save will raise. Read-only;
+// `assets:read` because the assets list already exposes every IP it names.
+//
+// `canMerge` rides along so the form's "review merge" button is gated by the
+// SERVER's answer rather than a client-side re-derivation of the matrix — the
+// too-strict-client-gate trap this codebase has hit before.
+//
+// Declared above `/:id` so Express does not read "ip-check" as an asset id.
+const IpCheckQuerySchema = z.object({
+  ip: z.string().trim().min(1),
+  excludeAssetId: z.string().trim().min(1).optional(),
+  assetType: z.string().trim().min(1).optional(),
+  macAddress: z.string().trim().min(1).optional(),
+});
+router.get("/ip-check", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    const q = IpCheckQuerySchema.parse(req.query);
+    if (!isValidIpAddress(q.ip)) throw new AppError(400, `"${q.ip}" is not a valid IP address`);
+    const result = await checkIpForIncomingClaim({
+      ip: q.ip,
+      excludeAssetId: q.excludeAssetId ?? null,
+      assetType: q.assetType ?? null,
+      macAddress: q.macAddress ? q.macAddress.toUpperCase().replace(/-/g, ":") : null,
+    });
+    res.json({ ...result, canMerge: hasPermission(req, "assets", "fullwrite") });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get("/:id", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     const asset = await prisma.asset.findUnique({
@@ -1471,9 +1633,11 @@ router.get("/:id", requirePermission("assets", "read"), async (req, res, next) =
       // a derived boolean (the raw config is stripped below — it holds API
       // tokens) so the asset edit form can cap the FortiAP Description at the
       // 35-char device `location` limit, but only when this AP's integration
-      // actually syncs descriptions to the device.
+      // actually syncs descriptions to the device. The toggle is per device
+      // class, so this is resolved for THIS asset's Fortinet role.
       if (isFortinetIntegrationType(asset.discoveredByIntegration.type)) {
-        integrationSyncDescriptions = cfg.syncDescriptions === true;
+        const role = ((asset.fortinetTopology ?? {}) as { role?: string }).role;
+        integrationSyncDescriptions = descriptionSyncEnabledForRole(cfg, role);
       }
     }
     const { config: _omit, ...integrationLite } = (asset.discoveredByIntegration as { config?: unknown } | null) || {};
@@ -1659,7 +1823,9 @@ router.get("/:id/metric-thresholds", requirePermission("assets", "read"), async 
     if (!asset) throw new AppError(404, "Asset not found");
     const sensorName = req.query.sensorName ? String(req.query.sensorName) : undefined;
     const sensorClass = req.query.sensorClass ? String(req.query.sensorClass) : undefined;
-    const dimension = sensorName || sensorClass ? { sensorName, sensorClass } : undefined;
+    // Path charts are one check's series (path* metrics).
+    const checkId = req.query.checkId ? String(req.query.checkId) : undefined;
+    const dimension = sensorName || sensorClass || checkId ? { sensorName, sensorClass, checkId } : undefined;
     res.json({ metric, tiers: await getMetricSeverityTiers(id, metric, dimension) });
   } catch (err) {
     next(err);
@@ -1765,6 +1931,9 @@ router.get("/:id/monitor-history", requirePermission("assets", "read"), async (r
           }
         : null,
       samples: result.samples,
+      // The packet-loss line the chart overlays on its right axis — every
+      // probe kind, the ICMP sweep's packets included (see MonitorLossSeries).
+      loss: result.loss,
       stats: result.stats,
     });
   } catch (err) { next(err); }
@@ -1899,7 +2068,13 @@ router.post("/:id/probe-now", requirePermission("assetsProbe", "read"), async (r
     const tr_p:    Promise<TelResult>  = collectTelemetry(id).catch((err: any): TelResult  => ({ supported: true, error: err?.message || "Telemetry collection failed" }));
     const hwR_p:   Promise<HwResult>   = collectHardwareSensors(id).catch((err: any): HwResult => ({ supported: true, error: err?.message || "Hardware sensor collection failed" }));
     const sr_p:    Promise<SysResult>  = collectSystemInfo(id).catch((err: any): SysResult  => ({ supported: true, error: err?.message || "System info collection failed" }));
+    // SD-WAN left the system-info pass for its own cadence (2026-09), so a Poll
+    // Now that should still refresh the SD-WAN tab asks for it explicitly. The
+    // runner applies its own eligibility (integration pulls SD-WAN, REST gate)
+    // and is a silent no-op everywhere else, so it stays out of the summary.
+    const sdwan_p = runSdwanFor(id, { transport: "rest_api", assetType: "unknown" }).catch(() => "crash" as const);
     const [tr, hwR, sr] = [await tr_p, await hwR_p, await sr_p];
+    await sdwan_p;
     await Promise.all([
       recordTelemetryResult(id, tr),
       recordHardwareSensorResult(id, hwR),
@@ -2221,49 +2396,8 @@ router.post("/:id/snmp-walk", requirePermission("assetsProbe", "read"), async (r
 // columns are coerced to Number on the way out — interface octets up to
 // 2^53-1 (≈9 PB) fit safely.
 
-const RANGE_MS: Record<string, number> = {
-  "1h":  1 * 60 * 60 * 1000,
-  "12h": 12 * 60 * 60 * 1000,
-  "24h": 24 * 60 * 60 * 1000,
-  "7d":  7  * 24 * 60 * 60 * 1000,
-  "30d": 30 * 24 * 60 * 60 * 1000,
-};
-
-function resolveRange(req: any): { since: Date; until: Date; rangeLabel: string } {
-  const fromQ = req.query.from ? String(req.query.from) : null;
-  const toQ   = req.query.to   ? String(req.query.to)   : null;
-  if (fromQ && toQ) {
-    const f = new Date(fromQ), t = new Date(toQ);
-    if (isNaN(+f) || isNaN(+t)) throw new AppError(400, "Invalid from/to date");
-    if (+f >= +t) throw new AppError(400, "from must be before to");
-    if (+t - +f > 365 * 24 * 60 * 60 * 1000) throw new AppError(400, "Custom range cannot exceed 1 year");
-    return { since: f, until: t, rangeLabel: "custom" };
-  }
-  const range = String(req.query.range || "24h");
-  const windowMs = RANGE_MS[range] ?? RANGE_MS["24h"];
-  const until = new Date();
-  return { since: new Date(+until - windowMs), until, rangeLabel: range };
-}
-
-/**
- * Extend `since` backwards by one bucket of lookback overflow so the chart
- * polyline has at least one sample BEFORE the visible window. The renderer
- * clips drawn content to `[since, until]` via SVG clipPath, so the extra
- * sample is hidden but its presence lets the line enter the chart from the
- * left edge instead of starting partway through. Stats stay scoped to the
- * visible window (filtered in the service). See the "Time-series chart
- * (SVG)" section of polaris-ui-canon.
- *
- *   - detail tier (bucketSeconds=0): 5-minute lookback — covers ~1-5 polls
- *     at 1m/2m/5m cadences without bloating the query.
- *   - hourly tier: one extra bucket (3600s).
- *   - daily tier:  one extra bucket (86400s).
- */
-function extendSinceForLookback(since: Date, bucketSeconds: number): Date {
-  const DETAIL_LOOKBACK_MS = 5 * 60 * 1000;
-  const lookbackMs = bucketSeconds > 0 ? bucketSeconds * 1000 : DETAIL_LOOKBACK_MS;
-  return new Date(+since - lookbackMs);
-}
+// resolveRange / extendSinceForLookback live in utils/chartRange.ts (shared
+// with the path-checks route's Polaris-server history).
 
 function bigIntToNumber(v: bigint | null | undefined): number | null {
   if (v == null) return null;
@@ -2899,6 +3033,7 @@ router.get("/:id/services", requirePermission("assets", "read"), async (req, res
         unit:         s.unit,
         platform:     s.platform,
         displayName:  s.displayName,
+        description:  s.description,
         loadState:    s.loadState,
         activeState:  s.activeState,
         subState:     s.subState,
@@ -2906,6 +3041,7 @@ router.get("/:id/services", requirePermission("assets", "read"), async (req, res
         mainPid:      s.mainPid,
         mainProcess:  s.mainProcess,
         memBytes:     s.memBytes != null ? s.memBytes.toString() : null,
+        cpuPct:       s.cpuPct,
         controllable: s.controllable,
       })),
       monitoredServices: (asset.monitoredServices ?? []) as string[],
@@ -3152,15 +3288,15 @@ router.get("/:id/interface-history", requirePermission("assets", "read"), async 
     ];
     const overrideDescription = override?.description ?? null;
     // Interface comments sync to the device only when the originating
-    // integration's syncDescriptions toggle is on AND the asset is a synced
-    // Fortinet role (FortiGate interface / FortiSwitch port — FortiAPs have
-    // no per-interface description).
+    // integration's toggle for this device class is on AND the asset is a
+    // synced Fortinet role (FortiGate interface / FortiSwitch port — FortiAPs
+    // have no per-interface description).
     const dsIntegration = assetMeta?.discoveredByIntegration ?? null;
     const dsRole = ((assetMeta?.fortinetTopology ?? {}) as { role?: string }).role;
     const descriptionSyncEnabled =
       (isFortinetIntegrationType(dsIntegration?.type)) &&
-      (dsIntegration?.config as { syncDescriptions?: boolean } | null)?.syncDescriptions === true &&
-      (dsRole === "fortigate" || dsRole === "fortiswitch");
+      (dsRole === "fortigate" || dsRole === "fortiswitch") &&
+      descriptionSyncEnabledForRole(dsIntegration?.config, dsRole);
     res.json({
       range: rangeLabel,
       ifName,
@@ -3208,7 +3344,7 @@ router.get("/:id/interface-history", requirePermission("assets", "read"), async 
 
 // PUT /assets/:id/interfaces/:ifName/comment — operator-typed override for the
 // interface's "Interface Comments" text box. Polaris-local by default; when
-// the originating integration's `syncDescriptions` toggle is on, a saved
+// the originating integration's FortiGate / FortiSwitch description-sync toggle is on, a saved
 // comment is also pushed to the device (Polaris-primary — see
 // descriptionSyncService). Empty string or null clears the override locally
 // only (the device keeps its description; the discovered FortiOS CMDB
@@ -3344,15 +3480,21 @@ router.get("/:id/perf-sla-links", requirePermission("assets", "read"), async (re
 //
 // Carries the same freshness pair the ARP/MAC tabs do — `collectedAt` (the
 // newest perf-SLA sample, i.e. the scrape stamp) and `pollIntervalSec` — so the
-// table can state its own age and turn amber past its own cadence. No discovery
-// fallback: only the system-info pass writes perf-SLA samples, so an unmonitored
-// gate reports null rather than borrowing its integration's 12h sweep.
+// table can state its own age and turn amber past its own cadence. The cadence
+// is the SD-WAN stream's own (integration sdwanIntervalSeconds, default 60s) —
+// not the system-info one it rode until 2026-09. Only that cadence writes
+// perf-SLA samples, so an unpolled gate reports null rather than borrowing its
+// integration's 12h discovery sweep.
 router.get("/:id/sdwan-members", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
+    // The strip shades an in-SLA scrape by the severity tier an SD-WAN
+    // automation would fire at on it — the same lookup the asset charts shade
+    // with, loaded once for every (metric, health check, member) the table asks.
+    const tierFor = await getMetricSeverityTierResolver(id);
     const [result, pollIntervalSec] = await Promise.all([
-      readSdwanMembers(id),
-      resolveCurrentStateIntervalSec(id, { discoveryFallback: false }),
+      readSdwanMembers(id, (metric, healthCheck, link) => tierFor(metric, { healthCheck, link })),
+      resolveSdwanPollIntervalForAsset(id),
     ]);
     res.json({ ...result, pollIntervalSec });
   } catch (err) { next(err); }
@@ -3384,6 +3526,58 @@ router.get("/:id/perf-sla-history", requirePermission("assets", "read"), async (
   } catch (err) { next(err); }
 });
 
+// GET /assets/:id/path-checks — the agent-run path checks this
+// host runs, each with its latest result (from path_check_sources, never
+// the hypertable). Drives the slide-over's Paths tab AND its visibility:
+// an empty list means no tab. assets:read — the results describe this asset.
+router.get("/:id/path-checks", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    res.json(await getAssetPathChecks(req.params.id as string));
+  } catch (err) { next(err); }
+});
+
+// GET /assets/:id/path-check-history?checkId=...&range=... — one check's
+// latency / phases / verdict series from this host, tier-picked like every
+// other history endpoint.
+router.get("/:id/path-check-history", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const checkId = req.query.checkId ? String(req.query.checkId) : null;
+    if (!checkId) throw new AppError(400, "checkId query parameter is required");
+    const { since, until, rangeLabel } = resolveRange(req);
+    const pick = await pickSampleTierForAsset(id, "pathCheck", since);
+    const fetchSince = extendSinceForLookback(since, pick.bucketSeconds);
+    const result = await readPathCheckHistory(id, since, until, pick.tier, checkId, fetchSince);
+    res.json({
+      range: rangeLabel,
+      checkId,
+      since,
+      until,
+      tier: pick.tier,
+      bucketSeconds: pick.bucketSeconds,
+      samples: result.samples,
+    });
+  } catch (err) { next(err); }
+});
+
+// GET /assets/:id/path-check-traceroutes?checkId=...&limit=10 — the newest
+// traceroutes this host ran for one check, hops already resolved to assets and
+// subnets at write time. Newest first; limit ≤ 50.
+router.get("/:id/path-check-traceroutes", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const checkId = req.query.checkId ? String(req.query.checkId) : null;
+    if (!checkId) throw new AppError(400, "checkId query parameter is required");
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+    const traceroutes = await prisma.assetPathCheckTraceroute.findMany({
+      where: { assetId: id, checkId },
+      orderBy: { timestamp: "desc" },
+      take: limit,
+    });
+    res.json({ checkId, traceroutes });
+  } catch (err) { next(err); }
+});
+
 // GET /assets/:id/sdwan-rules — current-state SD-WAN service rules (one row per
 // rule, replaced per scrape by persistSdwanRules). The SD-WAN tab table + the
 // "data exists?" gate. Ordered by the rule's FortiOS sequence (priority) so the
@@ -3404,7 +3598,8 @@ router.get("/:id/sdwan-rules", requirePermission("assets", "read"), async (req, 
     });
     const [rows, pollIntervalSec] = await Promise.all([
       rowsP,
-      resolveCurrentStateIntervalSec(id, { discoveryFallback: false }),
+      // The SD-WAN stream's own cadence, not the system-info one.
+      resolveSdwanPollIntervalForAsset(id),
     ]);
     // One stamp for the whole table: persistSdwanRules delete-replaces every
     // rule in one transaction, so the newest updatedAt IS the scrape time.
@@ -3724,6 +3919,26 @@ router.put("/:id/processes/:name/config", requirePermission("assets", "write"), 
 // the AgentCommand queue with action="run_script").
 
 // POST /api/v1/assets — create (assets admin)
+/**
+ * Business rule 40(i): re-evaluate the duplicate-ip conflicts for the
+ * addresses an operator write touched and hand back the one on the address
+ * it wrote (`null` when the save raised nothing). A failure here must never
+ * cost the save that already landed — the sweep re-derives the same answer
+ * within ten minutes — so it degrades to `null` with a log line.
+ */
+async function writeTimeIpConflictFor(
+  touched: readonly (string | null | undefined)[],
+  writtenIp: string | null | undefined,
+): Promise<WriteTimeIpConflict | null> {
+  try {
+    const byIp = await reconcileDuplicateIpForAddresses(touched);
+    return writtenIp ? (byIp.get(writtenIp) ?? null) : null;
+  } catch (err: any) {
+    logger.warn({ err: err?.message, touched }, "write-time duplicate-ip check failed; the sweep will re-evaluate");
+    return null;
+  }
+}
+
 router.post("/", requirePermission("assets", "write"), async (req, res, next) => {
   try {
     const input = CreateAssetSchema.parse(req.body);
@@ -3736,7 +3951,7 @@ router.post("/", requirePermission("assets", "write"), async (req, res, next) =>
     if (input.macAddress) data.macAddress = input.macAddress.toUpperCase().replace(/-/g, ":");
     // Description: empty string clears to null (an empty Polaris description
     // is re-seeded from the device on the next discovery when the
-    // integration's syncDescriptions toggle is on).
+    // integration's description-sync toggle for its device class is on).
     if (typeof input.description === "string") data.description = input.description.trim() || null;
     // Hostname: trim; an empty box means "not provided", not "" (the edit
     // form now always sends the field, including blank).
@@ -3759,7 +3974,15 @@ router.post("/", requirePermission("assets", "write"), async (req, res, next) =>
     if (asset.assetType === "firewall" && typeof input.latitude === "number") {
       reconcileMapRegions().catch(() => {});
     }
-    res.status(201).json(asset);
+    // Business rule 40(i): an operator just put a device on an address. If
+    // something else network-present already records it, the collision is
+    // raised NOW — a duplicate-ip conflict card plus the `conflict.detected`
+    // Event the baseline automation alerts on — rather than on the sweep's
+    // next tick, and the response names the card so the form can open it or
+    // hand the pair to the merge review. Awaited, not fire-and-forget: the
+    // whole point is that the person who caused the collision is told.
+    const ipConflict = await writeTimeIpConflictFor(asset.ipAddress ? [asset.ipAddress] : [], asset.ipAddress);
+    res.status(201).json({ ...asset, ipConflict });
   } catch (err) {
     next(err);
   }
@@ -3917,7 +4140,7 @@ async function buildAssetUpdatePatch(
   if (input.macAddress) data.macAddress = input.macAddress.toUpperCase().replace(/-/g, ":");
   // Description: empty string clears to null (an empty Polaris description
   // is re-seeded from the device on the next discovery when the
-  // integration's syncDescriptions toggle is on).
+  // integration's description-sync toggle for its device class is on).
   if (typeof input.description === "string") data.description = input.description.trim() || null;
   // Notes: empty string clears to null (notes are operator-only — an
   // emptied box is an intentional clear, not "not provided").
@@ -4197,7 +4420,16 @@ router.put("/:id", requirePermission("assets", "write"), async (req, res, next) 
     const { data, ipOverrideTouched, coordChanged } = await buildAssetUpdatePatch(id, existing, input, actor);
     const asset = await prisma.asset.update({ where: { id }, data: data as any });
     await applyAssetUpdateSideEffects(id, existing, asset, input, actor, { ipOverrideTouched, coordChanged });
-    res.json(asset);
+    // Business rule 40(i): when the edit MOVED the address, re-evaluate both
+    // ends — the new address may now be a collision (raise it, tell the
+    // operator), and the old one may have just stopped being one (close it,
+    // rather than leaving the card up for ten minutes). Unchanged address ⇒
+    // nothing to ask; the sweep owns the steady state.
+    const ipMoved = (asset.ipAddress ?? null) !== (existing.ipAddress ?? null);
+    const ipConflict = ipMoved
+      ? await writeTimeIpConflictFor([existing.ipAddress, asset.ipAddress], asset.ipAddress)
+      : null;
+    res.json({ ...asset, ipConflict });
   } catch (err) {
     next(err);
   }
@@ -5215,7 +5447,11 @@ const mergeBodySchema = z.object({
   fieldWinners: z.record(z.enum(["this", "other"])).optional(),
   dependencyWinner: z.enum(["this", "other"]).optional(),
 });
-router.post("/:id/merge", requirePermission("assets", "write"), async (req, res, next) => {
+// Merging is editing one asset AND deleting another, which is why it takes the
+// assets key's destructive tier rather than the `write` that create/edit use.
+// The merge modal (asset-merge-modal.js) and the conflict card's merge verbs
+// gate on the same level, so what the UI offers is what the API allows.
+router.post("/:id/merge", requirePermission("assets", "fullwrite"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const { otherAssetId, survivor, fieldWinners, dependencyWinner } = mergeBodySchema.parse(req.body);
@@ -5241,10 +5477,16 @@ router.post("/:id/merge", requirePermission("assets", "write"), async (req, res,
 
     const [survivorBefore, absorbedBefore] = await Promise.all([
       prisma.asset.findUnique({ where: { id: canonicalId }, select: { id: true, hostname: true } }),
-      prisma.asset.findUnique({ where: { id: ghostId }, select: { id: true, hostname: true } }),
+      prisma.asset.findUnique({ where: { id: ghostId }, select: { id: true, hostname: true, ipAddress: true } }),
     ]);
     if (!survivorBefore) throw new AppError(404, "Survivor asset not found");
     if (!absorbedBefore) throw new AppError(404, "Absorbed asset not found");
+
+    // A duplicate-serial or duplicate-ip card filed on the asset about to be
+    // deleted would cascade away with it — unresolved and unaudited. Move both
+    // first so the settle below can close them properly (rules 83 and 40(i)).
+    await repointDuplicateSerialConflicts(ghostId, canonicalId);
+    await repointDuplicateIpConflicts(ghostId, canonicalId);
 
     const result = await mergeAssets({
       canonicalId,
@@ -5283,6 +5525,37 @@ router.post("/:id/merge", requirePermission("assets", "write"), async (req, res,
         fieldWinners: resolvedWinners,
       },
     });
+
+    // Settle the conflict cards this merge resolved, AWAITED: both cards'
+    // "Review & merge..." open this modal and reload the conflict queue on
+    // success, and a card still listed after the merge it asked for reads as a
+    // merge that did not happen. A failure here must not fail a merge that
+    // already committed — the sweeps stay the backstop.
+    //
+    // Duplicate-ip (rule 40(i)): re-evaluate the survivor's address AND the
+    // absorbed asset's old one — when the survivor kept a different address,
+    // the card being resolved is about the absorbed row's, which checking only
+    // the survivor would never look at.
+    try {
+      const survivorAfter = await prisma.asset.findUnique({
+        where: { id: result.survivorId },
+        select: { ipAddress: true },
+      });
+      await reconcileDuplicateIpForAddresses([survivorAfter?.ipAddress, absorbedBefore.ipAddress]);
+    } catch (err) {
+      logger.warn({ err, survivorId: result.survivorId }, "Duplicate-ip conflict reconcile after merge failed");
+    }
+    // Duplicate-serial (rule 83).
+    try {
+      await settleDuplicateSerialConflictsAfterMerge({
+        survivorAssetId: result.survivorId,
+        absorbedAssetId: result.absorbedId,
+        survivorLabel: survivorBefore.hostname || result.survivorId,
+        actor: requestActor(req),
+      });
+    } catch (err) {
+      logger.warn({ err, survivorId: result.survivorId }, "Duplicate-serial conflict settle after merge failed");
+    }
 
     res.json(result);
   } catch (err) {
@@ -6070,9 +6343,11 @@ router.post("/bulk-quarantine/release", requirePermission("assetsQuarantine", "w
 // every selected asset at once (assets-page bulk bar "Deploy Agent"). OS
 // platform + transport are resolved per asset the way discovery auto-deploy
 // does (inferAgentPlatform: Windows → WinRM credential with SSH fallback,
-// everything else → SSH); ineligible assets (existing agent, hypervisor,
-// Fortinet source, unreachable, no matching credential) come back as skipped
-// with a reason instead of failing the batch. Remote installs run in a
+// everything else → SSH); ineligible assets (agent in any state but "failed",
+// hypervisor, Fortinet source, unreachable, no matching credential) come back
+// as skipped with a reason instead of failing the batch. An asset whose agent
+// install FAILED is retried in place (the /:id/agent/retry reset, with this
+// batch's credentials) and counted in `retried`. Remote installs run in a
 // bounded background pool — the response returns immediately and the UI
 // watches per-asset installStatus.
 const BulkAgentInstallSchema = z.object({
@@ -6435,7 +6710,14 @@ router.post("/:id/agent/reinstall", requirePermission("assets", "fullwrite"), as
     });
 
     const { startInstall } = await import("../../services/agentInstallService.js");
-    await startInstall({ managedAgentId: row.id, credentialId: row.installCredentialId });
+    // A reinstall stops an agent that is running right now — hold the asset in
+    // maintenance so the disconnect it causes doesn't page anyone (rule 80).
+    // /retry and a first install pass no kind: nothing is running to drop.
+    await startInstall({
+      managedAgentId: row.id,
+      credentialId:   row.installCredentialId,
+      holdKind:       "agent-reinstall",
+    });
 
     res.json({
       managedAgentId: row.id,

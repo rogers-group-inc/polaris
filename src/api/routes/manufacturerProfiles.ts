@@ -27,6 +27,7 @@ import {
   TRANSFORM_LABELS,
   COMBINER_KINDS,
   COMBINER_LABELS,
+  METRIC_ROW_TRANSFORMS,
 } from "../../utils/symbolTransforms.js";
 import { requestActor } from "../middleware/auth.js";
 import { logEvent } from "./events.js";
@@ -59,6 +60,10 @@ router.get("/", requirePermission("manufacturerProfiles", "read"), handle(async 
     profiles,
     transforms: TRANSFORM_KINDS.map((k) => ({ kind: k, label: TRANSFORM_LABELS[k] })),
     combiners:  COMBINER_KINDS.map((k) => ({ kind: k, label: COMBINER_LABELS[k] })),
+    // metricKey → the unary transforms a SCALAR metric row of that key may
+    // carry. `transforms` above is the widget list; a metric row offers only
+    // this subset, and no select at all where its metric is absent.
+    metricTransforms: METRIC_ROW_TRANSFORMS,
   });
 }));
 

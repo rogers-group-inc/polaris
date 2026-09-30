@@ -4,20 +4,22 @@
 // backing program, so a service running as a shared runtime (e.g. a Spring Boot
 // app as "java") is visible as itself and oneshot/exited units still appear.
 //
-// Single writer: the agent's `serviceInventory` sample stream. Full-replace per
-// push (delete-then-insert in one $transaction, retryOnDeadlock), mirroring
-// persistAssetProcesses / persistSdwanRules — a reader sees either the old set
-// or the new set, never an empty intermediate. Agent-only (agentless SSH/WinRM
-// does not resolve units).
+// Single writer: the agent's `serviceInventory` sample stream. The whole list
+// arrives per push but is written as a DELTA in one transaction
+// (utils/inventoryDelta, retryOnDeadlock), like persistAssetProcesses — a
+// reader sees either the old set or the new set, never an empty intermediate.
+// Agent-only (agentless SSH/WinRM does not resolve units).
 import { randomUUID } from "node:crypto";
 
 import { prisma } from "../db.js";
 import { retryOnDeadlock } from "../utils/dbRetry.js";
+import { diffInventory, normalizeBytes, normalizeCpuPct, sameInventoryRow } from "../utils/inventoryDelta.js";
 
 export interface AssetServiceInput {
   unit:         string;
   platform:     "systemd" | "windows";
   displayName:  string | null;
+  description:  string | null;
   loadState:    string | null;
   activeState:  string | null;
   subState:     string | null;
@@ -25,6 +27,8 @@ export interface AssetServiceInput {
   mainPid:      number | null;
   mainProcess:  string | null;
   memBytes:     bigint | null;
+  /** Agent interval mean since its previous scrape; 100 = one core. */
+  cpuPct:       number | null;
 }
 
 /**
@@ -56,20 +60,82 @@ export function isServiceControllable(s: AssetServiceInput): boolean {
   return load === "loaded";
 }
 
+/** The stored columns a scrape can change. memBytes / cpuPct are compared
+ *  through the dead band (sameInventoryRow); the rest exactly. */
+const SERVICE_FIELDS = [
+  "platform", "displayName", "description", "loadState", "activeState", "subState",
+  "enabledState", "mainPid", "mainProcess", "memBytes", "cpuPct", "controllable",
+] as const;
+const SERVICE_EXACT_FIELDS = SERVICE_FIELDS.filter((f) => f !== "memBytes" && f !== "cpuPct");
+type ServiceRow = { unit: string } & { [K in (typeof SERVICE_FIELDS)[number]]: unknown };
+
+/** An input row as it will be STORED: normalized figures, derived controllable. */
+function storedServiceRow(r: AssetServiceInput): ServiceRow & AssetServiceInput & { controllable: boolean } {
+  return { ...r, memBytes: normalizeBytes(r.memBytes), cpuPct: normalizeCpuPct(r.cpuPct), controllable: isServiceControllable(r) };
+}
+
 /**
- * Current-state service inventory full-replace for one asset. An empty `rows`
- * is a valid delete-only scrape (a host that lost its agent / has no services).
+ * Current-state service inventory for one asset, written as a DELTA
+ * (utils/inventoryDelta): in one transaction, read the host's rows, create the
+ * units that appeared, delete the ones that vanished, update only the ones
+ * that changed, and stamp the scrape time (AssetInventoryScrape). A reader
+ * still sees the old set or the new set, never a mix. An empty `rows` is a
+ * valid delete-only scrape (a host that lost its agent / has no services).
+ *
+ * CPU and memory are stored rounded and compared through a dead band (a point
+ * of CPU, 2% of memory) — a raw figure jitters every scrape and would mark
+ * every running service changed. A stored figure can lag by up to one band.
+ * Returns the delta's counts (the tests read them; nothing else needs them).
  */
 export async function persistAssetServices(
   assetId: string,
   rows: AssetServiceInput[],
-): Promise<void> {
-  const data = rows.map((r) => ({
-    id:           randomUUID(),
-    assetId,
-    unit:         r.unit,
+  now: Date = new Date(),
+): Promise<{ created: number; updated: number; removed: number; unchanged: number }> {
+  const incoming = rows.map(storedServiceRow);
+  return retryOnDeadlock(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const existing = await tx.assetService.findMany({
+          where: { assetId },
+          select: { id: true, unit: true, ...Object.fromEntries(SERVICE_FIELDS.map((f) => [f, true])) },
+        }) as unknown as Array<ServiceRow & { id: string }>;
+        const delta = diffInventory(existing, incoming, (r) => r.unit, (e) => e.unit,
+          (e, n) => sameInventoryRow<ServiceRow>(e, n, SERVICE_EXACT_FIELDS, "cpuPct", "memBytes"));
+        if (delta.remove.length > 0) {
+          await tx.assetService.deleteMany({ where: { id: { in: delta.remove.map((e) => e.id) } } });
+        }
+        if (delta.create.length > 0) {
+          await tx.assetService.createMany({
+            data: delta.create.map((r) => ({ id: randomUUID(), assetId, unit: r.unit, ...pickServiceFields(r) })),
+            skipDuplicates: true,
+          });
+        }
+        // updateMany, not update: a concurrent push for the same host may have
+        // deleted the row between our read and this write, and update would
+        // throw where this is a no-op the next scrape converges.
+        for (const { existing: e, next } of delta.update) {
+          await tx.assetService.updateMany({ where: { id: e.id }, data: pickServiceFields(next) });
+        }
+        await tx.assetInventoryScrape.upsert({
+          where: { assetId_kind: { assetId, kind: "services" } },
+          create: { assetId, kind: "services", scrapedAt: now },
+          update: { scrapedAt: now },
+        });
+        return { created: delta.create.length, updated: delta.update.length, removed: delta.remove.length, unchanged: delta.unchanged };
+      },
+      // The first write after the upgrade updates every row once (the stored
+      // figures are re-rounded); steady state is a handful.
+      { timeout: 30_000 },
+    ),
+  );
+}
+
+function pickServiceFields(r: ReturnType<typeof storedServiceRow>) {
+  return {
     platform:     r.platform,
     displayName:  r.displayName,
+    description:  r.description,
     loadState:    r.loadState,
     activeState:  r.activeState,
     subState:     r.subState,
@@ -77,14 +143,7 @@ export async function persistAssetServices(
     mainPid:      r.mainPid,
     mainProcess:  r.mainProcess,
     memBytes:     r.memBytes,
-    controllable: isServiceControllable(r),
-  }));
-  await retryOnDeadlock(() =>
-    prisma.$transaction([
-      prisma.assetService.deleteMany({ where: { assetId } }),
-      ...(data.length > 0
-        ? [prisma.assetService.createMany({ data, skipDuplicates: true })]
-        : []),
-    ]),
-  );
+    cpuPct:       r.cpuPct,
+    controllable: r.controllable,
+  };
 }

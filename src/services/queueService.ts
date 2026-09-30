@@ -53,6 +53,7 @@ import {
   runStorageFor,
   runProcessesFor,
   runEventLogFor,
+  runSdwanFor,
   runLossSweepFor,
   type MonitorCadence,
 } from "./monitoringService.js";
@@ -171,6 +172,10 @@ export const QUEUE_NAMES: Record<MonitorCadence, string> = {
   // ships off-host through the syslog / SFTP archivers deserves a pool that can
   // be sized (and starved) on its own.
   eventLog:     "polaris-monitor-eventlog",
+  // FortiOS SD-WAN SLA + rule selection. Split out of systemInfo 2026-09 so the
+  // SLA stream runs on its own (default 60s) interval; two small REST GETs per
+  // gate, published on the light tick.
+  sdwan:        "polaris-monitor-sdwan",
   // ICMP packet-loss sampler: a 10s side-probe for assets in warning /
   // recovering, feeding probeLossPct resolution only. Its own queue + pool so a
   // site-wide outage (hundreds of assets entering warning at once) drains
@@ -303,6 +308,7 @@ let slotPools: {
   storage:      WorkerSlotPool;
   processes:    WorkerSlotPool;
   eventLog:     WorkerSlotPool;
+  sdwan:        WorkerSlotPool;
   lossSample:   WorkerSlotPool;
   floating:     WorkerSlotPool;
 } | null = null;
@@ -374,7 +380,9 @@ let floatingLoopRunning = false;
 // generally cheaper than the per-vendor disk scalar pair; storage outranks
 // telemetry because storage feeds capacity alerts directly. Both still sit
 // below probe/fastFiltered so probes (the cheapest cadence) never starve.
-const FLOAT_PRIORITY: MonitorCadence[] = ["probe", "fastFiltered", "lldp", "storage", "processes", "eventLog", "telemetry", "systemInfo"];
+// sdwan sits with fastFiltered: a per-minute stream whose value is timeliness,
+// and cheaper than any of the walks below it.
+const FLOAT_PRIORITY: MonitorCadence[] = ["probe", "fastFiltered", "sdwan", "lldp", "storage", "processes", "eventLog", "telemetry", "systemInfo"];
 
 
 // ─── Stalled-worker watchdog ─────────────────────────────────────────────────
@@ -667,6 +675,8 @@ async function ensureQueues(boss: PgBossType): Promise<void> {
     // One SSH/WinRM session reading a bounded window of the OS log, then an
     // ingest that the sink rate-caps. Shorter than processes: no sub-passes.
     eventLog:     300,
+    // Two parallel REST GETs bounded by the system-info timeout (≤120s).
+    sdwan:        150,
     // One ping with a 5s timeout. Deliberately the tightest cap of any queue:
     // a sample that has not landed within 15s is worthless (the next one is
     // already due at 10s), so failing fast is better than holding a slot.
@@ -828,6 +838,11 @@ export async function startPgbossWorkers(): Promise<void> {
   // ssh/winrm-polled assets with pins/mapped names produce work.
   const processesWorkers = resolveEnvInt("POLARIS_MONITOR_PROCESSES_WORKERS", 12);
   const eventLogWorkers  = resolveEnvInt("POLARIS_MONITOR_EVENTLOG_WORKERS", 8);
+  // SD-WAN: one job per SD-WAN-enabled FortiGate per interval (default 60s),
+  // each two parallel REST GETs. 8 slots clears several hundred gates a minute
+  // at typical sub-second FortiOS response times; the floating pool absorbs a
+  // slow-gate backlog.
+  const sdwanWorkers     = resolveEnvInt("POLARIS_MONITOR_SDWAN_WORKERS", 8);
   // The loss sampler is one ping per asset per 10s — cheap individually, but
   // fleet-wide during a site outage. A generous default is safe (a ping holds
   // its slot for ≤5s) and the cap is what stops it competing with real probes.
@@ -842,12 +857,13 @@ export async function startPgbossWorkers(): Promise<void> {
     storage:      storageWorkers,
     processes:    processesWorkers,
     eventLog:     eventLogWorkers,
+    sdwan:        sdwanWorkers,
     lossSample:   lossSampleWorkers,
     floating:     floatingWorkers,
   });
   logger.info(
     {
-      probeWorkers, fastWorkers, heavyWorkers, lldpWorkers, storageWorkers, processesWorkers, eventLogWorkers, lossSampleWorkers, floatingWorkers, cores: cpus().length,
+      probeWorkers, fastWorkers, heavyWorkers, lldpWorkers, storageWorkers, processesWorkers, eventLogWorkers, sdwanWorkers, lossSampleWorkers, floatingWorkers, cores: cpus().length,
     },
     "pg-boss workers configured",
   );
@@ -865,6 +881,7 @@ export async function startPgbossWorkers(): Promise<void> {
     storage:      createWorkerSlotPool("storage",   storageWorkers),
     processes:    createWorkerSlotPool("processes", processesWorkers),
     eventLog:     createWorkerSlotPool("eventlog",  eventLogWorkers),
+    sdwan:        createWorkerSlotPool("sdwan",     sdwanWorkers),
     lossSample:   createWorkerSlotPool("losssample", lossSampleWorkers),
     floating:     createWorkerSlotPool("floating",  floatingWorkers),
   };
@@ -938,6 +955,14 @@ export async function startPgbossWorkers(): Promise<void> {
   }, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
     await runDedicatedWorker("eventLog", jobs[0], (assetId, labels) =>
       runEventLogFor(assetId, labels),
+    );
+  });
+
+  await boss.work<MonitorJobPayload>(QUEUE_NAMES.sdwan, {
+    localConcurrency: sdwanWorkers, batchSize: 1, pollingIntervalSeconds: 2,
+  }, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
+    await runDedicatedWorker("sdwan", jobs[0], (assetId, labels) =>
+      runSdwanFor(assetId, labels),
     );
   });
 
@@ -1065,6 +1090,7 @@ async function dispatchFloatingJob(
       case "storage":      await runStorageFor(assetId, labels);      break;
       case "processes":    await runProcessesFor(assetId, labels);    break;
       case "eventLog":     await runEventLogFor(assetId, labels);     break;
+      case "sdwan":        await runSdwanFor(assetId, labels);        break;
       // The sweep is the one chunked cadence, so it reads the whole array off
       // the payload rather than the single assetId the others take. (It is not
       // in the floating pool's priority list today — if its own budget is

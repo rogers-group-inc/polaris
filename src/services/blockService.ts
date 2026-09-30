@@ -10,6 +10,7 @@ import {
   isValidCidr,
   detectIpVersion,
 } from "../utils/cidr.js";
+import { lockBlockForSubnetWrites } from "./subnetService.js";
 
 export interface CreateBlockInput {
   name: string;
@@ -126,33 +127,40 @@ export async function updateBlock(id: string, input: UpdateBlockInput) {
 
 // ─── Delete ───────────────────────────────────────────────────────────────────
 
+// Business rule 4: a block that still holds networks is refused with a 409,
+// whatever state those networks are in (deprecated ones included). The FK
+// cascades, so without this guard one click silently took every network — and
+// every reservation under them — with it. The operator moves the networks to
+// another block (subnetService.moveSubnet), archives or deletes them first.
+//
+// The count and the delete share one transaction under the block's subnet
+// write lock (rule 20a), so a network created or moved INTO this block by a
+// concurrent writer is either seen by the count or waits until the block is
+// gone (and then fails its own existence check) — never cascaded away unseen.
 export async function deleteBlock(id: string, actor?: string) {
-  const block = await prisma.ipBlock.findUnique({
-    where: { id },
-    include: { subnets: { select: { id: true } } },
+  const deleted = await prisma.$transaction(async (tx) => {
+    await lockBlockForSubnetWrites(tx, id);
+    const block = await tx.ipBlock.findUnique({
+      where: { id },
+      include: { _count: { select: { subnets: true } } },
+    });
+    if (!block) throw new AppError(404, `IP Block ${id} not found`);
+
+    const networks = block._count.subnets;
+    if (networks > 0)
+      throw new AppError(
+        409,
+        `Cannot delete block ${block.cidr} — it still contains ${networks} network${networks === 1 ? "" : "s"}. ` +
+          `Move ${networks === 1 ? "it" : "them"} to another block, archive or delete ${networks === 1 ? "it" : "them"} first.`,
+      );
+
+    return tx.ipBlock.delete({ where: { id } });
   });
-
-  if (!block) throw new AppError(404, `IP Block ${id} not found`);
-
-  const activeReservations = await prisma.reservation.count({
-    where: {
-      subnetId: { in: block.subnets.map((s) => s.id) },
-      status: "active",
-    },
-  });
-
-  if (activeReservations > 0)
-    throw new AppError(
-      409,
-      `Cannot delete block ${block.cidr} — it has ${activeReservations} active reservation(s) across its subnets`
-    );
-
-  const deleted = await prisma.ipBlock.delete({ where: { id } });
   void logEvent({
     action: "block.deleted",
     resourceType: "block",
     resourceId: id,
-    resourceName: block.name,
+    resourceName: deleted.name,
     actor,
     message: `Block deleted`,
   });

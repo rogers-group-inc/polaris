@@ -78,6 +78,37 @@ var DEFAULT_THEME = "nightfall";
   document.documentElement.setAttribute("data-theme", saved);
 })();
 
+// Page layout: how wide the shell may grow. Two capped columns centred in the
+// window (the sidebar, tables and slide-overs all follow the column's edges)
+// and one that fills the window. Stored per BROWSER, like the theme, because
+// the right answer is a property of the monitor, not of the account — the same
+// operator wants Auto on the ultrawide and 16:9 on the laptop. The CSS side is
+// the --layout-max-width token keyed on :root[data-layout] in styles.css.
+var LAYOUTS = [
+  { id: "16x9",  label: "16:9",  title: "A 16:9 column centred in the window" },
+  { id: "16x10", label: "16:10", title: "A 16:10 column centred in the window" },
+  { id: "auto",  label: "Auto",  title: "Fill the browser window, however wide it is" },
+];
+var DEFAULT_LAYOUT = "16x9";
+var LAYOUT_STORAGE_KEY = "polaris-layout";
+
+// Unknown, missing or retired values land on the default rather than on a
+// layout the stylesheet does not define (which would silently mean full-bleed).
+function _layoutId(v) {
+  for (var i = 0; i < LAYOUTS.length; i++) if (LAYOUTS[i].id === v) return v;
+  return DEFAULT_LAYOUT;
+}
+
+function _currentLayout() {
+  return _layoutId(document.documentElement.getAttribute("data-layout"));
+}
+
+(function () {
+  var saved = null;
+  try { saved = localStorage.getItem(LAYOUT_STORAGE_KEY); } catch (e) {}
+  document.documentElement.setAttribute("data-layout", _layoutId(saved));
+})();
+
 // SELECTABLE ids only — transit palettes are deliberately absent, so a saved
 // "afternoon" (which nothing should ever write) is rejected here the same way
 // a retired "dark" is, and the browser lands on a real theme.
@@ -470,6 +501,15 @@ function isAssetsAdmin() { return currentUserRole === "assetsadmin"; }
 // names map to the closest function-key check that matches the old
 // hardcoded-role behavior. Custom roles with the relevant grant pass.
 function canManageNetworks() { return permAtLeast("subnets", "fullwrite"); }
+// Mirrors the server's isAdminEquivalentPermissions (users + roles fullwrite):
+// the predicate behind admin-only overrides such as force-deleting a network
+// that still holds active reservations.
+function isAdminEquivalent() { return permAtLeast("users", "fullwrite") && permAtLeast("roles", "fullwrite"); }
+// IP blocks are their OWN function key: POST/PUT/DELETE /blocks gate on
+// ipBlocks:write, so the Blocks tab's Add / Edit / Delete must not ride the
+// subnets gate above (a subnets:fullwrite role without ipBlocks:write saw
+// controls that could only 403, and an ipBlocks:write role never saw them).
+function canManageBlocks() { return permAtLeast("ipBlocks", "write"); }
 function canManageAssets() { return permAtLeast("assets", "write"); }
 // Quarantine is its OWN function key, not part of `assets` — a role can manage
 // asset records without being allowed to push MAC blocks to FortiGates, and
@@ -499,11 +539,44 @@ function canProbeAssets() { return permAtLeast("assetsProbe", "read"); }
 // `dependencyTestUntil` and can briefly mask a real outage — so it sits on
 // `assetMonitorSettings=fullwrite`, admin-only in every built-in role.
 function canSimulateDependencyDown() { return permAtLeast("assetMonitorSettings", "fullwrite"); }
-function canManageMaintenance() { return permAtLeast("maintenanceManagement", "fullwrite"); }
+function canManageMaintenance() { return permAtLeast("maintenanceManagement", "write"); }
 function isUserOrAbove() { return permAtLeast("subnets", "write") || permAtLeast("reservations", "write"); }
 function canReviewConflicts() { return permAtLeast("discoveryConflicts", "write"); }
 function canReserveIps() { return permAtLeast("reservations", "write"); }
 function canCreateNetworks() { return permAtLeast("subnets", "write"); }
+// Add Network dialogs: the operator never picks a block — the server places a
+// new network in the most specific block containing its CIDR. This fills a
+// read-only Block field from the typed CIDR (debounced; the containment math
+// stays server-side in src/utils/cidr.ts), so the operator sees where it will
+// land before saving. A stale reply (the CIDR changed while it was in flight)
+// is dropped rather than painted over the newer answer. The field is a
+// preview only; the create response's `block` is what the server chose.
+function wireResolvedBlockField(cidrInputId, blockFieldId) {
+  var input = document.getElementById(cidrInputId);
+  var field = document.getElementById(blockFieldId);
+  if (!input || !field) return;
+  var timer = null;
+  var seq = 0;
+  function show(text) { field.value = text; }
+  input.addEventListener("input", function () {
+    clearTimeout(timer);
+    var cidr = input.value.trim();
+    if (!cidr) { seq++; show(""); return; }
+    timer = setTimeout(async function () {
+      var mine = ++seq;
+      try {
+        var out = await api.subnets.resolveBlock(cidr);
+        if (mine !== seq) return;
+        show(out && out.block
+          ? out.block.name + " (" + out.block.cidr + ")"
+          : (cidr.indexOf("/") < 0 ? "" : "No block contains this network"));
+      } catch (_) {
+        if (mine === seq) show("");
+      }
+    }, 250);
+  });
+}
+
 function canEditSubnet(subnet) {
   if (permAtLeast("subnets", "fullwrite")) return true;
   if (!permAtLeast("subnets", "write")) return false;
@@ -564,6 +637,9 @@ const NAV_ITEMS = [
   { href: "/",                label: "Dashboard",    icon: "grid" },
   { href: "/map.html",        label: "Device Map",   icon: "mapPin", perm: ["deviceMap", "read"] },
   { href: "/appmap.html",     label: "Application Map", icon: "share2", perm: ["applicationMap", "read"] },
+  // Agent-run path checks. Gate in lockstep with pageRequiredPermission
+  // in src/app.ts.
+  { href: "/path-monitor.html", label: "Path Monitor", icon: "globe", perm: ["pathChecks", "read"] },
   { href: "/ipam.html",       label: "IPAM",         icon: "layers", anyPerm: [["ipBlocks", "read"], ["subnets", "read"]] },
   { href: "/assets.html",         label: "Assets",       icon: "monitor", perm: ["assets", "read"] },
   { href: "/events.html",         label: "Events",       icon: "activity", perm: ["events", "read"] },
@@ -584,6 +660,11 @@ const NAV_ITEMS = [
 var _pushState = null;
 var _pushBusy = false;
 var _notifPref = null;
+
+// renderNav (and with it wireNotificationPrefs) runs twice on a cold cache —
+// once off the cached user, once after /auth/me lands. One enrollment offer
+// per page load, checked at most once.
+var _pushOfferHandled = false;
 
 // The three answers to "how do you want to be alerted", in menu order. Kept
 // here rather than fetched from GET /me/notification-preference's `options`
@@ -665,7 +746,87 @@ function wireNotificationPrefs() {
     .catch(function () { _notifPref = _notifPref || "email"; })
     .then(function () {
       return polarisPush.status().then(function (st) { _pushState = st || null; }).catch(function () {});
+    })
+    // Status first, so the offer can answer "does the server even do push?"
+    // from the reading already in hand instead of fetching the key again.
+    .then(function () { return _maybeOfferPushEnrollment(); });
+}
+
+/**
+ * Ask a browser that has never been asked whether it should receive push.
+ *
+ * The reconcile above enrolls this browser silently when permission is already
+ * granted — which is every browser that has enrolled before. A browser signing
+ * in for the first time sits at permission "default", and nothing may enroll
+ * it without the permission prompt, which needs live user activation. Without
+ * this, an operator whose account prefers push had to go and re-pick the
+ * preference from the account menu on every new laptop, browser profile or
+ * re-install, and nothing told them so: the alert simply never arrived there.
+ *
+ * Asked once per account per browser (polarisPush records it), and inside the
+ * alerts:read gate wireNotificationPrefs already applies — the push routes
+ * themselves say any viewer may opt into push.
+ */
+function _maybeOfferPushEnrollment() {
+  if (_pushOfferHandled) return;
+  if (!window.polarisPush || !polarisPush.shouldOfferEnrollment) return;
+  _pushOfferHandled = true;
+  return polarisPush
+    .shouldOfferEnrollment(_notifPref, { username: currentUsername, status: _pushState })
+    .then(function (offer) { if (offer) _openPushOfferDialog(); })
+    .catch(function () { /* an offer nobody asked for is never worth an error */ });
+}
+
+/**
+ * The offer itself.
+ *
+ * Recorded as made the moment it opens rather than when a button is clicked.
+ * openModal's other exits — the X, a click on the scrim, Escape — hand back no
+ * callback, and an offer that reopens on every page navigation until it is
+ * answered through one specific button is a nag. So: asked once, however it
+ * ends, and the body says where to go afterwards.
+ *
+ * enable() is called as the FIRST statement of the click handler, before
+ * closeModal and before any await, because Notification.requestPermission()
+ * needs the click's transient user activation and Safari drops it across an
+ * await — the same ordering rule as _chooseNotifPref and push.js's enable().
+ */
+function _openPushOfferDialog() {
+  if (typeof openModal !== "function") return;
+  var body =
+    '<p style="font-size:0.9rem;color:var(--color-text-primary);margin:0 0 0.75rem">' +
+      'Your account is set to be notified by ' +
+      escapeHtml((NOTIF_PREF_LABELS[_notifPref] || _notifPref).toLowerCase()) +
+      ', but this browser has never been enrolled. Turn push notifications on here?' +
+    '</p>' +
+    '<p style="font-size:0.85rem;color:var(--color-text-secondary);margin:0">' +
+      'Your browser will ask for permission. You can turn push on or off at any time from ' +
+      'the Notifications row in your account menu.' +
+    '</p>';
+  var footer =
+    '<button class="btn btn-secondary" id="push-offer-dismiss">Not now</button>' +
+    '<button class="btn btn-primary" id="push-offer-enable">Enable</button>';
+  openModal("Push notifications", body, footer);
+  polarisPush.recordOfferMade(currentUsername);
+
+  var dismissBtn = document.getElementById("push-offer-dismiss");
+  if (dismissBtn) dismissBtn.onclick = function () { closeModal(); };
+
+  var enableBtn = document.getElementById("push-offer-enable");
+  if (!enableBtn) return;
+  enableBtn.onclick = function () {
+    var enrolling = polarisPush.enable({ surface: "desktop" });
+    closeModal();
+    enrolling.then(function () {
+      if (typeof showToast === "function") showToast("Push notifications are on for this browser", "success");
+    }, function (err) {
+      if (typeof showToast === "function") {
+        showToast((err && err.message) || "This browser refused push notifications.", "warning");
+      }
+    }).then(function () {
+      return polarisPush.status().then(function (st) { _pushState = st || null; }).catch(function () {});
     });
+  };
 }
 
 /**
@@ -705,6 +866,48 @@ function _tzMenuItem() {
     icon: ICONS.clock,
     onSelect: function () { _openTimezoneModal(); },
   };
+}
+
+/**
+ * The user menu's layout row. No permission gate and no async state: it is a
+ * display preference held in this browser, so it always renders, labelled with
+ * the layout in force.
+ */
+function _layoutMenuItem(anchor) {
+  var cur = _currentLayout();
+  var label = cur;
+  for (var i = 0; i < LAYOUTS.length; i++) if (LAYOUTS[i].id === cur) label = LAYOUTS[i].label;
+  return {
+    label: "Layout: " + label,
+    icon: ICONS.monitor,
+    onSelect: function () { _openLayoutMenu(anchor); },
+  };
+}
+
+/**
+ * The three-way layout chooser, opened on the same anchor once the account
+ * menu has closed (showRowMenu closes before it runs a handler) — the same
+ * shape as the notification-preference chooser.
+ */
+function _openLayoutMenu(anchor) {
+  if (typeof showRowMenu !== "function") return;
+  var cur = _currentLayout();
+  var items = LAYOUTS.map(function (l) {
+    return {
+      label: l.label + (l.id === cur ? "  ✓" : ""),
+      title: l.title,
+      onSelect: function () { _setLayout(l.id); },
+    };
+  });
+  showRowMenu(anchor, items, { label: "Page layout", align: "end" });
+}
+
+// Applies live: the shell width and the slide-over offset both read the CSS
+// token, so an open panel moves with the column and nothing needs a reload.
+function _setLayout(id) {
+  id = _layoutId(id);
+  document.documentElement.setAttribute("data-layout", id);
+  try { localStorage.setItem(LAYOUT_STORAGE_KEY, id); } catch (e) {}
 }
 
 /**
@@ -1047,6 +1250,7 @@ const ICONS = {
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
   shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>',
   key: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L21 2"/><path d="M17 6l3 3"/><path d="M14 9l3 3"/></svg>',
+  globe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
   share2: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>',
   zap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
   help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
@@ -1104,7 +1308,7 @@ function renderNav() {
       <div id="update-status" class="query-status update-status" style="display:none"></div>
       <div id="query-status" class="query-status" style="display:none"></div>
       <div id="capacity-critical-alert" class="capacity-critical-alert" style="display:none"></div>
-      ${(isAdmin() || canManageAssets() || permAtLeast("credentials", "write")) ? `<div style="padding:0.5rem 0.5rem 0;border-top:1px solid var(--color-border-light)">
+      ${(isAdmin() || canManageAssets() || permAtLeast("credentials", "write") || permAtLeast("firmware", "read")) ? `<div style="padding:0.5rem 0.5rem 0;border-top:1px solid var(--color-border-light)">
         <a href="/server-settings.html" class="sidebar-bottom-link${current === '/server-settings.html' ? ' active' : ''}">${ICONS.settings}<span>Server Settings</span></a>
       </div>` : ''}
       <!-- The theme band sits here, below Server Settings and above the
@@ -1832,6 +2036,11 @@ function openSearchResult(hit) {
 
   if (window.location.pathname === target.page) {
     target.handler();
+  } else if (typeof target.open === "function") {
+    // The record's slide-over, in place — every page can host one
+    // (PolarisPanels loads the panel's scripts on demand), so a hit no
+    // longer costs the operator the page they were on.
+    target.open();
   } else {
     window.location.href = target.page + target.hash;
   }
@@ -1909,13 +2118,18 @@ function _searchTargetFor(hit) {
       page: "/assets.html",
       hash: "#view=asset:" + encodeURIComponent(hit.id),
       handler: function () { if (typeof openViewModal === "function") openViewModal(hit.id); },
+      open: function () { PolarisPanels.openAsset(hit.id); },
     };
   }
   if (hit.type === "block") {
+    // On the IPAM page a block hit opens its editor; anywhere else the
+    // drill-in slide-over (the block's networks) is the one surface that can
+    // be hosted in place.
     return {
       page: "/ipam.html",
       hash: "#tab=blocks&view=block:" + encodeURIComponent(hit.id),
       handler: function () { if (typeof openBlockEditModal === "function") openBlockEditModal(hit.id); },
+      open: function () { PolarisPanels.openBlock(hit.id); },
     };
   }
   if (hit.type === "subnet") {
@@ -1923,6 +2137,7 @@ function _searchTargetFor(hit) {
       page: "/ipam.html",
       hash: "#tab=networks&subnet=" + encodeURIComponent(hit.id),
       handler: function () { if (typeof openIpPanel === "function") openIpPanel(hit.id); },
+      open: function () { PolarisPanels.openNetwork(hit.id); },
     };
   }
   if (hit.type === "reservation") {
@@ -1938,6 +2153,7 @@ function _searchTargetFor(hit) {
         handler: function () {
           if (typeof openIpPanel === "function") openIpPanel(resvSubnetId, { focusReservationId: hit.id });
         },
+        open: function () { PolarisPanels.openNetwork(resvSubnetId, { focusReservationId: hit.id }); },
       };
     }
     // Fallback when the search hit didn't carry a subnetId — open the
@@ -1958,6 +2174,7 @@ function _searchTargetFor(hit) {
         handler: function () {
           if (typeof openIpPanel === "function") openIpPanel(ctx.subnetId, { focusIp: ctx.ipAddress });
         },
+        open: function () { PolarisPanels.openNetwork(ctx.subnetId, { focusIp: ctx.ipAddress }); },
       };
     }
   }
@@ -2118,7 +2335,7 @@ var WIKI_URL = "https://github.com/rogers-group-inc/polaris/wiki";
 
 /**
  * The account menu behind the page-header user badge: notification
- * preference, two-factor enrollment, help, logout. Items are built per open so
+ * preference, timezone, page layout, credentials, help, logout. Items are built per open so
  * the preference / 2FA rows reflect current state without anything to keep
  * repainted. The theme
  * toggle lives at the bottom of the sidebar, not here — it is a display
@@ -2135,6 +2352,9 @@ function openUserMenu(anchor) {
 
   var tz = _tzMenuItem();
   if (tz) items.push(tz);
+
+  var layout = _layoutMenuItem(anchor);
+  if (layout) items.push(layout);
 
   // Credentials group: password first, then the second factor on it.
   var pw = _changePasswordMenuItem();
@@ -2887,6 +3107,96 @@ function _focusFirstIn(container) {
 }
 var _modalReturnFocus = null;  // element refocused when the shared modal closes
 var _modalKeyTeardown = null;  // active focus-trap teardown for the shared modal
+var _modalStepKeyTeardown = null; // active stepper-key teardown for the shared modal
+
+// ─── Stepped-modal keyboard navigation ────────────────────────────────────────
+//
+// Every wizard footer is `Cancel · ← Back · Next → · Save`, with only the
+// buttons that apply to the current step on screen (each toggled through an
+// inline `style.display` by the wizard's own syncFooter). `wireModalStepKeys`
+// puts the keyboard on that footer so a six-step form can be walked without
+// reaching for the mouse:
+//
+//   → / ←   click Next / Back, whenever that button is showing
+//   Enter   Next while Next is showing; the submit button only once it is not
+//
+// Enter is deliberately NOT "submit the dialog". On a stepped form the primary
+// button under the operator's eye is Next, so Enter on step 2 has to mean step
+// 3 — an Enter that instead saved a form the operator hadn't finished would
+// create half-built automations, and the wizards keep every later step's
+// validation for when it is reached.
+//
+// Registered against openModal's ONE shared #modal-overlay, which is why the
+// teardown hangs off the same two places `_modalKeyTeardown` does: a wizard
+// never has to remember to unwire on close, and the next modal to use that
+// overlay — a plain form with a single Save — cannot inherit these keys.
+function wireModalStepKeys(opts) {
+  if (_modalStepKeyTeardown) { _modalStepKeyTeardown(); _modalStepKeyTeardown = null; }
+  function onKey(e) {
+    if (e.key !== "Enter" && e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    // A field-level handler that already acted owns the key: both wizard
+    // typeaheads preventDefault on Enter while a suggestion is highlighted.
+    if (e.defaultPrevented || e.repeat) return;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    // Only keys typed inside the shared modal. A dialog stacked OVER the
+    // wizard (the code editor, the address book, a showConfirm) builds its own
+    // overlay, so this leaves that layer's Enter alone.
+    var t = e.target;
+    if (!t || !t.closest || !t.closest("#modal-overlay")) return;
+    var tag = (t.tagName || "").toUpperCase();
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+      // Arrows belong to the caret in a text field and to the options of a
+      // select; the footer only hears them from elsewhere in the dialog.
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable) return;
+      var move = _stepKeyBtn(e.key === "ArrowRight" ? opts.next : opts.back);
+      if (!move) return;
+      e.preventDefault();
+      move.click();
+      _focusVisibleStepPanel(move);
+      return;
+    }
+    // Enter: a textarea keeps it for newlines, and a focused button or link
+    // keeps its own activation (Tab to Back, press Enter, and you go back).
+    if (tag === "TEXTAREA" || t.closest("button, a[href]")) return;
+    var next = _stepKeyBtn(opts.next);
+    var btn = next || _stepKeyBtn(opts.submit);
+    if (!btn) return;
+    e.preventDefault();
+    btn.click();
+    if (next) _focusVisibleStepPanel(next);
+  }
+  document.addEventListener("keydown", onKey);
+  _modalStepKeyTeardown = function () { document.removeEventListener("keydown", onKey); };
+  return _modalStepKeyTeardown;
+}
+
+// A footer button that is on screen and clickable, by id or element. Visibility
+// is read off the inline `display` those footers toggle — deliberately NOT
+// `offsetParent === null` the way `_focusableIn` does it, because happy-dom has
+// no layout engine and that test would call every button hidden, making the DOM
+// tests vacuous.
+function _stepKeyBtn(ref) {
+  var el = typeof ref === "string" ? document.getElementById(ref) : ref;
+  if (!el || el.disabled || el.hidden) return null;
+  if (el.isConnected === false) return null;
+  if (el.style && el.style.display === "none") return null;
+  return el;
+}
+
+// Move focus into the step that just became visible, so the next keystroke
+// isn't typed into a field on the step the operator has left (a hidden field
+// keeps focus, swallows the arrows, and reads as a dead keyboard). Falls back
+// to the button that did the moving, which keeps Enter and the arrows live.
+function _focusVisibleStepPanel(fallback) {
+  var overlay = document.getElementById("modal-overlay");
+  var panel = overlay && overlay.querySelector(".step-panel.visible");
+  var f = panel ? _focusableIn(panel) : [];
+  if (f.length) { try { f[0].focus(); return; } catch (_) { /* element gone */ } }
+  if (fallback && typeof fallback.focus === "function") {
+    try { fallback.focus(); } catch (_) { /* element gone */ }
+  }
+}
+if (typeof window !== "undefined") window.wireModalStepKeys = wireModalStepKeys;
 
 // ─── Panel lock (per-user, app-wide) ────────────────────────────────────────
 //
@@ -3101,6 +3411,229 @@ function revealOverlay(el, after) {
 }
 if (typeof window !== "undefined") window.revealOverlay = revealOverlay;
 
+// ─── Slide-overs from any page ──────────────────────────────────────────────
+//
+// The asset, network (IP) and block slide-overs each live in their own script
+// (assets.js, ip-panel.js, block-panel.js) and used to be reachable only on
+// the pages that load them; everywhere else a click-through navigated to the
+// panel's home page with a #view= hash and the operator lost their place.
+// PolarisPanels loads a panel's scripts on demand — in order, once, skipping
+// any the page already carries — then opens it in place, so every page can
+// pivot into any record without paying for assets.js up front. CSP permits
+// it: the files are same-origin, which `script-src 'self'` covers regardless
+// of how the <script> element reaches the document.
+//
+// Each bundle is the SAME ordered list the panel's home page loads statically
+// (index.html / map.html / ipam.html carry the commented versions) — keep
+// them in step when a panel grows a dependency. A file's DOMContentLoaded
+// page-init never runs when it lands late, which is exactly the off-page case
+// those handlers already guard for.
+var _PANEL_SCRIPT_BUNDLES = {
+  asset: [
+    "/js/vendor/jspdf.umd.min.js",
+    "/js/vendor/jspdf.plugin.autotable.min.js",
+    "/js/vendor/html-to-image.min.js",
+    "/js/table-sf.js",
+    "/js/favorites.js",
+    "/js/integrations.js",
+    "/js/temp-unit.js",
+    "/js/chart-severity.js",
+    "/js/monitor-states.js",
+    "/js/monitor-down-after.js",
+    "/js/asset-merge-modal.js",
+    "/js/assets.js",
+    "/js/condition-builder.js",
+    "/js/automations-address-book.js",
+    "/js/automations-wizard.js",
+    "/js/automations-portability.js",
+    "/js/recurrence-editor.js",
+    "/js/assets-maintenance.js",
+  ],
+  network: ["/js/table-sf.js", "/js/placeholder-mac.js", "/js/reservation-notes.js", "/js/ip-panel.js"],
+  block: ["/js/block-panel.js"],
+};
+// The global each bundle must leave behind — also the "already here" test, so
+// a page that loads a panel statically never fetches a byte.
+var _PANEL_OPENERS = { asset: "openViewModal", network: "openIpPanel", block: "openBlockPanel" };
+var _panelScriptLoads = {};   // src → Promise; a script is requested once per page
+
+function _loadPanelScript(src) {
+  if (_panelScriptLoads[src]) return _panelScriptLoads[src];
+  if (document.querySelector('script[src="' + src + '"]')) {
+    _panelScriptLoads[src] = Promise.resolve();
+    return _panelScriptLoads[src];
+  }
+  _panelScriptLoads[src] = new Promise(function (resolve, reject) {
+    var s = document.createElement("script");
+    s.src = src;
+    s.async = false;
+    s.onload = function () { resolve(); };
+    s.onerror = function () {
+      delete _panelScriptLoads[src];   // let a later open retry after a blip
+      reject(new Error("Failed to load " + src));
+    };
+    document.body.appendChild(s);
+  });
+  return _panelScriptLoads[src];
+}
+
+// Resolves once `kind`'s opener is callable. Sequential on purpose: the files
+// declare globals the next one reads at evaluation time.
+function ensurePanelScripts(kind) {
+  var opener = _PANEL_OPENERS[kind];
+  var list = _PANEL_SCRIPT_BUNDLES[kind];
+  if (!opener || !list) return Promise.reject(new Error("Unknown panel: " + kind));
+  if (typeof window[opener] === "function") return Promise.resolve();
+  return list.reduce(function (p, src) {
+    return p.then(function () { return _loadPanelScript(src); });
+  }, Promise.resolve()).then(function () {
+    if (typeof window[opener] !== "function") throw new Error(opener + " is not defined after loading the " + kind + " panel");
+  });
+}
+
+// When the scripts cannot be loaded (a proxy that blocks a file, a half-
+// deployed update) the deep link is still the right answer — it is what every
+// caller did before the panel could open in place.
+function _panelFallbackNavigate(href) {
+  window.location.href = href;
+  return false;
+}
+
+// Deep-link hash the network slide-over is reachable by on /ipam.html. Two
+// forms because two readers exist: subnets.js applyHashFilters takes
+// subnet= (+ focusReservation=), processSearchHash takes ip=<sid>@<ip>.
+function networkPanelHash(subnetId, opts) {
+  var o = opts || {};
+  if (o.focusIp) return "#tab=networks&ip=" + encodeURIComponent(subnetId) + "@" + encodeURIComponent(o.focusIp);
+  return "#tab=networks&subnet=" + encodeURIComponent(subnetId) +
+    (o.focusReservationId ? "&focusReservation=" + encodeURIComponent(o.focusReservationId) : "");
+}
+
+var PolarisPanels = {
+  ensure: ensurePanelScripts,
+
+  // Asset details (openViewModal in assets.js). opts.tab lands on a tab.
+  // Resolves true when the panel opened in place, false when it could not
+  // (the Dash wallboard has no session, so a panel there would only 401 —
+  // the click stays a no-op, as it always was).
+  openAsset: function (id, opts) {
+    if (!id || window.POLARIS_DASH_LOCAL) return Promise.resolve(false);
+    var href = "/assets.html#view=asset:" + encodeURIComponent(id) +
+      (opts && opts.tab ? "&tab=" + encodeURIComponent(opts.tab) : "");
+    return ensurePanelScripts("asset").then(function () {
+      window.openViewModal(id, opts || undefined);
+      return true;
+    }, function () { return _panelFallbackNavigate(href); });
+  },
+
+  // Network slide-over (openIpPanel in ip-panel.js) — the reservation table
+  // of one subnet. opts: focusIp / focusReservationId scroll to a row;
+  // subnetCidr lets the panel land on the right page of a large subnet
+  // without a second fetch, and is looked up here when focusIp is given
+  // without it.
+  openNetwork: function (subnetId, opts) {
+    if (!subnetId || window.POLARIS_DASH_LOCAL) return Promise.resolve(false);
+    var o = Object.assign({}, opts || {});
+    var href = "/ipam.html" + networkPanelHash(subnetId, o);
+    return ensurePanelScripts("network").then(function () {
+      var cidrP = (o.focusIp && !o.subnetCidr && typeof api !== "undefined" && api.subnets && typeof api.subnets.get === "function")
+        ? api.subnets.get(subnetId).then(function (s) { if (s && s.cidr) o.subnetCidr = s.cidr; }, function () {})
+        : Promise.resolve();
+      return cidrP.then(function () {
+        window.openIpPanel(subnetId, Object.keys(o).length ? o : undefined);
+        return true;
+      });
+    }, function () { return _panelFallbackNavigate(href); });
+  },
+
+  // Block drill-in (openBlockPanel in block-panel.js) — the networks inside
+  // one block.
+  openBlock: function (blockId) {
+    if (!blockId || window.POLARIS_DASH_LOCAL) return Promise.resolve(false);
+    var href = "/ipam.html#tab=blocks&view=block:" + encodeURIComponent(blockId);
+    return ensurePanelScripts("block").then(function () {
+      window.openBlockPanel(blockId);
+      return true;
+    }, function () { return _panelFallbackNavigate(href); });
+  },
+};
+if (typeof window !== "undefined") window.PolarisPanels = PolarisPanels;
+
+// True when `overlayEl` is the slide-over the operator is looking at: it is
+// open, no other slide-over was opened after it (every .slideover-overlay is
+// z-index 1050, so the later one in the DOM paints on top — see
+// raiseSlideover; that is why no slide-over may carry a z-index of its own),
+// and no modal is stacked over it. Escape and keyboard
+// chords gate on this, so a key meant for the top panel never closes the one
+// underneath.
+function isTopmostSlideover(overlayEl) {
+  if (!overlayEl || !overlayEl.classList || !overlayEl.classList.contains("open")) return false;
+  var mo = document.getElementById("modal-overlay");
+  if (mo && mo.classList.contains("open")) return false;
+  var open = document.querySelectorAll(".slideover-overlay.open");
+  return open.length > 0 && open[open.length - 1] === overlayEl;
+}
+if (typeof window !== "undefined") window.isTopmostSlideover = isTopmostSlideover;
+
+// Escape closes `overlayEl`'s slide-over when it is the topmost layer — the
+// one Escape handler every slide-over uses. Exactly one open slide-over is
+// topmost when the key lands, so exactly one handler matches; it then stops
+// the event, because once it has closed, the panel beneath IS topmost and a
+// handler registered after this one would close that too — one keypress,
+// two panels gone. Handlers registered earlier already ran and declined.
+function wireSlideoverEscape(overlayEl, close) {
+  if (!overlayEl || typeof close !== "function") return;
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    if (!isTopmostSlideover(overlayEl)) return;
+    e.stopImmediatePropagation();
+    close();
+  });
+}
+if (typeof window !== "undefined") window.wireSlideoverEscape = wireSlideoverEscape;
+
+// Move a CLOSED slide-over overlay to the end of <body> before it opens, so it
+// paints over every slide-over already open. The overlays are created once and
+// kept, so DOM order is first-open order, not open order: a network panel
+// opened early in a session and then re-opened from inside the asset panel
+// would otherwise slide in BEHIND the panel that asked for it. A no-op for an
+// open overlay (a panel pivoting in place must not be re-inserted under its
+// own nested drilldowns) and for one with no slide-over after it.
+function raiseSlideover(overlayEl) {
+  if (!overlayEl || overlayEl.parentNode !== document.body) return;
+  if (!overlayEl.classList.contains("slideover-overlay") || overlayEl.classList.contains("open")) return;
+  var later = overlayEl.nextElementSibling;
+  while (later) {
+    if (later.classList && later.classList.contains("slideover-overlay")) { document.body.appendChild(overlayEl); return; }
+    later = later.nextElementSibling;
+  }
+}
+if (typeof window !== "undefined") window.raiseSlideover = raiseSlideover;
+
+// Any <a href="/assets.html#view=asset:<id>[&tab=<key>]"> — the deep link the
+// dashboard widgets, the Events page's conflict cards and the alert email all
+// emit — opens the asset panel in place on a plain left click. Modifier and
+// middle clicks keep the href so "open in a new tab" still works, an explicit
+// target does too, and a listener that already handled the click (the Down
+// Assets widget's acknowledge menu calls preventDefault) is left alone.
+// Guarded against app.js being evaluated twice.
+function _wirePanelDeepLinks() {
+  if (typeof document === "undefined" || window.__polarisPanelLinksWired) return;
+  window.__polarisPanelLinksWired = true;
+  document.addEventListener("click", function (e) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var a = e.target && e.target.closest ? e.target.closest('a[href^="/assets.html#view=asset:"]') : null;
+    if (!a) return;
+    var tgt = a.getAttribute("target");
+    if (tgt && tgt !== "_self") return;
+    var m = /#view=asset:([^&]+)(?:&tab=([^&]+))?/.exec(a.getAttribute("href") || "");
+    if (!m) return;
+    e.preventDefault();
+    PolarisPanels.openAsset(decodeURIComponent(m[1]), m[2] ? { tab: decodeURIComponent(m[2]) } : undefined);
+  });
+}
+_wirePanelDeepLinks();
+
 // ─── Modal tabs + form parts ────────────────────────────────────────────────
 //
 // A tall config form stays ONE modal with tabs — never a wizard, never a new
@@ -3161,7 +3694,8 @@ function formDivider() {
 // Compatibility / scope constraints stated UP FRONT — versions, on-prem vs
 // cloud, what the integration will and won't reach. Bold the specific values.
 function infoBox(html) {
-  return '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);' +
+  return '<div style="background:color-mix(in srgb, var(--color-accent) 8%, transparent);' +
+    'border:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);' +
     'border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-bottom:1rem;font-size:0.82rem;' +
     'color:var(--color-text-secondary);line-height:1.5">' + html + "</div>";
 }
@@ -3381,6 +3915,9 @@ function openModal(title, bodyHTML, footerHTML, options) {
   _modalReturnFocus = document.activeElement;
   if (_modalKeyTeardown) { _modalKeyTeardown(); }
   _modalKeyTeardown = _trapFocus(modal, closeModal);
+  // The previous occupant of this overlay may have been a wizard; its stepper
+  // keys must not survive into a dialog whose footer means something else.
+  if (_modalStepKeyTeardown) { _modalStepKeyTeardown(); _modalStepKeyTeardown = null; }
   // rAF so the transition has a start state to animate from — but rAF does
   // NOT fire in a hidden tab, which would leave the dialog built and invisible
   // until the tab is next looked at. The timeout is the floor; `reveal` is
@@ -3403,6 +3940,7 @@ function closeModal() {
     overlay.classList.remove("above-slideover");
   }
   if (_modalKeyTeardown) { _modalKeyTeardown(); _modalKeyTeardown = null; }
+  if (_modalStepKeyTeardown) { _modalStepKeyTeardown(); _modalStepKeyTeardown = null; }
   if (_modalReturnFocus && typeof _modalReturnFocus.focus === "function") {
     try { _modalReturnFocus.focus(); } catch (_) { /* element gone */ }
   }
@@ -3737,9 +4275,14 @@ function showConfirm(message) {
     overlay.querySelector(".modal-body p").textContent = message;
     document.body.appendChild(overlay);
     var dialog = overlay.querySelector(".modal");
+    var cancelBtn = overlay.querySelector('[data-confirm="cancel"]');
+    var okBtn = overlay.querySelector('[data-confirm="ok"]');
     var prevFocus = document.activeElement;
+    var settled = false;
     var teardownTrap = _trapFocus(dialog, function () { done(false); });
     function done(val) {
+      if (settled) return;
+      settled = true;
       teardownTrap();
       overlay.classList.remove("open");
       overlay.addEventListener("transitionend", function () {
@@ -3752,15 +4295,130 @@ function showConfirm(message) {
       }
       resolve(val);
     }
-    overlay.querySelector('[data-confirm="cancel"]').onclick = function () { done(false); };
-    overlay.querySelector('[data-confirm="ok"]').onclick = function () { done(true); };
+    cancelBtn.onclick = function () { done(false); };
+    okBtn.onclick = function () { done(true); };
+    // Keyboard: Enter confirms, Escape cancels (`_trapFocus` wires Escape).
+    // Confirm also TAKES focus on open, so the default action is the one the
+    // operator can see is default — but Enter is handled here rather than left
+    // to the focused button, so it still confirms if anything on the page has
+    // stolen focus back.
+    //
+    // Two things this must not do. An operator who Tabs to Cancel and presses
+    // Enter cancels: that key belongs to the button they chose. And an
+    // auto-REPEATING Enter is swallowed outright, because these dialogs open
+    // from row menus whose items are themselves activated with Enter — the
+    // repeat of that same keypress lands on a button that appeared mid-press,
+    // and a held key must never confirm a destructive act nobody has read.
+    dialog.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter") return;
+      if (e.repeat) { e.preventDefault(); return; }
+      if (e.target === cancelBtn) return;
+      e.preventDefault();
+      done(true);
+    });
     // See openModal: rAF alone never fires in a hidden tab.
     var shown = false;
     var reveal = function () {
       if (shown) return;
       shown = true;
       overlay.classList.add("open");
-      _focusFirstIn(dialog);
+      try { okBtn.focus(); } catch (_) { _focusFirstIn(dialog); }
+    };
+    requestAnimationFrame(reveal);
+    setTimeout(reveal, 50);
+  });
+}
+
+/**
+ * showConfirm's sibling for a question with MORE than two answers: resolves to
+ * the chosen choice's `id`, or `null` if the operator cancelled (Escape,
+ * backdrop, or the Cancel button).
+ *
+ * Exists because showConfirm is binary by contract — Confirm or Cancel — and
+ * some decisions genuinely have a third answer that is not "no". The first use
+ * is the asset form's duplicate-address dialog (business rule 40(i)): save and
+ * submit the collision for conflict review, or save and go straight to the
+ * merge review, or cancel. Two stacked confirms would ask the same question
+ * twice; a checkbox would hide the more consequential path behind a default.
+ *
+ * Same overlay discipline as showConfirm — a standalone element at z-index
+ * 1300 that STACKS over an open modal without touching its DOM, so a save flow
+ * can still read the form after this resolves. Keyboard: Escape cancels via
+ * `_trapFocus`; Enter activates the FOCUSED button and nothing else — with
+ * three or more answers there is no default an operator can be assumed to
+ * have read, so unlike showConfirm this never confirms on a stray Enter, and
+ * a held (auto-repeating) Enter is swallowed for the same reason it is there.
+ *
+ * opts: { title, choices: [{ id, label, kind: "primary" | "secondary" | "danger" }],
+ *         cancelLabel }
+ * Choices render in order; the first receives focus on open.
+ */
+function showChoice(message, opts) {
+  opts = opts || {};
+  var choices = Array.isArray(opts.choices) ? opts.choices.filter(function (c) { return c && c.id; }) : [];
+  return new Promise(function (resolve) {
+    var overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.style.zIndex = "1300";
+    var title = opts.title || "Choose";
+    overlay.innerHTML =
+      '<div class="modal" role="dialog" aria-modal="true" tabindex="-1">' +
+        '<div class="modal-header"><h3></h3></div>' +
+        '<div class="modal-body"><p style="font-size:0.9rem;color:var(--color-text-secondary);white-space:pre-wrap"></p></div>' +
+        '<div class="modal-footer" style="flex-wrap:wrap;gap:0.5rem">' +
+          '<button class="btn btn-secondary" data-choice="cancel"></button>' +
+        '</div>' +
+      '</div>';
+    var dialog = overlay.querySelector(".modal");
+    dialog.setAttribute("aria-label", title);
+    dialog.querySelector(".modal-header h3").textContent = title;
+    // textContent throughout: the message interpolates hostnames straight
+    // from the database.
+    overlay.querySelector(".modal-body p").textContent = message || "";
+    var footer = overlay.querySelector(".modal-footer");
+    var cancelBtn = overlay.querySelector('[data-choice="cancel"]');
+    cancelBtn.textContent = opts.cancelLabel || "Cancel";
+    var firstBtn = null;
+    choices.forEach(function (c) {
+      var b = document.createElement("button");
+      b.className = "btn " + (c.kind === "danger" ? "btn-danger" : c.kind === "secondary" ? "btn-secondary" : "btn-primary");
+      b.setAttribute("data-choice", String(c.id));
+      b.textContent = c.label || String(c.id);
+      b.onclick = function () { done(String(c.id)); };
+      footer.appendChild(b);
+      if (!firstBtn) firstBtn = b;
+    });
+
+    document.body.appendChild(overlay);
+    var prevFocus = document.activeElement;
+    var settled = false;
+    var teardownTrap = _trapFocus(dialog, function () { done(null); });
+    function done(val) {
+      if (settled) return;
+      settled = true;
+      teardownTrap();
+      overlay.classList.remove("open");
+      overlay.addEventListener("transitionend", function () {
+        if (overlay.parentNode) overlay.remove();
+      }, { once: true });
+      setTimeout(function () { if (overlay.parentNode) overlay.remove(); }, 400);
+      if (prevFocus && typeof prevFocus.focus === "function") {
+        try { prevFocus.focus(); } catch (_) { /* element gone */ }
+      }
+      resolve(val);
+    }
+    cancelBtn.onclick = function () { done(null); };
+    // A held Enter must not pick an answer nobody has read (see showConfirm).
+    // A deliberate Enter falls through to the focused button's own click.
+    dialog.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && e.repeat) e.preventDefault();
+    });
+    var shown = false;
+    var reveal = function () {
+      if (shown) return;
+      shown = true;
+      overlay.classList.add("open");
+      try { (firstBtn || cancelBtn).focus(); } catch (_) { _focusFirstIn(dialog); }
     };
     requestAnimationFrame(reveal);
     setTimeout(reveal, 50);
@@ -4204,12 +4862,12 @@ function _tagChipStyle(color, checked) {
     : 'background:' + c + '11;border-color:' + c + '40;color:' + c + '99';
 }
 
-// Creating a registry tag is gated fullwrite on serverSettingsSystem; a failed
+// Creating a registry tag is gated write (the top rung) on serverSettingsSystem; a failed
 // catalogue read also means we can't offer it (we'd be adding to a list we
 // couldn't show).
 function _canCreateRegistryTags() {
   if (_tagCache.failed) return false;
-  return typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "fullwrite");
+  return typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "write");
 }
 
 /**
@@ -4411,6 +5069,9 @@ function hideAdminOnlyElements() {
   });
   document.querySelectorAll("[data-manage-networks]").forEach(function (el) {
     if (!canManageNetworks()) el.style.display = "none";
+  });
+  document.querySelectorAll("[data-manage-blocks]").forEach(function (el) {
+    if (!canManageBlocks()) el.style.display = "none";
   });
   document.querySelectorAll("[data-create-networks]").forEach(function (el) {
     if (!canCreateNetworks()) el.style.display = "none";

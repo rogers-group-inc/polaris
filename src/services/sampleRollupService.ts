@@ -50,6 +50,7 @@ export type SourceTable =
   | "storage"
   | "ipsec"
   | "perfSla"
+  | "pathCheck"
   | "process";
 
 interface RollupDef {
@@ -70,6 +71,7 @@ const DEFS: RollupDef[] = [
   { source: "storage",     detailTable: "asset_storage_samples",       hourlyTable: "asset_storage_samples_hourly",       dailyTable: "asset_storage_samples_daily"       },
   { source: "ipsec",       detailTable: "asset_ipsec_tunnel_samples",  hourlyTable: "asset_ipsec_tunnel_samples_hourly",  dailyTable: "asset_ipsec_tunnel_samples_daily"  },
   { source: "perfSla",     detailTable: "asset_perf_sla_samples",      hourlyTable: "asset_perf_sla_samples_hourly",      dailyTable: "asset_perf_sla_samples_daily"      },
+  { source: "pathCheck", detailTable: "asset_path_check_samples", hourlyTable: "asset_path_check_samples_hourly", dailyTable: "asset_path_check_samples_daily" },
   { source: "process",     detailTable: "asset_process_samples",       hourlyTable: "asset_process_samples_hourly",       dailyTable: "asset_process_samples_daily"       },
 ];
 
@@ -145,6 +147,7 @@ function buildSql(def: RollupDef, tier: RollupTier): string {
     case "storage":      return tier === "hourly" ? sqlStorageHourly()      : sqlStorageDaily();
     case "ipsec":        return tier === "hourly" ? sqlIpsecHourly()        : sqlIpsecDaily();
     case "perfSla":      return tier === "hourly" ? sqlPerfSlaHourly()      : sqlPerfSlaDaily();
+    case "pathCheck": return tier === "hourly" ? sqlPathCheckHourly() : sqlPathCheckDaily();
     case "process":      return tier === "hourly" ? sqlProcessHourly()      : sqlProcessDaily();
   }
 }
@@ -349,6 +352,8 @@ function sqlTelemetryHourly(): string {
       "avgMemUsedBytes", "maxMemUsedBytes", "lastMemTotalBytes",
       "avgMemBuffersBytes", "avgMemCachedBytes", "avgMemFreeBytes",
       "avgSwapUsedBytes", "lastSwapTotalBytes",
+      "avgMemPrivateBytes", "avgMemSharedBytes", "avgMemBalloonedBytes",
+      "avgMemSwappedBytes", "avgMemCompressedBytes", "avgMemConsumedBytes",
       "avgSessionCount", "minSessionCount", "maxSessionCount"
     )
     SELECT
@@ -371,6 +376,12 @@ function sqlTelemetryHourly(): string {
       AVG("memBuffersBytes")::bigint, AVG("memCachedBytes")::bigint, AVG("memFreeBytes")::bigint,
       AVG("swapUsedBytes")::bigint,
       (ARRAY_AGG("swapTotalBytes" ORDER BY "timestamp" DESC) FILTER (WHERE "swapTotalBytes" IS NOT NULL))[1],
+      -- The vCenter bands, averaged the same way. They cannot appear in the
+      -- same bucket as the agent bands above unless the asset's telemetry
+      -- source changed mid-hour, which is the one case both sets go non-null
+      -- and is already the documented caveat for a mixed bucket.
+      AVG("memPrivateBytes")::bigint, AVG("memSharedBytes")::bigint, AVG("memBalloonedBytes")::bigint,
+      AVG("memSwappedBytes")::bigint, AVG("memCompressedBytes")::bigint, AVG("memConsumedBytes")::bigint,
       AVG("sessionCount"), MIN("sessionCount"), MAX("sessionCount")
     FROM "asset_telemetry_samples"
     WHERE "timestamp" >= $1
@@ -391,6 +402,12 @@ function sqlTelemetryHourly(): string {
       "avgMemFreeBytes"    = EXCLUDED."avgMemFreeBytes",
       "avgSwapUsedBytes"   = EXCLUDED."avgSwapUsedBytes",
       "lastSwapTotalBytes" = EXCLUDED."lastSwapTotalBytes",
+      "avgMemPrivateBytes"    = EXCLUDED."avgMemPrivateBytes",
+      "avgMemSharedBytes"     = EXCLUDED."avgMemSharedBytes",
+      "avgMemBalloonedBytes"  = EXCLUDED."avgMemBalloonedBytes",
+      "avgMemSwappedBytes"    = EXCLUDED."avgMemSwappedBytes",
+      "avgMemCompressedBytes" = EXCLUDED."avgMemCompressedBytes",
+      "avgMemConsumedBytes"   = EXCLUDED."avgMemConsumedBytes",
       "avgSessionCount"   = EXCLUDED."avgSessionCount",
       "minSessionCount"   = EXCLUDED."minSessionCount",
       "maxSessionCount"   = EXCLUDED."maxSessionCount"
@@ -407,6 +424,8 @@ function sqlTelemetryDaily(): string {
       "avgMemUsedBytes", "maxMemUsedBytes", "lastMemTotalBytes",
       "avgMemBuffersBytes", "avgMemCachedBytes", "avgMemFreeBytes",
       "avgSwapUsedBytes", "lastSwapTotalBytes",
+      "avgMemPrivateBytes", "avgMemSharedBytes", "avgMemBalloonedBytes",
+      "avgMemSwappedBytes", "avgMemCompressedBytes", "avgMemConsumedBytes",
       "avgSessionCount", "minSessionCount", "maxSessionCount"
     )
     SELECT
@@ -433,6 +452,12 @@ function sqlTelemetryDaily(): string {
       (SUM("avgMemFreeBytes"    * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
       (SUM("avgSwapUsedBytes"   * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
       (ARRAY_AGG("lastSwapTotalBytes" ORDER BY "bucketStart" DESC) FILTER (WHERE "lastSwapTotalBytes" IS NOT NULL))[1],
+      (SUM("avgMemPrivateBytes"    * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
+      (SUM("avgMemSharedBytes"     * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
+      (SUM("avgMemBalloonedBytes"  * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
+      (SUM("avgMemSwappedBytes"    * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
+      (SUM("avgMemCompressedBytes" * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
+      (SUM("avgMemConsumedBytes"   * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
       SUM("avgSessionCount" * "sampleCount") / NULLIF(SUM("sampleCount"), 0),
       MIN("minSessionCount"),
       MAX("maxSessionCount")
@@ -455,6 +480,12 @@ function sqlTelemetryDaily(): string {
       "avgMemFreeBytes"    = EXCLUDED."avgMemFreeBytes",
       "avgSwapUsedBytes"   = EXCLUDED."avgSwapUsedBytes",
       "lastSwapTotalBytes" = EXCLUDED."lastSwapTotalBytes",
+      "avgMemPrivateBytes"    = EXCLUDED."avgMemPrivateBytes",
+      "avgMemSharedBytes"     = EXCLUDED."avgMemSharedBytes",
+      "avgMemBalloonedBytes"  = EXCLUDED."avgMemBalloonedBytes",
+      "avgMemSwappedBytes"    = EXCLUDED."avgMemSwappedBytes",
+      "avgMemCompressedBytes" = EXCLUDED."avgMemCompressedBytes",
+      "avgMemConsumedBytes"   = EXCLUDED."avgMemConsumedBytes",
       "avgSessionCount"   = EXCLUDED."avgSessionCount",
       "minSessionCount"   = EXCLUDED."minSessionCount",
       "maxSessionCount"   = EXCLUDED."maxSessionCount"
@@ -880,6 +911,109 @@ function sqlPerfSlaHourly(): string {
       "avgPacketLoss"      = EXCLUDED."avgPacketLoss",
       "minPacketLoss"      = EXCLUDED."minPacketLoss",
       "maxPacketLoss"      = EXCLUDED."maxPacketLoss",
+      "lastBucketSampleAt" = EXCLUDED."lastBucketSampleAt"
+  `;
+}
+
+// ─── Agent-run path checks (gauge + pass/fail per check) ─────────────
+//
+// Latency and its phases are gauges → averaged. ok/fail roll up as counts, the
+// SD-WAN state precedent, which is what the availability chart and the
+// pathFailurePct metric need on the long-range tiers. The HTTP status rolls up
+// as the bucket's MOST FREQUENT code (mode ignores the nulls tcp/icmp rows
+// carry). The daily tier weights each average by the number of hourly samples
+// that actually HAD a value — a failed run carries no latency, so weighting by
+// sampleCount would drag the day's average toward zero.
+
+function sqlPathCheckHourly(): string {
+  return `
+    INSERT INTO "asset_path_check_samples_hourly" (
+      "id", "assetId", "bucketStart", "checkId", "sampleCount",
+      "okCount", "failCount",
+      "avgLatencyMs", "minLatencyMs", "maxLatencyMs",
+      "avgDnsMs", "avgConnectMs", "avgTlsMs", "avgTtfbMs",
+      "avgHopCount", "maxHopCount", "modeHttpStatus",
+      "lastBucketSampleAt"
+    )
+    SELECT
+      gen_random_uuid()::text,
+      "assetId",
+      date_trunc('hour', "timestamp") AS bucket_start,
+      "checkId",
+      COUNT(*)::int,
+      COUNT(*) FILTER (WHERE "ok")::int,
+      COUNT(*) FILTER (WHERE NOT "ok")::int,
+      AVG("latencyMs"), MIN("latencyMs"), MAX("latencyMs"),
+      AVG("dnsMs"), AVG("connectMs"), AVG("tlsMs"), AVG("ttfbMs"),
+      AVG("hopCount"), MAX("hopCount"),
+      mode() WITHIN GROUP (ORDER BY "httpStatus"),
+      MAX("timestamp")
+    FROM "asset_path_check_samples"
+    WHERE "timestamp" >= $1 AND "cadence" = 'fast'
+    GROUP BY "assetId", bucket_start, "checkId"
+    ON CONFLICT ("bucketStart", "assetId", "checkId") DO UPDATE SET
+      "sampleCount"        = EXCLUDED."sampleCount",
+      "okCount"            = EXCLUDED."okCount",
+      "failCount"          = EXCLUDED."failCount",
+      "avgLatencyMs"       = EXCLUDED."avgLatencyMs",
+      "minLatencyMs"       = EXCLUDED."minLatencyMs",
+      "maxLatencyMs"       = EXCLUDED."maxLatencyMs",
+      "avgDnsMs"           = EXCLUDED."avgDnsMs",
+      "avgConnectMs"       = EXCLUDED."avgConnectMs",
+      "avgTlsMs"           = EXCLUDED."avgTlsMs",
+      "avgTtfbMs"          = EXCLUDED."avgTtfbMs",
+      "avgHopCount"        = EXCLUDED."avgHopCount",
+      "maxHopCount"        = EXCLUDED."maxHopCount",
+      "modeHttpStatus"     = EXCLUDED."modeHttpStatus",
+      "lastBucketSampleAt" = EXCLUDED."lastBucketSampleAt"
+  `;
+}
+
+function sqlPathCheckDaily(): string {
+  // Weight = hours that reported a value × their sample count. The ok count
+  // stands in for "samples that had a latency" (a failed run has none).
+  const wavg = (col: string) =>
+    `SUM("${col}" * "okCount") / NULLIF(SUM(CASE WHEN "${col}" IS NOT NULL THEN "okCount" END), 0)`;
+  return `
+    INSERT INTO "asset_path_check_samples_daily" (
+      "id", "assetId", "bucketStart", "checkId", "sampleCount",
+      "okCount", "failCount",
+      "avgLatencyMs", "minLatencyMs", "maxLatencyMs",
+      "avgDnsMs", "avgConnectMs", "avgTlsMs", "avgTtfbMs",
+      "avgHopCount", "maxHopCount", "modeHttpStatus",
+      "lastBucketSampleAt"
+    )
+    SELECT
+      gen_random_uuid()::text,
+      "assetId",
+      date_trunc('day', "bucketStart") AS bucket_start,
+      "checkId",
+      SUM("sampleCount")::int,
+      SUM("okCount")::int,
+      SUM("failCount")::int,
+      ${wavg("avgLatencyMs")}, MIN("minLatencyMs"), MAX("maxLatencyMs"),
+      ${wavg("avgDnsMs")}, ${wavg("avgConnectMs")}, ${wavg("avgTlsMs")}, ${wavg("avgTtfbMs")},
+      SUM("avgHopCount" * "sampleCount") / NULLIF(SUM(CASE WHEN "avgHopCount" IS NOT NULL THEN "sampleCount" END), 0),
+      MAX("maxHopCount"),
+      mode() WITHIN GROUP (ORDER BY "modeHttpStatus"),
+      MAX("lastBucketSampleAt")
+    FROM "asset_path_check_samples_hourly"
+    WHERE "bucketStart" >= $1
+    GROUP BY "assetId", bucket_start, "checkId"
+    ON CONFLICT ("bucketStart", "assetId", "checkId") DO UPDATE SET
+      "sampleCount"        = EXCLUDED."sampleCount",
+      "okCount"            = EXCLUDED."okCount",
+      "failCount"          = EXCLUDED."failCount",
+      "avgLatencyMs"       = EXCLUDED."avgLatencyMs",
+      "minLatencyMs"       = EXCLUDED."minLatencyMs",
+      "maxLatencyMs"       = EXCLUDED."maxLatencyMs",
+      "avgDnsMs"           = EXCLUDED."avgDnsMs",
+      "avgConnectMs"       = EXCLUDED."avgConnectMs",
+      "avgTlsMs"           = EXCLUDED."avgTlsMs",
+      "avgTtfbMs"          = EXCLUDED."avgTtfbMs",
+      "avgHopCount"        = EXCLUDED."avgHopCount",
+      "maxHopCount"        = EXCLUDED."maxHopCount",
+      "modeHttpStatus"     = EXCLUDED."modeHttpStatus",
       "lastBucketSampleAt" = EXCLUDED."lastBucketSampleAt"
   `;
 }

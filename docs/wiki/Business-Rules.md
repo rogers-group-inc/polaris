@@ -1,6 +1,6 @@
 # Business rules
 
-Polaris carries **74 numbered rules**. Each one records a decision *and* the
+Polaris carries **78 numbered rules**. Each one records a decision *and* the
 incident or constraint that forced it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
 where the reasons live.
@@ -24,15 +24,24 @@ a per-block advisory lock, and backed by a unique index. A create that bypasses
 the lock re-opens the race in [rule 20a](#rule-20).
 
 ### Rule 2
-**A network must be contained within its parent block.**
+**A network must be contained within its parent block.** A new network is
+placed in the most specific block that contains it — **+ Add Network** never
+asks for one — and is refused if no block contains it.
 
 ### Rule 3
 **No duplicate IP reservations** — one *active* reservation per address per
 network, backed by a unique index.
 
 ### Rule 4
-**Block and network deletion are protected.** 409 while any active reservation
-exists inside. (Archiving is deliberately exempt — see [rule 41](#rule-41).)
+**Block and network deletion are protected.** A network delete is refused (409)
+while any active reservation exists inside it — except the firewall's own
+interface IP on the network, which never counts and is deleted with it. An
+administrator (a role with full write on both Users and Roles) is warned and
+may delete the network anyway; its reservations go with it, nothing is removed
+from any FortiGate, and the Event is logged as a warning. A block delete is refused (409)
+while the block contains **any** network at all — move each one to another
+block (**Move to block…** on the Networks tab), archive it or delete it first.
+(Archiving is deliberately exempt — see [rule 41](#rule-41).)
 
 ### Rule 5
 **CIDRs are normalised on write.** Host bits are zeroed: `10.1.1.5/24` stores as
@@ -47,8 +56,9 @@ to `manual`.
 reservation creates a [Conflict](Conflict-Resolution) rather than overwriting.
 
 ### Rule 8
-**Event archival.** Events older than 7 days are pruned; syslog (CEF) and
-SFTP/SCP archival are configurable.
+**Event archival.** Events older than the configured retention (default 7 days,
+set under [Server Settings](Server-Settings)) are archived and then pruned; syslog
+(CEF) and SFTP/SCP archival are configurable.
 
 ### Rule 9
 **`acquiredAt` ≤ `lastSeen`**, clamped on every write and repaired at boot.
@@ -92,7 +102,8 @@ is *inferred* and labelled as such.
 ### Rule 14
 **Description sync is opt-in and Polaris-primary.** A non-empty Polaris value
 always wins; an empty Polaris field adopts the device value. No conflict state
-exists.
+exists. It is switched on per device class — FortiGates, FortiSwitches and
+FortiAPs each have their own toggle.
 
 ### Rule 15
 **Location codes ride device descriptions; notes are operator-only.** The asset
@@ -167,8 +178,11 @@ everyone it names is on the same To line, so each reader can see who else is
 already on it. Nothing about the reader splits that message — not their
 timezone (times are the Polaris server's, and the footer names the zone) and
 not their permissions (a reader who cannot acknowledge gets the button and is
-refused, with a reason, on the acknowledge page). See
-[Actions](Automation-Actions#acknowledgement).
+refused, with a reason, on the acknowledge page). An alert outside a reader's
+regions reads as **not found** rather than forbidden — except to an
+administrator, whom region scope never narrows on alerts. See
+[Actions](Automation-Actions#acknowledgement) and
+[region scope](Users-Roles-and-Permissions#tags-and-region-scope).
 
 ### Rule 26
 **A generated MAC is a placeholder until the network proves otherwise.** The
@@ -271,9 +285,11 @@ down, leaving needs a parent genuinely back (`up` / `unknown` / `passive` only;
 ### Rule 39
 **How a person wants to be reached is theirs, not the automation's.** The
 notification preference is an **account** setting, and every client reconciles its
-own subscription to it at boot. It is consulted only when the action group offers
-both methods, only accounts are filtered, and **a preference never deletes an
-alert**.
+own subscription to it at boot. That reconcile never prompts, so a browser that
+has never been asked for notification permission is **asked once** instead — and
+never on iOS outside the installed app. It is consulted only when the action group
+offers both methods, only accounts are filtered, and **a preference never deletes
+an alert**.
 
 ### Rule 40
 **Two assets on one address is a conflict; one asset on a stale address is not.**
@@ -282,6 +298,19 @@ The short version: only network-present assets, only current claims, two
 **devices** not two rows, one card per address, two verbs instead of accept, and
 one claimant must be equipment somebody addressed on purpose **or** the address
 itself must be deliberate with disjoint reporting sources.
+
+**Since 2026-09-22 the sweep is not the only trigger.** Creating an asset with an
+IP, or changing an asset's IP in the edit form, re-checks that address on the
+spot: the form first asks whether another network-present asset already records
+it and, if so, offers *Save & submit for conflict review* — and, to an operator
+with Assets **full read-write**, *Save & review merge* — before anything is
+written. The save then raises the Duplicate IP conflict immediately instead of
+on the sweep's next tick. A third reason a pair qualifies came with it: **an
+address an operator typed** counts as deliberately assigned whatever the device
+types are, so two workstations one of which you addressed by hand is a conflict.
+Merging assets now requires Assets **full read-write** everywhere — it edits one
+record and deletes another. See
+[Conflict Resolution](Conflict-Resolution#i-or-an-operator-typed-the-address).
 
 ### Rule 41
 **A subnet dies with its FortiGate, and the chassis — not the name — says which
@@ -301,6 +330,32 @@ refusal**, and it **destroys nothing**.
 **A grant is only as narrow as the act it names.** Deploying the agent is
 `assets:fullwrite`, not `write`. `assetsProbe` is a **read-only key**.
 `credentials` carries the ownership dimension, testing a stored row included.
+
+Extended across the whole catalogue on 2026-09-22: **a level exists only where it
+grants something the level below it does not.** Eighteen keys were offering a rung
+no button or route ever asked for, so picking it and picking the one below it were
+the same grant. `processControl`, which had gated nothing since process control was
+removed, is gone. **Nothing lost a capability** — a stored level folds onto the one
+that always actually delivered it. Two levels also moved because they misdescribed
+the act: **downloading a backup is the whole database leaving the host**, so it is no
+longer a read, and the asset auto-decommission thresholds moved off the audit-log key
+onto monitor settings. See
+[Users, roles and permissions](Users-Roles-and-Permissions#short-ladders).
+
+A level can also be *divided* in the wrong place. On 2026-09-23 the identity
+providers, passkey policy and password policy moved out of Server Settings —
+System onto a key of their own, **Authentication**, because repointing every
+login at a different provider had been a lesser grant than changing the logo,
+and neither job could be delegated without the other. One kind of custom role
+is narrowed by this. See
+[Who may change how people log in](Users-Roles-and-Permissions#who-may-change-how-people-log-in).
+
+The opposite mistake also happens: one act split across two keys. The
+manufacturer alias map had a key of its own, but an alias decides which
+**manufacturer profile** a device gets, so it could never really be granted
+apart from the profiles. On 2026-09-23 it was folded into **Manufacturer
+Profiles**. A custom role that held the two at different levels kept the
+lower one; no built-in role changed.
 
 ### Rule 44
 **A quiet window withholds the reminder, not the alert — and the reminder that
@@ -567,10 +622,12 @@ cannot disagree with it.
 Sizes are read from PostgreSQL's catalog rather than by measuring the data
 directory, which is what keeps the tab instant on a large install — so a figure
 is accurate as of the last `VACUUM`/`ANALYZE`, and the card says so when that
-matters. **"N relations have never been vacuumed or analyzed"** means those
-relations report zero pages whatever they hold and every size shown is
-understated: run `vacuumdb --analyze-in-stages`, which is owed after a restore
-or a PostgreSQL major-version upgrade. **"Hypertable sizing is degraded"** means
+matters. Relations that have never been analyzed report zero pages whatever
+they hold, so the card names how many there are **and how many bytes they
+hide**, and warns only when that is material (over 64 MB or 1% of the
+database) — a few small compressed chunks are normal and get a plain note. The
+fix is `vacuumdb --analyze-only`, which is owed after a restore or a PostgreSQL
+major-version upgrade. **"Hypertable sizing is degraded"** means
 Polaris could not read TimescaleDB's chunk catalog, so the sample tables are
 listed at their parent size — near zero — and their real bytes appear under
 *Unattributed*. Neither condition is left to be inferred from a number that
@@ -599,9 +656,15 @@ carrying on to authorize a key for an account that does not exist. It verifies
 without changing anything — choosing an existing account is not asking Polaris
 to create one or to promote it.
 
-The firewall rule is deliberately not checked. If you did not give Polaris a
-server address there is no rule to look for, and a check nothing can satisfy
-would make the pair remediate forever.
+On Windows, detection also checks the firewall, but only for the state the
+remediation itself sets up with the same server address (see
+[Rule 76](Business-Rules#rule-76)). With an address, it checks for the Polaris
+rule scoped to that address and for Windows' own rule being off. Without one, it
+checks that Windows' own rule covers the Domain profile. It never demands
+anything the remediation would not do, because a check nothing can satisfy would
+make the pair remediate forever. (Until 2026-09 the firewall was not checked at
+all, so a machine set up by hand could stay unreachable on a domain network
+while reporting healthy.)
 
 One consequence you will see: both scripts now refuse to download until you have
 named the account on the **SSH Deployment** card. Before, the Windows detection
@@ -676,6 +739,38 @@ judged, so a row can always be shortened rather than being stuck.
 
 See [IPAM](IPAM#pushing-reservations-to-the-gate).
 
+### Rule 75
+
+**An alert may name many problems on one device, and it ends only when the
+last of them does.**
+
+A PoE fault rarely hits one port. A power supply browns out and eight ports
+fault inside the same minute — and without this rule that is eight alerts,
+eight emails and eight acknowledge links for one problem.
+
+An automation that watches something per component (per interface, per mount,
+per sensor) can tick **Raise one alert per device, not one per interface** on its
+Actions step. Every affected component is then named on **one** alert, one
+acknowledgement covers all of them, and the alert **stays up until the last one
+recovers** — the first port to come back does not mail "Resolved" while seven
+are still down. A component that goes wrong later joins the same alert and sends
+one more message naming the whole set, and that **re-opens the alert if it had
+been acknowledged**: acknowledging "3 ports faulted" is not acknowledging
+"9 ports faulted". The alert carries the worst severity among the components
+still affected.
+
+**Alert groups** (Automations → Alert Groups) go one step further: several
+automations whose alerts about the same device should read as one. The group
+decides **who is told and how** — its notify actions, escalation, reminders,
+acknowledge-note policy and email layout — while each member automation still
+decides **what counts as a problem**. While an automation is in a group it stops
+delivering on its own. A group can be limited to some devices; on the others its
+members alert exactly as they would outside it.
+
+Turning grouping on or off, changing a group's members or devices, or disabling
+or deleting a group ends the affected live alerts, and the next check raises
+them again under whoever owns them now. An alert never changes hands mid-life.
+
 ### Rule 76
 
 **Access is granted on the network profile the endpoint is actually on, and
@@ -702,8 +797,9 @@ whether you filled in **Polaris server address**:
 **Public is never added**, on either path: being unreachable on your own domain
 network is the problem being solved, and an any-source rule on the profile a
 laptop picks up in an airport is not part of it. Both paths are safe to re-run,
-and the detection script does not judge the firewall — it cannot know which of
-the two shapes to expect.
+and the detection script checks for whichever of the two shapes the same server
+address produces, so a machine left on Private-only is remediated rather than
+reported healthy.
 
 See [Polaris Agent](Polaris-Agent#the-windows-firewall-rule-and-the-one-windows-writes-for-itself).
 
@@ -743,6 +839,43 @@ are no VIPs" — so nothing already recorded is retired on a failed read
 
 See [IPAM](IPAM#addresses-that-carry-a-firewall-vip).
 
+### Rule 78
+
+**An automation may choose to speak for a silenced device, and then it must
+name who silenced it.**
+
+A device behind a down switch or firewall is **dependency-down** (Dep. Down),
+and every automation stays silent about it — the outage is the parent's, and one
+alert on the parent is the whole story ([rule 37](#rule-37), [rule 16](#rule-16)).
+That is right for the network team and wrong for the people who only watch one
+device: the operators subscribed to a PLC's down automation heard nothing when
+the switch above it died.
+
+So a `monitor status is down` automation — and only that kind — can tick
+**Dependency-Down Bypass** on its Actions step. With it on, the automation still
+raises its alert **the moment the device turns Dep. Down**; it does not wait for
+the device's own missed-poll count, because the upstream's confirmed outage is
+the evidence. The alert **says DEPENDENCY DOWN** in the subject, the headline
+and the message, and **names the upstream device** — and, when that device is
+itself Dep. Down under something further up, the device that is actually down
+(a suppressed switch's FortiGate). If Polaris cannot work out who, the alert
+still goes out, saying so.
+
+The alert's kind follows the device's state. A plain Down alert on a device that
+then turns Dep. Down is **ended and raised again** as dependency-down, naming
+the switch; a dependency-down alert whose upstream has recovered while the
+device is still down is ended and raised again as the device's own outage.
+Neither sends a "resolved" message — nothing recovered.
+
+Three things the toggle does **not** change. A **maintenance window still
+silences** the device. **Reminders and escalation still wait** while the device
+is dependency-down — you get one notification, and the follow-ups resume when
+the upstream is back. And every automation **without** the toggle behaves
+exactly as before.
+
+See [Dependency suppression](Dependency-Suppression) and
+[Automation triggers](Automation-Triggers#monitorstatus--down-is-the-down-detection-automation).
+
 ### Rule 79
 
 **Removing a MAC from an asset is a correction, not a block.**
@@ -777,3 +910,432 @@ correctly shows no primary MAC.
 Needs **Assets: Write** (the built-in *assetsadmin* role, and admin).
 
 See [Assets](Assets#correcting-a-wrong-mac-association).
+
+### Rule 80
+
+**Downtime Polaris itself causes is not an incident, and a silence it grants
+expires on its own.**
+
+Upgrading, reinstalling or uninstalling the [Polaris Agent](Polaris-Agent) stops
+the agent service on the host. That drops the agent's connection, which raises
+`agent.disconnected` — and the built-in automation on that event would page you
+about work you asked for.
+
+So each of those three operations puts the asset into a
+[maintenance window](Maintenance-Windows#windows-polaris-opens-for-itself) for
+its duration. A first install and a retry do not: there is no agent running to
+disconnect, and silencing a host mid-install would hide a real failure.
+
+Two parts of this are deliberate and worth knowing:
+
+- **It ends when the agent comes back**, not when the installer finishes. The
+  disconnect can take up to a minute to be noticed, so ending the window early
+  would let the alert through anyway.
+- **It expires on its own** — 20 minutes for an upgrade or uninstall, 30 for a
+  reinstall — whatever happened to the operation that opened it. A device in
+  maintenance is not being monitored, so a window that could be left open by a
+  crashed upgrade would quietly stop watching a production machine. If that cap
+  is ever reached, the alert that was suppressed fires late rather than never.
+
+A failed operation ends its window immediately: an agent that is down because
+its upgrade failed is exactly what you want to hear about.
+
+See [Maintenance Windows](Maintenance-Windows#windows-polaris-opens-for-itself)
+and [Polaris Agent](Polaris-Agent#upgrading).
+
+### Rule 80a
+
+**A silence is granted for when the event happened, not for when something got
+round to reading it.**
+
+Rule 80 shipped and operators were still paged by their own agent upgrades. The
+maintenance window was being taken correctly every time — you can see it in the
+asset's own event list:
+
+```
+10:30:47  agent.upgrade_kickoff     0.19.0 -> 0.20.0
+10:30:47  maintenance.entered       Polaris Agent upgrade
+10:30:49  agent.disconnected        WARNING
+10:30:49  agent.connected
+10:30:49  maintenance.exited
+```
+
+The device really was in maintenance when the disconnect was recorded. But
+**automations that watch events are evaluated once a minute**, against a
+backlog — and they used to ask "is this device in maintenance?" rather than
+"was it in maintenance when this happened?". By the time the automation looked,
+the two-second window had been shut for most of a minute, the device was back
+to active, and the alert went out.
+
+The consequence was general, not specific to agents: **any maintenance window
+shorter than a minute suppressed nothing at all.** A short scheduled window, or
+releasing a device from maintenance shortly after something happened to it,
+leaked the same way. An agent upgrade just made it happen every single time,
+because the window is only about two seconds wide.
+
+Event automations now check the device's maintenance **history** at the moment
+the event was recorded. In practice:
+
+- **An event that happened inside a maintenance window stays silent**, however
+  briefly that window was open and however long ago it closed.
+- **An event just outside one still alerts.** A device that drops again ten
+  seconds after its upgrade finished is a real outage and you will hear about
+  it.
+- **A failed upgrade still alerts.** Polaris ends the maintenance window
+  *before* recording the failure, deliberately, so an agent that is down
+  because its upgrade failed is never covered by the silence its own upgrade
+  was granted.
+- **Recovery still clears.** The counterpart event that closes an alert is
+  never suppressed — otherwise an alert raised before a window could be left
+  with nothing able to clear it.
+
+One limit worth knowing: this covers maintenance windows. A device silenced by
+[dependency suppression](Dependency-Suppression) that recovers within the same
+minute can still produce an alert, because Polaris keeps no history of when
+suppression started and stopped the way it does for windows.
+
+See [Maintenance Windows](Maintenance-Windows) and
+[Automation Triggers](Automation-Triggers).
+
+### Rule 82
+
+**A measurement of the host must not be dominated by the measurer, and a
+scheduling offset is not a way to protect one.**
+
+The [Polaris Agent](Polaris-Agent#what-the-cpu-number-measures) used to report
+host CPU by measuring **one second out of every sixty**. On a host with cores to
+spare that is just an imprecise way to describe a minute. On a **single-vCPU VM**
+it was actively wrong: if one of the agent's own collections was still running
+when that one-second window opened, it held the only core, and the sample
+reported close to 100% CPU for a host that was otherwise idle.
+
+The error was not random, which is what made it worth a rule. The same
+collections overrun on the same hosts every minute, so those hosts read high the
+same way every time, and nothing on the chart said so.
+
+Spreading the collections across the minute — which Polaris already does, and
+which fixed an [earlier problem](Polaris-Agent#the-collections-are-spread-across-the-minute)
+of the same family — could not fix this one. **An offset controls when a
+collection starts, not how long it runs**, and on the small hosts where this
+matters everything runs long. One collection only had to overrun by 11 seconds
+to land on the reading.
+
+So the sampling window was removed rather than moved. The agent now reads the
+operating system's running CPU counters and reports the difference since its
+previous sample, which means:
+
+- **The measured span is the whole interval between samples** — by default 60
+  seconds. Nothing goes unmeasured, and the agent's own work can only ever
+  count for what it actually costs.
+- **The chart is flatter, and CPU thresholds fire on a sustained average**
+  rather than on whichever second happened to be sampled. If you tuned a CPU
+  threshold before agent 0.20.0, re-check it.
+- **The sample interval is the smoothing.** Shorten `telemetry_interval_sec` on
+  a host you want a sharper chart for; that shortens the averaging window too.
+
+This applies to host CPU. Per-program CPU still takes a brief sample, because a
+single program's percentage is measured against elapsed time rather than against
+the machine — a collection competing with it makes that number read *low*, not
+high.
+
+An agent already installed keeps its old behaviour until it is upgraded.
+
+See [Polaris Agent](Polaris-Agent#what-the-cpu-number-measures).
+
+### Rule 83
+
+**A serial belongs to one device and one owner; two claimants is a report,
+never a silent winner.**
+
+A serial number is meant to settle arguments, and two situations can make it the
+argument instead. Polaris now reports both on the
+[Conflicts](Conflict-Resolution) page.
+
+**One device, two FortiGates.** A FortiSwitch or FortiAP is discovered through
+the gate that manages it. If two gates both carry it on their managed roster —
+because the device was moved and nobody removed it from the old gate's
+configuration, or because two integrations cover overlapping equipment — then
+**whichever integration ran discovery most recently owned the record**, and the
+next run of the other one took it back. That decided the device's parent for
+[dependency suppression](Dependency-Suppression), where it appeared on the
+[Device Map](Device-Map), which region tags it carried, and which gate a
+description sync was addressed to. None of it was visible: the record simply
+said something different depending on which run was last.
+
+The card names both gates and, for each, when it last reported the device. That
+last column is the one that tells the two explanations apart, because a gate
+that has genuinely lost the device stops reporting it.
+
+**Polaris changes nothing on the devices, and picks no winner.** A completed
+move and a forgotten roster entry look identical for as long as both gates keep
+answering, and only you know which happened — the fix is on the FortiGates
+either way. So there is no "accept": remove the device from the gate that no
+longer owns it, and **the card closes itself** once that gate has stopped
+reporting it for two days. A stale entry keeps being reported, so it keeps the
+card.
+
+**One serial, two records.** The other case is two assets carrying the same
+serial — usually one device that two integrations both found and nothing
+cross-linked, or a record that outlived a re-enrolment. Here there is nothing to
+weigh up: a serial identifies one unit, so the card's action is a merge, either
+one-click from the row you want to keep or through the full comparison first.
+Merging needs full read-write on Assets, because it deletes a record.
+
+Serials that identify nothing are ignored rather than reported: the placeholders
+some hardware ships (`To Be Filled By O.E.M.`, `Default string`, `System Serial
+Number`, and a serial that is one character repeated), and any serial shared by
+more than eight assets — past that count the serial is the problem, not the
+assets. If two genuinely different units do report one serial, Reject the card
+and that pair will not come back.
+
+Those placeholders are also refused at the point a serial would be recorded,
+not just here — see [Rule 84](#rule-84).
+
+See [Conflict Resolution](Conflict-Resolution) and
+[Integration: Fortinet](Integration-Fortinet).
+
+### Rule 84
+
+**A serial that identifies nothing is refused when it would be recorded, not
+when something later reads it.**
+
+Hardware is supposed to carry a serial number programmed at the factory.
+Plenty of it does not, and reports a placeholder instead — `To Be Filled By
+O.E.M.`, `Default string`, `System Serial Number`, a row of zeroes. Every unit
+of that model reports the same one.
+
+Polaris refuses those values wherever a serial would be recorded, rather than
+storing them and filtering them later. Three things follow, and they are what
+you will actually see:
+
+- **An asset shows no serial rather than a fake one.** An empty Serial Number
+  field means nothing that saw this device could tell you — not that the value
+  was lost.
+- **Polaris falls through to the next source.** A device known to both an agent
+  and Intune, where the agent can only read a placeholder, shows Intune's
+  serial. The agent normally outranks Intune for this field; it does not get to
+  win it with a value that identifies nothing.
+- **A stored placeholder is cleared once nothing can replace it**, and the
+  change is written to Events as `asset.serial.cleared`. This is why a serial
+  can disappear from a Windows asset after you upgrade its agent — see
+  [Polaris Agent](Polaris-Agent#host-identity--hostname-os-make-model-serial).
+  It was never that machine's serial.
+
+Serials are still checked for uniqueness on top of this. A value can be
+well-formed and still not identify anything — a cloned VM inherits its
+template's serial, and a machine whose agent has not been upgraded yet keeps
+whatever it reported before. A serial two different assets both claim is not
+used to match them.
+
+See [Polaris Agent](Polaris-Agent) and [Conflict Resolution](Conflict-Resolution).
+
+### Rule 85
+
+**A path check measures the path from a host, not the host — and the
+automation, not the check, decides what failing means.**
+
+A [path check](Path-Monitor) is run by the Polaris Agent on each
+matching host, and optionally by the Polaris server itself. Its result
+describes whether that source can reach the target, so:
+
+- **It never changes the host's status.** A laptop that cannot reach the
+  intranet is not a laptop that is down. The host's own Up / Down comes only
+  from its agent's response time, exactly as before.
+- **A check has no threshold.** You set the SLA in an automation on the
+  path-check metrics (latency, failure rate, HTTP status, pass / fail, hop
+  count, TLS days remaining). Holds, severity bands, resets, maintenance
+  windows and dependency suppression all work the same as for any other
+  automation. One difference from packet loss: the failure rate has no
+  "ignore readings at or above" ceiling, so a target that fails **every** run
+  alerts — the host is up and reporting, so no other automation covers it.
+- **Response bodies are not kept by default.** Every run stores a fingerprint
+  (SHA-256) and the size of the body. Up to 4 KB of the body itself is kept
+  only when a run fails, so you can see what came back, or when you turn on
+  *Keep body excerpt* for that check.
+- **Some targets are refused.** Loopback, link-local (including cloud
+  metadata addresses), multicast, IPv6 addresses, URLs with a user name or
+  password in them, and the Polaris server itself cannot be a check target.
+  Private (RFC 1918) addresses are allowed.
+- **A route change is an Event, not an alert state.** When an agent's
+  traceroute takes a different set of hops from last time, Polaris writes
+  `path_check.path_changed` to Events (at most once every 10 minutes per host
+  and check). You can alert on it with a *Path changed* trigger.
+- **The Polaris server is a source, not an asset.** Its results are charted
+  and listed under the check's Results, but in this version they raise no
+  automation alert, and a route change it sees names the check rather than a
+  device. Pointing the server at a target needs *Read-Write* on **Network
+  Discovery** as well as on Path Monitor, because the server probes from its
+  own network, where no agent host may be able to reach. Turning the server
+  off, renaming the check or changing its agent hosts does not.
+- **A check that signs in runs only from the Polaris server.** A web check can
+  authenticate with an HTTP credential (Bearer, Basic or Digest), and such a
+  check is never sent to an agent, so the password or token never leaves the
+  server. Anyone with Read-Only on Credentials can pick a credential and test
+  with it, but not change it. Checks only ever send GET or HEAD.
+
+See [Path Checks](Path-Monitor) and [Automation Triggers](Automation-Triggers).
+
+### Rule 86
+
+**An agent that deployed and went quiet has missed its poll, unless Polaris is
+the one that stopped listening.**
+
+Nothing polls a host that is monitored by the Polaris Agent. The agent sends its
+own response-time readings, so a host that dies, crashes, loses its network or
+has its agent stopped simply stops sending. Polaris now counts that silence as a
+missed poll.
+
+Once an agent that finished deploying has not been heard from for **two polling
+intervals** (and never less than one interval plus a minute), each poll it
+misses is recorded exactly like a failed ping. The asset turns **Warning**, then
+**Down** when your down-detection automation's missed-poll count is reached, and
+**Asset down** fires. At the default 60-second interval with three missed polls,
+that is about four minutes from the last reading. The chart shows the outage as
+a dive, and the asset recovers on the agent's next real reading.
+
+What does **not** count:
+
+- **An agent that has not finished deploying**: still installing, failed,
+  uninstalling, or revoked. Polaris does not expect to hear from it.
+- **An agent upgrade, reinstall or uninstall.** The asset is in a maintenance
+  hold for that ([rule 80](Business-Rules#rule-80)).
+- **Polaris being down.** After a restart or an update, every agent gets a full
+  window to reconnect before its silence counts. If *no* agent anywhere is
+  reporting, Polaris assumes it is the one not receiving (a stopped web service
+  or proxy, say) and records nothing. This check needs at least two agents. With
+  a single agent the two cases look the same, and Polaris alerts rather than
+  staying silent.
+
+The warning-level **Agent disconnected** automation still fires as well. It
+describes the agent's connection; **Asset down** describes the host.
+
+See [Polaris Agent](Polaris-Agent#when-the-host-stops-reporting) and
+[Monitor States](Monitor-States).
+
+### Rule 87
+
+**A firmware image is offered only to a device whose serial names the image's
+platform, and only forward; the flash takes a hold and never records a version
+it has not read back.**
+
+The [Repository](Server-Settings#repository) files firmware images under a
+model, but a device is matched on its **platform** — the token in the image's
+own header, which is the first six characters of the serial numbers the image
+was built for. An image whose header cannot be read is stored and never
+offered. A device is offered an image only when the platform matches **and**
+the image is strictly newer than what it runs; a device whose version Polaris
+cannot read is offered nothing. Never a downgrade — the switch's own
+compatibility check is consulted too, and a "downgrade" answer aborts before
+anything is flashed.
+
+A model keeps two images, a **primary** and a **backup**. Only the primary is
+offered on its own; the backup is named in the approval dialog when it is also
+newer than the device. The upgrade request carries the image you approved by
+name, and it must be one of those two — a click can never push an image nobody
+looked at.
+
+The same match feeds the automation field
+[`firmwareVsPrimary`](Automation-Triggers#firmwarevsprimary--what-the-repository-would-push):
+`current`, `older` or `newer` against the platform's primary image, and no
+reading at all for a device the Repository cannot place. The baseline
+automation **Firmware differs from repository primary** (informational) is
+that field with `!= current`.
+
+An upgrade does not start on a device that is down, warning, recovering,
+behind a parent that is down, decommissioned, quarantined, in storage or
+disabled; nor while another flash is running on that device, on a switch above
+or below it, or on its MCLAG peer. A device in a scheduled maintenance window
+is fine — that is when you flash. The flash opens a
+[maintenance window of its own](Maintenance-Windows#windows-polaris-opens-for-itself)
+(45 minutes at most) that suppresses everything behind the switch. A failed
+run ends it at once. A run that got as far as the reboot keeps it open until
+**Polaris's own monitoring** answers the device again, for up to 10 more
+minutes: a device's web interface, which the upgrade talks to, often comes
+back minutes before the SNMP agent that monitoring polls. If monitoring still
+has not answered by then, the window ends anyway and the device is judged
+normally.
+
+The run records what the device **reported after it came back**; it never
+rewrites the asset's OS/firmware field itself. The next discovery reads the
+device and records the new version — the same path every other firmware
+change takes — and until then the card says *Flashed* rather than offering
+the same image again.
+
+Starting an upgrade needs **Read-Write on Assets**: whoever may edit an
+asset may upgrade it. The `firmware` key covers the Repository only — Read
+to see it, Read-Write to upload and manage images. Every role with Assets
+Read-Write can therefore reboot a switch or access point; the approval
+dialog and the checks above are what stand between a click and a flash.
+
+See [Server Settings → Repository](Server-Settings#repository) and
+[Assets → Firmware](Assets#firmware).
+
+### Rule 88
+
+**A port Polaris has positive evidence was never in use does not alert when the
+automation asks it to skip unused ports. "Unused" is decided by the port's
+remembered address, never its current one.**
+
+Some deployment templates enable every WAN port on every FortiGate, as SD-WAN
+members, whether or not a circuit is plugged into them. An unused `wan2` is then
+down on every health check, and a "member is down" automation alerts about it on
+every gate that has one.
+
+An unused port reads `0.0.0.0`, but so does a working DHCP WAN whose link just
+dropped and whose lease was released. So the current address cannot tell them
+apart. Polaris therefore **remembers the last address each interface reported**,
+for 30 days after it last had one. A port counts as unused only when all of these
+are true:
+
+- it is not a tunnel (IPsec and other overlays are never skipped)
+- it reports an address, and that address is `0.0.0.0`
+- it has had no address in the last 30 days
+
+Tick **Skip unused ports** on an SD-WAN member state, SD-WAN latency / jitter /
+packet loss, or interface oper status condition to use it. A skipped port never
+raises an alert, and an alert already open on one clears. A port that had an
+address recently (a DHCP WAN that just lost its lease, a static WAN that went
+down) still alerts. A port down for more than 30 days is treated as unused.
+
+See [Automation Triggers → Skip unused ports](Automation-Triggers#skip-unused-ports).
+
+### Rule 89
+
+**A per-core CPU hold follows one core, the alert names it, and it yields to the
+all-cores alert on the same device.**
+
+The **CPU core utilization** condition (`cpuCorePct`) finds single-threaded
+applications. "Above 90% for 3 polls" means the **same core** was above 90% on
+three polls in a row. Different cores each spiking once does not count. It
+raises **one alert per device**, naming the cores that stayed over the line,
+with the top five processes by CPU. Only the Polaris Agent and vCenter report
+per-core figures; any other device has no reading for it.
+
+When the whole device is busy, every core is hot. So while the device has an
+open **CPU utilization** alert, the per-core automation does not alert on it,
+and an alert it already raised clears as *superseded*. Once the CPU utilization
+alert clears, the per-core automation can alert again if a core is still hot.
+Per-core conditions inside a multi-condition automation are not affected.
+
+See [Automation Triggers → CPU core utilization](Automation-Triggers#cpu-core-utilization).
+
+### Rule 90
+
+**An SD-WAN member riding a parent that is over the same line does not alert;
+the parent's alert names the cause.**
+
+An overlay (an IPsec tunnel that is an SD-WAN member) rides an underlay port:
+Overlay-3 over wan2. When wan2 loses packets, every overlay on it loses
+packets too. Instead of one alert for wan2 and one for each overlay, Polaris
+raises only the wan2 alert.
+
+This applies to SD-WAN packet loss, latency, jitter and member state. An
+overlay's alert is held back while its underlay is over the same line in the
+same automation, or while any automation has an open alert on the same
+condition about the underlay. Polaris learns which port a tunnel rides from
+the FortiGate's IPsec configuration. An overlay alert that was already open
+clears as *superseded*, with no "resolved" notification: the overlay has not
+recovered, its parent's alert covers it. An overlay whose underlay is
+healthy alerts as usual.
+
+See [Automation Triggers → SD-WAN](Automation-Triggers#sd-wan).

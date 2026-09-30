@@ -236,7 +236,11 @@ describe("tag creation category", () => {
     // Without the grant a typed name attaches to this assignment alone, so
     // there is no row for a category to land on.
     const perm = g.permAtLeast;
-    g.permAtLeast = (key: string, level: string) => !(key === "serverSettingsSystem" && level === "fullwrite");
+    // `write` is serverSettingsSystem's top rung as of 2026-09-23, the identity
+    // providers having moved to `authentication` and left the old fullwrite
+    // routes to come down onto write. Stubbing the retired level here would
+    // pass the gate and silently stop testing anything.
+    g.permAtLeast = (key: string, level: string) => !(key === "serverSettingsSystem" && level === "write");
     try {
       mount([]);
       expect(g.document.querySelector(".other-tags-category")).toBeNull();

@@ -28,6 +28,8 @@ the conflict slide-over.
 | **Hostname collision** | asset | a discovered device's hostname matches an existing asset |
 | **`duplicate-ip`** | asset | two network-present devices claim one address |
 | **IP override** | asset | discovery disagrees with an operator's IP pin |
+| **`serial-two-controllers`** | asset | one managed FortiSwitch/FortiAP is on **two FortiGates'** rosters |
+| **`duplicate-serial`** | asset | two asset records carry the **same serial number** — usually merged automatically, see below |
 | **`chassis-replaced`** | subnet | a network's serving FortiGate answers with a different chassis serial |
 
 ---
@@ -174,6 +176,48 @@ What (h) reports is overwhelmingly **one device recorded twice**, so the card
 leads with the merge rather than with renumbering. The card records which clause
 admitted it.
 
+### (i) Or an operator typed the address
+
+The third way a pair qualifies. (g) asks whether the *device* has deliberate
+addressing and (h) whether the *address* does; this asks whether a **person**
+did the addressing. An IP you typed into the asset form — or pinned — is an
+address somebody chose, exactly as a reservation is, so two workstations one of
+which was hand-addressed is a conflict even though neither device's type would
+qualify it on its own. The card says so in those terms.
+
+It still takes two devices (a shared MAC is one device recorded twice — merge
+it) and a *current* counterpart (a departed device's leftover record is not a
+collision with the one you just addressed).
+
+### Checked when you save, not just every ten minutes
+
+Creating an asset with an IP, or changing an asset's IP in the edit form, checks
+that address **before** the write. If another network-present asset already
+records it, a dialog names the holder — type, status, when the address was last
+confirmed, whether it is pinned — and offers:
+
+- **Save & submit for conflict review** — the save lands and the Duplicate IP
+  card is raised immediately, with the `conflict.detected` event your
+  automations already alert on. This is the choice for everyone.
+- **Save & review merge with …** — shown only when you hold Assets **full
+  read-write** and there is exactly one current holder. It saves, then opens the
+  merge review between your record and the holder — the answer when the
+  "collision" is one device recorded twice. With several holders, merge from the
+  conflict card instead.
+- **Cancel** — nothing is written.
+
+A record whose claim is **stale** is listed but does not count as a collision;
+saving over it raises nothing. If the check itself fails (a network blip), the
+save proceeds — the ten-minute sweep is the backstop, and a pre-flight that could
+block a save would be worse than none.
+
+Changing an asset **off** a contested address closes that card on the same save
+rather than on the next sweep. Merging two assets re-checks the survivor's
+address the same way.
+
+CSV and PDF imports do not trigger this: the CSV import writes no address, and
+PDF-imported assets are created in `storage`, which (a) excludes.
+
 ---
 
 ## IP override conflicts
@@ -190,6 +234,72 @@ The pin is re-asserted, and **one** pending conflict is raised per asset.
 Note the self-disabling case that is *not* a conflict: a discovery write staging
 the **same** IP as the pin **releases** the pin in that write, audited. The pin
 did its job.
+
+---
+
+## Two FortiGates claim one device
+
+A FortiSwitch or FortiAP is discovered through the FortiGate that manages it,
+and that gate becomes the device's owner: its parent for
+[dependency suppression](Dependency-Suppression), its placement on the
+[Device Map](Device-Map), the source of its region tags, and the gate a
+description sync writes to.
+
+When **two** gates carry the same device on their managed roster, whichever
+integration ran discovery last owned the record — and the other one took it back
+on its next run. Nothing said so; the record just changed. This card is Polaris
+telling you it is happening.
+
+The card lists each claiming gate with **when it last reported the device**,
+which is the column that tells the two causes apart:
+
+| What you are looking at | What it means |
+|---|---|
+| Both gates reporting recently | the device was moved and the **old gate still has it configured**, or two integrations cover the same equipment |
+| One gate's "last confirmed" going stale | the move is settling; the card will close itself |
+
+**Polaris changes nothing on the FortiGates, and does not pick a winner.** There
+is no Accept — remove the device from the roster of the gate that no longer owns
+it, and once that gate stops reporting it for **two days** the conflict closes
+itself as auto-resolved. **Reject** dismisses the card and changes nothing; the
+same pair of gates will not raise it again, but a different pair will.
+
+An HA cluster is one gate, not two — the cluster's members are recognised as the
+same FortiGate and never raise this card between themselves.
+
+---
+
+## Two records, one serial number
+
+Two assets carry the same serial. Nearly always one device recorded twice:
+two integrations found it and nothing cross-linked the records, or a record
+outlived a re-enrolment.
+
+**Polaris usually merges these for you.** Because a shared real serial leaves
+no room for doubt — it is one device — a background pass absorbs these groups
+automatically, every 30 minutes — the same merge the card's buttons perform, so both
+records' sources and any agent enrolment are kept — into whichever record has the stronger
+provenance. So you will rarely see this card, and one that *does* appear is a
+group the automatic pass declined: a serial shared by more assets than any one
+device could have, or a merge that failed. The verbs below are for those.
+
+| Verb | Does |
+|---|---|
+| **Merge into this** | keeps the row you clicked, absorbs and **deletes** the others |
+| **Review & merge…** | opens the full [comparison](Conflict-Resolution#merging-assets-by-hand) first; the card closes as soon as that merge completes |
+| **Reject** | they really are different units; the same set will not re-raise |
+
+Merging needs **full read-write on Assets** — it deletes a record. There is no
+Accept: there is nothing to adopt.
+
+Polaris ignores serials that identify nothing rather than reporting them: the
+placeholders some hardware ships (`To Be Filled By O.E.M.`, `Default string`,
+`System Serial Number`, `Not Specified`, and any serial that is one character
+repeated), anything under four characters, and any serial shared by **more than
+eight** assets — past that count the serial is the problem, not the assets.
+
+Both serial conflicts are swept every 30 minutes and are covered by business
+rule [83](Business-Rules#rule-83).
 
 ---
 
@@ -238,7 +348,14 @@ The fix is a [network exclusion](IPAM#exclusions), not a rejection.
 ## Merging assets by hand
 
 The **Sources** tab's merge modal, or the Assets bulk bar with exactly two rows
-selected.
+selected — or, from the asset form's duplicate-address dialog, *Save & review
+merge*.
+
+**Merging requires Assets full read-write.** A merge edits one record and
+deletes another, so it takes the same level as deploying the agent, on every
+path: the modal, the Duplicate IP and Duplicate Serial cards' *Merge into this* and
+*Review & merge* buttons, and the API. Reassigning an address from the card needs only Assets
+write — it deletes nothing.
 
 Per-field winners are pre-selected from the
 [Sources priority order](Assets#sources), with the winning column badged

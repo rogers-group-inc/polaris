@@ -67,7 +67,11 @@ func SystemInfoOnce(agentVersion string) *SystemInfo {
 	if dmi := readPlatformDMI(); dmi != nil {
 		info.Manufacturer = dmi.Manufacturer
 		info.Model = dmi.Model
-		info.SerialNumber = dmi.Serial
+		// A vendor placeholder ("To Be Filled By O.E.M.", "Default string")
+		// is reported as no serial at all, on every platform — /sys/class/dmi
+		// hands these back as readily as SMBIOS does. See serialnumber.go for
+		// why sending one is worse than sending nothing.
+		info.SerialNumber = usableSerial(dmi.Serial)
 		info.BiosVersion = dmi.BiosVersion
 	}
 

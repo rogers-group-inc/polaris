@@ -229,7 +229,7 @@ window.PolarisTheme = {
     // and only affects the launch splash, so a light-mode user still gets a dark
     // splash — cosmetic and unavoidable.
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", t.family === "dark" ? "#1d2024" : "#eef0f7");
+    if (meta) meta.setAttribute("content", t.family === "dark" ? "#1d2244" : "#eef0f7");
   },
   // One tap, one step — but the step can have waypoints. Lands only on a
   // selectable theme; any transit position between here and there is faded
@@ -335,7 +335,7 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
         // authProvider, regionTags: {user, role, effective} }. Translate to
         // the shape the rest of the mobile bundle expects — role becomes the
         // role NAME string for back-compat with existing role-name checks in
-        // reservations-tab.js / subnet-detail.js / more-tab.js. Permissions +
+        // reservation-actions.js / subnet-detail.js / more-tab.js. Permissions +
         // effective regions are passed through under explicit keys so future
         // surfaces (e.g. region-filtered reservation list) can read them.
         if (data && data.authenticated) {
@@ -414,11 +414,86 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
   function initPushOnce() {
     if (_pushInitDone || !window.polarisPush) return;
     _pushInitDone = true;
+    var pref = "email";
     polarisPush.registerSW()
       .then(function () { return api.push.preference(); })
-      .then(function (r) { return polarisPush.syncToPreference((r && r.preference) || "email", "mobile"); })
+      .then(function (r) {
+        pref = (r && r.preference) || "email";
+        return polarisPush.syncToPreference(pref, "mobile");
+      })
       .catch(function () { return polarisPush.reconcileSubscription("mobile"); })
-      .catch(function () { /* push is optional — never block boot */ });
+      .catch(function () { /* push is optional — never block boot */ })
+      // After the reconcile, never instead of it: a phone that has never been
+      // asked for permission cannot be enrolled silently, so it is asked once.
+      // `pref` is still "email" if the read above failed, which is the right
+      // way to fail — an offer made off a preference nobody confirmed would be
+      // asking on behalf of a setting that may say email.
+      .then(function () { return maybeOfferPushEnrollment(pref); })
+      .catch(function () { /* likewise */ });
+  }
+
+  /**
+   * Offer enrollment on a phone the account's push preference cannot reach
+   * yet (business rule 39).
+   *
+   * iOS grants Web Push only to a home-screen-installed app, and on iOS 16.4+
+   * `"PushManager" in window` is true in plain Safari — so an Enable button
+   * there is one that can only ever throw. That phone is not asked at all; the
+   * More tab's Notifications row already tells it to Add to Home Screen, and
+   * the offer is put to it once it is installed and signs in as an app.
+   */
+  function maybeOfferPushEnrollment(pref) {
+    if (!window.polarisPush || !polarisPush.shouldOfferEnrollment) return;
+    if (window.PolarisInstall && PolarisInstall.isIos() && !PolarisInstall.isStandalone()) return;
+    return polarisPush
+      .shouldOfferEnrollment(pref, { username: currentUser && currentUser.username })
+      .then(function (offer) { if (offer) openPushOfferSheet(); })
+      .catch(function () { /* an offer nobody asked for is never worth an error */ });
+  }
+
+  /**
+   * The offer, as the bottom sheet every other choice on this app is made in.
+   *
+   * Recorded as made the moment it opens, not when a button is tapped: the
+   * scrim and a swipe-away dismiss it with no callback, and a sheet that comes
+   * back on every boot until it is answered one specific way is a nag.
+   *
+   * enable() is the first statement of the tap handler — before the sheet is
+   * torn down and before any await — because Notification.requestPermission()
+   * needs the tap's transient user activation and Safari drops it across an
+   * await. Same rule as the More tab's chooser and push.js's enable().
+   */
+  function openPushOfferSheet() {
+    polarisPush.recordOfferMade(currentUser && currentUser.username);
+    var scrim = document.createElement("div");
+    scrim.className = "scrim";
+    var sheet = document.createElement("div");
+    sheet.className = "sheet";
+    sheet.innerHTML = ''
+      + '<div class="sheet-handle"></div>'
+      + '<h3 class="sheet-title" style="margin:0 0 4px;">Push notifications</h3>'
+      + '<p style="margin:0 0 16px;color:var(--md-on-surface-variant);font-size:14px;">'
+      + 'Your account is set to be notified by push, but this phone has never been enrolled. '
+      + 'Turn push notifications on here? You can change this any time from More → Notifications.</p>'
+      + '<div style="display:flex;gap:12px;justify-content:flex-end;">'
+      + '  <button id="push-offer-dismiss" class="btn btn-outlined">Not now</button>'
+      + '  <button id="push-offer-enable" class="btn btn-filled">Enable</button>'
+      + '</div>';
+    document.body.appendChild(scrim);
+    document.body.appendChild(sheet);
+
+    function close() { scrim.remove(); sheet.remove(); }
+    scrim.addEventListener("click", close);
+    sheet.querySelector("#push-offer-dismiss").addEventListener("click", close);
+    sheet.querySelector("#push-offer-enable").addEventListener("click", function () {
+      var enrolling = polarisPush.enable({ surface: "mobile" });
+      close();
+      enrolling.then(function () {
+        PolarisTabs.showSnackbar("Push notifications are on for this phone");
+      }, function (err) {
+        PolarisTabs.showSnackbar((err && err.message) || "This browser refused push notifications.", { error: true });
+      });
+    });
   }
 
   // ─── Shell ─────────────────────────────────────────────────────────────
@@ -558,6 +633,16 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
   // ─── Route handler ─────────────────────────────────────────────────────
   function routeChanged(route) {
     if (!currentUser) return;
+
+    // Retired routes. The Reservations tab and More → Networks both became
+    // the Networks tab; an installed PWA keeps its home-screen shortcut
+    // (#reservations) until the manifest is re-read, and bookmarks keep
+    // theirs forever, so both land on the tab rather than bouncing to Search.
+    if (route && (route.name === "reservations"
+        || (route.name === "more" && route.parts && route.parts[0] === "subnets"))) {
+      PolarisRouter.go("networks", { replace: true });
+      return;
+    }
 
     var topbar = document.getElementById("topbar-slot");
     var body = document.getElementById("app-body");

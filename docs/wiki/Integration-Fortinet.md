@@ -88,7 +88,7 @@ resolved method needs them.
 | **`pushQuarantine`** | quarantining an asset pushes MAC address-group entries to every gate that has sighted it within the sighting window | address-group write access |
 | **`autoReserveFortinetInfra`** | each cycle pins the address a managed switch or AP **already holds by lease**. Occupancy does not change | `pushReservations` |
 | **`adoptDiscoveredMac`** | replaces a synthetic **placeholder** MAC with the real one and re-pushes. Only ever overwrites a MAC matching the placeholder prefix | `pushReservations` |
-| **`syncDescriptions`** | writes Polaris descriptions back to the devices | device-config write on the FMG admin profile |
+| **`syncFortigateDescriptions`** / **`syncSwitchDescriptions`** / **`syncApDescriptions`** (Description Sync) | writes Polaris descriptions back to the devices — one toggle each for FortiGates, FortiSwitches and FortiAPs | proxy mode: device-config write on the FMG admin profile. Direct mode and standalone FortiGate: **System → Read-Write** on the gate's REST API access profile (plus Network → Configuration, and WiFi & Switch Controller when the gate manages switches / APs) |
 | **`pullSdwan`** | pulls SD-WAN health-check metrics and rule member selection | — |
 | **`arpPresenceSweep`** | fires one datagram at every reserved IP so the gate ARP-resolves it | — |
 
@@ -99,11 +99,32 @@ other DHCP write Polaris makes is one operator acting on one address, whereas
 this one runs on a schedule across a fleet. It is bounded per cycle, takes the
 MAC only from the gate's own lease table, and verifies by read-back.
 
-**`syncDescriptions` is Polaris-primary** ([rule 14](Business-Rules#rule-14)).
+**Description Sync is Polaris-primary** ([rule 14](Business-Rules#rule-14)).
 A non-empty Polaris value **always wins** — pushed on save, re-asserted by every
 reconcile, device-side edits overwritten. An **empty** Polaris field adopts the
 device value. There is no conflict state. Under FMG central management, pushes
 are additionally mirrored into FMG's database.
+
+It is switched on **per device class**: FortiGates (the alias and interface
+comments), FortiSwitches (switch and port descriptions) and FortiAPs (the AP
+location field) each have their own toggle, so you can sync switches without
+touching APs. An integration saved before the split keeps its old single
+setting for every class until the Description Sync tab is next saved.
+
+**FortiAP descriptions through FortiManager: use with caution.** This path is
+not implemented well. AP Manager keeps its own copy of each AP's location, and
+Polaris only mirrors into it when central AP management is detected — a
+FortiManager install can still revert or overwrite what Polaris pushed. Try it
+on a few APs before turning it on for a whole ADOM. The FortiManager
+integration's Description Sync tab carries the same warning.
+
+When the writes go **direct to the gate** (FMG bypassing the proxy, or a
+standalone FortiGate), the access profile must grant **System → Read-Write**.
+The FortiGate alias lives in `system/global`, which FortiOS puts in the System
+group rather than Network. Without it the alias write is refused, but interface
+descriptions still sync, so the feature can look like it partly works. System
+Read-Write also covers administrators and global settings, so treat that token
+as an admin-grade credential.
 
 **`arpPresenceSweep` is IDS-visible.** It also requires Polaris→subnet routing
 and a permitting policy to have any effect; where the packet cannot reach, the
@@ -114,6 +135,16 @@ evidence of absence** ([rule 17](Business-Rules#rule-17)).
 It **never writes to the device**. Where FortiOS will not expose the runtime
 selected route over REST, the value is *inferred* and labelled as such in the
 UI.
+
+SD-WAN has its own polling pass, separate from the interface scrape. The SD-WAN
+tab's **Polling Interval (seconds)** field — `sdwanIntervalSeconds`, 60 to
+86400, default **60** — sets how often each REST-polled FortiGate is asked for
+its health-check readings and rule selection. It is the same field on the
+FortiManager and standalone FortiGate integrations. SLA charts and SD-WAN
+alerts therefore move once a minute by default, and an SD-WAN automation
+"sustained for N polls" means N reads at this interval. Only gates whose
+interfaces are polled over FortiOS REST are asked. A gate moved to SNMP gets no
+SD-WAN reads, and managed switches and APs have no SD-WAN.
 
 Also on the Monitoring tab: **`excludeFortilinkLldp`**, which stops internal
 FortiGate↔FortiSwitch links appearing in the LLDP Neighbor column, and

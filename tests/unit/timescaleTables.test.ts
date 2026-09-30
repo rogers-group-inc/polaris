@@ -136,7 +136,9 @@ describe("timescaleService managed-table inventory", () => {
 
   it("every sample-shaped table in prisma/schema.prisma is Timescale-managed or explicitly exempt", () => {
     const schema = readFileSync(join(ROOT, "prisma", "schema.prisma"), "utf8");
-    const re = /@@map\("(asset_[a-z_]+_samples(?:_hourly|_daily)?)"\)/g;
+    // `_traceroutes` is the path-check path-snapshot hypertable — not a
+    // `_samples` name, but sample-shaped all the same.
+    const re = /@@map\("(asset_[a-z_]+_(?:samples(?:_hourly|_daily)?|traceroutes))"\)/g;
     const declared = new Set<string>();
     for (const m of schema.matchAll(re)) declared.add(m[1]);
     expect(declared.size).toBeGreaterThanOrEqual(ALL_HYPERTABLE_CANDIDATES.length);

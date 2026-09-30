@@ -11,17 +11,19 @@
  * tests/integration: the resolver reads the manual-tier Setting row.
  */
 
-import { it, expect, beforeAll } from "vitest";
+import { it, expect, beforeAll, afterAll } from "vitest";
 import { dbDescribe, dbReachable } from "./_helpers.js";
+import { prisma } from "../../src/db.js";
 import {
   computeDueWork,
   resolveMonitorSettings,
+  invalidateMonitorSettingsCache,
   type MonitorPassCandidate,
   type MonitorCadence,
   LOSS_SAMPLES_MAX_PER_PASS,
 } from "../../src/services/monitoringService.js";
 
-const ALL = new Set<MonitorCadence>(["probe", "fastFiltered", "telemetry", "systemInfo", "processes", "lossSample"]);
+const ALL = new Set<MonitorCadence>(["probe", "fastFiltered", "telemetry", "systemInfo", "processes", "sdwan", "lossSample"]);
 const now = new Date("2026-08-06T12:00:00.000Z");
 
 let probeSec = 60;
@@ -62,6 +64,7 @@ function cand(over: Partial<MonitorPassCandidate> & { id?: string } = {}): Monit
     lastProcessPinsAt: null,
     monitoredProcesses: [],
     mappedProcesses: [],
+    lastSdwanAt: null,
     dependencySuppressed: false,
     // ICMP loss-sampler inputs. An address is required (there is nothing to
     // ping without one) and `status` gates on maintenance.
@@ -375,5 +378,93 @@ dbDescribe("probe batching", () => {
       [cand({ responseTimePolling: "disabled" })], ALL, now,
     );
     expect(probeDueIds(due)).toEqual([]);
+  });
+});
+
+// ─── SD-WAN cadence (split out of system-info 2026-09) ───────────────────────
+// SD-WAN used to ride the system-info pass, so SLA readings arrived only as
+// often as interfaces did (10 min by default). It has its own anchor
+// (lastSdwanAt) and a per-integration interval (config.sdwanIntervalSeconds,
+// default 60s) read from the resolver's integration sidecar — which is why
+// these need real Integration rows.
+
+dbDescribe("SD-WAN due-set", () => {
+  const PFX = `cdw-sdwan-${Date.now()}`;
+  let onId = "";
+  let slowId = "";
+  let offId = "";
+
+  beforeAll(async () => {
+    const mk = (suffix: string, config: Record<string, unknown>) =>
+      prisma.integration.create({
+        data: { name: `${PFX}-${suffix}`, type: "fortigate", enabled: false, config: config as never },
+      });
+    onId   = (await mk("on",   { pullSdwan: true })).id;
+    slowId = (await mk("slow", { pullSdwan: true, sdwanIntervalSeconds: 600 })).id;
+    offId  = (await mk("off",  { pullSdwan: false })).id;
+    invalidateMonitorSettingsCache();
+  });
+
+  afterAll(async () => {
+    await prisma.integration.deleteMany({ where: { name: { startsWith: PFX } } });
+    invalidateMonitorSettingsCache();
+  });
+
+  const gate = (integrationId: string, over: Partial<MonitorPassCandidate> & { id?: string } = {}) =>
+    cand({
+      assetType: "firewall",
+      discoveredByIntegrationId: integrationId,
+      discoveredByIntegration: { type: "fortigate" } as never,
+      ...over,
+    });
+
+  it("queues a never-polled SD-WAN gate, independent of the system-info cadence", async () => {
+    // System-info was polled a moment ago — under the old ride-along the gate
+    // would wait its full interface interval for the next SLA reading.
+    const due = await computeDueWork([gate(onId, { lastSystemInfoAt: now })], ALL, now);
+    expect(due.sdwanWork.map((w) => w.id)).toEqual(["cand-1"]);
+    expect(due.systemInfos).toEqual([]);
+  });
+
+  it("defaults to a 60s interval", async () => {
+    const fresh = await computeDueWork([gate(onId, { lastSdwanAt: ago(30) })], ALL, now);
+    expect(fresh.sdwanWork).toEqual([]);
+    const stale = await computeDueWork([gate(onId, { lastSdwanAt: ago(60) })], ALL, now);
+    expect(stale.sdwanWork).toHaveLength(1);
+  });
+
+  it("honours the integration's sdwanIntervalSeconds", async () => {
+    const notYet = await computeDueWork([gate(slowId, { lastSdwanAt: ago(300) })], ALL, now);
+    expect(notYet.sdwanWork).toEqual([]);
+    const due = await computeDueWork([gate(slowId, { lastSdwanAt: ago(600) })], ALL, now);
+    expect(due.sdwanWork).toHaveLength(1);
+  });
+
+  it("does nothing when the integration's toggle is off, or for an orphan asset", async () => {
+    const off = await computeDueWork([gate(offId)], ALL, now);
+    expect(off.sdwanWork).toEqual([]);
+    const orphan = await computeDueWork([cand({ assetType: "firewall" })], ALL, now);
+    expect(orphan.sdwanWork).toEqual([]);
+  });
+
+  it("skips a gate that is not confirmed up, and a managed switch", async () => {
+    const warning = await computeDueWork([gate(onId, { monitorStatus: "warning" })], ALL, now);
+    expect(warning.sdwanWork).toEqual([]);
+    const sw = await computeDueWork([gate(onId, { assetType: "switch" })], ALL, now);
+    expect(sw.sdwanWork).toEqual([]);
+  });
+
+  it("keeps the old REST-only reach: a gate moved to SNMP interfaces is left alone", async () => {
+    const snmp = await computeDueWork([gate(onId, { interfacesPolling: "snmp" })], ALL, now);
+    expect(snmp.sdwanWork).toEqual([]);
+  });
+
+  it("emits nothing when the cadence is not requested (the heavy loop)", async () => {
+    const heavy = await computeDueWork(
+      [gate(onId)],
+      new Set<MonitorCadence>(["telemetry", "systemInfo", "processes", "eventLog"]),
+      now,
+    );
+    expect(heavy.sdwanWork).toEqual([]);
   });
 });

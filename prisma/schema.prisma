@@ -271,6 +271,7 @@ model Integration {
   pushedReservations    Reservation[]            @relation("ReservationPushedTo")
   fortigateSightings    AssetFortigateSighting[] // Back-relation: sightings recorded against this integration's discovered FortiGates
   assetSources          AssetSource[] // Back-relation: per-source asset rows attributed to this integration
+  controllerClaims      AssetControllerClaim[] // Back-relation: managed-device claims this integration's gates asserted (business rule 83)
   monitorClassOverrides MonitorClassOverride[] // Back-relation: (assetType, integration) override rows
   vcenterDatastores     VcenterDatastore[] // Back-relation: current-state datastore rows (vcenter type only)
 
@@ -441,6 +442,7 @@ model Credential {
   updatedAt DateTime @updatedAt
 
   customWidgets                   ManufacturerCustomWidget[] @relation("ManufacturerCustomWidgetCredential")
+  pathChecks                      PathCheck[]                @relation("PathCheckCredential")
   assets                          Asset[]                    @relation("AssetMonitorCred") // default credential back-relation
   rtAssets                        Asset[]                    @relation("AssetRTCred")
   cpuMemoryAssets                 Asset[]                    @relation("AssetCpuMemCred")
@@ -464,6 +466,10 @@ model Credential {
   // credential doesn't block a stuck agent install — operator falls
   // back to DELETE /assets/:id/agent?force=true in that case.
   managedAgents                   ManagedAgent[]             @relation("AgentInstallCredential")
+  // Back-relation for the firmware repository's device-admin bindings
+  // (business rule 87). SetNull on delete: a binding whose credential is gone
+  // is SKIPPED by resolution and falls through to the next scope.
+  firmwareBindings                FirmwareCredentialBinding[] @relation("FirmwareBindingCredential")
 
   @@index([type])
   @@index([createdBy])
@@ -1062,6 +1068,13 @@ model Asset {
   // table it writes into. Agent-mode assets never use it (the agent runs its
   // own loop and pushes to POST /agents/samples).
   lastEventLogAt          DateTime?
+  // SD-WAN cadence anchor (FortiOS Performance SLA + service-rule selection).
+  // Its own cadence since 2026-09 — it used to ride the system-info pass, so
+  // SLA readings arrived only as often as interfaces did (10 min by default).
+  // Interval is Integration.config.sdwanIntervalSeconds (default 60s). Stamped
+  // even on failure, like lastEventLogAt, so an unreachable gate is asked once
+  // per interval rather than once per 5s light tick.
+  lastSdwanAt             DateTime?
   // Bumped after every successful collectCustomWidgets pass.
   lastCustomWidgetAt      DateTime?
 
@@ -1180,6 +1193,7 @@ model Asset {
   conflicts              Conflict[]
   ipHistory              AssetIpHistory[]
   fortigateSightings     AssetFortigateSighting[]
+  controllerClaims       AssetControllerClaim[]
   interfaceOverrides     AssetInterfaceOverride[]
   // NOTE: the append-only sample/rollup time-series (AssetMonitorSample,
   // *InterfaceSample, the *Hourly/*Daily rollups, AssetCustomWidgetSample, etc.)
@@ -1226,7 +1240,12 @@ model Asset {
   dependencyParents  AssetDependencyParent[]  @relation("AssetDependencyChild")
   dependencyChildren AssetDependencyParent[]  @relation("AssetDependencyParent")
   managedAgent       ManagedAgent?
+  // Path checks this agent host runs (materialized membership; see
+  // PathCheckSource).
+  pathCheckSources PathCheckSource[]
   maintenanceWindows AssetMaintenanceWindow[]
+  maintenanceHolds   MaintenanceHold[]
+  firmwareUpgradeRuns FirmwareUpgradeRun[]
   topologyLayouts    TopologyLayout[]
   processConnections AssetProcessConnection[]
 
@@ -1365,15 +1384,17 @@ model AssetTelemetrySample {
   memUsedBytes  BigInt?
   memTotalBytes BigInt?
   // Per-logical-core CPU utilisation, as a jsonb array of 0-100 numbers whose
-  // INDEX is the logical core id (`[12.5, 3.1, ...]`, one decimal). Only the
-  // Polaris Agent reports it; every other transport leaves it null, which is
-  // why it is nullable jsonb rather than a Float[] — a scalar list cannot
-  // express "this source does not break CPU down by core" distinctly from
-  // "this host has no cores". DETAIL TIER ONLY: the hourly/daily rollups do
-  // not carry it (element-wise averaging of a variable-length array across
-  // every asset in the fleet is the one aggregate that does not pay for
-  // itself), so a range that resolves to a rollup tier charts the aggregate
-  // `cpuPct` alone and the chart says so.
+  // INDEX is the logical core id (`[12.5, 3.1, ...]`, one decimal). Two
+  // sources fill it — the Polaris Agent (a host's own logical cores) and
+  // vCenter (a VM's vCPUs, an ESXi host's physical cores, from the
+  // PerformanceManager's real-time `cpu.usage` instances). Every other
+  // transport leaves it null, which is why it is nullable jsonb rather than a
+  // Float[] — a scalar list cannot express "this source does not break CPU
+  // down by core" distinctly from "this host has no cores". DETAIL TIER ONLY:
+  // the hourly/daily rollups do not carry it (element-wise averaging of a
+  // variable-length array across every asset in the fleet is the one
+  // aggregate that does not pay for itself), so a range that resolves to a
+  // rollup tier charts the aggregate `cpuPct` alone and the chart says so.
   cpuCorePcts   Json?
   // Memory BREAKDOWN (bytes) — the parts `memUsedBytes` is not. Agent-only
   // today. The four bands are defined to sum EXACTLY to memTotalBytes:
@@ -1393,6 +1414,34 @@ model AssetTelemetrySample {
   // — it is backing store, so it charts as its own overlaid line.
   swapUsedBytes   BigInt?
   swapTotalBytes  BigInt?
+  // The vCenter memory breakdown (bytes) — a SECOND, disjoint band set, not a
+  // rewording of the agent's. vSphere does not measure buffers or page cache;
+  // it measures how the HYPERVISOR is backing the guest's configured RAM, and
+  // the two vocabularies must not be mixed in one stack. A row carries the
+  // agent bands or these, never both, and the chart picks its band table from
+  // whichever is present.
+  //
+  // A VM partitions its CONFIGURED RAM (memTotalBytes) into:
+  //   memPrivateBytes + memSharedBytes + memBalloonedBytes
+  //     + memSwappedBytes + memCompressedBytes + (untouched) = total
+  // from `summary.quickStats` — private/shared are host memory backing the
+  // guest, ballooned is what the balloon driver reclaimed, swapped and
+  // compressed are what the host took back under pressure. The last three
+  // rising is the reading an operator opens a VM's memory chart FOR.
+  //
+  // An ESXi host partitions its INSTALLED RAM into:
+  //   memConsumedBytes + memBalloonedBytes + memSwappedBytes + (free) = total
+  // `memConsumedBytes` is machine memory actually in use (quickStats
+  // `overallMemoryUsage`); the other two come from the PerformanceManager.
+  // A host never sets private/shared/compressed and a VM never sets consumed,
+  // which is what keeps either stack from double-counting itself — host
+  // "shared" is a SUBSET of consumed and is deliberately not collected.
+  memPrivateBytes    BigInt?
+  memSharedBytes     BigInt?
+  memBalloonedBytes  BigInt?
+  memSwappedBytes    BigInt?
+  memCompressedBytes BigInt?
+  memConsumedBytes   BigInt?
   // Active session count (FortiGate only — read from the same
   // /api/v2/monitor/system/resource/usage `session` resource the CPU/mem
   // collector already fetches). Null for every other source.
@@ -1523,6 +1572,16 @@ model AssetInterface {
   speedBps    BigInt?
   ipAddress   String?
   macAddress  String?
+
+  // The last ADDRESSED ipAddress this port reported (bare, no mask), and when.
+  // Carried across the delete-replace in persistInterfaceRows: a scrape that
+  // reports an address refreshes both, one reporting 0.0.0.0 or nothing keeps
+  // them until lastLearnedIpAt is LAST_LEARNED_IP_TTL_MS (30 days) old. It is
+  // what tells a port that was never connected (a template's unused wan2 —
+  // null) from a DHCP WAN that lost its lease when the link dropped (the lease
+  // it held). Read by the "skip unused ports" condition option.
+  lastLearnedIp   String?
+  lastLearnedIpAt DateTime?
 
   // Cumulative counters as of the last full scrape. Current values only -- rate
   // math still comes from AssetInterfaceSample, which is why these are a snapshot
@@ -2029,19 +2088,30 @@ model AssetService {
   platform     String
   // systemd Description / Windows DisplayName.
   displayName  String?
+  // Windows service description (Win32_Service.Description); null on systemd,
+  // whose Description is displayName.
+  description  String?
   // systemd load state (loaded/masked/not-found); "" for Windows.
   loadState    String?
   // systemd active state (active/inactive/failed) / Windows state (running/stopped).
   activeState  String?
   // systemd sub state (running/exited/dead/failed); "" for Windows.
   subState     String?
-  // systemd enablement (enabled/disabled/static) / Windows start mode (auto/manual/disabled).
+  // systemd enablement (enabled/disabled/static) / Windows start mode
+  // (auto/auto-delayed/manual/disabled/boot/system).
   enabledState String?
   // Main process PID + its program name (cross-links to the Processes tab).
   mainPid      Int?
   mainProcess  String?
-  // Current memory of the unit's cgroup (systemd MemoryCurrent); null when unset.
+  // Current memory: the unit's cgroup (systemd MemoryCurrent) / the service
+  // process's working set (Windows); null when unset. Windows services sharing
+  // one svchost.exe share its PID and so each carry the whole process's figure.
   memBytes     BigInt?
+  // Mean CPU over the agent's last inventory interval (100 = one core, the
+  // AssetProcess convention): the unit's cgroup (systemd CPUUsageNSec, else its
+  // main PID) / the service process (Windows). Null on the agent's first scrape,
+  // after a restart, and for a stopped service. Same sharing caveat as memBytes.
+  cpuPct       Float?
   // True when the unit is start/stop/restartable via the AgentCommand queue.
   controllable Boolean  @default(false)
   updatedAt    DateTime @updatedAt
@@ -2049,6 +2119,22 @@ model AssetService {
   @@unique([assetId, unit])
   @@index([assetId])
   @@map("asset_services")
+}
+
+// When each current-state inventory of an asset was last SCRAPED — one row per
+// (asset, kind), upserted in the same transaction as the inventory write.
+// AssetProcess / AssetService are delta-written (utils/inventoryDelta): an
+// unchanged row is not rewritten, so its updatedAt is "last CHANGED", and
+// "how old is this list" (the alert email's top-process block) has to be read
+// here instead. No FK to Asset — the AssetProcess / AssetService convention.
+model AssetInventoryScrape {
+  assetId   String
+  // "processes" | "services"
+  kind      String
+  scrapedAt DateTime
+
+  @@id([assetId, kind])
+  @@map("asset_inventory_scrapes")
 }
 
 // ACCUMULATE + AGE connection map for MAPPED processes (Asset.mappedProcesses).
@@ -2829,6 +2915,13 @@ model AssetTelemetrySampleHourly {
   avgMemFreeBytes    BigInt?
   avgSwapUsedBytes   BigInt?
   lastSwapTotalBytes BigInt?
+  // vCenter band averages. Same avg-only reasoning as the agent bands above.
+  avgMemPrivateBytes    BigInt?
+  avgMemSharedBytes     BigInt?
+  avgMemBalloonedBytes  BigInt?
+  avgMemSwappedBytes    BigInt?
+  avgMemCompressedBytes BigInt?
+  avgMemConsumedBytes   BigInt?
   avgSessionCount   Float?
   minSessionCount   Float?
   maxSessionCount   Float?
@@ -2858,6 +2951,13 @@ model AssetTelemetrySampleDaily {
   avgMemFreeBytes    BigInt?
   avgSwapUsedBytes   BigInt?
   lastSwapTotalBytes BigInt?
+  // vCenter band averages. Same avg-only reasoning as the agent bands above.
+  avgMemPrivateBytes    BigInt?
+  avgMemSharedBytes     BigInt?
+  avgMemBalloonedBytes  BigInt?
+  avgMemSwappedBytes    BigInt?
+  avgMemCompressedBytes BigInt?
+  avgMemConsumedBytes   BigInt?
   avgSessionCount   Float?
   minSessionCount   Float?
   maxSessionCount   Float?
@@ -3176,6 +3276,210 @@ model AssetPerfSlaSampleDaily {
   @@index([assetId, bucketStart])
   @@index([assetId, healthCheck, link, bucketStart])
   @@map("asset_perf_sla_samples_daily")
+}
+
+// ─── Agent-run path checks ──────────────────────────────────────────
+// An operator-defined reachability check (HTTP/HTTPS/TCP/ICMP + optional
+// traceroute) that the Polaris Agent on every matching host runs on its own
+// cadence. The check carries NO threshold — the SLA lives in the automation
+// that watches its path* metrics. Results never move Asset.monitorStatus.
+model PathCheck {
+  id               String   @id @default(uuid())
+  name             String   @unique
+  description      String?
+  enabled          Boolean  @default(true)
+  // "http" | "https" | "tcp" | "icmp"
+  kind             String
+  // URL for http/https, host:port for tcp, host for icmp.
+  target           String
+  intervalSec      Int      @default(60)
+  timeoutMs        Int      @default(5000)
+  // http/https only: { acceptedStatuses: string[], bodyMatch?: { mode, pattern,
+  // caseSensitive }, verifyTls }.
+  http             Json?
+  // { enabled, everyNRuns, maxHops, probesPerHop }
+  traceroute       Json
+  keepBodyExcerpt  Boolean  @default(false)
+  // Which agent hosts run it: an automation-shaped scope (RuleScope), implicitly
+  // AND'd with "Polaris Agent installed and active", plus explicit pins.
+  scope            Json
+  assetIds         String[] @default([])
+  // Also run it from THIS Polaris server (the scheduler-role process —
+  // jobs/runServerPathChecks). Its source row is the one with assetId NULL.
+  runOnServer      Boolean  @default(false)
+  // http/https only: the `http`-typed Credential (bearer / basic / digest) the
+  // request authenticates with. A check with one runs ONLY from this Polaris
+  // server — no agent source is allowed or shipped, so the secret never
+  // leaves the server (business rule 85). Restrict: a credential in use by a
+  // check cannot be deleted out from under it (credentialService says why).
+  credentialId     String?
+  credential       Credential? @relation("PathCheckCredential", fields: [credentialId], references: [id], onDelete: Restrict)
+  // sha256 of exactly the definition the agent receives — folded into both
+  // config ETags so an edit reaches running agents.
+  definitionSha256 String
+  createdBy        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  lastReconciledAt DateTime?
+
+  sources PathCheckSource[]
+
+  @@index([credentialId])
+  @@map("path_checks")
+}
+
+// Materialized (check × agent host) membership, rebuilt by
+// reconcilePathCheckSources. Also carries the latest result so the
+// fleet view, the asset tab and path-change detection read this small table
+// instead of the sample hypertable.
+//
+// assetId NULL = the Polaris server itself (PathCheck.runOnServer). At most
+// one such row per check — a partial unique index in the migration
+// (path_check_sources_server_key), which Prisma cannot express. Its samples
+// and traceroutes carry the reserved subject id "polaris-server"
+// (pathCheckService.POLARIS_SERVER_SUBJECT) in place of an asset id.
+model PathCheckSource {
+  id                    String            @id @default(uuid())
+  checkId               String
+  check                 PathCheck @relation(fields: [checkId], references: [id], onDelete: Cascade)
+  assetId               String?
+  asset                 Asset?            @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  // true = pinned by PathCheck.assetIds (kept even when the filter no longer matches).
+  explicit              Boolean           @default(false)
+  lastOk                Boolean?
+  lastSampleAt          DateTime?
+  lastLatencyMs         Float?
+  lastHttpStatus        Int?
+  lastError             String?
+  lastResolvedIp        String?
+  lastFailAt            DateTime?
+  lastHopCount          Int?
+  lastTracerouteComplete Boolean?
+  lastPathHash          String?
+  lastTracerouteAt      DateTime?
+  lastPathChangeEventAt DateTime?
+  createdAt             DateTime          @default(now())
+
+  @@unique([checkId, assetId])
+  @@index([assetId])
+  @@map("path_check_sources")
+}
+
+// One agent host's result for one path check run. Hypertable, NO FK
+// (sample-table rule: never cascade into compressed chunks). checkId is not a
+// FK either (the AssetStateSample.probeId precedent).
+model AssetPathCheckSample {
+  id          String    @default(uuid())
+  assetId     String
+  timestamp   DateTime  @default(now())
+  checkId     String
+  ok          Boolean
+  // Whole run (DNS → body read). Null when nothing connected.
+  latencyMs   Float?
+  dnsMs       Float?
+  connectMs   Float?
+  tlsMs       Float?
+  ttfbMs      Float?
+  httpStatus  Int?
+  bodyMatched Boolean?
+  bodySha256  String?
+  bodyBytes   Int?
+  // ≤4 KB, stored only when the run failed or the check keeps excerpts
+  // (enforced at ingest, never trusted from the wire).
+  bodyExcerpt String?   @db.Text
+  error       String?
+  resolvedIp  String?
+  tlsNotAfter DateTime?
+  tlsIssuer   String?
+  hopCount    Int?
+  // Always "fast" (rollups filter on it).
+  cadence     String?
+
+  @@id([id, timestamp])
+  @@index([assetId, timestamp])
+  @@index([assetId, checkId, timestamp])
+  @@index([checkId, timestamp])
+  @@map("asset_path_check_samples")
+}
+
+model AssetPathCheckSampleHourly {
+  id                 String   @default(uuid())
+  assetId            String
+  bucketStart        DateTime
+  checkId            String
+  sampleCount        Int
+  okCount            Int      @default(0)
+  failCount          Int      @default(0)
+  avgLatencyMs       Float?
+  minLatencyMs       Float?
+  maxLatencyMs       Float?
+  avgDnsMs           Float?
+  avgConnectMs       Float?
+  avgTlsMs           Float?
+  avgTtfbMs          Float?
+  avgHopCount        Float?
+  maxHopCount        Int?
+  // Most frequent HTTP status in the bucket (null for tcp/icmp).
+  modeHttpStatus     Int?
+  lastBucketSampleAt DateTime
+
+  @@id([id, bucketStart])
+  @@unique([bucketStart, assetId, checkId])
+  @@index([assetId, bucketStart])
+  @@index([assetId, checkId, bucketStart])
+  @@map("asset_path_check_samples_hourly")
+}
+
+model AssetPathCheckSampleDaily {
+  id                 String   @default(uuid())
+  assetId            String
+  bucketStart        DateTime
+  checkId            String
+  sampleCount        Int
+  okCount            Int      @default(0)
+  failCount          Int      @default(0)
+  avgLatencyMs       Float?
+  minLatencyMs       Float?
+  maxLatencyMs       Float?
+  avgDnsMs           Float?
+  avgConnectMs       Float?
+  avgTlsMs           Float?
+  avgTtfbMs          Float?
+  avgHopCount        Float?
+  maxHopCount        Int?
+  modeHttpStatus     Int?
+  lastBucketSampleAt DateTime
+
+  @@id([id, bucketStart])
+  @@unique([bucketStart, assetId, checkId])
+  @@index([assetId, bucketStart])
+  @@index([assetId, checkId, bucketStart])
+  @@map("asset_path_check_samples_daily")
+}
+
+// A traceroute an agent ran for a path check. Standalone hypertable
+// (no rollups — a path snapshot has no meaningful average), pruned on the flat
+// `pathCheckTraceroutes` retention window. Hops were resolved to assets and
+// subnets at WRITE time: [{ttl, ip|null, rdns?, rttMs[], assetId?, hostname?,
+// monitorStatus?, subnetCidr?, interfaceName?}].
+model AssetPathCheckTraceroute {
+  id            String   @default(uuid())
+  assetId       String
+  timestamp     DateTime @default(now())
+  checkId       String
+  destinationIp String?
+  complete      Boolean
+  hopCount      Int
+  hops          Json
+  // sha256 over the hop IP sequence ("*" for silent hops); RTTs excluded.
+  pathHash      String
+  // "scheduled" | "transition"
+  reason        String   @default("scheduled")
+  note          String?
+
+  @@id([id, timestamp])
+  @@index([assetId, checkId, timestamp])
+  @@map("asset_path_check_traceroutes")
 }
 
 model AssetIpHistory {
@@ -3913,7 +4217,8 @@ model ManufacturerProfile {
 // null defaultMibId = built-in seed scope. `defaultType` is "scalar" or
 // "table" and is what `collectTelemetrySnmp` uses to decide between GET .0
 // and walk-the-subtree. `defaultTransform` is the optional value-transform
-// applied after the SNMP value lands (Celsius↔Fahrenheit, bytes→MB, etc.).
+// applied after the SNMP value lands — on a metric row, only what
+// METRIC_ROW_TRANSFORMS allows (tenths_to_units on a scalar temperature row).
 model ManufacturerProfileMetric {
   id               String              @id @default(uuid())
   profileId        String
@@ -3948,11 +4253,12 @@ model ManufacturerProfileMetric {
   // metrics whose symbol comes from a built-in seed instead of "seed".
   defaultMibStdKey String?
   defaultType      String              @default("scalar") // "scalar" | "double_scalar" | "table"
-  // Unary transforms (TransformKind, e.g. celsius_to_fahrenheit, bytes_to_gb)
-  // when defaultType="scalar"; binary combiners (CombinerKind, e.g.
-  // a_over_b_as_percent) when defaultType="double_scalar"; null on
-  // defaultType="table". Validated against the registries in
-  // src/utils/symbolTransforms.ts at the service layer.
+  // A unary transform (TransformKind) when defaultType="scalar" — restricted
+  // per metric key to METRIC_ROW_TRANSFORMS, the ones a collector applies
+  // (today tenths_to_units on temperature); binary combiners (CombinerKind,
+  // e.g. a_over_b_as_percent) when defaultType="double_scalar"; null on
+  // defaultType="table". Validated against src/utils/symbolTransforms.ts at
+  // the service layer.
   defaultTransform String?
   // Second OID for the double_scalar shape. Populated when defaultType=
   // "double_scalar"; the combiner in defaultTransform is applied as
@@ -4313,6 +4619,66 @@ model AssetFortigateSighting {
   // in through assetId.
   @@index([ipAddress])
   @@map("asset_fortigate_sightings")
+}
+
+// One controller FortiGate's CLAIM on one managed device (business rule 83).
+//
+// Why this table exists: `AssetSource` is unique on `(sourceKind, externalId)`
+// and externalId for a FortiSwitch/FortiAP is its SERIAL, so exactly one row
+// can exist per managed device however many gates report it. Discovery's
+// switch/AP loops then stamp `Asset.fortinetTopology` and
+// `discoveredByIntegrationId` unconditionally, so when two gates both carry a
+// device on their managed roster the record simply flips to whichever
+// integration ran last — silently, every pass, taking dependency suppression,
+// Device Map membership, region tags and description-sync targeting with it.
+// Nothing persisted the fact that a SECOND gate also claimed the serial, so
+// nothing could report it. This row is that evidence: one row per
+// (device serial, claiming controller), re-asserted on every discovery pass.
+//
+// It is NOT a projection input — `projectAssetFromSources` never reads it and
+// the claim never decides which controller wins. Report-only by design: the
+// conflict card tells an operator that two gates disagree, discovery keeps its
+// existing last-writer-wins behaviour, and a claim that stops being re-asserted
+// ages out (which is how a completed move closes its own card).
+model AssetControllerClaim {
+  id      String @id @default(uuid())
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  /// The managed device's own serial, upper-cased — the same key
+  /// `AssetSource.externalId` uses for the fortiswitch/fortiap kinds.
+  deviceSerial String
+  /// "fortiswitch" | "fortiap" — matches the AssetSource sourceKind that
+  /// recorded the device, so a card can say what kind of thing is contested.
+  sourceKind   String
+
+  /// Chassis identity of the CLAIMING gate (business rule 41's vocabulary:
+  /// the serial, never the name, is what identifies a gate). Null when the
+  /// controller published no serial, which is why `controllerKey` exists.
+  controllerSerial String?
+  /// FortiManager's device NAME for the claiming gate — what
+  /// `fortinetTopology.controllerFortigate` holds. Kept alongside the serial
+  /// because it is the string an operator sees in FMG and in the Sources
+  /// column (business rule 22), and because it is the only identity a gate
+  /// that published no serial has.
+  controllerDevice String
+  /// The stable dedupe key: the upper-cased controller serial when there is
+  /// one, else `name:<lower-cased device name>`. Two claims sharing this key
+  /// are the same gate saying the same thing twice.
+  controllerKey    String
+
+  integrationId String?
+  integration   Integration? @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+
+  firstSeen DateTime @default(now())
+  lastSeen  DateTime @default(now())
+
+  @@unique([deviceSerial, controllerKey])
+  @@index([assetId])
+  // The sweep's read: every fresh claim, grouped by the contested serial.
+  @@index([deviceSerial, lastSeen])
+  @@index([integrationId])
+  @@map("asset_controller_claims")
 }
 
 // Bearer-token authentication for external callers (e.g. SIEM systems) that
@@ -5010,6 +5376,26 @@ model Notification {
   /// six regressions to buy nothing.
   alertGroupId String?
   alertGroup   AlertGroup? @relation(fields: [alertGroupId], references: [id], onDelete: SetNull)
+  // Business rule 78 — this alert was raised FOR A DEPENDENCY-SUPPRESSED
+  // device by a down automation that opted in (`trigger.alertWhenDependencyDown`).
+  // Three readers, none of which could work off the message text: the
+  // suppression sweep (clearSuppressedAlerts) skips these rows — a
+  // dependency-flavoured alert on a suppressed asset is the one alert that is
+  // supposed to be there; the engine compares it with the asset's live flag
+  // and, on a mismatch, ENDS the alert and raises a new one in the other
+  // flavour (a plain Down that turned Dep. Down, or a Dep. Down whose upstream
+  // came back while the device stayed down); and the alert surfaces badge it.
+  // A column rather than a key in `templateCtx` because that snapshot is
+  // written only when the rule composes or escalates — a plain in-app
+  // automation would carry nothing to read.
+  dependencyDown Boolean @default(false)
+  // Who silenced it, snapshotted at fire so the row still explains itself
+  // after the topology changes: { upstream: {id, hostname}, rootCause: {id,
+  // hostname, reason: "down"|"maintenance"|"dependency_test"}, hops, ownStatus }.
+  // `upstream` is the device directly above; `rootCause` the one actually down
+  // — the same device on a one-hop chain, the FortiGate above a suppressed
+  // switch on a two-hop one. NULL unless dependencyDown.
+  dependencyBlame Json?
 
   deliveries NotificationDelivery[]
 
@@ -5380,22 +5766,164 @@ model MaintenanceSchedule {
   @@map("maintenance_schedules")
 }
 
-// One realized maintenance window per (asset, schedule): opened when the
-// scheduler puts the asset into maintenance for that schedule, closed
-// (endedAt + endReason) when the window ends for any reason. Open rows
-// (endedAt IS NULL) are the source of truth for "currently in maintenance" —
-// restart-safe by construction. Closed rows power the chart maintenance
-// bands (scheduleName is snapshotted so labels survive schedule deletion).
+// Downtime POLARIS ITSELF is causing, as an intent the reconcile turns into a
+// real window (business rule 80). An agent upgrade / reinstall / uninstall
+// stops the agent service, which drops the WebSocket and writes
+// `agent.disconnected` — an alert about work the operator asked for. A hold
+// puts the asset in maintenance for the duration, which suppresses it the same
+// way a schedule does (assetCanTrigger).
+//
+// Why a table and not just a window row: open windows are the reconcile's
+// OUTPUT, and it closes any it cannot re-derive from a live holder. This is the
+// holder — the "should be in maintenance" input that a window is diffed
+// against, so entry, status parking, the maintenance.entered event and the
+// live-alert sweep all happen through the one path schedules already use.
+//
+// `expiresAt` is not a nicety. A held asset is not monitored, so a hold whose
+// release never runs — the process died mid-upgrade, the host never came back —
+// would silently stop watching a production machine forever. The reconcile
+// closes an expired hold whether or not anything released it; the alert it was
+// suppressing then fires late rather than never.
+//
+// Released by deletion, not by a flag: the AssetMaintenanceWindow row it opened
+// IS the history (with endReason), so a second row here would only be a second
+// place to read the same fact from.
+model MaintenanceHold {
+  id        String   @id @default(uuid())
+  assetId   String
+  // "agent-upgrade" | "agent-reinstall" | "agent-uninstall" |
+  // "firmware-upgrade" (business rule 87). Part of the uniqueness so two
+  // different operations on one asset cannot lose each other's hold, and
+  // re-running the same one extends rather than stacks.
+  kind      String
+  // Snapshotted onto the window's scheduleName for the chart band and the
+  // asset's Maintenance tab — "Polaris Agent upgrade", not a kind slug.
+  label     String
+  startedAt DateTime @default(now())
+  expiresAt DateTime
+  createdBy String?
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, kind])
+  @@index([expiresAt])
+  @@map("maintenance_holds")
+}
+
+// ─── Firmware repository (business rule 87) ───────────────────────────────────
+// Server Settings → Repository: firmware images for switches and access points,
+// filed under a manufacturer › device type › model node, with a device-admin
+// login bound at whichever of those three scopes fits, and one run row per
+// flash. Matching is by PLATFORM (the image header's serial-prefix token), the
+// model node is only where the operator files the image.
+
+// One uploaded `.out`. The bytes live on disk under FIRMWARE_DIR (data/firmware,
+// never the public uploads dir); the row carries identity and placement.
+// A model node holds at most one `primary` and one `backup` image — the two
+// partial unique indexes in migration 20260925000000 are what enforce the
+// two-image cap, since Prisma cannot express a partial unique.
+model FirmwareImage {
+  id           String   @id @default(uuid())
+  manufacturer String   // alias-canonicalised, the same spelling Asset.manufacturer carries
+  assetType    String   // "switch" | "access_point" — CHECK in the migration; not the whole registry
+  model        String   // tree placement only (an FMG-discovered switch may carry the literal "FortiSwitch")
+  platform     String?  // header token, e.g. S108FF / FP231K — the SERIAL PREFIX it fits; null = unrecognised, never offered
+  versionMajor Int?
+  versionMinor Int?
+  versionPatch Int?
+  build        Int?
+  versionLabel String   // "7.6.8 build1164", or "7 build1164" from a filename-only parse
+  parsedFrom   String   // "header" | "filename"
+  role         String   @default("primary") // "primary" | "backup" — the new upload is primary, the displaced primary becomes backup ("swapping" only inside the make-primary transaction)
+  filename     String   // original upload name
+  sizeBytes    Int      // ≤ 104857600 (the FortiSwitch upload endpoint's own ceiling)
+  sha256       String   @unique
+  storagePath  String   // relative to FIRMWARE_DIR: "<id>.out"
+  notes        String?  @db.Text
+  uploadedBy   String?
+  uploadedAt   DateTime @default(now())
+
+  runs FirmwareUpgradeRun[]
+
+  @@index([manufacturer, assetType, platform]) // the per-asset candidate lookup
+  @@index([manufacturer, assetType, model])    // the tree
+  @@map("firmware_images")
+}
+
+// Which device-admin login (an `http` Credential in authMode "form") an
+// upgrade signs in with. Three scopes — manufacturer-wide (assetType null),
+// device type (model null), model — and the most specific one with a live
+// credential wins. `model` requires `assetType` (CHECK); one row per scope
+// (three partial unique indexes). Prisma cannot express either.
+model FirmwareCredentialBinding {
+  id           String      @id @default(uuid())
+  manufacturer String
+  assetType    String?     // null = manufacturer-wide
+  model        String?     // non-null only with assetType
+  credentialId String?
+  credential   Credential? @relation("FirmwareBindingCredential", fields: [credentialId], references: [id], onDelete: SetNull)
+  createdBy    String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([manufacturer, assetType, model])
+  @@map("firmware_credential_bindings")
+}
+
+// One flash. Identity is snapshotted (platform, versions) so history survives
+// the image being rotated out. At most one queued/running row per asset
+// (partial unique index in the migration) — the concurrency guard's last line.
+model FirmwareUpgradeRun {
+  id              String         @id @default(uuid())
+  assetId         String
+  asset           Asset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  imageId         String?
+  image           FirmwareImage? @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  platform        String
+  fromVersion     String?
+  toVersion       String
+  engine          String         // "fortiswitch-https" | "fortiap-https"
+  status          String         @default("queued") // queued | running | succeeded | failed | unverified
+  stage           String?        // preflight | staging | compat | deploying | rebooting | verifying
+  progress        Json?          // { erase, write, verify, restart, curStep, totStep, lastMsgAt }
+  log             Json           @default("[]") // [{ t, level, msg }], capped at 500 lines
+  result          String?        // upgraded | already-current | failed | unverified
+  error           String?        @db.Text
+  verifiedVersion String?        // what the device reported after it came back; NEVER written onto Asset.osVersion
+  startedBy       String
+  heartbeatAt     DateTime?
+  startedAt       DateTime       @default(now())
+  finishedAt      DateTime?
+
+  @@index([assetId, startedAt])
+  @@index([status])
+  @@map("firmware_upgrade_runs")
+}
+
+// One realized maintenance window per (asset, holder), where a holder is a
+// schedule or a MaintenanceHold: opened when the scheduler puts the asset into
+// maintenance for that holder, closed (endedAt + endReason) when the window
+// ends for any reason. Open rows (endedAt IS NULL) are the source of truth for
+// "currently in maintenance" — restart-safe by construction. Closed rows power
+// the chart maintenance bands (scheduleName is snapshotted so labels survive
+// schedule deletion).
 // Plain table — the hypertable no-FK rule does not apply here.
 model AssetMaintenanceWindow {
   id           String    @id @default(uuid())
   assetId      String
   scheduleId   String? // SetNull on schedule delete — history survives
+  // The MaintenanceHold kind holding this window open; null = schedule-driven.
+  // Both are null on a window whose holder is gone, which is what the reconcile
+  // closes as "deleted" — so a hold row MUST carry this or the next 30s tick
+  // tears the hold down as an orphan.
+  holdKind     String?
   scheduleName String // snapshot for chart-band labels after delete
   startedAt    DateTime  @default(now())
   endedAt      DateTime? // null = window currently open
   // "schedule" | "operator" | "disabled" | "deleted" | "criteria" |
-  // "decommissioned" (deleted at its discovery source mid-window)
+  // "decommissioned" (deleted at its discovery source mid-window) |
+  // "released" (a hold's operation finished) | "expired" (a hold outlived its
+  // cap and was closed rather than left holding an unwatched asset)
   endReason    String?
 
   asset    Asset                @relation(fields: [assetId], references: [id], onDelete: Cascade)

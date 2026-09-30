@@ -180,6 +180,24 @@ d("POST /agents/samples", () => {
     expect(rows.map((r) => r.unit)).toEqual(["cron.service", "sshd.service"]);
   });
 
+  it("serviceInventory: stores a Windows service's CPU, memory and description", async () => {
+    const resp = await post({
+      stream: "serviceInventory",
+      samples: [{
+        unit: "Spooler", platform: "windows", displayName: "Print Spooler",
+        description: "Spools print jobs.", activeState: "running", enabledState: "auto-delayed",
+        mainPid: 6616, mainProcess: "spoolsv.exe", memBytes: 12_000_000, cpuPct: 0.75,
+      }],
+    });
+    expect(resp.status).toBe(200);
+    const row = await prisma.assetService.findFirstOrThrow({ where: { assetId, unit: "Spooler" } });
+    expect(row.description).toBe("Spools print jobs.");
+    // Stored to one decimal (utils/inventoryDelta.normalizeCpuPct).
+    expect(row.cpuPct).toBe(0.8);
+    expect(row.memBytes).toBe(12_000_000n);
+    expect(row.enabledState).toBe("auto-delayed");
+  });
+
   it("processConnections: keeps only rows whose name or unit is mapped", async () => {
     await prisma.asset.update({
       where: { id: assetId },

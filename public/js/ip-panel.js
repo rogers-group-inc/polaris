@@ -54,6 +54,12 @@ function _ensurePanelDOM() {
   });
   document.getElementById("ip-panel-close").addEventListener("click", closeIpPanel);
 
+  // Escape closes the panel when it is the topmost layer — this panel can now
+  // open over the asset panel (an interface's "Open network") and under a
+  // modal (Reserve IP), and in both cases the key belongs to whatever is on
+  // top (isTopmostSlideover, app.js).
+  wireSlideoverEscape(overlay, closeIpPanel);
+
   initSlideoverResize(document.getElementById("ip-panel"), "polaris.panel.width.ip");
 }
 
@@ -77,6 +83,10 @@ function openIpPanel(subnetId, opts) {
   document.getElementById("ip-panel-meta").innerHTML = "";
   document.getElementById("ip-panel-body").innerHTML = '<p class="empty-state">Loading...</p>';
   document.getElementById("ip-panel-footer").innerHTML = "";
+  // Paint over any slide-over already open (the asset panel this may have
+  // been opened from) — DOM order is stacking order, so a closed overlay is
+  // moved to the end of <body> before it slides in.
+  raiseSlideover(document.getElementById("ip-panel-overlay"));
   revealOverlay(document.getElementById("ip-panel-overlay"));
   // focusReservationId path (dashboard / global-search deep links): fetch the
   // reservation to resolve its IP + parent subnet CIDR, then re-enter
@@ -760,9 +770,12 @@ function _renderIpList(data) {
       }
     });
   });
+  // The asset details slide-over, in place over this panel — PolarisPanels
+  // loads assets.js on demand on a page that doesn't carry it.
   body.querySelectorAll(".ip-asset-btn").forEach(function (btn) {
     btn.addEventListener("click", function () {
       var aid = btn.getAttribute("data-aid");
+      if (typeof PolarisPanels !== "undefined" && PolarisPanels.openAsset) { PolarisPanels.openAsset(aid); return; }
       window.location.href = '/assets.html#view=asset:' + encodeURIComponent(aid);
     });
   });

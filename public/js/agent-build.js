@@ -1218,6 +1218,7 @@
 
   function openInstalledAgentsPanel() {
     var overlay = _ensureInstalledAgentsPanelDOM();
+    raiseSlideover(overlay);   // over any slide-over already open (DOM order is stacking order)
     revealOverlay(overlay);
     refreshInstalledAgentsPanel();
   }
@@ -1396,8 +1397,12 @@
       if (!el) return;
       var assetId = el.getAttribute("data-asset-id");
       if (!assetId) return;
+      // The asset panel in place (PolarisPanels loads assets.js on demand on
+      // the Integrations page); the deep link only when app.js is absent.
       if (typeof openViewModal === "function") {
         openViewModal(assetId);
+      } else if (window.PolarisPanels && typeof window.PolarisPanels.openAsset === "function") {
+        window.PolarisPanels.openAsset(assetId);
       } else {
         window.location.href = "/assets.html#view=asset:" + encodeURIComponent(assetId);
       }

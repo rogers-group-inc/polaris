@@ -83,6 +83,7 @@ import {
   BASELINE_RULES,
   EVENT_BASELINE_RULES,
   PLATFORM_LIFECYCLE_RULES,
+  FIRMWARE_DRIFT_RULES,
 } from "../../src/jobs/seedBaselineAutomations.js";
 import { ruleInputSchema } from "../../src/services/notificationTypes.js";
 import { globToRegExp } from "../../src/services/notificationEngine.js";
@@ -102,7 +103,7 @@ beforeEach(() => {
 
 describe("seed bodies", () => {
   it("every baseline rule (all sets) parses through the real ruleInputSchema", () => {
-    for (const raw of [...BASELINE_RULES, ...EVENT_BASELINE_RULES, ...PLATFORM_LIFECYCLE_RULES]) {
+    for (const raw of [...BASELINE_RULES, ...EVENT_BASELINE_RULES, ...PLATFORM_LIFECYCLE_RULES, ...FIRMWARE_DRIFT_RULES]) {
       expect(() => ruleInputSchema.parse(raw), `rule "${(raw as { name?: string }).name}"`).not.toThrow();
     }
   });
@@ -135,23 +136,25 @@ describe("marker gating (V2 reaches existing installs)", () => {
     // +1 for the V3 down-detection rule, which is computed rather than
     // listed in a static set.
     expect(res.created).toBe(
-      BASELINE_RULES.length + EVENT_BASELINE_RULES.length + PLATFORM_LIFECYCLE_RULES.length + 1,
+      BASELINE_RULES.length + EVENT_BASELINE_RULES.length + PLATFORM_LIFECYCLE_RULES.length + FIRMWARE_DRIFT_RULES.length + 1,
     );
     expect(settings.has("seedBaselineAutomationsSeededAt")).toBe(true);
     expect(settings.has("seedBaselineAutomationsV2SeededAt")).toBe(true);
     expect(settings.has("seedBaselineAutomationsV3SeededAt")).toBe(true);
     expect(settings.has("seedBaselineAutomationsV6PlatformLifecycleSeededAt")).toBe(true);
+    expect(settings.has("seedBaselineAutomationsV9FirmwareDriftSeededAt")).toBe(true);
   });
 
   it("pre-V2 install (v1 marker stamped): seeds the later sets only", async () => {
     settings.set("seedBaselineAutomationsSeededAt", { key: "seedBaselineAutomationsSeededAt", value: {} });
     const res = await seedBaselineAutomations();
     expect(res.skipped).toBe(false);
-    expect(res.created).toBe(EVENT_BASELINE_RULES.length + PLATFORM_LIFECYCLE_RULES.length + 1);
+    expect(res.created).toBe(EVENT_BASELINE_RULES.length + PLATFORM_LIFECYCLE_RULES.length + FIRMWARE_DRIFT_RULES.length + 1);
     expect(createdRules).toEqual([
       ...EVENT_BASELINE_RULES.map((r) => (r as { name: string }).name),
       "Asset down", // the V3 down-detection rule
       ...PLATFORM_LIFECYCLE_RULES.map((r) => (r as { name: string }).name),
+      ...FIRMWARE_DRIFT_RULES.map((r) => (r as { name: string }).name),
     ]);
   });
 
@@ -166,8 +169,32 @@ describe("marker gating (V2 reaches existing installs)", () => {
     settings.set("seedBaselineAutomationsV5LossCeilingSeededAt", { key: "v", value: {} });
     const res = await seedBaselineAutomations();
     expect(res.skipped).toBe(false);
-    expect(res.created).toBe(PLATFORM_LIFECYCLE_RULES.length);
-    expect(createdRules).toEqual(PLATFORM_LIFECYCLE_RULES.map((r) => (r as { name: string }).name));
+    expect(res.created).toBe(PLATFORM_LIFECYCLE_RULES.length + FIRMWARE_DRIFT_RULES.length);
+    expect(createdRules).toEqual([
+      ...PLATFORM_LIFECYCLE_RULES.map((r) => (r as { name: string }).name),
+      ...FIRMWARE_DRIFT_RULES.map((r) => (r as { name: string }).name),
+    ]);
+  });
+
+  // Same reasoning for V9: an install that stamped V6 before the firmware
+  // Repository existed must still receive the drift rule, and only that.
+  it("install seeded before V9: still receives the firmware-drift rule, and nothing else", async () => {
+    for (const k of [
+      "seedBaselineAutomationsSeededAt", "seedBaselineAutomationsV2SeededAt", "seedBaselineAutomationsV3SeededAt",
+      "seedBaselineAutomationsV4ResetEventSeededAt", "seedBaselineAutomationsV5LossCeilingSeededAt",
+      "seedBaselineAutomationsV6PlatformLifecycleSeededAt", "seedBaselineAutomationsV7ResponseTimeWindowAt",
+      "seedBaselineAutomationsV8CapacityResetEventAt",
+    ]) settings.set(k, { key: k, value: {} });
+    const res = await seedBaselineAutomations();
+    expect(res.skipped).toBe(false);
+    expect(res.created).toBe(FIRMWARE_DRIFT_RULES.length);
+    expect(createdRules).toEqual(FIRMWARE_DRIFT_RULES.map((r) => (r as { name: string }).name));
+    expect(settings.has("seedBaselineAutomationsV9FirmwareDriftSeededAt")).toBe(true);
+    const body = createdBodies[0];
+    expect(body.severity).toBe("informational");
+    // toMatchObject: ruleInputSchema fills the hold defaults (forDurationSec…).
+    expect(body.trigger).toMatchObject({ type: "asset_state", field: "firmwareVsPrimary", operator: "!=", value: "current" });
+    expect(body.scope).toEqual({ assetTypes: ["switch", "access_point"] });
   });
 
   it("fully seeded install: no-op", async () => {
@@ -179,6 +206,7 @@ describe("marker gating (V2 reaches existing installs)", () => {
     settings.set("seedBaselineAutomationsV6PlatformLifecycleSeededAt", { key: "u", value: {} });
     settings.set("seedBaselineAutomationsV7ResponseTimeWindowAt", { key: "t", value: {} });
     settings.set("seedBaselineAutomationsV8CapacityResetEventAt", { key: "s", value: {} });
+    settings.set("seedBaselineAutomationsV9FirmwareDriftSeededAt", { key: "r", value: {} });
     const res = await seedBaselineAutomations();
     expect(res).toEqual({ created: 0, skipped: true });
     expect(createdRules).toEqual([]);

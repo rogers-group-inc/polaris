@@ -489,6 +489,8 @@ describe("getRecentAlerts", () => {
       // reports both as null, which is what keeps the widget's "+N" affordance
       // off every ungrouped row.
       groupName: null, dimensionCount: null,
+      // Business rule 78 — a plain alert reads neither.
+      dependencyDown: false, dependencyUpstream: null,
     });
     // It reads ALERTS, never audit Events — the whole point of the feed.
     expect(eventFindMany).not.toHaveBeenCalled();

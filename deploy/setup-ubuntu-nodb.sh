@@ -148,6 +148,21 @@ else
   warn "  interval to suit. To fix later:  apt-get install -y fping"
 fi
 
+# ─── 1d. Install traceroute (OPTIONAL — path checks from this server) ─────
+# A path check whose Sources include "This Polaris server" traces the route
+# from here with the system traceroute (src/utils/serverTraceroute.ts — UDP
+# probes, no privilege needed). Without it Polaris falls back to iputils'
+# tracepath, and failing that records the trace with no hops and a note. In
+# the base repositories; best-effort and never fatal.
+if command -v traceroute &>/dev/null; then
+  info "traceroute already installed"
+elif apt-get install -y traceroute &>/dev/null; then
+  info "traceroute installed"
+else
+  warn "traceroute not installed — server-run path checks trace with tracepath if present."
+  warn "  To fix later:  apt-get install -y traceroute"
+fi
+
 # ─── 2. Install git ──────────────────────────────────────────────────────────
 if command -v git &>/dev/null; then
   info "Git already installed"
@@ -196,6 +211,10 @@ fi
 # ─── 4b. Bootstrap Polaris Agent build directories ──────────────────────────
 mkdir -p "$APP_DIR/data/agents" "$APP_DIR/.cache/go-build"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/agents" "$APP_DIR/.cache"
+# The firmware repository (Server Settings → Repository) stores switch / AP
+# images under $APP_DIR/data/firmware/ — same posture as data/agents.
+mkdir -p "$APP_DIR/data/firmware"
+chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/firmware"
 
 # ─── 4c. Java 25 + jsign (agent code signing — optional at runtime) ─────────
 # Used by the agent code-signing feature (Integrations → Polaris Agents →

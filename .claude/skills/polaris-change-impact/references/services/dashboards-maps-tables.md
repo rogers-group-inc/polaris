@@ -150,7 +150,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `src/services/savedDashboardService.ts` — imports `normalizeName`, so both lists of named presets share ONE name rule (trim + collapse whitespace, no control characters, 60 chars). Changing it changes both.
 
 **Invariants:**
-- **The stored `state` is untrusted input replayed into other operators' browsers.** Every write goes through `sanitizeFilterState`, which accepts only the shapes `table-sf.js` emits and bounds size (60 columns × 200 values × 300 chars). Widening what the table can filter by means widening this in lockstep, or presets silently 400.
+- **The stored `state` is untrusted input replayed into other operators' browsers.** Every write goes through `sanitizeFilterState`, which accepts only the shapes `table-sf.js` emits (string, array, `{op: contains|not-contains, q}`, `{op: empty|notempty}`, `{op: "in-networks", terms[]}` from the ipnet filter, `{type: "date"}`) and bounds size (60 columns × 200 values × 300 chars). Widening what the table can filter by means widening this in lockstep, or presets silently 400.
 - `scope` must be in `SAVED_FILTER_SCOPES`; each maps to an EXISTING function key. This is the whole authorization model — there is no `savedFilters` RBAC key, so a new scope inherits its page's gate for free.
 - Level split: read = list + own/private writes; `write` = publish or keep public; `fullwrite` = delete someone else's. A readonly operator can keep private presets — that's the point of storing them server-side.
 - Session callers only (`sessionUser` 401s bearer tokens): a preset has an owner, and a token has no user identity.

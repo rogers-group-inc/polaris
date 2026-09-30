@@ -55,11 +55,14 @@ import { persistAssetServices } from "../../services/serviceInventoryService.js"
 import { persistInterfaceRows } from "../../services/interfaceInventoryService.js";
 import { reconcileMacAddresses, reconcileInterfaceMacs } from "../../services/macAddressService.js";
 import { selectPrimaryMac } from "../../utils/macAddresses.js";
+import { isUsableSerial } from "../../utils/serialNumber.js";
 import { logEvent } from "./events.js";
 import { buildFirmwareChangedEvent } from "../../services/eventLogService.js";
 import { ingestOsEventLog, getAgentEventLogConfig } from "../../services/osEventLogService.js";
 import { fetchPendingCommands, recordCommandResult } from "../../services/agentCommandService.js";
 import { SCRIPT_OUTPUT_CAP_BYTES } from "../../services/automationScriptService.js";
+import { agentConfigChecks, pathCheckEtagFold } from "../../services/pathCheckService.js";
+import { ingestPathCheckSamples, ingestPathCheckTraceroutes } from "../../services/pathCheckIngestService.js";
 import { logger } from "../../utils/logger.js";
 import { macColonUpperOrNull } from "../../utils/mac.js";
 
@@ -298,12 +301,14 @@ const ProcessLogSampleSchema = z.object({
 });
 
 // Current-state service inventory — one row per systemd unit / Windows service.
-// Full-replaced per push (persistAssetServices). platform drives the state
+// Each push carries the whole list and replaces the stored one
+// (persistAssetServices writes it as a delta). platform drives the state
 // vocabulary; controllable is derived server-side.
 const ServiceSampleSchema = z.object({
   unit:         z.string().min(1).max(255),
   platform:     z.enum(["systemd", "windows"]),
   displayName:  z.string().max(512).nullable().optional(),
+  description:  z.string().max(4096).nullable().optional(),
   loadState:    z.string().max(64).nullable().optional(),
   activeState:  z.string().max(64).nullable().optional(),
   subState:     z.string().max(64).nullable().optional(),
@@ -311,6 +316,7 @@ const ServiceSampleSchema = z.object({
   mainPid:      z.number().int().min(0).nullable().optional(),
   mainProcess:  z.string().max(255).nullable().optional(),
   memBytes:     z.number().int().min(0).nullable().optional(),
+  cpuPct:       z.number().min(0).nullable().optional(),
 });
 
 // Per-pinned-unit journalctl log lines (Phase 2, service dimension). Same shape
@@ -321,6 +327,50 @@ const ServiceLogSampleSchema = z.object({
   level:     z.string().max(32).nullable().optional(),
   message:   z.string().max(8192),
   source:    z.string().max(512).nullable().optional(),
+});
+
+// Agent-run path check result — one row per check run. Mirrors
+// transport.PathCheckSample in agent/internal/transport/client.go. Timings
+// are optional/nullable on purpose: "not measured" must never arrive as 0.
+const optMs = z.number().min(0).max(600_000).nullable().optional();
+const PathCheckSampleSchema = z.object({
+  checkId:       z.string().min(1).max(64),
+  timestamp:     z.string().datetime().optional(),
+  ok:            z.boolean(),
+  latencyMs:     optMs,
+  dnsMs:         optMs,
+  connectMs:     optMs,
+  tlsMs:         optMs,
+  ttfbMs:        optMs,
+  httpStatus:    z.number().int().min(100).max(999).nullable().optional(),
+  bodyMatched:   z.boolean().nullable().optional(),
+  bodySha256:    z.string().regex(/^[0-9a-f]{64}$/i).nullable().optional(),
+  bodyBytes:     z.number().int().min(0).max(1_048_576).nullable().optional(),
+  // Capped here AND re-cut at ingest (MAX_EXCERPT_CHARS); the ingest also drops
+  // it on a passing run unless the check keeps excerpts.
+  bodyExcerpt:   z.string().max(16_384).nullable().optional(),
+  error:         z.string().max(2048).nullable().optional(),
+  resolvedIp:    z.string().max(64).nullable().optional(),
+  tlsNotAfter:   z.string().datetime({ offset: true }).nullable().optional(),
+  tlsIssuer:     z.string().max(512).nullable().optional(),
+  tracerouteRan: z.boolean().optional(),
+});
+
+// A traceroute the agent ran for a path check. Mirrors
+// transport.PathCheckTraceroute. `ip` "" (or null) = a silent hop.
+const PathCheckTracerouteSchema = z.object({
+  checkId:       z.string().min(1).max(64),
+  timestamp:     z.string().datetime().optional(),
+  destinationIp: z.string().max(64).nullable().optional(),
+  complete:      z.boolean(),
+  reason:        z.enum(["scheduled", "transition"]).optional(),
+  note:          z.string().max(256).nullable().optional(),
+  hops: z.array(z.object({
+    ttl:   z.number().int().min(1).max(64),
+    ip:    z.string().max(64).nullable().optional(),
+    rdns:  z.string().max(255).nullable().optional(),
+    rttMs: z.array(z.number().min(-1).max(600_000)).max(8),
+  })).max(64),
 });
 
 const SamplesBodySchema = z.discriminatedUnion("stream", [
@@ -343,6 +393,10 @@ const SamplesBodySchema = z.discriminatedUnion("stream", [
   z.object({ stream: z.literal("serviceInventory"), samples: z.array(ServiceSampleSchema).max(5000) }),
   // Per-pinned-unit journalctl lines. Bounded like processLog.
   z.object({ stream: z.literal("serviceLog"), samples: z.array(ServiceLogSampleSchema).min(1).max(2000) }),
+  // Path checks: one row per run (the agent caps at 64 checks, so a
+  // tick's push is small); traceroutes ride their own stream.
+  z.object({ stream: z.literal("pathCheck"), samples: z.array(PathCheckSampleSchema).min(1).max(500) }),
+  z.object({ stream: z.literal("pathCheckTraceroute"), samples: z.array(PathCheckTracerouteSchema).min(1).max(64) }),
 ]);
 
 // ─── Per-stream ingest handlers (split from the /samples dispatcher, 2026-08
@@ -403,6 +457,16 @@ async function ingestTelemetry(assetId: string, samples: StreamSamples<"telemetr
       memFreeBytes:    bytes(s.memFreeBytes),
       swapUsedBytes:   bytes(s.swapUsedBytes),
       swapTotalBytes:  bytes(s.swapTotalBytes),
+      // The vCenter band set. An agent reports the guest's OWN view of its
+      // memory; ballooning and host swap are things done TO that guest from
+      // outside it, which the guest cannot see and the agent must never
+      // claim to have measured. A row carries one band set or the other.
+      memPrivateBytes:    null,
+      memSharedBytes:     null,
+      memBalloonedBytes:  null,
+      memSwappedBytes:    null,
+      memCompressedBytes: null,
+      memConsumedBytes:   null,
       sessionCount:  null, // FortiGate-only metric; agents don't report it
     });
     if (s.temperatures && s.temperatures.length > 0) {
@@ -557,8 +621,8 @@ async function ingestEventLog(assetId: string, samples: StreamSamples<"eventLog"
 }
 
 async function ingestProcessInventory(assetId: string, samples: StreamSamples<"processInventory">): Promise<number> {
-  // Current-state inventory: full-replace the asset's process rows. The
-  // agent aggregates by name; serviceUnit/controllable resolution lands in
+  // Current-state inventory: the pushed list replaces the asset's process
+  // rows (written as a delta — utils/inventoryDelta). The agent aggregates by name; serviceUnit/controllable resolution lands in
   // Phase 4 (the agent doesn't report it yet, so controllable stays false).
   await persistAssetProcesses(
     assetId,
@@ -637,14 +701,16 @@ async function ingestProcessConnections(assetId: string, samples: StreamSamples<
 }
 
 async function ingestServiceInventory(assetId: string, samples: StreamSamples<"serviceInventory">): Promise<number> {
-  // Current-state inventory: full-replace the asset's service rows. The
-  // server derives `controllable` from platform + load state.
+  // Current-state inventory: the pushed list replaces the asset's service
+  // rows (written as a delta). The server derives `controllable` from
+  // platform + load state.
   await persistAssetServices(
     assetId,
     samples.map((s) => ({
       unit:         s.unit,
       platform:     s.platform,
       displayName:  s.displayName ?? null,
+      description:  s.description ?? null,
       loadState:    s.loadState ?? null,
       activeState:  s.activeState ?? null,
       subState:     s.subState ?? null,
@@ -652,6 +718,7 @@ async function ingestServiceInventory(assetId: string, samples: StreamSamples<"s
       mainPid:      s.mainPid ?? null,
       mainProcess:  s.mainProcess ?? null,
       memBytes:     s.memBytes != null ? BigInt(Math.round(s.memBytes)) : null,
+      cpuPct:       s.cpuPct ?? null,
     })),
   );
   return samples.length;
@@ -710,6 +777,16 @@ agentsRouter.post("/samples", async (req, res, next) => {
         { assetId, stream: body.stream, received: body.samples.length, first },
         "agent /samples received",
       );
+    }
+
+    // Path streams report their own rejects: a sample naming a check
+    // this host is not a source of is refused, not stored.
+    if (body.stream === "pathCheck" || body.stream === "pathCheckTraceroute") {
+      const r = body.stream === "pathCheck"
+        ? await ingestPathCheckSamples(assetId, body.samples, now)
+        : await ingestPathCheckTraceroutes(assetId, body.samples, now);
+      res.json(r);
+      return;
     }
 
     let accepted = 0;
@@ -820,7 +897,7 @@ agentsRouter.get("/config", async (req, res, next) => {
     // pin change still invalidates the 304 cache.
     const managedAgent = await prisma.managedAgent.findUnique({
       where: { id: req.managedAgent!.managedAgentId },
-      select: { serverCertFingerprint: true, additionalServerCertFingerprints: true },
+      select: { serverCertFingerprint: true, additionalServerCertFingerprints: true, agentVersion: true },
     });
     const certFingerprints = managedAgent
       ? [managedAgent.serverCertFingerprint, ...managedAgent.additionalServerCertFingerprints]
@@ -936,6 +1013,11 @@ agentsRouter.get("/config", async (req, res, next) => {
       // refreshes running agents.
       monitoredServices: (asset.monitoredServices ?? []) as string[],
       mappedServices:    (asset.mappedServices ?? []) as string[],
+      // Agent-run path checks this host is a source of (enabled only,
+      // oldest first, capped; empty below MIN_AGENT_PATH_CHECK_VERSION).
+      // Part of the payload hash, and folded into computeConfigEtag by
+      // id + revision — both halves, or running agents never see an edit.
+      pathChecks: await agentConfigChecks(assetId, managedAgent?.agentVersion),
     };
     const etag = computeEtag(payload);
 
@@ -1123,6 +1205,23 @@ agentsRouter.post("/system-info", async (req, res, next) => {
         }
       }
 
+      // Business rule 84: a stored serial that is NOT a serial gets cleared when
+      // no source can replace it. The loop above deliberately never writes a null — "no
+      // source has an opinion" must not wipe a field — but that rule stranded
+      // the values this endpoint used to create: agents before 0.20.1 reported
+      // the Windows SystemSKU as the serial, and a fixed agent on the same host
+      // reports an honest empty one, which the projection turns into null and
+      // the loop then ignores. The junk would outlive the bug forever.
+      // Scoped as narrowly as it can be: only a value that fails isUsableSerial
+      // is cleared, so a real serial is never lost to a transient read failure.
+      if (
+        projected.serialNumber === null &&
+        current.serialNumber !== null &&
+        !isUsableSerial(current.serialNumber)
+      ) {
+        diff.serialNumber = null;
+      }
+
       // MAC isn't owned by projectAssetFromSources (see polaris-change-impact -> cross-cutting/asset-source-projection.md "Fields the
       // projection does NOT own") — every discovery path writes it inline.
       // Mirror that here: normalize the agent's primaryMac to colon-upper,
@@ -1179,6 +1278,24 @@ agentsRouter.post("/system-info", async (req, res, next) => {
           diff,
         );
         if (firmwareEvent) void logEvent(firmwareEvent);
+
+        // The serial clear is its own record: a value disappearing off an
+        // asset is exactly the change an operator will otherwise spend an
+        // afternoon explaining, and it is a mutation this handler makes on
+        // its own initiative rather than one a source asked for.
+        if (diff.serialNumber === null) {
+          void logEvent({
+            action:       "asset.serial.cleared",
+            resourceType: "asset",
+            resourceId:   assetId,
+            resourceName: current.hostname || undefined,
+            actor:        "system:agent",
+            level:        "info",
+            message:      `Cleared the serial number on "${current.hostname || assetId}" — the stored value ` +
+                          `"${current.serialNumber}" is a vendor placeholder, not a serial, and no source reported a real one`,
+            details:      { previousSerialNumber: current.serialNumber, source: "polaris-agent", managedAgentId },
+          });
+        }
       }
     }
 
@@ -1237,6 +1354,13 @@ async function computeConfigEtag(assetId: string): Promise<string> {
     spins: (asset.monitoredServices ?? []).join(""),
     smap:  (asset.mappedServices    ?? []).join(""),
     mon:   asset.monitored,
+    // Path checks by id + definition revision, so a target edit, a
+    // new membership or a disable all move the heartbeat etag — the agent
+    // only re-fetches /config when this changes (the deadlock above).
+    path:  pathCheckEtagFold(await agentConfigChecks(assetId, (await prisma.managedAgent.findUnique({
+      where: { assetId },
+      select: { agentVersion: true },
+    }))?.agentVersion)),
   };
   return computeEtag(compact);
 }

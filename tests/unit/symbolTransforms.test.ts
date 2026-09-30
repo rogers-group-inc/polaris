@@ -13,7 +13,33 @@ import { describe, it, expect } from "vitest";
 import {
   TRANSFORM_KINDS, TRANSFORM_LABELS, applyTransform, isTransformKind,
   COMBINER_KINDS, COMBINER_LABELS, applyCombiner,
+  METRIC_ROW_TRANSFORMS, metricRowTransforms,
 } from "../../src/utils/symbolTransforms.js";
+
+describe("metricRowTransforms — what a metric row may carry", () => {
+  it("offers tenths_to_units on a scalar temperature row", () => {
+    expect(metricRowTransforms("temperature", "scalar")).toEqual(["tenths_to_units"]);
+  });
+
+  it("offers nothing on a table or double-scalar row, whatever the metric", () => {
+    // A table walk and a double-scalar pair never pass through a unary transform.
+    expect(metricRowTransforms("temperature", "table")).toEqual([]);
+    expect(metricRowTransforms("temperature", "double_scalar")).toEqual([]);
+  });
+
+  it("offers nothing on a metric whose collector applies no transform", () => {
+    // The 2026-09-16 failure: these accepted the whole list and applied none.
+    for (const key of ["cpu", "memory", "storage", "model", "interfaces"]) {
+      expect(metricRowTransforms(key, "scalar")).toEqual([]);
+    }
+  });
+
+  it("names only registered kinds", () => {
+    for (const kinds of Object.values(METRIC_ROW_TRANSFORMS)) {
+      for (const k of kinds) expect(isTransformKind(k)).toBe(true);
+    }
+  });
+});
 
 describe("the registry is internally consistent", () => {
   it("every kind has a label, and every label a kind", () => {
@@ -68,9 +94,12 @@ describe("the conversions", () => {
     expect(applyTransform(-55, "tenths_to_units")).toBe(-5.5);
   });
 
-  it("converts temperature both ways", () => {
-    expect(applyTransform(100, "celsius_to_fahrenheit")).toBe(212);
-    expect(applyTransform(212, "fahrenheit_to_celsius")).toBe(100);
+  it("has no Celsius↔Fahrenheit transform — temperature converts at render only", () => {
+    // Polaris stores and alerts in Celsius; converting before storage would
+    // re-point every temperature automation's threshold.
+    expect(isTransformKind("celsius_to_fahrenheit")).toBe(false);
+    expect(isTransformKind("fahrenheit_to_celsius")).toBe(false);
+    expect(applyTransform(100, "celsius_to_fahrenheit" as any)).toBe(100);
   });
 
   it("converts bytes on binary multiples, not decimal ones", () => {

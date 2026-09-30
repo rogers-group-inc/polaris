@@ -174,7 +174,7 @@ d("PUT /api/v1/blocks/:id", () => {
 // ─── DELETE /api/v1/blocks/:id ────────────────────────────────────────────────
 
 d("DELETE /api/v1/blocks/:id", () => {
-  it("deletes a block with no active reservations and returns 204", async () => {
+  it("deletes a block that holds no networks and returns 204", async () => {
     const { agent, csrf } = await authedAgent(app);
     const created = await agent
       .post("/api/v1/blocks")
@@ -207,6 +207,29 @@ d("DELETE /api/v1/blocks/:id", () => {
       .delete(`/api/v1/blocks/${block.body.id}`)
       .set("X-CSRF-Token", csrf);
     expect(resp.status).toBe(409);
+  });
+
+  // Business rule 4: networks alone are enough to refuse — the FK cascade used
+  // to take an empty-of-reservations network (deprecated or not) with the block.
+  it("returns 409 when the block still contains networks, even with no reservations", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const block = await agent
+      .post("/api/v1/blocks")
+      .set("X-CSRF-Token", csrf)
+      .send({ name: "Has-Networks", cidr: "10.125.0.0/16" });
+    const subnet = await agent
+      .post("/api/v1/subnets")
+      .set("X-CSRF-Token", csrf)
+      .send({ blockId: block.body.id, cidr: "10.125.1.0/24", name: "Sub" });
+    await prisma.subnet.update({ where: { id: subnet.body.id }, data: { status: "deprecated" } });
+
+    const resp = await agent
+      .delete(`/api/v1/blocks/${block.body.id}`)
+      .set("X-CSRF-Token", csrf);
+    expect(resp.status).toBe(409);
+    expect(resp.body.error).toMatch(/1 network/);
+    expect(await prisma.subnet.count({ where: { id: subnet.body.id } })).toBe(1);
+    expect(await prisma.ipBlock.count({ where: { id: block.body.id } })).toBe(1);
   });
 });
 

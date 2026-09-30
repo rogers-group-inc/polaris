@@ -136,5 +136,5 @@ may then decommission it — but Arc itself will not.
 | Arc's OS overrode what AD said, and you expected the reverse | that is correct. Arc reads the running OS in-guest; AD's `operatingSystem` lags until the computer object re-registers |
 | Discovery is slow on a large tenant | **Fetch network profile** is one GET per machine. Turn it off unless you need it |
 | Resource Graph returns nothing | it falls back to a per-subscription list automatically — check `subscriptionInclude` and the app's readable scope |
-| Run Command is refused | the RBAC role assignment is missing, or the route's chained `serverSettingsSystem:fullwrite` is |
+| Run Command is refused | the RBAC role assignment is missing, or the route's chained `serverSettingsSystem:write` is |
 | A machine shows as an asset despite being disconnected | that is the default. **Include disconnected** is a reachability statement, not a lifecycle one |

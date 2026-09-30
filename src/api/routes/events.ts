@@ -282,8 +282,18 @@ router.put("/retention-settings", requirePermission("events", "write"), async (r
   }
 });
 
+// Auto-decommission settings decide when an asset that has stopped appearing
+// in vCenter / AD / Entra is retired from the inventory. They are gated on
+// assetMonitorSettings rather than on `events`, for two reasons that agree:
+// the `events` key gates the audit LOG and where it is archived to, and
+// somebody trusted to configure syslog export is not thereby trusted to
+// change when devices leave the inventory; and the only UI that reads or
+// writes these is the Asset Monitoring Settings modal
+// (`openMonitoringSettingsModal` in public/js/assets.js), every other call in
+// which already rides assetMonitorSettings. The path stays under /events for
+// URL compatibility — it is the GATE that was wrong, not the mount.
 // GET /api/v1/events/asset-decommission-settings
-router.get("/asset-decommission-settings", requirePermission("events", "read"), async (_req, res, next) => {
+router.get("/asset-decommission-settings", requirePermission("assetMonitorSettings", "read"), async (_req, res, next) => {
   try {
     res.json(await getAssetDecommissionSettings());
   } catch (err) {
@@ -292,7 +302,7 @@ router.get("/asset-decommission-settings", requirePermission("events", "read"), 
 });
 
 // PUT /api/v1/events/asset-decommission-settings
-router.put("/asset-decommission-settings", requirePermission("events", "write"), async (req, res, next) => {
+router.put("/asset-decommission-settings", requirePermission("assetMonitorSettings", "write"), async (req, res, next) => {
   try {
     res.json(await updateAssetDecommissionSettings(req.body));
   } catch (err) {

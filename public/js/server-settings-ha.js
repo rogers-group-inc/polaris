@@ -38,7 +38,7 @@
   function esc(v) { return typeof escapeHtml === "function" ? escapeHtml(String(v == null ? "" : v)) : String(v == null ? "" : v); }
 
   function canWrite() {
-    if (typeof permAtLeast === "function") return permAtLeast("serverSettingsSystem", "fullwrite");
+    if (typeof permAtLeast === "function") return permAtLeast("serverSettingsSystem", "write");
     return typeof isAdmin === "function" ? isAdmin() : false;
   }
 

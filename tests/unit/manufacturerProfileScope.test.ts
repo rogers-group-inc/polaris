@@ -131,6 +131,34 @@ describe("aggregate, label, parse", () => {
   });
 });
 
+describe("transform — a metric row takes only what its collector applies", () => {
+  // Metric rows used to accept the whole unary registry and apply none of it
+  // (a Celsius→Fahrenheit FortiAP row on prod, 2026-09-16). Anything outside
+  // METRIC_ROW_TRANSFORMS is now a 400, so it can never be stored inert again.
+  it("keeps tenths_to_units on a scalar temperature override", async () => {
+    h.metricRow = { id: "metric-4", metricKey: "temperature" };
+    const row = await createOverride("p1", "temperature", { assetType: "switch", symbol: "mtxrHlTemperature", transform: "tenths_to_units" });
+    expect(row.transform).toBe("tenths_to_units");
+  });
+
+  it("refuses a transform on a metric whose collector applies none, and on a temperature table row", async () => {
+    await expect(createOverride("p1", "cpu", { assetType: "switch", symbol: "x", transform: "ratio_to_percent" })).rejects.toThrow(/not applied to a scalar cpu row/);
+    h.metricRow = { id: "metric-4", metricKey: "temperature" };
+    await expect(createOverride("p1", "temperature", { assetType: "switch", symbol: "x", type: "table", transform: "tenths_to_units" })).rejects.toThrow(/not applied to a table temperature row/);
+  });
+
+  it("refuses Celsius→Fahrenheit outright — it is no longer a transform", async () => {
+    h.metricRow = { id: "metric-4", metricKey: "temperature" };
+    await expect(createOverride("p1", "temperature", { assetType: "switch", symbol: "x", transform: "celsius_to_fahrenheit" })).rejects.toThrow(/Invalid transform/);
+  });
+
+  it("still takes a combiner on a double-scalar row — it names the pair's shape", async () => {
+    h.metricRow = { id: "metric-2", metricKey: "memory" };
+    const row = await createOverride("p1", "memory", { assetType: "switch", symbol: "a", symbolB: "b", type: "double_scalar", transform: "a_over_b_as_percent" });
+    expect(row.transform).toBe("a_over_b_as_percent");
+  });
+});
+
 describe("updateProfile — matchPattern", () => {
   it("stores a compiling regex, clears on null, refuses garbage", async () => {
     // getProfile after the write reads the DB; the mock returns a bare row,

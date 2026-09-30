@@ -107,9 +107,11 @@ GET    /assets/:id
 GET    /assets/:id/sources                  every source's answer
 GET    /assets/:id/sightings                FortiGate sightings
 GET    /assets/:id/dependencies             the dependency tree
+GET    /assets/ip-check?ip=…                is this address already in use?
 POST   /assets                              create a device
 PUT    /assets/:id                          update + the monitoring surface
 POST   /assets/bulk-monitor                 flip monitoring on many at once
+POST   /assets/bulk-tags                    add / remove / replace tags on many at once
 DELETE /assets/:id
 GET    /credentials                         stored credentials, secrets masked
 ```
@@ -127,6 +129,20 @@ or paste the id into the client's config). This also sidesteps [the ownership
 trap](#the-ownership-trap) — a token that never writes a credential never needs
 `credentials:fullwrite`. `assets:write` alone covers both calls; add
 `credentials:read` only if the client resolves ids by name.
+
+**Duplicate addresses are checked as you write.** Both calls return an
+`ipConflict` field — `null`, or `{ conflictId, ip, qualifiedBy, members[] }` when
+the address you just set is already recorded by another network-present asset.
+Polaris raises the Duplicate IP conflict on the spot rather than on its
+ten-minute sweep, and a `PUT` that moves a device *off* a contested address
+closes that conflict in the same call. Ask before writing with
+`GET /assets/ip-check?ip=&excludeAssetId=&assetType=&macAddress=`
+(`assets:read`): it returns every current holder (`holders[]`, each with
+`claimCurrent` — a stale record is listed but does not collide),
+`wouldConflict`, and `canMerge` (whether the caller holds `assets:fullwrite`,
+which merging requires). The answer uses the same rules the write applies, so a
+`wouldConflict: true` is a conflict the save will raise. See
+[Conflict Resolution](Conflict-Resolution#checked-when-you-save-not-just-every-ten-minutes).
 
 A device created this way is a **manual-source** asset, and only response time
 gets a source default (ICMP). Every other stream stays dark until a polling
@@ -202,6 +218,75 @@ evaluated against that clock) and repeat the end as a true instant
 not narrow them: a schedule is returned when any of its devices is in scope,
 whole, with `matchedCount` giving the in-scope share.
 
+### Path Monitor
+
+```
+GET    /path-checks
+GET    /path-checks/:id
+GET    /path-checks/:id/results
+POST   /path-checks
+PUT    /path-checks/:id
+POST   /path-checks/:id/enabled
+DELETE /path-checks/:id
+POST   /path-checks/preview-sources
+POST   /path-checks/test
+GET    /path-checks/filter-schema
+GET    /path-checks/:id/server
+GET    /path-checks/:id/server/history
+GET    /path-checks/:id/server/traceroutes
+GET    /assets/:id/path-checks
+GET    /assets/:id/path-check-history?checkId=
+GET    /assets/:id/path-check-traceroutes?checkId=
+```
+
+A [path check](Path-Monitor) is an HTTP / HTTPS request, a TCP connect or a
+ping that the Polaris Agent (0.21.0 or later) runs from each of its hosts, with
+an optional traceroute. The `/path-checks` endpoints gate on the `pathChecks`
+key; the three `/assets/:id/…` readings gate on `assets:read`, because they
+describe that asset.
+
+- **Hosts** are the check's `scope` (the automation device-filter tree,
+  `{ "allAssets": true }` for every agent host) plus pinned `assetIds`, limited
+  to hosts running an active agent. `preview-sources` dry-runs that selection
+  without saving.
+- **The Polaris server** runs the check too when `runOnServer` is `true`. One
+  of `scope`, `assetIds` and `runOnServer` must select something. Setting it,
+  changing what a server-run check sends, or re-enabling one also needs
+  `networkScan:write` (`403` otherwise). The server is not an asset: it is the
+  first `/results` row (`server: true`, `assetId: null`), its readings are the
+  three `/path-checks/:id/server…` endpoints (on `pathChecks:read`), and its
+  results raise no automation alert.
+- **Targets** are a full URL for HTTP / HTTPS, `host:port` for TCP and a bare
+  host for ICMP, IPv4 only. Loopback, link-local, cloud-metadata and multicast
+  addresses, and the Polaris server itself, are refused with `400`.
+- **Limits:** `intervalSec` is whole minutes (60–3600); `timeoutMs` is
+  500–30000 and at most half the interval; a body-match regex must be
+  RE2-compatible. At most 50 checks can be enabled (`409` past that), and a
+  host runs at most 20 — the oldest win, and the rest raise a
+  `path_check.agent_over_cap` event.
+- `PUT` replaces the whole definition; it is not a patch.
+- `http` also takes `method` (`GET` | `HEAD`, nothing else), `hostHeader`,
+  `followRedirects` and `bodyMatch.negate`; a check using any of them needs
+  agent 0.23.0. `credentialId` (an HTTP credential, Bearer / Basic / Digest)
+  makes the check server-only: agent `scope` / `assetIds` are refused with
+  `400`, and using the credential needs at least `credentials:read`
+  (`403` otherwise).
+- `test` runs a draft once from the Polaris server and returns the verdict,
+  timings and, for HTTP / HTTPS, the headers (cookie values redacted) and the
+  first 64 KB of the body. Nothing is saved but an audit event. Same
+  `networkScan:write` requirement as running from the server; 10 a minute per
+  caller (`429` past that).
+- A check has no threshold and never changes a host's Up / Down status. To be
+  alerted, build an automation on the `path*` metrics or the
+  `path_check.path_changed` event.
+
+`path-check-history` takes the same `range=` presets and `from` / `to` as the
+other history endpoints and returns per-run samples on the detail tier, or
+per-bucket averages with `okCount` / `failCount` on the hourly and daily tiers.
+`path-check-traceroutes` returns the newest traces first (`limit` ≤ 50). Each
+hop carries the asset, interface and subnet Polaris matched its address to at
+the time of the trace.
+
 ### Search
 
 ```
@@ -223,11 +308,14 @@ POST   /blocks              PUT /blocks/:id      DELETE /blocks/:id
 ```
 GET    /subnets                    GET /subnets/:id
 GET    /subnets/:id/ips
-POST   /subnets
+POST   /subnets                    blockId optional — omitted = most specific containing block
+GET    /subnets/resolve-block?cidr= which block that would be
 POST   /subnets/next-available     allocate the next free /N
 POST   /subnets/bulk-allocate      anchor-aligned, all-or-nothing
 PUT    /subnets/:id                DELETE /subnets/:id
 POST   /subnets/:id/refresh        the Discover button: DHCP + firewall VIPs
+GET    /subnets/:id/move-targets   blocks that can hold it, overlaps flagged
+POST   /subnets/:id/move           { blockId } — re-parent onto another block
 POST   /subnets/:id/archive        fullwrite
 GET    /subnets/archived           GET /subnets/archived/:id
 GET    /subnets/exclusions

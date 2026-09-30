@@ -83,8 +83,33 @@ describe("createSubnet", () => {
     prisma.subnet.create.mockResolvedValue(fakeSubnet);
 
     const result = await createSubnet({ blockId: "b1", cidr: "10.0.1.0/24", name: "test" });
-    expect(result).toEqual(fakeSubnet);
+    expect(result).toMatchObject(fakeSubnet);
+    expect(result.block).toEqual({ id: "b1", name: undefined, cidr: "10.0.0.0/8" });
     expect(prisma.subnet.create).toHaveBeenCalledOnce();
+  });
+
+  it("with no blockId, lands in the most specific block containing the CIDR", async () => {
+    prisma.ipBlock.findMany.mockResolvedValue([
+      { id: "wide", name: "Corp", cidr: "10.0.0.0/8", ipVersion: "v4" },
+      { id: "site", name: "Site", cidr: "10.84.0.0/16", ipVersion: "v4" },
+      { id: "far", name: "Lab", cidr: "192.168.0.0/16", ipVersion: "v4" },
+    ]);
+    prisma.subnet.findMany.mockResolvedValue([]);
+    prisma.subnet.create.mockImplementation(async ({ data }: any) => ({ id: "s1", ...data }));
+
+    const result = await createSubnet({ cidr: "10.84.3.7/24", name: "test" });
+    expect(prisma.ipBlock.findUnique).not.toHaveBeenCalled();
+    expect(prisma.ipBlock.findMany).toHaveBeenCalledWith({ where: { ipVersion: "v4" } });
+    expect(prisma.subnet.create.mock.calls[0][0].data).toMatchObject({ blockId: "site", cidr: "10.84.3.0/24" });
+    expect(result.block).toEqual({ id: "site", name: "Site", cidr: "10.84.0.0/16" });
+  });
+
+  it("with no blockId, 400s when no block contains the CIDR", async () => {
+    prisma.ipBlock.findMany.mockResolvedValue([
+      { id: "far", name: "Lab", cidr: "192.168.0.0/16", ipVersion: "v4" },
+    ]);
+    await expect(createSubnet({ cidr: "10.1.1.0/24", name: "test" })).rejects.toMatchObject({ httpStatus: 400 });
+    expect(prisma.subnet.create).not.toHaveBeenCalled();
   });
 
   it("inserts inside a transaction that first takes the per-block advisory lock", async () => {
@@ -190,8 +215,38 @@ describe("deleteSubnet", () => {
   });
 
   it("throws 409 when subnet has active reservations", async () => {
-    prisma.subnet.findUnique.mockResolvedValue({ id: "s1", cidr: "10.0.1.0/24", _count: { reservations: 2 } });
-    prisma.reservation.count.mockResolvedValue(2);
-    await expect(deleteSubnet("s1")).rejects.toThrow(AppError);
+    prisma.subnet.findUnique.mockResolvedValue({
+      id: "s1", cidr: "10.0.1.0/24",
+      reservations: [
+        { id: "r1", ipAddress: "10.0.1.5", status: "active", sourceType: "manual" },
+        { id: "r2", ipAddress: "10.0.1.6", status: "active", sourceType: "dhcp_reservation" },
+      ],
+    });
+    await expect(deleteSubnet("s1")).rejects.toMatchObject({ httpStatus: 409 });
+    expect(prisma.subnet.delete).not.toHaveBeenCalled();
+  });
+
+  it("does not count the interface IP reservation against the delete", async () => {
+    prisma.subnet.findUnique.mockResolvedValue({
+      id: "s1", cidr: "10.0.1.0/24", name: "Office",
+      reservations: [
+        { id: "r1", ipAddress: "10.0.1.1", status: "active", sourceType: "interface_ip" },
+        { id: "r2", ipAddress: "10.0.1.9", status: "released", sourceType: "manual" },
+      ],
+    });
+    prisma.subnet.delete.mockResolvedValue({});
+    await deleteSubnet("s1");
+    expect(prisma.subnet.delete).toHaveBeenCalledWith({ where: { id: "s1" } });
+  });
+
+  it("deletes over active reservations when forced", async () => {
+    prisma.subnet.findUnique.mockResolvedValue({
+      id: "s1", cidr: "10.0.1.0/24", name: "Office",
+      reservations: [{ id: "r1", ipAddress: "10.0.1.5", status: "active", sourceType: "manual" }],
+    });
+    prisma.subnet.delete.mockResolvedValue({});
+    const out = await deleteSubnet("s1", "admin", { force: true });
+    expect(prisma.subnet.delete).toHaveBeenCalledWith({ where: { id: "s1" } });
+    expect(out.deletedReservations).toHaveLength(1);
   });
 });

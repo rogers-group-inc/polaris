@@ -1,6 +1,14 @@
 # Automation actions and recipients
 
-Step 5 of the wizard. What happens when the automation fires, and who hears
+Step 5 of the wizard, laid out as a stack of cards: the **In-app Alert** every
+fire creates, the two rows that describe that alert (**Require Acknowledgement**
+and, on a down automation, **Dependency-Down Bypass**), then per severity the
+**Trigger Action** list with its **+ Escalation Action** chain, and last the
+**Reset Action** list. The two rows sit above the action list because they are
+facts about the alert being raised rather than about what is sent, and they stay
+visible when a severity's actions are folded away.
+
+What happens when the automation fires, and who hears
 about it.
 
 ---
@@ -13,6 +21,16 @@ alert's id, as do the escalation sweep, acknowledge, clear and the rule state
 machine.
 
 The card hosts the **alert / event message template** and nothing else.
+
+Under the template, an **Example** line shows the alert as the Alerts tab
+would show it for one of the devices you selected — Polaris picks one at
+random. Pick another from the drop-down beside it, or press **Random**. The
+example follows your typing, and uses the device's current reading as
+`{value}` (it shows `n/a` when the device has no reading for the trigger).
+Hover over a chip under **Insert variable…** to see what that variable would
+be for the example device. Variables marked "Filled in when the alert is
+sent" — the acknowledge link, charts, recipients — only exist once a real
+alert is delivered.
 
 > The **audit Event** is separate and *is* removable — a "Create an Event"
 > action row, present by default, with no config. It is a no-op on event and
@@ -53,7 +71,7 @@ The card hosts the **alert / event message template** and nothing else.
 | Args template | ≤ 2000 chars, `{token}` vocabulary |
 | Timeout | 1–600 s, overrides the script's own default |
 
-Attaching one needs `automationScripts:fullwrite`. See
+Attaching one needs `automationScripts:write`. See
 [Automation scripts](Automation-Scripts) — it is an RCE-equivalent surface and
 the page says what that means.
 
@@ -178,6 +196,95 @@ to edit; un-ticking clears nothing, it just stops collecting.
 stored and both are sent — a mail client picks the part it renders — so the
 toggle only chooses what is on screen.
 
+### What the default email shows for an interface alert
+
+An alert on an interface (oper status, admin status, IP address, PoE status,
+error rate or throughput) is about **one port, not the device**. The device is
+still answering, which is how Polaris knows the port is down, so its facts
+describe a healthy device. The default email therefore leaves out the device
+facts: IP address, connected switch and AP, location, model and description.
+
+It keeps the device name, the **Interface** row, the automation and timing
+rows, and the LLDP neighbour that was last seen on the port. **If the port has
+an IP address configured, an Interface IP row shows it.** An access port, or
+one at 0.0.0.0, shows nothing.
+
+**Graphs depend on the kind of alert:**
+
+- **Status alerts** (oper status, admin status, interface IP, PoE) drop the
+  device graphs (CPU, memory, response time and packet loss). A WAN port that
+  is an SD-WAN member gets the SD-WAN graphs instead: the last hour of
+  latency, jitter and packet loss for that member, from the health checks
+  probing through it, with the FortiGate's own SLA targets drawn as dashed
+  lines. Any other port gets no graphs.
+- **Error-rate and throughput alerts** keep the device graphs, because a port
+  erroring or saturating can go with load on the device itself.
+
+This applies to the **default** email only. If you tick **Customize the
+email**, your body is sent exactly as written. A `{asset.ip}` you put in it
+still prints.
+
+### What the default email shows for a storage alert
+
+A storage alert (used %, used bytes, or days until full) is about **one
+filesystem**, so the email graphs that filesystem instead of the device's CPU,
+memory, response time and packet loss. The device facts (IP address, location,
+model and so on) stay, because which server is filling up is usually the
+first thing you need.
+
+- **Used % and used bytes** show the last 24 hours of that filesystem's usage,
+  with the automation's threshold as a dashed red line.
+- **Days until full** shows a **forecast**:
+  - Left of "now": the daily usage the forecast was worked out from, up to
+    30 days of it.
+  - Right of "now": that trend carried forward as a dashed line, to the
+    grey **full** line. A red dot marks the projected full date.
+  - How far forward it draws is **the automation's own number of days**. A
+    "days until full is less than 7" automation draws 7 days ahead. The
+    alert only fires when the full date falls inside that window, so the line
+    normally reaches **full** on the graph.
+  - The caption gives the current usage, the growth per day, and how many
+    days until full. It is the same number the alert fired on.
+  - If the filesystem has stopped growing by the time the email is sent (for
+    example, on a reminder after someone cleaned it up), the graph shows the
+    history and says it is no longer growing.
+
+A test email from the automation wizard draws an example filesystem, and
+always forecasts 7 days ahead.
+
+### What the default email shows for a CPU or memory alert
+
+A high-CPU or high-memory alert is about the host's **load**. The host is
+answering, which is how its CPU was read, so its response-time and
+packet-loss graphs say nothing about the fault. Those are dropped.
+
+- **Graphs.** The last hour of **CPU and memory**, both of them whichever one
+  fired, since a runaway process usually moves the two together. The one
+  that fired comes first.
+- **Top 5 processes.** The five programs using the most of that resource:
+  ranked by **CPU** on a CPU alert, by **memory** on a memory alert, with the
+  other figure beside each. A program running as several processes is one row
+  with its count (`chrome.exe ×14`). CPU is summed across a program's
+  processes and across cores, so **100% means one full core** and a busy
+  program on a multi-core host can read higher.
+- **How old the list is.** The list comes from the host's process inventory,
+  which is refreshed every few minutes, not at alert time, so the email says
+  how long before it was sent the list was reported.
+
+The list appears only on a host that reports processes: one with the Polaris
+Agent, or one whose processes are collected over SSH or WinRM. An
+SNMP-polled device or a firewall gets the two graphs and no list. On an agent
+host the CPU figures need agent **0.22.1** or later. Older agents report each
+process's average since it started, which ranks a long-running process that
+has just started spinning near the bottom.
+
+Unlike the interface changes above, dropping the connectivity graphs applies to
+a **customized** email too: a `{chart.responseTime}` or `{chart.probeLoss}` in
+your body renders nothing on a CPU or memory alert. The process list is the
+`{processes.top}` token, which is in the default email. An automation whose
+email you customized before this existed does not have it, so add it where you
+want the list.
+
 ### Template tokens
 
 Available in the message template, the email subject and body, the `api_call`
@@ -208,6 +315,12 @@ the subject fragment away when they are.
 `{asset.description}` `{asset.manufacturer}` `{asset.model}` `{asset.serial}`
 `{asset.os}` `{asset.osVersion}` `{asset.department}` `{asset.assignedTo}`
 `{asset.tags}` `{asset.connectedSwitch}` `{asset.connectedAp}` `{asset.link}`
+
+> `{asset.link}` — the default email's **Open device** button — is one address
+> for every reader. Opened on a phone it lands on the mobile app's device
+> screen; anywhere else, on the desktop assets page. It is empty when
+> `POLARIS_PUBLIC_URL` is unset, because an email cannot resolve a relative
+> link.
 
 **Follow-up**
 `{escalation.tier}` `{escalation.elapsed}` `{escalation.policy}`
@@ -287,8 +400,8 @@ What follows from that:
 
 ### Requiring a note
 
-**"Require a note when acknowledging"** lives at the foot of each **severity
-section**, not on the rule ([rule 56](Business-Rules#rule-56)). What closing an
+**"Require Acknowledgement"** is a row at the head of each **severity section**,
+not a setting on the rule ([rule 56](Business-Rules#rule-56)). What closing an
 alert out costs is a property of the alert record, and a `notice` and a
 `critical` do not deserve the same answer.
 

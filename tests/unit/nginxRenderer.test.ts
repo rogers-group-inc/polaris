@@ -100,7 +100,7 @@ describe("renderNginxConfig — defaults", () => {
     expect(contents).toMatch(/^\s*client_max_body_size 8m;/m);
   });
 
-  it("lifts the body limit for the database-restore upload only", () => {
+  it("lifts the body limit for the database-restore upload", () => {
     // A restore carries a pg_dump of the whole database and the route has no
     // fileSize of its own by design, so any finite ceiling here would silently
     // break somebody's restore.
@@ -110,10 +110,24 @@ describe("renderNginxConfig — defaults", () => {
     // Streaming rather than spooling is what keeps "unlimited" from being able
     // to fill nginx's client_body_temp volume.
     expect(block).toMatch(/^\s*proxy_request_buffering off;/m);
-    // Only that one location overrides the limit. Anchored to directive lines
-    // so the surrounding explanatory comments don't count as occurrences.
-    expect((contents.match(/^\s*client_max_body_size .+;/gm) ?? []).length).toBe(2);
-    expect((contents.match(/^\s*proxy_request_buffering .+;/gm) ?? []).length).toBe(1);
+  });
+
+  it("raises the body limit for the firmware image upload to the app's own 100 MiB ceiling", () => {
+    // Server Settings → Repository (business rule 87): a switch / AP image is
+    // up to 100 MiB and the route's multer limit is exactly that, so the edge
+    // gets the same finite number rather than the restore's "unlimited".
+    expect(contents).toMatch(/^\s*location = \/api\/v1\/server-settings\/firmware\/images \{/m);
+    const block = contents.split("location = /api/v1/server-settings/firmware/images {")[1]!.split("}")[0]!;
+    expect(block).toMatch(/^\s*client_max_body_size 100m;/m);
+    expect(block).toMatch(/^\s*proxy_request_buffering off;/m);
+    expect(block).toMatch(/proxy_pass http:\/\/127\.0\.0\.1:3000;/);
+  });
+
+  it("only those two locations override the limit", () => {
+    // Anchored to directive lines so the surrounding explanatory comments
+    // don't count as occurrences: the server-level 8m plus the two overrides.
+    expect((contents.match(/^\s*client_max_body_size .+;/gm) ?? []).length).toBe(3);
+    expect((contents.match(/^\s*proxy_request_buffering .+;/gm) ?? []).length).toBe(2);
   });
 
   it("points the restore override at the app upstream, not dash or metrics", () => {

@@ -21,7 +21,9 @@ selection's bulk bar, or from the monitor pill's popover on a single device.
 
 Dashboards treat maintenance as **its own state, never an outage**. The monitor
 pill turns purple, and every asset chart draws a labelled translucent band over
-the window.
+the window — on the phone's asset sheet as well as the desktop. Because nothing
+is polled, the chart has no line inside the band; on the phone a chart section
+with no readings says *Polling paused for maintenance* rather than *No samples*.
 
 ### It retires live alerts — it does not freeze them
 
@@ -174,7 +176,7 @@ opens, loaded on that schedule) and **Disable schedule** — which ends its open
 windows immediately, returns the held devices to polling, and stops the
 schedule firing until re-enabled. A **+ New schedule** button at the top of the
 widget opens that editor empty, so a window can be scheduled from the dashboard
-without going to Assets first. All three need `maintenanceManagement:fullwrite`,
+without going to Assets first. All three need `maintenanceManagement:write`,
 like the modal itself.
 
 A row filtered out of a *device*-scoped board does not mean the maintenance is
@@ -194,6 +196,49 @@ offers:
 
 Every schedule mutation reconciles **inline**, so an ad-hoc window applies
 immediately rather than on the next tick.
+
+---
+
+## Windows Polaris opens for itself
+
+Some of what Polaris does to a device **is** downtime for it. Upgrading,
+reinstalling or uninstalling the [Polaris Agent](Polaris-Agent) stops the agent
+service on the host, which drops its connection — and without this, the
+`agent.disconnected` automation would page you about work you asked for.
+
+So those three operations put the asset in maintenance for their duration
+([rule 80](Business-Rules#rule-80)). You do not create or manage these: they
+open when the operation starts and end when the agent reconnects.
+
+| | |
+|---|---|
+| **Which operations** | agent upgrade, reinstall, uninstall, and a **firmware upgrade** of a switch or access point ([Assets](Assets#firmware)). A first install and a retry take no window — there is no agent running to disconnect, and silencing the host would hide a real problem |
+| **What you see** | the device reads **maintenance** while it runs, and its Maintenance tab names the operation ("Polaris Agent upgrade", "Firmware upgrade") and the time it ends by. A firmware window suppresses everything behind the switch, exactly as a scheduled window with *mark dependents down* does — a rebooting switch takes them with it |
+| **When it ends** | when the agent reconnects — not when the installer finishes, because the disconnect can be noticed up to a minute later. An uninstall ends when the uninstall does. A firmware upgrade that failed ends at once. One that reached the reboot ends when Polaris's own monitoring answers the device again, up to 10 minutes after the device confirmed its new version: its web interface comes back before the SNMP agent monitoring polls |
+| **If the operation fails** | it ends immediately. An agent that is down because its upgrade failed is a real problem and you should hear about it |
+| **If nothing ends it** | it expires on its own — 20 minutes for an agent upgrade or uninstall, 30 for a reinstall, 45 for a firmware upgrade (a switch flash is about fifteen minutes and the reboot up to another fifteen), extended to cover the wait for monitoring to answer when a run reaches it — at most eleven minutes past the moment the device confirmed its version. A device in maintenance is not being watched, so this can never be left open by a crash |
+
+These windows are usually **very short** — an agent upgrade can open and close
+one inside two seconds. That is shorter than the interval event automations run
+on, which is why they judge an event against the device's maintenance history at
+the moment it happened rather than against its state when they get round to
+reading it ([rule 80a](Business-Rules#rule-80a)). Without that, a window this
+brief would suppress nothing at all.
+
+They do **not** appear on the Active Maintenance widget, which lists your
+schedules — a fleet-wide agent upgrade would otherwise fill a wallboard with
+one-minute entries. They do appear on the device: its status, its Maintenance
+tab, its `maintenance.entered` / `maintenance.exited` events and its chart bands.
+
+> **It silences the whole device, not just the agent.** For the length of the
+> operation the asset is in maintenance, so a live alert on the way in is
+> retired and a genuine failure that starts during it is not reported until the
+> window ends. That is the same trade every maintenance window makes, for a
+> minute or two per device.
+
+Ending maintenance yourself (setting the status to something else) wins, as
+always — the operation carries on, and you will hear about it if it breaks
+something.
 
 ---
 

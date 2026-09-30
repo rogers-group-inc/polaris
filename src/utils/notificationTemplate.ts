@@ -16,6 +16,7 @@
  */
 
 import { severityCss } from "./severityStyle.js";
+import { assetOpenPath } from "./assetOpenLink.js";
 
 export interface TemplateVariable {
   token: string;
@@ -56,22 +57,25 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{severity.upper}", label: "SEVERITY", description: "Rule severity upper-cased (e.g. WARNING)", group: "notification" },
   { token: "{severity.color}", label: "Severity color", description: "Hex colour for this severity (e.g. #d97706) — for styling an HTML email", group: "notification" },
   { token: "{chart.sensor}", label: "Sensor chart", description: "Last hour of the HARDWARE SENSOR this alert fired on, with the device's own alarm periods shaded — inline chart (HTML) or a now/avg/peak line (plain text). Renders away entirely unless the automation triggers on a hardware sensor's value or its alarm", group: "notification" },
-  { token: "{chart.sdwanLatency}", label: "SD-WAN latency chart", description: "Last hour of SD-WAN latency on the HEALTH CHECK and WAN member this alert fired on, with the FortiGate's own SLA target as a dashed line and the periods it called the member down shaded. Renders away entirely unless the automation triggers on SD-WAN (a health-check metric, a service rule's status, or its selected member)", group: "notification" },
-  { token: "{chart.sdwanJitter}", label: "SD-WAN jitter chart", description: "Last hour of SD-WAN jitter on the health check and WAN member this alert fired on, against its SLA target. Renders away entirely unless the automation triggers on SD-WAN", group: "notification" },
-  { token: "{chart.sdwanLoss}", label: "SD-WAN packet-loss chart", description: "Last hour of SD-WAN packet loss on the health check and WAN member this alert fired on, against its SLA target. Renders away entirely unless the automation triggers on SD-WAN", group: "notification" },
-  { token: "{chart.cpu}", label: "CPU chart", description: "Last hour of CPU as an inline chart (HTML) or a now/avg/peak line (plain text). Dropped from an SD-WAN alert, which charts the health check instead — a firewall whose WAN link is degrading is answering its own probes perfectly", group: "notification" },
+  { token: "{chart.sdwanLatency}", label: "SD-WAN latency chart", description: "Last hour of SD-WAN latency on the HEALTH CHECK and WAN member this alert fired on, with the FortiGate's own SLA target as a dashed line and the periods it called the member down shaded. Renders away entirely unless the automation triggers on SD-WAN (a health-check metric, a service rule's status, or its selected member) or on the status of an interface that is an SD-WAN member, where it charts that member", group: "notification" },
+  { token: "{chart.sdwanJitter}", label: "SD-WAN jitter chart", description: "Last hour of SD-WAN jitter on the health check and WAN member this alert fired on, against its SLA target. Renders away entirely unless the automation triggers on SD-WAN or on the status of an SD-WAN member interface", group: "notification" },
+  { token: "{chart.sdwanLoss}", label: "SD-WAN packet-loss chart", description: "Last hour of SD-WAN packet loss on the health check and WAN member this alert fired on, against its SLA target. Renders away entirely unless the automation triggers on SD-WAN or on the status of an SD-WAN member interface", group: "notification" },
+  { token: "{chart.cpu}", label: "CPU chart", description: "Last hour of CPU as an inline chart (HTML) or a now/avg/peak line (plain text). Dropped from an SD-WAN alert, which charts the health check instead — a firewall whose WAN link is degrading is answering its own probes perfectly. Dropped from an interface STATUS alert too (oper / admin status, interface IP, PoE — with memory, response time and packet loss): the device is healthy, the port is the story, and an SD-WAN member port charts its health checks instead. Error-rate and throughput alerts keep it. Dropped from a storage alert as well, which charts the filesystem instead", group: "notification" },
+  { token: "{chart.storage}", label: "Storage chart", description: "The FILESYSTEM this alert fired on. A used-% or used-bytes alert gets the last 24 hours of that mount's usage with the automation's threshold as a dashed line; a days-until-full alert gets a forecast — the daily usage the trend was fitted on, then the trend carried forward as a dashed line for the automation's threshold in days, to the capacity line, captioned with the growth rate and the projected full date. Replaces the CPU, memory, response-time and packet-loss charts on a storage alert and renders away on every other alert", group: "notification" },
   { token: "{chart.memory}", label: "Memory chart", description: "Last hour of memory as an inline chart (HTML) or a now/avg/peak line (plain text)", group: "notification" },
   { token: "{chart.responseTime}", label: "Response-time chart", description: "Last hour of probe response time as an inline chart (HTML) or a now/avg/peak line (plain text)", group: "notification" },
   { token: "{brand.header}", label: "Letterhead", description: "This install's logo, application name and subtitle — the block in the top-right corner of the default email. Filled at send time (the logo rides as an inline image); renders away on an install with neither a subtitle nor a readable logo", group: "notification" },
   { token: "{push.recipients}", label: "Web push recipients", description: "The Polaris accounts this alert was also sent to by web push, named — the footer line under the default email. Filled at send time from the alert's own push deliveries (one name per account, however many browsers it has enrolled); renders away entirely on an automation that pushes to nobody", group: "notification" },
   { token: "{email.recipients}", label: "Email recipients", description: "Who this alert was also emailed to — the footer line beside {push.recipients}. Filled at send time from the alert's own email deliveries, deduped by address across every copy and every reminder; an address with a Polaris account prints as that account's name, anything else prints as the address. Bcc is never listed, and the line renders away entirely when there is nothing to name", group: "notification" },
+  { token: "{interface.ip}", label: "Interface IP", description: "The IP address configured on the INTERFACE this alert fired on, as a complete \"Interface IP\" row (HTML facts table) or line (plain text). Renders away entirely unless the automation triggers on an interface (status, PoE, throughput, error rate) and the port has an address — an access port or a 0.0.0.0 interface prints nothing", group: "notification" },
   { token: "{interface.lldp}", label: "Interface LLDP neighbors", description: "The LLDP neighbours on the INTERFACE this alert fired on — what was plugged into the port, its own port, management IP and when it last advertised. Renders away entirely unless the automation triggers on an interface (status, PoE, throughput, error rate) and the port has a neighbour", group: "notification" },
+  { token: "{processes.top}", label: "Top 5 processes", description: "The five programs using the most of the resource a CPU or memory alert fired on — ranked by CPU for a CPU alert (all-cores or per-core), by memory for a memory alert, with the other figure beside each — from the host's process inventory, with how long before the email it was reported. Renders away entirely on every other alert and on a host with no process inventory", group: "notification" },
   { token: "{time}", label: "Time", description: "Trigger time (ISO-8601)", group: "notification" },
   { token: "{time.local}", label: "Time (readable)", description: "Trigger time in this install's own timezone, e.g. \"Aug 12, 2026, 1:46 PM CDT\" — what the default email prints. Every copy of an alert reads the same clock, whichever zone its recipients sit in", group: "notification" },
   { token: "{time.zone}", label: "Timezone", description: "The timezone every time in this email is rendered in, named in full — e.g. \"CDT (America/Chicago)\". The default email prints it in the footer so a reader in another zone converts rather than guesses", group: "notification" },
   { token: "{link}", label: "Link", description: "Notifications page URL (empty if POLARIS_PUBLIC_URL unset)", group: "notification" },
   { token: "{ack}", label: "Acknowledge link", description: "URL of this alert's acknowledge page in Polaris — the reader signs in (unless they already are), adds a note and acknowledges. The same link for every recipient; empty when POLARIS_PUBLIC_URL is unset", group: "notification" },
-  { token: "{asset.link}", label: "Open asset", description: "URL that opens this device in Polaris (empty if POLARIS_PUBLIC_URL unset)", group: "asset" },
+  { token: "{asset.link}", label: "Open asset", description: "URL that opens this device in Polaris — the phone app on a phone, the desktop page anywhere else (empty if POLARIS_PUBLIC_URL unset)", group: "asset" },
   { token: "{asset.connectedSwitch}", label: "Connected switch", description: "Switch/port the device was last seen on, e.g. FS-248E-01/port15", group: "asset" },
   { token: "{asset.connectedAp}", label: "Connected AP", description: "Access point the device was last seen on", group: "asset" },
   { token: "{trigger.summary}", label: "What fired", description: "The trigger in the builder's own words, with the observed value — e.g. \"Response time (median over 5 minutes) is 760 ms\"", group: "notification" },
@@ -104,7 +108,72 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{repeat.quiet}", label: "Quiet period ended", description: "On the first reminder after a quiet period, a sentence saying reminders have resumed and how long the alert has been active. Empty on every other send", group: "escalation" },
   { token: "{repeat.policy}", label: "Reminder policy", description: "Whether this alert will keep reminding, in words — e.g. \"Reminders every 15 minutes until acknowledged.\" Empty (and its row prunes away) when the automation doesn't repeat", group: "escalation" },
   { token: "{escalation.policy}", label: "Escalation policy", description: "Whether this alert goes over the reader's head if they leave it — e.g. \"Escalates in 30 minutes if not acknowledged.\" Empty when the automation has no escalation at the severity it fired at", group: "escalation" },
+  // Business rule 78 — a down automation speaking for a dependency-suppressed
+  // device. All four are present-but-empty on every other alert, so a body
+  // that prints them costs a plain alert nothing.
+  { token: "{dependency.summary}", label: "Dependency-down notice", description: "On an alert raised for a device that is dependency-down, the whole sentence: \"DEPENDENCY DOWN — PLC-7 is unreachable because its upstream device SW-PLANT-3 is down\". Empty on every other alert, so its banner prunes away", group: "notification" },
+  { token: "{dependency.upstream}", label: "Upstream device", description: "Dependency-down alerts: the device directly above this one that is down (or itself dependency-down). Empty on every other alert", group: "notification" },
+  { token: "{dependency.rootCause}", label: "Root cause", description: "Dependency-down alerts: the device further up that is actually down, when it is not the upstream device itself — the FortiGate above a dependency-down switch. Empty when the upstream device is the root cause, and on every other alert", group: "notification" },
+  { token: "{dependency.headline}", label: "Dependency-down headline", description: "The compact notice, for a message that already names the device: \"DEPENDENCY DOWN — upstream SW-PLANT-3 is down\". Empty on every other alert", group: "notification" },
+  { token: "{dependency.tag}", label: "Dependency-down tag", description: "\" · DEPENDENCY DOWN\" on a dependency-down alert, with its own separator so a subject line can append it unconditionally; empty on every other alert", group: "notification" },
 ];
+
+/**
+ * Business rule 78 — who silenced a dependency-suppressed device, as the
+ * template sees it. `upstream` is the device directly above; `rootCause` is
+ * the device actually down when that is a DIFFERENT device (null when the
+ * upstream is the root cause, so the row prunes rather than repeats); `reason`
+ * is why the root cause counts as down. A null `upstream` means the walk could
+ * not name anyone — the alert still says dependency down, just not by whom.
+ */
+export interface DependencyTemplateParts {
+  upstream: string | null;
+  rootCause: string | null;
+  reason: "down" | "maintenance" | "dependency_test" | "suppressed" | null;
+}
+
+function dependencyReasonPhrase(reason: DependencyTemplateParts["reason"]): string {
+  switch (reason) {
+    case "maintenance": return "is in a maintenance window";
+    case "dependency_test": return "is under a Dependency Test";
+    default: return "is down";
+  }
+}
+
+/** The `{dependency.summary}` sentence — the whole notice, or nothing. */
+export function dependencySummarySentence(asset: string, d: DependencyTemplateParts | null | undefined): string {
+  if (!d) return "";
+  const who = asset || "The device";
+  if (!d.upstream) return `DEPENDENCY DOWN — ${who} is unreachable because a device above it is down`;
+  if (!d.rootCause || d.rootCause === d.upstream) {
+    return `DEPENDENCY DOWN — ${who} is unreachable because its upstream device ${d.upstream} ${dependencyReasonPhrase(d.reason)}`;
+  }
+  return `DEPENDENCY DOWN — ${who} is unreachable because its upstream device ${d.upstream} sits behind ${d.rootCause}, which ${dependencyReasonPhrase(d.reason)}`;
+}
+
+/** The `{trigger.summary}` headline of a dependency-down alert — the device's
+ *  own probe did not decide it, so "Monitor status is down" would mislead. */
+export function dependencyTriggerSummary(d: DependencyTemplateParts | null | undefined): string {
+  if (!d || !d.upstream) return "Dependency down — a device above it is down";
+  const root = d.rootCause && d.rootCause !== d.upstream ? ` (root cause ${d.rootCause})` : "";
+  return `Dependency down — upstream ${d.upstream} ${dependencyReasonPhrase(d.reason)}${root}`;
+}
+
+/**
+ * The COMPACT notice (`{dependency.headline}`) — the state in the words the
+ * pill uses, plus who, and deliberately WITHOUT the device's own name.
+ *
+ * It exists for the one place the full sentence does not fit: an operator's own
+ * `messageTemplate`. Such a template has already named the device ("{asset} is
+ * down"), and it could not have anticipated this alert, so the engine appends
+ * this rather than replacing their words — and it must be the MESSAGE that
+ * carries it, because push, Slack, Teams and Pushbullet send nothing else.
+ */
+export function dependencyHeadline(d: DependencyTemplateParts | null | undefined): string {
+  if (!d) return "";
+  const s = dependencyTriggerSummary(d);
+  return "DEPENDENCY DOWN" + s.slice("Dependency down".length);
+}
 
 /** Escape a string for safe embedding in HTML text/attribute content. */
 export function escapeHtml(s: string): string {
@@ -214,6 +283,8 @@ export interface TemplateContextParts {
     message?: string | null;
   } | null;
   assetDetail?: AssetTemplateDetail | null;
+  /** Business rule 78 — set only on an alert raised for a dependency-suppressed device. */
+  dependency?: DependencyTemplateParts | null;
   escalationTier?: number;
   escalationElapsed?: string;
   /** Which reminder this is; empty on the initial notification. */
@@ -438,6 +509,15 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     // literal braces if the key were absent instead of blank.
     "repeat.policy": str(parts.repeatPolicy),
     "escalation.policy": str(parts.escalationPolicy),
+    // Business rule 78 — present-but-empty on every alert that is not about a
+    // dependency-suppressed device, for the reason every pair above is: the
+    // default body prints them on every send.
+    "dependency.summary": dependencySummarySentence(str(parts.asset), parts.dependency),
+    "dependency.upstream": str(parts.dependency?.upstream),
+    "dependency.rootCause": parts.dependency && parts.dependency.rootCause && parts.dependency.rootCause !== parts.dependency.upstream
+      ? parts.dependency.rootCause : "",
+    "dependency.headline": dependencyHeadline(parts.dependency),
+    "dependency.tag": parts.dependency ? " · DEPENDENCY DOWN" : "",
   };
 }
 
@@ -476,6 +556,11 @@ const TOKEN_RE = /\{([a-zA-Z][\w.]*)\}/g;
  * same reason the charts are: it needs a DB read, and its HTML and plain-text
  * forms are different markup, which one context string can't carry.
  *
+ * The process half (`{processes.top}` — the top-5 programs by CPU or memory on a
+ * CPU / memory alert, read at delivery by alertProcessService) is deferred for
+ * the interface half's two reasons: a DB read, and different HTML and text
+ * markup.
+ *
  * The branding half (`{brand.header}` — the install's logo, application name and
  * subtitle in the email's top-right corner, built at delivery by
  * alertBrandService) is deferred for the same pair of reasons: the logo rides as
@@ -499,6 +584,7 @@ export function isDeferredToken(name: string): boolean {
     DEFERRED_TOKEN_NAMES.has(name) ||
     name.startsWith("chart.") ||
     name.startsWith("interface.") ||
+    name.startsWith("processes.") ||
     name.startsWith("brand.") ||
     name.startsWith("push.")
   );
@@ -611,9 +697,15 @@ export function followUpLine(ctx: Record<string, string>): string {
     .join(" ");
 }
 
-/** The device page's path for ONE asset. Shared by both callers. */
+/**
+ * The device link's path for ONE asset. Shared by both callers. NOT the
+ * desktop page: it is the `/assets/<id>` landing route in app.ts, which sends
+ * a phone to the mobile SPA and everything else to the desktop page — the
+ * link is composed once for every reader, so the choice has to wait for the
+ * request that follows it (utils/assetOpenLink.ts has the reasoning).
+ */
 function assetPath(assetId: string): string {
-  return `/assets.html#view=asset:${encodeURIComponent(assetId)}`;
+  return assetOpenPath(assetId);
 }
 
 /**

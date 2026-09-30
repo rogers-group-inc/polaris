@@ -28,10 +28,11 @@ import { Router } from "express";
 import { z } from "zod";
 import * as credentialService from "../../services/credentialService.js";
 import { requirePermission, requireOwnership, assertOwnership } from "../middleware/permissions.js";
+import { credentialTestLimiter } from "../middleware/rateLimits.js";
 import { logEvent } from "./events.js";
 import { AppError } from "../../utils/errors.js";
 import { probeCredentialAgainstHost } from "../../services/monitoringService.js";
-import type { HttpProbeDiagnostics } from "../../utils/httpCheck.js";
+import { isDeviceLoginCredential, type HttpAuthConfig, type HttpProbeDiagnostics } from "../../utils/httpCheck.js";
 import { normalizeProbeTarget } from "../../utils/probeTarget.js";
 
 const router = Router();
@@ -161,7 +162,7 @@ router.put("/:id", requireOwnership("credentials"), async (req, res, next) => {
 // is set, masked secrets in `config` are merged from the stored credential so
 // the operator doesn't have to retype the password on edit. Returns the same
 // shape as a probe: { success, responseTimeMs, error?, host }.
-router.post("/test", requireOwnership("credentials"), async (req, res, next) => {
+router.post("/test", credentialTestLimiter, requireOwnership("credentials"), async (req, res, next) => {
   try {
     const input = TestSchema.parse(req.body);
 
@@ -237,6 +238,20 @@ router.post("/test", requireOwnership("credentials"), async (req, res, next) => 
         success: false,
         responseTimeMs: 0,
         error: err?.message || "Credential config is invalid",
+        host,
+      });
+      return;
+    }
+
+    // A device admin login (authMode "form") has no HTTP check to run: it is
+    // the password a switch or AP's login page takes, and the only thing that
+    // can prove it is the firmware engine logging in (business rule 87).
+    // Answered as a RESULT, not a 4xx, so the modal renders it inline.
+    if (input.type === "http" && isDeviceLoginCredential(config as HttpAuthConfig)) {
+      res.json({
+        success: false,
+        responseTimeMs: 0,
+        error: "Device admin logins are used by the firmware repository and are verified when an upgrade signs in to the device",
         host,
       });
       return;

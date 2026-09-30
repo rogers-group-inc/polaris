@@ -462,7 +462,7 @@ The single most common operational footgun on a fresh Polaris install is undersi
 
 **Budget more than your retention window.** When TimescaleDB is installed, sample data is reclaimed a whole *chunk* at a time — a chunk can only be dropped once all of it is past the cutoff, and the prune runs once every 24 h. Each tier therefore keeps its configured window **plus one chunk interval plus one prune cycle**. Most sample tables use TimescaleDB's default 7-day chunk interval (only the interface, storage and IPsec detail tables are narrowed to 1 day), so a 7-day detail retention holds up to ~15 days on disk and a 3-day retention holds up to ~11. Size for that, not for the number in the retention setting.
 
-A second driver, on fleets running the **Polaris Agent**, is **per-core CPU**. An agent reports one utilisation figure per logical core each telemetry cycle, so a rack of 64-core servers stores roughly an order of magnitude more per telemetry row than the same count of network devices — which report a single CPU number. It is detail-tier only (the hourly and daily rollups keep the cross-core average alone), so it is bounded by your *detail* retention rather than your longest window, and the Capacity Advisor measures it from your actual rows rather than estimating. If the projection jumps after an agent rollout, this is why; shortening detail retention is the lever.
+A second driver, on fleets monitored by the **Polaris Agent** or through **vCenter**, is **per-core CPU**. Both report one utilisation figure per core each telemetry cycle — logical cores for an agent, a VM's vCPUs or an ESXi host's physical cores for vCenter — so a rack of 64-core servers, or a cluster of ESXi hosts, stores roughly an order of magnitude more per telemetry row than the same count of network devices, which report a single CPU number. vCenter rows additionally carry their own five-band memory breakdown. It is detail-tier only (the hourly and daily rollups keep the cross-core average alone), so it is bounded by your *detail* retention rather than your longest window, and the Capacity Advisor measures it from your actual rows rather than estimating. If the projection jumps after an agent rollout or a vCenter integration goes in, this is why; shortening detail retention is the lever.
 
 The largest single driver is usually **how many interfaces operators pin** for fast-cadence polling (the System tab's *Poll 1m* column, and the per-integration interface auto-monitor selection). Polaris records interface *current state* for every port on every device at negligible cost, but keeps a time-series only for pinned interfaces — so a broad auto-monitor pattern across a fleet of 48-port switches is the difference between a few gigabytes and a few hundred. Server Settings → Maintenance → Capacity Advisor projects the steady-state size from your actual pinned count; if the forecast looks wrong, narrow the auto-monitor selection before buying disk.
 
@@ -835,6 +835,35 @@ chunk` and keeps measuring. A quiet log means the batched path is working.
 
 ---
 
+## Optional: traceroute (path checks run from this server)
+
+A path check can run from the **Polaris server itself** as well as from agent
+hosts (Path Monitor → the check's **Sources** step → *Run from this Polaris
+server*). Its traceroute uses the system tracer, tried in this order:
+
+1. `traceroute -n` — UDP probes, no privilege needed. Installed by the Docker
+   image and by the setup scripts (it is in RHEL BaseOS and the Debian/Ubuntu
+   archive).
+2. `tracepath -n` — part of iputils, so present wherever `ping` is. It walks
+   hops one at a time and takes no per-probe settings, so it is the fallback.
+3. `tracert -d` on a Windows dev install.
+
+With none of them, server-run checks still run and chart normally; only their
+traceroutes come back with no hops and a note saying the package is missing.
+The setup scripts install it best-effort. To add it later:
+
+```bash
+sudo dnf install -y traceroute     # RHEL / Rocky / AlmaLinux 9
+sudo apt install -y traceroute     # Ubuntu / Debian
+```
+
+Polaris looks for the tracer once per process, so restart it (or let the next
+update restart it) after installing. ICMP checks from the server use the same
+system `ping` the rest of Polaris uses. Server-run checks run on the **web**
+role (the one that runs the schedulers), so the traffic leaves from that host.
+
+---
+
 ## The split-role deployment (web / monitor / discovery)
 
 Since Phase 3 this is the **default and only supported production layout**
@@ -1109,7 +1138,11 @@ card (unchanged).
 > dark either way until you enable it on the Dash Wallboard card.
 > **Upgrade note (request-body limits):** the shipped nginx config gained a
 > server-level `client_max_body_size 8m` plus one `location` that lifts the
-> limit for the database-restore upload (7 → 8 locations). Before this, nginx
+> limit for the database-restore upload (7 → 8 locations), and later a second
+> `location` that raises it to 100m for the firmware-image upload
+> (`/api/v1/server-settings/firmware/images`, 9 → 10 locations, after the
+> `/api` docs block; the app's own multer limit is the same number). Before
+> this, nginx
 > enforced its 1 MB default on every request — **below** what Polaris's own
 > handlers accept — so a branding logo over 1 MB and *any* database restore
 > through the UI were rejected at the edge with a 413 whose HTML error page the
@@ -1612,7 +1645,7 @@ On RHEL with SELinux enforcing, `sudo restorecon -v /opt/polaris/tools/codesign.
 
 Integrations → **Polaris Agents** → **Code signing (internal CA)**:
 
-1. Tick **Sign Windows agent binaries on build** and fill in the **keystore path**, **keystore password**, and **timestamp URL**. Leave **key alias** blank unless the keystore holds more than one entry, and leave **jsign jar path** blank for auto-detection. Saving requires `serverSettingsSystem = fullwrite` (admin).
+1. Tick **Sign Windows agent binaries on build** and fill in the **keystore path**, **keystore password**, and **timestamp URL**. Leave **key alias** blank unless the keystore holds more than one entry, and leave **jsign jar path** blank for auto-detection. Saving requires `serverSettingsSystem = write` (the key's top rung; admin holds it).
 2. Click **Test** — it checks Java and the jar, then opens the keystore with the stored password via `keytool` and lists the aliases it found. That proves the path/password pair and catches a mistyped alias, which otherwise only surfaces as a jsign error mid-build. It makes **no network call**, so it does not prove the timestamp authority is reachable.
 
    `keytool` ships inside `java-25-openjdk-headless`, but beside the JVM rather than necessarily symlinked onto `PATH`. Polaris tries the bare name first and then the JVM's own reported `java.home` (and `JAVA_HOME` if you set one), so it normally finds it either way. If it genuinely can't, Test reports *"password NOT verified"* and everything else still passes — signing itself never uses keytool, only `java -jar jsign.jar`, so this is a diagnostic downgrade rather than a functional one.

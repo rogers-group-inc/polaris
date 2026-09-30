@@ -31,9 +31,10 @@
  * shape is unchanged: the UNITS beneath it moved from rows to packets, the
  * arithmetic every caller does did not.
  *
- * THIS QUERY COUNTS EVERY `probeKind`. It is one of only TWO readers of
- * asset_monitor_samples that does (the other being alertChartService's loss
- * chart); everything else filters to the response-time poll. That is the point
+ * THIS QUERY COUNTS EVERY `probeKind`. It is one of only THREE readers of
+ * asset_monitor_samples that does (the others being alertChartService's loss
+ * chart and the loss line sampleHistoryService.readMonitorHistory hands the
+ * response-time chart); everything else filters to the response-time poll. That is the point
  * of the ICMP loss sweep (utils/lossSweep.ts): a uniform burst of echoes at
  * every eligible asset every cycle, so a 15-minute ratio divides ~90 samples
  * instead of ~15. Its rows carry probeKind='icmp' and a NULL responseTimeMs,

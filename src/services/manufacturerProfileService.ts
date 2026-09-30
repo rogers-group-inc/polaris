@@ -15,6 +15,7 @@ import { normalizeManufacturer } from "../utils/manufacturerNormalize.js";
 import {
   isTransformKind,
   isCombinerKind,
+  metricRowTransforms,
   type TransformKind,
   type CombinerKind,
 } from "../utils/symbolTransforms.js";
@@ -23,7 +24,9 @@ import { symbolReadiness, ensureRegistryLoaded, type SymbolReadiness } from "./o
 import { logEvent } from "./eventLogService.js";
 import { isKnownAssetType, normalizeAssetTypeName } from "../utils/assetTypes.js";
 import { validateModelParse } from "../utils/modelParse.js";
+import { findUnsafeRegexConstruct } from "../utils/regexSafety.js";
 import { validateHttpCheckDefinition } from "./credentialService.js";
+import { isDeviceLoginCredential, type HttpAuthConfig } from "../utils/httpCheck.js";
 import { logger } from "../utils/logger.js";
 import {
   normalizeStateMap,
@@ -286,10 +289,18 @@ async function httpFieldsForWrite(
     // Verified at save so a mistyped or deleted id fails in the form rather
     // than once per asset per interval, which is the same reasoning behind
     // compiling the regex here.
-    const cred = await prisma.credential.findUnique({ where: { id: credId }, select: { id: true, type: true } });
+    const cred = await prisma.credential.findUnique({ where: { id: credId }, select: { id: true, type: true, config: true } });
     if (!cred) throw new AppError(400, "The selected HTTP credential no longer exists");
     if (cred.type !== "http") {
       throw new AppError(400, "An HTTP check widget needs an HTTP-typed credential");
+    }
+    // A device admin login (authMode "form") is a switch or AP's web-UI
+    // password, held for the firmware repository (business rule 87). It is not
+    // an HTTP auth scheme: a check has no login form to post it to, and the
+    // only thing the probe could do with it is guess Basic and send the
+    // device's admin password in a header to whatever answered.
+    if (isDeviceLoginCredential((cred.config ?? {}) as HttpAuthConfig)) {
+      throw new AppError(400, "A device admin login (form) credential cannot authenticate an HTTP check — pick a bearer, basic or digest credential");
     }
   }
   return { httpCheck: check, credentialId: credId };
@@ -323,7 +334,12 @@ function stateFieldsForWrite(
 // For double_scalar `transform` is a binary CombinerKind. The validator is
 // type-aware so a typo (combiner on a scalar row, transform on a double row)
 // errors at write time instead of silently being persisted.
-function asTransformForType(value: unknown, type: MetricRowType): TransformKind | CombinerKind | null {
+//
+// `metricKey` is passed for METRIC rows and overrides, never for widgets: a
+// metric row's unary transform must be one a collector applies for that
+// metric (`metricRowTransforms`), because anything else is stored, displayed
+// and silently ignored. Widgets apply the whole registry.
+function asTransformForType(value: unknown, type: MetricRowType, metricKey?: string): TransformKind | CombinerKind | null {
   if (value === null || value === undefined || value === "") {
     // double_scalar requires a combiner to be useful, but we accept null at
     // write time so the operator can save a partially-configured row and
@@ -336,8 +352,11 @@ function asTransformForType(value: unknown, type: MetricRowType): TransformKind 
     throw new AppError(400, `Invalid combiner for double_scalar type: ${String(value)}`);
   }
   // scalar / table
-  if (isTransformKind(value)) return value;
-  throw new AppError(400, `Invalid transform: ${String(value)}`);
+  if (!isTransformKind(value)) throw new AppError(400, `Invalid transform: ${String(value)}`);
+  if (metricKey !== undefined && !metricRowTransforms(metricKey, type).includes(value)) {
+    throw new AppError(400, `Transform ${value} is not applied to a ${type} ${metricKey} row`);
+  }
+  return value;
 }
 
 // Reads a stored transform from the DB without knowing the row's type — used
@@ -360,10 +379,23 @@ function assertValidModelPattern(pattern: string): void {
   if (pattern.length > 512) {
     throw new AppError(400, "modelPattern is too long (max 512 characters)");
   }
+  let re: RegExp;
   try {
-    new RegExp(pattern);
+    re = new RegExp(pattern);
   } catch {
     throw new AppError(400, "modelPattern must be a valid regex");
+  }
+  // Guards both fields that reach here — a per-model exception's `modelPattern`
+  // and a profile's `matchPattern`. `profileResolver` runs them per asset per
+  // poll, and a JS regex cannot be interrupted, so the one shape that goes
+  // exponential is refused while the operator is still looking at it.
+  // See utils/regexSafety.ts.
+  const unsafe = findUnsafeRegexConstruct(re.source);
+  if (unsafe) {
+    throw new AppError(
+      400,
+      `modelPattern may never finish on some inputs: \`${unsafe}\` repeats a group that already repeats. Rewrite it so only one of the two repeats.`,
+    );
   }
 }
 
@@ -1003,7 +1035,7 @@ export async function updateMetricRow(
   const nextSymbolB   = input.defaultSymbolB   === undefined ? (row.defaultSymbolB ?? null)     : trimOrNull(input.defaultSymbolB);
   const nextTransform = input.defaultTransform === undefined
     ? readStoredTransform(row.defaultTransform)
-    : asTransformForType(input.defaultTransform, nextType);
+    : asTransformForType(input.defaultTransform, nextType, mk);
 
   validateMetricRowShape({
     type:      nextType,
@@ -1092,7 +1124,7 @@ export async function createOverride(
   const type          = asMetricRowType(input.type ?? "scalar");
   const symbol        = trimOrNull(input.symbol);
   const symbolB       = trimOrNull(input.symbolB);
-  const transform     = asTransformForType(input.transform ?? null, type);
+  const transform     = asTransformForType(input.transform ?? null, type, mk);
   const aggregate     = asAggregate(input.aggregate);
   const label         = trimOrNull(input.label);
   const parsePattern  = trimOrNull(input.parsePattern);
@@ -1179,7 +1211,7 @@ export async function updateOverride(
   const nextSymbolB   = input.symbolB   === undefined ? (existing.symbolB ?? null)    : trimOrNull(input.symbolB);
   const nextTransform = input.transform === undefined
     ? readStoredTransform(existing.transform)
-    : asTransformForType(input.transform, nextType);
+    : asTransformForType(input.transform, nextType, mk);
   const nextAggregate     = input.aggregate     === undefined ? asAggregate(existing.aggregate) : asAggregate(input.aggregate);
   const nextLabel         = input.label         === undefined ? (existing.label ?? null)         : trimOrNull(input.label);
   const nextParsePattern  = input.parsePattern  === undefined ? (existing.parsePattern ?? null)  : trimOrNull(input.parsePattern);

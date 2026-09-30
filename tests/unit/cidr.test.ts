@@ -9,6 +9,7 @@ import {
   isValidIpAddress,
   cidrContains,
   cidrOverlaps,
+  mostSpecificContaining,
   ipInCidr,
   compareIpv4,
   usableHostCount,
@@ -106,6 +107,32 @@ describe("buildCidrMatcher", () => {
     const match = buildCidrMatcher(["10.0.0.0/8"]);
     expect(match("2001:db8::1")).toBeNull();
     expect(match("")).toBeNull();
+  });
+});
+
+describe("mostSpecificContaining", () => {
+  const blocks = [
+    { id: "wide", cidr: "10.0.0.0/8" },
+    { id: "site", cidr: "10.84.0.0/16" },
+    { id: "floor", cidr: "10.84.1.0/24" },
+    { id: "other", cidr: "192.168.0.0/16" },
+  ];
+
+  it("picks the narrowest block that contains the network, whatever the input order", () => {
+    expect(mostSpecificContaining(blocks, "10.84.1.0/25")?.id).toBe("floor");
+    expect(mostSpecificContaining([...blocks].reverse(), "10.84.1.0/25")?.id).toBe("floor");
+    expect(mostSpecificContaining(blocks, "10.84.9.0/24")?.id).toBe("site");
+    expect(mostSpecificContaining(blocks, "10.99.0.0/24")?.id).toBe("wide");
+  });
+
+  it("a block exactly the network's size contains it", () => {
+    expect(mostSpecificContaining(blocks, "10.84.1.0/24")?.id).toBe("floor");
+  });
+
+  it("returns null when no block contains the network, including one wider than every block", () => {
+    expect(mostSpecificContaining(blocks, "172.16.0.0/24")).toBeNull();
+    expect(mostSpecificContaining(blocks, "10.0.0.0/7")).toBeNull();
+    expect(mostSpecificContaining([], "10.0.0.0/24")).toBeNull();
   });
 });
 

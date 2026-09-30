@@ -66,11 +66,20 @@ describe("summarizeBuckets", () => {
     expect(Number.isNaN(b.totalBytes)).toBe(false);
   });
 
-  it("carries the never-analyzed relation count through", () => {
+  it("carries the never-analyzed relation count and the bytes they hide through", () => {
     // Non-zero is the post-pg_upgrade / post-restore state: relpages is 0 for a
     // relation nothing has written to since, so every figure understates until
-    // vacuumdb runs. The card has to be able to say so.
-    expect(summarizeBuckets([], 412).neverAnalyzedRelations).toBe(412);
+    // vacuumdb runs. The card has to be able to say so — and how much.
+    const b = summarizeBuckets([], { relations: 5, missingBytes: 3 * 1024 * 1024 });
+    expect(b.neverAnalyzedRelations).toBe(5);
+    expect(b.neverAnalyzedMissingBytes).toBe(3 * 1024 * 1024);
+  });
+
+  it("keeps an unmeasured never-analyzed set as null, not zero", () => {
+    // Too many to stat (a restore): null means "unknown, probably large", and
+    // collapsing it to 0 would render the loud warning as a harmless hint.
+    const b = summarizeBuckets([], { relations: 4000, missingBytes: null });
+    expect(b.neverAnalyzedMissingBytes).toBeNull();
   });
 });
 

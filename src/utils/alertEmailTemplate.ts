@@ -36,7 +36,10 @@
  * identical lines in an inbox, and no way to tell whether that is one fault
  * reported eight times or eight ports gone.
  */
-export const DEFAULT_ALERT_SUBJECT = "[{severity.upper}] {asset}{dimension.suffix} — {rule}";
+// `{dependency.tag}` carries its own separator and is empty on every alert not
+// raised for a dependency-suppressed device (business rule 78), so the subject
+// appends it unconditionally and a plain alert's subject is unchanged.
+export const DEFAULT_ALERT_SUBJECT = "[{severity.upper}] {asset}{dimension.suffix} — {rule}{dependency.tag}";
 
 /**
  * Plain-text alternative. Not a stripped copy of the HTML: it is the version
@@ -59,6 +62,12 @@ export const DEFAULT_ALERT_TEXT = [
   // and it renders away — collapsing its blank line with it — on every other
   // send, including every ordinary reminder.
   "{repeat.quiet}",
+  // The dependency-down notice (business rule 78): the device is unreachable
+  // because of a device above it, named. Above the facts because on that one
+  // kind of alert it is the fact. Renders away, blank line and all, on every
+  // other alert.
+  "{dependency.summary}",
+  "",
   // No {message} line here either — same redundancy, and the two bodies must
   // stay in step or an operator editing one wonders why the other differs.
   // "Subject", not "Device": plenty of alerts are about Polaris itself (a
@@ -71,9 +80,18 @@ export const DEFAULT_ALERT_TEXT = [
   // bare ": " that `pruneEmptyTextLines` drops (its label is optional for
   // exactly this line).
   "{dimension.label}: {dimension}",
+  // The PORT's own address, on an interface alert whose port has one. A
+  // deferred token (alertInterfaceService) that expands to the whole line or
+  // to nothing, so it needs no label here.
+  "{interface.ip}",
   "IP:         {asset.ip}",
   "Switch:     {asset.connectedSwitch}",
   "AP:         {asset.connectedAp}",
+  // Who silenced it (business rule 78). Both prune away on every alert that is
+  // not dependency-down; "Root cause" prunes too when the upstream device IS
+  // the root cause, since the token is blank in that case.
+  "Upstream:   {dependency.upstream}",
+  "Root cause: {dependency.rootCause}",
   "Location:   {asset.location}",
   "Description: {asset.description}",
   "Event:      {event.action}",
@@ -100,7 +118,12 @@ export const DEFAULT_ALERT_TEXT = [
   // What was on the port, when the alert is about ONE port. Renders away for
   // every other alert — and for a port that advertised no neighbour — so it
   // costs a non-interface alert nothing. Above the charts because on an
-  // interface alert the charts render away entirely (alertInterfaceService).
+  // interface STATUS alert the device charts never render (alertChartService's
+  // isPortScopedAlert) — only the SD-WAN trio, when the port is a WAN member;
+  // error-rate and throughput alerts keep the device charts.
+  // The device facts above (IP, switch, AP, location, description) are blanked
+  // for an interface alert too (notificationRecipientService's
+  // defaultBodyContext) and prune away.
   "{interface.lldp}",
   "",
   "{chart.trigger}",
@@ -115,9 +138,21 @@ export const DEFAULT_ALERT_TEXT = [
   "{chart.sdwanLatency}",
   "{chart.sdwanJitter}",
   "{chart.sdwanLoss}",
+  // The mount a storage alert fired on — its last day of usage, or its
+  // forecast for a days-until-full alert. Replaces the device charts below on
+  // a storage alert (alertChartService's STORAGE_SCOPED_METRICS) and renders
+  // away on every other alert.
+  "{chart.storage}",
   "{chart.cpu}",
   "{chart.memory}",
   "{chart.responseTime}",
+  "",
+  // What is using the CPU or memory, on an alert about either (alertProcessService).
+  // Under the charts because they show HOW MUCH and this shows WHO. Renders away,
+  // blank line and all, on every other alert — which is also when the
+  // response-time and packet-loss charts above are dropped (alertChartService's
+  // RESOURCE_SCOPED_METRICS), leaving CPU and memory.
+  "{processes.top}",
   "",
   "Open device:      {asset.link}",
   "Acknowledge:      {ack}",
@@ -187,6 +222,13 @@ export const DEFAULT_ALERT_HTML = [
   // and its whole band of padding disappear rather than leaving a grey stripe.
   // No token but this one inside it, or the div is never exactly empty.
   '<div style="font-size:13px;font-weight:600;color:#374151;background:#f3f4f6;border-left:3px solid {severity.color};padding:8px 10px;margin-top:10px">{repeat.quiet}</div>',
+  // The dependency-down notice (business rule 78) — the same shape as the
+  // quiet-period div above and for the same two reasons: it belongs above the
+  // facts on the one kind of alert it appears on, and with that token alone
+  // inside it `pruneEmptyDivs` removes it, padding and all, on every other
+  // alert. Slate rather than grey: it is the colour the Dep. Down pill wears
+  // in the app, so the two read as the same state.
+  '<div style="font-size:13px;font-weight:600;color:#1f2937;background:#e8edf5;border-left:3px solid #5b6b8c;padding:8px 10px;margin-top:10px">{dependency.summary}</div>',
   // {message} is deliberately NOT printed under it. The two say the same thing:
   // the sentence above is generated from the automation's own trigger, and the
   // message — whether the generated default or a template like "{asset} is
@@ -232,9 +274,22 @@ export const DEFAULT_ALERT_HTML = [
   // "Interface", "Sensor" or "IPsec tunnel" without three templates; both
   // render blank on a whole-device alert and `pruneEmptyRows` drops the row.
   factRow("{dimension.label}", "{dimension}"),
+  // The PORT's own address, when the alert is about an interface that has one
+  // (a WAN uplink, a VLAN gateway). Deferred and filled at delivery by
+  // alertInterfaceService, which emits the complete row or nothing: a
+  // factRow() here would be judged by pruneEmptyRows at COMPOSE time, while
+  // the token was still literal, and survive empty. On an interface alert the
+  // device's IP row below it is blanked (defaultBodyContext) and prunes away,
+  // so this row takes its place.
+  "{interface.ip}",
   factRow("IP address", "{asset.ip}"),
   factRow("Connected switch", "{asset.connectedSwitch}"),
   factRow("Connected AP", "{asset.connectedAp}"),
+  // Who silenced it (business rule 78) — the device directly above, and the
+  // one actually down when that is somebody else. Both prune away on a plain
+  // alert; "Root cause" prunes too when the upstream device is the root cause.
+  factRow("Upstream device", "{dependency.upstream}"),
+  factRow("Root cause", "{dependency.rootCause}"),
   factRow("Location", "{asset.location}"),
   factRow("Model", "{asset.manufacturer} {asset.model}"),
   // Last of the asset rows, and deliberately so: it's the only free-text one,
@@ -274,6 +329,9 @@ export const DEFAULT_ALERT_HTML = [
   // (alertInterfaceService, like the charts) and is the substance of an
   // "interface down" email: the device is answering, so its own graphs explain
   // nothing, and "what was plugged into port2" is the question being asked.
+  // On any interface alert the device rows above prune away (their tokens are
+  // blanked by defaultBodyContext); on an interface STATUS alert only a WAN
+  // member's SD-WAN charts can render below.
   "{interface.lldp}",
   // Charts — the last hour of the metrics that explain most alerts. The sensor
   // chart leads because when it renders at all, it IS what the alert is about:
@@ -293,10 +351,16 @@ export const DEFAULT_ALERT_HTML = [
   "{chart.sdwanLatency}",
   "{chart.sdwanJitter}",
   "{chart.sdwanLoss}",
+  // See the text body: the storage chart replaces the device charts on a
+  // storage alert.
+  "{chart.storage}",
   "{chart.cpu}",
   "{chart.memory}",
   "{chart.responseTime}",
   "</td></tr>",
+  // The top-5 process table on a CPU / memory alert — a complete <tr> with its
+  // own heading, or nothing (see the text body). Filled at delivery.
+  "{processes.top}",
   // Actions
   '<tr><td style="padding:16px 22px 22px">',
   '<table role="presentation" cellpadding="0" cellspacing="0"><tr>',

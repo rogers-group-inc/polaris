@@ -469,15 +469,31 @@ d("POST /api/v1/reservations/next-available/preview", () => {
 // ─── Device-owned addresses (VIP / interface IP) ──────────────────────────────
 //
 // A FortiGate VIP and a statically-configured interface address belong to the
-// device's own config. Polaris reports them; it must not offer to reserve,
-// release or edit one.
+// device's own config. Polaris reports them; it must not offer to release or
+// edit one. Reserving is the one verb they differ on — business rule 77 lets a
+// create supersede a VIP (the VIP says what happens to traffic for an address,
+// not that the address is spoken for), while an interface address is still
+// refused because it genuinely cannot be handed to anything else.
 
 d("device-owned reservations are read-only", () => {
   /** Discovery-shaped row — created straight through Prisma, since no API
    *  route mints a vip / interface_ip reservation. */
-  async function seedDeviceOwned(subnetId: string, ipAddress: string, sourceType: "vip" | "interface_ip") {
+  async function seedDeviceOwned(
+    subnetId: string,
+    ipAddress: string,
+    sourceType: "vip" | "interface_ip",
+    vipInfo?: Record<string, unknown>,
+  ) {
     return prisma.reservation.create({
-      data: { subnetId, ipAddress, hostname: "device-owned", sourceType, status: "active", createdBy: "system:discovery" },
+      data: {
+        subnetId,
+        ipAddress,
+        hostname: "device-owned",
+        sourceType,
+        status: "active",
+        createdBy: "system:discovery",
+        ...(vipInfo ? { vipInfo } : {}),
+      } as any,
     });
   }
 
@@ -519,18 +535,40 @@ d("device-owned reservations are read-only", () => {
     expect(del.status).toBe(409);
   });
 
-  it("refuses to reserve over a device-owned address, and never previews one", async () => {
+  it("refuses to reserve over an interface address, claims a VIP, and previews neither", async () => {
     const { agent, csrf } = await authedAgent(app);
     const { subnet } = await scaffold(agent, csrf, "10.69.0.0/16", "10.69.1.0/24");
     await seedDeviceOwned(subnet.id, "10.69.1.1", "interface_ip");
-    await seedDeviceOwned(subnet.id, "10.69.1.2", "vip");
+    const vipRow = await seedDeviceOwned(subnet.id, "10.69.1.2", "vip", {
+      name: "web-dnat",
+      device: "FGT-TEST-01",
+      extip: "10.69.1.2",
+      role: "external",
+      isVirtualServer: false,
+    });
 
-    const create = await agent
+    const onInterface = await agent
       .post("/api/v1/reservations")
       .set("X-CSRF-Token", csrf)
-      .send({ subnetId: subnet.id, ipAddress: "10.69.1.2", hostname: "steal-the-vip" });
-    expect(create.status).toBe(409);
+      .send({ subnetId: subnet.id, ipAddress: "10.69.1.1", hostname: "steal-the-interface" });
+    expect(onInterface.status).toBe(409);
 
+    // Business rule 77: the claim lands, the VIP row is released, and its
+    // snapshot rides onto the operator's row so the address still reports
+    // its VIP ("VIP / Reserved" in the panel).
+    const onVip = await agent
+      .post("/api/v1/reservations")
+      .set("X-CSRF-Token", csrf)
+      .send({ subnetId: subnet.id, ipAddress: "10.69.1.2", hostname: "claim-the-vip" });
+    expect(onVip.status).toBe(201);
+    const oldVip = await prisma.reservation.findUnique({ where: { id: vipRow.id } });
+    expect(oldVip?.status).toBe("released");
+    const claimed = await prisma.reservation.findUnique({ where: { id: onVip.body.id } });
+    expect(claimed?.sourceType).toBe("manual");
+    expect((claimed?.vipInfo as { name?: string } | null)?.name).toBe("web-dnat");
+
+    // Neither address is offered by auto-allocate: .1 is still device-owned and
+    // .2 now holds the operator's own active row.
     const preview = await agent
       .post("/api/v1/reservations/next-available/preview")
       .set("X-CSRF-Token", csrf)

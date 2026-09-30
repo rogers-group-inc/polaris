@@ -26,6 +26,7 @@ import { dbDescribe, dbReachable } from "./_helpers.js";
 const d = dbDescribe;
 
 const TOAST_TABLE = "polaris_dbsize_toast_probe";
+const UNANALYZED_TABLE = "polaris_dbsize_unanalyzed_probe";
 
 /** The card's pre-fix total: every relation in the database, no attribution. */
 async function flatTotalBytes(): Promise<number> {
@@ -47,6 +48,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (!dbReachable) return;
   await prisma.$queryRawUnsafe(`DROP TABLE IF EXISTS "${TOAST_TABLE}"`);
+  await prisma.$queryRawUnsafe(`DROP TABLE IF EXISTS "${UNANALYZED_TABLE}"`);
   await prisma.$disconnect();
 });
 
@@ -105,6 +107,46 @@ d("dbSizeService against a real catalog", () => {
     // reported a few pages here — under 1% of the real size.
     expect(measured!.bytes).toBeGreaterThan(actual * 0.95);
     expect(measured!.bytes).toBeLessThan(actual * 1.05);
+  });
+
+  it("sizes an un-analyzed relation's missing bytes and leaves an empty heap out", async () => {
+    // Prod after the PG17 pg_upgrade: 27 un-analyzed relations, almost all
+    // truncated compressed-chunk shells, ~4 MB between them — and a warning
+    // worded as if every size on the card were wrong. An empty heap has nothing
+    // to measure; a populated one must report what it hides.
+    await prisma.$queryRawUnsafe(`DROP TABLE IF EXISTS "${UNANALYZED_TABLE}"`);
+    // Earlier tests and migrations leave their own un-analyzed relations; clear
+    // them so the baseline is small enough to measure, then work in deltas.
+    await prisma.$queryRawUnsafe(`ANALYZE`);
+    const baseline = await getDatabaseSizeBreakdown();
+    if (baseline.neverAnalyzedMissingBytes === null) return; // over the cap even after ANALYZE
+
+    // No index (CREATE INDEX writes heap stats) and no autovacuum, so the
+    // relation stays at reltuples -1 for the length of the test.
+    await prisma.$queryRawUnsafe(
+      `CREATE TABLE "${UNANALYZED_TABLE}" (blob text) WITH (autovacuum_enabled = false, toast.autovacuum_enabled = false)`,
+    );
+    const empty = await getDatabaseSizeBreakdown();
+    expect(empty.neverAnalyzedRelations).toBe(baseline.neverAnalyzedRelations);
+
+    await prisma.$queryRawUnsafe(
+      `INSERT INTO "${UNANALYZED_TABLE}" (blob)
+       SELECT md5(random()::text || g) FROM generate_series(1, 100000) g`,
+    );
+    const [populated, truth] = await Promise.all([
+      getDatabaseSizeBreakdown(),
+      prisma.$queryRawUnsafe<{ size: bigint }[]>(
+        `SELECT pg_total_relation_size($1::regclass)::bigint AS size`,
+        UNANALYZED_TABLE,
+      ),
+    ]);
+    const actual = Number(truth[0]?.size ?? 0);
+    const hidden = (populated.neverAnalyzedMissingBytes ?? 0) - (baseline.neverAnalyzedMissingBytes ?? 0);
+
+    expect(populated.neverAnalyzedRelations).toBe(baseline.neverAnalyzedRelations + 1);
+    expect(actual).toBeGreaterThan(4 * 1024 * 1024);
+    expect(hidden).toBeGreaterThan(actual * 0.95);
+    expect(hidden).toBeLessThan(actual * 1.05);
   });
 
   it("puts a hypertable's chunk bytes on the hypertable, not in the residual", async () => {

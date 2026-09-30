@@ -454,6 +454,12 @@ export async function clearSuppressedAlerts(assetIds?: string[]): Promise<number
       // A system-scoped alert (capacity, backups) has no asset and can't be
       // suppressed by one.
       assetId: assetIds ? { in: assetIds } : { not: null },
+      // Business rule 78 — an alert RAISED FOR a dependency-suppressed device
+      // (by a down automation that opted in) is the one alert that is supposed
+      // to be live on a suppressed asset. Retiring it here would re-raise it on
+      // the next engine tick, forever. The engine owns its end: the device
+      // recovers, or the flavour is handed off when the upstream comes back.
+      dependencyDown: false,
     },
     select: { id: true, assetId: true, rule: { select: { name: true } } },
     take: SUPPRESSION_SWEEP_CAP,
@@ -631,7 +637,8 @@ export async function activeAlertSummaryByAsset(
 
 /**
  * The asset-details Notifications tab bundle: active (non-cleared)
- * notifications for the asset + the enabled rules whose scope matches it.
+ * notifications for the asset + the enabled rules that can trigger for it
+ * (scope matches, and no more-specific same-signature automation supersedes).
  */
 export async function getAssetNotifications(assetId: string) {
   const [active, matchingRules] = await Promise.all([
@@ -641,7 +648,7 @@ export async function getAssetNotifications(assetId: string) {
       take: 200,
       include: ACK_POLICY_INCLUDE,
     }),
-    findRulesMatchingAsset(assetId),
+    findRulesMatchingAsset(assetId, { carveOut: true }),
   ]);
   return { active: active.map(withAckPolicy), matchingRules };
 }

@@ -24,6 +24,7 @@ A number, compared against a threshold.
 | Metric | Unit | Dimension |
 |---|---|---|
 | `cpuPct` — CPU utilization | % | — |
+| `cpuCorePct` — **CPU core utilization** | % | — (one alert per device, naming the hot cores — see below) |
 | `memPct` — Memory utilization | % | — |
 | `memUsedBytes` — Memory used | bytes | — |
 | `sessionCount` — Active sessions | — | — |
@@ -40,6 +41,45 @@ A number, compared against a threshold.
 | `ipsecThroughputBps` | bps | tunnel name |
 | `customWidgetValue` | — | widget |
 | `customStateValue` — Device state flag | 0/1 | state probe, row |
+| `pathLatencyMs` — Path latency | ms | path check |
+| `pathFailurePct` — Path failure rate | % | path check (windowed ratio, like packet loss) |
+| `pathOk` — Path check result | Reachable / Unreachable | path check |
+| `pathHttpStatus` — Path HTTP status | — | path check |
+| `pathHopCount` — Traceroute hop count | hops | path check |
+| `pathTlsDaysLeft` — TLS certificate days remaining | days | path check |
+
+The `path*` metrics come from [agent-run path checks](Path-Monitor).
+The device they are about is the **host that ran the check**, not the target, and
+they never change that host's Up / Down status. Pick the check on the condition
+row; blank means every check the host runs, one alert each.
+
+### CPU core utilization
+
+`cpuCorePct` finds a **single-threaded application**: one thread pinning one
+core of a 16-core server reads about 6% as **CPU utilization**, so the
+all-cores condition never sees it.
+
+**The hold is counted per core.** "Above 90% sustained for 3 polls" means the
+**same core** was above 90% on three polls in a row. Different cores each going
+over 90% once, which is how ordinary multi-threaded load looks, does not fire.
+Set the number of polls in **Sustained for**, as for any other condition.
+
+- **One alert per device.** It names the cores that stayed over the line for
+  the whole hold, busiest first, for example `Core 3 (97%)`. The email shows
+  them in a **CPU cores** row, with the **top 5 processes by CPU** and the CPU
+  and memory charts.
+- **It clears when every core is back under the line** for the reset's
+  clear-sustain count, not just the core that fired.
+- **Only hosts that report per-core figures**: the Polaris Agent and vCenter
+  (VMs and ESXi hosts). SNMP, FortiOS, WinRM and SSH do not report cores, so
+  those devices never fire this condition.
+- **The regular CPU alert wins.** While a device has an open **CPU
+  utilization** (`cpuPct`) alert from any automation, a per-core automation
+  stays quiet on that device. If it had already alerted, its alert clears as
+  *superseded*, because when every core is busy the device-wide alert already
+  says so. Acknowledging the CPU alert does not change this; clearing it does.
+  This does not apply to a per-core condition inside a multi-condition
+  automation. See [rule 89](Business-Rules#rule-89).
 
 ### Prefer the device's own alarm bit
 
@@ -73,7 +113,9 @@ Three things it does that no other metric does
 - **A reading at or above the rule's `ignoreAtOrAbove` ceiling is not a
   reading** — default 100, so an untouched rule is unchanged and only a total
   outage is suppressed. Polaris opts its own baseline rule out at **90**.
-  Lower it if you do not want an alert trailing every outage.
+  Lower it if you do not want an alert trailing every outage. This box is
+  offered for packet loss only — a path check's failure rate has no ceiling,
+  because 100 % there means every run to the target failed, which is the alert.
 
 And the failures of an outage are **excluded from the metric**: every maximal
 run of consecutive failures that reached `down` is dropped whole, onset
@@ -105,7 +147,7 @@ nothing.
 A field rather than a number.
 
 **Device-wide fields:** `monitorStatus` · `status` · `consecutiveFailures` ·
-`dependencySuppressed` · `quarantined` · `fortilinkStatus`.
+`dependencySuppressed` · `quarantined` · `fortilinkStatus` · `firmwareVsPrimary`.
 
 **Per-dimension fields:** `ifOperStatus` · `ifAdminStatus` · `ifIpAddress` ·
 `poeStatus` · `ipsecStatus` · `sdwanRuleStatus` · `sdwanSelectedMember`.
@@ -130,6 +172,14 @@ it covers ([rule 36](Business-Rules#rule-36)).
   answered.
 - It also decides **what colour Down is** on every chart and in every alert
   email — the automation's own severity.
+- **Dependency-Down Bypass** — a checkbox row on the **Actions** step, under the
+  In-app Alert card beside *Require Acknowledgement* — lets this automation keep
+  alerting about a device that is Dep. Down behind a down switch or firewall,
+  the one opt-out from the silence every other automation observes ([rule
+  78](Business-Rules#rule-78)). The alert fires the moment the device turns
+  Dep. Down, says **DEPENDENCY DOWN**, and names the upstream device that is
+  actually down. One notification only: reminders and escalation wait until
+  the upstream is back. See [Dependency suppression](Dependency-Suppression).
 
 See [Monitor states](Monitor-States) for the whole machine.
 
@@ -161,6 +211,31 @@ writes `!= up`, not `== down`.
 
 A null produces **no reading at all** — not a reading of null, which would make
 `!= up` true of every workstation in a fleet-wide scope.
+
+### `firmwareVsPrimary` — what the Repository would push
+
+How a switch or access point's running firmware stands against the **primary**
+image the [Repository](Server-Settings#repository) holds for its platform:
+`current`, `older` or `newer` ([rule 87](Business-Rules#rule-87)). Polaris makes
+the comparison from the parsed versions, so those three words are the only
+readings — the picker is closed.
+
+The usual rule is `!= current`, and the baseline automation **Firmware differs
+from repository primary** (informational, switches and access points) is
+exactly that. It is a to-do list, not a fault: the alert clears on its own once
+the device is upgraded, or once a different image is made primary. `== newer`
+names the fleet that is *ahead* of the image someone selected — useful the day
+an older image is made primary on purpose.
+
+A device the Repository cannot place produces **no reading at all**: not a
+switch or access point, no usable serial number (the platform is its first six
+characters), no version Polaris can parse, or no primary image for its
+platform. So a fleet-wide `!= current` is true only of devices that really
+differ, never of every printer and VM the Repository knows nothing about.
+
+The reading is refreshed by the system-info pass and by discovery, which are
+what update a device's firmware version — a `Sustained for (polls)` hold counts
+those, not the 60-second probe.
 
 ### `ifIpAddress` — a gate, not an alarm
 
@@ -262,6 +337,10 @@ Sugar over the change Events Polaris emits:
 | `wireless_ap_changed` | a roam |
 | `gateway_firewall_changed` | the gate in front of the device changed |
 | `fortilink_changed` | controller link changed |
+| `path_check_path_changed` | an agent's traceroute for a [path check](Path-Monitor) took a different set of hops (at most once per 10 minutes per host and check) |
+
+The Devices step's **Polaris Agent installed** field (*yes* / *no*) selects hosts
+with an active Polaris Agent — the natural scope for path-check automations.
 
 ---
 
@@ -561,6 +640,91 @@ different device filters **never carve each other out**.
 
 Every stream writes samples for unpinned members too, permanently inside the
 engine's lookback — so the pin is a **gate**, never a side effect of retention.
+
+### Skip unused ports
+
+**SD-WAN member state**, **SD-WAN latency / jitter / packet loss** and
+**Interface oper status** conditions offer a **Skip unused ports** checkbox
+([rule 88](Business-Rules#rule-88)). Tick it when your FortiGates have WAN ports
+that are enabled (often SD-WAN members) but not always plugged in, such as a
+template that turns on `wan1` and `wan2` everywhere.
+
+A port is skipped when it reports `0.0.0.0` **and** has had no address in the
+last 30 days. A port that had an address recently still alerts, so a DHCP WAN
+that just lost its lease is not mistaken for an unused one. Tunnels (the overlay
+members) are never skipped. An SD-WAN member is matched to the interface of the
+same name.
+
+Use this instead of adding an *Interface IP address is not 0.0.0.0* condition
+beside the member or port condition. With two conditions, each is checked across
+the whole device rather than on the same port: some other interface always has an
+address, so that second condition never filters anything.
+
+---
+
+## SD-WAN
+
+The SD-WAN conditions are **SD-WAN latency**, **SD-WAN jitter** and **SD-WAN
+packet loss** (asset metrics) and **SD-WAN member state** (asset state). Each
+one is about a health check's view of a member. The condition row has a picker
+for each: **health check** and **member**.
+
+### Pick several health checks or members
+
+Both pickers take more than one value. Click a name in the list to add it, and
+click it again to remove it. Picked names show a ✓, and the list stays open so
+you can pick the next one. The box shows your picks separated by `|`, for
+example `Microsoft | Primary WAN`. The sentence reads *"for health check
+Microsoft or Primary WAN"*.
+
+- **Any of them matches.** A condition with several picks alerts on a member
+  that matches any one of them.
+- **Each pick matches part of a name**, as a single value always has: `wan`
+  matches `wan1` and `wan2`.
+- **Blank means all.** Leave a picker empty to cover every health check or
+  every member.
+- **Typing filters the list** by what you type after the last `|`.
+- **A pick that matches nothing is named** by the match cue. The condition
+  still fires on the other picks.
+
+The member list follows the health checks you picked: it shows only the members
+of those health checks. Automations saved with one value work exactly as before.
+
+### Graphs in the alert email
+
+An SD-WAN alert email shows the member's last hour of **latency**, **jitter**
+and **packet loss** instead of the FortiGate's CPU, memory and response time.
+The FortiGate's own SLA targets are drawn as dashed lines. Stretches where the
+health check called the member down are shaded red.
+
+The FortiGate stops reporting latency, jitter and loss for a member it has
+marked dead. If the member was down for the whole hour, each graph shows the
+red shading with *no readings — the health check reported this member down*,
+rather than a line.
+
+### Overlays stay quiet while their underlay is over the line
+
+An overlay tunnel rides an underlay port: Overlay-3 over wan2. When wan2 loses
+packets, every overlay on it loses packets too. Polaris raises the wan2 alert
+and holds back the overlay alerts
+([rule 90](Business-Rules#rule-90)).
+
+- It applies to all four SD-WAN conditions above.
+- An overlay is held back while its underlay is over the same line in the same
+  automation, or while any automation has an open alert on the same condition
+  about the underlay.
+- An overlay alert that was already open clears as *superseded*. No "resolved"
+  notification is sent: the overlay has not recovered.
+- An overlay whose underlay is healthy alerts as usual, and so does every other
+  member on the same FortiGate.
+
+Polaris learns which port a tunnel rides from the FortiGate's IPsec
+configuration. A tunnel on a VLAN sub-interface (such as `wan1.100`) is traced
+back to its physical port.
+
+The **Health Check Status** strip on the device's SD-WAN tab also uses these
+automations: a poll that would cross one of their severity levels is coloured by
+that severity. See [Assets](Assets#sd-wan-fortigate-firewalls).
 
 ---
 

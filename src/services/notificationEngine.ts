@@ -26,6 +26,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { logEvent } from "./eventLogService.js";
+import { loadPrimaryFirmwareImages, firmwareVsPrimary } from "./firmwareRepositoryService.js";
 import { triggerSummary } from "../utils/triggerSummary.js";
 import { eventSubjectLabel } from "../utils/alertSubject.js";
 import { sensorReadingDisplay, chartKeysForChangeEvent } from "./alertChartService.js";
@@ -104,16 +105,28 @@ import {
   sustainedSeverityByRun,
   scopeIsUnconstrained,
   allRepeatsOf,
+  ruleAlertsWhenDependencyDown,
+  buildShadowIndex,
+  isAssetShadowed,
+  type ShadowIndex as ShadowIndexOf,
 } from "./notificationTypes.js";
 import { scopeMatchesAsset, type ScopeAsset } from "./notificationRuleService.js";
+// Business rule 78 — who silenced a dependency-suppressed device, for the
+// alert a down automation raises about it anyway.
+import { resolveDependencyBlame, newBlameLoadCache, type BlameLoadCache } from "./dependencyTreeService.js";
+import { dependencyTriggerSummary, type DependencyTemplateParts } from "../utils/notificationTemplate.js";
 import { decorateRelationLeafHits } from "./scopeRelationIndex.js";
 import { ipInCidr, bareInterfaceIp } from "../utils/cidr.js";
 import { computeStorageForecast } from "./storageForecastService.js";
 import { buildComposedEmail, scopeRegionTagsOf } from "./notificationRecipientService.js";
 import { executeActions, type ActionExecContext } from "./automationActionService.js";
 import { queryProbeLossRatios } from "./probeLossQuery.js";
+import { isUnusedPort } from "./interfaceInventoryService.js";
+import { logger } from "../utils/logger.js";
 import { alarmStatusToFlag } from "../utils/hardwareSensors.js";
 import { median } from "../utils/stats.js";
+import { coreVector, coreConditionIsBelow, coreSeries, coresToName, formatCoreList } from "../utils/cpuCores.js";
+import { sdwanDimensionMatch, sdwanChildrenYielding } from "../utils/sdwanDimensions.js";
 import {
   buildTemplateContext,
   renderNotificationTemplate,
@@ -259,6 +272,11 @@ interface ScopeAssetRow extends ScopeAsset {
   // field, not decoration — see the resolver.
   fortilinkStatus: string | null;
   fortilinkCheckedAt: Date | null;
+  // Read by the firmwareVsPrimary resolver (business rule 87) alongside
+  // manufacturer / model / assetType — the four facts the Repository matches
+  // an image on.
+  serialNumber?: string | null;
+  osVersion?: string | null;
   // Read by the device-identifier dimension filters (applyDeviceFilters).
   macAddress?: string | null;
   // Read by every interface resolver — state trio AND counter metrics — for
@@ -296,13 +314,30 @@ interface Reading {
    */
   series?: (number | string | boolean | null)[];
   /**
+   * The series the RECOVERY run is counted off, when it is not `series` — set
+   * only by cpuCorePct (business rule 89), whose `series` is a per-core
+   * envelope that counts one core's run and would read a single recovered poll
+   * as a whole run of them. Newest first, like `series`.
+   */
+  clearSeries?: (number | string | boolean | null)[];
+  /**
    * When this reading was taken: the newest sample's timestamp for a series
    * source, that stream's poll anchor on the Asset for a current-state one
-   * (`lastMonitorAt` for the probe-backed fields, `lastSystemInfoAt` for the
-   * SD-WAN ones). The current-state path counts observations on the state row
+   * (`lastMonitorAt` for the probe-backed fields; the SD-WAN rule readings
+   * use the rule row's own `updatedAt`, written only by a successful read). The current-state path counts observations on the state row
    * and uses this to tell a NEW poll from the same one seen again.
    */
   readingAt?: Date | null;
+  /**
+   * Business rule 78 — this reading was SYNTHESIZED for a dependency-suppressed
+   * device on a down automation that opted to speak for it: `value` is "down"
+   * because the device's upstream is, not because its own probe said so (that
+   * verdict is `ownMonitorStatus`). Everything downstream of the reading — the
+   * fire, the message, the stored alert — carries the flavour, and a firing row
+   * whose alert has the OTHER flavour is handed off rather than kept.
+   */
+  dependencyDown?: boolean;
+  ownMonitorStatus?: string | null;
 }
 
 // ─── Comparators ────────────────────────────────────────────────────────────
@@ -336,6 +371,9 @@ const SCOPE_SELECT = {
   // state field can be read off the scope row like the other Asset-column
   // fields instead of needing a query of its own.
   fortilinkStatus: true, fortilinkCheckedAt: true,
+  // Business rule 87 — the firmwareVsPrimary field compares off the scope row
+  // too: serial prefix = platform, osVersion = what the device runs.
+  serialNumber: true, osVersion: true,
   // condition-tree evaluation reads these (manufacturer/model/os); small
   // string columns, still a tight select at 2000 assets. macAddress feeds the
   // device-identifier dimension filters (applyDeviceFilters) alongside
@@ -350,8 +388,9 @@ const SCOPE_SELECT = {
   // The poll anchors a CURRENT-STATE reading counts on: these fields have no
   // sample series, so "3 polls" can only mean three observations in which the
   // stream that produces them actually ran. lastMonitorAt is the probe (every
-  // Asset-column field, plus the windowed-ratio metrics), lastSystemInfoAt the
-  // scrape that rewrites the SD-WAN rule table.
+  // Asset-column field, plus the windowed-ratio metrics). The SD-WAN rule
+  // readings anchor on the rule rows' own updatedAt instead (see the
+  // sdwanRuleStatus case), which is written only by a successful SD-WAN read.
   lastMonitorAt: true, lastSystemInfoAt: true,
   // The gate every trigger path applies (assetCanTrigger): an automation only
   // ever fires about a device Polaris is actually polling. Kept in the select
@@ -846,7 +885,217 @@ function reduceReadings(
  * is exactly what business rule 29 exists to prevent. Composite leaves and the
  * preview pass nothing: they only need the reading gone.
  */
-async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "asset_metric" }>, assets: ScopeAssetRow[], saturated?: Set<string>): Promise<Reading[]> {
+/**
+ * "Skip unused ports" (SKIP_UNUSED_PORT_TARGETS): drop the readings whose port
+ * was never in use — interfaceInventoryService.isUnusedPort over the port's
+ * current-state row. `portOf` names the port a reading is about: the interface
+ * itself for ifOperStatus, the member (`link`, the second half of the
+ * `healthCheck|link` key) for the SD-WAN conditions.
+ *
+ * A dropped port produces NO reading, the same contract as an unpinned
+ * interface: a live alert on it is retired by clearVanishedStates, and one is
+ * never raised. ONE read on AssetInterface narrowed to the assets AND port
+ * names in play (a handful of WAN names per gate), so a 2000-gate fleet costs
+ * one small indexed query per evaluation, and none at all when the option is
+ * off. A failed read keeps every reading — the option removes ports it has
+ * positive evidence about, never ones it could not check.
+ */
+async function dropUnusedPorts(
+  trigger: { skipUnusedPorts?: boolean },
+  readings: Reading[],
+  portOf: (r: Reading) => string,
+  now: Date = new Date(),
+): Promise<Reading[]> {
+  if (!trigger.skipUnusedPorts || readings.length === 0) return readings;
+  const assetIds = Array.from(new Set(readings.map((r) => r.assetId)));
+  const names = Array.from(new Set(readings.map(portOf)));
+  let rows: Array<{ assetId: string; ifName: string; ifType: string | null; ipAddress: string | null; lastLearnedIp: string | null; lastLearnedIpAt: Date | null }>;
+  try {
+    rows = await prisma.assetInterface.findMany({
+      where: { assetId: { in: assetIds }, ifName: { in: names } },
+      select: { assetId: true, ifName: true, ifType: true, ipAddress: true, lastLearnedIp: true, lastLearnedIpAt: true },
+    });
+  } catch (err) {
+    logger.warn({ err: (err as Error)?.message }, "skip-unused-ports lookup failed — keeping every port");
+    return readings;
+  }
+  const unused = new Set(rows.filter((r) => isUnusedPort(r, now)).map((r) => `${r.assetId}|${r.ifName}`));
+  return unused.size === 0 ? readings : readings.filter((r) => !unused.has(`${r.assetId}|${portOf(r)}`));
+}
+
+/**
+ * cpuCorePct readings (business rule 89): ONE reading per device, whose hold is
+ * counted PER CORE — "over 90% for 3 polls" means the same core on three
+ * consecutive polls, which is what a single-threaded application pinning one
+ * core looks like (three different cores each spiking once is ordinary load).
+ *
+ * `utils/cpuCores.coreSeries` does the work: `series` is an envelope whose
+ * leading run under any threshold equals the longest single-core run, so the
+ * ordinary hold, band and tier counting below needs no per-core knowledge;
+ * `clearSeries` is the most extreme core of each poll, so recovery waits until
+ * EVERY core has stayed back under the line. The label names the cores whose
+ * own run reached the hold (coresToName). Dimension key "": the label changes
+ * as cores heat and cool, and state is keyed per device.
+ */
+function reduceCoreReadings(
+  rows: Array<{ assetId: string; timestamp: Date; cpuCorePcts: unknown }>,
+  assetIndex: Map<string, ScopeAssetRow>,
+  trigger: Extract<Trigger, { type: "asset_metric" }>,
+  windowPolls: number,
+): Reading[] {
+  const byAsset = new Map<string, Array<{ ts: number; vec: number[] }>>();
+  for (const r of rows) {
+    const vec = coreVector(r.cpuCorePcts);
+    if (!vec || !assetIndex.has(r.assetId)) continue;
+    let list = byAsset.get(r.assetId);
+    if (!list) byAsset.set(r.assetId, (list = []));
+    list.push({ ts: r.timestamp.getTime(), vec });
+  }
+  const below = coreConditionIsBelow(trigger.operator);
+  const holdPolls = triggerHoldPolls(trigger);
+  const out: Reading[] = [];
+  for (const [assetId, list] of byAsset) {
+    list.sort((a, b) => b.ts - a.ts);
+    const cs = coreSeries(list.map((x) => x.vec), { aggregation: trigger.aggregation, windowPolls, below }, rollingAggregate);
+    if (!cs) continue;
+    const asset = assetIndex.get(assetId)!;
+    out.push({
+      assetId, hostname: asset.hostname, tags: asset.tags, dimKey: "",
+      dimLabel: formatCoreList(coresToName(cs, (v) => readingMeets(trigger, v), holdPolls, below)),
+      value: cs.value,
+      series: cs.series.slice(0, SERIES_CAP),
+      clearSeries: cs.clearSeries.slice(0, SERIES_CAP),
+      readingAt: new Date(list[0]!.ts),
+    });
+  }
+  return out;
+}
+
+/** The SD-WAN member a `healthCheck|link` reading is about. FortiOS object
+ *  names admit no `|`, so the first separator splits it. */
+const sdwanMemberOf = (r: Reading): string => r.dimKey.slice(r.dimKey.indexOf("|") + 1);
+
+/** How far back an IPsec tunnel sample may be to name the port the tunnel
+ *  rides. The phase-1 `interface` is configuration, not state — it only moves
+ *  when someone re-homes the tunnel — so a day-old full scrape is still true. */
+const SDWAN_PARENT_LOOKBACK_HOURS = 48;
+
+/**
+ * Business rule 90 — the port each SD-WAN member rides, for the members
+ * named: `${assetId}|${member}` → parent name. Two sources, both already
+ * collected:
+ *  - an overlay member IS an IPsec phase-1 interface, and its sample row
+ *    carries the phase-1 `interface` (`AssetIpsecTunnelSample.parentInterface`
+ *    — "Overlay-3" rides "wan2");
+ *  - a VLAN sub-interface names its physical port (`AssetInterface.ifParent`
+ *    on an `ifType = "vlan"` row), so a tunnel homed on "wan1.100" still
+ *    reaches wan1. Only VLAN rows: the aggregate back-fill writes ifParent on
+ *    a trunk's MEMBER ports pointing at the trunk, which is the opposite
+ *    direction (the trunk rides the ports, not the other way round).
+ * Called only for the gates that have a reading over the line this tick, so a
+ * healthy fleet costs no query at all.
+ */
+async function loadSdwanParents(assetIds: string[], names: string[]): Promise<Map<string, string>> {
+  const [tunnels, vlans] = await Promise.all([
+    prisma.$queryRawUnsafe<Array<{ assetId: string; tunnelName: string; parentInterface: string }>>(
+      `SELECT DISTINCT ON ("assetId", "tunnelName") "assetId", "tunnelName", "parentInterface"
+         FROM "asset_ipsec_tunnel_samples"
+        WHERE "assetId" = ANY($1::text[]) AND "tunnelName" = ANY($2::text[])
+          AND "parentInterface" IS NOT NULL
+          AND "timestamp" > now() - make_interval(hours => $3::int)
+        ORDER BY "assetId", "tunnelName", "timestamp" DESC`,
+      assetIds, names, SDWAN_PARENT_LOOKBACK_HOURS,
+    ),
+    prisma.assetInterface.findMany({
+      where: { assetId: { in: assetIds }, ifType: "vlan", ifParent: { not: null } },
+      select: { assetId: true, ifName: true, ifParent: true },
+    }),
+  ]);
+  const out = new Map<string, string>();
+  for (const v of vlans) if (v.ifParent) out.set(`${v.assetId}|${v.ifName}`, v.ifParent);
+  // A tunnel's own phase-1 wins over anything an interface row says about it.
+  for (const t of tunnels) out.set(`${t.assetId}|${t.tunnelName}`, t.parentInterface);
+  return out;
+}
+
+/** Members carrying a LIVE alert on this condition (`target` = the metric or
+ *  field the alert stamped), from ANY automation: `${assetId}|${member}`. The
+ *  alert's dimension is the `healthCheck|link` key, so the member is its tail.
+ *  Acknowledged still counts — acknowledging an alert does not end it. */
+async function liveSdwanAlertMembers(assetIds: string[], target: string): Promise<Set<string>> {
+  const rows = await prisma.notification.findMany({
+    where: { assetId: { in: assetIds }, metric: target, cleared: false, testRun: false, ruleId: { not: null } },
+    select: { assetId: true, dimension: true },
+  });
+  const out = new Set<string>();
+  for (const r of rows) {
+    if (!r.assetId || !r.dimension || r.dimension.indexOf("|") < 0) continue;
+    out.add(`${r.assetId}|${r.dimension.slice(r.dimension.indexOf("|") + 1)}`);
+  }
+  return out;
+}
+
+/**
+ * Business rule 90 — a member riding a parent that is itself over the line
+ * takes no reading: the parent's alert is the one that names the cause. A
+ * lossy wan2 makes Overlay-3 and Overlay-4 lossy too; without this an operator
+ * reads three alerts about one circuit.
+ *
+ * "Over the line" is the SAME condition (utils/sdwanDimensions →
+ * sdwanChildrenYielding): a meeting reading on the parent in this automation
+ * this tick, or an uncleared alert any automation raised on this metric/field
+ * about the parent. Only a reading that MEETS yields — a child that has come
+ * back under the line keeps its reading and recovers normally.
+ *
+ * Applied ONLY when the caller passes `yielded` — the threshold path, which
+ * collects `${assetId}|${dimKey}` → parent there and retires the child's live
+ * alert as superseded rather than letting it read as "no longer reported".
+ * Every other caller keeps every reading, and must: a reset leaf is the
+ * trigger INVERTED, so "meets" there means recovered, and yielding a
+ * recovered child to its recovered parent would strand the child's alert with
+ * no reading to reset on; a composite leaf folds per device, where the parent
+ * reading already carries the device. A failed lookup keeps every reading —
+ * the rule removes readings it has evidence about, never ones it could not
+ * check.
+ */
+async function yieldToSdwanParents(
+  trigger: Trigger,
+  target: string,
+  readings: Reading[],
+  yielded?: Map<string, string>,
+): Promise<Reading[]> {
+  if (!yielded) return readings;
+  const meets = (r: Reading) => readingMeets(trigger, r.value);
+  const hot = readings.filter(meets);
+  if (hot.length === 0) return readings;
+  const assetIds = Array.from(new Set(hot.map((r) => r.assetId)));
+  const names = Array.from(new Set(hot.map(sdwanMemberOf)));
+  let parentOf: Map<string, string>;
+  let live: Set<string>;
+  try {
+    [parentOf, live] = await Promise.all([loadSdwanParents(assetIds, names), liveSdwanAlertMembers(assetIds, target)]);
+  } catch (err) {
+    logger.warn({ err: (err as Error)?.message }, "SD-WAN parent lookup failed — keeping every member reading");
+    return readings;
+  }
+  if (parentOf.size === 0) return readings;
+  const out = sdwanChildrenYielding(
+    readings.map((r) => ({ assetId: r.assetId, member: sdwanMemberOf(r), dimKey: r.dimKey, meets: meets(r) })),
+    parentOf,
+    live,
+  );
+  if (out.size === 0) return readings;
+  for (const [k, v] of out) yielded.set(k, v);
+  return readings.filter((r) => !out.has(`${r.assetId}|${r.dimKey}`));
+}
+
+async function resolveAssetMetricReadings(
+  trigger: Extract<Trigger, { type: "asset_metric" }>,
+  assets: ScopeAssetRow[],
+  saturated?: Set<string>,
+  /** Business rule 90 out-param — see yieldToSdwanParents. */
+  sdwanYielded?: Map<string, string>,
+): Promise<Reading[]> {
   const df = trigger.dimensionFilter ?? {};
   // The device-identifier dimensions narrow the ASSET set before any sample
   // query — every metric takes them (they name the device rather than a
@@ -870,6 +1119,19 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
       const rows = await prisma.assetTelemetrySample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since } }, select: { assetId: true, timestamp: true, cpuPct: true, memPct: true, memUsedBytes: true, sessionCount: true } });
       const pick = (r: any) => trigger.metric === "memUsedBytes" ? num(r.memUsedBytes) : (r[trigger.metric] ?? null);
       return reduceReadings(rows, index, () => "", () => "", pick, agg, winPolls);
+    }
+    case "cpuCorePct": {
+      // One reading per DEVICE (dimension ""), valued at each sample's hottest
+      // core, then labelled with the cores that are over the line — so a
+      // 64-core host with three hot cores raises one alert naming three cores,
+      // not three alerts. Only rows that carry a vector are read: every other
+      // telemetry source leaves the column null, and a device with no per-core
+      // data has no reading rather than a zero.
+      const rows = await prisma.assetTelemetrySample.findMany({
+        where: { assetId: { in: ids }, timestamp: { gte: since }, cpuCorePcts: { not: Prisma.DbNull } },
+        select: { assetId: true, timestamp: true, cpuCorePcts: true },
+      });
+      return reduceCoreReadings(rows, index, trigger, winPolls);
     }
     case "responseTimeMs": case "uptimeSec": {
       // Response-time poll only (probeKind): the ICMP loss sampler writes a
@@ -1035,8 +1297,15 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
     case "sdwanLatencyMs": case "sdwanJitterMs": case "sdwanPacketLoss": {
       const col = trigger.metric === "sdwanLatencyMs" ? "latencyMs" : trigger.metric === "sdwanJitterMs" ? "jitterMs" : "packetLoss";
       const rows = await prisma.assetPerfSlaSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since } }, select: { assetId: true, timestamp: true, healthCheck: true, link: true, latencyMs: true, jitterMs: true, packetLoss: true } });
-      const filtered = rows.filter((r) => substringMatch(r.healthCheck, df.healthCheck) && substringMatch(r.link, df.link));
-      return reduceReadings(filtered, index, (r) => `${r.healthCheck}|${r.link}`, (r) => `${r.healthCheck} / ${r.link}`, (r) => r[col] ?? null, agg, winPolls);
+      // Any-of over "|"-joined terms (utils/sdwanDimensions) — a single
+      // pattern is one term and reads exactly as it always did.
+      const filtered = rows.filter((r) => sdwanDimensionMatch(r.healthCheck, df.healthCheck) && sdwanDimensionMatch(r.link, df.link));
+      const kept = await dropUnusedPorts(
+        trigger,
+        reduceReadings(filtered, index, (r) => `${r.healthCheck}|${r.link}`, (r) => `${r.healthCheck} / ${r.link}`, (r) => r[col] ?? null, agg, winPolls),
+        sdwanMemberOf,
+      );
+      return yieldToSdwanParents(trigger, trigger.metric, kept, sdwanYielded);
     }
     case "customWidgetValue": {
       const rows = await prisma.assetCustomWidgetSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since }, kind: "scalar", ...(df.widgetId ? { widgetId: df.widgetId } : {}) }, select: { assetId: true, timestamp: true, widgetId: true, value: true } });
@@ -1094,9 +1363,99 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
       const filtered = rows.filter((r) => tunnelIsPinned(index.get(r.assetId), r.tunnelName) && substringMatch(r.tunnelName, df.tunnelName));
       return rateReadings(filtered, index, (r) => r.tunnelName, (r) => r.tunnelName, (r) => { const i = num(r.incomingBytes); const o = num(r.outgoingBytes); return i === null && o === null ? null : (i ?? 0) + (o ?? 0); }, 8);
     }
+    // ── Agent-run path checks ──────────────────────────────────────
+    // The asset is the AGENT HOST; the dimension is the check (key = id, label
+    // = the check's name). A reading here is about a path from that host — it
+    // never moves the host's monitorStatus, and the SLA the operator writes is
+    // this trigger's threshold, not anything stored on the check.
+    case "pathLatencyMs": case "pathHttpStatus": case "pathOk": case "pathTlsDaysLeft": {
+      const rows = await prisma.assetPathCheckSample.findMany({
+        where: { assetId: { in: ids }, timestamp: { gte: since }, ...(df.checkId ? { checkId: df.checkId } : {}) },
+        select: { assetId: true, timestamp: true, checkId: true, ok: true, latencyMs: true, httpStatus: true, tlsNotAfter: true },
+      });
+      const names = await pathCheckNames(rows.map((r) => r.checkId));
+      const now = Date.now();
+      const valueFn = (r: typeof rows[number]): number | null => {
+        switch (trigger.metric) {
+          // A failed run carries no latency (nothing connected, or it timed
+          // out): no reading, not a zero — the failure is pathOk's to report.
+          case "pathLatencyMs": return r.latencyMs ?? null;
+          case "pathHttpStatus": return r.httpStatus ?? null;
+          case "pathOk": return r.ok ? 1 : 0;
+          // tcp / icmp checks and plain-http runs have no certificate: no reading.
+          default: return r.tlsNotAfter ? Math.floor((r.tlsNotAfter.getTime() - now) / 86_400_000) : null;
+        }
+      };
+      return reduceReadings(rows, index, (r) => r.checkId, (r) => names.get(r.checkId) ?? r.checkId, valueFn, agg, winPolls);
+    }
+    case "pathHopCount": {
+      // Read off the traceroutes (every Nth run + each pass→fail), not the
+      // per-run samples, which carry no hop count.
+      const rows = await prisma.assetPathCheckTraceroute.findMany({
+        where: { assetId: { in: ids }, timestamp: { gte: since }, ...(df.checkId ? { checkId: df.checkId } : {}) },
+        select: { assetId: true, timestamp: true, checkId: true, hopCount: true },
+      });
+      const names = await pathCheckNames(rows.map((r) => r.checkId));
+      return reduceReadings(rows, index, (r) => r.checkId, (r) => names.get(r.checkId) ?? r.checkId, (r) => r.hopCount, agg, winPolls);
+    }
+    case "pathFailurePct": {
+      // A windowed RATIO (failed runs / runs) like probeLossPct: the window is
+      // the measurement, floored at 5 min and defaulted to 15 by the same
+      // probeLossWindowSec. ONE grouped aggregate over (host, check, ok) — never
+      // a fetch-all at 2000 hosts on the 60 s tick. Emits 0 % rows too so a
+      // hysteresis reset recovers. NOT gated on the host answering probes (the
+      // probeLossPct gate): these results are the agent's own report, and a
+      // host that cannot report pushes nothing, so it is naturally silent.
+      const windowSec = probeLossWindowSec(trigger.windowSec);
+      const grouped = await prisma.assetPathCheckSample.groupBy({
+        by: ["assetId", "checkId", "ok"],
+        where: {
+          assetId: { in: ids },
+          timestamp: { gte: new Date(Date.now() - windowSec * 1000) },
+          ...(df.checkId ? { checkId: df.checkId } : {}),
+        },
+        _count: { _all: true },
+        _max: { timestamp: true },
+      });
+      const cells = new Map<string, { assetId: string; checkId: string; total: number; failed: number; last: Date | null }>();
+      for (const g of grouped) {
+        const key = `${g.assetId}|${g.checkId}`;
+        const c = cells.get(key) ?? { assetId: g.assetId, checkId: g.checkId, total: 0, failed: 0, last: null };
+        c.total += g._count._all;
+        if (!g.ok) c.failed += g._count._all;
+        const m = g._max.timestamp;
+        if (m && (!c.last || m > c.last)) c.last = m;
+        cells.set(key, c);
+      }
+      const names = await pathCheckNames([...cells.values()].map((c) => c.checkId));
+      const out: Reading[] = [];
+      for (const c of cells.values()) {
+        const a = index.get(c.assetId);
+        if (!a || c.total === 0) continue;
+        const value = Math.round((c.failed / c.total) * 1000) / 10;
+        // No saturation ceiling here (business rule 85): 100% is every run
+        // failing while the host reports — the case an operator wrote this rule
+        // for — not an outage some other automation owns, as it is for loss.
+        out.push({
+          assetId: a.id, hostname: a.hostname, tags: a.tags,
+          dimKey: c.checkId, dimLabel: names.get(c.checkId) ?? c.checkId,
+          value, readingAt: c.last,
+        });
+      }
+      return out;
+    }
     default:
       return [];
   }
+}
+
+/** id → name for the path checks a resolver's rows mention. One small
+ *  query per resolver call (the table is capped at a few dozen rows). */
+async function pathCheckNames(ids: readonly string[]): Promise<Map<string, string>> {
+  const distinct = [...new Set(ids)];
+  if (distinct.length === 0) return new Map();
+  const rows = await prisma.pathCheck.findMany({ where: { id: { in: distinct } }, select: { id: true, name: true } });
+  return new Map(rows.map((r) => [r.id, r.name]));
 }
 
 /** Compute a per-dimension rate (delta / dt) from the two latest counter samples. */
@@ -1327,7 +1686,16 @@ async function resolveAssetStateReadings(
    *  whose trigger does. The inverted leaf (`!= fault`) can never qualify by
    *  itself, and without this the tree is silent about the very port the alert
    *  is about. See resolveResetTruths. */
-  opts?: { coverUnpinnedPoe?: boolean },
+  opts?: {
+    coverUnpinnedPoe?: boolean;
+    /** Business rule 78: a dependency-suppressed asset reads `down` on the
+     *  monitorStatus field, flagged as a dependency reading, instead of its own
+     *  probe's verdict. Set only by a down automation that opted in — the gate
+     *  loop keeps every other automation's suppressed assets out of `assets`. */
+    dependencyDownReadsDown?: boolean;
+    /** Business rule 90 out-param — see yieldToSdwanParents. */
+    sdwanYielded?: Map<string, string>;
+  },
 ): Promise<Reading[]> {
   const df = trigger.dimensionFilter ?? {};
   assets = applyDeviceFilters(assets, df); // same asset-set narrowing as the metric resolver
@@ -1339,7 +1707,13 @@ async function resolveAssetStateReadings(
   // poll-counted hold counts observations gated on the probe's own anchor.
   const probeAt = (a: ScopeAssetRow): Date | null => a.lastMonitorAt ?? null;
   switch (trigger.field) {
-    case "monitorStatus": return assets.map((a) => ({ ...mk(a, "", "", a.monitorStatus), readingAt: probeAt(a) }));
+    case "monitorStatus": return assets.map((a) =>
+      opts?.dependencyDownReadsDown && a.dependencySuppressed
+        // The upstream's confirmed verdict IS the evidence (rule 78): the
+        // device turned Dep. Down, and that is the edge the operator asked to
+        // hear about — not its own probe reaching the count at half cadence.
+        ? { ...mk(a, "", "", "down"), readingAt: probeAt(a), dependencyDown: true, ownMonitorStatus: a.monitorStatus }
+        : { ...mk(a, "", "", a.monitorStatus), readingAt: probeAt(a) });
     case "status": return assets.map((a) => ({ ...mk(a, "", "", a.status), readingAt: probeAt(a) }));
     case "consecutiveFailures": return assets.map((a) => ({ ...mk(a, "", "", a.consecutiveFailures), readingAt: probeAt(a) }));
     case "dependencySuppressed": return assets.map((a) => ({ ...mk(a, "", "", a.dependencySuppressed), readingAt: probeAt(a) }));
@@ -1367,6 +1741,27 @@ async function resolveAssetStateReadings(
       return assets
         .filter((a) => a.fortilinkStatus != null)
         .map((a) => ({ ...mk(a, "", "", a.fortilinkStatus), readingAt: a.fortilinkCheckedAt ?? null }));
+    }
+    case "firmwareVsPrimary": {
+      // Business rule 87. Same posture as fortilinkStatus: a device the
+      // Repository cannot place — not a switch / AP, no usable serial, no
+      // readable version, no primary image for its platform — produces NO
+      // READING, so `!= current` is true only of devices that really differ.
+      //
+      // Scale: ONE findMany over the image table (≤ 2 rows per model node)
+      // per evaluation, then an in-memory comparison per asset — never a
+      // query per asset. The anchor is the system-info pass, which is what
+      // refreshes osVersion; the probe tick says nothing about firmware.
+      const primaries = await loadPrimaryFirmwareImages();
+      const out: Reading[] = [];
+      for (const a of assets) {
+        const v = firmwareVsPrimary(
+          { assetType: a.assetType, manufacturer: a.manufacturer ?? null, model: a.model ?? null, serialNumber: a.serialNumber ?? null, osVersion: a.osVersion ?? null },
+          primaries,
+        );
+        if (v) out.push({ ...mk(a, "", "", v), readingAt: a.lastSystemInfoAt ?? probeAt(a) });
+      }
+      return out;
     }
     case "ifOperStatus": case "ifAdminStatus": case "ifIpAddress": case "poeStatus": {
       const col = INTERFACE_STATE_COLUMN[trigger.field];
@@ -1418,7 +1813,8 @@ async function resolveAssetStateReadings(
       if (trigger.field === "poeStatus" && (poeFaultCoversUnpinned(trigger) || opts?.coverUnpinnedPoe)) {
         out.push(...await unpinnedPoeFaultReadings(index, ids, df, mk));
       }
-      return out;
+      // "Skip unused ports" — offered on oper status only (validateSkipUnusedPorts).
+      return trigger.field === "ifOperStatus" ? dropUnusedPorts(trigger, out, (r) => r.dimKey) : out;
     }
     case "ipsecStatus": {
       const since = new Date(Date.now() - lookbackMsFor(trigger));
@@ -1466,34 +1862,42 @@ async function resolveAssetStateReadings(
       // filter them — an operator who narrowed a packet-loss rule to "Primary
       // WAN" must get the same set here or the two rules disagree about which
       // members they are about.
-      const filtered = rows.filter((r) => substringMatch(r.healthCheck, df.healthCheck) && substringMatch(r.link, df.link));
+      const filtered = rows.filter((r) => sdwanDimensionMatch(r.healthCheck, df.healthCheck) && sdwanDimensionMatch(r.link, df.link));
       // dimKey matches the metrics' `healthCheck|link` so a member's state
       // alert and its loss alert name the same dimension.
-      return groupSeries(filtered, (r) => `${r.assetId}|${r.healthCheck}|${r.link}`).map((g) => {
+      const memberReadings: Reading[] = groupSeries(filtered, (r) => `${r.assetId}|${r.healthCheck}|${r.link}`).map((g) => {
         const r = g[0]!;
         const a = index.get(r.assetId)!;
         return {
           ...mk(a, `${r.healthCheck}|${r.link}`, `${r.healthCheck} / ${r.link}`, r.state),
           series: g.slice(0, SERIES_CAP).map((x) => x.state),
-          // The SD-WAN collector rides the system-info cadence, not the monitor
-          // loop, so a forPolls hold counts health-check reads — anchoring on
-          // lastMonitorAt would count 60s ICMP ticks during which nothing
-          // asked the gate about its SLA.
+          // The SD-WAN collector runs on its own cadence (the integration's
+          // sdwanIntervalSeconds), not the monitor loop, so a forPolls hold
+          // counts health-check reads — anchoring on lastMonitorAt would count
+          // ICMP ticks during which nothing asked the gate about its SLA.
           readingAt: r.timestamp,
         };
       });
+      // "Skip unused ports": a template's unplugged wan2 is down on every
+      // health check forever — see SKIP_UNUSED_PORT_TARGETS.
+      const kept = await dropUnusedPorts(trigger, memberReadings, sdwanMemberOf);
+      // Business rule 90: a dead wan2 explains its dead overlays.
+      return yieldToSdwanParents(trigger, trigger.field, kept, opts?.sdwanYielded);
     }
     case "sdwanRuleStatus": case "sdwanSelectedMember": {
-      const rows = await prisma.assetSdwanRule.findMany({ where: { assetId: { in: ids } }, select: { assetId: true, ruleName: true, status: true, selectedMember: true } });
+      const rows = await prisma.assetSdwanRule.findMany({ where: { assetId: { in: ids } }, select: { assetId: true, ruleName: true, status: true, selectedMember: true, updatedAt: true } });
       const col = trigger.field === "sdwanRuleStatus" ? "status" : "selectedMember";
       // sdwanRulePattern narrows to the named rule(s) — without it every rule
       // on the gate is its own alerting dimension, which is the default.
       return rows.filter((r) => substringMatch(r.ruleName, df.sdwanRulePattern)).map((r) => {
         const a = index.get(r.assetId);
         if (!a) return null;
-        // Delete-replaced per scrape, so there is no history to count: the
-        // system-info anchor is what says a NEW reading happened.
-        return { ...mk(a, r.ruleName, r.ruleName, (r as any)[col]), readingAt: a.lastSystemInfoAt ?? null };
+        // Delete-replaced per SUCCESSFUL SD-WAN read (runSdwanFor), so there is
+        // no history to count: the row's own updatedAt is what says a NEW
+        // reading happened. Not Asset.lastSdwanAt — that is stamped on failed
+        // reads too, and a failed read re-observes nothing. (Until 2026-09 this
+        // was lastSystemInfoAt, when the rules rode the system-info pass.)
+        return { ...mk(a, r.ruleName, r.ruleName, (r as any)[col]), readingAt: r.updatedAt ?? null };
       }).filter(Boolean) as Reading[];
     }
     default: return [];
@@ -1714,7 +2118,18 @@ function renderMessage(
   members?: AlertMember[] | null,
 ): string {
   if (rule.messageTemplate && rule.messageTemplate.trim()) {
-    return renderNotificationTemplate(rule.messageTemplate, ctx);
+    const own = renderNotificationTemplate(rule.messageTemplate, ctx);
+    // Business rule 78 — a custom template cannot have anticipated this alert,
+    // so the notice is APPENDED rather than replacing the operator's words.
+    // It has to reach the message and not just the email body: push, Slack,
+    // Teams and Pushbullet all send `Notification.message` and nothing else,
+    // so a template like "{asset} is down" would page the plant with the one
+    // fact they already knew and none of the reason. Skipped when their own
+    // template already renders the notice (it is a catalogued token).
+    if (reading.dependencyDown && ctx["dependency.tag"] && !own.includes("DEPENDENCY DOWN")) {
+      return `${own} — ${ctx["dependency.headline"] || "DEPENDENCY DOWN"}`;
+    }
+    return own;
   }
   if (members?.length) {
     const active = activeMembers(members);
@@ -1728,6 +2143,13 @@ function renderMessage(
     // {metric} holds the met-conditions summary — no "= (threshold )" artifacts.
     const count = ctx["conditions"] ? ` (${ctx["conditions"]})` : "";
     return `${rule.name}: ${ctx["asset"]} — ${ctx["metric"]}${count}`;
+  }
+  // Business rule 78 — the whole dependency sentence, which already names the
+  // device and the upstream: "monitorStatus = down (threshold down)" would be
+  // the one thing this alert is NOT saying. This is what the in-app card, push
+  // and chat bodies show, so it carries the name on every surface.
+  if (reading.dependencyDown && ctx["dependency.summary"]) {
+    return `${rule.name}: ${ctx["dependency.summary"]}`;
   }
   return `${rule.name}: ${ctx["asset"]}${dim} — ${ctx["metric"]} = ${ctx["value"]} (threshold ${ctx["threshold"]})`;
 }
@@ -1794,70 +2216,13 @@ export { buildComposedEmail };
 // (superseded), and its pending debounce resets. Same-rank ties both fire.
 // Built once per engine tick over the enabled rule set; only asset_metric /
 // asset_state rules (non-null signature) participate.
-
-interface ShadowMember {
-  rule: DbRule;
-  rank: number;
-}
-interface ShadowIndex {
-  /** signature → participating rules (with precomputed scopeRank). */
-  bySig: Map<string, ShadowMember[]>;
-  /** signature → highest rank present (skip the per-asset check for max-rank rules). */
-  maxRankBySig: Map<string, number>;
-}
-
-export function buildShadowIndex(rules: DbRule[]): ShadowIndex {
-  const bySig = new Map<string, ShadowMember[]>();
-  const maxRankBySig = new Map<string, number>();
-  for (const rule of rules) {
-    const sig = triggerSignature(rule.trigger);
-    if (!sig) continue;
-    const rank = scopeRank(rule.scope);
-    const arr = bySig.get(sig);
-    if (arr) arr.push({ rule, rank });
-    else bySig.set(sig, [{ rule, rank }]);
-    maxRankBySig.set(sig, Math.max(maxRankBySig.get(sig) ?? 0, rank));
-  }
-  return { bySig, maxRankBySig };
-}
-
-/**
- * Does a peer rule genuinely COVER this asset — i.e. could it produce a reading
- * for it at all? Scope alone is not the whole answer: a trigger's device
- * filter (hostname / IP / MAC / manufacturer / model) narrows the asset set
- * just as scope does, so a peer scoped to all assets but filtered to
- * `hostname matches "core-"` covers only the core switches.
- *
- * This used to be scope-only, which was safe while `triggerSignature` pinned
- * the dimensionFilter — two differently-filtered rules were in different
- * signature groups and never compared. Now that monitorStatus rules group by
- * value instead (so down automations with different device filters CAN carve
- * each other out), the filter has to be tested here or a filtered peer would
- * shadow every asset in its scope, including ones it can never fire on.
- *
- * For asset_metric this is a no-op: peers in a signature group have identical
- * filters by construction, so the predicate short-circuits in applyDeviceFilters'
- * "no patterns set" check.
- */
-function peerCoversAsset(peer: DbRule, asset: ScopeAsset): boolean {
-  if (!scopeMatchesAsset(peer.scope, asset)) return false;
-  const df = (peer.trigger as { dimensionFilter?: Parameters<typeof deviceFilterMatch>[0] }).dimensionFilter;
-  if (!df) return true;
-  const rec = df as Record<string, string | undefined>;
-  if (!DEVICE_FILTER_DIMENSIONS.some((d) => rec[d])) return true;
-  return deviceFilterMatch(df, asset);
-}
-
-/** Does a higher-rank same-signature rule also cover this asset? */
-export function isAssetShadowed(index: ShadowIndex, rule: DbRule, sig: string, rank: number, asset: ScopeAsset): boolean {
-  const group = index.bySig.get(sig);
-  if (!group) return false;
-  for (const other of group) {
-    if (other.rule.id === rule.id) continue;
-    if (other.rank > rank && peerCoversAsset(other.rule, asset)) return true;
-  }
-  return false;
-}
+//
+// The index and the per-asset test live in notificationTypes so the asset
+// Alerts tab's "automations that can trigger" lookup (notificationRuleService,
+// which this module imports) applies the very same carve-out; re-exported here
+// for the tests' import path.
+export { buildShadowIndex, isAssetShadowed };
+type ShadowIndex = ShadowIndexOf<DbRule>;
 
 // ─── Threshold / state evaluation ───────────────────────────────────────────
 
@@ -1960,6 +2325,35 @@ async function clearVanishedStates(
   }
 }
 
+/**
+ * Business rule 89 — which of these assets carry a LIVE all-cores CPU alert
+ * (an uncleared, real — not test — alert some automation raised on the
+ * `cpuPct` asset metric). A per-core CPU automation hands those assets off:
+ * the all-cores alert already says the device is busy, and a second alert
+ * listing its cores says the same thing again. Acknowledged still counts —
+ * acknowledging an alert does not end it. One indexed query per per-core
+ * rule per tick, narrowed to the assets that rule is about to evaluate.
+ */
+async function assetsWithLiveAllCoresCpuAlert(assetIds: string[]): Promise<Set<string>> {
+  const rows = await prisma.notification.findMany({
+    where: { assetId: { in: assetIds }, metric: "cpuPct", cleared: false, testRun: false, ruleId: { not: null } },
+    select: { assetId: true },
+  });
+  return new Set(rows.map((r) => r.assetId).filter((id): id is string => !!id));
+}
+
+/** Tick order: every rule before a per-core CPU rule, so the all-cores alert a
+ *  per-core rule defers to (rule 89) is raised or cleared in the SAME tick it
+ *  is read — otherwise a device crossing both lines at once would get both
+ *  alerts for one tick before the handoff. Stable: nothing else reorders. */
+export function evaluationOrder<T extends { trigger: unknown }>(rules: T[]): T[] {
+  const late = (r: T) => {
+    const t = r.trigger as { type?: string; metric?: string } | null;
+    return t?.type === "asset_metric" && t.metric === "cpuCorePct" ? 1 : 0;
+  };
+  return rules.map((r, i) => ({ r, i })).sort((a, b) => late(a.r) - late(b.r) || a.i - b.i).map((x) => x.r);
+}
+
 async function evaluateThresholdRule(
   rule: DbRule,
   shadowIndex?: ShadowIndex,
@@ -1975,8 +2369,14 @@ async function evaluateThresholdRule(
   let readings: Reading[] = [];
   // Assets silenced this tick (maintenance window / dependency-suppressed).
   const suppressedIds = new Set<string>();
+  // Business rule 78: this down automation speaks for its dependency-
+  // suppressed devices instead of dropping them.
+  const speaksForSuppressed = ruleAlertsWhenDependencyDown(trigger);
   // Assets carved out this tick by a more-specific same-signature automation.
   const shadowedIds = new Set<string>();
+  // Business rule 89 — a per-core CPU rule's assets that carry a live
+  // all-cores CPU alert this tick. Handed off like a carve-out.
+  const coreSupersededIds = new Set<string>();
   // Assets whose device isn't answering, on a rule whose metric needs it to be
   // (packet loss — business rule 29). Handed off to asset-down alerting.
   const notAnsweringIds = new Set<string>();
@@ -1984,6 +2384,10 @@ async function evaluateThresholdRule(
   // there is no reading this tick. Handled like notAnswering: cleared, not
   // frozen (business rule 29).
   const saturatedIds = new Set<string>();
+  // Business rule 90 — SD-WAN member readings that yielded to a parent member
+  // over the same line: `${assetId}|${dimKey}` → the parent. Per DIMENSION,
+  // unlike the per-asset handoffs above: wan1 keeps alerting on the same gate.
+  const sdwanYielded = new Map<string, string>();
   // Every asset the scope resolved this tick (incl. suppressed/shadowed);
   // null for host rules, which have no asset scope to leave.
   let scopeIds: Set<string> | null = null;
@@ -2018,15 +2422,23 @@ async function evaluateThresholdRule(
     const needsAnswering = triggerNeedsAnsweringDevice(trigger);
     const active: ScopeAssetRow[] = [];
     for (const a of assets) {
-      if (isSuppressedForNotifications(a)) suppressedIds.add(a.id);
+      // Business rule 78: a down automation that opted in keeps its
+      // dependency-suppressed devices — it is about to speak for them. A
+      // MAINTENANCE window still silences (rule 16 wins: announced downtime
+      // is not an outage to report), so the carve-out is dependency-only.
+      const spokenFor = speaksForSuppressed && a.dependencySuppressed && String(a.status) !== "maintenance";
+      if (isSuppressedForNotifications(a) && !spokenFor) suppressedIds.add(a.id);
       else if (shadowable && isAssetShadowed(shadowIndex!, rule, sig!, rank, a)) shadowedIds.add(a.id);
       else if (needsAnswering && !assetIsAnsweringProbes(a)) notAnsweringIds.add(a.id);
       else active.push(a);
     }
-    activeAssets = active;
+    if (trigger.type === "asset_metric" && trigger.metric === "cpuCorePct" && active.length > 0) {
+      for (const id of await assetsWithLiveAllCoresCpuAlert(active.map((a) => a.id))) coreSupersededIds.add(id);
+    }
+    activeAssets = coreSupersededIds.size ? active.filter((a) => !coreSupersededIds.has(a.id)) : active;
     readings = trigger.type === "asset_metric"
-      ? await resolveAssetMetricReadings(trigger, active, saturatedIds)
-      : await resolveAssetStateReadings(trigger, active);
+      ? await resolveAssetMetricReadings(trigger, activeAssets, saturatedIds, sdwanYielded)
+      : await resolveAssetStateReadings(trigger, activeAssets, { dependencyDownReadsDown: speaksForSuppressed, sdwanYielded });
   } else {
     return;
   }
@@ -2035,6 +2447,18 @@ async function evaluateThresholdRule(
   const states = await prisma.notificationRuleState.findMany({ where: { ruleId: rule.id } });
   const stateMap = new Map(states.map((s) => [`${s.assetId ?? ""}|${s.dimensionKey}`, s]));
   const now = new Date();
+  // Business rule 78 — which FLAVOUR each live alert of this rule was raised
+  // in (plain Down, or dependency-down), so a firing row can be handed off when
+  // the asset's suppression flag no longer agrees with its alert. Read only for
+  // an opted-in rule and only for its firing rows: a handful of ids.
+  const flavourByNotif = new Map<string, boolean>();
+  if (speaksForSuppressed) {
+    const firingIds = states.filter((s) => s.state === "firing" && s.notificationId).map((s) => s.notificationId as string);
+    if (firingIds.length > 0) {
+      const rows = await prisma.notification.findMany({ where: { id: { in: firingIds } }, select: { id: true, dependencyDown: true } });
+      for (const r of rows) flavourByNotif.set(r.id, r.dependencyDown);
+    }
+  }
   const seen = new Set<string>();
   const hasBands = ruleHasBands(rule);
   // Per-tier sustained durations: every severity (base + each band) carries its
@@ -2109,6 +2533,22 @@ async function evaluateThresholdRule(
       : undefined;
 
     if (meets) {
+      // Business rule 78 — the alert's flavour follows the asset's suppression
+      // flag. A plain Down alert whose device has since turned Dep. Down (the
+      // sweep normally retires it first; this catches a flag that flipped
+      // between the sweep and this loop), or a dependency-down alert whose
+      // upstream came back while the device stayed dark, is ENDED and raised
+      // again in the other flavour — the operators hear "and it is the switch"
+      // or "and now it is the PLC itself". No reset actions: nothing recovered.
+      if (st && st.state === "firing" && speaksForSuppressed && st.notificationId) {
+        const was = flavourByNotif.get(st.notificationId);
+        const isDep = reading.dependencyDown === true;
+        if (was !== undefined && was !== isDep) {
+          await handoffDependencyFlavour(rule, st, isDep);
+          await fire(rule, reading, lastValue, now, undefined, fireOpts);
+          continue;
+        }
+      }
       if (!st || st.state === "clear") {
         if (hasBands) {
           // A tier whose sustain is 0 fires on the first reading; otherwise the
@@ -2260,7 +2700,9 @@ async function evaluateThresholdRule(
   // takeover is a real handoff — clear any active alert (superseded) and reset
   // pending debounce so the general rule no longer alerts for these assets.
   for (const st of states) {
-    if (!st.assetId || !shadowedIds.has(st.assetId)) continue;
+    if (!st.assetId) continue;
+    const allCores = coreSupersededIds.has(st.assetId);
+    if (!allCores && !shadowedIds.has(st.assetId)) continue;
     if (st.state === "firing") {
       await clearActiveNotification(st, "system:superseded", rule);
       await prisma.notificationRuleState.update({
@@ -2273,8 +2715,10 @@ async function evaluateThresholdRule(
         resourceId: st.notificationId ?? undefined,
         resourceName: rule.name,
         actor: "system:notification-engine",
-        message: `Cleared: ${rule.name} superseded by a more-specific automation`,
-        details: { ruleId: rule.id, assetId: st.assetId },
+        message: allCores
+          ? `Cleared: ${rule.name} superseded by the device's all-cores CPU utilization alert`
+          : `Cleared: ${rule.name} superseded by a more-specific automation`,
+        details: { ruleId: rule.id, assetId: st.assetId, ...(allCores ? { reason: "all-cores-cpu" } : {}) },
       }).catch(() => {});
     } else if (st.state === "pending") {
       await prisma.notificationRuleState.update({
@@ -2335,12 +2779,48 @@ async function evaluateThresholdRule(
     }
   }
 
+  // Business rule 90 — a member whose parent is over the same line hands its
+  // alert to the parent's. Same shape as the carve-out: the live alert CLEARS
+  // as superseded, with no reset actions — the child has not recovered, and
+  // mailing "packet loss resolved" about an overlay still dropping packets
+  // would be a lie. Marked seen so the vanished sweep below does not also
+  // retire it as "no longer reported".
+  for (const st of states) {
+    if (!st.assetId) continue;
+    const key = `${st.assetId}|${st.dimensionKey}`;
+    const parent = sdwanYielded.get(key);
+    if (parent === undefined) continue;
+    seen.add(key);
+    if (st.state === "firing") {
+      await clearActiveNotification(st, "system:superseded", rule);
+      await prisma.notificationRuleState.update({
+        where: { id: st.id },
+        data: { state: "clear", conditionMetSince: null, recoveredSince: null, notificationId: null, bandMetSince: Prisma.DbNull, ...CLEARED_RUNS },
+      });
+      const member = st.dimensionKey.slice(st.dimensionKey.indexOf("|") + 1);
+      await logEvent({
+        action: "notification.superseded",
+        resourceType: "notification",
+        resourceId: st.notificationId ?? undefined,
+        resourceName: rule.name,
+        actor: "system:notification-engine",
+        message: `Cleared: ${rule.name} on ${member} — it rides ${parent}, which is over the same line; ${parent}'s alert speaks for it`,
+        details: { ruleId: rule.id, assetId: st.assetId, dimension: st.dimensionKey, reason: "sdwan-parent", parent },
+      }).catch(() => {});
+    } else if (st.state === "pending") {
+      await prisma.notificationRuleState.update({
+        where: { id: st.id },
+        data: { state: "clear", conditionMetSince: null, bandMetSince: Prisma.DbNull },
+      });
+    }
+  }
+
   // Vanished states: assets that left the scope or dimensions that stopped
   // being reported — the readings loop never sees them, so clear them here
   // (suppressed assets stay frozen, in-scope assets with no readings at all
   // stay frozen; see clearVanishedStates).
   if (scopeIds) {
-    const handled = new Set([...suppressedIds, ...shadowedIds, ...notAnsweringIds, ...saturatedIds]);
+    const handled = new Set([...suppressedIds, ...shadowedIds, ...coreSupersededIds, ...notAnsweringIds, ...saturatedIds]);
     const assetsWithReadings = new Set(readings.map((r) => r.assetId).filter(Boolean));
     // activeAssets suffices as the pin-test index: any state row that passes
     // the handled/scope checks belongs to an active asset by construction.
@@ -3092,7 +3572,8 @@ function readingRuns(
 ): ReadingRuns {
   const met = seriesRun(reading, (v) => readingMeets(trigger, v));
   if (met !== null) {
-    const clear = seriesRun(reading, (v) => recoveredMeets(trigger, reset, v)) ?? 0;
+    const clearOf = reading.clearSeries ? { ...reading, series: reading.clearSeries } : reading;
+    const clear = seriesRun(clearOf, (v) => recoveredMeets(trigger, reset, v)) ?? 0;
     return { metRun: met, clearRun: clear, stateful: false, advanced: false };
   }
   const m = advanceRun(st?.metRun ?? 0, meets, reading.readingAt, st?.lastReadingAt);
@@ -3729,6 +4210,23 @@ async function fire(
   // above, not rule.severity, because a band declares its own escalation
   // chain — a critical alert must not advertise the warning tier's.
   applyFollowUpPolicy(parts, rule, severity);
+  // Business rule 78 — a dependency reading names who silenced the device.
+  // The walk is bounded and memoized per tick; a failed read still lets the
+  // alert out, worded without a name, because "your PLC is dependency down"
+  // beats silence even when the switch cannot be named.
+  let blame: Awaited<ReturnType<typeof resolveDependencyBlame>> = null;
+  if (reading.dependencyDown && reading.assetId) {
+    blame = await resolveDependencyBlame(reading.assetId, _blameCache);
+    const rootIsUpstream = !blame || blame.rootCause.id === blame.upstream.id;
+    parts.dependency = {
+      upstream: blame?.upstream.hostname ?? blame?.upstream.id ?? null,
+      rootCause: rootIsUpstream ? null : (blame!.rootCause.hostname ?? blame!.rootCause.id),
+      reason: blame?.rootCause.reason ?? null,
+    };
+    // The headline is the dependency, not "Monitor status is down": the
+    // device's own probe did not decide this alert.
+    parts.triggerSummary = dependencyTriggerSummary(parts.dependency);
+  }
   const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
   // State a sensor reading in the install's display unit, so the sentence
   // agrees with the chart drawn underneath it in the email.
@@ -3756,6 +4254,18 @@ async function fire(
         // what the email leads with (monitorStatus → the probe history).
         : rule.trigger.type === "asset_state" ? rule.trigger.field : null,
       ...(ruleWantsContext(rule) ? { templateCtx: ctx as any } : {}),
+      // Business rule 78 — the flavour, and who silenced it, on the row itself
+      // (the sweep, the handoff and the badge all read it; none can read text).
+      ...(reading.dependencyDown ? {
+        dependencyDown: true,
+        dependencyBlame: {
+          upstream: blame ? { id: blame.upstream.id, hostname: blame.upstream.hostname } : null,
+          rootCause: blame ? { id: blame.rootCause.id, hostname: blame.rootCause.hostname, reason: blame.rootCause.reason } : null,
+          hops: blame?.hops ?? 0,
+          truncated: blame?.truncated ?? false,
+          ownStatus: reading.ownMonitorStatus ?? null,
+        } as Prisma.InputJsonValue,
+      } : {}),
     },
   });
   await prisma.notificationRuleState.upsert({
@@ -3777,7 +4287,14 @@ async function fire(
       actor: "system:notification-engine",
       level: severityLevel(severity),
       message: notif.message,
-      details: { ruleId: rule.id, assetId: reading.assetId || null, dimension: reading.dimKey, severity },
+      details: {
+        ruleId: rule.id, assetId: reading.assetId || null, dimension: reading.dimKey, severity,
+        ...(reading.dependencyDown ? {
+          dependencyDown: true,
+          upstreamAssetId: blame?.upstream.id ?? null,
+          rootCauseAssetId: blame?.rootCause.id ?? null,
+        } : {}),
+      },
     });
   }
 }
@@ -4259,6 +4776,36 @@ function regroupedMessage(rule: DbRule, members: AlertMember[]): string | null {
   return `${rule.name}: ${list}${count} still affected`;
 }
 
+/**
+ * Business rule 78 — end a live alert whose flavour no longer matches its
+ * asset's suppression flag, so the caller can raise the other flavour. Same
+ * handoff contract as the carve-out and the packet-loss handoffs: soft-clear,
+ * release the state row, audit it, run NO reset actions.
+ */
+async function handoffDependencyFlavour(
+  rule: DbRule,
+  st: ReleasableState & { assetId: string | null },
+  toDependencyDown: boolean,
+): Promise<void> {
+  const reason = toDependencyDown ? "dependency-down" : "dependency-released";
+  await clearActiveNotification(st, `system:${reason}`, rule);
+  await prisma.notificationRuleState.update({
+    where: { id: st.id },
+    data: { state: "clear", conditionMetSince: null, recoveredSince: null, notificationId: null, bandMetSince: Prisma.DbNull, ...CLEARED_RUNS },
+  });
+  await logEvent({
+    action: "notification.superseded",
+    resourceType: "notification",
+    resourceId: st.notificationId ?? undefined,
+    resourceName: rule.name,
+    actor: "system:notification-engine",
+    message: toDependencyDown
+      ? `Cleared: ${rule.name} — the device turned dependency-down, so the alert is raised again naming the upstream device`
+      : `Cleared: ${rule.name} — the upstream device is back and the device is still down, so the alert is raised again as its own outage`,
+    details: { ruleId: rule.id, assetId: st.assetId, reason },
+  }).catch(() => {});
+}
+
 // ─── Event-tail evaluation ──────────────────────────────────────────────────
 
 export function globToRegExp(glob: string): RegExp {
@@ -4455,9 +5002,21 @@ async function runEventTail(rules: DbRule[]): Promise<void> {
   // Warm the asset-detail cache for the whole batch up front — the loop below
   // reads it per matched event, and the miss-per-distinct-asset pattern is at
   // its worst exactly when a broad outage fills the batch with asset events.
+  // Maintenance windows that were open at any point across this batch's span,
+  // for the gate below. Loaded per batch rather than per event: see
+  // loadMaintenanceSpansForEvents for why the live Asset row cannot answer
+  // this question for an event that is up to a tick old.
+  let maintenanceSpans = new Map<string, MaintenanceSpan[]>();
   if (compiled.length > 0) {
     const eventAssetIds = [...new Set(events.flatMap((ev) => (ev.resourceType === "asset" && ev.resourceId ? [ev.resourceId] : [])))];
     await primeAssetDetailCache(eventAssetIds);
+    // `events` is ordered by timestamp asc, so the ends of the batch are the
+    // ends of its span.
+    maintenanceSpans = await loadMaintenanceSpansForEvents(
+      eventAssetIds,
+      events[0]!.timestamp,
+      events[events.length - 1]!.timestamp,
+    );
     // Relation-backed device-filter leaves (interface name, SSID, FortiGate
     // sighting) resolve in SQL for the whole batch — one query per DISTINCT
     // leaf, and no query at all when no filter asks for one — instead of
@@ -4532,6 +5091,13 @@ async function runEventTail(rules: DbRule[]): Promise<void> {
       // the deletion audit trail. System-scoped events carry no assetId at
       // all and are unaffected.
       if (detail && !assetCanTrigger(detail)) continue;
+      // ...and the same gate asked as of WHEN THE EVENT HAPPENED. The check
+      // above reads the asset's status now; this one reads the maintenance
+      // window history at ev.timestamp, which is the only way a window shorter
+      // than this job's 60s interval can suppress anything at all (business
+      // rule 80a — an agent upgrade's window is about two seconds wide). The
+      // cursor still advances: a suppressed event is skipped, not deferred.
+      if (suppressedAtEventTime(maintenanceSpans, assetId, ev.timestamp)) continue;
       // Cooldown: skip when this (rule, asset/resource) fired within
       // cooldownSec — and stamp the map so later events in this batch dedupe.
       if (c.rule.cooldownSec) {
@@ -4707,8 +5273,14 @@ type AssetDetailRow = AssetTemplateDetail & {
 };
 
 const _assetDetailCache = new Map<string, AssetDetailRow | null>();
+// Business rule 78 — the blame walk's per-tick cache: every dependency-down
+// fire in one tick shares the switch/gate rows it loads. Renewed with the
+// asset-detail cache; a stale chain would name a device that has since come
+// back.
+let _blameCache: BlameLoadCache = newBlameLoadCache();
 export function clearAssetDetailCache(): void {
   _assetDetailCache.clear();
+  _blameCache = newBlameLoadCache();
 }
 export async function assetDetail(assetId: string): Promise<AssetDetailRow | null> {
   if (_assetDetailCache.has(assetId)) return _assetDetailCache.get(assetId)!;
@@ -4716,6 +5288,114 @@ export async function assetDetail(assetId: string): Promise<AssetDetailRow | nul
   const row = a ? { ...a, status: String(a.status) } : null;
   _assetDetailCache.set(assetId, row);
   return row;
+}
+
+/**
+ * One maintenance window's span. `endedAt: null` = still open.
+ */
+export type MaintenanceSpan = { startedAt: Date; endedAt: Date | null };
+
+/**
+ * ─── Suppression at EVENT time, not tick time (business rule 80a) ───────────
+ *
+ * `assetCanTrigger` reads the live Asset row, which is the right question for
+ * a threshold rule: a reading is current by definition, so "is this device
+ * suppressed" and "was it suppressed when this was measured" are the same
+ * question. The EVENT tail is different, and the difference is a real leak.
+ *
+ * Events are a backlog. `runEventTail` reads everything since a cursor and the
+ * job runs once a MINUTE, so an event is routinely judged up to 60 seconds
+ * after it happened — against whatever the asset's status is by then. Any
+ * maintenance window shorter than that interval is therefore invisible to the
+ * gate: it opened and closed entirely between two ticks, and the engine sees
+ * an asset that is plainly `active`.
+ *
+ * That is not hypothetical. Business rule 80 holds an asset in maintenance for
+ * the duration of an agent upgrade so the `agent.disconnected` the operator
+ * asked for does not page anyone — and a 0.19.0 → 0.20.0 upgrade takes about
+ * TWO SECONDS end to end:
+ *
+ *   10:30:47  agent.upgrade_kickoff
+ *   10:30:47  maintenance.entered      ← hold taken, window opens
+ *   10:30:49  agent.disconnected       ← written INSIDE the window
+ *   10:30:49  agent.connected
+ *   10:30:49  maintenance.exited       ← released on reattach, window closes
+ *
+ * Every part of rule 80 worked. The window was open at the instant the event
+ * was written. But by the time the tail read that event the window had been
+ * shut for most of a minute, so the gate passed it and the operator was paged
+ * for exactly the work they had asked for — the thing rule 80 exists to stop.
+ * The faster the upgrade, the more reliably it leaks, which is why it survived
+ * the rule's own testing: a slow operation is still in its window when the
+ * tick lands.
+ *
+ * So the tail asks the question the event's own timestamp asks, against the
+ * window HISTORY (`AssetMaintenanceWindow` keeps `startedAt` / `endedAt` and is
+ * indexed `[assetId, startedAt]`). This is general, not an agent carve-out: a
+ * scheduled window that ends quickly, or an operator releasing maintenance
+ * shortly after an event, leaked the same way.
+ *
+ * **The boundary is strict — no grace after `endedAt`, deliberately.** It is
+ * tempting to extend the window by a few seconds to absorb the fact that
+ * `Event.timestamp` is `@default(now())` (stamped by the DATABASE at insert)
+ * while `detach()` writes its event without awaiting it, so a heavily loaded
+ * host could in principle land the insert just after the window closed. A
+ * grace would also swallow `agent.upgrade_failed`, which `failUpgrade` writes
+ * IMMEDIATELY after dropping the hold — on purpose, so a dead agent still
+ * alerts. Losing that is far worse than the rare race, which merely degrades
+ * to the behaviour we have today (one late alert), so the strict test wins.
+ *
+ * Covers the maintenance half of the gate only. `dependencySuppressed` is a
+ * live boolean on Asset with no history to consult, so a suppression that
+ * clears within the tick still leaks — a separate problem, and not one any
+ * table here can answer.
+ */
+export async function loadMaintenanceSpansForEvents(
+  assetIds: string[],
+  from: Date,
+  to: Date,
+): Promise<Map<string, MaintenanceSpan[]>> {
+  const byAsset = new Map<string, MaintenanceSpan[]>();
+  if (assetIds.length === 0) return byAsset;
+  const rows = await prisma.assetMaintenanceWindow.findMany({
+    where: {
+      assetId: { in: assetIds },
+      // Overlaps the batch's span: started no later than its newest event, and
+      // either still open or closed no earlier than its oldest. One query per
+      // tick, bounded by the assets IN THE BATCH rather than by the fleet —
+      // at 2000 assets a quiet minute still costs nothing.
+      startedAt: { lte: to },
+      OR: [{ endedAt: null }, { endedAt: { gte: from } }],
+    },
+    select: { assetId: true, startedAt: true, endedAt: true },
+  });
+  for (const r of rows) {
+    const list = byAsset.get(r.assetId);
+    if (list) list.push({ startedAt: r.startedAt, endedAt: r.endedAt });
+    else byAsset.set(r.assetId, [{ startedAt: r.startedAt, endedAt: r.endedAt }]);
+  }
+  return byAsset;
+}
+
+/**
+ * Was this asset inside a maintenance window at `at`? Pure, so the boundary
+ * cases are testable without a database — and the boundaries are the whole
+ * point of this function. Both ends are INCLUSIVE: an event stamped the same
+ * millisecond a window opened or closed belongs to it, which is the common
+ * case rather than an edge when a window lasts two seconds.
+ */
+export function suppressedAtEventTime(
+  spans: Map<string, MaintenanceSpan[]>,
+  assetId: string | null,
+  at: Date,
+): boolean {
+  if (!assetId) return false;
+  const list = spans.get(assetId);
+  if (!list || list.length === 0) return false;
+  const t = at.getTime();
+  return list.some(
+    (w) => w.startedAt.getTime() <= t && (w.endedAt === null || t <= w.endedAt.getTime()),
+  );
 }
 
 /** Warm the per-tick cache for a known id set in ONE query. A site-wide
@@ -4785,7 +5465,7 @@ export async function evaluateAllNotificationRules(): Promise<void> {
   // issues the query.
   const tickIndex = new TickAlertIndex();
 
-  for (const rule of rules) {
+  for (const rule of evaluationOrder(rules)) {
     try {
       if (rule.trigger.type === "composite") {
         await evaluateCompositeRule(rule, pendingSends, tickIndex);
@@ -5254,5 +5934,128 @@ async function previewCompositeRule(trigger: CompositeTrigger, input: PreviewRul
     ...(trigger.kind === "host" ? {} : { totalAssets: evaluated }),
     matches: matches.slice(0, 200),
     emailPreview,
+  };
+}
+
+/** How many of the draft's devices the in-app example's picker offers. */
+const MESSAGE_EXAMPLE_CANDIDATE_CAP = 200;
+
+export interface MessageExampleResult {
+  /** The devices the example can be about — the draft's monitored scope, capped. */
+  candidates: Array<{ id: string; hostname: string | null }>;
+  /** More devices matched than `candidates` carries. */
+  truncated: boolean;
+  /** The device the example is about; null for a host trigger or an empty scope. */
+  asset: { id: string; hostname: string | null } | null;
+  /** The in-app alert text, rendered exactly the way a fire renders it. */
+  message: string;
+  severity: string;
+  /** Token (no braces) → what it renders to for this device. Deferred tokens
+   *  ({ack}, {chart.*} …) are absent: they are filled at delivery time. */
+  values: Record<string, string>;
+  /** The draft has no readings for this device right now — {value} is "n/a". */
+  noReading: boolean;
+}
+
+/**
+ * The wizard's In-app Alert example: the draft's message rendered against ONE
+ * real device from its own scope — `assetId` when it is in scope, otherwise a
+ * random pick — through the same context builder and `renderMessage` a fire
+ * uses, so the example cannot word itself differently from the real alert.
+ *
+ * Read-only, like previewRule. The value is the device's CURRENT reading (the
+ * first one that meets the trigger, else the first at all); an event/change
+ * trigger has no reading to take, so its `{value}` is a stand-in that says so.
+ */
+export async function previewAlertMessage(input: PreviewRuleInput, assetId?: string | null): Promise<MessageExampleResult> {
+  const trigger = input.trigger;
+  const isHost = !!trigger && (trigger.type === "host_metric" || (trigger.type === "composite" && trigger.kind === "host"));
+  const scopeAssets = isHost ? [] : await loadScopeAssets(input.scope, { monitoredOnly: true });
+  const candidates = scopeAssets
+    .map((a) => ({ id: a.id, hostname: a.hostname }))
+    .sort((a, b) => (a.hostname ?? a.id).localeCompare(b.hostname ?? b.id));
+  const picked = isHost
+    ? null
+    : scopeAssets.find((a) => a.id === assetId) ?? (scopeAssets.length ? scopeAssets[Math.floor(Math.random() * scopeAssets.length)] : null);
+
+  // The draft's trigger, or a stand-in state trigger for a draft that has none
+  // yet — readingContextParts / renderMessage need SOME trigger to word from.
+  const draftTrigger = (trigger ?? { type: "asset_state", field: "monitorStatus", operator: "==", value: "down" }) as DbRule["trigger"];
+  const draft = draftRuleForPreview(input, draftTrigger);
+
+  let reading: Reading = {
+    assetId: picked?.id ?? "",
+    hostname: picked?.hostname ?? (isHost ? "Polaris" : null),
+    tags: [], dimKey: "", dimLabel: "", value: null,
+  };
+  let fireInfo: CompositeFireInfo | undefined;
+  let noReading = false;
+  if (trigger && trigger.type === "host_metric") {
+    const r = await resolveHostMetricReading(trigger);
+    if (r) reading = r; else noReading = true;
+  } else if (picked && trigger && (trigger.type === "asset_metric" || trigger.type === "asset_state")) {
+    const rs = trigger.type === "asset_metric"
+      ? await resolveAssetMetricReadings(trigger, [picked])
+      : await resolveAssetStateReadings(trigger, [picked]);
+    const r = rs.find((x) => readingMeets(trigger, x.value)) ?? rs[0];
+    if (r) reading = r; else noReading = true;
+  } else if (trigger && trigger.type === "composite") {
+    const assets = trigger.kind === "host" ? [HOST_PSEUDO_ASSET] : picked ? [picked] : [];
+    if (assets.length) {
+      const leaves = collectLeafRefs(trigger);
+      const truths = await resolveLeafTruths(leaves, assets);
+      const outcome = compositeOutcomeForAsset(trigger, assets[0].id, leaves, truths);
+      if (outcome.hasAnyReading) fireInfo = compositeFireInfo(outcome); else noReading = true;
+    }
+  }
+
+  const severity = (trigger && (trigger.type === "asset_metric" || trigger.type === "host_metric") && input.severityBands && input.severityBands.length && typeof reading.value === "number")
+    ? severityForValue(trigger.operator, trigger.threshold, input.severity as Severity, input.severityBands as SeverityBand[], reading.value) ?? input.severity
+    : input.severity;
+
+  const detail = picked
+    ? await prisma.asset.findUnique({ where: { id: picked.id }, select: ASSET_DETAIL_SELECT })
+    : null;
+  const isEvent = !!trigger && (trigger.type === "event" || trigger.type === "change");
+  const eventStandIn = "(the source event’s own message)";
+  const eventAction = trigger && trigger.type === "event" ? trigger.actionPattern ?? ""
+    : trigger && trigger.type === "change" ? trigger.changeType ?? "" : "";
+  const parts: TemplateContextParts = isEvent
+    ? {
+      asset: picked?.hostname ?? "",
+      metric: eventAction,
+      value: eventStandIn,
+      threshold: "",
+      dimension: "",
+      severity,
+      time: new Date(),
+      link: notificationsPageUrl(),
+      ruleName: draft.name,
+      ruleDescription: draft.description,
+      event: { action: eventAction || null, message: eventStandIn, resourceName: picked?.hostname ?? null, resourceType: picked ? "asset" : null },
+      triggerSummary: triggerSummary({ trigger: trigger as never, eventResource: picked?.hostname ?? null }),
+    }
+    : { ...readingContextParts(draft, reading, new Date(), fireInfo), severity };
+  const ctx = buildTemplateContext({
+    ...parts,
+    assetDetail: detail ? { ...detail, status: String(detail.status) } : null,
+  });
+  let message: string;
+  if (isEvent) {
+    const tmpl = draft.messageTemplate;
+    message = tmpl && tmpl.trim() ? renderNotificationTemplate(tmpl, ctx) : `${draft.name}: ${eventStandIn}`;
+  } else {
+    message = renderMessage(draft, reading, ctx);
+  }
+  ctx["message"] = message;
+
+  return {
+    candidates: candidates.slice(0, MESSAGE_EXAMPLE_CANDIDATE_CAP),
+    truncated: candidates.length > MESSAGE_EXAMPLE_CANDIDATE_CAP,
+    asset: picked ? { id: picked.id, hostname: picked.hostname } : null,
+    message,
+    severity,
+    values: ctx,
+    noReading,
   };
 }

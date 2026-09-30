@@ -23,7 +23,7 @@ alert.
 | Gate | Grants |
 |---|---|
 | `automationScripts:read` | see the tab and run history |
-| `automationScripts:fullwrite` | create, edit, delete, test-run, **and attach a script action to an automation** |
+| `automationScripts:write` | create, edit, delete, test-run, **and attach a script action to an automation** |
 
 ---
 
@@ -178,7 +178,7 @@ script's, or the request is refused before a run row exists.
 
 ## Testing
 
-Each script has a **Test** button (`automationScripts:fullwrite`) that starts a
+Each script has a **Test** button (`automationScripts:write`) that starts a
 **server-side** run and polls for its exit code and output.
 
 Script and `api_call` actions are **never offered** in an automation's step-6

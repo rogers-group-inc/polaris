@@ -88,14 +88,14 @@ maintenanceSchedulesRouter.get("/server-time", requirePermission("maintenanceMan
 });
 
 // Static path BEFORE any "/:id" so it isn't captured as an id.
-maintenanceSchedulesRouter.post("/preview", requirePermission("maintenanceManagement", "fullwrite"), async (req, res, next) => {
+maintenanceSchedulesRouter.post("/preview", requirePermission("maintenanceManagement", "write"), async (req, res, next) => {
   try {
     const input = previewInputSchema.parse(req.body);
     res.json(await previewTargets(input));
   } catch (err) { next(err); }
 });
 
-maintenanceSchedulesRouter.post("/", requirePermission("maintenanceManagement", "fullwrite"), async (req, res, next) => {
+maintenanceSchedulesRouter.post("/", requirePermission("maintenanceManagement", "write"), async (req, res, next) => {
   try {
     const input = scheduleInputSchema.parse(req.body);
     const schedule = await createSchedule(input, requestActor(req) ?? undefined);
@@ -103,7 +103,7 @@ maintenanceSchedulesRouter.post("/", requirePermission("maintenanceManagement", 
   } catch (err) { next(err); }
 });
 
-maintenanceSchedulesRouter.put("/:id", requirePermission("maintenanceManagement", "fullwrite"), async (req, res, next) => {
+maintenanceSchedulesRouter.put("/:id", requirePermission("maintenanceManagement", "write"), async (req, res, next) => {
   try {
     const input = scheduleInputSchema.parse(req.body);
     const schedule = await updateSchedule(req.params.id as string, input, requestActor(req) ?? undefined);
@@ -115,7 +115,7 @@ maintenanceSchedulesRouter.put("/:id", requirePermission("maintenanceManagement"
 // BEFORE "/:id" is irrelevant (distinct depth), but the fullwrite gate is the
 // same one the schedule builder carries: this edits the schedule, it just
 // reaches it from the device.
-maintenanceSchedulesRouter.delete("/:id/assets/:assetId", requirePermission("maintenanceManagement", "fullwrite"), async (req, res, next) => {
+maintenanceSchedulesRouter.delete("/:id/assets/:assetId", requirePermission("maintenanceManagement", "write"), async (req, res, next) => {
   try {
     const result = await removeAssetFromSchedule(
       req.params.id as string,
@@ -126,7 +126,7 @@ maintenanceSchedulesRouter.delete("/:id/assets/:assetId", requirePermission("mai
   } catch (err) { next(err); }
 });
 
-maintenanceSchedulesRouter.delete("/:id", requirePermission("maintenanceManagement", "fullwrite"), async (req, res, next) => {
+maintenanceSchedulesRouter.delete("/:id", requirePermission("maintenanceManagement", "write"), async (req, res, next) => {
   try {
     await deleteSchedule(req.params.id as string, requestActor(req) ?? undefined);
     res.status(204).end();

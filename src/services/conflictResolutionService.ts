@@ -40,6 +40,18 @@
  *         resolution verb is `POST /conflicts/:id/reassign-ip`, which gives one
  *         member a new address. Reject = dismiss (the same member set won't
  *         re-raise). `proposedAssetFields.members[]` carries every claimant.
+ *       - "serial-two-controllers" — one managed device (FortiSwitch /
+ *         FortiAP) is on the managed roster of TWO controller FortiGates at
+ *         once, so whichever integration ran discovery last owns its record
+ *         (raised by duplicateSerialConflictService's sweep; business rule 83).
+ *         REPORT-ONLY: accept is refused and there is no resolution verb — the
+ *         fix is on the gates. Reject dismisses, keyed on the claimant set.
+ *         `proposedAssetFields.claimants[]` carries every claiming gate.
+ *       - "duplicate-serial"       — two (or more) Asset rows carry the same
+ *         serial number, i.e. one device recorded twice (same sweep, same
+ *         rule). Accept is refused; the verb is `POST /conflicts/:id/merge`,
+ *         which absorbs the duplicates through the shared merge engine.
+ *         `proposedAssetFields.members[]` carries every record.
  *       - "ip-override"            — a discovery write proposed an IP that
  *         differs from the asset's operator IP pin (Asset.ipOverride; raised
  *         by ipOverrideService). Accept adopts the discovered IP and releases
@@ -79,6 +91,12 @@ import {
   DUPLICATE_IP_COLLISION_REASON,
   logDuplicateIpDismissal,
 } from "./duplicateIpConflictService.js";
+import {
+  SERIAL_CLAIM_COLLISION_REASON,
+  DUPLICATE_SERIAL_COLLISION_REASON,
+  logSerialClaimDismissal,
+  logDuplicateSerialDismissal,
+} from "./duplicateSerialConflictService.js";
 import {
   acceptChassisReplacement,
   rejectChassisReplacement,
@@ -331,6 +349,26 @@ async function acceptAssetConflict(
     throw new AppError(
       400,
       "A duplicate IP conflict is resolved by assigning a new address to one of the assets, or dismissed with Reject",
+    );
+  }
+  // Two gates claiming one device (business rule 83) is REPORT-ONLY: there is
+  // no proposed record to adopt, and Polaris deliberately does not pick a
+  // winner — whether this is a completed move or a stale roster entry is a
+  // fact about the FortiGates' configuration, and the fix lives there. Reject
+  // dismisses the card; the sweep closes it on its own once one gate stops
+  // reporting the device.
+  if (proposed.collisionReason === SERIAL_CLAIM_COLLISION_REASON) {
+    throw new AppError(
+      400,
+      "A contested serial is resolved on the FortiGates — remove the device from the roster of whichever gate no longer owns it. Dismiss the card with Reject.",
+    );
+  }
+  // Two records of one device: nothing to adopt either, but there IS a verb —
+  // POST /conflicts/:id/merge absorbs the duplicates into one asset.
+  if (proposed.collisionReason === DUPLICATE_SERIAL_COLLISION_REASON) {
+    throw new AppError(
+      400,
+      "A duplicate serial conflict is resolved by merging the records into one asset, or dismissed with Reject",
     );
   }
   if (!conflict.proposedDeviceId) {
@@ -655,6 +693,20 @@ async function rejectAssetConflict(conflict: any, actor?: string) {
   // row is the dedup marker — the sweep re-raises only if the member set moves.
   if (proposedForKind.collisionReason === DUPLICATE_IP_COLLISION_REASON) {
     logDuplicateIpDismissal(conflict, actor);
+    return;
+  }
+  // Contested serial, dismissed: both gates keep the device on their roster
+  // and discovery carries on as before (report-only — business rule 83). The
+  // resolved row is the dedup marker, keyed on the CLAIMANT set, so the same
+  // two gates stay quiet while a third one arriving raises anew.
+  if (proposedForKind.collisionReason === SERIAL_CLAIM_COLLISION_REASON) {
+    logSerialClaimDismissal(conflict, actor);
+    return;
+  }
+  // Duplicate records, dismissed: the operator says these really are two
+  // devices that report one serial. Same dedup model, keyed on the member set.
+  if (proposedForKind.collisionReason === DUPLICATE_SERIAL_COLLISION_REASON) {
+    logDuplicateSerialDismissal(conflict, actor);
     return;
   }
   if (!conflict.proposedDeviceId) {

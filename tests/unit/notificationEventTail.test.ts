@@ -25,6 +25,7 @@ const db = {
   created: [] as any[],
   updateManyCalls: [] as any[],
   settings: new Map<string, any>(),
+  maintenanceWindows: [] as any[],
 };
 
 vi.mock("../../src/db.js", () => ({
@@ -60,6 +61,15 @@ vi.mock("../../src/db.js", () => ({
       }),
     },
     notificationRuleState: { findMany: vi.fn(async () => []), deleteMany: vi.fn(async () => ({ count: 0 })) },
+    // Maintenance-window history for the tail's event-time gate (business rule
+    // 82a). Tests that care push spans into db.maintenanceWindows; the rest
+    // get none, i.e. an asset that was never in maintenance.
+    assetMaintenanceWindow: {
+      findMany: vi.fn(async (args: any) => {
+        const ids = args?.where?.assetId?.in;
+        return ids ? db.maintenanceWindows.filter((w: any) => ids.includes(w.assetId)) : [];
+      }),
+    },
   },
 }));
 
@@ -116,6 +126,7 @@ beforeEach(() => {
   db.recentNotifs.length = 0;
   db.created.length = 0;
   db.updateManyCalls.length = 0;
+  db.maintenanceWindows.length = 0;
   db.settings.clear();
 });
 

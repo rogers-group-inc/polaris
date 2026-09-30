@@ -1,7 +1,9 @@
 /**
  * src/services/descriptionSyncService.ts — description sync for the
- * FortiManager / standalone FortiGate integrations, gated by the per-integration
- * `syncDescriptions` toggle (default off).
+ * FortiManager / standalone FortiGate integrations, gated per device class by
+ * the integration's `syncFortigateDescriptions` / `syncSwitchDescriptions` /
+ * `syncApDescriptions` toggles (default off; see utils/descriptionSyncFlags.ts
+ * for the legacy `syncDescriptions` fallback).
  *
  * Policy (operator-specified 2026-07): POLARIS-PRIMARY.
  *   - Polaris has a non-empty value → it wins, always: pushed to the device
@@ -69,6 +71,7 @@ import {
   type Transport,
 } from "./reservationPushService.js";
 import { proxyQuery as fmgQuery } from "./fortimanagerService.js";
+import { descriptionSyncFlags, type DescriptionSyncFlags } from "../utils/descriptionSyncFlags.js";
 
 // ─── Value normalization + decision ─────────────────────────────────────────
 
@@ -408,10 +411,6 @@ interface EligibleContext {
   deviceName: string;
 }
 
-function syncEnabled(config: unknown): boolean {
-  return (config as { syncDescriptions?: boolean } | null)?.syncDescriptions === true;
-}
-
 // ─── FMG central-management mirror ──────────────────────────────────────────
 //
 // FortiManager ADOMs manage FortiAPs (AP Manager) and FortiSwitches
@@ -540,8 +539,9 @@ async function logFmgMirrorEvent(
 
 /**
  * Resolve whether description sync applies to this asset and, if so, which
- * FortiGate the transport must land on. Null = not eligible (toggle off,
- * non-Fortinet asset, HA-secondary member, or missing controller linkage).
+ * FortiGate the transport must land on. Null = not eligible (this device
+ * class's toggle off, non-Fortinet asset, HA-secondary member, or missing
+ * controller linkage).
  */
 function resolveEligibility(asset: {
   fortinetTopology: unknown;
@@ -551,10 +551,10 @@ function resolveEligibility(asset: {
   const integration = asset.discoveredByIntegration;
   if (!integration) return null;
   if (integration.type !== "fortimanager" && integration.type !== "fortigate") return null;
-  if (!syncEnabled(integration.config)) return null;
   const topology = (asset.fortinetTopology ?? {}) as TopologyBlob;
   const role = topology.role;
   if (role !== "fortigate" && role !== "fortiswitch" && role !== "fortiap") return null;
+  if (!descriptionSyncFlags(integration.config)[role]) return null;
   // HA config replicates from the primary; never push at a standby member.
   if (role === "fortigate" && topology.haRole === "secondary") return null;
   const deviceName =
@@ -863,7 +863,8 @@ export async function runDescriptionSyncForIntegration(
   integration: { id: string; type: string; config: unknown; name: string },
 ): Promise<DescriptionSyncSummary> {
   const summary: DescriptionSyncSummary = { devices: 0, pushed: 0, adopted: 0, failed: 0, skippedDevices: 0, fmgMirrored: 0, fmgMirrorFailed: 0 };
-  if (!syncEnabled(integration.config)) return summary;
+  const flags = descriptionSyncFlags(integration.config);
+  if (!flags.fortigate && !flags.fortiswitch && !flags.fortiap) return summary;
   const pushedThisRun: PushedThisRun = { device: new Map(), port: new Map() };
 
   const assets: ReconcileAsset[] = await prisma.asset.findMany({
@@ -881,7 +882,9 @@ export async function runDescriptionSyncForIntegration(
     },
   });
 
-  // Group assets under the FortiGate whose transport reaches them.
+  // Group assets under the FortiGate whose transport reaches them. A device
+  // class whose toggle is off is left out entirely — no read, no push, no
+  // adopt, no FMG mirror.
   const groups = new Map<string, { firewall?: ReconcileAsset; switches: ReconcileAsset[]; aps: ReconcileAsset[] }>();
   const groupFor = (deviceName: string) => {
     let g = groups.get(deviceName);
@@ -894,13 +897,16 @@ export async function runDescriptionSyncForIntegration(
   for (const a of assets) {
     const topo = (a.fortinetTopology ?? {}) as TopologyBlob;
     if (topo.role === "fortigate") {
+      if (!flags.fortigate) continue;
       if (topo.haRole === "secondary") continue;
       const name = (topo.deviceName || a.hostname || "").trim();
       if (name) groupFor(name).firewall = a;
     } else if (topo.role === "fortiswitch") {
+      if (!flags.fortiswitch) continue;
       const ctrl = (topo.controllerFortigate || "").trim();
       if (ctrl) groupFor(ctrl).switches.push(a);
     } else if (topo.role === "fortiap") {
+      if (!flags.fortiap) continue;
       const ctrl = (topo.controllerFortigate || "").trim();
       if (ctrl) groupFor(ctrl).aps.push(a);
     }
@@ -954,7 +960,7 @@ export async function runDescriptionSyncForIntegration(
   // transiently, and this run's own pushes (via pushedThisRun — the assets
   // snapshot's sync-state blobs predate them).
   if (integration.type === "fortimanager") {
-    await mirrorCentralDbDrift(integration, assets, overridesByAsset, pushedThisRun, summary);
+    await mirrorCentralDbDrift(integration, flags, assets, overridesByAsset, pushedThisRun, summary);
   }
   return summary;
 }
@@ -1230,13 +1236,17 @@ async function reconcileInterfaceOverride(
  */
 async function mirrorCentralDbDrift(
   integration: { id: string; type: string; config: unknown; name: string },
+  syncFlags: DescriptionSyncFlags,
   assets: ReconcileAsset[],
   overridesByAsset: Map<string, ReconcileOverride[]>,
   pushedThisRun: PushedThisRun,
   summary: DescriptionSyncSummary,
 ): Promise<void> {
   try {
-    const flags = centralFlags(integration.config);
+    // A class is mirrored only when it is centrally managed AND its own
+    // description-sync toggle is on.
+    const central = centralFlags(integration.config);
+    const flags = { wtp: central.wtp && syncFlags.fortiap, fsw: central.fsw && syncFlags.fortiswitch };
     if (!flags.wtp && !flags.fsw) return;
     const adom = fmgAdom(integration.config);
 

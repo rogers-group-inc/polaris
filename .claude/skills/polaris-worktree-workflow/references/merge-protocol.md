@@ -53,12 +53,15 @@ For each selected worktree:
    by keeping both entries.
    **One conflict is foreseeable and is resolved before merging, not reported**: two open
    worktrees that each added a business rule both took "the next free number". The branch
-   merging second renumbers its rule to main's current next-free number (`(N is the next free
-   number.)` in `polaris-business-rules/SKILL.md`, plus every `rule N` citation in its code,
-   tests and skill entries), and **the rule reference files are never renamed** — main keeps
+   merging second renumbers its rule to the number `npm run rules:next` reports AFTER the first
+   merge (the script scans every branch, so it also shows which numbers other open worktrees
+   still hold), plus every `rule N` citation in its code, tests, skill entries and its
+   `narrative-N.md` filename — and **the range reference files are never renamed** — main keeps
    `invariants-30-43.md` / `narrative-36-43.md` whatever range they now hold, because other
    skills and code link to those paths. Do it in the worktree (re-enter it, WORKLOCK, `git merge
-   main`, fix, commit), then merge to main. 2026-09-08: two branches both claimed rule 44.
+   main`, fix, commit), then merge to main. 2026-09-08: two branches both claimed rule 44;
+   2026-09-21: two claimed 77. The next-free number is no longer written in `SKILL.md` for
+   exactly this reason — a stated number is stale the moment another branch merges.
 4. Continue with the next selection only after the previous merge is clean.
 
 ## 4. Review what landed against the skills
@@ -111,6 +114,15 @@ After the last merge and the skill review: `npm run check:docs`, `npm run typech
 (`npx vitest run tests/unit --no-file-parallelism`) on `main`. Report the results. Do not push
 unless this merge is stage 5 of `/polaris-deploy`, which continues into `push-protocol.md`;
 otherwise the user says "push" separately.
+
+**A clean merge is not a working browser.** `public/` has no build step and no typecheck, and the
+browser scripts share one global scope, so two classes of break merge with no conflict marker and a
+green unit suite (both hit on 2026-09-25, merging 67 commits of `main` into a feature branch):
+a POSITIONAL array both sides appended to (`openViewModal`'s `Promise.all` in `assets.js` is read
+back as `wave[N]` — re-derive every index after resolving a hunk there), and a helper one side
+removed while the other still calls it (`tests/unit/browserPrivateCallsDefined.test.ts` now catches
+the `_name(` case statically). When the merged range touched `public/js`, open the affected page
+headlessly and read its `pageerror`s before calling the merge verified.
 
 ## The DEVLOCK variant (the chat's own worktree)
 

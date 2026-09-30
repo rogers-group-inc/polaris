@@ -10,7 +10,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 
 - **SshHostKey** — trust-on-first-use pins for SSH **server** host keys, one row per dialed `(host, port)` — no Asset FK, since a host is often onboarded before it exists as an Asset. A changed key **refuses** the connection. Gated per credential by `SshConfig.verifyHostKey`. See business rule 21.
 
-- **Credential** — named SNMP / WinRM / SSH / REST API / HTTP credentials for monitoring probes. **`createdBy` is the ownership dimension of the `credentials` function key** (business rule 43): stamped once at create, never rewritten by an edit (so saving a row can't adopt it), and `null` means UNOWNED — every row predating the column, deliberately not backfilled, reachable only at `fullwrite`. The `http` type carries **authentication only** (`authMode` ∈ bearer/basic/digest) and deliberately has no "none" mode — see business rule 33. Secret fields inside `config` are **encrypted at rest** by the Prisma extension in `src/db.ts` (business rule 20b) and masked on read at the API layer.
+- **Credential** — named SNMP / WinRM / SSH / REST API / HTTP credentials for monitoring probes. **`createdBy` is the ownership dimension of the `credentials` function key** (business rule 43): stamped once at create, never rewritten by an edit (so saving a row can't adopt it), and `null` means UNOWNED — every row predating the column, deliberately not backfilled, reachable only at `fullwrite`. The `http` type carries **authentication only** (`authMode` ∈ bearer/basic/digest/form) and deliberately has no "none" mode — see business rule 33. `form` (2026-09) is a **device admin login** — a switch or AP's own web-UI username + password, consumed only by the firmware repository (business rule 87); an HTTP-check widget refuses it and the probe never turns it into a header. Secret fields inside `config` are **encrypted at rest** by the Prisma extension in `src/db.ts` (business rule 20b) and masked on read at the API layer.
 
 - **MibFile** — admin-uploaded SNMP MIBs used by `oidRegistry` + `vendorTelemetryProfiles`.
 
@@ -20,8 +20,10 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 
 - **DeviceIcon** — operator-uploaded topology icon blobs (scope + key), served to the Device Map / topology renderer.
 
+- **FirmwareImage** / **FirmwareCredentialBinding** / **FirmwareUpgradeRun** — the firmware repository for switches and access points (Server Settings → Repository; business rule 87). An **image** is one uploaded `.out`, bytes under `FIRMWARE_DIR` (`data/firmware`, never the public uploads dir), filed under a manufacturer › device type (`switch` / `access_point` only, CHECK) › model node; its identity — `platform` (the header's serial-prefix token), version parts, `build` — is parsed from the image header, and the MODEL NODE is only where it is filed: an asset is matched on `platform === platformFromSerial(serial)`, never on the model string. **A node holds at most one `primary` and one `backup`** (two partial unique indexes); a new upload becomes primary, the displaced primary becomes backup, the displaced backup is removed by the rotation. Only the primary is offered unasked. A **binding** names which device-admin login (an `http` Credential in authMode `form`) signs in at manufacturer, device-type or model scope — one row per scope (three partial uniques), `model` requires `assetType` (CHECK), FK `SetNull` so a deleted credential's binding is SKIPPED by resolution rather than shadowing a wider one. A **run** is one flash: identity snapshotted so history survives rotation; at most one queued/running per asset (partial unique); `verifiedVersion` is what the device reported after reboot and is **never written onto `Asset.osVersion`** — projection owns that, via the scoped rediscover the run requests.
+
 - **UserPasskey** — one registered WebAuthn credential on a local account. The row holds only what verifying a later assertion needs (credential id, COSE public key, signature counter, transports) plus what an operator deciding whether to rely on it needs to see (name, last used, whether it syncs through a credential manager). It is a credential, not a device: the same security key registered by two people is two rows. Whether a passkey may sign in on its own, act as a second factor, both, or nothing is the install-wide `passkeyConfig` Setting, never a property of the row — see `polaris-api-rbac` for the endpoints and business rules 63–64.
-- **User** / **Role** — dynamic-role RBAC; `User.roleId` → `Role`; permissions matrix on Role over 32 function keys. `User.notificationPreference` (`email` | `push` | `any`, default `email`) is the account's own answer to how it wants to be alerted — stored here rather than per browser so a sign-in on a new device knows to enroll or un-enroll itself; see business rule 39. `User.timezone` (an IANA name or the literal `auto`, default `auto`) is the zone this account reads times in, and `User.detectedTimezone` (nullable) is the zone its BROWSER last reported — client-posted on boot, never operator-set and never offered as a choice. The pair exists because an alert EMAIL has no browser to ask: `auto` resolves explicit-choice → detected → server zone, so an operator who never opens the picker still gets mail on their own wall clock instead of a UTC-clocked host's. Both are free-form TEXT, not an enum — the tz database moves on its own schedule and an unresolvable name degrades to `auto` on READ (`normalizeUserTimezone`) rather than failing a render or a send.
+- **User** / **Role** — dynamic-role RBAC; `User.roleId` → `Role`; permissions matrix on Role over 34 function keys. `User.notificationPreference` (`email` | `push` | `any`, default `email`) is the account's own answer to how it wants to be alerted — stored here rather than per browser so a sign-in on a new device knows to enroll or un-enroll itself; see business rule 39. `User.timezone` (an IANA name or the literal `auto`, default `auto`) is the zone this account reads times in, and `User.detectedTimezone` (nullable) is the zone its BROWSER last reported — client-posted on boot, never operator-set and never offered as a choice. The pair exists because an alert EMAIL has no browser to ask: `auto` resolves explicit-choice → detected → server zone, so an operator who never opens the picker still gets mail on their own wall clock instead of a UTC-clocked host's. Both are free-form TEXT, not an enum — the tz database moves on its own schedule and an unresolvable name degrades to `auto` on READ (`normalizeUserTimezone`) rather than failing a render or a send.
 
 - **GroupMapping** — IdP group → role + tags map for OIDC / LDAP / SAML SSO login (`provider` + `groupKey`; nullable `roleId` for tags-only mappings).
 
@@ -402,7 +404,7 @@ ManufacturerProfileMetric       -- One row per System-tab metric the profile own
   defaultLabel     String?         -- Label for the sample row a scalar-form metric synthesizes: the `StorageSample.mountPath` ("flash" on a FortiSwitch — the key pins and thresholds attach to) or the hardware-sensor `sensorName` ("System" for a FortiAP's single reading). Null → the collector's default. Surfaced on the storage / temperature rows only.
   defaultParsePattern  String?     -- `model` metric ONLY: a regex with one capture group, applied to the vendor scalar's raw string.
   defaultParseTemplate String?     -- `model` metric ONLY: a `$1` template turning that capture into `Asset.model` — `"S548DF-v7.2.5-…"` → `"FortiSwitch S548DF"`. Pattern + template together replace the JS parse FUNCTION the hardcoded FortiSwitch profile carried; `src/utils/modelParse.ts` owns the evaluation and `validateModelParse` is the write-time gate (including the "don't re-prefix a token that already carries the prefix" rule read off the template). The service rejects parse fields on any metric other than `model`.
-  defaultTransform String?         -- For `scalar`/`table`, a unary `TransformKind` (`celsius_to_fahrenheit` / `bytes_to_mb` / `ratio_to_percent` / ...); for `double_scalar`, a binary `CombinerKind` (`a_over_b_as_percent` / `a_over_a_plus_b_as_percent` / `b_minus_a_over_b_as_percent` / `a_minus_b` / `a_plus_b` / `a_over_b_ratio`). Null on `table`, optional on the other two. Validated at write time against the matching registry in `src/utils/symbolTransforms.ts` based on `defaultType` — a unary transform on a `double_scalar` row (or a combiner on a `scalar` row) is a 400 at the service layer.
+  defaultTransform String?         -- For `scalar`, a unary `TransformKind` restricted per metric key to `METRIC_ROW_TRANSFORMS` (today only `tenths_to_units` on `temperature`, applied by the hardware-sensor collector; there is no Celsius↔Fahrenheit transform — removed 2026-09-23); for `double_scalar`, a binary `CombinerKind` (`a_over_b_as_percent` / `a_over_a_plus_b_as_percent` / `b_minus_a_over_b_as_percent` / `a_minus_b` / `a_plus_b` / `a_over_b_ratio`). Null on `table`, optional on the other two. Validated at write time against the matching registry in `src/utils/symbolTransforms.ts` based on `defaultType` — a unary transform on a `double_scalar` row (or a combiner on a `scalar` row) is a 400 at the service layer.
   composition     Json?            -- DEPRECATED. Was the memory-only multi-OID blob (`{ shape, usedSymbol?, totalSymbol?, freeSymbol?, pctSymbol? }`). Superseded by the generic `defaultType="double_scalar" + defaultSymbolB + defaultTransform=<CombinerKind>` shape that any metric can now use. Kept on the schema for one release as a rollback safety net for the data migration that promoted existing rows; the `20260531000000_manufacturer_profile_double_scalar` SQL migration walks every row with a non-null composition and rewrites it into the new columns (`percent → scalar`; `bytes_used_total → double_scalar + a_over_b_as_percent`; `bytes_used_free → double_scalar + a_over_a_plus_b_as_percent`). New writes MUST NOT populate this column; new reads ignore it. To be dropped in a follow-up migration once production has settled.
   @@unique([profileId, metricKey])
 
@@ -420,7 +422,7 @@ ManufacturerProfileMetricOverride -- A SCOPED row inside one metric row: a devic
   mibId          UUID? FK → MibFile (set null on delete)
   mibStdKey      String?           -- Per-override standard MIB hint; same mutual-exclusion contract as `ManufacturerProfileMetric.defaultMibStdKey`.
   type           String            -- "scalar" | "double_scalar" | "table"
-  transform      String?           -- TransformKind on scalar / table; CombinerKind on double_scalar; null on table.
+  transform      String?           -- TransformKind on scalar (same METRIC_ROW_TRANSFORMS restriction as the row); CombinerKind on double_scalar; null on table.
   order          Int               -- evaluation order (lower wins)
   composition    Json?             -- DEPRECATED. Same rationale + removal plan as `ManufacturerProfileMetric.composition`.
   -- Resolution is MOST-SPECIFIC-FIRST: type+model → model → type default → the metric row's own defaults, with `order` breaking ties inside a tier (lower wins). A stated model outranks an inferred type on purpose, so a mis-typed asset whose model names the family still routes. The pre-2026-09 shape (modelPattern only) is unchanged and still legal; the device-type tier replaces keying a device FAMILY off a model regex ("FortiSwitch"), which matched an empty model only through the Fortinet-specific `fortinetClassHint`. FOUR metric keys are actually read by the runtime — `cpu` / `memory` / `temperature` / `storage` (the last since 2026-08; `interfaces` / `lldp` / `wirelessStations` are table walks with no symbol to swap and stay descriptive on the profile page). Seeded entries cover the Fortinet sub-families: `FortiSwitch → fsSysCpuUsage / fsSysMemUsage / fsSysDiskUsage`, `FortiAP → fapCpuUsage / fapMemoryUsage / fapTemperature`. The FortiSwitch memory override is stamped as `type="double_scalar", symbol="fsSysMemUsage", symbolB="fsSysMemCapacity", transform="a_over_b_as_percent"` so the editable profile matches the hardcoded baseline's bytes-form semantics. Existing installs receive the promotion via the `backfillManufacturerProfileMemoryComposition` startup job (kept its legacy name for marker-key back-compat).
@@ -459,6 +461,62 @@ DeviceIcon                      -- Operator-uploaded topology node icons; resolv
   uploadedBy    String?
   uploadedAt    DateTime
   @@unique([scope, key])
+
+FirmwareImage                   -- One uploaded switch / AP firmware image (business rule 87). Bytes live on disk under FIRMWARE_DIR as "<id>.out".
+  id            UUID PK
+  manufacturer  String          -- alias-canonicalised; the spelling Asset.manufacturer carries
+  assetType     String          -- "switch" | "access_point" (CHECK firmware_images_asset_type_check)
+  model         String          -- tree placement ONLY (an FMG-discovered switch may carry the literal "FortiSwitch")
+  platform      String?         -- image-header token, e.g. S108FF / FP231K = the SERIAL PREFIX it fits; null = filename-only parse, never offered
+  versionMajor  Int?
+  versionMinor  Int?
+  versionPatch  Int?
+  build         Int?
+  versionLabel  String          -- "7.6.8 build1164" (formatFirmwareVersion)
+  parsedFrom    String          -- "header" | "filename"
+  role          String          -- "primary" | "backup" (CHECK also allows the transient "swapping" the make-primary transaction steps through)
+  filename      String
+  sizeBytes     Int             -- ≤ 104857600 (the FortiSwitch upload endpoint's ceiling; multer enforces it)
+  sha256        String @unique  -- the same bytes filed twice is a 409 naming where they live
+  storagePath   String          -- relative to FIRMWARE_DIR
+  notes         String?
+  uploadedBy    String?
+  uploadedAt    DateTime
+  @@index([manufacturer, assetType, platform])   -- the per-asset candidate lookup
+  @@index([manufacturer, assetType, model])      -- the tree
+  -- SQL only: UNIQUE (manufacturer, assetType, model) WHERE role='primary', and the same WHERE role='backup' — the two-image cap.
+
+FirmwareCredentialBinding       -- Which device-admin login (an `http` Credential, authMode "form") an upgrade signs in with, at one scope
+  id            UUID PK
+  manufacturer  String
+  assetType     String?         -- null = manufacturer-wide
+  model         String?         -- non-null only with assetType (CHECK firmware_credential_bindings_scope_check)
+  credentialId  UUID? FK → Credential (SetNull) -- null = the credential was deleted; resolution SKIPS the row
+  createdBy     String?
+  createdAt, updatedAt
+  -- SQL only: three partial unique indexes, one per scope shape (manufacturer / type / model). Resolution: model › type › manufacturer, most specific LIVE row wins.
+
+FirmwareUpgradeRun              -- One flash of one asset. Identity snapshotted so history survives the image being rotated out.
+  id              UUID PK
+  assetId         UUID FK → Asset (cascade)
+  imageId         UUID? FK → FirmwareImage (SetNull)
+  platform        String
+  fromVersion     String?
+  toVersion       String
+  engine          String        -- "fortiswitch-https" | "fortiap-https"
+  status          String        -- queued | running | succeeded | failed | unverified
+  stage           String?       -- preflight | staging | compat | deploying | rebooting | verifying
+  progress        Json?         -- { erase, write, verify, restart, curStep, totStep, lastMsgAt } (FortiSwitch reports percentages while flashing)
+  log             Json          -- [{ t, level, msg }], capped at 500 lines; the transcript a bench tester reads
+  result          String?       -- upgraded | already-current | failed | unverified
+  error           String?
+  verifiedVersion String?       -- what the device reported after it came back; NEVER written onto Asset.osVersion
+  startedBy       String
+  heartbeatAt     DateTime?
+  startedAt       DateTime
+  finishedAt      DateTime?
+  @@index([assetId, startedAt]); @@index([status])
+  -- SQL only: UNIQUE (assetId) WHERE status IN ('queued','running') — one live run per asset; the concurrency guard's last line.
 ```
 
 ---
@@ -471,7 +529,7 @@ DeviceIcon                      -- Operator-uploaded topology node icons; resolv
 
 #### Credential
 
-**Credential** — named SNMP / WinRM / SSH / REST API / **HTTP** credentials for monitoring probes. **`createdBy` is the ownership dimension of the `credentials` function key** (business rule 43, migration `20260904050000_credential_ownership_and_probe_readonly`): a `write`-level role reaches only the rows it created — edit, delete AND test-with, that last one because naming a stored `id` on `POST /credentials/test` merges the row's real secrets into the probe — while `fullwrite` reaches any. Stamped once at create from the session username and never rewritten by an update, so saving a row cannot adopt it; `null` means UNOWNED (every row predating the column — deliberately NOT backfilled, since inventing an owner would hand a write-level operator every secret the install already had) and is fullwrite-only, exactly as `assertOwnership` already treats a null `createdBy` on a subnet or a contact. Indexed on `createdBy`, no FK — a username string that survives the account being deleted, like its three siblings. The `http` type carries **authentication only** — `authMode` (`bearer` | `basic` | `digest`) plus its carrier — and deliberately has no "none" mode. It used to carry the whole health check as well; that half moved to a manufacturer custom widget in 2026-08 because a check varies by vendor AND model while a login varies by vendor or site, so sharing one row meant a second path needed a second copy of the same password. See business rule 33. The `ssh` type takes `password` OR `privateKey` (+ optional `passphrase` for an encrypted key — operator-supplied escrow keys only; a Polaris-generated deployment key is never exported so a passphrase would sit beside the key it protects), plus opt-in `verifyHostKey` (business rule 21). `publicKey` is present but deliberately NOT masked. Secret fields inside `config` are **encrypted at rest** by the Prisma extension in `src/db.ts` when `POLARIS_SECRET_KEY` is set (see business rule 20b); masked-on-read at the API layer as before. The same applies to `Integration.config`, `NotificationChannel.config` and the secret-bearing `Setting` rows.
+**Credential** — named SNMP / WinRM / SSH / REST API / **HTTP** credentials for monitoring probes. **`createdBy` is the ownership dimension of the `credentials` function key** (business rule 43, migration `20260904050000_credential_ownership_and_probe_readonly`): a `write`-level role reaches only the rows it created — edit, delete AND test-with, that last one because naming a stored `id` on `POST /credentials/test` merges the row's real secrets into the probe — while `fullwrite` reaches any. Stamped once at create from the session username and never rewritten by an update, so saving a row cannot adopt it; `null` means UNOWNED (every row predating the column — deliberately NOT backfilled, since inventing an owner would hand a write-level operator every secret the install already had) and is fullwrite-only, exactly as `assertOwnership` already treats a null `createdBy` on a subnet or a contact. Indexed on `createdBy`, no FK — a username string that survives the account being deleted, like its three siblings. The `http` type carries **authentication only** — `authMode` (`bearer` | `basic` | `digest` | `form`) plus its carrier — and deliberately has no "none" mode; `form` is a device admin login held for the firmware repository (business rule 87), which posts it to the device's own login page and is the only consumer. It used to carry the whole health check as well; that half moved to a manufacturer custom widget in 2026-08 because a check varies by vendor AND model while a login varies by vendor or site, so sharing one row meant a second path needed a second copy of the same password. See business rule 33. The `ssh` type takes `password` OR `privateKey` (+ optional `passphrase` for an encrypted key — operator-supplied escrow keys only; a Polaris-generated deployment key is never exported so a passphrase would sit beside the key it protects), plus opt-in `verifyHostKey` (business rule 21). `publicKey` is present but deliberately NOT masked. Secret fields inside `config` are **encrypted at rest** by the Prisma extension in `src/db.ts` when `POLARIS_SECRET_KEY` is set (see business rule 20b); masked-on-read at the API layer as before. The same applies to `Integration.config`, `NotificationChannel.config` and the secret-bearing `Setting` rows.
 
 #### ManufacturerProfile
 

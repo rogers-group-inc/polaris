@@ -479,11 +479,21 @@ export function tierMetSinceChanged(
 // Numeric thresholds over the telemetry / sample tables. `dimensionFilter`
 // narrows multi-row streams (interfaces, sensors, mounts, SD-WAN members).
 export const ASSET_METRICS = [
-  "cpuPct", "memPct", "memUsedBytes", "sessionCount", "responseTimeMs", "uptimeSec", "probeLossPct",
+  // cpuCorePct is per-core CPU (AssetTelemetrySample.cpuCorePcts — Polaris
+  // Agent + vCenter only), for finding a single-threaded application: its
+  // hold is counted PER CORE (the same core over the line for N polls). One
+  // alert per device naming the cores, superseded on a device while that
+  // device carries a live all-cores cpuPct alert (business rule 89).
+  "cpuPct", "cpuCorePct", "memPct", "memUsedBytes", "sessionCount", "responseTimeMs", "uptimeSec", "probeLossPct",
   "hwSensorValue", "hwSensorAlarm", "storageUsedPct", "storageUsedBytes", "storageDaysUntilFull",
   "ifInErrorRate", "ifOutErrorRate", "ifInBps", "ifOutBps",
   "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss", "ipsecThroughputBps",
   "customWidgetValue", "customStateValue",
+  // Agent-run path checks — the asset is the AGENT HOST and the
+  // dimension is the check (`checkId`). pathOk is the 0/1 verdict,
+  // pathFailurePct the windowed ratio, the rest gauges off the same samples
+  // (pathHopCount off the traceroutes).
+  "pathLatencyMs", "pathHttpStatus", "pathOk", "pathFailurePct", "pathHopCount", "pathTlsDaysLeft",
 ] as const;
 
 /**
@@ -499,7 +509,7 @@ export const ASSET_METRICS = [
  * chart's threshold shading, and the value/unit hints. Everything that offers
  * those checks this set rather than testing metric names inline.
  */
-export const BOOLEAN_METRICS = ["customStateValue", "hwSensorAlarm"] as const;
+export const BOOLEAN_METRICS = ["customStateValue", "hwSensorAlarm", "pathOk"] as const;
 
 export function isBooleanMetric(metric: string | null | undefined): boolean {
   return !!metric && (BOOLEAN_METRICS as readonly string[]).includes(metric);
@@ -515,6 +525,8 @@ export function isBooleanMetric(metric: string | null | undefined): boolean {
  */
 export const BOOLEAN_METRIC_LABELS: Record<string, { trueLabel: string; falseLabel: string; trueIsProblem: boolean }> = {
   hwSensorAlarm: { trueLabel: "Alarm", falseLabel: "OK", trueIsProblem: true },
+  // 1 = the run met every expectation (status, body, TLS, connect / echo).
+  pathOk: { trueLabel: "Reachable", falseLabel: "Unreachable", trueIsProblem: false },
 };
 
 // ─── Asset-state trigger ────────────────────────────────────────────────────
@@ -529,6 +541,13 @@ export const ASSET_STATE_FIELDS = [
   // is answering ICMP while its FortiLink session to the gate is dead, which
   // is a fault the monitor loop cannot see because it is asking the switch.
   "fortilinkStatus",
+  // How a switch / access point's running firmware stands against the
+  // PRIMARY image the Repository holds for its platform — business rule 87.
+  // "current" | "older" | "newer", and NO READING (not null) for a device the
+  // Repository cannot place: not a switch / AP, no usable serial, no readable
+  // version, no primary for its platform. Resolved from one findMany over the
+  // image table per evaluation, never one query per asset.
+  "firmwareVsPrimary",
   "ifOperStatus", "ifAdminStatus", "ifIpAddress", "poeStatus", "ipsecStatus", "sdwanRuleStatus", "sdwanSelectedMember",
   // Whether ONE WAN member of ONE performance-SLA health check is alive, as the
   // FortiGate itself judges it (AssetPerfSlaSample.state, normalized from the
@@ -555,6 +574,7 @@ export const CHANGE_TYPES = [
   "sdwan_failover", "mclag_peer_lost", "wireless_station_connected",
   "firmware_changed", "switch_port_changed", "wireless_ap_changed", "gateway_firewall_changed",
   "fortilink_changed",
+  "path_check_path_changed",
 ] as const;
 
 // Map a change type → the audit Event action the persist functions emit and
@@ -586,6 +606,10 @@ export const CHANGE_TYPE_ACTIONS: Record<(typeof CHANGE_TYPES)[number], string> 
   // the link is down" (it has a reading, so it gets auto-reset and a forPolls
   // hold); this one is for "tell me each time it moves".
   fortilink_changed: "asset.fortilink.changed",
+  // Written unconditionally by pathCheckIngestService when an agent's
+  // traceroute for a check takes a different hop sequence than the last one
+  // (10-minute floor per host and check). Names the agent HOST as its asset.
+  path_check_path_changed: "path_check.path_changed",
 };
 
 const dimensionFilterSchema = z
@@ -627,8 +651,11 @@ const dimensionFilterSchema = z
     // per ruleName dimension; this narrows to the named rule[s]). Substring-
     // matched like every other *Pattern dimension.
     sdwanRulePattern: z.string().max(200).optional(),
-    healthCheck: z.string().max(200).optional(),
-    link: z.string().max(200).optional(),
+    // SD-WAN pair: one value, or several joined by "|" — any-of, each term a
+    // substring (utils/sdwanDimensions). Longer than the single-pattern
+    // dimensions because it holds a list.
+    healthCheck: z.string().max(1000).optional(),
+    link: z.string().max(1000).optional(),
     tunnelName: z.string().max(200).optional(),
     widgetId: z.string().max(200).optional(),
     processNamePattern: z.string().max(200).optional(),
@@ -641,6 +668,10 @@ const dimensionFilterSchema = z
     // its own. Matching on the label rather than the OID index is the point of
     // resolving labels at all — an operator knows "PSU 2", not ".14".
     stateRowPattern: z.string().max(200).optional(),
+    // ── Path checks (path*) ──────────────────────────────────────
+    // Which check — a PathCheck id, matched exactly (a registry key,
+    // like stateProbeId). Blank = every check the host runs, one alert each.
+    checkId: z.string().max(200).optional(),
   })
   .strict()
   .optional();
@@ -709,8 +740,9 @@ const assetMetricTrigger = z.object({
    * SATURATION CEILING: a reading at or above this produces no reading at all,
    * and clears any alert this rule already had on that asset.
    *
-   * Offered for the windowed-ratio metrics (packet loss), where the top of the
-   * scale stops describing the thing the metric is named after. 100% loss is an
+   * Offered for packet loss only (SATURATION_CEILING_METRICS), where the top of
+   * the scale stops describing the thing the metric is named after. Inert on
+   * every other metric — a path check's failure rate included. 100% loss is an
    * outage, which the down automation already owns; and since the loss anchor
    * was removed (business rule 29) a device coming back from a 55-minute outage
    * genuinely reads ~92% for the rest of the window, so an operator who does not
@@ -720,7 +752,38 @@ const assetMetricTrigger = z.object({
    * leaves every pre-existing rule behaving as it always has.
    */
   ignoreAtOrAbove: z.number().min(0).max(100).optional(),
+  /** SKIP UNUSED PORTS — see SKIP_UNUSED_PORT_TARGETS. SD-WAN metrics only. */
+  skipUnusedPorts: z.boolean().optional(),
 });
+
+/**
+ * SKIP UNUSED PORTS: the conditions that can drop a reading for a port that
+ * was never in use (interfaceInventoryService.isUnusedPort — a non-tunnel port
+ * reporting 0.0.0.0 with no address remembered in 30 days).
+ *
+ * The case it exists for (2026-09-28): a FortiGate deployment template enables
+ * wan1 AND wan2 on every gate, both SD-WAN members, whether or not the site has
+ * a second circuit — so an unplugged wan2 is down on every health check
+ * forever, and a "member is down" automation pages about it on every gate that
+ * has one. The unused port reads 0.0.0.0, but so does a working DHCP WAN whose
+ * link just dropped, so the current address cannot tell them apart; the port's
+ * REMEMBERED address (AssetInterface.lastLearnedIp) can.
+ *
+ * On the SD-WAN member conditions the port is the member's own name (the
+ * `link` of the `healthCheck|link` key — the SD-WAN tab joins a member to its
+ * interface the same way); on interface oper status it is the interface. A
+ * flag on the condition itself rather than a second condition, deliberately:
+ * a second "interface IP" condition is folded per DEVICE in a multi-condition
+ * automation, so it could never say which port it meant.
+ */
+export const SKIP_UNUSED_PORT_TARGETS: ReadonlySet<string> = new Set([
+  "sdwanMemberState", "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss", "ifOperStatus",
+]);
+
+/** The metric/field a condition names, for the SKIP_UNUSED_PORT_TARGETS test. */
+export function leafTargetOf(leaf: { type: string; metric?: string; field?: string }): string | null {
+  return leaf.type === "asset_state" ? leaf.field ?? null : leaf.type === "asset_metric" ? leaf.metric ?? null : null;
+}
 
 const assetStateTrigger = z.object({
   type: z.literal("asset_state"),
@@ -745,6 +808,23 @@ const assetStateTrigger = z.object({
    * devices, at DEFAULT_MISSED_POLLS.
    */
   missedPolls: z.number().int().min(1).max(100).optional(),
+  /**
+   * SPEAK FOR A SILENCED DEVICE (business rule 78) — valid only on
+   * `monitorStatus == down`, like `missedPolls`. A device behind a down switch
+   * or firewall is dependency-suppressed (Dep. Down) and normally alerts
+   * nothing (rules 16 and 37). With this on, THIS automation still raises its
+   * alert the moment such a device turns Dep. Down, and the alert says so and
+   * names the upstream device that is actually down. Read only through
+   * `ruleAlertsWhenDependencyDown`, never off the raw key.
+   *
+   * Optional, absent on every automation authored before the key existed —
+   * absence is the pre-feature behaviour (silence), and an operator who never
+   * asked to be told about a parent's outage keeps not being told.
+   */
+  alertWhenDependencyDown: z.boolean().optional(),
+  /** SKIP UNUSED PORTS — see SKIP_UNUSED_PORT_TARGETS. SD-WAN member state and
+   *  interface oper status only. */
+  skipUnusedPorts: z.boolean().optional(),
 });
 
 const hostMetricTrigger = z.object({
@@ -993,6 +1073,12 @@ export const SCOPE_FIELD_OPS: Record<string, readonly string[]> = {
   // single-asset paths. Same consequence, too: an AP whose radios have not
   // been discovered reports no SSIDs, so a positive rule never selects it.
   ssid: STRING_OPS,
+  // "Polaris Agent installed" — yes / no, from the asset's ManagedAgent row:
+  // yes means an ACTIVE agent (installStatus "active"), the same test
+  // requestScriptRun and path-check membership apply. The third
+  // relation-backed field: fleet-scale loaders prefetch it through
+  // scopeRelationIndex, the single-asset paths join `managedAgent`.
+  agentInstalled: ["equals", "notEquals"],
   status: ["equals", "notEquals"],
   assetId: ["equals", "notEquals"],
 };
@@ -1169,9 +1255,13 @@ export function conditionFields(cond: ScopeConditionGroup): Set<string> {
  * which is what kept the fleet-scale SQL path and the single-asset in-memory
  * path answering the same question when the second such field arrived.
  */
-export const RELATION_CONDITION_FIELDS: Record<string, { relation: "interfaces" | "apVaps"; column: "ifName" | "ssid" }> = {
-  interfaceName: { relation: "interfaces", column: "ifName" },
-  ssid:          { relation: "apVaps",     column: "ssid" },
+export const RELATION_CONDITION_FIELDS: Record<string, { relation: "interfaces" | "apVaps" | "managedAgent"; column: "ifName" | "ssid" | "installStatus" }> = {
+  interfaceName:  { relation: "interfaces",   column: "ifName" },
+  ssid:           { relation: "apVaps",       column: "ssid" },
+  // Not a string match like the other two: the prefetch answers "has an
+  // ACTIVE agent" whatever the rule's value, and matchScopeRule compares that
+  // with yes / no. See `agentInstalled` in SCOPE_FIELD_OPS.
+  agentInstalled: { relation: "managedAgent", column: "installStatus" },
 };
 export const RELATION_CONDITION_FIELD_NAMES = Object.keys(RELATION_CONDITION_FIELDS);
 
@@ -1184,6 +1274,14 @@ export function conditionNeedsInterfaces(cond: ScopeConditionGroup | null | unde
 export function conditionNeedsApVaps(cond: ScopeConditionGroup | null | undefined): boolean {
   return !!cond && conditionFields(cond).has("ssid");
 }
+
+/** Does this tree ask whether the Polaris Agent is installed? */
+export function conditionNeedsManagedAgent(cond: ScopeConditionGroup | null | undefined): boolean {
+  return !!cond && conditionFields(cond).has("agentInstalled");
+}
+
+/** The single-asset join `agentInstalled` reads (the fleet paths prefetch). */
+export const MANAGED_AGENT_CONDITION_SELECT = { managedAgent: { select: { installStatus: true } } } as const;
 
 /**
  * The asset fields the condition evaluator reads (matcher + engine select).
@@ -1217,6 +1315,9 @@ export interface ScopeConditionAsset {
    *  the same terms as `interfaces` above — only when a tree asks for it,
    *  and only on the SINGLE-asset paths. */
   apVaps?: { ssid: string | null }[];
+  /** The asset's Polaris Agent row, for `agentInstalled`. Same terms as the two
+   *  relations above: joined only when a tree asks, on single-asset paths. */
+  managedAgent?: { installStatus: string } | null;
   /** The fleet-scale alternative for EVERY relation-backed field:
    *  `relationLeafKey(leaf)` -> did this asset satisfy that leaf, resolved in
    *  SQL by decorateRelationLeafHits rather than by shipping the relation.
@@ -1386,6 +1487,18 @@ function matchScopeRule(rule: ScopeConditionRule, asset: ScopeConditionAsset): b
       return rule.operator === "notInCidr" ? !inside : inside;
     }
     case "fortigate": return matchMultiValue(rule, fortigateNames(asset), v);
+    case "agentInstalled": {
+      // "Has an ACTIVE agent" — prefetched per leaf by scopeRelationIndex on
+      // fleet paths (the verdict is value-independent), else read off the
+      // joined row. An absent prefetch key is unknown, so fall through.
+      const pre = asset.relationLeafHits;
+      const key = relationLeafKey(rule);
+      const has = pre && pre.has(key)
+        ? pre.get(key) === true
+        : asset.managedAgent?.installStatus === "active";
+      const eq = has === (v === "yes" || v === "true");
+      return rule.operator === "notEquals" ? !eq : eq;
+    }
     case "interfaceName":
     case "ssid": {
       // Two ways in, one predicate, for both relation-backed fields. A
@@ -2351,7 +2464,12 @@ function stableDimFilter(df: Record<string, unknown> | undefined | null): string
 }
 
 export function triggerSignature(trigger: Trigger): string | null {
-  if (trigger.type === "asset_metric") return `am:${trigger.metric}:${stableDimFilter(trigger.dimensionFilter)}`;
+  // "Skip unused ports" narrows WHICH PORTS a condition watches, exactly like a
+  // dimension filter, so it is part of the signature for the same reason: an
+  // automation that skips them and one that does not are watching different
+  // sets and must never carve each other out.
+  const skip = (trigger.type === "asset_metric" || trigger.type === "asset_state") && trigger.skipUnusedPorts ? ":skipUnused" : "";
+  if (trigger.type === "asset_metric") return `am:${trigger.metric}:${stableDimFilter(trigger.dimensionFilter)}${skip}`;
   if (trigger.type === "asset_state") {
     // monitorStatus is the one state field that is a SINGLE per-asset column
     // with no reading dimensions of its own (neither FIELD_DIMENSIONS nor
@@ -2373,9 +2491,86 @@ export function triggerSignature(trigger: Trigger): string | null {
     if (trigger.field === "monitorStatus") {
       return `as:monitorStatus:${trigger.operator}${String(trigger.value).toLowerCase()}`;
     }
-    return `as:${trigger.field}:${stableDimFilter(trigger.dimensionFilter)}`;
+    return `as:${trigger.field}:${stableDimFilter(trigger.dimensionFilter)}${skip}`;
   }
   return null;
+}
+
+// ─── Specificity carve-out (shared by the engine and the asset Alerts tab) ──
+// A more-specific automation carves the assets it covers out of a
+// less-specific one watching the SAME triggerSignature. The engine builds the
+// index once per tick; findRulesMatchingAsset builds it over the enabled rule
+// set so the asset-details "automations that can trigger" list drops the ones
+// the engine would never evaluate for that asset.
+
+/** The rule fields the carve-out reads. */
+export interface ShadowRule {
+  id: string;
+  trigger: Trigger;
+  scope: RuleScope;
+}
+interface ShadowMember<R extends ShadowRule> {
+  rule: R;
+  rank: number;
+}
+export interface ShadowIndex<R extends ShadowRule = ShadowRule> {
+  /** signature → participating rules (with precomputed scopeRank). */
+  bySig: Map<string, ShadowMember<R>[]>;
+  /** signature → highest rank present (skip the per-asset check for max-rank rules). */
+  maxRankBySig: Map<string, number>;
+}
+
+export function buildShadowIndex<R extends ShadowRule>(rules: R[]): ShadowIndex<R> {
+  const bySig = new Map<string, ShadowMember<R>[]>();
+  const maxRankBySig = new Map<string, number>();
+  for (const rule of rules) {
+    const sig = triggerSignature(rule.trigger);
+    if (!sig) continue;
+    const rank = scopeRank(rule.scope);
+    const arr = bySig.get(sig);
+    if (arr) arr.push({ rule, rank });
+    else bySig.set(sig, [{ rule, rank }]);
+    maxRankBySig.set(sig, Math.max(maxRankBySig.get(sig) ?? 0, rank));
+  }
+  return { bySig, maxRankBySig };
+}
+
+/**
+ * Does a peer rule genuinely COVER this asset — i.e. could it produce a reading
+ * for it at all? Scope alone is not the whole answer: a trigger's device
+ * filter (hostname / IP / MAC / manufacturer / model) narrows the asset set
+ * just as scope does, so a peer scoped to all assets but filtered to
+ * `hostname matches "core-"` covers only the core switches.
+ *
+ * This used to be scope-only, which was safe while `triggerSignature` pinned
+ * the dimensionFilter — two differently-filtered rules were in different
+ * signature groups and never compared. Now that monitorStatus rules group by
+ * value instead (so down automations with different device filters CAN carve
+ * each other out), the filter has to be tested here or a filtered peer would
+ * shadow every asset in its scope, including ones it can never fire on.
+ *
+ * For asset_metric this is a no-op: peers in a signature group have identical
+ * filters by construction, so the predicate short-circuits in applyDeviceFilters'
+ * "no patterns set" check.
+ */
+function peerCoversAsset(peer: ShadowRule, asset: ScopeAsset): boolean {
+  if (!scopeMatchesAsset(peer.scope, asset)) return false;
+  const df = (peer.trigger as { dimensionFilter?: Parameters<typeof deviceFilterMatch>[0] }).dimensionFilter;
+  if (!df) return true;
+  const rec = df as Record<string, string | undefined>;
+  if (!DEVICE_FILTER_DIMENSIONS.some((d) => rec[d])) return true;
+  return deviceFilterMatch(df, asset);
+}
+
+/** Does a higher-rank same-signature rule also cover this asset? */
+export function isAssetShadowed(index: ShadowIndex<ShadowRule>, rule: ShadowRule, sig: string, rank: number, asset: ScopeAsset): boolean {
+  const group = index.bySig.get(sig);
+  if (!group) return false;
+  for (const other of group) {
+    if (other.rule.id === rule.id) continue;
+    if (other.rank > rank && peerCoversAsset(other.rule, asset)) return true;
+  }
+  return false;
 }
 
 /**
@@ -2410,6 +2605,22 @@ export function isDownDetectionTrigger(trigger: Trigger): boolean {
     trigger.operator === "==" &&
     String(trigger.value).toLowerCase() === "down"
   );
+}
+
+/**
+ * Does this down automation speak for its devices while they are dependency-
+ * suppressed (business rule 78)?
+ *
+ * The ONE reader of `trigger.alertWhenDependencyDown`. Gated on
+ * `isDownDetectionTrigger` rather than on the key alone so a key that survived
+ * on a trigger edited away from "monitor status is down" (a pre-validation
+ * import, a hand-written body) can never turn a CPU automation into one that
+ * fires about silenced devices. The engine's gate (`assetCanTrigger`) is
+ * otherwise unchanged: maintenance still silences, and every other automation
+ * still drops a suppressed asset.
+ */
+export function ruleAlertsWhenDependencyDown(trigger: Trigger): boolean {
+  return isDownDetectionTrigger(trigger) && (trigger as { alertWhenDependencyDown?: boolean }).alertWhenDependencyDown === true;
 }
 
 /**
@@ -2862,6 +3073,16 @@ function validateMissedPolls(trigger: Trigger | undefined, ctx: z.RefinementCtx)
           'a missed-poll count only applies to a "monitor status is down" automation — it is the definition of down for the devices that automation covers',
       });
     }
+    // Same shape, same reason (business rule 78): the dependency-down toggle
+    // is a property of the down verdict, so it has no meaning anywhere else.
+    if (trigger.alertWhenDependencyDown != null && !isDownDetectionTrigger(trigger)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["trigger", "alertWhenDependencyDown"],
+        message:
+          'alerting while dependency-down only applies to a "monitor status is down" automation — it is that verdict the silenced device is being spoken for',
+      });
+    }
     return;
   }
   if (trigger.type === "composite") {
@@ -2876,6 +3097,38 @@ function validateMissedPolls(trigger: Trigger | undefined, ctx: z.RefinementCtx)
           "a missed-poll count cannot sit inside a multi-condition trigger — down detection is decided by the probe loop, which can only see whether the device answered. Put the count on an automation whose only condition is \"monitor status is down\".",
       });
     }
+    const depOffender = collectTriggerLeaves(trigger).find(
+      (l) => l.type === "asset_state" && (l as { alertWhenDependencyDown?: boolean }).alertWhenDependencyDown != null,
+    );
+    if (depOffender) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["trigger", "children"],
+        message:
+          "alerting while dependency-down cannot sit inside a multi-condition trigger — a silenced device reports nothing the other conditions could read. Put it on an automation whose only condition is \"monitor status is down\".",
+      });
+    }
+  }
+}
+
+/**
+ * `skipUnusedPorts` only means something on the conditions that name a port
+ * (SKIP_UNUSED_PORT_TARGETS). Anywhere else it would save, render as nothing
+ * and filter nothing — so it is refused rather than kept as an inert flag.
+ * Checked on the bare trigger and on every leaf of a composite.
+ */
+function validateSkipUnusedPorts(trigger: Trigger | undefined, ctx: z.RefinementCtx): void {
+  if (!trigger) return;
+  const leaves: Array<{ type: string; metric?: string; field?: string; skipUnusedPorts?: boolean }> =
+    trigger.type === "composite" ? (collectTriggerLeaves(trigger) as never) : [trigger as never];
+  const offender = leaves.find((l) => l.skipUnusedPorts != null && !SKIP_UNUSED_PORT_TARGETS.has(leafTargetOf(l) ?? ""));
+  if (offender) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: trigger.type === "composite" ? ["trigger", "children"] : ["trigger", "skipUnusedPorts"],
+      message:
+        "skipping unused ports only applies to SD-WAN member conditions (member state, latency, jitter, packet loss) and interface oper status — the conditions that name a port",
+    });
   }
 }
 
@@ -2898,6 +3151,7 @@ function validateRuleV2(
   validateRepeat(v, ctx);
   validateMissedPolls(trigger, ctx);
   validateGrouping(v, ctx);
+  validateSkipUnusedPorts(trigger, ctx);
   if (reset.mode === "timed" && reset.afterSec == null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reset", "afterSec"], message: "timed reset requires afterSec" });
   }
@@ -3614,7 +3868,18 @@ export function isAssetScopedTrigger(trigger: Trigger): boolean {
  * its `latest`-sample lookback floor. Exposed on /automations/schema as
  * `windowedRatioMetrics`.
  */
-export const WINDOWED_RATIO_METRICS = ["probeLossPct"] as const;
+export const WINDOWED_RATIO_METRICS = ["probeLossPct", "pathFailurePct"] as const;
+
+/**
+ * The windowed-ratio metrics the SATURATION CEILING (`ignoreAtOrAbove`) applies
+ * to — a narrower list than WINDOWED_RATIO_METRICS, on purpose. The ceiling
+ * exists because 100% packet loss is an OUTAGE, which the down automation
+ * already owns (business rule 29). A path check's failure rate has no such
+ * owner: the host is up and is the one reporting, so 100% is the headline case
+ * ("the ERP is unreachable from this site") and must fire (business rule 85).
+ * Exposed on /automations/schema as `saturationCeilingMetrics`.
+ */
+export const SATURATION_CEILING_METRICS = ["probeLossPct"] as const;
 
 /**
  * The probe-loss measurement window, resolved exactly the way the engine
@@ -3648,8 +3913,12 @@ export const DEFAULT_READING_CEILING_PCT = 100;
  */
 export function readingAtOrAboveCeiling(trigger: unknown, value: number | null): boolean {
   if (typeof value !== "number" || !Number.isFinite(value)) return false;
-  const t = trigger as { type?: string; ignoreAtOrAbove?: unknown } | null;
+  const t = trigger as { type?: string; metric?: unknown; ignoreAtOrAbove?: unknown } | null;
   if (!t || t.type !== "asset_metric") return false;
+  // Only the metrics whose top of scale IS someone else's alert. A stored
+  // ceiling on any other metric (an API write, or a rule saved before this
+  // list existed) is inert rather than silencing readings.
+  if (!(SATURATION_CEILING_METRICS as readonly string[]).includes(String(t.metric))) return false;
   const ceiling = typeof t.ignoreAtOrAbove === "number" && Number.isFinite(t.ignoreAtOrAbove)
     ? t.ignoreAtOrAbove
     : DEFAULT_READING_CEILING_PCT;
@@ -3692,6 +3961,8 @@ export function probeLossWindowSecFromTrigger(trigger: unknown): number | null {
 export const METRIC_META: Record<string, { label: string; unit: string }> = {
   // asset_metric
   cpuPct: { label: "CPU utilization", unit: "%" },
+  // Any ONE logical core, its hold counted per core — agent and vCenter hosts only.
+  cpuCorePct: { label: "CPU core utilization", unit: "%" },
   memPct: { label: "Memory utilization", unit: "%" },
   memUsedBytes: { label: "Memory used", unit: "bytes" },
   sessionCount: { label: "Active sessions", unit: "" },
@@ -3734,6 +4005,15 @@ export const METRIC_META: Record<string, { label: string; unit: string }> = {
   // the builder renders the probe's own labels ("Alarm" / "OK") instead of the
   // numbers, and there's no unit because there's no magnitude.
   customStateValue: { label: "Device state flag (0/1)", unit: "" },
+  // Agent-run path checks (asset = the agent host, dimension = check).
+  pathLatencyMs: { label: "Path latency", unit: "ms" },
+  pathHttpStatus: { label: "Path HTTP status", unit: "" },
+  pathOk: { label: "Path check result", unit: "" },
+  // Failed runs / runs over the History window, like probeLossPct.
+  pathFailurePct: { label: "Path failure rate", unit: "%" },
+  pathHopCount: { label: "Traceroute hop count", unit: "hops" },
+  // Days until the target's TLS certificate expires. Alert with "<", e.g. < 14.
+  pathTlsDaysLeft: { label: "TLS certificate days remaining", unit: "days" },
   // host_metric
   memUsedPct: { label: "Memory utilization", unit: "%" },
   loadAvg1: { label: "Load average (1m)", unit: "" },
@@ -3794,6 +4074,11 @@ export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" |
   // wants "tell me when the gate stops seeing this switch at all" writes
   // `!= up` rather than `== down`.
   fortilinkStatus: { label: "Controller link (FortiLink / CAPWAP)", kind: "enum", values: ["up", "down", "unknown"] },
+  // Business rule 87. Closed enum: the comparison is made by Polaris from the
+  // parsed versions, so the three words are the only readings that exist.
+  // The operator's usual rule is `!= current`; `== newer` names the fleet
+  // that is AHEAD of the image someone selected as primary.
+  firmwareVsPrimary: { label: "Firmware vs Repository primary", kind: "enum", values: ["current", "older", "newer"] },
   // The interface is INTEGRAL on all three port-state fields (see the header):
   // the row says which port it is about, and blank keeps meaning "every
   // monitored interface", one alert each — the engine folds per dimension
@@ -3854,6 +4139,7 @@ export const CHANGE_TYPE_META: Record<string, string> = {
   wireless_ap_changed: "Wireless AP changed (roam)",
   gateway_firewall_changed: "Gateway FortiGate changed",
   fortilink_changed: "Controller link changed (FortiLink / CAPWAP)",
+  path_check_path_changed: "Path changed (traceroute)",
 };
 
 // Which dimensionFilter inputs are relevant per asset_metric metric, so the
@@ -3897,7 +4183,24 @@ export const METRIC_DIMENSIONS: Record<string, string[]> = {
   ipsecThroughputBps: ["tunnelName"],
   customWidgetValue: ["widgetId"],
   customStateValue: ["stateProbeId", "stateRowPattern"],
+  pathLatencyMs: ["checkId"],
+  pathHttpStatus: ["checkId"],
+  pathOk: ["checkId"],
+  pathFailurePct: ["checkId"],
+  pathHopCount: ["checkId"],
+  pathTlsDaysLeft: ["checkId"],
 };
+
+/** Does a path* dimension filter select this check? Shared by the engine's
+ *  resolvers (applied in SQL there) and getMetricSeverityTiers, so a chart is
+ *  never shaded with another check's thresholds. */
+export function pathCheckFilterMatches(
+  df: { checkId?: string } | null | undefined,
+  check: { checkId?: string | null },
+): boolean {
+  if (!df?.checkId) return true;
+  return df.checkId === (check.checkId ?? "");
+}
 // Which dimensionFilter inputs apply per asset_state FIELD — the state twin of
 // METRIC_DIMENSIONS. The engine has honored ifNamePattern on the interface
 // state trio and tunnelName on ipsecStatus since the pin-gate work, but the
@@ -4461,6 +4764,7 @@ export const DIMENSION_NOUNS: Record<string, string> = {
   widgetId: "custom widget",
   stateProbeId: "state probe",
   stateRowPattern: "state-probe row",
+  checkId: "path check",
 };
 
 /**
@@ -4503,9 +4807,22 @@ export function dimensionNounOf(
   const keys = t.type === "asset_metric"
     ? METRIC_DIMENSIONS[t.metric ?? ""]
     : t.type === "asset_state" ? STATE_FIELD_DIMENSIONS[t.field ?? ""] : null;
-  const noun = keys?.length ? DIMENSION_NOUNS[keys[0]!] : undefined;
+  const noun = keys?.length
+    ? DIMENSION_NOUNS[keys[0]!]
+    : t.type === "asset_metric" ? METRIC_COMPONENT_NOUNS[t.metric ?? ""] : undefined;
   return noun ? noun.charAt(0).toUpperCase() + noun.slice(1) : "";
 }
+
+/**
+ * A WHOLE-DEVICE metric whose alert still names components: cpuCorePct raises
+ * one alert per device (dimension key "") but labels it with the cores that are
+ * over the line, so the email's component row reads "CPU cores — Core 3 (97%)".
+ * Deliberately not a METRIC_DIMENSIONS entry: that would give the metric a
+ * dimension space and a filter input, and there is one alert per device here.
+ */
+export const METRIC_COMPONENT_NOUNS: Record<string, string> = {
+  cpuCorePct: "CPU cores",
+};
 
 /**
  * The catalog the builder UI reads from GET /notification-rules/schema, so the
@@ -4531,6 +4848,9 @@ export function buildSchemaCatalog() {
     // Absent on a pre-upgrade server; the wizard treats that as "state leaves
     // take no dimensions", the old behavior.
     fieldDimensions: FIELD_DIMENSIONS,
+    // The conditions that offer "Skip unused ports" (SKIP_UNUSED_PORT_TARGETS).
+    // Absent on a pre-upgrade server; the wizard then renders no checkbox.
+    skipUnusedPortTargets: Array.from(SKIP_UNUSED_PORT_TARGETS),
     // Device-identifier dimensions, valid on every asset metric/state leaf —
     // the wizard's "+ Condition → Device identifier" filter rows. Absent on a
     // pre-upgrade server; the wizard then offers no identifier rows.
@@ -4554,6 +4874,17 @@ export function buildSchemaCatalog() {
         "How many polls in a row a device must miss before Polaris calls it down. " +
         "This automation owns that number for every device it covers — the most specific automation wins. " +
         "A device no down automation covers is never called down: it stays Passive, still polled and still charted.",
+      // Business rule 78 — the toggle that lets this automation speak for a
+      // dependency-suppressed device. Served as data for the same reason as
+      // the count: a wizard talking to a pre-upgrade server must not render a
+      // control whose key the API would refuse.
+      dependencyDownKey: "alertWhenDependencyDown",
+      dependencyDownLabel: "Also alert when the device is dependency-down",
+      dependencyDownHelp:
+        "A device behind a down switch or firewall is normally silenced (Dep. Down). " +
+        "With this on, this automation still raises its alert the moment the device turns Dep. Down, " +
+        "and the message names the upstream device that is actually down. " +
+        "One notification only — reminders and escalation wait until the upstream device is back.",
     },
     // Per-dimension alerting vocabulary — which state fields report per
     // dimension, and what one dimension is called. The reset step reads both to
@@ -4587,6 +4918,9 @@ export function buildSchemaCatalog() {
     // The saturation ceiling the wizard prefills for those metrics, served
     // rather than hardcoded client-side so the two cannot drift.
     readingCeilingDefault: DEFAULT_READING_CEILING_PCT,
+    // ...and which of them the ceiling applies to at all (packet loss, not a
+    // path check's failure rate — see SATURATION_CEILING_METRICS).
+    saturationCeilingMetrics: SATURATION_CEILING_METRICS,
     // Per-metric state names, so a boolean metric with no probe behind it still
     // renders "is Alarm" rather than "is true".
     booleanMetricLabels: BOOLEAN_METRIC_LABELS,
@@ -4776,6 +5110,10 @@ const SCOPE_FIELD_META: Record<string, { label: string; optionsFrom: string | nu
   ipBlock: { label: "IP block", optionsFrom: "ipBlocks" },
   interfaceName: { label: "Device interface", optionsFrom: "interfaceNames" },
   ssid: { label: "Broadcast SSID", optionsFrom: "ssids" },
+  // `values` rather than `optionsFrom`: every client valueOptions switch
+  // returns a field's `values` before consulting optionsFrom, so a closed
+  // yes/no field needs no case in any of them.
+  agentInstalled: { label: "Polaris Agent installed", optionsFrom: null, values: ["yes", "no"] },
   status: {
     label: "Lifecycle status",
     optionsFrom: null,

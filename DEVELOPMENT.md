@@ -230,6 +230,40 @@ hostnames, serials, addresses and (once GAL directory sync has run) employee nam
 be published along with the image. The script header lists the pages it does not yet cover
 and what each would need.
 
+### Mock switches and access points for the firmware repository
+
+Server Settings → Repository and the asset Firmware card (business rule 87) can be driven
+end to end without hardware. Two scripts, both run INSIDE the dev app container — the
+firmware images live under the container's `POLARIS_STATE_DIR`, and the mock devices
+listen on loopback aliases the app dials on port 443:
+
+```bash
+# seed three Fortinet assets (127.0.0.2 / .3 / .4), a "Mock device login" form
+# credential bound at Fortinet, and two images per model node (+ one orphaned node)
+podman exec polaris-<slug>_app_1 sh -c \
+  'cd /app && node --env-file=.env --import tsx/esm scripts/seed-firmware-mock.ts'
+
+# fake FortiSwitch (127.0.0.2, 127.0.0.3) and FortiAP (127.0.0.4) web UIs, admin/admin.
+# Background it INSIDE the container: `podman exec -d node …` loses the process.
+podman exec polaris-<slug>_app_1 sh -c \
+  'cd /app && (nohup node scripts/mock-firmware-devices.mjs > /tmp/mock-devices.log 2>&1 &)'
+```
+
+(podman-compose names containers `<project>_<service>_1`; docker compose uses dashes.
+On this machine `npm run dev` dies under `--watch` inside the container; the app then runs as a
+separate container, `polaris-<slug>_web`, started with `podman compose … run -d --service-ports
+--name polaris-<slug>_web app node --env-file=.env --import tsx/esm src/index.ts` — exec into THAT one.)
+
+Open a mock switch's asset → System → Firmware → *Upgrade firmware to 7.6.8 build1164*:
+the mock stages the image, reports erase / write / verify for ~40 s, drops off for ~20 s
+and comes back reporting the image's version. Its log (`/tmp/mock-devices.log` in the
+container) prints every step. The three assets are seeded **monitored** (loopback answers
+ping inside the container), so the baseline automation *Firmware differs from repository
+primary* raises one informational alert per mock device within a minute — the mocks run
+7.4.3 and every primary is 7.6.8. A mock is a static record: after an upgrade the asset
+stays at 7.4.3 (`pending-discovery` on the card) because nothing rediscovers it. Both
+scripts refuse `NODE_ENV=production`.
+
 ### Pointing a dev stack at real FortiGates
 
 Seeded data cannot exercise the Fortinet surface. The discovery phases, the
