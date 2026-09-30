@@ -108,6 +108,8 @@ import {
   ruleAlertsWhenDependencyDown,
   buildShadowIndex,
   isAssetShadowed,
+  alertOwnerOf,
+  type DeliveryOwner,
   type ShadowIndex as ShadowIndexOf,
 } from "./notificationTypes.js";
 import { scopeMatchesAsset, type ScopeAsset } from "./notificationRuleService.js";
@@ -2173,6 +2175,20 @@ function ruleWantsContext(rule: DbRule): boolean {
   return !!(rule.emailComposition || ruleHasAnyEscalation(rule) || allRepeatsOf(rule).length > 0);
 }
 
+/** A grouped alert's snapshot answers to its GROUP's delivery too (business
+ *  rule 75): the group may escalate, remind or compose an email where its
+ *  member would not, and the sweep renders those from `templateCtx`. Whether
+ *  the group governs this device is only settled at delivery, so an automation
+ *  in any group snapshots; the cost stays on grouped alerts. */
+function groupWantsContext(rule: DbRule): boolean {
+  return !!rule.alertGroupId || ruleWantsContext(rule);
+}
+
+/** Same reasoning for `{asset.*}`: the group's email layout may name them. */
+function groupWantsAssetDetail(rule: DbRule): boolean {
+  return !!rule.alertGroupId || ruleWantsAssetDetail(rule);
+}
+
 function ruleWantsAssetDetail(rule: DbRule): boolean {
   const comp = rule.emailComposition;
   // Action-level templates can reference {asset.*} too: per-action email
@@ -3675,6 +3691,10 @@ async function enqueueAlertActions(
   /** Set when this send UPDATES a grouped alert that gained a contribution
    *  (business rule 75) rather than opening one. */
   growth?: { growth: true; count: number },
+  /** The AlertGroup delivering this alert, when one governs it (business rule
+   *  75). Supplies the email layout; the caller has already swapped in its
+   *  actions. Provenance (ruleId, ruleName) stays the AUTOMATION's. */
+  owner?: DeliveryOwner | null,
 ): Promise<void> {
   await executeActionsSafe(notifId, actions, ctx, {
     ...(growth ? { growth: { count: growth.count } } : {}),
@@ -3685,9 +3705,51 @@ async function enqueueAlertActions(
     assetId: reading.assetId || null,
     ruleId: rule.id,
     ruleName: rule.name,
-    ruleEmailComposition: rule.emailComposition,
+    ruleEmailComposition: owner ? owner.emailComposition : rule.emailComposition,
     actor: "system:notification-engine",
   });
+}
+
+/** What `alertOwnerOf` needs of an AlertGroup to answer for its delivery. */
+const GROUP_OWNER_SELECT = {
+  id: true, name: true, enabled: true, requireAckNote: true,
+  actions: true, escalation: true, repeat: true, emailComposition: true, resetActions: true, messageTemplate: true,
+} as const;
+
+/**
+ * The AlertGroup that DELIVERS these alerts, per alert, or nothing (business
+ * rule 75: a group owns delivery, its members own detection).
+ *
+ * Asked of the ALERT, never of the automation: `alertGroupId` is stamped only
+ * where the group governs the device, so a member firing on a device outside
+ * the group's scope still delivers on its own — and a disabled group owns
+ * nothing (`alertOwnerOf`). Zero queries for an automation in no group, which
+ * is every automation in an install that has not made one; one query for a
+ * whole drain pass otherwise.
+ */
+async function groupOwnersOf(notificationIds: string[]): Promise<Map<string, DeliveryOwner>> {
+  const out = new Map<string, DeliveryOwner>();
+  if (notificationIds.length === 0) return out;
+  const rows = await prisma.notification.findMany({
+    where: { id: { in: notificationIds }, alertGroupId: { not: null } },
+    select: { id: true, severity: true, alertGroup: { select: GROUP_OWNER_SELECT } },
+  });
+  for (const r of rows) {
+    const owner = alertOwnerOf({ severity: r.severity, alertGroup: r.alertGroup });
+    if (owner?.kind === "group") out.set(r.id, owner);
+  }
+  return out;
+}
+
+async function groupOwnerOf(rule: DbRule, notificationId: string): Promise<DeliveryOwner | null> {
+  if (!rule.alertGroupId) return null;
+  return (await groupOwnersOf([notificationId])).get(notificationId) ?? null;
+}
+
+/** The owner's own actions, for a send it delivers. `EscalatableAction` is a
+ *  superset of the plain action shape; the chains on it run from the sweep. */
+function ownerActions(owner: DeliveryOwner): AutomationAction[] {
+  return (owner.actions ?? []) as AutomationAction[];
 }
 
 // ─── Grouped alerts (business rule 75) ──────────────────────────────────────
@@ -3976,7 +4038,7 @@ async function createGroupAlert(
         alertGroupId: governs ? (rule.alertGroupId ?? null) : null,
         members: members as unknown as Prisma.InputJsonValue,
         dimensionCount: activeMembers(members).length,
-        ...(ruleWantsContext(rule) ? { templateCtx: ctx as any } : {}),
+        ...(groupWantsContext(rule) ? { templateCtx: ctx as any } : {}),
       },
       select: { id: true },
     });
@@ -4064,7 +4126,7 @@ async function joinGroupAlert(
       severity,
       message: ctx["message"] ?? "",
       dimension: primary?.key || null,
-      ...(ruleWantsContext(rule) ? { templateCtx: ctx as any } : {}),
+      ...(groupWantsContext(rule) ? { templateCtx: ctx as any } : {}),
       ...(reopening
         ? { acknowledged: false, acknowledgedBy: null, acknowledgedAt: null, acknowledgeNote: null, escalationState: Prisma.DbNull }
         : {}),
@@ -4139,7 +4201,7 @@ async function buildGroupContext(
   severity: string,
   now: Date,
 ): Promise<Record<string, string>> {
-  const detail = ruleWantsAssetDetail(rule) && lead.reading.assetId ? await assetDetail(lead.reading.assetId) : null;
+  const detail = groupWantsAssetDetail(rule) && lead.reading.assetId ? await assetDetail(lead.reading.assetId) : null;
   const parts = readingContextParts(rule, lead.reading, now, undefined, members);
   parts.severity = severity;
   applyFollowUpPolicy(parts, rule, severity);
@@ -4157,10 +4219,19 @@ async function buildGroupContext(
  * storm tick starves everything else.
  */
 async function drainPendingSends(pending: PendingSends): Promise<void> {
+  // Business rule 75: a governed alert FIRES through its group, exactly as it
+  // later escalates, reminds and resets through it. Without this the first
+  // message went out on the member automation's own actions — and a member
+  // with no notify action of its own (the normal shape inside a group) sent
+  // nothing at all. One lookup for the pass, over only the grouped rules' sends.
+  const grouped = [...pending.values()].filter((s) => s.rule.alertGroupId).map((s) => s.notificationId);
+  const owners = await groupOwnersOf(grouped);
   for (const s of pending.values()) {
+    const owner = owners.get(s.notificationId) ?? null;
     await enqueueAlertActions(
-      s.notificationId, s.actions, s.ctx, s.rule, s.reading,
+      s.notificationId, owner ? ownerActions(owner) : s.actions, s.ctx, s.rule, s.reading,
       s.kind === "growth" ? { growth: true, count: s.count } : undefined,
+      owner,
     );
   }
 }
@@ -4427,7 +4498,7 @@ async function reconcileGroupSeverity(
 
   const increased = severityRank(groupSev) > severityRank(row.severity);
   const tier = tierForSeverity(rule, groupSev);
-  const detail = ruleWantsAssetDetail(rule) && reading.assetId ? await assetDetail(reading.assetId) : null;
+  const detail = groupWantsAssetDetail(rule) && reading.assetId ? await assetDetail(reading.assetId) : null;
   const parts = readingContextParts(rule, reading, now, undefined, members);
   parts.severity = groupSev;
   applyFollowUpPolicy(parts, rule, groupSev);
@@ -4445,12 +4516,14 @@ async function reconcileGroupSeverity(
       // The new band's escalation timers restart from band entry — but only
       // because the ALERT changed band, never because one component did.
       escalationState: { tiers: {}, bandSince: now.toISOString() } as any,
-      ...(ruleWantsContext(rule) ? { templateCtx: ctx as any } : {}),
+      ...(groupWantsContext(rule) ? { templateCtx: ctx as any } : {}),
     },
   });
 
   if ((increased && policy.onIncrease) || (!increased && policy.onDecrease)) {
-    await enqueueAlertActions(notificationId, tier.actions, ctx, rule, reading);
+    // WHETHER to say so is the member's band policy; WHO hears it is the owner's.
+    const owner = await groupOwnerOf(rule, notificationId);
+    await enqueueAlertActions(notificationId, owner ? ownerActions(owner) : tier.actions, ctx, rule, reading, undefined, owner);
     await logEvent({
       action: increased ? "notification.escalated" : "notification.deescalated",
       resourceType: "notification",
@@ -4480,14 +4553,21 @@ async function fireResolved(
   // forget; the extra count runs on a recovery transition, and only for a rule
   // that groups.
   if (await stillFiringElsewhere(st, rule)) return;
-  const actions = policy.resolvedMode === "dedicated" ? policy.resolvedActions : tierForSeverity(rule, st.firingSeverity ?? rule.severity).actions;
+  // A group has no bands and no band policy of its own, so the member's policy
+  // still decides whether "Resolved" is sent — but "reuse" means reuse the
+  // alert's OWN recipients, and on a governed alert those are the group's.
+  // "dedicated" names actions the operator wrote for exactly this and stays.
+  const owner = policy.resolvedMode === "dedicated" ? null : await groupOwnerOf(rule, st.notificationId);
+  const actions = policy.resolvedMode === "dedicated"
+    ? policy.resolvedActions
+    : owner ? ownerActions(owner) : tierForSeverity(rule, st.firingSeverity ?? rule.severity).actions;
   if (!actions.length) return;
   const detail = ruleWantsAssetDetail(rule) && reading.assetId ? await assetDetail(reading.assetId) : null;
   const parts = readingContextParts(rule, reading, now);
   parts.severity = "resolved";
   const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
   setRecoverySentence(ctx, `Resolved: ${rule.name} — ${ctx["asset"] ?? reading.hostname ?? ""} recovered`);
-  await enqueueAlertActions(st.notificationId, actions, ctx, rule, reading);
+  await enqueueAlertActions(st.notificationId, actions, ctx, rule, reading, undefined, owner);
 }
 
 /**
@@ -4525,8 +4605,12 @@ async function fireReset(
   reason: string,
   now: Date,
 ): Promise<void> {
-  const actions = rule.resetActions;
-  if (!actions?.length || !st.notificationId) return;
+  if (!st.notificationId) return;
+  // A governed alert's reset actions are its GROUP's (business rule 75), the
+  // same answer runResetActionsForCleared gives for an operator's Clear.
+  const owner = await groupOwnerOf(rule, st.notificationId);
+  const actions = owner ? owner.resetActions : rule.resetActions;
+  if (!actions?.length) return;
   const detail = ruleWantsAssetDetail(rule) && reading.assetId ? await assetDetail(reading.assetId) : null;
   const parts = readingContextParts(rule, reading, now);
   // "resolved" is a pseudo-severity (not in SEVERITIES) that colours the email
@@ -4535,7 +4619,7 @@ async function fireReset(
   parts.severity = "resolved";
   const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
   setRecoverySentence(ctx, `Resolved: ${rule.name} — ${ctx["asset"] || reading.hostname || "device"} ${reason}`);
-  await enqueueAlertActions(st.notificationId, actions, ctx, rule, reading);
+  await enqueueAlertActions(st.notificationId, actions, ctx, rule, reading, undefined, owner);
 }
 
 /**

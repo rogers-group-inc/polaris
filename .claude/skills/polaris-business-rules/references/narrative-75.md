@@ -246,6 +246,23 @@ surfaces, the escalation sweep (whose candidate set widens to
 on their own, so an alert that outlives the switch-off falls back to its automation rather than
 silently losing its escalation.
 
+**The engine's own sends go through it too** (fixed 2026-09-30 — for the first twelve days
+the fire path did not). `fire()` buffers each contribution with its MEMBER's actions, and
+`drainPendingSends` used to send exactly those, with the member's `emailComposition`: the
+group's recipients never heard about a new alert, only about its reminders and escalations,
+and a member with no notify action of its own — the normal shape inside a group, and exactly
+the case the delete-confirm dialog warns about — sent nothing at all. Found in review, not in
+use. Now every send the engine makes on the alert's behalf resolves the owner from the ALERT
+(`groupOwnersOf`, keyed on the stamped `alertGroupId`, so a device outside the group's scope and
+a disabled group both fall back to the member): the first fire and every growth (one lookup
+per drain pass), `reconcileGroupSeverity`'s re-notify, `fireResolved` in `reuse` mode and
+`fireReset`. The member's band policy still decides WHETHER a severity change or a "Resolved"
+is sent — `bandNotify` stays on the member — and `dedicated` resolved actions stay the member's,
+since the operator wrote them for exactly that send. A grouped automation also always snapshots
+`templateCtx` and loads `{asset.*}` detail (`groupWantsContext` / `groupWantsAssetDetail`),
+because the group may escalate, remind or compose where its member would not. Pinned by
+`tests/integration/alertGroupDelivery.test.ts`.
+
 ### The alert keeps a primary ruleId, and that is load-bearing
 
 It would be tidier for a group-owned alert to carry a null `ruleId`. It would also be six
