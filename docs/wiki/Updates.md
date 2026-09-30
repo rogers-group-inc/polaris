@@ -65,8 +65,9 @@ filenames.
 | A maintenance window is open | so the restart does not page anyone |
 
 That last one is worth doing properly: a
-[maintenance window](Maintenance-Windows) stops polling **and retires live
-alerts** for the devices it covers — but the Polaris host restarting is
+[maintenance window](Maintenance-Windows) stops polling **and silences
+alerts** for the devices it covers (alerts already open stay open and resolve
+normally afterwards) — but the Polaris host restarting is
 something your own automations may notice.
 
 ---

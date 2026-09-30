@@ -4,8 +4,8 @@
  * Maintenance/dependency suppression semantics in the notification engine:
  * suppressed assets (status="maintenance" or dependencySuppressed) produce no
  * readings (no fire), their `pending` state rows reset to clear, their
- * `firing` rows are left to the suppression sweep (clearSuppressedAlerts —
- * see notificationSuppressionSweep.test.ts, which owns retiring the alert),
+ * `firing` rows are left alone (frozen through a window; the down-parent sweep,
+ * clearSuppressedAlerts, is notificationSuppressionSweep.test.ts),
  * and a healthy asset in the same scope still evaluates normally. Also locks
  * the shared monitor candidate filter so the polling exclusion can't silently
  * drift.
@@ -131,8 +131,8 @@ describe("threshold-rule suppression", () => {
     expect(h.prisma.notificationRuleState.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "st-pending" }, data: expect.objectContaining({ state: "clear" }) }),
     );
-    // firing row untouched HERE: retiring it belongs to clearSuppressedAlerts,
-    // which runs ahead of the tick and covers event/change alerts too.
+    // firing row untouched: a maintenance window freezes a live alert, it
+    // never retires it (business rule 16).
     const touchedIds = h.prisma.notificationRuleState.update.mock.calls.map((c) => c[0].where.id);
     expect(touchedIds).not.toContain("st-firing");
     expect(h.prisma.notification.updateMany).not.toHaveBeenCalled();

@@ -74,7 +74,7 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 |---|---|
 | An automation never fires | The **monitored gate** ([rule 37](Business-Rules#rule-37)), or a **more specific automation carved the devices out** ([rule 18](Business-Rules#rule-18)). Step 6 shows both |
 | A per-dimension automation fires about nothing | Nothing is **pinned**. The pin is the gate, and the picker lists the pin set, not the inventory ([rule 57](Business-Rules#rule-57)) |
-| An alert cleared itself when a window opened | Correct — a maintenance window **retires** live alerts rather than freezing them ([rule 16](Business-Rules#rule-16)) |
+| An alert stayed open through a maintenance window | Correct — a window pauses an open alert rather than clearing it. It resolves by itself once polling resumes and the device reads healthy; clear it by hand if you don't want to wait ([rule 16](Business-Rules#rule-16)) |
 | Alerts from two automations about one outage | Same-rank ties **both fire**. That is also why Clone and Import create **disabled** |
 | A recipient gets nothing, and the automation looks right | Check the **Addresses** column's hover breakdown. Then check whether they have an email address at all, or (for push) an enrolled browser — the builder warns about both |
 | Push delivers to nobody | Push is opt-in **per browser**, and the boot-time reconcile **never prompts**. The account must pick the preference **on that browser** once |

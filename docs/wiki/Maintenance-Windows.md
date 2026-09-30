@@ -25,14 +25,29 @@ the window — on the phone's asset sheet as well as the desktop. Because nothin
 is polled, the chart has no line inside the band; on the phone a chart section
 with no readings says *Polling paused for maintenance* rather than *No samples*.
 
-### It retires live alerts — it does not freeze them
+### Alerts already open stay open — they are paused, not cleared
 
-An alert that was already up when the window opens is **cleared**, not paused.
-The state row is released, **no reset actions run**, and a still-bad condition
-**re-earns its debounce and fires anew after the window**.
+An alert that was already up when the window opens **stays open** through the
+window. While the device is in maintenance it is silenced: no new alerts fire
+about the device, and escalation and reminders on the open alert pause.
 
-That is the right behaviour: the alert that was live before the window is about
-a device nobody was working on yet.
+When the window ends, polling resumes and the alert is judged on fresh
+readings. If the device is healthy, the alert **resolves normally** through its
+own automation — the reset actions run, exactly as they would for any recovery.
+If the problem is still there, the alert simply carries on (no duplicate is
+raised), and escalation and reminders pick up again. You can also clear it by
+hand at any time.
+
+That is deliberate: an alert someone was already tracking — acknowledged,
+escalating, noted — should not be wiped out because a device went into
+maintenance. (Between 2026-08-28 and 2026-09-30 Polaris did clear such alerts
+when a window opened; that was reverted because it reset alerts operators were
+still working.)
+
+The same applies to devices silenced **behind** a device in maintenance: their
+open alerts are paused too, not cleared. Only a genuine outage upstream — a
+parent that is actually down — clears a child's alerts (see
+[Dependency Suppression](Dependency-Suppression)).
 
 ### Discovery must not fight it
 
@@ -232,7 +247,8 @@ tab, its `maintenance.entered` / `maintenance.exited` events and its chart bands
 
 > **It silences the whole device, not just the agent.** For the length of the
 > operation the asset is in maintenance, so a live alert on the way in is
-> retired and a genuine failure that starts during it is not reported until the
+> paused (it stays open and resolves normally afterwards if the device is
+> healthy) and a genuine failure that starts during it is not reported until the
 > window ends. That is the same trade every maintenance window makes, for a
 > minute or two per device.
 
@@ -262,9 +278,10 @@ They are easy to confuse and do opposite things:
 |---|---|---|
 | Scope | a device | a reminder on one notify action |
 | Polling | **stopped** | unaffected |
-| The first alert | **retired** | unaffected |
-| Reminders | n/a — there is no alert | **held**, and sent when the window ends |
-| Escalation tiers | n/a | unaffected |
+| An alert already open | **stays open, paused** — resolves normally after the window | unaffected |
+| New alerts | **not raised** | unaffected |
+| Reminders | **paused**, resume after the window | **held**, and sent when the window ends |
+| Escalation tiers | **paused**, resume after the window | unaffected |
 | Recurrence model | shared | shared |
 
 **Maintenance silences the device. Quiet time silences the chasing.**
