@@ -233,7 +233,7 @@ memory, response time and packet loss. The device facts (IP address, location,
 model and so on) stay, because which server is filling up is usually the
 first thing you need.
 
-- **Used % and used bytes** show the last 24 hours of that filesystem's usage,
+- **Used % and used bytes** show the last hour of that filesystem's usage,
   with the automation's threshold as a dashed red line.
 - **Days until full** shows a **forecast**:
   - Left of "now": the daily usage the forecast was worked out from, up to

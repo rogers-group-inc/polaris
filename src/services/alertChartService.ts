@@ -1189,9 +1189,9 @@ async function loadProbeLoss(assetId: string, since: Date, bucketMs: number = LO
 // A storage alert is about ONE FILESYSTEM, so it charts that mount rather than
 // the device (STORAGE_SCOPED_METRICS). Two shapes, one token:
 //
-//  - `storageUsedPct` / `storageUsedBytes`: the mount's last 24 hours
-//    (STORAGE_USAGE_WINDOW_MS — an hour of disk usage is almost always a flat
-//    line), in the unit the automation compares, with its threshold dashed.
+//  - `storageUsedPct` / `storageUsedBytes`: the mount's last hour
+//    (STORAGE_USAGE_WINDOW_MS — the same window as every other alert chart),
+//    in the unit the automation compares, with its threshold dashed.
 //  - `storageDaysUntilFull`: a FORECAST. The daily points the automation's
 //    number was fitted on (storageForecastService.loadStorageForecastSeries —
 //    the same SQL, the same regression), then the trend carried forward as a
@@ -1199,10 +1199,10 @@ async function loadProbeLoss(assetId: string, since: Date, bucketMs: number = LO
 //    the capacity line. The caption quotes the same "full in N d" the alert
 //    fired on, so the picture and the number cannot disagree.
 
-/** How far back a used-% / used-bytes storage chart looks (operator decision
- *  2026-09-28: a day shows whether usage jumped or crept, an hour shows a flat
- *  line). */
-export const STORAGE_USAGE_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** How far back a used-% / used-bytes storage chart looks. The last hour, like
+ *  every other alert chart (operator decision 2026-09-30, reversing the 24 h
+ *  window of 2026-09-28 — it sat under the email's "Last hour" heading). */
+export const STORAGE_USAGE_WINDOW_MS = CHART_WINDOW_MS;
 
 /** A forecast chart's horizon when the automation's threshold is unknown (a
  *  deleted rule, a composite trigger): enough past the projected fill date to
@@ -1242,7 +1242,7 @@ export function bytesDisplayScale(maxBytes: number): { divisor: number; unit: st
 }
 
 /**
- * The 24-hour usage chart for a used-% or used-bytes alert. Pure. Percent is
+ * The last-hour usage chart for a used-% or used-bytes alert. Pure. Percent is
  * pinned 0–100 like every percentage chart here; bytes self-scale in the unit
  * that fits the larger of the data and the threshold, and the threshold is
  * scaled with it so the dashed line lands where the automation compares.
@@ -1348,7 +1348,7 @@ export function storageForecastSpec(
   };
 }
 
-/** The 24-hour read for a usage chart: one mount, one indexed range read on
+/** The last-hour read for a usage chart: one mount, one indexed range read on
  *  `(assetId, mountPath, timestamp)`. */
 async function loadStorageUsage(assetId: string, mountPath: string, since: Date) {
   const rows = await prisma.assetStorageSample.findMany({
@@ -1377,7 +1377,6 @@ function sampleStorageSpec(metric: string, mountPath: string, threshold: number 
   const total = 500 * 1024 ** 3;
   const from = now - STORAGE_USAGE_WINDOW_MS;
   const rows = sampleWave(from, now, (f, i) => clamp(0.78 + 0.04 * f + 0.006 * Math.sin(i * 0.37) + (f > 0.85 ? (f - 0.85) * 0.9 : 0), 0, 1))
-    .filter((_, i) => i % 15 === 0)
     .map((p) => ({ t: p.t, used: p.v * total, total }));
   return storageUsageSpec(rows, { metric, mountPath, threshold, now });
 }
