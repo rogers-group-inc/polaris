@@ -28,6 +28,10 @@
  * trio is the per-host twin). Pointing the SERVER at a target is chained on
  * networkScan:write (pathCheckService.CheckWriteOpts) — decided by the service
  * from `mayRunOnServer`, because only it knows whether an edit re-aims the server.
+ * A `credentialId` (authenticate with an http Credential) makes the check
+ * server-only and is a USE of that secret: the caller needs `credentials`
+ * write on a row they created, or fullwrite for any (business rule 43's
+ * test-by-id scoping).
  *
  * Zod validates the outer shape; the semantic checks (target refusal, status
  * spec, RE2-compatible regex, interval / timeout rules) live in
@@ -42,6 +46,7 @@ import { requestActor } from "../middleware/auth.js";
 import {
   CHECK_KINDS,
   BODY_MATCH_MODES,
+  HTTP_METHODS,
   listChecks,
   getCheck,
   createCheck,
@@ -78,8 +83,14 @@ export const pathCheckInputSchema = z.object({
       mode: z.enum(BODY_MATCH_MODES),
       pattern: z.string().max(1024),
       caseSensitive: z.boolean().optional(),
+      negate: z.boolean().optional(),
     }).nullable().optional(),
     verifyTls: z.boolean().optional(),
+    // GET / HEAD only — anything that writes is refused by design, and the
+    // enum is what refuses it.
+    method: z.enum(HTTP_METHODS).optional(),
+    hostHeader: z.string().max(260).nullable().optional(),
+    followRedirects: z.boolean().optional(),
   }).nullable().optional(),
   traceroute: z.object({
     enabled: z.boolean().optional(),
@@ -92,6 +103,7 @@ export const pathCheckInputSchema = z.object({
   scope: scopeSchema.nullable().optional(),
   assetIds: z.array(z.string().max(64)).max(2000).optional(),
   runOnServer: z.boolean().optional(),
+  credentialId: z.string().max(64).nullable().optional(),
 });
 
 const previewSchema = z.object({
@@ -104,9 +116,20 @@ const enabledSchema = z.object({ enabled: z.boolean() });
 /** A draft under test: the full check body, but no name or Sources needed yet. */
 const testSchema = pathCheckInputSchema.extend({ name: z.string().max(120).optional() });
 
-/** The chained half of the server-source gate (see the header). */
+/**
+ * The chained half of the server-source gate, and who may USE which stored
+ * credential (see the header) — both decided by the service, which alone
+ * knows whether an edit re-aims the server or re-points a secret.
+ */
 function writeOpts(req: Parameters<typeof hasPermission>[0]) {
-  return { mayRunOnServer: hasPermission(req, "networkScan", "write") };
+  const credentialAccess = hasPermission(req, "credentials", "fullwrite") ? "fullwrite" as const
+    : hasPermission(req, "credentials", "write") ? "write" as const
+    : hasPermission(req, "credentials", "read") ? "read" as const : "none" as const;
+  return {
+    mayRunOnServer: hasPermission(req, "networkScan", "write"),
+    credentialAccess,
+    username: (req as { session?: { username?: string } }).session?.username ?? null,
+  };
 }
 
 export const pathChecksRouter = Router();

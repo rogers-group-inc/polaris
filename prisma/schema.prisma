@@ -442,6 +442,7 @@ model Credential {
   updatedAt DateTime @updatedAt
 
   customWidgets                   ManufacturerCustomWidget[] @relation("ManufacturerCustomWidgetCredential")
+  pathChecks                      PathCheck[]                @relation("PathCheckCredential")
   assets                          Asset[]                    @relation("AssetMonitorCred") // default credential back-relation
   rtAssets                        Asset[]                    @relation("AssetRTCred")
   cpuMemoryAssets                 Asset[]                    @relation("AssetCpuMemCred")
@@ -3306,6 +3307,13 @@ model PathCheck {
   // Also run it from THIS Polaris server (the scheduler-role process —
   // jobs/runServerPathChecks). Its source row is the one with assetId NULL.
   runOnServer      Boolean  @default(false)
+  // http/https only: the `http`-typed Credential (bearer / basic / digest) the
+  // request authenticates with. A check with one runs ONLY from this Polaris
+  // server — no agent source is allowed or shipped, so the secret never
+  // leaves the server (business rule 85). Restrict: a credential in use by a
+  // check cannot be deleted out from under it (credentialService says why).
+  credentialId     String?
+  credential       Credential? @relation("PathCheckCredential", fields: [credentialId], references: [id], onDelete: Restrict)
   // sha256 of exactly the definition the agent receives — folded into both
   // config ETags so an edit reaches running agents.
   definitionSha256 String
@@ -3316,6 +3324,7 @@ model PathCheck {
 
   sources PathCheckSource[]
 
+  @@index([credentialId])
   @@map("path_checks")
 }
 

@@ -19,6 +19,8 @@ vi.mock("../../src/db.js", () => ({
     asset: { findMany: vi.fn() },
     monitorClassOverride: { findMany: vi.fn() },
     integration: { findMany: vi.fn() },
+    // Path checks that authenticate with a credential (business rule 85).
+    pathCheck: { findMany: vi.fn(async () => []) },
   },
 }));
 
@@ -172,6 +174,13 @@ describe("deleteCredential guard", () => {
 
   it("blocks deletion when only a class override references it (no assets)", async () => {
     await expect(deleteCredential(CRED_D)).rejects.toMatchObject({ httpStatus: 409 });
+    expect(credDelete).not.toHaveBeenCalled();
+  });
+
+  it("blocks deletion while a path check authenticates with it, naming the check", async () => {
+    const { prisma } = await import("../../src/db.js");
+    vi.mocked(prisma.pathCheck.findMany).mockResolvedValueOnce([{ name: "ERP health" }] as never);
+    await expect(deleteCredential(CRED_E)).rejects.toMatchObject({ httpStatus: 409, message: expect.stringMatching(/path check "ERP health"/) });
     expect(credDelete).not.toHaveBeenCalled();
   });
 

@@ -74,6 +74,13 @@ function load(opts: { networkScan?: "read" | "write" } = {}) {
     }),
   };
   g.api = {
+    credentials: {
+      list: async () => [
+        { id: "cr-basic", name: "ERP login", type: "http", config: { authMode: "basic", username: "svc" } },
+        { id: "cr-form", name: "Switch admin", type: "http", config: { authMode: "form", username: "admin" } },
+        { id: "cr-snmp", name: "public", type: "snmp", config: {} },
+      ],
+    },
     pathChecks: {
       filterSchema: async () => ({ scopeCondition: { fields: [] }, options: {} }),
       previewSources: async () => ({ total: 0, pinned: 0, matchedWithoutAgent: 0, agents: [], pinnedWithoutAgent: [], minAgentVersion: "0.21.0" }),
@@ -248,5 +255,82 @@ describe("path check wizard — Test from this Polaris server", () => {
     expect(html).toContain("&lt;script&gt;");
     expect(html).not.toContain("<script>x");
     expect(html).toContain("&lt;b&gt;");
+  });
+});
+
+describe("path check wizard — request options and authentication", () => {
+  async function fillGeneral() {
+    (doc.getElementById("pc-name") as HTMLInputElement).value = "ERP";
+    (doc.getElementById("pc-target") as HTMLInputElement).value = "https://erp.example/health";
+  }
+  const change = (id: string) => (doc.getElementById(id) as HTMLElement).dispatchEvent(new (g.window as any).Event("change"));
+
+  it("offers only Bearer / Basic / Digest http credentials", async () => {
+    const PC = load();
+    await PC.openCheckModal(null);
+    const opts = Array.from((doc.getElementById("pc-credential") as HTMLSelectElement).options).map((o) => o.value);
+    expect(opts).toEqual(["", "cr-basic"]);
+  });
+
+  it("locks Sources to this server once a credential is chosen, and posts no agent hosts", async () => {
+    const PC = load();
+    await PC.openCheckModal(null);
+    await fillGeneral();
+    (doc.getElementById("pc-credential") as HTMLSelectElement).value = "cr-basic";
+    change("pc-credential");
+    const serverCb = doc.getElementById("pc-server") as HTMLInputElement;
+    expect(serverCb.checked).toBe(true);
+    expect(serverCb.disabled).toBe(true);
+    expect((doc.getElementById("pc-agent-sources") as HTMLElement).style.display).toBe("none");
+    expect((doc.getElementById("pc-server-only-note") as HTMLElement).style.display).toBe("");
+    // Back to None and on again: the agent half comes back, then goes away.
+    (doc.getElementById("pc-credential") as HTMLSelectElement).value = "";
+    change("pc-credential");
+    expect((doc.getElementById("pc-agent-sources") as HTMLElement).style.display).toBe("");
+    (doc.getElementById("pc-credential") as HTMLSelectElement).value = "cr-basic";
+    change("pc-credential");
+    click("pc-next"); click("pc-next"); click("pc-next");
+    click("pc-save");
+    await flush();
+    expect(posted[0]).toMatchObject({ credentialId: "cr-basic", runOnServer: true, scope: {}, assetIds: [] });
+  });
+
+  it("collects HEAD, the Host header, redirects and a NOT body match, and notes the agent version they need", async () => {
+    const PC = load();
+    await PC.openCheckModal(null);
+    await fillGeneral();
+    (doc.getElementById("pc-host-header") as HTMLInputElement).value = "erp-02.example";
+    (doc.getElementById("pc-follow-redirects") as HTMLInputElement).checked = true;
+    change("pc-follow-redirects");
+    expect((doc.getElementById("pc-agent-version-note") as HTMLElement).style.display).toBe("");
+    (doc.getElementById("pc-body-mode") as HTMLSelectElement).value = "!contains";
+    (doc.getElementById("pc-body-pattern") as HTMLInputElement).value = "maintenance";
+    const p = PC.collectCheck(doc.querySelector("#modal-overlay .modal-body"), {}, []);
+    expect(p.http).toMatchObject({ method: "GET", hostHeader: "erp-02.example", followRedirects: true, bodyMatch: { mode: "contains", pattern: "maintenance", negate: true } });
+    (doc.getElementById("pc-method") as HTMLSelectElement).value = "HEAD";
+    const head = PC.collectCheck(doc.querySelector("#modal-overlay .modal-body"), {}, []);
+    expect(PC.validateCheck(head)).toMatchObject({ tab: "expect", message: expect.stringMatching(/HEAD request has no body/) });
+  });
+
+  it("opens a stored check with its negated match and method pinned from the model", async () => {
+    const PC = load();
+    await PC.openCheckModal({
+      id: "c9", name: "ERP", kind: "https", target: "https://erp.example/", intervalSec: 60, timeoutMs: 5000, enabled: true,
+      http: { expectStatus: "", verifyTls: true, method: "GET", hostHeader: "x.example", followRedirects: true, bodyMatch: { mode: "regex", pattern: "err", caseSensitive: false, negate: true } },
+      traceroute: { enabled: true, everyNRuns: 5, maxHops: 30, probesPerHop: 3 }, scope: {}, assetIds: [], runOnServer: true, credentialId: "cr-basic",
+    });
+    expect((doc.getElementById("pc-body-mode") as HTMLSelectElement).value).toBe("!regex");
+    expect((doc.getElementById("pc-credential") as HTMLSelectElement).value).toBe("cr-basic");
+    expect((doc.getElementById("pc-follow-redirects") as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("filters usable credentials as a pure function", () => {
+    const PC = load();
+    expect(PC.usableHttpCredentials([
+      { id: "a", name: "a", type: "http", config: { authMode: "digest" } },
+      { id: "b", name: "b", type: "http", config: { apiToken: "***" } },
+      { id: "c", name: "c", type: "http", config: { authMode: "form" } },
+      { id: "d", name: "d", type: "ssh", config: {} },
+    ]).map((c: any) => c.id + ":" + c.authMode)).toEqual(["a:digest", "b:bearer"]);
   });
 });

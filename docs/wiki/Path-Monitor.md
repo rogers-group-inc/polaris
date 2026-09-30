@@ -66,13 +66,37 @@ addresses), multicast, IPv6 addresses, URLs with a user name or password in
 them, and the Polaris server itself. Private (RFC 1918) addresses are allowed.
 The agent checks the address again after it resolves the name.
 
+For HTTP and HTTPS, the **Request** section sets how the request is sent:
+
+| Field | What it means |
+|---|---|
+| **Method** | **GET** (default) or **HEAD**, which fetches the headers only, so there is no body to check. A check never sends anything that changes data (no PUT, POST or DELETE). |
+| **Host header** | Sent instead of the URL's host name, and used for the TLS certificate check. Point the URL at one server's address and still ask for the site by name, for example to test each server behind a load balancer. |
+| **Follow redirects** | Off by default, so a 302 is judged as a 302. On follows up to 5 redirects and judges the final page. Each new address is checked like the first. |
+| **Authentication** | *None*, or an HTTP credential (Bearer token, Basic or Digest) from Server Settings → Credentials. See below. |
+
+A check using Method HEAD, a Host header, Follow redirects or a *NOT* body
+check needs **Polaris Agent 0.23.0 or later** on agent hosts; older agents skip
+it and show *upgrade agent* until they are upgraded.
+
+**Authentication runs only from the Polaris server.** A check that
+authenticates is never sent to an agent, so the password or token stays on the
+Polaris server. Choosing a credential ticks *Run from this Polaris server* and
+clears the agent hosts. You can use a credential you created (*Read-Write* on
+Credentials), or any credential with *Full Read-Write*. A credential a check
+uses cannot be deleted until the check stops using it. Authentication and the
+Host header are sent only to the original site: a redirect that leaves it gets
+neither. Basic and Bearer over plain `http://` send the secret unencrypted, and
+the dialog warns you.
+
 ### Expectations (HTTP / HTTPS only)
 
 - **Accepted status codes** — codes and ranges, comma-separated, e.g.
-  `200,204,300-399`. Blank means any 2xx. Redirects are never followed, so a
-  302 is judged as a 302.
-- **Body must** contain / equal exactly / match a regular expression. Checked in
-  the first 64 KB. Regular expressions run on the agent, which does not support
+  `200,204,300-399`. Blank means any 2xx. Unless the check follows redirects,
+  a 302 is judged as a 302.
+- **Body must** contain / equal exactly / match a regular expression, or
+  **NOT** contain / equal / match one: use a *NOT* option to fail the check
+  when an error or maintenance page comes back. Checked in the first 64 KB. Regular expressions run on the agent, which does not support
   lookahead, lookbehind or backreferences.
 - **Verify the TLS certificate** — on by default. Off accepts any certificate;
   the check still reports the certificate's issuer and expiry.
@@ -224,6 +248,8 @@ out on the retention schedule.
 | ICMP check fails with `icmp unsupported on this host (ping_group_range)` | Linux only. See [Polaris Agent → Troubleshooting](Polaris-Agent#troubleshooting) for the one-line fix. HTTP, TCP and traceroute are unaffected |
 | Every hop after the first shows `* * *` | the network drops the ICMP replies traceroute relies on. The check result is unaffected |
 | An HTTPS check fails with a certificate error | the host does not trust the target's certificate. Fix the certificate or its chain, or turn off *Verify the TLS certificate* |
-| A 302 fails the check | redirects are never followed. Point the check at the final URL, or accept `300-399` |
+| A 302 fails the check | redirects are not followed unless you tick *Follow redirects* (General step). Or point the check at the final URL, or accept `300-399` |
+| An authenticating check shows no agent hosts | by design: a check with a credential runs only from the Polaris server, so the credential never reaches an agent |
+| A check says *upgrade agent* on every host | it uses HEAD, a Host header, Follow redirects or a *NOT* body check, which need agent 0.23.0 |
 
 See also: [Polaris Agent](Polaris-Agent), [Automation triggers](Automation-Triggers), [Business rule 85](Business-Rules#rule-85).

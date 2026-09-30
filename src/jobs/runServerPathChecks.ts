@@ -21,15 +21,20 @@
  * re-baselines, as an agent restart does.
  *
  * Runs are launched without awaiting the tick, at most MAX_IN_FLIGHT at once,
- * one per check, so a 30 s traceroute never delays another check's run. At
- * the fleet-wide cap of 50 enabled checks that is ≤ 1 definition query per
+ * one per check, so a 30 s traceroute never delays another check's run.
+ *
+ * A check with a credential authenticates from here and ONLY from here — it
+ * has no agent sources (pathCheckService), so the secret never leaves the
+ * server.
+ *
+ * At the fleet-wide cap of 50 enabled checks that is ≤ 1 definition query per
  * tick plus 1–2 small ingest statements per run — independent of fleet size.
  *
  * Import this module from src/app.ts to activate.
  */
 
 import { logger } from "../utils/logger.js";
-import { serverCheckDefinitions, POLARIS_SERVER_SUBJECT, type AgentCheckDef } from "../services/pathCheckService.js";
+import { serverCheckDefinitions, loadServerCheckAuth, POLARIS_SERVER_SUBJECT, type ServerCheckDef } from "../services/pathCheckService.js";
 import { ingestPathCheckSamples, ingestPathCheckTraceroutes } from "../services/pathCheckIngestService.js";
 import {
   runServerCheck,
@@ -50,9 +55,12 @@ let states = new Map<string, ServerCheckState>();
 const inFlight = new Set<string>();
 let ticking = false;
 
-async function runOne(def: AgentCheckDef, st: ServerCheckState, mode: TraceMode): Promise<void> {
+async function runOne(def: ServerCheckDef, st: ServerCheckState, mode: TraceMode): Promise<void> {
   try {
-    const { sample, trace } = await runServerCheck(def, mode);
+    // Opened per run, never cached: a rotated password takes effect on the
+    // next run, and the plaintext lives only for the length of one request.
+    const auth = await loadServerCheckAuth(def.credentialId);
+    const { sample, trace } = await runServerCheck(def, mode, undefined, undefined, auth);
     st.lastOk = sample.ok;
     await ingestPathCheckSamples(POLARIS_SERVER_SUBJECT, [sample], new Date());
     if (trace) await ingestPathCheckTraceroutes(POLARIS_SERVER_SUBJECT, [trace], new Date());

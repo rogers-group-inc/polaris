@@ -44,6 +44,7 @@ async function cleanup(): Promise<void> {
   await prisma.pathCheck.deleteMany({ where: { name: { startsWith: "IT path-check" } } });
   await prisma.apiToken.deleteMany({ where: { name: NO_SCAN_ROLE } });
   await prisma.role.deleteMany({ where: { name: NO_SCAN_ROLE } });
+  await prisma.credential.deleteMany({ where: { name: { startsWith: "IT path-check cred" } } });
   await prisma.managedAgent.deleteMany({ where: { asset: { hostname: { in: [HOST, GATE] } } } });
   await prisma.asset.deleteMany({ where: { hostname: { in: [HOST, GATE] } } });
 }
@@ -334,5 +335,51 @@ d("path checks — the Polaris server as a source", () => {
       .send({ ...serverBody, enabled: false, runOnServer: false, scope: { allAssets: true } });
     expect(res.status).toBe(200);
     expect(await prisma.pathCheckSource.count({ where: { checkId: serverCheckId, assetId: null } })).toBe(0);
+  });
+});
+
+d("path checks — authentication (server-only)", () => {
+  let credId = "";
+  let authCheckId = "";
+
+  it("creates an authenticating check that runs only from the server", async () => {
+    const cred = await prisma.credential.create({
+      data: { name: "IT path-check cred", type: "http", config: { authMode: "basic", username: "svc", password: "s3cret" }, createdBy: "someone-else" },
+    });
+    credId = cred.id;
+    const body = {
+      name: "IT path-check with auth", kind: "https", target: "https://erp.example.test/health",
+      http: { expectStatus: "", verifyTls: true }, scope: {}, assetIds: [], credentialId: credId,
+    };
+    // Path Monitor + Network Discovery, but no Credentials rung: may not USE a stored secret.
+    const denied = await request(app).post("/api/v1/path-checks").set("Authorization", `Bearer ${noScanToken}`).send(body);
+    expect(denied.status).toBe(403);
+    const { agent, csrf } = await authedAgent(app);
+    const withAgents = await agent.post("/api/v1/path-checks").set("X-CSRF-Token", csrf).send({ ...body, scope: { allAssets: true } });
+    expect(withAgents.status).toBe(400);
+    const res = await agent.post("/api/v1/path-checks").set("X-CSRF-Token", csrf).send(body);
+    expect(res.status).toBe(201);
+    authCheckId = res.body.id;
+    expect(res.body).toMatchObject({ credentialId: credId, runOnServer: true });
+    const rows = await prisma.pathCheckSource.findMany({ where: { checkId: authCheckId } });
+    expect(rows.map((r) => r.assetId)).toEqual([null]);
+    // Never in an agent's config, and the definition carries no secret.
+    const cfg = await agentReq("get", "/config");
+    expect((cfg.body.pathChecks as Array<{ id: string }>).some((c) => c.id === authCheckId)).toBe(false);
+    expect(JSON.stringify(cfg.body)).not.toContain("s3cret");
+  });
+
+  it("refuses to delete a credential a check uses, naming the check", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const res = await agent.delete(`/api/v1/credentials/${credId}`).set("X-CSRF-Token", csrf);
+    expect(res.status).toBe(409);
+    expect(res.body.error ?? res.body.message).toMatch(/IT path-check with auth/);
+  });
+
+  it("the server job's definitions carry the credential, and the opened auth is usable", async () => {
+    const { serverCheckDefinitions, loadServerCheckAuth } = await import("../../src/services/pathCheckService.js");
+    const def = (await serverCheckDefinitions()).find((d) => d.id === authCheckId);
+    expect(def?.credentialId).toBe(credId);
+    expect(await loadServerCheckAuth(credId)).toMatchObject({ authMode: "basic", username: "svc", password: "s3cret" });
   });
 });

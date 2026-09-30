@@ -294,7 +294,7 @@
         '<select id="pc-kind">' + ["https", "http", "tcp", "icmp"].map(function (k) {
           return '<option value="' + k + '">' + KIND_LABELS[k] + "</option>";
         }).join("") + "</select>",
-        "HTTP / HTTPS send one GET and judge the status (and body, if set). TCP opens a connection. ICMP sends one ping.") +
+        "HTTP / HTTPS send one GET (or HEAD) and judge the status (and body, if set). TCP opens a connection. ICMP sends one ping.") +
       '<div class="form-group"><label id="pc-target-label">' + esc(hint.label) + '</label>' +
         '<input type="text" id="pc-target" maxlength="512" placeholder="' + esc(hint.placeholder) + '" value="' + esc(c.target || "") + '">' +
         '<p class="hint" style="margin:4px 0 0">Loopback, link-local, multicast and IPv6 targets are refused, as is this Polaris server. Credentials in a URL are not supported.</p></div>' +
@@ -302,7 +302,65 @@
         field("Every (minutes)", '<input type="number" id="pc-interval-min" min="1" max="60" step="1" value="' + Math.round((c.intervalSec || 60) / 60) + '" style="max-width:120px">') +
         field("Timeout (ms)", '<input type="number" id="pc-timeout-ms" min="500" max="30000" step="100" value="' + (c.timeoutMs || 5000) + '" style="max-width:140px">', "At most half the interval.") +
       "</div>" +
+      requestSectionHtml(c) +
       checkboxLine("pc-enabled", "Enabled", c.enabled !== false);
+  }
+
+  // ─── Request options (HTTP / HTTPS) ────────────────────────────────────
+  // Method (GET / HEAD — never anything that writes), a Host header override,
+  // following redirects, and authentication with an http Credential. A check
+  // that authenticates runs ONLY from this Polaris server, so the secret never
+  // reaches an agent (business rule 85). The first three need agent 0.23.0+.
+
+  var _httpCredentials = null; // [{id, name, authMode}] — null: not loaded / not permitted
+
+  function authModeLabel(m) { return m === "bearer" ? "Bearer token" : m === "basic" ? "Basic" : m === "digest" ? "Digest" : m; }
+
+  /** Pure: which stored credentials a path check can authenticate with (tested). */
+  function usableHttpCredentials(list) {
+    return (list || []).filter(function (cr) {
+      if (!cr || cr.type !== "http") return false;
+      var cfg = cr.config || {};
+      var mode = cfg.authMode || (cfg.apiToken ? "bearer" : cfg.username ? "basic" : "");
+      return mode === "bearer" || mode === "basic" || mode === "digest";
+    }).map(function (cr) {
+      var cfg = cr.config || {};
+      return { id: cr.id, name: cr.name, authMode: cfg.authMode || (cfg.apiToken ? "bearer" : "basic") };
+    });
+  }
+
+  function requestSectionHtml(c) {
+    var http = c.http || {};
+    var credOptions = '<option value="">None</option>';
+    var creds = _httpCredentials;
+    var current = c.credentialId || "";
+    var listed = false;
+    (creds || []).forEach(function (cr) {
+      if (cr.id === current) listed = true;
+      credOptions += '<option value="' + esc(cr.id) + '">' + esc(cr.name) + " (" + esc(authModeLabel(cr.authMode)) + ")</option>";
+    });
+    // A stored credential this caller cannot list still shows as chosen.
+    if (current && !listed) credOptions += '<option value="' + esc(current) + '">(the credential this check uses)</option>';
+    var credHint = creds === null
+      ? "Listing credentials needs the <strong>Credentials</strong> permission."
+      : !creds.length
+        ? "No HTTP credentials with Bearer, Basic or Digest yet. Add one under Server Settings → Credentials."
+        : "A check that authenticates runs <strong>only from this Polaris server</strong>, so the password or token never leaves it. You can use a credential you created, or any with Full Read-Write on Credentials.";
+    return '<div id="pc-request-fields">' + formDivider() + sectionHeading("Request") +
+      '<div style="display:flex;gap:1rem;flex-wrap:wrap">' +
+        field("Method", '<select id="pc-method" style="max-width:140px"><option value="GET">GET</option><option value="HEAD">HEAD</option></select>',
+          "HEAD fetches the headers only — no body to check.") +
+        '<div style="flex:1;min-width:220px">' +
+          field("Host header", '<input type="text" id="pc-host-header" maxlength="260" placeholder="(the URL\'s host)" value="' + esc(http.hostHeader || "") + '">',
+            "Sent instead of the URL's host (and used for TLS), so you can point the URL at one server's address and still ask for the site by name.") +
+        "</div>" +
+      "</div>" +
+      checkboxLine("pc-follow-redirects", "Follow redirects", http.followRedirects === true,
+        "Up to 5, each new address checked like the first. The check judges the final response. Authentication and the Host header go only to the original site, never to a redirect that leaves it.") +
+      field("Authentication", '<select id="pc-credential"' + (creds === null && !current ? " disabled" : "") + ">" + credOptions + "</select>", credHint) +
+      '<p id="pc-auth-cleartext" style="display:none;font-size:0.8rem;color:var(--color-warning,#b26a00);margin:-0.5rem 0 0.75rem">Basic and Bearer over plain HTTP send the secret unencrypted. Prefer an HTTPS URL, or Digest.</p>' +
+      '<p id="pc-agent-version-note" style="display:none;font-size:0.8rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">Agent hosts need Polaris Agent 0.23.0 or later to run a check with these options; older agents skip it and show <em>upgrade agent</em>.</p>' +
+    "</div>";
   }
 
   function expectationsTab(c) {
@@ -311,11 +369,12 @@
     return '<div id="pc-http-fields">' +
         field("Accepted status codes",
           '<input type="text" id="pc-status-spec" placeholder="200-299" value="' + esc(http.expectStatus || "") + '">',
-          'Codes and ranges, comma-separated — e.g. <code>200,204,300-399</code>. Blank means any 2xx. Redirects are never followed, so a 302 is judged as a 302.') +
+          'Codes and ranges, comma-separated — e.g. <code>200,204,300-399</code>. Blank means any 2xx. Unless the check follows redirects (General step), a 302 is judged as a 302.') +
         '<p class="hint" id="pc-status-error" style="color:var(--color-danger,#d32f2f);display:none;margin:-0.5rem 0 0.75rem"></p>' +
         field("Body must",
           '<select id="pc-body-mode"><option value="">(no body check)</option><option value="contains">contain</option>' +
-            '<option value="exact">equal exactly</option><option value="regex">match the regular expression</option></select>' +
+            '<option value="exact">equal exactly</option><option value="regex">match the regular expression</option>' +
+            '<option value="!contains">NOT contain</option><option value="!exact">NOT equal exactly</option><option value="!regex">NOT match the regular expression</option></select>' +
           '<input type="text" id="pc-body-pattern" maxlength="1024" style="margin-top:6px" value="' + esc(bm ? bm.pattern : "") + '">',
           "Checked in the first 64 KB. Regular expressions use RE2 syntax (the agent's): no lookahead / lookbehind or backreferences.") +
         checkboxLine("pc-body-case", "Case-sensitive", !!(bm && bm.caseSensitive)) +
@@ -369,6 +428,7 @@
       if (v) facts.push(p[0] + " " + v);
     });
     if (sm.resolvedIp) facts.push("Resolved " + esc(sm.resolvedIp));
+    if (res && res.finalUrl) facts.push("Redirected to <code>" + esc(res.finalUrl) + "</code>");
     if (sm.tlsIssuer) facts.push("TLS issuer " + esc(sm.tlsIssuer));
     if (sm.tlsNotAfter) facts.push("TLS expires " + esc(fmtDay(sm.tlsNotAfter)));
     if (sm.bodyBytes != null) facts.push(esc(sm.bodyBytes) + " bytes" + (sm.bodyBytes >= 65536 ? " (first 64 KB read)" : ""));
@@ -431,10 +491,13 @@
         (mayServer ? "" : " <strong>Needs Read-Write on Network Discovery</strong> as well as Path Monitor, because the server probes from its own network.")) +
       formDivider() +
       sectionHeading("Agent hosts") +
-      infoBox("An agent host runs a check only if it has an active <strong>Polaris Agent</strong> (0.21.0 or later). This filter is always combined with <em>Polaris Agent installed = yes</em>.") +
-      checkboxLine("pc-all-hosts", "All agent hosts", false) +
-      '<div id="pc-cond-wrap"><div id="pc-cond-root"></div></div>' +
-      '<div class="aw-preview-box" id="pc-preview" style="margin-top:0.75rem;max-height:260px;overflow:auto"></div>';
+      '<div id="pc-server-only-note" style="display:none">' + infoBox("This check <strong>authenticates</strong>, so it runs only from this Polaris server — its credential is never sent to an agent. To run it from agent hosts too, set Authentication to <em>None</em> on the General step.") + "</div>" +
+      '<div id="pc-agent-sources">' +
+        infoBox("An agent host runs a check only if it has an active <strong>Polaris Agent</strong> (0.21.0 or later). This filter is always combined with <em>Polaris Agent installed = yes</em>.") +
+        checkboxLine("pc-all-hosts", "All agent hosts", false) +
+        '<div id="pc-cond-wrap"><div id="pc-cond-root"></div></div>' +
+        '<div class="aw-preview-box" id="pc-preview" style="margin-top:0.75rem;max-height:260px;overflow:auto"></div>' +
+      "</div>";
   }
 
   /** The four steps, in the order the operator answers them. */
@@ -472,6 +535,10 @@
     }
     var CB = window.PolarisConditionBuilder;
     if (!CB) { showToast("Condition builder failed to load — reload the page", "error"); return; }
+    _httpCredentials = null;
+    if (typeof permAtLeast === "function" && permAtLeast("credentials", "read") && api.credentials && api.credentials.list) {
+      try { _httpCredentials = usableHttpCredentials(await api.credentials.list()); } catch (_) { _httpCredentials = null; }
+    }
 
     var c = existing ? JSON.parse(JSON.stringify(existing)) : {
       kind: "https", intervalSec: 60, timeoutMs: 5000, enabled: true,
@@ -503,7 +570,9 @@
     // Pin selects from the model (the happy-dom <option selected> trap, and
     // the reason product code sets .value rather than writing `selected`).
     body.querySelector("#pc-kind").value = c.kind || "https";
-    body.querySelector("#pc-body-mode").value = c.http && c.http.bodyMatch ? c.http.bodyMatch.mode : "";
+    body.querySelector("#pc-body-mode").value = c.http && c.http.bodyMatch ? (c.http.bodyMatch.negate ? "!" : "") + c.http.bodyMatch.mode : "";
+    body.querySelector("#pc-method").value = (c.http && c.http.method) || "GET";
+    body.querySelector("#pc-credential").value = c.credentialId || "";
 
     var scope = c.scope || {};
     var serverCb = body.querySelector("#pc-server");
@@ -534,9 +603,34 @@
       body.querySelector("#pc-http-fields").style.display = isHttp ? "" : "none";
       body.querySelector("#pc-nonhttp-note").style.display = isHttp ? "none" : "";
       body.querySelector("#pc-tls-row").style.display = k === "https" ? "" : "none";
+      body.querySelector("#pc-request-fields").style.display = isHttp ? "" : "none";
+      syncRequest();
+    }
+    /** Authentication locks Sources to the server; the new options need agent 0.23.0. */
+    function syncRequest() {
+      var k = body.querySelector("#pc-kind").value;
+      var isHttp = k === "http" || k === "https";
+      var cred = isHttp ? body.querySelector("#pc-credential").value : "";
+      var mode = "";
+      (_httpCredentials || []).forEach(function (cr) { if (cr.id === cred) mode = cr.authMode; });
+      body.querySelector("#pc-auth-cleartext").style.display = (cred && k === "http" && (mode === "basic" || mode === "bearer")) ? "" : "none";
+      var usesOptions = isHttp && (body.querySelector("#pc-method").value === "HEAD" || !!body.querySelector("#pc-host-header").value.trim() ||
+        body.querySelector("#pc-follow-redirects").checked || body.querySelector("#pc-body-mode").value.charAt(0) === "!");
+      body.querySelector("#pc-agent-version-note").style.display = usesOptions && !cred ? "" : "none";
+      var serverOnly = !!cred;
+      var lock = body.querySelector("#pc-server-only-note");
+      if (lock) lock.style.display = serverOnly ? "" : "none";
+      var agentWrap = body.querySelector("#pc-agent-sources");
+      if (agentWrap) agentWrap.style.display = serverOnly ? "none" : "";
+      if (serverOnly) serverCb.checked = true;
+      serverCb.disabled = serverOnly || (!canRunOnServer() && !serverCb.checked);
     }
     body.querySelector("#pc-kind").addEventListener("change", syncKind);
+    ["#pc-method", "#pc-credential", "#pc-body-mode"].forEach(function (sel) { body.querySelector(sel).addEventListener("change", syncRequest); });
+    body.querySelector("#pc-host-header").addEventListener("input", syncRequest);
+    body.querySelector("#pc-follow-redirects").addEventListener("change", syncRequest);
     syncKind();
+    syncRequest();
 
     var statusInput = body.querySelector("#pc-status-spec");
     function syncStatusError() {
@@ -761,8 +855,12 @@
     var on = function (id) { var el = root.querySelector("#" + id); return !!(el && el.checked); };
     var kind = v("pc-kind");
     var isHttp = kind === "http" || kind === "https";
-    var mode = v("pc-body-mode");
+    var modeSel = v("pc-body-mode");
+    var negate = modeSel.charAt(0) === "!";
+    var mode = negate ? modeSel.slice(1) : modeSel;
     var pattern = v("pc-body-pattern");
+    var method = v("pc-method") === "HEAD" ? "HEAD" : "GET";
+    var credentialId = isHttp ? (v("pc-credential") || null) : null;
     var out = {
       name: v("pc-name").trim(),
       description: v("pc-description").trim() || null,
@@ -773,8 +871,11 @@
       timeoutMs: Math.round(Number(v("pc-timeout-ms")) || 5000),
       http: isHttp ? {
         expectStatus: v("pc-status-spec").trim(),
-        bodyMatch: mode && pattern ? { mode: mode, pattern: pattern, caseSensitive: on("pc-body-case") } : null,
+        bodyMatch: mode && pattern ? Object.assign({ mode: mode, pattern: pattern, caseSensitive: on("pc-body-case") }, negate ? { negate: true } : {}) : null,
         verifyTls: kind === "https" ? on("pc-verify-tls") : false,
+        method: method,
+        hostHeader: v("pc-host-header").trim() || null,
+        followRedirects: on("pc-follow-redirects"),
       } : null,
       traceroute: {
         enabled: on("pc-tr-enabled"),
@@ -783,9 +884,12 @@
         probesPerHop: Math.round(Number(v("pc-tr-probes")) || 3),
       },
       keepBodyExcerpt: isHttp && on("pc-keep-excerpt"),
-      scope: scope,
-      assetIds: assetIds || [],
-      runOnServer: on("pc-server"),
+      // An authenticating check is server-only: its agent Sources are dropped
+      // here, and the server refuses them if they arrive anyway.
+      scope: credentialId ? {} : scope,
+      assetIds: credentialId ? [] : (assetIds || []),
+      runOnServer: credentialId ? true : on("pc-server"),
+      credentialId: credentialId,
     };
     return out;
   }
@@ -806,6 +910,12 @@
     if (!(p.timeoutMs >= 500 && p.timeoutMs <= 30000)) return { tab: "general", message: "Timeout must be 500–30000 ms" };
     if (p.timeoutMs * 2 > p.intervalSec * 1000) return { tab: "general", message: "Timeout must be at most half the interval" };
     if (p.http) {
+      if (p.http.hostHeader && !/^[a-z0-9.-]+(:\d{1,5})?$/i.test(p.http.hostHeader)) {
+        return { tab: "general", message: "Host header must be a host name or address, optionally with :port" };
+      }
+      if (p.http.method === "HEAD" && p.http.bodyMatch) {
+        return { tab: "expect", message: "A HEAD request has no body to match — use GET, or set the body check to none" };
+      }
       var s = parseStatusSpec(p.http.expectStatus);
       if (s.error) return { tab: "expect", message: "Accepted status codes: " + s.error };
       if (p.http.bodyMatch && p.http.bodyMatch.mode === "regex") {
@@ -963,6 +1073,7 @@
     collectCheck: collectCheck,
     scopeProblem: scopeProblem,
     testResultHtml: testResultHtml,
+    usableHttpCredentials: usableHttpCredentials,
     stepOfTab: stepOfTab,
     STEPS: STEPS,
   };

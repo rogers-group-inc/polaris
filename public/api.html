@@ -781,8 +781,23 @@
             <li><code>http?</code> (HTTP / HTTPS only): <code>{ expectStatus?</code> — e.g.
               <code>"200,204,300-399"</code>, empty = any 2xx; <code>bodyMatch?: { mode:
               "contains" | "regex" | "exact", pattern (≤1024), caseSensitive? }</code>;
-              <code>verifyTls?</code> (default <code>true</code>) <code>}</code>. A regex must be
-              RE2-compatible (no look-around or back-references) — the agent runs it.</li>
+              <code>verifyTls?</code> (default <code>true</code>), <code>method?</code>
+              (<code>"GET"</code> | <code>"HEAD"</code> — nothing that writes is ever sent),
+              <code>hostHeader?</code> (sent as Host and used for TLS),
+              <code>followRedirects?</code> (≤5 hops, default off) <code>}</code>;
+              <code>bodyMatch.negate?</code> makes it "must NOT". A regex must be
+              RE2-compatible (no look-around or back-references) — the agent runs it. A check
+              using <code>method</code> HEAD, <code>hostHeader</code>,
+              <code>followRedirects</code> or <code>negate</code> needs agent 0.23.0; older agents
+              are listed <code>supported: false</code> and run nothing.</li>
+            <li><code>credentialId?</code> (HTTP / HTTPS only) — an <code>http</code> credential
+              (Bearer, Basic or Digest) to authenticate with. It makes the check
+              <strong>server-only</strong>: it sets <code>runOnServer</code>, agent
+              <code>scope</code> / <code>assetIds</code> are refused with <code>400</code>, and the
+              secret is never sent to an agent. Using it needs <code>credentials:write</code> on a
+              credential you created, or <code>credentials:fullwrite</code> for any
+              (<code>403</code>). A credential in use cannot be deleted
+              (<code>409</code>).</li>
             <li><code>traceroute?: { enabled?</code> (default <code>true</code>),
               <code>everyNRuns?</code> (1–100, default 5), <code>maxHops?</code> (1–64, default 30),
               <code>probesPerHop?</code> (1–5, default 3), <code>probeTimeoutMs?</code> (100–5000,

@@ -24658,7 +24658,9 @@ function _pathSampleRows(s, row) {
   var phases = ["dnsMs", "connectMs", "tlsMs", "ttfbMs"].filter(function (k) { return typeof s[k] === "number"; })
     .map(function (k) { return k.replace("Ms", "").toUpperCase() + " " + Math.round(s[k]) + " ms"; });
   if (phases.length) out += row("Phases", escapeHtml(phases.join(" · ")));
-  if (s.bodyMatched != null) out += row("Body match", s.bodyMatched ? "matched" : '<span style="color:' + _CHART_FAIL_COLOR + '">not found</span>');
+  // bodyMatched = "the body expectation held" — which for a "must NOT contain"
+  // check means the text was absent, so the wording is neutral about direction.
+  if (s.bodyMatched != null) out += row("Body check", s.bodyMatched ? "as expected" : '<span style="color:' + _CHART_FAIL_COLOR + '">not as expected</span>');
   if (s.bodySha256) out += row("Body SHA-256", '<code class="copy-cell" style="font-size:0.75rem;word-break:break-all">' + escapeHtml(s.bodySha256) + "</code>");
   if (s.bodyBytes != null) out += row("Body size", s.bodyBytes + " bytes" + (s.bodyBytes >= 65536 ? " (first 64 KB read)" : ""));
   if (s.tlsIssuer) out += row("TLS issuer", escapeHtml(s.tlsIssuer));

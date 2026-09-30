@@ -14,6 +14,7 @@ const db = {
   sources: [] as any[],
   agents: [] as any[],
   settings: new Map<string, unknown>(),
+  credentials: [] as any[],
 };
 let seq = 0;
 
@@ -103,6 +104,7 @@ vi.mock("../../src/db.js", () => ({
     managedAgent: {
       findMany: vi.fn(async ({ where }: any) => db.agents.filter((a) => a.installStatus === where.installStatus)),
     },
+    credential: { findUnique: vi.fn(async ({ where }: any) => db.credentials.find((c) => c.id === where.id) ?? null) },
     asset: { findMany: vi.fn(async () => []) },
     $transaction: vi.fn(async (ops: any[]) => Promise.all(ops)),
   },
@@ -129,6 +131,9 @@ import {
   testCheck,
   _resetTestRunLimiter,
   TEST_RUNS_PER_MINUTE,
+  normalizeHostHeader,
+  requiredAgentVersion,
+  MIN_AGENT_REQUEST_OPTIONS_VERSION,
 } from "../../src/services/pathCheckService.js";
 import { parseStatusSpec, statusInRanges, agentRegexProblem } from "../../src/utils/httpCheck.js";
 
@@ -139,6 +144,7 @@ beforeEach(() => {
   db.sources = [];
   db.agents = [];
   db.settings.clear();
+  db.credentials = [];
   loadScopeAssetIds.mockReset().mockResolvedValue([]);
   publishConfigRefresh.mockClear();
   logEvent.mockClear();
@@ -272,7 +278,7 @@ describe("agentConfigChecks", () => {
   function seedCheck(id: string, enabled = true, createdAt = new Date()) {
     db.checks.push({
       id, name: id, enabled, kind: "icmp", target: "10.0.0.1", intervalSec: 60, timeoutMs: 1000,
-      http: null, traceroute: { enabled: false }, keepBodyExcerpt: false, definitionSha256: `h-${id}`, createdAt,
+      http: null, traceroute: { enabled: false }, keepBodyExcerpt: false, definitionSha256: `h-${id}`, createdAt, credentialId: null,
     });
     db.sources.push({ id: `s-${id}`, checkId: id, assetId: "host" });
   }
@@ -428,5 +434,94 @@ describe("testCheck — a draft run once from the server", () => {
     for (let i = 0; i < TEST_RUNS_PER_MINUTE; i++) await testCheck(draft, "bob", { mayRunOnServer: true });
     await expect(testCheck(draft, "bob", { mayRunOnServer: true })).rejects.toMatchObject({ httpStatus: 429 });
     await expect(testCheck(draft, "carol", { mayRunOnServer: true })).resolves.toBeTruthy();
+  });
+});
+
+describe("request options — validation and the wire", () => {
+  it("accepts GET / HEAD and refuses anything that writes", async () => {
+    expect((await normalizeCheckInput({ ...base, http: { method: "HEAD" } })).http).toMatchObject({ method: "HEAD" });
+    await expect(normalizeCheckInput({ ...base, http: { method: "POST" as any } })).rejects.toThrow(/GET or HEAD/);
+    await expect(normalizeCheckInput({ ...base, http: { method: "HEAD", bodyMatch: { mode: "contains", pattern: "ok" } } })).rejects.toThrow(/HEAD request has no body/);
+  });
+  it("normalizes a Host header and refuses a malformed one", () => {
+    expect(normalizeHostHeader("  App.Example:8443 ")).toBe("app.example:8443");
+    expect(normalizeHostHeader("")).toBeNull();
+    for (const bad of ["a b", "a.example/x", "a.example\r\nX: 1", "a.example:0", "a.example:70000", "user@a.example"]) {
+      expect(() => normalizeHostHeader(bad)).toThrow();
+    }
+  });
+  it("keeps an old definition's hash: defaults are never written to the wire", async () => {
+    const n = await normalizeCheckInput({ ...base, http: { method: "GET", hostHeader: "", followRedirects: false } });
+    expect(Object.keys(n.http!).sort()).toEqual(["bodyMatch", "expectStatus", "verifyTls"]);
+    const row = { id: "c1", name: "c", kind: "https", target: base.target, intervalSec: 60, timeoutMs: 5000, http: n.http, traceroute: {}, keepBodyExcerpt: false };
+    const d = toAgentCheckDef(row);
+    expect("method" in d || "hostHeader" in d || "followRedirects" in d).toBe(false);
+  });
+  it("ships the options, and asks for agent 0.23.0 when any is used", async () => {
+    const n = await normalizeCheckInput({ ...base, http: { hostHeader: "x.example", followRedirects: true, bodyMatch: { mode: "contains", pattern: "err", negate: true } } });
+    const d = toAgentCheckDef({ id: "c1", name: "c", kind: "https", target: base.target, intervalSec: 60, timeoutMs: 5000, http: n.http, traceroute: {}, keepBodyExcerpt: false });
+    expect(d).toMatchObject({ hostHeader: "x.example", followRedirects: true, expectBody: { negate: true } });
+    expect(requiredAgentVersion(d)).toBe(MIN_AGENT_REQUEST_OPTIONS_VERSION);
+    expect(requiredAgentVersion({ expectBody: null })).toBe(MIN_AGENT_PATH_CHECK_VERSION);
+  });
+  it("does not ship an options-using check to an older agent", async () => {
+    db.checks.push({
+      id: "opt", name: "opt", enabled: true, kind: "https", target: "https://x.example/", intervalSec: 60, timeoutMs: 1000, credentialId: null,
+      http: { expectStatus: "", bodyMatch: null, verifyTls: true, method: "HEAD" }, traceroute: { enabled: false }, keepBodyExcerpt: false, definitionSha256: "h", createdAt: new Date(),
+    });
+    db.sources.push({ id: "s-opt", checkId: "opt", assetId: "host" });
+    expect(await agentConfigChecks("host", "0.22.1")).toEqual([]);
+    expect((await agentConfigChecks("host", "0.23.0")).map((d) => d.id)).toEqual(["opt"]);
+  });
+});
+
+describe("authentication — server-only, and only with a credential you may use", () => {
+  const cred = (id: string, over: any = {}) => ({ id, type: "http", createdBy: "alice", config: { authMode: "basic", username: "u", password: "p" }, ...over });
+  const input = (credentialId: string) => ({ ...base, scope: {}, credentialId });
+
+  it("accepts an http Bearer / Basic / Digest credential and makes the check server-only", async () => {
+    db.credentials = [cred("c-basic"), cred("c-digest", { config: { authMode: "digest", username: "u", password: "p" } }), cred("c-bearer", { config: { apiToken: "t" } })];
+    for (const id of ["c-basic", "c-digest", "c-bearer"]) {
+      expect(await normalizeCheckInput(input(id))).toMatchObject({ credentialId: id, runOnServer: true });
+    }
+  });
+  it("refuses a missing, non-http or device-login credential, a non-HTTP kind, and agent hosts beside it", async () => {
+    db.credentials = [cred("snmp", { type: "snmp" }), cred("form", { config: { authMode: "form", username: "u", password: "p" } }), cred("ok")];
+    await expect(normalizeCheckInput(input("gone"))).rejects.toThrow(/no longer exists/);
+    await expect(normalizeCheckInput(input("snmp"))).rejects.toThrow(/Bearer, Basic or Digest/);
+    await expect(normalizeCheckInput(input("form"))).rejects.toThrow(/Bearer, Basic or Digest/);
+    await expect(normalizeCheckInput({ ...input("ok"), kind: "tcp", target: "db:5432" })).rejects.toThrow(/Only an HTTP or HTTPS check/);
+    await expect(normalizeCheckInput({ ...input("ok"), scope: { allAssets: true } })).rejects.toThrow(/runs only from this Polaris server/);
+    await expect(normalizeCheckInput({ ...input("ok"), assetIds: ["a1"] })).rejects.toThrow(/runs only from this Polaris server/);
+  });
+  it("lets a caller use only a credential they created (write), or any (fullwrite), never at read", async () => {
+    db.credentials = [cred("mine", { createdBy: "alice" }), cred("theirs", { createdBy: "bob" }), cred("unowned", { createdBy: null })];
+    const as = (credentialAccess: any, username = "alice") => ({ mayRunOnServer: true, credentialAccess, username });
+    await expect(createCheck({ ...input("mine"), name: "a" }, "alice", as("read"))).rejects.toMatchObject({ httpStatus: 403 });
+    await expect(createCheck({ ...input("theirs"), name: "b" }, "alice", as("write"))).rejects.toMatchObject({ httpStatus: 403 });
+    await expect(createCheck({ ...input("unowned"), name: "c" }, "alice", as("write"))).rejects.toMatchObject({ httpStatus: 403 });
+    await expect(createCheck({ ...input("mine"), name: "d" }, "alice", as("write"))).resolves.toMatchObject({ credentialId: "mine" });
+    await expect(createCheck({ ...input("theirs"), name: "e" }, "alice", as("fullwrite"))).resolves.toMatchObject({ credentialId: "theirs" });
+  });
+  it("re-checks the use when the credential changes or the check is re-aimed, not on a rename", async () => {
+    db.credentials = [cred("theirs", { createdBy: "bob" })];
+    const c = await createCheck({ ...input("theirs"), name: "x" }, "admin", { mayRunOnServer: true, credentialAccess: "fullwrite" });
+    const alice = { mayRunOnServer: true, credentialAccess: "write" as const, username: "alice" };
+    await expect(updateCheck(c.id, { ...input("theirs"), name: "renamed" }, "alice", alice)).resolves.toMatchObject({ name: "renamed" });
+    await expect(updateCheck(c.id, { ...input("theirs"), name: "renamed", target: "https://attacker.example/" }, "alice", alice)).rejects.toMatchObject({ httpStatus: 403 });
+  });
+  it("never ships an authenticating check to an agent, even with a stray agent source row", async () => {
+    db.checks.push({
+      id: "auth", name: "auth", enabled: true, kind: "https", target: "https://x.example/", intervalSec: 60, timeoutMs: 1000, credentialId: "c1",
+      http: { expectStatus: "", bodyMatch: null, verifyTls: true }, traceroute: { enabled: false }, keepBodyExcerpt: false, definitionSha256: "h", createdAt: new Date(),
+    });
+    db.sources.push({ id: "stray", checkId: "auth", assetId: "host" });
+    expect(await agentConfigChecks("host", "0.23.0")).toEqual([]);
+  });
+  it("reconciles no agent member for an authenticating check, whatever its stored scope", async () => {
+    db.agents = [{ id: "ma1", assetId: "a1", installStatus: "active" }];
+    db.checks.push({ id: "auth", name: "auth", scope: { allAssets: true }, assetIds: ["a1"], runOnServer: true, credentialId: "c1" });
+    await reconcilePathCheckSources("auth");
+    expect(db.sources.map((s) => s.assetId)).toEqual([null]);
   });
 });

@@ -1135,6 +1135,11 @@ describes whether that source can reach the target, so:
   Discovery** as well as on Path Monitor, because the server probes from its
   own network, where no agent host may be able to reach. Turning the server
   off, renaming the check or changing its agent hosts does not.
+- **A check that signs in runs only from the Polaris server.** A web check can
+  authenticate with an HTTP credential (Bearer, Basic or Digest), and such a
+  check is never sent to an agent, so the password or token never leaves the
+  server. You can use a credential you created, or any with Full Read-Write
+  on Credentials. Checks only ever send GET or HEAD.
 
 See [Path Checks](Path-Monitor) and [Automation Triggers](Automation-Triggers).
 

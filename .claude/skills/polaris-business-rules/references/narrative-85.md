@@ -190,6 +190,26 @@ primitive above in its plainest form, so it takes the same chained key, is audit
 (`path_check.tested`), is rate-limited per caller, stores nothing, applies the same
 save-time target refusals, and redacts Set-Cookie values from what it shows.
 
+**Authentication, and why it is the server's alone (2026-09-30).** An HTTP check may
+authenticate — Bearer, Basic or Digest, from an `http` Credential. The operator's condition
+was explicit: the credential must not be sent to agents. So a check with a credential runs
+ONLY from the Polaris server: it may carry no agent scope or pins, reconcile gives it no agent
+member, and the agent config filters it out besides — the definition an agent receives never
+names a credential at all, and the agent has no auth code. Choosing one is a USE of a stored
+secret against an operator-chosen target, which is rule 43's test-by-id act, so it takes the
+same scoping: a credential the caller created at `credentials:write`, any at `fullwrite`,
+never at `read`; re-checked whenever the credential or the traffic changes. Without that, a
+caller who may edit checks could aim a peer's admin password at a host of their own. A
+followed redirect that leaves the target's origin gets no credential and no Host override.
+Basic and Bearer over plain HTTP are allowed (internal apps do it) but the wizard warns.
+
+**The request options that were considered and refused.** PUT / POST / DELETE: a check runs
+on a schedule from every source, and a write on a schedule from a fleet is an incident, not a
+measurement — GET and HEAD only. A proxy option: a check measures the DIRECT path from its
+source; through a proxy it measures the proxy. A threshold on the check: the SLA is the
+automation's, per the section above. (SolarWinds' template offered all three; the operator
+chose to skip them.)
+
 **Why it runs on the scheduler role.** "The server" must be one vantage point. The monitor
 role can have N replicas on N hosts; running there would interleave several hosts' paths
 into one series that "changes path" every run. The scheduler role is the single-instance one

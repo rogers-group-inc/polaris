@@ -9,8 +9,9 @@
  * WHAT IT MIRRORS. The agent's probe (agent/internal/collectors/path_check*.go)
  * field for field, so a server row and an agent row mean the same thing on the
  * same chart: one timed DNS lookup preferring IPv4; the SSRF ranges refused
- * AFTER resolution; HTTP(S) = one GET, no proxy, no redirects, no auth, status
- * judged before body, the first 64 KB read and fingerprinted, a 4 KB excerpt
+ * AFTER resolution; HTTP(S) = one GET (or HEAD), no proxy, redirects only when
+ * the check follows them (each hop refused-checked again), an optional Host
+ * override, status judged before body (a negated body match for "must not"), the first 64 KB read and fingerprinted, a 4 KB excerpt
  * on a failed run (or always, when the check keeps them); TLS facts reported
  * even when verification FAILED; TCP = one connect; ICMP = one echo. Change a
  * rule there and change it here.
@@ -22,6 +23,9 @@
  *  - ICMP goes through the system `ping` (utils/icmpPing), as every other
  *    server-side ICMP probe does — the service holds no CAP_NET_RAW.
  *  - The traceroute is the system tool's (utils/serverTraceroute).
+ *  - It may AUTHENTICATE (bearer / basic / digest, from an http Credential).
+ *    The agent never does: a check with a credential is server-only, so the
+ *    secret never leaves this server. Auth goes only to the target's origin.
  *
  * A result describes the path FROM THIS SERVER to the target. It never moves
  * any asset's monitorStatus (business rule 85): the server is not an asset.
@@ -36,7 +40,8 @@ import os from "node:os";
 import type { TLSSocket } from "node:tls";
 import { isBlockedOutboundHost } from "../utils/netGuard.js";
 import { isValidIpAddress } from "../utils/cidr.js";
-import { parseStatusSpec, statusInRanges, MAX_BODY_BYTES, MAX_EXCERPT_CHARS } from "../utils/httpCheck.js";
+import { parseStatusSpec, statusInRanges, MAX_BODY_BYTES, MAX_EXCERPT_CHARS, type HttpAuthConfig } from "../utils/httpCheck.js";
+import { parseDigestChallenge, buildDigestAuthorization, newCnonce } from "../utils/digestAuth.js";
 import { burstPingHost } from "../utils/icmpPing.js";
 import { traceFromServer } from "../utils/serverTraceroute.js";
 import { getAppVersion } from "../utils/version.js";
@@ -57,7 +62,12 @@ export interface RunCapture {
   body?: string;
   /** e.g. "1.1". */
   httpVersion?: string;
+  /** The URL the verdict was judged on — differs from the target after followed redirects. */
+  finalUrl?: string;
 }
+
+/** Mirrors pathCheckService.MAX_REDIRECTS (a type-only import cannot carry a value). */
+const MAX_REDIRECTS = 5;
 
 export const MAX_CAPTURED_HEADERS = 60;
 
@@ -192,28 +202,67 @@ function splitHostPort(target: string): { host: string; port: number | null } {
   return { host: t.slice(0, idx), port: Number(t.slice(idx + 1)) };
 }
 
-function runHttp(def: AgentCheckDef, u: URL, ip: string, s: PathCheckSampleInput, started: bigint, deadlineMs: number, capture?: RunCapture): Promise<void> {
+/** One HTTP exchange as runHttp sees it. */
+interface Exchange {
+  status: number;
+  headers: Record<string, string | string[] | undefined>;
+  httpVersion: string;
+  body: Buffer;
+  readErr: string | null;
+}
+
+/** Pure: same scheme + host + port (the default port made explicit). */
+export function sameOrigin(a: URL, b: URL): boolean {
+  const port = (u: URL) => u.port || (u.protocol === "https:" ? "443" : "80");
+  return a.protocol === b.protocol && a.hostname.toLowerCase() === b.hostname.toLowerCase() && port(a) === port(b);
+}
+
+/** The Authorization value for Basic / Bearer (Digest is a handshake — see runHttp). */
+function staticAuthorization(auth: HttpAuthConfig | null | undefined): string | null {
+  if (!auth) return null;
+  if (auth.authMode === "bearer" && auth.apiToken) return `Bearer ${auth.apiToken}`;
+  if (auth.authMode === "basic" && auth.username) {
+    return "Basic " + Buffer.from(`${auth.username}:${auth.password ?? ""}`, "utf8").toString("base64");
+  }
+  return null;
+}
+
+/**
+ * Issue ONE request to `u` dialing `ip`, filling the timing and TLS fields of
+ * `s` (the last hop's win when redirects are followed). Resolves with the
+ * exchange, or null with `s.error` set.
+ */
+function requestOnce(
+  def: AgentCheckDef, u: URL, ip: string, s: PathCheckSampleInput, deadlineMs: number,
+  opts: { method: string; hostHeader: string | null; authorization: string | null },
+): Promise<Exchange | null> {
   return new Promise((resolve) => {
     const isHttps = u.protocol === "https:";
     const hostname = u.hostname.replace(/^\[|\]$/g, "");
     const lib = isHttps ? https : http;
+    // The name the server is asked for: a Host header override wins, for the
+    // Host line AND the TLS SNI / certificate check alike.
+    const sniName = (opts.hostHeader ?? hostname).replace(/:\d+$/, "");
     let connectStart = process.hrtime.bigint();
     let tcpDone: bigint | null = null;
     let wrote: bigint | null = null;
     let settled = false;
-    const done = () => { if (!settled) { settled = true; clearTimeout(timer); resolve(); } };
+    const finish = (x: Exchange | null) => { if (!settled) { settled = true; clearTimeout(timer); resolve(x); } };
+    const headers: Record<string, string> = { "User-Agent": `polaris-server/${getAppVersion()}`, Accept: "*/*" };
+    if (opts.hostHeader) headers.Host = opts.hostHeader;
+    if (opts.authorization) headers.Authorization = opts.authorization;
 
     const req = lib.request({
-      method: "GET",
+      method: opts.method,
       protocol: u.protocol,
       hostname,
       port: u.port || (isHttps ? 443 : 80),
       path: u.pathname + u.search,
-      headers: { "User-Agent": `polaris-server/${getAppVersion()}`, Accept: "*/*" },
+      headers,
       // Dial the address already resolved (and refused-checked): DNS is timed
       // once, and resolvedIp is the address actually used.
-      lookup: ((_h: string, opts: { all?: boolean }, cb: (...a: unknown[]) => void) => {
-        if (opts && opts.all) cb(null, [{ address: ip, family: 4 }]);
+      lookup: ((_h: string, lo: { all?: boolean }, cb: (...a: unknown[]) => void) => {
+        if (lo && lo.all) cb(null, [{ address: ip, family: 4 }]);
         else cb(null, ip, 4);
       }) as unknown as net.LookupFunction,
       // A fresh socket per run, no proxy, no pooling.
@@ -221,14 +270,14 @@ function runHttp(def: AgentCheckDef, u: URL, ip: string, s: PathCheckSampleInput
       // Verified by hand on secureConnect, so the certificate facts survive a
       // FAILED verification — the case an operator needs them for.
       rejectUnauthorized: false,
-      ...(isHttps && !isValidIpAddress(hostname) ? { servername: hostname } : {}),
+      ...(isHttps && !isValidIpAddress(sniName) ? { servername: sniName } : {}),
       minVersion: "TLSv1.2",
     });
 
     const timer = setTimeout(() => {
       s.error = `timed out after ${def.timeoutMs} ms`;
       req.destroy();
-      done();
+      finish(null);
     }, Math.max(1, deadlineMs));
 
     req.on("socket", (sock) => {
@@ -252,7 +301,7 @@ function runHttp(def: AgentCheckDef, u: URL, ip: string, s: PathCheckSampleInput
           if (def.verifyTls && !tls.authorized) {
             s.error = truncateError(`tls: certificate verification failed: ${String(tls.authorizationError ?? "untrusted")}`);
             req.destroy();
-            done();
+            finish(null);
           }
         });
       }
@@ -260,58 +309,129 @@ function runHttp(def: AgentCheckDef, u: URL, ip: string, s: PathCheckSampleInput
     req.on("finish", () => { wrote = process.hrtime.bigint(); });
     req.on("error", (err) => {
       if (!s.error) s.error = truncateError(err.message);
-      done();
+      finish(null);
     });
     req.on("response", (res) => {
       if (wrote) s.ttfbMs = Number((Number(process.hrtime.bigint() - wrote) / 1e6).toFixed(3));
       const chunks: Buffer[] = [];
       let size = 0;
       let readErr: string | null = null;
-      const finish = () => {
-        if (settled) return;
-        const body = Buffer.concat(chunks).subarray(0, MAX_BODY_BYTES);
-        s.bodySha256 = createHash("sha256").update(body).digest("hex");
-        s.bodyBytes = body.length;
-        s.httpStatus = res.statusCode ?? null;
-        s.latencyMs = msSince(started);
-        const spec = def.expectStatus;
-        const { ranges } = parseStatusSpec(spec); // validated at save
-        const code = res.statusCode ?? 0;
-        if (!statusInRanges(code, ranges)) {
-          s.error = `HTTP ${code} (expected ${spec || "2xx"})`;
-        } else if (readErr) {
-          s.error = truncateError(`reading the response body: ${readErr}`);
-        } else {
-          try {
-            const matched = pathBodyMatches(body.toString("utf8"), def.expectBody);
-            if (def.expectBody) s.bodyMatched = matched;
-            if (matched) s.ok = true;
-            else s.error = `Expected text not found in the first 64 KB of the response body (HTTP ${code})`;
-          } catch (err) {
-            s.error = truncateError(`invalid regex pattern: ${(err as Error).message}`);
-          }
-        }
-        if (!s.ok || def.keepBodyExcerpt) s.bodyExcerpt = excerptOf(body);
-        if (capture) {
-          capture.headers = captureHeaders(res.headers);
-          capture.body = new TextDecoder("utf-8").decode(body, { stream: true });
-          capture.httpVersion = res.httpVersion;
-        }
-        done();
-      };
+      const done = () => finish({
+        status: res.statusCode ?? 0,
+        headers: res.headers,
+        httpVersion: res.httpVersion,
+        body: Buffer.concat(chunks).subarray(0, MAX_BODY_BYTES),
+        readErr,
+      });
       res.on("data", (c: Buffer) => {
         if (size >= MAX_BODY_BYTES) return;
         chunks.push(c);
         size += c.length;
         // Enough read: stop the transfer rather than draining a large body.
-        if (size >= MAX_BODY_BYTES) { finish(); res.destroy(); }
+        if (size >= MAX_BODY_BYTES) { done(); res.destroy(); }
       });
-      res.on("end", finish);
-      res.on("error", (err) => { readErr = err.message; finish(); });
-      res.on("close", finish);
+      res.on("end", done);
+      res.on("error", (err) => { readErr = err.message; done(); });
+      res.on("close", done);
     });
     req.end();
   });
+}
+
+/**
+ * One HTTP(S) check run: the request (GET or HEAD), a Digest handshake when
+ * the credential is Digest (unauthenticated first, then EXACTLY one answer —
+ * never a retry loop, the digestAuth.ts rule), redirects when the check follows
+ * them (≤ MAX_REDIRECTS, every hop resolved and refused-checked again), then
+ * the verdict on the LAST response: status before body, body match (negated
+ * for "must not"), the 64 KB fingerprint and the excerpt policy.
+ *
+ * Credentials and the Host override go only to the TARGET'S OWN ORIGIN: a
+ * redirect that leaves it gets neither, or following one would hand the
+ * secret to whatever host the target (or someone who controls it) names.
+ */
+async function runHttp(
+  def: AgentCheckDef, u0: URL, ip0: string, s: PathCheckSampleInput, started: bigint,
+  auth: HttpAuthConfig | null | undefined, capture?: RunCapture,
+): Promise<void> {
+  const method = def.method === "HEAD" ? "HEAD" : "GET";
+  const remaining = () => def.timeoutMs - msSince(started);
+  let u = u0;
+  let ip = ip0;
+  let x: Exchange | null = null;
+  for (let hop = 0; ; hop++) {
+    const home = sameOrigin(u, u0);
+    const hostHeader = home ? def.hostHeader ?? null : null;
+    let authorization = home ? staticAuthorization(auth) : null;
+    x = await requestOnce(def, u, ip, s, remaining(), { method, hostHeader, authorization });
+    if (!x) return;
+    if (home && x.status === 401 && auth?.authMode === "digest" && auth.username) {
+      const challenge = parseDigestChallenge(headerValue(x.headers["www-authenticate"]));
+      if (challenge) {
+        try {
+          authorization = buildDigestAuthorization({
+            challenge, username: auth.username, password: auth.password ?? "",
+            method, uri: u.pathname + u.search, cnonce: newCnonce(),
+          });
+        } catch (err) {
+          s.error = truncateError(`digest: ${(err as Error).message}`);
+          return;
+        }
+        x = await requestOnce(def, u, ip, s, remaining(), { method, hostHeader, authorization });
+        if (!x) return;
+      }
+    }
+    const loc = headerValue(x.headers.location);
+    if (!def.followRedirects || x.status < 300 || x.status > 399 || !loc) break;
+    if (hop >= MAX_REDIRECTS) { s.error = `more than ${MAX_REDIRECTS} redirects`; s.httpStatus = x.status; return; }
+    let next: URL;
+    try { next = new URL(loc, u); } catch { s.error = truncateError(`redirect to an invalid URL: ${loc}`); return; }
+    if (next.protocol !== "http:" && next.protocol !== "https:") { s.error = `refused: redirect to ${next.protocol} URL`; return; }
+    if (next.username || next.password) { s.error = "refused: redirect to a URL with credentials in it"; return; }
+    const r = await resolveTarget(next.hostname, Math.max(1, remaining()));
+    if (r.error || !r.ip) { s.error = truncateError(`redirect to ${next.host}: ${r.error ?? "no address"}`); return; }
+    u = next;
+    ip = r.ip;
+    s.resolvedIp = r.ip;
+  }
+
+  const body = method === "HEAD" ? Buffer.alloc(0) : x.body;
+  s.bodySha256 = createHash("sha256").update(body).digest("hex");
+  s.bodyBytes = body.length;
+  s.httpStatus = x.status;
+  s.latencyMs = msSince(started);
+  const spec = def.expectStatus;
+  const { ranges } = parseStatusSpec(spec); // validated at save
+  if (!statusInRanges(x.status, ranges)) {
+    s.error = `HTTP ${x.status} (expected ${spec || "2xx"})`;
+  } else if (x.readErr) {
+    s.error = truncateError(`reading the response body: ${x.readErr}`);
+  } else {
+    try {
+      const found = pathBodyMatches(body.toString("utf8"), def.expectBody);
+      // bodyMatched = "the body expectation HELD" — for a negated one, that the
+      // text was absent. The agent reports it the same way.
+      const held = def.expectBody?.negate ? !found : found;
+      if (def.expectBody) s.bodyMatched = held;
+      if (held) s.ok = true;
+      else if (def.expectBody?.negate) s.error = `Forbidden text found in the first 64 KB of the response body (HTTP ${x.status})`;
+      else s.error = `Expected text not found in the first 64 KB of the response body (HTTP ${x.status})`;
+    } catch (err) {
+      s.error = truncateError(`invalid regex pattern: ${(err as Error).message}`);
+    }
+  }
+  if (!s.ok || def.keepBodyExcerpt) s.bodyExcerpt = excerptOf(body);
+  if (capture) {
+    capture.headers = captureHeaders(x.headers);
+    capture.body = new TextDecoder("utf-8").decode(body, { stream: true });
+    capture.httpVersion = x.httpVersion;
+    capture.finalUrl = u.toString();
+  }
+}
+
+function headerValue(v: string | string[] | undefined): string | null {
+  if (v === undefined) return null;
+  return Array.isArray(v) ? v[0] ?? null : v;
 }
 
 function runTcp(ip: string, port: number, timeoutMs: number, s: PathCheckSampleInput): Promise<void> {
@@ -403,6 +523,7 @@ export async function runServerCheck(
   trace: TraceMode,
   now: () => Date = () => new Date(),
   capture?: RunCapture,
+  auth?: HttpAuthConfig | null,
 ): Promise<{ sample: PathCheckSampleInput; trace: PathCheckTracerouteInput | null }> {
   const startedAt = now();
   const started = process.hrtime.bigint();
@@ -421,7 +542,7 @@ export async function runServerCheck(
       else {
         dst = r.ip;
         s.resolvedIp = r.ip;
-        await runHttp(def, u, r.ip, s, started, remaining(), capture);
+        await runHttp(def, u, r.ip, s, started, auth, capture);
       }
     } else {
       const { host, port } = splitHostPort(def.target);
