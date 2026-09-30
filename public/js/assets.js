@@ -24212,7 +24212,13 @@ async function _loadAssetArpTable(assetId, range) {
 // latest result and traceroute render below the summary table.
 //
 // A result describes the PATH from this host (business rule 85): nothing here
-// says anything about the host's own Up / Down. The latency line follows the
+// says anything about the host's own Up / Down.
+//
+// The same renderer draws a check's POLARIS SERVER source (Path Monitor →
+// Results → the "Polaris server" row, renderServerPathDetail below): the
+// subject id is then _PATH_SERVER_SUBJECT and _pathApi routes the two reads to
+// /path-checks/:id/server/*. The server raises no automation alerts, so its
+// latency chart draws no severity bands. The latency line follows the
 // canonical two-colour failure treatment (a failed run dives to the baseline
 // in red), NOT the five-verdict palette the response-time chart alone uses; no
 // DATA series is red or grey.
@@ -24226,6 +24232,39 @@ var _PATH_PHASES = [
   { key: "ttfbMs",    label: "TTFB",    color: "#c77dba" },
 ];
 var _PATH_KIND_LABELS = { http: "HTTP", https: "HTTPS", tcp: "TCP", icmp: "ICMP" };
+/** Mirrors pathCheckService.POLARIS_SERVER_SUBJECT. */
+var _PATH_SERVER_SUBJECT = "polaris-server";
+
+/** Pure: the two per-source reads for an asset id, or for the server. */
+function _pathApi(subjectId) {
+  if (subjectId === _PATH_SERVER_SUBJECT) {
+    return {
+      history: function (checkId, opts) { return api.pathChecks.serverHistory(checkId, opts); },
+      traceroutes: function (checkId, limit) { return api.pathChecks.serverTraceroutes(checkId, limit); },
+    };
+  }
+  return {
+    history: function (checkId, opts) { return api.assets.pathCheckHistory(subjectId, checkId, opts); },
+    traceroutes: function (checkId, limit) { return api.assets.pathCheckTraceroutes(subjectId, checkId, limit); },
+  };
+}
+
+/**
+ * Draw one check's SERVER source into `mount` — the charts, latest result and
+ * path graph of the slide-over's Paths tab, for the source that has no
+ * slide-over. `payload` is GET /path-checks/:id/server ({checks: [...]}).
+ */
+function renderServerPathDetail(mount, payload) {
+  var checks = (payload && payload.checks) || [];
+  if (!checks.length) {
+    mount.innerHTML = '<p class="hint">This check does not run on the Polaris server.</p>';
+    return;
+  }
+  mount.innerHTML = '<div id="path-detail"></div>';
+  var server = { id: _PATH_SERVER_SUBJECT, hostname: "Polaris server" };
+  _pathTabState = { assetId: server.id, checks: checks, checkId: checks[0].id, hiddenPhases: _pathLoadHiddenPhases() };
+  _pathSelectCheck(server, checks[0].id);
+}
 
 /** Pure: does this host get a Paths tab? */
 function _pathTabEligible(payload) {
@@ -24310,13 +24349,14 @@ function _pathSelectCheck(a, checkId) {
   var l = check.latest || {};
   var stale = l.lastSampleAt && (Date.now() - new Date(l.lastSampleAt).getTime()) > 3 * (check.intervalSec || 60) * 1000;
   var isHttp = check.kind === "http" || check.kind === "https";
+  var isServer = a.id === _PATH_SERVER_SUBJECT;
   mount.innerHTML =
     '<div data-shot-section="pathDetail" data-shot-chart="assetPathCheck">' +
       '<div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.5rem">' +
         '<strong>' + escapeHtml(check.name) + "</strong>" +
         '<span class="badge">' + escapeHtml(_PATH_KIND_LABELS[check.kind] || check.kind) + "</span>" +
         _pathResultPill(l) +
-        '<span class="hint">Polaris Agent on this host · every ' + Math.round((check.intervalSec || 60) / 60) + " min</span>" +
+        '<span class="hint">' + (isServer ? "This Polaris server" : "Polaris Agent on this host") + " · every " + Math.round((check.intervalSec || 60) / 60) + " min</span>" +
         _freshnessStampHTML(l.lastSampleAt || null, check.intervalSec || 60, "no results yet") +
         '<span style="margin-left:auto;display:flex;gap:4px">' +
           _chartRangeBtnsHTML("path-range-btn", [
@@ -24325,7 +24365,9 @@ function _pathSelectCheck(a, checkId) {
           ], "assetPathCheck", "24h") +
         "</span>" +
       "</div>" +
-      (stale ? _staleBannerBoxHTML("⚠ Last result " + _pathFmtWhen(l.lastSampleAt) + " — the agent may be offline or not running this check") : "") +
+      (stale ? _staleBannerBoxHTML("⚠ Last result " + _pathFmtWhen(l.lastSampleAt) + (isServer
+        ? " — the server may have stopped running this check (is the check enabled, and is the scheduler role up?)"
+        : " — the agent may be offline or not running this check")) : "") +
       '<div class="chart-label">Latency</div>' +
       '<div class="chart-box" id="asset-path-latency-chart" style="min-height:170px">Loading samples…</div>' +
       '<div class="chart-stats" id="asset-path-latency-stats"></div>' +
@@ -24360,6 +24402,7 @@ function _pathSelectCheck(a, checkId) {
   _renderPathLatestCard(check);
   _loadPathTraceroutes(a.id, check, a);
   if (!st.tiers) st.tiers = {};
+  if (isServer) return; // no automation alerts on the server source — no bands to draw
   _loadMetricSeverityTiers(a.id, "pathLatencyMs", { checkId: check.id }).then(function (tiers) {
     st.tiers[check.id] = tiers;
     if (st.lastData && st.checkId === check.id) _renderPathCharts(check, st.lastData);
@@ -24375,7 +24418,7 @@ async function _loadPathCheckHistoryFor(assetId, check, rangeOrOpts) {
     else { el.dataset.range = opts.range; delete el.dataset.from; delete el.dataset.to; }
   });
   try {
-    var data = await api.assets.pathCheckHistory(assetId, check.id, opts);
+    var data = await _pathApi(assetId).history(check.id, opts);
     var st = _pathTabState;
     if (!st || st.assetId !== assetId || st.checkId !== check.id) return;
     st.lastData = data;
@@ -24850,7 +24893,12 @@ function _renderTrPathGraph(box, list, sel, source) {
     var t = e.target;
     if (!t || !t.classList || !t.classList.contains("chart-hit")) return;
     var n = g.nodes[t.getAttribute("data-k")];
-    if (n && n.hop && n.hop.assetId) openViewModal(n.hop.assetId);
+    if (!n || !n.hop || !n.hop.assetId) return;
+    // Drawn inside Path Monitor → Results (the server source)? That detail
+    // shares the slide-over Paths tab's element ids — clear it first.
+    var serverDetail = document.getElementById("path-server-detail");
+    if (serverDetail && serverDetail.contains(box)) serverDetail.innerHTML = "";
+    openViewModal(n.hop.assetId);
   });
 }
 
@@ -24863,7 +24911,7 @@ async function _loadPathTraceroutes(assetId, check, source) {
   }
   mount.innerHTML = '<div class="chart-label">Path</div><p class="hint">Loading…</p>';
   try {
-    var res = await api.assets.pathCheckTraceroutes(assetId, check.id, 10);
+    var res = await _pathApi(assetId).traceroutes(check.id, 10);
     if (!_pathTabState || _pathTabState.checkId !== check.id) return;
     var list = (res && res.traceroutes) || [];
     if (!list.length) {

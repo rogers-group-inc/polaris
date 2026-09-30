@@ -404,7 +404,9 @@ const DIMENSION_SOURCES: Record<string, DimensionSource> = {
       (await prisma.pathCheckSource.findMany({
         where: { assetId: { in: ids } },
         select: { assetId: true, checkId: true },
-      })).map((r) => ({ value: r.checkId, assetId: r.assetId })),
+      // `in: ids` never matches the server's own row (assetId NULL) — it is
+      // no asset an automation can scope.
+      })).map((r) => ({ value: r.checkId, assetId: r.assetId as string })),
   },
 };
 

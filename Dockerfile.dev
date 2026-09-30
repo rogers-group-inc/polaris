@@ -10,13 +10,15 @@ FROM node:24-trixie
 # in the monitoring code path; fping batches the packet-loss sweep, and is
 # here so dev exercises the SAME backend production does rather than the
 # per-host fallback (utils/burstPing.ts picks whichever is present, so a dev
-# box without it silently tests the other path).
+# box without it silently tests the other path). traceroute serves a path
+# check's "This Polaris server" source (utils/serverTraceroute.ts).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       python3 build-essential \
       postgresql-client-17 \
       iputils-ping \
       fping \
+      traceroute \
       ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 

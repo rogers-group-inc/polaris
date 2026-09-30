@@ -276,13 +276,13 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/pathCheckService.ts
 
-**What it owns:** Agent-run path checks — the `PathCheck` definition (HTTP / HTTPS / TCP / ICMP + optional traceroute), its validation, audited CRUD, and the materialized `PathCheckSource` membership (check × agent host, plus each pair's latest result). Also the agent-facing definition shape and its ETag fold.
+**What it owns:** Path checks — the `PathCheck` definition (HTTP / HTTPS / TCP / ICMP + optional traceroute), its validation, audited CRUD, and the materialized `PathCheckSource` membership (check × agent host, plus each pair's latest result — and, when `runOnServer`, ONE row with `assetId` NULL for the Polaris server itself). Also the agent-facing definition shape and its ETag fold, which the server source reuses verbatim (`serverCheckDefinitions`).
 
-**Public API:** `CHECK_KINDS`, `BODY_MATCH_MODES`, `MIN/MAX_INTERVAL_SEC`, `MIN/MAX_TIMEOUT_MS`, `MAX_ENABLED_CHECKS` (50), `MAX_CHECKS_PER_AGENT` (20), `MIN_AGENT_PATH_CHECK_VERSION` (0.21.0), `DEFAULT_TRACEROUTE`, `normalizeTraceroute`, `splitHostPort`, `targetHostOf`, `assertTargetHostAllowed`, `normalizeCheckInput`, `definitionSha256`, `toAgentCheckDef`, `listChecks`, `getCheck`, `createCheck`, `updateCheck`, `setCheckEnabled`, `deleteCheck`, `reconcilePathCheckSources`, `agentOnline`, `previewSources`, `listCheckResults`, `getAssetChecks`, `agentConfigChecks`, `pathCheckEtagFold`; types `PathCheckInput`, `NormalizedCheck`, `AgentCheckDef`, `CheckHttpConfig`, `CheckTracerouteConfig`, `ReconcileResult`.
+**Public API:** `CHECK_KINDS`, `BODY_MATCH_MODES`, `MIN/MAX_INTERVAL_SEC`, `MIN/MAX_TIMEOUT_MS`, `MAX_ENABLED_CHECKS` (50), `MAX_CHECKS_PER_AGENT` (20), `MIN_AGENT_PATH_CHECK_VERSION` (0.21.0), `DEFAULT_TRACEROUTE`, `normalizeTraceroute`, `splitHostPort`, `targetHostOf`, `assertTargetHostAllowed`, `normalizeCheckInput`, `definitionSha256`, `toAgentCheckDef`, `listChecks`, `getCheck`, `createCheck`, `updateCheck`, `setCheckEnabled`, `deleteCheck`, `reconcilePathCheckSources`, `agentOnline`, `previewSources`, `listCheckResults`, `getAssetChecks`, `agentConfigChecks`, `pathCheckEtagFold`, `getServerCheck`, `listServerTraceroutes`, `serverCheckDefinitions`, `testCheck`, `TEST_RUNS_PER_MINUTE`, `_resetTestRunLimiter`, `SERVER_SOURCE_PERMISSION_MESSAGE`, and the re-exported `POLARIS_SERVER_SUBJECT` / `POLARIS_SERVER_LABEL`; types `PathCheckInput`, `NormalizedCheck`, `AgentCheckDef`, `CheckHttpConfig`, `CheckTracerouteConfig`, `ReconcileResult`, `CheckWriteOpts`.
 
 **Cross-service deps:** `prisma`, `eventLogService.logEvent`, `agentCommandWake.publishConfigRefresh`, `notificationEngine.loadScopeAssetIds` (the scope resolver the engine itself uses — so a check's Sources can never disagree with an automation's Devices step), `notificationTypes.scopeIsUnconstrained`, `utils/netGuard.isBlockedOutboundHost`, `utils/httpCheck` (`parseStatusSpec`, `agentRegexProblem`), `utils/version.versionAtLeast`, `agentInstallService.AGENT_SERVER_URL_SETTING_KEY`.
 
-**Used by:** `src/api/routes/pathChecks.ts` (CRUD / preview / results / filter-schema), `src/jobs/reconcilePathCheckSources.ts` (5-minute full reconcile).
+**Used by:** `src/api/routes/pathChecks.ts` (CRUD / preview / results / filter-schema / the three server-source reads), `src/jobs/reconcilePathCheckSources.ts` (5-minute full reconcile), `src/jobs/runServerPathChecks.ts` (`serverCheckDefinitions`, every 15 s).
 
 **Invariants:**
 - **A check carries no threshold.** The SLA — what latency is a breach, how many failures page someone — lives in the automation that watches the `path*` metrics, the split business rule 36 makes for "down". Never add a threshold column here.
@@ -296,26 +296,30 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **`MAX_CHECKS_PER_AGENT` is enforced in `agentConfigChecks`** (oldest checks win, deterministically) and REPORTED by `reportOverCap` as a `path_check.agent_over_cap` Event when a host newly exceeds it — never a silent truncation. The in-memory set dedupes it across the 5-minute ticks.
 - **`agentConfigChecks` returns `[]` below `MIN_AGENT_PATH_CHECK_VERSION`.**
 - **A target/kind edit clears `lastPathHash` / `lastOk`** on every source so the first new traceroute is a baseline, not a "path changed" Event about a different destination.
+- **The server source is one row, `assetId` NULL, following `runOnServer` and nothing else.** `reconcilePathCheckSources` creates it, deletes duplicates beyond the first and deletes it when the flag goes off; it nudges no agent. A partial unique index (`path_check_sources_server_key`, migration only — Prisma cannot say it) holds the one-per-check rule. Every agent-shaped read keeps working because an agent's rows always carry an asset id: `reportOverCap` groups `assetId: { not: null }`, `listCheckResults` puts the server row FIRST with `server: true`, `notificationDimensionService`'s checkId pairs read `assetId in ids`, which never matches NULL.
+- **`testCheck` (the wizard's Test button) runs a DRAFT once from the server and stores nothing but a `path_check.tested` Event.** It is the same gate as aiming the server (a test IS a request from there), validates through `normalizeCheckInput` with a stand-in name and `runOnServer: true` so the save-time refusals still apply, forces `keepBodyExcerpt` on and the traceroute off, and is rate-limited per actor (`TEST_RUNS_PER_MINUTE`, in-memory, per process — a split install's web role is the only one serving it).
+- **Aiming the SERVER is chained on `networkScan:write`** (`CheckWriteOpts.mayRunOnServer`, answered by the route from the caller's matrix; 403 `SERVER_SOURCE_PERMISSION_MESSAGE`). Required on create with `runOnServer`, on an update that turns it on, RE-AIMS it (the agent definition hash compared with the name blanked — a rename is not re-aiming) or re-enables it, and on `setCheckEnabled(true)` of a server-run check. Never required to turn the server off, rename, edit Sources or delete. The reason is business rule 85's server-source section: the server probes from its own network position, and an HTTP excerpt is a read primitive from there.
 - Delete cascades sources only; samples and traceroutes age out on retention (a row DELETE in a compressed chunk decompresses it).
 
 **Wired into GET /agents/config and the heartbeat:** `agents.ts` ships `pathChecks: await agentConfigChecks(assetId, agentVersion)` in the payload (strong ETag covers it) AND folds `pathCheckEtagFold(...)` into `computeConfigEtag` as `conn`. **Both halves or neither** — the heartbeat etag is the only thing that makes a running agent refetch.
 
-**When changing this:** a field the agent reads → `agentDefCore` + `transport.PathCheckDef` in `agent/internal/transport/client.go` + an `agent/VERSION` bump, in lockstep. A new kind → `CHECK_KINDS`, `targetHostOf`, the route's Zod enum, the agent's `ValidateCheckDef` + runner, and the modal. A new membership signal → the 5-minute job catches it; a write path that changes membership should reconcile inline.
+**When changing this:** a field the agent reads → `agentDefCore` + `transport.PathCheckDef` in `agent/internal/transport/client.go` + an `agent/VERSION` bump, in lockstep — AND `services/pathCheckServerRunner.ts`, which runs the same definition on the server. A new kind → `CHECK_KINDS`, `targetHostOf`, the route's Zod enum, the agent's `ValidateCheckDef` + runner, the server runner, and the wizard. A new membership signal → the 5-minute job catches it; a write path that changes membership should reconcile inline.
 
 ---
 
 ## services/pathCheckIngestService.ts
 
-**What it owns:** The server half of the agent's two path-check streams (`POST /agents/samples`, stream `pathCheck` and `pathCheckTraceroute`): authorization of each sample against the pushing host's sources, the body-excerpt policy, buffered sample writes, the source's latest-result columns, hop resolution, and path-change Events.
+**What it owns:** The server half of the agent's two path-check streams (`POST /agents/samples`, stream `pathCheck` and `pathCheckTraceroute`): authorization of each sample against the pushing host's sources, the body-excerpt policy, buffered sample writes, the source's latest-result columns, hop resolution, and path-change Events. The Polaris server's own runs (`jobs/runServerPathChecks.ts`) come through the SAME two functions under the reserved subject `POLARIS_SERVER_SUBJECT` ("polaris-server"), which it owns with `POLARIS_SERVER_LABEL`.
 
-**Public API:** `ingestPathCheckSamples`, `ingestPathCheckTraceroutes`, `resolveHopContexts`, `excerptToKeep`, `hopIp`, `pathHashOf`, `sampleTime`, `PATH_CHANGE_EVENT_FLOOR_MS`; types `IngestResult`, `PathCheckSampleInput`, `PathCheckTracerouteInput`, `StoredHop`, `HopContext`.
+**Public API:** `ingestPathCheckSamples`, `ingestPathCheckTraceroutes`, `resolveHopContexts`, `excerptToKeep`, `hopIp`, `pathHashOf`, `sampleTime`, `PATH_CHANGE_EVENT_FLOOR_MS`, `POLARIS_SERVER_SUBJECT`, `POLARIS_SERVER_LABEL`; types `IngestResult`, `PathCheckSampleInput`, `PathCheckTracerouteInput`, `StoredHop`, `HopContext`.
 
 **Cross-service deps:** `prisma` (`pathCheckSource`, `assetPathCheckTraceroute`, `asset`, one `$queryRaw`), `sampleWriteBuffer.enqueuePathCheckSamples`, `eventLogService.logEvent`, `metrics` (`recordPathCheckSamples`, `recordPathCheckPathChange`), `utils/cidr.isValidIpAddress`, `utils/httpCheck.MAX_EXCERPT_CHARS`.
 
-**Used by:** `src/api/routes/agents.ts` (`POST /samples` — the two path-check arms return `{accepted, rejected}` of their own).
+**Used by:** `src/api/routes/agents.ts` (`POST /samples` — the two path-check arms return `{accepted, rejected}` of their own), `src/jobs/runServerPathChecks.ts` (the server subject).
 
 **Invariants:**
 - **The subject is the pushing agent's own asset.** Nothing in the body names a host; `assetId` comes from `req.managedAgent`.
+- **`POLARIS_SERVER_SUBJECT` reads the `assetId`-NULL source row** (`sourcesFor`), and its samples / traceroutes are written with that string in the FK-less `assetId` column. It is never a UUID, so no agent's bearer can reach it and no asset can collide with it; the alert engine reads these tables only for real asset ids, so server rows never alert. Its `path_check.path_changed` Event names the CHECK (`resourceType: "path-check"`, `details.source: "server"`) — the server is no asset, so no device-filtered automation matches it.
 - **A sample for a check this host is not a source of is REJECTED**, counted in `rejected` and in `polaris_agent_path_check_samples_total{outcome="rejected"}` — never stored.
 - **The excerpt policy is enforced HERE, not trusted from the wire** (`excerptToKeep`): kept only on a failed run or when the check keeps excerpts, re-cut to `MAX_EXCERPT_CHARS`. Hash + byte count are always stored.
 - **Nothing here touches `monitorStatus` / `consecutiveFailures` / `lastMonitorAt` / the responseTime stream.** A path-check result describes a path from the host, not the host.
@@ -325,6 +329,27 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **`path_check.path_changed` is written only against a non-null previous hash** (the first trace, and the first after a target edit, is a baseline) and at most once per `PATH_CHANGE_EVENT_FLOOR_MS` (10 min) per (host, check) — ECMP flap is recorded in the rows, not in the Event table. It names the asset (`resourceType: "asset"`, `resourceName`) so an event automation's device filter applies to the HOST (business rule 46).
 - A late-arriving older push never overwrites a newer latest result (`lastSampleAt` guard).
 
-**When changing this:** a new sample field → `PathCheckSampleSchema` in agents.ts + `PathCheckSampleRow` (sampleWriteBuffer) + the Prisma model/migration + the Go `transport.PathCheckSample`, in lockstep; a rollup column also needs `sampleRollupService` + `sampleHistoryService.readPathCheckHistory`.
+**When changing this:** a new sample field → `PathCheckSampleSchema` in agents.ts + `PathCheckSampleRow` (sampleWriteBuffer) + the Prisma model/migration + the Go `transport.PathCheckSample`, in lockstep, and `pathCheckServerRunner` must fill it too; a rollup column also needs `sampleRollupService` + `sampleHistoryService.readPathCheckHistory`.
+
+---
+
+## services/pathCheckServerRunner.ts
+
+**What it owns:** The probe half of a path check's **Polaris server** source (`PathCheck.runOnServer`): one run of one definition FROM THE SERVER — timed DNS preferring IPv4, the SSRF refusal after resolution (plus the server's own addresses), HTTP(S) / TCP / ICMP, and the optional traceroute — returning a sample and trace in the agent's wire shape. Also the scheduling rules the job applies (due-ness, traceroute mode, state pruning), as pure helpers.
+
+**Public API:** `runServerCheck` (optional 4th arg `RunCapture`, filled by a TEST run only: headers via `captureHeaders`, the 64 KB body judged, `httpVersion`), `captureHeaders`, `MAX_CAPTURED_HEADERS`, `pathBodyMatches`, `excerptOf`, `truncateError`, `ownAddresses`, `refusedAddress`, `serverCheckDue`, `serverTraceMode`, `pruneServerStates`, `DUE_SLACK_MS`, `TRACEROUTE_BUDGET_MS`, `_deps` (test seams: `lookup`, `ownAddresses`, `refusedAddress`); types `TraceMode`, `ServerCheckState`.
+
+**Cross-service deps:** `utils/netGuard.isBlockedOutboundHost`, `utils/cidr.isValidIpAddress`, `utils/httpCheck` (`parseStatusSpec`, `statusInRanges`, `MAX_BODY_BYTES`, `MAX_EXCERPT_CHARS`), `utils/icmpPing.burstPingHost`, `utils/serverTraceroute.traceFromServer`, `utils/version.getAppVersion`; types from `pathCheckService` / `pathCheckIngestService`. No Prisma — results are written by the job through the ingest service.
+
+**Used by:** `src/jobs/runServerPathChecks.ts`, `pathCheckService.testCheck`.
+
+**Invariants:**
+- **It mirrors the agent's probe** (`agent/internal/collectors/path_check*.go`) field for field, so a server row and an agent row mean the same thing on one chart: one GET, no proxy (`agent: false`), no redirects, no auth; status judged before body; the first 64 KB read and fingerprinted; a 4 KB excerpt on a failed run or when the check keeps them; TLS facts reported even when verification FAILED (`rejectUnauthorized: false`, then `tls.authorized` checked by hand); TCP = one connect; ICMP = one echo; the agent's error strings where it has one (`dns lookup failed:`, `refused:`, `ipv6 not supported in v1`, `connect failed:`, `HTTP 302 (expected 2xx)`).
+- **It refuses the server's OWN addresses after resolution**, beyond the agent's ranges — a name resolving to this host is a loopback probe of Polaris itself. The save path refuses the literal (`assertTargetHostAllowed`); this catches the DNS name.
+- **ICMP rides the system `ping` and the traceroute the system tracer** — the service holds no CAP_NET_RAW. A `ping` that could not run reads `icmp unsupported on this server …`, never as the target failing (rule 71); a missing tracer is a trace with no hops and a note.
+- **Never throws**; every problem is the sample's `error`.
+- **Scheduling mirrors `cmd/polaris-agent/path_check.go`:** due when the interval (less `DUE_SLACK_MS`) has elapsed, always on the first run under a revision; traceroute on the baseline, every Nth run, and on the run after a PASS if it fails; a changed revision re-baselines.
+
+**When changing this:** a probe rule changed on the agent → change it here in the same commit (and the reverse). A new sample field → fill it here as well as in the Go collector.
 
 ---

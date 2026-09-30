@@ -8,7 +8,10 @@
  *     latest-result columns, hop resolution to a monitored asset, and the
  *     path_check.path_changed Event,
  *   - the engine's path* resolvers read the stored samples (previewRule),
- *   - nothing touches the host's monitorStatus (business rule 85).
+ *   - nothing touches the host's monitorStatus (business rule 85),
+ *   - the Polaris server as a source: its assetId-NULL row, the server-subject
+ *     ingest and its three readings, and the networkScan:write chained gate
+ *     (a role-bound token without it is refused with 403).
  */
 
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -21,6 +24,9 @@ import { hashPassword } from "../../src/utils/password.js";
 import { flushAllSampleBuffers } from "../../src/services/sampleWriteBuffer.js";
 import { previewRule } from "../../src/services/notificationEngine.js";
 import { previewInputSchema } from "../../src/services/notificationTypes.js";
+import { createToken } from "../../src/services/apiTokenService.js";
+import { createRole, deleteRole } from "../../src/services/roleService.js";
+import { ingestPathCheckSamples, ingestPathCheckTraceroutes, POLARIS_SERVER_SUBJECT } from "../../src/services/pathCheckIngestService.js";
 
 const d = dbDescribe;
 const HOST = "path-check-it-host";
@@ -30,9 +36,14 @@ let hostId = "";
 let gateId = "";
 let bearer = "";
 let checkId = "";
+const NO_SCAN_ROLE = "it-path-check-no-network-scan";
+let noScanRoleId = "";
+let noScanToken = "";
 
 async function cleanup(): Promise<void> {
-  await prisma.pathCheck.deleteMany({ where: { name: { startsWith: "IT pathCheck" } } });
+  await prisma.pathCheck.deleteMany({ where: { name: { startsWith: "IT path-check" } } });
+  await prisma.apiToken.deleteMany({ where: { name: NO_SCAN_ROLE } });
+  await prisma.role.deleteMany({ where: { name: NO_SCAN_ROLE } });
   await prisma.managedAgent.deleteMany({ where: { asset: { hostname: { in: [HOST, GATE] } } } });
   await prisma.asset.deleteMany({ where: { hostname: { in: [HOST, GATE] } } });
 }
@@ -58,11 +69,18 @@ beforeAll(async () => {
       bearerPrefix: bearer.slice(0, TOKEN_INDEX_PREFIX_LEN), bearerHash: await hashPassword(bearer),
     },
   });
+  // Path Monitor write, but no Network Discovery — may run checks from agents only.
+  noScanRoleId = (await createRole({ name: NO_SCAN_ROLE, permissions: { pathChecks: "write", networkScan: "read" } })).id;
+  noScanToken = (await createToken({ name: NO_SCAN_ROLE, roleId: noScanRoleId, createdBy: "integration-test" })).rawToken;
 });
 
 afterAll(async () => {
   if (!dbReachable) return;
-  try { await cleanup(); } catch { /* noop */ }
+  try {
+    await prisma.apiToken.deleteMany({ where: { name: NO_SCAN_ROLE } });
+    await deleteRole(noScanRoleId).catch(() => {});
+    await cleanup();
+  } catch { /* noop */ }
 });
 
 function agentReq(method: "get" | "post", path: string) {
@@ -211,5 +229,110 @@ d("path checks", () => {
     await reconcilePathCheckSources(checkId);
     expect(await prisma.pathCheckSource.count({ where: { checkId } })).toBe(0);
     await prisma.managedAgent.update({ where: { assetId: hostId }, data: { installStatus: "active" } });
+  });
+});
+
+d("path checks — the Polaris server as a source", () => {
+  let serverCheckId = "";
+  const serverBody = {
+    name: "IT path-check from the server",
+    kind: "tcp",
+    target: "db01.example.test:5432",
+    intervalSec: 60,
+    timeoutMs: 5000,
+    traceroute: { enabled: true, everyNRuns: 5 },
+    scope: {},
+    assetIds: [],
+    runOnServer: true,
+  };
+
+  it("refuses a caller without networkScan:write, and creates it for one with it", async () => {
+    const denied = await request(app).post("/api/v1/path-checks").set("Authorization", `Bearer ${noScanToken}`).send(serverBody);
+    expect(denied.status).toBe(403);
+    expect(await prisma.pathCheck.count({ where: { name: serverBody.name } })).toBe(0);
+    // The same caller may still create an agent-only check.
+    const agentOnly = await request(app).post("/api/v1/path-checks").set("Authorization", `Bearer ${noScanToken}`)
+      .send({ ...serverBody, name: "IT path-check agents only", runOnServer: false, scope: { allAssets: true } });
+    expect(agentOnly.status).toBe(201);
+    const { agent, csrf } = await authedAgent(app);
+    const res = await agent.post("/api/v1/path-checks").set("X-CSRF-Token", csrf).send(serverBody);
+    expect(res.status).toBe(201);
+    serverCheckId = res.body.id;
+    expect(res.body).toMatchObject({ runOnServer: true, sourceCount: 1 });
+    const rows = await prisma.pathCheckSource.findMany({ where: { checkId: serverCheckId } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].assetId).toBeNull();
+  });
+
+  it("holds one server row per check at the database, not just in the reconcile", async () => {
+    await expect(prisma.pathCheckSource.create({ data: { checkId: serverCheckId, assetId: null, explicit: true } })).rejects.toThrow();
+  });
+
+  it("lets a caller without networkScan rename it or turn the server off, never re-aim it", async () => {
+    const put = (body: object) => request(app).put(`/api/v1/path-checks/${serverCheckId}`).set("Authorization", `Bearer ${noScanToken}`).send(body);
+    expect((await put({ ...serverBody, target: "db02.example.test:5432" })).status).toBe(403);
+    const renamed = await put({ ...serverBody, name: "IT path-check from the server (renamed)" });
+    expect(renamed.status).toBe(200);
+    serverBody.name = "IT path-check from the server (renamed)";
+  });
+
+  it("ingests under the server subject and serves its three readings", async () => {
+    const now = new Date();
+    const r = await ingestPathCheckSamples(POLARIS_SERVER_SUBJECT, [
+      { checkId: serverCheckId, timestamp: new Date(now.getTime() - 60_000).toISOString(), ok: true, latencyMs: 12, connectMs: 12, resolvedIp: "10.77.0.50" },
+    ], now);
+    expect(r).toEqual({ accepted: 1, rejected: 0 });
+    await ingestPathCheckTraceroutes(POLARIS_SERVER_SUBJECT, [{
+      checkId: serverCheckId, timestamp: new Date(now.getTime() - 50_000).toISOString(), complete: true, destinationIp: "10.77.0.50",
+      hops: [{ ttl: 1, ip: "10.77.0.1", rttMs: [1] }, { ttl: 2, ip: "10.77.0.50", rttMs: [2] }],
+    }], now);
+    await flushAllSampleBuffers();
+    // An agent's bearer can never write under the server's check.
+    const foreign = await agentReq("post", "/samples").send({ stream: "pathCheck", samples: [{ checkId: serverCheckId, ok: true }] });
+    expect(foreign.body).toEqual({ accepted: 0, rejected: 1 });
+
+    const { agent } = await authedAgent(app);
+    const results = await agent.get(`/api/v1/path-checks/${serverCheckId}/results`);
+    expect(results.body.results[0]).toMatchObject({ server: true, assetId: null, hostname: "Polaris server", lastOk: true, lastLatencyMs: 12 });
+    const detail = await agent.get(`/api/v1/path-checks/${serverCheckId}/server`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.checks[0]).toMatchObject({ id: serverCheckId, latestSample: { ok: true, resolvedIp: "10.77.0.50" } });
+    const hist = await agent.get(`/api/v1/path-checks/${serverCheckId}/server/history?range=1h`);
+    expect(hist.status).toBe(200);
+    expect(hist.body.samples).toHaveLength(1);
+    const trs = await agent.get(`/api/v1/path-checks/${serverCheckId}/server/traceroutes?limit=5`);
+    expect(trs.body.traceroutes).toHaveLength(1);
+    expect((trs.body.traceroutes[0].hops as Array<{ assetId?: string }>)[0]).toMatchObject({ assetId: gateId });
+    // A check that does not run on the server answers an empty list, not an error.
+    const other = await agent.get(`/api/v1/path-checks/${checkId}/server`);
+    expect(other.body).toEqual({ checks: [] });
+  });
+
+  it("refuses to re-enable a server-run check without networkScan:write", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    await agent.post(`/api/v1/path-checks/${serverCheckId}/enabled`).set("X-CSRF-Token", csrf).send({ enabled: false });
+    const denied = await request(app).post(`/api/v1/path-checks/${serverCheckId}/enabled`).set("Authorization", `Bearer ${noScanToken}`).send({ enabled: true });
+    expect(denied.status).toBe(403);
+  });
+
+  it("test-runs a draft from the server for a caller with networkScan:write, and audits it", async () => {
+    const draft = { kind: "tcp", target: "no-such-host.invalid:443", timeoutMs: 2000 };
+    const denied = await request(app).post("/api/v1/path-checks/test").set("Authorization", `Bearer ${noScanToken}`).send(draft);
+    expect(denied.status).toBe(403);
+    const { agent, csrf } = await authedAgent(app);
+    const res = await agent.post("/api/v1/path-checks/test").set("X-CSRF-Token", csrf).send(draft);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ source: "server", sample: { ok: false } });
+    expect(res.body.sample.error).toMatch(/^dns lookup failed: /);
+    expect(await prisma.event.count({ where: { action: "path_check.tested", resourceName: "Test run" } })).toBeGreaterThanOrEqual(1);
+    const bad = await agent.post("/api/v1/path-checks/test").set("X-CSRF-Token", csrf).send({ kind: "http", target: "http://127.0.0.1/" });
+    expect(bad.status).toBe(400);
+  });
+
+  it("drops the server row when the server is turned off", async () => {
+    const res = await request(app).put(`/api/v1/path-checks/${serverCheckId}`).set("Authorization", `Bearer ${noScanToken}`)
+      .send({ ...serverBody, enabled: false, runOnServer: false, scope: { allAssets: true } });
+    expect(res.status).toBe(200);
+    expect(await prisma.pathCheckSource.count({ where: { checkId: serverCheckId, assetId: null } })).toBe(0);
   });
 });

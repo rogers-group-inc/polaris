@@ -1103,7 +1103,8 @@ See [Polaris Agent](Polaris-Agent) and [Conflict Resolution](Conflict-Resolution
 automation, not the check, decides what failing means.**
 
 A [path check](Path-Monitor) is run by the Polaris Agent on each
-matching host. Its result describes whether that host can reach the target, so:
+matching host, and optionally by the Polaris server itself. Its result
+describes whether that source can reach the target, so:
 
 - **It never changes the host's status.** A laptop that cannot reach the
   intranet is not a laptop that is down. The host's own Up / Down comes only
@@ -1127,6 +1128,13 @@ matching host. Its result describes whether that host can reach the target, so:
   traceroute takes a different set of hops from last time, Polaris writes
   `path_check.path_changed` to Events (at most once every 10 minutes per host
   and check). You can alert on it with a *Path changed* trigger.
+- **The Polaris server is a source, not an asset.** Its results are charted
+  and listed under the check's Results, but in this version they raise no
+  automation alert, and a route change it sees names the check rather than a
+  device. Pointing the server at a target needs *Read-Write* on **Network
+  Discovery** as well as on Path Monitor, because the server probes from its
+  own network, where no agent host may be able to reach. Turning the server
+  off, renaming the check or changing its agent hosts does not.
 
 See [Path Checks](Path-Monitor) and [Automation Triggers](Automation-Triggers).
 

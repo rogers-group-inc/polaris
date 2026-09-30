@@ -8,12 +8,26 @@
  *                             vocabulary — its own route so the check modal never needs
  *                             automationManagement:read; the contacts /filter-schema precedent)
  *   POST   /preview-sources   pathChecks:write  (dry-run the Sources filter → agent hosts)
+ *   POST   /test              pathChecks:write + networkScan:write  (run a DRAFT once from
+ *                             this server and return the answer — the Expectations step's
+ *                             Test button; audited, 10 a minute per caller)
  *   GET    /:id               pathChecks:read
- *   GET    /:id/results       pathChecks:read   (fleet view: latest result per host)
- *   POST   /                  pathChecks:write
- *   PUT    /:id               pathChecks:write
- *   POST   /:id/enabled       pathChecks:write
+ *   GET    /:id/results       pathChecks:read   (fleet view: latest result per host,
+ *                             the Polaris server's own row first)
+ *   GET    /:id/server        pathChecks:read   (the server source, in the asset Paths
+ *                             tab's {checks:[…]} shape — empty when it does not run there)
+ *   GET    /:id/server/history      pathChecks:read   (?range= | ?from=&to=, tier-picked)
+ *   GET    /:id/server/traceroutes  pathChecks:read   (?limit= ≤ 50, newest first)
+ *   POST   /                  pathChecks:write  (+ networkScan:write when runOnServer)
+ *   PUT    /:id               pathChecks:write  (+ networkScan:write when it re-aims the server)
+ *   POST   /:id/enabled       pathChecks:write  (+ networkScan:write to re-enable a server-run check)
  *   DELETE /:id               pathChecks:write
+ *
+ * The server source's reads ride pathChecks:read, not assets:read: the server
+ * is no asset, and these endpoints describe the CHECK (the /assets/:id/path-check-*
+ * trio is the per-host twin). Pointing the SERVER at a target is chained on
+ * networkScan:write (pathCheckService.CheckWriteOpts) — decided by the service
+ * from `mayRunOnServer`, because only it knows whether an edit re-aims the server.
  *
  * Zod validates the outer shape; the semantic checks (target refusal, status
  * spec, RE2-compatible regex, interval / timeout rules) live in
@@ -23,7 +37,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { requirePermission } from "../middleware/permissions.js";
+import { requirePermission, hasPermission } from "../middleware/permissions.js";
 import { requestActor } from "../middleware/auth.js";
 import {
   CHECK_KINDS,
@@ -35,8 +49,15 @@ import {
   deleteCheck,
   setCheckEnabled,
   previewSources,
+  testCheck,
   listCheckResults,
+  getServerCheck,
+  listServerTraceroutes,
+  POLARIS_SERVER_SUBJECT,
 } from "../../services/pathCheckService.js";
+import { resolveRange, extendSinceForLookback } from "../../utils/chartRange.js";
+import { pickSampleTierForAsset } from "../../services/sampleQueryRouter.js";
+import { readPathCheckHistory } from "../../services/sampleHistoryService.js";
 import { listScopeOptions } from "../../services/notificationRuleService.js";
 import { SCOPE_FIELD_OPS, scopeConditionMeta, scopeSchema } from "../../services/notificationTypes.js";
 import { listAssetTypes } from "../../services/assetTypeService.js";
@@ -70,6 +91,7 @@ export const pathCheckInputSchema = z.object({
   keepBodyExcerpt: z.boolean().optional(),
   scope: scopeSchema.nullable().optional(),
   assetIds: z.array(z.string().max(64)).max(2000).optional(),
+  runOnServer: z.boolean().optional(),
 });
 
 const previewSchema = z.object({
@@ -78,6 +100,14 @@ const previewSchema = z.object({
 });
 
 const enabledSchema = z.object({ enabled: z.boolean() });
+
+/** A draft under test: the full check body, but no name or Sources needed yet. */
+const testSchema = pathCheckInputSchema.extend({ name: z.string().max(120).optional() });
+
+/** The chained half of the server-source gate (see the header). */
+function writeOpts(req: Parameters<typeof hasPermission>[0]) {
+  return { mayRunOnServer: hasPermission(req, "networkScan", "write") };
+}
 
 export const pathChecksRouter = Router();
 
@@ -108,6 +138,13 @@ pathChecksRouter.post("/preview-sources", requirePermission("pathChecks", "write
   } catch (err) { next(err); }
 });
 
+pathChecksRouter.post("/test", requirePermission("pathChecks", "write"), async (req, res, next) => {
+  try {
+    const input = testSchema.parse(req.body ?? {});
+    res.json(await testCheck({ ...input, name: input.name ?? "", scope: input.scope ?? undefined }, requestActor(req), writeOpts(req)));
+  } catch (err) { next(err); }
+});
+
 pathChecksRouter.get("/:id", requirePermission("pathChecks", "read"), async (req, res, next) => {
   try {
     res.json(await getCheck(String(req.params.id)));
@@ -120,24 +157,57 @@ pathChecksRouter.get("/:id/results", requirePermission("pathChecks", "read"), as
   } catch (err) { next(err); }
 });
 
+pathChecksRouter.get("/:id/server", requirePermission("pathChecks", "read"), async (req, res, next) => {
+  try {
+    res.json(await getServerCheck(String(req.params.id)));
+  } catch (err) { next(err); }
+});
+
+pathChecksRouter.get("/:id/server/history", requirePermission("pathChecks", "read"), async (req, res, next) => {
+  try {
+    const checkId = String(req.params.id);
+    const { since, until, rangeLabel } = resolveRange(req);
+    const pick = await pickSampleTierForAsset(POLARIS_SERVER_SUBJECT, "pathCheck", since);
+    const fetchSince = extendSinceForLookback(since, pick.bucketSeconds);
+    const result = await readPathCheckHistory(POLARIS_SERVER_SUBJECT, since, until, pick.tier, checkId, fetchSince);
+    res.json({
+      range: rangeLabel,
+      checkId,
+      since,
+      until,
+      tier: pick.tier,
+      bucketSeconds: pick.bucketSeconds,
+      samples: result.samples,
+    });
+  } catch (err) { next(err); }
+});
+
+pathChecksRouter.get("/:id/server/traceroutes", requirePermission("pathChecks", "read"), async (req, res, next) => {
+  try {
+    const checkId = String(req.params.id);
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+    res.json({ checkId, traceroutes: await listServerTraceroutes(checkId, limit) });
+  } catch (err) { next(err); }
+});
+
 pathChecksRouter.post("/", requirePermission("pathChecks", "write"), async (req, res, next) => {
   try {
     const input = pathCheckInputSchema.parse(req.body);
-    res.status(201).json(await createCheck({ ...input, scope: input.scope ?? undefined }, requestActor(req)));
+    res.status(201).json(await createCheck({ ...input, scope: input.scope ?? undefined }, requestActor(req), writeOpts(req)));
   } catch (err) { next(err); }
 });
 
 pathChecksRouter.put("/:id", requirePermission("pathChecks", "write"), async (req, res, next) => {
   try {
     const input = pathCheckInputSchema.parse(req.body);
-    res.json(await updateCheck(String(req.params.id), { ...input, scope: input.scope ?? undefined }, requestActor(req)));
+    res.json(await updateCheck(String(req.params.id), { ...input, scope: input.scope ?? undefined }, requestActor(req), writeOpts(req)));
   } catch (err) { next(err); }
 });
 
 pathChecksRouter.post("/:id/enabled", requirePermission("pathChecks", "write"), async (req, res, next) => {
   try {
     const { enabled } = enabledSchema.parse(req.body);
-    res.json(await setCheckEnabled(String(req.params.id), enabled, requestActor(req)));
+    res.json(await setCheckEnabled(String(req.params.id), enabled, requestActor(req), writeOpts(req)));
   } catch (err) { next(err); }
 });
 

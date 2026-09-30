@@ -14,7 +14,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 
 - **MonitorClassOverride** — tier-2 of the monitor settings hierarchy; manual-scope only post-Phase-2.
 
-- **PathCheck / PathCheckSource / AssetPathCheckSample / AssetPathCheckTraceroute** — agent-run path checks. A `PathCheck` is an operator-defined HTTP / HTTPS / TCP / ICMP probe (+ optional traceroute) that the Polaris Agent on every matching host runs; `PathCheckSource` is the materialized check × agent-host membership plus that pair's latest result. `AssetPathCheckSample` (+ hourly/daily) and `AssetPathCheckTraceroute` are hypertables with NO FK to Asset, and their `assetId` is the **agent host**, never the target. **A result never moves `monitorStatus`** — a host that cannot reach a website is not a host that is down — and **a check carries no threshold**: the SLA lives in the automation that watches the `path*` metrics. Deleting a check cascades its sources only; samples age out on retention (never row-deleted — compressed chunks).
+- **PathCheck / PathCheckSource / AssetPathCheckSample / AssetPathCheckTraceroute** — path checks. A `PathCheck` is an operator-defined HTTP / HTTPS / TCP / ICMP probe (+ optional traceroute) that the Polaris Agent on every matching host runs — and, with `runOnServer`, the Polaris server itself; `PathCheckSource` is the materialized check × agent-host membership plus that pair's latest result, with ONE extra row whose `assetId` is NULL for the server. `AssetPathCheckSample` (+ hourly/daily) and `AssetPathCheckTraceroute` are hypertables with NO FK to Asset, and their `assetId` is the **source that measured** — an agent host, or the reserved subject `"polaris-server"` (`POLARIS_SERVER_SUBJECT`) for the server — never the target. **A result never moves `monitorStatus`** — a host that cannot reach a website is not a host that is down — and **a check carries no threshold**: the SLA lives in the automation that watches the `path*` metrics. Deleting a check cascades its sources only; samples age out on retention (never row-deleted — compressed chunks).
 
 ## Schema
 
@@ -216,16 +216,17 @@ PathCheck               -- path_checks (plain). An operator-defined agent-run re
   keepBodyExcerpt  Boolean         -- http/https only; otherwise the 4 KB excerpt is kept only on a FAILED run
   scope            Json            -- automation-shaped RuleScope ({allAssets:true} | {condition}), implicitly AND'd with "active Polaris Agent"
   assetIds         String[]        -- explicit pins, kept even when the filter stops matching
+  runOnServer      Boolean         -- also run from the Polaris server (jobs/runServerPathChecks, scheduler role). Setting / re-aiming it needs networkScan:write too
   definitionSha256 String          -- sha256 of exactly what the agent receives (pathCheckService.definitionSha256) — the ETag fold; a description edit does not change it
   createdBy / createdAt / updatedAt / lastReconciledAt
 
 PathCheckSource         -- path_check_sources (plain, FK cascade to both check and asset). Materialized check × agent-host membership, rebuilt by reconcilePathCheckSources; ALSO the latest-result cache the fleet view / asset tab / path-change detection read.
-  checkId, assetId  @@unique       -- @@index([assetId])
+  checkId, assetId  @@unique       -- @@index([assetId]). assetId NULLABLE: NULL = the Polaris server's own row (runOnServer), at most one per check via the migration-only partial unique index path_check_sources_server_key (NULLs are distinct in the @@unique)
   explicit          Boolean        -- from PathCheck.assetIds
   lastOk / lastSampleAt / lastLatencyMs / lastHttpStatus / lastError / lastResolvedIp / lastFailAt
   lastHopCount / lastTracerouteComplete / lastPathHash / lastTracerouteAt / lastPathChangeEventAt   -- path-change detection state (10-minute Event floor)
 
-AssetPathCheckSample         -- asset_path_check_samples, hypertable, NO FK. One agent host's result for one check run. assetId = the AGENT HOST, never the target.
+AssetPathCheckSample         -- asset_path_check_samples, hypertable, NO FK. One source's result for one check run. assetId = the AGENT HOST, or "polaris-server" for the server source — never the target.
   id, timestamp (@@id)  assetId  checkId (not a FK — AssetStateSample.probeId precedent)
   ok            Boolean
   latencyMs / dnsMs / connectMs / tlsMs / ttfbMs   Float?   -- null = not measured (never 0); dnsMs null for an IP-literal target

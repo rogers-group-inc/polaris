@@ -229,7 +229,11 @@ PUT    /path-checks/:id
 POST   /path-checks/:id/enabled
 DELETE /path-checks/:id
 POST   /path-checks/preview-sources
+POST   /path-checks/test
 GET    /path-checks/filter-schema
+GET    /path-checks/:id/server
+GET    /path-checks/:id/server/history
+GET    /path-checks/:id/server/traceroutes
 GET    /assets/:id/path-checks
 GET    /assets/:id/path-check-history?checkId=
 GET    /assets/:id/path-check-traceroutes?checkId=
@@ -243,8 +247,15 @@ describe that asset.
 
 - **Hosts** are the check's `scope` (the automation device-filter tree,
   `{ "allAssets": true }` for every agent host) plus pinned `assetIds`, limited
-  to hosts running an active agent. One of the two must select something.
-  `preview-sources` dry-runs that selection without saving.
+  to hosts running an active agent. `preview-sources` dry-runs that selection
+  without saving.
+- **The Polaris server** runs the check too when `runOnServer` is `true`. One
+  of `scope`, `assetIds` and `runOnServer` must select something. Setting it,
+  changing what a server-run check sends, or re-enabling one also needs
+  `networkScan:write` (`403` otherwise). The server is not an asset: it is the
+  first `/results` row (`server: true`, `assetId: null`), its readings are the
+  three `/path-checks/:id/server…` endpoints (on `pathChecks:read`), and its
+  results raise no automation alert.
 - **Targets** are a full URL for HTTP / HTTPS, `host:port` for TCP and a bare
   host for ICMP, IPv4 only. Loopback, link-local, cloud-metadata and multicast
   addresses, and the Polaris server itself, are refused with `400`.
@@ -254,6 +265,11 @@ describe that asset.
   host runs at most 20 — the oldest win, and the rest raise a
   `path_check.agent_over_cap` event.
 - `PUT` replaces the whole definition; it is not a patch.
+- `test` runs a draft once from the Polaris server and returns the verdict,
+  timings and, for HTTP / HTTPS, the headers (cookie values redacted) and the
+  first 64 KB of the body. Nothing is saved but an audit event. Same
+  `networkScan:write` requirement as running from the server; 10 a minute per
+  caller (`429` past that).
 - A check has no threshold and never changes a host's Up / Down status. To be
   alerted, build an automation on the `path*` metrics or the
   `path_check.path_changed` event.

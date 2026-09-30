@@ -47,6 +47,11 @@ ENV NODE_ENV=production \
 # finish — but a container is a controlled environment with no reason to make
 # it take the slow path. ~100 KB.
 #
+# traceroute is the tracer a path check's "This Polaris server" source uses
+# (src/utils/serverTraceroute.ts): UDP probes, unprivileged. Without it the
+# server falls back to iputils' tracepath (not in this image either) and then
+# records traces with no hops and a note saying which package is missing.
+#
 # postgresql-client-17 by NAME, not the unversioned `postgresql-client`
 # metapackage. src/utils/pgClientTools.ts resolves pg_dump/psql by the SERVER's
 # major (rule 47), so a client that silently follows the base image's default
@@ -62,6 +67,7 @@ RUN apt-get update \
       postgresql-client-17 \
       iputils-ping \
       fping \
+      traceroute \
       ca-certificates \
       tini \
  && rm -rf /var/lib/apt/lists/*

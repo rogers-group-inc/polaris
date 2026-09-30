@@ -8,6 +8,7 @@ Each rule records the decision *and the constraint that forced it*. The invarian
 `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
 - [Rule 85](#rule-85) — A path check measures a PATH from a host, not the host — it never moves `monitorStatus`, and the automation, not the check, says what failing means
+  - [The Polaris server as a source (2026-09-30)](#rule-85-server-source)
 
 <a id="rule-85"></a>
 
@@ -143,6 +144,67 @@ test "offers the saturation ceiling on packet loss but not on a path check's fai
 - **Traceroute on every run.** ~90 probes a minute per agent for a 30-hop path. It runs
   every Nth run (default 5) and immediately on a pass→fail transition, so a failure always
   has a fresh path and a baseline to compare it with.
+
+<a id="rule-85-server-source"></a>
+
+### The Polaris server as a source (2026-09-30)
+
+**What was asked for.** The operator wanted a check to run from the Polaris server they
+deployed — on Linux or in a container — as well as from agent hosts: the same progression
+of results, from the one vantage point every install has, with no agent on it.
+
+**Why the server is not made an asset.** The results tables are keyed by asset, so the
+obvious move was a synthetic "Polaris server" asset. It was rejected: that record would
+collide with the real one discovery already writes for the same machine (vCenter, AD,
+Entra — rule 83's two-records-one-device problem), would show in every asset count, and
+would need a monitorStatus nothing measures. Instead the server's membership row in
+`path_check_sources` has `assetId` NULL (one per check — a partial unique index, since
+NULLs are distinct in the table's `@@unique`), and its samples and traceroutes carry the
+reserved subject `"polaris-server"` in the FK-less `assetId` column. It is never a UUID, so
+no agent's bearer reaches it and no asset collides with it.
+
+**What that costs, deliberately.** The alert engine resolves `path*` readings per asset in an
+automation's scope, and the server is in no scope — so **a server-run result raises no
+automation alert** in this version. It is charted and listed (Path Monitor → Results → the
+"Polaris server" row, drawn by the same renderer as a host's Paths tab), and a changed path
+is still an Event — naming the CHECK (`resourceType: "path-check"`), because there is no
+host for an event automation's device filter to match (rule 46). Alerting on the server
+source is a follow-up that needs a subject kind the engine does not have.
+
+**Why aiming the server takes a second key.** An agent probes from a host people sit at. The
+server probes from ITS network position — often a management segment no agent reaches —
+and an HTTP check hands back what came back (the failed-run excerpt, or every run's with
+"keep excerpts"). That is a request relay from the server, which is exactly the concern the
+Network Discovery key exists for (a sweep from the server, rule 34). So creating a
+server-run check, turning the server on, re-aiming one (anything in the agent definition
+except its name) or re-enabling one needs `networkScan:write` ON TOP of `pathChecks:write`
+— the chained-gate shape of `POST /network-scans/…/adopt`. Turning the server off,
+renaming, editing agent Sources and deleting do not: they reduce what the server sends.
+The service decides it (`CheckWriteOpts.mayRunOnServer`), because only it can tell whether
+an edit re-aims the server.
+
+**The Test button is the same act.** The wizard's Expectations step can run a DRAFT once
+from the server (`POST /path-checks/test`) and show the headers and the first 64 KB of the
+body, so the operator writes the expectation from the real answer. That is the read
+primitive above in its plainest form, so it takes the same chained key, is audited
+(`path_check.tested`), is rate-limited per caller, stores nothing, applies the same
+save-time target refusals, and redacts Set-Cookie values from what it shows.
+
+**Why it runs on the scheduler role.** "The server" must be one vantage point. The monitor
+role can have N replicas on N hosts; running there would interleave several hosts' paths
+into one series that "changes path" every run. The scheduler role is the single-instance one
+and runs the write buffers.
+
+**What it mirrors, and what it refuses beyond the agent.** The probe
+(`pathCheckServerRunner`) mirrors the agent's collectors field for field, so both sources
+mean the same thing on one chart. After resolution it refuses the agent's ranges AND the
+server's own interface addresses — a name that resolves to this host is a loopback probe of
+Polaris itself, which the save-time literal check cannot see. ICMP uses the system `ping`
+and the traceroute the system tracer (`traceroute`, then `tracepath`, then Windows
+`tracert`), because the service holds no CAP_NET_RAW; a missing tool is a note on the trace,
+never a failing target (rule 71). Pinned by `tests/unit/pathCheckServerRunner.test.ts`,
+`serverTraceroute.test.ts`, the "the Polaris server" blocks of `pathCheckService.test.ts`
+and `pathCheckIngest.test.ts`, and `pathCheckWizardDom.test.ts`.
 
 ### Rule 85 — the invariant as stated in full
 

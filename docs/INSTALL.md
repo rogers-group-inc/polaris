@@ -835,6 +835,35 @@ chunk` and keeps measuring. A quiet log means the batched path is working.
 
 ---
 
+## Optional: traceroute (path checks run from this server)
+
+A path check can run from the **Polaris server itself** as well as from agent
+hosts (Path Monitor → the check's **Sources** step → *Run from this Polaris
+server*). Its traceroute uses the system tracer, tried in this order:
+
+1. `traceroute -n` — UDP probes, no privilege needed. Installed by the Docker
+   image and by the setup scripts (it is in RHEL BaseOS and the Debian/Ubuntu
+   archive).
+2. `tracepath -n` — part of iputils, so present wherever `ping` is. It walks
+   hops one at a time and takes no per-probe settings, so it is the fallback.
+3. `tracert -d` on a Windows dev install.
+
+With none of them, server-run checks still run and chart normally; only their
+traceroutes come back with no hops and a note saying the package is missing.
+The setup scripts install it best-effort. To add it later:
+
+```bash
+sudo dnf install -y traceroute     # RHEL / Rocky / AlmaLinux 9
+sudo apt install -y traceroute     # Ubuntu / Debian
+```
+
+Polaris looks for the tracer once per process, so restart it (or let the next
+update restart it) after installing. ICMP checks from the server use the same
+system `ping` the rest of Polaris uses. Server-run checks run on the **web**
+role (the one that runs the schedulers), so the traffic leaves from that host.
+
+---
+
 ## The split-role deployment (web / monitor / discovery)
 
 Since Phase 3 this is the **default and only supported production layout**
