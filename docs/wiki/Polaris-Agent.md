@@ -534,6 +534,16 @@ an explicit credentialId on the request
   did not make.
 - A host the fan-out still cannot upgrade writes an `agent.upgrade_skipped`
   Event, so the silence that hid this is gone.
+- **A host that monitoring shows as down is skipped, not attempted**, by
+  **Upgrade all out-of-date** and by the automatic upgrade after a new build:
+  connecting to it would only sit out a timeout while the reachable hosts
+  wait. Nothing about the agent changes — it stays out of date, so the next
+  fan-out picks it up once the host is back, or you can use the host's own
+  **Upgrade** button, which is never skipped. Each one writes an info-level
+  `agent.upgrade_deferred` Event (deliberately not `agent.upgrade_skipped`, so
+  an automation watching for stranded hosts does not page about one that is
+  simply off), and the toast says how many were skipped. A device that is not
+  monitored is still attempted.
 
 **Upgrade only.** Install, reinstall and uninstall still require a credential on
 file; force-remove is the escape hatch.

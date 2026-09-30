@@ -65,7 +65,19 @@ build auto-prune + boot-time auto-build are layered on top.
   hook in `finalizeBuild` (agentBuildService.ts) gated on
   `Setting.agent.autoUpgradeOnNewBuild`. Auto-path emits
   `agent.upgrade_all_auto_kickoff` so the audit trail distinguishes
-  human-initiated from build-triggered fan-outs.
+  human-initiated from build-triggered fan-outs. **A host monitoring reads
+  as DOWN is not attempted** (2026-09-30): an eligible row whose asset is
+  `monitored === true && monitorStatus === "down"` is left untouched (still
+  upgradeable and lagging, so the next fan-out or the per-asset Upgrade
+  button — `startUpgrade`, deliberately not gated — picks it up), counted
+  in `UpgradeAllResult.deferredDown`, and logged as an info-level
+  `agent.upgrade_deferred` Event — its own action, never
+  `agent.upgrade_skipped`, so an automation keyed on "skipped" (a stranded
+  host) does not page about a host that is merely off. An unmonitored
+  asset is still attempted (its `monitorStatus` is stale). Why: a dead
+  host's SSH/WinRM connect sits out its timeout holding one of the 4 pool
+  slots every reachable host queues behind. The Server Settings toast reads
+  "Queued X of Y upgrade(s) — Z skipped (host down)".
 - `src/utils/version.ts:getAgentVersion()` / `getAgentSourceDir()` —
   readers of `agent/VERSION` (not writers, but documenting here for
   proximity). 5s mtime-checked cache; format-validated; fallback

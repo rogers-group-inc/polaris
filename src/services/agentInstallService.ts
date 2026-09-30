@@ -41,7 +41,7 @@ import { AGENT_BIN_DIR } from "../utils/paths.js";
 import { linuxServiceBlock, normalizePrivilegeTier, type AgentPrivilegeTier } from "../utils/agentUnit.js";
 import { getCredential } from "./credentialService.js";
 import { mintEnrollmentToken } from "./agentTokenService.js";
-import { logEvent } from "./eventLogService.js";
+import { logEvent, logEventsBatch } from "./eventLogService.js";
 import { truncate } from "../utils/text.js";
 import { winrmRunOne, type WinRmConnection } from "../utils/winrm.js";
 import { withSshClient, sshExec, sftpPut } from "../utils/remoteExec.js";
@@ -447,6 +447,8 @@ export async function startUpgrade(input: StartUpgradeInput): Promise<{ fromVers
 export interface UpgradeAllResult {
   eligible: number;
   queued:   number;
+  /** Of `eligible`, how many were not attempted because the host is down. */
+  deferredDown: number;
   perAsset: Array<{ assetId: string; managedAgentId: string; ok: boolean; error?: string }>;
 }
 
@@ -455,7 +457,7 @@ export async function upgradeAllOutdated(actor: string): Promise<UpgradeAllResul
   const inv = await getInventory();
   const currentVersion = inv.manifest?.currentVersion;
   if (!currentVersion) {
-    return { eligible: 0, queued: 0, perAsset: [] };
+    return { eligible: 0, queued: 0, deferredDown: 0, perAsset: [] };
   }
   const eligible = await prisma.managedAgent.findMany({
     where: {
@@ -469,12 +471,39 @@ export async function upgradeAllOutdated(actor: string): Promise<UpgradeAllResul
     // skipped — a fan-out that reports N nameless failures is not a report.
     select: {
       id: true, assetId: true, agentVersion: true,
-      asset: { select: { hostname: true, ipAddress: true } },
+      asset: { select: { hostname: true, ipAddress: true, monitored: true, monitorStatus: true } },
     },
   });
   const perAsset: UpgradeAllResult["perAsset"] = [];
+
+  // A host monitoring reads as DOWN is not attempted: the SSH/WinRM connect
+  // would only sit out its timeout while holding one of the POOL_SIZE slots
+  // every reachable host is queued behind. The row is left untouched
+  // ("active" / "upgrade_failed", still lagging), so the next fan-out — or
+  // the operator's per-asset Upgrade button, which is not gated — picks it
+  // up once it is back. Only a MONITORED asset's status is trusted; an
+  // unmonitored one's monitorStatus is whatever it was when polling stopped.
+  // Its own action, not agent.upgrade_skipped: an automation keyed on
+  // "skipped" means a host stranded on its old binary, and a host that is
+  // simply off would page on top of its own device-down alert.
+  const isDown = (e: (typeof eligible)[number]) => e.asset?.monitored === true && e.asset.monitorStatus === "down";
+  const down = eligible.filter(isDown);
+  if (down.length > 0) {
+    await logEventsBatch(down.map((e) => ({
+      action:       "agent.upgrade_deferred",
+      resourceType: "asset",
+      resourceId:   e.assetId,
+      resourceName: e.asset?.hostname || e.asset?.ipAddress || undefined,
+      actor,
+      level:        "info" as const,
+      message:      `Polaris Agent upgrade deferred (still on ${e.agentVersion ?? "an unknown version"}): the host is down`,
+      details:      { managedAgentId: e.id, fromVersion: e.agentVersion ?? null, toVersion: currentVersion, reason: "host_down" },
+    }))).catch(() => { /* best-effort — never fail the fan-out on the audit write */ });
+    for (const e of down) perAsset.push({ assetId: e.assetId, managedAgentId: e.id, ok: false, error: "host is down" });
+  }
+
   const POOL_SIZE = 4;
-  await mapWithConcurrency(eligible, POOL_SIZE, async (e) => {
+  await mapWithConcurrency(eligible.filter((e) => !isDown(e)), POOL_SIZE, async (e) => {
     try {
       await startUpgrade({ managedAgentId: e.id, actor });
       perAsset.push({ assetId: e.assetId, managedAgentId: e.id, ok: true });
@@ -503,6 +532,7 @@ export async function upgradeAllOutdated(actor: string): Promise<UpgradeAllResul
   return {
     eligible: eligible.length,
     queued:   perAsset.filter((p) => p.ok).length,
+    deferredDown: down.length,
     perAsset,
   };
 }

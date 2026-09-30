@@ -141,6 +141,7 @@ device-down supersession or a saturated reading.
 | `automation.script.run` | | one execution |
 | `ssh.host_key.mismatch` | | a host key **changed** and the connection was refused |
 | `agent.upgrade_skipped` | | a host the fan-out could not upgrade |
+| `agent.upgrade_deferred` | info | a host the fan-out did not try because monitoring shows it down; retried by the next fan-out |
 | `asset.pins.bulk_updated` | | one mass-pin apply |
 
 The two password Events being **different actions at different levels** is
