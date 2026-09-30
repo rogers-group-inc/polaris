@@ -270,7 +270,10 @@ Live telemetry and history: response time, CPU, memory, temperature,
 interfaces, storage, IPsec tunnels, SD-WAN.
 
 **The Response time chart also draws packet loss.** A dashed purple line reads
-against a second axis on the right, 0–100 %. It counts packets from every probe
+against a second axis on the right. That axis tops out at the worst loss in
+the window (4 %, 8 %, 12 %, 20 %, 40 %, 60 %, 80 % or 100 %), so small loss
+stays readable instead of hugging the bottom. Check the scale before comparing
+two charts. It counts packets from every probe
 Polaris sends the device — the response-time poll and the ICMP packet-loss
 sweep — so on a device the sweep reaches it is much finer than the missed polls
 on the response-time line. Each point covers a short bucket (two minutes on a

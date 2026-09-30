@@ -4,7 +4,8 @@
  * _renderMonitorChart).
  *
  * Pins what is only observable in the rendered SVG:
- *  - the loss series draws on its own right-hand 0–100 % axis, in a colour
+ *  - the loss series draws on its own right-hand percentage axis, scaled to
+ *    the worst bucket in the window (whole-percent quarters), in a colour
  *    that is none of the reserved chart hues (red = missed poll / Down, grey =
  *    dependency-down — a data line in either reads as an outage marker);
  *  - a gap in the buckets breaks the line rather than being bridged, because
@@ -111,11 +112,33 @@ describe("response-time chart — packet-loss line", () => {
     const titles = Array.from(el.querySelectorAll(".chart-axis-title")).map((t) => t.textContent);
     expect(titles).toContain("Packet loss (%)");
     const labels = Array.from(el.querySelectorAll("text")).map((t) => t.textContent);
-    expect(labels).toEqual(expect.arrayContaining(["0%", "50%", "100%"]));
+    // The worst bucket is 40 %, so the axis tops out at 40 %, not 100 %.
+    expect(labels).toEqual(expect.arrayContaining(["0%", "10%", "20%", "30%", "40%"]));
+    expect(labels).not.toContain("100%");
     expect(el.querySelectorAll(".monitor-loss-hit")).toHaveLength(4);
-    // 40 % sits 40 % of the way up the plot (padT 10, innerH 134).
+    // 40 % sits at the top of the plot (padT 10).
     const hit = el.querySelectorAll(".monitor-loss-hit")[2]!;
-    expect(Number(hit.getAttribute("cy"))).toBeCloseTo(10 + 134 * 0.6, 5);
+    expect(Number(hit.getAttribute("cy"))).toBeCloseTo(10, 5);
+  });
+
+  it("scales the loss axis to the worst bucket", () => {
+    const B = 2 * 60_000;
+    const axis = (peak: number) => {
+      document.body.innerHTML = "";
+      const el = render(payload({
+        bucketMs: B,
+        points: [0, 1, 2].map((i) => ({ t: T0 + i * B, v: i === 1 ? peak : 0 })),
+        ratioPct: peak / 3,
+      }));
+      return Array.from(el.querySelectorAll("text"))
+        .map((t) => t.textContent ?? "")
+        .filter((t) => /^\d+(\.\d+)?%$/.test(t));
+    };
+    expect(axis(0)).toEqual(["0%", "1%", "2%", "3%", "4%"]);
+    expect(axis(1.5)).toEqual(["0%", "1%", "2%", "3%", "4%"]);
+    expect(axis(9)).toEqual(["0%", "3%", "6%", "9%", "12%"]);
+    expect(axis(55)).toEqual(["0%", "15%", "30%", "45%", "60%"]);
+    expect(axis(100)).toEqual(["0%", "25%", "50%", "75%", "100%"]);
   });
 
   it("breaks the line across missing buckets", () => {
