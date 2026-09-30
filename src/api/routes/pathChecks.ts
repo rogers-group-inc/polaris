@@ -4,7 +4,7 @@
  *
  * Mounted at /api/v1/path-checks.
  *   GET    /                  pathChecks:read   (list + per-check pass/fail summary)
- *   GET    /filter-schema     pathChecks:read   (the Sources tab's condition-builder
+ *   GET    /filter-schema     pathChecks:read   (the wizard's Sources-step condition-builder
  *                             vocabulary — its own route so the check modal never needs
  *                             automationManagement:read; the contacts /filter-schema precedent)
  *   POST   /preview-sources   pathChecks:write  (dry-run the Sources filter → agent hosts)

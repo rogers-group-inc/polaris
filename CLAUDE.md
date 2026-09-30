@@ -96,7 +96,7 @@ Code lives in `src/` (`api/routes/`, `api/middleware/`, `services/`, `jobs/`, `u
 | DOM screenshots | html-to-image (bundled under `public/js/vendor/`) — capture rules in `polaris-ui-canon` → tech-stack-frontend.md |
 | Mapping | Leaflet + leaflet.markercluster + leaflet-draw 1.0.4 (region polygon edit mode) + OpenStreetMap tiles (bundled under `public/css/vendor/leaflet/` and `public/js/vendor/leaflet/`) |
 | Graph layout | Cytoscape.js column solver (`computeTopologyColumns` in `topology-render.js`), dagre fallback — the solver, location-code hulls and building/floor views are in `polaris-ui-canon` → tech-stack-frontend.md |
-| Asset monitoring | net-snmp, ssh2, `node:https`/`node:http` (FortiOS REST, WinRM, HTTP check), system `ping` / fping (batched ICMP + loss sweep) — per-transport rules in `polaris-monitoring-discovery` → polling-methods-streams.md |
+| Asset monitoring | net-snmp, ssh2, `node:https`/`node:http` (FortiOS REST, WinRM, HTTP check), system `ping` / fping (batched ICMP + loss sweep), system `traceroute` → `tracepath` (path checks run from the server; optional) — per-transport rules in `polaris-monitoring-discovery` → polling-methods-streams.md |
 | Testing | Vitest + Supertest |
 | Frontend | Vanilla JavaScript + HTML (served from /public) |
 
