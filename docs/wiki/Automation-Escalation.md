@@ -127,8 +127,9 @@ from a control that says "reminders" would weaken an escalation you configured
 somewhere you were not looking. `escalation.stopOn` and `repeat.stopOn` are
 still the only things that stop either.
 
-A **maintenance window** is not a quiet hold. It retires the alert outright
-([rule 16](Business-Rules#rule-16)).
+A **maintenance window** is not a quiet hold. It pauses reminders and
+escalation on an open alert for the whole window, and they resume afterwards if
+the alert is still open ([rule 16](Business-Rules#rule-16)).
 
 ### Validation
 
@@ -152,8 +153,8 @@ indefinitely.
 | **The reset condition becomes true** | same as Clear, automatically |
 | **The device leaves the scope** | alert cleared as `out_of_scope` |
 | **The device stops being monitored** | same ([rule 37](Business-Rules#rule-37)) |
-| **A maintenance window opens** | the alert is **retired**, not frozen ([rule 16](Business-Rules#rule-16)) |
-| **The parent goes dark** | dependency suppression retires it ([rule 38](Business-Rules#rule-38)) |
+| **A maintenance window opens** | nothing ends — the alert stays open, escalation and reminders **pause** until the window ends, then it resolves or carries on as usual ([rule 16](Business-Rules#rule-16)) |
+| **The parent goes dark** | dependency suppression retires it — a parent genuinely down, not one in maintenance ([rule 38](Business-Rules#rule-38)) |
 | **A more specific automation carves the device out** | cleared as `superseded` ([rule 18](Business-Rules#rule-18)) |
 | **The pin is removed** | a dimensioned alert clears ([rule 57](Business-Rules#rule-57)) |
 

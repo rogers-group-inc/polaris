@@ -74,7 +74,7 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 |---|---|
 | An automation never fires | The **monitored gate** ([rule 37](Business-Rules#rule-37)), or a **more specific automation carved the devices out** ([rule 18](Business-Rules#rule-18)). Step 6 shows both |
 | A per-dimension automation fires about nothing | Nothing is **pinned**. The pin is the gate, and the picker lists the pin set, not the inventory ([rule 57](Business-Rules#rule-57)) |
-| An alert cleared itself when a window opened | Correct — a maintenance window **retires** live alerts rather than freezing them ([rule 16](Business-Rules#rule-16)) |
+| An alert stayed open through a maintenance window | Correct — a window pauses an open alert rather than clearing it. It resolves by itself once polling resumes and the device reads healthy; clear it by hand if you don't want to wait ([rule 16](Business-Rules#rule-16)) |
 | Alerts from two automations about one outage | Same-rank ties **both fire**. That is also why Clone and Import create **disabled** |
 | A recipient gets nothing, and the automation looks right | Check the **Addresses** column's hover breakdown. Then check whether they have an email address at all, or (for push) an enrolled browser — the builder warns about both |
 | Push delivers to nobody | Push is opt-in **per browser**, and the boot-time reconcile **never prompts**. The account must pick the preference **on that browser** once |
@@ -113,6 +113,7 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 | TLS handshake fails after a certificate rotation | The pin. **Stage the new pin before rotating** |
 | Samples stopped, heartbeat continues | A hung filesystem or NIC in a collector — bounded by a 30-second guard on current builds |
 | An upgrade silently skipped a host | Look for `agent.upgrade_skipped`. On older builds this was completely silent |
+| Upgrade all says "skipped (host down)" | Those hosts read **down** in monitoring, so the fan-out did not try them (`agent.upgrade_deferred`). They are picked up by the next fan-out once they are back, or use the host's own **Upgrade** button |
 | `agent.disconnected` alerts never clear | Use the **counterpart Event** reset — `agent.connected`, scoped to the same subject |
 | Onboarding ran clean, but SSH to a **domain-joined** endpoint times out | The firewall **profile**. Windows creates its OpenSSH rule for Private only, so a Domain-profile machine runs sshd nothing can reach. Re-run a current onboarding script — it settles that rule ([rule 76](Business-Rules#rule-76)). Check with `Get-NetFirewallRule -Name OpenSSH-Server-In-* \| Select Name,Enabled,Profile` |
 

@@ -136,7 +136,7 @@ does not mean the switch under it has.
 | Response-time probe | still runs, at **2× the interval** — the device may answer over a redundant path |
 | Probe failures | stamped as dependency-explained, rendered **grey** |
 | Alerts | the device is excluded from firing ([rule 37](Business-Rules#rule-37)) — unless a down automation opted to speak for it, below |
-| Live alerts | retired |
+| Live alerts | retired when the upstream is genuinely down; **kept (paused)** when the device is silenced behind a parent in maintenance ([rule 16](Business-Rules#rule-16)) |
 
 A suppressed device is **still probed**. That is deliberate: a device with a
 redundant path may well answer, and finding that out is worth one probe at half

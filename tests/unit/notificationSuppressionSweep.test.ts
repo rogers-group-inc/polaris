@@ -1,11 +1,12 @@
 /**
  * tests/unit/notificationSuppressionSweep.test.ts
  *
- * clearSuppressedAlerts: an asset inside a maintenance window (or suppressed
- * behind a dark parent) must not carry a live alert — business rule 16. The
- * sweep soft-clears the alert with a reason, releases the state row so the
- * condition re-earns its debounce after the window, and leaves alerts on
- * healthy assets alone.
+ * clearSuppressedAlerts — business rule 16. An asset dark behind a parent that
+ * is genuinely DOWN must not carry a live alert: the sweep soft-clears it,
+ * releases the state row so the condition re-earns its debounce, and leaves
+ * alerts on healthy assets alone. A MAINTENANCE WINDOW never retires an alert —
+ * not on the asset in the window, and not on a child whose suppression is owed
+ * to a maintained parent.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -18,12 +19,16 @@ const h = vi.hoisted(() => ({
     $transaction: vi.fn(async (ops: unknown[]) => ops),
   },
   logEventsBatch: vi.fn(async () => 0),
+  resolveDependencyBlameMany: vi.fn(),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
 vi.mock("../../src/services/eventLogService.js", () => ({
   logEvent: vi.fn(async () => {}),
   logEventsBatch: h.logEventsBatch,
+}));
+vi.mock("../../src/services/dependencyTreeService.js", () => ({
+  resolveDependencyBlameMany: h.resolveDependencyBlameMany,
 }));
 
 import { clearSuppressedAlerts } from "../../src/services/notificationService.js";
@@ -32,17 +37,23 @@ const ALERT = (id: string, assetId: string, ruleName = "CPU high") => ({
   id, assetId, rule: { name: ruleName },
 });
 
+type Reason = "down" | "maintenance" | "dependency_test" | "suppressed";
+/** A blame chain, upstream first, root cause last. */
+const blame = (...reasons: Reason[]) => {
+  const chain = reasons.map((reason, i) => ({ id: `p${i}`, hostname: `P-${i}`, reason }));
+  return { upstream: chain[0], rootCause: chain[chain.length - 1], chain, hops: chain.length, truncated: false };
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   h.prisma.$transaction.mockImplementation(async (ops: unknown[]) => ops);
 });
 
 describe("clearSuppressedAlerts", () => {
-  it("clears a maintenance asset's live alert and releases its state row", async () => {
+  it("clears an alert behind a DOWN parent and releases its state row", async () => {
     h.prisma.notification.findMany.mockResolvedValue([ALERT("n1", "a1")]);
-    h.prisma.asset.findMany.mockResolvedValue([
-      { id: "a1", hostname: "SW-1", status: "maintenance", dependencySuppressed: false },
-    ]);
+    h.prisma.asset.findMany.mockResolvedValue([{ id: "a1", hostname: "AP-9" }]);
+    h.resolveDependencyBlameMany.mockResolvedValue(new Map([["a1", blame("suppressed", "down")]]));
 
     const n = await clearSuppressedAlerts();
 
@@ -50,7 +61,7 @@ describe("clearSuppressedAlerts", () => {
     expect(h.prisma.notification.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: { in: ["n1"] }, cleared: false },
-        data: expect.objectContaining({ cleared: true, clearedBy: "system:maintenance" }),
+        data: expect.objectContaining({ cleared: true, clearedBy: "system:dependency-suppressed" }),
       }),
     );
     // The state machine must let go, or the key sits firing on a dead alert.
@@ -63,20 +74,67 @@ describe("clearSuppressedAlerts", () => {
     const events = h.logEventsBatch.mock.calls[0][0] as any[];
     expect(events).toHaveLength(1);
     expect(events[0].action).toBe("notification.suppressed");
-    expect(events[0].message).toContain("SW-1");
+    expect(events[0].message).toContain("AP-9");
   });
 
-  it("names dependency suppression as its own reason", async () => {
+  it("only asks about dependency-suppressed assets that are NOT themselves in maintenance", async () => {
+    // An asset in its own window is excluded in the QUERY, whatever its
+    // dependency flag says — a window never retires an alert (rule 16).
     h.prisma.notification.findMany.mockResolvedValue([ALERT("n2", "a2")]);
-    h.prisma.asset.findMany.mockResolvedValue([
-      { id: "a2", hostname: "AP-9", status: "active", dependencySuppressed: true },
-    ]);
+    h.prisma.asset.findMany.mockResolvedValue([]);
 
-    await clearSuppressedAlerts();
-
-    expect(h.prisma.notification.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ clearedBy: "system:dependency-suppressed" }) }),
+    expect(await clearSuppressedAlerts()).toBe(0);
+    expect(h.prisma.asset.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ dependencySuppressed: true, NOT: { status: "maintenance" } }),
+      }),
     );
+    expect(h.resolveDependencyBlameMany).not.toHaveBeenCalled();
+    expect(h.prisma.notification.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("leaves a child's alert alone when a MAINTAINED parent is what silenced it", async () => {
+    h.prisma.notification.findMany.mockResolvedValue([ALERT("n3", "a3"), ALERT("n4", "a4")]);
+    h.prisma.asset.findMany.mockResolvedValue([
+      { id: "a3", hostname: "SW-1" },
+      { id: "a4", hostname: "AP-2" },
+    ]);
+    h.resolveDependencyBlameMany.mockResolvedValue(new Map([
+      ["a3", blame("maintenance")],
+      // A grandchild: the switch above it is suppressed, the gate above THAT
+      // is in a window — still owed to maintenance.
+      ["a4", blame("suppressed", "maintenance")],
+    ]));
+
+    expect(await clearSuppressedAlerts()).toBe(0);
+    expect(h.prisma.notification.updateMany).not.toHaveBeenCalled();
+    expect(h.logEventsBatch).not.toHaveBeenCalled();
+  });
+
+  it("clears only the outage-owed child when both kinds are present", async () => {
+    h.prisma.notification.findMany.mockResolvedValue([ALERT("n5", "a5"), ALERT("n6", "a6")]);
+    h.prisma.asset.findMany.mockResolvedValue([
+      { id: "a5", hostname: "SW-5" },
+      { id: "a6", hostname: "SW-6" },
+    ]);
+    h.resolveDependencyBlameMany.mockResolvedValue(new Map([
+      ["a5", blame("maintenance")],
+      ["a6", blame("down")],
+    ]));
+
+    expect(await clearSuppressedAlerts()).toBe(1);
+    expect(h.prisma.notification.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ["n6"] }, cleared: false } }),
+    );
+  });
+
+  it("leaves the alert alone when the blame walk finds nothing (a flag about to be released)", async () => {
+    h.prisma.notification.findMany.mockResolvedValue([ALERT("n7", "a7")]);
+    h.prisma.asset.findMany.mockResolvedValue([{ id: "a7", hostname: "SW-7" }]);
+    h.resolveDependencyBlameMany.mockResolvedValue(new Map([["a7", null]]));
+
+    expect(await clearSuppressedAlerts()).toBe(0);
+    expect(h.prisma.notification.updateMany).not.toHaveBeenCalled();
   });
 
   it("never retires an alert RAISED FOR a dependency-suppressed device (business rule 78)", async () => {
@@ -90,60 +148,12 @@ describe("clearSuppressedAlerts", () => {
     );
   });
 
-  it("maintenance wins when an asset is both — it is the downtime the operator announced", async () => {
-    h.prisma.notification.findMany.mockResolvedValue([ALERT("n3", "a3")]);
-    h.prisma.asset.findMany.mockResolvedValue([
-      { id: "a3", hostname: "FW-1", status: "maintenance", dependencySuppressed: true },
-    ]);
-
-    await clearSuppressedAlerts();
-
-    expect(h.prisma.notification.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ clearedBy: "system:maintenance" }) }),
-    );
-  });
-
-  it("leaves alerts on healthy assets alone", async () => {
-    h.prisma.notification.findMany.mockResolvedValue([ALERT("n4", "a4"), ALERT("n5", "a5")]);
-    h.prisma.asset.findMany.mockResolvedValue([
-      { id: "a5", hostname: "SW-2", status: "maintenance", dependencySuppressed: false },
-    ]);
-
-    const n = await clearSuppressedAlerts();
-
-    expect(n).toBe(1);
-    expect(h.prisma.notification.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: ["n5"] }, cleared: false } }),
-    );
-  });
-
-  it("writes nothing when no alert belongs to a suppressed asset", async () => {
-    h.prisma.notification.findMany.mockResolvedValue([ALERT("n6", "a6")]);
-    h.prisma.asset.findMany.mockResolvedValue([]);
-
-    expect(await clearSuppressedAlerts()).toBe(0);
-    expect(h.prisma.notification.updateMany).not.toHaveBeenCalled();
-    expect(h.logEventsBatch).not.toHaveBeenCalled();
-  });
-
-  it("scopes to the assets just handed to it, and short-circuits on an empty set", async () => {
-    expect(await clearSuppressedAlerts([])).toBe(0);
-    expect(h.prisma.notification.findMany).not.toHaveBeenCalled();
-
-    h.prisma.notification.findMany.mockResolvedValue([]);
-    await clearSuppressedAlerts(["a7", "a8"]);
-    expect(h.prisma.notification.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ cleared: false, assetId: { in: ["a7", "a8"] } }),
-      }),
-    );
-  });
-
   it("only ever considers alerts that have an asset", async () => {
     h.prisma.notification.findMany.mockResolvedValue([]);
     await clearSuppressedAlerts();
     expect(h.prisma.notification.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ assetId: { not: null } }) }),
     );
+    expect(h.prisma.asset.findMany).not.toHaveBeenCalled();
   });
 });

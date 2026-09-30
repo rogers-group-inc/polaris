@@ -475,7 +475,8 @@
           if (!ok) return;
           btn.disabled = true;
           api.serverSettings.agentUpgradeAll().then(function (r) {
-            showToast("Queued " + r.queued + " of " + r.eligible + " upgrade(s)", "success");
+            showToast("Queued " + r.queued + " of " + r.eligible + " upgrade(s)" +
+              (r.deferredDown ? " — " + r.deferredDown + " skipped (host down)" : ""), "success");
             // Kick the live poll immediately so the status panel shows
             // upgrading=N right away rather than waiting for a manual refresh.
             refreshInstalledSummary();

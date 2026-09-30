@@ -40,9 +40,10 @@ anyway, now with a maintenance flap in the audit log as well.
 
 So a hold is a `MaintenanceHold` row: the same kind of thing a schedule is, an INPUT the diff
 runs against. That is not a technicality. Entering through the diff is what parks the status in
-`maintenanceReturnStatus`, writes `maintenance.entered`, and sweeps the live alerts that a
-window must not open on top of (business rule 16) — three behaviours that a bespoke path would
-have had to reimplement and would have reimplemented differently.
+`maintenanceReturnStatus`, writes `maintenance.entered`, and freezes the live alerts through
+the window rather than retiring them (business rule 16, as of 2026-09-30; until then this path
+swept them) — behaviours that a bespoke path would have had to reimplement and would have
+reimplemented differently.
 
 ### Which operations hold, and which deliberately do not
 
@@ -96,7 +97,8 @@ any other window.
 
 And it does not narrow the silence to the disconnect. For the length of the operation the asset
 is in maintenance, so a genuine failure that starts in that window is suppressed too, and a live
-alert on the way in is retired by the rule 16 sweep. That is the cost of using the mechanism
+alert on the way in is frozen for the length of the hold — kept, not retired (rule 16, 2026-09-30) —
+and recovers on its own evidence once the agent reports again. That is the cost of using the mechanism
 that already exists, paid deliberately: the alternative — a per-event carve-out that only knows
 about `agent.disconnected` — silences less, but only suppresses the one symptom somebody
 happened to think of, and says nothing on the asset about why the device was quiet.

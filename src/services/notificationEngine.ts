@@ -522,13 +522,13 @@ export async function loadScopeAssetIds(scope: RuleScope, opts?: { monitoredOnly
  *    alerts for every device behind it.
  * Suppressed assets are dropped from rule evaluation and their `pending` state
  * rows reset to clear — a still-bad condition re-earns its full debounce after
- * the window. Their live ALERTS are retired rather than frozen, by
- * `clearSuppressedAlerts` (notificationService) rather than here: an alert
- * raised before the window opened has nothing left that could clear it (the
- * readings that would recover it are what maintenance stops collecting), and
- * event/change alerts carry no state row at all, so the sweep has to run over
- * Notification rows. Once it has, the firing row is already `clear` and the
- * loops below never see it.
+ * the window. Their live ALERTS are frozen, not retired, when the cause is a
+ * maintenance window (the asset's own, or a maintained parent's) — business
+ * rule 16: an alert raised before the window stays live and recovers on its
+ * own evidence once polling resumes. Behind a parent that is genuinely DOWN
+ * they are retired, by `clearSuppressedAlerts` (notificationService) rather
+ * than here, because event/change alerts carry no state row at all and the
+ * sweep has to run over Notification rows.
  */
 export function isSuppressedForNotifications(a: { status: string; dependencySuppressed: boolean }): boolean {
   return String(a.status) === "maintenance" || a.dependencySuppressed === true;
@@ -2625,12 +2625,10 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
 
   // Suppressed assets produced no readings this tick. Reset their `pending`
   // rows — the debounce restarts from scratch after the window, a dropped
-  // reading being evidence of nothing. Their `firing` rows are the
-  // suppression sweep's business (clearSuppressedAlerts, run ahead of this
-  // tick), which retires the alert and resets the row in one place for every
-  // trigger type; by the time this loop runs there is normally nothing firing
-  // left to see, and a row that entered suppression mid-tick is picked up by
-  // the next one.
+  // reading being evidence of nothing. Their `firing` rows are left alone:
+  // frozen through a maintenance window (rule 16 — a window never retires an
+  // alert), or retired by the suppression sweep (clearSuppressedAlerts, run
+  // ahead of this tick) when the asset is dark behind a parent that is down.
   for (const st of states) {
     if (st.state === "pending" && st.assetId && suppressedIds.has(st.assetId)) {
       await prisma.notificationRuleState.update({

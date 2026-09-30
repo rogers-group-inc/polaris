@@ -1214,6 +1214,32 @@ export async function resolveDependencyBlame(assetId: string, cache: BlameLoadCa
   }
 }
 
+/**
+ * `resolveDependencyBlame` for a whole set at once: the graph loads one LAYER
+ * per query for every asset together, instead of one walk per asset — the
+ * shape a 60s sweep over hundreds of children needs. An asset whose walk
+ * cannot be resolved maps to null, and a failed load maps every asset to null.
+ */
+export async function resolveDependencyBlameMany(assetIds: string[]): Promise<Map<string, DependencyBlame | null>> {
+  const out = new Map<string, DependencyBlame | null>();
+  if (assetIds.length === 0) return out;
+  const cache = newBlameLoadCache();
+  try {
+    let frontier = Array.from(new Set(assetIds));
+    for (let hop = 0; hop <= BLAME_MAX_HOPS && frontier.length > 0; hop++) {
+      frontier = await loadBlameLayer(frontier, cache);
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error)?.message, count: assetIds.length }, "resolveDependencyBlameMany failed");
+    for (const id of assetIds) out.set(id, null);
+    return out;
+  }
+  const states = Array.from(cache.states.values());
+  const nowMs = Date.now();
+  for (const id of assetIds) out.set(id, blameFromGraph(states, cache.parents, id, nowMs));
+  return out;
+}
+
 // ─── DB-bound recompute ─────────────────────────────────────────────────────
 
 /**
