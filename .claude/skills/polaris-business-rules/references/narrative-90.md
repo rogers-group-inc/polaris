@@ -90,6 +90,25 @@ keeps alerting.
   tick, narrowed to the members named — so a healthy 2000-gate fleet runs no extra query at
   all, and a fault on a handful of gates costs two small indexed reads.
 
+### Follow-up 2026-09-30 — a DOWN parent yields whatever the filter
+
+The operator's "FortiGate Overlay is down" automation (`sdwanMemberState == down`, 3 polls,
+`dimensionFilter.healthCheck = "Metrocenter|Flexential"`) still paged per overlay when the
+underlay died. Both halves of "over the line" were blind to it: the filter is applied
+before the yield, and the underlays are members of other health checks (or none), so the
+automation never had a reading on wan2; and no automation carried a live member-state alert
+about wan2. A physically down port that is in no health check was invisible to the rule
+entirely.
+
+So a third source: `notificationEngine → downSdwanParents` marks an ancestor over the line
+when its `AssetInterface.operStatus` is `down`, or its newest perf-SLA read within 15 min is
+`down` on ANY health check — read without the automation's filter. It applies to all four
+conditions, not only member state: unlike "wan2's latency explains an overlay's loss", a
+dead underlay explains every symptom of a tunnel riding it. It runs inside the same
+hot-readings-only branch, narrowed to the ancestor names, so a healthy fleet still costs no
+query; a failed lookup falls back to the same-condition evidence alone. Pinned by the three
+"down parent" cases in `tests/integration/sdwanParentYield.test.ts`.
+
 ### Rejected alternatives
 
 - **Rule 38 dependency suppression.** That machinery is per ASSET (a device behind a dark

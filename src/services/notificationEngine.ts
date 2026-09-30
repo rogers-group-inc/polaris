@@ -1016,6 +1016,50 @@ async function liveSdwanAlertMembers(assetIds: string[], target: string): Promis
 }
 
 /**
+ * Business rule 90 — the parents that are DOWN outright, whatever the
+ * automation's own filter or condition: `${assetId}|${name}` for every
+ * ancestor named in `parentOf` whose port is operationally down
+ * (`AssetInterface.operStatus`), or whose newest health-check read calls it
+ * dead on ANY health check. A dead wan2 explains everything wrong with the
+ * overlays riding it — the state, the loss, the latency — even when the
+ * automation is narrowed to health checks wan2 is not a member of, or wan2 is
+ * in no health check at all. Without this, an automation filtered to the
+ * overlay health checks ("Metrocenter|Flexential") never sees the underlay and
+ * pages once per overlay for one dead circuit.
+ */
+async function downSdwanParents(assetIds: string[], parentOf: Map<string, string>): Promise<Set<string>> {
+  const names = Array.from(new Set(parentOf.values()));
+  const out = new Set<string>();
+  if (names.length === 0) return out;
+  const since = new Date(Date.now() - SDWAN_PARENT_DOWN_LOOKBACK_MS);
+  const [ports, sla] = await Promise.all([
+    prisma.assetInterface.findMany({
+      where: { assetId: { in: assetIds }, ifName: { in: names }, operStatus: "down" },
+      select: { assetId: true, ifName: true },
+    }),
+    prisma.assetPerfSlaSample.findMany({
+      where: { assetId: { in: assetIds }, link: { in: names }, timestamp: { gte: since } },
+      orderBy: { timestamp: "desc" },
+      select: { assetId: true, healthCheck: true, link: true, state: true },
+    }),
+  ]);
+  for (const p of ports) out.add(`${p.assetId}|${p.ifName}`);
+  // Newest read per (gate, health check, member) — dead on any one is down.
+  const newest = new Set<string>();
+  for (const r of sla) {
+    const k = `${r.assetId}|${r.healthCheck}|${r.link}`;
+    if (newest.has(k)) continue;
+    newest.add(k);
+    if (r.state === "down") out.add(`${r.assetId}|${r.link}`);
+  }
+  return out;
+}
+
+/** How far back a parent's health-check read may be to call it dead — a few
+ *  SD-WAN scrapes; a member no longer reported says nothing either way. */
+const SDWAN_PARENT_DOWN_LOOKBACK_MS = 15 * 60_000;
+
+/**
  * Business rule 90 — a member riding a parent that is itself over the line
  * takes no reading: the parent's alert is the one that names the cause. A
  * lossy wan2 makes Overlay-3 and Overlay-4 lossy too; without this an operator
@@ -1024,7 +1068,9 @@ async function liveSdwanAlertMembers(assetIds: string[], target: string): Promis
  * "Over the line" is the SAME condition (utils/sdwanDimensions →
  * sdwanChildrenYielding): a meeting reading on the parent in this automation
  * this tick, or an uncleared alert any automation raised on this metric/field
- * about the parent. Only a reading that MEETS yields — a child that has come
+ * about the parent — or the parent is DOWN outright (downSdwanParents: an
+ * oper-down port, or dead on any health check, whatever this automation's
+ * filter). Only a reading that MEETS yields — a child that has come
  * back under the line keeps its reading and recovers normally.
  *
  * Applied ONLY when the caller passes `yielded` — the threshold path, which
@@ -1059,6 +1105,11 @@ async function yieldToSdwanParents(
     return readings;
   }
   if (parentOf.size === 0) return readings;
+  try {
+    for (const k of await downSdwanParents(assetIds, parentOf)) live.add(k);
+  } catch (err) {
+    logger.warn({ err: (err as Error)?.message }, "SD-WAN parent down lookup failed — yielding on same-condition evidence only");
+  }
   const out = sdwanChildrenYielding(
     readings.map((r) => ({ assetId: r.assetId, member: sdwanMemberOf(r), dimKey: r.dimKey, meets: meets(r) })),
     parentOf,

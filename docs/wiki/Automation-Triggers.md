@@ -713,6 +713,10 @@ and holds back the overlay alerts
 - An overlay is held back while its underlay is over the same line in the same
   automation, or while any automation has an open alert on the same condition
   about the underlay.
+- An overlay is also held back while its underlay is **down**: the underlay's
+  port is down, or it is dead on any health check. This applies even if the
+  automation is narrowed to other health checks, or the underlay is in no
+  health check at all.
 - An overlay alert that was already open clears as *superseded*. No "resolved"
   notification is sent: the overlay has not recovered.
 - An overlay whose underlay is healthy alerts as usual, and so does every other
