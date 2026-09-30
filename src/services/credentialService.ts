@@ -896,6 +896,11 @@ export async function getTestAssetTarget(assetId: string) {
 
 export async function deleteCredential(id: string): Promise<void> {
   const usage = await getCredentialUsage(id); // throws 404 if missing
+  // A path check that authenticates with it (the FK is RESTRICT; say why here).
+  const checks = await prisma.pathCheck.findMany({ where: { credentialId: id }, select: { name: true }, take: 5 });
+  if (checks.length) {
+    throw new AppError(409, `Credential is used by path check${checks.length === 1 ? "" : "s"} ${checks.map((c) => `"${c.name}"`).join(", ")}${checks.length === 5 ? " and possibly more" : ""}; change their authentication first`);
+  }
   if (usage.total > 0) {
     const parts: string[] = [];
     if (usage.assetLevel.length) parts.push(`${usage.assetLevel.length} directly`);

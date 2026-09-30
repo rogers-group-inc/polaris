@@ -720,6 +720,17 @@
           <code>pathChecks</code> key; the per-host readings under <code>/assets/:id</code> gate on
           <code>assets:read</code>, because they describe that asset.
         </p>
+        <p>
+          A check can also run from <strong>the Polaris server itself</strong>
+          (<code>runOnServer: true</code>), alone or beside agent hosts. The server is not an
+          asset: its results come back as the first <code>/results</code> row
+          (<code>server: true</code>, <code>assetId: null</code>) and through the three
+          <code>/path-checks/:id/server…</code> readings, and they raise no automation alert.
+          <strong>Pointing the server at a target also needs <code>networkScan:write</code></strong>
+          — creating a server-run check, turning the server on, changing what a server-run check
+          sends, or re-enabling one returns <code>403</code> without it. Turning the server off,
+          renaming a check or changing its agent hosts does not need it.
+        </p>
 
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks
@@ -742,7 +753,9 @@
           <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks/:id/results
             <span class="gate">pathChecks:read</span></div>
           <p><code>{ results: [...] }</code> — every host running the check with its latest
-            result, by hostname: <code>assetId, hostname, ipAddress, os, explicit</code> (pinned
+            result, by hostname, after the Polaris server's own row when it runs there
+            (<code>server: true</code>, <code>assetId: null</code>, <code>hostname: "Polaris
+            server"</code>; every host row has <code>server: false</code>): <code>assetId, hostname, ipAddress, os, explicit</code> (pinned
             rather than matched), <code>lastOk, lastSampleAt, lastLatencyMs, lastHttpStatus,
             lastError, lastResolvedIp, lastFailAt, lastHopCount, lastTracerouteComplete,
             lastTracerouteAt</code>, and the agent's <code>agentVersion, online,
@@ -768,8 +781,23 @@
             <li><code>http?</code> (HTTP / HTTPS only): <code>{ expectStatus?</code> — e.g.
               <code>"200,204,300-399"</code>, empty = any 2xx; <code>bodyMatch?: { mode:
               "contains" | "regex" | "exact", pattern (≤1024), caseSensitive? }</code>;
-              <code>verifyTls?</code> (default <code>true</code>) <code>}</code>. A regex must be
-              RE2-compatible (no look-around or back-references) — the agent runs it.</li>
+              <code>verifyTls?</code> (default <code>true</code>), <code>method?</code>
+              (<code>"GET"</code> | <code>"HEAD"</code> — nothing that writes is ever sent),
+              <code>hostHeader?</code> (sent as Host and used for TLS),
+              <code>followRedirects?</code> (≤5 hops, default off) <code>}</code>;
+              <code>bodyMatch.negate?</code> makes it "must NOT". A regex must be
+              RE2-compatible (no look-around or back-references) — the agent runs it. A check
+              using <code>method</code> HEAD, <code>hostHeader</code>,
+              <code>followRedirects</code> or <code>negate</code> needs agent 0.23.0; older agents
+              are listed <code>supported: false</code> and run nothing.</li>
+            <li><code>credentialId?</code> (HTTP / HTTPS only) — an <code>http</code> credential
+              (Bearer, Basic or Digest) to authenticate with. It makes the check
+              <strong>server-only</strong>: it sets <code>runOnServer</code>, agent
+              <code>scope</code> / <code>assetIds</code> are refused with <code>400</code>, and the
+              secret is never sent to an agent. Using it — for a check or a test run — needs at
+              least <code>credentials:read</code> (<code>403</code> otherwise); changing the
+              credential is the <code>/credentials</code> routes' business. A credential in use cannot be deleted
+              (<code>409</code>).</li>
             <li><code>traceroute?: { enabled?</code> (default <code>true</code>),
               <code>everyNRuns?</code> (1–100, default 5), <code>maxHops?</code> (1–64, default 30),
               <code>probesPerHop?</code> (1–5, default 3), <code>probeTimeoutMs?</code> (100–5000,
@@ -779,8 +807,11 @@
               run, not only on failures.</li>
             <li><code>scope?</code> — the automation device-filter tree
               (<code>{ "allAssets": true }</code> for every agent host), and
-              <code>assetIds?</code> (≤2000) to pin hosts regardless of the filter. At least one of
-              the two must select something.</li>
+              <code>assetIds?</code> (≤2000) to pin hosts regardless of the filter.</li>
+            <li><code>runOnServer?</code> (default <code>false</code>) — also run the check from
+              the Polaris server. Needs <code>networkScan:write</code>, else <code>403</code>. At
+              least one of <code>scope</code>, <code>assetIds</code> and <code>runOnServer</code>
+              must select something.</li>
           </ul>
           <p><code>409</code> when the new check would be the 51st enabled one. A host runs at
             most 20 checks, the oldest first; past that, the newer ones stay listed as members but
@@ -794,14 +825,18 @@
           <div class="endpoint-head"><span class="method m-put">PUT</span> /path-checks/:id
             <span class="gate">pathChecks:write</span></div>
           <p>Replace a check — the full body <code>POST</code> takes, not a patch. Agents pick the
-            new definition up on their next heartbeat.</p>
+            new definition up on their next heartbeat; the server on its next run.
+            <code>403</code> without <code>networkScan:write</code> when it turns
+            <code>runOnServer</code> on, or changes what a server-run check sends (anything but
+            its name, description and hosts), or re-enables one.</p>
         </div>
 
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-post">POST</span> /path-checks/:id/enabled
             <span class="gate">pathChecks:write</span></div>
           <p><code>{ enabled: boolean }</code>. A disabled check keeps its hosts and their last
-            results; agents stop running it.</p>
+            results; agents and the server stop running it. Re-enabling a server-run check needs
+            <code>networkScan:write</code>.</p>
         </div>
 
         <div class="endpoint">
@@ -820,10 +855,52 @@
         </div>
 
         <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /path-checks/test
+            <span class="gate">pathChecks:write + networkScan:write</span></div>
+          <p>Run a <em>draft</em> check once from the Polaris server and return what came back —
+            the body <code>POST /path-checks</code> takes, with <code>name</code> and the sources
+            optional. Nothing is stored except a <code>path_check.tested</code> audit event.
+            Returns <code>{ source: "server", sample, headers, httpVersion, body }</code>:
+            <code>sample</code> is one run's result fields (the verdict under the draft's
+            expectations, timings, <code>httpStatus</code>, TLS facts, <code>error</code>);
+            <code>headers</code> (≤60, lower-cased, <code>Set-Cookie</code> values redacted) and
+            <code>body</code> (the first 64&nbsp;KB it was judged on) are HTTP / HTTPS only, else
+            <code>null</code>. The same target refusals as a save (<code>400</code>);
+            <code>429</code> past 10 test runs a minute per caller.</p>
+        </div>
+
+        <div class="endpoint">
           <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks/filter-schema
             <span class="gate">pathChecks:read</span></div>
           <p>The fields, operators and option lists the <code>scope</code> filter accepts — the
             same vocabulary as an automation's device filter.</p>
+        </div>
+
+        <h3>The Polaris server's readings</h3>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks/:id/server
+            <span class="gate">pathChecks:read</span></div>
+          <p>The server source in the <code>/assets/:id/path-checks</code> shape:
+            <code>{ checks: [ check + latest + latestSample ] }</code>, or
+            <code>{ checks: [] }</code> when the check does not run on the server.
+            <code>404</code> when the check does not exist.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks/:id/server/history
+            <span class="gate">pathChecks:read</span></div>
+          <p>The server's series for the check — the same <code>range=</code> / <code>from=</code>
+            + <code>to=</code> and the same response as
+            <code>/assets/:id/path-check-history</code>.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks/:id/server/traceroutes
+            <span class="gate">pathChecks:read</span></div>
+          <p>The newest traceroutes the server ran for the check, newest first
+            (<code>limit=</code> 1–50, default 10) — the same shape as
+            <code>/assets/:id/path-check-traceroutes</code>.</p>
         </div>
 
         <h3>Per-host readings</h3>

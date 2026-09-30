@@ -63,6 +63,9 @@ const (
 	TracerouteBudget = 30 * time.Second
 )
 
+// maxRedirects bounds a check that follows redirects (the server's MAX_REDIRECTS).
+const maxRedirects = 5
+
 // ErrIPv6Unsupported is reported for an IPv6 literal or an IPv6-only name.
 var ErrIPv6Unsupported = errors.New("ipv6 not supported in v1")
 
@@ -108,6 +111,18 @@ func ValidateCheckDef(def *transport.PathCheckDef) error {
 		return fmt.Errorf("timeoutMs %d outside 500..30000", def.TimeoutMs)
 	}
 	if def.Kind == "http" || def.Kind == "https" {
+		switch def.Method {
+		case "", "GET", "HEAD":
+		default:
+			// Never anything that writes — the server refuses it too.
+			return fmt.Errorf("method %q is not GET or HEAD", def.Method)
+		}
+		if def.Method == "HEAD" && def.ExpectBody != nil {
+			return errors.New("a HEAD request has no body to match")
+		}
+		if def.HostHeader != "" && !validHostHeader(def.HostHeader) {
+			return fmt.Errorf("host header %q is not a host[:port]", def.HostHeader)
+		}
 		if _, err := parseStatusSpec(def.ExpectStatus); err != nil {
 			return fmt.Errorf("expectStatus: %w", err)
 		}
@@ -128,6 +143,22 @@ func ValidateCheckDef(def *transport.PathCheckDef) error {
 		return errors.New("traceroute settings out of range")
 	}
 	return nil
+}
+
+// validHostHeader: a host name or IPv4 address, optionally :port.
+func validHostHeader(h string) bool {
+	if len(h) == 0 || len(h) > 260 || strings.ContainsAny(h, " /\\\r\n\t@") {
+		return false
+	}
+	host := h
+	if i := strings.LastIndexByte(h, ':'); i >= 0 {
+		p, err := strconv.Atoi(h[i+1:])
+		if err != nil || p < 1 || p > 65535 {
+			return false
+		}
+		host = h[:i]
+	}
+	return host != "" && !strings.Contains(host, ":")
 }
 
 // DefHash is the scheduler's reset key: sha256 of the definition's JSON.
@@ -180,6 +211,10 @@ func splitTargetHostPort(kind, target string) (string, int, error) {
 	return host, port, nil
 }
 
+// refuseAddrHook is refuseAddr, swapped only by tests that must follow a
+// redirect to a loopback fixture server. Production never replaces it.
+var refuseAddrHook = refuseAddr
+
 // lookupHost is swapped by tests.
 var lookupHost = func(ctx context.Context, host string) ([]net.IP, error) {
 	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
@@ -200,7 +235,7 @@ func resolveTarget(ctx context.Context, host string) (net.IP, *float64, error) {
 		if ip.To4() == nil {
 			return nil, nil, ErrIPv6Unsupported
 		}
-		if err := refuseAddr(ip); err != nil {
+		if err := refuseAddrHook(ip); err != nil {
 			return nil, nil, err
 		}
 		return ip.To4(), nil, nil
@@ -213,7 +248,7 @@ func resolveTarget(ctx context.Context, host string) (net.IP, *float64, error) {
 	}
 	for _, ip := range ips {
 		if v4 := ip.To4(); v4 != nil {
-			if err := refuseAddr(v4); err != nil {
+			if err := refuseAddrHook(v4); err != nil {
 				return nil, &dns, err
 			}
 			return v4, &dns, nil

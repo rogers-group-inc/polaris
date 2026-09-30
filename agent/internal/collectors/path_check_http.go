@@ -150,11 +150,30 @@ func applyLeaf(leaf *x509.Certificate, s *transport.PathCheckSample) {
 	}
 }
 
-// runHTTP performs one GET against u, dialing ip (already resolved and
-// refused-checked) so resolvedIp is the address actually used and DNS is
-// counted once. Redirects are never followed; status is judged before body.
-func runHTTP(ctx context.Context, def *transport.PathCheckDef, u *url.URL, ip net.IP, ua string, s *transport.PathCheckSample) {
-	start := time.Now()
+// sameOrigin: scheme + host + port, the default port made explicit.
+func sameOrigin(a, b *url.URL) bool {
+	port := func(u *url.URL) string {
+		if p := u.Port(); p != "" {
+			return p
+		}
+		if u.Scheme == "https" {
+			return "443"
+		}
+		return "80"
+	}
+	return a.Scheme == b.Scheme && strings.EqualFold(a.Hostname(), b.Hostname()) && port(a) == port(b)
+}
+
+// httpOnce is one request of a run: its response (body read and closed) or
+// an error. Timings and TLS facts land on s — the last hop's win.
+type httpOnce struct {
+	status int
+	body   []byte
+	rerr   error
+	loc    string
+}
+
+func doHTTPOnce(ctx context.Context, def *transport.PathCheckDef, u *url.URL, ip net.IP, method, hostHeader, ua string, s *transport.PathCheckSample) (*httpOnce, error) {
 	port := u.Port()
 	if port == "" {
 		if u.Scheme == "https" {
@@ -164,6 +183,15 @@ func runHTTP(ctx context.Context, def *transport.PathCheckDef, u *url.URL, ip ne
 		}
 	}
 	dialAddr := net.JoinHostPort(ip.String(), port)
+	serverName := u.Hostname()
+	if hostHeader != "" {
+		// The Host override names the virtual host for the TLS handshake too.
+		if h, _, err := net.SplitHostPort(hostHeader); err == nil {
+			serverName = h
+		} else {
+			serverName = hostHeader
+		}
+	}
 	var dialer net.Dialer
 	tr := &http.Transport{
 		// Measure the DIRECT path the host takes — an environment proxy would
@@ -175,7 +203,7 @@ func runHTTP(ctx context.Context, def *transport.PathCheckDef, u *url.URL, ip ne
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: !def.VerifyTLS, //nolint:gosec // operator-chosen per check; default on
 			MinVersion:         tls.VersionTLS12,
-			ServerName:         u.Hostname(),
+			ServerName:         serverName,
 		},
 		DisableKeepAlives:     true,
 		ForceAttemptHTTP2:     false,
@@ -183,11 +211,11 @@ func runHTTP(ctx context.Context, def *transport.PathCheckDef, u *url.URL, ip ne
 		ResponseHeaderTimeout: time.Duration(def.TimeoutMs) * time.Millisecond,
 	}
 	defer tr.CloseIdleConnections()
+	// Redirects are followed by runHTTP itself, hop by hop, so every hop is
+	// resolved and refused-checked like the first one.
 	client := &http.Client{
-		Transport: tr,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+		Transport:     tr,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 
 	var connStart, tlsStart, wrote time.Time
@@ -213,10 +241,12 @@ func runHTTP(ctx context.Context, def *transport.PathCheckDef, u *url.URL, ip ne
 			}
 		},
 	}
-	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), method, u.String(), nil)
 	if err != nil {
-		s.Error = truncateError(err)
-		return
+		return nil, err
+	}
+	if hostHeader != "" {
+		req.Host = hostHeader
 	}
 	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Accept", "*/*")
@@ -224,37 +254,107 @@ func runHTTP(ctx context.Context, def *transport.PathCheckDef, u *url.URL, ip ne
 	resp, err := client.Do(req)
 	applyLeaf(leaf, s)
 	if err != nil {
-		s.Error = truncateError(err)
-		return
+		return nil, err
 	}
 	defer resp.Body.Close()
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, pathCheckMaxBodyBytes))
+	out := &httpOnce{status: resp.StatusCode, loc: resp.Header.Get("Location")}
+	if method != http.MethodHead {
+		out.body, out.rerr = io.ReadAll(io.LimitReader(resp.Body, pathCheckMaxBodyBytes))
+	}
+	return out, nil
+}
+
+// runHTTP performs one check run against u: GET (or HEAD), dialing ip
+// (already resolved and refused-checked) so resolvedIp is the address actually
+// used and DNS is counted once. Redirects are followed only when the check
+// says so — at most maxRedirects, each new host resolved and refused-checked
+// again — and the Host override applies only on the target's own origin. The
+// agent never authenticates: a check with a credential is server-only.
+// Status is judged before body, on the LAST response.
+func runHTTP(ctx context.Context, def *transport.PathCheckDef, u *url.URL, ip net.IP, ua string, s *transport.PathCheckSample) {
+	start := time.Now()
+	method := http.MethodGet
+	if def.Method == http.MethodHead {
+		method = http.MethodHead
+	}
+	u0 := u
+	var res *httpOnce
+	for hop := 0; ; hop++ {
+		hostHeader := ""
+		if sameOrigin(u, u0) {
+			hostHeader = def.HostHeader
+		}
+		r, err := doHTTPOnce(ctx, def, u, ip, method, hostHeader, ua, s)
+		if err != nil {
+			s.Error = truncateError(err)
+			return
+		}
+		res = r
+		if !def.FollowRedirects || r.status < 300 || r.status > 399 || r.loc == "" {
+			break
+		}
+		if hop >= maxRedirects {
+			s.HTTPStatus = iptr(r.status)
+			s.Error = fmt.Sprintf("more than %d redirects", maxRedirects)
+			return
+		}
+		next, err := u.Parse(r.loc)
+		if err != nil {
+			s.Error = truncateError(fmt.Errorf("redirect to an invalid URL: %w", err))
+			return
+		}
+		if next.Scheme != "http" && next.Scheme != "https" {
+			s.Error = fmt.Sprintf("refused: redirect to %s: URL", next.Scheme)
+			return
+		}
+		if next.User != nil {
+			s.Error = "refused: redirect to a URL with credentials in it"
+			return
+		}
+		nip, _, err := resolveTarget(ctx, next.Hostname())
+		if err != nil {
+			s.Error = truncateError(fmt.Errorf("redirect to %s: %w", next.Host, err))
+			return
+		}
+		u, ip = next, nip
+		s.ResolvedIP = nip.String()
+	}
+
+	body := res.body
 	sum := sha256.Sum256(body)
 	s.BodySha256 = hex.EncodeToString(sum[:])
 	s.BodyBytes = iptr(len(body))
-	s.HTTPStatus = iptr(resp.StatusCode)
+	s.HTTPStatus = iptr(res.status)
 	s.LatencyMs = fptr(msSince(start))
 
 	ranges, _ := parseStatusSpec(def.ExpectStatus) // validated by ValidateCheckDef
 	switch {
-	case !statusAccepted(resp.StatusCode, ranges):
+	case !statusAccepted(res.status, ranges):
 		spec := def.ExpectStatus
 		if spec == "" {
 			spec = "2xx"
 		}
-		s.Error = fmt.Sprintf("HTTP %d (expected %s)", resp.StatusCode, spec)
-	case readErr != nil:
-		s.Error = truncateError(fmt.Errorf("reading the response body: %w", readErr))
+		s.Error = fmt.Sprintf("HTTP %d (expected %s)", res.status, spec)
+	case res.rerr != nil:
+		s.Error = truncateError(fmt.Errorf("reading the response body: %w", res.rerr))
 	default:
-		matched, merr := bodyMatches(body, def.ExpectBody)
+		found, merr := bodyMatches(body, def.ExpectBody)
+		// BodyMatched = "the body expectation HELD" — for a negated one, that
+		// the text was absent. The server's runner reports it the same way.
+		held := found
+		if def.ExpectBody != nil && def.ExpectBody.Negate {
+			held = !found
+		}
 		if def.ExpectBody != nil {
-			s.BodyMatched = bptr(matched)
+			s.BodyMatched = bptr(held)
 		}
 		switch {
 		case merr != nil:
 			s.Error = truncateError(merr)
-		case !matched:
-			s.Error = fmt.Sprintf("Expected text not found in the first 64 KB of the response body (HTTP %d)", resp.StatusCode)
+		case !held && def.ExpectBody != nil && def.ExpectBody.Negate:
+			s.Error = fmt.Sprintf("Forbidden text found in the first 64 KB of the response body (HTTP %d)", res.status)
+		case !held:
+			s.Error = fmt.Sprintf("Expected text not found in the first 64 KB of the response body (HTTP %d)", res.status)
 		default:
 			s.OK = true
 		}

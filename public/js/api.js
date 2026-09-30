@@ -468,6 +468,19 @@ function trackedRequest(label, method, path, body) {
     .finally(function () { _unregisterQuery(qid); });
 }
 
+/** Range / from-to query for a path-check history call (both subjects). */
+function _pathRangeQs(opts, qs) {
+  if (typeof opts === "string") opts = { range: opts };
+  opts = opts || {};
+  if (opts.from && opts.to) {
+    qs.push("from=" + encodeURIComponent(opts.from));
+    qs.push("to="   + encodeURIComponent(opts.to));
+  } else if (opts.range) {
+    qs.push("range=" + encodeURIComponent(opts.range));
+  }
+  return qs.join("&");
+}
+
 const api = {
   blocks: {
     list:   (params) => request("GET", "/blocks" + toQuery(params)),
@@ -886,18 +899,8 @@ const api = {
     },
     // Agent-run path checks this host runs (+ latest result each).
     pathChecks:      (id) => request("GET", `/assets/${id}/path-checks`),
-    pathCheckHistory:     (id, checkId, opts) => {
-      if (typeof opts === "string") opts = { range: opts };
-      opts = opts || {};
-      var qs = ["checkId=" + encodeURIComponent(checkId)];
-      if (opts.from && opts.to) {
-        qs.push("from=" + encodeURIComponent(opts.from));
-        qs.push("to="   + encodeURIComponent(opts.to));
-      } else if (opts.range) {
-        qs.push("range=" + encodeURIComponent(opts.range));
-      }
-      return request("GET", `/assets/${id}/path-check-history?` + qs.join("&"));
-    },
+    pathCheckHistory:     (id, checkId, opts) =>
+      request("GET", `/assets/${id}/path-check-history?` + _pathRangeQs(opts, ["checkId=" + encodeURIComponent(checkId)])),
     pathCheckTraceroutes: (id, checkId, limit) =>
       request("GET", `/assets/${id}/path-check-traceroutes?checkId=` + encodeURIComponent(checkId) + "&limit=" + (limit || 10)),
     hardwareHistory:      (id, opts) => {
@@ -1153,7 +1156,14 @@ const api = {
     setEnabled:     (id, enabled) => request("POST", `/path-checks/${id}/enabled`, { enabled: !!enabled }),
     filterSchema:   ()      => request("GET", "/path-checks/filter-schema"),
     previewSources: (body)  => request("POST", "/path-checks/preview-sources", body || {}),
+    // Run a DRAFT once from the Polaris server (the wizard's Test button).
+    test:           (body)  => request("POST", "/path-checks/test", body || {}),
     results:        (id)    => request("GET", `/path-checks/${id}/results`),
+    // The Polaris server's own source — the /assets/:id/path-check-* trio's
+    // twin, in the same shapes, so the Paths renderer draws either.
+    server:         (id)    => request("GET", `/path-checks/${id}/server`),
+    serverHistory:  (id, opts) => request("GET", `/path-checks/${id}/server/history?` + _pathRangeQs(opts, [])),
+    serverTraceroutes: (id, limit) => request("GET", `/path-checks/${id}/server/traceroutes?limit=` + (limit || 10)),
   },
   contacts: {
     // Paginated + server-side searched. `params` = { q, limit, offset }; the

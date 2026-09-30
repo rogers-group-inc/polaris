@@ -22,12 +22,13 @@
         </div>
       </div>
 
-      <!-- Agent-run path checks (path-checks.js). Gated by the
+      <!-- Path checks (path-checks.js). Gated by the
            pathChecks key: read = the list + Results, write = the verbs.
-           A check says WHAT to measure and FROM which agent hosts; SLAs are set
+           A check says WHAT to measure and FROM where (this server and/or
+           agent hosts); SLAs are set
            by automations on its path* metrics (business rule 85). -->
       <p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 1rem">
-        Checks the <strong>Polaris Agent</strong> runs from the hosts you choose: an HTTP / HTTPS request, a TCP connect or a ping, with a traceroute of the path. Results appear on each host's <strong>Paths</strong> tab. To be alerted, create an <a href="/automations.html">automation</a> on the <em>Path</em> metrics (latency, failure rate, HTTP status…) — a check has no threshold of its own, and never changes the host's own Up / Down status.
+        Checks run from this <strong>Polaris server</strong>, from the <strong>Polaris Agent</strong> on the hosts you choose, or both: an HTTP / HTTPS request, a TCP connect or a ping, with a traceroute of the path. Results appear under each check's <strong>Results</strong> and on each agent host's <strong>Paths</strong> tab. To be alerted, create an <a href="/automations.html">automation</a> on the <em>Path</em> metrics (latency, failure rate, HTTP status…); these alert on agent hosts. A check has no threshold of its own, and never changes a host's own Up / Down status.
       </p>
       <div id="path-pagination-top" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
       <div class="table-wrapper table-wrapper-sticky">
@@ -38,7 +39,7 @@
               <th style="width:80px" data-col-no-resize="true" data-col-id="kind" data-sf-key="kind" data-sf-type="string" data-sf-options="http|https|tcp|icmp">Kind</th>
               <th style="width:260px" data-col-id="target" data-sf-key="target" data-sf-type="string">Target</th>
               <th style="width:110px" data-col-no-resize="true" data-col-id="interval" data-sf-key="intervalSec" data-sf-type="number" data-sf-nofilter="true">Interval</th>
-              <th style="width:90px" data-col-no-resize="true" data-col-id="sources" data-sf-key="sourceCount" data-sf-type="number" data-sf-nofilter="true">Hosts</th>
+              <th style="width:90px" data-col-no-resize="true" data-col-id="sources" data-sf-key="sourceCount" data-sf-type="number" data-sf-nofilter="true">Sources</th>
               <th style="width:170px" data-col-id="result" data-sf-key="failCount" data-sf-type="number" data-sf-nofilter="true">Result</th>
               <th style="width:150px" data-col-id="lastRun" data-sf-key="lastRunAt" data-sf-type="date">Last run</th>
               <th style="width:110px" data-col-no-resize="true" data-col-id="traceroute" data-sf-key="tracerouteEnabled" data-sf-type="string" data-sf-options="true=On|false=Off">Traceroute</th>

@@ -3,7 +3,8 @@
  * path-check streams: what is trusted from the wire (nothing about WHICH
  * host; not the excerpt policy), rejection of checks the host is not a source
  * of, latest-result bookkeeping, hop resolution decoration, and path-change
- * Events with their 10-minute floor.
+ * Events with their 10-minute floor — and the same ingest under the Polaris
+ * server's reserved subject (its source row is the one with assetId NULL).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -51,7 +52,9 @@ import {
   pathHashOf,
   sampleTime,
   PATH_CHANGE_EVENT_FLOOR_MS,
+  POLARIS_SERVER_SUBJECT,
 } from "../../src/services/pathCheckIngestService.js";
+import { prisma } from "../../src/db.js";
 import { MAX_EXCERPT_CHARS } from "../../src/utils/httpCheck.js";
 
 const now = new Date("2026-09-23T12:00:00Z");
@@ -165,5 +168,42 @@ describe("ingestPathCheckTraceroutes", () => {
     const r = await ingestPathCheckTraceroutes("host", [{ checkId: "nope", complete: false, hops: [] }], now);
     expect(r).toEqual({ accepted: 0, rejected: 1 });
     expect(db.traceroutes).toHaveLength(0);
+  });
+});
+
+describe("the Polaris server subject", () => {
+  const hops = (third: string) => [
+    { ttl: 1, ip: "10.1.1.1", rttMs: [1, 1, 1] },
+    { ttl: 2, ip: "8.8.4.4", rttMs: [2, 2, 2] },
+    { ttl: 3, ip: third, rttMs: [9, 10, 11] },
+  ];
+  it("reads the assetId-NULL source row, and writes samples under the reserved subject", async () => {
+    db.sources = [source("c1", { assetId: null })];
+    const r = await ingestPathCheckSamples(POLARIS_SERVER_SUBJECT, [{ checkId: "c1", ok: true, latencyMs: 7 }], now);
+    expect(r).toEqual({ accepted: 1, rejected: 0 });
+    expect(enqueue.mock.calls[0][0][0]).toMatchObject({ assetId: POLARIS_SERVER_SUBJECT, checkId: "c1" });
+    expect(db.sources[0]).toMatchObject({ lastOk: true, lastLatencyMs: 7 });
+  });
+  it("never lets an agent's own rows answer for the server, or the server's for an agent", async () => {
+    db.sources = [source("c1", { assetId: "host" })];
+    expect(await ingestPathCheckSamples(POLARIS_SERVER_SUBJECT, [{ checkId: "c1", ok: true }], now)).toEqual({ accepted: 0, rejected: 1 });
+    db.sources = [source("c1", { assetId: null })];
+    expect(await ingestPathCheckSamples("host", [{ checkId: "c1", ok: true }], now)).toEqual({ accepted: 0, rejected: 1 });
+  });
+  it("names the CHECK on a path change (the server is no asset) and looks up no asset", async () => {
+    db.sources = [source("c1", { assetId: null })];
+    vi.mocked(prisma.asset.findUnique).mockClear();
+    await ingestPathCheckTraceroutes(POLARIS_SERVER_SUBJECT, [{ checkId: "c1", complete: true, timestamp: "2026-09-23T11:00:00Z", hops: hops("8.8.8.8") }], now);
+    await ingestPathCheckTraceroutes(POLARIS_SERVER_SUBJECT, [{ checkId: "c1", complete: true, timestamp: "2026-09-23T11:20:00Z", hops: hops("9.9.9.9") }], now);
+    expect(prisma.asset.findUnique).not.toHaveBeenCalled();
+    expect(db.traceroutes[0]).toMatchObject({ assetId: POLARIS_SERVER_SUBJECT });
+    expect((logEvent.mock.calls[0] as any)[0]).toMatchObject({
+      action: "path_check.path_changed",
+      resourceType: "path-check",
+      resourceId: "c1",
+      resourceName: "Check c1",
+      details: { source: "server" },
+    });
+    expect((logEvent.mock.calls[0] as any)[0].message).toMatch(/^Path from Polaris server /);
   });
 });

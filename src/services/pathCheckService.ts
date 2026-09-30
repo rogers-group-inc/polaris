@@ -25,6 +25,13 @@
  * `monitored` — whether a result may ALERT is business rule 37's question,
  * asked by the engine at fire time, not this one.
  *
+ * `runOnServer` adds ONE more source: the Polaris server itself, run by
+ * jobs/runServerPathChecks on the scheduler role. The server is not an asset,
+ * so its source row has assetId NULL and its samples carry the reserved
+ * subject id POLARIS_SERVER_SUBJECT. The alert engine resolves path* readings
+ * per ASSET, so a server-run result is charted and listed but raises no
+ * automation alert (business rule 85, "The Polaris server as a source").
+ *
  * WHERE IT MAY POINT
  * The vendor HTTP check (business rule 33) skips netGuard because its target is
  * the monitored device's own address. A path check's target is
@@ -44,13 +51,18 @@ import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { isBlockedOutboundHost } from "../utils/netGuard.js";
 import { isValidIpAddress } from "../utils/cidr.js";
-import { parseStatusSpec, agentRegexProblem } from "../utils/httpCheck.js";
+import { parseStatusSpec, agentRegexProblem, resolveHttpAuthMode, type HttpAuthConfig } from "../utils/httpCheck.js";
 import { versionAtLeast } from "../utils/version.js";
 import { logEvent } from "./eventLogService.js";
 import { publishConfigRefresh } from "./agentCommandWake.js";
 import { loadScopeAssetIds } from "./notificationEngine.js";
 import { scopeIsUnconstrained, type RuleScope } from "./notificationTypes.js";
 import { AGENT_SERVER_URL_SETTING_KEY } from "./agentInstallService.js";
+import { POLARIS_SERVER_SUBJECT, POLARIS_SERVER_LABEL } from "./pathCheckIngestService.js";
+
+import { runServerCheck, type RunCapture } from "./pathCheckServerRunner.js";
+
+export { POLARIS_SERVER_SUBJECT, POLARIS_SERVER_LABEL };
 
 // ─── Vocabulary ─────────────────────────────────────────────────────────────
 
@@ -76,14 +88,39 @@ export interface CheckBodyMatch {
   mode: BodyMatchMode;
   pattern: string;
   caseSensitive: boolean;
+  /** true = the body must NOT contain / equal / match (SolarWinds "Fail If Found"). */
+  negate?: boolean;
 }
+
+export const HTTP_METHODS = ["GET", "HEAD"] as const;
+export type HttpMethod = (typeof HTTP_METHODS)[number];
+/** Redirect hops a check that follows redirects takes at most. */
+export const MAX_REDIRECTS = 5;
 
 export interface CheckHttpConfig {
   /** Accepted status spec, e.g. "200,204,300-399". Empty = any 2xx. */
   expectStatus: string;
   bodyMatch: CheckBodyMatch | null;
   verifyTls: boolean;
+  /** GET (default) or HEAD — nothing that writes; PUT/POST/DELETE are refused by design. */
+  method?: HttpMethod;
+  /** Sent as Host (and the TLS SNI name) instead of the URL's host — test one backend by address. */
+  hostHeader?: string | null;
+  /** Follow up to MAX_REDIRECTS redirects and judge the LAST response. Default off. */
+  followRedirects?: boolean;
 }
+
+/**
+ * First agent version that runs checks using the 2026-09-30 request options
+ * (HEAD, a Host header, redirects, a negated body match). An older agent would
+ * ignore the fields it does not know and run a DIFFERENT check under the same
+ * name — so such a check is not shipped to it at all, and the UI says
+ * "upgrade" (requiredAgentVersion).
+ */
+export const MIN_AGENT_REQUEST_OPTIONS_VERSION = "0.23.0";
+
+/** The credential authModes a path check may authenticate with. */
+export const PATH_CHECK_AUTH_MODES = ["bearer", "basic", "digest"] as const;
 
 export interface CheckTracerouteConfig {
   enabled: boolean;
@@ -111,13 +148,19 @@ export interface PathCheckInput {
   timeoutMs?: number;
   http?: {
     expectStatus?: string;
-    bodyMatch?: { mode: BodyMatchMode; pattern: string; caseSensitive?: boolean } | null;
+    bodyMatch?: { mode: BodyMatchMode; pattern: string; caseSensitive?: boolean; negate?: boolean } | null;
     verifyTls?: boolean;
+    method?: HttpMethod;
+    hostHeader?: string | null;
+    followRedirects?: boolean;
   } | null;
+  /** An `http` Credential to authenticate with — makes the check server-only. */
+  credentialId?: string | null;
   traceroute?: Partial<CheckTracerouteConfig> | null;
   keepBodyExcerpt?: boolean;
   scope?: RuleScope | null;
   assetIds?: string[];
+  runOnServer?: boolean;
 }
 
 /** The normalized definition a check row stores. */
@@ -134,6 +177,8 @@ export interface NormalizedCheck {
   keepBodyExcerpt: boolean;
   scope: RuleScope;
   assetIds: string[];
+  runOnServer: boolean;
+  credentialId: string | null;
 }
 
 /**
@@ -150,8 +195,12 @@ export interface AgentCheckDef {
   intervalSec: number;
   timeoutMs: number;
   expectStatus: string;
-  expectBody: { mode: BodyMatchMode; value: string; caseSensitive: boolean } | null;
+  expectBody: { mode: BodyMatchMode; value: string; caseSensitive: boolean; negate?: boolean } | null;
   verifyTls: boolean;
+  /** Present only when not the default ("GET" / none / false): omitted keys keep old definitions' hashes. */
+  method?: HttpMethod;
+  hostHeader?: string;
+  followRedirects?: boolean;
   keepBodyExcerpt: boolean;
   traceroute: CheckTracerouteConfig;
   revision: string;
@@ -329,7 +378,14 @@ export async function normalizeCheckInput(input: PathCheckInput): Promise<Normal
         if (problem) throw new AppError(400, `Body match: ${problem}`);
       }
       bodyMatch = { mode, pattern: src.bodyMatch.pattern, caseSensitive: src.bodyMatch.caseSensitive === true };
+      if (src.bodyMatch.negate === true) bodyMatch.negate = true;
     }
+    const method = src.method ?? "GET";
+    if (!HTTP_METHODS.includes(method)) {
+      throw new AppError(400, "Method must be GET or HEAD — a check never sends a request that changes anything");
+    }
+    if (method === "HEAD" && bodyMatch) throw new AppError(400, "A HEAD request has no body to match — use GET, or clear the body check");
+    const hostHeader = normalizeHostHeader(src.hostHeader);
     http = {
       expectStatus,
       bodyMatch,
@@ -337,6 +393,25 @@ export async function normalizeCheckInput(input: PathCheckInput): Promise<Normal
       // check that cannot notice the one failure TLS exists to catch.
       verifyTls: kind === "https" ? src.verifyTls !== false : false,
     };
+    // Written only when not the default, so every check saved before these
+    // options existed keeps its definition hash (and its agents' baselines).
+    if (method !== "GET") http.method = method;
+    if (hostHeader) http.hostHeader = hostHeader;
+    if (src.followRedirects === true) http.followRedirects = true;
+  }
+
+  // Authentication makes the check SERVER-ONLY: the secret is used by this
+  // Polaris server and is never sent to an agent (business rule 85).
+  let credentialId: string | null = null;
+  if (input.credentialId) {
+    if (kind !== "http" && kind !== "https") throw new AppError(400, "Only an HTTP or HTTPS check can authenticate");
+    const cred = await prisma.credential.findUnique({ where: { id: input.credentialId }, select: { id: true, type: true, config: true } });
+    if (!cred) throw new AppError(400, "That credential no longer exists");
+    const mode = cred.type === "http" ? resolveHttpAuthMode((cred.config ?? {}) as HttpAuthConfig) : null;
+    if (!mode || !(PATH_CHECK_AUTH_MODES as readonly string[]).includes(mode)) {
+      throw new AppError(400, "A path check authenticates with an HTTP credential using Bearer, Basic or Digest");
+    }
+    credentialId = cred.id;
   }
 
   const scope: RuleScope = (input.scope ?? {}) as RuleScope;
@@ -346,8 +421,12 @@ export async function normalizeCheckInput(input: PathCheckInput): Promise<Normal
     const v = (scope as Record<string, unknown>)[k];
     return Array.isArray(v) && v.length > 0;
   });
-  if (!hasScope && assetIds.length === 0) {
-    throw new AppError(400, "Choose which agent hosts run this check: add a condition, pin a host, or pick All agent hosts");
+  if (credentialId && (hasScope || assetIds.length > 0)) {
+    throw new AppError(400, "A check that authenticates runs only from this Polaris server, so its credential never reaches an agent — remove its agent hosts");
+  }
+  const runOnServer = input.runOnServer === true || credentialId !== null;
+  if (!hasScope && assetIds.length === 0 && !runOnServer) {
+    throw new AppError(400, "Choose where this check runs: this Polaris server, or agent hosts (add a condition, pin a host, or pick All agent hosts)");
   }
 
   return {
@@ -363,7 +442,29 @@ export async function normalizeCheckInput(input: PathCheckInput): Promise<Normal
     keepBodyExcerpt: input.keepBodyExcerpt === true && (kind === "http" || kind === "https"),
     scope,
     assetIds,
+    runOnServer,
+    credentialId,
   };
+}
+
+const HOST_HEADER_RE = /^(?=.{1,253}(?::\d{1,5})?$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?(?::\d{1,5})?$/i;
+
+/** A Host header value: a name or IPv4 address, optional :port. Null when blank. Pure (tested). */
+export function normalizeHostHeader(raw: string | null | undefined): string | null {
+  const v = (raw ?? "").trim();
+  if (!v) return null;
+  if (v.length > 260 || !HOST_HEADER_RE.test(v)) {
+    throw new AppError(400, `Host header "${v.slice(0, 60)}" must be a host name or address, optionally with :port`);
+  }
+  const port = /:(\d+)$/.exec(v);
+  if (port && (Number(port[1]) < 1 || Number(port[1]) > 65535)) throw new AppError(400, "Host header port must be 1–65535");
+  return v.toLowerCase();
+}
+
+/** Pure: the agent version a definition needs (the request options raise it). */
+export function requiredAgentVersion(def: Pick<AgentCheckDef, "method" | "hostHeader" | "followRedirects" | "expectBody">): string {
+  const usesOptions = (def.method && def.method !== "GET") || !!def.hostHeader || def.followRedirects === true || def.expectBody?.negate === true;
+  return usesOptions ? MIN_AGENT_REQUEST_OPTIONS_VERSION : MIN_AGENT_PATH_CHECK_VERSION;
 }
 
 interface CheckDefinitionRow {
@@ -391,11 +492,17 @@ function agentDefCore(row: CheckDefinitionRow): Omit<AgentCheckDef, "revision"> 
     timeoutMs: row.timeoutMs,
     expectStatus: http?.expectStatus ?? "",
     expectBody: http?.bodyMatch
-      ? { mode: http.bodyMatch.mode, value: http.bodyMatch.pattern, caseSensitive: http.bodyMatch.caseSensitive }
+      ? {
+          mode: http.bodyMatch.mode, value: http.bodyMatch.pattern, caseSensitive: http.bodyMatch.caseSensitive,
+          ...(http.bodyMatch.negate ? { negate: true } : {}),
+        }
       : null,
     verifyTls: http?.verifyTls ?? false,
     keepBodyExcerpt: row.keepBodyExcerpt,
     traceroute: normalizeTraceroute(row.traceroute as Partial<CheckTracerouteConfig> | null),
+    ...(http?.method && http.method !== "GET" ? { method: http.method } : {}),
+    ...(http?.hostHeader ? { hostHeader: http.hostHeader } : {}),
+    ...(http?.followRedirects ? { followRedirects: true } : {}),
   };
 }
 
@@ -486,8 +593,53 @@ function jsonOf<T>(v: T): object {
   return v as unknown as object;
 }
 
-export async function createCheck(input: PathCheckInput, actor?: string) {
+/**
+ * Who may point the SERVER at a target. A server-run check probes from the
+ * Polaris server's own network position — often a management segment no agent
+ * host sits on — and an HTTP check hands back what came back (the excerpt).
+ * That is the Discovery key's concern (an operator-chosen sweep from the
+ * server), so directing the server needs `networkScan:write` ON TOP of
+ * `pathChecks:write` — the chained-gate precedent of POST /network-scans/…/adopt.
+ * The route answers `mayRunOnServer` from the caller's matrix.
+ */
+export interface CheckWriteOpts {
+  mayRunOnServer?: boolean;
+  /** The caller's `credentials` level — any rung (read and up) may USE a stored secret. */
+  credentialAccess?: "none" | "read" | "write" | "fullwrite";
+}
+
+export const CREDENTIAL_USE_MESSAGE =
+  "Using a stored credential in a path check needs at least Read-Only on Credentials";
+
+/**
+ * Pointing a stored secret at an operator-chosen target is USING it. The
+ * operator's decision (2026-09-30): anyone who can SEE the credential list
+ * (`credentials:read`) may pick any credential for a check and test with it —
+ * deliberately looser than credential test-by-id (business rule 43, own rows
+ * at write), because a path check is aimed by someone who already holds
+ * pathChecks:write AND networkScan:write. Changing the credential itself stays
+ * on the Credentials page's own ownership rules. What still holds: the secret
+ * never leaves the server (no agent source), never follows a redirect off the
+ * target's origin, and every create / re-aim / test is audited with the
+ * credential id.
+ */
+async function assertMayUseCredential(_credentialId: string, opts: CheckWriteOpts | undefined): Promise<void> {
+  const level = opts?.credentialAccess ?? "none";
+  if (level === "read" || level === "write" || level === "fullwrite") return;
+  throw new AppError(403, CREDENTIAL_USE_MESSAGE);
+}
+
+export const SERVER_SOURCE_PERMISSION_MESSAGE =
+  "Running a check from this Polaris server also needs Read-Write on Network Discovery — ask an administrator, or run it from agent hosts only";
+
+function assertMayRunOnServer(opts: CheckWriteOpts | undefined): void {
+  if (!opts?.mayRunOnServer) throw new AppError(403, SERVER_SOURCE_PERMISSION_MESSAGE);
+}
+
+export async function createCheck(input: PathCheckInput, actor?: string, opts?: CheckWriteOpts) {
   const n = await normalizeCheckInput(input);
+  if (n.runOnServer) assertMayRunOnServer(opts);
+  if (n.credentialId) await assertMayUseCredential(n.credentialId, opts);
   if (n.enabled) await assertEnabledCap();
   const dupe = await prisma.pathCheck.findUnique({ where: { name: n.name } });
   if (dupe) throw new AppError(409, `A path check named "${n.name}" already exists`);
@@ -508,6 +660,8 @@ export async function createCheck(input: PathCheckInput, actor?: string) {
       keepBodyExcerpt: n.keepBodyExcerpt,
       scope: jsonOf(n.scope),
       assetIds: n.assetIds,
+      runOnServer: n.runOnServer,
+      credentialId: n.credentialId,
       definitionSha256: sha,
       createdBy: actor ?? null,
     },
@@ -521,13 +675,13 @@ export async function createCheck(input: PathCheckInput, actor?: string) {
     // Always audit-worthy: a new check directs agents to send traffic.
     level: "warning",
     message: `Path check "${check.name}" created (${check.kind} ${check.target}, every ${check.intervalSec / 60} min)`,
-    details: { kind: check.kind, target: check.target, intervalSec: check.intervalSec },
+    details: { kind: check.kind, target: check.target, intervalSec: check.intervalSec, runOnServer: check.runOnServer, credentialId: check.credentialId },
   });
   await reconcilePathCheckSources(check.id, { refreshAllMembers: true });
   return getCheck(check.id);
 }
 
-export async function updateCheck(id: string, input: PathCheckInput, actor?: string) {
+export async function updateCheck(id: string, input: PathCheckInput, actor?: string, opts?: CheckWriteOpts) {
   const existing = await prisma.pathCheck.findUnique({ where: { id } });
   if (!existing) throw new AppError(404, "Path check not found");
   const n = await normalizeCheckInput(input);
@@ -537,6 +691,19 @@ export async function updateCheck(id: string, input: PathCheckInput, actor?: str
     if (dupe) throw new AppError(409, `A path check named "${n.name}" already exists`);
   }
   const sha = definitionSha256({ id, ...n, http: n.http, traceroute: n.traceroute });
+  // Anything that makes the SERVER send different traffic — turning it on,
+  // re-aiming it, re-enabling it — needs the chained key. Renaming a server-run
+  // check, editing its Sources or turning the server OFF does not. (The name
+  // is part of the agent definition hash, so compare with it blanked.)
+  const traffic = (row: CheckDefinitionRow) => definitionSha256({ ...row, name: "" });
+  const reAimed = traffic({ id, ...n }) !== traffic({ ...existing, id });
+  if (n.runOnServer && (!existing.runOnServer || reAimed || (n.enabled && !existing.enabled))) {
+    assertMayRunOnServer(opts);
+  }
+  // A new credential, or the same one aimed somewhere new, is a new USE of it.
+  if (n.credentialId && (n.credentialId !== existing.credentialId || reAimed)) {
+    await assertMayUseCredential(n.credentialId, opts);
+  }
   const targetChanged = existing.target !== n.target || existing.kind !== n.kind;
   const check = await prisma.pathCheck.update({
     where: { id },
@@ -553,6 +720,8 @@ export async function updateCheck(id: string, input: PathCheckInput, actor?: str
       keepBodyExcerpt: n.keepBodyExcerpt,
       scope: jsonOf(n.scope),
       assetIds: n.assetIds,
+      runOnServer: n.runOnServer,
+      credentialId: n.credentialId,
       definitionSha256: sha,
     },
   });
@@ -571,6 +740,10 @@ export async function updateCheck(id: string, input: PathCheckInput, actor?: str
       previousKind: existing.kind, kind: check.kind,
       definitionChanged: sha !== existing.definitionSha256,
       enabled: check.enabled,
+      runOnServer: check.runOnServer,
+      ...(existing.runOnServer !== check.runOnServer ? { previousRunOnServer: existing.runOnServer } : {}),
+      credentialId: check.credentialId,
+      ...(existing.credentialId !== check.credentialId ? { previousCredentialId: existing.credentialId } : {}),
     },
   });
   // A changed path makes every stored path hash describe a different target;
@@ -587,10 +760,11 @@ export async function updateCheck(id: string, input: PathCheckInput, actor?: str
   return getCheck(id);
 }
 
-export async function setCheckEnabled(id: string, enabled: boolean, actor?: string) {
+export async function setCheckEnabled(id: string, enabled: boolean, actor?: string, opts?: CheckWriteOpts) {
   const existing = await prisma.pathCheck.findUnique({ where: { id } });
   if (!existing) throw new AppError(404, "Path check not found");
   if (existing.enabled === enabled) return getCheck(id);
+  if (enabled && existing.runOnServer) assertMayRunOnServer(opts);
   if (enabled) await assertEnabledCap(id);
   await prisma.pathCheck.update({ where: { id }, data: { enabled } });
   await logEvent({
@@ -626,7 +800,7 @@ export async function deleteCheck(id: string, actor?: string) {
     message: `Path check "${existing.name}" deleted (${existing.kind} ${existing.target})`,
     details: { kind: existing.kind, target: existing.target },
   });
-  await publishConfigRefresh(members.map((m) => m.asset.managedAgent?.id ?? "").filter(Boolean));
+  await publishConfigRefresh(members.map((m) => m.asset?.managedAgent?.id ?? "").filter(Boolean));
 }
 
 // ─── Membership ─────────────────────────────────────────────────────────────
@@ -701,7 +875,7 @@ export async function reconcilePathCheckSources(
 ): Promise<ReconcileResult> {
   const checks = await prisma.pathCheck.findMany({
     where: checkId ? { id: checkId } : {},
-    select: { id: true, name: true, scope: true, assetIds: true },
+    select: { id: true, name: true, scope: true, assetIds: true, runOnServer: true, credentialId: true },
   });
   const result: ReconcileResult = { checks: checks.length, added: 0, removed: 0, refreshedAgents: 0 };
   if (checks.length === 0) return result;
@@ -717,13 +891,23 @@ export async function reconcilePathCheckSources(
     byCheck.set(s.checkId, list);
   }
   const refresh = new Set<string>();
-  const toCreate: { checkId: string; assetId: string; explicit: boolean }[] = [];
+  const toCreate: { checkId: string; assetId: string | null; explicit: boolean }[] = [];
   const toDelete: string[] = [];
   const toExplicit: string[] = [];
   const toImplicit: string[] = [];
   for (const c of checks) {
-    const { members } = await membersFor((c.scope ?? {}) as RuleScope, c.assetIds, agents);
-    const have = new Map((byCheck.get(c.id) ?? []).map((s) => [s.assetId, s]));
+    // An authenticating check is server-only: no agent is ever a member, whatever
+    // its stored scope says (normalizeCheckInput already refuses one).
+    const { members } = c.credentialId
+      ? { members: new Map<string, { explicit: boolean; agent: ActiveAgent }>() }
+      : await membersFor((c.scope ?? {}) as RuleScope, c.assetIds, agents);
+    const rows = byCheck.get(c.id) ?? [];
+    // The server's own row (assetId NULL) follows runOnServer and nothing else.
+    // No agent to refresh: the server job reads the definitions directly.
+    const serverRows = rows.filter((s) => s.assetId === null);
+    if (c.runOnServer && serverRows.length === 0) toCreate.push({ checkId: c.id, assetId: null, explicit: true });
+    for (const row of c.runOnServer ? serverRows.slice(1) : serverRows) toDelete.push(row.id);
+    const have = new Map(rows.filter((s) => s.assetId !== null).map((s) => [s.assetId as string, s]));
     for (const [assetId, m] of members) {
       const row = have.get(assetId);
       if (!row) {
@@ -765,11 +949,12 @@ export async function reconcilePathCheckSources(
 async function reportOverCap(fullPass: boolean): Promise<void> {
   const rows = await prisma.pathCheckSource.groupBy({
     by: ["assetId"],
-    where: { check: { enabled: true } },
+    // The server's own rows are no agent's: it runs every check it is given.
+    where: { check: { enabled: true }, assetId: { not: null } },
     _count: { _all: true },
     having: { assetId: { _count: { gt: MAX_CHECKS_PER_AGENT } } },
   });
-  const now = new Set(rows.map((r) => r.assetId));
+  const now = new Set(rows.map((r) => r.assetId).filter((id): id is string => id !== null));
   const fresh = [...now].filter((id) => !_overCapLast.has(id));
   if (fullPass) _overCapLast = now;
   else for (const id of fresh) _overCapLast.add(id);
@@ -796,6 +981,73 @@ async function reportOverCap(fullPass: boolean): Promise<void> {
 export function agentOnline(a: { wsConnectedAt: Date | null; wsDisconnectedAt: Date | null; lastSeenAt: Date | null }, now = Date.now()): boolean {
   if (a.wsConnectedAt && (!a.wsDisconnectedAt || a.wsConnectedAt > a.wsDisconnectedAt)) return true;
   return !!a.lastSeenAt && now - a.lastSeenAt.getTime() < 10 * 60_000;
+}
+
+// ─── Test run (the wizard's Expectations step) ──────────────────────────────
+
+/** Test runs a caller may start per minute — each is a request FROM the server. */
+export const TEST_RUNS_PER_MINUTE = 10;
+const _testRuns = new Map<string, number[]>();
+
+/** Test seam. */
+export function _resetTestRunLimiter(): void {
+  _testRuns.clear();
+}
+
+/**
+ * Run a DRAFT check once from this Polaris server and return what came back —
+ * the verdict under the draft's expectations, the timings, and (HTTP/HTTPS)
+ * the response headers and the first 64 KB of the body — so the operator can
+ * write the expectation from the real answer. Nothing is stored but an audit
+ * Event. The same gate as aiming the server (networkScan:write): a test IS a
+ * request from the server's network position. Rate-limited per caller.
+ */
+export async function testCheck(input: PathCheckInput, actor?: string, opts?: CheckWriteOpts) {
+  assertMayRunOnServer(opts);
+  const who = actor ?? "anonymous";
+  const now = Date.now();
+  const recent = (_testRuns.get(who) ?? []).filter((t) => now - t < 60_000);
+  if (recent.length >= TEST_RUNS_PER_MINUTE) {
+    throw new AppError(429, `At most ${TEST_RUNS_PER_MINUTE} test runs a minute — wait a moment and try again`);
+  }
+  recent.push(now);
+  _testRuns.set(who, recent);
+
+  // A draft on step 2 may have no name or Sources yet; neither changes what
+  // the probe sends, so the validator gets harmless stand-ins for both.
+  // A credential makes the stored check server-only; for a TEST the draft's
+  // agent Sources are irrelevant, so drop them rather than refuse.
+  const n = await normalizeCheckInput({
+    ...input, name: input.name?.trim() || "Test run", runOnServer: true,
+    ...(input.credentialId ? { scope: {}, assetIds: [] } : {}),
+  });
+  if (n.credentialId) await assertMayUseCredential(n.credentialId, opts);
+  const def = toAgentCheckDef({
+    id: "test", ...n,
+    keepBodyExcerpt: true,
+    traceroute: { ...n.traceroute, enabled: false },
+  });
+  const capture: RunCapture = {};
+  const auth = await loadServerCheckAuth(n.credentialId);
+  const { sample } = await runServerCheck(def, "never", undefined, capture, auth);
+  await logEvent({
+    action: "path_check.tested",
+    resourceType: "path-check",
+    resourceName: n.name,
+    actor,
+    level: "info",
+    message: `Path check test run from the Polaris server: ${n.kind} ${n.target} → ${sample.ok ? "passed" : "failed"}${sample.httpStatus != null ? ` (HTTP ${sample.httpStatus})` : ""}`,
+    details: { kind: n.kind, target: n.target, ok: sample.ok, httpStatus: sample.httpStatus ?? null, error: sample.error ?? null, credentialId: n.credentialId },
+  });
+  return {
+    source: "server" as const,
+    sample,
+    headers: capture.headers ?? null,
+    httpVersion: capture.httpVersion ?? null,
+    body: capture.body ?? null,
+    // Only when redirects moved it — the URL the verdict was judged on.
+    finalUrl: capture.finalUrl && capture.finalUrl !== new URL(n.target).toString() ? capture.finalUrl : null,
+  };
 }
 
 export interface PreviewSourcesInput {
@@ -854,8 +1106,13 @@ const SOURCE_RESULT_SELECT = {
 
 /** Fleet view of one check: every member host with its latest result. */
 export async function listCheckResults(checkId: string) {
-  const check = await prisma.pathCheck.findUnique({ where: { id: checkId }, select: { id: true } });
+  const check = await prisma.pathCheck.findUnique({
+    where: { id: checkId },
+    select: { id: true, name: true, kind: true, target: true, intervalSec: true, timeoutMs: true, http: true, traceroute: true, keepBodyExcerpt: true },
+  });
   if (!check) throw new AppError(404, "Path check not found");
+  // An agent below the version THIS definition needs is a member that runs nothing.
+  const needs = requiredAgentVersion(agentDefCore(check));
   const rows = await prisma.pathCheckSource.findMany({
     where: { checkId },
     select: {
@@ -868,17 +1125,127 @@ export async function listCheckResults(checkId: string) {
       },
     },
   });
-  return rows
+  const hosts = rows
+    .filter((r) => r.asset !== null)
     .map(({ asset, ...s }) => ({
       ...s,
-      hostname: asset.hostname,
-      ipAddress: asset.ipAddress,
-      os: asset.os,
-      agentVersion: asset.managedAgent?.agentVersion ?? null,
-      online: asset.managedAgent ? agentOnline(asset.managedAgent) : false,
-      supported: versionAtLeast(asset.managedAgent?.agentVersion, MIN_AGENT_PATH_CHECK_VERSION),
+      server: false,
+      hostname: asset!.hostname,
+      ipAddress: asset!.ipAddress,
+      os: asset!.os,
+      agentVersion: asset!.managedAgent?.agentVersion ?? null,
+      online: asset!.managedAgent ? agentOnline(asset!.managedAgent) : false,
+      supported: versionAtLeast(asset!.managedAgent?.agentVersion, needs),
+      requiredAgentVersion: needs,
     }))
     .sort((a, b) => (a.hostname ?? "").localeCompare(b.hostname ?? ""));
+  // The server's own row leads: it is the one source every operator has.
+  const server = rows
+    .filter((r) => r.asset === null)
+    .map(({ asset: _asset, ...s }) => ({
+      ...s,
+      server: true,
+      hostname: POLARIS_SERVER_LABEL,
+      ipAddress: null,
+      os: null,
+      agentVersion: null,
+      online: true,
+      supported: true,
+    }));
+  return [...server, ...hosts];
+}
+
+/**
+ * One check as the SERVER runs it — the same `{checks: [...]}` shape as
+ * getAssetChecks, so the slide-over's Paths renderer draws it unchanged. An
+ * empty list when the check does not run on the server.
+ */
+export async function getServerCheck(checkId: string) {
+  const row = await prisma.pathCheckSource.findFirst({
+    where: { checkId, assetId: null },
+    select: {
+      ...SOURCE_RESULT_SELECT,
+      check: {
+        select: {
+          id: true, name: true, description: true, enabled: true, kind: true, target: true,
+          intervalSec: true, timeoutMs: true, traceroute: true, http: true, keepBodyExcerpt: true,
+        },
+      },
+    },
+  });
+  if (!row) {
+    const exists = await prisma.pathCheck.findUnique({ where: { id: checkId }, select: { id: true } });
+    if (!exists) throw new AppError(404, "Path check not found");
+    return { checks: [] };
+  }
+  const latestSample = await prisma.assetPathCheckSample.findFirst({
+    where: { assetId: POLARIS_SERVER_SUBJECT, checkId },
+    orderBy: { timestamp: "desc" },
+    select: {
+      timestamp: true, ok: true, latencyMs: true, dnsMs: true, connectMs: true, tlsMs: true, ttfbMs: true,
+      httpStatus: true, bodyMatched: true, bodySha256: true, bodyBytes: true, bodyExcerpt: true,
+      error: true, resolvedIp: true, tlsNotAfter: true, tlsIssuer: true,
+    },
+  });
+  const { check, ...latest } = row;
+  return { checks: [{ ...check, latest, latestSample }] };
+}
+
+/** The newest traceroutes the SERVER ran for one check (the asset route's twin). */
+export async function listServerTraceroutes(checkId: string, limit: number) {
+  const exists = await prisma.pathCheck.findUnique({ where: { id: checkId }, select: { id: true } });
+  if (!exists) throw new AppError(404, "Path check not found");
+  return prisma.assetPathCheckTraceroute.findMany({
+    where: { assetId: POLARIS_SERVER_SUBJECT, checkId },
+    orderBy: { timestamp: "desc" },
+    take: Math.min(50, Math.max(1, limit)),
+  });
+}
+
+/**
+ * The definitions the server job runs: every ENABLED check with a server
+ * source row, in the agent's wire shape (the runner mirrors the agent's probe,
+ * so it reads the same definition). No per-host cap — the fleet-wide
+ * MAX_ENABLED_CHECKS already bounds it.
+ */
+/** A server-run definition: the agent's wire shape plus the server-only credential. */
+export type ServerCheckDef = AgentCheckDef & { credentialId: string | null };
+
+export async function serverCheckDefinitions(): Promise<ServerCheckDef[]> {
+  const rows = await prisma.pathCheckSource.findMany({
+    where: { assetId: null, check: { enabled: true, runOnServer: true } },
+    select: {
+      check: {
+        select: {
+          id: true, name: true, kind: true, target: true, intervalSec: true, timeoutMs: true,
+          http: true, traceroute: true, keepBodyExcerpt: true, definitionSha256: true, createdAt: true, credentialId: true,
+        },
+      },
+    },
+  });
+  return rows
+    .map((r) => r.check)
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))
+    // The credential is part of the revision key so re-pointing it re-baselines.
+    .map((c) => {
+      const d = toAgentCheckDef(c);
+      return { ...d, revision: c.credentialId ? `${d.revision}:${c.credentialId}` : d.revision, credentialId: c.credentialId };
+    });
+}
+
+/**
+ * The auth a server run presents, opened from the credential (the Prisma
+ * client opens sealed values on read). Null for an unauthenticated check, or
+ * one whose credential no longer resolves to a usable mode.
+ */
+export async function loadServerCheckAuth(credentialId: string | null): Promise<HttpAuthConfig | null> {
+  if (!credentialId) return null;
+  const cred = await prisma.credential.findUnique({ where: { id: credentialId }, select: { type: true, config: true } });
+  if (!cred || cred.type !== "http") return null;
+  const cfg = (cred.config ?? {}) as HttpAuthConfig;
+  const mode = resolveHttpAuthMode(cfg);
+  if (!(PATH_CHECK_AUTH_MODES as readonly string[]).includes(mode)) return null;
+  return { authMode: mode, username: cfg.username, password: cfg.password, apiToken: cfg.apiToken };
 }
 
 /** The checks one host runs, with its latest result for each. */
@@ -924,7 +1291,9 @@ export async function getAssetChecks(assetId: string) {
 export async function agentConfigChecks(assetId: string, agentVersion: string | null | undefined): Promise<AgentCheckDef[]> {
   if (!versionAtLeast(agentVersion, MIN_AGENT_PATH_CHECK_VERSION)) return [];
   const rows = await prisma.pathCheckSource.findMany({
-    where: { assetId, check: { enabled: true } },
+    // credentialId: null — defence in depth: an authenticating check never has
+    // an agent source, and is never shipped to one if a row somehow exists.
+    where: { assetId, check: { enabled: true, credentialId: null } },
     select: {
       check: {
         select: {
@@ -938,7 +1307,9 @@ export async function agentConfigChecks(assetId: string, agentVersion: string | 
     .map((r) => r.check)
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))
     .slice(0, MAX_CHECKS_PER_AGENT)
-    .map((c) => toAgentCheckDef(c));
+    .map((c) => toAgentCheckDef(c))
+    // A definition this agent would half-understand is not shipped at all.
+    .filter((d) => versionAtLeast(agentVersion, requiredAgentVersion(d)));
 }
 
 /** The compact fold both config ETags carry: check id + revision, in order. */

@@ -325,6 +325,12 @@ REPO
     fi
   fi
 
+  # traceroute: the tracer for path checks run from this server
+  # (utils/serverTraceroute.ts). BaseOS; optional, never fatal.
+  if ! command -v traceroute >/dev/null 2>&1; then
+    dnf install -y traceroute >/dev/null 2>&1 || warn "traceroute unavailable (optional; server-run path checks fall back to tracepath)"
+  fi
+
   # PostgreSQL from PGDG, matching docs/INSTALL.md — and NO initdb. Patroni
   # clones this node from the primary; an initialised cluster here would be a
   # different database with the same name.

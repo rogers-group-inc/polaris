@@ -75,6 +75,7 @@ describe("client validation", () => {
     expect(CC.validateCheck({ ...good, http: { ...good.http, expectStatus: "2000" } }).tab).toBe("expect");
     expect(CC.validateCheck({ ...good, http: { ...good.http, bodyMatch: { mode: "regex", pattern: "a(?=b)" } } }).tab).toBe("expect");
     expect(CC.validateCheck({ ...good, scope: {}, assetIds: [] }).tab).toBe("sources");
+    expect(CC.validateCheck({ ...good, scope: {}, assetIds: [], runOnServer: true })).toBeNull();
     expect(CC.validateCheck({ ...good, kind: "tcp", target: "db01", http: null }).tab).toBe("general");
   });
   it("every payload it accepts parses against the route schema", async () => {
@@ -84,6 +85,8 @@ describe("client validation", () => {
       { ...good, kind: "tcp", target: "db01.example:5432", http: null },
       { ...good, kind: "icmp", target: "10.0.0.1", http: null, scope: {}, assetIds: ["a1"] },
       { ...good, scope: { condition: { op: "and", children: [{ field: "agentInstalled", operator: "equals", value: "yes" }] } } },
+      // The Polaris server as the only source.
+      { ...good, scope: {}, assetIds: [], runOnServer: true },
     ]) {
       expect(CC.validateCheck(p)).toBeNull();
       expect(pathCheckInputSchema.safeParse(p).success).toBe(true);
@@ -102,6 +105,33 @@ describe("row menu", () => {
   });
   it("never asks for fullwrite on the UP_TO_WRITE key (rule 43d)", () => {
     expect(pageSrc).not.toMatch(/pathChecks",\s*"fullwrite"/);
+  });
+});
+
+describe("Paths renderer — per-source reads", () => {
+  it("routes the server subject to /path-checks/:id/server/* and an asset to /assets/:id/*", () => {
+    const calls: string[] = [];
+    (globalThis as any).api = {
+      assets: {
+        pathCheckHistory: (id: string, c: string) => calls.push(`asset-history:${id}:${c}`),
+        pathCheckTraceroutes: (id: string, c: string) => calls.push(`asset-tr:${id}:${c}`),
+      },
+      pathChecks: {
+        serverHistory: (c: string) => calls.push(`server-history:${c}`),
+        serverTraceroutes: (c: string) => calls.push(`server-tr:${c}`),
+      },
+    };
+    const src = 'var _PATH_SERVER_SUBJECT = "polaris-server";\n' + sliceFn(assetsSrc, "_pathApi") + "\nreturn _pathApi;";
+    const pathApi = new Function(src)();
+    pathApi("polaris-server").history("c1", { range: "24h" });
+    pathApi("polaris-server").traceroutes("c1", 10);
+    pathApi("a1").history("c1", {});
+    pathApi("a1").traceroutes("c1", 10);
+    expect(calls).toEqual(["server-history:c1", "server-tr:c1", "asset-history:a1:c1", "asset-tr:a1:c1"]);
+  });
+  it("mirrors the server's reserved subject id", async () => {
+    const { POLARIS_SERVER_SUBJECT } = await import("../../src/services/pathCheckIngestService.js");
+    expect(assetsSrc).toContain(`var _PATH_SERVER_SUBJECT = "${POLARIS_SERVER_SUBJECT}";`);
   });
 });
 

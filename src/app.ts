@@ -1235,6 +1235,10 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // filter as agents enroll / leave and hosts change. Scheduler role only
       // — one fleet pass.
       "./jobs/reconcilePathCheckSources.js",
+      // Path checks whose Sources include this Polaris server, run from the
+      // server itself. Scheduler role only: "the server" must be one vantage
+      // point, not one per monitor replica.
+      "./jobs/runServerPathChecks.js",
       "./jobs/runSampleRollup.js",
       "./jobs/reclaimBloatedChunks.js",
       "./jobs/autoBuildAgents.js",

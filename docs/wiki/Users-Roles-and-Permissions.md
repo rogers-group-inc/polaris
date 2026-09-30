@@ -131,7 +131,7 @@ the only thing that justifies the rung existing.
 | `alerts` | Full RW | **Read** = view · **Read-Write** = acknowledge · **Full RW** = clear |
 | `automationManagement` | Read-Write | automations and delivery channels |
 | `automationScripts` | Read-Write | **RCE-equivalent** — see [Automation scripts](Automation-Scripts) |
-| `pathChecks` | Read-Write | [agent-run path checks](Path-Monitor). Read-Write tells every matching Polaris Agent to send traffic to a destination on a schedule. Gates the **Path Monitor** page (sidebar, under Application Map). Starts at each role's **Application Map** level, so the built-in roles read the same on both |
+| `pathChecks` | Read-Write | [path checks](Path-Monitor). Read-Write tells every matching Polaris Agent to send traffic to a destination on a schedule. Running a check **from the Polaris server** also needs Read-Write on `networkScan` (Network Discovery), because the server probes from its own network. Gates the **Path Monitor** page (sidebar, under Application Map). Starts at each role's **Application Map** level, so the built-in roles read the same on both |
 | `maintenanceManagement` | Read-Write | maintenance windows; Read-Write is schedule CRUD |
 | `contacts` | Full RW | the address book — **ownership** |
 

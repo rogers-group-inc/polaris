@@ -49,7 +49,7 @@ Vanilla JavaScript SPA served from `/public/`. **No build step** — plain ES mo
 | Automations | `automations.html` | `automationManagement:read` |
 | Device Map | `map.html` | `deviceMap:read` |
 | Application Map | `appmap.html` | `applicationMap:read` |
-| Path Monitor | `path-monitor.html` | `pathChecks:read` (agent-run path checks; sidebar entry directly under Application Map) |
+| Path Monitor | `path-monitor.html` | `pathChecks:read` (path checks from agent hosts and/or the Polaris server; sidebar entry directly under Application Map; the wizard's "Run from this Polaris server" box also reads `networkScan:write`) |
 | Events | `events.html` | `events:read` |
 | Users | `users.html` | `users:read` |
 | Server Settings | `server-settings.html` | `anyOf` `serverSettingsSystem:read` / `credentials:write` / `firmware:read` — each non-admin key opens exactly the tab it is about |

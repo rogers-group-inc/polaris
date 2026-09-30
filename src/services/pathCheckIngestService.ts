@@ -39,6 +39,19 @@ import { recordPathCheckSamples, recordPathCheckPathChange } from "../metrics.js
  *  flapping between two equal-cost paths must not flood the Event table. */
 export const PATH_CHANGE_EVENT_FLOOR_MS = 10 * 60_000;
 
+/**
+ * The subject id a result run by the Polaris SERVER itself is written under
+ * (PathCheck.runOnServer, jobs/runServerPathChecks), in the FK-less assetId
+ * column of both hypertables. Never a UUID, so it cannot collide with an
+ * asset; the alert engine reads those tables only for real asset ids, so it
+ * never sees these rows. Its membership row is the source with assetId NULL.
+ * No agent can write under it: the agent route passes its own bearer's asset
+ * id, which is always a UUID.
+ */
+export const POLARIS_SERVER_SUBJECT = "polaris-server";
+/** What the results list, the path graph and the path-change Event call it. */
+export const POLARIS_SERVER_LABEL = "Polaris server";
+
 export interface IngestResult {
   accepted: number;
   rejected: number;
@@ -226,7 +239,7 @@ interface SourceRow {
 
 async function sourcesFor(assetId: string, checkIds: readonly string[]): Promise<Map<string, SourceRow>> {
   const rows = await prisma.pathCheckSource.findMany({
-    where: { assetId, checkId: { in: [...new Set(checkIds)] } },
+    where: { assetId: assetId === POLARIS_SERVER_SUBJECT ? null : assetId, checkId: { in: [...new Set(checkIds)] } },
     select: {
       id: true, checkId: true, lastOk: true, lastPathHash: true, lastPathChangeEventAt: true, lastSampleAt: true,
       check: { select: { name: true, keepBodyExcerpt: true } },
@@ -324,11 +337,12 @@ export async function ingestPathCheckTraceroutes(
     const ip = hopIp(h.ip);
     if (ip) allIps.push(ip);
   }
+  const isServer = assetId === POLARIS_SERVER_SUBJECT;
   const [contexts, asset] = await Promise.all([
     resolveHopContexts(allIps),
-    prisma.asset.findUnique({ where: { id: assetId }, select: { hostname: true, ipAddress: true } }),
+    isServer ? Promise.resolve(null) : prisma.asset.findUnique({ where: { id: assetId }, select: { hostname: true, ipAddress: true } }),
   ]);
-  const hostLabel = asset?.hostname || asset?.ipAddress || assetId;
+  const hostLabel = isServer ? POLARIS_SERVER_LABEL : asset?.hostname || asset?.ipAddress || assetId;
 
   // Oldest first so each item is compared against the one before it.
   const ordered = [...accepted].sort((a, b) => sampleTime(a.timestamp, now).getTime() - sampleTime(b.timestamp, now).getTime());
@@ -366,14 +380,18 @@ export async function ingestPathCheckTraceroutes(
       recordPathCheckPathChange();
       events.push(logEvent({
         action: "path_check.path_changed",
-        resourceType: "asset",
-        resourceId: assetId,
-        resourceName: hostLabel,
+        // A host's change names the HOST (rule 46: an event automation's device
+        // filter applies to it). The server is no asset, so its change names
+        // the check instead — and no device-filtered automation matches it.
+        resourceType: isServer ? "path-check" : "asset",
+        resourceId: isServer ? t.checkId : assetId,
+        resourceName: isServer ? src.check.name : hostLabel,
         level: "warning",
         message: `Path from ${hostLabel} for path check "${src.check.name}" changed (${hops.length} hops${t.complete ? "" : ", incomplete"})`,
         details: {
           checkId: t.checkId,
           checkName: src.check.name,
+          ...(isServer ? { source: "server" } : {}),
           destinationIp: t.destinationIp ?? null,
           previousHops: st.hops ? st.hops.map((h) => h.ip) : null,
           hops: hops.map((h) => h.ip),

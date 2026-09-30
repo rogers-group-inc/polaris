@@ -504,6 +504,8 @@ type PathCheckBodyExpect struct {
 	Mode          string `json:"mode"` // contains | regex | exact
 	Value         string `json:"value"`
 	CaseSensitive bool   `json:"caseSensitive"`
+	// Negate: the body must NOT contain / equal / match (0.23.0).
+	Negate bool `json:"negate,omitempty"`
 }
 
 // PathCheckTracerouteDef is pathChecks[].traceroute. Zeros take the
@@ -529,6 +531,12 @@ type PathCheckDef struct {
 	VerifyTLS       bool                      `json:"verifyTls"`
 	KeepBodyExcerpt bool                      `json:"keepBodyExcerpt"`
 	Traceroute      PathCheckTracerouteDef `json:"traceroute"`
+	// Request options (0.23.0). The server omits each at its default, and
+	// ships a check using any of them only to agents >= 0.23.0 — an older
+	// agent would silently run a different check.
+	Method          string `json:"method,omitempty"`          // "" | GET | HEAD
+	HostHeader      string `json:"hostHeader,omitempty"`      // Host + TLS SNI override
+	FollowRedirects bool   `json:"followRedirects,omitempty"` // up to 5, each hop refused-checked
 	// sha256 of the definition server-side; rides inside the agent's own
 	// definition hash, so an edit re-baselines the check.
 	Revision string `json:"revision"`
