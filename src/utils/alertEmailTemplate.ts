@@ -87,6 +87,10 @@ export const DEFAULT_ALERT_TEXT = [
   "IP:         {asset.ip}",
   "Switch:     {asset.connectedSwitch}",
   "AP:         {asset.connectedAp}",
+  // Who owns the device — kept on an interface alert (it is not among the
+  // device facts defaultBodyContext blanks): a PoE-fault page is exactly when
+  // the reader needs to know which FortiManager / gate to go and look in.
+  "Managed by: {asset.managedBy}",
   // Who silenced it (business rule 78). Both prune away on every alert that is
   // not dependency-down; "Root cause" prunes too when the upstream device IS
   // the root cause, since the token is blank in that case.
@@ -285,6 +289,11 @@ export const DEFAULT_ALERT_HTML = [
   factRow("IP address", "{asset.ip}"),
   factRow("Connected switch", "{asset.connectedSwitch}"),
   factRow("Connected AP", "{asset.connectedAp}"),
+  // Who owns the device, in the System tab's words. Deliberately NOT among the
+  // device facts an interface alert drops (defaultBodyContext): on a PoE fault
+  // or a port-down page, "which FortiManager / FortiGate do I open" is still
+  // the reader's question. Mirrors the text body's "Managed by" line.
+  factRow("Managed by", "{asset.managedBy}"),
   // Who silenced it (business rule 78) — the device directly above, and the
   // one actually down when that is somebody else. Both prune away on a plain
   // alert; "Root cause" prunes too when the upstream device is the root cause.

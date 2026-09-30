@@ -64,6 +64,8 @@ export const SAMPLE_ALERT_DEVICE: AssetTemplateDetail = {
   department: "Example Department",
   assignedTo: null,
   tags: [],
+  discoveredByIntegration: { type: "fortimanager", name: "Example FortiManager" },
+  fortinetTopology: { role: "fortiswitch", controllerFortigate: "EXAMPLE-FGT-01" },
 };
 
 /** The sensor a test of a hardware-sensor automation is "about". */

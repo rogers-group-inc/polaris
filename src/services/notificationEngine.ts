@@ -4372,6 +4372,12 @@ const ASSET_DETAIL_SELECT = {
   // already cover, so the event tail can test a device filter (business rule
   // 46) against the row it primed for the alert text.
   discoveredByIntegrationId: true,
+  // {asset.managedBy} — the owning integration's type + name, and the
+  // controller FortiGate a managed switch/AP is labelled with: one joined row
+  // and one small JSON blob per asset, fetched with the rest of the detail
+  // (and cached per tick with it).
+  discoveredByIntegration: { select: { type: true, name: true } },
+  fortinetTopology: true,
 } as const;
 
 /** Also a `ScopeAsset`: the event tail evaluates device filters against it, and
