@@ -1348,7 +1348,7 @@ export function storageForecastSpec(
   };
 }
 
-/** The 24-hour read for a usage chart: one mount, one indexed range read on
+/** The last-hour read for a usage chart: one mount, one indexed range read on
  *  `(assetId, mountPath, timestamp)`. */
 async function loadStorageUsage(assetId: string, mountPath: string, since: Date) {
   const rows = await prisma.assetStorageSample.findMany({
