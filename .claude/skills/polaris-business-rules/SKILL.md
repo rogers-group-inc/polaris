@@ -32,7 +32,7 @@ number that means two things is worse than a gap.
 ([scripts/next-rule-number.mjs](../../../scripts/next-rule-number.mjs)). It scans `main` AND
 every `worktree-*` branch, because a number that is free on `main` may already be claimed by an
 open worktree — on 2026-09-21 two branches both picked 77 by checking `main` alone, and rule 75
-has been held by an in-flight worktree since 2026-09-18. Re-run it at merge time; the branch
+was held by an in-flight worktree from 2026-09-18 until it merged on 2026-09-30. Re-run it at merge time; the branch
 merging second renumbers (merge-protocol.md § 3).
 
 **Sub-clauses.** A rule may grow lettered clauses — 20a, 29h, 38b, 40(i), 80a — and those
