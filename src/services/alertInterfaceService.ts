@@ -340,10 +340,12 @@ export async function buildInterfaceLldpBlocks(
 ): Promise<{ html: string; text: string; ipHtml: string; ipText: string }> {
   const empty = { html: "", text: "", ipHtml: "", ipText: "" };
   if (!assetId || !isInterfaceDimensionMetric(metric)) return empty;
-  const ports = (dimensions?.length ? dimensions : dimension ? [dimension] : [])
-    .filter((p) => !!p)
-    .slice(0, MAX_GROUP_LLDP_PORTS + 1);
-  if (!ports.length) return empty;
+  const allPorts = (dimensions?.length ? dimensions : dimension ? [dimension] : []).filter((p) => !!p);
+  if (!allPorts.length) return empty;
+  // The trailer counts off the FULL member list, never the capped one: a
+  // 48-port storm must say "and 42 more", not "and 1 more".
+  const extraPorts = Math.max(0, allPorts.length - MAX_GROUP_LLDP_PORTS);
+  const ports = allPorts.slice(0, MAX_GROUP_LLDP_PORTS);
 
   // ONE query for every port, not one per port: the alias sets are unioned and
   // the rows grouped in memory. An alert on a 48-port switch must not turn the
@@ -353,10 +355,9 @@ export async function buildInterfaceLldpBlocks(
   const [byPort, ip] = await Promise.all([loadInterfacesLldp(assetId, ports), loadInterfaceIp(assetId, primary)]);
   const ipHtml = renderInterfaceIp(ip, { html: true });
   const ipText = renderInterfaceIp(ip, { html: false });
-  const shown = ports.slice(0, MAX_GROUP_LLDP_PORTS).filter((p) => (byPort.get(p) ?? []).length > 0);
+  const shown = ports.filter((p) => (byPort.get(p) ?? []).length > 0);
   // No neighbours anywhere still keeps the IP row: the two blocks are independent.
   if (!shown.length) return { html: "", text: "", ipHtml, ipText };
-  const extraPorts = ports.length - Math.min(ports.length, MAX_GROUP_LLDP_PORTS);
 
   const render = (html: boolean) => {
     const blocks = shown.map((p) => renderInterfaceLldp(p, byPort.get(p) ?? [], { html, timeZone }));

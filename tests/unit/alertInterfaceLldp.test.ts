@@ -220,6 +220,40 @@ describe("delivery-time gating", () => {
     expect(out.text).not.toContain("<tr>");
   });
 
+  // Business rule 75 — a grouped alert explains up to six of its ports and
+  // counts the rest. The count is off the FULL member list: capping first
+  // made a 48-port storm read "and 1 more port on this alert".
+  it("counts every port past the cap on a grouped alert, not just one", async () => {
+    const ports = Array.from({ length: 48 }, (_, i) => `port${i + 1}`);
+    findMany.mockImplementation(async (q: { where: { localIfName: { in: string[] } } }) =>
+      q.where.localIfName.in.map((localIfName) => ({
+        localIfName, chassisId: null, portId: "p", portDescription: null, systemName: null, systemDescription: null,
+        managementIp: null, capabilities: [], lastSeen: new Date("2026-08-18T12:00:00Z"),
+        matchedAsset: { hostname: `AP-${localIfName}`, ipAddress: null, assetType: "access_point" },
+      })));
+    const out = await buildInterfaceLldpBlocks("asset-1", "poeStatus", "port1", null, ports);
+    expect(findMany).toHaveBeenCalledTimes(1);
+    // Only the ports that will be SHOWN are queried.
+    expect(findMany.mock.calls[0]![0].where.localIfName.in).toHaveLength(6);
+    expect(out.text).toContain("and 42 more ports on this alert");
+    expect(out.html).toContain("and 42 more ports on this alert");
+    expect(out.text).toContain("AP-port6");
+    expect(out.text).not.toContain("AP-port7");
+  });
+
+  it("names one extra port in the singular, and none at the cap", async () => {
+    findMany.mockImplementation(async (q: { where: { localIfName: { in: string[] } } }) =>
+      q.where.localIfName.in.map((localIfName) => ({
+        localIfName, chassisId: null, portId: "p", portDescription: null, systemName: null, systemDescription: null,
+        managementIp: null, capabilities: [], lastSeen: new Date("2026-08-18T12:00:00Z"),
+        matchedAsset: { hostname: `AP-${localIfName}`, ipAddress: null, assetType: "access_point" },
+      })));
+    const seven = Array.from({ length: 7 }, (_, i) => `port${i + 1}`);
+    expect((await buildInterfaceLldpBlocks("asset-1", "poeStatus", "port1", null, seven)).text).toContain("and 1 more port on this alert");
+    const six = seven.slice(0, 6);
+    expect((await buildInterfaceLldpBlocks("asset-1", "poeStatus", "port1", null, six)).text).not.toContain("more port");
+  });
+
   it("drops the token when there is no block", () => {
     expect(substituteInterfaceTokens("a{interface.lldp}b", "")).toBe("ab");
     expect(substituteInterfaceTokens("a{interface.lldp}b", "<tr>x</tr>")).toBe("a<tr>x</tr>b");
