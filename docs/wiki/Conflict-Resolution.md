@@ -261,7 +261,7 @@ which is the column that tells the two causes apart:
 **Polaris changes nothing on the FortiGates, and does not pick a winner.** There
 is no Accept — remove the device from the roster of the gate that no longer owns
 it, and once that gate stops reporting it for **two days** the conflict closes
-itself as auto-resolved. **Reject** dismisses the card and changes nothing; the
+itself as auto-resolved. **Acknowledge** dismisses the card and changes nothing; the
 same pair of gates will not raise it again, but a different pair will.
 
 An HA cluster is one gate, not two — the cluster's members are recognised as the

@@ -966,7 +966,9 @@ function getAlertsFormData() {
               await api.conflicts.reject(id);
               showToast(kind === "subnet"
                 ? "Dismissed — this chassis change won't be reported again"
-                : "Conflict rejected — existing values kept");
+                : kind === "contested-serial"
+                  ? "Acknowledged — this pair of gates won't be reported again"
+                  : "Conflict rejected — existing values kept");
             }
             var scrollTop = body.scrollTop;
             await loadConflicts(true);
@@ -1437,13 +1439,13 @@ function getAlertsFormData() {
       '<strong>If it was not moved:</strong> one of these gates has a stale entry — the "last confirmed" ' +
       'column says which one is still being told about it. ' +
       'Polaris changes nothing on the devices either way. ' +
-      '<strong>Reject</strong> dismisses the card; the same pair of gates will not re-raise, a different ' +
+      '<strong>Acknowledge</strong> dismisses the card; the same pair of gates will not re-raise, a different ' +
       'pair will.';
 
     var actions = isResolved
       ? resolvedActionsHtml(c)
-      : '<button class="btn btn-secondary btn-sm" data-conflict-action="reject" data-conflict-id="' + c.id + '" ' +
-          'title="Dismiss — both gates keep the device on their roster">Reject (dismiss)</button>';
+      : '<button class="btn btn-secondary btn-sm" data-conflict-action="reject" data-conflict-kind="contested-serial" data-conflict-id="' + c.id + '" ' +
+          'title="Dismiss — both gates keep the device on their roster">Acknowledge</button>';
 
     var deviceLink = c.assetId
       ? '<a href="/assets.html#view=asset:' + encodeURIComponent(c.assetId) + '">' + escapeHtml(deviceLabel) + '</a>'
