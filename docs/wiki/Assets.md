@@ -269,6 +269,16 @@ asset whose only remaining entries are ranges correctly shows no primary MAC.
 Live telemetry and history: response time, CPU, memory, temperature,
 interfaces, storage, IPsec tunnels, SD-WAN.
 
+**The Response time chart also draws packet loss.** A dashed purple line reads
+against a second axis on the right, 0–100 %. It counts packets from every probe
+Polaris sends the device — the response-time poll and the ICMP packet-loss
+sweep — so on a device the sweep reaches it is much finer than the missed polls
+on the response-time line. Each point covers a short bucket (two minutes on a
+one-hour view, longer on longer ranges; the tooltip names it), and the line
+breaks where nothing was probed rather than dropping to 0 %. The **Packet
+loss** figure above the chart is the same measurement over the whole window.
+Hovering a response-time point still says whether *that poll* was missed.
+
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
 When the interface's address sits inside a network Polaris knows, the click

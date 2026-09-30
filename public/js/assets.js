@@ -337,6 +337,15 @@ var _CHART_MISS_COLOR = "#ffc107";
 // either one read the other.
 var _CHART_RECOVER_COLOR = "#0288d1";
 
+// The packet-loss line the response-time chart overlays on its right-hand
+// 0–100 % axis. Every other hue on that chart is spoken for — up green, miss
+// amber, recovering blue, the severity ladder's reds and oranges, dependency
+// grey, maintenance lavender — so it takes a saturated magenta-purple, drawn
+// DASHED so it cannot be read as the reachability series it shares a plot with
+// even where the two cross. Never red: a 100 % loss bucket is a reading, and
+// red on this chart is the verdict.
+var _CHART_LOSS_COLOR = "#ab47bc";
+
 /**
  * "#rrggbb" + alpha → "rgba(r,g,b,a)". Exists because the Last-30-min strip
  * paints its cells at a fixed translucency while the colour ITSELF is now a
@@ -13511,7 +13520,12 @@ async function _loadMonitorHistoryFor(assetId, selection, callOpts) {
         { label: "Avg",         value: s.avgMs != null ? s.avgMs + " ms" : "—" },
         { label: "Min",         value: s.minMs != null ? s.minMs + " ms" : "—" },
         { label: "Max",         value: s.maxMs != null ? s.maxMs + " ms" : "—" },
-        { label: "Packet loss", value: s.packetLossRate != null ? (s.packetLossRate * 100).toFixed(1) + "%" : "—" },
+        // The loss line's own window ratio (every probe kind, packets counted)
+        // when the payload carries one, so the figure is what the dashed line
+        // averages to; the poll-outcome rate only for an older payload.
+        { label: "Packet loss", value: (data.loss && data.loss.ratioPct != null)
+            ? Number(data.loss.ratioPct).toFixed(1) + "%"
+            : s.packetLossRate != null ? (s.packetLossRate * 100).toFixed(1) + "%" : "—" },
       ];
       var monitorTierPart = _tierStatsPart(data);
       if (monitorTierPart) monitorParts.unshift(monitorTierPart);
@@ -13593,9 +13607,15 @@ function _renderMonitorChart(container, data, transitions) {
     return;
   }
   transitions = Array.isArray(transitions) ? transitions : [];
+  // Packet loss rides a right-hand axis of its own (see _CHART_LOSS_COLOR). An
+  // older payload without `loss`, or a window with nothing countable, keeps the
+  // single-axis chart and its narrow right gutter.
+  var lossSeries = (data && data.loss) || null;
+  var lossPoints = (lossSeries && Array.isArray(lossSeries.points)) ? lossSeries.points : [];
+  var hasLoss = lossPoints.length > 0;
   var W = container.clientWidth || 600;
   var H = 200;
-  var padL = 56, padR = 10, padT = 10, padB = 56;
+  var padL = 56, padR = hasLoss ? 46 : 10, padT = 10, padB = 56;
   var innerW = W - padL - padR;
   var innerH = H - padT - padB;
 
@@ -13748,6 +13768,41 @@ function _renderMonitorChart(container, data, transitions) {
     ticks +=
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + Math.round(v) + '</text>';
+    // The loss axis shares the gridlines — quarters of 0–100 % land on the
+    // same five rows as the ms quarters — so it adds labels, never lines.
+    if (hasLoss) {
+      ticks += '<text x="' + (W - padR + 4) + '" y="' + (y + 3) + '" text-anchor="start" font-size="10" fill="' + _CHART_LOSS_COLOR + '">' + (25 * i) + '%</text>';
+    }
+  }
+
+  // The packet-loss layer: a dashed polyline per contiguous run of buckets,
+  // broken where buckets are missing (a gap in probing is not 0 % loss), plus a
+  // hover target per point. Drawn OVER the response series and its hit targets
+  // so a cursor landing on a loss point reads the loss.
+  var lossLayer = "";
+  var lossHits = "";
+  if (hasLoss) {
+    var yLoss = _chartYScale(padT, innerH, 0, 100);
+    var lossBucketMs = Number(lossSeries.bucketMs) || 0;
+    var runs = [];
+    var cur = [];
+    lossPoints.forEach(function (p, i) {
+      var prev = i > 0 ? lossPoints[i - 1] : null;
+      if (prev && lossBucketMs > 0 && (p.t - prev.t) > lossBucketMs * 2.5) { runs.push(cur); cur = []; }
+      cur.push(p);
+    });
+    if (cur.length) runs.push(cur);
+    lossLayer = runs.map(function (run) {
+      if (run.length === 1) {
+        return '<circle cx="' + xFor(run[0].t) + '" cy="' + yLoss(run[0].v) + '" r="2" fill="' + _CHART_LOSS_COLOR + '"/>';
+      }
+      return '<polyline fill="none" stroke="' + _CHART_LOSS_COLOR + '" stroke-width="1.5" stroke-dasharray="4,3" stroke-linejoin="round" points="' +
+        run.map(function (p) { return xFor(p.t) + ',' + yLoss(p.v); }).join(" ") + '"/>';
+    }).join("");
+    lossHits = lossPoints.map(function (p) {
+      return '<circle class="monitor-loss-hit" cx="' + xFor(p.t) + '" cy="' + yLoss(p.v) + '" r="6" fill="transparent" style="cursor:crosshair"' +
+        ' data-ts="' + escapeHtml(String(p.t)) + '" data-loss="' + escapeHtml(String(p.v)) + '"/>';
+    }).join("");
   }
 
   // X-axis tick labels. When the window is ≤24h the time-only label loses the
@@ -13760,6 +13815,10 @@ function _renderMonitorChart(container, data, transitions) {
   var yTitleX = 14;
   var yTitleY = padT + innerH / 2;
   var yTitle = '<text class="chart-axis-title" x="' + yTitleX + '" y="' + yTitleY + '" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.85" transform="rotate(-90 ' + yTitleX + ' ' + yTitleY + ')">Response time (ms)</text>';
+  if (hasLoss) {
+    var y2TitleX = W - 8;
+    yTitle += '<text class="chart-axis-title" x="' + y2TitleX + '" y="' + yTitleY + '" text-anchor="middle" font-size="11" fill="' + _CHART_LOSS_COLOR + '" transform="rotate(90 ' + y2TitleX + ' ' + yTitleY + ')">Packet loss (%)</text>';
+  }
   var xTitle = '<text class="chart-axis-title" x="' + (padL + innerW / 2) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.85">Time</text>';
 
   // Polling-method transition markers — vertical amber dashed lines at
@@ -13802,6 +13861,8 @@ function _renderMonitorChart(container, data, transitions) {
         }).join("") +
         _failureDotsSVG(linePts) +
         hitTargets +
+        lossLayer +
+        lossHits +
       '</g>' +
     '</svg>' +
     '<div class="monitor-tooltip" style="position:absolute;pointer-events:none;display:none;background:var(--color-bg-primary);border:1px solid var(--color-border);border-radius:4px;padding:6px 8px;font-size:0.75rem;line-height:1.35;color:var(--color-text-primary);box-shadow:0 4px 12px rgba(0,0,0,0.25);white-space:nowrap;z-index:5"></div>';
@@ -13860,7 +13921,7 @@ function _renderMonitorChart(container, data, transitions) {
       tip.innerHTML =
         '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(fmtTooltipTs(ts)) + '</div>' +
         '<div>Response: ' + rRttLine + '</div>' +
-        '<div>Packet loss: ' + rLossLine + '</div>';
+        '<div>Missed polls: ' + rLossLine + '</div>';
       tip.style.display = "block";
       positionTip(evt);
       return;
@@ -13871,8 +13932,24 @@ function _renderMonitorChart(container, data, transitions) {
     tip.innerHTML =
       '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(fmtTooltipTs(ts)) + '</div>' +
       '<div>Response: ' + rttLine + '</div>' +
-      '<div>Packet loss: ' + lossLine + '</div>' +
+      '<div>Missed poll: ' + lossLine + '</div>' +
       errLine;
+    tip.style.display = "block";
+    positionTip(evt);
+  }
+  // Hover tooltip for a packet-loss point: the bucket's loss and how wide the
+  // bucket is, since on a long window one point covers many probes.
+  function showLossTip(target, evt) {
+    var ts = Number(target.getAttribute("data-ts"));
+    var v = parseFloat(target.getAttribute("data-loss") || "0");
+    var bMs = Number(lossSeries && lossSeries.bucketMs) || 0;
+    var span = bMs >= 86400000 ? Math.round(bMs / 86400000) + "-day"
+      : bMs >= 3600000 ? Math.round(bMs / 3600000) + "-hour"
+      : bMs > 0 ? Math.round(bMs / 60000) + "-min" : "";
+    tip.innerHTML =
+      '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(fmtTooltipTs(ts)) + '</div>' +
+      '<div>Packet loss: <span style="color:' + _CHART_LOSS_COLOR + ';font-weight:600">' + v.toFixed(1) + '%</span></div>' +
+      (span ? '<div style="color:var(--color-text-secondary)">' + span + ' bucket, all probes</div>' : '');
     tip.style.display = "block";
     positionTip(evt);
   }
@@ -13899,6 +13976,8 @@ function _renderMonitorChart(container, data, transitions) {
     // both a sample dot and a transition line.
     if (t.classList.contains("monitor-transition")) {
       showTransitionTip(t, evt);
+    } else if (t.classList.contains("monitor-loss-hit")) {
+      showLossTip(t, evt);
     } else if (t.classList.contains("monitor-hit")) {
       showTip(t, evt);
     } else {
