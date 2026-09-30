@@ -5,7 +5,7 @@
  * filesystem, so it charts THAT mount instead of the device's CPU / memory /
  * response time / loss:
  *
- *  - used % / used bytes: the mount's last 24 hours, with the automation's
+ *  - used % / used bytes: the mount's last hour, with the automation's
  *    threshold dashed;
  *  - days until full: a FORECAST — the daily points the automation's number was
  *    fitted on, then the trend carried forward for the automation's own
@@ -113,11 +113,11 @@ describe("which alerts are storage alerts", () => {
 
 describe("the usage chart (used % / used bytes)", () => {
   const rows = [
-    { t: NOW - 20 * 3_600_000, used: 80 * GB, total: TOTAL },
-    { t: NOW - 1 * 3_600_000, used: 93 * GB, total: TOTAL },
+    { t: NOW - 50 * 60_000, used: 80 * GB, total: TOTAL },
+    { t: NOW - 5 * 60_000, used: 93 * GB, total: TOTAL },
   ];
 
-  it("covers the last 24 hours in percent, pinned 0–100, with the threshold", () => {
+  it("covers the last hour in percent, pinned 0–100, with the threshold", () => {
     const spec = storageUsageSpec(rows, { metric: "storageUsedPct", mountPath: "/data", threshold: 90, now: NOW });
     expect(spec.from).toBe(NOW - STORAGE_USAGE_WINDOW_MS);
     expect(spec.to).toBe(NOW);
@@ -126,7 +126,7 @@ describe("the usage chart (used % / used bytes)", () => {
     expect(spec.threshold).toBe(90);
     expect(spec.projection).toEqual([]);
     expect(spec.label).toContain("/data");
-    expect(spec.summary).toContain("last 24 h");
+    expect(spec.summary).toContain("last hour");
     expect(spec.summary).toContain("now 93%");
   });
 
@@ -247,7 +247,7 @@ describe("the swap, end to end", () => {
   beforeEach(() => {
     calls.length = 0;
     storageRows.rows = [
-      { timestamp: new Date(NOW - 2 * 3_600_000), usedBytes: BigInt(80 * GB), totalBytes: BigInt(TOTAL) },
+      { timestamp: new Date(NOW - 30 * 60_000), usedBytes: BigInt(80 * GB), totalBytes: BigInt(TOTAL) },
       { timestamp: new Date(NOW - 60_000), usedBytes: BigInt(94 * GB), totalBytes: BigInt(TOTAL) },
     ];
     dailyRows.rows = growing(14, 64, 2).map((p) => ({ day: new Date(p.t), used: p.v, total: TOTAL }));
