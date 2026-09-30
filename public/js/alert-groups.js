@@ -245,7 +245,7 @@
         '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0">Blank = no reminders. Stops on acknowledge.</p>' +
       "</div>" +
       '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0.75rem 0 0">' +
-        "<strong>Recipients</strong> are seeded from the first automation you add, and escalation chains are carried over with them. Editing either in this screen is not built yet — adjust them on the automation you seeded from, or through the API." +
+        "<strong>Recipients</strong> — with the escalation chain, email layout and reset actions — are copied once from the first automation in the group that has any, the first time the group is saved with no recipients of its own. Changing that automation afterwards does not change the group, and while an automation is in the group its own recipients are not used. Editing them here is not built yet; change them through the API." +
       "</p>"
     );
   }

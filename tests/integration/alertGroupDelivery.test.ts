@@ -22,6 +22,7 @@ import { afterAll, beforeEach, expect, it } from "vitest";
 import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable } from "./_helpers.js";
 import { evaluateAllNotificationRules } from "../../src/services/notificationEngine.js";
+import { createGroup, updateGroup } from "../../src/services/alertGroupService.js";
 
 const d = dbDescribe;
 const HOST = "alert-group-delivery-test";
@@ -153,6 +154,40 @@ d("an AlertGroup delivers its alerts from the first message (business rule 75)",
     const ruleId = await seedMember(groupId);
     await evaluateAllNotificationRules();
     expect(await targetsOf(ruleId)).toEqual(["member@example.test"]);
+  });
+
+  // The Groups tab posts no actions — it has no recipient editor. A group
+  // created there must take its delivery from its first member, or it owns
+  // delivery and delivers to nobody.
+  it("a group created with no actions takes its first member's, once, and delivers to them", async () => {
+    const ruleId = await seedMember(null as unknown as string, {
+      escalation: { stopOn: "acknowledge", tiers: [{ afterMin: 15, actions: [notify("tier@example.test")] }] },
+    });
+    const g = await createGroup({ name: `${RULE} ui`, ruleIds: [ruleId] }, "tester");
+    const stored = await prisma.alertGroup.findUniqueOrThrow({ where: { id: g.id } });
+    expect(JSON.stringify(stored.actions)).toContain("member@example.test");
+    expect(JSON.stringify(stored.escalation)).toContain("tier@example.test");
+    expect(await prisma.event.count({ where: { action: "alert_group.seeded", resourceId: g.id } })).toBe(1);
+
+    await evaluateAllNotificationRules();
+    expect(await targetsOf(ruleId)).toEqual(["member@example.test"]);
+
+    // Copied ONCE: editing the member afterwards leaves the group alone, and a
+    // later save of the group does not re-seed over what it already has.
+    await prisma.notificationRule.update({ where: { id: ruleId }, data: { actions: [notify("changed@example.test")] } as never });
+    await updateGroup(g.id, { name: `${RULE} ui`, ruleIds: [ruleId] }, "tester");
+    const after = await prisma.alertGroup.findUniqueOrThrow({ where: { id: g.id } });
+    expect(JSON.stringify(after.actions)).toContain("member@example.test");
+    expect(JSON.stringify(after.actions)).not.toContain("changed@example.test");
+  });
+
+  it("never seeds over actions the group was given", async () => {
+    const ruleId = await seedMember(null as unknown as string);
+    const g = await createGroup({ name: `${RULE} api`, ruleIds: [ruleId], actions: [notify("group@example.test")] }, "tester");
+    const stored = await prisma.alertGroup.findUniqueOrThrow({ where: { id: g.id } });
+    expect(JSON.stringify(stored.actions)).toContain("group@example.test");
+    expect(JSON.stringify(stored.actions)).not.toContain("member@example.test");
+    expect(await prisma.event.count({ where: { action: "alert_group.seeded", resourceId: g.id } })).toBe(0);
   });
 
   it("runs the group's reset actions when the alert ends, not the member's", async () => {

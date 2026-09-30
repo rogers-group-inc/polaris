@@ -36,7 +36,7 @@ import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
-import { triggerCanJoinGroup, type Trigger } from "./notificationTypes.js";
+import { triggerCanJoinGroup, normalizeRuleToV2, type Trigger } from "./notificationTypes.js";
 
 export interface AlertGroupInput {
   name: string;
@@ -137,6 +137,7 @@ export async function createGroup(input: AlertGroupInput, actor?: string) {
     select: { id: true, name: true },
   });
   await setMembership(group.id, input.ruleIds ?? []);
+  if (input.actions === undefined) await seedDeliveryFromMembers(group.id, input.ruleIds ?? [], actor);
   await logEvent({
     action: "alert_group.created",
     resourceType: "alert-group",
@@ -171,6 +172,7 @@ export async function updateGroup(id: string, input: AlertGroupInput, actor?: st
     select: { id: true, name: true },
   });
   if (input.ruleIds) await setMembership(id, input.ruleIds);
+  if (input.ruleIds && input.actions === undefined) await seedDeliveryFromMembers(id, input.ruleIds, actor);
 
   // DISABLING a group hands delivery back to the member automations, which is
   // a change of owner mid-life — the same reason joining and leaving retire
@@ -308,6 +310,71 @@ async function setMembership(groupId: string, ruleIds: string[]): Promise<void> 
   // owner. Deleting them (rather than clearing) is what updateRule does on the
   // same kind of reshape, and it is what makes the re-fire unconditional.
   await prisma.notificationRuleState.deleteMany({ where: { ruleId: { in: changed } } });
+}
+
+/**
+ * Give a group with no delivery of its own the delivery of its first member.
+ *
+ * A group OWNS delivery (business rule 75): while an automation is in one, the
+ * engine sends that automation's alerts through the group's actions and never
+ * through its own. The Groups tab edits membership, reminders, the ack-note
+ * policy and the alert text, but not recipients or escalation chains — so a
+ * group created there would own delivery and deliver to nobody. Instead it
+ * takes over what the FIRST automation added (in the posted order) that has
+ * any actions was already doing: its actions, escalation chain, email layout
+ * and reset actions, copied ONCE.
+ *
+ * Only while the group has no actions of its own, and only into fields the
+ * group has not set, so a later save never overwrites recipients set through
+ * the API, and editing the member afterwards does not change the group. Read
+ * through `normalizeRuleToV2`, so a pre-v2 automation's legacy targets seed
+ * the same actions the engine would have sent for it.
+ */
+async function seedDeliveryFromMembers(groupId: string, ruleIds: string[], actor?: string): Promise<void> {
+  if (!ruleIds.length) return;
+  const group = await prisma.alertGroup.findUnique({
+    where: { id: groupId },
+    select: { name: true, actions: true, escalation: true, emailComposition: true, resetActions: true },
+  });
+  if (!group || (Array.isArray(group.actions) && group.actions.length > 0)) return;
+
+  const rows = await prisma.notificationRule.findMany({
+    where: { id: { in: ruleIds } },
+    select: {
+      id: true, name: true, trigger: true, clearBehavior: true, clearAfterSec: true, targets: true,
+      emailComposition: true, escalation: true, reset: true, actions: true, severityBands: true,
+      bandNotify: true, resetActions: true, repeat: true,
+    },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  let source: { id: string; name: string; v2: ReturnType<typeof normalizeRuleToV2>; emailComposition: unknown } | null = null;
+  for (const rid of ruleIds) {
+    const r = byId.get(rid);
+    if (!r) continue;
+    const v2 = normalizeRuleToV2(r);
+    if (v2.actions.length) { source = { id: r.id, name: r.name, v2, emailComposition: r.emailComposition }; break; }
+  }
+  if (!source) return;
+
+  const json = (v: unknown) => v as Prisma.InputJsonValue;
+  await prisma.alertGroup.update({
+    where: { id: groupId },
+    data: {
+      actions: json(source.v2.actions),
+      ...(group.escalation == null && source.v2.escalation ? { escalation: json(source.v2.escalation) } : {}),
+      ...(group.emailComposition == null && source.emailComposition != null ? { emailComposition: json(source.emailComposition) } : {}),
+      ...(group.resetActions == null && source.v2.resetActions?.length ? { resetActions: json(source.v2.resetActions) } : {}),
+    },
+  });
+  await logEvent({
+    action: "alert_group.seeded",
+    resourceType: "alert-group",
+    resourceId: groupId,
+    resourceName: group.name,
+    actor,
+    message: `Alert group "${group.name}" took its recipients from "${source.name}"`,
+    details: { fromRuleId: source.id, actions: source.v2.actions.length, escalation: !!source.v2.escalation },
+  });
 }
 
 /** Retire every live alert this group owns, releasing the state rows behind

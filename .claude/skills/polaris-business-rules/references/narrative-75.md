@@ -263,6 +263,17 @@ since the operator wrote them for exactly that send. A grouped automation also a
 because the group may escalate, remind or compose where its member would not. Pinned by
 `tests/integration/alertGroupDelivery.test.ts`.
 
+Fixing that exposed the other half of the same gap. The Groups tab has no recipient editor — its
+hint promised that recipients are "seeded from the first automation you add", and nothing did
+the seeding. While members still delivered on their own, nobody could tell; once the group
+really owned delivery, a group created in the UI owned it and delivered to nobody. So a save
+that sets membership, posts no `actions`, and finds the group with none of its own now copies
+the first such member's actions, escalation chain, email layout and reset actions into it —
+once, into unset fields only (`alertGroupService → seedDeliveryFromMembers`). Copying rather than
+reading through to the member live was deliberate: a group whose recipients silently changed
+whenever someone edited one of its automations would be a group that does not own delivery at
+all.
+
 ### The alert keeps a primary ruleId, and that is load-bearing
 
 It would be tidier for a group-owned alert to carry a null `ruleId`. It would also be six
