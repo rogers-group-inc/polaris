@@ -359,13 +359,29 @@ describe("pure helpers", () => {
     expect(PC.resultState(false, null)).toBe("fail");
     expect(PC.resultState(null, null)).toBeNull();
   });
-  it("folds a check's sources into one Result, without counts", () => {
+  it("counts a check's sources per state, zeros left out", () => {
     const PC = load();
-    expect(PC.checkResultState({ okCount: 3, failCount: 0 })).toBe("ok");
-    expect(PC.checkResultState({ okCount: 3, failCount: 1, unexpectedCount: 1 })).toBe("unexpected");
-    // No answer at all outranks a wrong answer.
-    expect(PC.checkResultState({ okCount: 0, failCount: 2, unexpectedCount: 1 })).toBe("fail");
-    expect(PC.checkResultState({ okCount: 0, failCount: 0 })).toBeNull();
+    expect(PC.checkResultCounts({ okCount: 3, failCount: 0 })).toEqual([{ state: "ok", count: 3 }]);
+    // unexpectedCount is carved out of failCount, not added to it.
+    expect(PC.checkResultCounts({ okCount: 3, failCount: 3, unexpectedCount: 1 })).toEqual([
+      { state: "ok", count: 3 }, { state: "unexpected", count: 1 }, { state: "fail", count: 2 },
+    ]);
+    expect(PC.checkResultCounts({ okCount: 0, failCount: 1, unexpectedCount: 5 })).toEqual([{ state: "unexpected", count: 1 }]);
+    expect(PC.checkResultCounts({ okCount: 0, failCount: 0 })).toEqual([]);
+  });
+  it("renders the counts in the list's Result cell", async () => {
+    const PC = load();
+    const tb = doc.createElement("table");
+    tb.innerHTML = '<tbody id="path-tbody"></tbody>';
+    doc.body.appendChild(tb);
+    g.renderPageControls = () => {};
+    g.TableSF = function (this: any) { this.apply = (d: any) => d; this.getPrefs = () => ({}); this.setPrefs = () => {}; };
+    g.setupColumnLayout = () => ({ getPrefs: () => null, setPrefs: () => {} });
+    g.api.pathChecks.list = async () => ({ checks: [
+      { id: "k1", name: "Cams", kind: "https", target: "https://c.example/", intervalSec: 60, enabled: true, sourceCount: 6, okCount: 3, failCount: 3, unexpectedCount: 1, traceroute: {} },
+    ] });
+    await PC.loadTab();
+    expect(doc.getElementById("path-tbody")!.textContent).toMatch(/3 OK · 1 Unexpected response · 2 Fail/);
   });
   it("offers the server row its charts, and an agent row its asset", () => {
     const PC = load();

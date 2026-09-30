@@ -103,16 +103,18 @@
   }
 
   /**
-   * Pure (tested): a check's Result cell across all its sources, no counts.
-   * A source that got no answer at all outranks one that got the wrong answer.
+   * Pure (tested): a check's Result cell — how many sources' latest run is in
+   * each state, in the three words the Results view uses, zeros left out.
+   * unexpectedCount is a subset of failCount (failed WITH an HTTP answer).
    */
-  function checkResultState(c) {
+  function checkResultCounts(c) {
     var fail = c.failCount || 0;
     var unexpected = Math.min(c.unexpectedCount || 0, fail);
-    if (fail > unexpected) return "fail";
-    if (unexpected) return "unexpected";
-    if (c.okCount) return "ok";
-    return null;
+    return [
+      { state: "ok", count: c.okCount || 0 },
+      { state: "unexpected", count: unexpected },
+      { state: "fail", count: fail - unexpected },
+    ].filter(function (p) { return p.count > 0; });
   }
 
   // ─── List ───────────────────────────────────────────────────────────────
@@ -212,9 +214,12 @@
       var result;
       if (!c.sourceCount) result = '<span style="color:var(--color-text-tertiary)">no sources</span>';
       else {
-        var st = checkResultState(c);
-        result = st
-          ? '<strong style="color:' + RESULT_COLORS[st] + '">' + RESULT_LABELS[st] + "</strong>"
+        var parts = checkResultCounts(c);
+        result = parts.length
+          ? parts.map(function (p) {
+              var tag = p.state === "ok" ? "span" : "strong";
+              return "<" + tag + ' style="color:' + RESULT_COLORS[p.state] + '">' + p.count + " " + RESULT_LABELS[p.state] + "</" + tag + ">";
+            }).join(" · ")
           : '<span style="color:var(--color-text-tertiary)">no results yet</span>';
       }
       var enabledCell = editor
@@ -1167,7 +1172,7 @@
     collectCheck: collectCheck,
     selectionState: selectionState,
     resultState: resultState,
-    checkResultState: checkResultState,
+    checkResultCounts: checkResultCounts,
     testResultHtml: testResultHtml,
     usableHttpCredentials: usableHttpCredentials,
     stepOfTab: stepOfTab,

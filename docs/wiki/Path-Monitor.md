@@ -167,13 +167,13 @@ Polaris writes a `path_check.agent_over_cap` event naming it.
 
 ## Reading the results
 
-The list's **Result** column sums up every source's latest run in one word:
+The list's **Result** column counts how many sources' latest run is in each state, for example *3 OK · 1 Unexpected response · 2 Fail* (a state with no sources is left out):
 
 | Result | Means |
 |---|---|
-| **OK** | every source that has run it passed |
+| **OK** | the source's latest run passed |
 | **Unexpected response** | a source got an answer from the target, just not the expected one: a status code outside *Accepted status codes*, or a body that failed its check |
-| **Fail** | a source got no answer at all (timeout, refused connection, DNS or TLS failure). It wins over *Unexpected response* when sources disagree |
+| **Fail** | a source got no answer at all (timeout, refused connection, DNS or TLS failure) |
 
 The Results view and a host's Paths tab use the same three words for each
 source.
