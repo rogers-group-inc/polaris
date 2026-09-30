@@ -59,11 +59,17 @@ const IPV4_RE = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 
 export type Tracer = "traceroute" | "tracepath" | "tracert";
 
-/** The command line for each tracer. Pure (tested). */
-export function tracerArgs(tracer: Tracer, dst: string, o: TraceOptions): string[] {
+/**
+ * The command line for each tracer. Pure (tested). `traceroute` gets `-N 1`
+ * (one probe in flight, as tracert and tracepath already do): its default
+ * sends 16 at once, and MPLS core routers rate-limit a burst of Time Exceeded
+ * replies — the same loss the agent's tracer had (agent 0.23.1). A tracer
+ * without `-N` (inetutils, busybox) is retried without it (`sequential` false).
+ */
+export function tracerArgs(tracer: Tracer, dst: string, o: TraceOptions, sequential = true): string[] {
   const waitSec = String(Math.max(1, Math.ceil(o.probeTimeoutMs / 1000)));
   switch (tracer) {
-    case "traceroute": return ["-n", "-q", String(o.probesPerHop), "-w", waitSec, "-m", String(o.maxHops), dst];
+    case "traceroute": return ["-n", ...(sequential ? ["-N", "1"] : []), "-q", String(o.probesPerHop), "-w", waitSec, "-m", String(o.maxHops), dst];
     case "tracepath":  return ["-n", "-m", String(o.maxHops), dst];
     case "tracert":    return ["-d", "-h", String(o.maxHops), "-w", String(o.probeTimeoutMs), dst];
   }
@@ -207,9 +213,14 @@ function candidates(): Tracer[] {
  *  one takes effect on the next restart, which an updater run is). */
 let _missing = new Set<Tracer>();
 
+/** Set once this host's `traceroute` refused `-N` (printed no hops with it and
+ *  some without it) — skipped from then on, for the life of the process. */
+let _noSequentialFlag = false;
+
 /** Test seam. */
 export function _resetTracerCache(): void {
   _missing = new Set();
+  _noSequentialFlag = false;
 }
 
 function runTool(tracer: Tracer, args: string[], budgetMs: number): Promise<{ out: string; missing: boolean; cut: boolean }> {
@@ -266,9 +277,20 @@ export async function traceFromServer(dst: string, o: TraceOptions): Promise<Tra
   const rdnsBudget = Math.min(3000, Math.floor(o.budgetMs / 5));
   for (const tracer of candidates()) {
     if (_missing.has(tracer)) continue;
-    const r = await runTool(tracer, tracerArgs(tracer, dst, o), o.budgetMs - rdnsBudget);
+    const toolBudget = o.budgetMs - rdnsBudget;
+    const sequential = tracer === "traceroute" && !_noSequentialFlag;
+    let r = await runTool(tracer, tracerArgs(tracer, dst, o, sequential), toolBudget);
     if (r.missing) { _missing.add(tracer); continue; }
-    const { hops, complete } = assembleTrace(PARSERS[tracer](r.out), dst, o);
+    let raw = PARSERS[tracer](r.out);
+    if (sequential && !r.cut && raw.length === 0) {
+      // No hops at all with -N: this traceroute may not know the flag (it
+      // printed a usage message). Retry once without it, and keep it off if
+      // that is what produced hops.
+      const plain = await runTool(tracer, tracerArgs(tracer, dst, o, false), Math.max(1000, toolBudget - (Date.now() - started)));
+      const plainRaw = plain.missing ? [] : PARSERS[tracer](plain.out);
+      if (plainRaw.length) { _noSequentialFlag = true; r = plain; raw = plainRaw; }
+    }
+    const { hops, complete } = assembleTrace(raw, dst, o);
     let note: string | null = null;
     if (r.cut) note = `traceroute cut off at the ${Math.round((o.budgetMs - rdnsBudget) / 1000)} s budget`;
     else if (!complete && hops.length >= o.maxHops) note = `hop limit (${o.maxHops}) reached before the destination`;

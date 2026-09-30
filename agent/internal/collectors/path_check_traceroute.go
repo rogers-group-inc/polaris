@@ -42,7 +42,14 @@ func tracerouteOptsFrom(def transport.PathCheckTracerouteDef) tracerouteOpts {
 		maxHops:        def.MaxHops,
 		probesPerHop:   def.ProbesPerHop,
 		probeTimeout:   time.Duration(def.ProbeTimeoutMs) * time.Millisecond,
-		inflightTTLs:   8,
+		// One TTL at a time, as tracert / traceroute do. Probing 8 (even 2)
+		// TTLs at once lost most probes to the core hops of an MPLS path —
+		// their Time Exceeded replies are tunnelled out through the LSP's
+		// egress and rate-limited there, so a burst of them is dropped —
+		// while one at a time answered every probe (live A/B, 2026-09-30).
+		// A silent hop now costs probesPerHop × probeTimeout; TracerouteBudget
+		// still bounds the whole trace, and a trace cut short keeps its hops.
+		inflightTTLs:   1,
 		silentHopLimit: 8,
 	}
 }
