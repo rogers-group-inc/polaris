@@ -13660,6 +13660,17 @@ function _renderMonitorChart(container, data, transitions) {
   // round up to a tidy ceiling
   var step = maxRtt > 1000 ? 250 : maxRtt > 200 ? 50 : 10;
   var ceil = Math.ceil(maxRtt / step) * step;
+  // The loss axis scales to the worst bucket in the window rather than pinning
+  // at 100 % — a 2 % blip on a 0–100 axis hugs the baseline and reads as none.
+  // Ceilings are picked so the quarter labels stay whole percentages.
+  var lossCeil = 100;
+  if (hasLoss) {
+    var maxLoss = Math.max.apply(null, lossPoints.map(function (p) { return Number(p.v) || 0; }));
+    var lossSteps = [4, 8, 12, 20, 40, 60, 80, 100];
+    for (var li = 0; li < lossSteps.length; li++) {
+      if (maxLoss <= lossSteps[li]) { lossCeil = lossSteps[li]; break; }
+    }
+  }
 
   var xFor = _chartXScale(padL, innerW, t0, t1);
   var yFor = _chartYScale(padT, innerH, 0, ceil);
@@ -13768,10 +13779,10 @@ function _renderMonitorChart(container, data, transitions) {
     ticks +=
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + Math.round(v) + '</text>';
-    // The loss axis shares the gridlines — quarters of 0–100 % land on the
+    // The loss axis shares the gridlines — quarters of 0–lossCeil land on the
     // same five rows as the ms quarters — so it adds labels, never lines.
     if (hasLoss) {
-      ticks += '<text x="' + (W - padR + 4) + '" y="' + (y + 3) + '" text-anchor="start" font-size="10" fill="' + _CHART_LOSS_COLOR + '">' + (25 * i) + '%</text>';
+      ticks += '<text x="' + (W - padR + 4) + '" y="' + (y + 3) + '" text-anchor="start" font-size="10" fill="' + _CHART_LOSS_COLOR + '">' + (lossCeil * i / 4) + '%</text>';
     }
   }
 
@@ -13782,7 +13793,7 @@ function _renderMonitorChart(container, data, transitions) {
   var lossLayer = "";
   var lossHits = "";
   if (hasLoss) {
-    var yLoss = _chartYScale(padT, innerH, 0, 100);
+    var yLoss = _chartYScale(padT, innerH, 0, lossCeil);
     var lossBucketMs = Number(lossSeries.bucketMs) || 0;
     var runs = [];
     var cur = [];
