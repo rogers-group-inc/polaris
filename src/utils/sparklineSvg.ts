@@ -64,6 +64,12 @@ export interface SparklineOptions {
    */
   alarmSpans?: Array<{ from: number; to: number }>;
   /**
+   * The centred note on a chart with NO points but with `alarmSpans` — the
+   * bands still draw (see sparklineSvg). Defaults to "no readings in this
+   * window".
+   */
+  emptyNote?: string;
+  /**
    * Spans (epoch ms) where the device's polls FAILED. Rendered as the DIVE:
    * the line drops to the chart baseline in red across the span and climbs
    * back out, each transition fading between the series color and red, with a
@@ -278,6 +284,32 @@ export function sparklineSvg(points: SparkPoint[], opts: SparklineOptions): stri
     `<text x="4" y="14" font-family="Helvetica,Arial,sans-serif" font-size="12" font-weight="bold" fill="#1f2430">${esc(opts.label)}</text>`;
 
   const stats = seriesStats(points);
+  // Nothing measured, but the device SAID something about the window: draw the
+  // frame and its alarm bands with no line. This is a dead SD-WAN member —
+  // FortiOS stops reporting latency / jitter / loss for a member it has
+  // declared dead, so an outage older than the window leaves all three series
+  // empty while the health check's own verdict covers every sample. A "no data"
+  // card there reads as Polaris failing to chart; the band says "down all
+  // along", which is the finding.
+  if (!stats && opts.alarmSpans?.length && opts.from !== undefined && opts.to !== undefined && opts.to > opts.from) {
+    const from = opts.from;
+    const tSpan = opts.to - from;
+    const baseY = PAD_T + plotH;
+    const bands = opts.alarmSpans
+      .map((s) => {
+        const x1 = Math.max(PAD_L, Math.min(PAD_L + ((s.from - from) / tSpan) * plotW, PAD_L + plotW));
+        const x2 = Math.max(PAD_L, Math.min(PAD_L + ((s.to - from) / tSpan) * plotW, PAD_L + plotW));
+        return `<rect x="${x1.toFixed(1)}" y="${PAD_T}" width="${Math.max(2, x2 - x1).toFixed(1)}" height="${plotH}" fill="#dc2626" fill-opacity="0.13"/>`;
+      })
+      .join("");
+    return (
+      head +
+      bands +
+      `<line x1="${PAD_L}" y1="${baseY}" x2="${width - PAD_R}" y2="${baseY}" stroke="#e5e7eb" stroke-width="1"/>` +
+      `<text x="${PAD_L + plotW / 2}" y="${PAD_T + plotH / 2 + 4}" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#6b7280">${esc(opts.emptyNote ?? "no readings in this window")}</text>` +
+      `</svg>`
+    );
+  }
   if (!stats) {
     return (
       head +
