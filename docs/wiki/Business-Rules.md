@@ -1300,7 +1300,9 @@ raises only the wan2 alert.
 This applies to SD-WAN packet loss, latency, jitter and member state. An
 overlay's alert is held back while its underlay is over the same line in the
 same automation, or while any automation has an open alert on the same
-condition about the underlay. Polaris learns which port a tunnel rides from
+condition about the underlay. It is also held back while the underlay is
+down: its port is down, or it is dead on any health check. That holds
+whatever health checks the automation is narrowed to. Polaris learns which port a tunnel rides from
 the FortiGate's IPsec configuration. An overlay alert that was already open
 clears as *superseded*, with no "resolved" notification: the overlay has not
 recovered, its parent's alert covers it. An overlay whose underlay is
