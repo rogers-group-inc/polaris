@@ -67,6 +67,8 @@ Vanilla JavaScript SPA served from `/public/`. **No build step** — plain ES mo
 | Module | Global | Owns |
 |---|---|---|
 | `public/js/condition-builder.js` | `PolarisConditionBuilder` | the nested AND/OR device-filter builder (automations wizard, address book, mass pinning, tag auto-assign) |
+| `public/js/scope-vocabulary.js` | `PolarisScopeVocabulary` | the automations' device-selection field set + value suggestions, shared by the wizard's Devices step and the Alert Groups editor — use it, not a new `valueOptions` copy, for any surface that picks devices with the automation vocabulary |
+| `public/js/alert-groups.js` | `PolarisAlertGroups` | the Automations page's Alert Groups tab (business rule 75) — list, editor, delete confirm |
 | `public/js/automations-wizard.js` | `openAutomationWizard` | the 6-step automation wizard; loads on every page that loads `assets.js` |
 | `public/js/automations-portability.js` | `PolarisAutomationPortability` | automation export / import / view code |
 | `public/js/automations-wizard.js` | `PolarisAutomationSentences` | trigger/reset prose — one phrasing for the list AND the editor |

@@ -23,12 +23,13 @@ Polaris a monitoring tool rather than an inventory.
 
 ## The page
 
-Four tabs:
+Five tabs:
 
 | Tab | Holds |
 |---|---|
 | **Automations** | the list, with an enable toggle per row |
 | **Delivery** | the [delivery-channel registry](Delivery-Channels) |
+| **Alert Groups** | automations whose alerts about one device become one alert — [below](#alert-groups) |
 | **Scripts** | the [script registry](Automation-Scripts) |
 | **Address Book** | [contacts and the directory](Address-Book) |
 
@@ -126,6 +127,54 @@ step's lead line says which case you are in. `event` automations **are** scoped
 since 2026-09 ([rule 46](Business-Rules#rule-46)).
 
 ---
+
+## Alert groups
+
+An **alert group** is a named set of automations whose alerts about the same
+device become **one** alert ([rule 75](Business-Rules#rule-75)). A switch whose
+power supply fails can trip a PoE-fault automation on eight ports and an
+uplink-down automation at the same moment; in a group that is one alert naming
+everything wrong, one acknowledgement, and one page at 02:00 instead of three.
+
+The split is the whole idea:
+
+- **Each automation still decides what counts as a problem** — its devices,
+  trigger, holds, severity bands and reset are unchanged.
+- **The group decides who hears about it** — its recipients, escalation chain,
+  reminders, acknowledge-note policy and email. While an automation is in a
+  group, **its own recipients are not used** for alerts the group governs.
+
+The editor holds a name, an **Active** switch, a **Which devices** filter, the
+member list, the alert text, **Require a note when acknowledging** and
+**Remind while unhandled**.
+
+- **Members.** Every automation is listed; one that cannot join says why rather
+  than being left out. An automation can be in one group at a time, and only
+  one that watches something it can keep checking — a metric, a state, or a
+  multi-condition device trigger. Event and change automations cannot join:
+  they fire on a single moment, so Polaris could never tell when their part in
+  a shared alert had ended.
+- **Which devices.** Narrows where the folding applies, never what a member
+  watches. On a device outside the filter, a member alerts on its own exactly
+  as it would outside the group — which is how one set of automations can serve
+  several groups routed to different people.
+- **Recipients are copied once, from the first member that has any**, the first
+  time the group is saved with none of its own — together with that
+  automation's escalation chain, email layout and reset actions. Changing that
+  automation afterwards does **not** change the group. This screen cannot edit
+  recipients or escalation yet; change them through the [API](API).
+- **Turning a group off** does not turn its automations off: they go back to
+  alerting on their own. **Deleting** one does not delete them either, and the
+  confirmation names any member that has no recipients of its own and would go
+  quiet.
+
+Adding or removing a member, changing the device filter, and turning off or
+deleting a group all **end the affected live alerts**; the next check raises
+them again under whoever now delivers them.
+
+Separately from groups, a single automation that watches something per
+component can raise **one alert per device** on its own — see
+[Actions and recipients](Automation-Actions#one-alert-per-device).
 
 ## Precedence — the single most important behaviour
 
