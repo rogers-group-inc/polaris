@@ -86,7 +86,17 @@ vi.mock("../../src/db.js", () => ({
         if (select?.asset) return rows.map(() => ({ asset: { managedAgent: null } }));
         return rows;
       }),
-      groupBy: vi.fn(async () => []),
+      groupBy: vi.fn(async ({ by, where }: any) => {
+        const groups = new Map<string, any>();
+        for (const s of db.sources.filter((r) => matchWhere(r, where))) {
+          const key = by.map((k: string) => String(s[k])).join("|");
+          const g = groups.get(key) ?? { ...Object.fromEntries(by.map((k: string) => [k, s[k]])), _count: { _all: 0 }, _max: { lastSampleAt: null } };
+          g._count._all++;
+          if (s.lastSampleAt && (!g._max.lastSampleAt || s.lastSampleAt > g._max.lastSampleAt)) g._max.lastSampleAt = s.lastSampleAt;
+          groups.set(key, g);
+        }
+        return [...groups.values()];
+      }),
       createMany: vi.fn(async ({ data }: any) => {
         for (const d of data) db.sources.push({ id: `src${++seq}`, ...d });
         return { count: data.length };
@@ -126,6 +136,7 @@ import {
   createCheck,
   updateCheck,
   setCheckEnabled,
+  getCheck,
   serverCheckDefinitions,
   POLARIS_SERVER_SUBJECT,
   testCheck,
@@ -531,5 +542,40 @@ describe("authentication — server-only, and only with a credential you may use
     db.checks.push({ id: "auth", name: "auth", scope: { allAssets: true }, assetIds: ["a1"], runOnServer: true, credentialId: "c1" });
     await reconcilePathCheckSources("auth");
     expect(db.sources.map((s) => s.assetId)).toEqual([null]);
+  });
+});
+
+describe("sourceFilter — the wizard's finder, never membership", () => {
+  const TREE = { op: "and", children: [{ field: "tag", op: "has", value: "Camera Station" }] } as any;
+  it("keeps only the condition, and only on an agent-run check", async () => {
+    const n = await normalizeCheckInput({ ...base, scope: {}, assetIds: ["a1"], sourceFilter: { condition: TREE, allAssets: true } as any });
+    expect(n.sourceFilter).toEqual({ condition: TREE });
+    const s = await normalizeCheckInput({ ...base, scope: {}, runOnServer: true, sourceFilter: { condition: TREE } as any });
+    expect(s.sourceFilter).toBeNull();
+  });
+  it("never widens who runs the check", async () => {
+    db.agents = [{ id: "ma1", assetId: "a1", installStatus: "active" }, { id: "ma2", assetId: "a2", installStatus: "active" }];
+    loadScopeAssetIds.mockResolvedValue(["a1", "a2"]);
+    db.checks.push({ id: "f1", name: "f1", scope: {}, assetIds: ["a1"], runOnServer: false, credentialId: null, sourceFilter: { condition: TREE } });
+    await reconcilePathCheckSources("f1");
+    expect(db.sources.map((s) => s.assetId)).toEqual(["a1"]);
+  });
+});
+
+describe("check summaries — the Result column's inputs", () => {
+  it("counts a failing source that still got an HTTP answer as unexpected, apart from one that got none", async () => {
+    db.checks.push({ id: "k1", name: "k1" });
+    const at = new Date(1000);
+    db.sources.push(
+      { id: "s1", checkId: "k1", assetId: "a1", lastOk: true, lastHttpStatus: 200, lastSampleAt: at },
+      { id: "s2", checkId: "k1", assetId: "a2", lastOk: false, lastHttpStatus: 503, lastSampleAt: at },
+      { id: "s3", checkId: "k1", assetId: "a3", lastOk: false, lastHttpStatus: null, lastSampleAt: new Date(2000) },
+      { id: "s4", checkId: "k1", assetId: "a4", lastOk: null, lastHttpStatus: null, lastSampleAt: null },
+    );
+    expect(await getCheck("k1")).toMatchObject({ sourceCount: 4, okCount: 1, failCount: 2, unexpectedCount: 1, lastRunAt: new Date(2000) });
+  });
+  it("reports zeros for a check with no sources", async () => {
+    db.checks.push({ id: "k2", name: "k2" });
+    expect(await getCheck("k2")).toMatchObject({ sourceCount: 0, okCount: 0, failCount: 0, unexpectedCount: 0, lastRunAt: null });
   });
 });

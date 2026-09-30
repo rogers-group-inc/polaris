@@ -109,6 +109,23 @@ d("path checks", () => {
     expect(await waitForEventCount("path_check.created", 1, checkId)).toBe(1);
   });
 
+  it("runs a picked-hosts check on its pins only, stores the finder filter, and previews every match id", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const finder = { condition: { op: "and", children: [{ field: "tag", operator: "has", value: "it-conn" }] } };
+    const preview = await agent.post("/api/v1/path-checks/preview-sources").set("X-CSRF-Token", csrf).send({ scope: finder, assetIds: [] });
+    expect(preview.status).toBe(200);
+    expect(preview.body.ids).toEqual([hostId]);
+    const res = await agent.post("/api/v1/path-checks").set("X-CSRF-Token", csrf).send({
+      name: "IT path-check picked", kind: "icmp", target: "10.20.30.1", scope: {}, assetIds: [hostId], sourceFilter: finder,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.sourceFilter).toEqual(finder);
+    expect(res.body.scope).toEqual({});
+    const src = await prisma.pathCheckSource.findMany({ where: { checkId: res.body.id } });
+    expect(src.map((s) => [s.assetId, s.explicit])).toEqual([[hostId, true]]);
+    await agent.delete("/api/v1/path-checks/" + res.body.id).set("X-CSRF-Token", csrf);
+  });
+
   it("refuses a loopback target", async () => {
     const { agent, csrf } = await authedAgent(app);
     const res = await agent.post("/api/v1/path-checks").set("X-CSRF-Token", csrf).send({

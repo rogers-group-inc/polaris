@@ -248,7 +248,10 @@ describe that asset.
 - **Hosts** are the check's `scope` (the automation device-filter tree,
   `{ "allAssets": true }` for every agent host) plus pinned `assetIds`, limited
   to hosts running an active agent. `preview-sources` dry-runs that selection
-  without saving.
+  without saving; its `ids` lists every selected host (up to 2000), past the
+  100 rows it describes. `sourceFilter` (`{ condition }` or `null`) is the
+  filter the UI used to find hosts before ticking them into `assetIds`; it is
+  stored for display only and never decides who runs the check.
 - **The Polaris server** runs the check too when `runOnServer` is `true`. One
   of `scope`, `assetIds` and `runOnServer` must select something. Setting it,
   changing what a server-run check sends, or re-enabling one also needs
