@@ -57,6 +57,18 @@ import {
   updateTierMetSince,
   sustainedSeverity,
   tierMetSinceChanged,
+  // Grouped alerts (business rule 75) — the pure fold layer. Everything that
+  // DECIDES lives there and is unit-tested; this file does the I/O.
+  type AlertMember,
+  ruleGroupsByAsset,
+  alertScopeOf,
+  groupKeyOf,
+  mergeMembers,
+  markMemberLeft,
+  activeMembers,
+  groupSeverity,
+  primaryMember,
+  renderMemberList,
   CHANGE_TYPE_ACTIONS,
   hwSensorFilterMatches,
   METRIC_META,
@@ -96,6 +108,8 @@ import {
   ruleAlertsWhenDependencyDown,
   buildShadowIndex,
   isAssetShadowed,
+  alertOwnerOf,
+  type DeliveryOwner,
   type ShadowIndex as ShadowIndexOf,
 } from "./notificationTypes.js";
 import { scopeMatchesAsset, type ScopeAsset } from "./notificationRuleService.js";
@@ -214,6 +228,14 @@ interface DbRule {
   /** Re-send while unhandled; null = never repeats. Read by ruleWantsContext —
    *  a repeat-only rule still needs its templateCtx snapshot. */
   repeat: RepeatConfig | null;
+  /** Consolidate this rule's per-component alerts into one alert per device
+   *  (business rule 75). Never read directly — go through `ruleGroupsByAsset`,
+   *  which also checks the trigger actually reports per component. */
+  groupByAsset: boolean;
+  /** The AlertGroup this rule delivers through, or null. Membership implies
+   *  the per-component fold AND folds this rule's alerts together with every
+   *  other member's on the same device. */
+  alertGroupId: string | null;
 }
 
 /** Best-effort action fan-out — never breaks rule evaluation. (executeActions
@@ -2059,15 +2081,29 @@ interface CompositeFireInfo {
 }
 
 /** The reading-derived template parts (sans assetDetail/message, added by callers). */
-function readingContextParts(rule: DbRule, reading: Reading, now: Date, composite?: CompositeFireInfo): TemplateContextParts {
+function readingContextParts(
+  rule: DbRule,
+  reading: Reading,
+  now: Date,
+  composite?: CompositeFireInfo,
+  /** The contributions on a GROUPED alert (business rule 75). When present,
+   *  {dimension} names the whole set rather than this one reading's component
+   *  — the alert IS about all of them, and a sentence naming one of eight
+   *  faulted ports would be the storm's problem in a single message. */
+  members?: AlertMember[] | null,
+): TemplateContextParts {
   const trigger = rule.trigger;
   const base = {
     asset: reading.hostname || reading.assetId || "host",
-    dimension: reading.dimLabel || "",
+    dimension: members?.length ? renderMemberList(members) : (reading.dimLabel || ""),
     // What that component IS, so the email can label it rather than leaving the
     // port name buried mid-sentence: "Interface — port12 (Indoor AP)". Blank on
     // a whole-device alert, where the row prunes itself away.
-    dimensionNoun: reading.dimLabel ? dimensionNounOf(trigger) : "",
+    //
+    // A GROUPED alert names several components of the same KIND (they all came
+    // from the same per-dimension trigger), so the noun still applies — and it
+    // reads correctly in the plural position the list puts it in.
+    dimensionNoun: (members?.length || reading.dimLabel) ? dimensionNounOf(trigger) : "",
     severity: rule.severity,
     time: now,
     link: notificationsPageUrl(),
@@ -2079,8 +2115,18 @@ function readingContextParts(rule: DbRule, reading: Reading, now: Date, composit
     triggerSummary: triggerSummary({
       trigger: trigger as never,
       value: reading.value,
-      dimensionLabel: reading.dimLabel || null,
+      // On a grouped alert the sentence names every affected component, for
+      // the same reason {dimension} does.
+      dimensionLabel: members?.length ? renderMemberList(members) : (reading.dimLabel || null),
     }),
+    // Grouped-alert tokens. Present on every alert so a template is never
+    // broken by them, and "1" / the single component's own label on an
+    // ungrouped one — which is exactly what they mean there.
+    dimensionCount: String(members?.length ? activeMembers(members).length : (reading.dimLabel ? 1 : 0)),
+    dimensionFirst: members?.length
+      ? (primaryMember(members)?.label ?? "")
+      : (reading.dimLabel || ""),
+    dimensionList: members?.length ? renderMemberList(members, Number.MAX_SAFE_INTEGER) : (reading.dimLabel || ""),
   };
   if (trigger.type === "composite") {
     // No single metric/value/threshold exists — {metric} carries the
@@ -2116,7 +2162,14 @@ function applyFollowUpPolicy(parts: TemplateContextParts, rule: DbRule, severity
 }
 
 /** Render the in-app message from a built context (default string when no template). */
-function renderMessage(rule: DbRule, reading: Reading, ctx: Record<string, string>): string {
+function renderMessage(
+  rule: DbRule,
+  reading: Reading,
+  ctx: Record<string, string>,
+  /** The contributions on a grouped alert — the default sentence then names
+   *  the set and says how many, instead of naming one of them. */
+  members?: AlertMember[] | null,
+): string {
   if (rule.messageTemplate && rule.messageTemplate.trim()) {
     const own = renderNotificationTemplate(rule.messageTemplate, ctx);
     // Business rule 78 — a custom template cannot have anticipated this alert,
@@ -2130,6 +2183,13 @@ function renderMessage(rule: DbRule, reading: Reading, ctx: Record<string, strin
       return `${own} — ${ctx["dependency.headline"] || "DEPENDENCY DOWN"}`;
     }
     return own;
+  }
+  if (members?.length) {
+    const active = activeMembers(members);
+    const noun = active.length === 1 ? "" : ` (${active.length})`;
+    const list = renderMemberList(members);
+    const where = list ? ` [${list}]${noun}` : "";
+    return `${rule.name}: ${ctx["asset"]}${where} — ${ctx["metric"]} = ${ctx["value"]} (threshold ${ctx["threshold"]})`;
   }
   const dim = reading.dimLabel ? ` [${reading.dimLabel}]` : "";
   if (rule.trigger.type === "composite") {
@@ -2164,6 +2224,20 @@ function ruleWantsContext(rule: DbRule): boolean {
   // allRepeatsOf, not `rule.repeat`: an automation that repeats ONLY at one
   // severity band has a null rule-level repeat and still needs the snapshot.
   return !!(rule.emailComposition || ruleHasAnyEscalation(rule) || allRepeatsOf(rule).length > 0);
+}
+
+/** A grouped alert's snapshot answers to its GROUP's delivery too (business
+ *  rule 75): the group may escalate, remind or compose an email where its
+ *  member would not, and the sweep renders those from `templateCtx`. Whether
+ *  the group governs this device is only settled at delivery, so an automation
+ *  in any group snapshots; the cost stays on grouped alerts. */
+function groupWantsContext(rule: DbRule): boolean {
+  return !!rule.alertGroupId || ruleWantsContext(rule);
+}
+
+/** Same reasoning for `{asset.*}`: the group's email layout may name them. */
+function groupWantsAssetDetail(rule: DbRule): boolean {
+  return !!rule.alertGroupId || ruleWantsAssetDetail(rule);
 }
 
 function ruleWantsAssetDetail(rule: DbRule): boolean {
@@ -2290,16 +2364,24 @@ async function clearVanishedStates(
   }
   for (const { st, reason } of vanished) {
     if (st.state === "firing") {
-      await clearActiveNotification(st, "system:out-of-scope");
+      // On a GROUPED alert (business rule 75) most departures are not clears:
+      // one port of eight going out of scope leaves the alert standing. Ask
+      // before logging, so the audit trail does not say "Cleared" about an
+      // alert that is still up — the Event vocabulary is what an operator
+      // reads back when working out why an alert did or did not end.
+      const alsoFiring = await stillFiringElsewhere(st, rule);
+      await clearActiveNotification(st, "system:out-of-scope", rule);
       await logEvent({
-        action: "notification.out_of_scope",
+        action: alsoFiring ? "notification.member_left" : "notification.out_of_scope",
         resourceType: "notification",
         resourceId: st.notificationId ?? undefined,
         resourceName: rule.name,
         actor: "system:notification-engine",
-        message: reason === "scope"
-          ? `Cleared: ${rule.name} — asset is no longer covered by this automation's scope`
-          : `Cleared: ${rule.name} — ${st.dimensionKey || "the dimension"} is no longer reported or monitored`,
+        message: alsoFiring
+          ? `${rule.name}: ${st.dimensionKey || "a component"} is no longer reported or monitored — it left this alert`
+          : reason === "scope"
+            ? `Cleared: ${rule.name} — asset is no longer covered by this automation's scope`
+            : `Cleared: ${rule.name} — ${st.dimensionKey || "the dimension"} is no longer reported or monitored`,
         details: { ruleId: rule.id, assetId: st.assetId, dimension: st.dimensionKey, reason },
       }).catch(() => {});
     }
@@ -2339,7 +2421,17 @@ export function evaluationOrder<T extends { trigger: unknown }>(rules: T[]): T[]
   return rules.map((r, i) => ({ r, i })).sort((a, b) => late(a.r) - late(b.r) || a.i - b.i).map((x) => x.r);
 }
 
-async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): Promise<void> {
+async function evaluateThresholdRule(
+  rule: DbRule,
+  shadowIndex?: ShadowIndex,
+  /** The TICK's pending sends (business rule 75). Owned by
+   *  evaluateAllNotificationRules and drained once every rule has run, so a
+   *  grouped alert sends once however many contributions arrived. */
+  pendingSends: PendingSends = new Map(),
+  /** The TICK's live-alert index (business rule 75). Only an AlertGroup member
+   *  needs it: its alert may have been opened by a different automation. */
+  tickIndex: TickAlertIndex | null = null,
+): Promise<void> {
   const trigger = rule.trigger;
   let readings: Reading[] = [];
   // Assets silenced this tick (maintenance window / dependency-suppressed).
@@ -2447,6 +2539,17 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
   // dedicated pass after this loop, which is why the firing branches below
   // hand recovery off rather than acting on the trigger's own reading.
   const resetTree = rule.reset.mode === "condition" ? (rule.reset.condition ?? null) : null;
+  // GROUPED ALERTS (business rule 75). When this rule consolidates per device,
+  // fire() stops writing and starts BUFFERING: the eight ports a failing PSU
+  // faults land in one `readings` loop, and a read-modify-write per reading
+  // would be eight reads, eight updates and eight sends on precisely the tick
+  // the feature exists to quieten. flushGroupFires (after the loop) turns each
+  // asset's buffer into ONE alert.
+  //
+  // `liveByAsset` is seeded from the `states` snapshot already loaded above, so
+  // finding the alert a contribution should join costs ZERO extra queries.
+  const groupBuf: GroupBuffer | null = ruleGroupsByAsset(rule) ? new Map() : null;
+  const liveByAsset = await liveAlertsByAsset(rule, states, tickIndex);
 
   for (const reading of readings) {
     const key = `${reading.assetId || ""}|${reading.dimKey}`;
@@ -2487,7 +2590,14 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
       runs && runs.stateful && runs.advanced
         ? { metRun: runs.metRun, clearRun: runs.clearRun, lastReadingAt: reading.readingAt ?? now }
         : {};
-    const fireOpts = sustainedSev ? { severity: sustainedSev, actions: tierForSeverity(rule, sustainedSev).actions } : undefined;
+    // The grouping buffer rides fireOpts so the six fire() sites below stay
+    // untouched — every one of them already threads it.
+    const fireOpts = sustainedSev || groupBuf
+      ? {
+        ...(sustainedSev ? { severity: sustainedSev, actions: tierForSeverity(rule, sustainedSev).actions } : {}),
+        ...(groupBuf ? { group: groupBuf } : {}),
+      }
+      : undefined;
 
     if (meets) {
       // Business rule 78 — the alert's flavour follows the asset's suppression
@@ -2623,6 +2733,18 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
     }
   }
 
+  // GROUPED ALERTS (business rule 75). Every contribution that crossed into
+  // firing this tick is in the buffer; turn each asset's into ONE alert.
+  //
+  // Placed HERE, straight after the readings loop, for one hard reason: the
+  // custom-reset pass further down re-reads firing rows from the database
+  // rather than from the pre-loop snapshot, so these state rows have to exist
+  // by then. The sweeps between the two (suppressed-pending, carve-out,
+  // device-down, vanished-state) all read `states`, which is the snapshot —
+  // they cannot see these rows and have no business with them: a contribution
+  // that only just fired has not gone out of scope or been superseded.
+  if (groupBuf?.size) await flushGroupFires(rule, groupBuf, liveByAsset, now, pendingSends, tickIndex);
+
   // Suppressed assets produced no readings this tick. Reset their `pending`
   // rows — the debounce restarts from scratch after the window, a dropped
   // reading being evidence of nothing. Their `firing` rows are left alone:
@@ -2647,7 +2769,7 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
     const allCores = coreSupersededIds.has(st.assetId);
     if (!allCores && !shadowedIds.has(st.assetId)) continue;
     if (st.state === "firing") {
-      await clearActiveNotification(st, "system:superseded");
+      await clearActiveNotification(st, "system:superseded", rule);
       await prisma.notificationRuleState.update({
         where: { id: st.id },
         data: { state: "clear", conditionMetSince: null, recoveredSince: null, notificationId: null },
@@ -2698,7 +2820,7 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
       : saturatedIds.has(st.assetId) ? "reading-saturated" : null;
     if (!handoff) continue;
     if (st.state === "firing") {
-      await clearActiveNotification(st, `system:${handoff}`);
+      await clearActiveNotification(st, `system:${handoff}`, rule);
       await prisma.notificationRuleState.update({
         where: { id: st.id },
         data: { state: "clear", conditionMetSince: null, recoveredSince: null, notificationId: null, bandMetSince: Prisma.DbNull, ...CLEARED_RUNS },
@@ -2735,7 +2857,7 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
     if (parent === undefined) continue;
     seen.add(key);
     if (st.state === "firing") {
-      await clearActiveNotification(st, "system:superseded");
+      await clearActiveNotification(st, "system:superseded", rule);
       await prisma.notificationRuleState.update({
         where: { id: st.id },
         data: { state: "clear", conditionMetSince: null, recoveredSince: null, notificationId: null, bandMetSince: Prisma.DbNull, ...CLEARED_RUNS },
@@ -2821,13 +2943,51 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
   // recovery reading (e.g. the asset stopped reporting).
   if (rule.reset.mode === "timed" && rule.reset.afterSec) {
     const afterSec = rule.reset.afterSec;
-    for (const st of states) {
-      if (st.state === "firing" && st.firedAt && now.getTime() - st.firedAt.getTime() >= afterSec * 1000) {
-        // A timed clear may have no reading at all (the asset stopped
-        // reporting), so the reset context is built from the state row.
-        await fireReset(rule, readingFromState(st), st, "alert timed out", now);
-        await clearActiveNotification(st, "system:timed");
-        await prisma.notificationRuleState.update({ where: { id: st.id }, data: { state: "clear", conditionMetSince: null, recoveredSince: null, notificationId: null, bandMetSince: Prisma.DbNull, ...CLEARED_RUNS } });
+    if (ruleGroupsByAsset(rule)) {
+      // GROUPED ALERTS (business rule 75): a timed reset times the ALERT, not
+      // each contribution.
+      //
+      // `firedAt` is per state row and contributions join on different ticks,
+      // so timing them individually would expire the first-joined port while
+      // seven were still faulted — the alert would shrink port by port instead
+      // of ending, and each departure would mail its own reset. The alert's own
+      // `triggeredAt` is the only clock that means "this alert has been up for
+      // an hour", which is what the operator asked for.
+      const byAlert = new Map<string, typeof states>();
+      for (const st of states) {
+        if (st.state !== "firing" || !st.notificationId) continue;
+        const rows = byAlert.get(st.notificationId) ?? [];
+        rows.push(st);
+        byAlert.set(st.notificationId, rows);
+      }
+      if (byAlert.size) {
+        const alerts = await prisma.notification.findMany({
+          where: { id: { in: [...byAlert.keys()] }, cleared: false },
+          select: { id: true, triggeredAt: true },
+        });
+        for (const a of alerts) {
+          if (now.getTime() - a.triggeredAt.getTime() < afterSec * 1000) continue;
+          const rows = byAlert.get(a.id) ?? [];
+          if (!rows.length) continue;
+          // One reset for the alert, from its lead contribution — not one per
+          // component.
+          await fireReset(rule, readingFromState(rows[0]!), rows[0]!, "alert timed out", now);
+          await clearAlertRow(rows[0]!, "system:timed");
+          await prisma.notificationRuleState.updateMany({
+            where: { id: { in: rows.map((r) => r.id) } },
+            data: { state: "clear", conditionMetSince: null, recoveredSince: null, notificationId: null, bandMetSince: Prisma.DbNull, ...CLEARED_RUNS },
+          });
+        }
+      }
+    } else {
+      for (const st of states) {
+        if (st.state === "firing" && st.firedAt && now.getTime() - st.firedAt.getTime() >= afterSec * 1000) {
+          // A timed clear may have no reading at all (the asset stopped
+          // reporting), so the reset context is built from the state row.
+          await fireReset(rule, readingFromState(st), st, "alert timed out", now);
+          await clearActiveNotification(st, "system:timed", rule);
+          await prisma.notificationRuleState.update({ where: { id: st.id }, data: { state: "clear", conditionMetSince: null, recoveredSince: null, notificationId: null, bandMetSince: Prisma.DbNull, ...CLEARED_RUNS } });
+        }
       }
     }
   }
@@ -3165,7 +3325,13 @@ async function applySustainedRecovery(
   // else: recovered but not sustained long enough yet — keep firing.
 }
 
-async function evaluateCompositeRule(rule: DbRule): Promise<void> {
+async function evaluateCompositeRule(
+  rule: DbRule,
+  /** The TICK's pending sends and live-alert index (business rule 75) — a
+   *  composite may be a member of an AlertGroup. */
+  pendingSends: PendingSends = new Map(),
+  tickIndex: TickAlertIndex | null = null,
+): Promise<void> {
   const trigger = rule.trigger as CompositeTrigger;
   const suppressedIds = new Set<string>();
   let scopeAssets: ScopeAssetRow[] = [];
@@ -3212,6 +3378,14 @@ async function evaluateCompositeRule(rule: DbRule): Promise<void> {
     }
   }
 
+  // GROUPED ALERTS (business rule 75). A composite is the natural whole-device
+  // contribution to an AlertGroup — it already fires once per asset at
+  // dimensionKey "", which is exactly one contribution. It can never group on
+  // its OWN (the per-rule checkbox refuses it as redundant), so the buffer is
+  // armed only for a group member.
+  const groupBuf: GroupBuffer | null = rule.alertGroupId && ruleGroupsByAsset(rule) ? new Map() : null;
+  const liveByAsset = await liveAlertsByAsset(rule, states, tickIndex);
+
   // Assets actually evaluated this tick (≥1 leaf reading) — the composite
   // analogue of the per-reading path's `seen` set, for the vanished sweep.
   const evaluatedIds = new Set<string>();
@@ -3256,7 +3430,7 @@ async function evaluateCompositeRule(rule: DbRule): Promise<void> {
     if (outcome.meets) {
       if (!st || st.state === "clear") {
         if (holdPolls > 0) {
-          if (stepped && stepped.run >= holdPolls) await fire(rule, reading, null, now, compositeFireInfo(outcome));
+          if (stepped && stepped.run >= holdPolls) await fire(rule, reading, null, now, compositeFireInfo(outcome), groupBuf ? { group: groupBuf } : undefined);
           else await upsertState(rule.id, reading, "pending", {
             conditionMetSince: now, lastValue: null,
             metRun: stepped?.run ?? 1, clearRun: 0, lastReadingAt: outcome.readingAt ?? now,
@@ -3264,11 +3438,11 @@ async function evaluateCompositeRule(rule: DbRule): Promise<void> {
         } else if (trigger.forDurationSec > 0) {
           await upsertState(rule.id, reading, "pending", { conditionMetSince: now, lastValue: null });
         } else {
-          await fire(rule, reading, null, now, compositeFireInfo(outcome));
+          await fire(rule, reading, null, now, compositeFireInfo(outcome), groupBuf ? { group: groupBuf } : undefined);
         }
       } else if (st.state === "pending") {
         if (holdPolls > 0) {
-          if (stepped && stepped.run >= holdPolls) await fire(rule, reading, null, now, compositeFireInfo(outcome));
+          if (stepped && stepped.run >= holdPolls) await fire(rule, reading, null, now, compositeFireInfo(outcome), groupBuf ? { group: groupBuf } : undefined);
           else if (stepped?.advanced) {
             await prisma.notificationRuleState.update({
               where: { id: st.id },
@@ -3278,7 +3452,7 @@ async function evaluateCompositeRule(rule: DbRule): Promise<void> {
         } else {
           const since = st.conditionMetSince ?? now;
           if (now.getTime() - since.getTime() >= trigger.forDurationSec * 1000) {
-            await fire(rule, reading, null, now, compositeFireInfo(outcome));
+            await fire(rule, reading, null, now, compositeFireInfo(outcome), groupBuf ? { group: groupBuf } : undefined);
           }
           // else keep pending
         }
@@ -3299,6 +3473,11 @@ async function evaluateCompositeRule(rule: DbRule): Promise<void> {
       await prisma.notificationRuleState.update({ where: { id: st.id }, data: { state: "clear", conditionMetSince: null } });
     }
   }
+
+  // GROUPED ALERTS (business rule 75): land this composite's contributions
+  // before the sweeps below, for the same reason the threshold path does —
+  // a state row must never be left `firing` with no notification behind it.
+  if (groupBuf?.size) await flushGroupFires(rule, groupBuf, liveByAsset, now, pendingSends, tickIndex);
 
   // Vanished states: assets that left the rule's scope (composite state lives
   // at dimensionKey "", so only the scope reason applies here — an evaluated
@@ -3552,8 +3731,22 @@ function severityLevel(severity: string): "error" | "warning" | "info" {
 
 /** Fan the alert's actions out to the delivery pipeline (shared by initial fire
  *  + band escalation/de-escalation + resolved). */
-async function enqueueAlertActions(notifId: string, actions: AutomationAction[], ctx: Record<string, string>, rule: DbRule, reading: Reading): Promise<void> {
+async function enqueueAlertActions(
+  notifId: string,
+  actions: AutomationAction[],
+  ctx: Record<string, string>,
+  rule: DbRule,
+  reading: Reading,
+  /** Set when this send UPDATES a grouped alert that gained a contribution
+   *  (business rule 75) rather than opening one. */
+  growth?: { growth: true; count: number },
+  /** The AlertGroup delivering this alert, when one governs it (business rule
+   *  75). Supplies the email layout; the caller has already swapped in its
+   *  actions. Provenance (ruleId, ruleName) stays the AUTOMATION's. */
+  owner?: DeliveryOwner | null,
+): Promise<void> {
   await executeActionsSafe(notifId, actions, ctx, {
+    ...(growth ? { growth: { count: growth.count } } : {}),
     scopeRegionTags: scopeRegionTagsOf(rule.scope),
     // The triggering asset's own region tags (stripped) — recipientDeviceRegion
     // routing. Same snapshot fire() writes to Notification.regionTags.
@@ -3561,9 +3754,535 @@ async function enqueueAlertActions(notifId: string, actions: AutomationAction[],
     assetId: reading.assetId || null,
     ruleId: rule.id,
     ruleName: rule.name,
-    ruleEmailComposition: rule.emailComposition,
+    ruleEmailComposition: owner ? owner.emailComposition : rule.emailComposition,
     actor: "system:notification-engine",
   });
+}
+
+/** What `alertOwnerOf` needs of an AlertGroup to answer for its delivery. */
+const GROUP_OWNER_SELECT = {
+  id: true, name: true, enabled: true, requireAckNote: true,
+  actions: true, escalation: true, repeat: true, emailComposition: true, resetActions: true, messageTemplate: true,
+} as const;
+
+/**
+ * The AlertGroup that DELIVERS these alerts, per alert, or nothing (business
+ * rule 75: a group owns delivery, its members own detection).
+ *
+ * Asked of the ALERT, never of the automation: `alertGroupId` is stamped only
+ * where the group governs the device, so a member firing on a device outside
+ * the group's scope still delivers on its own — and a disabled group owns
+ * nothing (`alertOwnerOf`). Zero queries for an automation in no group, which
+ * is every automation in an install that has not made one; one query for a
+ * whole drain pass otherwise.
+ */
+async function groupOwnersOf(notificationIds: string[]): Promise<Map<string, DeliveryOwner>> {
+  const out = new Map<string, DeliveryOwner>();
+  if (notificationIds.length === 0) return out;
+  const rows = await prisma.notification.findMany({
+    where: { id: { in: notificationIds }, alertGroupId: { not: null } },
+    select: { id: true, severity: true, alertGroup: { select: GROUP_OWNER_SELECT } },
+  });
+  for (const r of rows) {
+    const owner = alertOwnerOf({ severity: r.severity, alertGroup: r.alertGroup });
+    if (owner?.kind === "group") out.set(r.id, owner);
+  }
+  return out;
+}
+
+async function groupOwnerOf(rule: DbRule, notificationId: string): Promise<DeliveryOwner | null> {
+  if (!rule.alertGroupId) return null;
+  return (await groupOwnersOf([notificationId])).get(notificationId) ?? null;
+}
+
+/** The owner's own actions, for a send it delivers. `EscalatableAction` is a
+ *  superset of the plain action shape; the chains on it run from the sweep. */
+function ownerActions(owner: DeliveryOwner): AutomationAction[] {
+  return (owner.actions ?? []) as AutomationAction[];
+}
+
+// ─── Grouped alerts (business rule 75) ──────────────────────────────────────
+//
+// One alert may name many parts of one device, and it ends only when the last
+// of them does. A CONTRIBUTION is (automation, component) on an asset.
+//
+// The state machine is UNCHANGED: NotificationRuleState stays keyed
+// (rule, asset, dimension) and every hold, band, hysteresis, poll count and
+// pin gate still runs per contribution. Only the Notification row is shared —
+// many firing state rows point at one of them. That is what keeps this feature
+// out of the hot path: the whole of it is behind `ruleGroupsByAsset`, false for
+// every rule in an install that has not opted in.
+//
+// Two sources of truth, and the direction between them is load-bearing:
+//   - the STATE ROWS are the live truth. "Was that the last contribution?" is
+//     asked of them with a count, never of the members snapshot;
+//   - `Notification.members` is a RENDER snapshot, because the email renders at
+//     delivery time and the alert page renders after the clear.
+
+/** One buffered contribution, waiting for the flush to write it. */
+interface GroupFire {
+  reading: Reading;
+  lastValue: number | null;
+  severity: string;
+  actions: AutomationAction[];
+  bandMetSince: Record<string, number> | null;
+}
+
+/** assetId → the contributions that crossed into firing on this tick. */
+type GroupBuffer = Map<string, GroupFire[]>;
+
+/** What the tick still owes an alert once every rule has been evaluated.
+ *
+ *  Sends are drained ONCE per tick rather than once per flush, so contributions
+ *  that arrive in the same tick produce ONE message however many of them there
+ *  are. In this phase that only matters within a rule; it is built this way
+ *  because the moment alerts can be folded ACROSS automations, a PoE fault and
+ *  a temperature alarm landing together must not become a fire plus a growth. */
+interface PendingSend {
+  kind: "fire" | "growth";
+  notificationId: string;
+  rule: DbRule;
+  /** The contribution the message leads with (charts, LLDP block, {value}). */
+  reading: Reading;
+  ctx: Record<string, string>;
+  actions: AutomationAction[];
+  severity: string;
+  /** How many contributions the alert names as of this send. */
+  count: number;
+}
+type PendingSends = Map<string, PendingSend>;
+
+/**
+ * The TICK's index of live grouped alerts, keyed by `groupKey`.
+ *
+ * Only an AlertGroup needs it. A rule folding its own components can find its
+ * alert in the state rows it has already loaded — a contribution and the alert
+ * it belongs to are always the same automation's — but a GROUP's alert may have
+ * been opened by a different member automation entirely, whose state rows this
+ * rule's pass never sees.
+ *
+ * Built once per tick and mutated as alerts are created, so the cost is one
+ * query bounded by LIVE ALERTS (tens to low thousands) rather than by fleet
+ * size, and a group of five automations pays it once rather than five times.
+ */
+class TickAlertIndex {
+  private loaded = false;
+  private byKey = new Map<string, string>();
+
+  async keysFor(): Promise<Map<string, string>> {
+    if (!this.loaded) {
+      const rows = await prisma.notification.findMany({
+        where: { groupKey: { not: null }, cleared: false },
+        select: { id: true, groupKey: true },
+      });
+      for (const r of rows) if (r.groupKey) this.byKey.set(r.groupKey, r.id);
+      this.loaded = true;
+    }
+    return this.byKey;
+  }
+
+  /** Record an alert this tick just opened, so a later member joins it rather
+   *  than racing the partial unique index for a second one. */
+  remember(groupKey: string, notificationId: string): void {
+    this.byKey.set(groupKey, notificationId);
+  }
+
+  // ── Which devices each AlertGroup GOVERNS ─────────────────────────────────
+  //
+  // A group may carry a scope of its own. It narrows where the FOLD applies —
+  // never what a member watches — so on a device the group does not govern,
+  // that member delivers on its own exactly as an ungrouped automation would.
+  //
+  // Resolved through `loadScopeAssetIds`, the documented server-side resolver,
+  // rather than by matching rows in memory: it is the path that decorates
+  // relation-backed leaves (`interfaceName`) before evaluating them, and an
+  // undecorated row would silently read as "no interfaces". Cached per GROUP
+  // per tick, so five member automations resolve it once between them.
+  //
+  // `null` means "governs everything" — no scope, or an unconstrained one —
+  // which is what every group had before the column existed.
+  private groupScopes = new Map<string, Set<string> | null>();
+
+  async governedAssetIds(alertGroupId: string): Promise<Set<string> | null> {
+    if (this.groupScopes.has(alertGroupId)) return this.groupScopes.get(alertGroupId)!;
+    let governed: Set<string> | null = null;
+    try {
+      const g = await prisma.alertGroup.findUnique({ where: { id: alertGroupId }, select: { scope: true } });
+      const scope = (g?.scope ?? null) as RuleScope | null;
+      if (scope && !scopeIsUnconstrained(scope)) {
+        // NOT monitoredOnly: the trigger gate (business rule 37) has already
+        // decided what may fire. This asks only "does the group cover it".
+        governed = new Set(await loadScopeAssetIds(scope));
+      }
+    } catch (err) {
+      // A failed resolve must not silently un-group a fleet: fall back to
+      // "governs everything" (the pre-scope behaviour) and SAY SO as an Event
+      // rather than a log line. The alternative failure — treating it as
+      // "governs nothing" — would scatter one folded alert back into one per
+      // component and per automation, which reads as the feature breaking.
+      governed = null;
+      await logEvent({
+        action: "notification.engine_error",
+        actor: "system:notification-engine",
+        level: "warning",
+        message: "Alert group device filter could not be resolved — the group covered every device this tick",
+        details: { alertGroupId, err: (err as Error)?.message },
+      }).catch(() => {});
+    }
+    this.groupScopes.set(alertGroupId, governed);
+    return governed;
+  }
+}
+
+/** assetId → the live alert a contribution from this rule should join. */
+async function liveAlertsByAsset(
+  rule: DbRule,
+  states: { state: string; assetId: string | null; notificationId: string | null }[],
+  tickIndex: TickAlertIndex | null,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!ruleGroupsByAsset(rule)) return out;
+  if (!rule.alertGroupId) {
+    // Its own alerts: free, off the snapshot the readings loop already loaded.
+    for (const s of states) {
+      if (s.state === "firing" && s.assetId && s.notificationId) out.set(s.assetId, s.notificationId);
+    }
+    return out;
+  }
+  // A group's alert may belong to another member automation, so the answer is
+  // keyed by groupKey rather than by anything this rule can see.
+  //
+  // BOTH prefixes are collected: a member whose group does not govern a given
+  // device keys that device's alert on itself, so the same automation can have
+  // `grp:` alerts on some devices and `rule:` alerts on others at once.
+  if (!tickIndex) return out;
+  const byKey = await tickIndex.keysFor();
+  const prefixes = [alertScopeOf(rule, true), alertScopeOf(rule, false)]
+    .map((s) => `${s.scope}:${s.id}|`);
+  for (const [key, id] of byKey) {
+    for (const prefix of prefixes) {
+      if (key.startsWith(prefix)) { out.set(key.slice(prefix.length), id); break; }
+    }
+  }
+  return out;
+}
+
+/**
+ * Does this rule's AlertGroup govern THIS device?
+ *
+ * True with no work at all when the rule has no group, or the group has no
+ * scope — which is every group until someone narrows one, so the common path
+ * costs nothing. False only when a scope exists and this device is outside it,
+ * in which case the member delivers on its own.
+ */
+async function groupGovernsAsset(
+  rule: DbRule,
+  assetId: string,
+  tickIndex: TickAlertIndex | null,
+): Promise<boolean> {
+  if (!rule.alertGroupId || !tickIndex) return true;
+  const governed = await tickIndex.governedAssetIds(rule.alertGroupId);
+  return governed === null || governed.has(assetId);
+}
+
+/** Turn an engine reading into the contribution stored on the alert. */
+function memberOf(rule: DbRule, f: GroupFire, now: Date): AlertMember {
+  const r = f.reading;
+  return {
+    key: r.dimKey,
+    // The LABEL, so the alert says "port12 (Indoor AP)" and nobody has to go
+    // and look up which port that is. `dimension` on the row stays the KEY.
+    label: r.dimLabel || r.dimKey,
+    ruleId: rule.id,
+    ruleName: rule.name,
+    severity: f.severity,
+    value: r.value === null || r.value === undefined
+      ? undefined
+      : typeof r.value === "number" ? round2(r.value) : String(r.value),
+    joinedAt: now.toISOString(),
+  };
+}
+
+/**
+ * Write this tick's buffered contributions: one alert per asset, created or
+ * joined, with the sends recorded for the end-of-tick drain.
+ *
+ * Ordering matters at the call site — this must land its state rows BEFORE the
+ * custom-reset pass, which re-reads firing rows from the database rather than
+ * from the pre-loop snapshot.
+ */
+async function flushGroupFires(
+  rule: DbRule,
+  buf: GroupBuffer,
+  liveByAsset: Map<string, string>,
+  now: Date,
+  pending: PendingSends,
+  tickIndex: TickAlertIndex | null,
+): Promise<void> {
+  for (const [assetId, fires] of buf) {
+    if (!fires.length) continue;
+    const live = liveByAsset.get(assetId);
+    const joined = live ? await joinGroupAlert(rule, live, fires, now, pending) : false;
+    if (!joined) await createGroupAlert(rule, assetId, fires, now, pending, liveByAsset, tickIndex);
+  }
+}
+
+/** Open a new grouped alert for this asset. */
+async function createGroupAlert(
+  rule: DbRule,
+  assetId: string,
+  fires: GroupFire[],
+  now: Date,
+  pending: PendingSends,
+  liveByAsset: Map<string, string>,
+  tickIndex: TickAlertIndex | null,
+): Promise<void> {
+  const members = mergeMembers([], fires.map((f) => memberOf(rule, f, now)), now);
+  const severity = groupSeverity(members, rule.severity);
+  const primary = primaryMember(members);
+  // The contribution the alert LEADS with — its reading is what {value} and
+  // the email's charts are about.
+  const lead = fires.find((f) => f.reading.dimKey === primary?.key) ?? fires[0]!;
+  const ctx = await buildGroupContext(rule, lead, members, severity, now);
+  // Where this rule's grouped alerts live: its AlertGroup when it belongs to
+  // one AND that group governs THIS device, else itself. The two scopes can
+  // never collide in the partial unique index.
+  //
+  // The per-device test is what lets one set of automations serve several
+  // groups — "Switch health — Ashfield" and "Switch health — Dock" over the
+  // same checks, routed to different people. On a device no group governs,
+  // the automation still folds its own components; it just does so alone.
+  const governs = await groupGovernsAsset(rule, assetId, tickIndex);
+  const scope = alertScopeOf(rule, governs);
+  const groupKey = groupKeyOf(scope.scope, scope.id, assetId);
+
+  let notif: { id: string };
+  try {
+    notif = await prisma.notification.create({
+      data: {
+        ruleId: rule.id,
+        assetId: assetId || null,
+        assetHostname: lead.reading.hostname,
+        severity,
+        message: ctx["message"] ?? "",
+        regionTags: regionSnapshot(lead.reading.tags),
+        dimension: primary?.key || null,
+        metric: rule.trigger.type === "asset_metric" || rule.trigger.type === "host_metric"
+          ? rule.trigger.metric
+          : rule.trigger.type === "asset_state" ? rule.trigger.field : null,
+        groupKey,
+        // The group owns this alert's DELIVERY from here on — its recipients,
+        // escalation chain, reminder cadence and ack-note policy, resolved at
+        // delivery time through alertOwnerOf. `ruleId` above stays set to the
+        // automation that OPENED it regardless (the worst contribution is what
+        // `dimension` follows; provenance that moved mid-life would be worse):
+        // a null-ruleId alert cannot escalate, is invisible to the NOC's
+        // relevance pills and has no name.
+        //
+        // Stamped ONLY when the group governs this device. An alert keyed
+        // `rule:` because the group's scope excluded the device must not then
+        // be DELIVERED by that group — it would fold alone and still page the
+        // group's recipients, which is the half-applied version of the setting
+        // and the one nobody would predict from the screen.
+        alertGroupId: governs ? (rule.alertGroupId ?? null) : null,
+        members: members as unknown as Prisma.InputJsonValue,
+        dimensionCount: activeMembers(members).length,
+        ...(groupWantsContext(rule) ? { templateCtx: ctx as any } : {}),
+      },
+      select: { id: true },
+    });
+  } catch (err: any) {
+    // The partial unique index refused a second LIVE row for this group key.
+    // Something else opened the alert between our snapshot and this write — an
+    // overlapping tick, a retried job. Join it rather than losing the fire.
+    if (err?.code !== "P2002") throw err;
+    const existing = await prisma.notification.findFirst({ where: { groupKey, cleared: false }, select: { id: true } });
+    if (!existing) throw err;
+    liveByAsset.set(assetId, existing.id);
+    await joinGroupAlert(rule, existing.id, fires, now, pending);
+    return;
+  }
+
+  liveByAsset.set(assetId, notif.id);
+  // Remember it TICK-wide too, so a later member automation of the same group
+  // joins this alert instead of racing the unique index for a second one.
+  tickIndex?.remember(groupKey, notif.id);
+  await upsertGroupStates(rule, fires, notif.id, now);
+  pending.set(notif.id, { kind: "fire", notificationId: notif.id, rule, reading: lead.reading, ctx, actions: lead.actions, severity, count: activeMembers(members).length });
+
+  if (wantsEventAction(lead.actions)) {
+    await logEvent({
+      action: "notification.triggered",
+      resourceType: "notification",
+      resourceId: notif.id,
+      resourceName: rule.name,
+      actor: "system:notification-engine",
+      level: severityLevel(severity),
+      message: ctx["message"] ?? "",
+      details: {
+        ruleId: rule.id,
+        assetId: assetId || null,
+        dimension: primary?.key ?? null,
+        severity,
+        grouped: true,
+        members: members.map((m) => m.key),
+      },
+    });
+  }
+}
+
+/**
+ * Add contributions to an alert that is already up.
+ *
+ * Returns false when the alert turned out to be gone, which is not an edge
+ * case: `clearNotifications` (an operator clicking Clear) deliberately does NOT
+ * release the state rows, so the very first manual clear of a grouped alert
+ * leaves this function looking at a cleared row. The caller then creates a new
+ * alert, which is the honest answer — the operator ended that episode.
+ */
+async function joinGroupAlert(
+  rule: DbRule,
+  notificationId: string,
+  fires: GroupFire[],
+  now: Date,
+  pending: PendingSends,
+): Promise<boolean> {
+  const row = await prisma.notification.findFirst({
+    where: { id: notificationId, cleared: false },
+    select: { id: true, members: true, severity: true, acknowledged: true, acknowledgedBy: true, acknowledgeNote: true },
+  });
+  if (!row) return false;
+
+  const prev = (row.members ?? []) as unknown as AlertMember[];
+  const members = mergeMembers(prev, fires.map((f) => memberOf(rule, f, now)), now);
+  const severity = groupSeverity(members, rule.severity);
+  const primary = primaryMember(members);
+  const lead = fires.find((f) => f.reading.dimKey === primary?.key) ?? fires[0]!;
+  const ctx = await buildGroupContext(rule, lead, members, severity, now);
+
+  // A contribution arriving after someone acknowledged RE-OPENS the alert:
+  // acknowledging "3 ports faulted" is not acknowledging "now 9 ports". The
+  // columns are cleared and the escalation/reminder clocks restart, which is
+  // the whole point of re-opening; the acknowledgement itself is not lost,
+  // because the Event below records who made it and what they said.
+  const reopening = row.acknowledged;
+
+  const res = await prisma.notification.updateMany({
+    where: { id: notificationId, cleared: false },
+    data: {
+      members: members as unknown as Prisma.InputJsonValue,
+      dimensionCount: activeMembers(members).length,
+      severity,
+      message: ctx["message"] ?? "",
+      dimension: primary?.key || null,
+      ...(groupWantsContext(rule) ? { templateCtx: ctx as any } : {}),
+      ...(reopening
+        ? { acknowledged: false, acknowledgedBy: null, acknowledgedAt: null, acknowledgeNote: null, escalationState: Prisma.DbNull }
+        : {}),
+    },
+  });
+  // Lost a race with a clear between the read and the write — treat it as gone.
+  if (res.count === 0) return false;
+
+  await upsertGroupStates(rule, fires, notificationId, now);
+  // One send per alert per tick: everything that joined folds into one message
+  // naming the whole set. A "fire" already recorded for this alert stays a
+  // fire — the contributions simply ride it, with no second message.
+  const existing = pending.get(notificationId);
+  pending.set(notificationId, {
+    kind: existing?.kind ?? "growth",
+    notificationId,
+    rule,
+    reading: lead.reading,
+    ctx,
+    actions: lead.actions,
+    severity,
+    count: activeMembers(members).length,
+  });
+
+  await logEvent({
+    action: reopening ? "notification.reopened" : "notification.member_joined",
+    resourceType: "notification",
+    resourceId: notificationId,
+    resourceName: rule.name,
+    actor: "system:notification-engine",
+    level: severityLevel(severity),
+    message: reopening
+      ? `${rule.name}: ${fires.map((f) => f.reading.dimLabel || f.reading.dimKey).join(", ")} joined after ${row.acknowledgedBy ?? "someone"} acknowledged it`
+      : `${rule.name}: ${fires.map((f) => f.reading.dimLabel || f.reading.dimKey).join(", ")} joined this alert`,
+    details: {
+      ruleId: rule.id,
+      joined: fires.map((f) => f.reading.dimKey),
+      severity,
+      ...(reopening
+        ? { priorAcknowledgedBy: row.acknowledgedBy, priorAcknowledgeNote: row.acknowledgeNote }
+        : {}),
+    },
+  });
+  return true;
+}
+
+/** Point every buffered contribution's state row at the alert. */
+async function upsertGroupStates(rule: DbRule, fires: GroupFire[], notificationId: string, now: Date): Promise<void> {
+  for (const f of fires) {
+    await prisma.notificationRuleState.upsert({
+      where: { ruleId_assetId_dimensionKey: { ruleId: rule.id, assetId: f.reading.assetId, dimensionKey: f.reading.dimKey } },
+      create: {
+        ruleId: rule.id, assetId: f.reading.assetId, dimensionKey: f.reading.dimKey,
+        state: "firing", firedAt: now, lastValue: f.lastValue, notificationId,
+        firingSeverity: f.severity, bandMetSince: metSinceJson(f.bandMetSince),
+      },
+      update: {
+        state: "firing", firedAt: now, lastValue: f.lastValue, notificationId,
+        conditionMetSince: null, recoveredSince: null,
+        firingSeverity: f.severity, bandMetSince: metSinceJson(f.bandMetSince),
+      },
+    });
+  }
+}
+
+/** The template context for a grouped alert: the lead contribution's reading,
+ *  with the member list folded over the dimension tokens. */
+async function buildGroupContext(
+  rule: DbRule,
+  lead: GroupFire,
+  members: AlertMember[],
+  severity: string,
+  now: Date,
+): Promise<Record<string, string>> {
+  const detail = groupWantsAssetDetail(rule) && lead.reading.assetId ? await assetDetail(lead.reading.assetId) : null;
+  const parts = readingContextParts(rule, lead.reading, now, undefined, members);
+  parts.severity = severity;
+  applyFollowUpPolicy(parts, rule, severity);
+  const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
+  await applySensorUnitToSummary(rule, lead.reading, ctx);
+  ctx["message"] = renderMessage(rule, lead.reading, ctx, members);
+  return ctx;
+}
+
+/**
+ * Drain the tick's sends — one fan-out per alert, with the final member set.
+ *
+ * Deliberately outside any transaction: executeActions does its own writes and
+ * outbound work, and holding a pooled connection across the fan-out is how a
+ * storm tick starves everything else.
+ */
+async function drainPendingSends(pending: PendingSends): Promise<void> {
+  // Business rule 75: a governed alert FIRES through its group, exactly as it
+  // later escalates, reminds and resets through it. Without this the first
+  // message went out on the member automation's own actions — and a member
+  // with no notify action of its own (the normal shape inside a group) sent
+  // nothing at all. One lookup for the pass, over only the grouped rules' sends.
+  const grouped = [...pending.values()].filter((s) => s.rule.alertGroupId).map((s) => s.notificationId);
+  const owners = await groupOwnersOf(grouped);
+  for (const s of pending.values()) {
+    const owner = owners.get(s.notificationId) ?? null;
+    await enqueueAlertActions(
+      s.notificationId, owner ? ownerActions(owner) : s.actions, s.ctx, s.rule, s.reading,
+      s.kind === "growth" ? { growth: true, count: s.count } : undefined,
+      owner,
+    );
+  }
 }
 
 async function fire(
@@ -3572,7 +4291,7 @@ async function fire(
   lastValue: number | null,
   now: Date,
   composite?: CompositeFireInfo,
-  opts?: { severity?: string; actions?: AutomationAction[] },
+  opts?: { severity?: string; actions?: AutomationAction[]; group?: GroupBuffer },
   /** Per-tier met-since runs to carry onto the firing row (banded rules). */
   bandMetSince?: Record<string, number> | null,
 ): Promise<void> {
@@ -3581,6 +4300,22 @@ async function fire(
     where: { ruleId_assetId_dimensionKey: { ruleId: rule.id, assetId: reading.assetId, dimensionKey: reading.dimKey } },
   });
   if (rule.cooldownSec && existing?.firedAt && now.getTime() - existing.firedAt.getTime() < rule.cooldownSec * 1000) {
+    return;
+  }
+  // GROUPED (business rule 75): buffer the contribution and let
+  // flushGroupFires do every write once it can see all of this tick's.
+  //
+  // The cooldown check above stays here deliberately — it is per (rule, asset,
+  // dimension) suppression, i.e. about this one contribution, and remains
+  // exactly as honest under grouping as it was before.
+  //
+  // Nothing is written here on purpose. Upserting the state row now would park
+  // it `firing` with a null notificationId until the flush, and a row in that
+  // shape is unreachable by every recovery path there is.
+  if (opts?.group) {
+    const forAsset = opts.group.get(reading.assetId) ?? [];
+    forAsset.push({ reading, lastValue, severity: opts.severity ?? rule.severity, actions: opts.actions ?? rule.actions, bandMetSince: bandMetSince ?? null });
+    opts.group.set(reading.assetId, forAsset);
     return;
   }
   const severity = opts?.severity ?? rule.severity;
@@ -3695,7 +4430,7 @@ function wantsEventAction(actions: AutomationAction[] | null | undefined): boole
 async function applyBandTransition(
   rule: DbRule,
   reading: Reading,
-  st: { id: string; notificationId: string | null; firingSeverity: string | null },
+  st: { id: string; notificationId: string | null; firingSeverity: string | null; dimensionKey?: string },
   newSeverity: string,
   now: Date,
   /** Per-tier met-since runs as of this tick (banded rules). */
@@ -3705,6 +4440,26 @@ async function applyBandTransition(
   const increased = severityRank(newSeverity) > prevRank;
   const policy = bandNotifyOf(rule);
   const tier = tierForSeverity(rule, newSeverity);
+
+  // GROUPED ALERTS (business rule 75). A band change belongs to ONE
+  // contribution; the alert carries the worst of all of them. So the member
+  // half below always runs, and the alert is only rewritten — and only
+  // re-notified, and its escalation clock only restarted — when the GROUP's
+  // severity actually moved. Without the split, one port flapping between two
+  // bands would restart the paging clock for the other seven every time.
+  if (ruleGroupsByAsset(rule) && st.notificationId) {
+    await prisma.notificationRuleState.update({
+      where: { id: st.id },
+      data: {
+        firingSeverity: newSeverity,
+        lastValue: typeof reading.value === "number" ? reading.value : null,
+        recoveredSince: null,
+        ...(bandMetSince !== undefined ? { bandMetSince: metSinceJson(bandMetSince) } : {}),
+      },
+    });
+    await reconcileGroupSeverity(rule, reading, st.notificationId, st.dimensionKey ?? reading.dimKey, newSeverity, now, policy);
+    return;
+  }
 
   const detail = ruleWantsAssetDetail(rule) && reading.assetId ? await assetDetail(reading.assetId) : null;
   const parts = readingContextParts(rule, reading, now);
@@ -3751,23 +4506,117 @@ async function applyBandTransition(
   }
 }
 
+/**
+ * Fold a contribution's new severity into its grouped alert.
+ *
+ * The alert's severity is the worst of what is still wrong, so a contribution
+ * climbing raises it, one easing lowers it only if it held the top alone, and
+ * a move that changes neither writes the member set and stops — keeping the
+ * hot path transition-only, which is the property the whole engine is built on.
+ */
+async function reconcileGroupSeverity(
+  rule: DbRule,
+  reading: Reading,
+  notificationId: string,
+  dimensionKey: string,
+  memberSeverity: string,
+  now: Date,
+  policy: ReturnType<typeof bandNotifyOf>,
+): Promise<void> {
+  const row = await prisma.notification.findFirst({
+    where: { id: notificationId, cleared: false },
+    select: { id: true, members: true, severity: true },
+  });
+  if (!row) return;
+
+  const members = ((row.members ?? []) as unknown as AlertMember[]).map((m) =>
+    m.ruleId === rule.id && m.key === dimensionKey && !m.leftAt ? { ...m, severity: memberSeverity } : m,
+  );
+  const groupSev = groupSeverity(members, rule.severity);
+  const changed = groupSev !== row.severity;
+
+  if (!changed) {
+    // The alert is still as severe as it was — a worse contribution is holding
+    // it there. Record the member's own band and say nothing.
+    await prisma.notification.updateMany({
+      where: { id: notificationId, cleared: false },
+      data: { members: members as unknown as Prisma.InputJsonValue },
+    });
+    return;
+  }
+
+  const increased = severityRank(groupSev) > severityRank(row.severity);
+  const tier = tierForSeverity(rule, groupSev);
+  const detail = groupWantsAssetDetail(rule) && reading.assetId ? await assetDetail(reading.assetId) : null;
+  const parts = readingContextParts(rule, reading, now, undefined, members);
+  parts.severity = groupSev;
+  applyFollowUpPolicy(parts, rule, groupSev);
+  const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
+  await applySensorUnitToSummary(rule, reading, ctx);
+  const message = renderMessage(rule, reading, ctx, members);
+  ctx["message"] = message;
+
+  await prisma.notification.updateMany({
+    where: { id: notificationId, cleared: false },
+    data: {
+      members: members as unknown as Prisma.InputJsonValue,
+      severity: groupSev,
+      message,
+      // The new band's escalation timers restart from band entry — but only
+      // because the ALERT changed band, never because one component did.
+      escalationState: { tiers: {}, bandSince: now.toISOString() } as any,
+      ...(groupWantsContext(rule) ? { templateCtx: ctx as any } : {}),
+    },
+  });
+
+  if ((increased && policy.onIncrease) || (!increased && policy.onDecrease)) {
+    // WHETHER to say so is the member's band policy; WHO hears it is the owner's.
+    const owner = await groupOwnerOf(rule, notificationId);
+    await enqueueAlertActions(notificationId, owner ? ownerActions(owner) : tier.actions, ctx, rule, reading, undefined, owner);
+    await logEvent({
+      action: increased ? "notification.escalated" : "notification.deescalated",
+      resourceType: "notification",
+      resourceId: notificationId,
+      resourceName: rule.name,
+      actor: "system:notification-engine",
+      level: severityLevel(groupSev),
+      message,
+      details: { ruleId: rule.id, assetId: reading.assetId || null, dimension: dimensionKey, severity: groupSev, from: row.severity, grouped: true },
+    }).catch(() => {});
+  }
+}
+
 /** Resolved (below tier 0): optionally send an all-clear before recovering. */
 async function fireResolved(
   rule: DbRule,
   reading: Reading,
-  st: { id: string; notificationId: string | null; firingSeverity: string | null },
+  st: { id: string; notificationId: string | null; firingSeverity: string | null; ruleId?: string; dimensionKey?: string },
   now: Date,
 ): Promise<void> {
   const policy = bandNotifyOf(rule);
   if (!policy.onResolved || !st.notificationId) return;
-  const actions = policy.resolvedMode === "dedicated" ? policy.resolvedActions : tierForSeverity(rule, st.firingSeverity ?? rule.severity).actions;
+  // GROUPED ALERTS (business rule 75): the banded twin of recover()'s guard.
+  // "Resolved" is a statement about the ALERT, and on a grouped one a middle
+  // contribution recovering resolves nothing — seven ports are still faulted.
+  // Guarded here rather than at the four call sites so no future one can
+  // forget; the extra count runs on a recovery transition, and only for a rule
+  // that groups.
+  if (await stillFiringElsewhere(st, rule)) return;
+  // A group has no bands and no band policy of its own, so the member's policy
+  // still decides whether "Resolved" is sent — but "reuse" means reuse the
+  // alert's OWN recipients, and on a governed alert those are the group's.
+  // "dedicated" names actions the operator wrote for exactly this and stays.
+  const owner = policy.resolvedMode === "dedicated" ? null : await groupOwnerOf(rule, st.notificationId);
+  const actions = policy.resolvedMode === "dedicated"
+    ? policy.resolvedActions
+    : owner ? ownerActions(owner) : tierForSeverity(rule, st.firingSeverity ?? rule.severity).actions;
   if (!actions.length) return;
   const detail = ruleWantsAssetDetail(rule) && reading.assetId ? await assetDetail(reading.assetId) : null;
   const parts = readingContextParts(rule, reading, now);
   parts.severity = "resolved";
   const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
   setRecoverySentence(ctx, `Resolved: ${rule.name} — ${ctx["asset"] ?? reading.hostname ?? ""} recovered`);
-  await enqueueAlertActions(st.notificationId, actions, ctx, rule, reading);
+  await enqueueAlertActions(st.notificationId, actions, ctx, rule, reading, undefined, owner);
 }
 
 /**
@@ -3805,8 +4654,12 @@ async function fireReset(
   reason: string,
   now: Date,
 ): Promise<void> {
-  const actions = rule.resetActions;
-  if (!actions?.length || !st.notificationId) return;
+  if (!st.notificationId) return;
+  // A governed alert's reset actions are its GROUP's (business rule 75), the
+  // same answer runResetActionsForCleared gives for an operator's Clear.
+  const owner = await groupOwnerOf(rule, st.notificationId);
+  const actions = owner ? owner.resetActions : rule.resetActions;
+  if (!actions?.length) return;
   const detail = ruleWantsAssetDetail(rule) && reading.assetId ? await assetDetail(reading.assetId) : null;
   const parts = readingContextParts(rule, reading, now);
   // "resolved" is a pseudo-severity (not in SEVERITIES) that colours the email
@@ -3815,7 +4668,7 @@ async function fireReset(
   parts.severity = "resolved";
   const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
   setRecoverySentence(ctx, `Resolved: ${rule.name} — ${ctx["asset"] || reading.hostname || "device"} ${reason}`);
-  await enqueueAlertActions(st.notificationId, actions, ctx, rule, reading);
+  await enqueueAlertActions(st.notificationId, actions, ctx, rule, reading, undefined, owner);
 }
 
 /**
@@ -3848,19 +4701,35 @@ async function applySensorUnitToSummary(
 
 async function recover(
   rule: DbRule,
-  st: { id: string; notificationId: string | null },
+  st: ReleasableState,
   reading?: Reading,
   now?: Date,
 ): Promise<void> {
   // "condition" recovers like "auto": the reset tree (or trigger negation)
   // observed a real recovery, so clear the notification + stamp the event.
   if (rule.reset.mode === "auto" || rule.reset.mode === "condition") {
+    // GROUPED ALERTS (business rule 75). Ask FIRST whether this contribution
+    // was the last one, because everything below is about ending the alert —
+    // and on a grouped alert a middle contribution recovering ends nothing.
+    //
+    // This ordering is the whole feature. `fireReset` runs before the clear so
+    // its delivery rows can hang off a live notification id; left where it
+    // was, the first of eight ports to come back would have mailed the alert's
+    // "Resolved" while seven were still faulted.
+    const { last } = await releaseGroupMember(st, rule, now ?? new Date());
+    if (!last) {
+      // Release this contribution's own row and leave the alert standing. Its
+      // member list, count, severity and text have already been rewritten to
+      // stop claiming this component is affected.
+      await prisma.notificationRuleState.update({ where: { id: st.id }, data: { state: "clear", conditionMetSince: null, recoveredSince: null, notificationId: null, bandMetSince: Prisma.DbNull, ...CLEARED_RUNS } });
+      return;
+    }
     // Reset actions run BEFORE the clear, while the notification id is still
     // live for their delivery rows to hang off. The manual/timed branch below
     // deliberately doesn't: manual leaves the alert standing for a human, and
     // timed fires its own reset from the sweep that actually clears it.
     if (reading && now) await fireReset(rule, reading, st, "recovered", now);
-    await clearActiveNotification(st, "system:auto-resolve");
+    await clearAlertRow(st, "system:auto-resolve");
     await prisma.notificationRuleState.update({ where: { id: st.id }, data: { state: "clear", conditionMetSince: null, recoveredSince: null, notificationId: null, bandMetSince: Prisma.DbNull, ...CLEARED_RUNS } });
     await logEvent({
       action: "notification.auto_cleared",
@@ -3875,17 +4744,169 @@ async function recover(
     // manual / timed: re-arm the state but leave the notification for a human
     // (timed is swept by the timer pass; manual stays until cleared).
     if (rule.reset.mode === "manual") {
+      // Still release the contribution: the alert stays up for a person to
+      // deal with, but it must stop naming a component that has recovered.
+      await releaseGroupMember(st, rule, now ?? new Date());
       await prisma.notificationRuleState.update({ where: { id: st.id }, data: { state: "clear", conditionMetSince: null, recoveredSince: null, notificationId: null, bandMetSince: Prisma.DbNull, ...CLEARED_RUNS } });
     }
   }
 }
 
-async function clearActiveNotification(st: { notificationId: string | null }, by: string): Promise<void> {
+/** The state-row fields a release needs: which contribution is letting go. */
+type ReleasableState = {
+  id: string;
+  ruleId?: string;
+  dimensionKey?: string;
+  notificationId: string | null;
+};
+
+/**
+ * End this contribution's part in its alert — and the alert itself, but ONLY if
+ * nothing else is still firing against it.
+ *
+ * This is the one chokepoint every clear path goes through: auto-recovery, the
+ * timed sweeps, the carve-out handoff, the device-down handoff and the
+ * vanished-state sweep. That matters more than it looks: none of those read
+ * `Notification.ruleId`, but every one of them used to carry the same 1:1
+ * assumption through `NotificationRuleState.notificationId`, so under grouping
+ * any one of eight ports recovering would have ended the alert for all eight.
+ *
+ * `rule` is what keeps this free for everyone else: an ungrouped rule
+ * short-circuits with NO extra query and behaviour byte-identical to before.
+ */
+async function clearActiveNotification(
+  st: ReleasableState,
+  by: string,
+  /** The rule this state row belongs to. Omitted only by a caller that has
+   *  none, which by definition cannot be grouped. */
+  rule?: DbRule,
+): Promise<void> {
+  if (!st.notificationId) return;
+  const { last } = await releaseGroupMember(st, rule, new Date());
+  // A contribution that was not the last one leaves the alert standing. The
+  // alert's own text has already been rewritten to stop claiming this
+  // component is still faulted.
+  if (!last) return;
+  await clearAlertRow(st, by);
+}
+
+/** Is any OTHER contribution still firing against this alert?
+ *
+ *  False with no query at all for an ungrouped rule — the contribution IS the
+ *  alert there, so nothing else can be firing against it. */
+async function stillFiringElsewhere(
+  st: { id: string; notificationId: string | null },
+  rule: DbRule,
+): Promise<boolean> {
+  if (!st.notificationId || !ruleGroupsByAsset(rule)) return false;
+  const others = await prisma.notificationRuleState.count({
+    where: { notificationId: st.notificationId, state: "firing", id: { not: st.id } },
+  });
+  return others > 0;
+}
+
+/** Soft-clear the alert row itself. Split out of clearActiveNotification so a
+ *  caller that has ALREADY released its contribution (recover, which must know
+ *  whether it was the last one before it decides to send an all-clear) can end
+ *  the alert without releasing twice. */
+async function clearAlertRow(st: { notificationId: string | null }, by: string): Promise<void> {
   if (!st.notificationId) return;
   await prisma.notification.updateMany({
     where: { id: st.notificationId, cleared: false },
     data: { cleared: true, clearedBy: by, clearedAt: new Date() },
   });
+}
+
+/**
+ * Stamp this contribution as departed and answer whether it was the last one.
+ *
+ * The count is asked of the STATE ROWS, never of the members snapshot: the
+ * snapshot is written for rendering and can lag, and a stale one would either
+ * strand an alert nothing can clear or end one that is still firing. Note the
+ * WHERE carries no ruleId — "is anything else still firing against this alert?"
+ * is the right question whether the contributions came from one automation or
+ * several.
+ */
+async function releaseGroupMember(
+  st: ReleasableState,
+  rule: DbRule | undefined,
+  now: Date,
+): Promise<{ last: boolean }> {
+  // Not a grouped alert: the contribution IS the alert. Zero queries.
+  if (!st.notificationId || !rule || !ruleGroupsByAsset(rule)) return { last: true };
+
+  const others = await prisma.notificationRuleState.count({
+    where: { notificationId: st.notificationId, state: "firing", id: { not: st.id } },
+  });
+
+  const row = await prisma.notification.findFirst({
+    where: { id: st.notificationId, cleared: false },
+    select: { id: true, members: true },
+  });
+  if (row) {
+    const members = markMemberLeft(
+      (row.members ?? []) as unknown as AlertMember[],
+      st.ruleId ?? rule.id,
+      st.dimensionKey ?? "",
+      now,
+    );
+    const remaining = activeMembers(members);
+    // On the LAST release we leave the text alone: the alert is about to be
+    // cleared, and a message rewritten to name nothing at all would be the
+    // last thing the history shows.
+    if (others > 0) {
+      const severity = groupSeverity(members, rule.severity);
+      const primary = primaryMember(members);
+      const message = regroupedMessage(rule, members);
+      await prisma.notification.updateMany({
+        where: { id: st.notificationId, cleared: false },
+        data: {
+          members: members as unknown as Prisma.InputJsonValue,
+          dimensionCount: remaining.length,
+          severity,
+          dimension: primary?.key || null,
+          ...(message === null ? {} : { message }),
+        },
+      });
+      await logEvent({
+        action: "notification.member_recovered",
+        resourceType: "notification",
+        resourceId: st.notificationId,
+        resourceName: rule.name,
+        actor: "system:notification-engine",
+        message: `${rule.name}: ${st.dimensionKey || "a component"} recovered — ${remaining.length} still affected`,
+        details: { ruleId: rule.id, dimension: st.dimensionKey ?? null, remaining: remaining.length },
+      }).catch(() => {});
+    } else {
+      // Last one out: keep the departure in the snapshot so the cleared alert
+      // still renders everything it covered.
+      await prisma.notification.updateMany({
+        where: { id: st.notificationId, cleared: false },
+        data: { members: members as unknown as Prisma.InputJsonValue, dimensionCount: 0 },
+      });
+    }
+  }
+  return { last: others === 0 };
+}
+
+/**
+ * The message for a grouped alert whose membership just shrank, or null to
+ * leave the existing one alone.
+ *
+ * Null for a CUSTOM template, deliberately. Re-rendering one here would mean
+ * rebuilding a full template context from a recovery that carries no reading —
+ * no {value}, no {threshold}, no {metric} — and a sentence the operator wrote
+ * would come back with half its tokens blanked. The stale component list is
+ * the smaller lie, and every other surface (the member list, the count, the
+ * severity) is refreshed around it.
+ */
+function regroupedMessage(rule: DbRule, members: AlertMember[]): string | null {
+  if (rule.messageTemplate && rule.messageTemplate.trim()) return null;
+  const active = activeMembers(members);
+  const list = renderMemberList(members);
+  if (!list) return null;
+  const count = active.length === 1 ? "" : ` (${active.length})`;
+  return `${rule.name}: ${list}${count} still affected`;
 }
 
 /**
@@ -3896,11 +4917,11 @@ async function clearActiveNotification(st: { notificationId: string | null }, by
  */
 async function handoffDependencyFlavour(
   rule: DbRule,
-  st: { id: string; notificationId: string | null; assetId: string | null },
+  st: ReleasableState & { assetId: string | null },
   toDependencyDown: boolean,
 ): Promise<void> {
   const reason = toDependencyDown ? "dependency-down" : "dependency-released";
-  await clearActiveNotification(st, `system:${reason}`);
+  await clearActiveNotification(st, `system:${reason}`, rule);
   await prisma.notificationRuleState.update({
     where: { id: st.id },
     data: { state: "clear", conditionMetSince: null, recoveredSince: null, notificationId: null, bandMetSince: Prisma.DbNull, ...CLEARED_RUNS },
@@ -4553,6 +5574,12 @@ export async function evaluateAllNotificationRules(): Promise<void> {
       bandNotify: v2.bandNotify,
       resetActions: v2.resetActions,
       repeat: v2.repeat,
+      // Not part of the v2 normalization — grouping is a real column on the
+      // rule, deliberately not a key inside the trigger (a trigger key would
+      // change triggerSignature and stop a grouped rule shadowing its
+      // ungrouped sibling in the carve-out index, business rule 46).
+      groupByAsset: r.groupByAsset === true,
+      alertGroupId: r.alertGroupId ?? null,
     };
   });
 
@@ -4567,16 +5594,35 @@ export async function evaluateAllNotificationRules(): Promise<void> {
   // of which (same trigger signature, higher scope specificity). Built once.
   const shadowIndex = buildShadowIndex(rules);
 
+  // Grouped alerts (business rule 75): the tick's sends, drained once every
+  // rule has been evaluated rather than inside each rule's flush. A grouped
+  // alert therefore sends ONCE per tick with the final member set, whatever
+  // order its contributions arrived in.
+  const pendingSends: PendingSends = new Map();
+  // Live grouped alerts, keyed by groupKey. Loaded lazily and only when an
+  // AlertGroup member actually needs it, so an install with no groups never
+  // issues the query.
+  const tickIndex = new TickAlertIndex();
+
   for (const rule of evaluationOrder(rules)) {
     try {
       if (rule.trigger.type === "composite") {
-        await evaluateCompositeRule(rule);
+        await evaluateCompositeRule(rule, pendingSends, tickIndex);
       } else if (rule.trigger.type === "asset_metric" || rule.trigger.type === "asset_state" || rule.trigger.type === "host_metric") {
-        await evaluateThresholdRule(rule, shadowIndex);
+        await evaluateThresholdRule(rule, shadowIndex, pendingSends, tickIndex);
       }
     } catch (err) {
       await logEvent({ action: "notification.engine_error", actor: "system:notification-engine", level: "error", message: `Rule "${rule.name}" evaluation failed`, details: { ruleId: rule.id, err: (err as Error)?.message } }).catch(() => {});
     }
+  }
+
+  // After every rule, before the event tail: the alerts exist and their member
+  // sets are final, so each one's message goes out exactly once. Best-effort,
+  // like every other fan-out — a failed send must not cost the fleet a tick.
+  try {
+    await drainPendingSends(pendingSends);
+  } catch (err) {
+    await logEvent({ action: "notification.engine_error", actor: "system:notification-engine", level: "error", message: "Grouped-alert send drain failed", details: { err: (err as Error)?.message } }).catch(() => {});
   }
 
   try {
@@ -4823,6 +5869,12 @@ function draftRuleForPreview(input: PreviewRuleInput, trigger: DbRule["trigger"]
     messageTemplate: input.messageTemplate ?? null,
     emailComposition: input.emailComposition, escalation: normalizeEscalationToV2(input.escalation),
     severityBands: input.severityBands, bandNotify: input.bandNotify,
+    // A preview writes nothing, so grouping cannot change what it reports per
+    // reading — but the draft still carries the operator's choice so the
+    // preview's own grouped roll-up ("47 interfaces → 12 alerts") can count it.
+    groupByAsset: input.groupByAsset === true,
+    // A preview writes nothing and joins nothing, so it never resolves a group.
+    alertGroupId: null,
   };
 }
 

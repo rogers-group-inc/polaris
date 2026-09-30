@@ -741,6 +741,38 @@ judged, so a row can always be shortened rather than being stuck.
 
 See [IPAM](IPAM#pushing-reservations-to-the-gate).
 
+### Rule 75
+
+**An alert may name many problems on one device, and it ends only when the
+last of them does.**
+
+A PoE fault rarely hits one port. A power supply browns out and eight ports
+fault inside the same minute — and without this rule that is eight alerts,
+eight emails and eight acknowledge links for one problem.
+
+An automation that watches something per component (per interface, per mount,
+per sensor) can tick **Raise one alert per device, not one per interface** on its
+Actions step. Every affected component is then named on **one** alert, one
+acknowledgement covers all of them, and the alert **stays up until the last one
+recovers** — the first port to come back does not mail "Resolved" while seven
+are still down. A component that goes wrong later joins the same alert and sends
+one more message naming the whole set, and that **re-opens the alert if it had
+been acknowledged**: acknowledging "3 ports faulted" is not acknowledging
+"9 ports faulted". The alert carries the worst severity among the components
+still affected.
+
+**Alert groups** (Automations → Alert Groups) go one step further: several
+automations whose alerts about the same device should read as one. The group
+decides **who is told and how** — its notify actions, escalation, reminders,
+acknowledge-note policy and email layout — while each member automation still
+decides **what counts as a problem**. While an automation is in a group it stops
+delivering on its own. A group can be limited to some devices; on the others its
+members alert exactly as they would outside it.
+
+Turning grouping on or off, changing a group's members or devices, or disabling
+or deleting a group ends the affected live alerts, and the next check raises
+them again under whoever owns them now. An alert never changes hands mid-life.
+
 ### Rule 76
 
 **Access is granted on the network profile the endpoint is actually on, and

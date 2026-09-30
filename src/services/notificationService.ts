@@ -14,7 +14,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent, logEventsBatch } from "./eventLogService.js";
 import { findRulesMatchingAsset } from "./notificationRuleService.js";
-import { effectiveAckNoteForSeverity, parseSeverityBands } from "./notificationTypes.js";
+import { effectiveAckNoteForSeverity, parseSeverityBands, alertOwnerOf } from "./notificationTypes.js";
 import { higherAlertSeverity } from "../utils/alertSeverity.js";
 
 // Both moved to utils/tagNormalize (a leaf) so regionHierarchyService can use
@@ -77,26 +77,46 @@ const ACK_POLICY_INCLUDE = {
   // alternative — asking the client to fetch the automation and work it out —
   // would put the same resolution in four places (Alerts tab, phone, ack page,
   // push action) and let them disagree.
-  rule: { select: { requireAckNote: true, severity: true, severityBands: true } },
+  rule: { select: { id: true, name: true, requireAckNote: true, severity: true, severityBands: true } },
+  // An alert delivered through an AlertGroup takes its note policy from the
+  // GROUP (business rule 75) — the group owns delivery, and "does closing this
+  // out need a note" is a delivery policy. `enabled` rides along because a
+  // disabled group owns nothing: its members go back to delivering on their
+  // own, and an alert that outlives the switch-off falls back to the rule
+  // rather than silently losing the gate.
+  alertGroup: { select: { id: true, name: true, enabled: true, requireAckNote: true } },
 } as const;
 
-type RulePolicyRow = { requireAckNote: boolean; severity: string; severityBands: unknown };
-type RowWithRulePolicy = { severity: string; rule?: RulePolicyRow | null };
+type RulePolicyRow = { id?: string; name?: string; requireAckNote: boolean; severity: string; severityBands: unknown };
+type GroupPolicyRow = { id: string; name: string; enabled: boolean; requireAckNote: boolean };
+type RowWithRulePolicy = { severity: string; rule?: RulePolicyRow | null; alertGroup?: GroupPolicyRow | null };
 
 /** The note policy in force for ONE alert, at the severity it is sitting at.
- *  Rule-less rows (test alerts, deleted automations) read false — see the
- *  ACK_POLICY_INCLUDE note. */
+ *  Resolved from whoever OWNS the alert's delivery — its group, else its
+ *  automation. Owner-less rows (test alerts, deleted automations) read false —
+ *  see the ACK_POLICY_INCLUDE note. */
 export function ackNotePolicyOf(row: RowWithRulePolicy): boolean {
-  if (!row.rule) return false;
-  return effectiveAckNoteForSeverity(
-    { severity: row.rule.severity, severityBands: parseSeverityBands(row.rule.severityBands), requireAckNote: row.rule.requireAckNote },
-    row.severity,
-  );
+  const owner = alertOwnerOf({
+    severity: row.severity,
+    rule: row.rule ? { ...row.rule, severityBands: parseSeverityBands(row.rule.severityBands) } : null,
+    alertGroup: row.alertGroup ?? null,
+  });
+  if (!owner) return false;
+  return effectiveAckNoteForSeverity(owner, row.severity);
 }
 
-export function withAckPolicy<T extends RowWithRulePolicy>(row: T): Omit<T, "rule"> & { requireAckNote: boolean } {
+/** The owner's NAME, for the surfaces that say what raised this — the ack
+ *  page's "Automation" row, the Active Alerts widget's title. A grouped alert
+ *  is named by its group: that is the thing the operator configured and the
+ *  thing one acknowledgement covers. */
+export function alertOwnerNameOf(row: RowWithRulePolicy): { name: string | null; kind: "rule" | "group" | null } {
+  const owner = alertOwnerOf({ severity: row.severity, rule: row.rule ?? null, alertGroup: row.alertGroup ?? null });
+  return owner ? { name: owner.name, kind: owner.kind } : { name: null, kind: null };
+}
+
+export function withAckPolicy<T extends RowWithRulePolicy>(row: T): Omit<T, "rule" | "alertGroup"> & { requireAckNote: boolean } {
   const requireAckNote = ackNotePolicyOf(row);
-  const { rule, ...rest } = row;
+  const { rule, alertGroup, ...rest } = row;
   return { ...rest, requireAckNote };
 }
 
@@ -191,12 +211,43 @@ export async function getNotificationForViewer(
       clearedAt: true,
       // A rule-less alert (a test fire, or one whose automation was deleted —
       // ruleId is SetNull) has no note policy left to enforce.
-      rule: { select: { name: true, requireAckNote: true, severity: true, severityBands: true } },
+      rule: { select: { id: true, name: true, requireAckNote: true, severity: true, severityBands: true } },
+      // An alert delivered through an AlertGroup is NAMED by its group
+      // (business rule 75): that is the thing the operator configured, the
+      // thing one acknowledgement covers, and the thing whose note policy is
+      // being enforced on this page.
+      alertGroup: { select: { id: true, name: true, enabled: true, requireAckNote: true } },
+      // Which automations actually contributed — the page says "Switch health"
+      // and then lists what raised it, so a reader is not left guessing which
+      // check fired. Read off the alert's own snapshot; no extra query.
+      members: true,
+      dimensionCount: true,
     },
   });
   if (!row) return null;
-  const { rule, ...rest } = row;
-  return { ...rest, ruleName: rule?.name ?? null, requireAckNote: ackNotePolicyOf(row) };
+  const { rule, alertGroup, ...rest } = row;
+  const owner = alertOwnerNameOf(row);
+  return {
+    ...rest,
+    // Unchanged for every ungrouped alert: the automation's name.
+    ruleName: owner.name ?? rule?.name ?? null,
+    ownerKind: owner.kind,
+    groupName: alertGroup?.name ?? null,
+    contributingRules: contributingRuleNames(row.members),
+    requireAckNote: ackNotePolicyOf(row),
+  };
+}
+
+/** The distinct automations that contributed to a grouped alert, in the order
+ *  they first appear — read off the members snapshot, so no extra query and it
+ *  still answers after the alert is cleared. */
+function contributingRuleNames(members: unknown): string[] {
+  if (!Array.isArray(members)) return [];
+  const out: string[] = [];
+  for (const m of members as { ruleName?: unknown }[]) {
+    if (typeof m?.ruleName === "string" && m.ruleName && !out.includes(m.ruleName)) out.push(m.ruleName);
+  }
+  return out;
 }
 
 /**
@@ -209,14 +260,23 @@ export async function getNotificationForViewer(
  */
 async function runResetActionsForCleared(ids: string[], actor: string): Promise<void> {
   const rows = await prisma.notification.findMany({
-    where: { id: { in: ids }, cleared: false, ruleId: { not: null } },
+    // An alert delivered through an AlertGroup has its OWN reset actions
+    // (business rule 75) and may well carry no automation-level ones, so the
+    // filter widens from "has a rule" to "has an owner".
+    where: { id: { in: ids }, cleared: false, OR: [{ ruleId: { not: null } }, { alertGroupId: { not: null } }] },
     select: {
       id: true, message: true, severity: true, assetId: true, assetHostname: true,
       rule: { select: { id: true, name: true, scope: true, emailComposition: true, resetActions: true } },
+      alertGroup: { select: { id: true, name: true, enabled: true, emailComposition: true, resetActions: true } },
     },
     take: 200,
   });
-  const withActions = rows.filter((r) => Array.isArray(r.rule?.resetActions) && (r.rule!.resetActions as unknown[]).length > 0);
+  // Resolve the OWNER per alert: the group when it has one, else the
+  // automation. "Tell someone it ended" is a delivery policy, and delivery is
+  // exactly what a group owns.
+  const withActions = rows
+    .map((r) => ({ row: r, owner: alertOwnerOf({ severity: r.severity, rule: r.rule, alertGroup: r.alertGroup }) }))
+    .filter((e) => e.owner && Array.isArray(e.owner.resetActions) && e.owner.resetActions.length > 0);
   if (withActions.length === 0) return;
 
   // Imported lazily: notificationService is imported BY the recipient service
@@ -227,24 +287,29 @@ async function runResetActionsForCleared(ids: string[], actor: string): Promise<
     import("./notificationRecipientService.js"),
   ]);
 
-  for (const n of withActions) {
-    const rule = n.rule!;
+  for (const { row: n, owner } of withActions) {
+    const o = owner!;
     const ctx = buildTemplateContext({
       asset: n.assetHostname ?? "",
       severity: "resolved",
       time: new Date(),
-      ruleName: rule.name,
+      ruleName: o.name,
     });
     // Headline AND {message}: this context has no reading behind it, so without
     // the headline the email would state the severity and the hostname and
     // nothing about what happened.
-    setRecoverySentence(ctx, `Resolved: ${rule.name} — ${n.assetHostname ?? "alert"} cleared by ${actor}`);
-    await executeActions(n.id, rule.resetActions as never, ctx, {
-      scopeRegionTags: scopeRegionTagsOf(rule.scope as never),
+    setRecoverySentence(ctx, `Resolved: ${o.name} — ${n.assetHostname ?? "alert"} cleared by ${actor}`);
+    await executeActions(n.id, o.resetActions as never, ctx, {
+      // A group has no scope of its own; its members' scopes chose the devices
+      // at fire time, and recipientDeviceRegion routing reads the ALERT's own
+      // snapshotted region tags either way.
+      scopeRegionTags: scopeRegionTagsOf((n.rule?.scope ?? {}) as never),
       assetId: n.assetId,
-      ruleId: rule.id,
-      ruleName: rule.name,
-      ruleEmailComposition: (rule.emailComposition ?? null) as never,
+      // PROVENANCE stays the automation's — which automation raised this — even
+      // when a group supplied the actions.
+      ruleId: n.rule?.id,
+      ruleName: o.name,
+      ruleEmailComposition: (o.emailComposition ?? null) as never,
       actor,
     }).catch(() => { /* one bad alert must not stop the rest of the batch */ });
   }

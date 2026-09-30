@@ -374,6 +374,28 @@ A token palette is visible in both view modes.
 
 ---
 
+## One alert per device
+
+An automation that watches something **per component** — per interface, per
+PoE port, per storage mount, per sensor — raises one alert per component by
+default. Tick **Raise one alert per device, not one per interface** (the noun
+follows the trigger) on the Actions step and it raises **one alert per device**
+instead ([rule 75](Business-Rules#rule-75)):
+
+- every affected component is named on the alert — `{dimension}` renders the
+  list, `{dimension.count}` how many, `{dimension.first}` the lead one;
+- **one acknowledgement** covers all of them;
+- the alert **stays up until the last one recovers** — the first port to come
+  back does not send "Resolved" while the rest are still down;
+- a component that goes wrong later **joins** the alert and sends one more
+  message naming the whole set, and that **re-opens** an acknowledged alert;
+- the alert carries the **worst** severity among the components still affected.
+
+The checkbox appears only on a trigger that reports per component. Turning it
+on or off ends the automation's live alerts, and the next check raises them in
+the new shape. To fold alerts from **several** automations into one, use an
+[alert group](Automations#alert-groups).
+
 ## Acknowledgement
 
 An alert can be acknowledged from all three places you might read it: in-app,

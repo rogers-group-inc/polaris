@@ -45,9 +45,12 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{metric}", label: "Metric", description: "Metric / field / event action that triggered", group: "notification" },
   { token: "{value}", label: "Value", description: "Observed value at fire time", group: "notification" },
   { token: "{threshold}", label: "Threshold", description: "Configured threshold / comparison value", group: "notification" },
-  { token: "{dimension}", label: "Dimension", description: "Sub-asset dimension (interface / mount / sensor / tunnel)", group: "notification" },
+  { token: "{dimension}", label: "Dimension", description: "Sub-asset dimension (interface / mount / sensor / tunnel). On an automation that consolidates per device, every affected one — \"port12 (AP-1), port14 and 5 more\"", group: "notification" },
   { token: "{dimension.label}", label: "Dimension label", description: "What that component is called — \"Interface\", \"Sensor\", \"IPsec tunnel\". Blank when the alert is about the whole device", group: "notification" },
   { token: "{dimension.suffix}", label: "Dimension suffix", description: "The component with its own separator (\" · port12\"), for appending to a subject line — blank when the alert is about the whole device", group: "notification" },
+  { token: "{dimension.count}", label: "Dimension count", description: "How many components this alert names (1 when it is about a single one)", group: "notification" },
+  { token: "{dimension.first}", label: "Leading dimension", description: "The one component the alert leads with — the worst, and the one its charts are about", group: "notification" },
+  { token: "{dimension.list}", label: "Dimension list", description: "Every affected component, uncapped — for a body rather than a subject line", group: "notification" },
   { token: "{conditions}", label: "Conditions", description: "Multi-condition summary, e.g. \"2 of 3 conditions met\" (composite triggers; empty otherwise)", group: "notification" },
   { token: "{message}", label: "Message", description: "The rendered in-app notification message", group: "notification" },
   { token: "{severity}", label: "Severity", description: "Rule severity (e.g. warning)", group: "notification" },
@@ -264,6 +267,17 @@ export interface TemplateContextParts {
   value?: string;
   threshold?: string;
   dimension?: string;
+  /** GROUPED ALERTS (business rule 75). On an alert that names several
+   *  components, `{dimension}` is the capped list, so these three are the ways
+   *  back to the parts of it a sentence may want on its own. All three are set
+   *  on every alert — on an ungrouped one they describe its single component,
+   *  which is exactly what they mean there, so a template using them is never
+   *  broken by the automation not being grouped. */
+  dimensionCount?: string;
+  /** The component the alert leads with — the one its charts are about. */
+  dimensionFirst?: string;
+  /** Every affected component, uncapped. For a body, not a subject line. */
+  dimensionList?: string;
   /** What the component IS — "Interface", "Sensor", "IPsec tunnel" — so a
    *  surface can LABEL `{dimension}` instead of printing a bare port name.
    *  Blank on a whole-device alert; `{dimension.label}` falls back to the
@@ -465,6 +479,9 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     "value": str(parts.value),
     "threshold": str(parts.threshold),
     "dimension": str(parts.dimension),
+    "dimension.count": str(parts.dimensionCount),
+    "dimension.first": str(parts.dimensionFirst),
+    "dimension.list": str(parts.dimensionList),
     // Both derived from `{dimension}` itself rather than from the parts, so a
     // caller that renders the dimension differently — a grouped alert naming
     // every affected component — gets a label and a subject tag that agree with

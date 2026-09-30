@@ -50,6 +50,11 @@ var _rulesPage = 1;
     if (mb) mb.style.display = canManage ? "" : "none";
     var db = document.getElementById("auto-tab-delivery-btn");
     if (db) db.style.display = canManage ? "" : "none";
+    // Alert groups (business rule 75) ride the automations key: a group
+    // decides who gets paged about every one of its members, so it is at least
+    // as sensitive as editing one of them.
+    var gb = document.getElementById("auto-tab-groups-btn");
+    if (gb) gb.style.display = canManage ? "" : "none";
     var sb = document.getElementById("auto-tab-scripts-btn");
     if (sb) sb.style.display = canReadScripts ? "" : "none";
     var cb = document.getElementById("auto-tab-contacts-btn");
@@ -65,6 +70,14 @@ var _rulesPage = 1;
     if (ac) {
       ac.style.display = canEditRules && activeKey === "delivery" ? "" : "none";
       if (canEditRules && !ac._wired) { ac._wired = true; ac.addEventListener("click", function () { showChannelTypePicker(); }); }
+    }
+    var agBtn = document.getElementById("ag-new-btn");
+    if (agBtn) {
+      agBtn.style.display = canEditRules ? "" : "none";
+      if (canEditRules && !agBtn._wired) {
+        agBtn._wired = true;
+        agBtn.addEventListener("click", function () { window.PolarisAlertGroups.openEditor(null); });
+      }
     }
     var asBtn = document.getElementById("btn-add-script");
     if (asBtn) {
@@ -108,6 +121,7 @@ var _rulesPage = 1;
       if (acBtn3 && canEditContacts) acBtn3.style.display = key === "contacts" ? "" : "none";
       if (key === "manage" && !_rulesSF) initRulesTab();
       if (key === "delivery") loadChannelsTab();
+      if (key === "groups") window.PolarisAlertGroups.renderTab();
       if (key === "scripts") loadScriptsTab();
       if (key === "contacts") window.PolarisAddressBook.renderTab();
     });
@@ -117,6 +131,7 @@ var _rulesPage = 1;
     var active = document.querySelector("#auto-tabs .page-tab.active");
     var key = active ? active.getAttribute("data-tab") : "manage";
     if (key === "delivery") loadChannelsTab();
+    else if (key === "groups") window.PolarisAlertGroups.renderTab();
     else if (key === "scripts") loadScriptsTab();
     else if (key === "contacts") window.PolarisAddressBook.renderTab();
     else loadRules();

@@ -80,6 +80,16 @@ export interface ActionExecContext {
    *  part of the email an operator reads in a full inbox after a silent
    *  night. */
   repeat?: { attempt: number; elapsed?: string; quietResumed?: boolean };
+  /** Set by the engine when a GROUPED alert (business rule 75) gained a
+   *  contribution after it was already up: this send updates a live alert
+   *  rather than opening one. Mutually exclusive with the two above for the
+   *  same reason they are with each other — "another port faulted" is neither
+   *  a reminder nor an escalation tier, and a reader who cannot tell the three
+   *  apart cannot tell whether the situation is spreading or merely ageing.
+   *
+   *  `count` is the number of contributions the alert now names, which is what
+   *  makes the subject worth reading in a full inbox. */
+  growth?: { count: number };
   /** Audit actor; defaults to "system:automation". */
   actor?: string;
 }
@@ -320,6 +330,18 @@ function composeForNotify(
       // every one of them would make the marker mean nothing.
       const age = exec.repeat.quietResumed && exec.repeat.elapsed ? ` · ACTIVE ${exec.repeat.elapsed}` : "";
       composed.subject = `[REMINDER ${exec.repeat.attempt}${age}] ${composed.subject}`;
+    }
+    return composed;
+  }
+  // A grouped alert that gained a contribution (business rule 75). Same shape
+  // and same restraint as the reminder prefix above: only when nobody wrote a
+  // subject template. The COUNT is the finding — "another port" is noise, "now
+  // 9 ports" is a spreading fault — so it is what the marker carries.
+  if (exec.growth && !exec.escalation) {
+    const comp = actionComp ?? exec.ruleEmailComposition ?? {};
+    const composed = buildComposedEmail(comp, ctx);
+    if (!comp.subjectTemplate || !comp.subjectTemplate.trim()) {
+      composed.subject = `[UPDATED · ${exec.growth.count}] ${composed.subject}`;
     }
     return composed;
   }

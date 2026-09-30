@@ -293,6 +293,45 @@ function triggerMatchesRelevance(trigger: unknown, rel: AlertRelevance): boolean
  *  asset's alerts that was. Ties break toward the UNACKNOWLEDGED one: at equal
  *  severity the choice is invisible to the pill, and it is the only one that
  *  keeps "already acknowledged" meaning every relevant alert is handled. */
+/**
+ * Every trigger that contributed to each GROUPED alert, keyed by alert id.
+ *
+ * ONE query for the whole page, not one per alert: the contributing rule ids
+ * come off each alert's own `members` snapshot (already selected), so this is a
+ * single `findMany` over the distinct ids — and it runs only when a grouped
+ * alert is actually present, so an install with no groups pays nothing.
+ *
+ * Alerts that are not grouped are absent from the map, and the caller falls
+ * back to the single `rule.trigger` it already had.
+ */
+async function contributingTriggers(
+  rows: { id: string; alertGroupId?: string | null; members?: unknown }[],
+): Promise<Map<string, unknown[]>> {
+  const out = new Map<string, unknown[]>();
+  const byAlert = new Map<string, string[]>();
+  const wanted = new Set<string>();
+  for (const r of rows) {
+    if (!r.alertGroupId || !Array.isArray(r.members)) continue;
+    const ids: string[] = [];
+    for (const m of r.members as { ruleId?: unknown }[]) {
+      if (typeof m?.ruleId === "string" && m.ruleId && !ids.includes(m.ruleId)) ids.push(m.ruleId);
+    }
+    if (!ids.length) continue;
+    byAlert.set(r.id, ids);
+    for (const id of ids) wanted.add(id);
+  }
+  if (!wanted.size) return out;
+  const rules = await prisma.notificationRule.findMany({
+    where: { id: { in: [...wanted] } },
+    select: { id: true, trigger: true },
+  });
+  const triggerById = new Map(rules.map((r) => [r.id, r.trigger]));
+  for (const [alertId, ids] of byAlert) {
+    out.set(alertId, ids.map((id) => triggerById.get(id)).filter((t) => t !== undefined));
+  }
+  return out;
+}
+
 export async function activeAlertSeverityByAsset(
   assetIds: string[] | null,
   relevance: AlertRelevance = { kind: "any" },
@@ -300,12 +339,28 @@ export async function activeAlertSeverityByAsset(
   if (relevance.kind === "none") return new Map();
   const rows = await prisma.notification.findMany({
     where: { cleared: false, assetId: assetIds ? { in: assetIds } : { not: null } },
-    select: { id: true, assetId: true, severity: true, acknowledged: true, rule: { select: { trigger: true } } },
+    select: {
+      id: true, assetId: true, severity: true, acknowledged: true,
+      rule: { select: { trigger: true } },
+      // A GROUPED alert (business rule 75) may be raised by several
+      // automations, so "is this alert about the thing this widget measures?"
+      // is answered by ANY contributing trigger. Without it a switch's grouped
+      // alert vanishes from the interfaces pill whenever the primary
+      // contribution happened to be a temperature condition — the alert is
+      // still about a dead port, and the widget would say the switch is fine.
+      alertGroupId: true,
+      members: true,
+    },
   });
+  const triggersByGroupAlert = await contributingTriggers(rows);
   const out = new Map<string, { severity: string; rank: number; id: string; acknowledged: boolean }>();
   for (const r of rows) {
     if (!r.assetId) continue;
-    if (!triggerMatchesRelevance(r.rule?.trigger, relevance)) continue;
+    const contributed = triggersByGroupAlert.get(r.id);
+    const matches = contributed
+      ? contributed.some((t) => triggerMatchesRelevance(t, relevance))
+      : triggerMatchesRelevance(r.rule?.trigger, relevance);
+    if (!matches) continue;
     const rank = ALERT_SEVERITY_RANK[r.severity] ?? 0;
     const acknowledged = r.acknowledged === true;
     const cur = out.get(r.assetId);
@@ -1110,7 +1165,16 @@ export interface AlertRow {
   message: string;
   severity: string;
   raisedAt: Date;
+  /** What KIND of problem this is, and the widget's row title: the AlertGroup's
+   *  name when the alert is delivered through one (business rule 75), else the
+   *  automation's. */
   ruleName: string | null;
+  /** Set only when an AlertGroup owns the alert — the surfaces that want to say
+   *  "this is a group" rather than just name it. */
+  groupName?: string | null;
+  /** How many components a GROUPED alert covers, for the "+N" affordance.
+   *  Null on an alert about a single thing, which is every ungrouped one. */
+  dimensionCount?: number | null;
   /** The KIND of automation behind the alert — the raising rule's
    *  `trigger.type` (`asset_metric` | `asset_state` | `host_metric` | `event` |
    *  `change` | `composite`), null when the rule is gone or its trigger is
@@ -1185,6 +1249,12 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
       id: true, ruleId: true, assetId: true, assetHostname: true, dimension: true, message: true,
       severity: true, triggeredAt: true,
       acknowledged: true, acknowledgedBy: true, rule: { select: { name: true } },
+      // Grouped alerts (business rule 75): the widget's row TITLE is what kind
+      // of problem this is, and for a grouped alert that is the group's name —
+      // without it the row renders titleless. `dimensionCount` drives the "+N"
+      // affordance beside it.
+      alertGroup: { select: { name: true } },
+      dimensionCount: true,
       dependencyDown: true, dependencyBlame: true,
     },
     orderBy: { triggeredAt: "desc" },
@@ -1198,7 +1268,14 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     message: n.message,
     severity: n.severity,
     raisedAt: n.triggeredAt,
-    ruleName: n.rule?.name ?? null,
+    // The group names a grouped alert; the automation names every other one.
+    ruleName: n.alertGroup?.name ?? n.rule?.name ?? null,
+    groupName: n.alertGroup?.name ?? null,
+    // How many components this alert covers — null unless it is grouped, so
+    // the widget renders "+N" only where there is an N.
+    dimensionCount: n.dimensionCount ?? null,
+    // Still the PRIMARY automation's type: the gear's "hide event-triggered
+    // alerts" toggle keeps working, and groups cannot contain event triggers.
     triggerType: (n.ruleId && triggerTypeByRule.get(n.ruleId)) || null,
     acknowledged: n.acknowledged,
     acknowledgedBy: n.acknowledgedBy ?? null,

@@ -1655,7 +1655,7 @@ async function openAutomationWizard(existing, opts) {
       scope: { allAssets: true },
       trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "latest", windowSec: 0, operator: ">=", threshold: null, forDurationSec: 0 },
       reset: null, // defaulted per trigger type on Step-4 entry
-      cooldownSec: null, messageTemplate: null, requireAckNote: false, repeat: null,
+      cooldownSec: null, messageTemplate: null, requireAckNote: false, groupByAsset: false, repeat: null,
       // The audit Event is an action now, present by default — a new
       // automation behaves like every existing one until someone removes it.
       actions: [{ type: "event" }], escalation: null,
@@ -2356,32 +2356,20 @@ async function openAutomationWizard(existing, opts) {
     { value: "event", label: (findType("event") || {}).label || "Audit event match" },
     { value: "change", label: (findType("change") || {}).label || "Change detection" },
   ];
-  var scMeta = s.scopeCondition || {
-    groupOps: ["and", "or", "none", "notAll"],
-    groupOpLabels: {
-      and: "All child conditions must be satisfied (AND)",
-      or: "At least one child condition must be satisfied (OR)",
-      none: "All child conditions must NOT be satisfied",
-      notAll: "At least one child condition must NOT be satisfied",
-    },
-    operatorLabels: { equals: "is equal to", notEquals: "is not equal to", contains: "contains", notContains: "does not contain", startsWith: "starts with", endsWith: "ends with", has: "is applied", notHas: "is not applied", inCidr: "is within", notInCidr: "is not within" },
-    fields: [
-      { field: "assetType", label: "Device type", ops: ["equals", "notEquals"], optionsFrom: "assetTypes" },
-      { field: "manufacturer", label: "Manufacturer", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: "manufacturers" },
-      { field: "model", label: "Model", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: "models" },
-      { field: "hostname", label: "Hostname", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: null },
-      { field: "os", label: "Operating system", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: null },
-      { field: "tag", label: "Tag", ops: ["has", "notHas"], optionsFrom: "tags" },
-      { field: "subnet", label: "Subnet / IP", ops: ["inCidr", "notInCidr"], optionsFrom: "subnets" },
-      { field: "ipBlock", label: "IP block", ops: ["inCidr", "notInCidr"], optionsFrom: "ipBlocks" },
-      { field: "interfaceName", label: "Device interface", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: "interfaceNames" },
-      { field: "ssid", label: "Broadcast SSID", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: "ssids" },
-      { field: "status", label: "Lifecycle status", ops: ["equals", "notEquals"], optionsFrom: null, values: ["active", "maintenance", "decommissioned", "storage", "disabled", "quarantined"] },
-      // Asset ID intentionally omitted — a raw id targets one device with no
-      // precedence meaning; use hostname. Saved rules using it still evaluate.
-    ],
-    maxDepth: 5,
-  };
+  // The Devices-step catalog + value suggestions come from the SHARED
+  // vocabulary module (public/js/scope-vocabulary.js), which the Alert Groups
+  // editor uses too. The fallback catalog and the `optionsFrom` switch used to
+  // live inline here; they moved the moment a second surface behind the same
+  // `automationManagement` gate wanted them, rather than being copied — a
+  // second copy of that switch is how a newly added field silently degrades to
+  // a free-text box on one surface and nobody notices.
+  var _scVocab = window.PolarisScopeVocabulary.make({
+    schema: s,
+    assetTypes: _ruleAssetTypes,
+    tagList: _ruleTagList,
+    scopeOptions: _awScopeOptions,
+  });
+  var scMeta = _scVocab.meta;
 
   // The devices-step tree is built by the shared module (public/js/condition-builder.js),
   // which contacts use too — this wizard only injects the catalog and the value
@@ -2620,24 +2608,9 @@ async function openAutomationWizard(existing, opts) {
   // NOT-ALL), child rules of [field][operator][value], and nested sub-groups.
   // An empty root = all assets. Collect walks the DOM into scope.condition;
   // the backend evaluates the same tree via evaluateScopeCondition.
-  function scFieldMeta(field) {
-    return (scMeta.fields || []).find(function (f) { return f.field === field; }) || scMeta.fields[0];
-  }
-  function scValueOptions(field) {
-    var fm = scFieldMeta(field);
-    if (fm.values) return fm.values.map(function (v) { return { value: v, label: v }; });
-    switch (fm.optionsFrom) {
-      case "assetTypes": return (_ruleAssetTypes || []).map(function (t) { return { value: t.name, label: t.label || t.name }; });
-      case "manufacturers": return (_awScopeOptions.manufacturers || []).map(function (m) { return { value: m, label: m }; });
-      case "models": return (_awScopeOptions.models || []).map(function (m) { return { value: m, label: m }; });
-      case "interfaceNames": return (_awScopeOptions.interfaceNames || []).map(function (n) { return { value: n, label: n }; });
-      case "ssids":         return (_awScopeOptions.ssids || []).map(function (n) { return { value: n, label: n }; });
-      case "tags": return (_ruleTagList || []).map(function (t) { return { value: t, label: t }; });
-      case "subnets": return (_awScopeOptions.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr }; });
-      case "ipBlocks": return (_awScopeOptions.ipBlocks || []).map(function (b) { return { value: b.cidr, label: b.name + " — " + b.cidr }; });
-      default: return [];
-    }
-  }
+  // Both delegate to the shared vocabulary — see the _scVocab note above.
+  function scFieldMeta(field) { return _scVocab.fieldMeta(field); }
+  function scValueOptions(field) { return _scVocab.valueOptions(field); }
   /** The Devices step's one-line lead, which depends on what the trigger can
    *  actually be filtered BY. This line used to tell an audit-event operator
    *  that the step was ignored — and it was, silently discarding whatever was
@@ -5189,6 +5162,56 @@ async function openAutomationWizard(existing, opts) {
     }
     return "reading";
   }
+  /**
+   * "Raise one alert per device" (business rule 75).
+   *
+   * Rendered only when the trigger actually reports per component, because
+   * that is the only case where there is anything to fold — and a checkbox
+   * that saves and then does nothing is worse than no checkbox. The server
+   * refuses it on anything else (validateGrouping), and collectStep5 drops it
+   * from the draft when the trigger changes, so the two can never disagree.
+   *
+   * The noun comes from the schema catalog's dimensionNouns, like every other
+   * per-dimension sentence in this wizard — "interface", "sensor", "storage
+   * mount" — so the copy follows the vocabulary rather than repeating it.
+   */
+  function groupByAssetHtml() {
+    var tr = draft.trigger;
+    if (!isTriggerPerDimension(tr)) return "";
+    var noun = perDimensionNoun(tr);
+    var capability = (s.alertGrouping && s.alertGrouping.supported) ? s.alertGrouping : null;
+    if (!capability) return "";
+    return '<div style="border-top:1px solid var(--color-border);margin-top:0.6rem;padding-top:0.5rem">' +
+      '<label style="display:block;margin:0;font-weight:400">' +
+        '<input type="checkbox" id="aw-group-by-asset"' + (draft.groupByAsset ? " checked" : "") + '> ' +
+        'Raise one alert per device, not one per ' + escapeHtml(noun) +
+      '</label>' +
+      '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 1.4rem">' +
+        'Every affected ' + escapeHtml(noun) + ' is named on the one alert, one acknowledgement covers all of them, ' +
+        'and it stays up until the last one recovers. A ' + escapeHtml(noun) + ' that goes wrong later joins the ' +
+        'same alert and sends one more message — which also re-opens it if it had been acknowledged. ' +
+        '<strong>{dimension} then renders the list</strong> rather than a single name.' +
+      '</p>' +
+    '</div>';
+  }
+
+  /** "Delivered by <group>" — shown on the actions step while this automation
+   *  belongs to an AlertGroup, with a link to the group that actually decides
+   *  who hears about it. Empty for every automation that delivers on its own,
+   *  which is every one until somebody builds a group. */
+  function groupDeliveryBannerHtml() {
+    if (!draft.alertGroupName) return "";
+    return '<div style="border:1px solid var(--color-warning,#b45309);background:var(--color-warning-bg,rgba(180,83,9,0.08));' +
+        'border-radius:6px;padding:0.6rem 0.75rem;margin:0 0 0.75rem">' +
+      '<div style="font-weight:600;font-size:0.9rem">Delivered by the group “' + escapeHtml(draft.alertGroupName) + '”</div>' +
+      '<p style="font-size:0.8rem;color:var(--color-text-secondary);margin:4px 0 0">' +
+        'While this automation is in that group, the group decides who is told, how it escalates and how often it reminds — ' +
+        'and its alerts about one device are folded in with the other members’. The actions below are kept, and are what ' +
+        'this automation would go back to on its own, but they do not run meanwhile.' +
+      '</p>' +
+    '</div>';
+  }
+
   /** The custom-reset tree an untouched draft starts from: the trigger's own
    *  condition, inverted (De Morgan for a composite). Falls back to a blank
    *  condition row only when there is nothing invertible to seed from. */
@@ -6040,12 +6063,30 @@ async function openAutomationWizard(existing, opts) {
     // the alert being raised rather than about what is sent, and outside every
     // collapse body so a folded severity still states them.
     var html = '<h3 style="margin:0 0 0.25rem">What should happen?</h3>' +
+      // DELIVERED BY A GROUP (business rule 75). While this automation belongs
+      // to an AlertGroup the group does the telling — its recipients, its
+      // escalation chain, its reminder cadence. Everything below still SAVES,
+      // and is what this automation goes back to if it ever leaves the group,
+      // but none of it runs meanwhile. Saying so is not optional: an operator
+      // editing recipients that cannot fire has no way to discover it, and the
+      // symptom is the worst kind — the right people are configured and nobody
+      // is told.
+      groupDeliveryBannerHtml() +
       '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">Notifications route through Delivery-tab channels; API calls POST to your systems; scripts run on the Polaris server or the triggering asset’s agent.</p>' +
       '<div class="form-group aw5-card" id="aw-inapp-card">' +
         '<label class="aw5-card-title">' + cardTitle + '</label>' +
         '<p class="aw5-help">' + cardHelp + '</p>' +
         tokenPaletteHtml("aw-token-palette") +
         '<input type="text" id="aw-msg" class="tpl-field" value="' + escapeHtml(draft.messageTemplate || "") + '" placeholder="' + (isEC ? "{rule}: {value}" : "{asset} {metric} = {value} (threshold {threshold})") + '" style="width:100%;margin-top:4px">' +
+        // The follow-up pair ("require a note" / "repeat this notification")
+        // used to live here. It moved into each severity section — see
+        // followUpBlockHtml.
+        //
+        // Consolidating per device (business rule 75) stays HERE, and not in
+        // followUpBlockHtml beside it, because it is a property of the alert
+        // RECORD rather than of a severity: that block is cloned per band, and
+        // "how many alerts exist" cannot have a different answer per tier.
+        groupByAssetHtml() +
         // One of the selected devices, picked at random, rendered through the
         // server's own message path (/message-example) — hover a variable chip
         // to see what it is for this device.
@@ -8536,6 +8577,13 @@ async function openAutomationWizard(existing, opts) {
     // every band inherits when it says nothing of its own.
     var baseBlock = followUpBlocks(panel)[0];
     if (baseBlock) draft.requireAckNote = collectFollowUp(baseBlock).requireAckNote;
+    // Consolidating per device (business rule 75). Read from the control when
+    // it is on screen; FORCED OFF when it is not, which is the case that
+    // matters: an operator who ticked it on a PoE-fault trigger and then
+    // switched the trigger to CPU would otherwise post a flag the server
+    // refuses, and get a 400 pointing at a checkbox no longer rendered.
+    var groupEl = panel.querySelector("#aw-group-by-asset");
+    draft.groupByAsset = groupEl ? !!groupEl.checked : false;
     // Business rule 78 — only when its box is on screen: the control renders
     // for a bare down trigger alone, and a hidden control must never post (or
     // strip) a key the operator did not touch.
@@ -9234,6 +9282,10 @@ function _awDraftFromRule(r) {
     cooldownSec: null,
     messageTemplate: r.messageTemplate != null ? r.messageTemplate : null,
     requireAckNote: r.requireAckNote === true,
+    groupByAsset: r.groupByAsset === true,
+    // Read-only here: membership is managed on the Groups tab, not in the
+    // wizard. Carried so the actions step can say who is really delivering.
+    alertGroupName: (r.alertGroup && r.alertGroup.name) || null,
     actions: JSON.parse(JSON.stringify(Array.isArray(r.actions) ? r.actions : [])),
     escalation: esc ? JSON.parse(JSON.stringify(esc)) : null,
     severityBands: Array.isArray(r.severityBands) && r.severityBands.length ? JSON.parse(JSON.stringify(r.severityBands)) : null,

@@ -149,6 +149,13 @@ beforeAll(() => {
   // missing module here reproduces the "wizard silently fails to open" bug.
   const cbSrc = readFileSync(resolve(__dirname, "../../public/js/condition-builder.js"), "utf8");
   (0, eval)(cbSrc);
+  // The shared device-selection vocabulary — the Devices step's catalog and
+  // its value suggestions, which the Alert Groups editor uses too. The wizard
+  // reads it while assembling the modal body, so a missing module here
+  // reproduces the same silent "wizard does not open" a forgotten script tag
+  // would cause.
+  const svSrc = readFileSync(resolve(__dirname, "../../public/js/scope-vocabulary.js"), "utf8");
+  (0, eval)(svSrc);
   // The address book, loaded before the wizard on every page that carries it.
   // It owns the dynamic-recipient catalogue ("Asset's Region Users" and
   // friends) that the wizard's recipient typeahead offers, so a missing module

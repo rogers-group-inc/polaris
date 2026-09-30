@@ -15,7 +15,25 @@ import { runInstrumentedJob } from "./_metrics.js";
 
 const INTERVAL_MS = 60 * 1000; // 1 minute
 
+/**
+ * Independent re-entrancy guard so a slow tick cannot double-fire.
+ *
+ * `setInterval` does not wait for the previous run, and a tick that overruns 60
+ * seconds — a fleet-wide sweep, a slow database, a storm — would otherwise start
+ * a second evaluation in the same process while the first is still writing. Two
+ * evaluations racing the same `(rule, asset, dimension)` key can both see it
+ * `clear` and both fire it. That has always been possible; grouped alerts
+ * (business rule 75) make it VISIBLE, because the artifact is two alerts for one
+ * device rather than a duplicate that looks like a retry. The partial unique
+ * index `notifications_group_key_live` is the backstop either way — this is the
+ * cheap half of the fix, and the same pattern jobs/dependencyReconciler.ts and
+ * six others already carry.
+ */
+let running = false;
+
 async function runEvaluateNotificationRules(): Promise<void> {
+  if (running) return;
+  running = true;
   try {
     await runInstrumentedJob("evaluateNotificationRules", async () => {
       // Before the rules run, not after: an asset that went dark behind a
@@ -38,6 +56,10 @@ async function runEvaluateNotificationRules(): Promise<void> {
     });
   } catch (err: any) {
     logger.warn({ err: err?.message }, "evaluateNotificationRules job failed (non-fatal)");
+  } finally {
+    // In `finally`, not after the try: a throw that escaped the catch above
+    // would otherwise leave the flag set and stop evaluation for good.
+    running = false;
   }
 }
 

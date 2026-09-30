@@ -80,7 +80,32 @@ interface DeliveryRow {
      *  rather than read (the alert is about an invented device with no
      *  telemetry — see `utils/sampleAlertDevice`). */
     testRun: boolean;
+    /** The contributions a GROUPED alert names (business rule 75) —
+     *  AlertMember[], or null on an alert about a single thing. Read here so
+     *  the interface block can explain every affected port rather than only
+     *  the one the alert leads with. */
+    members: unknown;
   };
+}
+
+/**
+ * The components a grouped alert names, primary first — or null when it names
+ * one thing, which keeps every ungrouped alert on the untouched single-port
+ * path. Recovered contributions are left out: an email explaining a port that
+ * has come back is explaining the wrong port.
+ */
+function groupedDimensionsOf(n: DeliveryRow["notification"]): string[] | null {
+  if (!Array.isArray(n.members) || n.members.length === 0) return null;
+  const active = (n.members as { key?: unknown; leftAt?: unknown }[])
+    .filter((m) => !m.leftAt && typeof m.key === "string" && m.key)
+    .map((m) => m.key as string);
+  if (active.length <= 1) return null;
+  // The alert's own `dimension` is the primary contribution; lead with it so
+  // the block's first entry is the port the charts and the subject are about.
+  const primary = n.dimension;
+  return primary && active.includes(primary)
+    ? [primary, ...active.filter((k) => k !== primary)]
+    : active;
 }
 
 /**
@@ -282,6 +307,11 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
         // stays until those have drained. Absent = the install's zone, which is
         // what the body around it now uses.
         typeof meta.timeZone === "string" ? meta.timeZone : null,
+        // Every port a GROUPED alert names (business rule 75), primary first,
+        // so the block explains all of them and not just the one the alert
+        // leads with. Null on an ungrouped alert, which keeps the
+        // single-port path byte-identical.
+        groupedDimensionsOf(d.notification),
       );
       text = pruneEmptyTextLines(substituteInterfaceTokens(text, lldp.text, lldp.ipText));
       if (html) html = substituteInterfaceTokens(html, lldp.html, lldp.ipHtml);
@@ -694,7 +724,7 @@ export async function drainPendingDeliveries(
       // ruleId feeds the loss chart's window: the automation's own History is
       // what the chart should span (resolved lazily, only when a loss chart is
       // actually in the body).
-      notification: { select: { id: true, message: true, severity: true, assetId: true, assetHostname: true, dimension: true, metric: true, ruleId: true, triggeredAt: true, testRun: true } },
+      notification: { select: { id: true, message: true, severity: true, assetId: true, assetHostname: true, dimension: true, metric: true, ruleId: true, triggeredAt: true, testRun: true, members: true } },
     },
   })) as DeliveryRow[];
 

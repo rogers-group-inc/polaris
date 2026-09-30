@@ -28,6 +28,11 @@ const FULL_PARTS: TemplateContextParts = {
   value: "97.5",
   threshold: "90",
   dimension: "port1",
+  // Grouped alerts (business rule 75): the three ways back to the parts of a
+  // multi-component {dimension}. Set on every alert, so they are set here too.
+  dimensionCount: "3",
+  dimensionFirst: "port1",
+  dimensionList: "port1, port4, port9",
   conditions: "2 of 3 conditions met",
   message: "High CPU: fw-atl-01 — cpuPct = 97.5 (threshold 90)",
   severity: "critical",

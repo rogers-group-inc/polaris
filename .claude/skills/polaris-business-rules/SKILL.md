@@ -49,7 +49,7 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 | touch what the IP panel's Status column SAYS about an address, a FortiGate VIP or virtual server, `vipInfo`, or whether an address can be reserved at all | 23 first (the two-facts split), then 77 (the third fact and the composed pill) |
 | touch Asset status, `monitored`, `lastSeen`, `acquiredAt` | 9, 10; 12, 16, 36, 37 |
 | touch probes, `monitorStatus`, the failure bucket, packet loss, dependency suppression | 29, 30, 36, 38, 55, 59, 66, 67, 78, 86, 90 — the state machine itself is `polaris-change-impact` → cross-cutting/five-state-monitor-machine.md |
-| touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56, 58, 59, 60, 65, 66, 67, 78, 85, 89, 90 |
+| touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56, 58, 59, 60, 65, 66, 67, 75, 78, 85, 89, 90 |
 | touch what an alert says about a device that is dependency-down, or who may alert about one | 16 and 37 (the silence), then 78 (the one opt-out from it) |
 | touch what an alert EMAIL says — the timezone a timestamp is drawn in, who is on the To line, whether one send may become two, the Acknowledge button | 25 first (it forbids splitting a send), then 56 and 60 |
 | touch a maintenance window, a hold Polaris takes for itself, or any surface that REPORTS one | 16 (what a window does), 37 (the gate that reads it), 80 + 80a (holds and event-time), 73 (reporting) |
@@ -97,7 +97,7 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 - [references/narrative-36-43.md](references/narrative-36-43.md) — narrative, rules 36–43
 - [references/narrative-44-48.md](references/narrative-44-48.md) — narrative, rules 44–59 (split 2026-09-09 when 36–43 passed 100 KB)
 - [references/narrative-60-64.md](references/narrative-60-64.md) — narrative, rules 60–74 (split 2026-09-15; rules 76, 77 and 79 moved out to their own files 2026-09-22 to keep it under the ceiling)
-- one file per rule from here on: [narrative-76.md](references/narrative-76.md), [narrative-77.md](references/narrative-77.md), [narrative-78.md](references/narrative-78.md), [narrative-79.md](references/narrative-79.md), [narrative-80.md](references/narrative-80.md) (80 and 80a), [narrative-82.md](references/narrative-82.md), [narrative-83.md](references/narrative-83.md), [narrative-84.md](references/narrative-84.md), [narrative-85.md](references/narrative-85.md), [narrative-86.md](references/narrative-86.md), [narrative-87.md](references/narrative-87.md), [narrative-88.md](references/narrative-88.md), [narrative-89.md](references/narrative-89.md), [narrative-90.md](references/narrative-90.md)
+- one file per rule from here on: [narrative-75.md](references/narrative-75.md), [narrative-76.md](references/narrative-76.md), [narrative-77.md](references/narrative-77.md), [narrative-78.md](references/narrative-78.md), [narrative-79.md](references/narrative-79.md), [narrative-80.md](references/narrative-80.md) (80 and 80a), [narrative-82.md](references/narrative-82.md), [narrative-83.md](references/narrative-83.md), [narrative-84.md](references/narrative-84.md), [narrative-85.md](references/narrative-85.md), [narrative-86.md](references/narrative-86.md), [narrative-87.md](references/narrative-87.md), [narrative-88.md](references/narrative-88.md), [narrative-89.md](references/narrative-89.md), [narrative-90.md](references/narrative-90.md)
 
 ## Rules 1–11
 
@@ -172,7 +172,7 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 72 | A detection script asserts every prerequisite its remediation establishes, and a mode that establishes nothing refuses instead of reporting success | invariants-30-43 | narrative-60-64 |
 | 73 | Planned downtime is reported as planned, and a scoped view of a window still reports the WHOLE window | invariants-30-43 | narrative-60-64 |
 | 74 | A field Polaris writes onto a device is budgeted where the operator types it, and the budget is the DEVICE's | invariants-30-43 | narrative-60-64 |
-| 75 | — claimed by an in-flight worktree (alert grouping), not yet on `main` | — | — |
+| 75 | An alert may name many problems on one device, and it ends only when the last of them does | invariants-30-43 | narrative-75 |
 | 76 | Access is granted on the network profile the endpoint is actually on, and scoping it counts for nothing while a wider rule stands beside it | invariants-30-43 | narrative-76 |
 | 77 | A VIP describes an address; it does not claim it — and the status says every fact it has | invariants-30-43 | narrative-77 |
 | 78 | An automation may choose to speak for a silenced device, and then it must name who silenced it | invariants-30-43 | narrative-78 |

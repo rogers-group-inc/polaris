@@ -2717,6 +2717,12 @@ const ruleInputBaseSchema = z.object({
   // alert record — and is enforced in acknowledgeNotifications, so the emailed
   // ack link and the push action obey it too.
   requireAckNote: z.boolean().optional(),
+  // Consolidate this automation's per-component alerts into ONE alert per
+  // device (business rule 75): eight faulted PoE ports become one alert naming
+  // all eight, one email, one acknowledge. Refused by validateGrouping on any
+  // trigger that does not report per component — there would be nothing to
+  // fold, and a checkbox that silently does nothing is worse than none.
+  groupByAsset: z.boolean().optional(),
   channels: z.array(z.string().max(50)).default(["in_app"]),
   emailComposition: emailCompositionSchema.optional().nullable(),
   // Accepts BOTH shapes: legacy email tiers (pre-wizard UI) and v2 tiers of
@@ -2754,6 +2760,9 @@ export interface RuleInput {
   messageTemplate: string | null;
   /** Refuse an acknowledgement with no note (enforced server-side). */
   requireAckNote: boolean;
+  /** Fold this automation's per-component alerts into one alert per device
+   *  (business rule 75). Per-dimension triggers only. */
+  groupByAsset: boolean;
   channels: string[];
   emailComposition: EmailComposition | null;
   /** As posted (legacy email tiers OR v2 tiers-of-actions) — stored verbatim;
@@ -2899,6 +2908,7 @@ function normalizeRuleInputCore(raw: Omit<RuleInputRaw, "trigger">): Omit<RuleIn
     cooldownSec: raw.cooldownSec ?? null,
     messageTemplate: raw.messageTemplate ?? null,
     requireAckNote: raw.requireAckNote === true,
+    groupByAsset: raw.groupByAsset === true,
     channels: raw.channels,
     emailComposition: raw.emailComposition ?? null,
     escalation: raw.escalation ?? null,
@@ -2985,6 +2995,56 @@ function validateRepeat(
         "Repeating an alert re-sends its notifications, so the automation needs at least one Notify action. " +
         "API calls and scripts deliberately run only once, when the alert first fires.",
     });
+  }
+}
+
+/**
+ * `groupByAsset` applies only where there is something to fold.
+ *
+ * The refusal is deliberate rather than a silent no-op: a checkbox that saves
+ * and then changes nothing is the same failure mode as an ASSET_STATE_FIELDS
+ * entry with no engine resolver — it validates, it persists, it renders, and
+ * the automation quietly never does what it says. Each message names WHY this
+ * trigger has nothing to fold, because "invalid" tells an operator nothing
+ * about which of their choices to change.
+ */
+function validateGrouping(
+  v: { trigger?: Trigger | null; groupByAsset?: boolean | null },
+  ctx: z.RefinementCtx,
+): void {
+  if (v.groupByAsset !== true) return;
+  const trigger = v.trigger;
+  if (!trigger) return; // the trigger's own validation already failed
+  const refuse = (message: string) =>
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["groupByAsset"], message });
+
+  if (trigger.type === "composite") {
+    refuse(
+      "This automation already raises one alert per device — a composite condition folds its readings " +
+      "across components before it fires, so there is nothing left to consolidate.",
+    );
+    return;
+  }
+  if (trigger.type === "host_metric") {
+    refuse(
+      "Consolidating per device needs a device. A host-metric automation is about the Polaris server itself, " +
+      "so its alerts are already one.",
+    );
+    return;
+  }
+  if (trigger.type === "event" || trigger.type === "change") {
+    refuse(
+      `An ${trigger.type} automation fires on an instant rather than on a reading it keeps watching, ` +
+      "so Polaris has no per-component state to fold or to know when a part of it has ended.",
+    );
+    return;
+  }
+  if (!triggerIsPerDimension(trigger)) {
+    const what = trigger.type === "asset_metric" ? trigger.metric : trigger.field;
+    refuse(
+      `"${what}" is reported once per device, so this automation already raises one alert per device. ` +
+      "Consolidating applies to an automation that alerts per interface, sensor, storage mount, tunnel or SD-WAN member.",
+    );
   }
 }
 
@@ -3081,6 +3141,7 @@ function validateRuleV2(
     bandNotify?: BandNotify | null;
     actions?: AutomationAction[] | null;
     repeat?: RepeatConfig | null;
+    groupByAsset?: boolean | null;
   },
   ctx: z.RefinementCtx,
 ): void {
@@ -3089,6 +3150,7 @@ function validateRuleV2(
   validateSeverityBands(v, ctx);
   validateRepeat(v, ctx);
   validateMissedPolls(trigger, ctx);
+  validateGrouping(v, ctx);
   validateSkipUnusedPorts(trigger, ctx);
   if (reset.mode === "timed" && reset.afterSec == null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reset", "afterSec"], message: "timed reset requires afterSec" });
@@ -4272,6 +4334,423 @@ export const STATE_FIELD_DIMENSIONS: Record<string, string[]> = {
   sdwanMemberState: ["healthCheck", "link"],
 };
 
+// ─── Grouped alerts (business rule 75) ──────────────────────────────────────
+//
+// A CONTRIBUTION is (automation, component) on a device. A grouped alert owns
+// a set of them. Everything below is PURE — the engine does the I/O, these
+// decide. That split is deliberate and matches the poll-counted-hold helpers
+// (`leadingRun` / `advanceRun` / `sustainedSeverityByRun`): tests/unit is a
+// pure-function suite, so a decision that lives inside the engine's DB path
+// can only be covered by the integration suite, and the folds below are
+// exactly the part that must never drift.
+
+/** A contribution to a grouped alert, as snapshotted onto Notification.members.
+ *
+ *  This is a RENDER snapshot. The live truth is the NotificationRuleState rows
+ *  pointing at the alert — never ask this array whether a contribution is still
+ *  firing. It exists because the email renders at DELIVERY time and the alert
+ *  page renders after the clear, both long after those rows were released. */
+export interface AlertMember {
+  /** The engine's dimensionKey — ifName / sensorName / mountPath / "hc|link".
+   *  "" for a whole-device contribution (a composite, or an ungrouped field). */
+  key: string;
+  /** What a human reads: `interfaceDimLabel` output, so "port12 (AP-1)" rather
+   *  than "port12". The label is the whole reason members is JSON and not a
+   *  String[] of keys. */
+  label: string;
+  /** Which automation contributed. Always the one rule while a single
+   *  automation folds its own components; several once alert groups land. */
+  ruleId: string;
+  ruleName: string;
+  /** The severity THIS contribution resolved to, from its own rule's bands. */
+  severity: string;
+  /** Its reading when it joined or last changed, for the email's member table. */
+  value?: string;
+  /** ISO. Preserved across re-merges — a contribution that is still firing has
+   *  joined once, however many ticks have rewritten the snapshot since. */
+  joinedAt: string;
+  /** ISO. Set when the contribution recovered or left; the row is KEPT, because
+   *  what this alert covered is the history the snapshot exists to carry. */
+  leftAt?: string;
+}
+
+/** A 48-port switch plus its SFPs. Past this an alert has stopped being about
+ *  components and is about the device, and a body listing 200 of them is not a
+ *  message anyone reads. The cap drops the OLDEST departed entries first, then
+ *  refuses new ones. */
+export const MAX_GROUP_MEMBERS = 64;
+
+/** How many contributions a one-line summary (a message, a subject) names
+ *  before it says "and N more". Bounded because `{dimension}` reaches the email
+ *  SUBJECT on a rule that templates it there. */
+export const GROUP_LABEL_CAP = 6;
+
+/** The identity of a live grouped alert.
+ *
+ *  Prefixed by scope so the two kinds can never collide in the partial unique
+ *  index: an automation folding its own components keys on itself, and (once
+ *  alert groups land) a group keys on the group. A rule joining or leaving a
+ *  group therefore changes its key, which is what keeps the old episode's row
+ *  and the new one from fighting over it. */
+export function groupKeyOf(scope: "rule" | "grp", id: string, assetId: string): string {
+  return `${scope}:${id}|${assetId}`;
+}
+
+/** Does this trigger report one reading PER COMPONENT (rather than one per
+ *  device)?
+ *
+ *  The server-side twin of the wizard's `triggerDimensions(tr)`, which until now
+ *  existed only in automations-wizard.js. One predicate, read by the validator,
+ *  the engine and the schema catalog — the same argument the codebase makes for
+ *  keeping `hwSensorFilterMatches` single. */
+export function triggerIsPerDimension(trigger: Trigger | null | undefined): boolean {
+  if (!trigger) return false;
+  if (trigger.type === "asset_metric") return (METRIC_DIMENSIONS[trigger.metric] ?? []).length > 0;
+  if (trigger.type === "asset_state") return (STATE_FIELD_DIMENSIONS[trigger.field] ?? []).length > 0;
+  // A composite already fires once per device (dimensionKey ""), host metrics
+  // have no device to fold onto, and event/change write no state row at all.
+  return false;
+}
+
+/** Does this rule consolidate its alerts into one per device?
+ *
+ *  The single gate the engine branches on — everything grouping-related is
+ *  behind it, which is what makes the feature cost exactly nothing for every
+ *  rule in an install that has not opted in. */
+export function ruleGroupsByAsset(rule: {
+  groupByAsset?: boolean | null;
+  /** Membership of an AlertGroup IMPLIES the fold: joining a group means one
+   *  alert per device, components included. An operator who put an automation
+   *  in a group and still got eight alerts per switch would reasonably call
+   *  that broken. */
+  alertGroupId?: string | null;
+  trigger: Trigger;
+}): boolean {
+  if (rule.alertGroupId) return triggerCanJoinGroup(rule.trigger);
+  return rule.groupByAsset === true && triggerIsPerDimension(rule.trigger);
+}
+
+/**
+ * May this trigger contribute to an AlertGroup?
+ *
+ * Wider than `triggerIsPerDimension` by exactly one case: a COMPOSITE fires
+ * once per device at dimensionKey "" — redundant as a per-rule fold, which is
+ * why the checkbox refuses it, but a perfectly good whole-device contribution
+ * to a group. "Switch health" wanting a composite beside a PoE-fault automation
+ * is the obvious case, not an exotic one.
+ *
+ * Refused: `host_metric` (no device to group by) and `event`/`change` — and
+ * that refusal is structural rather than cautious. The event tail writes no
+ * `NotificationRuleState` row at all, so there would be nothing for the "was
+ * that the last contribution?" count to see, and the alert could never learn
+ * that the event's part in it had ended. Revisit only with a state row for them.
+ */
+export function triggerCanJoinGroup(trigger: Trigger | null | undefined): boolean {
+  if (!trigger) return false;
+  if (trigger.type === "composite") return trigger.kind !== "host";
+  return triggerIsPerDimension(trigger);
+}
+
+/** Where a rule's grouped alerts live: its group when it has one, else itself.
+ *
+ *  The two scopes can never collide in the partial unique index, and a rule
+ *  joining or leaving a group CHANGES its key — which is what stops the old
+ *  episode's alert and the new one fighting over the same row. */
+export function alertScopeOf(
+  rule: { id: string; alertGroupId?: string | null },
+  /** Whether the group GOVERNS this particular device.
+   *
+   *  A group may carry a scope of its own, which narrows where the fold
+   *  applies without touching what any member watches (detection stays the
+   *  automation's — business rule 75). On a device the group does not govern,
+   *  the member falls back to its OWN key and delivers as an ungrouped
+   *  automation would. Defaults true so every caller that has no group, or a
+   *  group with no scope, behaves exactly as before. */
+  groupGoverns = true,
+): { scope: "rule" | "grp"; id: string } {
+  return rule.alertGroupId && groupGoverns
+    ? { scope: "grp", id: rule.alertGroupId }
+    : { scope: "rule", id: rule.id };
+}
+
+/** The contributions that have NOT recovered. */
+export function activeMembers(members: AlertMember[] | null | undefined): AlertMember[] {
+  return (members ?? []).filter((m) => !m.leftAt);
+}
+
+/**
+ * Fold this tick's live contributions into the stored snapshot.
+ *
+ * Three properties the callers depend on:
+ *  - a contribution already present keeps its ORIGINAL `joinedAt` (it joined
+ *    once; every later tick merely re-renders the snapshot) and clears any
+ *    `leftAt` — a port that faults, recovers and faults again inside one alert
+ *    is the same contribution returning, not a second one;
+ *  - a stored contribution absent from `live` is NOT dropped. It is left
+ *    exactly as it is: departure is stamped by `markMemberLeft` on the recovery
+ *    transition, because only the state rows know the difference between "this
+ *    recovered" and "this tick produced no reading for it" (a collection gap
+ *    must never read as a recovery — the same rule the engine's no-readings
+ *    freeze enforces one layer down);
+ *  - order is stable: existing entries keep their position, new ones append.
+ *    A re-render that reshuffled the list would rewrite the message on a tick
+ *    where nothing happened.
+ */
+export function mergeMembers(
+  prev: AlertMember[] | null | undefined,
+  live: AlertMember[],
+  now: Date,
+): AlertMember[] {
+  const out = [...(prev ?? [])];
+  const byKey = new Map<string, number>();
+  out.forEach((m, i) => byKey.set(memberIdentity(m), i));
+  const stamp = now.toISOString();
+  for (const m of live) {
+    const at = byKey.get(memberIdentity(m));
+    if (at === undefined) {
+      out.push({ ...m, joinedAt: m.joinedAt || stamp });
+      byKey.set(memberIdentity(m), out.length - 1);
+      continue;
+    }
+    const existing = out[at]!;
+    out[at] = {
+      ...existing,
+      label: m.label,
+      ruleName: m.ruleName,
+      severity: m.severity,
+      value: m.value,
+      // Re-joining is the same contribution returning — keep the original
+      // joinedAt so "since" on the alert does not jump backwards.
+      joinedAt: existing.joinedAt,
+      leftAt: undefined,
+    };
+  }
+  return capMembers(out);
+}
+
+/** Stamp a contribution as recovered/departed, keeping its row for the history. */
+export function markMemberLeft(
+  members: AlertMember[] | null | undefined,
+  ruleId: string,
+  key: string,
+  now: Date,
+): AlertMember[] {
+  const id = memberIdentityOf(ruleId, key);
+  return (members ?? []).map((m) =>
+    memberIdentity(m) === id && !m.leftAt ? { ...m, leftAt: now.toISOString() } : m,
+  );
+}
+
+/** A contribution is identified by (automation, component), not by component
+ *  alone — two automations may both be about port12 and they are two findings. */
+function memberIdentity(m: AlertMember): string {
+  return memberIdentityOf(m.ruleId, m.key);
+}
+
+/** The identity pair, flattened.
+ *
+ *  `|` is unambiguous here even though a dimension key may contain one (the
+ *  SD-WAN keys are "<healthCheck>|<link>"): a rule id is a UUID, so the FIRST
+ *  separator is always the boundary and nothing in the left half can imitate
+ *  it. Splitting is never needed anyway — this string is only ever compared. */
+function memberIdentityOf(ruleId: string, key: string): string {
+  return `${ruleId}|${key}`;
+}
+
+/** Hold the snapshot to MAX_GROUP_MEMBERS, shedding DEPARTED entries oldest
+ *  first. An active contribution is never dropped for a departed one — the
+ *  history is what gives way, never the live finding. */
+function capMembers(members: AlertMember[]): AlertMember[] {
+  if (members.length <= MAX_GROUP_MEMBERS) return members;
+  const departed = members
+    .map((m, i) => ({ m, i }))
+    .filter((e) => e.m.leftAt)
+    .sort((a, b) => String(a.m.leftAt).localeCompare(String(b.m.leftAt)));
+  const drop = new Set<number>();
+  for (const e of departed) {
+    if (members.length - drop.size <= MAX_GROUP_MEMBERS) break;
+    drop.add(e.i);
+  }
+  const kept = members.filter((_, i) => !drop.has(i));
+  // Still over: the alert genuinely has more live contributions than the cap.
+  // Keep the FIRST ones — they are the oldest findings, and the count on the
+  // alert still reports the true total.
+  return kept.length <= MAX_GROUP_MEMBERS ? kept : kept.slice(0, MAX_GROUP_MEMBERS);
+}
+
+/** The alert's severity: the worst of what is still wrong.
+ *
+ *  Over ACTIVE contributions only — a recovered critical port must not hold the
+ *  alert at critical. Falls back to the rule's base severity when nothing is
+ *  active, which is the moment before the last contribution's clear lands. */
+export function groupSeverity(members: AlertMember[] | null | undefined, base: string): string {
+  const active = activeMembers(members);
+  if (!active.length) return base;
+  let best = active[0]!.severity;
+  for (const m of active) if (severityRank(m.severity) > severityRank(best)) best = m.severity;
+  return best;
+}
+
+/**
+ * The contribution the alert LEADS with — what `Notification.dimension` and
+ * `Notification.metric` are stamped from, and therefore which component the
+ * email's charts and LLDP block are about.
+ *
+ * Worst severity first, then a natural sort of the key, so port2 precedes
+ * port10 (the same ordering nocDashboardService and the asset Alerts tab
+ * already apply to per-port alerts). Deterministic on purpose: a tie broken by
+ * array order would let a re-render swap the alert's primary component, and
+ * with it the graph in the email.
+ */
+export function primaryMember(members: AlertMember[] | null | undefined): AlertMember | null {
+  const active = activeMembers(members);
+  const pool = active.length ? active : (members ?? []);
+  if (!pool.length) return null;
+  return [...pool].sort((a, b) => {
+    const d = severityRank(b.severity) - severityRank(a.severity);
+    if (d !== 0) return d;
+    return naturalCompare(a.key, b.key) || naturalCompare(a.label, b.label);
+  })[0]!;
+}
+
+/** "port2" before "port10" — digits compared as numbers, not as text. */
+export function naturalCompare(a: string, b: string): number {
+  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+}
+
+/**
+ * The contribution list a sentence names: "port12 (AP-1), port14 and 5 more".
+ *
+ * Labels, never keys — `interfaceDimLabel` exists so an alert says
+ * "port12 (Indoor AP)" and an operator does not have to go and look up which
+ * port that is. Active contributions only, in primary-first order, so the
+ * worst thing leads the sentence.
+ */
+export function renderMemberList(
+  members: AlertMember[] | null | undefined,
+  cap = GROUP_LABEL_CAP,
+): string {
+  const active = activeMembers(members);
+  if (!active.length) return "";
+  const ordered = [...active].sort((a, b) => {
+    const d = severityRank(b.severity) - severityRank(a.severity);
+    if (d !== 0) return d;
+    return naturalCompare(a.key, b.key) || naturalCompare(a.label, b.label);
+  });
+  const shown = ordered.slice(0, Math.max(1, cap)).map((m) => m.label || m.key).filter(Boolean);
+  const extra = ordered.length - shown.length;
+  if (extra <= 0) return shown.join(", ");
+  return `${shown.join(", ")} and ${extra} more`;
+}
+
+// ─── Who owns an alert's delivery (business rule 75, second half) ───────────
+
+/**
+ * The delivery policy behind a live alert: its AlertGroup when it has one, else
+ * its automation.
+ *
+ * Deliberately RULE-SHAPED. Every existing resolver —
+ * `effectiveAckNoteForSeverity`, `escalationChainsForSeverity`,
+ * `allEscalationsOf`, `allRepeatsOf`, `effectiveActionsForSeverity` — takes a
+ * rule-ish object, and handing them one keeps the whole grouped path on the
+ * same code as the ungrouped one rather than growing a parallel set that can
+ * drift. `kind` exists for the surfaces that must SAY which it was (the alert
+ * page's "Automation" row, the widget's title), not for branching on policy.
+ *
+ * A group carries no `severityBands`: a grouped alert's severity is the max of
+ * its active contributions, each resolved by its own automation's bands. That
+ * falls out correctly — every band-aware resolver reads an empty ladder and
+ * answers from the base, which is the group's own policy.
+ */
+export interface DeliveryOwner {
+  kind: "rule" | "group";
+  id: string;
+  name: string;
+  severity: string;
+  severityBands: SeverityBand[] | null;
+  requireAckNote: boolean;
+  actions: EscalatableAction[] | null;
+  escalation: EscalationV2Config | EscalationConfig | null;
+  repeat: RepeatConfig | null;
+  emailComposition: EmailComposition | null;
+  resetActions: AutomationAction[] | null;
+  messageTemplate: string | null;
+}
+
+/** The shapes `alertOwnerOf` reads — a notification with its relations joined. */
+export interface AlertOwnerSources {
+  severity?: string | null;
+  rule?: {
+    // id/name are optional because several callers select only the policy
+    // columns — the owner's identity matters to the surfaces that NAME it, not
+    // to the ones that only ask what it requires.
+    // `severity` likewise: it is the rule's BASE severity, which only the
+    // ack-note resolver's "is the alert sitting at the base?" test consults.
+    // A caller selecting only reset actions has no use for it, and falling
+    // back to the alert's own severity makes that test answer yes — which is
+    // the right answer when there are no bands to consult anyway.
+    id?: string; name?: string; severity?: string;
+    severityBands?: unknown; requireAckNote?: boolean | null;
+    actions?: unknown; escalation?: unknown; repeat?: unknown;
+    emailComposition?: unknown; resetActions?: unknown; messageTemplate?: string | null;
+  } | null;
+  alertGroup?: {
+    id: string; name: string; enabled?: boolean;
+    requireAckNote?: boolean | null;
+    actions?: unknown; escalation?: unknown; repeat?: unknown;
+    emailComposition?: unknown; resetActions?: unknown; messageTemplate?: string | null;
+  } | null;
+}
+
+/**
+ * Resolve an alert's delivery owner. Null when there is neither — a test alert
+ * or one whose automation was deleted, which every caller already treats as
+ * "no policy left to enforce".
+ *
+ * A DISABLED group does not own anything: its member automations go back to
+ * delivering on their own, so an alert that outlives the group being switched
+ * off falls back to the rule rather than losing its escalation entirely.
+ */
+export function alertOwnerOf(n: AlertOwnerSources | null | undefined): DeliveryOwner | null {
+  const g = n?.alertGroup;
+  if (g && g.enabled !== false) {
+    return {
+      kind: "group",
+      id: g.id,
+      name: g.name,
+      // The alert's own severity is the max of its contributions; the group has
+      // no base of its own, so it reports what the alert is sitting at. That is
+      // what makes `effectiveAckNoteForSeverity`'s "is this the base?" test
+      // answer yes and fall through to the group's own flag.
+      severity: n?.severity ?? "warning",
+      severityBands: null,
+      requireAckNote: g.requireAckNote === true,
+      actions: (g.actions ?? null) as EscalatableAction[] | null,
+      escalation: (g.escalation ?? null) as EscalationV2Config | EscalationConfig | null,
+      repeat: (g.repeat ?? null) as RepeatConfig | null,
+      emailComposition: (g.emailComposition ?? null) as EmailComposition | null,
+      resetActions: (g.resetActions ?? null) as AutomationAction[] | null,
+      messageTemplate: g.messageTemplate ?? null,
+    };
+  }
+  const r = n?.rule;
+  if (!r) return null;
+  return {
+    kind: "rule",
+    id: r.id ?? "",
+    name: r.name ?? "",
+    severity: r.severity ?? n?.severity ?? "warning",
+    severityBands: (r.severityBands ?? null) as SeverityBand[] | null,
+    requireAckNote: r.requireAckNote === true,
+    actions: (r.actions ?? null) as EscalatableAction[] | null,
+    escalation: (r.escalation ?? null) as EscalationV2Config | EscalationConfig | null,
+    repeat: (r.repeat ?? null) as RepeatConfig | null,
+    emailComposition: (r.emailComposition ?? null) as EmailComposition | null,
+    resetActions: (r.resetActions ?? null) as AutomationAction[] | null,
+    messageTemplate: r.messageTemplate ?? null,
+  };
+}
+
 /** What one dimension of a reading IS, in an operator's words — so a surface can
  *  say "one alert per interface" without hardcoding the vocabulary. */
 export const DIMENSION_NOUNS: Record<string, string> = {
@@ -4413,6 +4892,21 @@ export function buildSchemaCatalog() {
     // the device (see the resolveResetTruths note in notificationEngine).
     stateFieldDimensions: STATE_FIELD_DIMENSIONS,
     dimensionNouns: DIMENSION_NOUNS,
+    // Consolidating per device (business rule 75). Published as a capability so
+    // a pre-upgrade client simply renders no checkbox rather than posting a
+    // field the server would reject — the same degradation posture every other
+    // catalog flag takes. The wizard decides WHEN to show it from
+    // stateFieldDimensions / metricDimensions above, and names the thing being
+    // folded from dimensionNouns, so the copy follows the vocabulary instead of
+    // repeating it.
+    alertGrouping: {
+      supported: true,
+      labelCap: GROUP_LABEL_CAP,
+      help:
+        "Raise one alert per device instead of one per component. Every affected component is named on " +
+        "the alert, one acknowledgement covers all of them, and the alert stays up until the last one " +
+        "recovers. {dimension} then renders the list rather than a single name.",
+    },
     // Metrics whose reading is a 0/1 flag, so the builder renders a state picker
     // instead of a threshold box and hides the numeric-only surfaces (severity
     // bands, hysteresis, unit hints).
