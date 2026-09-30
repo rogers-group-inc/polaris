@@ -454,6 +454,11 @@
     // pass that would otherwise clear the class only runs on the next
     // viewport event.
     resetKeyboardFit();
+    // An emailed / pushed device link (/assets/<id>) drops a polaris_next
+    // cookie for the SSO paths (utils/loginRedirect.ts). This login finished
+    // in the page with the hash still in place, so the cookie has done nothing
+    // here — clear it, or it would steer the NEXT sign-in on this phone.
+    document.cookie = "polaris_next=; Max-Age=0; Path=/";
     window.PolarisMobile.boot();
   }
 

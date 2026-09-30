@@ -20,11 +20,12 @@
  * decides here too, and the same `?desktop=1` escape hatch is honoured, so a
  * phone that asked for the desktop keeps getting it.
  *
- * Nothing here needs a session: it is a redirect between two pages that carry
- * their own login gates (the desktop page through `protectedPages`, the SPA
- * through its own in-app login, which keeps the hash across sign-in). Adding
- * a gate would only cost the phone reader the fragment — the login round trip
- * cannot carry one.
+ * Signed out, the route itself is the login target. Both destinations name the
+ * device in a fragment the server never sees, so the desktop page's gate could
+ * only remember a bare `/assets.html` and the reader signed in to the list, not
+ * the device. The route in app.ts remembers `/assets/<id>` instead (no
+ * fragment to lose) and bounces a desktop browser to sign-in directly; a phone
+ * still goes to the SPA, whose in-app login keeps the hash.
  */
 
 /**
