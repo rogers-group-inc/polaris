@@ -690,6 +690,18 @@ Microsoft or Primary WAN"*.
 The member list follows the health checks you picked: it shows only the members
 of those health checks. Automations saved with one value work exactly as before.
 
+### Graphs in the alert email
+
+An SD-WAN alert email shows the member's last hour of **latency**, **jitter**
+and **packet loss** instead of the FortiGate's CPU, memory and response time.
+The FortiGate's own SLA targets are drawn as dashed lines. Stretches where the
+health check called the member down are shaded red.
+
+The FortiGate stops reporting latency, jitter and loss for a member it has
+marked dead. If the member was down for the whole hour, each graph shows the
+red shading with *no readings — the health check reported this member down*,
+rather than a line.
+
 ### Overlays stay quiet while their underlay is over the line
 
 An overlay tunnel rides an underlay port: Overlay-3 over wan2. When wan2 loses

@@ -580,6 +580,9 @@ export interface SdwanSeries {
   packetLossThreshold: number | null;
   /** Spans where the health check reported this member DOWN. */
   downSpans: Array<{ from: number; to: number }>;
+  /** The newest sample was down — the last span is still open, and the chart
+   *  bands it to the right edge (the member is down as the email sends). */
+  downAtEnd: boolean;
 }
 
 /**
@@ -667,6 +670,7 @@ export function sdwanSeriesFrom(rows: SdwanSampleRow[], target: SdwanTarget): Sd
       openDown = null;
     }
   }
+  const downAtEnd = openDown !== null;
   if (openDown) downSpans.push(openDown);
 
   return {
@@ -679,6 +683,7 @@ export function sdwanSeriesFrom(rows: SdwanSampleRow[], target: SdwanTarget): Sd
     jitterThresholdMs,
     packetLossThreshold,
     downSpans,
+    downAtEnd,
   };
 }
 
@@ -1531,6 +1536,7 @@ export function sampleChartSeries(
         jitterThresholdMs: 30,
         packetLossThreshold: 2,
         downSpans: [],
+        downAtEnd: false,
       }
     : null;
 
@@ -1787,6 +1793,14 @@ export async function buildAlertCharts(
     : token === "chart.sdwanLoss" ? sdwan?.packetLossThreshold ?? null
     : null;
 
+  // The health check's down verdict, banded to the right edge while it still
+  // holds. A trailing span otherwise ends on the last sample — close enough on
+  // a chart with a line, but on a dead member's chart the band IS the chart.
+  const sdwanDownSpans = !sdwan ? []
+    : sdwan.downAtEnd
+      ? sdwan.downSpans.map((s, i, all) => (i === all.length - 1 ? { from: s.from, to: now.getTime() } : s))
+      : sdwan.downSpans;
+
   for (const token of wanted) {
     // The storage chart carries its own spec — label, unit, axis, window,
     // caption and summary are all decided there. A mount that could not be
@@ -1835,7 +1849,11 @@ export async function buildAlertCharts(
       // sensor's own alarm and for the same reason: it is the DEVICE's verdict
       // about a reading, not Polaris's, and on a failover email it is usually
       // the answer — the member the rule left was declared dead here.
-      ...(isSdwan && sdwan!.downSpans.length ? { alarmSpans: sdwan!.downSpans } : {}),
+      ...(isSdwan && sdwanDownSpans.length ? { alarmSpans: sdwanDownSpans } : {}),
+      // FortiOS reports no latency / jitter / loss for a member it has declared
+      // dead, so an outage older than the window leaves the line empty — the
+      // band is drawn anyway, with this in the middle of it.
+      ...(isSdwan ? { emptyNote: "no readings — the health check reported this member down" } : {}),
       ...(withFailSpans ? { failSpans: fail.spans } : {}),
       // The severity colour for the "outage" kind only — "missed" stays amber
       // (not a verdict yet) and "dependency" stays grey (not this device's
@@ -1846,13 +1864,21 @@ export async function buildAlertCharts(
       to: now.getTime(),
       avgOverride,
     });
-    const png = points.length > 0 ? await rasterize(svg) : null;
+    // A dead SD-WAN member's chart counts as drawn with no points at all: the
+    // down band is the picture (see the emptyNote above), and dropping it is how
+    // a "WAN is down" email used to arrive with no graphs whenever the member
+    // had been dead for longer than the window.
+    const sdwanDownOnly = isSdwan && points.length === 0 && sdwanDownSpans.length > 0;
+    const drawn = points.length > 0 || sdwanDownOnly;
+    const png = drawn ? await rasterize(svg) : null;
     const cid = `polaris-${token.replace(".", "-")}@polaris`;
     out.set(token, {
       token,
       cid,
-      hasData: points.length > 0,
-      summary: summaryLine(label, unit, points, isLoss ? lossWindowMs : CHART_WINDOW_MS, avgOverride) +
+      hasData: drawn,
+      summary: sdwanDownOnly
+        ? `${label} (last hour): no readings — the health check reported this member down`
+        : summaryLine(label, unit, points, isLoss ? lossWindowMs : CHART_WINDOW_MS, avgOverride) +
         // An alarm-triggered alert charts the VALUE; the bit itself is what the
         // automation fired on, so the text has to carry it too — image blocking
         // is on by default in plenty of clients.

@@ -78,6 +78,7 @@ import {
   type SdwanSampleRow,
   type ChartToken,
 } from "../../src/services/alertChartService.js";
+import { sparklineSvg } from "../../src/utils/sparklineSvg.js";
 
 const T0 = Date.parse("2026-09-09T10:00:00Z");
 
@@ -386,6 +387,61 @@ describe("the swap, end to end", () => {
     }
     expect(calls).not.toContain("perfSla:VPN-SLA");
     expect(calls).toContain("telemetry");
+  });
+});
+
+describe("a member that has been dead for the whole window", () => {
+  // FortiOS stops reporting latency / jitter / loss for a member it has
+  // declared dead — only the verdict survives. A "WAN is down" email for an
+  // outage older than the chart window therefore had three EMPTY series, every
+  // SD-WAN chart rendered away, and the email arrived with no graphs at all.
+  const dead = (min: number) => row({ min, state: "down", latencyMs: null, jitterMs: null, packetLoss: null });
+
+  beforeEach(() => {
+    calls.length = 0;
+    sdwanRule.row = null;
+    perfSlaRows.rows = [dead(0), dead(1), dead(2), dead(3)];
+  });
+
+  it("still draws all three SD-WAN charts, as the down band", async () => {
+    const charts = await buildAlertCharts("a1", ALL_TOKENS, {
+      now: new Date(T0 + 10 * 60_000),
+      metric: "sdwanMemberState",
+      dimension: "VPN-SLA|wan1",
+    });
+    for (const t of ["chart.sdwanLatency", "chart.sdwanJitter", "chart.sdwanLoss", "chart.trigger"] as ChartToken[]) {
+      const c = charts.get(t)!;
+      expect(c.hasData).toBe(true);
+      expect(c.attachment).not.toBeNull();
+      expect(c.summary).toContain("VPN-SLA / wan1");
+      expect(c.summary).toContain("no readings — the health check reported this member down");
+    }
+  });
+
+  it("draws the band with no line, rather than the 'no data' card", () => {
+    const svg = sparklineSvg([], {
+      label: "SD-WAN latency",
+      from: T0 - 50 * 60_000,
+      to: T0 + 10 * 60_000,
+      alarmSpans: [{ from: T0, to: T0 + 10 * 60_000 }],
+      emptyNote: "no readings — the health check reported this member down",
+    });
+    expect(svg).toContain("<rect");
+    expect(svg).toContain('fill="#dc2626"');
+    expect(svg).toContain("reported this member down");
+    expect(svg).not.toContain("no data in this window");
+  });
+
+  it("still renders a chart away when nothing was measured AND nothing was down", async () => {
+    // A member that is up but reports no gauges (a health check with no
+    // probes configured) has neither a line nor a band — nothing to draw.
+    perfSlaRows.rows = [row({ min: 0, latencyMs: null, jitterMs: null, packetLoss: null })];
+    const charts = await buildAlertCharts("a1", ALL_TOKENS, {
+      now: new Date(T0 + 10 * 60_000),
+      metric: "sdwanMemberState",
+      dimension: "VPN-SLA|wan1",
+    });
+    expect(charts.get("chart.sdwanLatency")!.hasData).toBe(false);
   });
 });
 
