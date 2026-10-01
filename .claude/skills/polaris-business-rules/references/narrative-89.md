@@ -73,6 +73,11 @@ row, which `METRIC_COMPONENT_NOUNS` captions "CPU cores" (the metric deliberatel
 **The same email a CPU alert gets.** `processRankingForMetric` ranks the `{processes.top}`
 table by CPU, and `isResourceScopedAlert` keeps the CPU and memory charts and drops the
 connectivity graphs — the two things rule-of-thumb debugging of a hot core needs first.
+Since 2026-10-01 the CPU chart on THIS metric's email is the per-core chart — every core
+thin behind the all-cores line, the busiest core emphasised and named in the caption
+(`alertChartService → coreSeriesFrom / busiestCore`) — because the all-cores line alone
+draws a pinned core of a 16-core host as a flat 6%, the very misreading the metric exists
+to avoid. Every other CPU alert keeps the all-cores line alone (operator's call).
 
 **Only devices that report cores.** SNMP, FortiOS REST, WinRM and SSH leave
 `cpuCorePcts` null, and the resolver reads only rows that carry a vector, so such a device

@@ -265,8 +265,13 @@ packet-loss graphs say nothing about the fault. Those are dropped.
   that runs up to the host's installed memory (the line marked **full**), on
   any host that reports memory in bytes: one with the Polaris Agent, an
   SNMP-polled device, or a Windows host over WinRM. A FortiGate reports memory
-  only as a percentage, so its graph stays at 0–100%. CPU is the **overall**
-  figure for the host, not one line per core.
+  only as a percentage, so its graph stays at 0–100%. The CPU graph is the
+  **overall** figure for the host, except on a **CPU core utilization**
+  alert. There it becomes **CPU per core**: one thin line per core, the
+  busiest core drawn heavier and named in the caption (`Core 3 now 98%`), and
+  the overall line in black on top. A single-threaded process pinning one core
+  then shows as one line at the top of the graph, even while the overall line
+  barely moves.
 - **Top 5 processes.** The five programs using the most of that resource:
   ranked by **CPU** on a CPU alert, by **memory** on a memory alert, with the
   other figure beside each. A program running as several processes is one row
