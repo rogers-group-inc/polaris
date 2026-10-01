@@ -162,6 +162,43 @@ d("Phase 7 device-inventory deferred flush", () => {
     expect(after?.os).toBe("Linux");
   });
 
+  it("a sighting that AGREES with an operator IP override releases the pin and audits it", async () => {
+    // While pinned, ipAddress already equals ipOverride — the equality gate
+    // used to skip the write, so the db.ts guard never saw the matching IP
+    // and the override never self-cleared.
+    const existing = await prisma.asset.create({
+      data: {
+        hostname: HOST, macAddress: MAC_A, assetType: "workstation", status: "active",
+        ipAddress: "10.80.0.50", ipOverride: "10.80.0.50", ipSource: "manual",
+      },
+    });
+    await run([inv({ switchName: "SW-1", ipAddress: "10.80.0.50" })]);
+    const after = await prisma.asset.findUnique({ where: { id: existing.id }, select: { ipAddress: true, ipOverride: true } });
+    expect(after?.ipAddress).toBe("10.80.0.50");
+    expect(after?.ipOverride).toBeNull();
+    // The release Event is written by a fire-and-forget follow-up.
+    let events = 0;
+    for (let i = 0; i < 40 && events === 0; i++) {
+      events = await prisma.event.count({ where: { action: "asset.ip_override.released", resourceId: existing.id } });
+      if (events === 0) await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(events).toBe(1);
+    await prisma.event.deleteMany({ where: { resourceId: existing.id } });
+  });
+
+  it("a sighting that DISAGREES with an operator IP override keeps the pin", async () => {
+    const existing = await prisma.asset.create({
+      data: {
+        hostname: HOST, macAddress: MAC_A, assetType: "workstation", status: "active",
+        ipAddress: "10.80.0.50", ipOverride: "10.80.0.50", ipSource: "manual",
+      },
+    });
+    await run([inv({ switchName: "SW-1", ipAddress: "10.80.0.51" })]);
+    const after = await prisma.asset.findUnique({ where: { id: existing.id }, select: { ipAddress: true, ipOverride: true } });
+    expect(after?.ipAddress).toBe("10.80.0.50");
+    expect(after?.ipOverride).toBe("10.80.0.50");
+  });
+
   it("reconciles the MAC side table once per asset, keeping the last list", async () => {
     await run([inv(), inv({ device: "GATE-2" })]);
     const rows = await assetsForMac(MAC_A);

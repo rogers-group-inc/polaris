@@ -6060,7 +6060,13 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           const bestClaimMs = bestInvIpSeenByAsset.get(existingAsset.id);
           if (bestClaimMs === undefined || invClaimMs > bestClaimMs) {
             bestInvIpSeenByAsset.set(existingAsset.id, invClaimMs);
-            if (inv.ipAddress !== existingAsset.ipAddress) {
+            // A pinned asset's ipAddress already equals its ipOverride, so an
+            // agreeing sighting must still be staged — the db.ts guard only
+            // releases the pin when a write carries the matching IP.
+            if (
+              inv.ipAddress !== existingAsset.ipAddress ||
+              ((existingAsset as any).ipOverride && (existingAsset as any).ipOverride === inv.ipAddress)
+            ) {
               updateData.ipAddress = inv.ipAddress;
             }
           }
@@ -6174,6 +6180,10 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
               });
               // Update in-memory
               Object.assign(existingAsset, updateData);
+              // Mirror the db.ts pin release so Phase 11 doesn't re-stage it.
+              if ((existingAsset as any).ipOverride && (existingAsset as any).ipOverride === updateData.ipAddress) {
+                (existingAsset as any).ipOverride = null;
+              }
               assetIdx.reindex(existingAsset);
             } else if (macListForReconcile) {
               // MAC-only change still counts as a touch for the run summary.
@@ -6854,6 +6864,11 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         considerString("model");
         considerString("learnedLocation");
         considerString("ipAddress");
+        // Pinned asset whose projection agrees with the pin: stage the IP so
+        // the db.ts guard releases the override (an equal value is otherwise
+        // skipped above and the pin would never self-clear).
+        const pinnedIp = (asset as any).ipOverride as string | null | undefined;
+        if (pinnedIp && projected.ipAddress === pinnedIp) corrections.ipAddress = pinnedIp;
         considerString("serialNumber");
         // lat/long: only meaningful for firewall-typed assets (excluded
         // from this set since infrastructure assets aren't tracked in
