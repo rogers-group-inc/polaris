@@ -130,7 +130,7 @@ describe("sampleChartSeries", () => {
     expect(s.cpu.length).toBeGreaterThan(30);
     // No query happened and none should have: the untouched series stay empty
     // so their tokens render away exactly as on a real alert with no samples.
-    expect(s.mem).toEqual([]);
+    expect(s.mem.points).toEqual([]);
     expect(s.rt).toEqual([]);
     expect(s.sdwan).toBeNull();
   });
@@ -139,11 +139,21 @@ describe("sampleChartSeries", () => {
     expect(sampleChartSeries(["chart.cpu"], base)).toEqual(sampleChartSeries(["chart.cpu"], base));
   });
 
-  it("keeps percentages inside the pinned 0-100 axis", () => {
-    const s = sampleChartSeries(["chart.cpu", "chart.memory"], base);
-    for (const p of [...s.cpu, ...s.mem]) {
+  it("keeps CPU inside the pinned 0-100 axis", () => {
+    const s = sampleChartSeries(["chart.cpu"], base);
+    for (const p of s.cpu) {
       expect(p.v).toBeGreaterThanOrEqual(0);
       expect(p.v).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it("charts memory in GB against the invented host's installed memory", () => {
+    const { mem } = sampleChartSeries(["chart.memory"], base);
+    expect(mem).toMatchObject({ unit: " GB", percent: false, total: 16 });
+    expect(mem.points.length).toBeGreaterThan(30);
+    for (const p of mem.points) {
+      expect(p.v).toBeGreaterThan(0);
+      expect(p.v).toBeLessThanOrEqual(16);
     }
   });
 

@@ -307,26 +307,63 @@ function thin<T extends { t: number }>(points: T[]): T[] {
   return out;
 }
 
-async function loadTelemetry(assetId: string, since: Date): Promise<{ cpu: SparkPoint[]; mem: SparkPoint[] }> {
+/** The memory chart's line, in whichever unit the device reported it. */
+export interface MemorySeries {
+  points: SparkPoint[];
+  /** " GB" (or whichever binary unit fits the installed memory), or "%". */
+  unit: string;
+  percent: boolean;
+  /** Installed memory in `unit` — the axis top and the "full" line. Null on a
+   *  percentage series, whose axis is pinned 0–100 instead. */
+  total: number | null;
+}
+
+const EMPTY_MEMORY: MemorySeries = { points: [], unit: "%", percent: true, total: null };
+
+/**
+ * The memory chart's series from raw telemetry rows. Pure.
+ *
+ * BYTES WIN whenever the window has them: "92%" on a 4 GB VM and on a 512 GB
+ * host are different problems, and the reader of a high-memory alert wants to
+ * know how much is in use against how much is installed. The axis runs 0 →
+ * installed memory (the largest total in the window, so a VM resized mid-hour
+ * still fits), scaled to the binary unit that total reads best in — GB on any
+ * real host. Rows with only a percentage are dropped from a bytes series rather
+ * than mixed onto the same axis.
+ *
+ * A device that reports ONLY a percentage (FortiOS) keeps the 0–100% chart:
+ * there is no byte count to convert it back into.
+ */
+export function memorySeriesFrom(
+  rows: Array<{ t: number; memPct: number | null; memUsedBytes: number | bigint | null; memTotalBytes: number | bigint | null }>,
+): MemorySeries {
+  const bytes = rows.filter((r) => r.memUsedBytes != null && r.memTotalBytes != null && Number(r.memTotalBytes) > 0);
+  if (bytes.length > 0) {
+    const totalBytes = Math.max(...bytes.map((r) => Number(r.memTotalBytes)));
+    const { divisor, unit } = bytesDisplayScale(totalBytes);
+    return {
+      points: bytes.map((r) => ({ t: r.t, v: Number(r.memUsedBytes) / divisor })),
+      unit,
+      percent: false,
+      total: totalBytes / divisor,
+    };
+  }
+  const points = rows.filter((r) => r.memPct != null).map((r) => ({ t: r.t, v: r.memPct! }));
+  return { ...EMPTY_MEMORY, points };
+}
+
+async function loadTelemetry(assetId: string, since: Date): Promise<{ cpu: SparkPoint[]; mem: MemorySeries }> {
   const rows = await prisma.assetTelemetrySample.findMany({
     where: { assetId, timestamp: { gte: since } },
     orderBy: { timestamp: "asc" },
     select: { timestamp: true, cpuPct: true, memPct: true, memUsedBytes: true, memTotalBytes: true },
   });
   const cpu: SparkPoint[] = [];
-  const mem: SparkPoint[] = [];
   for (const r of rows) {
-    const t = r.timestamp.getTime();
-    if (r.cpuPct != null) cpu.push({ t, v: r.cpuPct });
-    // FortiOS reports a percentage; SNMP HOST-RESOURCES / WMI report bytes.
-    // Same COALESCE the dashboard's memory widget uses.
-    if (r.memPct != null) {
-      mem.push({ t, v: r.memPct });
-    } else if (r.memUsedBytes != null && r.memTotalBytes != null && Number(r.memTotalBytes) > 0) {
-      mem.push({ t, v: (Number(r.memUsedBytes) / Number(r.memTotalBytes)) * 100 });
-    }
+    if (r.cpuPct != null) cpu.push({ t: r.timestamp.getTime(), v: r.cpuPct });
   }
-  return { cpu: thin(cpu), mem: thin(mem) };
+  const mem = memorySeriesFrom(rows.map((r) => ({ ...r, t: r.timestamp.getTime() })));
+  return { cpu: thin(cpu), mem: { ...mem, points: thin(mem.points) } };
 }
 
 export interface SensorSeries {
@@ -1455,6 +1492,9 @@ function sampleWave(from: number, to: number, at: (fraction: number, i: number) 
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
 
+/** The invented test device's installed memory. */
+const SAMPLE_MEM_TOTAL_GB = 16;
+
 /**
  * INVENTED telemetry for a TEST alert's charts (business rule 65) — see
  * `utils/sampleAlertDevice`.
@@ -1474,7 +1514,7 @@ const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > 
 export function sampleChartSeries(
   tokens: Iterable<ChartToken>,
   opts: { since: Date; now: Date; lossSince: Date; lossBucketMs: number; displayUnit: "c" | "f" },
-): { cpu: SparkPoint[]; mem: SparkPoint[]; rt: SparkPoint[]; loss: ProbeLossSeries; sensor: SensorSeries; sdwan: SdwanSeries | null } {
+): { cpu: SparkPoint[]; mem: MemorySeries; rt: SparkPoint[]; loss: ProbeLossSeries; sensor: SensorSeries; sdwan: SdwanSeries | null } {
   const wanted = new Set(tokens);
   const from = opts.since.getTime();
   const to = opts.now.getTime();
@@ -1484,9 +1524,15 @@ export function sampleChartSeries(
     // the shape that makes a "CPU is above 80%" automation make sense.
     ? sampleWave(from, to, (f, i) => clamp(34 + 9 * Math.sin(f * 6.1) + 4 * Math.sin(i * 1.7) + (f > 0.8 ? (f - 0.8) * 190 : 0), 0, 100))
     : [];
-  const mem = wanted.has("chart.memory")
-    ? sampleWave(from, to, (f, i) => clamp(61 + 4 * Math.sin(f * 3.3) + 1.5 * Math.sin(i * 0.9), 0, 100))
-    : [];
+  // In GB against a 16 GB host, like a real agent host's chart (memorySeriesFrom).
+  const mem: MemorySeries = wanted.has("chart.memory")
+    ? {
+        points: sampleWave(from, to, (f, i) => clamp(9.8 + 0.6 * Math.sin(f * 3.3) + 0.25 * Math.sin(i * 0.9), 0, SAMPLE_MEM_TOTAL_GB)),
+        unit: " GB",
+        percent: false,
+        total: SAMPLE_MEM_TOTAL_GB,
+      }
+    : EMPTY_MEMORY;
   const rt = wanted.has("chart.responseTime")
     ? sampleWave(from, to, (f, i) => Math.max(1, 9 + 3 * Math.sin(f * 5.2) + 1.4 * Math.sin(i * 2.1) + (f > 0.85 ? (f - 0.85) * 820 : 0)))
     : [];
@@ -1704,7 +1750,7 @@ export async function buildAlertCharts(
   }
 
   let cpu: SparkPoint[] = [];
-  let mem: SparkPoint[] = [];
+  let mem: MemorySeries = EMPTY_MEMORY;
   let rt: SparkPoint[] = [];
   let loss: ProbeLossSeries = { points: [], ratioPct: null, engineRatioPct: null };
   let sensor: SensorSeries = { points: [], alarmSpans: [], unit: "", sensorClass: null };
@@ -1734,7 +1780,7 @@ export async function buildAlertCharts(
         ? await getBranding().then((b) => b.temperatureUnit).catch(() => "c" as const)
         : ("c" as const);
       const [tel, rtRows, sensorRows, lossRows, failRows, sdwanRows] = await Promise.all([
-        needTelemetry ? loadTelemetry(assetId, since) : Promise.resolve({ cpu: [], mem: [] }),
+        needTelemetry ? loadTelemetry(assetId, since) : Promise.resolve({ cpu: [], mem: EMPTY_MEMORY }),
         wanted.has("chart.responseTime") ? loadResponseTimes(assetId, since) : Promise.resolve([]),
         wanted.has("chart.sensor")
           ? loadSensorSeries(assetId, opts!.sensorName!, since, displayUnit)
@@ -1781,7 +1827,7 @@ export async function buildAlertCharts(
     "chart.sdwanJitter": sdwan?.jitter ?? [],
     "chart.sdwanLoss": sdwan?.loss ?? [],
     "chart.cpu": cpu,
-    "chart.memory": mem,
+    "chart.memory": mem.points,
     "chart.responseTime": rt,
     // Rendered from its own spec above; never read from here.
     "chart.storage": [],
@@ -1825,7 +1871,13 @@ export async function buildAlertCharts(
     const label = isSensor ? opts!.sensorName!
       : isSdwan ? sdwanChartLabel(meta.label, sdwan!.healthCheck, sdwan!.link)
       : meta.label;
-    const unit = isSensor ? (sensor.unit ? ` ${sensor.unit}` : "") : meta.unit;
+    // Memory charts in the unit its series came in (memorySeriesFrom): bytes
+    // against installed memory when the device reports them, else 0–100%.
+    const isMemory = token === "chart.memory";
+    const unit = isSensor ? (sensor.unit ? ` ${sensor.unit}` : "") : isMemory ? mem.unit : meta.unit;
+    const memAxis = isMemory && !mem.percent && mem.total != null
+      ? { yMin: 0, yMax: mem.total, ceiling: mem.total }
+      : null;
     // The loss chart's caption quotes the window's PROBE ratio, not the mean of
     // its buckets, which weights unequal buckets wrongly. It counts every probe
     // in the window — the misses taken while the device was `warning` or `down`
@@ -1840,7 +1892,7 @@ export async function buildAlertCharts(
       label,
       unit,
       color: meta.color,
-      ...(meta.percent ? { yMin: 0, yMax: 100 } : {}),
+      ...(memAxis ?? (meta.percent ? { yMin: 0, yMax: 100 } : {})),
       // An explicit threshold from the caller still wins; the SD-WAN charts are
       // the only ones that carry a line of their own, the FortiGate's own SLA
       // target for that health check.
@@ -1880,6 +1932,9 @@ export async function buildAlertCharts(
       summary: sdwanDownOnly
         ? `${label} (last hour): no readings — the health check reported this member down`
         : summaryLine(label, unit, points, isLoss ? lossWindowMs : CHART_WINDOW_MS, avgOverride) +
+        // "12.4 GB" says little without what the host has — the axis top on the
+        // image, spelled out for a reader with images blocked.
+        (memAxis && points.length ? ` (${formatReading(memAxis.yMax, unit)} installed)` : "") +
         // An alarm-triggered alert charts the VALUE; the bit itself is what the
         // automation fired on, so the text has to carry it too — image blocking
         // is on by default in plenty of clients.
