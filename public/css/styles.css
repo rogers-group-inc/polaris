@@ -3745,6 +3745,8 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   padding: 3px 6px;
   border-radius: 4px;
 }
+/* The row's flex gap already spaces the active-alert dot off the hostname. */
+.dep-tree-row .alert-strobe-dot { margin-left: 0; flex-shrink: 0; }
 .dep-tree-row-self {
   background: rgba(79,195,247,0.08);
   border: 1px dashed rgba(79,195,247,0.30);
