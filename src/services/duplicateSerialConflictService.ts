@@ -122,11 +122,18 @@ export const CLAIM_EXCLUDED_STATUSES = ["decommissioned", "disabled"] as const;
 
 /**
  * How many assets may share one serial before the serial itself is the suspect
- * rather than the assets. Nine identical "serials" is a vendor default this
- * code has not met yet, not nine records of one device — and raising a card
- * naming nine unrelated machines teaches an operator to ignore the queue.
+ * rather than the assets. One device recorded twice is the common real case
+ * (a re-enrolment that left the old record behind) and three is the most that
+ * still happens in practice; four identical "serials" is a vendor default this
+ * code has not met yet, not four records of one device.
+ *
+ * Was 8 until 2026-10-01. That let an unlisted placeholder (Intune's
+ * "DEFAULTSTRING") on eight unrelated machines raise a card AND qualify for
+ * the serial pass of `mergeDuplicateHostnameAssets`, which merges any group
+ * under this cap with no further check. The cap is that job's net too, so
+ * erring low costs a missed card; erring high costs merged machines.
  */
-export const MAX_PLAUSIBLE_DUPLICATES = 8;
+export const MAX_PLAUSIBLE_DUPLICATES = 3;
 
 // ─── Pure helpers ────────────────────────────────────────────────────────────
 

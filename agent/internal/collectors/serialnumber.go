@@ -26,9 +26,10 @@ package collectors
 
 import "strings"
 
-// placeholderSerials are the vendor defaults, matched case-insensitively
-// after trimming. Keep in sync with PLACEHOLDER_SERIALS in
-// src/utils/serialNumber.ts.
+// placeholderSerials are the vendor defaults, matched in squashed form (see
+// squashSerial), so each entry also covers every spelling that differs from
+// it only in case, spacing or punctuation. Keep in sync with
+// PLACEHOLDER_SERIALS in src/utils/serialNumber.ts.
 var placeholderSerials = map[string]struct{}{
 	"0":                        {},
 	"00000000":                 {},
@@ -72,7 +73,7 @@ func usableSerial(raw string) string {
 	if len(trimmed) < minSerialLength {
 		return ""
 	}
-	if _, bad := placeholderSerials[strings.ToLower(trimmed)]; bad {
+	if isPlaceholderSerial(trimmed) {
 		return ""
 	}
 	// A single repeated character, whatever it is: "0000000", "XXXXXXXX".
@@ -80,6 +81,33 @@ func usableSerial(raw string) string {
 		return ""
 	}
 	return trimmed
+}
+
+// squashSerial lower-cases s and drops everything that is not an ASCII letter
+// or digit — the comparison form for placeholders, mirroring squashSerial in
+// src/utils/serialNumber.ts. "Default string" and "DEFAULTSTRING" are the
+// same placeholder; only the lookup is squashed, never the value sent.
+func squashSerial(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+var squashedPlaceholders = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(placeholderSerials))
+	for k := range placeholderSerials {
+		m[squashSerial(k)] = struct{}{}
+	}
+	return m
+}()
+
+func isPlaceholderSerial(s string) bool {
+	_, bad := squashedPlaceholders[squashSerial(s)]
+	return bad
 }
 
 func isRepeatedChar(s string) bool {

@@ -38,7 +38,9 @@
  */
 
 /**
- * The vendor defaults, matched case-insensitively after trimming.
+ * The vendor defaults, written the way vendors usually spell them. They are
+ * matched in SQUASHED form (see `squashSerial`), so each entry also stands for
+ * every spelling that differs from it only in case, spacing or punctuation.
  * Keep in sync with `placeholderSerials` in agent/internal/collectors/serialnumber.go.
  */
 export const PLACEHOLDER_SERIALS = new Set([
@@ -71,21 +73,40 @@ export const PLACEHOLDER_SERIALS = new Set([
   "xxxxxxx",
 ]);
 
+/**
+ * The comparison form: lower-cased, with everything that is not a letter or a
+ * digit removed. Placeholders are compared this way because sources disagree
+ * about spacing and punctuation — SMBIOS says "Default string", Intune has
+ * been seen to report the same value as "DEFAULTSTRING", and an exact match on
+ * one spelling let eight machines share it (rule 84). The squashed form is
+ * used ONLY to test against this list; the value stored is never squashed.
+ */
+export function squashSerial(raw: string): string {
+  return raw.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+const SQUASHED_PLACEHOLDERS = new Set([...PLACEHOLDER_SERIALS].map(squashSerial));
+
+/** Is this value a vendor placeholder, in any spelling of it? */
+export function isPlaceholderSerial(raw: string): boolean {
+  return SQUASHED_PLACEHOLDERS.has(squashSerial(raw));
+}
+
 /** A serial too short to be one. Real Fortinet/Dell/HP serials are 7+. */
 export const MIN_SERIAL_LENGTH = 4;
 
 /**
  * Is this string a serial that identifies a specific piece of hardware?
  *
- * Rejects the SMBIOS placeholders, anything under `MIN_SERIAL_LENGTH`, and any
- * value that is a single character repeated (`0000000`, `XXXXXXXX`) — the shape
- * every "we didn't program one" serial takes.
+ * Rejects the SMBIOS placeholders (in any case, spacing or punctuation),
+ * anything under `MIN_SERIAL_LENGTH`, and any value that is a single character
+ * repeated (`0000000`, `XXXXXXXX`) — the shape every "we didn't program one"
+ * serial takes.
  */
 export function isUsableSerial(raw: string | null | undefined): boolean {
   const trimmed = typeof raw === "string" ? raw.trim() : "";
   if (trimmed.length < MIN_SERIAL_LENGTH) return false;
-  const lower = trimmed.toLowerCase();
-  if (PLACEHOLDER_SERIALS.has(lower)) return false;
+  if (isPlaceholderSerial(trimmed)) return false;
   // A single repeated character, whatever it is.
   if (/^(.)\1+$/.test(trimmed)) return false;
   return true;

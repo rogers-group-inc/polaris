@@ -18,6 +18,8 @@ import {
   isUsableSerial,
   usableSerialOrNull,
   PLACEHOLDER_SERIALS,
+  isPlaceholderSerial,
+  squashSerial,
   MIN_SERIAL_LENGTH,
 } from "../../src/utils/serialNumber.js";
 
@@ -62,6 +64,22 @@ describe("isUsableSerial", () => {
     expect(isUsableSerial("   ")).toBe(false);
     expect(isUsableSerial(null)).toBe(false);
     expect(isUsableSerial(undefined)).toBe(false);
+  });
+
+  it("rejects a placeholder in any case, spacing or punctuation", () => {
+    // Intune reported "DEFAULTSTRING" for "Default string"; an exact match on
+    // the list spelling let eight machines share it and raised a rule 83 card.
+    for (const s of ["DEFAULTSTRING", "defaultstring", "Default_String", "Default-String",
+      "SYSTEM-SERIAL-NUMBER", "To Be Filled By OEM", "TO.BE.FILLED.BY.O.E.M"]) {
+      expect(isUsableSerial(s), s).toBe(false);
+      expect(isPlaceholderSerial(s), s).toBe(true);
+    }
+  });
+
+  it("squashes only for the lookup — a real serial with punctuation survives untouched", () => {
+    expect(squashSerial("Default string")).toBe("defaultstring");
+    expect(usableSerialOrNull("  CN-0WG7H2-7016\n")).toBe("CN-0WG7H2-7016");
+    expect(isUsableSerial("VMware-56 4d aa 11")).toBe(true);
   });
 
   it("does NOT reject the Windows SystemSKU shape on length alone", () => {

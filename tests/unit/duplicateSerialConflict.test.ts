@@ -310,6 +310,17 @@ describe("groupDuplicateSerialAssets", () => {
     expect(groupDuplicateSerialAssets(rows)).toHaveLength(0);
   });
 
+  it("caps a plausible duplicate group at three records", () => {
+    // Also the auto-merge job's only net against an unlisted placeholder —
+    // raising this re-opens eight machines merging into one.
+    expect(MAX_PLAUSIBLE_DUPLICATES).toBe(3);
+  });
+
+  it("ignores a placeholder spelled without its space (Intune's DEFAULTSTRING)", () => {
+    const rows = ["a1", "a2"].map((id) => assetRow({ id, serialNumber: "DEFAULTSTRING" }));
+    expect(groupDuplicateSerialAssets(rows)).toHaveLength(0);
+  });
+
   it("still reports a group exactly at the plausible limit", () => {
     const rows = Array.from({ length: MAX_PLAUSIBLE_DUPLICATES }, (_, i) =>
       assetRow({ id: `a${i}`, serialNumber: "SHARED123456" }),

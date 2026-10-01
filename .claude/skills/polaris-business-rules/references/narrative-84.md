@@ -97,6 +97,29 @@ diverges**: `tests/unit/serialNumber.test.ts` parses
 `PLACEHOLDER_SERIALS`. A comment saying "keep these in sync" is how they went out of sync
 three times already.
 
+### The list is matched squashed (2026-10-01)
+
+On 2026-10-01 a prod conflict card named eight machines sharing the serial
+`DEFAULTSTRING`, reported by Intune. `default string` was on the list, but the lookup
+was an exact match on the lowercased, trimmed value, so the run-together spelling got
+through the projection, the conflict sweep and the merge job's filter. The list
+already had one patch for the same problem (`tobefilledbyoem` next to
+`to be filled by o.e.m.`). Patching spelling by spelling was the wrong fix. Both copies
+now compare in **squashed** form (`squashSerial`: lower-cased, ASCII letters and digits
+only), so each entry covers every spelling that differs only in case, spacing or
+punctuation. Only the lookup is squashed. The value stored and shown is never rewritten.
+
+The same incident lowered rule 83's `MAX_PLAUSIBLE_DUPLICATES` from 8 to 3. Eight is
+exactly the size of the group it let through. The cap is also the only net
+`mergeDuplicateHostnameAssets`' serial pass has against an unlisted placeholder, and that
+pass merges a qualifying group without asking, so a cap set too high merges unrelated
+machines. Real one-device-recorded-twice groups are 2, occasionally 3.
+
+A placeholder that is already stored is NOT cleared by this. The projection's write-back
+never writes a null (the `POST /system-info` clear covers agent hosts only), so a stored
+`DEFAULTSTRING` stays on the record. It stops grouping, and the open card auto-resolves
+on the next sweep, but an operator clears the field by hand.
+
 ### What this does not retire
 
 The `indexUniqueBy` uniqueness guard stays, and its comments now say why in terms that do

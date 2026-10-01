@@ -43,7 +43,7 @@
  * Pure — no DB, no I/O.
  */
 
-import { PLACEHOLDER_SERIALS, MIN_SERIAL_LENGTH } from "./serialNumber.js";
+import { isPlaceholderSerial, MIN_SERIAL_LENGTH } from "./serialNumber.js";
 
 /**
  * The placeholder list and the length floor are shared with the projection and
@@ -74,7 +74,7 @@ export function normalizeHardwareSerial(raw: unknown): string | null {
   const collapsed = raw.trim().replace(/\s+/g, " ");
   if (!collapsed) return null;
 
-  if (PLACEHOLDER_SERIALS.has(collapsed.toLowerCase())) return null;
+  if (isPlaceholderSerial(collapsed)) return null;
   if (collapsed.length < MIN_SERIAL_LENGTH) return null;
 
   // Must carry at least one alphanumeric character — a serial of "----" or
