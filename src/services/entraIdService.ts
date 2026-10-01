@@ -72,7 +72,12 @@ export interface DiscoveredEntraDevice {
   // since WiFi MAC randomizes on modern Windows/iOS/Android).
   macAddress?: string;
   wifiMacAddress?: string;       // Intune `wiFiMacAddress`
-  ethernetMacAddress?: string;   // Intune `ethernetMacAddress`
+  ethernetMacAddress?: string;   // Intune `ethernetMacAddress` (per-device read — see resolveEthernetMacs)
+  // The Intune `lastSyncDateTime` the Ethernet MAC above was read at. Stored
+  // on the intune source row so the next run can skip the per-device read for
+  // a device that has not checked in since. Undefined when no read has
+  // succeeded yet (the field is then re-fetched every run until one does).
+  ethernetMacSyncedAt?: string;
   manufacturer?: string;
   model?: string;
   userPrincipalName?: string;
@@ -679,6 +684,204 @@ export async function proxyQuery(
 
 const DEVICES_HARD_CAP = 10_000;
 
+// ─── Intune Ethernet MAC (per-device read) ──────────────────────────────────
+//
+// Graph's managedDevices LIST never returns `ethernetMacAddress`: it is a
+// "Non-Default property", null on every row of a list call even when $select
+// names it, and only an individual GET with $select fills it in (Microsoft's
+// managedDevice reference, v1.0). Before this read existed every Intune
+// device reached Polaris with its Wi-Fi MAC only, so FortiGate discovery's
+// sighting of the wired NIC matched nothing and created a second asset for
+// the same machine — and the Ethernet-MAC cross-link that should have joined
+// them never had a MAC to match on.
+//
+// The read goes through Graph JSON batching (20 GETs per $batch call) and is
+// skipped for any device whose `lastSyncDateTime` equals the one the stored
+// MAC was read at: a device that has not checked in cannot have reported a
+// new MAC. A fleet of 2000 costs ~100 batch calls on the first run and, after
+// that, only the devices that synced since the previous run.
+
+/** What a previous run stored for one device (from its intune source row). */
+export interface KnownEthernetMac {
+  ethernetMacAddress: string | null;
+  ethernetMacSyncedAt: string | null;
+}
+
+/** One device's resolved Ethernet MAC ("" = the device reports none). */
+interface ResolvedEthernetMac {
+  mac: string;
+  syncedAt: string | undefined;
+}
+
+/** Graph's JSON batching limit. */
+const GRAPH_BATCH_SIZE = 20;
+/** Batch calls in flight at once — keeps a cold 2000-device run near 80 req/round. */
+const ETHERNET_MAC_BATCH_CONCURRENCY = 4;
+const GUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/**
+ * Decide, per Intune device, whether its Ethernet MAC can come from the list
+ * row or the stored value, or needs a per-device read. Pure — the I/O is in
+ * fetchEthernetMacs.
+ *
+ * `forceRefresh` (a scoped "Discover Now") reads every device regardless of
+ * the stored value: one call, and the operator asked for fresh data.
+ */
+export function planEthernetMacFetch(
+  intuneDevices: Iterable<[string, any]>,
+  known: ReadonlyMap<string, KnownEthernetMac> | undefined,
+  forceRefresh: boolean,
+): { resolved: Map<string, ResolvedEthernetMac>; toFetch: Array<{ deviceId: string; managedDeviceId: string; lastSync: string | undefined }> } {
+  const resolved = new Map<string, ResolvedEthernetMac>();
+  const toFetch: Array<{ deviceId: string; managedDeviceId: string; lastSync: string | undefined }> = [];
+  for (const [deviceId, d] of intuneDevices) {
+    const lastSync = d?.lastSyncDateTime ? String(d.lastSyncDateTime) : undefined;
+    // Should Graph ever start filling the field on a list row, take it.
+    const fromList = formatMac(d?.ethernetMacAddress);
+    if (fromList) {
+      resolved.set(deviceId, { mac: fromList, syncedAt: lastSync });
+      continue;
+    }
+    const prev = known?.get(deviceId);
+    if (!forceRefresh && prev && lastSync && prev.ethernetMacSyncedAt === lastSync) {
+      resolved.set(deviceId, { mac: formatMac(prev.ethernetMacAddress), syncedAt: lastSync });
+      continue;
+    }
+    const managedDeviceId = d?.id ? String(d.id) : "";
+    if (GUID_RE.test(managedDeviceId)) {
+      toFetch.push({ deviceId, managedDeviceId, lastSync });
+    } else if (prev) {
+      // Nothing safe to put in a URL — keep what we had.
+      resolved.set(deviceId, carryForward(prev));
+    }
+  }
+  return { resolved, toFetch };
+}
+
+/** A failed or impossible read keeps the stored MAC AND its stored stamp, so
+ *  the device is retried next run instead of being cached as "no MAC". */
+function carryForward(prev: KnownEthernetMac): ResolvedEthernetMac {
+  return { mac: formatMac(prev.ethernetMacAddress), syncedAt: prev.ethernetMacSyncedAt ?? undefined };
+}
+
+/**
+ * Read `ethernetMacAddress` for each managed device id through Graph $batch.
+ * Returns the raw value per managed device id for every read that SUCCEEDED
+ * (null when the device reports none); a device missing from the result
+ * failed and must keep its stored value. A 429 inside a batch is retried up
+ * to MAX_GRAPH_THROTTLE_RETRIES times after the longest Retry-After the
+ * throttled responses asked for; the outer $batch call's own 401/403/429
+ * handling is graphRequest's.
+ */
+async function fetchEthernetMacs(
+  config: EntraIdConfig,
+  managedDeviceIds: string[],
+  signal: AbortSignal | undefined,
+  log: EntraDiscoveryProgressCallback,
+): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  const batches: string[][] = [];
+  for (let i = 0; i < managedDeviceIds.length; i += GRAPH_BATCH_SIZE) {
+    batches.push(managedDeviceIds.slice(i, i + GRAPH_BATCH_SIZE));
+  }
+  let failedBatches = 0;
+  let lastError = "";
+
+  const runBatch = async (ids: string[]): Promise<void> => {
+    let pending = ids;
+    for (let attempt = 0; pending.length > 0 && attempt <= MAX_GRAPH_THROTTLE_RETRIES; attempt++) {
+      if (signal?.aborted) return;
+      const res = await graphRequest(config, "https://graph.microsoft.com/v1.0/$batch", {
+        method: "POST",
+        signal,
+        body: {
+          requests: pending.map((id) => ({
+            id,
+            method: "GET",
+            url: `/deviceManagement/managedDevices/${id}?$select=id,ethernetMacAddress`,
+          })),
+        },
+      });
+      const throttled: string[] = [];
+      let delay = 0;
+      for (const r of Array.isArray(res?.responses) ? res.responses : []) {
+        const id = String(r?.id ?? "");
+        if (!pending.includes(id)) continue;
+        if (r.status === 200) {
+          out.set(id, r.body?.ethernetMacAddress ? String(r.body.ethernetMacAddress) : null);
+        } else if (r.status === 429) {
+          throttled.push(id);
+          // A batch sub-response's headers are a plain object with Graph's
+          // casing ("Retry-After"); throttleDelayMs asks in lower case.
+          const h: Record<string, unknown> = r.headers ?? {};
+          const get = (n: string): string | null => {
+            const k = Object.keys(h).find((key) => key.toLowerCase() === n.toLowerCase());
+            return k !== undefined && h[k] != null ? String(h[k]) : null;
+          };
+          delay = Math.max(delay, throttleDelayMs({ get }));
+        }
+        // Any other status (404 for a device retired mid-run, 403, 5xx) is a
+        // failed read: left out of `out`, so the caller keeps the stored MAC.
+      }
+      pending = throttled;
+      if (pending.length > 0 && attempt < MAX_GRAPH_THROTTLE_RETRIES) await sleep(delay);
+    }
+  };
+
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < batches.length && !signal?.aborted) {
+      const ids = batches[next++];
+      try {
+        await runBatch(ids);
+      } catch (err: any) {
+        failedBatches++;
+        lastError = err?.message || "Unknown error";
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(ETHERNET_MAC_BATCH_CONCURRENCY, batches.length) }, worker));
+
+  if (failedBatches > 0) {
+    log("discover.intune.ethernet_mac", "error", `Intune: ${failedBatches} of ${batches.length} Ethernet MAC batch read(s) failed — those devices keep their stored MAC and are retried next run (last error: ${lastError})`);
+  }
+  return out;
+}
+
+/**
+ * The Ethernet MAC for every Intune device, keyed by azureADDeviceId: from the
+ * list row when Graph filled it, the stored value when the device has not
+ * synced since it was read, otherwise a per-device read.
+ */
+async function resolveEthernetMacs(
+  config: EntraIdConfig,
+  intuneByDeviceId: Map<string, any>,
+  known: ReadonlyMap<string, KnownEthernetMac> | undefined,
+  forceRefresh: boolean,
+  signal: AbortSignal | undefined,
+  log: EntraDiscoveryProgressCallback,
+): Promise<Map<string, ResolvedEthernetMac>> {
+  const { resolved, toFetch } = planEthernetMacFetch(intuneByDeviceId, known, forceRefresh);
+  if (toFetch.length === 0 || signal?.aborted) {
+    for (const f of toFetch) {
+      const prev = known?.get(f.deviceId);
+      if (prev) resolved.set(f.deviceId, carryForward(prev));
+    }
+    return resolved;
+  }
+  const fetched = await fetchEthernetMacs(config, toFetch.map((f) => f.managedDeviceId), signal, log);
+  for (const f of toFetch) {
+    if (fetched.has(f.managedDeviceId)) {
+      resolved.set(f.deviceId, { mac: formatMac(fetched.get(f.managedDeviceId)), syncedAt: f.lastSync });
+    } else {
+      const prev = known?.get(f.deviceId);
+      if (prev) resolved.set(f.deviceId, carryForward(prev));
+    }
+  }
+  log("discover.intune.ethernet_mac", "info", `Intune: read the Ethernet MAC of ${fetched.size} device(s) (${toFetch.length} needed a read; ${intuneByDeviceId.size - toFetch.length} unchanged since their last sync)`);
+  return resolved;
+}
+
 export async function discoverDevices(
   config: EntraIdConfig,
   signal?: AbortSignal,
@@ -694,6 +897,13 @@ export async function discoverDevices(
    * zero devices rather than smuggling one past the filter.
    */
   scope?: { deviceId: string },
+  /**
+   * The Ethernet MAC each device's intune source row already holds, keyed by
+   * azureADDeviceId (lower case). Lets the per-device read skip devices that
+   * have not synced since — see resolveEthernetMacs. Omitted, every device is
+   * read.
+   */
+  knownEthernetMacs?: ReadonlyMap<string, KnownEthernetMac>,
 ): Promise<EntraDiscoveryResult> {
   const log = onProgress || (() => {});
   // Guard the interpolation: a deviceId is a GUID, and anything else must not
@@ -775,6 +985,20 @@ export async function discoverDevices(
     }
   }
 
+  // 2b. Intune Ethernet MACs — absent from the list call, read per device.
+  //     Never fails the run: a failed read keeps the stored value.
+  let ethernetByDeviceId = new Map<string, ResolvedEthernetMac>();
+  if (intuneByDeviceId.size > 0 && !signal?.aborted) {
+    try {
+      ethernetByDeviceId = await resolveEthernetMacs(config, intuneByDeviceId, knownEthernetMacs, !!scopedDeviceId, signal, log);
+    } catch (err: any) {
+      log("discover.intune.ethernet_mac", "error", `Intune: Ethernet MAC read failed — ${err.message || "Unknown error"}`);
+      for (const [id, prev] of knownEthernetMacs ?? []) {
+        if (intuneByDeviceId.has(id)) ethernetByDeviceId.set(id, carryForward(prev));
+      }
+    }
+  }
+
   // 3. Merge — Intune wins on fields present in both
   const merged: DiscoveredEntraDevice[] = [];
   const seenDeviceIds = new Set<string>();
@@ -790,7 +1014,8 @@ export async function discoverDevices(
 
     const intune = intuneByDeviceId.get(deviceId);
     const wifi = formatMac(intune?.wiFiMacAddress);
-    const eth = formatMac(intune?.ethernetMacAddress);
+    const ethRes = intune ? ethernetByDeviceId.get(deviceId) : undefined;
+    const eth = ethRes?.mac ?? "";
     const sources: ("entra" | "intune")[] = ["entra"];
     if (intune) sources.push("intune");
     merged.push({
@@ -812,6 +1037,7 @@ export async function discoverDevices(
       macAddress: (eth || wifi) || undefined,
       wifiMacAddress: wifi || undefined,
       ethernetMacAddress: eth || undefined,
+      ethernetMacSyncedAt: ethRes?.syncedAt,
       manufacturer: intune?.manufacturer || undefined,
       model: intune?.model || undefined,
       userPrincipalName: intune?.userPrincipalName || undefined,
@@ -829,7 +1055,8 @@ export async function discoverDevices(
       continue;
     }
     const wifi = formatMac(intune.wiFiMacAddress);
-    const eth = formatMac(intune.ethernetMacAddress);
+    const ethRes = ethernetByDeviceId.get(deviceId);
+    const eth = ethRes?.mac ?? "";
     merged.push({
       sources: ["intune"],
       intuneDeviceName: intune.deviceName ? String(intune.deviceName) : undefined,
@@ -843,6 +1070,7 @@ export async function discoverDevices(
       macAddress: (eth || wifi) || undefined,
       wifiMacAddress: wifi || undefined,
       ethernetMacAddress: eth || undefined,
+      ethernetMacSyncedAt: ethRes?.syncedAt,
       manufacturer: intune.manufacturer || undefined,
       model: intune.model || undefined,
       userPrincipalName: intune.userPrincipalName || undefined,
