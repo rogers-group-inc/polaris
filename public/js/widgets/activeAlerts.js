@@ -219,11 +219,27 @@
     // The automation's name is the row's title — it says what KIND of problem
     // this is, which the message alone often doesn't. The device follows it.
     var title = r.ruleName ? '<span style="margin-right:6px' + fadeTail + '">' + escapeHtml(r.ruleName) + '</span>' : "";
+    // A grouped alert (business rule 75) — folded by an Alert Group, or by an
+    // automation grouping its own components per device — names many problems
+    // on one device, and neither title says so; the GROUP pill does. Both
+    // kinds carry dimensionCount (null on an ungrouped alert); only the
+    // Alert Group kind carries groupName.
+    var grouped = !!r.groupName || r.dimensionCount != null;
+    var count = r.dimensionCount ? " — " + r.dimensionCount + " component" + (r.dimensionCount === 1 ? "" : "s") : "";
+    var group = grouped
+      ? '<span class="widget-pill widget-pill-watch" style="margin-right:6px' + fadeTail + '" title="' +
+        escapeHtml((r.groupName ? "Alert group: " + r.groupName : "Grouped by device") + count) +
+        '">GROUP</span>'
+      : "";
     var who = r.hostname ? '<span style="margin-right:6px;color:var(--color-text-secondary)' + fadeTail + '">' + escapeHtml(r.hostname) + '</span>' : "";
     // The sub-asset the alert is ABOUT (port, sensor, mount, tunnel). Monospace
     // because it's an identifier, and beside the hostname because that pair is
     // what tells two rows of one per-interface automation apart.
-    var dim = r.dimension
+    //
+    // Not on a grouped alert: its dimension is only the FIRST member, so
+    // "port39" beside the hostname read as the whole alert while the message
+    // below listed every port. The message already names them all.
+    var dim = r.dimension && !grouped
       ? '<span class="dash-alert-dim"' + fadeAttr + ' title="' + escapeHtml("Alert detail: " + r.dimension) + '">' +
         escapeHtml(r.dimension) + '</span>'
       : "";
@@ -271,7 +287,7 @@
     return "<" + tag + ' class="recent-item' + (actionable ? " recent-item-link" : "") + '"' + attrs +
       ' style="border-left:3px solid ' + bar + ';padding-left:8px">' +
       '<div style="min-width:0">' +
-        '<div class="recent-item-title"><span class="widget-pill ' + pillCls + '" style="margin-right:6px' + fadeTail + '">' + escapeHtml(sev) + '</span>' + title + who + dim + dep + ack + '</div>' +
+        '<div class="recent-item-title"><span class="widget-pill ' + pillCls + '" style="margin-right:6px' + fadeTail + '">' + escapeHtml(sev) + '</span>' + title + group + who + dim + dep + ack + '</div>' +
         '<div class="recent-item-meta"' + fadeAttr + '>' + escapeHtml(r.message || "") + '</div>' +
       '</div>' +
       '<span class="recent-item-time">' + timeAgo(r.raisedAt) + '</span>' +
