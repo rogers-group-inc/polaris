@@ -4212,6 +4212,7 @@ async function joinGroupAlert(
       : `${rule.name}: ${fires.map((f) => f.reading.dimLabel || f.reading.dimKey).join(", ")} joined this alert`,
     details: {
       ruleId: rule.id,
+      assetId: lead.reading.assetId || null,
       joined: fires.map((f) => f.reading.dimKey),
       severity,
       ...(reopening
@@ -4738,7 +4739,7 @@ async function recover(
       resourceName: rule.name,
       actor: "system:notification-engine",
       message: `Auto-resolved: ${rule.name} condition recovered`,
-      details: { ruleId: rule.id },
+      details: { ruleId: rule.id, assetId: st.assetId || reading?.assetId || null, dimension: st.dimensionKey ?? null },
     });
   } else {
     // manual / timed: re-arm the state but leave the notification for a human
@@ -4758,6 +4759,9 @@ type ReleasableState = {
   ruleId?: string;
   dimensionKey?: string;
   notificationId: string | null;
+  /** Rides the clear / member-recovered Event so it lands on the asset's
+   *  Events tab (Event.assetId). Every caller passes a full state row. */
+  assetId?: string | null;
 };
 
 /**
@@ -4875,7 +4879,7 @@ async function releaseGroupMember(
         resourceName: rule.name,
         actor: "system:notification-engine",
         message: `${rule.name}: ${st.dimensionKey || "a component"} recovered — ${remaining.length} still affected`,
-        details: { ruleId: rule.id, dimension: st.dimensionKey ?? null, remaining: remaining.length },
+        details: { ruleId: rule.id, assetId: st.assetId || null, dimension: st.dimensionKey ?? null, remaining: remaining.length },
       }).catch(() => {});
     } else {
       // Last one out: keep the departure in the snapshot so the cleared alert

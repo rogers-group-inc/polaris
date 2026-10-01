@@ -216,3 +216,25 @@ d("GET /api/v1/events — sort whitelist", () => {
     expect(resp.status).toBe(400);
   });
 });
+
+// ─── GET /api/v1/events?assetId= — the asset-details Events tab ──────────────
+
+d("GET /api/v1/events — assetId (every event about one device)", () => {
+  it("returns the device's own rows AND its alerts' fire / clear, and nothing about another device", async () => {
+    // Written through logEvent, so the test also pins the write-time stamp:
+    // the alert rows carry the device only in details.assetId.
+    const { logEvent } = await import("../../src/services/eventLogService.js");
+    await logEvent({ action: "asset.monitor.up", resourceType: "asset", resourceId: "dev-1", message: "up" });
+    await logEvent({ action: "notification.triggered", resourceType: "notification", resourceId: "notif-1", message: "PoE fault", details: { ruleId: "r1", assetId: "dev-1" } });
+    await logEvent({ action: "notification.auto_cleared", resourceType: "notification", resourceId: "notif-1", message: "resolved", details: { ruleId: "r1", assetId: "dev-1" } });
+    await logEvent({ action: "notification.triggered", resourceType: "notification", resourceId: "notif-2", message: "other device", details: { ruleId: "r1", assetId: "dev-2" } });
+    await logEvent({ action: "asset.monitor.up", resourceType: "asset", resourceId: "dev-2", message: "up" });
+
+    const { agent } = await authedAgent(app);
+    const resp = await agent.get("/api/v1/events?assetId=dev-1");
+    expect(resp.status).toBe(200);
+    const actions = resp.body.events.map((e: { action: string }) => e.action).sort();
+    expect(actions).toEqual(["asset.monitor.up", "notification.auto_cleared", "notification.triggered"]);
+    expect(resp.body.total).toBe(3);
+  });
+});

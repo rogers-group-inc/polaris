@@ -1300,6 +1300,11 @@
                 <code>not_contains</code>, <code>empty</code>, <code>is_not_empty</code>).</li>
             <li><code>resourceId</code> exact match; <code>since</code> / <code>until</code>
                 timestamps (floored by the retention window).</li>
+            <li><code>assetId</code> — every event <em>about</em> one asset, whatever it is filed
+                under: the asset's own <code>resourceType=asset</code> rows plus its alerts'
+                <code>notification.*</code> rows (fired, escalated, cleared). Every returned event
+                carries an <code>assetId</code> field (<code>null</code> when it is about no
+                single asset).</li>
             <li><code>sortBy</code> ∈ <code>timestamp, level, action, resourceType, resourceName,
                 actor, message</code> + <code>sortDir</code>; default newest first. Sorting by
                 <code>level</code> orders by severity, not alphabetically.</li>

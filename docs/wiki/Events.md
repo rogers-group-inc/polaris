@@ -36,6 +36,21 @@ page.
 The `system:` prefix is worth knowing: it tells you a change was made by a rule
 rather than by a person, and which rule.
 
+### One device's events
+
+An asset's **Events** tab (open the asset from [Assets](Assets)) shows every
+event *about* that device, not only the ones filed under it: its own monitoring,
+discovery and change events, **and its alerts** — an automation firing
+(`notification.triggered`), escalating, gaining or losing a port, and clearing
+(`notification.auto_cleared`). Those alert rows show **Resource**
+`notification` with the automation's name beside it. A device whose alert keeps
+firing and clearing shows each round there.
+
+An automation only writes its *fired* event when it has an **Event log** action;
+the clear is written regardless. Acknowledging or clearing alerts by hand is one
+event for the whole selection, so it appears here on the Events page but not on
+each device's tab.
+
 ---
 
 ## Conflicts
