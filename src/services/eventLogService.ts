@@ -26,6 +26,25 @@ export interface LogEventInput {
   message: string;
   level?: "info" | "warning" | "error";
   details?: Record<string, unknown>;
+  /** The asset this event is about. Optional: derived by eventAssetIdOf when
+   *  omitted, so callers only pass it when neither resourceId nor
+   *  details.assetId carries it. */
+  assetId?: string | null;
+}
+
+/**
+ * The asset an Event is ABOUT — the `Event.assetId` column, which is what the
+ * asset-details Events tab queries. An explicit `assetId` wins; then the
+ * resource itself when it IS an asset; then `details.assetId`, which is where
+ * every alert event (resourceType=notification, resourceId = the alert) has
+ * always named its device. The migration that added the column backfilled it
+ * with the same rule, so keep the two in step.
+ */
+export function eventAssetIdOf(input: Pick<LogEventInput, "assetId" | "resourceType" | "resourceId" | "details">): string | null {
+  if (typeof input.assetId === "string" && input.assetId) return input.assetId;
+  if (input.resourceType === "asset" && input.resourceId) return input.resourceId;
+  const fromDetails = input.details?.["assetId"];
+  return typeof fromDetails === "string" && fromDetails ? fromDetails : null;
 }
 
 export async function logEvent(input: LogEventInput): Promise<void> {
@@ -48,6 +67,7 @@ export async function logEvent(input: LogEventInput): Promise<void> {
         // any unknown level string.
         levelRank: LEVEL_ORDER[level] ?? 0,
         details: input.details as any,
+        assetId: eventAssetIdOf(input),
       },
     });
   } catch {
@@ -82,6 +102,7 @@ export async function logEventsBatch(inputs: LogEventInput[]): Promise<number> {
           level,
           levelRank: LEVEL_ORDER[level] ?? 0,
           details: i.details as any,
+          assetId: eventAssetIdOf(i),
         };
       });
     if (rows.length === 0) return 0;

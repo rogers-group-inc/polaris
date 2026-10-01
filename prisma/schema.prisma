@@ -626,10 +626,17 @@ model Event {
   actor        String? // username that triggered the event
   message      String   @db.Text
   details      Json? // Optional extra context (error stack, diff, etc.)
+  // The asset this event is ABOUT, whatever resource it is filed under —
+  // stamped by logEvent (eventAssetIdOf): resourceId for resourceType=asset,
+  // else details.assetId. Lets the asset-details Events tab show an alert's
+  // fire / clear (resourceType=notification) beside the device's own rows.
+  // Not a foreign key: events outlive the asset they describe.
+  assetId      String?
 
   @@index([timestamp])
   @@index([action])
   @@index([resourceType])
+  @@index([assetId, timestamp])
   @@index([level])
   @@index([levelRank, timestamp])
   @@index([actor, timestamp])

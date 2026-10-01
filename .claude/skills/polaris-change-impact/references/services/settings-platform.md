@@ -165,7 +165,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFirmwareChangedEvent`, `buildConnectionChangedEvent`, `buildFirewallChangedEvent`, `AssetChangeEventContext`) behind `asset.firmware.changed` / `asset.switch_port.changed` / `asset.wireless_ap.changed` / `asset.gateway_firewall.changed`.
 
-**Public API:** `logEvent`, `logEventsBatch`, `buildChanges`, `LogEventInput`, `snapshotMaterialAssetFields`, `computeMaterialAssetChanges`, `logDiscoveryAssetCreated`, `logDiscoveryAssetUpdated`, `DiscoveryAuditContext`, `computeFirmwareChange`, `buildFirmwareChangedEvent`, `buildConnectionChangedEvent`, `buildFirewallChangedEvent`, `AssetChangeEventContext`.
+**Public API:** `logEvent`, `logEventsBatch`, `eventAssetIdOf`, `buildChanges`, `LogEventInput`, `snapshotMaterialAssetFields`, `computeMaterialAssetChanges`, `logDiscoveryAssetCreated`, `logDiscoveryAssetUpdated`, `DiscoveryAuditContext`, `computeFirmwareChange`, `buildFirmwareChangedEvent`, `buildConnectionChangedEvent`, `buildFirewallChangedEvent`, `AssetChangeEventContext`.
 
 **Cross-service deps:** `eventArchiveService.getCachedRetentionSettings` (cached min-level read).
 
@@ -174,6 +174,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 **Invariants:**
 - `logEvent` must never throw — event logging can't be allowed to break the operation it audits. Failures are swallowed.
 - `levelRank` is stamped here (0=info, 1=warning, 2=error); the Events list endpoint's `sortBy=level` depends on it.
+- **`Event.assetId` is stamped here too, by `eventAssetIdOf()`** — explicit `assetId`, else `resourceId` when `resourceType === "asset"`, else a non-blank string `details.assetId`. It is what the asset-details Events tab queries (`GET /events?assetId=`), and the only way an alert's fire / clear reaches it: alert events are filed `resourceType: "notification"` with the ALERT's id as `resourceId`, and before the column existed the tab (which asked for `resourceType=asset AND resourceId=<asset>`) never showed them. So **an Event about a device must name it in `details.assetId`** when it is filed under anything other than the asset — the `notification.auto_cleared` / `member_joined` / `member_recovered` / `reminders_paused` writers had to be taught it. Batch events spanning many alerts (`notification.acknowledged` / `.cleared` with `ids[]`, the timed / event-reset sweeps, the delivery and escalation summaries) carry no single asset and stay off the tab. The `20261001000000_event_asset_id` migration backfilled the retention window by the same rule; keep the two in step.
 - Sub-`minLevel` events are dropped silently (cached settings read, 60s TTL — accept staleness).
 - The discovery audit MATERIAL_ASSET_FIELDS whitelist is the flood guard: discovery bumps `lastSeen` / fetched-at / monitor stamp every cycle on nearly every asset, so diffing those would write an event per asset per cycle (catastrophic at 2000 assets vs. 7-day Event retention). Only identity/classification/location fields are diffed; an unchanged pass emits nothing. The endpoint **update** path is intentionally NOT instrumented (it reassigns `macAddress` to the most-recently-sorted MAC each cycle → spurious diffs); only endpoint **create** is.
 

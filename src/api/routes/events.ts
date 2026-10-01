@@ -41,6 +41,9 @@ const ListQuerySchema = z.object({
   level: z.string().optional(),
   resourceType: z.string().optional(),
   resourceId: z.string().optional(),
+  // Every event ABOUT this asset, whatever it is filed under — the device's
+  // own rows and its alerts' fire / clear (Event.assetId, stamped by logEvent).
+  assetId: z.string().optional(),
   // Text filters + their per-field operator. Operator defaults to `contains`
   // when omitted, matching pre-this-change behavior.
   action: z.string().optional(),
@@ -136,6 +139,7 @@ router.get("/", requirePermission("events", "read"), async (req, res, next) => {
     if (resourceTypes) where.resourceType = resourceTypes.length === 1 ? resourceTypes[0] : { in: resourceTypes };
 
     if (q.resourceId) where.resourceId = q.resourceId;
+    if (q.assetId) where.assetId = q.assetId;
 
     // Operator-aware text filters. `action`, `actor`, `message` each take an
     // optional <field>Op param; missing op → contains (default). The actor

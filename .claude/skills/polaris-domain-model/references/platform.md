@@ -328,8 +328,14 @@ Event                           -- Audit log, 7-day rolling retention
   actor         String?         -- username that triggered the event
   message       String
   details       Json?
+  assetId       String?         -- The asset the event is ABOUT, whatever it is filed under.
+                                -- Stamped by logEvent (eventAssetIdOf): resourceId when
+                                -- resourceType=asset, else details.assetId — which is how an
+                                -- alert's fire / clear (resourceType=notification) reaches the
+                                -- asset-details Events tab (GET /events?assetId=). Not an FK:
+                                -- events outlive the asset.
   -- Indexed on: timestamp, action, resourceType, level, (levelRank,timestamp),
-  -- (actor,timestamp), (resourceName,timestamp). The trailing-timestamp
+  -- (actor,timestamp), (resourceName,timestamp), (assetId,timestamp). The trailing-timestamp
   -- composite indexes back the per-column sort UX added when the Events page
   -- adopted the server-side TableSF pattern.
 

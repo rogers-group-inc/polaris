@@ -5511,8 +5511,8 @@ async function openViewModal(id, opts) {
     if (canQuarantineAssets() && (a.status === "quarantined" || (hasMac && !isInfraQ && _quarantinePushAvailable()))) {
       tabs.push({ key: "quarantine", label: a.status === "quarantined" ? "Quarantine ⚠" : "Quarantine", html: _assetQuarantineTabHTML(a) });
     }
-    // Events tab — audit history scoped to this asset (resourceType=asset,
-    // resourceId=a.id). Lazy-loaded on first tab click (see _wireAssetEventsTab)
+    // Events tab — audit history about this asset (assetId=a.id: its own
+    // rows plus its alerts' fire / clear). Lazy-loaded on first tab click (see _wireAssetEventsTab)
     // so the modal doesn't fire an extra /events query on every open. Gated on
     // events-read to mirror the GET /events backend permission.
     if (permAtLeast("events", "read")) {
@@ -20392,7 +20392,7 @@ function _ipHistoryTableHTML(rows) {
 
 // ─── Events tab (asset-scoped audit history) ────────────────────────────────
 // Self-contained reimplementation of the Events-page table + change-Detail
-// popup, scoped to one asset (resourceType=asset, resourceId baked into every
+// popup, scoped to one asset (assetId baked into every
 // fetch). events.js is only loaded on events.html, so its renderTable /
 // showEventDetail / TableSF wiring aren't available here — these mirror
 // public/js/events.js. Follows polaris-ui-canon → "Sortable + filterable data
@@ -22201,14 +22201,14 @@ function _renderAssetEventRow(ev, idx) {
 }
 
 // Translate the live TableSF filter + sort state into GET /events params,
-// with resourceType/resourceId pinned to this asset. Mirrors events.js
-// _buildEventsQuery (server-side mode). The Resource column filter is left
-// unwired — every row in this view is resourceType=asset by construction.
+// pinned to this asset by `assetId` — every event ABOUT the device, so its
+// alerts' fire / clear (resourceType=notification) sit beside its own
+// resourceType=asset rows. Mirrors events.js _buildEventsQuery (server-side
+// mode). The Resource column filter is left unwired.
 function _buildAssetEventsQuery() {
   var filters = _assetEventsSF ? _assetEventsSF._filters || {} : {};
   var params = {
-    resourceType: "asset",
-    resourceId: _assetEventsAssetId,
+    assetId: _assetEventsAssetId,
     limit: _assetEventsPageSize,
     offset: _assetEventsOffset,
   };
@@ -22404,7 +22404,7 @@ function _wireAssetEventsTab(assetId) {
 // tab is active (_syncAssetFooterButtons). Mirrors the Events page export
 // (events.js handleEventExport / generateEventCsv / generateEventPdf) but is
 // scoped to this asset via _buildAssetEventsQuery — "all" honors the
-// operator's active column filters + sort, pinned to resourceType=asset.
+// operator's active column filters + sort, pinned to assetId.
 // The generators live here (with an _asset prefix) because events.js is not
 // loaded on assets.html / map.html.
 

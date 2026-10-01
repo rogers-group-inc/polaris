@@ -396,6 +396,7 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
   const quietPausedEvents: {
     notificationId: string;
     ruleName: string;
+    assetId: string | null;
     assetHostname: string | null;
     resumesAt: string | null;
   }[] = [];
@@ -524,6 +525,7 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
           quietPausedEvents.push({
             notificationId: n.id,
             ruleName: rule.name,
+            assetId: n.assetId,
             assetHostname: n.assetHostname,
             resumesAt: resumesAt ? formatLocalIsoMinute(resumesAt) : null,
           });
@@ -611,7 +613,7 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
       message:
         `Reminders paused for quiet time${q.assetHostname ? ` on ${q.assetHostname}` : ""}` +
         (q.resumesAt ? ` — next reminder at ${q.resumesAt}` : ""),
-      details: { resumesAt: q.resumesAt, assetHostname: q.assetHostname },
+      details: { assetId: q.assetId, resumesAt: q.resumesAt, assetHostname: q.assetHostname },
     }).catch(() => {});
   }
 
