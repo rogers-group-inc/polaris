@@ -44,8 +44,10 @@ beforeAll(() => {
   g.wireModalTabs = () => {};
   g.tabbedBodyHTML = renderTabbedBody;
   g.collectTagCriteria = () => null; // empty rule row → no criteria
-  g.openModal = (_title: string, body: string) => {
-    win.document.body.innerHTML = body;
+  // The editor's Save / Cancel Edit buttons ride in the footer, so the stub
+  // keeps it as the real openModal does.
+  g.openModal = (_title: string, body: string, footer: string) => {
+    win.document.body.innerHTML = body + footer;
   };
   g.api = {
     assetTypes: { list: async () => [] },
