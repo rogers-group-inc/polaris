@@ -3,8 +3,15 @@
  *
  * 60-second reaper — clears orphaned DiscoveryRun rows so a crashed/restarted
  * discovery worker doesn't leave an integration stuck in `running` forever
- * (which would block re-triggering via the singletonKey on the pg-boss
- * polaris-discovery-run queue).
+ * (which would block re-triggering through triggerDiscovery's isRunActive
+ * check).
+ *
+ * It reaps the ROW only. The pg-boss job the dead worker held is a separate
+ * thing, and it is what occupies the polaris-discovery-run singleton slot:
+ * that is released by the queue's job heartbeat (queueService ensureQueues)
+ * or, on a cancel-watchdog force-exit, by the watchdog itself. A reaped row
+ * with its job still `active` reads as "Discover queues, then errors" — the
+ * prod 2026-10-01 incident.
  *
  * Marks any `queued`/`running` row whose `workerHeartbeatAt` is older than
  * REAP_STALE_AFTER_MS (or null with a `createdAt` older than the same window)
