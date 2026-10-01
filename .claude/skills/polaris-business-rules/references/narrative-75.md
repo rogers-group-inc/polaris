@@ -159,6 +159,12 @@ one-line change with seven silent consequences. The full set lives in `members`;
 is denormalized beside it so the list surfaces can render "+7" without pulling the blob into a
 query that narrows with an explicit `select`.
 
+Because it is only the primary, the Active Alerts widget does NOT print `dimension` beside the
+hostname on a group-owned alert (`groupName` set): "port39" there read as the whole alert while the
+message beneath listed every faulted port. The row wears a GROUP pill after its title instead
+(tooltip: group name + `dimensionCount`), and an ungrouped alert keeps its dimension, which is what
+tells two rows of one per-interface automation apart.
+
 **`groupByAsset` is a first-class column and never a key inside `trigger`.**
 `triggerIdentityOf` / `triggerSignature` are computed from the trigger and feed the carve-out
 shadow index, so a flag hidden in there would stop a grouped automation shadowing its ungrouped

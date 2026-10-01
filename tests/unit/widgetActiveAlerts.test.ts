@@ -32,6 +32,8 @@ interface AlertRow {
   message?: string;
   severity: string;
   ruleName?: string | null;
+  groupName?: string | null;
+  dimensionCount?: number | null;
   acknowledged?: boolean;
   acknowledgedBy?: string | null;
   raisedAt?: string;
@@ -200,6 +202,25 @@ describe("row contents", () => {
   it("omits the dimension element for a whole-device alert", () => {
     const el = render([alert({ id: "a", severity: "critical", dimension: null })], 1, { minSeverity: "warning" });
     expect(el.querySelector(".dash-alert-dim")).toBeNull();
+  });
+
+  it("marks a grouped alert with a GROUP pill after its title, and drops the lone dimension", () => {
+    // A grouped alert's dimension is only its first member; beside the
+    // hostname it read as the whole alert while the message listed every port.
+    const el = render([
+      alert({ id: "a", severity: "serious", ruleName: "POE Faults", groupName: "POE Faults", dimension: "port39", dimensionCount: 2 }),
+    ], 1, { minSeverity: "warning" });
+    const title = el.querySelector(".recent-item-title") as any;
+    const pills = Array.from(title.querySelectorAll(".widget-pill")).map((p: any) => p.textContent);
+    expect(pills).toEqual(["serious", "GROUP"]);
+    expect(title.textContent).toMatch(/POE Faults\s*GROUP/);
+    expect(el.querySelector(".dash-alert-dim")).toBeNull();
+  });
+
+  it("gives an ungrouped alert no GROUP pill", () => {
+    const el = render([alert({ id: "a", severity: "serious", dimension: "port2" })], 1, { minSeverity: "warning" });
+    const pills = Array.from(el.querySelectorAll(".widget-pill")).map((p: any) => p.textContent);
+    expect(pills).not.toContain("GROUP");
   });
 
   it("links the row to the asset's details, keeping the href as the fallback", () => {
