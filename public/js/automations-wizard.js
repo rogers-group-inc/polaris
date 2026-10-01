@@ -9195,6 +9195,10 @@ async function openAutomationWizard(existing, opts) {
       cooldownSec: null,
       messageTemplate: draft.messageTemplate,
       requireAckNote: draft.requireAckNote === true,
+      // Business rule 75. collectStep5 already forces it off when the trigger
+      // stops reporting per component, so the server's validateGrouping and
+      // this flag never disagree.
+      groupByAsset: draft.groupByAsset === true,
       channels: ["in_app"],
       emailComposition: null, // per-action composition in v2; rule-level field retired by the wizard
       escalation: draft.escalation,
