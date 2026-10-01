@@ -24,6 +24,7 @@ let otherId = "";
 let peerId = "";
 
 async function wipe(): Promise<void> {
+  await prisma.notification.deleteMany({ where: { assetHostname: { startsWith: HOST } } });
   await prisma.assetDependencyParent.deleteMany({ where: { asset: { hostname: { startsWith: HOST } } } });
   await prisma.assetDependencyParent.deleteMany({ where: { parent: { hostname: { startsWith: HOST } } } });
   await prisma.asset.deleteMany({ where: { hostname: { startsWith: HOST } } });
@@ -180,5 +181,36 @@ d("GET /assets/:id/dependencies contract", () => {
     // Non-firewall assets never carry a peer block.
     const swResp = await getDeps(swId);
     expect(swResp.body.haPeer).toBeNull();
+  });
+
+  // Every rendered node carries the assets list's active-alert summary, so the
+  // tree can show which device in the chain is alerting — an up device with a
+  // live alert is otherwise indistinguishable from a quiet one.
+  it("stamps each node's worst active alert, and null where nothing is firing", async () => {
+    const alert = (assetId: string, hostname: string, severity: string, extra: Record<string, unknown> = {}) =>
+      ({ assetId, assetHostname: hostname, severity, message: "test", ...extra });
+    await prisma.notification.createMany({
+      data: [
+        alert(swId, `${HOST}-sw`, "warning"),
+        alert(swId, `${HOST}-sw`, "serious", { acknowledged: true }),
+        alert(apId, `${HOST}-ap`, "critical", { acknowledged: true }),
+        alert(peerId, `${HOST}-fw-peer`, "notice"),
+        // A cleared alert is history, not an active one.
+        alert(fwId, `${HOST}-fw`, "critical", { cleared: true }),
+      ] as never,
+    });
+
+    const resp = await getDeps(fwId);
+    expect(resp.status).toBe(200);
+    expect(resp.body.asset.activeAlert).toBeNull();
+    expect(resp.body.haPeer.activeAlert).toEqual({ severity: "notice", count: 1, unacknowledged: 1 });
+    const sw = resp.body.children.find((c: any) => c.id === swId);
+    expect(sw.activeAlert).toEqual({ severity: "serious", count: 2, unacknowledged: 1 });
+    expect(sw.grandchildren[0].activeAlert).toEqual({ severity: "critical", count: 1, unacknowledged: 0 });
+
+    // Upward: the parent rows carry it too.
+    const up = await getDeps(apId);
+    expect(up.body.asset.activeAlert).toEqual({ severity: "critical", count: 1, unacknowledged: 0 });
+    expect(up.body.effectiveParents[0].parent.activeAlert).toEqual({ severity: "serious", count: 2, unacknowledged: 1 });
   });
 });

@@ -5893,11 +5893,27 @@ router.get("/:id/dependencies", requirePermission("assets", "read"), async (req,
       childCountByParent.set(r.parentAssetId, (childCountByParent.get(r.parentAssetId) ?? 0) + 1);
     }
 
+    // Worst active alert per rendered node — the same {severity, count,
+    // unacknowledged} summary the assets list's Name-column dot is built from,
+    // so a device strobes the same colour in the tree as in the list. ONE query
+    // over every id the tree shows (bounded by the two caps above, ~800 ids
+    // worst case), not one per row.
+    const treeIds = new Set<string>([id]);
+    for (const p of effectiveParents) if (p.parent) treeIds.add(p.parent.id);
+    if (haPeer) treeIds.add(haPeer.id);
+    for (const c of children) treeIds.add(c.id);
+    for (const list of grandchildrenByParent.values()) for (const gc of list) treeIds.add(gc.id);
+    const alertSummaries = await activeAlertSummaryByAsset([...treeIds]);
+    const alertOf = (assetId: string) => alertSummaries.get(assetId) ?? null;
+
     const childrenWithGrandchildren = children.map(c => ({
       ...c,
-      grandchildren: grandchildrenByParent.get(c.id) ?? [],
+      activeAlert:   alertOf(c.id),
+      grandchildren: (grandchildrenByParent.get(c.id) ?? []).map(gc => ({ ...gc, activeAlert: alertOf(gc.id) })),
       childCount:    childCountByParent.get(c.id) ?? 0,
     }));
+    const withParentAlert = (p: ReturnType<typeof shape>) =>
+      p.parent ? { ...p, parent: { ...p.parent, activeAlert: alertOf(p.parent.id) } } : p;
 
     res.json({
       asset: {
@@ -5911,15 +5927,16 @@ router.get("/:id/dependencies", requirePermission("assets", "read"), async (req,
         dependencySuppressedAt:  asset.dependencySuppressedAt,
         dependencyTestUntil:     asset.dependencyTestUntil,
         dependencyTestStartedBy: asset.dependencyTestStartedBy,
+        activeAlert:             alertOf(asset.id),
       },
-      effectiveParents,
+      effectiveParents: effectiveParents.map(withParentAlert),
       computedParents,
       overrideParents,
       hasOverride,
       children: childrenWithGrandchildren,
       childrenTruncated,
       childCount: childCountByParent.get(id) ?? 0,
-      haPeer,
+      haPeer: haPeer ? { ...haPeer, activeAlert: alertOf(haPeer.id) } : null,
     });
   } catch (err) {
     next(err);

@@ -20190,8 +20190,13 @@ function _depTreeNodeRow(node, opts) {
     ? ' <span class="dep-tree-level" title="' + opts.moreCount + ' more switch(es) / access point(s) below this device, not shown here — open it to see them">+' + opts.moreCount + '</span>'
     : "";
   var depthClass = opts.depth ? ' dep-tree-row-depth-' + opts.depth : '';
+  // Worst active alert on this node — the assets list's strobe dot (app.js
+  // alertSummaryDotHTML), so a device reads equally alarmed here and in the
+  // list: strobing while any alert is unacknowledged, still once all are taken.
+  // Separate from the pip, which is monitor STATE: an up device can be alerting.
+  var alertDot = node.activeAlert ? ' ' + alertSummaryDotHTML(node.activeAlert) : '';
   return '<div class="dep-tree-row' + (opts.self ? ' dep-tree-row-self' : '') + depthClass + '">' +
-    pip + ' ' + hostHTML +
+    pip + ' ' + hostHTML + alertDot +
     ' <span class="dep-tree-type">' + escapeHtml(typeLabel) + '</span>' +
     // Self node already prints "— level N" inline, so skip the tag there.
     (opts.self ? '' : levelBit) +
@@ -20253,7 +20258,7 @@ function renderDependencyTreeBlock(payload, selfId) {
       id: p.parent.id, hostname: p.parent.hostname, assetType: p.parent.assetType,
       dependencyLayer: p.parent.dependencyLayer, monitorStatus: p.parent.monitorStatus,
       monitored: p.parent.monitored, dependencySuppressed: false /* we don't have it on parent */, source: p.source,
-      dependencyTestUntil: p.parent.dependencyTestUntil,
+      dependencyTestUntil: p.parent.dependencyTestUntil, activeAlert: p.parent.activeAlert,
     }, { via: p.detectedVia }); }).join("");
     parentsHTML += '<div class="dep-tree-connector">│</div>';
   }
@@ -20261,7 +20266,7 @@ function renderDependencyTreeBlock(payload, selfId) {
     id: self.id, hostname: self.hostname, assetType: self.assetType,
     dependencyLayer: self.dependencyLayer, monitorStatus: self.monitorStatus,
     monitored: self.monitored !== false, dependencySuppressed: !!self.dependencySuppressed,
-    dependencyTestUntil: self.dependencyTestUntil,
+    dependencyTestUntil: self.dependencyTestUntil, activeAlert: self.activeAlert,
   }, { self: true });
 
   // HA peer row — rendered directly under the self row at the same level
@@ -20276,7 +20281,7 @@ function renderDependencyTreeBlock(payload, selfId) {
     haPeerHTML = _depTreeNodeRow({
       id: haPeer.id, hostname: haPeer.hostname, assetType: haPeer.assetType,
       dependencyLayer: haPeer.dependencyLayer, monitorStatus: haPeer.monitorStatus,
-      monitored: haPeer.monitored,
+      monitored: haPeer.monitored, activeAlert: haPeer.activeAlert,
     }, { tag: peerTag, tagTitle: "HA cluster peer of " + (self.hostname || "this firewall") + " — redundant sibling, not a dependency" });
   }
 

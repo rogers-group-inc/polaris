@@ -243,6 +243,14 @@ The asset's **General** tab renders the dependency tree for **every** asset
 type. An endpoint sees its own dependency as the **parent row above it** — that
 is the only surface where an endpoint edge is displayed.
 
+Each row carries two separate signals. The **pip** at the left is the device's
+monitor state (▲ up, ▼ down, ● Dep. Down, and so on). A **coloured dot** after
+the name means the device has an **active alert** — the same dot as on the
+Assets list, coloured by its most severe alert. It **pulses** while any of
+those alerts is unacknowledged and sits still once all of them are
+acknowledged; hover it for the count. A device can be up and still alerting
+(high CPU, a down port), which is exactly what the dot is there to show.
+
 The downward view (children and grandchildren) is deliberately **infra-only**
 and capped. Endpoints *are* real children of the switch, AP or gate that last
 saw them, but listing them buries the infra chain the tree exists to show — and

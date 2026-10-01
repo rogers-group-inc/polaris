@@ -405,7 +405,11 @@
           <p>The device's dependency context: <code>{ asset, effectiveParents, computedParents,
             overrideParents, hasOverride, children, childrenTruncated, childCount, haPeer }</code>.
             <code>children</code> lists infrastructure-type children only, capped at 300
-            (<code>childrenTruncated</code> flags overflow).</p>
+            (<code>childrenTruncated</code> flags overflow). Every node &mdash; <code>asset</code>,
+            each <code>effectiveParents[].parent</code>, <code>haPeer</code>, each child and
+            grandchild &mdash; carries <code>activeAlert</code>: <code>{ severity, count,
+            unacknowledged }</code> for its uncleared alerts (worst severity first), or
+            <code>null</code> when nothing is firing.</p>
         </div>
 
         <h3>Device onboarding (writes)</h3>
