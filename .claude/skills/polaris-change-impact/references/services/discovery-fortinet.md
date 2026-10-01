@@ -60,11 +60,11 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/discoveryCancelWatchdog.ts
 
-**What it owns:** The force-exit backstop for discovery cancellation. Armed when a run's abort signal fires, disarmed when `runDiscovery` reaches its finally. If the run hasn't unwound within the grace window (2 min), it logs the in-flight devices with ages, writes an `integration.discover.force_exit` Event, finalizes the `DiscoveryRun` row as `aborted`, and exits the process with code 1 (systemd `Restart=on-failure` restarts it).
+**What it owns:** The force-exit backstop for discovery cancellation. Armed when a run's abort signal fires, disarmed when `runDiscovery` reaches its finally. If the run hasn't unwound within the grace window (2 min), it logs the in-flight devices with ages, writes an `integration.discover.force_exit` Event, finalizes the `DiscoveryRun` row as `aborted`, fails the run's pg-boss job, and exits the process with code 1 (systemd `Restart=on-failure` restarts it).
 
 **Public API:** `armDiscoveryCancelWatchdog` (returns the disarm fn), `formatStuckDevices`, `CANCEL_FORCE_EXIT_GRACE_MS`, `FORCE_EXIT_CLEANUP_TIMEOUT_MS`, `ActiveDeviceSnapshot`, `CancelWatchdogOptions`.
 
-**Cross-service deps:** `discoveryRunState.finishRun`, `eventLogService.logEvent`, `logger` — all injectable via options for tests.
+**Cross-service deps:** `discoveryRunState.finishRun`, `eventLogService.logEvent`, `queueService.failActiveDiscoveryJobs`, `logger` — all injectable via options for tests (`releaseQueueJob` for the queue call).
 
 **Used by:** `src/services/discovery/discoveryEngine.ts` — `runDiscovery` arms it right after the heartbeat timer and disarms in the finally. One call site.
 
@@ -72,7 +72,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Fires ONLY when armed (abort signal fired) and not disarmed — a run that cancels cleanly, completes, or errors never trips it.
 - Exists for wedges the abort signal cannot reach (non-HTTP awaits, e.g. a lock-blocked Prisma query). Those keep the 60s heartbeat ticking, so the discoveryRunReaper never clears them either — this watchdog is the only automatic recovery.
 - The pre-exit bookkeeping writes (Event, finishRun) are each raced against `FORCE_EXIT_CLEANUP_TIMEOUT_MS` — the DB may be the wedge; the exit must never be blocked by the hang it exists to break.
-- Finalizing the row as `aborted` before exit clears the UI immediately (no reaper wait) and leaves `cancelRequested=true`, so a pg-boss redelivery of the interrupted job self-aborts at runDiscovery startup.
+- Finalizing the row as `aborted` before exit clears the UI immediately (no reaper wait).
+- The run's pg-boss job is failed AFTER the row is finalized, never before: the discovery queue is singleton on integrationId, so a dead process's `active` job holds every later run — manual and scheduled — until `expireInSeconds` (1 h; prod 2026-10-01). Releasing first would let a run started in the freed slot mark the shared row `running` and then have this late finalize stamp it `aborted`. The release is raced against the same cleanup timeout as the other two writes. The queue heartbeat (`queueService` entry) is the backstop when the process dies some other way. retryLimit is 0, so the failed job is never redelivered.
 
 **When changing this:**
 - Keep the grace ≥ the cancel poll interval (3s) with generous margin — a well-behaved abort must always beat the watchdog.
