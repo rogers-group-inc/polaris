@@ -219,13 +219,16 @@
     // The automation's name is the row's title — it says what KIND of problem
     // this is, which the message alone often doesn't. The device follows it.
     var title = r.ruleName ? '<span style="margin-right:6px' + fadeTail + '">' + escapeHtml(r.ruleName) + '</span>' : "";
-    // An alert folded by an Alert Group (business rule 75) is titled by the
-    // group's name, and that name alone doesn't say it's a group rather than an
-    // automation — the GROUP pill does.
-    var grouped = !!r.groupName;
+    // A grouped alert (business rule 75) — folded by an Alert Group, or by an
+    // automation grouping its own components per device — names many problems
+    // on one device, and neither title says so; the GROUP pill does. Both
+    // kinds carry dimensionCount (null on an ungrouped alert); only the
+    // Alert Group kind carries groupName.
+    var grouped = !!r.groupName || r.dimensionCount != null;
+    var count = r.dimensionCount ? " — " + r.dimensionCount + " component" + (r.dimensionCount === 1 ? "" : "s") : "";
     var group = grouped
       ? '<span class="widget-pill widget-pill-watch" style="margin-right:6px' + fadeTail + '" title="' +
-        escapeHtml("Alert group: " + r.groupName + (r.dimensionCount ? " — " + r.dimensionCount + " component" + (r.dimensionCount === 1 ? "" : "s") : "")) +
+        escapeHtml((r.groupName ? "Alert group: " + r.groupName : "Grouped by device") + count) +
         '">GROUP</span>'
       : "";
     var who = r.hostname ? '<span style="margin-right:6px;color:var(--color-text-secondary)' + fadeTail + '">' + escapeHtml(r.hostname) + '</span>' : "";

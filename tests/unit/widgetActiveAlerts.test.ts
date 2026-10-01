@@ -217,6 +217,16 @@ describe("row contents", () => {
     expect(el.querySelector(".dash-alert-dim")).toBeNull();
   });
 
+  it("treats an automation's own per-device fold (no Alert Group) as grouped too", () => {
+    const el = render([
+      alert({ id: "a", severity: "serious", ruleName: "POE Fault", groupName: null, dimension: "port1", dimensionCount: 3 }),
+    ], 1, { minSeverity: "warning" });
+    const pill = Array.from(el.querySelectorAll(".widget-pill")).find((p: any) => p.textContent === "GROUP") as any;
+    expect(pill).toBeTruthy();
+    expect(pill.getAttribute("title")).toBe("Grouped by device — 3 components");
+    expect(el.querySelector(".dash-alert-dim")).toBeNull();
+  });
+
   it("gives an ungrouped alert no GROUP pill", () => {
     const el = render([alert({ id: "a", severity: "serious", dimension: "port2" })], 1, { minSeverity: "warning" });
     const pills = Array.from(el.querySelectorAll(".widget-pill")).map((p: any) => p.textContent);
