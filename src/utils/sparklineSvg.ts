@@ -159,6 +159,18 @@ export interface SparklineOptions {
   /** Replace the "now · avg · peak" caption with this text. A projection chart
    *  states its growth and fill date instead, which is what the alert is about. */
   caption?: string;
+  /**
+   * Thin secondary lines drawn BEHIND the main series — the per-core CPU lines
+   * on a per-core alert (business rule 89), under the all-cores line. No fill,
+   * no dive, no colour vocabulary: they are context for the main line, which
+   * keeps every one of those treatments. Each line breaks where its own samples
+   * stop arriving (a gap over three times its median spacing) rather than
+   * bridging a stretch in which nothing was measured. Not folded into the
+   * caption, which still describes the main series unless `caption` says
+   * otherwise. A `strong` entry (the busiest core) is drawn last, heavier and
+   * fully opaque, so the line the caption names is the one the eye finds.
+   */
+  backgroundSeries?: Array<{ points: SparkPoint[]; color: string; strong?: boolean }>;
 }
 
 /** The missed-poll red. Shared with the in-app charts' _CHART_FAIL_COLOR so
@@ -510,6 +522,25 @@ export function sparklineSvg(points: SparkPoint[], opts: SparklineOptions): stri
     if (!p.ok) dotParts.push(`<circle cx="${x(p.t).toFixed(1)}" cy="${p.py.toFixed(1)}" r="3" fill="${colorOf(p)}"/>`);
   }
   const defsBlock = defs.length ? `<defs>${defs.join("")}</defs>` : "";
+  // Fainter as they multiply, so 64 cores read as a texture the main line sits
+  // on rather than as a solid block of colour.
+  const bg = (opts.backgroundSeries ?? [])
+    .filter((s) => s.points.length > 0)
+    .sort((a, b) => Number(!!a.strong) - Number(!!b.strong));
+  const bgOpacity = bg.length > 16 ? 0.45 : bg.length > 4 ? 0.6 : 0.75;
+  const background = bg
+    .map((s) => {
+      const op = s.strong ? 1 : bgOpacity;
+      const sw = s.strong ? 1.8 : 1.2;
+      return backgroundRuns(s.points)
+        .map((run) =>
+          run.length === 1
+            ? `<circle cx="${x(run[0]!.t).toFixed(1)}" cy="${y(run[0]!.v).toFixed(1)}" r="1.5" fill="${s.color}" opacity="${op}"/>`
+            : `<polyline fill="none" stroke="${s.color}" stroke-width="${sw}" stroke-linejoin="round" stroke-linecap="round" opacity="${op}" points="${run.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ")}"/>`,
+        )
+        .join("");
+    })
+    .join("");
   const line = lineParts.join("");
   const area = areaParts.join("");
   const dot = dotParts.join("");
@@ -560,5 +591,24 @@ export function sparklineSvg(points: SparkPoint[], opts: SparklineOptions): stri
       `<line x1="${x(nowAt).toFixed(1)}" y1="${PAD_T}" x2="${x(nowAt).toFixed(1)}" y2="${PAD_T + plotH}" stroke="#d1d5db" stroke-width="1" stroke-dasharray="2 2"/>`
     : label(PAD_L, "start", `-${timeAxisLabel(tSpan)}`) + label(width - PAD_R, "end", "now");
 
-  return head + defsBlock + alarmBands + grid + area + line + dot + projectionSvg + ceilingLine + thresholdLine + axis + xLabels + caption + `</svg>`;
+  return head + defsBlock + alarmBands + grid + area + background + line + dot + projectionSvg + ceilingLine + thresholdLine + axis + xLabels + caption + `</svg>`;
+}
+
+/** Split a secondary series wherever its samples stop arriving — a gap over
+ *  three times its own median spacing. Exported for the tests. */
+export function backgroundRuns(points: SparkPoint[]): SparkPoint[][] {
+  if (points.length === 0) return [];
+  const steps: number[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const dt = points[i]!.t - points[i - 1]!.t;
+    if (dt > 0) steps.push(dt);
+  }
+  steps.sort((a, b) => a - b);
+  const maxGap = steps.length >= 2 ? steps[Math.floor(steps.length / 2)]! * 3 : Infinity;
+  const runs: SparkPoint[][] = [[points[0]!]];
+  for (let i = 1; i < points.length; i++) {
+    if (points[i]!.t - points[i - 1]!.t > maxGap) runs.push([]);
+    runs[runs.length - 1]!.push(points[i]!);
+  }
+  return runs;
 }

@@ -29,6 +29,7 @@ import { resolveMonitorSettings } from "./monitoringService.js";
 import { logger } from "../utils/logger.js";
 import { sparklineSvg, seriesStats, formatReading, timeAxisLabel, type SparkPoint } from "../utils/sparklineSvg.js";
 import { alarmStatusToFlag, convertSensorForDisplay, sensorDisplayUnit } from "../utils/hardwareSensors.js";
+import { coreVector } from "../utils/cpuCores.js";
 import { getBranding } from "./brandingService.js";
 import { SAMPLE_SDWAN_HEALTH_CHECK, SAMPLE_SDWAN_LINK } from "../utils/sampleAlertDevice.js";
 import { forecastFromDailyPoints, loadStorageForecastSeries, type StorageForecastSeries } from "./storageForecastService.js";
@@ -298,8 +299,12 @@ const META: Record<ChartToken, { label: string; unit: string; color: string; per
 
 /** Even-ish downsample that always keeps the newest point (the alerting one). */
 function thin<T extends { t: number }>(points: T[]): T[] {
-  if (points.length <= MAX_POINTS) return points;
-  const step = Math.ceil(points.length / MAX_POINTS);
+  return thinTo(points, MAX_POINTS);
+}
+
+function thinTo<T extends { t: number }>(points: T[], max: number): T[] {
+  if (points.length <= max) return points;
+  const step = Math.ceil(points.length / max);
   const out: T[] = [];
   for (let i = 0; i < points.length; i += step) out.push(points[i]!);
   const last = points[points.length - 1]!;
@@ -307,26 +312,156 @@ function thin<T extends { t: number }>(points: T[]): T[] {
   return out;
 }
 
-async function loadTelemetry(assetId: string, since: Date): Promise<{ cpu: SparkPoint[]; mem: SparkPoint[] }> {
+/** The memory chart's line, in whichever unit the device reported it. */
+export interface MemorySeries {
+  points: SparkPoint[];
+  /** " GB" (or whichever binary unit fits the installed memory), or "%". */
+  unit: string;
+  percent: boolean;
+  /** Installed memory in `unit` — the axis top and the "full" line. Null on a
+   *  percentage series, whose axis is pinned 0–100 instead. */
+  total: number | null;
+}
+
+const EMPTY_MEMORY: MemorySeries = { points: [], unit: "%", percent: true, total: null };
+
+/**
+ * The memory chart's series from raw telemetry rows. Pure.
+ *
+ * BYTES WIN whenever the window has them: "92%" on a 4 GB VM and on a 512 GB
+ * host are different problems, and the reader of a high-memory alert wants to
+ * know how much is in use against how much is installed. The axis runs 0 →
+ * installed memory (the largest total in the window, so a VM resized mid-hour
+ * still fits), scaled to the binary unit that total reads best in — GB on any
+ * real host. Rows with only a percentage are dropped from a bytes series rather
+ * than mixed onto the same axis.
+ *
+ * A device that reports ONLY a percentage (FortiOS) keeps the 0–100% chart:
+ * there is no byte count to convert it back into.
+ */
+export function memorySeriesFrom(
+  rows: Array<{ t: number; memPct: number | null; memUsedBytes: number | bigint | null; memTotalBytes: number | bigint | null }>,
+): MemorySeries {
+  const bytes = rows.filter((r) => r.memUsedBytes != null && r.memTotalBytes != null && Number(r.memTotalBytes) > 0);
+  if (bytes.length > 0) {
+    const totalBytes = Math.max(...bytes.map((r) => Number(r.memTotalBytes)));
+    const { divisor, unit } = bytesDisplayScale(totalBytes);
+    return {
+      points: bytes.map((r) => ({ t: r.t, v: Number(r.memUsedBytes) / divisor })),
+      unit,
+      percent: false,
+      total: totalBytes / divisor,
+    };
+  }
+  const points = rows.filter((r) => r.memPct != null).map((r) => ({ t: r.t, v: r.memPct! }));
+  return { ...EMPTY_MEMORY, points };
+}
+
+/**
+ * One series per logical core from the per-sample `cpuCorePcts` vectors, index
+ * 0 first (cores are numbered from 0, as the asset chart and the OS number
+ * them). Pure. Null when NO row in the window carries a vector — the signal to
+ * draw the plain all-cores chart instead. A core count that changes mid-window
+ * (a VM resized) just gives the extra cores shorter series.
+ */
+export function coreSeriesFrom(rows: Array<{ t: number; cores: unknown }>): SparkPoint[][] | null {
+  const series: SparkPoint[][] = [];
+  for (const r of rows) {
+    const v = coreVector(r.cores);
+    if (!v) continue;
+    v.forEach((pct, i) => (series[i] ??= []).push({ t: r.t, v: pct }));
+  }
+  return series.length > 0 ? series.map((s) => s ?? []) : null;
+}
+
+/**
+ * The core a per-core alert is about, for the caption: the busiest at the
+ * newest sample, ties to the higher peak. That is the core the alert's "now"
+ * describes; the alert message itself names every core that held the line.
+ */
+export function busiestCore(series: SparkPoint[][]): { index: number; last: number; peak: number } | null {
+  let best: { index: number; last: number; peak: number } | null = null;
+  series.forEach((s, index) => {
+    const st = seriesStats(s);
+    if (!st) return;
+    if (!best || st.last > best.last || (st.last === best.last && st.max > best.peak)) {
+      best = { index, last: st.last, peak: st.max };
+    }
+  });
+  return best;
+}
+
+/**
+ * The per-core line colour — the same arc as the asset CPU chart's
+ * `_cpuCoreColor` (public/js/assets.js): orange → violet, deliberately short
+ * of red (the missed-poll colour) and with no grey (dependency-down), with
+ * alternating lightness so adjacent cores stay apart on a crowded host. As hex,
+ * because the email is rasterized and a flat value is the safe input.
+ */
+export function cpuCoreColor(i: number, n: number, dark = false): string {
+  if (!n || n < 2) return hslToHex(205, 68, 50);
+  const h = Math.round(35 + (i / n) * (320 - 35));
+  return hslToHex(h, 68, dark ? 40 : i % 2 === 0 ? 46 : 63);
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+  const sat = s / 100;
+  const lig = l / 100;
+  const a = sat * Math.min(lig, 1 - lig);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const c = lig - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(c * 255).toString(16).padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+/** The per-core chart's caption: the busiest core first, then the all-cores
+ *  line it sits over. Pure. */
+export function perCoreCaption(hot: { index: number; last: number; peak: number }, allCores: SparkPoint[]): string {
+  const all = seriesStats(allCores);
+  return `Core ${hot.index} now ${formatReading(hot.last, "%")} · peak ${formatReading(hot.peak, "%")}` +
+    (all ? ` · all cores now ${formatReading(all.last, "%")}` : "");
+}
+
+/** The per-core chart's text-body line, for a reader with images blocked. */
+export function perCoreSummary(hot: { index: number; last: number; peak: number }, coreCount: number, allCores: SparkPoint[]): string {
+  const all = seriesStats(allCores);
+  return `CPU per core (last hour, ${coreCount} core${coreCount === 1 ? "" : "s"}): busiest Core ${hot.index} now ${formatReading(hot.last, "%")}, peak ${formatReading(hot.peak, "%")}` +
+    (all ? `; all cores now ${formatReading(all.last, "%")}, avg ${formatReading(all.avg, "%")}, peak ${formatReading(all.max, "%")}` : "");
+}
+
+/** The all-cores line on a per-core chart: dark ink rather than the CPU blue,
+ *  which sits inside the core arc and would vanish among the blue cores. */
+const CPU_ALL_CORES_COLOR = "#1f2430";
+
+/** Points per core line. Half the main series' cap: 64 cores × 240 points is a
+ *  heavy PNG for lines that are context, not the reading. */
+const MAX_CORE_POINTS = 120;
+
+async function loadTelemetry(
+  assetId: string,
+  since: Date,
+  withCores: boolean,
+): Promise<{ cpu: SparkPoint[]; mem: MemorySeries; cores: SparkPoint[][] | null }> {
   const rows = await prisma.assetTelemetrySample.findMany({
     where: { assetId, timestamp: { gte: since } },
     orderBy: { timestamp: "asc" },
-    select: { timestamp: true, cpuPct: true, memPct: true, memUsedBytes: true, memTotalBytes: true },
+    select: { timestamp: true, cpuPct: true, memPct: true, memUsedBytes: true, memTotalBytes: true, cpuCorePcts: withCores },
   });
   const cpu: SparkPoint[] = [];
-  const mem: SparkPoint[] = [];
   for (const r of rows) {
-    const t = r.timestamp.getTime();
-    if (r.cpuPct != null) cpu.push({ t, v: r.cpuPct });
-    // FortiOS reports a percentage; SNMP HOST-RESOURCES / WMI report bytes.
-    // Same COALESCE the dashboard's memory widget uses.
-    if (r.memPct != null) {
-      mem.push({ t, v: r.memPct });
-    } else if (r.memUsedBytes != null && r.memTotalBytes != null && Number(r.memTotalBytes) > 0) {
-      mem.push({ t, v: (Number(r.memUsedBytes) / Number(r.memTotalBytes)) * 100 });
-    }
+    if (r.cpuPct != null) cpu.push({ t: r.timestamp.getTime(), v: r.cpuPct });
   }
-  return { cpu: thin(cpu), mem: thin(mem) };
+  const mem = memorySeriesFrom(rows.map((r) => ({ ...r, t: r.timestamp.getTime() })));
+  const cores = withCores
+    ? coreSeriesFrom(rows.map((r) => ({ t: r.timestamp.getTime(), cores: r.cpuCorePcts })))
+    : null;
+  return {
+    cpu: thin(cpu),
+    mem: { ...mem, points: thin(mem.points) },
+    cores: cores ? cores.map((s) => thinTo(s, MAX_CORE_POINTS)) : null,
+  };
 }
 
 export interface SensorSeries {
@@ -1455,6 +1590,12 @@ function sampleWave(from: number, to: number, at: (fraction: number, i: number) 
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
 
+/** The invented test device's installed memory. */
+const SAMPLE_MEM_TOTAL_GB = 16;
+/** The invented test device's cores, and the one a per-core test alert pins. */
+const SAMPLE_CORE_COUNT = 8;
+const SAMPLE_HOT_CORE = 3;
+
 /**
  * INVENTED telemetry for a TEST alert's charts (business rule 65) — see
  * `utils/sampleAlertDevice`.
@@ -1473,20 +1614,37 @@ const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > 
  */
 export function sampleChartSeries(
   tokens: Iterable<ChartToken>,
-  opts: { since: Date; now: Date; lossSince: Date; lossBucketMs: number; displayUnit: "c" | "f" },
-): { cpu: SparkPoint[]; mem: SparkPoint[]; rt: SparkPoint[]; loss: ProbeLossSeries; sensor: SensorSeries; sdwan: SdwanSeries | null } {
+  opts: { since: Date; now: Date; lossSince: Date; lossBucketMs: number; displayUnit: "c" | "f"; perCore?: boolean },
+): { cpu: SparkPoint[]; mem: MemorySeries; rt: SparkPoint[]; loss: ProbeLossSeries; sensor: SensorSeries; sdwan: SdwanSeries | null; cores: SparkPoint[][] | null } {
   const wanted = new Set(tokens);
   const from = opts.since.getTime();
   const to = opts.now.getTime();
 
-  const cpu = wanted.has("chart.cpu")
+  // A per-core test alert: eight cores idling, one of them (Core 3) pinned for
+  // the second half of the hour — a single-threaded process the all-cores line
+  // barely registers, which is the whole point of the metric (rule 89).
+  const cores = wanted.has("chart.cpu") && opts.perCore
+    ? Array.from({ length: SAMPLE_CORE_COUNT }, (_, c) =>
+        sampleWave(from, to, (f, i) =>
+          c === SAMPLE_HOT_CORE && f > 0.5
+            ? clamp(96 + 3 * Math.sin(i * 1.3), 0, 100)
+            : clamp(18 + 7 * Math.sin(f * (3 + c) + c) + 4 * Math.sin(i * (0.7 + c * 0.13)), 0, 100)))
+    : null;
+  const cpu = !wanted.has("chart.cpu") ? []
+    // The all-cores line is the mean of the invented cores, so the two agree.
+    : cores ? cores[0]!.map((p, i) => ({ t: p.t, v: Math.round((cores.reduce((s, c) => s + c[i]!.v, 0) / cores.length) * 10) / 10 }))
     // A working day's drift, then a climb over the last fifth of the window —
     // the shape that makes a "CPU is above 80%" automation make sense.
-    ? sampleWave(from, to, (f, i) => clamp(34 + 9 * Math.sin(f * 6.1) + 4 * Math.sin(i * 1.7) + (f > 0.8 ? (f - 0.8) * 190 : 0), 0, 100))
-    : [];
-  const mem = wanted.has("chart.memory")
-    ? sampleWave(from, to, (f, i) => clamp(61 + 4 * Math.sin(f * 3.3) + 1.5 * Math.sin(i * 0.9), 0, 100))
-    : [];
+    : sampleWave(from, to, (f, i) => clamp(34 + 9 * Math.sin(f * 6.1) + 4 * Math.sin(i * 1.7) + (f > 0.8 ? (f - 0.8) * 190 : 0), 0, 100));
+  // In GB against a 16 GB host, like a real agent host's chart (memorySeriesFrom).
+  const mem: MemorySeries = wanted.has("chart.memory")
+    ? {
+        points: sampleWave(from, to, (f, i) => clamp(9.8 + 0.6 * Math.sin(f * 3.3) + 0.25 * Math.sin(i * 0.9), 0, SAMPLE_MEM_TOTAL_GB)),
+        unit: " GB",
+        percent: false,
+        total: SAMPLE_MEM_TOTAL_GB,
+      }
+    : EMPTY_MEMORY;
   const rt = wanted.has("chart.responseTime")
     ? sampleWave(from, to, (f, i) => Math.max(1, 9 + 3 * Math.sin(f * 5.2) + 1.4 * Math.sin(i * 2.1) + (f > 0.85 ? (f - 0.85) * 820 : 0)))
     : [];
@@ -1541,7 +1699,7 @@ export function sampleChartSeries(
       }
     : null;
 
-  return { cpu, mem, rt, loss, sensor, sdwan };
+  return { cpu, mem, rt, loss, sensor, sdwan, cores };
 }
 
 /**
@@ -1704,12 +1862,17 @@ export async function buildAlertCharts(
   }
 
   let cpu: SparkPoint[] = [];
-  let mem: SparkPoint[] = [];
+  let mem: MemorySeries = EMPTY_MEMORY;
   let rt: SparkPoint[] = [];
   let loss: ProbeLossSeries = { points: [], ratioPct: null, engineRatioPct: null };
   let sensor: SensorSeries = { points: [], alarmSpans: [], unit: "", sensorClass: null };
   let fail: FailSpanSeries = { spans: [], recoverySpans: [], failedCount: 0 };
   let sdwan: SdwanSeries | null = null;
+  // A per-core alert (rule 89) draws every core under the all-cores line; every
+  // other alert keeps the all-cores line alone. Null = draw the plain chart,
+  // including on a per-core alert whose window carries no core vectors.
+  const perCore = opts?.metric === "cpuCorePct" && wanted.has("chart.cpu");
+  let cores: SparkPoint[][] | null = null;
   if (opts?.sampleData) {
     // The display unit is still read for real: the generated sensor trace and
     // the sentence above it in the email have to agree about °C vs °F.
@@ -1717,9 +1880,9 @@ export async function buildAlertCharts(
       ? await getBranding().then((b) => b.temperatureUnit).catch(() => "c" as const)
       : ("c" as const);
     const s = sampleChartSeries(wanted, {
-      since, now, lossSince, lossBucketMs: lossBucketMs(lossWindowMs), displayUnit,
+      since, now, lossSince, lossBucketMs: lossBucketMs(lossWindowMs), displayUnit, perCore,
     });
-    cpu = s.cpu; mem = s.mem; rt = s.rt; loss = s.loss; sensor = s.sensor; sdwan = s.sdwan;
+    cpu = s.cpu; mem = s.mem; rt = s.rt; loss = s.loss; sensor = s.sensor; sdwan = s.sdwan; cores = s.cores;
   } else if (!assetId) {
     // No asset and no sample mode: nothing to chart, and nothing to query for.
     return out;
@@ -1734,7 +1897,7 @@ export async function buildAlertCharts(
         ? await getBranding().then((b) => b.temperatureUnit).catch(() => "c" as const)
         : ("c" as const);
       const [tel, rtRows, sensorRows, lossRows, failRows, sdwanRows] = await Promise.all([
-        needTelemetry ? loadTelemetry(assetId, since) : Promise.resolve({ cpu: [], mem: [] }),
+        needTelemetry ? loadTelemetry(assetId, since, perCore) : Promise.resolve({ cpu: [], mem: EMPTY_MEMORY, cores: null }),
         wanted.has("chart.responseTime") ? loadResponseTimes(assetId, since) : Promise.resolve([]),
         wanted.has("chart.sensor")
           ? loadSensorSeries(assetId, opts!.sensorName!, since, displayUnit)
@@ -1756,6 +1919,7 @@ export async function buildAlertCharts(
       ]);
       cpu = tel.cpu;
       mem = tel.mem;
+      cores = tel.cores;
       rt = rtRows;
       sensor = sensorRows;
       loss = lossRows;
@@ -1781,7 +1945,7 @@ export async function buildAlertCharts(
     "chart.sdwanJitter": sdwan?.jitter ?? [],
     "chart.sdwanLoss": sdwan?.loss ?? [],
     "chart.cpu": cpu,
-    "chart.memory": mem,
+    "chart.memory": mem.points,
     "chart.responseTime": rt,
     // Rendered from its own spec above; never read from here.
     "chart.storage": [],
@@ -1822,10 +1986,22 @@ export async function buildAlertCharts(
     // the pair drawn may not even be the one the alert named (see
     // sdwanSeriesFrom's fallback), so the label has to state what was charted.
     const isSdwan = sdwan !== null && SDWAN_CHART_TOKENS.includes(token);
+    // The per-core chart (rule 89): every core thin behind the all-cores line,
+    // and the caption leads with the busiest core, because on a per-core alert
+    // that core — not the all-cores average — is what crossed the line.
+    const coreLines = token === "chart.cpu" && cores ? cores : null;
+    const hotCore = coreLines ? busiestCore(coreLines) : null;
     const label = isSensor ? opts!.sensorName!
       : isSdwan ? sdwanChartLabel(meta.label, sdwan!.healthCheck, sdwan!.link)
+      : coreLines ? "CPU per core"
       : meta.label;
-    const unit = isSensor ? (sensor.unit ? ` ${sensor.unit}` : "") : meta.unit;
+    // Memory charts in the unit its series came in (memorySeriesFrom): bytes
+    // against installed memory when the device reports them, else 0–100%.
+    const isMemory = token === "chart.memory";
+    const unit = isSensor ? (sensor.unit ? ` ${sensor.unit}` : "") : isMemory ? mem.unit : meta.unit;
+    const memAxis = isMemory && !mem.percent && mem.total != null
+      ? { yMin: 0, yMax: mem.total, ceiling: mem.total }
+      : null;
     // The loss chart's caption quotes the window's PROBE ratio, not the mean of
     // its buckets, which weights unequal buckets wrongly. It counts every probe
     // in the window — the misses taken while the device was `warning` or `down`
@@ -1839,8 +2015,18 @@ export async function buildAlertCharts(
     const svg = sparklineSvg(points, {
       label,
       unit,
-      color: meta.color,
-      ...(meta.percent ? { yMin: 0, yMax: 100 } : {}),
+      color: coreLines ? CPU_ALL_CORES_COLOR : meta.color,
+      ...(coreLines ? {
+        backgroundSeries: coreLines.map((p, i) => ({
+          points: p,
+          // The busiest core takes the DARKER of the arc's two lightness steps,
+          // so it holds up as the emphasised line whichever core it is.
+          color: cpuCoreColor(i, coreLines.length, i === hotCore?.index),
+          strong: i === hotCore?.index,
+        })),
+        ...(hotCore ? { caption: perCoreCaption(hotCore, points) } : {}),
+      } : {}),
+      ...(memAxis ?? (meta.percent ? { yMin: 0, yMax: 100 } : {})),
       // An explicit threshold from the caller still wins; the SD-WAN charts are
       // the only ones that carry a line of their own, the FortiGate's own SLA
       // target for that health check.
@@ -1879,7 +2065,12 @@ export async function buildAlertCharts(
       hasData: drawn,
       summary: sdwanDownOnly
         ? `${label} (last hour): no readings — the health check reported this member down`
-        : summaryLine(label, unit, points, isLoss ? lossWindowMs : CHART_WINDOW_MS, avgOverride) +
+        : (hotCore && points.length
+          ? perCoreSummary(hotCore, coreLines!.length, points)
+          : summaryLine(label, unit, points, isLoss ? lossWindowMs : CHART_WINDOW_MS, avgOverride)) +
+        // "12.4 GB" says little without what the host has — the axis top on the
+        // image, spelled out for a reader with images blocked.
+        (memAxis && points.length ? ` (${formatReading(memAxis.yMax, unit)} installed)` : "") +
         // An alarm-triggered alert charts the VALUE; the bit itself is what the
         // automation fired on, so the text has to carry it too — image blocking
         // is on by default in plenty of clients.
