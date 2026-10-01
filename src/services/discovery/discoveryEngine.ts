@@ -841,7 +841,17 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
 
     if (integration.type === "entraid") {
       // Entra ID discovery produces assets only — no subnets, reservations, or VIPs.
-      const result = await entraId.discoverDevices(config as any, ac.signal, onProgress, scope?.kind === "entra-device" ? { deviceId: scope.deviceId } : undefined);
+      // What each intune row already holds, so the per-device Ethernet MAC
+      // read skips devices that have not synced since. A scoped run reads its
+      // one device fresh and needs none of it.
+      const entraScope = scope?.kind === "entra-device" ? { deviceId: scope.deviceId } : undefined;
+      const knownEthernetMacs = entraScope || !(config as any)?.enableIntune
+        ? undefined
+        : knownEthernetMacsFromIntuneRows(await prisma.assetSource.findMany({
+            where: { sourceKind: "intune", integrationId },
+            select: { externalId: true, observed: true },
+          }));
+      const result = await entraId.discoverDevices(config as any, ac.signal, onProgress, entraScope, knownEthernetMacs);
       if (!ac.signal.aborted) {
         const r = await syncEntraDevices(integrationId, integrationName, config, result, actor);
         syncTotals.created.push(...r.created);
@@ -7366,12 +7376,34 @@ function buildIntuneObservedBlob(
     manufacturer: dev.manufacturer || null,
     model: dev.model || null,
     ethernetMacAddress: dev.ethernetMacAddress || null,
+    // The lastSyncDateTime the Ethernet MAC was read at — the next run's
+    // skip-the-read key (entraIdService.resolveEthernetMacs).
+    ethernetMacSyncedAt: dev.ethernetMacSyncedAt || null,
     wiFiMacAddress: dev.wifiMacAddress || null,
     userPrincipalName: dev.userPrincipalName || null,
     chassisType: dev.chassisType || null,
     complianceState: dev.complianceState || null,
     lastSyncDateTime: dev.lastSyncDateTime || null,
   };
+}
+
+/**
+ * The Ethernet MAC each intune source row holds, keyed by azureADDeviceId —
+ * the input that lets entraIdService skip the per-device Graph read for a
+ * device that has not synced since. Pure over the rows so it is testable.
+ */
+export function knownEthernetMacsFromIntuneRows(
+  rows: Array<{ externalId: string; observed: unknown }>,
+): Map<string, entraId.KnownEthernetMac> {
+  const out = new Map<string, entraId.KnownEthernetMac>();
+  for (const r of rows) {
+    const o = (r.observed ?? {}) as Record<string, unknown>;
+    out.set(r.externalId.toLowerCase(), {
+      ethernetMacAddress: typeof o.ethernetMacAddress === "string" ? o.ethernetMacAddress : null,
+      ethernetMacSyncedAt: typeof o.ethernetMacSyncedAt === "string" ? o.ethernetMacSyncedAt : null,
+    });
+  }
+  return out;
 }
 
 /** One AssetSource row as the Entra sync's in-memory mirror carries it — the
@@ -8553,6 +8585,59 @@ export async function syncEntraDevices(
     }
   }
 
+  /**
+   * A device that already has its own asset can still have a FortiGate
+   * endpoint duplicate: the gate saw its wired NIC before Polaris knew the
+   * Ethernet MAC (Graph's list call never returns it — see
+   * entraIdService.resolveEthernetMacs), and created an asset for the
+   * unmatched MAC. The tertiary MAC cross-link only runs when the deviceId
+   * and SID lookups both MISS, so it never reaches that duplicate. Absorb it
+   * here instead: the Intune Ethernet MAC is hardware truth, the same
+   * positive identity the cross-link already trusts, and eligibility is the
+   * ghost merge's own (fortigate-endpoint provenance, no authoritative
+   * source), so a hand-created or independently discovered asset is never
+   * absorbed. Ethernet only, for the cross-link's reason: the Wi-Fi MAC can
+   * randomize. Best-effort — a failed merge never fails the device sync.
+   */
+  const absorbEthernetMacGhost = async (canonical: any, dev: entraId.DiscoveredEntraDevice): Promise<void> => {
+    const macKey = dev.ethernetMacAddress ? normalizeMacKey(dev.ethernetMacAddress) : null;
+    const ghost = macKey ? assetByMac.get(macKey) : undefined;
+    if (!ghost || ghost.id === canonical.id) return;
+    const label = dev.displayName || dev.deviceId;
+    try {
+      if (!(await isMergeableEndpointGhost(ghost.id))) return;
+      const res = await mergeEndpointGhostIntoAsset(canonical.id, ghost.id);
+      // Forget the ghost so no later device in this run matches a deleted row.
+      for (const [k, a] of assetByMac) if (a.id === ghost.id) assetByMac.set(k, canonical);
+      for (const m of [assetByHostnameNoTag, assetByHostnameEntraTagged]) {
+        for (const [k, a] of m) if (a.id === ghost.id) m.delete(k);
+      }
+      assetById.delete(ghost.id);
+      sourcesByAssetId.delete(ghost.id);
+      if (res.transferredMonitored) canonical.monitored = true;
+      syncLog("info", `Merged duplicate endpoint asset ${ghost.hostname || ghost.id} into "${label}" — it held the device's Intune Ethernet MAC ${dev.ethernetMacAddress}.`);
+      logEvent({
+        action: "asset.duplicate_merged",
+        resourceType: "asset",
+        resourceId: canonical.id,
+        resourceName: canonical.hostname ?? label,
+        actor,
+        level: "info",
+        message: `Discovery merged duplicate endpoint asset ${ghost.hostname || ghost.id} into ${label} (Intune Ethernet MAC ${dev.ethernetMacAddress})`,
+        details: {
+          integrationId,
+          integrationName,
+          ghostId: ghost.id,
+          ghostHostname: ghost.hostname ?? null,
+          matchedMac: dev.ethernetMacAddress,
+          transferredMonitored: res.transferredMonitored,
+        },
+      });
+    } catch (err: any) {
+      syncLog("error", `Failed to merge duplicate endpoint asset ${ghost.hostname || ghost.id} into "${label}": ${err?.message || "Unknown error"}`);
+    }
+  };
+
   for (const dev of result.devices) {
     const deviceIdKey = dev.deviceId.toLowerCase();
     if (!deviceIdKey) {
@@ -8590,7 +8675,17 @@ export async function syncEntraDevices(
           merged.push({ mac: e.mac, lastSeen: nowIso, source: e.source });
         }
       }
-      merged.sort((a: any, b: any) => new Date(b.lastSeen || 0).getTime() - new Date(a.lastSeen || 0).getTime());
+      // Both Intune MACs carry this sync's timestamp, and selectPrimaryMac
+      // keeps the FIRST entry on a tie — so without the tie-break an asset
+      // whose Wi-Fi row existed before its Ethernet row kept Wi-Fi as primary
+      // forever. Break same-instant ties in intuneMacEntries order (Ethernet
+      // first).
+      const tieRank = (m: any): number => {
+        const i = intuneMacEntries.findIndex((e) => normalizeMacKey(e.mac) === normalizeMacKey(m?.mac));
+        return i < 0 ? intuneMacEntries.length : i;
+      };
+      merged.sort((a: any, b: any) =>
+        (new Date(b.lastSeen || 0).getTime() - new Date(a.lastSeen || 0).getTime()) || (tieRank(a) - tieRank(b)));
       // Hardware-truth entries (these Intune rows included) outrank sightings
       // for the primary slot — see selectPrimaryMac.
       const primary = selectPrimaryMac(merged) ?? merged[0]?.mac ?? null;
@@ -8781,6 +8876,8 @@ export async function syncEntraDevices(
       } catch (err: any) {
         syncLog("error", `Failed to update asset for Entra device ${dev.displayName || dev.deviceId}: ${err.message || "Unknown error"}`);
       }
+
+      await absorbEthernetMacGhost(existing, dev);
 
       // Even though this device has its own asset, scan for sibling assets
       // that share the same hostname but haven't been reconciled yet. This

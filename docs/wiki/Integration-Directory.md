@@ -38,6 +38,31 @@ directory-read permissions that device discovery has never required — which is
 exactly why they are off by default: without the grant, every keystroke would
 403.
 
+### Wi-Fi and Ethernet MACs
+
+Intune reports two MACs per managed device, and both land in the asset's
+**All MACs** list as *Intune — Wi-Fi* and *Intune — Ethernet*. The Ethernet MAC
+becomes the asset's primary MAC, because Wi-Fi MACs can be randomized per network.
+
+Microsoft Graph leaves the Ethernet MAC out of its device list, so Polaris reads
+it for each device separately, 20 devices per request. After the first run it
+re-reads only the devices that have synced with Intune since the last run.
+That makes the first sync after enabling Intune noticeably longer on a large
+fleet. The permission the device read already uses covers these reads too. A
+failed read keeps the MAC Polaris already has, and the device is retried on
+the next run.
+
+**A FortiGate duplicate is merged automatically.** A computer that plugs into
+the wired network behind a FortiGate before Polaris knows its Ethernet MAC gets
+a second asset: FortiGate discovery records the unmatched MAC as a new
+endpoint. On the next Entra sync, once the Ethernet MAC is known, that endpoint
+asset is merged into the Intune asset. Its MACs, IPs and FortiGate sighting
+history move across, and an *asset.duplicate_merged* Event records the merge.
+Only a pure FortiGate endpoint record is ever merged this way. An asset with an
+authoritative source of its own (AD, Entra, an agent, a managed Fortinet
+device) is never touched. If the duplicate was monitored, the Intune asset is
+switched to monitored. The duplicate's chart history is not carried over.
+
 ---
 
 ## Active Directory
