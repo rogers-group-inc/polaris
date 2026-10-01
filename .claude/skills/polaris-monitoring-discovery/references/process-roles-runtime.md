@@ -42,9 +42,17 @@ finally: if the run hasn't unwound 2 minutes after abort, it logs the stuck
 devices, finalizes the row `aborted`, writes `integration.discover.force_exit`,
 and exits 1 so systemd restarts the process (same exit-and-restart pattern
 as the operator /restart endpoint). Under `all`/cursor-mode-fallback the exit
-takes the whole process — matching /restart semantics. If pg-boss redelivers
-the interrupted job, runDiscovery sees `cancelRequested` still set at startup
-and aborts cleanly.
+takes the whole process — matching /restart semantics. Before exiting it
+fails the run's own pg-boss job (`queueService.failActiveDiscoveryJobs`):
+the discovery queue's singleton policy holds every later run for the
+integration behind an `active` job, and a job whose process died stays
+`active` until `expireInSeconds` (1 h). The discovery and network-scan
+queues also carry a pg-boss job heartbeat (`DISCOVERY_JOB_HEARTBEAT_SECONDS`,
+60s; work() refreshes it every 30s), so a job orphaned any other way — OOM
+kill, crash, kill -9 — is failed by the supervisor within a couple of
+minutes instead of an hour. Prod incident 2026-10-01: a force-exit left the
+job `active` and every Discover click queued behind it until it was failed
+by hand. retryLimit is 0, so a failed job is never redelivered.
 
 **Singletons** (monitor producer ticks, discovery scheduler, reconcilers,
 rollups, prune, one-shot migrations) are pinned to `web`/`all` so they run in

@@ -23,13 +23,18 @@
  *   2. finalizes the DiscoveryRun row as `aborted` (so the UI clears
  *      immediately instead of waiting for the reaper),
  *   3. writes an `integration.discover.force_exit` Event,
- *   4. exits the process with code 1.
+ *   4. fails the run's pg-boss job, so the singleton slot is free when the
+ *      process comes back (otherwise the job stays `active` and blocks every
+ *      later run for the integration until the queue heartbeat or
+ *      expireInSeconds catches it — prod 2026-10-01, blocked until failed by
+ *      hand),
+ *   5. exits the process with code 1.
  *
  * systemd (`Restart=on-failure`, polaris-discovery.service) restarts
  * the process within seconds — the same exit-and-let-the-service-manager-
  * cycle-us pattern the operator /restart endpoint and the agent cert-pin
- * reload already use. If pg-boss redelivers the interrupted job, runDiscovery
- * sees `cancelRequested` still set at startup and aborts cleanly.
+ * reload already use. The discovery queue has retryLimit 0, so the failed job
+ * is never redelivered; the operator or the scheduler starts the next run.
  *
  * Because the wedge may BE the database, the pre-exit bookkeeping writes are
  * each raced against a short timeout — the exit must not be blocked by the
@@ -44,6 +49,7 @@
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
 import { finishRun } from "./discoveryRunState.js";
+import { failActiveDiscoveryJobs } from "./queueService.js";
 
 /** How long after abort the run gets to unwind on its own. */
 export const CANCEL_FORCE_EXIT_GRACE_MS = 2 * 60 * 1000;
@@ -69,6 +75,7 @@ export interface CancelWatchdogOptions {
   // ── Test seams (default to the real implementations) ────────────────────
   finalizeRun?: typeof finishRun;
   writeEvent?: typeof logEvent;
+  releaseQueueJob?: typeof failActiveDiscoveryJobs;
   exit?: (code: number) => void;
 }
 
@@ -103,6 +110,7 @@ export function armDiscoveryCancelWatchdog(opts: CancelWatchdogOptions): () => v
   const graceMs = opts.graceMs ?? CANCEL_FORCE_EXIT_GRACE_MS;
   const finalizeRun = opts.finalizeRun ?? finishRun;
   const writeEvent = opts.writeEvent ?? logEvent;
+  const releaseQueueJob = opts.releaseQueueJob ?? failActiveDiscoveryJobs;
   const exit = opts.exit ?? ((code: number) => process.exit(code));
 
   let graceTimer: NodeJS.Timeout | undefined;
@@ -133,6 +141,13 @@ export function armDiscoveryCancelWatchdog(opts: CancelWatchdogOptions): () => v
       FORCE_EXIT_CLEANUP_TIMEOUT_MS,
     );
     await settleWithin(finalizeRun(opts.integrationId, "aborted"), FORCE_EXIT_CLEANUP_TIMEOUT_MS);
+    // After the row is final, never before: a run started in the freed slot
+    // marks the shared row `running`, and a late finalize would stamp it
+    // `aborted` underneath it.
+    await settleWithin(
+      releaseQueueJob(opts.integrationId, "discovery process force-exited: cancel not honored within the grace window"),
+      FORCE_EXIT_CLEANUP_TIMEOUT_MS,
+    );
     exit(1);
   };
 

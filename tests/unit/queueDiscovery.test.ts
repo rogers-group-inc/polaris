@@ -6,7 +6,13 @@
  * unit test with no boss started.
  */
 import { describe, it, expect } from "vitest";
-import { publishDiscoveryJob, isPgbossRunning, DISCOVERY_QUEUE_NAME } from "../../src/services/queueService.js";
+import {
+  publishDiscoveryJob,
+  failActiveDiscoveryJobs,
+  isPgbossRunning,
+  DISCOVERY_QUEUE_NAME,
+  DISCOVERY_JOB_HEARTBEAT_SECONDS,
+} from "../../src/services/queueService.js";
 
 describe("queueService — discovery queue", () => {
   it("exposes the discovery queue name", () => {
@@ -23,5 +29,15 @@ describe("queueService — discovery queue", () => {
 
   it("accepts the scoped-device param (single-FortiGate re-discovery payload)", async () => {
     await expect(publishDiscoveryJob("itg-1", "tester", "FGT-X")).resolves.toBe(false);
+  });
+
+  it("failActiveDiscoveryJobs is a no-op returning 0 when pg-boss is off", async () => {
+    await expect(failActiveDiscoveryJobs("itg-1", "test")).resolves.toBe(0);
+  });
+
+  it("heartbeat leaves a live run a whole missed refresh of slack (refresh = heartbeat / 2)", () => {
+    // pg-boss itself refuses anything under 10s; 60 keeps a briefly slow pool
+    // from failing a healthy multi-minute run out from under its worker.
+    expect(DISCOVERY_JOB_HEARTBEAT_SECONDS).toBeGreaterThanOrEqual(60);
   });
 });

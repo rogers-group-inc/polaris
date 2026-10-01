@@ -246,6 +246,12 @@ interface MonitorJobPayload {
 // run mid-walk.
 export const DISCOVERY_QUEUE_NAME = "polaris-discovery-run";
 
+// pg-boss job heartbeat for the discovery + network-scan queues (see
+// ensureQueues). A job whose process died is failed by the supervisor within
+// this window plus one supervise interval, instead of holding the singleton
+// slot until expireInSeconds. 60 is well above a healthy refresh (every 30s).
+export const DISCOVERY_JOB_HEARTBEAT_SECONDS = 60;
+
 // ─── network-scan queue ────────────────────────────────────────────────────
 // A network Discovery (business rule 34) is an operator-initiated ACTIVE SCAN
 // that can take tens of minutes on a wide range. It gets its OWN queue rather
@@ -720,12 +726,24 @@ async function ensureQueues(boss: PgBossType): Promise<void> {
   // have pg-boss kill the run mid-walk. retryLimit 0 — discovery side effects
   // (asset/subnet writes, Events) aren't cheap to replay; the scheduler
   // re-enqueues on its next tick and operators can re-trigger.
+  //
+  // heartbeatSeconds: the consumer's work() loop refreshes the claimed job
+  // every heartbeatSeconds/2, and the supervisor fails a job whose heartbeat
+  // goes stale. Without it, a job whose process died mid-run (the cancel
+  // watchdog's force-exit, an OOM kill, a crash) stays `active` until
+  // expireInSeconds — and the singleton policy holds every later run for that
+  // integration behind it, manual and scheduled alike. Prod 2026-10-01: a
+  // force-exit at 07:20 blocked the integration until the job was failed by
+  // hand. The DiscoveryRun row, not the pg-boss job, is what stops two runs of
+  // one integration overlapping (triggerDiscovery's isRunActive), so a
+  // heartbeat lost under a live run cannot start a second one.
   {
     const discoveryOptions = {
       retryLimit: 0,
       deleteAfterSeconds: 86_400,
       retentionSeconds: 7_200,
       expireInSeconds: resolveEnvInt("POLARIS_DISCOVERY_EXPIRE_SECONDS", 3_600),
+      heartbeatSeconds: DISCOVERY_JOB_HEARTBEAT_SECONDS,
     };
     await boss.createQueue(DISCOVERY_QUEUE_NAME, { policy: "singleton", ...discoveryOptions });
     await boss.updateQueue(DISCOVERY_QUEUE_NAME, discoveryOptions);
@@ -1281,6 +1299,22 @@ export async function publishDiscoveryJob(integrationId: string, actor: string, 
     { singletonKey: integrationId },
   );
   return true;
+}
+
+/**
+ * Fail every ACTIVE discovery job for this integration. The cancel watchdog
+ * calls it right before force-exiting so the singleton slot is free the moment
+ * the process restarts — the queue heartbeat would free it too, but a minute
+ * or two later. Returns the number of jobs failed; 0 when pg-boss is off.
+ * Only ever called by the process that owns the run, on its way out.
+ */
+export async function failActiveDiscoveryJobs(integrationId: string, message: string): Promise<number> {
+  if (!bossInstance) return 0;
+  const jobs = await bossInstance.findJobs(DISCOVERY_QUEUE_NAME, { key: integrationId });
+  const ids = jobs.filter((j) => j.state === "active").map((j) => j.id);
+  if (ids.length === 0) return 0;
+  await bossInstance.fail(DISCOVERY_QUEUE_NAME, ids, { message });
+  return ids.length;
 }
 
 /**

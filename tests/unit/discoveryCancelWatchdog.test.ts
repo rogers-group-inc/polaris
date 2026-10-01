@@ -5,7 +5,8 @@
  *
  *   - never fires when the abort signal never fires
  *   - never fires when the run unwinds (disarm) within the grace window
- *   - fires after grace: Event written, run finalized `aborted`, exit(1)
+ *   - fires after grace: Event written, run finalized `aborted`, the run's
+ *     pg-boss job released (after the finalize), exit(1)
  *   - arms immediately when the signal is already aborted
  *   - still exits when the pre-exit bookkeeping writes hang (the DB may be
  *     the very thing that's wedged)
@@ -32,6 +33,9 @@ function makeOpts(overrides: Partial<CancelWatchdogOptions> = {}) {
   const exit = vi.fn();
   const finalizeRun = vi.fn(async () => {});
   const writeEvent = vi.fn(async () => {});
+  const calls: string[] = [];
+  finalizeRun.mockImplementation(async () => { calls.push("finalize"); });
+  const releaseQueueJob = vi.fn(async () => { calls.push("release"); return 1; });
   const opts: CancelWatchdogOptions = {
     integrationId: "int-1",
     integrationName: "Prod FMG",
@@ -40,10 +44,11 @@ function makeOpts(overrides: Partial<CancelWatchdogOptions> = {}) {
     getActiveDevices: () => [{ name: "COLUMBIA-61F-1", startedAtMs: Date.now() - 5 * 60_000 }],
     finalizeRun: finalizeRun as never,
     writeEvent: writeEvent as never,
+    releaseQueueJob: releaseQueueJob as never,
     exit,
     ...overrides,
   };
-  return { ac, opts, exit, finalizeRun, writeEvent };
+  return { ac, opts, exit, finalizeRun, writeEvent, releaseQueueJob, calls };
 }
 
 beforeEach(() => {
@@ -90,6 +95,25 @@ describe("armDiscoveryCancelWatchdog", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
+  it("releases the run's pg-boss job after finalizing the row, before exiting", async () => {
+    const { ac, opts, exit, releaseQueueJob, calls } = makeOpts();
+    armDiscoveryCancelWatchdog(opts);
+    ac.abort();
+    await vi.advanceTimersByTimeAsync(CANCEL_FORCE_EXIT_GRACE_MS);
+    expect(releaseQueueJob).toHaveBeenCalledWith("int-1", expect.stringContaining("force-exited"));
+    expect(calls).toEqual(["finalize", "release"]);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("does not release the job on a clean abort", async () => {
+    const { ac, opts, releaseQueueJob } = makeOpts();
+    const disarm = armDiscoveryCancelWatchdog(opts);
+    ac.abort();
+    disarm();
+    await vi.advanceTimersByTimeAsync(CANCEL_FORCE_EXIT_GRACE_MS * 2);
+    expect(releaseQueueJob).not.toHaveBeenCalled();
+  });
+
   it("starts the grace timer immediately when armed with an already-aborted signal", async () => {
     const { ac, opts, exit } = makeOpts();
     ac.abort();
@@ -113,13 +137,16 @@ describe("armDiscoveryCancelWatchdog", () => {
     const { ac, opts, exit } = makeOpts({
       finalizeRun: never as never,
       writeEvent: never as never,
+      releaseQueueJob: never as never,
     });
     armDiscoveryCancelWatchdog(opts);
     ac.abort();
-    // grace + one cleanup-timeout per hung write (event, then finalize)
+    // grace + one cleanup-timeout per hung write (event, finalize, job release)
     await vi.advanceTimersByTimeAsync(
-      CANCEL_FORCE_EXIT_GRACE_MS + FORCE_EXIT_CLEANUP_TIMEOUT_MS * 2,
+      CANCEL_FORCE_EXIT_GRACE_MS + FORCE_EXIT_CLEANUP_TIMEOUT_MS * 3 - 1,
     );
+    expect(exit).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
     expect(exit).toHaveBeenCalledWith(1);
   });
 
@@ -127,6 +154,7 @@ describe("armDiscoveryCancelWatchdog", () => {
     const { ac, opts, exit } = makeOpts({
       finalizeRun: vi.fn(async () => { throw new Error("db down"); }) as never,
       writeEvent: vi.fn(async () => { throw new Error("db down"); }) as never,
+      releaseQueueJob: vi.fn(async () => { throw new Error("db down"); }) as never,
     });
     armDiscoveryCancelWatchdog(opts);
     ac.abort();

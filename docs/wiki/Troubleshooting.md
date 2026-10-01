@@ -101,6 +101,7 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 | Auto-monitor pinned nothing | The agent had not reported at that cycle. Self-healing — check after the next one |
 | Coordinates did not change after enabling `pullSnmpLocation` | `useSnmpLocationCoords` is the **separate** toggle that lets it drive coordinates |
 | RPC `-11` "no valid session" churn | Something called `/sys/logout`, or two processes share one api-key session |
+| After cancelling a run, **Discover** queues and then errors without polling anything | The cancel was not honoured within 2 minutes, so Polaris restarted the discovery process (an `integration.discover.force_exit` Event). The run's queue job is now released on the way out, and any job left behind by a process that died some other way is cleared within a couple of minutes. On an older build that job blocked every run for the integration for up to an hour; wait it out, or ask whoever runs the server to fail it |
 
 ---
 
