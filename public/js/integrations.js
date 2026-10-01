@@ -683,12 +683,6 @@ async function loadIntegrations() {
       var config = intg.config || {};
       var statusDot = intg.lastTestOk === true ? "dot-ok" : intg.lastTestOk === false ? "dot-fail" : "dot-unknown";
       var statusText = intg.lastTestOk === true ? "Connected" : intg.lastTestOk === false ? "Failed" : "Not tested";
-      // A capability the header states outright rather than making an operator
-      // read the detail rows for it. Only rendered when ON — the detail row
-      // below already says so when it is off.
-      var flagBadges = intg.type === "entraid" && config.enableIntune
-        ? '<span class="integration-flag-badge">Intune Enabled</span>'
-        : '';
       var typeBadge =
         intg.type === "windowsserver" ? "Windows Server" :
         intg.type === "fortigate" ? "FortiGate" :
@@ -825,19 +819,18 @@ async function loadIntegrations() {
       }
 
       var isFmgDirect = intg.type === "fortimanager" && config.useProxy === false;
-      var fmgActivityRow = intg.type === "fortimanager"
-        ? '<div class="detail-row" id="fmg-activity-row-' + intg.id + '"><span class="detail-label">Active FMG Calls</span><span class="detail-value" id="fmg-activity-val-' + intg.id + '" style="color:var(--color-text-tertiary)">&mdash;</span></div>'
-        : '';
       return '<div class="integration-card"' + (isFmgDirect ? ' data-fmg-direct="1"' : '') + '>' +
         '<div class="integration-card-header">' +
-          '<div class="integration-card-header-top">' +
+          '<div class="integration-card-header-top integration-card-header-top--centered">' +
             '<div class="integration-card-title">' +
               '<span class="integration-type-badge">' + typeBadge + '</span>' +
               '<strong>' + escapeHtml(intg.name) + '</strong>' +
               '<span class="integration-status ' + statusDot + '">' + statusText + '</span>' +
-              flagBadges +
             '</div>' +
-            '<div id="discover-wrap-' + intg.id + '" data-disabled="' + (intg.lastTestOk !== true ? '1' : '0') + '">' +
+            '<div class="integration-card-enabled">' +
+              (intg.enabled ? '<span class="badge badge-active">Enabled</span>' : '<span class="badge badge-deprecated">Disabled</span>') +
+            '</div>' +
+            '<div class="integration-card-discover" id="discover-wrap-' + intg.id + '" data-disabled="' + (intg.lastTestOk !== true ? '1' : '0') + '">' +
               _discoverBtnHTML(intg.id, intg.name, activeDiscoveries.find(function(d){ return d.id === intg.id; }) || null, intg.lastTestOk !== true) +
             '</div>' +
           '</div>' +
@@ -858,78 +851,13 @@ async function loadIntegrations() {
           '<div class="detail-row"><span class="detail-label">Auto-Discovery</span><span class="detail-value">' + (!intg.lastTestOk ? '<span style="color:var(--color-text-tertiary)">Disabled until a successful connection test</span>' : intg.autoDiscover === false ? '<span style="color:var(--color-text-tertiary)">Disabled</span>' : 'Every ' + (intg.pollInterval || 4) + ' hour' + ((intg.pollInterval || 4) === 1 ? '' : 's')) + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Next Auto-Discovery</span><span class="detail-value">' + nextDiscoveryText + '</span></div>' +
           avgRow +
-          '<div class="detail-row"><span class="detail-label">Status</span><span class="detail-value">' + (intg.enabled ? '<span class="badge badge-active">Enabled</span>' : '<span class="badge badge-deprecated">Disabled</span>') + '</span></div>' +
-          fmgActivityRow +
         '</div>' +
       '</div>';
     }).join("");
-    _pollFmgActivityAll(integrations);
   } catch (err) {
     container.innerHTML = '<p class="empty-state">Error: ' + escapeHtml(err.message) + '</p>';
   }
 }
-
-// Poll the /fmg-activity endpoint for every FortiManager integration on the
-// page and update its "Active FMG Calls" row. Reads the DB-backed snapshot
-// the discovery role (or single-process "all" role) writes every 2 s — so a
-// stuck CMDB call shows up here as a non-zero native-inflight count that
-// never decrements, and a stuck proxy call shows as a long-running label.
-function _pollFmgActivityAll(integrations) {
-  var fmgIds = (integrations || []).filter(function (i) { return i.type === "fortimanager"; }).map(function (i) { return i.id; });
-  fmgIds.forEach(_pollFmgActivityOne);
-}
-async function _pollFmgActivityOne(id) {
-  var el = document.getElementById("fmg-activity-val-" + id);
-  if (!el) return;
-  try {
-    var r = await api.integrations.fmgActivity(id);
-    el.innerHTML = _renderFmgActivity(r);
-  } catch (_) {
-    // Leave the previous value in place on transient errors.
-  }
-}
-function _renderFmgActivity(r) {
-  var tertiary = 'color:var(--color-text-tertiary)';
-  var warning = 'color:var(--color-warning)';
-  if (!r || r.updatedAt === null) {
-    return '<span style="' + tertiary + '" title="No heartbeat from the FMG worker process yet. Snapshot is written by the discovery role; if you\'re in split-role prod, make sure polaris-discovery is running.">no heartbeat</span>';
-  }
-  if (!r.fresh) {
-    var ageSec = r.ageMs != null ? Math.round(r.ageMs / 1000) : null;
-    return '<span style="' + warning + '" title="The FMG worker process stopped publishing its activity heartbeat. Check polaris-discovery service health.">stale' + (ageSec != null ? ' (' + ageSec + 's old)' : '') + '</span>';
-  }
-  var parts = [];
-  if (r.proxyInFlightLabel) {
-    parts.push('<span title="Proxy lane in-flight (one at a time; FMG\'s rule)">&#9889; ' + escapeHtml(String(r.proxyInFlightLabel)) + '</span>');
-  }
-  if (r.proxyQueueDepth > 0) {
-    parts.push('<span title="Proxy-lane requests waiting behind the in-flight call">queued ' + r.proxyQueueDepth + '</span>');
-  }
-  if (r.nativeInFlightCount > 0) {
-    parts.push('<span title="Native-lane (CMDB/dvmdb) calls running in parallel">native ' + r.nativeInFlightCount + '</span>');
-  }
-  if (parts.length === 0) {
-    return '<span style="' + tertiary + '">idle</span>';
-  }
-  return parts.join(' &middot; ');
-}
-
-// Periodic refresher: re-poll every 2 s while the integrations tab is visible.
-// loadIntegrations() does the initial population (and re-runs whenever the
-// list changes); this interval keeps the rows live in between.
-//
-// The document.hidden gate is what makes the sentence above true — it wasn't
-// checked, so a backgrounded window kept issuing one request per FortiManager
-// every 2 seconds (30·N a minute) indefinitely. The row query is the other
-// half of the gate: no rendered activity cells, nothing to poll.
-setInterval(function () {
-  if (document.hidden) return;
-  var rows = document.querySelectorAll('[id^="fmg-activity-val-"]');
-  rows.forEach(function (el) {
-    var id = el.id.substring("fmg-activity-val-".length);
-    _pollFmgActivityOne(id);
-  });
-}, 2000);
 
 // The tab helpers (tabbedBodyHTML / wireModalTabs), the form-section parts
 // (sectionHeading / formDivider / infoBox / checkboxRow) and calloutHTML are
