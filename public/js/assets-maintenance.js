@@ -225,17 +225,7 @@ async function openMaintenanceModal(opts) {
     { key: "list",     label: "Schedules",       html: '<div id="maint-list-body" class="empty-state">Loading…</div>' },
     { key: "calendar", label: "Calendar",        html: _maintCalendarHTML() },
   ]);
-  // The editor's actions sit in the footer (the header X closes the modal),
-  // so they are shown only while the Create tab is the one on screen.
-  openModal(
-    "Maintenance",
-    body,
-    '<span id="maint-footer-actions" style="display:contents">' +
-      '<button type="button" class="btn btn-secondary" id="maint-cancel-edit" style="display:none">Cancel Edit</button>' +
-      '<button type="button" class="btn btn-primary" id="maint-save">Create Schedule</button>' +
-    '</span>',
-    { large: true }
-  );
+  openModal("Maintenance", body, _maintFooterHTML(), { large: true });
   wireModalTabs("maint");
   Array.prototype.forEach.call(document.querySelectorAll("#maint-tabs .page-tab"), function (tab) {
     tab.addEventListener("click", function () {
@@ -476,6 +466,18 @@ function _maintEditorHTML() {
       '</label>' +
     '</div>'
   );
+}
+
+/**
+ * The editor's actions, rendered into the modal FOOTER rather than the form
+ * (the header X closes the modal). openMaintenanceModal shows them only while
+ * the Create tab is the one on screen.
+ */
+function _maintFooterHTML() {
+  return '<span id="maint-footer-actions" style="display:contents">' +
+      '<button type="button" class="btn btn-secondary" id="maint-cancel-edit" style="display:none">Cancel Edit</button>' +
+      '<button type="button" class="btn btn-primary" id="maint-save">Create Schedule</button>' +
+    '</span>';
 }
 
 /**

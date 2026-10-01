@@ -181,7 +181,9 @@ describe("calendar grid", () => {
       '<div id="maint-tabs"><button class="page-tab" data-tab="create"></button>' +
       '<button class="page-tab" data-tab="calendar"></button></div>' +
       '<div id="maint-tab-create">' + g2._maintEditorHTML() + "</div>" +
-      '<div id="maint-tab-calendar">' + g2._maintCalendarHTML() + "</div>";
+      '<div id="maint-tab-calendar">' + g2._maintCalendarHTML() + "</div>" +
+      // The editor's Save / Cancel Edit buttons live in the modal footer.
+      g2._maintFooterHTML();
     g2._maintWireCalendar();
   });
 
