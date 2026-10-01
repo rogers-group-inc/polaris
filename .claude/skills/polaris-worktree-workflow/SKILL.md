@@ -14,7 +14,8 @@ description: "Polaris session workflow: start every task in its own git worktree
    end-of-work commit does not wait for approval (run `/polaris-docs-sync` first). Merging to
    main and pushing happen only when the user says "merge" / "push" — or invokes
    `/polaris-deploy`, which is docs-sync → deploy audit → commit → merge → push as one pipeline
-   and is itself the go-ahead for the last two.
+   and is itself the go-ahead for the last two. It merges and cleans up only the chat's own
+   worktree — never a menu of the others.
 3. **A dev environment = `DEVLOCK` at the worktree root + one podman stack per worktree.**
 4. **"merge"** → the merge protocol below (numbered menu of unlocked worktrees).
    **"push"** → the push protocol below (push main, clean up what was merged).
@@ -78,7 +79,7 @@ Report the branch name and say the worktree is ready to merge. Do not merge or p
    when this push is the last stage of `/polaris-deploy` — its audit already ran in the worktree).
 2. `git push origin main`.
 3. For each worktree merged in this session (plus any `worktree-*` branch already fully merged,
-   `git branch --merged main`): refuse if a lock file is present; check for directory junctions;
+   `git branch --merged main` — but under `/polaris-deploy` only the chat's own): refuse if a lock file is present; check for directory junctions;
    `podman compose -p polaris-<slug> down -v` if a stack lingers; `git worktree remove <path>`;
    `git branch -d worktree-<slug>`. Report what was removed.
 
