@@ -271,13 +271,13 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/fmgActivityService.ts
 
-**What it owns:** DB-backed heartbeat of every local `FmgWorker`'s proxy + native lane state. The role that runs FMG traffic (discovery in split-role prod, the single process in "all" mode) writes a snapshot of `getAllFmgWorkers()` to the `fmgActivitySnapshot` Setting row every 2 s. The web role reads the same row back to render "Active FMG Calls" on the integrations page — bridging the in-memory state across the multi-process split.
+**What it owns:** DB-backed heartbeat of every local `FmgWorker`'s proxy + native lane state. The role that runs FMG traffic (discovery in split-role prod, the single process in "all" mode) writes a snapshot of `getAllFmgWorkers()` to the `fmgActivitySnapshot` Setting row every 2 s. The web role reads the same row back through `GET /:id/fmg-activity` — bridging the in-memory state across the multi-process split. The integrations page no longer renders it (the "Active FMG Calls" card row was removed 2026-10-01); the endpoint is API-only now, for diagnosing a stuck proxy / CMDB call.
 
 **Public API:** `startFmgActivityHeartbeat()` (idempotent boot-path entry), `getFmgActivityForIntegration(integrationId)` (read-side; returns proxyInFlightLabel + proxyQueueDepth + nativeInFlightCount + updatedAt/role/ageMs/fresh), `STALENESS_MS` (10 s — older snapshots are flagged `fresh: false`), `stopFmgActivityHeartbeatForTests`.
 
 **Cross-service deps:** fmgWorker (`getAllFmgWorkers()` for the snapshot), prisma (single `Setting` row read/write).
 
-**Used by:** src/app.ts boots `startFmgActivityHeartbeat()` inside the `runsDiscoveryConsumers` block, src/api/routes/integrations.ts `GET /:id/fmg-activity` reads via `getFmgActivityForIntegration()`, public/js/integrations.js polls that endpoint every 2 s for every FortiManager-type integration card on screen.
+**Used by:** src/app.ts boots `startFmgActivityHeartbeat()` inside the `runsDiscoveryConsumers` block, src/api/routes/integrations.ts `GET /:id/fmg-activity` reads via `getFmgActivityForIntegration()`. No UI polls it — the integrations card row and its 2 s poller were removed 2026-10-01.
 
 **Invariants:**
 - Heartbeat write rate is 2 s per FMG-running process; only roles with `runsDiscoveryConsumers=true` write. Single Setting row clobbers per write — no per-process slicing, so in dev "all" mode the lone process is the writer.
@@ -287,7 +287,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **When changing this:**
 - Changing the heartbeat interval: keep `STALENESS_MS ≥ 3×` the interval so the UI doesn't flap on a single missed write.
-- Adding new FmgWorker fields you want surfaced: extend `FmgWorkerActivity`, both `buildSnapshot` and `getFmgActivityForIntegration`, the route response shape, and the `_renderFmgActivity()` helper in [public/js/integrations.js](public/js/integrations.js).
+- Adding new FmgWorker fields you want surfaced: extend `FmgWorkerActivity`, both `buildSnapshot` and `getFmgActivityForIntegration`, and the route response shape (there is no UI renderer any more).
 - Adding more cross-process state surfaces in the future: prefer one Setting row per concern (clobber-on-write is fine at 2 s cadence), not one big shared blob.
 
 ---

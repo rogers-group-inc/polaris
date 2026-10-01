@@ -203,7 +203,6 @@
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-serious       { background: rgba(234,88,12,0.10); border-color: rgba(234,88,12,0.30); color: #c2410c; }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-critical      { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .integration-type-badge { background: rgba(230,81,0,0.10); color: #e65100; border-color: rgba(230,81,0,0.30); }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .integration-flag-badge { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .modal-overlay { background: rgba(0,0,0,.2); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .slideover-overlay { background: rgba(0,0,0,.14); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .sidebar-nav a:hover { background: rgba(2,136,209,0.08); }
@@ -3290,6 +3289,14 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   align-items: center;
   gap: 8px;
 }
+/* Integrations page: the Enabled / Disabled pill sits at the true centre of
+   the header — equal 1fr side columns keep it centred however long the title
+   or however wide the Discover button is. */
+.integration-card-header-top--centered {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+.integration-card-header-top--centered > .integration-card-discover { justify-self: end; }
 .integration-card-title {
   display: flex;
   align-items: center;
@@ -3309,23 +3316,6 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   background: rgba(255,87,34,0.12);
   color: #ff7043;
   border: 1px solid rgba(255,87,34,0.25);
-}
-/* A per-integration capability the card header states outright, next to the
-   connection status — an optional sync that is ON. Same geometry as the type
-   badge so the header reads as one strip; accent rather than the type badge's
-   orange, since it is a fact about the integration's config, not its kind. */
-.integration-flag-badge {
-  display: inline-block;
-  padding: 3px 10px;
-  border-radius: 99px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  white-space: nowrap;
-  background: rgba(79,195,247,0.12);
-  color: var(--color-accent);
-  border: 1px solid rgba(79,195,247,0.25);
 }
 .integration-status {
   font-size: 0.78rem;
