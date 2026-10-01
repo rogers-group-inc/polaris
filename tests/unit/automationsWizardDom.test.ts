@@ -1212,6 +1212,60 @@ describe("automation wizard DOM render", () => {
     expect((savedPayloads[0]! as Record<string, any>).requireAckNote).toBe(true);
   });
 
+  it("saves the 'one alert per device' box ticked on the Actions step (rule 75)", async () => {
+    // It rendered and collected, but buildPayload never sent it — so every
+    // save stored false and the box came back unticked on the next edit.
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-group",
+      name: "Port down",
+      description: null,
+      enabled: true,
+      severity: "warning",
+      trigger: { type: "asset_state", field: "ifOperStatus", operator: "==", value: "down", forDurationSec: 0 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      actions: [{ type: "event" }],
+    });
+    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
+
+    const box = doc.querySelector("#aw-group-by-asset") as unknown as { checked: boolean };
+    expect(box).toBeTruthy();
+    expect(box.checked).toBe(false);
+    box.checked = true;
+
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const p = savedPayloads[0]! as Record<string, any>;
+    expect(p.groupByAsset).toBe(true);
+    expect(ruleInputSchema.parse(p).groupByAsset).toBe(true);
+  });
+
+  it("carries a stored groupByAsset through a save from step 1 (never visiting the Actions step)", async () => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-group2",
+      name: "Port down",
+      description: null,
+      enabled: true,
+      severity: "warning",
+      trigger: { type: "asset_state", field: "ifOperStatus", operator: "==", value: "down", forDurationSec: 0 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      groupByAsset: true,
+      actions: [{ type: "event" }],
+    });
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    expect((savedPayloads[0]! as Record<string, any>).groupByAsset).toBe(true);
+  });
+
   it("the Require Acknowledgement row leads each severity section, above its actions and its escalation", async () => {
     // It used to sit on the in-app-alert card at the top of the step, where it
     // read as one answer for the whole automation. What closing an alert out
