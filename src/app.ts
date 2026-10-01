@@ -624,13 +624,24 @@ app.use((req, res, next) => {
 // to the mobile SPA's asset detail, anything else to the desktop assets page.
 // Before this route the email embedded the desktop URL, and the redirect
 // above — which only watches "/" — let it render the full desktop page on a
-// phone. `?desktop=1` is honoured for the same reason it is above. The two
-// targets carry their own login gates (protectedPages for the desktop page,
-// the SPA's in-app login, which keeps the hash, for the phone), so this needs
-// none — a gate here would cost the phone reader its fragment across sign-in.
+// phone. `?desktop=1` is honoured for the same reason it is above.
+//
+// SIGNED OUT, THIS LINK IS THE LOGIN TARGET — not the page it resolves to.
+// Both targets name the device in a FRAGMENT, and a browser never sends one to
+// the server: left to the desktop page's protectedPages gate, the remembered
+// target was a bare "/assets.html", and the reader signed in to the asset list
+// with the device they tapped nowhere on screen. The phone lost it the same way
+// through SSO — the SPA's own login keeps the hash, but an IdP round trip
+// comes back to "/". So a signed-out request remembers THIS path, which has no
+// fragment to lose, and after any of the five login paths the browser comes
+// back through here and resolves it again. A desktop browser is bounced to
+// sign-in from here rather than via /assets.html, whose gate would overwrite
+// the target with its own fragment-less URL; a phone still goes to the SPA,
+// whose in-app login draws itself (mobile/auth.js clears the cookie when that
+// login finishes in the page).
 // UA-dependent, so never cacheable; an id that is not a UUID falls through to
 // the static handler's 404 rather than redirecting anywhere.
-app.get("/assets/:id", (req, res, next) => {
+app.get("/assets/:id", async (req, res, next) => {
   const target = resolveAssetOpenTarget({
     id: req.params.id,
     userAgent: req.get("user-agent"),
@@ -639,6 +650,12 @@ app.get("/assets/:id", (req, res, next) => {
   if (!target) return next();
   res.set("Cache-Control", "no-store");
   res.set("Vary", "User-Agent");
+  if (!req.session?.userId) {
+    // originalUrl, not assetOpenPath(id): it keeps `?desktop=1`, so a phone
+    // that asked for the desktop still gets it after signing in.
+    rememberLoginTarget(req, res, req.originalUrl);
+    if (target.startsWith("/assets.html")) return sendToSignIn(req, res);
+  }
   return res.redirect(target);
 });
 
@@ -727,6 +744,33 @@ async function skipLoginSsoTarget(): Promise<string | null> {
   }
 }
 
+// ─── Bounce a signed-out navigation to sign-in ──────────────────────────────
+// Shared by the protectedPages gate and the /assets/<id> landing route, which
+// each remember their own target (rememberLoginTarget) before calling this.
+// Hoisted, so the landing route registered above can call it.
+async function sendToSignIn(req: express.Request, res: express.Response): Promise<void> {
+  // Entra App Proxy silent auto-login — highest precedence: identity
+  // headers surviving the strip middleware mean this request definitively
+  // came through an allowlisted connector, and the user already passed
+  // Entra pre-authentication, so they must never see the login page. The
+  // login route re-validates trust and, on any failure, redirects to
+  // /login.html (NOT in protectedPages) so this can never loop. Inherent
+  // to seamless SSO (same as skipLoginPage): navigating to any protected
+  // page after logout re-establishes the session.
+  if (await isEntraProxyLoginAvailable(req).catch(() => false)) {
+    return res.redirect("/api/v1/auth/entra-proxy/login?next=" + encodeURIComponent(req.originalUrl));
+  }
+  // Skip login page: redirect unauthenticated users straight to SSO. The
+  // flag is only ever set by an SSO-authenticated admin (see the guard on
+  // PUT /auth/azure/settings), so reaching here normally resolves a
+  // provider; the final /login.html catch covers the edge case where SSO
+  // was torn down after the flag was set (the login-page middleware above
+  // falls through to the form for the same reason, so this cannot loop).
+  const ssoTarget = await skipLoginSsoTarget();
+  if (ssoTarget) return res.redirect(ssoTarget);
+  return res.redirect("/login.html");
+}
+
 // ─── /login.html under "Skip login page" ────────────────────────────────────
 // The setting used to redirect PROTECTED pages only, which left the form one
 // typed URL away for anyone, on any network — "skip" read as "hide from
@@ -771,26 +815,7 @@ app.use(async (req, res, next) => {
     // Acknowledge link lands the reader on the dashboard after they sign in,
     // with nothing left of the alert they were asked to look at.
     rememberLoginTarget(req, res, req.originalUrl);
-    // Entra App Proxy silent auto-login — highest precedence: identity
-    // headers surviving the strip middleware mean this request definitively
-    // came through an allowlisted connector, and the user already passed
-    // Entra pre-authentication, so they must never see the login page. The
-    // login route re-validates trust and, on any failure, redirects to
-    // /login.html (NOT in protectedPages) so this can never loop. Inherent
-    // to seamless SSO (same as skipLoginPage): navigating to any protected
-    // page after logout re-establishes the session.
-    if (await isEntraProxyLoginAvailable(req).catch(() => false)) {
-      return res.redirect("/api/v1/auth/entra-proxy/login?next=" + encodeURIComponent(req.originalUrl));
-    }
-    // Skip login page: redirect unauthenticated users straight to SSO. The
-    // flag is only ever set by an SSO-authenticated admin (see the guard on
-    // PUT /auth/azure/settings), so reaching here normally resolves a
-    // provider; the final /login.html catch covers the edge case where SSO
-    // was torn down after the flag was set (the login-page middleware above
-    // falls through to the form for the same reason, so this cannot loop).
-    const ssoTarget = await skipLoginSsoTarget();
-    if (ssoTarget) return res.redirect(ssoTarget);
-    return res.redirect("/login.html");
+    return sendToSignIn(req, res);
   }
   const required = pageRequiredPermission[req.path];
   if (required) {
