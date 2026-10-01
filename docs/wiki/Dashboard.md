@@ -177,6 +177,14 @@ The **Active Alerts** widget is not read-only. Each unacknowledged row carries:
 Both report the **server's** count back, so a no-op says "already cleared"
 rather than showing a success toast over nothing.
 
+A **grouped** alert (one alert covering several ports or components on a
+device, from an Alert Group or an automation that groups by device) wears a
+**GROUP** pill after its title; hover it for the group name and how many
+components it covers. A grouped row does not print a port beside the
+hostname: its message lists every affected component. An ungrouped alert
+still shows its port there, which is what tells two rows from one
+per-interface automation apart.
+
 The **Active Maintenance** widget is the other one you can act from. A
 **+ New schedule** button at the top of it opens the Maintenance editor to
 create one without leaving the dashboard — it is there over the empty widget
