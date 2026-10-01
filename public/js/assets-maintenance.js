@@ -225,13 +225,24 @@ async function openMaintenanceModal(opts) {
     { key: "list",     label: "Schedules",       html: '<div id="maint-list-body" class="empty-state">Loading…</div>' },
     { key: "calendar", label: "Calendar",        html: _maintCalendarHTML() },
   ]);
+  // The editor's actions sit in the footer (the header X closes the modal),
+  // so they are shown only while the Create tab is the one on screen.
   openModal(
     "Maintenance",
     body,
-    '<button class="btn btn-secondary" onclick="closeModal()">Close</button>',
+    '<span id="maint-footer-actions" style="display:contents">' +
+      '<button type="button" class="btn btn-secondary" id="maint-cancel-edit" style="display:none">Cancel Edit</button>' +
+      '<button type="button" class="btn btn-primary" id="maint-save">Create Schedule</button>' +
+    '</span>',
     { large: true }
   );
   wireModalTabs("maint");
+  Array.prototype.forEach.call(document.querySelectorAll("#maint-tabs .page-tab"), function (tab) {
+    tab.addEventListener("click", function () {
+      document.getElementById("maint-footer-actions").style.display =
+        tab.getAttribute("data-tab") === "create" ? "contents" : "none";
+    });
+  });
   _maintWireEditor();
   _maintWireCalendar();
   var listed = _maintReloadList();
@@ -463,8 +474,6 @@ function _maintEditorHTML() {
       '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin:0">' +
         '<input type="checkbox" id="maint-enabled" checked style="width:auto"> Enabled' +
       '</label>' +
-      '<button type="button" class="btn btn-primary" id="maint-save">Create Schedule</button>' +
-      '<button type="button" class="btn btn-secondary" id="maint-cancel-edit" style="display:none">Cancel Edit</button>' +
     '</div>'
   );
 }

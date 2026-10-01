@@ -70,6 +70,10 @@ Three tabs:
 A schedule selects devices either by a **filter** or by **explicit asset ids**
 (which is what the bulk bar pins), and states a recurrence.
 
+**Create Schedule** (or **Save Changes** while editing) and **Cancel Edit** sit
+bottom-right in the modal footer and show only on the Create Schedule tab; the
+**×** in the header closes the modal.
+
 ### The Calendar tab
 
 Occurrences are expanded **server-side**, because the recurrence engine works in
