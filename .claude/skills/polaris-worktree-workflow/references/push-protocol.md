@@ -22,7 +22,9 @@ Report the pushed range (`old..new`).
 ## 3. Clean up the merged worktrees
 
 Candidates: every worktree merged in this session, plus any other `worktree-*` branch already
-fully merged into `main` (`git branch --merged main | grep '^  worktree-'`). For each:
+fully merged into `main` (`git branch --merged main | grep '^  worktree-'`). **Inside
+`/polaris-deploy` the only candidate is the invoking chat's own worktree** — other merged
+branches are left for a bare "push". For each:
 
 1. **Refuse** if `WORKLOCK` or `DEVLOCK` exists at its path — a lock means a chat may still be
    using it; list it as skipped.

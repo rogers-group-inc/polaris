@@ -1,6 +1,6 @@
 ---
 name: polaris-deploy
-description: "Polaris deployment, runtime configuration and operations: the environment-variable catalogue, split-role systemd layout (polaris.target, web/monitor@N/discovery/dash/migrate), the in-app updater and update trains, nginx front-end + managed config + cert rotation, Docker/compose, first-run setup lock, disk-space monitoring, backup/restore, install and update scripts, docs/INSTALL.md. /polaris-deploy is also the release pipeline for a finished worktree: it runs the docs-sync review itself, audits the deployment surfaces, makes the end-of-work commit, merges to main and pushes — invoking it is the go-ahead for the merge and the push. Run it when a task is done, when adding or changing an env var, or when a change touches deploy/, Dockerfile, nginx, systemd units or the updater."
+description: "Polaris deployment, runtime configuration and operations: the environment-variable catalogue, split-role systemd layout (polaris.target, web/monitor@N/discovery/dash/migrate), the in-app updater and update trains, nginx front-end + managed config + cert rotation, Docker/compose, first-run setup lock, disk-space monitoring, backup/restore, install and update scripts, docs/INSTALL.md. /polaris-deploy is also the release pipeline for a finished worktree: it runs the docs-sync review itself, audits the deployment surfaces, makes the end-of-work commit, merges THIS worktree's branch to main and pushes — no other worktree is listed or merged — and invoking it is the go-ahead for that merge and push. Run it when a task is done, when adding or changing an env var, or when a change touches deploy/, Dockerfile, nginx, systemd units or the updater."
 disable-model-invocation: true
 ---
 
@@ -28,7 +28,7 @@ manual restart unless asked.
 | the local dev stack (podman/docker compose, host-native, DB reset) | `DEVELOPMENT.md` |
 | the shipped units, nginx template, sudo wrapper, update scripts | `deploy/` |
 | the production image and the multi-container stack | `Dockerfile`, `docker-compose.yml` (state under `./state`) |
-| the merge menu and the push / clean-up steps this pipeline ends with | `polaris-worktree-workflow` → merge-protocol.md, push-protocol.md |
+| the merge, push and clean-up steps this pipeline ends with (it skips the merge menu) | `polaris-worktree-workflow` → merge-protocol.md, push-protocol.md |
 
 ## The release pipeline — what `/polaris-deploy` does, in order
 
@@ -67,15 +67,19 @@ conflict, or `main` behind `origin/main`.
 4. **End-of-work commit**: `rm WORKLOCK`, commit everything pending (one logical change per
    commit). A `DEVLOCK` means a dev stack is up: `podman compose -f compose.dev.yml -p
    polaris-<slug> down -v`, delete the lock, then commit.
-5. **Merge** per merge-protocol.md, from the main checkout — a worktree-isolated session must
-   `ExitWorktree` (keep) first; its Bash guard refuses git aimed at the main checkout. This
-   chat's worktree is merged without a menu (`git merge --no-ff worktree-<slug>`); every
-   other unlocked worktree is offered as the numbered menu and merged only if picked, with
-   the § 4 review done at merge time as usual. Conflict → stop and report. Then
-   `npm run check:docs` + `npm run typecheck` on `main`.
-6. **Push** per push-protocol.md: `git push origin main` (stop and report if `main` is behind
-   `origin/main`), then remove the merged worktrees and their branches.
-7. **Report**: the pushed range, worktrees and branches removed, skill entries changed, and
+5. **Merge this chat's worktree — and only it.** From the main checkout — a worktree-isolated
+   session must `ExitWorktree` (keep) first; its Bash guard refuses git aimed at the main
+   checkout. **Before merging**, `git fetch origin` and check `git log origin/main..main`: it must
+   be empty. Commits there were merged by someone else and would ride along on this push — stop,
+   list them, and let the user decide (push them too, or push nothing). Then
+   `git merge --no-ff worktree-<slug>`. **No inventory, no numbered menu**: other worktrees are
+   never listed, offered or merged by this pipeline, locked or not — that is what a bare
+   "merge" is for. Conflict → stop and report. Then `npm run check:docs` + `npm run typecheck`
+   on `main`.
+6. **Push** per push-protocol.md § 1–2: `git push origin main` (stop and report if `main` is
+   behind `origin/main`). Clean-up (§ 3) covers **this worktree and its branch only** — not
+   other `worktree-*` branches that happen to be fully merged.
+7. **Report**: the pushed range, the worktree and branch removed, skill entries changed, and
    anything skipped with the reason.
 
 ## The deployment-surface audit (pipeline step 2; also what a bare "push" runs)

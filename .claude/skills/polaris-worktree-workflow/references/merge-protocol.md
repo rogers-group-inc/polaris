@@ -4,6 +4,11 @@ Triggered by the user saying "merge" (in any chat, about any worktree), or as st
 `/polaris-deploy`. Merging on its own never pushes; inside `/polaris-deploy` it continues into
 `push-protocol.md`.
 
+**Inside `/polaris-deploy`, skip §§ 1–3**: no inventory and no menu. That pipeline merges the
+invoking chat's own worktree and nothing else (`git merge --no-ff worktree-<slug>`), after
+checking `origin/main..main` is empty; § 4's review already ran in the worktree, and § 5 still
+applies. The menu below is only for a bare "merge".
+
 ## 1. Inventory the worktrees
 
 From the main checkout (`C:\Users\dmoore\VSCode\polaris`):
