@@ -66,6 +66,7 @@ import { ingestOsEventLog, getAgentEventLogConfig } from "./osEventLogService.js
 import type { WinRmConnection } from "../utils/winrm.js";
 import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
+import { bareInterfaceIp, interfaceIpIsUnaddressed } from "../utils/cidr.js";
 import { applyTransform } from "../utils/symbolTransforms.js";
 import { createTtlCache } from "../utils/ttlCache.js";
 import { expandMacRange } from "../utils/macAddresses.js";
@@ -5912,6 +5913,11 @@ export interface FortiCmdbInterfaceEntry {
    *  gates — the monitor payload's `status` is `undefined` on every entry,
    *  while the CMDB's is "up"/"down" on all of them. */
   adminStatus: string | null;
+  /** The CMDB's configured IPv4 address, bare (mask stripped), or null when
+   *  unset / 0.0.0.0. Only read for interfaces the monitor endpoint omits —
+   *  see `backfillFortiCmdbOnlyTunnels`; the monitor's runtime IP wins
+   *  everywhere else. */
+  ipAddress: string | null;
 }
 
 /**
@@ -5958,6 +5964,12 @@ export function parseFortiCmdbInterfaceTable(cmdbRes: unknown): Map<string, Fort
     // unknown rather than passed through, for the same reason `mode` is.
     const rawStatus = typeof c.status === "string" ? c.status.trim().toLowerCase() : "";
     const adminStatus = rawStatus === "up" || rawStatus === "down" ? rawStatus : null;
+    // FortiOS REST gives `ip` as "x.x.x.x y.y.y.y"; tolerate the [ip, mask]
+    // array shape the FMG device DB uses.
+    const rawIp = Array.isArray(c.ip) ? c.ip[0] : c.ip;
+    const ipAddress = typeof rawIp === "string" && !interfaceIpIsUnaddressed(rawIp)
+      ? bareInterfaceIp(rawIp)
+      : null;
     cmdbByName.set(c.name, {
       type:    t,
       parent:  t === "vlan" && typeof c.interface === "string" ? c.interface : null,
@@ -5967,6 +5979,7 @@ export function parseFortiCmdbInterfaceTable(cmdbRes: unknown): Map<string, Fort
       description,
       addressingMode,
       adminStatus,
+      ipAddress,
     });
   }
   return cmdbByName;
@@ -6093,6 +6106,53 @@ export function backfillFortiAggregateMembers(
   }
 }
 
+/**
+ * Synthesize rows for CMDB `type tunnel` interfaces the monitor endpoint
+ * omitted — IPsec phase1-interfaces (site-to-site, dial-up and ADVPN hub /
+ * spoke overlays), plus GRE / VXLAN, which FortiOS also types `tunnel`.
+ *
+ * `/api/v2/monitor/system/interface` leaves these out, so on a REST-polled
+ * gate they never reached `asset_interfaces`: the System tab didn't list
+ * them and the overlay addresses configured on them (`set ip 10.255.0.1
+ * 255.255.255.255`) were never tied to the firewall. The CMDB read that
+ * already runs alongside the monitor one carries both the name and the `ip`.
+ *
+ * Runtime fields stay null — the CMDB has no link state or counters, and the
+ * tunnel's real state is its SA, which the IPsec stream owns (an SNMP
+ * ifOperStatus "up" is meaningless for the same reason). The per-instance
+ * shortcut interfaces ADVPN spawns at runtime (`<name>_0`, `<name>_1`…) are
+ * not CMDB rows and are not synthesized; they carry the parent's address.
+ * A tunnel the monitor DID report is left alone. Mutates `interfaces` in place.
+ */
+export function backfillFortiCmdbOnlyTunnels(
+  interfaces: InterfaceSample[],
+  cmdbByName: Map<string, FortiCmdbInterfaceEntry>,
+): void {
+  const present = new Set(interfaces.map((s) => s.ifName));
+  for (const [name, c] of cmdbByName) {
+    if (c.type !== "tunnel" || present.has(name)) continue;
+    interfaces.push({
+      ifName:      name,
+      adminStatus: c.adminStatus,
+      operStatus:  null,
+      speedBps:    null,
+      ipAddress:   c.ipAddress,
+      macAddress:  null,
+      inOctets:    null,
+      outOctets:   null,
+      inErrors:    null,
+      outErrors:   null,
+      ifType:      "tunnel",
+      ifParent:    null,
+      vlanId:      null,
+      alias:       c.alias,
+      description: c.description,
+      addressingMode: c.addressingMode,
+    });
+    present.add(name);
+  }
+}
+
 async function collectSystemInfoFortinet(
   host: string,
   integration: { type: string; config: Record<string, unknown> },
@@ -6177,6 +6237,7 @@ async function collectSystemInfoFortinet(
     const obj = (res && typeof res === "object" && !Array.isArray(res)) ? res as Record<string, any> : {};
     interfaces = buildFortiInterfaceSamples(obj, cmdbByName);
     backfillFortiAggregateMembers(interfaces, obj, cmdbByName);
+    backfillFortiCmdbOnlyTunnels(interfaces, cmdbByName);
   } else if (interfaces.length === 0) {
     // Monitor failed AND we have no interfaces from the (also-failing) cmdb
     // synthesis path — re-throw the original error to match the prior
