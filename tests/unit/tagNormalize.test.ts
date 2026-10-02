@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { normalizeTags, unionTags, TAG_MAX_LEN } from "../../src/utils/tagNormalize.js";
+import { normalizeTags, unionTags, TAG_MAX_LEN, isAzureTag } from "../../src/utils/tagNormalize.js";
 import { AppError } from "../../src/utils/errors.js";
 
 describe("normalizeTags", () => {
@@ -45,5 +45,18 @@ describe("unionTags", () => {
 
   it("ignores blanks and non-strings", () => {
     expect(unionTags(["  ", "ok"], [3 as unknown as string])).toEqual(["ok"]);
+  });
+});
+
+describe("isAzureTag", () => {
+  it("matches the Arc-owned azure: prefix case-insensitively", () => {
+    expect(isAzureTag("azure:DefenderPlan=P1")).toBe(true);
+    expect(isAzureTag("Azure:Env=Prod")).toBe(true);
+  });
+
+  it("does not match Arc's discovery tags or lookalikes", () => {
+    expect(isAzureTag("azurearc")).toBe(false);
+    expect(isAzureTag("arc-sql")).toBe(false);
+    expect(isAzureTag("my-azure:tag")).toBe(false);
   });
 });

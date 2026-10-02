@@ -31,6 +31,22 @@ export const TAGS_MAX_COUNT = 64;
  */
 export const REGION_TAG_PREFIX = "region:";
 
+/**
+ * The prefix an asset tag mirrored from an Azure resource tag carries —
+ * `azure:<key>=<value>`. Owned by the Azure Arc sync alone: each Arc run strips
+ * every `azure:` tag off the assets it touches and re-adds the current set, so
+ * no other writer (operator registry row, auto-assign filter) may mint one.
+ */
+export const AZURE_TAG_PREFIX = "azure:";
+
+/** The Tag registry category the Arc sync files its mirrored `azure:` rows under. */
+export const AZURE_TAG_CATEGORY = "Azure Tags";
+
+/** True for an `azure:`-prefixed tag (case-insensitive). */
+export function isAzureTag(tag: string): boolean {
+  return tag.toLowerCase().startsWith(AZURE_TAG_PREFIX);
+}
+
 /** Strip the `region:` prefix from a map-region tag (case-insensitive). */
 export function stripRegionPrefix(tag: string): string {
   return tag.toLowerCase().startsWith(REGION_TAG_PREFIX)

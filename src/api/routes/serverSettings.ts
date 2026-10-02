@@ -72,7 +72,7 @@ import {
   type TagCriteria,
 } from "../../services/tagAssignmentService.js";
 import { REGION_TAG_CATEGORY } from "../../services/mapRegionService.js";
-import { REGION_TAG_PREFIX } from "../../utils/tagNormalize.js";
+import { REGION_TAG_PREFIX, AZURE_TAG_PREFIX, isAzureTag } from "../../utils/tagNormalize.js";
 import {
   DEVICE_FILTER_FIELD_OPS,
   scopeConditionMeta,
@@ -538,6 +538,27 @@ function assertNotRegionPrefix(name: string, verb: string): void {
 }
 
 /**
+ * The `azure:` prefix belongs to the Azure Arc sync, in every category.
+ *
+ * Each Arc run strips every `azure:` tag off the assets it touches and
+ * re-adds the set Azure currently reports, and it adds and prunes the
+ * registry rows to match. A hand-made `azure:` row would be pruned on the next
+ * run; one carrying an auto-assign filter would put a second managed-sync
+ * reconciler on a string the Arc sync already strips. So the registry refuses
+ * minting one by create or by rename, refuses renaming a mirrored row (the
+ * next run would re-add the old name beside it), and refuses a device filter
+ * on one. Colour and category edits stay open.
+ */
+function assertNotAzurePrefix(name: string, verb: string): void {
+  if (!isAzureTag(name.trim())) return;
+  throw new AppError(
+    409,
+    `Tag names starting with "${AZURE_TAG_PREFIX}" are mirrored from Azure resource tags by the Azure Arc integration — ` +
+      `set the tag in Azure to ${verb} it, or pick another name.`,
+  );
+}
+
+/**
  * How the audit Event describes the filter a write left on the tag. Counts
  * only — the tree itself is on the row, and an Event is shipped off-host by the
  * syslog / SFTP archivers.
@@ -610,6 +631,7 @@ router.post("/tags", requirePermission("serverSettingsSystem", "write"), async (
     const category = req.body.category || "General";
     assertNotRegionCategory(category, "add");
     assertNotRegionPrefix(name, "add");
+    assertNotAzurePrefix(name, "add");
 
     // Validate + normalize the optional auto-assignment device filter
     // (neither shape set = an ordinary manual tag).
@@ -734,6 +756,12 @@ router.put("/tags/:id", requirePermission("serverSettingsSystem", "write"), asyn
       if (!existing.name.trim().toLowerCase().startsWith(REGION_TAG_PREFIX)) {
         assertNotRegionPrefix(name, "rename");
       }
+      // Both directions: into the prefix mints an orphan the next Arc run
+      // prunes; out of it, the next run re-adds the old name beside it.
+      if (isAzureTag(existing.name.trim())) {
+        throw new AppError(409, `"${existing.name}" is mirrored from an Azure resource tag — rename it in Azure instead.`);
+      }
+      assertNotAzurePrefix(name, "rename");
     }
 
     const category = req.body.category ?? existing.category;
@@ -744,6 +772,9 @@ router.put("/tags/:id", requirePermission("serverSettingsSystem", "write"), asyn
     // The filter only changes when a shape key is present in the body. Absent =
     // leave as-is; explicit null / an empty tree = clear (becomes a manual tag).
     const posted = readPostedTagFilter(req.body, category);
+    if ((posted.condition || posted.criteria) && isAzureTag(name)) {
+      throw new AppError(409, `"${name}" is mirrored from an Azure resource tag — it cannot also carry a device filter.`);
+    }
     const filterWrite = posted.provided
       ? {
           assetCondition: posted.condition

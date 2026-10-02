@@ -95,7 +95,8 @@ import { recomputeDependencyTree } from "../dependencyTreeService.js";
 import { collectManagementAccess, type DeviceAccessGroup } from "../fortinetManagementAccessService.js";
 import { runDescriptionSyncForIntegration } from "../descriptionSyncService.js";
 import { anyDescriptionSyncEnabled } from "../../utils/descriptionSyncFlags.js";
-import { reconcileMapRegions } from "../mapRegionService.js";
+import { reconcileMapRegions, randomTagColor } from "../mapRegionService.js";
+import { AZURE_TAG_PREFIX, AZURE_TAG_CATEGORY, isAzureTag } from "../../utils/tagNormalize.js";
 import { releaseAssetsForDecommission } from "../maintenanceScheduleService.js";
 import { releaseInfraReservationsForAssets } from "../reservationService.js";
 import { runInfraReservationPush } from "../infraReservationPushService.js";
@@ -901,6 +902,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.created.push(...rc.created);
         syncTotals.updated.push(...rc.updated);
         syncTotals.skipped.push(...rc.skipped);
+        await syncAzureTagRegistry();
       }
     } else if (integration.type === "windowsserver") {
       const subnets = await windowsServer.discoverDhcpScopes(config as any, ac.signal);
@@ -7653,6 +7655,7 @@ async function syncArcClusters(
     const connected = (c.connectivityStatus || "").toLowerCase() === "connected";
     const tags = ["azurearc", "arc-kubernetes", "auto-discovered"];
     if (c.distribution) tags.push(`arc-k8s-${c.distribution.toLowerCase()}`);
+    tags.push(...azureArc.azureTagsToAssetTags(c.tags, integrationConfig as azureArc.AzureArcConfig | null));
 
     const observed = azureArc.buildArcClusterObservedBlob(c, now);
     const { projected } = projectAssetFromSources([
@@ -7681,8 +7684,7 @@ async function syncArcClusters(
         if (connected) bumpLastSeen(updateData, existing, now, "arc");
         Object.assign(updateData, buildMonitoredSweep(addAs, existing));
 
-        const preserved = ((existing.tags as string[]) || [])
-          .filter((t) => t !== "azurearc" && t !== "auto-discovered" && !t.startsWith("arc-"));
+        const preserved = ((existing.tags as string[]) || []).filter((t) => !isArcManagedTag(t));
         updateData.tags = [...preserved, ...tags.filter((t) => !preserved.includes(t))];
 
         clampAcquiredToLastSeen(updateData, existing);
@@ -7748,10 +7750,41 @@ async function upsertArcClusterSource(
 
 // Tags the Azure Arc discovery auto-assigns each run, so we strip them on
 // update before re-adding the fresh set. Operator tags and other
-// integrations' tags pass through untouched.
+// integrations' tags pass through untouched. `azure:` is stripped even when
+// importAzureTags is off — turning the toggle off is how an operator takes
+// the mirrored tags back off.
 function isArcManagedTag(t: string): boolean {
-  if (t.startsWith("arc-")) return true;
+  if (t.startsWith("arc-") || isAzureTag(t)) return true;
   return ["azurearc", "auto-discovered"].includes(t);
+}
+
+/**
+ * Keep the Tag registry's `azure:` rows in step with Asset.tags, so the
+ * mirrored tags show in the pickers and filters like any other tag.
+ *
+ * Read from the assets rather than from this run's machines, because the
+ * registry is global and a second Arc integration may own other `azure:`
+ * tags: a name is added when some asset carries it and removed when none
+ * does. One DISTINCT unnest over assets per Arc run — trivial at 2000 rows.
+ * Best-effort: a registry failure never fails the discovery run.
+ */
+export async function syncAzureTagRegistry(): Promise<void> {
+  try {
+    const rows = await prisma.$queryRaw<{ t: string }[]>`
+      SELECT DISTINCT t FROM assets, unnest(tags) AS t WHERE t LIKE ${AZURE_TAG_PREFIX + "%"}`;
+    const names = rows.map((r) => r.t);
+    if (names.length > 0) {
+      await prisma.tag.createMany({
+        data: names.map((name) => ({ name, category: AZURE_TAG_CATEGORY, color: randomTagColor() })),
+        skipDuplicates: true,
+      });
+    }
+    await prisma.tag.deleteMany({
+      where: { name: { startsWith: AZURE_TAG_PREFIX, notIn: names } },
+    });
+  } catch (err: any) {
+    logger.warn({ err: err?.message ?? String(err) }, "Azure tag registry sync failed (non-fatal)");
+  }
 }
 
 /**
@@ -7774,7 +7807,7 @@ function isArcManagedTag(t: string): boolean {
  * variants — see swapVmUuidEndianness) → hostname (FQDN then short, NetBIOS-
  * truncation tolerant) → Conflict → create.
  */
-async function syncArcDevices(
+export async function syncArcDevices(
   integrationId: string,
   integrationName: string,
   integrationConfig: Record<string, unknown> | null,
@@ -7941,15 +7974,18 @@ async function syncArcDevices(
     const { fqdn, short } = azureArc.arcHostnameCandidates(m);
     const label = m.displayName || m.name || m.armId;
 
-    // Discovery tags. Azure RESOURCE tags deliberately stay in the observed
-    // blob (observed.azureTags) — mirroring an unbounded stream of cloud tags
-    // into Asset.tags would fight tagAssignmentService's managed sync.
+    // Discovery tags. Azure RESOURCE tags always land in the observed blob
+    // (observed.azureTags); they reach Asset.tags only when the operator opts
+    // in (importAzureTags), under the Arc-owned `azure:` prefix so the strip
+    // in isArcManagedTag can never take an operator's or the auto-assign
+    // engine's tag with it.
     const tags = ["azurearc", "auto-discovered"];
     if (m.status && !connected) tags.push(`arc-${m.status.toLowerCase()}`);
     if (m.cloudProvider) tags.push(`arc-${m.cloudProvider.toLowerCase()}`);
     // Phase 2/3 — only present when the operator enabled the enrichment.
     if (m.vmInstance) tags.push(`arc-${m.vmInstance.platform}`);
     if (m.sqlInstances.length > 0) tags.push("arc-sql");
+    tags.push(...azureArc.azureTagsToAssetTags(m.tags, integrationConfig as azureArc.AzureArcConfig | null));
 
     // ── Match cascade ──────────────────────────────────────────────────────
     let existing: any = assetByArmId.get(m.armId) ?? null;

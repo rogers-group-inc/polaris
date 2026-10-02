@@ -351,3 +351,27 @@ describe("Azure Arc extra-resource toggles", () => {
     expect(cfg.enableKubernetes).toBe(true);
   });
 });
+
+describe("Azure Arc tag import", () => {
+  it("defaults the import toggle off", () => {
+    const s = boot();
+    s.document.body.innerHTML = s.azureArcFormHTML({});
+    const cfg = s.getArcFormConfig();
+    expect(cfg.importAzureTags).toBe(false);
+    expect(cfg.azureTagKeys).toEqual([]);
+  });
+
+  it("round-trips the toggle and the key list through the reader", () => {
+    const s = boot();
+    s.document.body.innerHTML = s.azureArcFormHTML({
+      importAzureTags: true, azureTagKeys: ["DefenderPlan", "Env*"],
+    });
+    const cfg = s.getArcFormConfig();
+    expect(cfg.importAzureTags).toBe(true);
+    expect(cfg.azureTagKeys).toEqual(["DefenderPlan", "Env*"]);
+  });
+
+  it("shows the azure:Key=Value shape the tags take", () => {
+    expect(boot().azureArcFormHTML({})).toContain("azure:Key=Value");
+  });
+});

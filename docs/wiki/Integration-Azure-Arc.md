@@ -32,6 +32,8 @@ Arc has **no host, port or TLS field** — the endpoint is fixed to
 | **Enable VM instances** | off | |
 | **Enable SQL Server** | off | |
 | **Enable Kubernetes** | off | |
+| **Add Azure tags to devices** (`importAzureTags`) | off | see [below](#azure-tags-on-devices) |
+| Tag keys to add (`azureTagKeys`) | — | key wildcards; empty = every key |
 | **Allow Run Command** | off | see [below](#publishing-scripts-via-run-command) |
 | Verify presence | on | |
 | Workstation / Server / Kubernetes monitor blocks | — | |
@@ -74,6 +76,35 @@ both, turn it on.
 become real assets. They take the reduced monitor block (add-as-monitored and
 streams only), because a cluster runs no Polaris Agent and reports no interfaces
 or mounts.
+
+---
+
+## Azure tags on devices
+
+Every machine's and cluster's Azure resource tags are always recorded on its
+Arc source (the **Azure Tags** row of the asset's sources). Turn on **Add Azure
+tags to devices** and they also become ordinary Polaris tags, named
+`azure:Key=Value`. For example, `DefenderPlan = P1` in Azure becomes
+`azure:DefenderPlan=P1`. A tag with no value becomes `azure:Key`. You can then
+filter the Assets page, scope automations and scope users by them like any
+other tag. They appear in the tag pickers under the **Azure Tags** category.
+
+- **Polaris keeps them in step with Azure on every discovery run.** A tag you
+  change or remove in Azure is changed or removed here. Turn the toggle off and
+  the next run removes them all.
+- **Tags you add by hand are never touched.** Only `azure:` tags are managed.
+  For the same reason, Polaris refuses a hand-made tag whose name starts with
+  `azure:`, a rename of one of the mirrored tags, and an auto-assign filter on
+  one. Change the tag in Azure instead. You can still change a mirrored tag's
+  colour and category.
+- **Tag keys to add** limits which keys are imported (one per line, case
+  ignored, wildcards like `Cost*` allowed). Leave it empty to import every key.
+  Use the list when your tenant has tags whose value is different on every
+  machine, such as a creation date or an owner email. Otherwise each machine
+  adds its own entry to the tag list.
+
+This is separate from the **Tag filter**. The filter decides which machines are
+discovered at all; this setting decides whether their tags are copied onto them.
 
 ---
 
