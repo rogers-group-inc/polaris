@@ -38,6 +38,7 @@ import {
   fetchRecentSampleStats,
 } from "../../services/topologyGraphService.js";
 import { getRegionHierarchy } from "../../services/mapRegionService.js";
+import { downAlertAcknowledgedByAsset } from "../../services/nocDashboardService.js";
 import {
   saveLayout,
   saveCheckpoint,
@@ -161,6 +162,12 @@ router.get("/sites", async (req, res, next) => {
       sites.filter((s) => s.monitored).map((s) => s.id),
     );
 
+    // Acknowledged-ness of each DOWN site's down alert, so the map widgets can
+    // fade an outage someone already owns. Bounded to the down sites only.
+    const downAck = await downAlertAcknowledgedByAsset(
+      sites.filter((s) => s.monitored && s.monitorStatus === "down").map((s) => s.id),
+    );
+
     // Subnet counts per FortiGate — the `fortigateDevice` column on Subnet
     // stores the FMG-side device name, which (for auto-discovered FortiGates)
     // matches the Asset's hostname or learnedLocation. One query, grouped.
@@ -191,6 +198,9 @@ router.get("/sites", async (req, res, next) => {
           monitorHealth: s.monitored ? monitorStatusToHealth(s.monitorStatus) : null,
           monitorRecentSamples: stats?.samples ?? 0,
           monitorRecentFailures: stats?.failures ?? 0,
+          // true = the down alert is acknowledged; false = unacknowledged;
+          // absent = no active down alert (or the site isn't down).
+          ...(downAck.has(s.id) ? { alertAcknowledged: downAck.get(s.id) } : {}),
         };
       }),
     );

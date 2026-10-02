@@ -1200,6 +1200,38 @@ describe("per-widget alert relevance (pill only when a matching automation fires
   });
 });
 
+describe("downAlertAcknowledgedByAsset (Status Map / Device Map fade)", () => {
+  const down = { trigger: { type: "asset_state", field: "monitorStatus", operator: "eq", value: "down" } };
+
+  it("skips the query entirely for an empty id set", async () => {
+    const m = await noc.downAlertAcknowledgedByAsset([]);
+    expect(m.size).toBe(0);
+    expect(notifFindMany).not.toHaveBeenCalled();
+  });
+
+  it("answers acknowledged per asset from its active monitorStatus alert only", async () => {
+    notifFindMany.mockResolvedValueOnce([
+      { id: "n-a", assetId: "a", severity: "critical", acknowledged: true, rule: down },
+      { id: "n-b", assetId: "b", severity: "critical", acknowledged: false, rule: down },
+      // An acknowledged CPU alert says nothing about whether the outage is owned.
+      { id: "n-c", assetId: "c", severity: "critical", acknowledged: true, rule: { trigger: { type: "asset_metric", metric: "cpuPct", operator: ">", threshold: 90 } } },
+    ]);
+    const m = await noc.downAlertAcknowledgedByAsset(["a", "b", "c"]);
+    expect(m.get("a")).toBe(true);
+    expect(m.get("b")).toBe(false);
+    expect(m.has("c")).toBe(false);
+  });
+
+  it("reads unacknowledged when an equal-severity down alert on the asset is still unowned", async () => {
+    notifFindMany.mockResolvedValueOnce([
+      { id: "n-1", assetId: "a", severity: "critical", acknowledged: true, rule: down },
+      { id: "n-2", assetId: "a", severity: "critical", acknowledged: false, rule: down },
+    ]);
+    const m = await noc.downAlertAcknowledgedByAsset(["a"]);
+    expect(m.get("a")).toBe(false);
+  });
+});
+
 describe("getStorageForecast", () => {
   it("hydrates forecast rows and sorts severity-first, then soonest-full", async () => {
     rawUnsafe.mockResolvedValueOnce([

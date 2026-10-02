@@ -5970,6 +5970,11 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .fg-cluster.monitor-dep-down    { background: #607d8b; }
 .fg-cluster.monitor-maintenance { background: #9575cd; }
 .fg-cluster.monitor-passive     { background: #5c6bc0; }
+/* Down, but the down alert is acknowledged — someone owns it. Faded so the
+   unowned outages are the ones that read at a glance (a cluster fades only
+   when every down child is acknowledged). */
+.fg-marker.monitor-down.acked,
+.fg-cluster.monitor-down.acked  { opacity: 0.4; }
 
 /* ── Dark basemap ─────────────────────────────────────────────── */
 /* Every Leaflet surface renders OpenStreetMap tiles — the only unkeyed tile
@@ -6055,6 +6060,8 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .leaflet-tooltip.sitemap-tip-down { background: rgba(40,8,12,0.92); border-color: #ff1744; color: #ff6b85; pointer-events: auto; cursor: grab; }
 .leaflet-tooltip.sitemap-tip-down.dragging { cursor: grabbing; }
 .leaflet-tooltip.sitemap-tip-down.leaflet-tooltip-top::before { display: none; }
+/* Acknowledged outage: same label, faded (the dot drops its pulse ring). */
+.leaflet-tooltip.sitemap-tip-down.sitemap-tip-acked { opacity: 0.45 !important; }
 
 /* Fullscreen: the widget body fills the viewport. !important beats the inline
    position:relative set on the body at render time. */
