@@ -134,6 +134,16 @@ stated plainly: ports failing one per tick over eight ticks produce eight messag
 minutes. That is no worse than the eight at once it replaces, the common case is one, and each
 contribution's own hold already staggers them.
 
+**An update says what changed** (2026-10-02). The count alone was not enough: a port that
+recovers and faults again inside one alert leaves the count where it was, and prod's PoE-fault
+automation mailed `[UPDATED · 2]` three times in three hours, each byte-identical to the first send.
+`classifyGroupChanges` (read BEFORE `mergeMembers`, which clears the `leftAt` that marks a return)
+sorts each joining contribution into joined / returned, and `describeGroupChanges` turns that into
+the `{alert.change}` sentence and the subject tag (`[UPDATED · 2 · port7 back]`). The sentence is
+applied to a COPY of the context in `drainPendingSends`, never to the stored `templateCtx`, so a
+reminder replaying that snapshot does not repeat an old update as news. A rejoin still sends — the
+decision above stands; only its content changed.
+
 **A later contribution re-opens an acknowledgement.** Acknowledging "3 ports faulted" is not
 acknowledging "now 9 ports", so the ack columns are cleared and `escalationState` is reset, which
 restarts the reminder and escalation clocks — the point of re-opening. Nothing is lost: the

@@ -107,6 +107,7 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{repeat.attempt}", label: "Reminder number", description: "Which reminder this is (empty on the initial notification)", group: "escalation" },
   { token: "{repeat.elapsed}", label: "Reminder elapsed", description: "Time since the alert fired, on a reminder (e.g. 1h 30m)", group: "escalation" },
   { token: "{repeat.quiet}", label: "Quiet period ended", description: "On the first reminder after a quiet period, a sentence saying reminders have resumed and how long the alert has been active. Empty on every other send", group: "escalation" },
+  { token: "{alert.change}", label: "What changed", description: "On the update sent when a grouped alert gains a component, what changed — e.g. \"Update: port7 is in fault again after recovering for 32m.\" Empty on every other send", group: "notification" },
   { token: "{repeat.policy}", label: "Reminder policy", description: "Whether this alert will keep reminding, in words — e.g. \"Reminders every 15 minutes until acknowledged.\" Empty (and its row prunes away) when the automation doesn't repeat", group: "escalation" },
   { token: "{escalation.policy}", label: "Escalation policy", description: "Whether this alert goes over the reader's head if they leave it — e.g. \"Escalates in 30 minutes if not acknowledged.\" Empty when the automation has no escalation at the severity it fired at", group: "escalation" },
   // Business rule 78 — a down automation speaking for a dependency-suppressed
@@ -341,6 +342,13 @@ export interface TemplateContextParts {
    */
   repeatQuiet?: string;
   /**
+   * On the `[UPDATED]` send of a grouped alert (business rule 75): which
+   * components joined or came back (`describeGroupChanges`). Empty on every
+   * other send, and never written into the stored templateCtx — a reminder
+   * replaying that snapshot must not repeat an old update as news.
+   */
+  groupChange?: string;
+  /**
    * IANA zone to render `{time.local}` and `{time.zone}` in. Omitted — which
    * is every caller today — means the INSTALL's own zone, and that is now the
    * whole story: an alert email is one message to one To line, so there is no
@@ -547,6 +555,8 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     // reason: the default body prints this token on EVERY send, so a missing
     // key would show the literal braces on the initial alert.
     "repeat.quiet": str(parts.repeatQuiet),
+    // Same contract again: the default body prints it on every send.
+    "alert.change": str(parts.groupChange),
     // Present-but-empty everywhere they don't apply, for the same reason the
     // four above are: the renderer leaves an UNKNOWN token in place, so a
     // body printing {repeat.policy} on a non-repeating alert would show the
