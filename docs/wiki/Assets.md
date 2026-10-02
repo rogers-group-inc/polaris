@@ -289,6 +289,16 @@ breaks where nothing was probed rather than dropping to 0 %. The **Packet
 loss** figure above the chart is the same measurement over the whole window.
 Hovering a response-time point still says whether *that poll* was missed.
 
+**FortiGate tunnel interfaces are listed from the configuration.** On a
+FortiGate polled over the REST API, IPsec interfaces (site-to-site, dial-up,
+ADVPN hub and spoke overlays) and GRE / VXLAN tunnels appear in the Interfaces
+table with their configured address, and that address is tied to the
+firewall like any other interface IP. FortiOS reports no link state or
+counters for them there, so the status and traffic columns stay empty. A
+tunnel's real up/down state is in the IPsec tunnels section. The temporary
+shortcut tunnels ADVPN builds between spokes are not listed. They share their
+parent interface's address.
+
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
 When the interface's address sits inside a network Polaris knows, the click
