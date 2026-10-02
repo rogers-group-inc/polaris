@@ -100,6 +100,11 @@ NOC wallboard that has no session at all. See
 | **Device Map** | geographic map of FortiGates — monitor-health dots, clustering, click through to topology |
 | **Site Map** | geographic map of monitored sites — status dots and live weather radar |
 
+On both maps a **down site whose alert has been acknowledged is faded**: it
+stays red, but drops the pulse and its label dims to `DOWN · ACK`. A full-strength
+red dot is an outage nobody has picked up yet. A Device Map cluster fades only
+when every down site inside it is acknowledged.
+
 ---
 
 ## Reading the widgets correctly

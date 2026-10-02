@@ -62,6 +62,11 @@
   function statusColor(site) { return COLOR[healthKey(site)] || COLOR.unknown; }
   function inMaintenance(site) { return site.status === "maintenance"; }
   function isDown(site) { return site.monitored && !site.dependencySuppressed && !inMaintenance(site) && site.monitorHealth === "down"; }
+  // A down site whose down alert someone has acknowledged: still red, but
+  // faded and without the pulse, so the unowned outages are the ones that
+  // read at a glance. /map/sites carries alertAcknowledged (the same answer
+  // the Down Assets widget's ack pill reads).
+  function isAcked(site) { return isDown(site) && site.alertAcknowledged === true; }
   function hasIssue(site) { return site.monitored && !site.dependencySuppressed && !inMaintenance(site) && (site.monitorHealth === "down" || site.monitorHealth === "degraded"); }
 
   function monitorLine(site) {
@@ -72,7 +77,7 @@
     switch (site.monitorHealth) {
       case "up": return "Up — last " + samples + " samples ok";
       case "degraded": return "Packet loss — " + failures + "/" + samples + " recent samples failed";
-      case "down": return "Down — " + failures + "/" + samples + " samples failed";
+      case "down": return "Down — " + failures + "/" + samples + " samples failed" + (isAcked(site) ? " · acknowledged" : "");
       default: return "Monitored — no samples yet";
     }
   }
@@ -201,7 +206,7 @@
           line.setAttribute("stroke", "#ff1744");
           line.setAttribute("stroke-width", "1.5");
           line.setAttribute("stroke-dasharray", "3 3");
-          line.setAttribute("opacity", "0.9");
+          line.setAttribute("opacity", m._acked ? "0.35" : "0.9");
           leaderSvg.appendChild(line);
         });
       }
@@ -290,8 +295,8 @@
       // latlng (not the site's true position) and must not bubble clicks to
       // the map, or the map-click collapse handler would fire on it.
       function addSiteDot(s, latlng, isLeg) {
-        var color = statusColor(s), down = isDown(s);
-        if (down) {
+        var color = statusColor(s), down = isDown(s), acked = isAcked(s);
+        if (down && !acked) {
           L.marker(latlng, {
             interactive: false,
             icon: L.divIcon({ className: "", html: '<div class="sitemap-pulse"></div>', iconSize: [22, 22], iconAnchor: [11, 11] }),
@@ -299,8 +304,8 @@
         }
         var dot = L.circleMarker(latlng, {
           radius: down ? 7 : 6,
-          fillColor: color, fillOpacity: down ? 1 : 0.85,
-          color: down ? "#fff" : color, weight: down ? 2 : 1, opacity: down ? 1 : 0.6,
+          fillColor: color, fillOpacity: acked ? 0.35 : (down ? 1 : 0.85),
+          color: down ? "#fff" : color, weight: down ? 2 : 1, opacity: acked ? 0.45 : (down ? 1 : 0.6),
           bubblingMouseEvents: !isLeg,
         });
         var name = escapeHtml(s.hostname || "(unnamed)");
@@ -319,18 +324,20 @@
         // on hover only. Reuse any offset the operator dragged it to.
         var offset = (down && draggedOffsets[s.id]) ? draggedOffsets[s.id] : [0, down ? -10 : -8];
         dot.bindTooltip(
-          down ? (name + " — DOWN") : name,
+          down ? (name + (acked ? " — DOWN · ACK" : " — DOWN")) : name,
           {
             permanent: down,
             direction: "top",
             offset: offset,
-            className: down ? "sitemap-tip sitemap-tip-down" : "sitemap-tip",
+            className: down ? "sitemap-tip sitemap-tip-down" + (acked ? " sitemap-tip-acked" : "") : "sitemap-tip",
             opacity: 1,
           }
         );
         if (down) dot.on("tooltipopen", function () { attachTooltipDrag(dot, s.id); });
         dot.addTo(markersLayer);
-        if (down) { dot._siteId = s.id; downMarkers.push(dot); }
+        // Acknowledged dots go to the FRONT of the list: every bringToFront
+        // pass walks it in order, so the unacknowledged ones end up on top.
+        if (down) { dot._siteId = s.id; dot._acked = acked; if (acked) downMarkers.unshift(dot); else downMarkers.push(dot); }
         return dot;
       }
 

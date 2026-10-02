@@ -370,6 +370,18 @@ export async function activeAlertSeverityByAsset(
   return out;
 }
 
+/** Whether each asset's active down alert (a monitorStatus automation) has
+ *  been acknowledged — the same answer the Down Assets widget's ack pill
+ *  reads, so the Status Map / Device Map widgets can fade an owned outage in
+ *  lockstep with it. Assets with no such active alert are absent. */
+export async function downAlertAcknowledgedByAsset(assetIds: string[]): Promise<Map<string, boolean>> {
+  const out = new Map<string, boolean>();
+  if (assetIds.length === 0) return out;
+  const sev = await activeAlertSeverityByAsset(assetIds, stateRel("monitorStatus"));
+  for (const [id, s] of sev) out.set(id, s.acknowledged);
+  return out;
+}
+
 /** Decorate feed rows with the owning asset's highest RELEVANT active-alert
  *  severity. One severity fetch bounded to the rows' own asset ids (feeds are
  *  capped, so this stays small at 2000 assets).

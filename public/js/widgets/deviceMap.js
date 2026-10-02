@@ -32,7 +32,7 @@
     switch (site.monitorHealth) {
       case "up":       return "monitor-up";
       case "degraded": return "monitor-degraded";
-      case "down":     return "monitor-down";
+      case "down":     return "monitor-down" + (site.alertAcknowledged === true ? " acked" : "");
       // No down-detection automation covers it, so there is no verdict to
       // paint. NOT "unknown", which claims we have no samples.
       case "passive":  return "monitor-passive";
@@ -50,7 +50,7 @@
     switch (site.monitorHealth) {
       case "up":       return "Up — last " + samples + " samples ok";
       case "degraded": return "Packet loss — " + failures + "/" + samples + " recent samples failed";
-      case "down":     return "Down — " + failures + "/" + samples + " samples failed";
+      case "down":     return "Down — " + failures + "/" + samples + " samples failed" + (site.alertAcknowledged === true ? " · acknowledged" : "");
       default:         return "Monitored — no samples yet";
     }
   }
@@ -63,18 +63,24 @@
   // mirroring clusterIcon() in map.js.
   function clusterIcon(cluster) {
     var children = cluster.getAllChildMarkers();
-    var sawMonitored = false, sawDepDown = false, worst = "up";
+    // A down cluster fades (`acked`) only when EVERY down child's alert is
+    // acknowledged — one unowned outage inside keeps the bubble at full red.
+    var sawMonitored = false, sawDepDown = false, sawUnackedDown = false, worst = "up";
     for (var i = 0; i < children.length; i++) {
       var s = children[i]._site;
       if (!s || !s.monitored) continue;
       sawMonitored = true;
-      if (s.monitorHealth === "down") { worst = "down"; break; }
+      if (s.monitorHealth === "down") {
+        worst = "down";
+        if (s.alertAcknowledged !== true) { sawUnackedDown = true; break; }
+        continue;
+      }
       if (s.monitorHealth === "degraded" && worst !== "down") worst = "degraded";
       if (s.dependencySuppressed && s.monitorHealth !== "down") sawDepDown = true;
     }
     var cls;
     if (!sawMonitored)       cls = "monitor-unmonitored";
-    else if (worst !== "up") cls = "monitor-" + worst;
+    else if (worst !== "up") cls = "monitor-" + worst + (worst === "down" && !sawUnackedDown ? " acked" : "");
     else if (sawDepDown)     cls = "monitor-dep-down";
     else                     cls = "monitor-up";
     return L.divIcon({
@@ -187,7 +193,7 @@
         });
         marker._site = site;   // clusterIcon() rolls up health across children
         var HP = window.POLARIS_HEALTH_COLORS;
-        var color = { "monitor-up": HP.up, "monitor-degraded": HP.degraded, "monitor-down": HP.down, "monitor-dep-down": HP.depDown, "monitor-unmonitored": HP.unmonitored, "monitor-passive": HP.passive, "monitor-unknown": HP.unknown }[monitorClass(site)] || HP.unknown;
+        var color = { "monitor-up": HP.up, "monitor-degraded": HP.degraded, "monitor-down": HP.down, "monitor-dep-down": HP.depDown, "monitor-unmonitored": HP.unmonitored, "monitor-passive": HP.passive, "monitor-unknown": HP.unknown }[monitorClass(site).split(" ")[0]] || HP.unknown;
         var name = escapeHtml(site.hostname || "(unnamed)");
         marker.bindTooltip(
           "<strong>" + name + "</strong>" +
