@@ -40,6 +40,7 @@ interface AlertRow {
   triggerType?: string | null;
   dependencyDown?: boolean;
   dependencyUpstream?: string | null;
+  testRun?: boolean;
 }
 interface Cfg { minSeverity?: string; rowLimit?: number | null; eventAlerts?: string }
 interface WidgetModule {
@@ -116,6 +117,21 @@ describe("dependency-down badge (business rule 78)", () => {
     expect(badge.textContent).toBe("Dep. Down");
     expect(badge.getAttribute("title")).toContain("SW-PLANT-3");
     expect(rows[1].querySelector(".badge-monitor-dep-down")).toBeNull();
+  });
+});
+
+describe("delivery-test pill (business rule 65)", () => {
+  it("pills a wizard test alert TEST right after its severity, and no other row", () => {
+    const el = render([
+      alert({ id: "t", severity: "critical", assetId: null, hostname: "EXAMPLE-SWITCH-01", ruleName: null, testRun: true }),
+      alert({ id: "real", severity: "critical", hostname: "SRV-1" }),
+    ], 2, { minSeverity: "warning", rowLimit: 100 });
+    const rows = rowsOf(el);
+    const pills = Array.from(rows[0].querySelectorAll(".recent-item-title .widget-pill")) as any[];
+    expect(pills.map((p) => p.textContent)).toEqual(["critical", "TEST"]);
+    expect(pills[1].getAttribute("title")).toContain("made-up device");
+    const realPills = Array.from(rows[1].querySelectorAll(".widget-pill")) as any[];
+    expect(realPills.some((p) => p.textContent === "TEST")).toBe(false);
   });
 });
 

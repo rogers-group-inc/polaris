@@ -285,6 +285,11 @@ escalation tiers, resolved and reset actions.
   data (`EXAMPLE-SWITCH-01` at `192.0.2.51`, and so on), so a test email can be
   forwarded to a vendor or a colleague without carrying any of your inventory.
   It is attached to no asset, so it never appears on a real device's alert list.
+- **It does appear in the Dashboard's Active Alerts widget, for up to an hour.**
+  Nothing can recover a test, so Polaris clears it automatically an hour after
+  it fired. Until then the row carries a grey **TEST** pill beside its severity,
+  so a wallboard doesn't read it as an outage. Clear it by hand if you don't
+  want to wait.
 - **It says so in three places** — `[TEST]` in the subject, a banner at the head
   of the body, and a line in the plain-text alternative. The marking is added at
   send time, so customizing the email template cannot remove it.

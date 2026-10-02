@@ -491,11 +491,28 @@ describe("getRecentAlerts", () => {
       groupName: null, dimensionCount: null,
       // Business rule 78 — a plain alert reads neither.
       dependencyDown: false, dependencyUpstream: null,
+      // A real fire, not a wizard delivery test (business rule 65).
+      testRun: false,
     });
     // It reads ALERTS, never audit Events — the whole point of the feed.
     expect(eventFindMany).not.toHaveBeenCalled();
     expect(notifFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ cleared: false }),
+    }));
+  });
+
+  it("marks a wizard delivery test, so the widget can pill it TEST", async () => {
+    // Rule 65: the test is a real uncleared row about the sample device that
+    // only the one-hour TTL sweep retires — it sits in the feed meanwhile.
+    const t = new Date("2026-06-20T00:00:00Z");
+    notifFindMany.mockReset();
+    notifFindMany.mockResolvedValueOnce([
+      { id: "n1", ruleId: null, assetId: null, assetHostname: "EXAMPLE-SWITCH-01", message: "[TEST] x", severity: "critical", triggeredAt: t, acknowledged: false, acknowledgedBy: null, rule: null, testRun: true },
+    ]);
+    const r = await noc.getRecentAlerts();
+    expect(r.alerts[0].testRun).toBe(true);
+    expect(notifFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({ testRun: true }),
     }));
   });
 

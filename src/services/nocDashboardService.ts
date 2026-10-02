@@ -1205,6 +1205,11 @@ export interface AlertRow {
    *  upstream device in the badge's tooltip. */
   dependencyDown: boolean;
   dependencyUpstream: string | null;
+  /** A wizard delivery test (business rule 65) — a real uncleared row about the
+   *  invented sample device, which nothing recovers and the TTL sweep retires
+   *  after an hour. The widget pills it TEST so it can't be read as an outage
+   *  while it waits; `[TEST]` in the message alone is easy to miss. */
+  testRun: boolean;
 }
 
 export interface ActiveAlerts {
@@ -1268,6 +1273,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
       alertGroup: { select: { name: true } },
       dimensionCount: true,
       dependencyDown: true, dependencyBlame: true,
+      testRun: true,
     },
     orderBy: { triggeredAt: "desc" },
   });
@@ -1293,6 +1299,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     acknowledgedBy: n.acknowledgedBy ?? null,
     dependencyDown: n.dependencyDown === true,
     dependencyUpstream: dependencyUpstreamOf(n.dependencyBlame),
+    testRun: n.testRun === true,
   }));
   out.sort((a, b) => {
     const d = (ALERT_SEVERITY_RANK[b.severity] ?? 0) - (ALERT_SEVERITY_RANK[a.severity] ?? 0);
