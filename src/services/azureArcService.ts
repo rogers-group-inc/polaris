@@ -46,6 +46,7 @@
 
 import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
+import { AZURE_TAG_PREFIX } from "../utils/tagNormalize.js";
 import { buildClientCredentialsTokenRequest } from "../utils/entraClientCredentials.js";
 import { mapSettledWithConcurrency } from "../utils/concurrency.js";
 
@@ -100,6 +101,11 @@ export interface AzureArcConfig {
   // Phase 4. UNLIKE the two above, connected clusters become ASSETS of their
   // own — this toggle changes the fleet, not just an existing machine's blob.
   enableKubernetes?: boolean;
+  // Mirror the Azure resource tags onto Asset.tags as `azure:<key>=<value>`.
+  // Default off: a tenant can carry per-resource-unique tags (CreatedDate,
+  // owner email) that would flood the tag registry.
+  importAzureTags?: boolean;
+  azureTagKeys?: string[];         // Key wildcards to import; empty = every key
 }
 
 /**
@@ -761,6 +767,31 @@ export function matchesTagFilter(tags: Record<string, string>, line: string): bo
     if (matchesWildcard(pattern, v ?? "")) return true;
   }
   return false;
+}
+
+/**
+ * The `azure:<key>=<value>` asset tags for one resource's Azure tags.
+ *
+ * Empty unless `importAzureTags` is on. `azureTagKeys` narrows by key (same
+ * case-insensitive glob-lite as every other filter); empty imports every key.
+ * A tag with an empty value becomes `azure:<key>`. Sorted by key so a run that
+ * changes nothing in Azure writes an identical array.
+ */
+export function azureTagsToAssetTags(
+  tags: Record<string, string>,
+  config: Pick<AzureArcConfig, "importAzureTags" | "azureTagKeys"> | null | undefined,
+): string[] {
+  if (config?.importAzureTags !== true) return [];
+  const keys = (config.azureTagKeys ?? []).map((k) => k.trim()).filter(Boolean);
+  const out: string[] = [];
+  for (const [rawKey, rawValue] of Object.entries(tags)) {
+    const key = rawKey.trim();
+    if (!key) continue;
+    if (keys.length > 0 && !keys.some((p) => matchesWildcard(p, key))) continue;
+    const value = (rawValue ?? "").trim();
+    out.push(value ? `${AZURE_TAG_PREFIX}${key}=${value}` : `${AZURE_TAG_PREFIX}${key}`);
+  }
+  return out.sort((a, b) => a.localeCompare(b));
 }
 
 /**

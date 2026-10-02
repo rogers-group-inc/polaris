@@ -40,6 +40,7 @@ import {
   buildArcClustersQuery,
   normalizeArcCluster,
   buildArcClusterObservedBlob,
+  azureTagsToAssetTags,
 } from "../../src/services/azureArcService.js";
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
@@ -901,5 +902,44 @@ describe("normalizeArcCluster", () => {
     // Region is metadata about the RECORD, never a physical location.
     expect(blob.azureRegion).toBe("eastus");
     expect(blob).not.toHaveProperty("location");
+  });
+});
+
+// ─── azureTagsToAssetTags ───────────────────────────────────────────────────
+
+describe("azureTagsToAssetTags", () => {
+  const tags = { DefenderPlan: "P1", Environment: "Production", CreatedDate: "2026-01-02" };
+
+  it("returns nothing while importAzureTags is off — the default", () => {
+    expect(azureTagsToAssetTags(tags, {})).toEqual([]);
+    expect(azureTagsToAssetTags(tags, null)).toEqual([]);
+    expect(azureTagsToAssetTags(tags, { azureTagKeys: ["*"] })).toEqual([]);
+  });
+
+  it("mirrors every key as azure:Key=Value, sorted, when no keys are listed", () => {
+    expect(azureTagsToAssetTags(tags, { importAzureTags: true })).toEqual([
+      "azure:CreatedDate=2026-01-02",
+      "azure:DefenderPlan=P1",
+      "azure:Environment=Production",
+    ]);
+  });
+
+  it("narrows by key, case-insensitively, with wildcards", () => {
+    expect(azureTagsToAssetTags(tags, { importAzureTags: true, azureTagKeys: ["defenderplan", "Env*"] }))
+      .toEqual(["azure:DefenderPlan=P1", "azure:Environment=Production"]);
+  });
+
+  it("ignores blank key lines rather than reading them as every key", () => {
+    expect(azureTagsToAssetTags(tags, { importAzureTags: true, azureTagKeys: ["  ", "DefenderPlan"] }))
+      .toEqual(["azure:DefenderPlan=P1"]);
+  });
+
+  it("drops the = for an empty value and trims both sides", () => {
+    expect(azureTagsToAssetTags({ " Critical ": "", Owner: "  IT  " }, { importAzureTags: true }))
+      .toEqual(["azure:Critical", "azure:Owner=IT"]);
+  });
+
+  it("returns nothing for a resource with no tags", () => {
+    expect(azureTagsToAssetTags({}, { importAzureTags: true })).toEqual([]);
   });
 });

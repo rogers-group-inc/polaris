@@ -101,7 +101,7 @@ const TAG_COLOR_PALETTE = [
   "#f87171", "#2dd4bf", "#818cf8", "#c084fc",
 ];
 
-function randomTagColor(): string {
+export function randomTagColor(): string {
   return TAG_COLOR_PALETTE[Math.floor(Math.random() * TAG_COLOR_PALETTE.length)]!;
 }
 

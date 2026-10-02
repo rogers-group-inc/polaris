@@ -856,6 +856,11 @@ const AzureArcConfigSchema = z.object({
   // Phase 4. Unlike the two above, connected clusters DO become assets
   // (assetType "kubernetes_cluster"), so this one changes the fleet.
   enableKubernetes: z.boolean().optional().default(false),
+  // Mirror Azure resource tags onto Asset.tags as `azure:<key>=<value>`. Off by
+  // default — a per-resource-unique tag (CreatedDate) would mint one registry
+  // row per machine. azureTagKeys narrows by key wildcard; empty = every key.
+  importAzureTags: z.boolean().optional().default(false),
+  azureTagKeys: z.array(z.string()).optional().default([]),
   // Post-sync network-presence verification — see EntraIdConfigSchema note.
   verifyPresence: z.boolean().optional().default(true),
   workstationMonitor: WorkstationServerClassMonitorSchema,
