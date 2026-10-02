@@ -38,6 +38,14 @@ If the problem is still there, the alert simply carries on (no duplicate is
 raised), and escalation and reminders pick up again. You can also clear it by
 hand at any time.
 
+A device that keeps reporting **during** the window doesn't have to wait for it
+to end. A Polaris Agent keeps sending readings through a window, and so does a
+**Poll Now**. If one of those readings shows the device is healthy again, the
+open alert resolves right away, as it would outside a window. Only readings
+taken after the window opened count, so a device that was already healthy
+before the window can't clear its alert on stale data. Those readings never
+raise a new alert.
+
 That is deliberate: an alert someone was already tracking — acknowledged,
 escalating, noted — should not be wiped out because a device went into
 maintenance. (Between 2026-08-28 and 2026-09-30 Polaris did clear such alerts
@@ -282,7 +290,7 @@ They are easy to confuse and do opposite things:
 |---|---|---|
 | Scope | a device | a reminder on one notify action |
 | Polling | **stopped** | unaffected |
-| An alert already open | **stays open, paused** — resolves normally after the window | unaffected |
+| An alert already open | **stays open, paused** — resolves normally after the window, or sooner if an agent reading shows the device is healthy | unaffected |
 | New alerts | **not raised** | unaffected |
 | Reminders | **paused**, resume after the window | **held**, and sent when the window ends |
 | Escalation tiers | **paused**, resume after the window | unaffected |
