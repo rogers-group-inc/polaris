@@ -43,7 +43,7 @@ one exception is below under *Troubleshooting*.
 
 ## Creating a check
 
-Click **+ Add check**. The dialog walks through four steps: **General →
+Click **+ Add monitor**. The **Add Path Monitor** dialog walks through four steps: **General →
 Expectations → Traceroute → Sources**. The bar across the top shows where you
 are, and the line between steps fills in as you move past each one. Use
 **Next** and **Back** (or the → / ← keys) to move. **Next** checks the step you
