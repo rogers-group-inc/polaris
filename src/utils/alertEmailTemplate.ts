@@ -119,6 +119,10 @@ export const DEFAULT_ALERT_TEXT = [
   // answer.
   "Active for: {repeat.elapsed}",
   "",
+  // The chain a dependency-down alert blames, on one line (alertDependencyPathService;
+  // the HTML body draws it). Renders away, blank line and all, on every other alert.
+  "{dependency.path}",
+  "",
   // What was on the port, when the alert is about ONE port. Renders away for
   // every other alert — and for a port that advertised no neighbour — so it
   // costs a non-interface alert nothing. Above the charts because on an
@@ -333,6 +337,13 @@ export const DEFAULT_ALERT_HTML = [
   factRow("Escalation", "{escalation.policy}"),
   "</table>",
   "</td></tr>",
+  // The dependency path (business rule 78): the chain this alert blames, drawn
+  // as the Device Map draws it — root cause left, this device right, each in
+  // its location box. A complete <tr> with its own heading, or nothing: filled
+  // at DELIVERY (alertDependencyPathService) and empty on every alert that is
+  // not dependency-down. Under the facts, because the Upstream / Root cause
+  // rows name the two ends and this shows what lies between and where.
+  "{dependency.path}",
   // The LLDP neighbours on the interface this alert is about — a complete <tr>
   // with its own heading, or nothing at all. It is filled at DELIVERY time
   // (alertInterfaceService, like the charts) and is the substance of an

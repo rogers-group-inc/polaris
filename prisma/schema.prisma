@@ -5403,7 +5403,9 @@ model Notification {
   dependencyDown Boolean @default(false)
   // Who silenced it, snapshotted at fire so the row still explains itself
   // after the topology changes: { upstream: {id, hostname}, rootCause: {id,
-  // hostname, reason: "down"|"maintenance"|"dependency_test"}, hops, ownStatus }.
+  // hostname, reason: "down"|"maintenance"|"dependency_test"}, chain: [{id,
+  // hostname, reason}] (upstream … rootCause, the email's dependency-path
+  // diagram; absent on rows fired before 2026-10-02), hops, ownStatus }.
   // `upstream` is the device directly above; `rootCause` the one actually down
   // — the same device on a one-hop chain, the FortiGate above a suppressed
   // switch on a two-hop one. NULL unless dependencyDown.

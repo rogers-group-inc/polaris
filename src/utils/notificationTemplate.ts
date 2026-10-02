@@ -116,6 +116,7 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{dependency.upstream}", label: "Upstream device", description: "Dependency-down alerts: the device directly above this one that is down (or itself dependency-down). Empty on every other alert", group: "notification" },
   { token: "{dependency.rootCause}", label: "Root cause", description: "Dependency-down alerts: the device further up that is actually down, when it is not the upstream device itself — the FortiGate above a dependency-down switch. Empty when the upstream device is the root cause, and on every other alert", group: "notification" },
   { token: "{dependency.headline}", label: "Dependency-down headline", description: "The compact notice, for a message that already names the device: \"DEPENDENCY DOWN — upstream SW-PLANT-3 is down\". Empty on every other alert", group: "notification" },
+  { token: "{dependency.path}", label: "Dependency path diagram", description: "Dependency-down alerts: a diagram of the chain the alert blames — the root cause on the left, the alerting device on the right, each device in its Device Map location box (a:/b:/f:/r:/jb: codes; a generic box labelled with its Location when it has none) and the link ports where LLDP knows them. At most four devices: a longer chain keeps two at each end with a \"+N more\" gap. An image in HTML email, one line in plain text. Renders away entirely on every other alert", group: "notification" },
   { token: "{dependency.tag}", label: "Dependency-down tag", description: "\" · DEPENDENCY DOWN\" on a dependency-down alert, with its own separator so a subject line can append it unconditionally; empty on every other alert", group: "notification" },
 ];
 
@@ -600,6 +601,14 @@ const TOKEN_RE = /\{([a-zA-Z][\w.]*)\}/g;
  * same reason the charts are: it needs a DB read, and its HTML and plain-text
  * forms are different markup, which one context string can't carry.
  *
+ * `{dependency.path}` — the dependency-down alert's path diagram, drawn at
+ * delivery by alertDependencyPathService — is an ENUMERATED name, the one
+ * exception to the prefix rule below: its siblings `{dependency.summary}` /
+ * `.upstream` / `.rootCause` / `.headline` / `.tag` are ordinary fire-time
+ * context values, so the `dependency.` prefix cannot be deferred wholesale.
+ * Deferred for the charts' reasons: an inline image attachment, and HTML and
+ * text forms that differ.
+ *
  * The process half (`{processes.top}` — the top-5 programs by CPU or memory on a
  * CPU / memory alert, read at delivery by alertProcessService) is deferred for
  * the interface half's two reasons: a DB read, and different HTML and text
@@ -621,7 +630,7 @@ const TOKEN_RE = /\{([a-zA-Z][\w.]*)\}/g;
  * file is a pure util that must not import the chart service (which pulls in
  * Prisma) just to enumerate its own tokens.
  */
-const DEFERRED_TOKEN_NAMES: ReadonlySet<string> = new Set(["ack", "email.recipients"]);
+const DEFERRED_TOKEN_NAMES: ReadonlySet<string> = new Set(["ack", "email.recipients", "dependency.path"]);
 
 export function isDeferredToken(name: string): boolean {
   return (

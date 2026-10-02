@@ -25,6 +25,8 @@ import { notificationsPageUrl, pushDeepLinkUrl, ackUrlForEmail, ackUrlForPush, a
 import { buildAlertCharts, chartTokensIn, substituteChartTokens, attachmentsFor, isStorageScopedAlert, storageThresholdFromTrigger, type ChartToken, type RenderedChart } from "./alertChartService.js";
 import { buildInterfaceLldpBlocks, interfaceTokensIn, substituteInterfaceTokens } from "./alertInterfaceService.js";
 import { buildTopProcessBlocks, processTokensIn, substituteProcessTokens } from "./alertProcessService.js";
+import { buildDependencyPathBlocks, dependencyPathTokensIn, substituteDependencyPathTokens } from "./alertDependencyPathService.js";
+import type { InlineAttachment } from "./notificationChannels/emailChannel.js";
 import { buildAlertBrandBlock, brandTokensIn, substituteBrandTokens, BRAND_LOGO_CID } from "./alertBrandService.js";
 import {
   buildRecipientBlocks,
@@ -85,6 +87,10 @@ interface DeliveryRow {
      *  the interface block can explain every affected port rather than only
      *  the one the alert leads with. */
     members: unknown;
+    /** Business rule 78 — a dependency-down alert, and the fire-time chain it
+     *  blames: what the email's dependency-path diagram draws. */
+    dependencyDown: boolean;
+    dependencyBlame: unknown;
   };
 }
 
@@ -137,10 +143,12 @@ interface RenderMemo {
   recipients: Map<string, Promise<{ push: PushRecipientBlock; email: PushRecipientBlock }>>;
   /** The top-process block, keyed by notification: one read per alert. */
   processes: Map<string, Promise<{ html: string; text: string }>>;
+  /** The dependency-path diagram, keyed by notification: one render per alert. */
+  dependencyPath: Map<string, Promise<{ html: string; text: string; attachment: InlineAttachment | null }>>;
 }
 
 function newRenderMemo(): RenderMemo {
-  return { charts: new Map(), lossWindow: new Map(), storageThreshold: new Map(), recipients: new Map(), processes: new Map() };
+  return { charts: new Map(), lossWindow: new Map(), storageThreshold: new Map(), recipients: new Map(), processes: new Map(), dependencyPath: new Map() };
 }
 
 /** Memoized read-through: one build per (alert, exact chart set) per drain. */
@@ -315,6 +323,23 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
       );
       text = pruneEmptyTextLines(substituteInterfaceTokens(text, lldp.text, lldp.ipText));
       if (html) html = substituteInterfaceTokens(html, lldp.html, lldp.ipHtml);
+    }
+
+    // The dependency path (business rule 78) — the chain the engine blamed,
+    // drawn with each device's location box. The DEVICES are the fire-time
+    // snapshot, so the picture agrees with the sentence above it; only their
+    // location codes and link ports are read here. A complete block or nothing:
+    // every alert that is not dependency-down returns before any read. One
+    // render per alert, shared by the email rows of a fan-out.
+    if (dependencyPathTokensIn(text, html).size > 0) {
+      const path = await memoize(memo.dependencyPath, d.notification.id, () => buildDependencyPathBlocks(d.notification));
+      text = pruneEmptyTextLines(substituteDependencyPathTokens(text, path.text));
+      if (html) {
+        html = substituteDependencyPathTokens(html, path.html);
+        if (path.attachment && html.includes(`cid:${path.attachment.cid}`)) {
+          attachments = [...(attachments ?? []), path.attachment];
+        }
+      }
     }
 
     // The top-5 process table on a CPU / memory alert — same contract as the
@@ -724,7 +749,7 @@ export async function drainPendingDeliveries(
       // ruleId feeds the loss chart's window: the automation's own History is
       // what the chart should span (resolved lazily, only when a loss chart is
       // actually in the body).
-      notification: { select: { id: true, message: true, severity: true, assetId: true, assetHostname: true, dimension: true, metric: true, ruleId: true, triggeredAt: true, testRun: true, members: true } },
+      notification: { select: { id: true, message: true, severity: true, assetId: true, assetHostname: true, dimension: true, metric: true, ruleId: true, triggeredAt: true, testRun: true, members: true, dependencyDown: true, dependencyBlame: true } },
     },
   })) as DeliveryRow[];
 

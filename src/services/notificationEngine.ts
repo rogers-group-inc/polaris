@@ -4501,6 +4501,10 @@ async function fire(
         dependencyBlame: {
           upstream: blame ? { id: blame.upstream.id, hostname: blame.upstream.hostname } : null,
           rootCause: blame ? { id: blame.rootCause.id, hostname: blame.rootCause.hostname, reason: blame.rootCause.reason } : null,
+          // Every device between them, upstream first — what the email's
+          // dependency-path diagram draws (alertDependencyPathService), so the
+          // picture agrees with the sentence written here even hours later.
+          chain: blame ? blame.chain.map((n) => ({ id: n.id, hostname: n.hostname, reason: n.reason })) : [],
           hops: blame?.hops ?? 0,
           truncated: blame?.truncated ?? false,
           ownStatus: reading.ownMonitorStatus ?? null,
