@@ -78,7 +78,9 @@ beforeAll(() => {
   const body = [
     extractVar(appSrc, "_tagCache"),
     extractVar(appSrc, "REGION_TAG_CATEGORY"),
-    ...["_ensureTagCache", "_tagChipStyle", "_canCreateRegistryTags", "_renderTagChips",
+    extractVar(appSrc, "AZURE_TAG_PREFIX"),
+    extractVar(appSrc, "AZURE_TAG_CATEGORY"),
+    ...["_ensureTagCache", "_tagChipStyle", "_tagChipHTML", "_canCreateRegistryTags", "_renderTagChips",
         "tagFieldHTML", "getTagFieldValue", "_wireChipListeners", "wireTagPicker"]
       .map((n) => extractFunction(appSrc, n)),
     "var _assetsSelected = new Set();",
