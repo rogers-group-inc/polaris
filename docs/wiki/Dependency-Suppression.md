@@ -160,6 +160,16 @@ A `monitor status is down` automation can opt out of the silence with the
   **names the upstream device that is down** — and, when that device is itself
   Dep. Down under something further up, the device that is actually down (a
   suppressed switch's FortiGate);
+- its email **draws the dependency path** under the alert's details: the device
+  that is actually down on the left, this device on the right, every device in
+  the location box its `a:` / `b:` / `f:` / `r:` / `jb:` codes put it in on the
+  [Device Map](Device-Map) (a device with no codes sits in a plain box named
+  after its **Location**), and the port names on each link where LLDP knows
+  them. At most four devices are drawn: a longer chain shows the two at each
+  end with a **+N more** gap between. The plain-text email gets the same chain
+  on one line. The diagram is the `{dependency.path}` token, which is in the
+  default email — an automation whose email you customized before it existed
+  does not have it, so add it where you want the diagram;
 - it is **one notification**: reminders and escalation tiers wait, as they do
   for every suppressed device, until the upstream is back;
 - a live plain Down alert on a device that then turns Dep. Down is **ended and

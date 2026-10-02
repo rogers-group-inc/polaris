@@ -205,6 +205,9 @@ describe("an opted-in automation speaks for its silenced devices", () => {
     const data = created()[0];
     expect(data.message).toContain("upstream device SW-PLANT-3 sits behind FG-PLANT, which is down");
     expect(data.dependencyBlame).toMatchObject({ rootCause: { id: "fg", hostname: "FG-PLANT" }, hops: 2 });
+    // The whole chain, upstream first — what the email's dependency-path
+    // diagram draws (alertDependencyPathService).
+    expect((data.dependencyBlame as { chain: unknown }).chain).toEqual(TWO_HOPS.chain);
     expect(triggeredEvents()[0].details).toMatchObject({ upstreamAssetId: "sw", rootCauseAssetId: "fg" });
   });
 

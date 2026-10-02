@@ -118,12 +118,23 @@ The walk loads the ancestor closure hop by hop through a cache the engine renews
 three hundred PLCs behind one switch load the switch and the gate once between them. It never
 throws: a failed read yields null and the alert goes out worded without a name — *because a
 device above it is down* — since "your PLC is dependency down" beats silence even when the switch
-cannot be named. The name, the reason and the hop count are snapshotted on
+cannot be named. The name, the reason, the hop count and the whole chain between them are snapshotted on
 `Notification.dependencyDown` + `dependencyBlame`, so the row still explains itself after the
 dependency tree is recomputed and the flag is a COLUMN because three readers need it without
 reading text: the sweep, the engine's handoff and the alert surfaces' badge. (`templateCtx` would
 not do — that snapshot is written only when the rule composes or escalates, and the simplest
 in-app-only automation writes none.)
+
+The email draws that chain (`{dependency.path}`, `alertDependencyPathService`, 2026-10-02): root
+cause on the left, the alerting device on the right, each device in the Device Map location box
+its a:/b:/f:/r:/jb: codes put it in, a generic box labelled with its Location when it has none,
+and the LLDP port names on each link. The operator asked for it so a plant reader sees which
+boxes sit between the dark one and theirs, and where each of them physically is. Two decisions
+are worth keeping. It draws the FIRE-TIME chain, not a fresh walk at delivery: the picture has
+to agree with the sentence above it, and an escalation an hour later that drew a different chain
+under an unchanged sentence would contradict itself. And it draws at most four devices — the root
+cause and the one below it, the upstream device and the alerting device, with a "+N more" gap
+between — because the two ends are what the email is for; the middle is the asset page's job.
 
 ### The flavour follows the flag
 

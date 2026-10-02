@@ -195,6 +195,20 @@ export async function runTestDelivery(args: RunTestArgs): Promise<TestDeliveryRe
       regionTags: [],
       dimension,
       metric,
+      // The dependency-down flavour, on the row as a real one carries it, so the
+      // delivery drain draws the email's dependency-path diagram for the test
+      // too — from the invented upstream device, never a real one (rule 65).
+      ...(speaksForSuppressed ? {
+        dependencyDown: true,
+        dependencyBlame: {
+          upstream: { id: null, hostname: SAMPLE_UPSTREAM_HOSTNAME },
+          rootCause: { id: null, hostname: SAMPLE_UPSTREAM_HOSTNAME, reason: "down" },
+          chain: [{ id: null, hostname: SAMPLE_UPSTREAM_HOSTNAME, reason: "down" }],
+          hops: 1,
+          truncated: false,
+          ownStatus: null,
+        },
+      } : {}),
     },
     select: { id: true },
   });
