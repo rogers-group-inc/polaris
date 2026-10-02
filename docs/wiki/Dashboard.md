@@ -190,6 +190,11 @@ hostname: its message lists every affected component. An ungrouped alert
 still shows its port there, which is what tells two rows from one
 per-interface automation apart.
 
+A **TEST** pill beside the severity marks a delivery test sent from the
+automation wizard ([Automations](Automations)). It is about a made-up device
+(`EXAMPLE-SWITCH-01`), not one of yours, and clears itself an hour after it
+fired.
+
 The **Active Maintenance** widget is the other one you can act from. A
 **+ New schedule** button at the top of it opens the Maintenance editor to
 create one without leaving the dashboard — it is there over the empty widget
