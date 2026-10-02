@@ -114,7 +114,9 @@ fall-through — and **discovery never writes notes on an existing asset**.
 **Maintenance windows pause everything**, and status flips are scheduler-managed.
 An alert **already open when the window starts stays open** — it is silenced
 (no new alerts, escalation and reminders paused) and, once polling resumes,
-resolves normally through its own automation if the device is healthy. A window
+resolves normally through its own automation if the device is healthy — or
+sooner, if a reading taken during the window (an agent push, a Poll Now) shows
+it healthy. A window
 never clears an alert; only a genuine outage upstream clears a silenced child's
 alerts ([rule 38](#rule-38)). A day carries a **list** of hour ranges, and each range is its
 own occurrence with its own start. See [Maintenance windows](Maintenance-Windows).

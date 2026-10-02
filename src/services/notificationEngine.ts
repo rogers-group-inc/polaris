@@ -547,13 +547,72 @@ export async function loadScopeAssetIds(scope: RuleScope, opts?: { monitoredOnly
  * the window. Their live ALERTS are frozen, not retired, when the cause is a
  * maintenance window (the asset's own, or a maintained parent's) — business
  * rule 16: an alert raised before the window stays live and recovers on its
- * own evidence once polling resumes. Behind a parent that is genuinely DOWN
+ * own evidence — once polling resumes, or sooner on a reading taken during the
+ * window (an agent push, a Probe Now; see frozenReadingIsFresh). Behind a parent that is genuinely DOWN
  * they are retired, by `clearSuppressedAlerts` (notificationService) rather
  * than here, because event/change alerts carry no state row at all and the
  * sweep has to run over Notification rows.
  */
 export function isSuppressedForNotifications(a: { status: string; dependencySuppressed: boolean }): boolean {
   return String(a.status) === "maintenance" || a.dependencySuppressed === true;
+}
+
+/**
+ * FROZEN, NOT DEAF (business rule 16). A suppressed asset's live alert is
+ * frozen — it neither fires nor escalates — but it may still RECOVER on
+ * evidence gathered during the suppression: a window stops server-driven
+ * polling, not agent pushes or an operator's Probe Now, so a camera NVR that
+ * powers back on before its overnight window ends is reporting `up` through
+ * its agent while its Down alert sat frozen until the window closed.
+ *
+ * The danger is the opposite mistake — "recovering" on the last reading taken
+ * BEFORE the window, re-read at every tick because nothing replaces it. So a
+ * reading counts only when it was taken after the freeze began:
+ *  - in maintenance: strictly after the earliest open window's `startedAt`.
+ *    A maintenance status with no open window row (no start to compare
+ *    against) never qualifies — the alert stays frozen, as before.
+ *  - dependency-suppressed only: the asset is still probed (rule 38b), so any
+ *    timestamped reading is current.
+ * Pure, so the boundaries are testable without a database.
+ */
+export function frozenReadingIsFresh(
+  readingAt: Date | null | undefined,
+  inMaintenance: boolean,
+  windowStartedAt: Date | null | undefined,
+): boolean {
+  if (!readingAt) return false;
+  if (!inMaintenance) return true;
+  if (!windowStartedAt) return false;
+  return readingAt.getTime() > windowStartedAt.getTime();
+}
+
+/** Earliest open maintenance-window start per asset — when its polling stopped. */
+async function openWindowStarts(assetIds: string[]): Promise<Map<string, Date>> {
+  const out = new Map<string, Date>();
+  if (assetIds.length === 0) return out;
+  const rows = await prisma.assetMaintenanceWindow.findMany({
+    where: { assetId: { in: assetIds }, endedAt: null },
+    select: { assetId: true, startedAt: true },
+  });
+  for (const r of rows) {
+    const prev = out.get(r.assetId);
+    if (!prev || r.startedAt.getTime() < prev.getTime()) out.set(r.assetId, r.startedAt);
+  }
+  return out;
+}
+
+/**
+ * A frozenReadingIsFresh test bound to `candidates`' open windows. One window
+ * query, and only for the in-window subset — callers have already narrowed to
+ * assets holding a FIRING row, so this is a handful of ids however large the
+ * fleet.
+ */
+async function frozenFreshnessFor(
+  candidates: { id: string; status: string }[],
+): Promise<(assetId: string, readingAt: Date | null | undefined) => boolean> {
+  const inMaint = new Set(candidates.filter((a) => String(a.status) === "maintenance").map((a) => a.id));
+  const starts = await openWindowStarts([...inMaint]);
+  return (assetId, readingAt) => frozenReadingIsFresh(readingAt, inMaint.has(assetId), starts.get(assetId));
 }
 
 /**
@@ -2462,6 +2521,9 @@ async function evaluateThresholdRule(
   // out / not-answering). Hoisted out of the branch below because a custom
   // reset condition resolves its own leaves against them.
   let activeAssets: ScopeAssetRow[] = [];
+  // The rows behind suppressedIds — the frozen-recovery pass re-reads them.
+  const suppressedAssets: ScopeAssetRow[] = [];
+  const needsAnswering = triggerNeedsAnsweringDevice(trigger);
 
   if (trigger.type === "host_metric") {
     const r = await resolveHostMetricReading(trigger);
@@ -2486,7 +2548,6 @@ async function evaluateThresholdRule(
         (shadowIndex!.bySig.get(sig!) ?? []).map((m) => m.rule.scope?.condition),
       );
     }
-    const needsAnswering = triggerNeedsAnsweringDevice(trigger);
     const active: ScopeAssetRow[] = [];
     for (const a of assets) {
       // Business rule 78: a down automation that opted in keeps its
@@ -2494,7 +2555,7 @@ async function evaluateThresholdRule(
       // MAINTENANCE window still silences (rule 16 wins: announced downtime
       // is not an outage to report), so the carve-out is dependency-only.
       const spokenFor = speaksForSuppressed && a.dependencySuppressed && String(a.status) !== "maintenance";
-      if (isSuppressedForNotifications(a) && !spokenFor) suppressedIds.add(a.id);
+      if (isSuppressedForNotifications(a) && !spokenFor) { suppressedIds.add(a.id); suppressedAssets.push(a); }
       else if (shadowable && isAssetShadowed(shadowIndex!, rule, sig!, rank, a)) shadowedIds.add(a.id);
       else if (needsAnswering && !assetIsAnsweringProbes(a)) notAnsweringIds.add(a.id);
       else active.push(a);
@@ -2514,6 +2575,32 @@ async function evaluateThresholdRule(
   const states = await prisma.notificationRuleState.findMany({ where: { ruleId: rule.id } });
   const stateMap = new Map(states.map((s) => [`${s.assetId ?? ""}|${s.dimensionKey}`, s]));
   const now = new Date();
+  // FROZEN, NOT DEAF (business rule 16 — frozenReadingIsFresh). A suppressed
+  // asset holding a FIRING row of this rule is re-read so the alert can recover
+  // on evidence taken during the window. These readings only ever reach the
+  // recovery half of the loop below: never a fire, a pending row or a band
+  // change. Narrowed to firing rows first, so at 2000 assets this is the
+  // handful currently frozen, not the whole suppressed set.
+  let frozenReadings: Reading[] = [];
+  const frozenFreshIds = new Set<string>();
+  if (suppressedAssets.length > 0 && (trigger.type === "asset_metric" || trigger.type === "asset_state")) {
+    const firingFrozen = new Set(
+      states.filter((s) => s.state === "firing" && s.assetId && suppressedIds.has(s.assetId)).map((s) => s.assetId as string),
+    );
+    // A metric that needs an answering device has nothing to say about one
+    // that isn't answering (business rule 29) — leave that alert frozen.
+    const candidates = suppressedAssets.filter((a) => firingFrozen.has(a.id) && (!needsAnswering || assetIsAnsweringProbes(a)));
+    if (candidates.length > 0) {
+      const raw = trigger.type === "asset_metric"
+        ? await resolveAssetMetricReadings(trigger, candidates, new Set(), new Map())
+        : await resolveAssetStateReadings(trigger, candidates, { dependencyDownReadsDown: speaksForSuppressed, sdwanYielded: new Map() });
+      // Judged per READING, not per asset: one dimension refreshed during the
+      // window says nothing about another that stopped reporting before it.
+      const isFresh = await frozenFreshnessFor(candidates);
+      frozenReadings = raw.filter((r) => isFresh(r.assetId, r.readingAt));
+      for (const r of frozenReadings) frozenFreshIds.add(r.assetId);
+    }
+  }
   // Business rule 78 — which FLAVOUR each live alert of this rule was raised
   // in (plain Down, or dependency-down), so a firing row can be handed off when
   // the asset's suppression flag no longer agrees with its alert. Read only for
@@ -2551,7 +2638,7 @@ async function evaluateThresholdRule(
   const groupBuf: GroupBuffer | null = ruleGroupsByAsset(rule) ? new Map() : null;
   const liveByAsset = await liveAlertsByAsset(rule, states, tickIndex);
 
-  for (const reading of readings) {
+  for (const reading of frozenReadings.length ? [...readings, ...frozenReadings] : readings) {
     const key = `${reading.assetId || ""}|${reading.dimKey}`;
     seen.add(key);
     const lastValue = typeof reading.value === "number" ? reading.value : null;
@@ -2598,6 +2685,20 @@ async function evaluateThresholdRule(
         ...(groupBuf ? { group: groupBuf } : {}),
       }
       : undefined;
+
+    // A FROZEN asset's reading (business rule 16 — only suppressed assets with
+    // a fresh reading get here at all) may end a live alert and nothing else:
+    // no fire, no pending row, no band move, no flavour handoff. A still-bad
+    // reading just breaks any recovery run in progress.
+    if (reading.assetId && suppressedIds.has(reading.assetId)) {
+      if (!st || st.state !== "firing") continue;
+      if (meets) {
+        const data: Prisma.NotificationRuleStateUpdateInput = { ...(resetTree || !st.recoveredSince ? {} : { recoveredSince: null }), ...runPatch() };
+        if (Object.keys(data).length) await prisma.notificationRuleState.update({ where: { id: st.id }, data });
+        continue;
+      }
+      // Not met → the ordinary firing-row recovery branch below.
+    }
 
     if (meets) {
       // Business rule 78 — the alert's flavour follows the asset's suppression
@@ -2745,12 +2846,13 @@ async function evaluateThresholdRule(
   // that only just fired has not gone out of scope or been superseded.
   if (groupBuf?.size) await flushGroupFires(rule, groupBuf, liveByAsset, now, pendingSends, tickIndex);
 
-  // Suppressed assets produced no readings this tick. Reset their `pending`
-  // rows — the debounce restarts from scratch after the window, a dropped
-  // reading being evidence of nothing. Their `firing` rows are left alone:
-  // frozen through a maintenance window (rule 16 — a window never retires an
-  // alert), or retired by the suppression sweep (clearSuppressedAlerts, run
-  // ahead of this tick) when the asset is dark behind a parent that is down.
+  // Suppressed assets produced no fire-side readings this tick. Reset their
+  // `pending` rows — the debounce restarts from scratch after the window, a
+  // dropped reading being evidence of nothing. Their `firing` rows are left
+  // alone here: frozen through a maintenance window (rule 16 — a window never
+  // retires an alert, though fresh evidence may recover one in the loop above),
+  // or retired by the suppression sweep (clearSuppressedAlerts, run ahead of
+  // this tick) when the asset is dark behind a parent that is down.
   for (const st of states) {
     if (st.state === "pending" && st.assetId && suppressedIds.has(st.assetId)) {
       await prisma.notificationRuleState.update({
@@ -2904,9 +3006,10 @@ async function evaluateThresholdRule(
   // a row that only just fired must not be recovered in the same tick it fired.
   if (resetTree) {
     const firing = (await prisma.notificationRuleState.findMany({ where: { ruleId: rule.id, state: "firing" } }))
-      // A suppressed asset (maintenance / dependency-down) is frozen, not
-      // recovering — same contract as every other path.
-      .filter((st) => !(st.assetId && suppressedIds.has(st.assetId)));
+      // A suppressed asset (maintenance / dependency-down) is frozen — unless
+      // its trigger reading was taken during the freeze, the same evidence
+      // test the readings loop applies (business rule 16).
+      .filter((st) => !(st.assetId && suppressedIds.has(st.assetId) && !frozenFreshIds.has(st.assetId)));
     // Resolve the tree against the FIRING assets only — usually a handful out of
     // the whole scope, and the leaves are separate queries per sample table, so
     // handing them 2000 asset ids to answer a question about three alerts is the
@@ -2915,7 +3018,7 @@ async function evaluateThresholdRule(
     const firingAssetIds = new Set(firing.map((st) => st.assetId ?? ""));
     const resetAssets = trigger.type === "host_metric"
       ? activeAssets // the host pseudo-asset; host leaf resolvers ignore the list anyway
-      : activeAssets.filter((a) => firingAssetIds.has(a.id));
+      : [...activeAssets, ...suppressedAssets.filter((a) => frozenFreshIds.has(a.id))].filter((a) => firingAssetIds.has(a.id));
     if (firing.length > 0 && resetAssets.length > 0) {
       const resetLeaves = collectLeafRefs(resetTree);
       // The firing rows' own dimension vocabulary, and whether this automation
@@ -2927,7 +3030,7 @@ async function evaluateThresholdRule(
         dimensionSpaceOf(trigger),
         poeFaultCoversUnpinned(trigger),
       );
-      const readingByKey = new Map(readings.map((r) => [`${r.assetId || ""}|${r.dimKey}`, r]));
+      const readingByKey = new Map([...readings, ...frozenReadings].map((r) => [`${r.assetId || ""}|${r.dimKey}`, r]));
       for (const st of firing) {
         const assetId = st.assetId ?? "";
         const recovered = evalTriggerTree(resetTree, (leafId) => truthAt(leafId, assetId, st.dimensionKey));
@@ -3365,12 +3468,24 @@ async function evaluateCompositeRule(
   }
   const stateMap = new Map(states.filter((s) => s.dimensionKey === "").map((s) => [s.assetId ?? "", s]));
 
+  // FROZEN, NOT DEAF (business rule 16 — frozenReadingIsFresh): a suppressed
+  // asset holding a firing row is evaluated for RECOVERY only, and only when
+  // its tree's newest reading was taken during the freeze.
+  let frozenAssets: ScopeAssetRow[] = [];
+  let frozenTruths: Awaited<ReturnType<typeof resolveLeafTruths>> | null = null;
+  const frozenCandidates = scopeAssets.filter((a) => suppressedIds.has(a.id) && stateMap.get(a.id)?.state === "firing");
+  if (frozenCandidates.length > 0) {
+    frozenTruths = await resolveLeafTruths(leaves, frozenCandidates);
+    const isFresh = await frozenFreshnessFor(frozenCandidates);
+    frozenAssets = frozenCandidates.filter((a) => isFresh(a.id, compositeOutcomeForAsset(trigger, a.id, leaves, frozenTruths!).readingAt));
+  }
+
   // Condition-mode reset: resolve the reset tree ONLY against assets that are
   // actually firing — usually zero extra queries.
   const resetTree = rule.reset.mode === "condition" ? (rule.reset.condition ?? null) : null;
   let resetOutcomeFor: (assetId: string) => CompositeOutcome | null = () => null;
   if (resetTree) {
-    const firingAssets = activeAssets.filter((a) => stateMap.get(a.id)?.state === "firing");
+    const firingAssets = [...activeAssets, ...frozenAssets].filter((a) => stateMap.get(a.id)?.state === "firing");
     if (firingAssets.length > 0) {
       const resetLeaves = collectLeafRefs(resetTree);
       const resetTruths = await resolveLeafTruths(resetLeaves, firingAssets);
@@ -3390,11 +3505,15 @@ async function evaluateCompositeRule(
   // analogue of the per-reading path's `seen` set, for the vanished sweep.
   const evaluatedIds = new Set<string>();
 
-  for (const a of activeAssets) {
-    const outcome = compositeOutcomeForAsset(trigger, a.id, leaves, truths);
+  for (const a of frozenAssets.length ? [...activeAssets, ...frozenAssets] : activeAssets) {
+    const frozen = suppressedIds.has(a.id);
+    const outcome = compositeOutcomeForAsset(trigger, a.id, leaves, frozen ? frozenTruths! : truths);
     if (!outcome.hasAnyReading) continue; // no evidence either way — state frozen (parity with the per-reading path)
     evaluatedIds.add(a.id);
     const st = stateMap.get(a.id);
+    // Frozen assets were narrowed to firing rows, so they take the firing
+    // branch below and `continue` — the fire half is unreachable for them.
+    if (frozen && st?.state !== "firing") continue;
     // `readingAt` is the tree's own poll anchor (the newest leaf reading), which
     // is what a poll-counted hold or clear-sustain counts observations against.
     const reading: Reading = { assetId: a.id, hostname: a.hostname, tags: a.tags, dimKey: "", dimLabel: "", value: null, readingAt: outcome.readingAt ?? null };
