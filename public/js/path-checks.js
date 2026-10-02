@@ -198,7 +198,7 @@
     if (_sf) data = _sf.apply(data);
     if (!data.length) {
       tbody.innerHTML = '<tr><td colspan="10" class="empty-state">' +
-        (_checks.length ? "No checks match the filters." : "No path checks yet" + (editor ? ' — click "+ Add check" to create one.' : ".")) +
+        (_checks.length ? "No checks match the filters." : "No path checks yet" + (editor ? ' — click "+ Add monitor" to create one.' : ".")) +
         "</td></tr>";
       if (typeof clearPageControls === "function") clearPageControls("path-pagination");
       return;
@@ -593,7 +593,7 @@
       return '<div class="step-panel' + (i === 0 ? " visible" : "") + '" id="pc-step-' + (i + 1) + '">' +
         stepHead(st.question, st.explain) + panels[st.key] + "</div>";
     }).join("");
-    var title = editingId ? "Edit Path Check" : "Add Path Check";
+    var title = editingId ? "Edit Path Monitor" : "Add Path Monitor";
     var footer = '<button type="button" class="btn btn-secondary" id="pc-cancel">Cancel</button>' +
       '<button type="button" class="btn btn-secondary" id="pc-back" style="display:none">&larr; Back</button>' +
       '<button type="button" class="btn btn-primary" id="pc-next">Next &rarr;</button>' +
@@ -630,7 +630,11 @@
     body.querySelector("#pc-follow-note").style.display = legacyFollow && existing ? "" : "none";
     var condRoot = body.querySelector("#pc-cond-root");
     condRoot.innerHTML = builder.groupHtml(scope.condition || (c.sourceFilter && c.sourceFilter.condition) || { op: "and", children: [] }, 0);
-    builder.wire(body, "#pc-cond-root");
+    // Bind to #pc-agent-sources, NEVER to the modal body: openModal reuses one
+    // persistent .modal-body, so listeners there outlive the dialog and stack
+    // up per open — the second open's "+ Condition" appended two rows, and the
+    // hidden blank one kept the host list stuck on "needs a value".
+    builder.wire(body.querySelector("#pc-agent-sources"), "#pc-cond-root");
     // The blank condition row is seeded only while the agent filter is the
     // source: seeding it under a server-run check left an unfilled row that
     // then refused the save.
@@ -751,6 +755,7 @@
       if (serverCb.checked || allCb.checked) { ++previewSeq; return; } // nothing to pick
       var finder = collectFinder();
       if (!finder.condition && !pins.size) {
+        ++previewSeq; // a reply still in flight must not overwrite this hint
         previewShell('<span class="hint">' + esc(finder.error || "Add a condition to find agent hosts, then tick the ones that should run this check.") + "</span>");
         return;
       }
