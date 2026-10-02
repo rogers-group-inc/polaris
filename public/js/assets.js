@@ -24737,7 +24737,9 @@ function _renderPathLatestCard(check) {
   var mount = document.getElementById("path-latest");
   if (!mount) return;
   var l = check.latest || {};
-  var row = function (k, v) { return '<div class="asset-view-row"><span class="asset-view-label">' + k + '</span><span class="asset-view-value">' + v + "</span></div>"; };
+  // The asset-details key/value row (label left, value right). This used
+  // asset-view-row/-label/-value, which have no CSS — label and value ran together.
+  var row = function (k, v) { return '<div class="detail-row"><span class="detail-label">' + k + '</span><span class="detail-value">' + v + "</span></div>"; };
   mount.innerHTML = '<div class="chart-label">Latest result</div><div class="asset-view-grid">' +
     row("Result", _pathResultPill(l)) +
     row("When", escapeHtml(_pathFmtWhen(l.lastSampleAt))) +
