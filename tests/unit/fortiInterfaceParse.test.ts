@@ -211,6 +211,23 @@ describe("backfillFortiCmdbOnlyTunnels", () => {
     expect(interfaces.filter((r) => r.ifName === "wan1")).toHaveLength(1);
   });
 
+  it("skips FortiOS's built-in pseudo-tunnels but keeps an unnumbered tunnel that has an underlay", () => {
+    // Shapes copied from the FortiOS 7.6.7 lab gates: ssl/l2t/naf.root exist on
+    // every gate with ip 0.0.0.0 and no `interface`.
+    const cmdb = parseFortiCmdbInterfaceTable([
+      { name: "ssl.root", type: "tunnel", ip: "0.0.0.0 0.0.0.0", interface: "" },
+      { name: "l2t.root", type: "tunnel", ip: "0.0.0.0 0.0.0.0" },
+      { name: "naf.root", type: "tunnel", ip: "0.0.0.0 0.0.0.0" },
+      { name: "to-branch", type: "tunnel", ip: "0.0.0.0 0.0.0.0", interface: "wan2" },
+    ]);
+    const interfaces = buildFortiInterfaceSamples({}, cmdb);
+    backfillFortiCmdbOnlyTunnels(interfaces, cmdb);
+    expect(interfaces.map((r) => r.ifName)).toEqual(["to-branch"]);
+    expect(interfaces[0]!.ipAddress).toBeNull();
+    expect(cmdb.get("to-branch")!.tunnelUnderlay).toBe("wan2");
+    expect(cmdb.get("ssl.root")!.tunnelUnderlay).toBeNull();
+  });
+
   it("leaves a tunnel the monitor did report alone, and ignores non-tunnel CMDB-only rows", () => {
     const cmdb = parseFortiCmdbInterfaceTable([
       { name: "vpn1", type: "tunnel", ip: "10.9.9.9 255.255.255.255" },

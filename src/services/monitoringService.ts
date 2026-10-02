@@ -5918,6 +5918,10 @@ export interface FortiCmdbInterfaceEntry {
    *  see `backfillFortiCmdbOnlyTunnels`; the monitor's runtime IP wins
    *  everywhere else. */
   ipAddress: string | null;
+  /** A `type tunnel` interface's underlay (CMDB `interface`, e.g. "wan1");
+   *  null for every other type and for FortiOS's built-in per-VDOM
+   *  pseudo-tunnels (`ssl.root`, `l2t.root`, `naf.root`), which carry none. */
+  tunnelUnderlay: string | null;
 }
 
 /**
@@ -5980,6 +5984,7 @@ export function parseFortiCmdbInterfaceTable(cmdbRes: unknown): Map<string, Fort
       addressingMode,
       adminStatus,
       ipAddress,
+      tunnelUnderlay: t === "tunnel" && typeof c.interface === "string" && c.interface.trim() ? c.interface.trim() : null,
     });
   }
   return cmdbByName;
@@ -6123,6 +6128,12 @@ export function backfillFortiAggregateMembers(
  * shortcut interfaces ADVPN spawns at runtime (`<name>_0`, `<name>_1`…) are
  * not CMDB rows and are not synthesized; they carry the parent's address.
  * A tunnel the monitor DID report is left alone. Mutates `interfaces` in place.
+ *
+ * A tunnel with neither an address nor an underlay is skipped: that is the
+ * shape of FortiOS's built-in per-VDOM pseudo-tunnels (`ssl.root`,
+ * `l2t.root`, `naf.root`), present on every gate and never what an operator
+ * means by a tunnel. An unnumbered route-based IPsec interface still has its
+ * underlay, so it is kept. Confirmed against the FortiOS 7.6.7 lab gates.
  */
 export function backfillFortiCmdbOnlyTunnels(
   interfaces: InterfaceSample[],
@@ -6131,6 +6142,7 @@ export function backfillFortiCmdbOnlyTunnels(
   const present = new Set(interfaces.map((s) => s.ifName));
   for (const [name, c] of cmdbByName) {
     if (c.type !== "tunnel" || present.has(name)) continue;
+    if (!c.ipAddress && !c.tunnelUnderlay) continue;
     interfaces.push({
       ifName:      name,
       adminStatus: c.adminStatus,
