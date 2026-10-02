@@ -60,6 +60,9 @@ import {
   // Grouped alerts (business rule 75) — the pure fold layer. Everything that
   // DECIDES lives there and is unit-tested; this file does the I/O.
   type AlertMember,
+  type GroupChange,
+  classifyGroupChanges,
+  describeGroupChanges,
   ruleGroupsByAsset,
   alertScopeOf,
   groupKeyOf,
@@ -3858,14 +3861,14 @@ async function enqueueAlertActions(
   reading: Reading,
   /** Set when this send UPDATES a grouped alert that gained a contribution
    *  (business rule 75) rather than opening one. */
-  growth?: { growth: true; count: number },
+  growth?: { growth: true; count: number; change?: string },
   /** The AlertGroup delivering this alert, when one governs it (business rule
    *  75). Supplies the email layout; the caller has already swapped in its
    *  actions. Provenance (ruleId, ruleName) stays the AUTOMATION's. */
   owner?: DeliveryOwner | null,
 ): Promise<void> {
   await executeActionsSafe(notifId, actions, ctx, {
-    ...(growth ? { growth: { count: growth.count } } : {}),
+    ...(growth ? { growth: { count: growth.count, ...(growth.change ? { change: growth.change } : {}) } } : {}),
     scopeRegionTags: scopeRegionTagsOf(rule.scope),
     // The triggering asset's own region tags (stripped) — recipientDeviceRegion
     // routing. Same snapshot fire() writes to Notification.regionTags.
@@ -3968,6 +3971,10 @@ interface PendingSend {
   severity: string;
   /** How many contributions the alert names as of this send. */
   count: number;
+  /** What joined or came back this tick — what a growth send says changed. */
+  changes?: GroupChange[];
+  /** Set when a join re-opened an acknowledged alert: who had acknowledged it. */
+  reopenedFrom?: string;
 }
 type PendingSends = Map<string, PendingSend>;
 
@@ -4273,7 +4280,11 @@ async function joinGroupAlert(
   if (!row) return false;
 
   const prev = (row.members ?? []) as unknown as AlertMember[];
-  const members = mergeMembers(prev, fires.map((f) => memberOf(rule, f, now)), now);
+  const joining = fires.map((f) => memberOf(rule, f, now));
+  // Before the merge, which clears `leftAt` — the only trace of a component
+  // that recovered and has now faulted again.
+  const changes = classifyGroupChanges(prev, joining, now);
+  const members = mergeMembers(prev, joining, now);
   const severity = groupSeverity(members, rule.severity);
   const primary = primaryMember(members);
   const lead = fires.find((f) => f.reading.dimKey === primary?.key) ?? fires[0]!;
@@ -4317,6 +4328,11 @@ async function joinGroupAlert(
     actions: lead.actions,
     severity,
     count: activeMembers(members).length,
+    // Accumulated, so two member automations of one AlertGroup joining in the
+    // same tick both make the one update's "what changed". A fire recorded
+    // this tick needs none — the contributions simply ride it.
+    changes: [...(existing?.changes ?? []), ...changes],
+    reopenedFrom: reopening ? (row.acknowledgedBy ?? "") : existing?.reopenedFrom,
   });
 
   await logEvent({
@@ -4397,9 +4413,16 @@ async function drainPendingSends(pending: PendingSends): Promise<void> {
   const owners = await groupOwnersOf(grouped);
   for (const s of pending.values()) {
     const owner = owners.get(s.notificationId) ?? null;
+    // An update says what changed. Applied to a COPY: `s.ctx` is the object
+    // joinGroupAlert stored as the alert's templateCtx, which reminders and
+    // escalations replay, and they must not repeat this update as news.
+    const change = s.kind === "growth"
+      ? describeGroupChanges(s.changes ?? [], s.reopenedFrom !== undefined ? { reopenedFrom: s.reopenedFrom } : {})
+      : null;
+    const ctx = change ? { ...s.ctx, "alert.change": change.sentence } : s.ctx;
     await enqueueAlertActions(
-      s.notificationId, owner ? ownerActions(owner) : s.actions, s.ctx, s.rule, s.reading,
-      s.kind === "growth" ? { growth: true, count: s.count } : undefined,
+      s.notificationId, owner ? ownerActions(owner) : s.actions, ctx, s.rule, s.reading,
+      s.kind === "growth" ? { growth: true, count: s.count, ...(change ? { change: change.subjectTag } : {}) } : undefined,
       owner,
     );
   }

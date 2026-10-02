@@ -89,7 +89,8 @@ export interface ActionExecContext {
    *
    *  `count` is the number of contributions the alert now names, which is what
    *  makes the subject worth reading in a full inbox. */
-  growth?: { count: number };
+  /** `change`: what joined or came back, for the subject ("port7 back"). */
+  growth?: { count: number; change?: string };
   /** Audit actor; defaults to "system:automation". */
   actor?: string;
 }
@@ -336,12 +337,16 @@ function composeForNotify(
   // A grouped alert that gained a contribution (business rule 75). Same shape
   // and same restraint as the reminder prefix above: only when nobody wrote a
   // subject template. The COUNT is the finding — "another port" is noise, "now
-  // 9 ports" is a spreading fault — so it is what the marker carries.
+  // 9 ports" is a spreading fault — so it is what the marker carries. Then
+  // WHAT changed, because a port that recovers and faults again inside one
+  // alert leaves the count where it was, and "[UPDATED · 2]" twice in a row
+  // read as the same email sent twice.
   if (exec.growth && !exec.escalation) {
     const comp = actionComp ?? exec.ruleEmailComposition ?? {};
     const composed = buildComposedEmail(comp, ctx);
     if (!comp.subjectTemplate || !comp.subjectTemplate.trim()) {
-      composed.subject = `[UPDATED · ${exec.growth.count}] ${composed.subject}`;
+      const change = exec.growth.change ? ` · ${exec.growth.change}` : "";
+      composed.subject = `[UPDATED · ${exec.growth.count}${change}] ${composed.subject}`;
     }
     return composed;
   }

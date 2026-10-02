@@ -12,7 +12,7 @@
 import { z } from "zod";
 import { isValidCidr, isValidIpAddress, ipInCidr } from "../utils/cidr.js";
 import { compileWildcard } from "../utils/wildcard.js";
-import { TEMPLATE_VARIABLES } from "../utils/notificationTemplate.js";
+import { TEMPLATE_VARIABLES, formatElapsed } from "../utils/notificationTemplate.js";
 import { defaultAlertEmailTemplate } from "../utils/alertEmailTemplate.js";
 import { SENSOR_CLASS_UNITS } from "../utils/hardwareSensors.js";
 import { POE_STATUS_VALUES } from "../utils/poePorts.js";
@@ -4539,6 +4539,95 @@ export function markMemberLeft(
   return (members ?? []).map((m) =>
     memberIdentity(m) === id && !m.leftAt ? { ...m, leftAt: now.toISOString() } : m,
   );
+}
+
+/** What one later contribution did to a grouped alert: arrived for the first
+ *  time, or came back after recovering inside the same alert. */
+export interface GroupChange {
+  label: string;
+  /** "joined": never on this alert before. "returned": it recovered (its
+   *  member row carries `leftAt`) and has faulted again. */
+  kind: "joined" | "returned";
+  /** How long it had been recovered, for a "returned" contribution. */
+  awayMs?: number;
+}
+
+/**
+ * Classify the contributions joining an alert against the snapshot they join.
+ *
+ * Read BEFORE `mergeMembers`, which clears `leftAt` and so erases the very
+ * difference this reports. A contribution already active in the snapshot is
+ * not a change and is left out.
+ */
+export function classifyGroupChanges(
+  prev: AlertMember[] | null | undefined,
+  joining: AlertMember[],
+  now: Date,
+): GroupChange[] {
+  const byId = new Map((prev ?? []).map((m) => [memberIdentity(m), m]));
+  const out: GroupChange[] = [];
+  for (const m of joining) {
+    const before = byId.get(memberIdentity(m));
+    if (!before) { out.push({ label: m.label || m.key, kind: "joined" }); continue; }
+    if (!before.leftAt) continue;
+    const left = Date.parse(before.leftAt);
+    out.push({
+      label: m.label || m.key,
+      kind: "returned",
+      ...(Number.isNaN(left) ? {} : { awayMs: Math.max(0, now.getTime() - left) }),
+    });
+  }
+  return out;
+}
+
+/** How many components an update's subject tag names before "+N more". The
+ *  subject already carries the device and the automation; past three names it
+ *  stops being readable on a phone. */
+const CHANGE_SUBJECT_CAP = 3;
+
+/**
+ * What an `[UPDATED]` email says changed — the `{alert.change}` sentence and
+ * the short tag the default subject carries.
+ *
+ * Exists because an update used to be byte-identical to the first send apart
+ * from the count, and a port that recovers and faults again inside one alert
+ * leaves the count where it was: the reader got the same email again with
+ * nothing to say why. Null when there is nothing to report.
+ */
+export function describeGroupChanges(
+  changes: GroupChange[],
+  opts: { reopenedFrom?: string | null } = {},
+): { sentence: string; subjectTag: string } | null {
+  if (!changes.length) return null;
+  const joined = changes.filter((c) => c.kind === "joined");
+  const returned = changes.filter((c) => c.kind === "returned");
+  const clauses: string[] = [];
+  if (joined.length) {
+    clauses.push(`${listLabels(joined.map((c) => c.label))} joined this alert`);
+  }
+  for (const c of returned) {
+    clauses.push(c.awayMs !== undefined
+      ? `${c.label} is in fault again after recovering for ${formatElapsed(c.awayMs)}`
+      : `${c.label} is in fault again after recovering`);
+  }
+  let sentence = `Update: ${clauses.join("; ")}.`;
+  if (opts.reopenedFrom !== undefined) {
+    sentence += ` Re-opened — ${opts.reopenedFrom || "someone"} had acknowledged it.`;
+  }
+  const tags = changes.map((c) => (c.kind === "joined" ? `+${c.label}` : `${c.label} back`));
+  const subjectTag = tags.length > CHANGE_SUBJECT_CAP
+    ? `${tags.slice(0, CHANGE_SUBJECT_CAP).join(", ")} +${tags.length - CHANGE_SUBJECT_CAP} more`
+    : tags.join(", ");
+  return { sentence, subjectTag };
+}
+
+/** "a", "a and b", "a, b and c" — capped at GROUP_LABEL_CAP like the message. */
+function listLabels(labels: string[]): string {
+  const shown = labels.slice(0, GROUP_LABEL_CAP);
+  const extra = labels.length - shown.length;
+  if (extra > 0) return `${shown.join(", ")} and ${extra} more`;
+  if (shown.length <= 1) return shown.join("");
+  return `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
 }
 
 /** A contribution is identified by (automation, component), not by component

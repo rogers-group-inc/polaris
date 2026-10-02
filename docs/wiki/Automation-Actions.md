@@ -345,6 +345,7 @@ the subject fragment away when they are.
 **Follow-up**
 `{escalation.tier}` `{escalation.elapsed}` `{escalation.policy}`
 `{repeat.attempt}` `{repeat.elapsed}` `{repeat.quiet}` `{repeat.policy}`
+`{alert.change}` — on the update a grouped alert sends when a component joins or comes back, what changed; empty on every other send
 
 **Who else knows**
 `{push.recipients}` `{email.recipients}`
@@ -400,7 +401,11 @@ instead ([rule 75](Business-Rules#rule-75)):
 - the alert **stays up until the last one recovers** — the first port to come
   back does not send "Resolved" while the rest are still down;
 - a component that goes wrong later **joins** the alert and sends one more
-  message naming the whole set, and that **re-opens** an acknowledged alert;
+  message naming the whole set, and that **re-opens** an acknowledged alert.
+  That message is marked `[UPDATED · n · what changed]` on the subject and
+  says what changed at the top — a new component (`+port9`), or one that
+  recovered and has faulted again (`port7 back`, with how long it had been
+  recovered). The sentence is the `{alert.change}` token;
 - the alert carries the **worst** severity among the components still affected.
 
 The checkbox appears only on a trigger that reports per component. Turning it
