@@ -215,6 +215,13 @@ the display string discovery stored back to the **Asset row behind it**, so the
 row carries verbs — open the device, open its HTTPS UI, SSH to it — instead of
 being text you re-find by hand.
 
+The tag picker in the edit form shows every tag the asset carries. Tags with no
+entry in the tag list (Server Settings → Identification), such as the ones
+discovery adds (`auto-discovered`, `azurearc`, `fortiswitch`…), appear ticked
+under **Not in tag list** and are kept when you save. Untick one to remove it;
+a discovery tag comes back on the next run. `azure:` tags are locked, because
+the Azure Arc integration owns them ([Azure tags on devices](Integration-Azure-Arc#azure-tags-on-devices)).
+
 Resolution never matches a FortiGate by hostname. `fortinetTopology.controllerFortigate`
 holds FortiManager's *device name*, which diverges from the gate's configured
 hostname on real fleets; matching on it fails silently across dependency

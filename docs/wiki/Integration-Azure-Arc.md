@@ -87,7 +87,8 @@ tags to devices** and they also become ordinary Polaris tags, named
 `azure:Key=Value`. For example, `DefenderPlan = P1` in Azure becomes
 `azure:DefenderPlan=P1`. A tag with no value becomes `azure:Key`. You can then
 filter the Assets page, scope automations and scope users by them like any
-other tag. They appear in the tag pickers under the **Azure Tags** category.
+other tag. They appear in the tag pickers under the **Azure Tags** category,
+locked: editing an asset keeps them, and you change them in Azure.
 
 - **Polaris keeps them in step with Azure on every discovery run.** A tag you
   change or remove in Azure is changed or removed here. Turn the toggle off and

@@ -4876,15 +4876,26 @@ function _canCreateRegistryTags() {
  */
 function _renderTagChips(selected) {
   var cats = {};
+  var registered = {};
   _tagCache.tags.forEach(function (t) {
     var cat = t.category || "General";
     if (!cats[cat]) cats[cat] = [];
     cats[cat].push(t);
+    registered[t.name] = true;
   });
   var catNames = Object.keys(cats).sort();
   var html = '';
+  // Tags the item carries that have no registry row — discovery's own tags
+  // (azurearc, auto-discovered, arc-*, fortiswitch, entraid…), or ones applied
+  // before the registry had a row for them. getTagFieldValue reads only the
+  // rendered checkboxes, so a tag with no chip was silently DROPPED on every
+  // save of the edit form. They render ticked in their own group instead:
+  // kept unless the operator unticks one.
+  var unlisted = selected.filter(function (name, i) {
+    return !registered[name] && selected.indexOf(name) === i;
+  });
 
-  if (_tagCache.tags.length === 0) {
+  if (_tagCache.tags.length === 0 && unlisted.length === 0) {
     html += '<p class="hint" style="margin:0">' + (
       _tagCache.failed
         ? 'Could not load the tag list. Reload the page to try again.'
@@ -4897,12 +4908,7 @@ function _renderTagChips(selected) {
       html += '<div class="tag-picker-category">' +
         '<span class="tag-picker-cat-label">' + escapeHtml(cat) + '</span>';
       cats[cat].forEach(function (t) {
-        var checked = selected.indexOf(t.name) !== -1;
-        var colorStyle = _tagChipStyle(t.color, checked);
-        html += '<label class="tag-picker-chip' + (checked ? ' selected' : '') + '" style="' + colorStyle + '">' +
-          '<input type="checkbox" name="f-tags-cb" value="' + escapeHtml(t.name) + '"' + (checked ? ' checked' : '') + '>' +
-          escapeHtml(t.name) +
-        '</label>';
+        html += _tagChipHTML(t.name, t.color, selected.indexOf(t.name) !== -1);
       });
       if (cat === REGION_TAG_CATEGORY) {
         // These are also written by the Device Map region reconciler; say what
@@ -4911,10 +4917,40 @@ function _renderTagChips(selected) {
           'Region tags are auto-applied to devices inside a Device Map region — removing one from a device still in the region re-adds it on the next reconcile. A tag you add here yourself is never auto-removed.' +
         '</p>';
       }
+      if (cat === AZURE_TAG_CATEGORY) {
+        html += '<p class="hint" style="flex-basis:100%;margin:2px 0 0">' +
+          'Mirrored from Azure resource tags by the Azure Arc integration — change them in Azure; the next discovery run follows.' +
+        '</p>';
+      }
       html += '</div>';
     });
+    if (unlisted.length > 0) {
+      html += '<div class="tag-picker-category">' +
+        '<span class="tag-picker-cat-label">Not in tag list</span>';
+      unlisted.forEach(function (name) { html += _tagChipHTML(name, '', true); });
+      html += '<p class="hint" style="flex-basis:100%;margin:2px 0 0">' +
+        'Added by discovery or before the tag list had them. Kept on save unless you untick one — a discovery tag you untick comes back on the next run.' +
+      '</p></div>';
+    }
   }
   return html;
+}
+
+// `azure:` tags belong to the Azure Arc sync (it strips and re-adds every one
+// each run), so their chips are locked: unticking one would only last until
+// the next run, and ticking one onto another device would be stripped by it.
+// A locked, ticked chip still counts in getTagFieldValue (`:checked` matches
+// a disabled checkbox), so a save keeps it.
+var AZURE_TAG_PREFIX = "azure:";
+var AZURE_TAG_CATEGORY = "Azure Tags";
+
+function _tagChipHTML(name, color, checked) {
+  var locked = String(name).toLowerCase().indexOf(AZURE_TAG_PREFIX) === 0;
+  return '<label class="tag-picker-chip' + (checked ? ' selected' : '') + '" style="' + _tagChipStyle(color, checked) + '"' +
+    (locked ? ' title="Set in Azure — mirrored by the Azure Arc integration"' : '') + '>' +
+    '<input type="checkbox" name="f-tags-cb" value="' + escapeHtml(name) + '"' + (checked ? ' checked' : '') + (locked ? ' disabled' : '') + '>' +
+    escapeHtml(name) +
+  '</label>';
 }
 
 function tagFieldHTML(selected, opts) {
