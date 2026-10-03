@@ -174,3 +174,38 @@ describe("decideDuplicateSerialGroup", () => {
     }
   });
 });
+
+// Business rule 91 — two usable serials that differ are two devices whatever
+// the tier. A FortiLink fleet names its switch-ids per site, so two switches
+// legitimately share a hostname; the MAC tie-break only guards a pair that
+// BOTH carry a MAC.
+describe("decideDuplicateHostnameGroup — conflicting serials (rule 91)", () => {
+  it("skips two managed switches with different serials even when one has no MAC", () => {
+    const a = row({ id: "a", sources: [{ sourceKind: "fortiswitch" }], serialNumber: "S248EPTF000A", macAddress: "70:4C:A5:00:00:0A" });
+    const b = row({ id: "b", sources: [{ sourceKind: "fortiswitch" }], serialNumber: "S248EPTF000B", macAddress: null });
+    const d = decideDuplicateHostnameGroup([a, b]);
+    expect(d.kind).toBe("skip");
+    if (d.kind === "skip") expect(d.reason).toContain("conflicting serials");
+  });
+
+  it("skips across tiers too — a serial-bearing endpoint ghost is not absorbed into a different-serial switch", () => {
+    const sw = row({ id: "sw", sources: [{ sourceKind: "fortiswitch" }], serialNumber: "S248EPTF000A" });
+    const ep = row({ id: "ep", sources: [{ sourceKind: "fortigate-endpoint" }], serialNumber: "S248EPTF000B" });
+    expect(decideDuplicateHostnameGroup([sw, ep]).kind).toBe("skip");
+  });
+
+  it("still merges when the serials agree or one side has none", () => {
+    const sw = row({ id: "sw", sources: [{ sourceKind: "fortiswitch" }], serialNumber: "S248EPTF000A" });
+    const same = row({ id: "same", sources: [{ sourceKind: "fortigate-endpoint" }], serialNumber: "s248eptf000a" });
+    const none = row({ id: "none", sources: [{ sourceKind: "fortigate-endpoint" }], serialNumber: null });
+    const d = decideDuplicateHostnameGroup([sw, same, none]);
+    expect(d.kind).toBe("merge");
+    if (d.kind === "merge") expect(d.ghosts.map((g) => g.id).sort()).toEqual(["none", "same"]);
+  });
+
+  it("ignores placeholder serials (rule 84) when judging the conflict", () => {
+    const a = row({ id: "a", sources: [{ sourceKind: "fortigate-endpoint" }], serialNumber: "To Be Filled By O.E.M." });
+    const b = row({ id: "b", sources: [{ sourceKind: "fortigate-endpoint" }], serialNumber: "Default string" });
+    expect(decideDuplicateHostnameGroup([a, b]).kind).toBe("merge");
+  });
+});

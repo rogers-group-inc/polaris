@@ -5619,6 +5619,11 @@ interface BoundChildRow {
   parentAssetId: string;
   id: string;
   hostname: string | null;
+  // Serial + address ride every tree node so the renderer can tell two
+  // same-named switches apart (business rule 91) — the hostname alone is not
+  // an identity on a FortiLink fleet that names its switch-ids per site.
+  serialNumber: string | null;
+  ipAddress: string | null;
   assetType: string;
   dependencyLayer: number | null;
   monitorStatus: string | null;
@@ -5662,6 +5667,8 @@ async function loadBoundChildRows(
         select: {
           id: true,
           hostname: true,
+          serialNumber: true,
+          ipAddress: true,
           assetType: true,
           dependencyLayer: true,
           monitorStatus: true,
@@ -5691,6 +5698,8 @@ async function loadBoundChildRows(
       parentAssetId:        r.parentAssetId,
       id:                   r.asset.id,
       hostname:             r.asset.hostname,
+      serialNumber:         r.asset.serialNumber,
+      ipAddress:            r.asset.ipAddress,
       assetType:            r.asset.assetType,
       dependencyLayer:      r.asset.dependencyLayer,
       monitorStatus:        r.asset.monitorStatus,
@@ -5719,7 +5728,7 @@ async function loadDependencyHaPeer(asset: { assetType: string; fortinetTopology
   const peer = await prisma.asset.findFirst({
     where: { serialNumber: { equals: peerSerial, mode: "insensitive" } },
     select: {
-      id: true, hostname: true, assetType: true, dependencyLayer: true,
+      id: true, hostname: true, serialNumber: true, ipAddress: true, assetType: true, dependencyLayer: true,
       monitorStatus: true, monitored: true, fortinetTopology: true,
     },
   });
@@ -5728,6 +5737,8 @@ async function loadDependencyHaPeer(asset: { assetType: string; fortinetTopology
   return {
     id: peer.id,
     hostname: peer.hostname,
+    serialNumber: peer.serialNumber,
+    ipAddress: peer.ipAddress,
     assetType: peer.assetType,
     dependencyLayer: peer.dependencyLayer,
     monitorStatus: peer.monitorStatus,
@@ -5744,6 +5755,8 @@ router.get("/:id/dependencies", requirePermission("assets", "read"), async (req,
       select: {
         id: true,
         hostname: true,
+        serialNumber: true,
+        ipAddress: true,
         assetType: true,
         monitorStatus: true,
         monitored: true,
@@ -5766,6 +5779,8 @@ router.get("/:id/dependencies", requirePermission("assets", "read"), async (req,
           select: {
             id: true,
             hostname: true,
+            serialNumber: true,
+            ipAddress: true,
             assetType: true,
             dependencyLayer: true,
             monitorStatus: true,
@@ -5784,6 +5799,8 @@ router.get("/:id/dependencies", requirePermission("assets", "read"), async (req,
           ? {
               id:                  r.parent.id,
               hostname:            r.parent.hostname,
+              serialNumber:        r.parent.serialNumber,
+              ipAddress:           r.parent.ipAddress,
               assetType:           r.parent.assetType,
               dependencyLayer:     r.parent.dependencyLayer,
               monitorStatus:       r.parent.monitorStatus,
@@ -5919,6 +5936,8 @@ router.get("/:id/dependencies", requirePermission("assets", "read"), async (req,
       asset: {
         id:                      asset.id,
         hostname:                asset.hostname,
+        serialNumber:            asset.serialNumber,
+        ipAddress:               asset.ipAddress,
         assetType:               asset.assetType,
         monitorStatus:           asset.monitorStatus,
         monitored:               asset.monitored,

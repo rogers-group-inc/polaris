@@ -409,7 +409,10 @@
             each <code>effectiveParents[].parent</code>, <code>haPeer</code>, each child and
             grandchild &mdash; carries <code>activeAlert</code>: <code>{ severity, count,
             unacknowledged }</code> for its uncleared alerts (worst severity first), or
-            <code>null</code> when nothing is firing.</p>
+            <code>null</code> when nothing is firing. Every node also carries
+            <code>serialNumber</code> and <code>ipAddress</code>: a hostname is not an identity
+            (FortiLink fleets name their switch-ids per site, so two switches in one tree can both
+            read "IDF-1"), and a client telling them apart needs one of those two fields.</p>
         </div>
 
         <h3>Device onboarding (writes)</h3>

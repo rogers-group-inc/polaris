@@ -3819,6 +3819,16 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   opacity: 0.75;
   font-family: var(--font-mono, monospace);
 }
+/* Rule 91 — the serial / address beside a hostname another row in the same
+   tree shares. Muted and mono, sized like the level tag: it tells two IDF-1s
+   apart without competing with the name. */
+.dep-tree-disambig {
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+  font-size: 0.72rem;
+  font-family: var(--font-mono, monospace);
+  letter-spacing: 0.2px;
+  cursor: help;
+}
 .dep-tree-source-tag,
 .dep-tree-override-tag {
   font-size: 0.7rem;

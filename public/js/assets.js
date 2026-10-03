@@ -20166,13 +20166,22 @@ function _depTreeNodeRow(node, opts) {
   var levelBit = (node.dependencyLayer != null)
     ? ' <span class="dep-tree-level" title="Dependency level ' + node.dependencyLayer + '">L' + node.dependencyLayer + '</span>'
     : "";
+  // Two rows reading the same name are two devices (business rule 91 — a
+  // FortiLink fleet names its switch-ids per site, so "IDF-1" sits behind
+  // every gate). renderDependencyTreeBlock passes the serial (or, failing
+  // that, the address) for every node whose hostname another rendered node
+  // shares, and it rides the link's tooltip too so the pivot says where it goes.
+  var disambigHTML = opts.disambig
+    ? ' <span class="dep-tree-disambig" title="Shares its name with another device in this tree — this is the one with ' + (opts.disambigKind === "ip" ? "address " : "serial ") + escapeHtml(opts.disambig) + '">' + escapeHtml(opts.disambig) + '</span>'
+    : "";
+  var openTitle = "Open " + safeName + (opts.disambig ? " (" + escapeHtml(opts.disambig) + ")" : "");
   var hostHTML;
   if (opts.self) {
     // Current asset — bold + non-clickable, with the level annotation.
     var layerBit = (node.dependencyLayer != null) ? ' <span class="dep-tree-self-meta">— level ' + node.dependencyLayer + '</span>' : "";
-    hostHTML = '<strong class="dep-tree-self">' + safeName + '</strong>' + layerBit;
+    hostHTML = '<strong class="dep-tree-self">' + safeName + '</strong>' + disambigHTML + layerBit;
   } else {
-    hostHTML = '<button type="button" class="dep-tree-link" data-asset-id="' + escapeHtml(node.id) + '" title="Open ' + safeName + '">' + safeName + '</button>';
+    hostHTML = '<button type="button" class="dep-tree-link" data-asset-id="' + escapeHtml(node.id) + '" title="' + openTitle + '">' + safeName + '</button>' + disambigHTML;
   }
   var sourceTag = (node.source === "override") ? ' <span class="dep-tree-source-tag" title="Operator override">override</span>' : "";
   // How the edge was detected. Shown for the endpoint-half signals and the
@@ -20243,11 +20252,42 @@ function renderDependencyTreeBlock(payload, selfId) {
       '</div>';
   }
 
+  // Rule 91: which hostnames appear on more than one node of THIS tree. Every
+  // such node gets its serial (or address) beside the name — a tree reading
+  // "IDF-1 → IDF-1" is otherwise unreadable, and the operator opening one of
+  // them has to know which site they are about to pivot to.
+  var nameCounts = {};
+  function countName(n) {
+    if (!n || !n.hostname) return;
+    var k = String(n.hostname).toLowerCase();
+    nameCounts[k] = (nameCounts[k] || 0) + 1;
+  }
+  parents.forEach(function (p) { countName(p.parent); });
+  countName(self);
+  countName(haPeer);
+  children.forEach(function (c) {
+    countName(c);
+    (Array.isArray(c.grandchildren) ? c.grandchildren : []).forEach(countName);
+  });
+  function disambigOpts(n) {
+    if (!n || !n.hostname || (nameCounts[String(n.hostname).toLowerCase()] || 0) < 2) return {};
+    if (n.serialNumber) return { disambig: n.serialNumber, disambigKind: "serial" };
+    if (n.ipAddress) return { disambig: n.ipAddress, disambigKind: "ip" };
+    return {};
+  }
+  function withDisambig(opts, n) {
+    var d = disambigOpts(n);
+    if (d.disambig) { opts.disambig = d.disambig; opts.disambigKind = d.disambigKind; }
+    return opts;
+  }
+
   var subtitle;
   if (parents.length === 0) subtitle = "Level 1 — root of the dependency tree";
   else if (parents.length === 1) {
     var p0 = parents[0].parent;
-    subtitle = "Level " + (self.dependencyLayer != null ? self.dependencyLayer : "?") + " · directly under " + escapeHtml(p0.hostname || p0.id);
+    var p0d = disambigOpts(p0);
+    subtitle = "Level " + (self.dependencyLayer != null ? self.dependencyLayer : "?") + " · directly under " + escapeHtml(p0.hostname || p0.id) +
+      (p0d.disambig ? " (" + escapeHtml(p0d.disambig) + ")" : "");
   } else {
     subtitle = "Level " + (self.dependencyLayer != null ? self.dependencyLayer : "?") + " · " + parents.length + " parents";
   }
@@ -20256,18 +20296,20 @@ function renderDependencyTreeBlock(payload, selfId) {
   if (parents.length > 0) {
     parentsHTML = parents.map(function (p) { return _depTreeNodeRow({
       id: p.parent.id, hostname: p.parent.hostname, assetType: p.parent.assetType,
+      serialNumber: p.parent.serialNumber, ipAddress: p.parent.ipAddress,
       dependencyLayer: p.parent.dependencyLayer, monitorStatus: p.parent.monitorStatus,
       monitored: p.parent.monitored, dependencySuppressed: false /* we don't have it on parent */, source: p.source,
       dependencyTestUntil: p.parent.dependencyTestUntil, activeAlert: p.parent.activeAlert,
-    }, { via: p.detectedVia }); }).join("");
+    }, withDisambig({ via: p.detectedVia }, p.parent)); }).join("");
     parentsHTML += '<div class="dep-tree-connector">│</div>';
   }
   var selfHTML = _depTreeNodeRow({
     id: self.id, hostname: self.hostname, assetType: self.assetType,
+    serialNumber: self.serialNumber, ipAddress: self.ipAddress,
     dependencyLayer: self.dependencyLayer, monitorStatus: self.monitorStatus,
     monitored: self.monitored !== false, dependencySuppressed: !!self.dependencySuppressed,
     dependencyTestUntil: self.dependencyTestUntil, activeAlert: self.activeAlert,
-  }, { self: true });
+  }, withDisambig({ self: true }, self));
 
   // HA peer row — rendered directly under the self row at the same level
   // (no connector: it's a redundant sibling, not a parent or child). The
@@ -20280,9 +20322,10 @@ function renderDependencyTreeBlock(payload, selfId) {
                 : "HA peer";
     haPeerHTML = _depTreeNodeRow({
       id: haPeer.id, hostname: haPeer.hostname, assetType: haPeer.assetType,
+      serialNumber: haPeer.serialNumber, ipAddress: haPeer.ipAddress,
       dependencyLayer: haPeer.dependencyLayer, monitorStatus: haPeer.monitorStatus,
       monitored: haPeer.monitored, activeAlert: haPeer.activeAlert,
-    }, { tag: peerTag, tagTitle: "HA cluster peer of " + (self.hostname || "this firewall") + " — redundant sibling, not a dependency" });
+    }, withDisambig({ tag: peerTag, tagTitle: "HA cluster peer of " + (self.hostname || "this firewall") + " — redundant sibling, not a dependency" }, haPeer));
   }
 
   var childrenHTML = "";
@@ -20294,9 +20337,9 @@ function renderDependencyTreeBlock(payload, selfId) {
       // workstations and printers that hang off this switch.
       var gcs = Array.isArray(c.grandchildren) ? c.grandchildren : [];
       var more = (typeof c.childCount === "number") ? Math.max(0, c.childCount - gcs.length) : 0;
-      var row = _depTreeNodeRow(c, { depth: 1, via: c.detectedVia, moreCount: more });
+      var row = _depTreeNodeRow(c, withDisambig({ depth: 1, via: c.detectedVia, moreCount: more }, c));
       if (gcs.length === 0) return row;
-      var gcRows = gcs.map(function (gc) { return _depTreeNodeRow(gc, { depth: 2, via: gc.detectedVia }); }).join("");
+      var gcRows = gcs.map(function (gc) { return _depTreeNodeRow(gc, withDisambig({ depth: 2, via: gc.detectedVia }, gc)); }).join("");
       return row + gcRows;
     }).join("");
     if (payload.childrenTruncated) {

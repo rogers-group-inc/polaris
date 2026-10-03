@@ -213,7 +213,10 @@ Identity, location, coordinates, description, notes, tags, and the **upstream
 rows**: *Last Seen Switch*, *Last Seen AP*, *Last Seen Firewall*. Each resolves
 the display string discovery stored back to the **Asset row behind it**, so the
 row carries verbs — open the device, open its HTTPS UI, SSH to it — instead of
-being text you re-find by hand.
+being text you re-find by hand. When several switches share the stored name
+(a per-site "IDF-1"), the row links the one this device actually sits behind —
+by its MAC table, then by the FortiGate that last saw the device — and stays
+plain text when nothing settles it ([rule 91](Business-Rules#rule-91)).
 
 The tag picker in the edit form shows every tag the asset carries. Tags with no
 entry in the tag list (Server Settings → Identification), such as the ones
