@@ -1153,6 +1153,17 @@ const api = {
      *  would go SILENT because the group was doing the telling. */
     removalImpact: (id) => request("GET", `/automations/groups/${id}/removal-impact`),
   },
+  // Global quiet times (business rule 92) — Automations → Settings. Mounted
+  // ABOVE /automations server-side like groups and scripts.
+  quietTimes: {
+    list:      ()      => request("GET", "/automations/quiet-times"),
+    get:       (id)    => request("GET", `/automations/quiet-times/${id}`),
+    /** Recent summary runs across every source — the Settings tab's list. */
+    summaries: (limit) => request("GET", "/automations/quiet-times/summaries" + (limit ? `?limit=${encodeURIComponent(limit)}` : "")),
+    create:    (body)  => request("POST", "/automations/quiet-times", body),
+    update:    (id, b) => request("PUT", `/automations/quiet-times/${id}`, b),
+    delete:    (id)    => request("DELETE", `/automations/quiet-times/${id}`),
+  },
   automationScripts: {
     list:    ()      => request("GET", "/automations/scripts"),
     get:     (id)    => request("GET", `/automations/scripts/${id}`),

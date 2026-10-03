@@ -71,6 +71,19 @@ var _rulesPage = 1;
       ac.style.display = canEditRules && activeKey === "delivery" ? "" : "none";
       if (canEditRules && !ac._wired) { ac._wired = true; ac.addEventListener("click", function () { showChannelTypePicker(); }); }
     }
+    // Automation settings (Global Quiet Times, business rule 92): readable
+    // with the page's own key; the verbs inside it check write themselves.
+    var st = document.getElementById("btn-automation-settings");
+    if (st) {
+      st.style.display = canManage && activeKey === "manage" ? "" : "none";
+      if (canManage && !st._wired) {
+        st._wired = true;
+        st.addEventListener("click", function () {
+          if (window.PolarisAutomationSettings) window.PolarisAutomationSettings.open();
+          else showToast("The settings module did not load", "error");
+        });
+      }
+    }
     var agBtn = document.getElementById("ag-new-btn");
     if (agBtn) {
       agBtn.style.display = canEditRules ? "" : "none";
@@ -115,6 +128,8 @@ var _rulesPage = 1;
       if (nrBtn && canEditRules) nrBtn.style.display = key === "manage" ? "" : "none";
       var acBtn = document.getElementById("btn-add-channel");
       if (acBtn && canEditRules) acBtn.style.display = key === "delivery" ? "" : "none";
+      var stBtn = document.getElementById("btn-automation-settings");
+      if (stBtn && canManage) stBtn.style.display = key === "manage" ? "" : "none";
       var asBtn2 = document.getElementById("btn-add-script");
       if (asBtn2 && canEditScripts) asBtn2.style.display = key === "scripts" ? "" : "none";
       var acBtn3 = document.getElementById("btn-add-contact");
@@ -238,6 +253,9 @@ var _rulesPage = 1;
       // server-side by jsonOrClear, so leaving this out would delete the
       // operator's repeat config every time they flipped the switch.
       repeat: r.repeat || null,
+      // Same reason: the automation's own quiet time (business rule 92) is a
+      // nullable Json column, and an omitted one is cleared by the PUT.
+      quietTime: r.quietTime || null,
       channels: r.channels || ["in_app"],
       emailComposition: r.emailComposition || null,
       escalation: r.escalation || null,

@@ -465,6 +465,18 @@
       if (ra.length) out.resetActions = ra;
     }
 
+    // The automation's own quiet time (business rule 92) travels: its windows,
+    // severities, summary time and recurrence threshold are policy, like the
+    // trigger. The summary CHANNEL is delivery wiring and is dropped — the
+    // importing install falls back to its own email channel.
+    if (isPlainObject(src.quietTime) && Array.isArray(src.quietTime.windows) && src.quietTime.windows.length) {
+      var qt = { windows: clone(src.quietTime.windows) };
+      if (Array.isArray(src.quietTime.severities) && src.quietTime.severities.length) qt.severities = src.quietTime.severities.slice();
+      if (src.quietTime.summaryAt) qt.summaryAt = src.quietTime.summaryAt;
+      if (src.quietTime.recurrenceThreshold != null) qt.recurrenceThreshold = src.quietTime.recurrenceThreshold;
+      out.quietTime = qt;
+    }
+
     // Rule-level escalation and emailComposition are pure delivery wiring.
     if (src.escalation) recordEscalationDeps(src.escalation, "Automation", cat, deps);
     if (src.emailComposition) {

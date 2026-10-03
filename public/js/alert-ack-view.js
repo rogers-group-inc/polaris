@@ -90,9 +90,16 @@
     }).join("") + "</table>";
   }
 
-  /** The test-run flag, the alert's own sentence, then the facts. */
+  /** The test-run / quiet-time flags, the alert's own sentence, then the facts. */
   function headerHtml(a) {
+    // Held for quiet time (business rule 92): raised, nobody emailed or pushed
+    // yet. Said here because the person acknowledging it is often the one who
+    // noticed no email came.
+    var quiet = a.quietHeldAt && !a.quietSummarizedAt
+      ? '<span class="ack-testflag" title="No email, push or chat message has gone out; a summary email is sent when the quiet period ends">Held for quiet time</span>'
+      : "";
     return (a.testRun ? '<span class="ack-testflag">Test alert</span>' : "")
+      + quiet
       + '<p class="ack-message">' + esc(a.message) + "</p>"
       + factsHtml(a);
   }

@@ -493,6 +493,8 @@ describe("getRecentAlerts", () => {
       dependencyDown: false, dependencyUpstream: null,
       // A real fire, not a wizard delivery test (business rule 65).
       testRun: false,
+      // Not held for quiet time (business rule 92).
+      quietHeld: false,
     });
     // It reads ALERTS, never audit Events — the whole point of the feed.
     expect(eventFindMany).not.toHaveBeenCalled();

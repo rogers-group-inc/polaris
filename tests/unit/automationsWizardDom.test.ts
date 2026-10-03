@@ -1,5 +1,5 @@
 /**
- * tests/unit/automationsWizardDom.test.ts — DOM render smoke for the 5-step
+ * tests/unit/automationsWizardDom.test.ts — DOM render smoke for the 7-step
  * automation wizard (public/js/automations-wizard.js).
  *
  * The wizard is a plain browser script (no module exports), so this test
@@ -169,6 +169,11 @@ beforeAll(() => {
   // a page that forgot the script tag would do.
   const recSrc = readFileSync(resolve(__dirname, "../../public/js/recurrence-editor.js"), "utf8");
   (0, eval)(recSrc);
+  // The quiet-time policy editor (business rule 92), loaded after the
+  // recurrence editor it builds on and before the wizard whose step 6 renders
+  // it — the same order the pages' script tags keep.
+  const qteSrc = readFileSync(resolve(__dirname, "../../public/js/quiet-time-editor.js"), "utf8");
+  (0, eval)(qteSrc);
   const src = readFileSync(resolve(__dirname, "../../public/js/automations-wizard.js"), "utf8");
   (0, eval)(src);
   // Export / import / view-code. Loaded on every page that loads the wizard.
@@ -181,7 +186,7 @@ describe("automation wizard DOM render", () => {
     await (g.openAutomationWizard as (r: unknown) => Promise<void>)(null);
     expect(toastErrors).toEqual([]);
     expect(doc.querySelector(".modal")).toBeTruthy();
-    expect(doc.querySelectorAll("#aw-stepper .stepper-step").length).toBe(6);
+    expect(doc.querySelectorAll("#aw-stepper .stepper-step").length).toBe(7);
     expect(doc.querySelector("#aw-step-1.visible")).toBeTruthy();
     // Severity + Enabled were removed from the name step (severity moved to the
     // trigger step; enabled is managed from the list toggle).
@@ -484,7 +489,15 @@ describe("automation wizard DOM render", () => {
 
     (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
+    // Step 6 is the automation's own quiet time (business rule 92): off by
+    // default, rendered through the shared editor, and Next passes with it off.
     expect(doc.querySelector("#aw-step-6.visible")).toBeTruthy();
+    expect(doc.querySelector("#aw-quiet-on")).toBeTruthy();
+    expect((doc.querySelector("#aw-quiet-on") as unknown as { checked: boolean }).checked).toBe(false);
+    expect(doc.querySelector("#aw-quiet-fields .qte")).toBeTruthy();
+    (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(doc.querySelector("#aw-step-7.visible")).toBeTruthy();
     expect(doc.querySelector("#aw-summary")).toBeTruthy();
     expect(doc.querySelector("#aw-summary")!.textContent).toContain("critical"); // band (added on step 3) in summary
     const affected = doc.querySelector("#aw-affected")!;
@@ -3545,9 +3558,9 @@ describe("trigger filter rows", () => {
       toastErrors.length = 0; // an earlier case in this block leaves its refusal toast behind
       await gotoStep(5);
       await tick(depAw()!, true);
-      await gotoStep(6);
-      expect(doc.querySelector("#aw-step-6")!.innerHTML).toContain("dependency-down");
-      expect(doc.querySelector("#aw-step-6")!.innerHTML).toContain("naming the upstream device");
+      await gotoStep(7);
+      expect(doc.querySelector("#aw-step-7")!.innerHTML).toContain("dependency-down");
+      expect(doc.querySelector("#aw-step-7")!.innerHTML).toContain("naming the upstream device");
       await save();
       expect(toastErrors).toEqual([]);
       const p = savedPayloads[0] as DepPayload;
@@ -3637,7 +3650,7 @@ describe("automation export / import / view code", () => {
   /** Open on the Summary step. */
   async function openToSummary(existing?: unknown, opts?: unknown) {
     await (g.openAutomationWizard as (r: unknown, o?: unknown) => Promise<void>)(existing || storedRule(), opts);
-    (doc.querySelector('.stepper-step[data-step="6"]') as unknown as { click: () => void }).click();
+    (doc.querySelector('.stepper-step[data-step="7"]') as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 60));
   }
 
@@ -3868,7 +3881,7 @@ describe("automation export / import / view code", () => {
     expect(note.textContent).toMatch(/Actions/);
 
     // It saves as a CREATE, disabled, whatever the file said.
-    (doc.querySelector('.stepper-step[data-step="6"]') as unknown as { click: () => void }).click();
+    (doc.querySelector('.stepper-step[data-step="7"]') as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 40));
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 40));
@@ -3899,7 +3912,7 @@ describe("automation export / import / view code", () => {
       { import: true, name: "Probe rule", importInfo: { dependencies: [], blankedDimensions: ["stateProbeId"] } },
     );
     toastErrors.length = 0;
-    (doc.querySelector('.stepper-step[data-step="6"]') as unknown as { click: () => void }).click();
+    (doc.querySelector('.stepper-step[data-step="7"]') as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 40));
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 40));

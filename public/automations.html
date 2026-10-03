@@ -24,6 +24,9 @@
           <button class="btn btn-primary" id="btn-add-channel" style="display:none">+ Add channel</button>
           <button class="btn btn-primary" id="btn-add-script" style="display:none">+ Add script</button>
           <button class="btn btn-primary" id="btn-add-contact" style="display:none">+ Add contact</button>
+          <!-- Automation settings (Global Quiet Times, business rule 92). Shown
+               with automationManagement:read; the verbs inside need write. -->
+          <button class="btn btn-secondary" id="btn-automation-settings" style="display:none" title="Automation settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="vertical-align:middle;margin-right:4px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>Settings</button>
           <button class="btn btn-secondary" id="btn-refresh">Refresh</button>
         </div>
       </div>
@@ -169,6 +172,9 @@
   <!-- Asset modal's Maintenance tab (ad-hoc "enter maintenance until…") needs
        maintCreateAdhoc; the Maintenance MODAL itself is wired on assets.html only. -->
   <script src="/js/recurrence-editor.js"></script>
+  <!-- The quiet-time policy editor (business rule 92). After recurrence-editor.js,
+       which it builds on; before the two wizards that render it. -->
+  <script src="/js/quiet-time-editor.js"></script>
   <script src="/js/assets-maintenance.js"></script>
   <script src="/js/push.js"></script>
   <script src="/js/password-self.js"></script>
@@ -183,6 +189,10 @@
        its editor reads; before automations.js, which wires its tab button and
        refresh handler to window.PolarisAlertGroups. -->
   <script src="/js/alert-groups.js"></script>
+  <!-- Settings modal + the global quiet-time wizard (business rule 92). Before
+       automations.js, which wires the Settings button to window.PolarisAutomationSettings. -->
+  <script src="/js/quiet-time-wizard.js"></script>
+  <script src="/js/automations-settings.js"></script>
   <script src="/js/automations.js"></script>
   <script src="/js/automations-address-book.js"></script>
   <script src="/js/automations-wizard.js"></script>

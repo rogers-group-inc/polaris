@@ -1210,6 +1210,11 @@ export interface AlertRow {
    *  after an hour. The widget pills it TEST so it can't be read as an outage
    *  while it waits; `[TEST]` in the message alone is easy to miss. */
   testRun: boolean;
+  /** Held for quiet time (business rule 92): raised, but nobody has been
+   *  emailed, pushed or messaged yet — a summary goes out when the quiet
+   *  period ends. The widget pills it QUIET so a wallboard reader knows the
+   *  silence is deliberate. */
+  quietHeld: boolean;
 }
 
 export interface ActiveAlerts {
@@ -1274,6 +1279,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
       dimensionCount: true,
       dependencyDown: true, dependencyBlame: true,
       testRun: true,
+      quietHeldAt: true, quietSummarizedAt: true,
     },
     orderBy: { triggeredAt: "desc" },
   });
@@ -1300,6 +1306,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     dependencyDown: n.dependencyDown === true,
     dependencyUpstream: dependencyUpstreamOf(n.dependencyBlame),
     testRun: n.testRun === true,
+    quietHeld: !!n.quietHeldAt && !n.quietSummarizedAt,
   }));
   out.sort((a, b) => {
     const d = (ALERT_SEVERITY_RANK[b.severity] ?? 0) - (ALERT_SEVERITY_RANK[a.severity] ?? 0);

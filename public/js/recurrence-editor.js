@@ -399,6 +399,133 @@
     out.style.color = "var(--color-text-secondary)";
   }
 
+  // ── Editing: a WHOLE recurring schedule ───────────────────────────────────
+  //
+  // The day/hours editor above is the days-of-the-week half of a recurrence.
+  // A full recurring shape also has a frequency (days of the week / monthly /
+  // yearly), the day-of-period controls those two need, an hour list for them
+  // (they match one day per period and so have no per-day rows), and optional
+  // first/last dates. The Maintenance modal built those around the day editor
+  // in its own markup; the quiet-time editors (an automation's Quiet time step
+  // and the global quiet-time wizard) need the same thing, so it lives here
+  // once. Class-scoped inside a `.rc-schedule` host, with the one id the
+  // <label for> needs prefixed, so two can share a page. The Maintenance modal
+  // still carries its own copy for now — migrating it is a follow-up.
+
+  function periodRanges(shape) {
+    return shape && shape.kind === "recurring" ? (dayRanges(shape, 0) || []) : [];
+  }
+
+  /**
+   * The whole recurring-schedule editor. `opts.shape` seeds it; `opts.zone`,
+   * `opts.defaultStart`/`defaultEnd` and `opts.hint` pass to the day editor.
+   */
+  function scheduleEditorHtml(prefix, opts) {
+    opts = opts || {};
+    var shape = opts.shape && opts.shape.kind === "recurring" ? opts.shape : null;
+    var storedFreq = shape ? (shape.freq || "daily") : "daily";
+    var mode = storedFreq === "daily" || storedFreq === "weekly" ? "days" : storedFreq;
+    var p = esc(prefix || "rc");
+    var monthOpts = MONTHS.map(function (m, i) {
+      return '<option value="' + (i + 1) + '"' + (shape && shape.month === i + 1 ? " selected" : "") + '>' + m + '</option>';
+    }).join("");
+    return '<div class="rc-schedule">' +
+      '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">' +
+        '<div><label for="' + p + '-freq">Repeats</label>' +
+          '<select id="' + p + '-freq" class="rc-freq" style="width:auto">' +
+            '<option value="days"' + (mode === "days" ? " selected" : "") + '>Specific days of the week</option>' +
+            '<option value="monthly"' + (mode === "monthly" ? " selected" : "") + '>Monthly</option>' +
+            '<option value="yearly"' + (mode === "yearly" ? " selected" : "") + '>Yearly</option>' +
+          '</select></div>' +
+        '<div class="rc-monthly-block"' + (mode === "monthly" ? "" : ' style="display:none"') + '><label>Day of month</label>' +
+          '<input type="number" class="rc-daymonth" min="1" max="31" value="' + esc(shape && shape.dayOfMonth ? shape.dayOfMonth : 1) + '" style="max-width:90px">' +
+          '<span class="hint" style="display:block">31 = last-day clamp in short months</span></div>' +
+        '<div class="rc-yearly-block"' + (mode === "yearly" ? "" : ' style="display:none"') + '><label>Month / day</label>' +
+          '<select class="rc-month" style="max-width:110px">' + monthOpts + '</select> ' +
+          '<input type="number" class="rc-day" min="1" max="31" value="' + esc(shape && shape.day ? shape.day : 1) + '" style="max-width:80px">' +
+        '</div>' +
+      '</div>' +
+      '<div class="rc-weekly-block" style="margin-top:8px"' + (mode === "days" ? "" : ';display:none"'.replace(";", " style=\"")) + '>' +
+        '<label>Days and hours</label>' +
+        '<div class="rc-days-host">' + dayEditorHtml({
+          shape: mode === "days" ? shape : null,
+          zone: opts.zone,
+          hint: opts.hint,
+          defaultStart: opts.defaultStart,
+          defaultEnd: opts.defaultEnd,
+        }) + '</div>' +
+      '</div>' +
+      '<div class="rc-period-block" style="margin-top:10px' + (mode === "days" ? ";display:none" : "") + '">' +
+        '<label>Hours</label>' +
+        '<div class="rc-period-host">' + hoursListHtml(mode === "days" ? [] : periodRanges(shape)) + '</div>' +
+      '</div>' +
+      '<div style="margin-top:10px">' +
+        '<label>Date range (optional)</label>' +
+        '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">' +
+          '<input type="date" class="rc-active-from" value="' + esc(shape && shape.activeFrom ? shape.activeFrom : "") + '" style="width:auto"> &ndash; ' +
+          '<input type="date" class="rc-active-until" value="' + esc(shape && shape.activeUntil ? shape.activeUntil : "") + '" style="width:auto">' +
+        '</div>' +
+        '<span class="hint">First / last day the schedule applies (inclusive). Leave empty for no bounds.</span>' +
+      '</div>' +
+    '</div>';
+  }
+
+  /** Show the blocks the chosen frequency needs. */
+  function syncScheduleBlocks(host) {
+    var freq = (host.querySelector(".rc-freq") || {}).value || "days";
+    var show = function (sel, on) { var el = host.querySelector(sel); if (el) el.style.display = on ? "" : "none"; };
+    show(".rc-weekly-block", freq === "days");
+    show(".rc-monthly-block", freq === "monthly");
+    show(".rc-yearly-block", freq === "yearly");
+    show(".rc-period-block", freq === "monthly" || freq === "yearly");
+  }
+
+  /** Delegated handlers for one `.rc-schedule` host. */
+  function wireScheduleEditor(host, onChange) {
+    var fire = function () { if (typeof onChange === "function") onChange(); };
+    wire(host.querySelector(".rc-days-host"), fire);
+    wire(host.querySelector(".rc-period-host"), fire);
+    var freq = host.querySelector(".rc-freq");
+    if (freq) freq.addEventListener("change", function () { syncScheduleBlocks(host); fire(); });
+    [".rc-daymonth", ".rc-month", ".rc-day", ".rc-active-from", ".rc-active-until"].forEach(function (sel) {
+      var el = host.querySelector(sel);
+      if (el) el.addEventListener(el.tagName === "SELECT" ? "change" : "input", fire);
+    });
+    syncScheduleBlocks(host);
+  }
+
+  /**
+   * One `.rc-schedule` host → a complete recurring shape, or `{error}`, or
+   * `{empty}` when the days mode has no day ticked (the caller decides whether
+   * that is a problem — see collectDayEditor).
+   */
+  function collectScheduleEditor(host) {
+    var freq = (host.querySelector(".rc-freq") || {}).value || "days";
+    var out = { version: 1, kind: "recurring" };
+    if (freq === "days") {
+      var got = collectDayEditor(host.querySelector(".rc-days-host"));
+      if (got.empty) return { empty: true };
+      if (got.error) return { error: got.error };
+      Object.keys(got).forEach(function (k) { out[k] = got[k]; });
+    } else {
+      out.freq = freq;
+      if (freq === "monthly") out.dayOfMonth = parseInt((host.querySelector(".rc-daymonth") || {}).value, 10) || 1;
+      if (freq === "yearly") {
+        out.month = parseInt((host.querySelector(".rc-month") || {}).value, 10) || 1;
+        out.day = parseInt((host.querySelector(".rc-day") || {}).value, 10) || 1;
+      }
+      var hours = collectHoursList(host.querySelector(".rc-period-host"), "Hours");
+      if (hours.error) return { error: hours.error };
+      if (hours.ranges.length) out.hours = hours.ranges;
+    }
+    var af = (host.querySelector(".rc-active-from") || {}).value;
+    var au = (host.querySelector(".rc-active-until") || {}).value;
+    if (af) out.activeFrom = af;
+    if (au) out.activeUntil = au;
+    if (af && au && au < af) return { error: "The date range ends before it starts." };
+    return { shape: out };
+  }
+
   window.PolarisRecurrence = {
     weekdays: WEEKDAYS,
     months: MONTHS,
@@ -412,5 +539,9 @@
     collectHoursList: collectHoursList,
     wire: wire,
     refreshSummary: refreshSummary,
+    scheduleEditorHtml: scheduleEditorHtml,
+    wireScheduleEditor: wireScheduleEditor,
+    collectScheduleEditor: collectScheduleEditor,
+    syncScheduleBlocks: syncScheduleBlocks,
   };
 })();
