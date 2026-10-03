@@ -94,6 +94,11 @@ digest". So each recipient's copy renders their own zone (explicit → detected 
 an address with no account gets the install's. It goes through the policy's own channel, else
 the first email channel among the held rows, else the first enabled email channel; none at all
 leaves the row `unroutable` with a warning Event and the alerts still on the Active Alerts page.
+Each recipient is retried for ten minutes of ticks, not the drain's three — one email a night
+must survive a short SMTP outage — and a row that still failed carries a **Resend** verb on the
+Settings tab, which re-queues only the recipients it never reached. That verb exists because
+the very first summary on the dev stack failed every attempt on a mistyped channel host, seconds
+before the host was corrected, and there was no way to send it.
 
 **Due is "the stretch ended, the send time arrived, and it is not quiet again".** A window
 ending 06:00 with a 07:30 send time summarises at 07:30; a second window that opened at 07:00

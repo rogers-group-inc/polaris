@@ -55,6 +55,7 @@
 
 import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
+import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { chunkArray } from "../utils/chunk.js";
 import { logEvent } from "./eventLogService.js";
@@ -73,7 +74,11 @@ import {
   type SummaryRecurringRow,
 } from "../utils/quietSummaryEmailTemplate.js";
 
-export const SUMMARY_MAX_ATTEMPTS = 3;
+/** Per-recipient attempts across the job's 60 s ticks — ten minutes of
+ *  retrying, not the drain's three: a summary is one email a night, and an
+ *  SMTP host that is down for three minutes at 06:00 must not cost it. A row
+ *  that still fails can be re-sent by hand (`resendSummary`). */
+export const SUMMARY_MAX_ATTEMPTS = 10;
 const SEND_CONCURRENCY = 4;
 /** Held alerts read per tick. A night on a 2000-asset fleet is far below it;
  *  the cap only bounds a pathological storm, and the rest follows next tick. */
@@ -495,6 +500,49 @@ async function finalize(id: string, sourceName: string, recipients: SummaryRecip
       (failedCount > 0 ? `; ${failedCount} failed (${recipients.filter((r) => r.status !== "sent").map((r) => r.address).join(", ")})` : ""),
     details: { sent: sentCount, failed: failedCount, recipients: recipients.map((r) => ({ address: r.address, status: r.status, attempts: r.attempts, ...(r.error ? { error: r.error } : {}) })) },
   }).catch(() => {});
+}
+
+/**
+ * Send a summary again, by hand (Automations → Settings → recent summaries →
+ * Resend). Every recipient that was NOT reached goes back to pending with a
+ * fresh attempt budget — a recipient already `sent` is left alone, so a
+ * partial failure re-sends to the people who missed it and nobody else — and
+ * the drain runs at once so the caller sees the outcome. The email is
+ * re-rendered from the row's own `details`, i.e. it says what it would have
+ * said at the time, not what is outstanding now.
+ */
+export async function resendSummary(id: string, actor?: string): Promise<void> {
+  const row = await prisma.quietTimeSummary.findUnique({
+    where: { id },
+    select: { id: true, sourceName: true, status: true, recipients: true, channelId: true },
+  });
+  if (!row) throw new AppError(404, "Quiet-time summary not found");
+  const recipients = (Array.isArray(row.recipients) ? row.recipients : []) as unknown as SummaryRecipient[];
+  if (recipients.length === 0) throw new AppError(400, "This summary has no recipients to send to");
+  if (!row.channelId) throw new AppError(400, "This summary has no email channel — configure one under Delivery and set it on the quiet time");
+  let reset = 0;
+  for (const r of recipients) {
+    if (r.status === "sent") continue;
+    r.status = "pending";
+    r.attempts = 0;
+    delete r.error;
+    reset++;
+  }
+  if (reset === 0) throw new AppError(400, "Every recipient of this summary has already been reached");
+  await prisma.quietTimeSummary.update({
+    where: { id },
+    data: { recipients: recipients as unknown as Prisma.InputJsonValue, status: "pending" },
+  });
+  await logEvent({
+    action: "quiet_time.summary_resent",
+    resourceType: "quiet-time-summary",
+    resourceId: id,
+    resourceName: row.sourceName,
+    actor,
+    message: `Quiet-time summary for "${row.sourceName}" queued again for ${reset} recipient(s)`,
+    details: { recipients: reset },
+  }).catch(() => {});
+  await drainPendingSummaries();
 }
 
 /** One tick: create what is due, then send what is pending. */

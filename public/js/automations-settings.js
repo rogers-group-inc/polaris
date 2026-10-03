@@ -77,7 +77,7 @@
 
     var recent = summaries.length
       ? '<h4 style="margin:1.25rem 0 0.4rem;font-size:0.95rem">Recent summaries</h4>' +
-        '<div class="table-wrapper"><table class="data-table"><thead><tr><th>Sent</th><th>Quiet time</th><th>Covered</th><th>Listed</th><th>Recipients</th><th>Status</th></tr></thead><tbody>' +
+        '<div class="table-wrapper"><table class="data-table"><thead><tr><th>Sent</th><th>Quiet time</th><th>Covered</th><th>Listed</th><th>Recipients</th><th>Status</th><th></th></tr></thead><tbody>' +
         summaries.map(summaryRowHtml).join("") + "</tbody></table></div>"
       : "";
 
@@ -100,6 +100,25 @@
         if (row) toggle(row, el.checked);
       });
     });
+    host.querySelectorAll("[data-qt-resend]").forEach(function (el) {
+      el.addEventListener("click", function () { resend(el); });
+    });
+  }
+
+  /** Send a failed summary again — to the recipients it never reached. */
+  async function resend(btn) {
+    var id = btn.getAttribute("data-qt-resend");
+    btn.disabled = true;
+    try {
+      var res = await api.quietTimes.resendSummary(id);
+      var s = res && res.summary;
+      var recips = s && Array.isArray(s.recipients) ? s.recipients : [];
+      var sent = recips.filter(function (r) { return r.status === "sent"; }).length;
+      showToast(s ? "Summary sent to " + sent + " of " + recips.length + " recipient(s)" : "Summary queued", s && sent === recips.length ? "success" : "error");
+    } catch (err) {
+      showToast((err && err.message) || "Failed to resend the summary", "error");
+    }
+    renderQuietTab();
   }
 
   function scopePhrase(scope) {
@@ -167,13 +186,22 @@
     var when = r.sentAt || r.createdAt;
     var d = when ? new Date(when) : null;
     var statusCls = r.status === "sent" || r.status === "empty" ? "badge-active" : (r.status === "pending" || r.status === "partial" ? "badge-warning" : "badge-deprecated");
+    // A summary that never (fully) reached its readers can be sent again by
+    // hand once the channel is fixed — only to the recipients who missed it.
+    var failed = r.status === "failed" || r.status === "partial-failed" || r.status === "unroutable";
+    var firstErr = (recips.filter(function (x) { return x.error; })[0] || {}).error || "";
     return "<tr>" +
       "<td>" + (d ? escapeHtml(d.toLocaleString()) : "—") + "</td>" +
       "<td>" + escapeHtml(r.sourceName) + ' <span style="font-size:0.78rem;color:var(--color-text-tertiary)">(' + (r.sourceKind === "global" ? "global" : "automation") + ")</span></td>" +
       "<td>" + escapeHtml((r.notificationIds || []).length + " alert" + ((r.notificationIds || []).length === 1 ? "" : "s")) + "</td>" +
       "<td>" + escapeHtml(r.listedCount + " outstanding" + (r.recurringCount ? ", " + r.recurringCount + " recurring" : "")) + "</td>" +
       "<td>" + (recips.length ? escapeHtml(sent + "/" + recips.length) : "—") + "</td>" +
-      '<td><span class="badge ' + statusCls + '">' + escapeHtml(r.status) + "</span></td>" +
+      '<td><span class="badge ' + statusCls + '"' + (firstErr ? ' title="' + escapeHtml(firstErr) + '"' : "") + '>' + escapeHtml(r.status) + "</span></td>" +
+      '<td style="text-align:right;white-space:nowrap">' +
+        (failed && canEdit() && recips.length
+          ? '<button type="button" class="btn btn-sm" data-qt-resend="' + escapeHtml(r.id) + '" title="Send again to the recipients it did not reach">Resend</button>'
+          : "") +
+      "</td>" +
     "</tr>";
   }
 

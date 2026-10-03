@@ -1160,6 +1160,8 @@ const api = {
     get:       (id)    => request("GET", `/automations/quiet-times/${id}`),
     /** Recent summary runs across every source — the Settings tab's list. */
     summaries: (limit) => request("GET", "/automations/quiet-times/summaries" + (limit ? `?limit=${encodeURIComponent(limit)}` : "")),
+    /** Send a failed summary again to every recipient not yet reached. */
+    resendSummary: (id) => request("POST", `/automations/quiet-times/summaries/${id}/resend`, {}),
     create:    (body)  => request("POST", "/automations/quiet-times", body),
     update:    (id, b) => request("PUT", `/automations/quiet-times/${id}`, b),
     delete:    (id)    => request("DELETE", `/automations/quiet-times/${id}`),

@@ -28,6 +28,7 @@ import {
   deleteQuietTimeSchedule,
   listQuietTimeSummaries,
 } from "../../services/quietTimeScheduleService.js";
+import { resendSummary } from "../../services/quietTimeSummaryService.js";
 import { scopeSchema, SEVERITIES } from "../../services/notificationTypes.js";
 import { quietTimeConfigSchema } from "../../utils/quietTime.js";
 
@@ -67,6 +68,16 @@ quietTimeSchedulesRouter.get("/summaries", requirePermission("automationManageme
   try {
     const limit = Number(req.query.limit) || 20;
     res.json({ summaries: await listQuietTimeSummaries(limit) });
+  } catch (err) { next(err); }
+});
+
+/** Send a failed or partly failed summary again — every recipient not yet
+ *  reached. The drain runs inline, so the response carries the outcome. */
+quietTimeSchedulesRouter.post("/summaries/:id/resend", requirePermission("automationManagement", "write"), async (req, res, next) => {
+  try {
+    await resendSummary(req.params.id as string, requestActor(req));
+    const rows = await listQuietTimeSummaries(100);
+    res.json({ summary: rows.find((r) => r.id === req.params.id) ?? null });
   } catch (err) { next(err); }
 });
 

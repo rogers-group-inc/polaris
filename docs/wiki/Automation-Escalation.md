@@ -174,7 +174,10 @@ The all-clear of a held alert that was **never** summarised sends nothing —
 there is no inbox to resolve it in.
 
 The Settings modal lists recent summaries: when, which quiet time, how many
-alerts it covered, how many it listed, and who it reached.
+alerts it covered, how many it listed, and who it reached. A send that fails is
+retried for about ten minutes; a summary that still did not reach everyone
+shows **Resend**, which sends it again to the recipients it missed (and nobody
+else) once the channel is fixed.
 
 ### What quiet time is not
 

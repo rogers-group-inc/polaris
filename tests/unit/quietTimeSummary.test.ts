@@ -60,6 +60,7 @@ vi.mock("../../src/db.js", () => {
     quietTimeSummary: {
       create: vi.fn(async ({ data }: any) => { const row = { id: `s${db.summaries.length + 1}`, createdAt: new Date(), ...data }; db.summaries.push(row); return { id: row.id }; }),
       findMany: vi.fn(async ({ where }: any) => db.summaries.filter((s) => where.status.in.includes(s.status))),
+      findUnique: vi.fn(async ({ where }: any) => db.summaries.find((s) => s.id === where.id) ?? null),
       update: vi.fn(async ({ where, data }: any) => { Object.assign(db.summaries.find((s) => s.id === where.id), data); return {}; }),
     },
     quietTimeSchedule: {
@@ -100,6 +101,8 @@ import {
   createDueSummaries,
   drainPendingSummaries,
   runQuietTimeSummaries,
+  resendSummary,
+  SUMMARY_MAX_ATTEMPTS,
 } from "../../src/services/quietTimeSummaryService.js";
 import { bumpQuietTimeCache } from "../../src/services/quietTimeHoldService.js";
 import { quietTimeConfigSchema } from "../../src/utils/quietTime.js";
@@ -334,6 +337,22 @@ describe("drainPendingSummaries", () => {
     expect(again).toEqual({ sent: 1, failed: 0 });
     expect(db.summaries[0].status).toBe("sent");
     expect(db.sent).toHaveLength(2 + 0); // phone once, oncall once
+  });
+
+  it("gives up after SUMMARY_MAX_ATTEMPTS, and Resend sends again only to whoever missed it", async () => {
+    await seedPending();
+    for (let i = 0; i < SUMMARY_MAX_ATTEMPTS; i++) db.failNext.push("oncall@example.com");
+    for (let i = 0; i < SUMMARY_MAX_ATTEMPTS; i++) await drainPendingSummaries(at(2026, 10, 3, 6, 1 + i));
+    expect(db.summaries[0].status).toBe("partial-failed");
+    expect(db.events.map((e) => e.action)).toContain("quiet_time.summary_failed");
+    expect(db.sent).toHaveLength(1); // phone, once
+    // The SMTP host is back: resend reaches oncall and leaves phone alone.
+    await resendSummary("s1", "admin");
+    expect(db.summaries[0].status).toBe("sent");
+    expect(db.sent.map((m) => m.to[0])).toEqual(["phone@example.com", "oncall@example.com"]);
+    expect(db.events.map((e) => e.action)).toContain("quiet_time.summary_resent");
+    // Nothing left to resend → refused rather than re-mailing everyone.
+    await expect(resendSummary("s1")).rejects.toThrow(/already been reached/);
   });
 
   it("the whole tick creates and sends in one call", async () => {
