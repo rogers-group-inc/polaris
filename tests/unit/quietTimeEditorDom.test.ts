@@ -184,13 +184,25 @@ describe("PolarisQuietTimeEditor", () => {
     expect(qte.collect(root, { severities: ["serious"] }).config.severities).toEqual(["serious"]);
   });
 
-  it("a summary time inside the quiet period is refused; one outside is kept", () => {
+  it("a summary time inside the quiet period on every day it occurs is refused; one free on some day is kept", () => {
+    // The default editor window is every night 22:00–06:00: 05:00 is quiet
+    // every day, 07:30 is free every day.
     const root = mountEditor(null);
     set(root, '.qte-sendat[value="time"]', true);
     (root.querySelector(".qte-summary-time") as HTMLInputElement).value = "05:00";
-    expect(qte.collect(root).error).toMatch(/falls inside the quiet period/);
+    expect(qte.collect(root).error).toMatch(/inside the quiet period on every day it occurs/);
     (root.querySelector(".qte-summary-time") as HTMLInputElement).value = "07:30";
     expect(qte.collect(root).config.summaryAt).toBe("07:30");
+  });
+
+  it("nights and weekends with a 07:30 summary is accepted — weekday mornings are free", () => {
+    const root = mountEditor(null);
+    (root.querySelector('.rc-preset[data-preset="nights"]') as unknown as { click: () => void }).click();
+    set(root, '.qte-sendat[value="time"]', true);
+    (root.querySelector(".qte-summary-time") as HTMLInputElement).value = "07:30";
+    const got = qte.collect(root);
+    expect(got.error).toBeUndefined();
+    expect(got.config.summaryAt).toBe("07:30");
   });
 
   it("the channel picker offers only email channels", () => {

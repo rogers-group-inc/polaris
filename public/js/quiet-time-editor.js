@@ -248,16 +248,21 @@
     });
   }
 
-  /** The browser's share of the summary-time rule; the server re-checks. */
+  /**
+   * The browser's share of the summary-time rule; the server re-checks. A time
+   * is refused only when it is inside the quiet period on EVERY day the period
+   * occurs — nights and weekends with a 07:30 summary is fine (weekday mornings
+   * are free), every night 22:00–08:00 with 07:30 is a summary that could never
+   * go out on time. Monthly / yearly shapes always leave free days.
+   */
   function summaryTimeProblem(shape, summaryAt) {
     if (!shape || !summaryAt) return "";
-    var days = shape.freq === "daily" ? [0, 1, 2, 3, 4, 5, 6] : (shape.freq === "weekly" ? (shape.daysOfWeek || []) : [0]);
+    var days = shape.freq === "daily" ? [0, 1, 2, 3, 4, 5, 6] : (shape.freq === "weekly" ? (shape.daysOfWeek || []) : []);
+    if (!days.length) return "";
     for (var i = 0; i < days.length; i++) {
-      if (timeInRanges(summaryAt, R().dayRanges(shape, days[i]))) {
-        return "The summary time " + summaryAt + " falls inside the quiet period. Pick a time outside it, or send when the period ends.";
-      }
+      if (!timeInRanges(summaryAt, R().dayRanges(shape, days[i]))) return "";
     }
-    return "";
+    return "The summary time " + summaryAt + " is inside the quiet period on every day it occurs, so a summary could never go out on time. Pick a time outside it, or send when the period ends.";
   }
 
   /**

@@ -518,24 +518,33 @@
 
   /** 7 × 1440 quiet-minute masks from the rules, plus per-day same-day overlap flags. */
   function rulesMasks(rules, invert) {
-    var m = [], conflict = [false, false, false, false, false, false, false];
-    for (var d = 0; d < 7; d++) m.push(new Uint8Array(1440));
+    // `own` is what each day's OWN rules cover; `spill` is what the previous
+    // day's overnight range carries past midnight. A conflict is two rules
+    // covering one minute of the SAME day — Friday 22:00–06:00 running into
+    // "Saturday all day" is the normal shape of nights-and-weekends, not a
+    // clash, and must not paint Saturday as one.
+    var own = [], spill = [], conflict = [false, false, false, false, false, false, false];
+    for (var d = 0; d < 7; d++) { own.push(new Uint8Array(1440)); spill.push(new Uint8Array(1440)); }
     rules.forEach(function (r) {
       if (r.error) return;
       r.days.forEach(function (dow) {
-        if (r.allDay) { for (var i = 0; i < 1440; i++) { if (m[dow][i]) conflict[dow] = true; m[dow][i] = 1; } return; }
+        if (r.allDay) { for (var i = 0; i < 1440; i++) { if (own[dow][i]) conflict[dow] = true; own[dow][i] = 1; } return; }
         (r.ranges || []).forEach(function (h) {
           var a = minutesOfDay(h.startTime), b = minutesOfDay(h.endTime);
           if (b <= a) b += 1440;
           for (var k = a; k < b; k++) {
-            var day = k < 1440 ? dow : (dow + 1) % 7, idx = k % 1440;
-            if (day === dow && m[day][idx]) conflict[day] = true;
-            m[day][idx] = 1;
+            if (k < 1440) { if (own[dow][k]) conflict[dow] = true; own[dow][k] = 1; }
+            else spill[(dow + 1) % 7][k % 1440] = 1;
           }
         });
       });
     });
-    if (invert) for (var d2 = 0; d2 < 7; d2++) for (var j = 0; j < 1440; j++) m[d2][j] = m[d2][j] ? 0 : 1;
+    var m = own.map(function (o, d3) {
+      var out = new Uint8Array(1440);
+      for (var j = 0; j < 1440; j++) out[j] = (o[j] || spill[d3][j]) ? 1 : 0;
+      return out;
+    });
+    if (invert) for (var d2 = 0; d2 < 7; d2++) for (var j2 = 0; j2 < 1440; j2++) m[d2][j2] = m[d2][j2] ? 0 : 1;
     return { m: m, conflict: conflict };
   }
 
@@ -604,7 +613,18 @@
   }
 
   /** Same-day overlap across rules, named by day. */
-  function crossRuleOverlap(byDay) {
+  function crossRuleOverlap(byDay, rules) {
+    // An all-day period sharing a day with any other period: the union would
+    // quietly be "all day", which hides that the day is listed twice.
+    for (var d0 = 0; d0 < 7; d0++) {
+      var here = (rules || []).filter(function (r) { return !r.error && r.days.indexOf(d0) >= 0; });
+      if (here.length < 2) continue;
+      var allDay = here.filter(function (r) { return r.allDay; });
+      if (!allDay.length) continue;
+      var other = here.filter(function (r) { return r !== allDay[0]; })[0];
+      var otherText = other.allDay ? "all day" : (other.ranges || []).map(function (h) { return h.startTime + "–" + h.endTime; }).join(", ");
+      return DAY_SHORT[d0] + ": all day overlaps " + otherText + " — a day that is quiet all day needs no other period; remove it from one.";
+    }
     for (var d = 0; d < 7; d++) {
       var ranges = byDay[d];
       if (!ranges || ranges.length < 2) continue;
@@ -633,7 +653,7 @@
     var invert = !!(host.querySelector(".rc-invert") && host.querySelector(".rc-invert").checked);
     var byDay = rulesPerDay(rules, invert);
     if (!invert) {
-      var clash = crossRuleOverlap(byDay);
+      var clash = crossRuleOverlap(byDay, rules);
       if (clash) return { error: clash };
     }
     return collapseDays(byDay);
