@@ -245,6 +245,17 @@ shared parent-key resolver, because `controllerFortigate` holds FortiManager's
 *device name* and "no parent" is a legitimate state — so the mismatch fails
 silently, in exactly the invisible-but-total way described above.
 
+**A hostname shared by several switches or access points is settled by where the
+device sits, or not at all** ([rule 91](Business-Rules#rule-91)). FortiLink
+fleets often name switches per site, so "IDF-1" sits behind every gate, while
+*Last Seen Switch*, *Last Seen AP* and an access point's uplink switch are all
+recorded by name. A shared name is resolved by the switch whose MAC table holds
+the device, then by the FortiGate that last saw it (an access point's own
+controller), then by the FortiGate that owns its network. Nothing decisive
+places nothing: the device hangs off the FortiGate that saw it instead, so it is
+still at the right site. In the tree, rows that share a name carry their serial
+number beside it.
+
 ---
 
 ## Seeing the tree

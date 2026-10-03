@@ -48,10 +48,12 @@ import { CLAIM_FRESH_DAYS } from "./duplicateIpConflictService.js";
 import {
   buildInfraParentIndex,
   resolveInfraParentAsset,
+  resolveInfraParentAssetDetailed,
   readControllerStamp,
   readParentSwitchStamp,
   normalizeNameKey,
   normalizeSerialKey,
+  type InfraParentScope,
 } from "../utils/fortinetParentKey.js";
 import { inferInterfaceTopology } from "./interfaceTopologyService.js";
 import { logEventsBatch } from "./eventLogService.js";
@@ -306,7 +308,18 @@ export function buildDependencyEdgesFromInputs(
       const switchStamp = readParentSwitchStamp(top);
       const fgStamp = readControllerStamp(top);
       if (switchStamp.name) {
-        const parent = resolveInfraParentAsset(parentIndex, switchStamp, "switch");
+        // `parentSwitch` is a NAME, and on a FortiLink fleet that renames its
+        // switch-ids per site the same name sits behind every gate. The AP
+        // knows its own controller (its stamp, and the gate whose roster lists
+        // it) — that scopes the switch lookup to the right site (rule 91).
+        const apGate = (fgStamp.serial || fgStamp.name)
+          ? resolveInfraParentAsset(parentIndex, fgStamp, "firewall")
+          : null;
+        const gateIds: string[] = [];
+        if (apGate) gateIds.push(apGate.id);
+        const rosterGate = gateOfMember.get(a.id);
+        if (rosterGate && !gateIds.includes(rosterGate)) gateIds.push(rosterGate);
+        const parent = resolveInfraParentAsset(parentIndex, switchStamp, "switch", { gateIds });
         if (parent) add(a.id, parent.id, "controller");
       } else if (fgStamp.name || fgStamp.serial) {
         // AP not behind a FortiSwitch (rare — direct uplink to FortiGate).
@@ -652,8 +665,10 @@ export interface DepEndpoint {
   lastSeenAp: string | null;
   /**
    * Candidate FortiGate names from `AssetFortigateSighting.fortigateDevice`,
-   * MOST RECENTLY SEEN FIRST. The caller orders them; this function just takes
-   * the first that resolves to a firewall asset.
+   * MOST RECENTLY SEEN FIRST. The caller orders them; this function takes the
+   * first that resolves to a firewall asset — and, together with
+   * `ipamGateAssetId`, uses ALL of them as the scope that picks between
+   * same-named switches / APs at different sites (rule 91).
    */
   sightedFortigates: string[];
   /**
@@ -665,6 +680,15 @@ export interface DepEndpoint {
    * claim on its address is not current.
    */
   ipamGateAssetId: string | null;
+  /**
+   * Switch asset ids whose forwarding table (`AssetMacTableEntry`, the SNMP
+   * FDB scrape) currently holds this endpoint's MAC, freshest first. The
+   * caller loads it only for endpoints whose `lastSeenSwitch` NAME is shared
+   * by several switches (rule 91): a switch that has the device in its MAC
+   * table is direct evidence, and outranks knowing which gate the device is
+   * behind. Absent / empty when not loaded or when no switch holds the MAC.
+   */
+  macTableSwitchIds?: string[];
 }
 
 /** One resolved endpoint parent. */
@@ -714,6 +738,16 @@ export function switchNameFromLastSeenSwitch(v: string | null | undefined): stri
  * the grandparents), so pinning an endpoint to an unmonitored access switch
  * still yields gate-driven suppression rather than silence.
  *
+ * SAME-NAMED SWITCHES AND APs (business rule 91): `lastSeenSwitch` and
+ * `lastSeenAp` carry a NAME, and a FortiLink fleet that renames its switch-ids
+ * per site has an `IDF-1` behind every gate. The gates that have SEEN this
+ * endpoint (its sightings, freshest first) and the gate IPAM says owns its
+ * address are passed as the resolver's scope, so the switch that wins is the
+ * one under a gate this device is actually behind. A name no gate can settle
+ * resolves to nothing rather than to the first site in the list — the stamp
+ * is then skipped like any other unknown device, and the ladder moves on to
+ * the firewall tiers, which still place the endpoint at the right SITE.
+ *
  * Returns null when nothing resolves — treat as "no parent", i.e. this endpoint
  * never suppresses. That's the safe direction: an unresolvable upstream must
  * leave alerting exactly as it was.
@@ -721,16 +755,44 @@ export function switchNameFromLastSeenSwitch(v: string | null | undefined): stri
 export function resolveEndpointParent(
   index: ReturnType<typeof buildInfraParentIndex>,
   endpoint: DepEndpoint,
+  stats?: EndpointResolutionStats,
 ): EndpointParentResolution | null {
+  // The scope: every gate this endpoint is known to sit behind, most trusted
+  // first. Resolved lazily — most endpoints carry a unique switch name and
+  // never need it.
+  let gateIds: string[] | null = null;
+  const scope = (): InfraParentScope => {
+    if (!gateIds) {
+      gateIds = [];
+      for (const name of endpoint.sightedFortigates) {
+        if (!name) continue;
+        const fg = resolveInfraParentAsset(index, { name }, "firewall");
+        if (fg && !gateIds.includes(fg.id)) gateIds.push(fg.id);
+      }
+      if (endpoint.ipamGateAssetId && !gateIds.includes(endpoint.ipamGateAssetId)) {
+        gateIds.push(endpoint.ipamGateAssetId);
+      }
+    }
+    return { preferIds: endpoint.macTableSwitchIds ?? [], gateIds };
+  };
+  const named = (name: string, type: "switch" | "access_point") => {
+    const unique = resolveInfraParentAssetDetailed(index, { name }, type);
+    if (unique.hit || !unique.ambiguous) return unique.hit;
+    if (stats) stats.sharedNameEndpointIds.add(endpoint.id);
+    const scoped = resolveInfraParentAssetDetailed(index, { name }, type, scope());
+    if (scoped.ambiguous && stats) stats.ambiguous++;
+    return scoped.hit;
+  };
+
   const switchName = switchNameFromLastSeenSwitch(endpoint.lastSeenSwitch);
   if (switchName) {
-    const sw = resolveInfraParentAsset(index, { name: switchName }, "switch");
+    const sw = named(switchName, "switch");
     if (sw) return { parentAssetId: sw.id, detectedVia: "switch-port" };
   }
 
   const apName = typeof endpoint.lastSeenAp === "string" ? endpoint.lastSeenAp.trim() : "";
   if (apName) {
-    const ap = resolveInfraParentAsset(index, { name: apName }, "access_point");
+    const ap = named(apName, "access_point");
     if (ap) return { parentAssetId: ap.id, detectedVia: "wireless" };
   }
 
@@ -747,6 +809,19 @@ export function resolveEndpointParent(
   return null;
 }
 
+/** What `resolveEndpointParent` reports back about shared names (rule 91). */
+export interface EndpointResolutionStats {
+  /** Endpoints whose switch / AP name several sites share and NOTHING settled. */
+  ambiguous: number;
+  /** Every endpoint that HIT a shared name, settled or not — the set the
+   *  caller loads MAC-table evidence for before the final pass. */
+  sharedNameEndpointIds: Set<string>;
+}
+
+export function newEndpointResolutionStats(): EndpointResolutionStats {
+  return { ambiguous: 0, sharedNameEndpointIds: new Set() };
+}
+
 /**
  * Build the endpoint half of the DAG — at most one edge per endpoint.
  *
@@ -759,11 +834,12 @@ export function resolveEndpointParent(
 export function buildEndpointDependencyEdges(
   endpoints: DepEndpoint[],
   infra: DepAsset[],
+  stats?: EndpointResolutionStats,
 ): DependencyEdge[] {
   const index = buildInfraParentIndex(infra);
   const out: DependencyEdge[] = [];
   for (const e of endpoints) {
-    const hit = resolveEndpointParent(index, e);
+    const hit = resolveEndpointParent(index, e, stats);
     if (!hit || hit.parentAssetId === e.id) continue;
     out.push({ childAssetId: e.id, parentAssetId: hit.parentAssetId, detectedVia: hit.detectedVia });
   }
@@ -1590,6 +1666,38 @@ async function resolveIpamGatesForEndpoints(assetIds: string[]): Promise<Map<str
 }
 
 /**
+ * The switches whose forwarding tables hold each endpoint's MAC, freshest
+ * first (rule 91's tie-break between same-named switches). Only `learned`
+ * entries count — `self` is the switch's own address and `mgmt` its
+ * controller's — and only ones refreshed within the last 48 h, so a table a
+ * switch stopped answering for cannot keep an endpoint on a port it left.
+ * Chunked like every other id list here.
+ */
+async function loadMacTableSwitchesForEndpoints(assetIds: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (assetIds.length === 0) return out;
+  const cutoff = new Date(Date.now() - MAC_TABLE_FRESH_MS);
+  const rows: Array<{ assetId: string; matchedAssetId: string | null; lastSeen: Date }> = [];
+  for (const ids of chunk(assetIds, 500)) {
+    rows.push(...await prisma.assetMacTableEntry.findMany({
+      where:  { matchedAssetId: { in: ids }, status: "learned", lastSeen: { gte: cutoff } },
+      select: { assetId: true, matchedAssetId: true, lastSeen: true },
+    }));
+  }
+  rows.sort((a, b) => b.lastSeen.getTime() - a.lastSeen.getTime());
+  for (const r of rows) {
+    if (!r.matchedAssetId) continue;
+    const list = out.get(r.matchedAssetId);
+    if (!list) out.set(r.matchedAssetId, [r.assetId]);
+    else if (!list.includes(r.assetId)) list.push(r.assetId);
+  }
+  return out;
+}
+
+/** How old a forwarding-table entry may be and still place an endpoint. */
+const MAC_TABLE_FRESH_MS = 48 * 60 * 60 * 1000;
+
+/**
  * Refresh every `source="endpoint"` row from the current endpoint columns.
  *
  * Fleet-wide but cheap: four reads, then a DIFF (insert missing / delete gone /
@@ -1672,13 +1780,40 @@ export async function syncEndpointDependencyEdges(
   // the unplaced set is the small tail this tier exists for. Set-based — one
   // claim query and one gate resolution for the whole tail, no per-asset await.
   const index = buildInfraParentIndex(infra);
-  const unplaced = endpoints.filter(e => !resolveEndpointParent(index, e));
+  const firstPass = newEndpointResolutionStats();
+  const unplaced = endpoints.filter(e => !resolveEndpointParent(index, e, firstPass));
   if (unplaced.length > 0) {
     const gateByAsset = await resolveIpamGatesForEndpoints(unplaced.map(e => e.id));
     for (const e of unplaced) e.ipamGateAssetId = gateByAsset.get(e.id) ?? null;
   }
 
-  const desiredEdges = buildEndpointDependencyEdges(endpoints, infra);
+  // Shared switch names (rule 91) — the SAME tail-only shape as the IPAM tier.
+  // An endpoint whose `lastSeenSwitch` names a switch several sites share gets
+  // the strongest evidence Polaris holds: which switches' forwarding tables
+  // (`AssetMacTableEntry`, the SNMP FDB scrape) currently carry its MAC. Loaded
+  // only for the endpoints that hit a shared name, against the indexed
+  // `matchedAssetId`, so a fleet with unique switch names pays nothing here.
+  if (firstPass.sharedNameEndpointIds.size > 0) {
+    const bySwitch = await loadMacTableSwitchesForEndpoints([...firstPass.sharedNameEndpointIds]);
+    for (const e of endpoints) {
+      const held = bySwitch.get(e.id);
+      if (held) e.macTableSwitchIds = held;
+    }
+  }
+
+  const resolution = newEndpointResolutionStats();
+  const desiredEdges = buildEndpointDependencyEdges(endpoints, infra, resolution);
+  if (resolution.ambiguous > 0) {
+    // Rule 91: these endpoints named a switch / AP that exists at several
+    // sites and neither a MAC table nor a sighting / IPAM gate singled one
+    // out. They fell through to the firewall tiers (or to no parent). Not an
+    // error — but an operator wondering why a device reads "last-seen
+    // firewall" rather than its switch starts here.
+    logger.info(
+      { event: "dependency.endpoints.ambiguous_name", endpoints: resolution.ambiguous, sharedName: firstPass.sharedNameEndpointIds.size },
+      "Endpoints whose last-seen switch / AP name is shared by several sites and nothing could settle",
+    );
+  }
   const desiredByKey = new Map<string, DependencyEdge>();
   for (const e of desiredEdges) desiredByKey.set(`${e.childAssetId}|${e.parentAssetId}`, e);
 

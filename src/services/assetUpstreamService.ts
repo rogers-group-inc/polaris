@@ -48,8 +48,11 @@
 import { prisma } from "../db.js";
 import {
   buildInfraParentIndex,
+  normalizeNameKey,
   parentAssetWhereOr,
+  readControllerStamp,
   resolveInfraParentAsset,
+  type InfraParentScope,
 } from "../utils/fortinetParentKey.js";
 import { shapeManagementAccessForClient } from "./fortinetManagementAccessService.js";
 import { resolveOwningGateContexts } from "./ipUpstreamChainService.js";
@@ -229,15 +232,53 @@ export async function resolveAssetUpstream(
         })) as CandidateRow[])
       : [];
 
-  // Index per KIND, not one index over everything: `buildInfraParentIndex` is
-  // first-writer-wins per key, so a switch and a gate sharing a hostname would
-  // let one shadow the other and the type guard would then reject the match.
+  // A switch / AP NAME several devices share (business rule 91 — the per-site
+  // switch-id of a FortiLink fleet). The resolver picks between them by the
+  // gate each sits under, so the candidates' controllers must be in the same
+  // index, and the scope is what this asset is known to sit behind: the
+  // switches whose forwarding tables hold its MAC, the gate that last sighted
+  // it, the gate IPAM says owns its address. All of it loaded only when a
+  // name actually collides — the common case stays one query.
+  const sharesName = (name: string, assetType: string) =>
+    candidates.filter((c) => c.assetType === assetType && normalizeNameKey(c.hostname) === normalizeNameKey(name)).length > 1;
+  const collided = (sw && sharesName(sw.name, "switch")) || (apName && sharesName(apName, "access_point"));
+  let scope: InfraParentScope = {};
+  if (collided) {
+    const controllerOr = candidates
+      .filter((c) => c.assetType !== "firewall")
+      .flatMap((c) => parentAssetWhereOr(readControllerStamp(c.fortinetTopology)));
+    const [controllers, macTableRows, owningForScope] = await Promise.all([
+      controllerOr.length > 0
+        ? (prisma.asset.findMany({ where: { assetType: "firewall", OR: controllerOr }, select: ASSET_SELECT }) as Promise<CandidateRow[]>)
+        : Promise.resolve([] as CandidateRow[]),
+      prisma.assetMacTableEntry.findMany({
+        where:   { matchedAssetId: assetId, status: "learned", lastSeen: { gte: new Date(Date.now() - 48 * 60 * 60 * 1000) } },
+        select:  { assetId: true },
+        orderBy: { lastSeen: "desc" },
+      }),
+      // The IPAM gate as SCOPE even when a sighting exists — the firewall ROW
+      // keeps its evidence-over-inference rule; this only narrows a name.
+      owning === undefined && ip ? resolveOwningGateContexts([ip]).then((m) => m.get(ip)) : Promise.resolve(owning),
+    ]);
+    for (const c of controllers) if (!candidates.some((x) => x.id === c.id)) candidates.push(c);
+    const gateIds: string[] = [];
+    if (fwName) {
+      const sighted = resolveInfraParentAsset(buildInfraParentIndex(candidates), { name: fwName }, "firewall");
+      if (sighted) gateIds.push(sighted.id);
+    }
+    const ipamGate = owningForScope?.gateAssetId;
+    if (ipamGate && !gateIds.includes(ipamGate)) gateIds.push(ipamGate);
+    scope = { preferIds: [...new Set(macTableRows.map((r) => r.assetId))], gateIds };
+  }
+
+  // One index over every candidate: the resolver filters by type BEFORE it
+  // counts, so a switch and a gate sharing a hostname no longer shadow each
+  // other, and the switch candidates' controllers are in reach for the scope.
+  const index = buildInfraParentIndex(candidates);
   const resolve = (name: string, assetType: string): UpstreamAssetRef | null => {
-    const pool = candidates.filter((c) => c.assetType === assetType);
-    if (pool.length === 0) return null;
-    const hit = resolveInfraParentAsset(buildInfraParentIndex(pool), { name }, assetType);
+    const hit = resolveInfraParentAsset(index, { name }, assetType, assetType === "firewall" ? undefined : scope);
     if (!hit) return null;
-    const row = pool.find((c) => c.id === hit.id);
+    const row = candidates.find((c) => c.id === hit.id);
     return row ? toRef(row) : null;
   };
 

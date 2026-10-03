@@ -51,6 +51,8 @@ import { recomputeMonitorOverrideForAssets } from "./monitorOverrideService.js";
 import { macHexKeyOrNull } from "../utils/mac.js";
 import { bumpLastSeen } from "../utils/assetInvariants.js";
 import { isGenericAssetType } from "../utils/assetTypes.js";
+import { isUsableSerial } from "../utils/serialNumber.js";
+import { normalizeSerialKey } from "../utils/fortinetParentKey.js";
 
 /**
  * Source kinds that mark an asset as having its own authoritative identity.
@@ -249,6 +251,24 @@ export function decideDuplicateHostnameGroup(rows: DuplicateHostnameAssetRow[]):
   const decorated = rankBySourceTier(rows);
   const canonical = decorated[0];
   const rest = decorated.slice(1);
+
+  // Two usable serials that differ are two devices, at ANY tier — a serial is
+  // identity (rule 83) and a shared hostname is not (rule 91). A FortiLink
+  // fleet that names the switch-id per site has an `IDF-1` behind every gate;
+  // the MAC tie-break below only protects a pair that BOTH carry a MAC, and a
+  // switch whose baseMac capture had not run yet would have been absorbed
+  // into another site's switch as a ghost. Placeholder serials fall through
+  // `isUsableSerial` and keep the old behaviour.
+  const cSerial = isUsableSerial(canonical.row.serialNumber) ? normalizeSerialKey(canonical.row.serialNumber) : "";
+  for (const g of rest) {
+    const gSerial = isUsableSerial(g.row.serialNumber) ? normalizeSerialKey(g.row.serialNumber) : "";
+    if (cSerial && gSerial && cSerial !== gSerial) {
+      return {
+        kind: "skip",
+        reason: `conflicting serials (${cSerial} vs ${gSerial}) — two devices sharing a hostname`,
+      };
+    }
+  }
 
   const cMac = normMac(canonical.row.macAddress);
   for (const g of rest) {

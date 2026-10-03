@@ -14,6 +14,7 @@ import {
   assignLayers,
   evaluateSuppression,
   buildEndpointDependencyEdges,
+  newEndpointResolutionStats,
   switchNameFromLastSeenSwitch,
   filterFreshLldpRows,
   type DepAsset,
@@ -1274,5 +1275,111 @@ describe("buildDependencyEdgesFromInputs — controller membership", () => {
     ];
     const edges = buildDependencyEdgesFromInputs(assets, [], []);
     expect(edges).toContainEqual({ childAssetId: "sw1", parentAssetId: "fg1", detectedVia: "controller" });
+  });
+});
+
+// Business rule 91 — switches at different sites sharing one hostname. The
+// prod shape: a FortiLink fleet whose switch-ids are renamed per site, so
+// `lastSeenSwitch` / `lastSeenAp` / an AP's `parentSwitch` all name "IDF-1"
+// and the tree used to bind everything to whichever IDF-1 sorted first.
+describe("shared switch / AP names across sites (rule 91)", () => {
+  function gateS(id: string, serial: string, deviceName: string): DepAsset {
+    return { id, hostname: `${deviceName}-FW`, serialNumber: serial, assetType: "firewall", fortinetTopology: { role: "fortigate", deviceName } };
+  }
+  function swS(id: string, serial: string, controllerSerial: string, controllerFortigate: string): DepAsset {
+    return { id, hostname: "IDF-1", serialNumber: serial, assetType: "switch", fortinetTopology: { role: "fortiswitch", controllerSerial, controllerFortigate } };
+  }
+  function apS(id: string, controllerSerial: string, controllerFortigate: string): DepAsset {
+    return { id, hostname: "AP-LOBBY", serialNumber: `FP231F${id}`, assetType: "access_point", fortinetTopology: { role: "fortiap", parentSwitch: "IDF-1", controllerSerial, controllerFortigate } };
+  }
+  const fgA = gateS("fgA", "FG100F000A", "SITE-A");
+  const fgB = gateS("fgB", "FG100F000B", "SITE-B");
+  const swA = swS("swA", "S248EPTF000A", "FG100F000A", "SITE-A");
+  const swB = swS("swB", "S248EPTF000B", "FG100F000B", "SITE-B");
+  const apA = apS("apA", "FG100F000A", "SITE-A");
+  const apB = apS("apB", "FG100F000B", "SITE-B");
+  const infra = [fgA, fgB, swA, swB, apA, apB];
+
+  it("an AP's parentSwitch resolves to the IDF-1 under ITS OWN controller", () => {
+    const edges = buildDependencyEdgesFromInputs(infra, [], []);
+    expect(edges).toContainEqual({ childAssetId: "apA", parentAssetId: "swA", detectedVia: "controller" });
+    expect(edges).toContainEqual({ childAssetId: "apB", parentAssetId: "swB", detectedVia: "controller" });
+    expect(edges.some(e => e.childAssetId === "apA" && e.parentAssetId === "swB")).toBe(false);
+    expect(edges.some(e => e.childAssetId === "apB" && e.parentAssetId === "swA")).toBe(false);
+  });
+
+  it("an AP with no controller stamp but a place on a gate's roster still finds its site's switch", () => {
+    const apRoster: DepAsset = { id: "apR", hostname: "AP-R", serialNumber: "FP231FAPR", assetType: "access_point", fortinetTopology: { role: "fortiap", parentSwitch: "IDF-1" } };
+    const fgBRoster: DepAsset = { ...fgB, fortinetTopology: { role: "fortigate", deviceName: "SITE-B", managedApSerials: ["FP231FAPR"] } };
+    const edges = buildDependencyEdgesFromInputs([fgA, fgBRoster, swA, swB, apRoster], [], []);
+    expect(edges).toContainEqual({ childAssetId: "apR", parentAssetId: "swB", detectedVia: "controller" });
+  });
+
+  it("an AP nothing places gets no switch edge rather than the first IDF-1", () => {
+    const apLost: DepAsset = { id: "apL", hostname: "AP-L", serialNumber: "FP231FAPL", assetType: "access_point", fortinetTopology: { role: "fortiap", parentSwitch: "IDF-1" } };
+    const edges = buildDependencyEdgesFromInputs([fgA, fgB, swA, swB, apLost], [], []);
+    expect(edges.filter(e => e.childAssetId === "apL")).toEqual([]);
+  });
+
+  function endpoint(id: string, over: Partial<DepEndpoint> = {}): DepEndpoint {
+    return { id, lastSeenSwitch: "IDF-1/port7", lastSeenAp: null, sightedFortigates: [], ipamGateAssetId: null, ...over };
+  }
+
+  it("an endpoint's shared switch name resolves by the gate that sighted it", () => {
+    const edges = buildEndpointDependencyEdges([
+      endpoint("pcA", { sightedFortigates: ["SITE-A"] }),
+      endpoint("pcB", { sightedFortigates: ["SITE-B"] }),
+    ], infra);
+    expect(edges).toEqual([
+      { childAssetId: "pcA", parentAssetId: "swA", detectedVia: "switch-port" },
+      { childAssetId: "pcB", parentAssetId: "swB", detectedVia: "switch-port" },
+    ]);
+  });
+
+  it("the freshest sighting wins when the device has been at both sites", () => {
+    const edges = buildEndpointDependencyEdges([endpoint("laptop", { sightedFortigates: ["SITE-B", "SITE-A"] })], infra);
+    expect(edges).toEqual([{ childAssetId: "laptop", parentAssetId: "swB", detectedVia: "switch-port" }]);
+  });
+
+  it("a switch whose MAC table holds the device outranks the sighting", () => {
+    const edges = buildEndpointDependencyEdges([endpoint("pc", { sightedFortigates: ["SITE-A"], macTableSwitchIds: ["swB"] })], infra);
+    expect(edges).toEqual([{ childAssetId: "pc", parentAssetId: "swB", detectedVia: "switch-port" }]);
+  });
+
+  it("the IPAM gate settles a shared name for a device no gate has sighted", () => {
+    const edges = buildEndpointDependencyEdges([endpoint("printer", { ipamGateAssetId: "fgB" })], infra);
+    expect(edges).toEqual([{ childAssetId: "printer", parentAssetId: "swB", detectedVia: "switch-port" }]);
+  });
+
+  it("nothing to go on: the switch tier is skipped, the ladder continues, and it is counted", () => {
+    const stats = newEndpointResolutionStats();
+    // No sighting, no IPAM gate — no parent at all, never the first IDF-1.
+    expect(buildEndpointDependencyEdges([endpoint("orphan")], infra, stats)).toEqual([]);
+    expect(stats.ambiguous).toBe(1);
+    expect([...stats.sharedNameEndpointIds]).toEqual(["orphan"]);
+    // A sighting at a THIRD site that has no IDF-1: the switch stays
+    // ambiguous and the endpoint hangs off that gate by the sighting tier.
+    const fgC = gateS("fgC", "FG100F000C", "SITE-C");
+    const edges = buildEndpointDependencyEdges([endpoint("visitor", { sightedFortigates: ["SITE-C"] })], [...infra, fgC]);
+    expect(edges).toEqual([{ childAssetId: "visitor", parentAssetId: "fgC", detectedVia: "sighting" }]);
+  });
+
+  it("a shared AP name resolves the same way", () => {
+    const edges = buildEndpointDependencyEdges([
+      endpoint("tabA", { lastSeenSwitch: null, lastSeenAp: "AP-LOBBY", sightedFortigates: ["SITE-A"] }),
+      endpoint("tabB", { lastSeenSwitch: null, lastSeenAp: "AP-LOBBY", sightedFortigates: ["SITE-B"] }),
+    ], infra);
+    expect(edges).toEqual([
+      { childAssetId: "tabA", parentAssetId: "apA", detectedVia: "wireless" },
+      { childAssetId: "tabB", parentAssetId: "apB", detectedVia: "wireless" },
+    ]);
+  });
+
+  it("a unique switch name never consults the scope", () => {
+    const unique: DepAsset = { id: "swU", hostname: "CORE-1", serialNumber: "S248EPTF000U", assetType: "switch", fortinetTopology: { controllerSerial: "FG100F000A" } };
+    const stats = newEndpointResolutionStats();
+    const edges = buildEndpointDependencyEdges([endpoint("srv", { lastSeenSwitch: "CORE-1/port1" })], [...infra, unique], stats);
+    expect(edges).toEqual([{ childAssetId: "srv", parentAssetId: "swU", detectedVia: "switch-port" }]);
+    expect(stats.sharedNameEndpointIds.size).toBe(0);
   });
 });

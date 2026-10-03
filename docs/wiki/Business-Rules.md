@@ -1,6 +1,6 @@
 # Business rules
 
-Polaris carries **78 numbered rules**. Each one records a decision *and* the
+Polaris carries **90 numbered rules** (81 is a deliberate gap). Each one records a decision *and* the
 incident or constraint that forced it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
 where the reasons live.
@@ -1345,3 +1345,29 @@ recovered, its parent's alert covers it. An overlay whose underlay is
 healthy alerts as usual.
 
 See [Automation Triggers → SD-WAN](Automation-Triggers#sd-wan).
+
+### Rule 91
+
+**A hostname is not an identity. A name that several switches or access points
+share is resolved by where the device sits, or not at all.**
+
+On a FortiLink fleet the switch name is often set per site, so "IDF-1" exists
+behind every FortiGate. A device's *Last Seen Switch*, its *Last Seen AP* and an
+access point's uplink switch are all recorded by name, and Polaris used to turn
+such a name into whichever same-named device it happened to find first, which
+could be at another site. The dependency tree then drifted: devices were shown
+under, and silenced behind, a switch they never sat under.
+
+Now a shared name is settled by evidence about the device itself: first the
+switch whose MAC table currently holds the device's MAC, then the FortiGate that
+last saw the device (or, for an access point, its own controller), then the
+FortiGate that owns the device's network. When none of those singles out one
+device, Polaris places nothing rather than guessing. The device then hangs off
+the FortiGate that saw it, so it is still at the right site. A name that is
+unique never needs any of this.
+
+Two switches with different serial numbers are never merged for sharing a
+hostname. In the dependency tree, rows that share a name show their serial
+number (or address) beside it, so you can tell them apart before you click.
+
+See [Dependency suppression → Rules that keep the graph honest](Dependency-Suppression#rules-that-keep-the-graph-honest).

@@ -205,6 +205,8 @@ import {
   responseTimeProbeShouldQueue,
 } from "../utils/pollingCompatibility.js";
 import { propagateAfterStatusChange } from "./dependencyTreeService.js";
+import { buildInfraParentIndex, controllerGateIdOf, type InfraParentCandidate } from "../utils/fortinetParentKey.js";
+import { indexLldpHostname, pickLldpHostnameMatch, type LldpHostnameMatchIndex } from "../utils/lldpHostnameMatch.js";
 import { triggerRetryAfterStatusChange } from "./reservationService.js";
 import { recordIpHistoryEntries } from "./assetIpHistoryService.js";
 import { snmpTicksToSeconds, formatUptimeLong } from "../utils/uptime.js";
@@ -10735,17 +10737,20 @@ async function persistLldpNeighbors(
       const m = matchIndex.byMac.get(mac);
       if (m && m !== assetId) return m;
     }
+    // Hostname arms (business rule 91): a name several assets share — the
+    // per-site switch-id of a FortiLink fleet — is matched only to the
+    // candidate under the same gate as this asset, else to nothing. The
+    // belt-and-suspenders FQDN → leftmost-label retry is kept: the index
+    // builder already adds short forms when it sees FQDNs, but both
+    // directions are defended.
+    const byName = (lower: string): string | null => {
+      let m = pickLldpHostnameMatch(matchIndex, assetId, lower);
+      if (!m && lower.includes(".")) m = pickLldpHostnameMatch(matchIndex, assetId, lower.split(".")[0]);
+      return m;
+    };
     if (n.systemName) {
-      const lower = n.systemName.toLowerCase();
-      let m = matchIndex.byHostname.get(lower);
-      // Belt-and-suspenders: if LLDP reports FQDN ("device.contoso.com")
-      // and the index only has the short form, try the leftmost label too.
-      // The index builder already adds short forms when it sees FQDNs, but
-      // both directions defended.
-      if (!m && lower.includes(".")) {
-        m = matchIndex.byHostname.get(lower.split(".")[0]);
-      }
-      if (m && m !== assetId) return m;
+      const m = byName(n.systemName.toLowerCase());
+      if (m) return m;
     }
     // Some LLDP implementations leave systemName empty and put the hostname
     // in chassisId with subtype local(7) or chassisComponent(1). Treat any
@@ -10756,12 +10761,8 @@ async function persistLldpNeighbors(
       // match a hostname index entry anyway, and we don't want to pollute
       // logs with bogus lookups.
       if (raw && !/\s/.test(raw) && !/^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(raw)) {
-        const lower = raw.toLowerCase();
-        let m = matchIndex.byHostname.get(lower);
-        if (!m && lower.includes(".")) {
-          m = matchIndex.byHostname.get(lower.split(".")[0]);
-        }
-        if (m && m !== assetId) return m;
+        const m = byName(raw.toLowerCase());
+        if (m) return m;
       }
     }
     return null;
@@ -11369,7 +11370,8 @@ async function bulkUpsertWirelessStations(
  *
  * - byIp: ipAddress + every row in asset_associated_ips (manual + monitor-discovered)
  * - byMac: macAddress (uppercased) + every entry in macAddresses
- * - byHostname: hostname (lowercased) — first wins on duplicates
+ * - byHostnameAll: hostname (lowercased) → EVERY asset carrying it (rule 91);
+ *   `gateIdByAssetId` is what picks between them
  */
 // ─── LLDP match-index cache ───────────────────────────────────────────────
 //
@@ -11391,10 +11393,9 @@ async function bulkUpsertWirelessStations(
 // explicit invalidation is optional, and most discovery writes don't need
 // it. Currently nobody calls it; the TTL is the source of truth.
 const LLDP_MATCH_CACHE_TTL_MS = 60_000;
-interface LldpMatchIndex {
+interface LldpMatchIndex extends LldpHostnameMatchIndex {
   byIp: Map<string, string>;
   byMac: Map<string, string>;
-  byHostname: Map<string, string>;
 }
 // createTtlCache (2026-08 audit) — the hand-rolled cache+inflight trio it
 // replaces re-implemented exactly the promise-coalescing the shared util
@@ -11414,11 +11415,7 @@ export function invalidateLldpMatchCache(): void {
   lldpMatchCache.invalidate();
 }
 
-async function buildLldpAssetMatchIndex(): Promise<{
-  byIp: Map<string, string>;
-  byMac: Map<string, string>;
-  byHostname: Map<string, string>;
-}> {
+async function buildLldpAssetMatchIndex(): Promise<LldpMatchIndex> {
   // Always-on logging around the full-fleet findMany: the rebuild fires at
   // most every 60 s on TTL miss, so log volume is bounded, and "the rebuild
   // wedged" is one of the leading hypotheses for systemInfo handler stalls
@@ -11427,37 +11424,61 @@ async function buildLldpAssetMatchIndex(): Promise<{
   // complete lines gives the operator wall-clock for the rebuild itself.
   const startedAt = Date.now();
   logger.info({ phase: "lldp_match_index.rebuild_start" }, "LLDP match index rebuild started");
-  const rows = await prisma.asset.findMany({
-    select: {
-      id: true, ipAddress: true, macAddress: true, hostname: true, dnsName: true,
-      associatedIpRows: { select: { ip: true } },
-      macAddressRows:   { select: { mac: true, macEnd: true } },
-    },
-  });
+  // Two reads: the identity columns for every asset, and — for the Fortinet
+  // infra rows only — the three `fortinetTopology` keys that say which gate
+  // each sits under (rule 91's tie-break for a shared hostname). A JSON-path
+  // projection rather than selecting the whole blob: a gate's topology stamp
+  // carries its managed-member serial lists, far more than this index needs
+  // every 60 s.
+  type InfraKeyRow = {
+    id: string; hostname: string | null; serialNumber: string | null; assetType: string;
+    controllerSerial: string | null; controllerFortigate: string | null; deviceName: string | null;
+  };
+  const [rows, infraRows] = await Promise.all([
+    prisma.asset.findMany({
+      select: {
+        id: true, ipAddress: true, macAddress: true, hostname: true, dnsName: true,
+        associatedIpRows: { select: { ip: true } },
+        macAddressRows:   { select: { mac: true, macEnd: true } },
+      },
+    }),
+    prisma.$queryRaw<InfraKeyRow[]>`
+      SELECT id, hostname, "serialNumber", "assetType"::text AS "assetType",
+             "fortinetTopology"->>'controllerSerial'    AS "controllerSerial",
+             "fortinetTopology"->>'controllerFortigate' AS "controllerFortigate",
+             "fortinetTopology"->>'deviceName'          AS "deviceName"
+      FROM assets
+      WHERE "assetType"::text IN ('firewall', 'switch', 'access_point')
+    `,
+  ]);
   logger.info(
     { phase: "lldp_match_index.rebuild_complete", elapsedMs: Date.now() - startedAt, assets: rows.length },
     "LLDP match index rebuild complete",
   );
   const byIp = new Map<string, string>();
   const byMac = new Map<string, string>();
-  const byHostname = new Map<string, string>();
-  // Helper: index a hostname-shaped string under the asset id, including
-  // the leftmost label when it's an FQDN. Symmetric coverage matters for
-  // LLDP matching: a FortiGate's `Asset.hostname` is "HARBOR-61F-1" (short
-  // form, set by the fortigate-firewall source) but the device advertises
-  // itself via LLDP as "HARBOR-61F-1.example.com" (FQDN). The
-  // lookup side already lowercases; we just need both forms in the index.
-  const idxHostname = (raw: string | null, assetId: string) => {
-    if (!raw) return;
-    const lower = raw.toLowerCase().trim();
-    if (!lower) return;
-    if (!byHostname.has(lower)) byHostname.set(lower, assetId);
-    const dotIdx = lower.indexOf(".");
-    if (dotIdx > 0) {
-      const shortForm = lower.slice(0, dotIdx);
-      if (!byHostname.has(shortForm)) byHostname.set(shortForm, assetId);
-    }
-  };
+  const byHostnameAll = new Map<string, string[]>();
+  // Index a hostname-shaped string under the asset id, including the leftmost
+  // label when it's an FQDN. Symmetric coverage matters for LLDP matching: a
+  // FortiGate's `Asset.hostname` is "HARBOR-61F-1" (short form, set by the
+  // fortigate-firewall source) but the device advertises itself via LLDP as
+  // "HARBOR-61F-1.example.com" (FQDN). The lookup side already lowercases; we
+  // just need both forms in the index.
+  const idxHostname = (raw: string | null, assetId: string) => indexLldpHostname(byHostnameAll, raw, assetId);
+  // Which gate each infra asset sits under, through the shared resolver (a
+  // controller stamp is serial-first, FMG device name second, hostname last).
+  const gateIdByAssetId = new Map<string, string>();
+  const infraCandidates: InfraParentCandidate[] = infraRows.map(r => ({
+    id: r.id, hostname: r.hostname, serialNumber: r.serialNumber, assetType: r.assetType,
+    fortinetTopology: {
+      controllerSerial: r.controllerSerial, controllerFortigate: r.controllerFortigate, deviceName: r.deviceName,
+    },
+  }));
+  const infraIndex = buildInfraParentIndex(infraCandidates);
+  for (const c of infraCandidates) {
+    const gate = c.assetType === "firewall" ? c.id : controllerGateIdOf(infraIndex, c);
+    if (gate) gateIdByAssetId.set(c.id, gate);
+  }
   for (const a of rows) {
     if (a.ipAddress && !byIp.has(a.ipAddress)) byIp.set(a.ipAddress, a.id);
     for (const row of a.associatedIpRows) {
@@ -11483,7 +11504,7 @@ async function buildLldpAssetMatchIndex(): Promise<{
     // form which might differ.
     idxHostname(a.dnsName, a.id);
   }
-  return { byIp, byMac, byHostname };
+  return { byIp, byMac, byHostnameAll, gateIdByAssetId };
 }
 
 /**
