@@ -104,6 +104,27 @@ describe("what it refuses", () => {
     expect(rec.collectRulesEditor(root).error).toMatch(/^Mon: 22:00–06:00 overlaps 23:00–01:00/);
   });
 
+  it("an all-day period sharing a day with an hours period, by day — the union would hide the double listing", () => {
+    const root = mount(null);
+    click(root.querySelector('.rc-preset[data-preset="nights"]')!);
+    // Tick Sunday on the weeknight rule too — the mis-click behind the first bug report.
+    click(root.querySelectorAll(".rc-rule")[0]!.querySelector('.rc-chip[data-dow="0"]')!);
+    expect(rec.collectRulesEditor(root).error).toMatch(/^Sun: all day overlaps 22:00–06:00/);
+  });
+
+  it("a preset's overnight range running into the next all-day day is NOT a conflict", () => {
+    const root = mount(null);
+    click(root.querySelector('.rc-preset[data-preset="nights"]')!);
+    // Friday 22:00–06:00 spills into Saturday, which is all day: the normal
+    // shape, so the strip paints Saturday in the plain colour, not the warning one.
+    const satCells = Array.from(root.querySelectorAll(".rc-strip > div")[6]!.querySelectorAll("i")) as HTMLElement[];
+    expect(satCells.some((c) => c.getAttribute("style")!.includes("--color-warning"))).toBe(false);
+    expect(satCells.every((c) => c.getAttribute("style")!.includes("--color-accent"))).toBe(true);
+    // And the preset leaves Sunday OFF the weeknight rule.
+    expect(root.querySelectorAll(".rc-rule")[0]!.querySelector('.rc-chip[data-dow="0"]')!.getAttribute("aria-pressed")).toBe("false");
+    expect(rec.collectRulesEditor(root).error).toBeUndefined();
+  });
+
   it("reports nothing picked as empty, not an error", () => {
     const root = mount(null);
     click(root.querySelector(".rc-rule-remove")!);

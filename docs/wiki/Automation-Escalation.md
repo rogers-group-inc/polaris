@@ -176,8 +176,11 @@ No graphs and no Acknowledge button; each device name opens the device in
 Polaris. Nothing outstanding and nothing recurring means no email.
 
 **When it is sent.** When the quiet period ends, or at a **send time** you
-choose — a time of day that must fall **outside** every quiet period (the editor
-and the server both refuse one inside). Alerts held until that time roll into
+choose — a time of day. On a day it falls inside the quiet period the summary
+waits: *nights and weekends* with a 07:30 send time summarises each weekday
+night at 07:30 and rolls the weekend into Monday's. A send time that is inside
+the quiet period on **every** day it occurs could never go out on time, so the
+editor and the server refuse it. Alerts held until the send time roll into
 that summary; if another quiet period opens first, they roll into *its* summary.
 **Through which channel:** the one you pick on the quiet time, else the alert's
 own email channel, else the first enabled email channel. With no email channel
@@ -207,8 +210,9 @@ A wizard **test delivery** is never held — it exists to show you the email.
 ### Validation
 
 A half-typed day contributes no window, so the step names the day — and the
-overlapping pair of hours — in the same words the server would. A summary time
-inside the quiet period is refused with the period named. The reminder note on
+overlapping pair of hours — in the same words the server would, and a day
+listed both all day and with hours is refused by name. A send time inside the
+quiet period on every day it occurs is refused. The reminder note on
 the Actions step still warns that `stopAfterHours` counts quiet time too.
 
 ---

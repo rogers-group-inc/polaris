@@ -237,7 +237,7 @@ describe("the global quiet-time wizard", () => {
     (doc.querySelector("#qtw-editor .qte-summary-time") as HTMLInputElement).value = "23:00";
     click("#qtw-next");
     await tick();
-    expect(toasts.pop()!.msg).toMatch(/falls inside the quiet period/);
+    expect(toasts.pop()!.msg).toMatch(/inside the quiet period on every day it occurs/);
     expect(doc.querySelector("#qtw-step-4.visible")).toBeTruthy();
   });
 

@@ -111,8 +111,13 @@ before the host was corrected, and there was no way to send it.
 **Due is "the stretch ended, the send time arrived, and it is not quiet again".** A window
 ending 06:00 with a 07:30 send time summarises at 07:30; a second window that opened at 07:00
 folds those alerts into ITS summary rather than mailing mid-silence. The send time is refused
-inside any window, in the browser and on the server (`summaryTimeConflicts` walks a year of
-occurrences, midnight-spanning ones at both days' HH:MM), because a summary inside a window is a
+only when it is inside the quiet period on EVERY day the period occurs, in the browser and on
+the server (`summaryTimeConflicts` walks a year of occurrences, midnight-spanning ones at both
+days' HH:MM, and compares the days quiet at HH:MM against the days touched at all). The first
+version refused a time inside ANY window, and the first operator to build "nights and weekends"
+with a 07:30 summary hit it at once: Saturday 07:30 is quiet, so no morning time was legal, yet
+the semantics already handled it — weekday nights summarise at 07:30 and the weekend rolls
+into Monday's. Only a time that is never free (every night 22:00–08:00, summary 07:30) is a
 contradiction. A deleted schedule flushes at once, named from the stamp the alert carries.
 
 **What is still outstanding, and what recurred.** Decided once, at creation, and stored on

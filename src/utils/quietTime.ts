@@ -331,18 +331,39 @@ export function summaryTimeConflicts(
   if (!cfg.summaryAt) return null;
   const from = startOfLocalDay(now);
   const to = new Date(from.getTime() + SUMMARY_CHECK_DAYS * 86_400_000);
+  // Two sets over the coming year: the local days on which quiet time happens
+  // at all, and those among them on which HH:MM is inside it. The time is
+  // refused only when the second set is the whole of the first — "nights and
+  // weekends" with a 07:30 summary is fine (weekday mornings are free; a held
+  // weekend rolls into Monday's), while "every night 22:00–08:00" with 07:30
+  // is a summary that could never go out on time.
+  const touched = new Set<number>();
+  const quietAt = new Set<number>();
+  // The first and last days of the scan are half-seen — the night BEFORE the
+  // first day was never expanded, and the last day's own night runs past the
+  // horizon — so a 05:59 or 23:30 summary would look free there and slip
+  // through. Judge only the days the scan sees whole.
+  // Day keys are LOCAL midnights stepped by calendar day, never by 86 400 000
+  // ms: across a DST change that step lands at 23:00 or 01:00 and the key no
+  // longer matches the next occurrence's start day, which then looks free.
+  const nextLocalDay = (d: Date): Date => new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0, 0);
+  const lo = nextLocalDay(from).getTime();
+  const hi = new Date(from.getFullYear(), from.getMonth(), from.getDate() + SUMMARY_CHECK_DAYS - 1, 0, 0, 0, 0).getTime();
   for (const w of cfg.windows) {
     for (const occ of expandOccurrences(w, from, to, SUMMARY_CHECK_MAX_OCCURRENCES)) {
-      // Every local day the occurrence touches, start day through end day.
-      for (let day = startOfLocalDay(occ.start); day.getTime() <= occ.end.getTime(); day = new Date(day.getTime() + 86_400_000)) {
+      // Every local day the occurrence has a minute in — strict, so an all-day
+      // window ending at midnight does not count the next day as touched.
+      for (let day = startOfLocalDay(occ.start); day.getTime() < occ.end.getTime(); day = nextLocalDay(day)) {
+        if (day.getTime() < lo || day.getTime() >= hi) continue;
+        touched.add(day.getTime());
         const candidate = atLocalTime(day, cfg.summaryAt);
-        if (candidate.getTime() >= occ.start.getTime() && candidate.getTime() < occ.end.getTime()) {
-          return `The summary time ${cfg.summaryAt} falls inside a quiet period (${describeQuietWindow(w)}). Pick a time outside every quiet period, or leave it blank to send when each period ends.`;
-        }
+        if (candidate.getTime() >= occ.start.getTime() && candidate.getTime() < occ.end.getTime()) quietAt.add(day.getTime());
       }
     }
   }
-  return null;
+  if (touched.size === 0) return null;
+  for (const day of touched) if (!quietAt.has(day)) return null;
+  return `The summary time ${cfg.summaryAt} is inside the quiet period on every day it occurs, so a summary could never go out on time. Pick a time outside it, or leave it blank to send when each period ends.`;
 }
 
 /**

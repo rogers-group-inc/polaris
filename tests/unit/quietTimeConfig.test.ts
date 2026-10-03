@@ -80,13 +80,12 @@ describe("quietTimeConfigSchema", () => {
     expect(() => quietTimeConfigSchema.parse({ windows: Array(MAX_QUIET_WINDOWS + 1).fill(NIGHTLY) })).toThrow();
   });
 
-  it("refuses a summary time inside a quiet period, naming the period", () => {
+  it("refuses a summary time that is inside the quiet period on every day it occurs", () => {
     const r = quietTimeConfigSchema.safeParse({ windows: [NIGHTLY], summaryAt: "05:00" });
     expect(r.success).toBe(false);
     if (!r.success) {
       expect(r.error.issues[0]!.path).toEqual(["summaryAt"]);
-      expect(r.error.issues[0]!.message).toMatch(/05:00 falls inside a quiet period/);
-      expect(r.error.issues[0]!.message).toMatch(/22:00–06:00/);
+      expect(r.error.issues[0]!.message).toMatch(/05:00 is inside the quiet period on every day it occurs/);
     }
   });
 });
@@ -102,15 +101,26 @@ describe("summaryTimeConflicts", () => {
   });
 
   it("catches both sides of a midnight-spanning window", () => {
-    expect(summaryTimeConflicts({ windows: [NIGHTLY] as never, summaryAt: "23:30" })).toMatch(/falls inside/);
-    expect(summaryTimeConflicts({ windows: [NIGHTLY] as never, summaryAt: "05:59" })).toMatch(/falls inside/);
-    expect(summaryTimeConflicts({ windows: [NIGHTLY] as never, summaryAt: "22:00" })).toMatch(/falls inside/); // inclusive start
+    expect(summaryTimeConflicts({ windows: [NIGHTLY] as never, summaryAt: "23:30" })).toMatch(/every day it occurs/);
+    expect(summaryTimeConflicts({ windows: [NIGHTLY] as never, summaryAt: "05:59" })).toMatch(/every day it occurs/);
+    expect(summaryTimeConflicts({ windows: [NIGHTLY] as never, summaryAt: "22:00" })).toMatch(/every day it occurs/); // inclusive start
   });
 
   it("catches an all-day weekend window at any time, and a monthly window on its day", () => {
-    expect(summaryTimeConflicts({ windows: [WEEKEND] as never, summaryAt: "14:00" })).toMatch(/falls inside/);
-    expect(summaryTimeConflicts({ windows: [MONTHLY] as never, summaryAt: "02:00" })).toMatch(/falls inside/);
+    expect(summaryTimeConflicts({ windows: [WEEKEND] as never, summaryAt: "14:00" })).toMatch(/every day it occurs/);
+    expect(summaryTimeConflicts({ windows: [MONTHLY] as never, summaryAt: "02:00" })).toMatch(/every day it occurs/);
     expect(summaryTimeConflicts({ windows: [MONTHLY] as never, summaryAt: "03:00" })).toBeNull();
+  });
+
+  it("allows a time that is free on SOME day the quiet time occurs — nights and weekends with a morning summary", () => {
+    // The shape the first operator built: every night plus the whole weekend,
+    // summary at 07:30. Saturday and Sunday 07:30 are quiet; Monday to Friday
+    // 07:30 are free, so weekday nights summarise at 07:30 and a weekend's
+    // alerts roll into Monday's. Refusing it left no sane morning time at all.
+    expect(summaryTimeConflicts({ windows: [NIGHTLY, WEEKEND] as never, summaryAt: "07:30" })).toBeNull();
+    // Still refused when every occurring day covers the time.
+    const LONG_NIGHT = { version: 1, kind: "recurring", freq: "daily", hours: [{ startTime: "22:00", endTime: "08:00" }] };
+    expect(summaryTimeConflicts({ windows: [LONG_NIGHT, WEEKEND] as never, summaryAt: "07:30" })).toMatch(/every day it occurs/);
   });
 
   it("ignores a one-shot window that has already passed", () => {
