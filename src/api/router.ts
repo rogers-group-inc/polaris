@@ -17,6 +17,7 @@ import notificationsRouter from "./routes/notifications.js";
 import notificationRulesRouter from "./routes/notificationRules.js";
 import automationScriptsRouter from "./routes/automationScripts.js";
 import alertGroupsRouter from "./routes/alertGroups.js";
+import quietTimeSchedulesRouter from "./routes/quietTimeSchedules.js";
 import maintenanceSchedulesRouter from "./routes/maintenanceSchedules.js";
 import pathChecksRouter from "./routes/pathChecks.js";
 import contactsRouter from "./routes/contacts.js";
@@ -198,6 +199,8 @@ router.use("/automations/scripts", automationScriptsRouter);
 // Alert groups (business rule 75). ABOVE /automations for the same reason
 // /automations/scripts is: the literal path must not be captured as a rule id.
 router.use("/automations/groups", alertGroupsRouter);
+// Global quiet-time schedules (business rule 92). Same reason, same place.
+router.use("/automations/quiet-times", quietTimeSchedulesRouter);
 // Rules CRUD/schema/preview.
 router.use("/automations", notificationRulesRouter);
 router.use("/notification-rules", deprecatedAlias("/api/v1/automations"), notificationRulesRouter);

@@ -39,6 +39,7 @@ import { listRegions, REGION_TAG_CATEGORY } from "./mapRegionService.js";
 import { regionLevelIndex } from "./regionHierarchyService.js";
 import { ipInCidr } from "../utils/cidr.js";
 import { invalidateDownDetectionCache } from "./downDetectionService.js";
+import { bumpQuietTimeCache } from "./quietTimeHoldService.js";
 import { scopeMatchesAsset } from "./notificationTypes.js";
 import { sdwanFilterSelects } from "../utils/sdwanDimensions.js";
 
@@ -622,10 +623,12 @@ export async function createRule(input: RuleInput, actor?: string) {
       bandNotify: (input.bandNotify ?? undefined) as any,
       resetActions: (input.resetActions ?? undefined) as any,
       repeat: (input.repeat ?? undefined) as any,
+      quietTime: (input.quietTime ?? undefined) as any,
       createdBy: actor ?? null,
     },
   });
   bumpChangeSubscriptions();
+  bumpQuietTimeCache();
   // Unconditional: an edit can turn a rule INTO or OUT OF a down-detection
   // rule, so gating on "was it one?" would miss half the transitions.
   invalidateDownDetectionCache();
@@ -702,8 +705,10 @@ export async function updateRule(id: string, input: RuleInput, actor?: string) {
       bandNotify: jsonOrClear(input.bandNotify),
       resetActions: jsonOrClear(input.resetActions),
       repeat: jsonOrClear(input.repeat),
+      quietTime: jsonOrClear(input.quietTime),
     },
   });
+  bumpQuietTimeCache();
   // The trigger now describes a different condition — the old state rows (and
   // their active alerts) are about something that no longer exists. Clear the
   // alerts + drop the rows so nothing lingers firing under a stale key; the
@@ -753,6 +758,7 @@ export async function deleteRule(id: string, actor?: string) {
   // set to null (onDelete: SetNull) so history survives.
   await prisma.notificationRule.delete({ where: { id } });
   bumpChangeSubscriptions();
+  bumpQuietTimeCache();
   // Unconditional: an edit can turn a rule INTO or OUT OF a down-detection
   // rule, so gating on "was it one?" would miss half the transitions.
   invalidateDownDetectionCache();

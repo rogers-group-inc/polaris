@@ -209,6 +209,10 @@ export async function getNotificationForViewer(
       acknowledgeNote: true,
       cleared: true,
       clearedAt: true,
+      // Quiet time (business rule 92): the page says when nobody has been
+      // told yet, so an acknowledger is not surprised that no email arrived.
+      quietHeldAt: true,
+      quietSummarizedAt: true,
       // A rule-less alert (a test fire, or one whose automation was deleted —
       // ruleId is SetNull) has no note policy left to enforce.
       rule: { select: { id: true, name: true, requireAckNote: true, severity: true, severityBands: true } },

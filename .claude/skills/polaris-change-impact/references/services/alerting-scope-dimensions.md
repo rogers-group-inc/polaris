@@ -22,7 +22,68 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - notify composition precedence: action-level `emailComposition` ?? `exec.ruleEmailComposition` ?? none (legacy per-address fan-out) — byte-identical to the pre-actions path for converted rules.
 - **A REPEAT takes the normal-fire composition path, not escalation's per-field tier→rule merge** — a reminder is a re-send of the initial email. The only difference from a first send is the subject, and both markers are conditional on nobody having set a subject template (the same condition `[ESCALATION n]` carries): `[REMINDER n]` always, and ` · ACTIVE <elapsed>` appended ONLY when `exec.repeat.quietResumed` — the reminder that ends a quiet-time hold (business rule 44). On every reminder that marker would mean nothing; it is there because that one email lands in an inbox full of a night's other mail.
 
-**When changing this:** New action type → new arm here + `actionSchema` + `assertActionRefs` (notificationRuleService) + a dispatch/execution path (drain arm or dedicated runner) + `actionTypes` catalog entry. Never execute long-running work inline here — enqueue (delivery row / script run) and let the owning job drain it.
+- **THIS is where quiet time holds a send** (2026-10-03, business rule 92). When `!exec.escalation && !exec.repeat` (a fire, a growth update, or an all-clear — the sweep gates its own two passes), one read of the alert row answers both questions: a FIRE inside a window (`quietTimeHoldService.resolveQuietHold`, asked with the row's `ruleId` / `metric` / `assetId` and the band-resolved `ctx.severity`) passes `hold` to `expandDeliveries` so the notify rows are written `held`, stamps `Notification.quietHeldAt` / `quietSource` once (`notification.quiet_held` Event), and lets `api_call` / `script` / `event` run; an ALL-CLEAR for an alert with `quietHeldAt` and no `quietSummarizedAt` skips its notify actions (`notification.quiet_allclear_dropped`) because nobody was told it started. A `testRun` alert is never held. The read fails toward "deliver" at warn. It lives HERE and not in `enqueueAlertActions` because the event/change tail never builds a `Reading` and reaches this function directly — a hold placed upstream would miss every event-driven automation.
+
+**When changing this:** New action type → new arm here + `actionSchema` + `assertActionRefs` (notificationRuleService) + a dispatch/execution path (drain arm or dedicated runner) + `actionTypes` catalog entry. Never execute long-running work inline here — enqueue (delivery row / script run) and let the owning job drain it. A new people-facing action type must be covered by the quiet hold (`dropPeopleFacing` + `hold`) or a quiet period will leak through it.
+
+---
+
+## services/quietTimeHoldService.ts
+
+**What it owns:** THE quiet-time decision (business rule 92): is this alert, now, inside a window that holds its people-facing sends — whose window, and when does it end. Precedence in one place: the automation's own `NotificationRule.quietTime` is the ONLY candidate when it exists (matching or not — an automation with a quiet time is exempt from every global schedule; the column may instead hold `{ignoreGlobal: true}`, the wizard's "Ignore Global Quiet Time", which the catalog keeps as `config: null` and the resolver answers "never quiet"); otherwise the enabled `QuietTimeSchedule` rows, oldest first, matched by severity, `Notification.metric` (`alertKinds`; an event alert has none and matches only "any"), window, then scope (last, because it is the one test that needs a device read — `QUIET_SCOPE_SELECT`, a `ScopeAsset`-complete select, since `ASSET_DETAIL_SELECT` lacks `discoveredByIntegrationId`; relation leaves through `decorateRelationLeafHits`).
+
+**Public API:** `resolveQuietHold({ruleId, severity, metric, assetId, send?: "fire"|"followUp", now?, memo?})` → `{source: {kind, id, name}, config, windowEnd} | null` (`windowEnd` is the END OF THE STRETCH via `quietResumesAt`; a `followUps` policy answers null for a `fire`), `newQuietHoldMemo()` + `primeQuietHoldAssets(assetIds, memo)` (the sweep's per-pass memo and one batched device read), `bumpQuietTimeCache()`, `parseQuietTimeConfig(raw)`, `quietSourceConfig({kind, id})` (reads the ROW, disabled or not — a disabled or deleted source still owes its summary).
+
+**Cross-service deps:** `prisma` (quietTimeSchedule + notificationRule `quietTime` + asset), `notificationTypes` (`scopeSchema`, `scopeIsUnconstrained`, `scopeMatchesAsset`), `scopeRelationIndex.decorateRelationLeafHits`, `utils/quietTime.ts`, `utils/ttlCache.ts`.
+
+**Used by:** `automationActionService.executeActions` (fires / growth), `notificationEscalationService.runEscalationSweep` (above both passes), `quietTimeSummaryService` (`quietSourceConfig`), `quietTimeScheduleService` + `notificationRuleService` (`bumpQuietTimeCache` on every write).
+
+**Invariants:**
+- **The catalog is one 15 s cache, bumped on every schedule and rule write** — a fresh window is honoured on the next fire, not in fifteen seconds. Reading it is wrapped: an unreadable catalog, schedule config or alert row is "not quiet", logged at warn (rule 44's posture carried forward — one page too many, never an outage nobody heard of).
+- **Memoised per (send, rule, severity, metric, asset)**, never per notification: an all-assets automation with 400 live alerts evaluates one recurrence.
+- **`scopeIsUnconstrained` first.** `scopeMatchesAsset({})` is false; a bare `{}` scope on a schedule means every device.
+- **It never writes.** Holding, stamping and summarising belong to automationActionService, notificationRecipientService and quietTimeSummaryService.
+- **Three rule-level states, one column.** `null` → the global schedules apply; `{ignoreGlobal: true}` → in the catalog with `config: null`, never quiet; a policy → judged alone. An UNREADABLE blob is the first state, not the second — failing toward "exempt" would silence an automation nobody asked to silence. Pinned by `tests/unit/quietTimeHoldResolve.test.ts`.
+
+**When changing this:** a new field on the policy goes in `quietTimeConfigSchema` (utils) and is read here, never parsed twice; a new rule-level STATE goes in `ruleQuietTimeSchema` beside the exemption marker. A new way an alert can be sent to a person must ask this function or it leaks through quiet time.
+
+---
+
+## services/quietTimeScheduleService.ts
+
+**What it owns:** CRUD for the global `QuietTimeSchedule` rows (business rule 92) behind Automations → Settings → Global Quiet Times, each write audited (`quiet_time.created/updated/deleted`) and followed by `bumpQuietTimeCache()`. The list decorates each row with `inWindow` / `windowEnd` / `nextWindow` (server-local minute strings) and its last `QuietTimeSummary`.
+
+**Public API:** `listQuietTimeSchedules(now?)`, `getQuietTimeSchedule(id)`, `createQuietTimeSchedule(input, actor?)`, `updateQuietTimeSchedule(id, input, actor?)`, `deleteQuietTimeSchedule(id, actor?)`, `listQuietTimeSummaries(limit)`.
+
+**Cross-service deps:** `prisma`, `eventLogService`, `quietTimeHoldService` (`bumpQuietTimeCache`, `parseQuietTimeConfig`), `utils/quietTime.ts`, `utils/maintenanceRecurrence.ts` (`nextWindow`, `formatLocalIsoMinute`).
+
+**Used by:** `src/api/routes/quietTimeSchedules.ts`.
+
+**Invariants:**
+- **Nothing here retires or re-sends an alert.** A change governs the NEXT fire; an alert already held keeps its stamp and is summarised by the source it was stamped with. Deleting a schedule flushes its held alerts into a summary at once (the Event names the count), because the alert carries the stamp rather than a FK.
+- Validation is the route's (`quietScheduleInputSchema`: the automations' `scopeSchema` + `quietTimeConfigSchema`, severities refined against `SEVERITIES`); the service trusts its typed input.
+
+---
+
+## services/quietTimeSummaryService.ts
+
+**What it owns:** The summary that ends a quiet window (business rule 92) — what makes a hold a hold rather than a drop. CREATE (`createDueSummaries`): held alerts still owing a summary (`quietHeldAt` set, `quietSummarizedAt` null — the partial index) grouped by `quietSource`; a source is DUE when the stretch containing its earliest hold has ended, `summaryAt` (if any) has arrived and it is not quiet again (`summaryDue`, pure) — then ONE `QuietTimeSummary` row is written and every held alert of the source is stamped `quietSummarizedAt` in the same transaction. What it says (`buildSummaryDetails`, pure): OUTSTANDING = still uncleared, oldest first; RECURRING = more than `recurrenceThreshold` fires for one (ruleId, assetId, dimension), every fire time, recovered or not, not repeated under outstanding. Who gets it (`recipientsFromHeldRows`, pure): the listed alerts' `held` delivery rows — an email row's To line + `meta.cc`, a web-push row's `meta.userId` by the account's email, chat rows nobody — deduped by lower-cased address; an account with no address is skipped with one warning Event. Channel (`resolveSummaryChannel`): the policy's `summaryChannelId` → the first email channel among the held rows → the first enabled email channel → `unroutable` + `quiet_time.summary_unroutable`. SEND (`drainPendingSummaries`): each pending recipient gets `renderQuietSummaryEmail` in THEIR zone (`resolveTimeZone`: explicit → detected → install; the install's for an address with no account) with `applyBrandLetterhead`, through `sendEmailThroughChannel`; ≤ `SUMMARY_MAX_ATTEMPTS` (10 — ten minutes of 60 s ticks, not the drain's three: one email a night must survive a three-minute SMTP outage at 06:00) per recipient; the row rolls up `sent` / `partial` / `partial-failed` / `failed` with one `quiet_time.summary_sent|failed` Event at the end. RESEND (`resendSummary`, the Settings tab's verb): every recipient NOT yet reached goes back to pending with a fresh budget — a `sent` one is left alone — the drain runs inline, and the email re-renders from the row's `details` (what it would have said then, not what is outstanding now). Found on the dev stack 2026-10-03: the first real summary failed all three attempts on a DNS typo in the channel, seconds before the fix landed, and there was no way back.
+
+**Public API:** `runQuietTimeSummaries(now?)` (job entry), `createDueSummaries(now?)`, `drainPendingSummaries(now?)`, `resendSummary(id, actor?)`, and the pure `summaryDue`, `buildSummaryDetails`, `recipientsFromHeldRows`, `resolveSummaryChannel`, `SUMMARY_MAX_ATTEMPTS`.
+
+**Cross-service deps:** `prisma` (notification, notificationDelivery, notificationChannel, user, quietTimeSummary), `quietTimeHoldService.quietSourceConfig`, `userTimezoneService.{resolveTimeZone, serverTimeZone}`, `notificationDeliveryService.{applyBrandLetterhead, sendEmailThroughChannel}`, `utils/quietSummaryEmailTemplate.ts`, `utils/quietTime.ts`, `eventLogService`.
+
+**Used by:** `src/jobs/sendQuietTimeSummaries.ts` (60 s, web/all role).
+
+**Invariants:**
+- **One email per reader, in the reader's zone** — the one place alert mail renders in anything but the install's zone, and NOT a reopening of rule 25: that rule forbids splitting ONE alert's audience; a summary is already addressed to one person, and `userTimezoneService` reserved `resolveTimeZone` for exactly this digest.
+- **Email, whatever the preference.** There is no summary push; a push-preferring account is reached by its email address.
+- **Covered is not named.** Every held alert of a due source is stamped, listed or not; a recovered alert under the threshold is covered silently. Nothing outstanding and nothing recurring writes an `empty` row and no email.
+- **`details` is decided once, at creation.** A retry re-renders the same facts for the same reader rather than re-deciding what was outstanding.
+- **Due folds forward.** A window that opened again before `sendAt` rolls the held alerts into ITS summary rather than mailing mid-silence; a deleted source flushes now.
+- **Scale:** one indexed query per tick for the held set (bounded by a night's alerts), one row read + one user read per due source, chunked sends; a stamp nothing can read is marked summarised with a warn rather than pinning the query forever.
+
+**When changing this:** the summary's recipients come from the HELD rows and nowhere else — a new recipient arm in `expandDeliveries` reaches the summary for free, a recipient resolved anywhere else does not. The `startAt` shift in the escalation sweep reads `quietSummarizedAt`; stamping it anywhere but here restarts clocks.
 
 ---
 

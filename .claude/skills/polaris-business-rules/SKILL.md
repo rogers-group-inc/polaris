@@ -98,13 +98,13 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 - [references/narrative-36-43.md](references/narrative-36-43.md) — narrative, rules 36–43
 - [references/narrative-44-48.md](references/narrative-44-48.md) — narrative, rules 44–59 (split 2026-09-09 when 36–43 passed 100 KB)
 - [references/narrative-60-64.md](references/narrative-60-64.md) — narrative, rules 60–74 (split 2026-09-15; rules 76, 77 and 79 moved out to their own files 2026-09-22 to keep it under the ceiling)
-- one file per rule from here on: [narrative-75.md](references/narrative-75.md), [narrative-76.md](references/narrative-76.md), [narrative-77.md](references/narrative-77.md), [narrative-78.md](references/narrative-78.md), [narrative-79.md](references/narrative-79.md), [narrative-80.md](references/narrative-80.md) (80 and 80a), [narrative-82.md](references/narrative-82.md), [narrative-83.md](references/narrative-83.md), [narrative-84.md](references/narrative-84.md), [narrative-85.md](references/narrative-85.md), [narrative-86.md](references/narrative-86.md), [narrative-87.md](references/narrative-87.md), [narrative-88.md](references/narrative-88.md), [narrative-89.md](references/narrative-89.md), [narrative-90.md](references/narrative-90.md), [narrative-91.md](references/narrative-91.md)
+- one file per rule from here on: [narrative-75.md](references/narrative-75.md), [narrative-76.md](references/narrative-76.md), [narrative-77.md](references/narrative-77.md), [narrative-78.md](references/narrative-78.md), [narrative-79.md](references/narrative-79.md), [narrative-80.md](references/narrative-80.md) (80 and 80a), [narrative-82.md](references/narrative-82.md), [narrative-83.md](references/narrative-83.md), [narrative-84.md](references/narrative-84.md), [narrative-85.md](references/narrative-85.md), [narrative-86.md](references/narrative-86.md), [narrative-87.md](references/narrative-87.md), [narrative-88.md](references/narrative-88.md), [narrative-89.md](references/narrative-89.md), [narrative-90.md](references/narrative-90.md), [narrative-91.md](references/narrative-91.md), [narrative-92.md](references/narrative-92.md)
 
 ## Rules 1–11
 
 One-line invariants, in [references/invariants-01-11.md](references/invariants-01-11.md): no overlapping subnets (1), subnet within block (2), no duplicate reservations (3), deletion protection (4), CIDR normalization (5), `sourceType` tracking (6), conflict detection (7), event retention (8), `acquiredAt ≤ lastSeen` (9), the four unmonitorable statuses (10), DNS-resolved reservations (11).
 
-## Rules 12–91 (index)
+## Rules 12–92 (index)
 
 Pairs that are two halves of one concern are marked; each keeps its own number because code cites both.
 
@@ -142,7 +142,7 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 41 | A subnet dies with its FortiGate; the chassis, not the name, says which gate | invariants-30-43 | narrative-36-43 |
 | 42 | Some address space is not one network; the way to say so is to exclude it | invariants-30-43 | narrative-36-43 |
 | 43 | A grant is only as narrow as the act it names (48 is the promotion guard beside it) | invariants-30-43 | narrative-36-43 |
-| 44 | A quiet window withholds the reminder, not the alert, and the reminder that follows says how long | invariants-30-43 | narrative-44-48 |
+| 44 | A quiet window holds the reminder, never skips it, and the reminder that follows says how long (the hold mechanics inside 92) | invariants-30-43 | narrative-44-48 |
 | 45 | An address places a device only through the gate that owns it, and only a device nothing else can place — the ARP-chain sweep that WRITES placement (55 is the read side) | invariants-30-43 | narrative-44-48 |
 | 46 | A device filter on an event automation filters the event's subject | invariants-30-43 | narrative-44-48 |
 | 47 | A PostgreSQL client is chosen by the server's major and verified, never spawned by bare name (51 is its other half) | invariants-30-43 | narrative-44-48 |
@@ -191,6 +191,7 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 89 | A per-core CPU hold follows ONE core, the alert names it, and it yields to the all-cores alert on the same device | invariants-30-43 | narrative-89 |
 | 90 | An SD-WAN member riding a parent that is over the same line does not alert; the parent's alert names the cause | invariants-30-43 | narrative-90 |
 | 91 | A hostname is not an identity: a name several devices of one kind share is resolved by where the child sits, or not at all | invariants-30-43 | narrative-91 |
+| 92 | Quiet time withholds the send, never the alert — and what it withheld is reported when it ends (44 is the hold mechanics inside it) | invariants-30-43 | narrative-92 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain, and the dormant
 columns they retired), `polaris-change-impact` (who else reads or writes the fields a rule

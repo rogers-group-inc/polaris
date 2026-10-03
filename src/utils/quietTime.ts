@@ -35,6 +35,7 @@ import {
   scheduleShapeSchema,
   currentWindow,
   nextWindow,
+  expandOccurrences,
   resolveDayRanges,
   type MaintenanceOccurrence,
   type MaintenanceScheduleShape,
@@ -198,4 +199,178 @@ export function describeQuietTime(quiet: QuietConfig | null | undefined): string
   if (!quiet || quiet.windows.length === 0) return "";
   if (quiet.windows.length <= 2) return quiet.windows.map(describeQuietWindow).join(" and ");
   return `${quiet.windows.length} quiet periods`;
+}
+
+// ─── Quiet time that HOLDS alerts (business rule 92) ────────────────────────
+//
+// The shape above (`quietConfigSchema`) is the legacy per-action
+// `repeat.quiet`, which only ever paused reminders (business rule 44). Since
+// 2026-10 quiet time is a policy of its own, carried by a global
+// `QuietTimeSchedule` row or by `NotificationRule.quietTime`, and it withholds
+// every people-facing send of an alert that fires inside a window — the alert
+// still exists, and a SUMMARY email reports what is still outstanding once the
+// window ends. The hold itself, the summary and the recipients live in
+// `services/quietTimeHoldService.ts` / `services/quietTimeSummaryService.ts`;
+// this half stays pure: the config shape, the one cross-field rule the shape
+// has (the summary time may not sit inside a window), and the arithmetic that
+// turns a window end into a send time.
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * One quiet-time policy — the same shape whether it is a global schedule's or
+ * an automation's own.
+ *
+ *   windows             the recurrence shapes, any one active = quiet
+ *   holds               "all" (default): the first alert, its escalation tiers
+ *                       and its reminders are all held, and a summary email
+ *                       of what is still outstanding goes out afterwards.
+ *                       "followUps": only the chasing goes quiet — reminders
+ *                       and escalation tiers wait for the window, the first
+ *                       alert and the all-clear send as usual, and there is
+ *                       nothing to summarise (rule 44's behaviour, widened to
+ *                       the tiers).
+ *   severities          which alert severities the window holds; null = all
+ *   alertKinds          GLOBAL ONLY — Notification.metric names the window
+ *                       holds ("cpuPct", "monitorStatus", …); null = any kind.
+ *                       An event/change alert carries no metric and so matches
+ *                       only "any". An automation's own quiet time has nothing
+ *                       to filter — the automation IS the kind.
+ *   summaryAt           "HH:MM" server-local; the summary waits for the first
+ *                       such time at or after the window ends. null = the
+ *                       moment the window ends.
+ *   summaryChannelId    the email channel the summary goes through; null =
+ *                       the hold's own email channel, else the first enabled
+ *                       one (quietTimeSummaryService.resolveSummaryChannel).
+ *   recurrenceThreshold an alert that fired MORE THAN this many times during
+ *                       the window is reported even if it has recovered, with
+ *                       every fire time; null = off.
+ *
+ * Severity values are plain strings here because `SEVERITIES` lives in
+ * notificationTypes, which imports this module; the two consumers refine
+ * membership against that list themselves (`severitiesKnown`).
+ */
+export const quietTimeConfigSchema = z
+  .object({
+    windows: z.array(scheduleShapeSchema).min(1).max(MAX_QUIET_WINDOWS),
+    holds: z.enum(["all", "followUps"]).optional(),
+    severities: z.array(z.string().min(1).max(32)).min(1).max(8).optional().nullable(),
+    alertKinds: z.array(z.string().min(1).max(64)).min(1).max(50).optional().nullable(),
+    summaryAt: z.string().regex(TIME_RE, "expected 24h time like 07:30").optional().nullable(),
+    summaryChannelId: z.string().min(1).max(100).optional().nullable(),
+    recurrenceThreshold: z.number().int().min(1).max(100).optional().nullable(),
+  })
+  .strict()
+  .superRefine((cfg, ctx) => {
+    const problem = summaryTimeConflicts(cfg);
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["summaryAt"], message: problem });
+  });
+
+export type QuietTimeConfig = z.infer<typeof quietTimeConfigSchema>;
+
+/**
+ * The third setting of an automation's Quiet time step: NO quiet time, not its
+ * own and not the global ones. An automation carrying this always sends,
+ * whatever Automations → Settings says — the shape a critical automation wants
+ * on an install whose global quiet time covers every severity. Stored in
+ * `NotificationRule.quietTime` beside the full policy so one column answers
+ * "is this automation exempt from the global schedules?" with one read; `null`
+ * there still means "the global schedules apply".
+ */
+export const quietTimeIgnoreGlobalSchema = z.object({ ignoreGlobal: z.literal(true) }).strict();
+
+/** What `NotificationRule.quietTime` may hold: the exemption marker or a full policy. */
+export const ruleQuietTimeSchema = z.union([quietTimeIgnoreGlobalSchema, quietTimeConfigSchema]);
+export type RuleQuietTime = z.infer<typeof ruleQuietTimeSchema>;
+
+export function isIgnoreGlobalQuietTime(q: unknown): q is { ignoreGlobal: true } {
+  return !!q && typeof q === "object" && (q as { ignoreGlobal?: unknown }).ignoreGlobal === true;
+}
+
+/** The policy inside a rule-level value, or null for the exemption marker / nothing. */
+export function ruleQuietConfig(q: RuleQuietTime | null | undefined): QuietTimeConfig | null {
+  if (!q || isIgnoreGlobalQuietTime(q)) return null;
+  return q as QuietTimeConfig;
+}
+
+/** Server-local midnight of `d`'s day. */
+function startOfLocalDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+
+/** `day` at the server-local wall-clock time `hhmm`. */
+function atLocalTime(day: Date, hhmm: string): Date {
+  const [h, m] = hhmm.split(":").map(Number);
+  return new Date(day.getFullYear(), day.getMonth(), day.getDate(), h ?? 0, m ?? 0, 0, 0);
+}
+
+/** How far ahead the summary-time check looks. A yearly window needs a year;
+ *  366 covers a leap year without scanning two of them. */
+const SUMMARY_CHECK_DAYS = 366;
+/** Occurrence cap for that scan — eight ranges a day for a year. */
+const SUMMARY_CHECK_MAX_OCCURRENCES = SUMMARY_CHECK_DAYS * MAX_QUIET_WINDOWS + 8;
+
+/**
+ * Why `summaryAt` cannot be used with these windows, or null when it can.
+ *
+ * The summary is the thing that ends the silence, so a send time inside a
+ * window is a contradiction: the summary would either go out mid-window
+ * (announcing alerts the window is still collecting) or wait for a window end
+ * that the time was supposed to replace. Refused at validation, in the server's
+ * wall clock, by walking every occurrence in the coming year and asking
+ * whether that day's HH:MM falls inside it — uniform across daily, weekly,
+ * monthly, yearly and one-shot windows, midnight-spanning ones included (an
+ * occurrence Fri 22:00 → Sat 06:00 is tested at both Friday's and Saturday's
+ * HH:MM). The year starts from `now`, which only matters for a one-shot or a
+ * bounded window that has already ended: those can never conflict again.
+ */
+export function summaryTimeConflicts(
+  cfg: { windows: MaintenanceScheduleShape[]; summaryAt?: string | null },
+  now: Date = new Date(),
+): string | null {
+  if (!cfg.summaryAt) return null;
+  const from = startOfLocalDay(now);
+  const to = new Date(from.getTime() + SUMMARY_CHECK_DAYS * 86_400_000);
+  for (const w of cfg.windows) {
+    for (const occ of expandOccurrences(w, from, to, SUMMARY_CHECK_MAX_OCCURRENCES)) {
+      // Every local day the occurrence touches, start day through end day.
+      for (let day = startOfLocalDay(occ.start); day.getTime() <= occ.end.getTime(); day = new Date(day.getTime() + 86_400_000)) {
+        const candidate = atLocalTime(day, cfg.summaryAt);
+        if (candidate.getTime() >= occ.start.getTime() && candidate.getTime() < occ.end.getTime()) {
+          return `The summary time ${cfg.summaryAt} falls inside a quiet period (${describeQuietWindow(w)}). Pick a time outside every quiet period, or leave it blank to send when each period ends.`;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * When the summary for a window that ended at `windowEnd` is due: the end
+ * itself, or the first `summaryAt` at or after it. A window ending 06:00 with
+ * a 07:30 summary sends at 07:30 the same day; one ending 13:00 sends at 07:30
+ * the NEXT day — the time is a daily appointment, not an offset.
+ */
+export function summarySendAt(cfg: { summaryAt?: string | null }, windowEnd: Date): Date {
+  if (!cfg.summaryAt) return windowEnd;
+  const sameDay = atLocalTime(startOfLocalDay(windowEnd), cfg.summaryAt);
+  return sameDay.getTime() >= windowEnd.getTime() ? sameDay : new Date(sameDay.getTime() + 86_400_000);
+}
+
+/** Does the policy hold the FIRST alert (and so owe a summary)? "followUps"
+ *  lets it through and quiets only the reminders and escalation tiers. */
+export function quietHoldsFires(cfg: { holds?: "all" | "followUps" | null }): boolean {
+  return cfg.holds !== "followUps";
+}
+
+/** Is `severity` one the policy holds? A null list holds every severity. */
+export function quietHoldsSeverity(cfg: { severities?: string[] | null }, severity: string): boolean {
+  return !cfg.severities || cfg.severities.includes(severity);
+}
+
+/** Is an alert of `metric` one the policy holds? A null list holds every kind;
+ *  an alert with no metric (event/change) is held only by "any". */
+export function quietHoldsKind(cfg: { alertKinds?: string[] | null }, metric: string | null | undefined): boolean {
+  if (!cfg.alertKinds) return true;
+  return !!metric && cfg.alertKinds.includes(metric);
 }

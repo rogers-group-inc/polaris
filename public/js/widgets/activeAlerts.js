@@ -180,6 +180,7 @@
         { header: "Dependency Down", get: function (r) { return r.dependencyDown ? (r.dependencyUpstream || "yes") : ""; } },
         { header: "Acknowledged By", get: function (r) { return r.acknowledgedBy || ""; } },
         { header: "Test", get: function (r) { return r.testRun ? "yes" : ""; } },
+        { header: "Quiet", get: function (r) { return r.quietHeld ? "held" : ""; } },
         { header: "Raised At", get: function (r) { return r.raisedAt ? new Date(r.raisedAt).toISOString() : ""; } },
       ],
       rows: filtered,
@@ -235,6 +236,14 @@
     // on one device, and neither title says so; the GROUP pill does. Both
     // kinds carry dimensionCount (null on an ungrouped alert); only the
     // Alert Group kind carries groupName.
+    // Held for quiet time (business rule 92): the alert is real and live, but
+    // nobody has been told yet — the summary email will. Pilled so the
+    // silence reads as deliberate rather than as a delivery failure.
+    var quiet = r.quietHeld
+      ? '<span class="widget-pill widget-pill-neutral" style="margin-right:6px' + fadeTail + '" title="' +
+        escapeHtml("Held for quiet time — no email, push or chat message has gone out; a summary email is sent when the quiet period ends") +
+        '">QUIET</span>'
+      : "";
     var grouped = !!r.groupName || r.dimensionCount != null;
     var count = r.dimensionCount ? " — " + r.dimensionCount + " component" + (r.dimensionCount === 1 ? "" : "s") : "";
     var group = grouped
@@ -298,7 +307,7 @@
     return "<" + tag + ' class="recent-item' + (actionable ? " recent-item-link" : "") + '"' + attrs +
       ' style="border-left:3px solid ' + bar + ';padding-left:8px">' +
       '<div style="min-width:0">' +
-        '<div class="recent-item-title"><span class="widget-pill ' + pillCls + '" style="margin-right:6px' + fadeTail + '">' + escapeHtml(sev) + '</span>' + test + title + group + who + dim + dep + ack + '</div>' +
+        '<div class="recent-item-title"><span class="widget-pill ' + pillCls + '" style="margin-right:6px' + fadeTail + '">' + escapeHtml(sev) + '</span>' + test + quiet + title + group + who + dim + dep + ack + '</div>' +
         '<div class="recent-item-meta"' + fadeAttr + '>' + escapeHtml(r.message || "") + '</div>' +
       '</div>' +
       '<span class="recent-item-time">' + timeAgo(r.raisedAt) + '</span>' +

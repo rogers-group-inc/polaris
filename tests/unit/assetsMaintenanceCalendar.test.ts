@@ -187,7 +187,7 @@ describe("calendar grid", () => {
     g2._maintWireCalendar();
   });
 
-  it("asks for whole weeks around the visible month and paints chips on both days a window spans", async () => {
+  it("asks for whole weeks around the visible month and paints a timed window ONCE, on the day it starts", async () => {
     await g2._maintRenderCalendar();
     // August 2026 starts on a Saturday, so the grid opens on Sun 2026-07-26.
     expect(occurrencesArgs[0]).toEqual(["2026-07-26", "2026-09-05"]);
@@ -196,13 +196,156 @@ describe("calendar grid", () => {
     const dayEl = (key: string) =>
       (g2.document as Document).querySelector(`.maint-cal-day[data-day="${key}"]`)!;
     expect(dayEl("2026-08-12").querySelectorAll(".maint-cal-chip")).toHaveLength(2);
-    // The 22:00 → 02:00 window continues onto the 13th…
-    expect(dayEl("2026-08-13").querySelectorAll(".maint-cal-chip")).toHaveLength(1);
+    // The 22:00 → 02:00 window is ONE chip on the 12th, labelled with its
+    // hours — it used to be painted again on the 13th and read as two nights.
+    expect(dayEl("2026-08-13").querySelectorAll(".maint-cal-chip")).toHaveLength(0);
+    expect(dayEl("2026-08-12").querySelector(".maint-cal-chip:not(.maint-cal-chip-adhoc) .maint-cal-chip-time")!.textContent).toBe("22:00 →");
     // …and the disabled ad-hoc one is styled as both.
     const adhoc = dayEl("2026-08-12").querySelector(".maint-cal-chip-adhoc")!;
     expect(adhoc.className).toContain("maint-cal-chip-off");
     expect(dayEl("2026-08-12").className).toContain("maint-cal-day-today");
     expect(dayEl("2026-07-26").className).toContain("maint-cal-day-out");
+    // Nothing a day or longer in this fixture, so no bar lanes.
+    expect((g2.document as Document).querySelectorAll(".maint-cal-span")).toHaveLength(0);
+  });
+
+  it("draws a window a day or longer as ONE bar per week row, continuing across rows", async () => {
+    g2.api.maintenanceSchedules.occurrences = (from: string, to: string) => {
+      occurrencesArgs.push([from, to]);
+      return Promise.resolve({ truncated: false, occurrences: [
+        // Thu Aug 13 13:11 → Mon Aug 24 09:00: touches three week rows.
+        { scheduleId: "s3", name: "Ad-hoc — PULASKI-CORE-SW1", enabled: true, kind: "oneshot", adhoc: true, start: "2026-08-13T13:11", end: "2026-08-24T09:00" },
+      ] });
+    };
+    await g2._maintRenderCalendar();
+    const doc = g2.document as Document;
+    const bars = Array.from(doc.querySelectorAll(".maint-cal-span")) as HTMLElement[];
+    expect(bars).toHaveLength(3);
+    // Week of Aug 9: starts Thursday (column 5) and runs to Saturday (3 columns), continuing to the right.
+    expect(bars[0].style.gridColumn.replace(/\s/g, "")).toBe("5/span3");
+    expect(bars[0].className).toContain("maint-cal-span-to");
+    expect(bars[0].className).not.toContain("maint-cal-span-from");
+    expect(bars[0].textContent).toContain("13:11");
+    // Week of Aug 16: the whole row, continuing both ways.
+    expect(bars[1].style.gridColumn.replace(/\s/g, "")).toBe("1/span7");
+    expect(bars[1].className).toContain("maint-cal-span-from");
+    expect(bars[1].className).toContain("maint-cal-span-to");
+    // Week of Aug 23: Sunday–Monday, ending at 09:00.
+    expect(bars[2].style.gridColumn.replace(/\s/g, "")).toBe("1/span2");
+    expect(bars[2].textContent).toContain("→ 09:00");
+    // No day cell repeats it as a chip.
+    expect(doc.querySelectorAll(".maint-cal-chip")).toHaveLength(0);
+    // Clicking the bar opens its schedule, like a chip.
+    expect(bars[0].getAttribute("data-schedule-id")).toBe("s3");
+  });
+
+  it("folds a week with more than three bars behind '+N more windows'", async () => {
+    const many = Array.from({ length: 5 }, (_, i) => ({
+      scheduleId: "m" + i, name: "Freeze " + i, enabled: true, kind: "oneshot", adhoc: false, start: "2026-08-10T00:00", end: "2026-08-15T00:00",
+    }));
+    g2.api.maintenanceSchedules.occurrences = () => Promise.resolve({ truncated: false, occurrences: many });
+    await g2._maintRenderCalendar();
+    const doc = g2.document as Document;
+    expect(doc.querySelectorAll(".maint-cal-span")).toHaveLength(3);
+    const more = doc.querySelector(".maint-cal-more-week")!;
+    expect(more.textContent).toBe("+2 more windows");
+    more.dispatchEvent(new g2.window.Event("click", { bubbles: true }));
+    await vi.waitFor(() => expect(doc.querySelectorAll(".maint-cal-span")).toHaveLength(5));
+  });
+
+  it("the List view shows the same windows as readable rows, with running windows first", async () => {
+    g2.api.maintenanceSchedules.occurrences = () => Promise.resolve({ truncated: false, occurrences: [
+      { scheduleId: "s1", name: "Nightly patching", enabled: true, kind: "recurring", adhoc: false, start: "2026-08-12T22:00", end: "2026-08-13T02:00" },
+      { scheduleId: "s3", name: "Ad-hoc — PULASKI-CORE-SW1", enabled: true, kind: "oneshot", adhoc: true, start: "2026-07-30T13:11", end: "2026-08-24T09:00" },
+    ] });
+    const doc = g2.document as Document;
+    doc.querySelector('.maint-cal-view [data-view="list"]')!.dispatchEvent(new g2.window.Event("click", { bubbles: true }));
+    await vi.waitFor(() => expect(doc.querySelectorAll(".maint-cal-row").length).toBe(2));
+    const groups = Array.from(doc.querySelectorAll(".maint-cal-group-title")).map((h) => h.textContent);
+    expect(groups[0]).toContain("Already running when the month opens");
+    expect(groups[1]).toContain("Aug 12");
+    const rows = Array.from(doc.querySelectorAll(".maint-cal-row")) as HTMLElement[];
+    expect(rows[0].textContent).toContain("Ad-hoc — PULASKI-CORE-SW1");
+    expect(rows[0].textContent).toContain("24d 19h");
+    expect(rows[1].querySelector(".maint-cal-row-when")!.textContent).toBe("22:00 – 02:00");
+    expect(rows[1].textContent).toContain("4h");
+    expect((doc.querySelector(".maint-cal-dow") as HTMLElement).style.display).toBe("none");
+    // Back to the month grid.
+    doc.querySelector('.maint-cal-view [data-view="month"]')!.dispatchEvent(new g2.window.Event("click", { bubbles: true }));
+    await vi.waitFor(() => expect(doc.querySelectorAll(".maint-cal-day").length).toBeGreaterThan(0));
+  });
+
+  it("the Week view fetches one week, draws timed windows as blocks at their hours and long ones in the all-day band", async () => {
+    g2.api.maintenanceSchedules.occurrences = (from: string, to: string) => {
+      occurrencesArgs.push([from, to]);
+      return Promise.resolve({ truncated: false, occurrences: [
+        { scheduleId: "s1", name: "Nightly patching", enabled: true, kind: "recurring", adhoc: false, start: "2026-08-12T22:00", end: "2026-08-13T02:00" },
+        { scheduleId: "s2", name: "Ad-hoc — SW1", enabled: false, kind: "oneshot", adhoc: true, start: "2026-08-12T10:00", end: "2026-08-12T12:00" },
+        { scheduleId: "s3", name: "Freeze", enabled: true, kind: "oneshot", adhoc: false, start: "2026-08-10T00:00", end: "2026-08-13T00:00" },
+      ] });
+    };
+    const doc = g2.document as Document;
+    doc.querySelector('.maint-cal-view [data-view="week"]')!.dispatchEvent(new g2.window.Event("click", { bubbles: true }));
+    await vi.waitFor(() => expect(doc.querySelectorAll(".maint-cal-time-col").length).toBe(7));
+    // Sun Aug 9 – Sat Aug 15, and only that.
+    expect(occurrencesArgs[occurrencesArgs.length - 1]).toEqual(["2026-08-09", "2026-08-15"]);
+    expect(doc.getElementById("maint-cal-title")!.textContent).toBe("Aug 9 – 15, 2026");
+    expect(doc.getElementById("maint-cal-prev")!.getAttribute("aria-label")).toBe("Previous week");
+    const col = (key: string) => doc.querySelector(`.maint-cal-time-col[data-day="${key}"]`)! as HTMLElement;
+    // Wednesday: the ad-hoc 10:00–12:00 block and the first half of the overnight one.
+    const wed = Array.from(col("2026-08-12").querySelectorAll(".maint-cal-block")) as HTMLElement[];
+    expect(wed).toHaveLength(2);
+    expect(wed[0].textContent).toContain("10:00–12:00");
+    expect(wed[0].style.top).toBe(`${10 * 28}px`);
+    expect(wed[0].style.height).toBe(`${2 * 28 - 2}px`);
+    expect(wed[1].textContent).toContain("22:00–00:00");
+    expect(wed[1].className).toContain("maint-cal-block-runs");
+    // Thursday: the second half, 00:00–02:00, marked as a continuation.
+    const thu = Array.from(col("2026-08-13").querySelectorAll(".maint-cal-block")) as HTMLElement[];
+    expect(thu).toHaveLength(1);
+    expect(thu[0].textContent).toContain("00:00–02:00");
+    expect(thu[0].className).toContain("maint-cal-block-cont");
+    // The three-day freeze is a bar in the all-day band, Mon–Wed.
+    const band = doc.querySelector(".maint-cal-time-band .maint-cal-span")! as HTMLElement;
+    expect(band.style.gridColumn.replace(/\s/g, "")).toBe("2/span3");
+    expect(band.textContent).toContain("Freeze");
+    // Today's column carries the now line; the weekday header is hidden.
+    expect(col("2026-08-12").querySelector(".maint-cal-nowline")).not.toBeNull();
+    expect(col("2026-08-11").querySelector(".maint-cal-nowline")).toBeNull();
+    expect((doc.querySelector(".maint-cal-dow") as HTMLElement).style.display).toBe("none");
+    // Next moves one week.
+    doc.getElementById("maint-cal-next")!.dispatchEvent(new g2.window.Event("click", { bubbles: true }));
+    await vi.waitFor(() => expect(doc.getElementById("maint-cal-title")!.textContent).toBe("Aug 16 – 22, 2026"));
+    expect(occurrencesArgs[occurrencesArgs.length - 1]).toEqual(["2026-08-16", "2026-08-22"]);
+    doc.querySelector('.maint-cal-view [data-view="month"]')!.dispatchEvent(new g2.window.Event("click", { bubbles: true }));
+    await vi.waitFor(() => expect(doc.querySelectorAll(".maint-cal-day").length).toBeGreaterThan(0));
+  });
+
+  it("the Day view shows one column, steps by a day, and a click on it schedules at that hour", async () => {
+    const doc = g2.document as Document;
+    doc.querySelector('.maint-cal-view [data-view="day"]')!.dispatchEvent(new g2.window.Event("click", { bubbles: true }));
+    await vi.waitFor(() => expect(doc.querySelectorAll(".maint-cal-time-col").length).toBe(1));
+    expect(occurrencesArgs[occurrencesArgs.length - 1]).toEqual(["2026-08-12", "2026-08-12"]);
+    expect(doc.getElementById("maint-cal-title")!.textContent).toBe("Wed Aug 12 2026");
+    doc.getElementById("maint-cal-next")!.dispatchEvent(new g2.window.Event("click", { bubbles: true }));
+    await vi.waitFor(() => expect(doc.getElementById("maint-cal-title")!.textContent).toBe("Thu Aug 13 2026"));
+    // A click with no layout falls back to the day's default (20:00 on a future day).
+    doc.querySelector(".maint-cal-time-col")!.dispatchEvent(new g2.window.Event("click", { bubbles: true }));
+    expect((doc.getElementById("maint-start") as HTMLInputElement).value).toBe("2026-08-13T20:00");
+    // Today is remembered across the view switch back to the month grid.
+    doc.getElementById("maint-cal-today")!.dispatchEvent(new g2.window.Event("click", { bubbles: true }));
+    await vi.waitFor(() => expect(doc.getElementById("maint-cal-title")!.textContent).toBe("Wed Aug 12 2026"));
+    doc.querySelector('.maint-cal-view [data-view="month"]')!.dispatchEvent(new g2.window.Event("click", { bubbles: true }));
+    await vi.waitFor(() => expect(doc.getElementById("maint-cal-title")!.textContent).toBe("Aug 2026"));
+  });
+
+  it("an hour handed to the day-click prefill is honoured, and a past hour today becomes now", () => {
+    g2._maintCalNewOnDay("2026-08-20", 14.6);
+    const doc = g2.document as Document;
+    expect((doc.getElementById("maint-start") as HTMLInputElement).value).toBe("2026-08-20T14:00");
+    expect((doc.getElementById("maint-end") as HTMLInputElement).value).toBe("2026-08-20T16:00");
+    g2._maintCalNewOnDay("2026-08-12", 7);
+    expect((doc.getElementById("maint-start") as HTMLInputElement).value).toBe("2026-08-12T09:00");
   });
 
   it("month nav moves the window and refetches", async () => {

@@ -5236,6 +5236,17 @@ model NotificationRule {
   // ticket-creating webhook or a registry script is not symmetric with an extra
   // email. NULL = never repeats, which is every pre-feature automation.
   repeat       Json?
+  // This automation's OWN quiet time (business rule 92): while one of its
+  // windows is open, every people-facing send of an alert it raises — the
+  // notify actions of the fire, the escalation tiers, the reminders — is HELD,
+  // and a summary email of what is still outstanding goes out when the window
+  // ends. Shape: utils/quietTime.quietTimeConfigSchema ({ windows, severities?,
+  // summaryAt?, summaryChannelId?, recurrenceThreshold? }). An automation with
+  // a quiet time of its own is exempt from every global QuietTimeSchedule.
+  // NULL = the global schedules apply. Supersedes the per-action
+  // `repeat.quiet` (rule 44), which the migrateRepeatQuietToQuietTime one-shot
+  // promotes into this column.
+  quietTime    Json?
   // Consolidate this automation's per-component alerts into ONE alert per
   // device (business rule 75). Valid only on a per-dimension asset trigger —
   // `validateGrouping` refuses it anywhere else, because there is nothing to
@@ -5411,6 +5422,27 @@ model Notification {
   // switch on a two-hop one. NULL unless dependencyDown.
   dependencyBlame Json?
 
+  // ─── Quiet time (business rule 92) ─────────────────────────────────────────
+  // Set when this alert FIRED inside a quiet window and its people-facing sends
+  // were written as `held` delivery rows instead of pending ones. The in-app
+  // alert, the Event, the scripts and API calls all ran; nobody was told.
+  // `quietSource` names what held it — { kind: "automation" | "global", id } —
+  // so the summary job can group held alerts by the policy that owes them a
+  // summary, and read that policy's send time and recurrence threshold.
+  // `quietSummarizedAt` is stamped when a summary covering this alert was
+  // created (listed in it or not — a recovered alert under the recurrence
+  // threshold is covered without being named). Until then the alert carries the
+  // QUIET pill on every alert surface and its all-clear sends nothing (there is
+  // no inbox to resolve it in); after it, the alert behaves like any other and
+  // its escalation and reminder clocks restart from this instant.
+  //
+  // Backed by the PARTIAL index `notifications_quiet_pending` (quietHeldAt
+  // WHERE quietSummarizedAt IS NULL), migration SQL only — Prisma cannot express
+  // it, so the schema diff reports it as drift forever. Do not "fix" that.
+  quietHeldAt       DateTime?
+  quietSummarizedAt DateTime?
+  quietSource       Json?
+
   deliveries NotificationDelivery[]
 
   @@index([assetId])
@@ -5544,7 +5576,11 @@ model NotificationDelivery {
   // naming who was pushed both read it). Destination secrets stay on the
   // channel, NOT here.
   meta           Json?
-  status         String               @default("pending") // pending | sent | failed
+  // pending | sent | failed | held. `held` is a row written INSIDE a quiet
+  // window (business rule 92): the recipients are resolved and snapshotted
+  // exactly as for a pending row, but the drain never picks it up — the
+  // quiet-time summary reads it to learn who the alert was for. Terminal.
+  status         String               @default("pending")
   attempts       Int                  @default(0)
   lastAttemptAt  DateTime?
   error          String?              @db.Text
@@ -5589,6 +5625,71 @@ model PushSubscription {
 // engine only fires on a clear→firing crossing and clears per the rule's
 // clearBehavior. `dimensionKey` distinguishes sub-asset dimensions (ifName /
 // mountPath / sensorName); "" for asset-level conditions.
+// A GLOBAL quiet time (business rule 92): while one of its windows is open,
+// every automation that has no quiet time of its own holds the people-facing
+// sends of the alerts this schedule selects — by device (`scope`, the
+// automations' own scope shape), by severity and by alert kind (both inside
+// `quiet`) — and a summary email of what is still outstanding goes out when the
+// window ends. Edited from Automations → Settings → Global Quiet Times. Several
+// may be enabled at once; the first (by creation) whose window is open and whose
+// filters match an alert is the one that holds it. Every time in `quiet` is
+// SERVER-LOCAL wall clock, exactly as a maintenance window's is.
+model QuietTimeSchedule {
+  id        String   @id @default(uuid())
+  name      String
+  enabled   Boolean  @default(true)
+  // notificationTypes.scopeSchema — which devices this schedule covers. {} /
+  // allAssets = every device.
+  scope     Json     @default("{}")
+  // utils/quietTime.quietTimeConfigSchema — windows, severities, alertKinds,
+  // summaryAt, summaryChannelId, recurrenceThreshold.
+  quiet     Json
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([enabled])
+  @@map("quiet_time_schedules")
+}
+
+// One quiet-time summary email run (business rule 92): the alerts a quiet
+// window held for one source — a global schedule or an automation — and the
+// per-recipient sends that reported them. Its own table rather than
+// NotificationDelivery rows because a summary is not an alert: it has no
+// notification behind it for the drain to render, and it reaches each reader
+// as their own message (per-reader zone) rather than one To line.
+//
+// `recipients` is [{ address, userId?, status: "pending"|"sent"|"failed",
+// attempts, error? }]; the quiet-time summary job retries the pending ones
+// until MAX attempts. `notificationIds` is every alert the run covered,
+// listed in the email or not, so a later reader can reconstruct what a
+// summary said from the alerts themselves. `status` rolls the recipients up:
+// pending | sent | partial | failed | empty (nothing to report, no email).
+model QuietTimeSummary {
+  id              String    @id @default(uuid())
+  sourceKind      String // automation | global
+  sourceId        String
+  sourceName      String
+  coveredFrom     DateTime
+  coveredTo       DateTime
+  notificationIds String[]  @default([])
+  listedCount     Int       @default(0)
+  recurringCount  Int       @default(0)
+  // What the email says — { outstanding: [...], recurring: [...] } as computed
+  // at creation (which IS the send time; a retry re-renders the same facts for
+  // the same reader rather than re-deciding what was outstanding).
+  details         Json      @default("{}")
+  recipients      Json      @default("[]")
+  channelId       String?
+  status          String    @default("pending")
+  createdAt       DateTime  @default(now())
+  sentAt          DateTime?
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("quiet_time_summaries")
+}
+
 model NotificationRuleState {
   id     String           @id @default(uuid())
   ruleId String
