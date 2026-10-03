@@ -33,6 +33,18 @@ Five tabs:
 | **Scripts** | the [script registry](Automation-Scripts) |
 | **Address Book** | [contacts and the directory](Address-Book) |
 
+### Settings
+
+The **Settings** button beside **+ New automation** opens the automation
+settings. Its one tab, **Global Quiet Times**, lists the quiet periods that
+apply to every automation without a quiet time of its own: which devices, which
+severities and kinds of alert, when, and how the summary email goes out. **+ New
+quiet time** walks the same five steps the automation wizard does — Name,
+Devices, Alerts, Schedule, Review. The list shows whether each one is quiet right
+now and when it next will be, and below it the recent summary emails. Reading
+needs `automationManagement:read`; creating, editing, toggling and deleting need
+`write`. See [Quiet time](Automation-Escalation#quiet-time).
+
 ### The list
 
 Columns: **Devices · Trigger · Reset · Actions · Addresses · Type**.
@@ -271,7 +283,7 @@ automation. The editor says so.
 
 ## Testing an automation
 
-Step 6 carries a **Test delivery** block (`automationManagement:write`;
+Step 7 (the review) carries a **Test delivery** block (`automationManagement:write`;
 omitted entirely otherwise), with one button per distinct delivery the draft
 would perform: *Send Test Web Push*, *Send Test Email*, *Send Test <channel>*,
 *Write a Test Event*. Deduplicated by channel across base actions, band actions,

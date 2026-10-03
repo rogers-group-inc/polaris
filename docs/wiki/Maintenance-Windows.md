@@ -288,12 +288,14 @@ They are easy to confuse and do opposite things:
 
 | | Maintenance window | Quiet time |
 |---|---|---|
-| Scope | a device | a reminder on one notify action |
+| Scope | a device | an automation, or (globally) a set of devices, severities and alert kinds |
 | Polling | **stopped** | unaffected |
 | An alert already open | **stays open, paused** — resolves normally after the window, or sooner if an agent reading shows the device is healthy | unaffected |
-| New alerts | **not raised** | unaffected |
-| Reminders | **paused**, resume after the window | **held**, and sent when the window ends |
-| Escalation tiers | **paused**, resume after the window | unaffected |
+| New alerts | **not raised** | **raised** and shown with a QUIET pill; the emails, pushes and chat messages are **held** |
+| Reminders | **paused**, resume after the window | **held**, resume after the period |
+| Escalation tiers | **paused**, resume after the window | **held**, resume after the period |
+| Afterwards | the alert resolves or carries on | a **summary email** of what is still outstanding ([rule 92](Business-Rules#rule-92)) |
 | Recurrence model | shared | shared |
 
-**Maintenance silences the device. Quiet time silences the chasing.**
+**Maintenance silences the device. Quiet time silences the people, and tells
+them afterwards.**

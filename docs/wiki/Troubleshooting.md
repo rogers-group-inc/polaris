@@ -79,8 +79,10 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 | A recipient gets nothing, and the automation looks right | Check the **Addresses** column's hover breakdown. Then check whether they have an email address at all, or (for push) an enrolled browser — the builder warns about both |
 | Push delivers to nobody | Push is opt-in **per browser**, and the boot-time reconcile **never prompts**. The account must pick the preference **on that browser** once |
 | An escalation paged the division instead of the site | An **orphaned region tag**. Level routing abstains entirely rather than promoting the container ([rule 58](Business-Rules#rule-58)), and it is invisible from every UI surface |
+| An alert paged during a quiet period | Either the automation has a **quiet time of its own** (global ones then do not apply to it), the alert's **severity** is not among those the quiet time holds (critical usually is not), or the quiet time holds **only reminders and escalations**. Also check the global quiet time's device filter and alert kinds ([rule 92](Business-Rules#rule-92)) |
+| No summary email arrived after a quiet period | Nothing was **outstanding** (every held alert recovered) and nothing recurred past the threshold — the Settings modal's recent summaries show an `empty` row. Otherwise look for `quiet_time.summary_unroutable` (no email channel) or `quiet_time.summary_failed` in Events; a send time set on the quiet time delays the summary until then |
+| A held alert never showed a Resolved email | By design: the all-clear of an alert nobody was told about sends nothing. Once a summary has named it, its all-clear is sent |
 | Reminders arrived overnight despite quiet time | A **half-typed day contributes no window**. The step names the day and the overlapping hours |
-| Reminders never resumed | An all-day-every-day quiet window holds them indefinitely. The live note warns about this pairing |
 | A banded automation announced recovery twice | The band-level Resolved control was retired for exactly this; re-save the automation |
 | A typo in a dimension pattern saved and never matched | The **match cue** beside the field now says so — *"matches none … would never fire"* |
 

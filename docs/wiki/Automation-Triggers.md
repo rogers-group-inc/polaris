@@ -734,7 +734,7 @@ that severity. See [Assets](Assets#sd-wan-fortigate-firewalls).
 
 ## Testing the trigger
 
-**"Test against current data"** on the step, and on step 6 a full
+**"Test against current data"** on the step, and on step 7 (the review) a full
 *Devices this automation affects* preview:
 
 - Headlined by **distinct devices**, with **readings** spelled out separately —

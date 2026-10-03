@@ -362,10 +362,12 @@ Profiles**. A custom role that held the two at different levels kept the
 lower one; no built-in role changed.
 
 ### Rule 44
-**A quiet window withholds the reminder, not the alert — and the reminder that
+**A quiet window holds the reminder, never skips it — and the reminder that
 follows says how long.** Held, never skipped. The hold is closed by the **send**,
-not by the window ending. It does not touch the first alert, the escalation
-tiers, or the reset notifications.
+not by the window ending. Since October 2026 this is the mechanics inside
+[rule 92](#rule-92): the windows belong to the automation (or to a global quiet
+time), and quiet reaches the escalation tiers too — and, when the quiet time
+holds everything, the first alert.
 
 ### Rule 45
 **An address places a device only through the gate that owns it, and only a
@@ -1371,3 +1373,26 @@ hostname. In the dependency tree, rows that share a name show their serial
 number (or address) beside it, so you can tell them apart before you click.
 
 See [Dependency suppression → Rules that keep the graph honest](Dependency-Suppression#rules-that-keep-the-graph-honest).
+
+### Rule 92
+**Quiet time withholds the send, never the alert — and what it withheld is
+reported when it ends.** A quiet time belongs to an automation (its Quiet time
+step) or to the install (Automations → Settings → Global Quiet Times, which
+applies only to automations with no quiet time of their own). While one is open,
+an alert it covers is still raised and shown — with a QUIET pill — and its
+scripts, API calls and audit event still run; what is held is every email, push
+and chat message, including the escalation tiers and reminders. A quiet time may
+instead hold **only** the reminders and escalations, letting the first alert and
+the all-clear through. Nothing in the alert's clocks moves while it is held.
+
+When the quiet period ends (or at a chosen send time, which may not fall inside
+a quiet period), **one summary email per person** goes to everyone the held
+alerts would have reached — by email even for people who prefer push, in each
+reader's own time zone — listing the alerts **still outstanding** and any that
+**recurred more than X times** for one device and component, with every time
+they fired. No graphs; each device opens in Polaris. A held alert that recovers
+before the summary is not listed, and its all-clear is not sent; once an alert
+has been named in a summary it behaves like any other. A test delivery is never
+held. Rule 44 is the hold mechanics inside this.
+
+See [Escalation, reminders and quiet time → Quiet time](Automation-Escalation#quiet-time).
