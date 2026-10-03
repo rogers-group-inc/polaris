@@ -1177,6 +1177,9 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // cooldown" control was retired from the wizard, and a value nothing on
       // screen states must not keep governing when an automation may re-fire.
       "./jobs/clearNotificationCooldowns.js",
+      // Promotes per-action reminder quiet windows (rule 44) into the
+      // automation's own quiet time (rule 92), which holds every send.
+      "./jobs/migrateRepeatQuietToQuietTime.js",
       "./jobs/seedBaselineAutomations.js",
       // Seals previously-plaintext secrets in Credential / Integration /
       // NotificationChannel config + Setting values. Not marker-guarded: the
@@ -1221,6 +1224,9 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       "./jobs/evaluateNotificationRules.js",
       "./jobs/escalateNotifications.js",
       "./jobs/deliverNotifications.js",
+      // Quiet-time summaries (business rule 92): the email that ends a quiet
+      // window. Same role as the three above — the hold was taken here.
+      "./jobs/sendQuietTimeSummaries.js",
       "./jobs/runAutomationScripts.js",
       "./jobs/resolvePolarisPushedConflicts.js",
       "./jobs/resolveStaleReservationConflicts.js",
