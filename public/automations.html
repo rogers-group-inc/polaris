@@ -60,6 +60,11 @@
                 <th style="width:110px" data-col-id="trigger"  data-sf-key="triggerType" data-sf-type="string">Type</th>
                 <th style="width:100px" data-col-no-resize="true" data-col-id="severity" data-sf-key="severity"  data-sf-type="string" data-sf-options="notice|informational|warning|serious|critical">Severity</th>
                 <th style="width:110px" data-col-no-resize="true" data-col-id="enabled"  data-sf-key="enabled"   data-sf-type="string" data-sf-options="true=Enabled|false=Disabled">Enabled</th>
+                <!-- The automation's Quiet time step (business rule 92): whether the
+                     global quiet times apply to it, are ignored (it always sends), or
+                     are overridden by a quiet time of its own. Filterable so "which
+                     automations page through the night" is one click. -->
+                <th style="width:140px" data-col-no-resize="true" data-col-id="quiet" data-sf-key="quietMode" data-sf-type="string" data-sf-options="global=Global|ignore=Ignores global|override=Overrides global">Quiet time</th>
                 <!-- The automation in its own words, one column per part of the
                      builder. Each is the SAME sentence the wizard shows on that
                      step (PolarisAutomationSentences), so the list and the editor
@@ -80,7 +85,7 @@
               </tr>
             </thead>
             <tbody id="rules-tbody">
-              <tr><td colspan="10" class="empty-state">Loading...</td></tr>
+              <tr><td colspan="11" class="empty-state">Loading...</td></tr>
             </tbody>
           </table>
         </div>

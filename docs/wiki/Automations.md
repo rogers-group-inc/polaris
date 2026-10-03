@@ -47,7 +47,12 @@ needs `automationManagement:read`; creating, editing, toggling and deleting need
 
 ### The list
 
-Columns: **Devices · Trigger · Reset · Actions · Addresses · Type**.
+Columns: **Devices · Trigger · Reset · Actions · Addresses · Type · Quiet time**.
+
+**Quiet time** shows what the automation's Quiet time step says: *Global*
+(the global quiet times apply), **IGNORES GLOBAL** (no quiet time at all — it
+sends whatever the hour) or **OVERRIDES GLOBAL** (its own quiet time; hover for
+the schedule). Filter on it to see which automations page through the night.
 
 The first four each hold that part of the automation **in the builder's own
 words**, so two automations can be told apart without opening either. Trigger
