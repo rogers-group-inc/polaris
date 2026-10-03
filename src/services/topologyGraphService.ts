@@ -32,6 +32,106 @@ import { inferInterfaceTopology } from "./interfaceTopologyService.js";
 import { resolveEffectiveLocation, hasLocationCodes, type LocationCodes } from "../utils/locationCodes.js";
 import { getLayoutsForSite } from "./topologyLayoutService.js";
 
+// ─── Which of a site's switches an endpoint sits on (business rule 91) ──────
+//
+// `Asset.lastSeenSwitch` carries a switch NAME, and a FortiLink fleet that
+// renames its switch-ids per site has an "IDF-1" behind every gate — so a
+// hostname-prefix match attributed every site's IDF-1 endpoints to EVERY
+// site's IDF-1 (the counts were right only where names were unique). The
+// dependency recompute already turns that name into one switch asset per
+// endpoint, settling a shared name by the endpoint's MAC table, its sightings
+// and its IPAM gate; the Device Map reads that edge. The prefix is still
+// honoured — but only for a name UNIQUE among switches fleet-wide, which keeps
+// an endpoint visible between discovery finalizes (the edge is refreshed on
+// that cadence) and keeps a VM, which the endpoint half leaves to its vCenter
+// host edge, under the switch port its MAC was learned on.
+
+/** A site's switches, as the attribution needs them. */
+export interface SiteSwitchRef { id: string; hostname: string | null }
+
+export interface SiteEndpointAttribution {
+  siteSwitchIds: string[];
+  /** The site's switch hostnames that no OTHER non-retired switch carries (case-insensitively); original case. */
+  uniqueHostnames: string[];
+  /** lower-cased unique hostname → the site switch's id. */
+  switchIdByUniqueHost: Map<string, string>;
+  /** Prisma `OR` branches selecting the endpoints that sit under one of this site's switches. Empty ⇒ none can. */
+  whereOr: Array<Record<string, unknown>>;
+  /** The `dependencyParents` select that carries the attributing edge, for `attributeEndpointToSiteSwitch`. */
+  edgeSelect: { where: Record<string, unknown>; select: { parentAssetId: true } };
+}
+
+/**
+ * Which of `switches`' hostnames are unique among every non-retired switch —
+ * the only names a bare `lastSeenSwitch` prefix may be trusted on.
+ */
+export async function buildSiteEndpointAttribution(switches: SiteSwitchRef[]): Promise<SiteEndpointAttribution> {
+  const siteSwitchIds = switches.map((s) => s.id);
+  const named = switches.filter((s): s is SiteSwitchRef & { hostname: string } => !!s.hostname);
+  const lowered = [...new Set(named.map((s) => s.hostname.toLowerCase()))];
+  const uniqueRows = lowered.length > 0
+    ? await prisma.$queryRaw<Array<{ host: string }>>`
+        SELECT lower(hostname) AS host
+        FROM assets
+        WHERE "assetType" = 'switch'
+          AND "status" NOT IN ('decommissioned', 'disabled')
+          AND lower(hostname) = ANY(${lowered}::text[])
+        GROUP BY lower(hostname)
+        HAVING COUNT(*) = 1
+      `
+    : [];
+  const uniqueLower = new Set(uniqueRows.map((r) => r.host));
+  const switchIdByUniqueHost = new Map<string, string>();
+  const uniqueHostnames: string[] = [];
+  for (const s of named) {
+    const key = s.hostname.toLowerCase();
+    if (!uniqueLower.has(key) || switchIdByUniqueHost.has(key)) continue;
+    switchIdByUniqueHost.set(key, s.id);
+    uniqueHostnames.push(s.hostname);
+  }
+  const edgeWhere = {
+    parentAssetId: { in: siteSwitchIds },
+    source: "endpoint",
+    detectedVia: "switch-port",
+  };
+  const whereOr: Array<Record<string, unknown>> = [];
+  if (siteSwitchIds.length > 0) whereOr.push({ dependencyParents: { some: edgeWhere } });
+  for (const h of uniqueHostnames) whereOr.push({ lastSeenSwitch: { startsWith: `${h}/` } });
+  return {
+    siteSwitchIds,
+    uniqueHostnames,
+    switchIdByUniqueHost,
+    whereOr,
+    edgeSelect: { where: edgeWhere, select: { parentAssetId: true } },
+  };
+}
+
+/**
+ * The site switch one endpoint row sits on: its `switch-port` dependency edge
+ * when it has one to a site switch, else the switch whose fleet-unique
+ * hostname its `lastSeenSwitch` names. Null when neither places it — a shared
+ * name the recompute could not settle stays OFF the map rather than on the
+ * wrong switch. Pure.
+ */
+export function attributeEndpointToSiteSwitch(
+  row: { lastSeenSwitch: string | null; dependencyParents?: Array<{ parentAssetId: string }> },
+  attribution: Pick<SiteEndpointAttribution, "siteSwitchIds" | "switchIdByUniqueHost">,
+): string | null {
+  const edge = row.dependencyParents?.find((d) => attribution.siteSwitchIds.includes(d.parentAssetId));
+  if (edge) return edge.parentAssetId;
+  const lss = row.lastSeenSwitch || "";
+  const slashIdx = lss.indexOf("/");
+  if (slashIdx <= 0) return null;
+  return attribution.switchIdByUniqueHost.get(lss.slice(0, slashIdx).toLowerCase()) ?? null;
+}
+
+/** The port half of a `lastSeenSwitch` value ("" when it carries none). */
+export function portOfLastSeenSwitch(v: string | null | undefined): string {
+  const lss = v || "";
+  const slashIdx = lss.indexOf("/");
+  return slashIdx > 0 ? lss.slice(slashIdx + 1) : "";
+}
+
 type TopologyMeta = {
   role?: "fortigate" | "fortiswitch" | "fortiap";
   controllerFortigate?: string | null;
@@ -299,22 +399,25 @@ export async function buildSiteTopology(siteId: string) {
       if (s.hostname) switchByName.set(s.hostname, s.id);
     }
 
-    // Endpoints attached to any of this site's FortiSwitches. We populate
-    // `Asset.lastSeenSwitch = "<switchHostname>/<portName>"` from the
-    // FortiSwitch MAC table during discovery (see Phase 7.5 in the FMG
-    // sync), so prefix-matching against each switch hostname yields every
-    // endpoint currently learned on that switch's ports. Returns top-25
-    // by recency per switch + the total count, so the modal info panel
-    // can show "12 endpoints" with a sample list while the search
-    // endpoint (slice 2) handles wildcards over the full set.
-    const switchHostnames = switches.map((s) => s.hostname).filter((h): h is string => !!h);
-    if (switchHostnames.length > 0) {
+    // Endpoints attached to any of this site's FortiSwitches. Discovery
+    // populates `Asset.lastSeenSwitch = "<switchHostname>/<portName>"` from
+    // the FortiSwitch MAC table (Phase 7.5), and the dependency recompute
+    // turns that name into ONE switch asset per endpoint (`source="endpoint"`,
+    // `detectedVia="switch-port"`), settling a name several sites share by the
+    // endpoint's MAC table / sightings / IPAM gate (business rule 91). That edge
+    // is the attribution here; the hostname prefix is only trusted when the
+    // name is unique among switches fleet-wide (see
+    // buildSiteEndpointAttribution). Returns top-25 by recency per switch + the
+    // total count, so the modal info panel can show "12 endpoints" with a
+    // sample list while the search endpoint handles wildcards over the full set.
+    const attribution = await buildSiteEndpointAttribution(switches);
+    if (attribution.whereOr.length > 0) {
       const [endpointSamples, countRows] = await Promise.all([
         prisma.asset.findMany({
           where: {
             assetType: { notIn: ["firewall", "switch", "access_point"] },
             status: { notIn: EXCLUDED_LIFECYCLE_STATUSES },
-            OR: switchHostnames.map((h) => ({ lastSeenSwitch: { startsWith: `${h}/` } })),
+            OR: attribution.whereOr,
           },
           select: {
             id: true,
@@ -325,31 +428,39 @@ export async function buildSiteTopology(siteId: string) {
             assignedTo: true,
             lastSeenSwitch: true,
             lastSeen: true,
+            dependencyParents: attribution.edgeSelect,
           },
           orderBy: { lastSeen: "desc" },
-          take: switchHostnames.length * 25,
+          take: switches.length * 25,
         }),
-        prisma.$queryRaw<Array<{ swhost: string; cnt: bigint }>>`
-          SELECT split_part("lastSeenSwitch", '/', 1) AS swhost, COUNT(*)::bigint AS cnt
-          FROM assets
-          WHERE "lastSeenSwitch" IS NOT NULL
-            AND "assetType" NOT IN ('firewall', 'switch', 'access_point')
-            AND "status" NOT IN ('decommissioned', 'disabled')
-            AND split_part("lastSeenSwitch", '/', 1) = ANY(${switchHostnames}::text[])
-          GROUP BY swhost
+        // Same attribution in SQL: the edge first, the hostname prefix only
+        // for a fleet-unique name. `split_part` rather than LIKE so a `_` or
+        // `%` in a hostname cannot widen the match.
+        prisma.$queryRaw<Array<{ switch_id: string; cnt: bigint }>>`
+          SELECT COALESCE(dp."parentAssetId", sw.id) AS switch_id, COUNT(*)::bigint AS cnt
+          FROM assets a
+          LEFT JOIN asset_dependency_parents dp
+            ON dp."assetId" = a.id
+           AND dp.source = 'endpoint'
+           AND dp."detectedVia" = 'switch-port'
+           AND dp."parentAssetId" = ANY(${attribution.siteSwitchIds}::text[])
+          LEFT JOIN assets sw
+            ON sw.id = ANY(${attribution.siteSwitchIds}::text[])
+           AND sw.hostname = ANY(${attribution.uniqueHostnames}::text[])
+           AND split_part(a."lastSeenSwitch", '/', 1) = sw.hostname
+          WHERE a."assetType" NOT IN ('firewall', 'switch', 'access_point')
+            AND a."status" NOT IN ('decommissioned', 'disabled')
+            AND (dp.id IS NOT NULL OR sw.id IS NOT NULL)
+          GROUP BY 1
         `,
       ]);
-      const countByHost = new Map<string, number>();
-      for (const r of countRows) countByHost.set(r.swhost, Number(r.cnt));
-      const switchByHost = new Map<string, typeof switches[number]>();
-      for (const s of switches) if (s.hostname) switchByHost.set(s.hostname, s);
+      const countBySwitch = new Map<string, number>();
+      for (const r of countRows) countBySwitch.set(r.switch_id, Number(r.cnt));
+      const switchById = new Map<string, typeof switches[number]>();
+      for (const s of switches) switchById.set(s.id, s);
       for (const ep of endpointSamples) {
-        const lss = ep.lastSeenSwitch || "";
-        const slashIdx = lss.indexOf("/");
-        if (slashIdx <= 0) continue;
-        const swHost = lss.slice(0, slashIdx);
-        const port = lss.slice(slashIdx + 1);
-        const sw = switchByHost.get(swHost);
+        const switchId = attributeEndpointToSiteSwitch(ep, attribution);
+        const sw = switchId ? switchById.get(switchId) : undefined;
         if (!sw) continue;
         if (sw.endpoints.length >= 25) continue; // per-switch cap
         sw.endpoints.push({
@@ -359,12 +470,12 @@ export async function buildSiteTopology(siteId: string) {
           macAddress: ep.macAddress,
           assetType: String(ep.assetType),
           assignedTo: ep.assignedTo,
-          port,
+          port: portOfLastSeenSwitch(ep.lastSeenSwitch),
           lastSeen: ep.lastSeen,
         });
       }
       for (const s of switches) {
-        s.endpointCount = s.hostname ? (countByHost.get(s.hostname) ?? 0) : 0;
+        s.endpointCount = countBySwitch.get(s.id) ?? 0;
       }
     }
 

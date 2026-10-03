@@ -122,6 +122,20 @@ is otherwise unreadable, and the operator opening a row has to know which site i
 - **No change to what `lastSeenSwitch` stores**, for the reasons above.
 - **No automatic renaming or merging of same-named switches.** Two switches sharing a
   hostname is a legitimate fleet convention, not a data error — the merge job now refuses to
-  touch them, and the Device Map's per-switch endpoint counts (`topologyGraphService`,
-  `routes/map.ts`), which still prefix-match `lastSeenSwitch` by hostname, remain a known
-  follow-up: within one site's topology they are correct, across sites they over-count.
+  touch them.
+
+### The Device Map (same day)
+
+The topology payload's per-switch `endpointCount` / `endpoints[]` and the modal's search
+(`topologyGraphService.buildSiteTopology`, `routes/map.ts → GET /map/sites/:id/topology/search`)
+attributed endpoints by a `lastSeenSwitch` hostname PREFIX over the site's switch hostnames, so
+every site's IDF-1 panel listed every site's IDF-1 endpoints. Both now read the attribution the
+recompute already made — the endpoint's `source="endpoint"` / `detectedVia="switch-port"` row
+pointing at a site switch — through `buildSiteEndpointAttribution` + the pure
+`attributeEndpointToSiteSwitch`. The prefix is still honoured, but only for a hostname that is
+UNIQUE among non-retired switches fleet-wide (one grouped query over the site's names): that keeps
+an endpoint visible between discovery finalizes, and keeps a VM — which the endpoint half leaves
+to its vCenter host edge — under the switch port its MAC was learned on. A shared name with no
+edge stays OFF the panel rather than on the wrong site's switch. The count is the same rule in
+SQL (`COALESCE(edge.parentAssetId, unique-name switch)`, `split_part` not LIKE), and the search
+result's `switchHostname` is the RESOLVED switch's name.
