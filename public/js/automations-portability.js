@@ -471,10 +471,15 @@
     // importing install falls back to its own email channel.
     if (isPlainObject(src.quietTime) && Array.isArray(src.quietTime.windows) && src.quietTime.windows.length) {
       var qt = { windows: clone(src.quietTime.windows) };
+      if (src.quietTime.holds === "followUps") qt.holds = "followUps";
       if (Array.isArray(src.quietTime.severities) && src.quietTime.severities.length) qt.severities = src.quietTime.severities.slice();
       if (src.quietTime.summaryAt) qt.summaryAt = src.quietTime.summaryAt;
       if (src.quietTime.recurrenceThreshold != null) qt.recurrenceThreshold = src.quietTime.recurrenceThreshold;
       out.quietTime = qt;
+    } else if (isPlainObject(src.quietTime) && src.quietTime.ignoreGlobal === true) {
+      // "Ignore Global Quiet Time" is policy too — an exported critical
+      // automation must stay exempt on the install that imports it.
+      out.quietTime = { ignoreGlobal: true };
     }
 
     // Rule-level escalation and emailComposition are pure delivery wiring.

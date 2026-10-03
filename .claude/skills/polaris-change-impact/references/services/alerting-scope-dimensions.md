@@ -30,7 +30,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/quietTimeHoldService.ts
 
-**What it owns:** THE quiet-time decision (business rule 92): is this alert, now, inside a window that holds its people-facing sends — whose window, and when does it end. Precedence in one place: the automation's own `NotificationRule.quietTime` is the ONLY candidate when it exists (matching or not — an automation with a quiet time is exempt from every global schedule); otherwise the enabled `QuietTimeSchedule` rows, oldest first, matched by severity, `Notification.metric` (`alertKinds`; an event alert has none and matches only "any"), window, then scope (last, because it is the one test that needs a device read — `QUIET_SCOPE_SELECT`, a `ScopeAsset`-complete select, since `ASSET_DETAIL_SELECT` lacks `discoveredByIntegrationId`; relation leaves through `decorateRelationLeafHits`).
+**What it owns:** THE quiet-time decision (business rule 92): is this alert, now, inside a window that holds its people-facing sends — whose window, and when does it end. Precedence in one place: the automation's own `NotificationRule.quietTime` is the ONLY candidate when it exists (matching or not — an automation with a quiet time is exempt from every global schedule; the column may instead hold `{ignoreGlobal: true}`, the wizard's "Ignore Global Quiet Time", which the catalog keeps as `config: null` and the resolver answers "never quiet"); otherwise the enabled `QuietTimeSchedule` rows, oldest first, matched by severity, `Notification.metric` (`alertKinds`; an event alert has none and matches only "any"), window, then scope (last, because it is the one test that needs a device read — `QUIET_SCOPE_SELECT`, a `ScopeAsset`-complete select, since `ASSET_DETAIL_SELECT` lacks `discoveredByIntegrationId`; relation leaves through `decorateRelationLeafHits`).
 
 **Public API:** `resolveQuietHold({ruleId, severity, metric, assetId, send?: "fire"|"followUp", now?, memo?})` → `{source: {kind, id, name}, config, windowEnd} | null` (`windowEnd` is the END OF THE STRETCH via `quietResumesAt`; a `followUps` policy answers null for a `fire`), `newQuietHoldMemo()` + `primeQuietHoldAssets(assetIds, memo)` (the sweep's per-pass memo and one batched device read), `bumpQuietTimeCache()`, `parseQuietTimeConfig(raw)`, `quietSourceConfig({kind, id})` (reads the ROW, disabled or not — a disabled or deleted source still owes its summary).
 
@@ -43,8 +43,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **Memoised per (send, rule, severity, metric, asset)**, never per notification: an all-assets automation with 400 live alerts evaluates one recurrence.
 - **`scopeIsUnconstrained` first.** `scopeMatchesAsset({})` is false; a bare `{}` scope on a schedule means every device.
 - **It never writes.** Holding, stamping and summarising belong to automationActionService, notificationRecipientService and quietTimeSummaryService.
+- **Three rule-level states, one column.** `null` → the global schedules apply; `{ignoreGlobal: true}` → in the catalog with `config: null`, never quiet; a policy → judged alone. An UNREADABLE blob is the first state, not the second — failing toward "exempt" would silence an automation nobody asked to silence. Pinned by `tests/unit/quietTimeHoldResolve.test.ts`.
 
-**When changing this:** a new field on the policy goes in `quietTimeConfigSchema` (utils) and is read here, never parsed twice. A new way an alert can be sent to a person must ask this function or it leaks through quiet time.
+**When changing this:** a new field on the policy goes in `quietTimeConfigSchema` (utils) and is read here, never parsed twice; a new rule-level STATE goes in `ruleQuietTimeSchema` beside the exemption marker. A new way an alert can be sent to a person must ask this function or it leaks through quiet time.
 
 ---
 

@@ -11,7 +11,10 @@
  *      the only candidate: its windows and severities decide, and every global
  *      schedule is ignored for that automation whatever they say. ("Quiet
  *      times in an automation override the global quiet times" — the
- *      operator's words, 2026-10-03.) An automation whose own quiet time does
+ *      operator's words, 2026-10-03.) The column may instead hold the
+ *      exemption marker `{ignoreGlobal: true}` — the step's "Ignore Global
+ *      Quiet Time" setting — which is the answer "never quiet" for that
+ *      automation. An automation whose own quiet time does
  *      not match right now is therefore NOT quiet, even inside a global window.
  *   2. The enabled `QuietTimeSchedule` rows, oldest first, for an automation
  *      with no quiet time of its own: a schedule holds the alert when its
@@ -38,6 +41,7 @@ import { createTtlCache } from "../utils/ttlCache.js";
 import { logger } from "../utils/logger.js";
 import {
   quietTimeConfigSchema,
+  isIgnoreGlobalQuietTime,
   quietWindowNow,
   quietResumesAt,
   quietHoldsSeverity,
@@ -80,12 +84,14 @@ interface GlobalSchedule {
 interface RuleQuiet {
   id: string;
   name: string;
-  config: QuietTimeConfig;
+  /** The automation's own policy — or null for "no quiet time at all" (`{ignoreGlobal: true}`). */
+  config: QuietTimeConfig | null;
 }
 
 interface QuietCatalog {
   schedules: GlobalSchedule[];
-  /** ruleId → the automation's own quiet time. Only rules that HAVE one. */
+  /** ruleId → the automation's own setting. Only rules that said SOMETHING —
+   *  a policy or the exemption; either way the global schedules stand aside. */
   rules: Map<string, RuleQuiet>;
 }
 
@@ -153,6 +159,10 @@ async function loadCatalogUncached(): Promise<QuietCatalog> {
     }
     const rules = new Map<string, RuleQuiet>();
     for (const r of ruleRows) {
+      // The exemption marker is an answer too ("never quiet"); an unreadable
+      // blob is not, and the global schedules apply to that rule as if the
+      // column were null — the same direction a bad global config fails.
+      if (isIgnoreGlobalQuietTime(r.quietTime)) { rules.set(r.id, { id: r.id, name: r.name, config: null }); continue; }
       const config = parseQuietTimeConfig(r.quietTime);
       if (config) rules.set(r.id, { id: r.id, name: r.name, config });
     }
@@ -262,8 +272,9 @@ export async function resolveQuietHold(q: QuietHoldQuestion): Promise<QuietHold 
 
   const own = catalog.rules.get(q.ruleId);
   if (own) {
-    // The automation's own quiet time is the whole answer, matching or not.
-    answer = quietHoldsSeverity(own.config, q.severity)
+    // The automation's own setting is the whole answer, matching or not — and
+    // "ignore the global quiet times" (config null) is the answer "never quiet".
+    answer = own.config && quietHoldsSeverity(own.config, q.severity)
       ? holdFromConfig({ kind: "automation", id: own.id, name: own.name }, own.config, now, send)
       : null;
   } else {

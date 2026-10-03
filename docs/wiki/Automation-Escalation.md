@@ -100,8 +100,17 @@ There are two places to set one:
 | **An automation's own quiet time** | that automation only | the wizard's **Quiet time** step (step 6) |
 | **A global quiet time** | every automation that has **no** quiet time of its own | **Automations → Settings → Global Quiet Times** |
 
-An automation with its own quiet time is left alone by the global ones — that
-is how a critical automation keeps paging while everything else waits.
+The automation's **Quiet time** step is a three-way choice:
+
+| Setting | Means |
+|---|---|
+| **Off** | No quiet time of its own. The global quiet times apply to it. |
+| **Ignore Global Quiet Time** | No quiet time at all. It sends whatever the hour, even inside a global quiet time — what a critical automation usually wants. |
+| **Override Global Quiet Time** | Its own quiet time, set below the choice. The global ones do not apply to it. |
+
+Either of the last two leaves the automation alone when a global quiet time
+opens — that is how a critical automation keeps paging while everything else
+waits.
 
 ### What goes quiet
 

@@ -268,6 +268,31 @@ export const quietTimeConfigSchema = z
 
 export type QuietTimeConfig = z.infer<typeof quietTimeConfigSchema>;
 
+/**
+ * The third setting of an automation's Quiet time step: NO quiet time, not its
+ * own and not the global ones. An automation carrying this always sends,
+ * whatever Automations → Settings says — the shape a critical automation wants
+ * on an install whose global quiet time covers every severity. Stored in
+ * `NotificationRule.quietTime` beside the full policy so one column answers
+ * "is this automation exempt from the global schedules?" with one read; `null`
+ * there still means "the global schedules apply".
+ */
+export const quietTimeIgnoreGlobalSchema = z.object({ ignoreGlobal: z.literal(true) }).strict();
+
+/** What `NotificationRule.quietTime` may hold: the exemption marker or a full policy. */
+export const ruleQuietTimeSchema = z.union([quietTimeIgnoreGlobalSchema, quietTimeConfigSchema]);
+export type RuleQuietTime = z.infer<typeof ruleQuietTimeSchema>;
+
+export function isIgnoreGlobalQuietTime(q: unknown): q is { ignoreGlobal: true } {
+  return !!q && typeof q === "object" && (q as { ignoreGlobal?: unknown }).ignoreGlobal === true;
+}
+
+/** The policy inside a rule-level value, or null for the exemption marker / nothing. */
+export function ruleQuietConfig(q: RuleQuietTime | null | undefined): QuietTimeConfig | null {
+  if (!q || isIgnoreGlobalQuietTime(q)) return null;
+  return q as QuietTimeConfig;
+}
+
 /** Server-local midnight of `d`'s day. */
 function startOfLocalDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);

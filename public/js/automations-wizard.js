@@ -6841,25 +6841,50 @@ async function openAutomationWizard(existing, opts) {
     var panel = document.getElementById("aw-step-6");
     var QE = window.PolarisQuietTimeEditor;
     var cfg = draft.quietTime && draft.quietTime.windows && draft.quietTime.windows.length ? draft.quietTime : null;
+    // Three settings, one radio group: Off (the global quiet times apply),
+    // Ignore (no quiet time at all — this automation always sends) and
+    // Override (its own windows, the global ones stand aside). Stored as null,
+    // `{ignoreGlobal: true}` and a full policy respectively.
+    var mode = cfg ? "own" : draft.quietTime && draft.quietTime.ignoreGlobal ? "ignore" : "off";
+    var radio = function (val, label, help) {
+      return '<label class="aw-quiet-mode" style="display:flex;gap:0.5rem;align-items:flex-start;margin:0 0 0.5rem;cursor:pointer">' +
+        '<input type="radio" name="aw-quiet-mode" id="aw-quiet-' + val + '" value="' + val + '"' + (mode === val ? " checked" : "") + ' style="margin-top:0.2rem">' +
+        '<span><span style="font-weight:600">' + label + '</span><br><span style="font-size:0.8rem;color:var(--color-text-tertiary)">' + help + '</span></span></label>';
+    };
     panel.innerHTML = '<h3 style="margin:0 0 0.25rem">Quiet time?</h3>' +
       '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">' +
         'Hours during which this automation stays quiet. The alert is still raised and shows on the Active Alerts page; ' +
-        'what changes is who hears about it and when. Leave this off and the global quiet times under Automations → Settings apply instead.' +
+        'what changes is who hears about it and when.' +
       '</p>' +
-      '<div class="form-group"><label style="font-weight:600"><input type="checkbox" id="aw-quiet-on"' + (cfg ? " checked" : "") + '> This automation has its own quiet time</label></div>' +
-      '<div id="aw-quiet-fields"' + (cfg ? "" : " hidden") + '>' +
+      '<div class="form-group" role="radiogroup" aria-label="Quiet time">' +
+        radio("off", "Off", "No quiet time of its own. The global quiet times under Automations → Settings apply to this automation.") +
+        radio("ignore", "Ignore Global Quiet Time", "No quiet time at all. This automation sends whatever the hour, even inside a global quiet time — what a critical automation usually wants.") +
+        radio("own", "Override Global Quiet Time", "Its own quiet time, below. The global quiet times do not apply to this automation.") +
+      '</div>' +
+      '<div id="aw-quiet-fields"' + (mode === "own" ? "" : " hidden") + '>' +
         (QE ? QE.html("awq", cfg, quietEditorMeta()) : '<p class="hint">The quiet-time editor did not load on this page.</p>') +
       '</div>';
-    var on = panel.querySelector("#aw-quiet-on");
     var fields = panel.querySelector("#aw-quiet-fields");
-    on.addEventListener("change", function () { fields.hidden = !on.checked; });
+    panel.querySelectorAll('input[name="aw-quiet-mode"]').forEach(function (r) {
+      r.addEventListener("change", function () {
+        fields.hidden = awQuietMode() !== "own";
+        syncRepeatNote();
+      });
+    });
     if (QE) QE.wire(fields.firstElementChild, cfg, function () { syncRepeatNote(); });
   }
+  /** "off" | "ignore" | "own" — what step 6's radio group says right now. */
+  function awQuietMode() {
+    var picked = document.querySelector('input[name="aw-quiet-mode"]:checked');
+    var v = picked ? picked.value : "off";
+    return v === "own" || v === "ignore" ? v : "off";
+  }
   function collectStep6() {
-    var on = document.getElementById("aw-quiet-on");
     var host = document.querySelector("#aw-quiet-fields .qte");
     draft._quietProblem = null;
-    if (!on || !on.checked || !host || !window.PolarisQuietTimeEditor) { draft.quietTime = null; return; }
+    var mode = document.querySelector('input[name="aw-quiet-mode"]') ? awQuietMode() : "off";
+    if (mode === "ignore") { draft.quietTime = { ignoreGlobal: true }; return; }
+    if (mode !== "own" || !host || !window.PolarisQuietTimeEditor) { draft.quietTime = null; return; }
     var got = window.PolarisQuietTimeEditor.collect(host);
     if (got.error) { draft._quietProblem = got.error; return; }
     draft.quietTime = got.config;
@@ -8884,7 +8909,9 @@ async function openAutomationWizard(existing, opts) {
     var QE = window.PolarisQuietTimeEditor;
     var quietRow = draft.quietTime && draft.quietTime.windows && draft.quietTime.windows.length
       ? '<dt>Quiet time</dt><dd>' + escapeHtml(QE ? QE.summary(draft.quietTime) : "configured") + ' <span style="color:var(--color-text-tertiary)">(server time; global quiet times do not apply to this automation)</span></dd>'
-      : "";
+      : draft.quietTime && draft.quietTime.ignoreGlobal
+        ? '<dt>Quiet time</dt><dd>None <span style="color:var(--color-text-tertiary)">(ignores the global quiet times — this automation always sends)</span></dd>'
+        : "";
     var repeatRow = (repeatLines.length
       ? '<dt>Reminders</dt><dd>' + repeatLines.join("<br>") + '</dd>'
       : "") + quietRow;
@@ -9151,7 +9178,7 @@ function _awDraftFromRule(r) {
     // seeds its reset list from the trigger, a stored rule shows what it saved.
     resetActions: Array.isArray(r.resetActions) && r.resetActions.length ? JSON.parse(JSON.stringify(r.resetActions)) : null,
     repeat: r.repeat ? JSON.parse(JSON.stringify(r.repeat)) : null,
-    quietTime: r.quietTime && r.quietTime.windows ? JSON.parse(JSON.stringify(r.quietTime)) : null,
+    quietTime: r.quietTime && (r.quietTime.windows || r.quietTime.ignoreGlobal) ? JSON.parse(JSON.stringify(r.quietTime)) : null,
     // Per-severity actions are opt-in on the Actions step; a stored rule opts in
     // iff any band actually carries its own actions, escalation or follow-up
     // pair. `followUp` counts on its own: a band may state only its own reminder

@@ -489,11 +489,15 @@ describe("automation wizard DOM render", () => {
 
     (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
-    // Step 6 is the automation's own quiet time (business rule 92): off by
-    // default, rendered through the shared editor, and Next passes with it off.
+    // Step 6 is the automation's own quiet time (business rule 92): a three-way
+    // choice — Off / Ignore Global Quiet Time / Override Global Quiet Time —
+    // Off by default, the editor rendered (hidden) through the shared module,
+    // and Next passes with it off.
     expect(doc.querySelector("#aw-step-6.visible")).toBeTruthy();
-    expect(doc.querySelector("#aw-quiet-on")).toBeTruthy();
-    expect((doc.querySelector("#aw-quiet-on") as unknown as { checked: boolean }).checked).toBe(false);
+    expect(doc.querySelectorAll('input[name="aw-quiet-mode"]')).toHaveLength(3);
+    expect((doc.querySelector("#aw-quiet-off") as unknown as { checked: boolean }).checked).toBe(true);
+    expect((doc.querySelector("#aw-quiet-ignore") as unknown as { checked: boolean }).checked).toBe(false);
+    expect((doc.querySelector("#aw-quiet-fields") as unknown as { hidden: boolean }).hidden).toBe(true);
     expect(doc.querySelector("#aw-quiet-fields .qte")).toBeTruthy();
     (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));

@@ -12,6 +12,9 @@ import { describe, it, expect } from "vitest";
 
 import {
   quietTimeConfigSchema,
+  ruleQuietTimeSchema,
+  isIgnoreGlobalQuietTime,
+  ruleQuietConfig,
   summaryTimeConflicts,
   summarySendAt,
   quietHoldsSeverity,
@@ -28,6 +31,25 @@ const NIGHTLY = { version: 1, kind: "recurring", freq: "daily", hours: [{ startT
 const LUNCH = { version: 1, kind: "recurring", freq: "daily", hours: [{ startTime: "12:00", endTime: "13:00" }] };
 const WEEKEND = { version: 1, kind: "recurring", freq: "weekly", daysOfWeek: [0, 6] };
 const MONTHLY = { version: 1, kind: "recurring", freq: "monthly", dayOfMonth: 1, hours: [{ startTime: "01:00", endTime: "03:00" }] };
+
+describe("ruleQuietTimeSchema — what an automation's quietTime column may hold", () => {
+  it("accepts the exemption marker, a full policy, and nothing in between", () => {
+    expect(ruleQuietTimeSchema.parse({ ignoreGlobal: true })).toEqual({ ignoreGlobal: true });
+    expect(ruleQuietTimeSchema.parse({ windows: [NIGHTLY] }).windows).toHaveLength(1);
+    expect(() => ruleQuietTimeSchema.parse({ ignoreGlobal: false })).toThrow();
+    expect(() => ruleQuietTimeSchema.parse({ ignoreGlobal: true, windows: [NIGHTLY] })).toThrow();
+    expect(() => ruleQuietTimeSchema.parse({})).toThrow();
+  });
+
+  it("tells the two apart", () => {
+    expect(isIgnoreGlobalQuietTime({ ignoreGlobal: true })).toBe(true);
+    expect(isIgnoreGlobalQuietTime({ windows: [NIGHTLY] })).toBe(false);
+    expect(isIgnoreGlobalQuietTime(null)).toBe(false);
+    expect(ruleQuietConfig({ ignoreGlobal: true })).toBeNull();
+    expect(ruleQuietConfig(null)).toBeNull();
+    expect(ruleQuietConfig(quietTimeConfigSchema.parse({ windows: [NIGHTLY] }))!.windows).toHaveLength(1);
+  });
+});
 
 describe("quietTimeConfigSchema", () => {
   it("accepts the minimal policy and fills nothing in", () => {

@@ -32,6 +32,14 @@ with an automation that has one being exempt from the global schedules. And then
 later: *"automations with quiet time configurations also need the ability to quiet only the
 repeat emails and the escalation emails."* That sentence is the `holds` setting.
 
+And later still, looking at the step itself: *"instead of a toggle for overriding the global
+quiet time schedules, make it a 3 way toggle, Off, Ignore Global Quiet Time, Override Global
+Quiet Time."* The toggle had conflated two things — "this automation has windows of its own"
+and "the global schedules stand aside" — so a critical automation on an install whose global
+quiet time covered every severity had no way to say "never quiet" short of inventing a window
+that never opens. The middle setting is that sentence, stored as `{ignoreGlobal: true}` in the
+same column (`ruleQuietTimeSchema`), so the resolver still asks one question of one column.
+
 ### What rule 44 was, and why it had to widen rather than be joined
 
 Rule 44 lived inside a notify action's reminder settings and paused REMINDERS only. Its own

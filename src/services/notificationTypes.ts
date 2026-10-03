@@ -19,8 +19,10 @@ import { POE_STATUS_VALUES } from "../utils/poePorts.js";
 import {
   quietConfigSchema,
   quietTimeConfigSchema,
+  quietTimeIgnoreGlobalSchema,
   describeQuietTime,
   type QuietTimeConfig,
+  type RuleQuietTime,
   MAX_QUIET_WINDOWS,
   type QuietConfig,
 } from "../utils/quietTime.js";
@@ -2744,19 +2746,25 @@ const ruleInputBaseSchema = z.object({
   // Re-send this alert's notifications while it stays unhandled. Absent/null =
   // never repeats, which is every pre-feature automation.
   repeat: repeatConfigSchema.optional().nullable(),
-  // This automation's OWN quiet time (business rule 92): windows during which
-  // every people-facing send of its alerts is held and a summary goes out
-  // afterwards. Absent/null = the global schedules apply. `alertKinds` is a
-  // global-schedule filter and is refused here — the automation IS the kind.
-  quietTime: quietTimeConfigSchema
-    .superRefine((q, ctx) => {
-      if (q.alertKinds) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["alertKinds"], message: "An automation's quiet time has no alert-kind filter" });
-      for (const s of q.severities ?? []) {
-        if (!(SEVERITIES as readonly string[]).includes(s)) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["severities"], message: `Unknown severity "${s}"` });
+  // This automation's OWN quiet time (business rule 92). Three settings, as the
+  // wizard's step 6 offers them: absent/null = Off, the global schedules apply;
+  // `{ignoreGlobal: true}` = no quiet time at all, this automation always
+  // sends; a full policy = windows during which every people-facing send of
+  // its alerts is held and a summary goes out afterwards, the global schedules
+  // ignored. `alertKinds` is a global-schedule filter and is refused here —
+  // the automation IS the kind.
+  quietTime: z
+    .union([
+      quietTimeIgnoreGlobalSchema,
+      quietTimeConfigSchema.superRefine((q, ctx) => {
+        if (q.alertKinds) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["alertKinds"], message: "An automation's quiet time has no alert-kind filter" });
+        for (const s of q.severities ?? []) {
+          if (!(SEVERITIES as readonly string[]).includes(s)) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["severities"], message: `Unknown severity "${s}"` });
+          }
         }
-      }
-    })
+      }),
+    ])
     .optional()
     .nullable(),
 });
@@ -2793,8 +2801,9 @@ export interface RuleInput {
   resetActions: AutomationAction[] | null;
   /** Re-send while unhandled; null = never repeats. */
   repeat: RepeatConfig | null;
-  /** The automation's own quiet time (business rule 92); null = global schedules apply. */
-  quietTime: QuietTimeConfig | null;
+  /** The automation's own quiet time (business rule 92): null = global schedules apply,
+   *  `{ignoreGlobal: true}` = none at all, a policy = its own windows. */
+  quietTime: RuleQuietTime | null;
 }
 
 /** Preview input = RuleInput with trigger optional (scope-only preview mode).
