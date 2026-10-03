@@ -132,9 +132,16 @@ quiet period — this alert has been active for 9h 12m"* and carries
 
 ### When
 
-The schedule editor is the Maintenance modal's: specific days of the week (each
-day off, all day, or carrying one or more hour ranges), or monthly, or yearly,
-with an optional first and last date. Times are **server-local wall clock** —
+The schedule editor is the Maintenance modal's. For specific days of the week
+you write **periods** — "Mon–Fri 22:00–06:00", "Sat, Sun all day" — each a
+row of day chips with either *all day* or one or more hour ranges; add as many
+periods as the week needs, or start from a preset (*Nights*, *Every night*,
+*Weekends*, *Outside business hours*). **Quiet outside these hours** turns the
+periods inside out, so working hours are what you type and the quiet time is
+everything else. A week strip and a per-day breakdown under the periods show
+exactly what will be quiet. Monthly and yearly schedules take a day of the
+period and an hour list, and every schedule can carry a first and last date.
+Times are **server-local wall clock** —
 the zone is printed beside the hours, and a browser prefilling 22:00 from its
 own clock is the whole trap. A 22:00–06:00 window survives DST and midnight.
 A window set through the API that the editor cannot express (a one-shot) is

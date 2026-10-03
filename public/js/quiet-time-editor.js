@@ -46,6 +46,17 @@
 
   var SEVERITY_LABELS = { notice: "Notice", informational: "Informational", warning: "Warning", serious: "Serious", critical: "Critical" };
 
+  // One-click starting points for the rules editor. Each is the whole rule
+  // list; "Outside business hours" is the one that INVERTS — its rules say
+  // when people are at work and everything else goes quiet.
+  var NIGHT = [{ startTime: "22:00", endTime: "06:00" }];
+  var QUIET_PRESETS = [
+    { key: "nights", label: "Nights and weekends", rules: [{ days: [1, 2, 3, 4, 5], ranges: NIGHT }, { days: [0, 6], ranges: [] }] },
+    { key: "everynight", label: "Every night", rules: [{ days: [0, 1, 2, 3, 4, 5, 6], ranges: NIGHT }] },
+    { key: "weekends", label: "Weekends only", rules: [{ days: [0, 6], ranges: [] }] },
+    { key: "business", label: "Outside business hours", invert: true, rules: [{ days: [1, 2, 3, 4, 5], ranges: [{ startTime: "08:00", endTime: "18:00" }] }] },
+  ];
+
   function zoneLabel(meta) {
     var clock = meta && meta.serverClock;
     if (!clock) return "";
@@ -122,6 +133,9 @@
             zone: zoneLabel(meta),
             defaultStart: meta.defaultStart || "22:00",
             defaultEnd: meta.defaultEnd || "06:00",
+            presets: QUIET_PRESETS,
+            invertLabel: "Quiet outside these hours",
+            invertHelp: "— the periods below are when people are at work; everything else goes quiet",
           }) +
         '</div>' +
         '<div class="qte-extras">' + split.extras.map(extraRowHtml).join("") + '</div>' +
@@ -185,7 +199,7 @@
   function wire(host, cfg, onChange) {
     var fire = function () { refreshProblem(host); if (typeof onChange === "function") onChange(); };
     stashExtras(host, cfg || null);
-    R().wireScheduleEditor(host.querySelector(".qte-window .rc-schedule"), fire);
+    R().wireScheduleEditor(host.querySelector(".qte-window .rc-schedule"), fire, QUIET_PRESETS);
     host.querySelectorAll(".qte-holds").forEach(function (r) {
       r.addEventListener("change", function () {
         var sum = host.querySelector(".qte-summary");
