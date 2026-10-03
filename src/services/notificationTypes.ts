@@ -18,7 +18,9 @@ import { SENSOR_CLASS_UNITS } from "../utils/hardwareSensors.js";
 import { POE_STATUS_VALUES } from "../utils/poePorts.js";
 import {
   quietConfigSchema,
+  quietTimeConfigSchema,
   describeQuietTime,
+  type QuietTimeConfig,
   MAX_QUIET_WINDOWS,
   type QuietConfig,
 } from "../utils/quietTime.js";
@@ -2742,6 +2744,21 @@ const ruleInputBaseSchema = z.object({
   // Re-send this alert's notifications while it stays unhandled. Absent/null =
   // never repeats, which is every pre-feature automation.
   repeat: repeatConfigSchema.optional().nullable(),
+  // This automation's OWN quiet time (business rule 92): windows during which
+  // every people-facing send of its alerts is held and a summary goes out
+  // afterwards. Absent/null = the global schedules apply. `alertKinds` is a
+  // global-schedule filter and is refused here — the automation IS the kind.
+  quietTime: quietTimeConfigSchema
+    .superRefine((q, ctx) => {
+      if (q.alertKinds) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["alertKinds"], message: "An automation's quiet time has no alert-kind filter" });
+      for (const s of q.severities ?? []) {
+        if (!(SEVERITIES as readonly string[]).includes(s)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["severities"], message: `Unknown severity "${s}"` });
+        }
+      }
+    })
+    .optional()
+    .nullable(),
 });
 
 type RuleInputRaw = z.infer<typeof ruleInputBaseSchema>;
@@ -2776,6 +2793,8 @@ export interface RuleInput {
   resetActions: AutomationAction[] | null;
   /** Re-send while unhandled; null = never repeats. */
   repeat: RepeatConfig | null;
+  /** The automation's own quiet time (business rule 92); null = global schedules apply. */
+  quietTime: QuietTimeConfig | null;
 }
 
 /** Preview input = RuleInput with trigger optional (scope-only preview mode).
@@ -2917,7 +2936,38 @@ function normalizeRuleInputCore(raw: Omit<RuleInputRaw, "trigger">): Omit<RuleIn
     // Anything not copied here is silently dropped by the transform.
     resetActions: raw.resetActions?.length ? raw.resetActions : null,
     repeat: raw.repeat ?? null,
+    quietTime: raw.quietTime ?? legacyQuietTimeOf(raw),
   };
+}
+
+/**
+ * A body written BEFORE quiet time was its own policy (business rule 92) may
+ * still carry windows inside a `repeat.quiet` — an export file from an older
+ * build, or an API client that never moved. Those windows become the
+ * automation's quiet time in the `followUps` mode (reminders and escalation
+ * tiers pause, the first alert still sends), the same promotion
+ * `migrateRepeatQuietToQuietTime` applied to stored rows, so an old file
+ * imports into the same policy it would have had on an upgraded install. The
+ * stale `quiet` keys themselves are harmless: nothing reads them.
+ */
+function legacyQuietTimeOf(raw: { repeat?: RepeatConfig | null; actions?: unknown; severityBands?: unknown }): QuietTimeConfig | null {
+  const windows: unknown[] = [];
+  const seen = new Set<string>();
+  const take = (rep: unknown) => {
+    const q = (rep as { quiet?: { windows?: unknown[] } | null } | null | undefined)?.quiet;
+    for (const w of q?.windows ?? []) {
+      const key = JSON.stringify(w);
+      if (!seen.has(key)) { seen.add(key); windows.push(w); }
+    }
+  };
+  take(raw.repeat);
+  for (const a of Array.isArray(raw.actions) ? raw.actions : []) take((a as { repeat?: unknown })?.repeat);
+  for (const b of Array.isArray(raw.severityBands) ? raw.severityBands : []) {
+    for (const a of Array.isArray((b as { actions?: unknown[] })?.actions) ? (b as { actions: unknown[] }).actions : []) take((a as { repeat?: unknown })?.repeat);
+  }
+  if (windows.length === 0) return null;
+  const parsed = quietTimeConfigSchema.safeParse({ windows: windows.slice(0, MAX_QUIET_WINDOWS), holds: "followUps" });
+  return parsed.success ? parsed.data : null;
 }
 
 /** Cross-field validation over the NORMALIZED v2 shape. */
@@ -3787,7 +3837,7 @@ function humanMinutes(min: number): string {
 const stopWord = (stopOn: string): string => (stopOn === "clear" ? "cleared" : "acknowledged");
 
 export function followUpPolicy(
-  rule: RuleActionCarrier & { severity: string; repeat?: RepeatConfig | null },
+  rule: RuleActionCarrier & { severity: string; repeat?: RepeatConfig | null; quietTime?: unknown },
   severity: string,
 ): FollowUpPolicy {
   let repeat = "";
@@ -3809,7 +3859,10 @@ export function followUpPolicy(
     // own: "every 15 minutes" and "paused overnight" are one answer to one
     // question ("when will this chase me again?"), and a reader who sees only
     // the cadence plans their night around a reminder that isn't coming.
-    const quiet = describeQuietTime(r.quiet);
+    // The windows are the AUTOMATION's quiet time now (business rule 92);
+    // a legacy `repeat.quiet` is read only when nothing was promoted.
+    const ownQuiet = quietTimeConfigSchema.safeParse(rule.quietTime ?? null);
+    const quiet = describeQuietTime(ownQuiet.success ? ownQuiet.data : r.quiet);
     repeat = `Reminders every ${humanMinutes(r.everyMin)} until ${stopWord(r.stopOn)}` +
       (quiet ? `, paused ${quiet}` : "") +
       (r.stopAfterHours ? `, for up to ${r.stopAfterHours === 1 ? "1 hour" : `${r.stopAfterHours} hours`}.` : ".");

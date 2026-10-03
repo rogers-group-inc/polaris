@@ -400,16 +400,10 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
       }
     }
 
-    if (brandTokensIn(text, html).size > 0) {
-      const brand = await buildAlertBrandBlock();
-      text = pruneEmptyTextLines(substituteBrandTokens(text, brand.text));
-      if (html) {
-        html = substituteBrandTokens(html, brand.html);
-        if (brand.attachment && html.includes(`cid:${BRAND_LOGO_CID}`)) {
-          attachments = [...(attachments ?? []), brand.attachment];
-        }
-      }
-    }
+    const branded = await applyBrandLetterhead({ text, html, attachments });
+    text = branded.text;
+    html = branded.html;
+    attachments = branded.attachments;
 
     const composedMsg: EmailMessage = {
       to,
@@ -441,6 +435,56 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
   // A test always composes, so this is belt-and-braces — but the marking rides
   // the notification, not the compose path, and must stay true of both.
   return d.notification.testRun ? markEmailAsTest(legacyMsg) : legacyMsg;
+}
+
+/**
+ * Fill `{brand.header}` — the install's letterhead — in a rendered email and
+ * attach the logo when the HTML references it. Shared by the alert email (via
+ * emailMessageFor) and the quiet-time summary (quietTimeSummaryService), which
+ * is why it is a function and not three lines in one place: two emails that
+ * carry the same letterhead must get it from the same code. A body with no
+ * brand token comes back untouched.
+ */
+export async function applyBrandLetterhead<T extends { text: string; html?: string; attachments?: InlineAttachment[] }>(msg: T): Promise<T> {
+  if (brandTokensIn(msg.text, msg.html).size === 0) return msg;
+  const brand = await buildAlertBrandBlock();
+  const text = pruneEmptyTextLines(substituteBrandTokens(msg.text, brand.text));
+  let html = msg.html;
+  let attachments = msg.attachments;
+  if (html) {
+    html = substituteBrandTokens(html, brand.html);
+    if (brand.attachment && html.includes(`cid:${BRAND_LOGO_CID}`)) {
+      attachments = [...(attachments ?? []), brand.attachment];
+    }
+  }
+  return { ...msg, text, html, attachments };
+}
+
+/**
+ * Send one email through a configured email channel (smtp / oauth_m365),
+ * reading the transport's secrets off the channel's config exactly as the
+ * drain does. Throws on a transport failure or a non-email channel so the
+ * caller records the failure its own way — the drain marks its row, the
+ * quiet-time summary marks its recipient.
+ */
+export async function sendEmailThroughChannel(
+  channel: { type: string; config: Record<string, unknown> | null | undefined },
+  msg: EmailMessage,
+): Promise<void> {
+  const cfg = channel.config && typeof channel.config === "object" ? channel.config : {};
+  if (channel.type === "smtp") {
+    await sendSmtpEmail(
+      { host: cfgStr(cfg, "host"), port: Number(cfg.port) || 587, security: (cfgStr(cfg, "security") as any) || "starttls", username: cfgStr(cfg, "username"), password: cfgStr(cfg, "password"), from: cfgStr(cfg, "from") },
+      msg,
+    );
+  } else if (channel.type === "oauth_m365") {
+    await sendM365Email(
+      { tenantId: cfgStr(cfg, "tenantId"), clientId: cfgStr(cfg, "clientId"), clientSecret: cfgStr(cfg, "clientSecret"), fromUserId: cfgStr(cfg, "fromUserId") },
+      msg,
+    );
+  } else {
+    throw new Error(`channel type "${channel.type}" cannot send email`);
+  }
 }
 
 /** Append the acknowledge line to a plain-text body. Pure. */
@@ -478,17 +522,7 @@ async function dispatch(d: DeliveryRow, channel: ChannelInfo | undefined, memo: 
     if (type === "smtp" || type === "oauth_m365") {
       const msg = await emailMessageFor(d, meta, url, memo);
       if ("error" in msg) return { ok: false, error: msg.error };
-      if (type === "smtp") {
-        await sendSmtpEmail(
-          { host: cfgStr(cfg, "host"), port: Number(cfg.port) || 587, security: (cfgStr(cfg, "security") as any) || "starttls", username: cfgStr(cfg, "username"), password: cfgStr(cfg, "password"), from: cfgStr(cfg, "from") },
-          msg,
-        );
-      } else {
-        await sendM365Email(
-          { tenantId: cfgStr(cfg, "tenantId"), clientId: cfgStr(cfg, "clientId"), clientSecret: cfgStr(cfg, "clientSecret"), fromUserId: cfgStr(cfg, "fromUserId") },
-          msg,
-        );
-      }
+      await sendEmailThroughChannel({ type, config: cfg }, msg);
     } else if (type === "slack" || type === "teams") {
       const webhookUrl = cfgStr(cfg, "webhookUrl");
       if (!webhookUrl) return { ok: false, error: `${type} channel has no webhook URL` };
@@ -622,8 +656,11 @@ export function alreadyEmailedOnChannel(
   address: string,
 ): boolean {
   const needle = address.trim().toLowerCase();
+  // A HELD row (business rule 92) never reached anyone — it is the record of
+  // who a quiet window kept the alert from — so it must not count as "already
+  // emailed" against a later, real fallback for the same address.
   return siblings.some(
-    (s) => s.transport === "email" && s.channelId === channelId &&
+    (s) => s.transport === "email" && s.channelId === channelId && s.status !== "held" &&
       s.target.toLowerCase().includes(needle),
   );
 }

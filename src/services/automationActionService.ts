@@ -44,6 +44,8 @@ import {
 } from "./notificationRecipientService.js";
 import { requestScriptRun } from "./automationScriptService.js";
 import { resolveContactEmailsForAsset } from "./contactService.js";
+import { resolveQuietHold, type QuietHold } from "./quietTimeHoldService.js";
+import { formatLocalIsoMinute } from "../utils/maintenanceRecurrence.js";
 import { logger } from "../utils/logger.js";
 import {
   actionsToTargets,
@@ -167,6 +169,95 @@ export async function executeActions(
   // `requireAckNote`, to a 400 demanding a note about it first.
   const allClear = ctx["severity"] === "resolved";
 
+  // ── Quiet time (business rule 92) ──────────────────────────────────────────
+  // Decided HERE, not in the engine, because this is the one function every
+  // people-facing send passes through: the engine's fire and growth paths,
+  // the event tail (which never builds a Reading) and the three all-clear
+  // paths all arrive here with a notification id. The sweep's tiers and
+  // reminders arrive here too, but it has already gated them (`exec.escalation`
+  // / `exec.repeat`), so they are left alone.
+  //
+  // Two answers come out of one read of the alert row:
+  //   - a FIRE (or growth update) inside a quiet window is HELD: its notify
+  //     actions still resolve their recipients, but the rows are written
+  //     `held` (see ExpandDeliveriesOptions.hold) and the alert is stamped with
+  //     who held it; scripts, API calls and the audit Event run as usual.
+  //   - an ALL-CLEAR for an alert whose fire was held and never summarised is
+  //     DROPPED on the notify side: nobody was told it started, so there is
+  //     no inbox in which "resolved" means anything. Once a summary has named
+  //     it, its all-clear goes out like any other.
+  // A test delivery is never held: it exists to show the operator what the
+  // email looks like, and "held for quiet time" would show them nothing.
+  let hold: QuietHold | null = null;
+  let dropPeopleFacing = false;
+  let stampHold = false;
+  if (!exec.escalation && !exec.repeat) {
+    // Fails toward "deliver" (no hold, no drop), logged: the same posture the
+    // hold service takes for its own reads — a read error here must never
+    // cost an alert its audience.
+    const row = await (async () => {
+      try {
+        return await prisma.notification.findUnique({
+          where: { id: notificationId },
+          select: { ruleId: true, assetId: true, metric: true, severity: true, testRun: true, quietHeldAt: true, quietSummarizedAt: true },
+        });
+      } catch (err) {
+        logger.warn({ err: (err as Error)?.message, notificationId }, "quiet-time check could not read the alert — delivering as usual");
+        return null;
+      }
+    })();
+    if (row && !row.testRun) {
+      if (allClear) {
+        dropPeopleFacing = !!row.quietHeldAt && !row.quietSummarizedAt;
+      } else {
+        hold = await resolveQuietHold({
+          ruleId: row.ruleId ?? exec.ruleId,
+          severity: ctx["severity"] || row.severity,
+          metric: row.metric,
+          assetId: row.assetId,
+        });
+        stampHold = !!hold && !row.quietHeldAt;
+      }
+    }
+  }
+  if (dropPeopleFacing) {
+    await logEvent({
+      action: "notification.quiet_allclear_dropped",
+      resourceType: "notification",
+      resourceId: notificationId,
+      resourceName: exec.ruleName,
+      actor: exec.actor ?? "system:automation",
+      level: "info",
+      message: "All-clear not sent: the alert was held for quiet time and nobody had been told about it yet",
+      details: { ruleId: exec.ruleId ?? null, assetId: exec.assetId ?? null },
+    }).catch(() => {});
+  }
+  if (hold && stampHold) {
+    await prisma.notification.update({
+      where: { id: notificationId },
+      // The NAME rides along so a summary for a since-deleted schedule can
+      // still say which one held the alert.
+      data: { quietHeldAt: new Date(), quietSource: { kind: hold.source.kind, id: hold.source.id, name: hold.source.name } },
+    });
+    await logEvent({
+      action: "notification.quiet_held",
+      resourceType: "notification",
+      resourceId: notificationId,
+      resourceName: exec.ruleName,
+      actor: exec.actor ?? "system:automation",
+      level: "info",
+      message:
+        `Held for quiet time (${hold.source.kind === "global" ? "global quiet time" : "automation quiet time"} "${hold.source.name}") — ` +
+        `a summary of outstanding alerts goes out after ${formatLocalIsoMinute(hold.windowEnd)}`,
+      details: {
+        ruleId: exec.ruleId ?? null,
+        assetId: exec.assetId ?? null,
+        source: { kind: hold.source.kind, id: hold.source.id, name: hold.source.name },
+        windowEnd: formatLocalIsoMinute(hold.windowEnd),
+      },
+    }).catch(() => {});
+  }
+
   let _bothMethods: boolean | null = null;
   const groupOffersBothMethods = async (): Promise<boolean> => {
     if (_bothMethods !== null) return _bothMethods;
@@ -176,6 +267,9 @@ export async function executeActions(
   for (const [index, action] of actions.entries()) {
     try {
       if (action.type === "notify") {
+        // The quiet-time all-clear drop (above). The other action types below
+        // are not people-facing and run regardless.
+        if (dropPeopleFacing) continue;
         const composed = composeForNotify(action.emailComposition ?? null, exec, ctx);
         const rows = await expandDeliveries(notificationId, actionsToTargets([action]), {
           scopeRegionTags: exec.scopeRegionTags,
@@ -201,6 +295,7 @@ export async function executeActions(
           dispatchId,
           ...(allClear ? { noAck: true } : {}),
           ...(action.respectUserPreference ? { enforceUserPreference: await groupOffersBothMethods() } : {}),
+          ...(hold ? { hold: { kind: hold.source.kind, id: hold.source.id, windowEnd: hold.windowEnd } } : {}),
         });
         if (rows > 0) executed++;
       } else if (action.type === "api_call") {

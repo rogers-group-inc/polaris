@@ -29,6 +29,7 @@ const db = {
   notifUpdates: [] as any[],
   scriptRuns: [] as any[],
   events: [] as any[],
+  quietSchedules: [] as any[],
 };
 
 vi.mock("../../src/db.js", () => ({
@@ -45,7 +46,10 @@ vi.mock("../../src/db.js", () => ({
         return {};
       }),
     },
-    asset: { findMany: vi.fn(async () => []) },
+    asset: { findMany: vi.fn(async () => []), findUnique: vi.fn(async () => null) },
+    // Global quiet-time schedules (business rule 92) — none unless a case
+    // seeds one; the hold service reads them on every sweep.
+    quietTimeSchedule: { findMany: vi.fn(async () => db.quietSchedules) },
     notificationChannel: {
       findMany: vi.fn(async ({ where }: any) => db.channels.filter((c) => where.id.in.includes(c.id))),
     },
@@ -81,6 +85,7 @@ vi.mock("../../src/services/automationScriptService.js", () => ({
 }));
 
 import { runEscalationSweep, repeatIsDue } from "../../src/services/notificationEscalationService.js";
+import { bumpQuietTimeCache } from "../../src/services/quietTimeHoldService.js";
 
 const NOW = new Date("2026-08-25T12:00:00Z");
 const minsAgo = (m: number) => new Date(NOW.getTime() - m * 60_000);
@@ -141,6 +146,8 @@ beforeEach(() => {
   db.notifUpdates.length = 0;
   db.scriptRuns.length = 0;
   db.events.length = 0;
+  db.quietSchedules.length = 0;
+  bumpQuietTimeCache();
   db.channels.push({ id: "ch-email", type: "smtp", enabled: true });
 });
 
@@ -409,13 +416,30 @@ describe("per-action reminders", () => {
     expect(db.deliveries[0].target).toBe("oncall@example.com");
   });
 
-  it("holds one action's reminder for ITS quiet time without silencing the other", async () => {
-    // The windows live inside each action's repeat, so the sweep's quiet cache
-    // is keyed per action. Keying it on the rule alone would hold the page
-    // through the window the digest was given.
-    // Covers the whole clock, so the sweep's `now` is inside it whatever the
-    // server's zone — this test is about WHOSE windows are consulted, not about
-    // when they open (the quiet-time block below owns that).
+  it("the automation's quiet time holds EVERY action's reminder (business rule 92)", async () => {
+    // Quiet time is the automation's now, not one action's: a window pauses
+    // the page and the digest alike. Covers the whole clock, so the sweep's
+    // `now` is inside it whatever the server's zone.
+    const allDay = { windows: [{ version: 1, kind: "recurring", freq: "daily", startTime: "00:00", endTime: "23:59" }] };
+    seedRule({
+      repeat: null,
+      quietTime: allDay,
+      actions: [
+        { ...PAGE, repeat: { everyMin: 5, stopOn: "acknowledge" } },
+        { ...DIGEST, repeat: { everyMin: 5, stopOn: "acknowledge" } },
+      ],
+    });
+    seedNotif({ triggeredAt: minsAgo(10) });
+
+    expect(await runEscalationSweep(NOW)).toBe(0);
+    expect(db.deliveries).toHaveLength(0);
+    expect(db.notifUpdates[0].data.escalationState.quietHeldSince).toBeTruthy();
+  });
+
+  it("a legacy per-action `repeat.quiet` no longer holds anything — the promotion moved it", async () => {
+    // A row the one-shot has not reached (or an API client still writing the
+    // old key) keeps reminding on its normal cadence: the stale key is
+    // ignored, never half-honoured.
     const allDay = { windows: [{ version: 1, kind: "recurring", freq: "daily", startTime: "00:00", endTime: "23:59" }] };
     seedRule({
       repeat: null,
@@ -426,60 +450,33 @@ describe("per-action reminders", () => {
     });
     seedNotif({ triggeredAt: minsAgo(10) });
 
-    expect(await runEscalationSweep(NOW)).toBe(1);
-    expect(db.deliveries).toHaveLength(1);
-    expect(db.deliveries[0].target).toBe("oncall@example.com");
-    // The digest is HELD, and the hold is stamped.
-    expect(db.notifUpdates[0].data.escalationState.quietHeldSince).toBeTruthy();
-  });
-
-  it("does not let a quiet-free action claim it resumed from a quiet period", async () => {
-    // The hold stamp is per notification while the windows are per action, so
-    // the "reminders resumed" sentence is gated on this action HAVING windows.
-    // Without that gate the page would announce a silence it never observed.
-    // Covers the whole clock, so the sweep's `now` is inside it whatever the
-    // server's zone — this test is about WHOSE windows are consulted, not about
-    // when they open (the quiet-time block below owns that).
-    const allDay = { windows: [{ version: 1, kind: "recurring", freq: "daily", startTime: "00:00", endTime: "23:59" }] };
-    seedRule({
-      repeat: null,
-      actions: [
-        { ...PAGE, repeat: { everyMin: 5, stopOn: "acknowledge" } },
-        { ...DIGEST, repeat: { everyMin: 5, stopOn: "acknowledge", quiet: allDay } },
-      ],
-    });
-    seedNotif({
-      triggeredAt: minsAgo(10),
-      escalationState: { tiers: {}, quietHeldSince: minsAgo(30).toISOString(), quietHeldCount: 6 },
-    });
-
-    await runEscalationSweep(NOW);
-    expect(db.deliveries).toHaveLength(1);
-    expect(db.deliveries[0].meta.repeat.quietResumed).toBeUndefined();
-    expect(db.deliveries[0].meta.text).not.toContain("Reminders resumed after a quiet period");
-    // …and the hold it did not observe is still open for the action that did.
-    expect(db.notifUpdates[0].data.escalationState.quietHeldSince).toBeTruthy();
+    expect(await runEscalationSweep(NOW)).toBe(2);
+    expect(db.deliveries).toHaveLength(2);
   });
 });
 
 /**
- * Quiet time (business rule 44).
+ * Quiet time (business rule 92, which widened rule 44).
  *
- * The mechanism under test is that a held reminder is an OVERDUE one: nothing
- * schedules the catch-up send, `lastSentAt` simply isn't advanced. Which means
- * the two things that can silently break the feature are (a) the sweep
- * returning early on `tierRuns === 0 && repeatRuns === 0` and never persisting
- * the hold stamp, and (b) the hold being cleared by the window ending rather
- * than by the send. Both have a case here.
+ * The mechanism under test is that a held send is an OVERDUE one: nothing
+ * schedules the catch-up, `lastSentAt` simply isn't advanced. Which means the
+ * two things that can silently break the feature are (a) the sweep returning
+ * early on `tierRuns === 0 && repeatRuns === 0` and never persisting the hold
+ * stamp, and (b) the hold being cleared by the window ending rather than by
+ * the send. Both have a case here — plus the three things rule 92 added: the
+ * escalation tiers are held too, a GLOBAL schedule holds an automation that
+ * has no quiet time of its own (and only such an automation), and the clocks
+ * restart from the summary that first named a held alert.
  *
  * Quiet windows are SERVER-LOCAL wall clock, so these cases build local Dates
  * (`atLocal`) instead of leaning on the UTC `NOW` the rest of the file uses.
  */
-describe("the repeat pass's quiet time", () => {
+describe("the sweep's quiet time", () => {
   // (y, m 1-based, d, hh, mm) in the server's own zone.
   const atLocal = (y: number, m: number, d: number, hh = 0, mm = 0) => new Date(y, m - 1, d, hh, mm, 0, 0);
   const NIGHTLY = { version: 1, kind: "recurring", freq: "daily", startTime: "22:00", endTime: "06:00" };
-  const QUIET_REPEAT = { everyMin: 15, stopOn: "acknowledge", quiet: { windows: [NIGHTLY] } };
+  const QUIET_REPEAT = { everyMin: 15, stopOn: "acknowledge" };
+  const QUIET_TIME = { windows: [NIGHTLY] };
 
   // 02:00 — inside the nightly window, and 04:00 after a 22:00 fire.
   const NIGHT = atLocal(2026, 8, 26, 2, 0);
@@ -494,7 +491,7 @@ describe("the repeat pass's quiet time", () => {
   });
 
   it("holds a due reminder, stamping the hold instead of sending", async () => {
-    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT });
+    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT, quietTime: QUIET_TIME });
     seedNotif({ triggeredAt: firedAt });
 
     const runs = await runEscalationSweep(NIGHT);
@@ -512,7 +509,7 @@ describe("the repeat pass's quiet time", () => {
   });
 
   it("audits the pause ONCE per hold, naming when reminders resume", async () => {
-    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT });
+    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT, quietTime: QUIET_TIME });
     seedNotif({ triggeredAt: firedAt });
 
     await runEscalationSweep(NIGHT);
@@ -531,7 +528,7 @@ describe("the repeat pass's quiet time", () => {
   });
 
   it("sends the held reminder as soon as the window ends, stating the alert's age", async () => {
-    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT });
+    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT, quietTime: QUIET_TIME });
     seedNotif({ triggeredAt: firedAt, escalationState: heldState(NIGHT, 14) });
 
     const runs = await runEscalationSweep(MORNING);
@@ -556,7 +553,7 @@ describe("the repeat pass's quiet time", () => {
   });
 
   it("says nothing about quiet time on an ordinary reminder", async () => {
-    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT });
+    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT, quietTime: QUIET_TIME });
     // Noon, well outside the window, and no hold ever opened.
     seedNotif({ triggeredAt: atLocal(2026, 8, 26, 11, 0) });
 
@@ -574,10 +571,11 @@ describe("the repeat pass's quiet time", () => {
     expect(meta.text).toContain("Active for: 1h");
   });
 
-  it("does NOT hold an escalation tier — quiet applies to reminders only", async () => {
+  it("holds an escalation tier too — a tier chasing someone about an alert nobody was told of is the loudest way to break the silence", async () => {
     seedRule({
       actions: [NOTIFY],
       repeat: QUIET_REPEAT,
+      quietTime: QUIET_TIME,
       escalation: {
         stopOn: "acknowledge",
         tiers: [{ afterMin: 30, actions: [{ type: "notify", channelId: "ch-email", addresses: ["boss@example.com"] }] }],
@@ -585,23 +583,76 @@ describe("the repeat pass's quiet time", () => {
     });
     seedNotif({ triggeredAt: firedAt });
 
-    const runs = await runEscalationSweep(NIGHT);
-
-    // The tier ran; only the reminder was held.
-    expect(runs).toBe(1);
-    expect(db.deliveries).toHaveLength(1);
-    expect(db.deliveries[0].meta.subject).toContain("[ESCALATION 1]");
+    expect(await runEscalationSweep(NIGHT)).toBe(0);
+    expect(db.deliveries).toHaveLength(0);
     expect(db.notifUpdates[0].data.escalationState.quietHeldCount).toBe(1);
+    // Nothing advanced: both go out on the first sweep after the window.
+    const after = db.notifUpdates[0].data.escalationState;
+    db.notifs[0].escalationState = after;
+    db.notifUpdates.length = 0;
+    expect(await runEscalationSweep(MORNING)).toBe(2);
+    expect(db.deliveries.map((d) => d.meta.subject.slice(0, 12)).sort()).toEqual(["[ESCALATION ", "[REMINDER 1 "]);
+  });
+
+  it("the follow-ups-only mode holds the chasing in the same way", async () => {
+    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT, quietTime: { ...QUIET_TIME, holds: "followUps" } });
+    seedNotif({ triggeredAt: firedAt });
+    expect(await runEscalationSweep(NIGHT)).toBe(0);
+    expect(db.notifUpdates[0].data.escalationState.quietHeldSince).toBe(NIGHT.toISOString());
   });
 
   it("keeps reminding when the quiet blob is malformed", async () => {
     // A hand-edited or restored row must not be able to turn "pause overnight"
-    // into "never remind anyone again" — normalizeRuleToV2 drops the windows
-    // and keeps the repeat.
-    seedRule({ actions: [NOTIFY], repeat: { everyMin: 15, stopOn: "acknowledge", quiet: { windows: "nightly" } } });
+    // into "never remind anyone again": an unreadable quietTime is "no quiet
+    // time", in the loud direction.
+    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT, quietTime: { windows: "nightly" } });
     seedNotif({ triggeredAt: firedAt });
 
     expect(await runEscalationSweep(NIGHT)).toBe(1);
     expect(db.deliveries).toHaveLength(1);
+  });
+
+  it("a GLOBAL schedule holds an automation with no quiet time of its own", async () => {
+    db.quietSchedules.push({ id: "g1", name: "Nights", scope: { allAssets: true }, quiet: { windows: [NIGHTLY] }, createdAt: new Date() });
+    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT });
+    seedNotif({ triggeredAt: firedAt });
+
+    expect(await runEscalationSweep(NIGHT)).toBe(0);
+    expect(db.deliveries).toHaveLength(0);
+    expect(db.events.filter((e) => e.action === "notification.reminders_paused")[0].details.resumesAt).toBe("2026-08-26T06:00");
+  });
+
+  it("a global schedule's severities and alert kinds select what it holds", async () => {
+    db.quietSchedules.push({ id: "g1", name: "Nights", scope: {}, quiet: { windows: [NIGHTLY], severities: ["warning"], alertKinds: ["cpuPct"] }, createdAt: new Date() });
+    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT });
+    seedNotif({ triggeredAt: firedAt, metric: "cpuPct" });
+    expect(await runEscalationSweep(NIGHT)).toBe(0);
+
+    db.notifs[0].severity = "critical";
+    expect(await runEscalationSweep(NIGHT)).toBe(1);
+
+    db.notifs[0].severity = "warning";
+    db.notifs[0].metric = "monitorStatus";
+    expect(await runEscalationSweep(NIGHT)).toBe(1);
+  });
+
+  it("an automation with its OWN quiet time is exempt from every global schedule", async () => {
+    // Its own windows cover only the afternoon; the global one covers the
+    // night. At 02:00 the automation is NOT quiet.
+    db.quietSchedules.push({ id: "g1", name: "Nights", scope: {}, quiet: { windows: [NIGHTLY] }, createdAt: new Date() });
+    const afternoon = { version: 1, kind: "recurring", freq: "daily", startTime: "13:00", endTime: "14:00" };
+    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT, quietTime: { windows: [afternoon] } });
+    seedNotif({ triggeredAt: firedAt });
+    expect(await runEscalationSweep(NIGHT)).toBe(1);
+  });
+
+  it("restarts the reminder clock from the summary that first named a held alert", async () => {
+    // Fired 22:30, held all night, summarised at 06:00. At 06:05 the reminder
+    // is NOT due: it counts from the summary, not the fire — the summary was
+    // the first anyone heard of it.
+    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT, quietTime: QUIET_TIME });
+    seedNotif({ triggeredAt: firedAt, quietSummarizedAt: atLocal(2026, 8, 26, 6, 0) });
+    expect(await runEscalationSweep(MORNING)).toBe(0);
+    expect(await runEscalationSweep(atLocal(2026, 8, 26, 6, 16))).toBe(1);
   });
 });
