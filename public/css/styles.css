@@ -274,11 +274,12 @@
    carries no caption and no marker, so this height IS the control. It also
    sets how much of the day is visible, and not the way round you would guess:
    taller art is wider art, so a taller band shows LESS of the clock, not more.
-   At 48px roughly a sixth of the strip is in the rail. */
+   At 32px (two-thirds of the 48px it shipped at) roughly a quarter of the
+   strip is in the rail. */
 .theme-band-window {
   position: relative;
   display: block;
-  height: 48px;
+  height: 32px;
   overflow: hidden;
   border-radius: var(--radius-sm);
 }
