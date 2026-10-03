@@ -73,7 +73,7 @@ Three tabs:
 |---|---|
 | **Create Schedule** | the form, with a live device-list preview |
 | **Schedules** | the list of what exists |
-| **Calendar** | a month grid of every schedule's occurrences |
+| **Calendar** | every schedule's occurrences, as a month grid, a week or day time grid, or a list |
 
 A schedule selects devices either by a **filter** or by **explicit asset ids**
 (which is what the bulk bar pins), and states a recurrence.
@@ -88,8 +88,18 @@ Occurrences are expanded **server-side**, because the recurrence engine works in
 server-local wall clock and a browser in another timezone would paint them on
 the wrong days.
 
-Clicking a day cell opens the editor prefilled with a one-time window on that
-date; clicking a chip opens its schedule for edit.
+Four views, switched top-right and remembered per browser; **‹ › Today** step
+by the unit the view shows.
+
+| View | What you see |
+|---|---|
+| **Month** | A window **a day or longer** (a change freeze, an ad-hoc "until next month") is drawn **once**, as a bar across the week row, continuing onto the next row with an open edge. A shorter window is a **chip on the day it starts**, labelled with its hours — an overnight 22:00 → 02:00 window is one chip, not one on each night. More than three bars in a week fold behind **+N more windows**. |
+| **Week** / **Day** | Hours down the side, a column per day, each window a block at its hours (an overnight window is a block to midnight and another from it). Windows a day or longer sit in an **all-day** band above the hours. Today's column carries a red "now" line. |
+| **List** | The same windows as rows — full names, dates, durations — grouped by the day they start, with windows already running when the month opens listed first. |
+
+Clicking a day cell (or an hour in the Week / Day grid) opens the editor
+prefilled with a one-time window there; clicking any window opens its schedule
+for edit. The legend under the grid tells planned, ad-hoc and disabled apart.
 
 ---
 
