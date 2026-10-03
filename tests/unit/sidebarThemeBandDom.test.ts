@@ -130,7 +130,7 @@ const BAND_HTML =
   "</span>" +
   "</button>";
 
-const STRIP_W = 1257; // the art at a 48px band: 3456 x 132 scaled by height
+const STRIP_W = 838;  // the art at a 32px band: 3456 x 132 scaled by height
 const WIN_W = 204;    // a 220px rail less its 0.5rem padding either side
 
 /** happy-dom has no layout, so the two widths the painter measures are stubbed. */
