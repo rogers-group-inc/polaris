@@ -173,9 +173,11 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   frosted "Dashboards ▾" menu that drops out of that header would then blur only the header and
   go clear over the widgets. Any new sticky bar follows the same `::before` pattern. The phone
   carries the same recipe (canon-mobile.md § Elevation and the page glow).
-- **The sidebar is frosted glass** (since 2026-10-04): `--panel-glass-chrome` (its own
-  `--color-bg-tertiary` at the glass mix) + `--panel-glass-blur`, so the page glow shows through
-  the rail. The blur is on `.sidebar` ITSELF, the one exception to the `::before` rule, because
+- **The sidebar is frosted glass in the CARDS' colour** (since 2026-10-04): `--color-bg-primary`
+  (what `.card` and `.dashboard-widget` paint) at 85% + `--panel-glass-blur`. The user asked for
+  the rail and the cards to be one colour. At the panels' 50/40% mix, the page ground pulls the
+  rail visibly off the card colour; at 85% it matches and the glow still warms it slightly. Change
+  the card ground and this mix together. The blur is on `.sidebar` ITSELF, the one exception to the `::before` rule, because
   the rail scrolls (`overflow-y: auto`) and an absolute pseudo-element would scroll away with the
   nav. That is safe only while nothing frosted or `position: fixed` mounts inside the sidebar —
   every menu, popover and tooltip appends to `body` today. A flyout added INSIDE the rail would be

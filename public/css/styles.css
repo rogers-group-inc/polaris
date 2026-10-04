@@ -609,17 +609,18 @@ code {
 .sidebar {
   width: var(--sidebar-width);
   flex-shrink: 0;
-  /* Frosted glass, the panels' own material: --panel-glass-chrome is this
-     same --color-bg-tertiary at the glass mix (50% dark family, 40%
-     daylight), so the page glow shows through the rail instead of stopping
-     at its edge. The blur is on the sidebar itself, NOT a ::before as on the
+  /* Frosted glass in the CARDS' colour: .card and .dashboard-widget paint
+     --color-bg-primary, and the rail is meant to read as the same material.
+     85% rather than the panels' 50/40% glass mix — at half strength the
+     page ground under it pulls the rail visibly off the card colour; at 85%
+     it matches, and the glow still warms it a little. The blur is on the sidebar itself, NOT a ::before as on the
      sticky header: the sidebar scrolls (overflow-y below), and an absolute
      pseudo-element would scroll away with the nav and leave the lower rail
      unfrosted. That is safe only while nothing frosted or position:fixed is
      mounted INSIDE it — every menu, popover and tooltip is appended to body
      today. One mounted in here would be backdrop-rooted to the rail (a menu
      going clear over the page) and positioned against it. */
-  background: var(--panel-glass-chrome);
+  background: color-mix(in srgb, var(--color-bg-primary) 85%, transparent);
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
   border-right: 1px solid var(--color-border);
