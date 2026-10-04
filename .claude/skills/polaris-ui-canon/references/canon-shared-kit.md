@@ -199,7 +199,7 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   opaque `--color-bg-primary` / `--color-bg-tertiary` grounds.
 - **So do the table's tabs and bulk bar.** The idle `.bulk-bar` and the `.table-tab:hover` /
   `.table-tab-add:hover` states take `--rail-glass-bg`. The active `.table-tab` and the selected
-  `.bulk-bar` take `--color-surface` at 55%, so they still stand out, with `--panel-glass-blur`
+  `.bulk-bar` take `--chip-glass-bg` (`--color-bg-elevated` at 70% in the dark family; `--color-surface` at 55% on the daylight base, because the surface mix all but vanished on nightfall's near-black), so they still stand out. Active tabs add a `--color-border` hairline and an inset top rim, with `--panel-glass-blur`
   on top. The bulk bar is sticky and the table scrolls under it, so its blur is real; it lives
   on `.bulk-bar::before`, because the bar's Type / State / Monitoring menus are frosted and a
   `backdrop-filter` on the bar would backdrop-root them. A tab holds nothing frosted or fixed,

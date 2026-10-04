@@ -148,6 +148,13 @@
      base). A token of its own so the rail can be tuned without moving every
      modal and slide-over header band, which share --panel-glass-chrome. */
   --rail-glass-bg: color-mix(in srgb, var(--color-bg-tertiary) 40%, transparent);
+  /* The glass of a SELECTED chip that has to stand out from that rail glass:
+     the active Assets / Automations tab and the lit bulk-select bar. In the
+     dark family it is the raised --color-bg-elevated at 70%. The daylight
+     value (--color-surface at 55%) was tried here first, and on nightfall it
+     came out within a few points of the near-black ground, so the active tab
+     all but vanished. The daylight base keeps that mix, which reads there. */
+  --chip-glass-bg: color-mix(in srgb, var(--color-bg-elevated) 70%, transparent);
   --sidebar-width: 220px;
 }
 
@@ -199,6 +206,7 @@
   --panel-glass-bg: color-mix(in srgb, var(--color-bg-primary) 40%, transparent);
   --panel-glass-chrome: color-mix(in srgb, var(--color-bg-tertiary) 40%, transparent);
   --rail-glass-bg: color-mix(in srgb, var(--color-bg-tertiary) 30%, transparent);
+  --chip-glass-bg: color-mix(in srgb, var(--color-surface) 55%, transparent);
   --menu-glass-bg: color-mix(in srgb, var(--color-surface) 30%, transparent);
 }
 /* The five headings that used to hardcode #fff and needed rescuing here now
@@ -1890,8 +1898,12 @@ code {
    a dot, a close button and the rename input). */
 .table-tab.active {
   color: var(--color-accent);
+  /* Hairline on the top and sides plus the inset top rim the cards carry:
+     on a near-black ground the tint alone leaves the chip's edge to guess. */
+  border-color: var(--color-border);
   border-bottom-color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-surface) 55%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  background: var(--chip-glass-bg);
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
 }
@@ -2696,10 +2708,10 @@ body.sf-resizing * { user-select: none !important; }
   align-items: center;
   gap: 10px;
   padding: 7px 12px;
-  /* Glass, like the table it sits on: the theme's surface at 55%, frosted by
-     ::before below. The table rows scroll under this sticky bar, so it is
+  /* Glass, like the table it sits on: --chip-glass-bg (the selected-chip
+     glass, denser than the table's), frosted by ::before below. The table rows scroll under this sticky bar, so it is
      the blur that keeps them from reading through. */
-  background: color-mix(in srgb, var(--color-surface) 55%, transparent);
+  background: var(--chip-glass-bg);
   border: 1px solid var(--color-accent);
   border-radius: var(--radius-sm);
   margin-bottom: 8px;
@@ -4223,8 +4235,10 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 .page-tabs-glass .page-tab:hover { color: var(--color-text-secondary); background: var(--rail-glass-bg); }
 .page-tabs-glass .page-tab.active {
   color: var(--color-accent);
+  border-color: var(--color-border);
   border-bottom-color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-surface) 55%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  background: var(--chip-glass-bg);
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
 }
