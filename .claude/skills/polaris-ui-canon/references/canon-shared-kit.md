@@ -157,6 +157,57 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   over a modal's own scrolling body, but this header stands in front of a full-bleed graph, so
   the title, the endpoint search box and the icon row read through it. Both rules lift only the
   opacity of the theme's own token — never a literal colour — so a new theme keeps its palette.
+- **The page ground carries a glow; nothing full-width may paint over it opaquely.** Since
+  2026-10-04 `body` paints `--page-glow` (a radial wash from the top centre of the viewport,
+  `background-attachment: fixed`) over `--color-bg-secondary`. The glow is `--page-glow-color`
+  (the theme's accent, except nightfall — electric blue `#2f6bff`, since its pastel accent goes grey slate at 12.3% — morning — warm white `#fff8e8` at 50%, clearly lighter than its parchment ground; on a mid-tone ground lightness shows and hue does not, and the accent, a vivid orange and pale gold all vanished — and noon, which takes sunlight yellow `#ffc928` because a terracotta
+  wash on its near-white ground reads as rust) at `--page-glow-strength` (17.6% dark family, 12.3% nightfall, 11.2%
+  daylight base, 24% noon; a wide horizontal ellipse, 140% × 60% of the viewport). A sticky band pinned at the top of the page sits exactly where the
+  glow is brightest, so `.page-header-sticky` is BLURRED and UNFILLED — a bare `blur(20px)`, no
+  tint. A 70% `--color-bg-secondary` tint was tried and rejected on 2026-10-04: it read as a
+  dark box sitting on the glow. With no tint the blur can't be seen at rest (blurring a smooth
+  gradient changes nothing) and only smears a widget once it scrolls under the bar. It must NOT
+  borrow `--panel-glass-blur`'s `saturate()`: saturation deepens the glow's colour under the bar
+  and the box reappears with no fill at all. The blur is on its `::before`, never on the element:
+  a `backdrop-filter` makes its element the backdrop root of everything inside it, and the
+  frosted "Dashboards ▾" menu that drops out of that header would then blur only the header and
+  go clear over the widgets. Any new sticky bar follows the same `::before` pattern. The phone
+  carries the same recipe (canon-mobile.md § Elevation and the page glow).
+- **The sidebar is frosted glass** (since 2026-10-04): `--rail-glass-bg` (its own
+  `--color-bg-tertiary` at 40%, 30% daylight — ten points under `--panel-glass-chrome`, a token of its own so the modal header bands are not moved with it) + `--panel-glass-blur`, so the page glow shows through
+  the rail. The blur is on `.sidebar` ITSELF, the one exception to the `::before` rule, because
+  the rail scrolls (`overflow-y: auto`) and an absolute pseudo-element would scroll away with the
+  nav. That is safe only while nothing frosted or `position: fixed` mounts inside the sidebar —
+  every menu, popover and tooltip appends to `body` today. A flyout added INSIDE the rail would be
+  backdrop-rooted to it (its glass goes clear over the page) and positioned against it; mount it
+  on `body` instead.
+- **Cards wear the sidebar's glass** (since 2026-10-04): `.card`, `.kpi-card`,
+  `.integration-card`, `.empty-state-card`, `.settings-card` and `.dashboard-widget` paint
+  `--card-bg`, which is `var(--rail-glass-bg)`, so a change to the rail's tint moves the cards with it. The user asked for the cards to match the
+  navigation rail, not the other way round. A one-commit attempt to paint the rail in the cards'
+  `--color-bg-primary` was reverted. Cards take the TINT WITHOUT THE BLUR: behind them is only
+  the page ground and the glow, and blurring a smooth gradient changes nothing. A
+  `backdrop-filter` on a card would also make it the containing block and backdrop root for its
+  widget menus and Leaflet panes. A new page-level card takes `--card-bg`. `.chart-box` does NOT,
+  because it lives inside the frosted asset slide-over, where a translucent plot is a window onto
+  the page (the `.tag-picker` / `.topology-info` lesson above).
+- **List tables wear it too** (since 2026-10-04): `.table-wrapper` and `thead th` paint
+  `--rail-glass-bg` (the two tints stack, so the header still reads a step denser than the
+  rows). The wrapper takes the tint without a blur, for the same reasons as the cards. A sticky
+  header needs a blur to hide the rows scrolling under it, and that blur lives on `thead::before`
+  (canon-tables-lists.md § frozen header). Inside `.modal` / `.slideover` a table keeps its
+  opaque `--color-bg-primary` / `--color-bg-tertiary` grounds.
+- **So do the table's tabs and bulk bar.** The idle `.bulk-bar` and the `.table-tab:hover` /
+  `.table-tab-add:hover` states take `--rail-glass-bg`. The active `.table-tab` and the selected
+  `.bulk-bar` take `--chip-glass-bg` (`--color-bg-elevated` at 70% in the dark family; `--color-surface` at 55% on the daylight base, because the surface mix all but vanished on nightfall's near-black), so they still stand out. Active tabs add a `--color-border` hairline and an inset top rim, with `--panel-glass-blur`
+  on top. The bulk bar is sticky and the table scrolls under it, so its blur is real; it lives
+  on `.bulk-bar::before`, because the bar's Type / State / Monitoring menus are frosted and a
+  `backdrop-filter` on the bar would backdrop-root them. A tab holds nothing frosted or fixed,
+  so its blur is on the tab itself. A page's `.page-tabs` strip opts into the same look with
+  the `.page-tabs-glass` modifier: rounded-top chips, glass on hover, and the frosted
+  surface chip with the accent underline when active. The strip scrolls instead of wrapping.
+  Automations (`#auto-tabs`) is the only user so far. It is a modifier, not a change to
+  `.page-tab`, because that class is also every modal's tab strip and the Server Settings tabs.
 
 ## Settings-card layout (one card, a fixed row, or a reflowing deck)
 

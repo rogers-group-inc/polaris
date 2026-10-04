@@ -80,6 +80,51 @@
   --elev-1: 0 1px 2px rgba(0,0,0,.30), 0 1px 3px 1px rgba(0,0,0,.15);
   --elev-2: 0 1px 2px rgba(0,0,0,.30), 0 2px 6px 2px rgba(0,0,0,.15);
   --elev-3: 0 4px 8px 3px rgba(0,0,0,.15), 0 1px 3px rgba(0,0,0,.30);
+  /* The desktop's card elevation (styles.css --shadow-card), value for value
+     per theme, so a card reads as the same raised object on both surfaces.
+     The MD3 --elev-* ladder above is a 1-3px blur at .15-.30 alpha — on a
+     card the width of the phone it is invisible, which is why the cards read
+     as flat cutouts here while the desktop's float. Two drop layers (the wide
+     halo tints the ground, the tight one draws the edge) and an inset TOP RIM,
+     which is the only thing that shows elevation on a near-black ground.
+     --shadow-sheet is the same recipe cast UPWARD for the bottom-anchored
+     slide-ups: a sheet's only free edge is its top. Both are re-declared in
+     every theme block below — a daylight block that skipped them would keep
+     this dark cast, grubby on parchment. */
+  --shadow-card:  0 8px 32px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.05);
+  --shadow-sheet: 0 -8px 32px rgba(0,0,0,.55), 0 -2px 6px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.07);
+
+  /* Background glow — a soft wash of the accent rising from the top centre of
+     the screen, behind every tab. Same recipe as the desktop's --page-glow
+     (styles.css). Declared once: this rule and every theme block target
+     <html>, so var(--md-primary) resolves to each theme's own accent. The
+     daylight block thins it — a wash that reads as light on indigo reads as a
+     stain on a white ground. Noon swaps the hue for sunlight yellow: its
+     ground is near-white, and a terracotta wash there reads as a rust mark,
+     not light. */
+  /* Opacity of the frosted bottom navbar's tint: the desktop sidebar's
+     --rail-glass-bg mix (40% dark family, 30% daylight, where a light panel
+     over a light page has less to hide behind). */
+  --nav-glass-mix: 40%;
+
+  /* The desktop's glass materials, under the phone's surface names.
+     --rail-glass-bg is what the desktop sidebar, cards and tables wear: the
+     list cards here (.asset-card, .card-elevated, .card-outlined) take it,
+     tint without blur, because behind them is only the smooth ground and
+     glow. --panel-glass-bg is the desktop modal / slide-over glass, worn by
+     every slide-up sheet with --glass-blur. .card-filled is deliberately NOT
+     glass: it is mostly the chart and detail panels INSIDE a sheet, and a
+     translucent box inside a frosted panel is a window onto the page behind
+     it (the desktop keeps its .chart-box opaque for the same reason). */
+  --rail-glass-bg:  color-mix(in srgb, var(--md-surface-cont-low) 40%, transparent);
+  --panel-glass-bg: color-mix(in srgb, var(--md-surface-cont-low) 50%, transparent);
+  --glass-blur: blur(12px) saturate(1.3);
+
+  --page-glow-color: var(--md-primary);
+  --page-glow-strength: 17.6%;
+  --page-glow: radial-gradient(ellipse 180% 66% at 50% 0%,
+    color-mix(in srgb, var(--page-glow-color) var(--page-glow-strength), transparent) 0%,
+    transparent 70%);
 
   /* Layout */
   --topbar-h:  64px;
@@ -141,6 +186,13 @@
   --md-sev-serious:             #b35c00;
 
   --user-pin-stroke:            #1f2937;
+
+  --shadow-card:  0 8px 32px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.6);
+  --shadow-sheet: 0 -8px 32px rgba(0,0,0,.16), 0 -2px 6px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.6);
+  --page-glow-strength: 11.2%;
+  --nav-glass-mix: 30%;
+  --rail-glass-bg:  color-mix(in srgb, var(--md-surface-cont-low) 30%, transparent);
+  --panel-glass-bg: color-mix(in srgb, var(--md-surface-cont-low) 40%, transparent);
 }
 
 /* ─── Daylight palettes, mapped from the desktop set ───────────────────────
@@ -177,6 +229,14 @@
   --md-on-primary:              #ffffff;
   --md-primary-container:       #ead7b3;
   --md-on-primary-container:    #33210a;
+  /* Selected chip / active nav pill, and the avatar. Without these the
+     daylight base's stock Material periwinkle (#dae2f9) and pink (#fbd7fc)
+     showed through on parchment. Warm gold and a soft apricot, from this
+     palette's own amber. */
+  --md-secondary-container:     #f0d29a;
+  --md-on-secondary-container:  #3d2805;
+  --md-tertiary-container:      #f6c9a0;
+  --md-on-tertiary-container:   #4a2208;
 
   --md-surface:                 #f7e6c8;
   --md-surface-cont-lowest:     #fff8e8;
@@ -192,6 +252,13 @@
   --md-success:                 #4b7a2f;
   --md-warning:                 #d07a00;
   --md-error:                   #b0301d;
+
+  --shadow-card:  0 8px 32px rgba(70,45,10,.22), 0 2px 6px rgba(70,45,10,.18), inset 0 1px 0 rgba(255,255,255,.55);
+  --shadow-sheet: 0 -8px 32px rgba(70,45,10,.28), 0 -2px 6px rgba(70,45,10,.18), inset 0 1px 0 rgba(255,255,255,.55);
+  /* Warm white, clearly lighter than the parchment ground, as on the
+     desktop (where the reasoning is written out). */
+  --page-glow-color: #fff8e8;
+  --page-glow-strength: 50%;
 }
 /* Noon — neutral near-white, terracotta, the highest contrast of any palette.
    The cool daylight palette; cream here and it reads as morning. */
@@ -200,6 +267,11 @@
   --md-on-primary:              #ffffff;
   --md-primary-container:       #eee5d9;
   --md-on-primary-container:    #201612;
+  /* Chip / nav pill and avatar in noon's terracotta family (see morning). */
+  --md-secondary-container:     #f3ddd1;
+  --md-on-secondary-container:  #3a1a0e;
+  --md-tertiary-container:      #ecd5c4;
+  --md-on-tertiary-container:   #3b2418;
 
   --md-surface:                 #fbfaf9;
   --md-surface-cont-lowest:     #ffffff;
@@ -215,6 +287,12 @@
   --md-success:                 #2f7d4f;
   --md-warning:                 #c96a00;
   --md-error:                   #9b1c1c;
+
+  --shadow-card:  0 8px 32px rgba(40,20,10,.18), 0 2px 6px rgba(40,20,10,.14), inset 0 1px 0 rgba(255,255,255,.6);
+  --shadow-sheet: 0 -8px 32px rgba(40,20,10,.22), 0 -2px 6px rgba(40,20,10,.14), inset 0 1px 0 rgba(255,255,255,.6);
+  /* Sunlight on a white ground — see --page-glow in :root. */
+  --page-glow-color: #ffc928;
+  --page-glow-strength: 24%;
 }
 /* Afternoon — TRANSIT ONLY, never selectable: the strip fades THROUGH this
    between noon and nightfall, so it has to be the strongest shift of the four
@@ -224,6 +302,11 @@
   --md-on-primary:              #ffffff;
   --md-primary-container:       #e4c2b0;
   --md-on-primary-container:    #33150e;
+  /* Chip / nav pill and avatar in afternoon's fired clay (see morning). */
+  --md-secondary-container:     #eec0aa;
+  --md-on-secondary-container:  #3d140a;
+  --md-tertiary-container:      #f1b9a3;
+  --md-on-tertiary-container:   #43150a;
 
   --md-surface:                 #f0d7cb;
   --md-surface-cont-lowest:     #fceae0;
@@ -239,6 +322,9 @@
   --md-success:                 #4a7238;
   --md-warning:                 #c05a00;
   --md-error:                   #9e1a14;
+
+  --shadow-card:  0 8px 32px rgba(90,30,10,.20), 0 2px 6px rgba(90,30,10,.15), inset 0 1px 0 rgba(255,255,255,.55);
+  --shadow-sheet: 0 -8px 32px rgba(90,30,10,.24), 0 -2px 6px rgba(90,30,10,.15), inset 0 1px 0 rgba(255,255,255,.55);
 }
 /* Nightfall — indigo ground, sky-blue accent: the desktop's nightfall hues
    (styles.css). Without this block the phone painted the neutral Material
@@ -280,6 +366,14 @@
 
   --md-success:                 #3ddc97;
   --md-warning:                 #f2c14e;
+
+  --shadow-card:  0 8px 32px rgba(0,0,0,.65), 0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
+  --shadow-sheet: 0 -8px 32px rgba(0,0,0,.7), 0 -2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.08);
+  /* 30% under the dark family's 17.6%, in a saturated electric blue rather
+     than the pastel accent, which went grey at this strength. Same as the
+     desktop. */
+  --page-glow-color: #2f6bff;
+  --page-glow-strength: 12.3%;
 }
 
 * { box-sizing: border-box; }
@@ -288,7 +382,10 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: var(--md-surface);
+  /* The glow over the ground. body is locked to the viewport (below), so the
+     gradient is sized to the screen and stays put while .app-body scrolls. */
+  background: var(--page-glow), var(--md-surface);
+  background-repeat: no-repeat;
   color: var(--md-on-surface);
   font-family: "Roboto", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -324,7 +421,8 @@ input, select, textarea { font-family: inherit; }
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--md-surface);
+  /* Transparent so body's glow shows through; body paints the ground. */
+  background: transparent;
 }
 
 /* Installed-PWA (home screen) insets.
@@ -436,10 +534,27 @@ input, select, textarea { font-family: inherit; }
   padding: 0 4px;
   display: flex;
   align-items: center;
-  background: var(--md-surface);
+  /* No fill: the bar sits at the very top of the screen, where the page glow
+     is brightest. An opaque --md-surface band cut the glow off, and a tinted
+     one read as a dark box on it. A blur alone is invisible at rest (blurring
+     a smooth gradient changes nothing) and smears scrolled content illegible.
+     No saturate(): it deepens the glow under the bar and draws the box back.
+     The blur is on ::before rather than the bar itself: a backdrop-filter
+     makes its element the backdrop root of, and the containing block for any
+     fixed-position, descendant. */
+  background: transparent;
   position: sticky;
   top: 0;
   z-index: 5;
+}
+.m3-topbar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
 }
 .m3-topbar .leading,
 .m3-topbar .trailing {
@@ -498,6 +613,9 @@ input, select, textarea { font-family: inherit; }
 .btn svg { width: 18px; height: 18px; fill: currentColor; }
 
 .btn-filled    { background: var(--md-primary); color: var(--md-on-primary); }
+/* Noon's filled buttons are golden, as on the desktop (styles.css
+   [data-theme="noon"] .btn-primary); --md-primary stays terracotta. */
+[data-theme="noon"] .btn-filled { background: #a9933d; color: #fff; }
 .btn-tonal     { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
 .btn-outlined  { background: transparent; color: var(--md-primary); border: 1px solid var(--md-outline); }
 .btn-text      { background: transparent; color: var(--md-primary); padding: 0 12px; }
@@ -692,20 +810,22 @@ input, select, textarea { font-family: inherit; }
 
 /* ─── Cards ───────────────────────────────────────────────────────────── */
 .card-elevated {
-  background: var(--md-surface-cont-low);
+  background: var(--rail-glass-bg);
   border-radius: var(--shape-md);
-  box-shadow: var(--elev-1);
+  box-shadow: var(--shadow-card);
   overflow: hidden;
 }
 .card-filled {
   background: var(--md-surface-cont-highest);
   border-radius: var(--shape-md);
+  box-shadow: var(--shadow-card);
   overflow: hidden;
 }
 .card-outlined {
-  background: var(--md-surface);
+  background: var(--rail-glass-bg);
   border: 1px solid var(--md-outline-variant);
   border-radius: var(--shape-md);
+  box-shadow: var(--shadow-card);
   overflow: hidden;
 }
 
@@ -713,7 +833,21 @@ input, select, textarea { font-family: inherit; }
 .m3-navbar {
   flex: 0 0 var(--navbar-h);
   height: var(--navbar-h);
-  background: var(--md-surface-cont);
+  /* Frosted glass, the desktop's floating-surface material (styles.css
+     --panel-glass-bg / --panel-glass-blur): the theme's own container colour
+     at --nav-glass-mix over a blur. Glass only reads as glass with something
+     behind it, so the bar is pulled UP over the bottom of .app-body (the
+     negative margin) and .app-body pads by the same height (rule below) —
+     lists scroll under the bar and the last row can still clear it. The blur
+     sits on the bar itself, not a ::before as on the top bars: a grid would
+     lay a pseudo-element out as a sixth cell, and nothing inside the bar is
+     fixed-position or frosted, so the backdrop-root trap has nothing to bite. */
+  margin-top: calc(-1 * var(--navbar-h));
+  background: color-mix(in srgb, var(--md-surface-cont) var(--nav-glass-mix), transparent);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  /* Top rim — the edge a dark-family glass panel shows elevation by. */
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   align-items: center;
@@ -779,6 +913,12 @@ input, select, textarea { font-family: inherit; }
   border: 2px solid var(--md-surface-cont);
 }
 .app[data-tab=""] .m3-navbar { display: none; }
+/* Room for the glass navbar that overlaps the scroller (see .m3-navbar). Only
+   while the bar is shown: the auth screens (data-tab="") and __fullbleed
+   render no bar, and a pad there would be dead space under the form. */
+.app:not([data-tab=""]):not([data-tab="__fullbleed"]) > .app-body {
+  padding-bottom: var(--navbar-h);
+}
 
 /* Fullbleed mode — used by the topology surface so the Cytoscape graph
    gets the entire viewport. The tab module renders its own floating
@@ -872,15 +1012,28 @@ input, select, textarea { font-family: inherit; }
   animation: scrim-in .15s ease-out;
 }
 @keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
+/* A lighter dim on the daylight palettes, the desktop's .modal-overlay /
+   .slideover-overlay values. The sheets are glass, and 45% black seen
+   through a 40% parchment tint turned every daylight sheet a muddy grey. */
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .scrim {
+  background: rgba(0,0,0,.18);
+}
 
 .sheet {
   position: fixed;
   left: 0; right: 0; bottom: 0;
-  background: var(--md-surface-cont-low);
+  /* Frosted like the desktop's modals and slide-overs (--panel-glass-bg,
+     see :root). The blur sits on the sheet itself: every sheet is appended to
+     body and holds nothing frosted or position:fixed (the snackbar and FABs
+     live outside it), so neither the backdrop-root nor the containing-block
+     trap has anything to catch. */
+  background: var(--panel-glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
   border-radius: var(--shape-xl) var(--shape-xl) 0 0;
   padding: 0 24px 24px;
   z-index: 1001;
-  box-shadow: 0 -4px 24px rgba(0,0,0,.5);
+  box-shadow: var(--shadow-sheet);
   max-height: 90vh;
   overflow-y: auto;
   animation: sheet-in .25s ease-out;
@@ -1243,16 +1396,17 @@ button, .list-item, .chip { touch-action: manipulation; }
   gap: 8px;
 }
 .asset-card {
-  background: var(--md-surface-cont-low);
+  background: var(--rail-glass-bg);  /* the desktop cards' glass (see :root) */
   border-radius: var(--shape-md);
   padding: 16px;
   border: none;
+  box-shadow: var(--shadow-card);
   width: 100%;
   text-align: left;
   color: inherit;
   cursor: pointer;
 }
-.asset-card:hover { background: var(--md-surface-cont); }
+.asset-card:hover { background: color-mix(in srgb, var(--md-surface-cont) 60%, transparent); }
 .asset-card .top {
   display: flex;
   align-items: center;
@@ -1413,18 +1567,21 @@ button, .list-item, .chip { touch-action: manipulation; }
 /* Asset-type avatar palettes. Keep the type → class mapping in sync with
    TYPE_META in /js/mobile/assets-tab.js. */
 .ico-fw   { background: rgba(255,180,80,.18); color: #ffc78a; }
-.ico-sw   { background: rgba(216,188,224,.20); color: var(--md-tertiary); }
-.ico-srv  { background: rgba(163,201,255,.20); color: var(--md-primary); }
+.ico-sw   { background: color-mix(in srgb, var(--md-tertiary) 20%, transparent); color: var(--md-tertiary); }
+.ico-srv  { background: color-mix(in srgb, var(--md-primary) 16%, transparent); color: var(--md-primary); }
 .ico-prn  { background: rgba(94,216,123,.18); color: var(--md-success); }
-.ico-ap   { background: rgba(216,188,224,.20); color: var(--md-tertiary); }
-.ico-rtr  { background: rgba(163,201,255,.20); color: var(--md-primary); }
-.ico-wks  { background: rgba(163,201,255,.20); color: var(--md-primary); }
+.ico-ap   { background: color-mix(in srgb, var(--md-tertiary) 20%, transparent); color: var(--md-tertiary); }
+.ico-rtr  { background: color-mix(in srgb, var(--md-primary) 16%, transparent); color: var(--md-primary); }
+.ico-wks  { background: color-mix(in srgb, var(--md-primary) 16%, transparent); color: var(--md-primary); }
 .ico-other{ background: var(--md-surface-cont-highest); color: var(--md-on-surface-variant); }
 
 /* ─── Asset detail ────────────────────────────────────────────────────── */
 .asset-hero {
   padding: 4px 24px 24px;
-  background: var(--md-surface-cont-low);
+  /* Transparent: it sits inside the frosted sheet. It used to paint the
+     sheet's own opaque --md-surface-cont-low, invisible until the sheet went
+     to glass and the hero showed as a solid slab across it. */
+  background: transparent;
 }
 .asset-hero .hero-name {
   display: flex;

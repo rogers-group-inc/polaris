@@ -60,13 +60,21 @@
   min-height: 34px;
   flex: 1 1 auto;
   max-width: 720px;
-  background: var(--color-surface);
+  /* The frame IS the field: same ground, border and lift as every other page
+     field (the global input rule in styles.css, and --shadow-control as on
+     .filter-bar fields), so it matches the "Seen within" select beside it.
+     It used to paint --color-surface, a bluer step that read as off-theme. */
+  background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-control);
 }
 
 .appmap-filter:focus-within {
   border-color: var(--color-accent);
+  /* box-shadow replaces rather than composes, so restate the lift with the
+     focus ring the global input:focus rule would have drawn on the field. */
+  box-shadow: var(--shadow-control), 0 0 0 2px rgba(79,195,247,0.15);
 }
 
 .appmap-filter-pills {
@@ -157,6 +165,18 @@
   font-size: 13px;
   padding: 2px 0;
   outline: none;
+}
+/* The bare-field reset above loses to styles.css's global input[type="text"]
+   rule (0,1,1 beats 0,1,0), which painted a second box, with its own ground,
+   border, padding and 100% width, INSIDE the frame. Two classes outrank it. */
+.appmap-filter .appmap-filter-input,
+.appmap-filter .appmap-filter-input:focus {
+  width: auto;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  padding: 2px 0;
 }
 
 /* A pill's kind prefix (proto:, port:, host:…) — dimmer than the value so the

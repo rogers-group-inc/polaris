@@ -95,6 +95,20 @@
      Distinct from --shadow-md, which stays the value for surfaces that float
      OVER the page (menus, dropdowns) and must not carry a rim. */
   --shadow-card: 0 8px 32px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.05);
+  /* Background glow — a soft wash of the accent rising from the top centre of
+     the viewport, painted by body over --color-bg-secondary and pinned there
+     (background-attachment: fixed) while the page scrolls. Declared once:
+     every theme block targets the root element too, so var(--color-accent)
+     resolves to each theme's own accent. The daylight base thins it (a wash
+     that reads as light on indigo reads as a stain on a pale ground), and
+     noon swaps the hue for sunlight yellow — its ground is near-white and a
+     terracotta wash there reads as rust, not light. The phone carries the
+     same recipe in mobile.css (--page-glow there, off --md-primary). */
+  --page-glow-color: var(--color-accent);
+  --page-glow-strength: 17.6%;
+  --page-glow: radial-gradient(ellipse 140% 60% at 50% 0%,
+    color-mix(in srgb, var(--page-glow-color) var(--page-glow-strength), transparent) 0%,
+    transparent 70%);
   /* ── Frosted panel surfaces ────────────────────────────────────────────────
      Modals and slide-overs are 50% of the theme's own panel colour over a
      blurred backdrop, so the page stays faintly legible behind them. Declared
@@ -117,6 +131,30 @@
      leaving shapes and colour behind it recognisable. saturate() compensates
      for the wash-out a large blur radius causes. */
   --panel-glass-blur: blur(12px) saturate(1.3);
+  /* Ground of every content card that rests on the page (.card, .kpi-card,
+     .integration-card, .empty-state-card, .settings-card, .dashboard-widget):
+     the SIDEBAR's glass, so the rail and the cards read as one material. It
+     is the tint without the blur, deliberately. What sits behind a card is
+     only the page ground and the glow, a smooth gradient, and blurring that
+     changes nothing, so the card looks exactly like the frosted rail. A
+     backdrop-filter on the card itself would make it the containing block
+     and backdrop root for its widget menus and Leaflet panes.
+     NOT for .chart-box: that sits inside the frosted asset slide-over, where
+     a translucent plot becomes a window onto the page ("a transparent box
+     inside a frosted panel" in canon-shared-kit.md). */
+  --card-bg: var(--rail-glass-bg);
+  /* The sidebar's glass: its own --color-bg-tertiary, ten points thinner
+     than the panels' --panel-glass-chrome (40% here, 30% on the daylight
+     base). A token of its own so the rail can be tuned without moving every
+     modal and slide-over header band, which share --panel-glass-chrome. */
+  --rail-glass-bg: color-mix(in srgb, var(--color-bg-tertiary) 40%, transparent);
+  /* The glass of a SELECTED chip that has to stand out from that rail glass:
+     the active Assets / Automations tab and the lit bulk-select bar. In the
+     dark family it is the raised --color-bg-elevated at 70%. The daylight
+     value (--color-surface at 55%) was tried here first, and on nightfall it
+     came out within a few points of the near-black ground, so the active tab
+     all but vanished. The daylight base keeps that mix, which reads there. */
+  --chip-glass-bg: color-mix(in srgb, var(--color-bg-elevated) 70%, transparent);
   --sidebar-width: 220px;
 }
 
@@ -156,6 +194,7 @@
   --shadow-md: 0 8px 32px rgba(0,0,0,.12);
   --shadow-panel: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.10);
   --shadow-control: 0 2px 5px rgba(0,0,0,.18), 0 1px 2px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.6);
+  --page-glow-strength: 11.2%;
   /* Thinner glass than the dark family's 50% / 40%. These are the only tokens
      :root derives that the daylight pair re-derives rather than inheriting, and
      the reason is contrast, not taste: a light panel over a light page has far
@@ -166,6 +205,8 @@
      version in :root. */
   --panel-glass-bg: color-mix(in srgb, var(--color-bg-primary) 40%, transparent);
   --panel-glass-chrome: color-mix(in srgb, var(--color-bg-tertiary) 40%, transparent);
+  --rail-glass-bg: color-mix(in srgb, var(--color-bg-tertiary) 30%, transparent);
+  --chip-glass-bg: color-mix(in srgb, var(--color-surface) 55%, transparent);
   --menu-glass-bg: color-mix(in srgb, var(--color-surface) 30%, transparent);
 }
 /* The five headings that used to hardcode #fff and needed rescuing here now
@@ -173,6 +214,22 @@
    was wrong in the dark family too — nightfall's text is #e4e7f6, not #fff. */
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .btn-primary {
   color: #fff;
+}
+/* Noon's primary buttons are GOLDEN rather than the terracotta accent — the
+   sun at its height. Only the button: links, active tabs and underlines keep
+   --color-accent. Derived from #9f8a46, the mean of the gold pixels in the
+   theme strip's art at noon's position (/img/brand/time-strip.png, the sun
+   engraving under Server Settings), made 20% more saturated and nudged from
+   hue 46 to 48 for a more yellow gold at the same lightness: #a9933d. White
+   text holds about 3:1 on it, the floor for bold button labels; any
+   lighter or yellower and the label would need to go dark. */
+[data-theme="noon"] .btn-primary {
+  background: #a9933d;
+  border-color: #a9933d;
+}
+[data-theme="noon"] .btn-primary:hover:not(:disabled) {
+  background: #8e7c33;
+  border-color: #8e7c33;
 }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-available  { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-active     { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
@@ -403,7 +460,9 @@ html { font-size: 14px; color-scheme: dark; }
 body {
   font-family: var(--font-sans);
   color: var(--color-text-primary);
-  background: var(--color-bg-secondary);
+  /* Fixed so the glow stays at the top of the viewport as the page scrolls —
+     it is light from above the screen, not a mark on the first screenful. */
+  background: var(--page-glow) no-repeat fixed, var(--color-bg-secondary);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -449,11 +508,19 @@ code {
   --color-danger: #b0301d;
   --color-danger-hover: #8e2314;
   --color-deprecated: #8a7a5e;
-  --shadow-sm: 0 1px 4px rgba(70,45,10,.10);
-  --shadow-md: 0 8px 32px rgba(70,45,10,.16);
-  --shadow-panel: 0 24px 64px rgba(70,45,10,.24), 0 2px 10px rgba(70,45,10,.14);
-  --shadow-control: 0 2px 5px rgba(70,45,10,.22), 0 1px 2px rgba(70,45,10,.14), inset 0 1px 0 rgba(255,255,255,.55);
-  --shadow-card: 0 8px 32px rgba(70,45,10,.16), 0 2px 6px rgba(70,45,10,.13), inset 0 1px 0 rgba(255,255,255,.55);
+  --shadow-sm: 0 1px 4px rgba(70,45,10,.14);
+  --shadow-md: 0 8px 32px rgba(70,45,10,.22);
+  --shadow-panel: 0 24px 64px rgba(70,45,10,.32), 0 2px 10px rgba(70,45,10,.20);
+  --shadow-control: 0 2px 5px rgba(70,45,10,.30), 0 1px 2px rgba(70,45,10,.20), inset 0 1px 0 rgba(255,255,255,.55);
+  --shadow-card: 0 8px 32px rgba(70,45,10,.22), 0 2px 6px rgba(70,45,10,.18), inset 0 1px 0 rgba(255,255,255,.55);
+  /* Warm white (this theme's own --color-surface), clearly LIGHTER than the
+     parchment ground, so it reads as early sun brightening the top of the
+     page. Lightness is what shows here, not hue. All three earlier attempts
+     failed on that: the brown-orange accent (#b25e0a) darkened the top into
+     mud, vivid orange (#ff8a00 at 7.8%) matched the orange-tan ground, and
+     pale gold (#ffe08a at 30%) was no lighter than it. */
+  --page-glow-color: #fff8e8;
+  --page-glow-strength: 50%;
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────
@@ -485,6 +552,9 @@ code {
   --shadow-panel: 0 24px 64px rgba(40,20,10,.26), 0 2px 10px rgba(40,20,10,.15);
   --shadow-control: 0 2px 5px rgba(40,20,10,.24), 0 1px 2px rgba(40,20,10,.15), inset 0 1px 0 rgba(255,255,255,.6);
   --shadow-card: 0 8px 32px rgba(40,20,10,.18), 0 2px 6px rgba(40,20,10,.14), inset 0 1px 0 rgba(255,255,255,.6);
+  /* Sunlight on a white ground — see --page-glow in :root. */
+  --page-glow-color: #ffc928;
+  --page-glow-strength: 24%;
 }
 
 /* ─── Afternoon — the clockface’s red-rust flank, an hour before dusk. NOT
@@ -562,6 +632,12 @@ code {
      pushed hardest and still does almost nothing — the inset rim is carrying
      this one, and it is a hair brighter here than in the :root dark base. */
   --shadow-card: 0 8px 32px rgba(0,0,0,.65), 0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
+  /* 30% under the dark family's 17.6%. At that strength the sky-blue
+     accent (#4bbcee), a light pastel, mixed into near-black came out a grey
+     slate haze (~rgb(21,35,54) at the peak), so nightfall's glow takes a
+     deep saturated electric blue instead: same faintness, real colour. */
+  --page-glow-color: #2f6bff;
+  --page-glow-strength: 12.3%;
 }
 
 /* ─── Layout ───────────────────────────────────────────────────────────────── */
@@ -586,7 +662,18 @@ code {
 .sidebar {
   width: var(--sidebar-width);
   flex-shrink: 0;
-  background: var(--color-bg-tertiary);
+  /* Frosted glass: --rail-glass-bg is this same --color-bg-tertiary at 40%
+     (30% daylight), so the page glow shows through the rail instead of
+     stopping at its edge. The cards paint it too (--card-bg). The blur is on the sidebar itself, NOT a ::before as on the
+     sticky header: the sidebar scrolls (overflow-y below), and an absolute
+     pseudo-element would scroll away with the nav and leave the lower rail
+     unfrosted. That is safe only while nothing frosted or position:fixed is
+     mounted INSIDE it — every menu, popover and tooltip is appended to body
+     today. One mounted in here would be backdrop-rooted to the rail (a menu
+     going clear over the page) and positioned against it. */
+  background: var(--rail-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
   border-right: 1px solid var(--color-border);
   /* Cast RIGHT, onto the content area — the sidebar is full-height and the
      leftmost element of .layout, so that is the only edge with anything to
@@ -1257,21 +1344,37 @@ code {
 /* Frozen top bar (Dashboard): the header stays pinned while the widgets scroll,
    so Add Widgets / Done Editing / search stay reachable. z-index sits above the
    widgets + their Leaflet panes/controls (~1000) but below the widget picker
-   (1100), gear popover (1200), and the Status Map fullscreen (4000). The page
-   background + bottom border keep scrolled content from showing through. */
+   (1100), gear popover (1200), and the Status Map fullscreen (4000). A blur, not
+   a fill, keeps scrolled content illegible beneath it (see ::before). */
 .page-header-sticky {
   position: sticky;
   top: 0;
   z-index: 1050;
-  /* Must match the body background (the surface scrolling beneath it) in
-     BOTH themes. Note: --color-bg does not exist — the theme defines
-     --color-bg-primary/-secondary/-tertiary — so a var(--color-bg, #hex)
-     here silently renders its hardcoded fallback (a near-black that clashes
-     with the Polaris navy) in every theme. */
-  background: var(--color-bg-secondary);
+  /* No fill. The bar is pinned at the top of the viewport, exactly where the
+     page glow is brightest: an opaque band cut the glow off, and a tinted one
+     (tried at 70% of --color-bg-secondary) read as a dark box sitting on it.
+     Blur alone is invisible at rest — blurring a smooth gradient changes
+     nothing — and only shows once a widget scrolls under the bar. */
+  background: transparent;
   padding: 1rem 0 0.85rem;
   margin-top: -1rem;
   border-bottom: 1px solid var(--color-border);
+}
+/* The blur lives on ::before, NOT the bar: a backdrop-filter makes its element
+   the backdrop root of everything inside it, so the frosted "Dashboards ▾" menu
+   that drops out of this bar would blur only the bar and go clear over the
+   widgets below it. Heavier than --panel-glass-blur because there is no tint
+   behind it to help hide what scrolls past — and WITHOUT that token's
+   saturate(): saturating the glow under the bar deepens its colour there, so
+   the bar shows as a box again even with no fill. */
+.page-header-sticky::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
 }
 .page-header h2 {
   /* The actions row is what wraps, so the title is what must not: with the
@@ -1511,7 +1614,7 @@ code {
 
 /* ─── Cards ────────────────────────────────────────────────────────────────── */
 .card {
-  background: var(--color-bg-primary);
+  background: var(--card-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 1rem 1.25rem;
@@ -1534,7 +1637,7 @@ code {
   margin-bottom: 1.5rem;
 }
 .kpi-card {
-  background: var(--color-bg-primary);
+  background: var(--card-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: 14px 16px;
@@ -1803,12 +1906,22 @@ code {
   cursor: pointer;
   transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
-.table-tab:hover { color: var(--color-text-secondary); background: var(--color-bg-secondary); }
+.table-tab:hover { color: var(--color-text-secondary); background: var(--rail-glass-bg); }
 .table-tab:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+/* Glass rather than an opaque --color-surface chip, so the active tab reads
+   as the same material as the table and bulk bar below it. The blur sits on
+   the tab itself: nothing inside a tab is frosted or position:fixed (a name,
+   a dot, a close button and the rename input). */
 .table-tab.active {
   color: var(--color-accent);
+  /* Hairline on the top and sides plus the inset top rim the cards carry:
+     on a near-black ground the tint alone leaves the chip's edge to guess. */
+  border-color: var(--color-border);
   border-bottom-color: var(--color-accent);
-  background: var(--color-surface);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  background: var(--chip-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
 }
 .table-tab-name {
   overflow: hidden;
@@ -1875,7 +1988,7 @@ code {
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }
-.table-tab-add:hover { color: var(--color-accent); background: var(--color-bg-secondary); }
+.table-tab-add:hover { color: var(--color-accent); background: var(--rail-glass-bg); }
 
 /* ─── Named-preset menu (Assets → Filters ▾, Dashboard → Dashboards ▾) ─────
    A dropdown whose list rows carry a trailing delete button, so each row is a
@@ -2079,7 +2192,12 @@ code {
    instead of it, so the background / border / shadow here reach every list
    table — including the ones inside a modal or slide-over. */
 .table-wrapper {
-  background: var(--color-bg-primary);
+  /* The sidebar's glass (--rail-glass-bg), tint without blur, as on the cards
+     (--card-bg): behind a page-level table there is only the smooth ground and
+     glow, so a blur would change nothing. It would also make the wrapper the
+     containing block for the position:fixed TableSF popovers mounted inside
+     its header cells. Opaque again inside a modal or slide-over (rule below). */
+  background: var(--rail-glass-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   overflow-x: auto;
@@ -2120,14 +2238,49 @@ code {
    resize / page-control render, and the panel variant's sizers measure rects
    that are garbage while the tab is display:none. */
 .table-wrapper-modal-sticky { overflow: auto; }
-.table-wrapper-sticky thead th,
-.table-wrapper-panel-sticky thead th,
-.table-wrapper-modal-sticky thead th {
+/* The HEADER ROW is the sticky element, not each cell: the header is glass,
+   so the rows that scroll under it must be blurred out of the way, and one
+   blur across the whole row is the only way to get that without seams. A
+   per-cell blur sampled each cell's own patch and drew every header cell as
+   a separate rectangle. The th stay static (TableSF gives them its own
+   position:relative fallback for the resize handles and gear), and the
+   z-index that was on each cell is on the row. */
+.table-wrapper-sticky thead,
+.table-wrapper-panel-sticky thead,
+.table-wrapper-modal-sticky thead {
   position: sticky;
   top: 0;
   z-index: 10;
+}
+.table-wrapper-sticky thead th,
+.table-wrapper-panel-sticky thead th,
+.table-wrapper-modal-sticky thead th {
   box-shadow: 0 1px 0 var(--color-border);
 }
+/* The blur is on the row's ::before, not on the thead: a backdrop-filter on
+   the thead would make it the containing block for the position:fixed
+   TableSF popover (.sf-multi-popover) mounted inside its cells. The sticky
+   thead is positioned and a stacking context (z-index 10), so inset 0 with
+   z-index -1 lands under the cells' tint and labels. Heavier than
+   --panel-glass-blur because at 12px the row text scrolled beneath still
+   showed as grey smudges beside the column labels through the rail's thin
+   tint. */
+.table-wrapper-sticky thead::before,
+.table-wrapper-panel-sticky thead::before,
+.table-wrapper-modal-sticky thead::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: blur(28px);
+}
+/* Inside a frosted modal or slide-over a translucent table is a window onto
+   the page behind the panel (canon-shared-kit.md, "a transparent box inside a
+   frosted panel"), so there the table keeps its opaque grounds. */
+:is(.modal, .slideover) .table-wrapper { background: var(--color-bg-primary); }
+:is(.modal, .slideover) thead th { background: var(--color-bg-tertiary); }
 /* Narrow center-aligned pin/checkbox columns (asset Services tab: Monitor /
    Logs / Map). Tight horizontal padding + no header wrap so the labels stay on
    one line and the checkboxes sit close together instead of spread across wide
@@ -2152,7 +2305,10 @@ thead th {
   text-transform: uppercase;
   letter-spacing: 1px;
   border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-tertiary);
+  /* The rail's glass again, over the wrapper's: the two tints stack, so the
+     header still reads a step denser than the rows, as it did when it was an
+     opaque --color-bg-tertiary band. */
+  background: var(--rail-glass-bg);
   white-space: normal;
   overflow-wrap: anywhere;
 }
@@ -2335,7 +2491,7 @@ body.sf-resizing * { user-select: none !important; }
   position: absolute;
   right: 8px;          /* JS refines this on reveal to clear the wrapper's scrollbar */
   top: 5px;
-  /* Above the sticky header cells (.table-wrapper-sticky thead th, z-index 10). */
+  /* Above the sticky header row (.table-wrapper-sticky thead, z-index 10). */
   z-index: 30;
   display: none;
   gap: 4px;            /* space between the optional screenshot button and the gear */
@@ -2568,7 +2724,10 @@ body.sf-resizing * { user-select: none !important; }
   align-items: center;
   gap: 10px;
   padding: 7px 12px;
-  background: var(--color-surface);
+  /* Glass, like the table it sits on: --chip-glass-bg (the selected-chip
+     glass, denser than the table's), frosted by ::before below. The table rows scroll under this sticky bar, so it is
+     the blur that keeps them from reading through. */
+  background: var(--chip-glass-bg);
   border: 1px solid var(--color-accent);
   border-radius: var(--radius-sm);
   margin-bottom: 8px;
@@ -2576,6 +2735,21 @@ body.sf-resizing * { user-select: none !important; }
   top: 8px;
   z-index: 50;
   box-shadow: 0 4px 16px rgba(0,0,0,0.35), 0 0 0 1px var(--color-accent);
+}
+/* The frost is on ::before, not the bar: its Type / State / Monitoring
+   menus are frosted glass themselves, and a backdrop-filter on the bar would
+   make it their backdrop root, so they would blur only the bar and go clear
+   over the table. The bar is sticky with z-index 50, so it is a stacking
+   context, and z-index -1 lands under its tint and buttons. */
+.bulk-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
 }
 /* Idle state for an always-visible action bar (e.g. Notifications View tab):
    nothing is selected, so the bar recedes into the page rather than floating
@@ -2587,8 +2761,9 @@ body.sf-resizing * { user-select: none !important; }
   /* Matches the unselected rows below it, i.e. .table-wrapper's fill — idle,
      the bar reads as the table's own top edge rather than a floating control.
      Note this is NOT the body fill (--color-bg-secondary), which is a step
-     darker and would read as a gap. */
-  background: var(--color-bg-primary);
+     darker and would read as a gap. The table wears the sidebar's glass now,
+     so the idle bar does too. */
+  background: var(--rail-glass-bg);
   border-color: var(--color-border);
   box-shadow: none;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
@@ -3270,7 +3445,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
    one column beside Web Push instead of spanning under it. */
 .delivery-grid > #channels-list > .empty-state-card { grid-column: auto; }
 .integration-card {
-  background: var(--color-bg-primary);
+  background: var(--card-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 1.25rem;
@@ -3373,7 +3548,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 }
 .detail-row.stacked .detail-value { text-align: left; }
 .empty-state-card {
-  background: var(--color-bg-primary);
+  background: var(--card-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 3rem;
@@ -4048,9 +4223,44 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 .page-tab.active { color: var(--color-accent); border-bottom-color: var(--color-accent); }
 .page-tab-panel { display: none; }
 .page-tab-panel.active { display: block; }
+/* Opt-in: page tabs drawn like the Assets view tabs (.table-tab), so a page
+   whose tab strip sits over glass tables and cards gets the same material
+   rounded-top chip, glass on hover, and a frosted --color-surface chip
+   with the accent underline when active. A modifier rather than a change to
+   .page-tab, because that class is also every modal's tab strip and the
+   Server Settings tabs. Used by the Automations page (#auto-tabs). */
+/* A strip too long for its width scrolls rather than wrapping a label onto a
+   second line — the same rule .table-tabs follows. */
+.page-tabs-glass {
+  gap: 2px;
+  align-items: flex-end;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.page-tabs-glass .page-tab {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.84rem;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.page-tabs-glass .page-tab:hover { color: var(--color-text-secondary); background: var(--rail-glass-bg); }
+.page-tabs-glass .page-tab.active {
+  color: var(--color-accent);
+  border-color: var(--color-border);
+  border-bottom-color: var(--color-accent);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  background: var(--chip-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
+}
 
 .settings-card {
-  background: var(--color-bg-primary);
+  background: var(--card-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 1.25rem;
@@ -5464,10 +5674,8 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 
 .dashboard-widget {
   position: relative;
-  /* Match the Assets table surface (.table-wrapper) so cards stay uniform
-     across the app; --color-bg-elevated was never defined and fell back to a
-     grey (#1c1f24) that didn't match the navy table. */
-  background: var(--color-bg-primary);
+  /* The sidebar's glass, like every card (--card-bg in :root). */
+  background: var(--card-bg);
   border: 1px solid var(--color-border, rgba(255,255,255,0.08));
   border-radius: 6px;
   padding: 14px 16px 16px;
