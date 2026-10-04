@@ -103,8 +103,8 @@
      ground is near-white, and a terracotta wash there reads as a rust mark,
      not light. */
   --page-glow-color: var(--md-primary);
-  --page-glow-strength: 22%;
-  --page-glow: radial-gradient(ellipse 90% 55% at 50% 0%,
+  --page-glow-strength: 17.6%;
+  --page-glow: radial-gradient(ellipse 180% 66% at 50% 0%,
     color-mix(in srgb, var(--page-glow-color) var(--page-glow-strength), transparent) 0%,
     transparent 70%);
 
@@ -171,7 +171,7 @@
 
   --shadow-card:  0 8px 32px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.6);
   --shadow-sheet: 0 -8px 32px rgba(0,0,0,.16), 0 -2px 6px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.6);
-  --page-glow-strength: 14%;
+  --page-glow-strength: 11.2%;
 }
 
 /* ─── Daylight palettes, mapped from the desktop set ───────────────────────
@@ -254,7 +254,7 @@
   --shadow-sheet: 0 -8px 32px rgba(40,20,10,.22), 0 -2px 6px rgba(40,20,10,.14), inset 0 1px 0 rgba(255,255,255,.6);
   /* Sunlight on a white ground — see --page-glow in :root. */
   --page-glow-color: #ffc928;
-  --page-glow-strength: 30%;
+  --page-glow-strength: 24%;
 }
 /* Afternoon — TRANSIT ONLY, never selectable: the strip fades THROUGH this
    between noon and nightfall, so it has to be the strongest shift of the four
