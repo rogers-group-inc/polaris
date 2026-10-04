@@ -1,5 +1,11 @@
 # syntax=docker/dockerfile:1.7
 
+# ─── Go toolchain ─────────────────────────────────────────────────────────────
+# Source of the Go toolchain copied into the runtime stage for the in-app agent
+# build. Pinned to major.minor so it follows upstream Go security patches;
+# scripts/check-versions.mjs reads the number here as the Go family's pin.
+FROM golang:1.26-trixie AS gotoolchain
+
 # ─── Builder ──────────────────────────────────────────────────────────────────
 FROM node:24-trixie AS builder
 
@@ -72,18 +78,18 @@ RUN apt-get update \
       tini \
  && rm -rf /var/lib/apt/lists/*
 
-# Install Go for the Polaris Agent build feature (Server Settings →
-# Maintenance → Polaris Agent → Build). trixie ships golang 1.24, which is
-# below agent/go.mod's floor; trixie-backports carries 1.26.
-# The backports SUITE must track the base image — a bookworm-backports line on
-# a trixie base resolves to nothing and the build fails at apt-get install.
-# Image size grows from ~50 MB to ~350 MB (one-time hit, not per-tag).
-RUN echo "deb http://deb.debian.org/debian trixie-backports main" \
-      > /etc/apt/sources.list.d/backports.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends -t trixie-backports \
-      golang-go \
- && rm -rf /var/lib/apt/lists/*
+# Go for the Polaris Agent build feature (Server Settings → Maintenance →
+# Polaris Agent → Build), copied from the official golang image (the `gotoolchain`
+# stage above) rather than installed from Debian. trixie ships golang 1.24,
+# below agent/go.mod's floor, and the trixie-backports route that replaced it
+# broke on 2026-10-04: backports published the golang-go 1.26 metapackage
+# without the golang-1.26-go it depends on, and every image build failed at
+# apt-get install. The upstream toolchain is self-contained, so it needs no
+# apt source and cannot be half-synced. PATH reaches the build subprocess:
+# agentBuildService spreads process.env, and the entrypoint's setpriv keeps it.
+# Image size grows by ~250 MB (one-time hit, not per-tag).
+COPY --from=gotoolchain /usr/local/go /usr/local/go
+ENV PATH=/usr/local/go/bin:$PATH
 
 # Java 25 (headless) + the jsign jar for the optional agent code-signing
 # feature (Integrations → Polaris Agents → Code signing — internal-CA

@@ -111,7 +111,7 @@ build auto-prune + boot-time auto-build are layered on top.
   alongside Node + mkdir `$APP_DIR/data/agents` + `$APP_DIR/.cache/go-build`;
   also install Java 25 headless + the SHA-256-pinned jsign jar to
   `$APP_DIR/tools/jsign.jar` (warn-don't-abort — signing is opt-in).
-- `Dockerfile` — pulls `golang-go` from trixie-backports (the suite must track the base image); pre-creates
+- `Dockerfile` — copies `/usr/local/go` from a `golang:<major.minor>-trixie` stage and puts it on `PATH` (was trixie-backports until 2026-10-04); pre-creates
   `/app/state/.cache/go-build`; installs `openjdk-25-jre-headless` by NAME + the
   pinned jsign jar at `/opt/polaris/tools/jsign.jar`.
 

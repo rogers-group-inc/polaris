@@ -468,7 +468,7 @@
         "Bump the go directive in agent/go.mod and run go mod tidy in agent/.",
         "Bump GO_MINIMUM in the agent build service so the preflight check and every copy string move together.",
         "Widen the go version accept-regex in all four Linux setup scripts.",
-        "Check whether the Dockerfile still needs the backports pin for golang-go.",
+        "Bump the golang:<major.minor> stage tag in the Dockerfile.",
         "Bump agent/VERSION and rebuild every platform binary - the agent version and the shipped binaries move in lockstep.",
         "Re-sign the binaries and confirm an existing agent upgrades cleanly."
       ],
