@@ -4195,6 +4195,39 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 .page-tab.active { color: var(--color-accent); border-bottom-color: var(--color-accent); }
 .page-tab-panel { display: none; }
 .page-tab-panel.active { display: block; }
+/* Opt-in: page tabs drawn like the Assets view tabs (.table-tab), so a page
+   whose tab strip sits over glass tables and cards gets the same material
+   rounded-top chip, glass on hover, and a frosted --color-surface chip
+   with the accent underline when active. A modifier rather than a change to
+   .page-tab, because that class is also every modal's tab strip and the
+   Server Settings tabs. Used by the Automations page (#auto-tabs). */
+/* A strip too long for its width scrolls rather than wrapping a label onto a
+   second line — the same rule .table-tabs follows. */
+.page-tabs-glass {
+  gap: 2px;
+  align-items: flex-end;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.page-tabs-glass .page-tab {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.84rem;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.page-tabs-glass .page-tab:hover { color: var(--color-text-secondary); background: var(--rail-glass-bg); }
+.page-tabs-glass .page-tab.active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-surface) 55%, transparent);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
+}
 
 .settings-card {
   background: var(--card-bg);

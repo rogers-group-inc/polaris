@@ -203,7 +203,11 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   on top. The bulk bar is sticky and the table scrolls under it, so its blur is real; it lives
   on `.bulk-bar::before`, because the bar's Type / State / Monitoring menus are frosted and a
   `backdrop-filter` on the bar would backdrop-root them. A tab holds nothing frosted or fixed,
-  so its blur is on the tab itself.
+  so its blur is on the tab itself. A page's `.page-tabs` strip opts into the same look with
+  the `.page-tabs-glass` modifier: rounded-top chips, glass on hover, and the frosted
+  surface chip with the accent underline when active. The strip scrolls instead of wrapping.
+  Automations (`#auto-tabs`) is the only user so far. It is a modifier, not a change to
+  `.page-tab`, because that class is also every modal's tab strip and the Server Settings tabs.
 
 ## Settings-card layout (one card, a fixed row, or a reflowing deck)
 
