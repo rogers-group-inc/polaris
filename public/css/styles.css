@@ -600,8 +600,11 @@ code {
      pushed hardest and still does almost nothing — the inset rim is carrying
      this one, and it is a hair brighter here than in the :root dark base. */
   --shadow-card: 0 8px 32px rgba(0,0,0,.65), 0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
-  /* 30% under the dark family's 17.6% — the sky-blue accent on the darkest
-     ground of the set reads brighter than the same mix anywhere else. */
+  /* 30% under the dark family's 17.6%. At that strength the sky-blue
+     accent (#4bbcee), a light pastel, mixed into near-black came out a grey
+     slate haze (~rgb(21,35,54) at the peak), so nightfall's glow takes a
+     deep saturated electric blue instead: same faintness, real colour. */
+  --page-glow-color: #2f6bff;
   --page-glow-strength: 12.3%;
 }
 
