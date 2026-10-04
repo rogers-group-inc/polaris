@@ -161,7 +161,7 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   2026-10-04 `body` paints `--page-glow` (a radial wash from the top centre of the viewport,
   `background-attachment: fixed`) over `--color-bg-secondary`. The glow is `--page-glow-color`
   (the theme's accent, except noon, which takes sunlight yellow `#ffc928` because a terracotta
-  wash on its near-white ground reads as rust) at `--page-glow-strength` (17.6% dark family, 11.2%
+  wash on its near-white ground reads as rust) at `--page-glow-strength` (17.6% dark family, 12.3% nightfall, 11.2%
   daylight base, 24% noon; a wide horizontal ellipse, 140% × 60% of the viewport). A sticky band pinned at the top of the page sits exactly where the
   glow is brightest, so `.page-header-sticky` is BLURRED and UNFILLED — a bare `blur(20px)`, no
   tint. A 70% `--color-bg-secondary` tint was tried and rejected on 2026-10-04: it read as a
