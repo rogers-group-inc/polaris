@@ -1277,38 +1277,35 @@ code {
 /* Frozen top bar (Dashboard): the header stays pinned while the widgets scroll,
    so Add Widgets / Done Editing / search stay reachable. z-index sits above the
    widgets + their Leaflet panes/controls (~1000) but below the widget picker
-   (1100), gear popover (1200), and the Status Map fullscreen (4000). The page
-   background + bottom border keep scrolled content from showing through. */
+   (1100), gear popover (1200), and the Status Map fullscreen (4000). A blur, not
+   a fill, keeps scrolled content illegible beneath it (see ::before). */
 .page-header-sticky {
   position: sticky;
   top: 0;
   z-index: 1050;
-  /* Must match the body background (the surface scrolling beneath it) in
-     BOTH themes. Note: --color-bg does not exist — the theme defines
-     --color-bg-primary/-secondary/-tertiary — so a var(--color-bg, #hex)
-     here silently renders its hardcoded fallback (a near-black that clashes
-     with the Polaris navy) in every theme.
-     Frosted rather than opaque since the page glow: the bar is pinned at the
-     top of the viewport, exactly where the glow is brightest, and a solid
-     band would cut it off. 70% keeps scrolled widgets illegible beneath.
-     The frost is on ::before, NOT this element: a backdrop-filter makes its
-     element the backdrop root of everything inside it, so the frosted
-     "Dashboards ▾" menu that drops out of this bar would blur only the bar
-     and go clear over the widgets below it. */
+  /* No fill. The bar is pinned at the top of the viewport, exactly where the
+     page glow is brightest: an opaque band cut the glow off, and a tinted one
+     (tried at 70% of --color-bg-secondary) read as a dark box sitting on it.
+     Blur alone is invisible at rest — blurring a smooth gradient changes
+     nothing — and only shows once a widget scrolls under the bar. */
   background: transparent;
   padding: 1rem 0 0.85rem;
   margin-top: -1rem;
   border-bottom: 1px solid var(--color-border);
 }
+/* The blur lives on ::before, NOT the bar: a backdrop-filter makes its element
+   the backdrop root of everything inside it, so the frosted "Dashboards ▾" menu
+   that drops out of this bar would blur only the bar and go clear over the
+   widgets below it. Heavier than --panel-glass-blur because there is no tint
+   behind it to help hide what scrolls past. */
 .page-header-sticky::before {
   content: "";
   position: absolute;
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background: color-mix(in srgb, var(--color-bg-secondary) 70%, transparent);
-  -webkit-backdrop-filter: var(--panel-glass-blur);
-  backdrop-filter: var(--panel-glass-blur);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  backdrop-filter: blur(20px) saturate(1.3);
 }
 .page-header h2 {
   /* The actions row is what wraps, so the title is what must not: with the

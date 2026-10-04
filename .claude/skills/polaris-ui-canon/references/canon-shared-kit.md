@@ -163,8 +163,10 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   (the theme's accent, except noon, which takes sunlight yellow `#ffc928` because a terracotta
   wash on its near-white ground reads as rust) at `--page-glow-strength` (17.6% dark family, 11.2%
   daylight base, 24% noon; a wide horizontal ellipse, 140% × 60% of the viewport). A sticky band pinned at the top of the page sits exactly where the
-  glow is brightest, so `.page-header-sticky` is FROSTED (70% of `--color-bg-secondary` +
-  `--panel-glass-blur`), not opaque — and the frost is on its `::before`, never on the element:
+  glow is brightest, so `.page-header-sticky` is BLURRED and UNFILLED — a bare `blur(20px)`, no
+  tint. A 70% `--color-bg-secondary` tint was tried and rejected on 2026-10-04: it read as a
+  dark box sitting on the glow. With no tint the blur can't be seen at rest (blurring a smooth
+  gradient changes nothing) and only smears a widget once it scrolls under the bar. The blur is on its `::before`, never on the element:
   a `backdrop-filter` makes its element the backdrop root of everything inside it, and the
   frosted "Dashboards ▾" menu that drops out of that header would then blur only the header and
   go clear over the widgets. Any new sticky bar follows the same `::before` pattern. The phone
