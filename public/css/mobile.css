@@ -232,9 +232,10 @@
 
   --shadow-card:  0 8px 32px rgba(70,45,10,.16), 0 2px 6px rgba(70,45,10,.13), inset 0 1px 0 rgba(255,255,255,.55);
   --shadow-sheet: 0 -8px 32px rgba(70,45,10,.20), 0 -2px 6px rgba(70,45,10,.13), inset 0 1px 0 rgba(255,255,255,.55);
-  /* Pale gold, lighter than the parchment ground, as on the desktop. */
-  --page-glow-color: #ffe08a;
-  --page-glow-strength: 30%;
+  /* Warm white, clearly lighter than the parchment ground, as on the
+     desktop (where the reasoning is written out). */
+  --page-glow-color: #fff8e8;
+  --page-glow-strength: 40%;
 }
 /* Noon — neutral near-white, terracotta, the highest contrast of any palette.
    The cool daylight palette; cream here and it reads as morning. */
