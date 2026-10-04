@@ -173,8 +173,8 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   frosted "Dashboards ▾" menu that drops out of that header would then blur only the header and
   go clear over the widgets. Any new sticky bar follows the same `::before` pattern. The phone
   carries the same recipe (canon-mobile.md § Elevation and the page glow).
-- **The sidebar is frosted glass** (since 2026-10-04): `--panel-glass-chrome` (its own
-  `--color-bg-tertiary` at the glass mix) + `--panel-glass-blur`, so the page glow shows through
+- **The sidebar is frosted glass** (since 2026-10-04): `--rail-glass-bg` (its own
+  `--color-bg-tertiary` at 40%, 30% daylight — ten points under `--panel-glass-chrome`, a token of its own so the modal header bands are not moved with it) + `--panel-glass-blur`, so the page glow shows through
   the rail. The blur is on `.sidebar` ITSELF, the one exception to the `::before` rule, because
   the rail scrolls (`overflow-y: auto`) and an absolute pseudo-element would scroll away with the
   nav. That is safe only while nothing frosted or `position: fixed` mounts inside the sidebar —
@@ -183,7 +183,7 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   on `body` instead.
 - **Cards wear the sidebar's glass** (since 2026-10-04): `.card`, `.kpi-card`,
   `.integration-card`, `.empty-state-card`, `.settings-card` and `.dashboard-widget` paint
-  `--card-bg`, which is `var(--panel-glass-chrome)`. The user asked for the cards to match the
+  `--card-bg`, which is `var(--rail-glass-bg)`, so a change to the rail's tint moves the cards with it. The user asked for the cards to match the
   navigation rail, not the other way round. A one-commit attempt to paint the rail in the cards'
   `--color-bg-primary` was reverted. Cards take the TINT WITHOUT THE BLUR: behind them is only
   the page ground and the glow, and blurring a smooth gradient changes nothing. A

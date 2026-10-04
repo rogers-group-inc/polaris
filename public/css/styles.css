@@ -142,7 +142,12 @@
      NOT for .chart-box: that sits inside the frosted asset slide-over, where
      a translucent plot becomes a window onto the page ("a transparent box
      inside a frosted panel" in canon-shared-kit.md). */
-  --card-bg: var(--panel-glass-chrome);
+  --card-bg: var(--rail-glass-bg);
+  /* The sidebar's glass: its own --color-bg-tertiary, ten points thinner
+     than the panels' --panel-glass-chrome (40% here, 30% on the daylight
+     base). A token of its own so the rail can be tuned without moving every
+     modal and slide-over header band, which share --panel-glass-chrome. */
+  --rail-glass-bg: color-mix(in srgb, var(--color-bg-tertiary) 40%, transparent);
   --sidebar-width: 220px;
 }
 
@@ -193,6 +198,7 @@
      version in :root. */
   --panel-glass-bg: color-mix(in srgb, var(--color-bg-primary) 40%, transparent);
   --panel-glass-chrome: color-mix(in srgb, var(--color-bg-tertiary) 40%, transparent);
+  --rail-glass-bg: color-mix(in srgb, var(--color-bg-tertiary) 30%, transparent);
   --menu-glass-bg: color-mix(in srgb, var(--color-surface) 30%, transparent);
 }
 /* The five headings that used to hardcode #fff and needed rescuing here now
@@ -621,17 +627,16 @@ code {
 .sidebar {
   width: var(--sidebar-width);
   flex-shrink: 0;
-  /* Frosted glass, the panels' own material: --panel-glass-chrome is this
-     same --color-bg-tertiary at the glass mix (50% dark family, 40%
-     daylight), so the page glow shows through the rail instead of stopping
-     at its edge. The blur is on the sidebar itself, NOT a ::before as on the
+  /* Frosted glass: --rail-glass-bg is this same --color-bg-tertiary at 40%
+     (30% daylight), so the page glow shows through the rail instead of
+     stopping at its edge. The cards paint it too (--card-bg). The blur is on the sidebar itself, NOT a ::before as on the
      sticky header: the sidebar scrolls (overflow-y below), and an absolute
      pseudo-element would scroll away with the nav and leave the lower rail
      unfrosted. That is safe only while nothing frosted or position:fixed is
      mounted INSIDE it — every menu, popover and tooltip is appended to body
      today. One mounted in here would be backdrop-rooted to the rail (a menu
      going clear over the page) and positioned against it. */
-  background: var(--panel-glass-chrome);
+  background: var(--rail-glass-bg);
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
   border-right: 1px solid var(--color-border);
