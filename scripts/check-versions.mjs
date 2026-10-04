@@ -226,6 +226,12 @@ const FAMILIES = [
         re: /GO_MINIMUM = "(\d+\.\d+)"/g, pick: (m) => m[1] },
       { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose", role: "floor",
         re: /\*\*Go\*\*[^|\n]*\|\s*(\d+\.\d+)\s*\|/g, pick: (m) => m[1] },
+      // The one PIN site: the container image copies its toolchain from this
+      // stage. Was an unversioned `golang-go` from trixie-backports until
+      // 2026-10-04, when backports shipped the metapackage without its
+      // dependency and every image build failed.
+      { file: "Dockerfile", label: "FROM golang", kind: "pin",
+        re: /^FROM golang:(\d+\.\d+)-/gm, pick: (m) => m[1] },
     ],
   },
 
