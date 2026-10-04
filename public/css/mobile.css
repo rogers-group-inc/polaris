@@ -235,7 +235,7 @@
   /* Warm white, clearly lighter than the parchment ground, as on the
      desktop (where the reasoning is written out). */
   --page-glow-color: #fff8e8;
-  --page-glow-strength: 40%;
+  --page-glow-strength: 50%;
 }
 /* Noon — neutral near-white, terracotta, the highest contrast of any palette.
    The cool daylight palette; cream here and it reads as morning. */
