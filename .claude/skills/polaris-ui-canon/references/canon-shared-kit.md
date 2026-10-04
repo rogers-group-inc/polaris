@@ -191,6 +191,12 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   widget menus and Leaflet panes. A new page-level card takes `--card-bg`. `.chart-box` does NOT,
   because it lives inside the frosted asset slide-over, where a translucent plot is a window onto
   the page (the `.tag-picker` / `.topology-info` lesson above).
+- **List tables wear it too** (since 2026-10-04): `.table-wrapper` and `thead th` paint
+  `--rail-glass-bg` (the two tints stack, so the header still reads a step denser than the
+  rows). The wrapper takes the tint without a blur, for the same reasons as the cards. A sticky
+  header needs a blur to hide the rows scrolling under it, and that blur lives on `thead::before`
+  (canon-tables-lists.md § frozen header). Inside `.modal` / `.slideover` a table keeps its
+  opaque `--color-bg-primary` / `--color-bg-tertiary` grounds.
 
 ## Settings-card layout (one card, a fixed row, or a reflowing deck)
 

@@ -2147,7 +2147,12 @@ code {
    instead of it, so the background / border / shadow here reach every list
    table — including the ones inside a modal or slide-over. */
 .table-wrapper {
-  background: var(--color-bg-primary);
+  /* The sidebar's glass (--rail-glass-bg), tint without blur, as on the cards
+     (--card-bg): behind a page-level table there is only the smooth ground and
+     glow, so a blur would change nothing. It would also make the wrapper the
+     containing block for the position:fixed TableSF popovers mounted inside
+     its header cells. Opaque again inside a modal or slide-over (rule below). */
+  background: var(--rail-glass-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   overflow-x: auto;
@@ -2188,14 +2193,49 @@ code {
    resize / page-control render, and the panel variant's sizers measure rects
    that are garbage while the tab is display:none. */
 .table-wrapper-modal-sticky { overflow: auto; }
-.table-wrapper-sticky thead th,
-.table-wrapper-panel-sticky thead th,
-.table-wrapper-modal-sticky thead th {
+/* The HEADER ROW is the sticky element, not each cell: the header is glass,
+   so the rows that scroll under it must be blurred out of the way, and one
+   blur across the whole row is the only way to get that without seams. A
+   per-cell blur sampled each cell's own patch and drew every header cell as
+   a separate rectangle. The th stay static (TableSF gives them its own
+   position:relative fallback for the resize handles and gear), and the
+   z-index that was on each cell is on the row. */
+.table-wrapper-sticky thead,
+.table-wrapper-panel-sticky thead,
+.table-wrapper-modal-sticky thead {
   position: sticky;
   top: 0;
   z-index: 10;
+}
+.table-wrapper-sticky thead th,
+.table-wrapper-panel-sticky thead th,
+.table-wrapper-modal-sticky thead th {
   box-shadow: 0 1px 0 var(--color-border);
 }
+/* The blur is on the row's ::before, not on the thead: a backdrop-filter on
+   the thead would make it the containing block for the position:fixed
+   TableSF popover (.sf-multi-popover) mounted inside its cells. The sticky
+   thead is positioned and a stacking context (z-index 10), so inset 0 with
+   z-index -1 lands under the cells' tint and labels. Heavier than
+   --panel-glass-blur because at 12px the row text scrolled beneath still
+   showed as grey smudges beside the column labels through the rail's thin
+   tint. */
+.table-wrapper-sticky thead::before,
+.table-wrapper-panel-sticky thead::before,
+.table-wrapper-modal-sticky thead::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: blur(28px);
+}
+/* Inside a frosted modal or slide-over a translucent table is a window onto
+   the page behind the panel (canon-shared-kit.md, "a transparent box inside a
+   frosted panel"), so there the table keeps its opaque grounds. */
+:is(.modal, .slideover) .table-wrapper { background: var(--color-bg-primary); }
+:is(.modal, .slideover) thead th { background: var(--color-bg-tertiary); }
 /* Narrow center-aligned pin/checkbox columns (asset Services tab: Monitor /
    Logs / Map). Tight horizontal padding + no header wrap so the labels stay on
    one line and the checkboxes sit close together instead of spread across wide
@@ -2220,7 +2260,10 @@ thead th {
   text-transform: uppercase;
   letter-spacing: 1px;
   border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-tertiary);
+  /* The rail's glass again, over the wrapper's: the two tints stack, so the
+     header still reads a step denser than the rows, as it did when it was an
+     opaque --color-bg-tertiary band. */
+  background: var(--rail-glass-bg);
   white-space: normal;
   overflow-wrap: anywhere;
 }
@@ -2403,7 +2446,7 @@ body.sf-resizing * { user-select: none !important; }
   position: absolute;
   right: 8px;          /* JS refines this on reveal to clear the wrapper's scrollbar */
   top: 5px;
-  /* Above the sticky header cells (.table-wrapper-sticky thead th, z-index 10). */
+  /* Above the sticky header row (.table-wrapper-sticky thead, z-index 10). */
   z-index: 30;
   display: none;
   gap: 4px;            /* space between the optional screenshot button and the gear */
