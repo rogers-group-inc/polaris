@@ -181,6 +181,16 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   every menu, popover and tooltip appends to `body` today. A flyout added INSIDE the rail would be
   backdrop-rooted to it (its glass goes clear over the page) and positioned against it; mount it
   on `body` instead.
+- **Cards wear the sidebar's glass** (since 2026-10-04): `.card`, `.kpi-card`,
+  `.integration-card`, `.empty-state-card`, `.settings-card` and `.dashboard-widget` paint
+  `--card-bg`, which is `var(--panel-glass-chrome)`. The user asked for the cards to match the
+  navigation rail, not the other way round. A one-commit attempt to paint the rail in the cards'
+  `--color-bg-primary` was reverted. Cards take the TINT WITHOUT THE BLUR: behind them is only
+  the page ground and the glow, and blurring a smooth gradient changes nothing. A
+  `backdrop-filter` on a card would also make it the containing block and backdrop root for its
+  widget menus and Leaflet panes. A new page-level card takes `--card-bg`. `.chart-box` does NOT,
+  because it lives inside the frosted asset slide-over, where a translucent plot is a window onto
+  the page (the `.tag-picker` / `.topology-info` lesson above).
 
 ## Settings-card layout (one card, a fixed row, or a reflowing deck)
 
