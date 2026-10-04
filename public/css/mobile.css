@@ -615,7 +615,7 @@ input, select, textarea { font-family: inherit; }
 .btn-filled    { background: var(--md-primary); color: var(--md-on-primary); }
 /* Noon's filled buttons are golden, as on the desktop (styles.css
    [data-theme="noon"] .btn-primary); --md-primary stays terracotta. */
-[data-theme="noon"] .btn-filled { background: #b07408; color: #fff; }
+[data-theme="noon"] .btn-filled { background: #9f8a46; color: #fff; }
 .btn-tonal     { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
 .btn-outlined  { background: transparent; color: var(--md-primary); border: 1px solid var(--md-outline); }
 .btn-text      { background: transparent; color: var(--md-primary); padding: 0 12px; }
