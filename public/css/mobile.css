@@ -230,8 +230,8 @@
   --md-warning:                 #d07a00;
   --md-error:                   #b0301d;
 
-  --shadow-card:  0 8px 32px rgba(70,45,10,.16), 0 2px 6px rgba(70,45,10,.13), inset 0 1px 0 rgba(255,255,255,.55);
-  --shadow-sheet: 0 -8px 32px rgba(70,45,10,.20), 0 -2px 6px rgba(70,45,10,.13), inset 0 1px 0 rgba(255,255,255,.55);
+  --shadow-card:  0 8px 32px rgba(70,45,10,.22), 0 2px 6px rgba(70,45,10,.18), inset 0 1px 0 rgba(255,255,255,.55);
+  --shadow-sheet: 0 -8px 32px rgba(70,45,10,.28), 0 -2px 6px rgba(70,45,10,.18), inset 0 1px 0 rgba(255,255,255,.55);
   /* Warm white, clearly lighter than the parchment ground, as on the
      desktop (where the reasoning is written out). */
   --page-glow-color: #fff8e8;
