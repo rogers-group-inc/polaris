@@ -157,6 +157,18 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   over a modal's own scrolling body, but this header stands in front of a full-bleed graph, so
   the title, the endpoint search box and the icon row read through it. Both rules lift only the
   opacity of the theme's own token — never a literal colour — so a new theme keeps its palette.
+- **The page ground carries a glow; nothing full-width may paint over it opaquely.** Since
+  2026-10-04 `body` paints `--page-glow` (a radial wash from the top centre of the viewport,
+  `background-attachment: fixed`) over `--color-bg-secondary`. The glow is `--page-glow-color`
+  (the theme's accent, except noon, which takes sunlight yellow `#ffc928` because a terracotta
+  wash on its near-white ground reads as rust) at `--page-glow-strength` (22% dark family, 14%
+  daylight base, 30% noon). A sticky band pinned at the top of the page sits exactly where the
+  glow is brightest, so `.page-header-sticky` is FROSTED (70% of `--color-bg-secondary` +
+  `--panel-glass-blur`), not opaque — and the frost is on its `::before`, never on the element:
+  a `backdrop-filter` makes its element the backdrop root of everything inside it, and the
+  frosted "Dashboards ▾" menu that drops out of that header would then blur only the header and
+  go clear over the widgets. Any new sticky bar follows the same `::before` pattern. The phone
+  carries the same recipe (canon-mobile.md § Elevation and the page glow).
 
 ## Settings-card layout (one card, a fixed row, or a reflowing deck)
 

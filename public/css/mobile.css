@@ -80,6 +80,33 @@
   --elev-1: 0 1px 2px rgba(0,0,0,.30), 0 1px 3px 1px rgba(0,0,0,.15);
   --elev-2: 0 1px 2px rgba(0,0,0,.30), 0 2px 6px 2px rgba(0,0,0,.15);
   --elev-3: 0 4px 8px 3px rgba(0,0,0,.15), 0 1px 3px rgba(0,0,0,.30);
+  /* The desktop's card elevation (styles.css --shadow-card), value for value
+     per theme, so a card reads as the same raised object on both surfaces.
+     The MD3 --elev-* ladder above is a 1-3px blur at .15-.30 alpha — on a
+     card the width of the phone it is invisible, which is why the cards read
+     as flat cutouts here while the desktop's float. Two drop layers (the wide
+     halo tints the ground, the tight one draws the edge) and an inset TOP RIM,
+     which is the only thing that shows elevation on a near-black ground.
+     --shadow-sheet is the same recipe cast UPWARD for the bottom-anchored
+     slide-ups: a sheet's only free edge is its top. Both are re-declared in
+     every theme block below — a daylight block that skipped them would keep
+     this dark cast, grubby on parchment. */
+  --shadow-card:  0 8px 32px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.05);
+  --shadow-sheet: 0 -8px 32px rgba(0,0,0,.55), 0 -2px 6px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.07);
+
+  /* Background glow — a soft wash of the accent rising from the top centre of
+     the screen, behind every tab. Same recipe as the desktop's --page-glow
+     (styles.css). Declared once: this rule and every theme block target
+     <html>, so var(--md-primary) resolves to each theme's own accent. The
+     daylight block thins it — a wash that reads as light on indigo reads as a
+     stain on a white ground. Noon swaps the hue for sunlight yellow: its
+     ground is near-white, and a terracotta wash there reads as a rust mark,
+     not light. */
+  --page-glow-color: var(--md-primary);
+  --page-glow-strength: 22%;
+  --page-glow: radial-gradient(ellipse 90% 55% at 50% 0%,
+    color-mix(in srgb, var(--page-glow-color) var(--page-glow-strength), transparent) 0%,
+    transparent 70%);
 
   /* Layout */
   --topbar-h:  64px;
@@ -141,6 +168,10 @@
   --md-sev-serious:             #b35c00;
 
   --user-pin-stroke:            #1f2937;
+
+  --shadow-card:  0 8px 32px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.6);
+  --shadow-sheet: 0 -8px 32px rgba(0,0,0,.16), 0 -2px 6px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.6);
+  --page-glow-strength: 14%;
 }
 
 /* ─── Daylight palettes, mapped from the desktop set ───────────────────────
@@ -192,6 +223,9 @@
   --md-success:                 #4b7a2f;
   --md-warning:                 #d07a00;
   --md-error:                   #b0301d;
+
+  --shadow-card:  0 8px 32px rgba(70,45,10,.16), 0 2px 6px rgba(70,45,10,.13), inset 0 1px 0 rgba(255,255,255,.55);
+  --shadow-sheet: 0 -8px 32px rgba(70,45,10,.20), 0 -2px 6px rgba(70,45,10,.13), inset 0 1px 0 rgba(255,255,255,.55);
 }
 /* Noon — neutral near-white, terracotta, the highest contrast of any palette.
    The cool daylight palette; cream here and it reads as morning. */
@@ -215,6 +249,12 @@
   --md-success:                 #2f7d4f;
   --md-warning:                 #c96a00;
   --md-error:                   #9b1c1c;
+
+  --shadow-card:  0 8px 32px rgba(40,20,10,.18), 0 2px 6px rgba(40,20,10,.14), inset 0 1px 0 rgba(255,255,255,.6);
+  --shadow-sheet: 0 -8px 32px rgba(40,20,10,.22), 0 -2px 6px rgba(40,20,10,.14), inset 0 1px 0 rgba(255,255,255,.6);
+  /* Sunlight on a white ground — see --page-glow in :root. */
+  --page-glow-color: #ffc928;
+  --page-glow-strength: 30%;
 }
 /* Afternoon — TRANSIT ONLY, never selectable: the strip fades THROUGH this
    between noon and nightfall, so it has to be the strongest shift of the four
@@ -239,6 +279,9 @@
   --md-success:                 #4a7238;
   --md-warning:                 #c05a00;
   --md-error:                   #9e1a14;
+
+  --shadow-card:  0 8px 32px rgba(90,30,10,.20), 0 2px 6px rgba(90,30,10,.15), inset 0 1px 0 rgba(255,255,255,.55);
+  --shadow-sheet: 0 -8px 32px rgba(90,30,10,.24), 0 -2px 6px rgba(90,30,10,.15), inset 0 1px 0 rgba(255,255,255,.55);
 }
 /* Nightfall — indigo ground, sky-blue accent: the desktop's nightfall hues
    (styles.css). Without this block the phone painted the neutral Material
@@ -280,6 +323,9 @@
 
   --md-success:                 #3ddc97;
   --md-warning:                 #f2c14e;
+
+  --shadow-card:  0 8px 32px rgba(0,0,0,.65), 0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
+  --shadow-sheet: 0 -8px 32px rgba(0,0,0,.7), 0 -2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.08);
 }
 
 * { box-sizing: border-box; }
@@ -288,7 +334,10 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: var(--md-surface);
+  /* The glow over the ground. body is locked to the viewport (below), so the
+     gradient is sized to the screen and stays put while .app-body scrolls. */
+  background: var(--page-glow), var(--md-surface);
+  background-repeat: no-repeat;
   color: var(--md-on-surface);
   font-family: "Roboto", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -324,7 +373,8 @@ input, select, textarea { font-family: inherit; }
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--md-surface);
+  /* Transparent so body's glow shows through; body paints the ground. */
+  background: transparent;
 }
 
 /* Installed-PWA (home screen) insets.
@@ -436,10 +486,26 @@ input, select, textarea { font-family: inherit; }
   padding: 0 4px;
   display: flex;
   align-items: center;
-  background: var(--md-surface);
+  /* Frosted rather than opaque: the bar sits at the very top of the screen,
+     which is where the page glow is brightest, and an opaque --md-surface
+     band would cut the glow off under it. Scrolled content still smears
+     illegible beneath it. The frost is on ::before rather than the bar
+     itself: a backdrop-filter makes its element the backdrop root of, and
+     the containing block for any fixed-position, descendant. */
+  background: transparent;
   position: sticky;
   top: 0;
   z-index: 5;
+}
+.m3-topbar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--md-surface) 55%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(1.3);
+  backdrop-filter: blur(12px) saturate(1.3);
 }
 .m3-topbar .leading,
 .m3-topbar .trailing {
@@ -694,18 +760,20 @@ input, select, textarea { font-family: inherit; }
 .card-elevated {
   background: var(--md-surface-cont-low);
   border-radius: var(--shape-md);
-  box-shadow: var(--elev-1);
+  box-shadow: var(--shadow-card);
   overflow: hidden;
 }
 .card-filled {
   background: var(--md-surface-cont-highest);
   border-radius: var(--shape-md);
+  box-shadow: var(--shadow-card);
   overflow: hidden;
 }
 .card-outlined {
   background: var(--md-surface);
   border: 1px solid var(--md-outline-variant);
   border-radius: var(--shape-md);
+  box-shadow: var(--shadow-card);
   overflow: hidden;
 }
 
@@ -880,7 +948,7 @@ input, select, textarea { font-family: inherit; }
   border-radius: var(--shape-xl) var(--shape-xl) 0 0;
   padding: 0 24px 24px;
   z-index: 1001;
-  box-shadow: 0 -4px 24px rgba(0,0,0,.5);
+  box-shadow: var(--shadow-sheet);
   max-height: 90vh;
   overflow-y: auto;
   animation: sheet-in .25s ease-out;
@@ -1247,6 +1315,7 @@ button, .list-item, .chip { touch-action: manipulation; }
   border-radius: var(--shape-md);
   padding: 16px;
   border: none;
+  box-shadow: var(--shadow-card);
   width: 100%;
   text-align: left;
   color: inherit;

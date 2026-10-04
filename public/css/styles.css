@@ -95,6 +95,20 @@
      Distinct from --shadow-md, which stays the value for surfaces that float
      OVER the page (menus, dropdowns) and must not carry a rim. */
   --shadow-card: 0 8px 32px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.05);
+  /* Background glow — a soft wash of the accent rising from the top centre of
+     the viewport, painted by body over --color-bg-secondary and pinned there
+     (background-attachment: fixed) while the page scrolls. Declared once:
+     every theme block targets the root element too, so var(--color-accent)
+     resolves to each theme's own accent. The daylight base thins it (a wash
+     that reads as light on indigo reads as a stain on a pale ground), and
+     noon swaps the hue for sunlight yellow — its ground is near-white and a
+     terracotta wash there reads as rust, not light. The phone carries the
+     same recipe in mobile.css (--page-glow there, off --md-primary). */
+  --page-glow-color: var(--color-accent);
+  --page-glow-strength: 22%;
+  --page-glow: radial-gradient(ellipse 70% 50% at 50% 0%,
+    color-mix(in srgb, var(--page-glow-color) var(--page-glow-strength), transparent) 0%,
+    transparent 70%);
   /* ── Frosted panel surfaces ────────────────────────────────────────────────
      Modals and slide-overs are 50% of the theme's own panel colour over a
      blurred backdrop, so the page stays faintly legible behind them. Declared
@@ -156,6 +170,7 @@
   --shadow-md: 0 8px 32px rgba(0,0,0,.12);
   --shadow-panel: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.10);
   --shadow-control: 0 2px 5px rgba(0,0,0,.18), 0 1px 2px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.6);
+  --page-glow-strength: 14%;
   /* Thinner glass than the dark family's 50% / 40%. These are the only tokens
      :root derives that the daylight pair re-derives rather than inheriting, and
      the reason is contrast, not taste: a light panel over a light page has far
@@ -403,7 +418,9 @@ html { font-size: 14px; color-scheme: dark; }
 body {
   font-family: var(--font-sans);
   color: var(--color-text-primary);
-  background: var(--color-bg-secondary);
+  /* Fixed so the glow stays at the top of the viewport as the page scrolls —
+     it is light from above the screen, not a mark on the first screenful. */
+  background: var(--page-glow) no-repeat fixed, var(--color-bg-secondary);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -485,6 +502,9 @@ code {
   --shadow-panel: 0 24px 64px rgba(40,20,10,.26), 0 2px 10px rgba(40,20,10,.15);
   --shadow-control: 0 2px 5px rgba(40,20,10,.24), 0 1px 2px rgba(40,20,10,.15), inset 0 1px 0 rgba(255,255,255,.6);
   --shadow-card: 0 8px 32px rgba(40,20,10,.18), 0 2px 6px rgba(40,20,10,.14), inset 0 1px 0 rgba(255,255,255,.6);
+  /* Sunlight on a white ground — see --page-glow in :root. */
+  --page-glow-color: #ffc928;
+  --page-glow-strength: 30%;
 }
 
 /* ─── Afternoon — the clockface’s red-rust flank, an hour before dusk. NOT
@@ -1267,11 +1287,28 @@ code {
      BOTH themes. Note: --color-bg does not exist — the theme defines
      --color-bg-primary/-secondary/-tertiary — so a var(--color-bg, #hex)
      here silently renders its hardcoded fallback (a near-black that clashes
-     with the Polaris navy) in every theme. */
-  background: var(--color-bg-secondary);
+     with the Polaris navy) in every theme.
+     Frosted rather than opaque since the page glow: the bar is pinned at the
+     top of the viewport, exactly where the glow is brightest, and a solid
+     band would cut it off. 70% keeps scrolled widgets illegible beneath.
+     The frost is on ::before, NOT this element: a backdrop-filter makes its
+     element the backdrop root of everything inside it, so the frosted
+     "Dashboards ▾" menu that drops out of this bar would blur only the bar
+     and go clear over the widgets below it. */
+  background: transparent;
   padding: 1rem 0 0.85rem;
   margin-top: -1rem;
   border-bottom: 1px solid var(--color-border);
+}
+.page-header-sticky::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-bg-secondary) 70%, transparent);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
 }
 .page-header h2 {
   /* The actions row is what wraps, so the title is what must not: with the
