@@ -232,6 +232,9 @@
 
   --shadow-card:  0 8px 32px rgba(70,45,10,.16), 0 2px 6px rgba(70,45,10,.13), inset 0 1px 0 rgba(255,255,255,.55);
   --shadow-sheet: 0 -8px 32px rgba(70,45,10,.20), 0 -2px 6px rgba(70,45,10,.13), inset 0 1px 0 rgba(255,255,255,.55);
+  /* Vivid dawn orange at 30% under 11.2%, as on the desktop. */
+  --page-glow-color: #ff8a00;
+  --page-glow-strength: 7.8%;
 }
 /* Noon — neutral near-white, terracotta, the highest contrast of any palette.
    The cool daylight palette; cream here and it reads as morning. */
