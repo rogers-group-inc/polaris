@@ -217,18 +217,19 @@
 }
 /* Noon's primary buttons are GOLDEN rather than the terracotta accent — the
    sun at its height. Only the button: links, active tabs and underlines keep
-   --color-accent. #9f8a46 is the mean of the gold pixels in the theme strip's
-   art at noon's position (/img/brand/time-strip.png, the sun engraving
-   under Server Settings), so the buttons match the band. White text holds
-   about 3.4:1 on it; the art's brightest quarter (#b9a556) would drop that
-   to about 2.6:1. */
+   --color-accent. Derived from #9f8a46, the mean of the gold pixels in the
+   theme strip's art at noon's position (/img/brand/time-strip.png, the sun
+   engraving under Server Settings), made 20% more saturated and nudged from
+   hue 46 to 48 for a more yellow gold at the same lightness: #a9933d. White
+   text holds about 3:1 on it, the floor for bold button labels; any
+   lighter or yellower and the label would need to go dark. */
 [data-theme="noon"] .btn-primary {
-  background: #9f8a46;
-  border-color: #9f8a46;
+  background: #a9933d;
+  border-color: #a9933d;
 }
 [data-theme="noon"] .btn-primary:hover:not(:disabled) {
-  background: #85733a;
-  border-color: #85733a;
+  background: #8e7c33;
+  border-color: #8e7c33;
 }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-available  { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-active     { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
