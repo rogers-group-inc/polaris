@@ -215,6 +215,18 @@
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .btn-primary {
   color: #fff;
 }
+/* Noon's primary buttons are GOLDEN rather than the terracotta accent — the
+   sun at its height. Only the button: links, active tabs and underlines keep
+   --color-accent. #b07408 is about as light as a gold goes while white text
+   on it still holds roughly 3.9:1. */
+[data-theme="noon"] .btn-primary {
+  background: #b07408;
+  border-color: #b07408;
+}
+[data-theme="noon"] .btn-primary:hover:not(:disabled) {
+  background: #935f06;
+  border-color: #935f06;
+}
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-available  { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-active     { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-reserved   { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
