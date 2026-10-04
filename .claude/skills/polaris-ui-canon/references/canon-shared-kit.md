@@ -197,6 +197,13 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   header needs a blur to hide the rows scrolling under it, and that blur lives on `thead::before`
   (canon-tables-lists.md § frozen header). Inside `.modal` / `.slideover` a table keeps its
   opaque `--color-bg-primary` / `--color-bg-tertiary` grounds.
+- **So do the table's tabs and bulk bar.** The idle `.bulk-bar` and the `.table-tab:hover` /
+  `.table-tab-add:hover` states take `--rail-glass-bg`. The active `.table-tab` and the selected
+  `.bulk-bar` take `--color-surface` at 55%, so they still stand out, with `--panel-glass-blur`
+  on top. The bulk bar is sticky and the table scrolls under it, so its blur is real; it lives
+  on `.bulk-bar::before`, because the bar's Type / State / Monitoring menus are frosted and a
+  `backdrop-filter` on the bar would backdrop-root them. A tab holds nothing frosted or fixed,
+  so its blur is on the tab itself.
 
 ## Settings-card layout (one card, a fixed row, or a reflowing deck)
 

@@ -1882,12 +1882,18 @@ code {
   cursor: pointer;
   transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
-.table-tab:hover { color: var(--color-text-secondary); background: var(--color-bg-secondary); }
+.table-tab:hover { color: var(--color-text-secondary); background: var(--rail-glass-bg); }
 .table-tab:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+/* Glass rather than an opaque --color-surface chip, so the active tab reads
+   as the same material as the table and bulk bar below it. The blur sits on
+   the tab itself: nothing inside a tab is frosted or position:fixed (a name,
+   a dot, a close button and the rename input). */
 .table-tab.active {
   color: var(--color-accent);
   border-bottom-color: var(--color-accent);
-  background: var(--color-surface);
+  background: color-mix(in srgb, var(--color-surface) 55%, transparent);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
 }
 .table-tab-name {
   overflow: hidden;
@@ -1954,7 +1960,7 @@ code {
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }
-.table-tab-add:hover { color: var(--color-accent); background: var(--color-bg-secondary); }
+.table-tab-add:hover { color: var(--color-accent); background: var(--rail-glass-bg); }
 
 /* ─── Named-preset menu (Assets → Filters ▾, Dashboard → Dashboards ▾) ─────
    A dropdown whose list rows carry a trailing delete button, so each row is a
@@ -2690,7 +2696,10 @@ body.sf-resizing * { user-select: none !important; }
   align-items: center;
   gap: 10px;
   padding: 7px 12px;
-  background: var(--color-surface);
+  /* Glass, like the table it sits on: the theme's surface at 55%, frosted by
+     ::before below. The table rows scroll under this sticky bar, so it is
+     the blur that keeps them from reading through. */
+  background: color-mix(in srgb, var(--color-surface) 55%, transparent);
   border: 1px solid var(--color-accent);
   border-radius: var(--radius-sm);
   margin-bottom: 8px;
@@ -2698,6 +2707,21 @@ body.sf-resizing * { user-select: none !important; }
   top: 8px;
   z-index: 50;
   box-shadow: 0 4px 16px rgba(0,0,0,0.35), 0 0 0 1px var(--color-accent);
+}
+/* The frost is on ::before, not the bar: its Type / State / Monitoring
+   menus are frosted glass themselves, and a backdrop-filter on the bar would
+   make it their backdrop root, so they would blur only the bar and go clear
+   over the table. The bar is sticky with z-index 50, so it is a stacking
+   context, and z-index -1 lands under its tint and buttons. */
+.bulk-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
 }
 /* Idle state for an always-visible action bar (e.g. Notifications View tab):
    nothing is selected, so the bar recedes into the page rather than floating
@@ -2709,8 +2733,9 @@ body.sf-resizing * { user-select: none !important; }
   /* Matches the unselected rows below it, i.e. .table-wrapper's fill — idle,
      the bar reads as the table's own top edge rather than a floating control.
      Note this is NOT the body fill (--color-bg-secondary), which is a step
-     darker and would read as a gap. */
-  background: var(--color-bg-primary);
+     darker and would read as a gap. The table wears the sidebar's glass now,
+     so the idle bar does too. */
+  background: var(--rail-glass-bg);
   border-color: var(--color-border);
   box-shadow: none;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
