@@ -1300,15 +1300,17 @@ code {
    the backdrop root of everything inside it, so the frosted "Dashboards ▾" menu
    that drops out of this bar would blur only the bar and go clear over the
    widgets below it. Heavier than --panel-glass-blur because there is no tint
-   behind it to help hide what scrolls past. */
+   behind it to help hide what scrolls past — and WITHOUT that token's
+   saturate(): saturating the glow under the bar deepens its colour there, so
+   the bar shows as a box again even with no fill. */
 .page-header-sticky::before {
   content: "";
   position: absolute;
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  -webkit-backdrop-filter: blur(20px) saturate(1.3);
-  backdrop-filter: blur(20px) saturate(1.3);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
 }
 .page-header h2 {
   /* The actions row is what wraps, so the title is what must not: with the

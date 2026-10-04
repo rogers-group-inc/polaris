@@ -102,6 +102,11 @@
      stain on a white ground. Noon swaps the hue for sunlight yellow: its
      ground is near-white, and a terracotta wash there reads as a rust mark,
      not light. */
+  /* Opacity of the frosted bottom navbar's tint — the desktop's panel glass
+     mix (50% dark family, 40% daylight, where a light panel over a light page
+     has less to hide behind). */
+  --nav-glass-mix: 50%;
+
   --page-glow-color: var(--md-primary);
   --page-glow-strength: 17.6%;
   --page-glow: radial-gradient(ellipse 180% 66% at 50% 0%,
@@ -172,6 +177,7 @@
   --shadow-card:  0 8px 32px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.6);
   --shadow-sheet: 0 -8px 32px rgba(0,0,0,.16), 0 -2px 6px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.6);
   --page-glow-strength: 11.2%;
+  --nav-glass-mix: 40%;
 }
 
 /* ─── Daylight palettes, mapped from the desktop set ───────────────────────
@@ -492,6 +498,7 @@ input, select, textarea { font-family: inherit; }
      is brightest. An opaque --md-surface band cut the glow off, and a tinted
      one read as a dark box on it. A blur alone is invisible at rest (blurring
      a smooth gradient changes nothing) and smears scrolled content illegible.
+     No saturate(): it deepens the glow under the bar and draws the box back.
      The blur is on ::before rather than the bar itself: a backdrop-filter
      makes its element the backdrop root of, and the containing block for any
      fixed-position, descendant. */
@@ -506,8 +513,8 @@ input, select, textarea { font-family: inherit; }
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  -webkit-backdrop-filter: blur(20px) saturate(1.3);
-  backdrop-filter: blur(20px) saturate(1.3);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
 }
 .m3-topbar .leading,
 .m3-topbar .trailing {
@@ -783,7 +790,21 @@ input, select, textarea { font-family: inherit; }
 .m3-navbar {
   flex: 0 0 var(--navbar-h);
   height: var(--navbar-h);
-  background: var(--md-surface-cont);
+  /* Frosted glass, the desktop's floating-surface material (styles.css
+     --panel-glass-bg / --panel-glass-blur): the theme's own container colour
+     at --nav-glass-mix over a blur. Glass only reads as glass with something
+     behind it, so the bar is pulled UP over the bottom of .app-body (the
+     negative margin) and .app-body pads by the same height (rule below) —
+     lists scroll under the bar and the last row can still clear it. The blur
+     sits on the bar itself, not a ::before as on the top bars: a grid would
+     lay a pseudo-element out as a sixth cell, and nothing inside the bar is
+     fixed-position or frosted, so the backdrop-root trap has nothing to bite. */
+  margin-top: calc(-1 * var(--navbar-h));
+  background: color-mix(in srgb, var(--md-surface-cont) var(--nav-glass-mix), transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(1.3);
+  backdrop-filter: blur(12px) saturate(1.3);
+  /* Top rim — the edge a dark-family glass panel shows elevation by. */
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   align-items: center;
@@ -849,6 +870,12 @@ input, select, textarea { font-family: inherit; }
   border: 2px solid var(--md-surface-cont);
 }
 .app[data-tab=""] .m3-navbar { display: none; }
+/* Room for the glass navbar that overlaps the scroller (see .m3-navbar). Only
+   while the bar is shown: the auth screens (data-tab="") and __fullbleed
+   render no bar, and a pad there would be dead space under the form. */
+.app:not([data-tab=""]):not([data-tab="__fullbleed"]) > .app-body {
+  padding-bottom: var(--navbar-h);
+}
 
 /* Fullbleed mode — used by the topology surface so the Cytoscape graph
    gets the entire viewport. The tab module renders its own floating
