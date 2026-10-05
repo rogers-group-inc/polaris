@@ -191,7 +191,15 @@ export async function executeActions(
   let hold: QuietHold | null = null;
   let dropPeopleFacing = false;
   let stampHold = false;
-  if (!exec.escalation && !exec.repeat) {
+  // Only a fire that would actually TELL someone can be held. An automation
+  // with no notify action — an event trigger that only writes the audit
+  // Event, or only runs a script — has no people-facing send for quiet time
+  // to withhold, so it is never stamped and never appears in a summary: a
+  // summary of "alerts nobody was told about" must not list alerts nobody was
+  // ever going to be told about. (The operator's firmware event automation,
+  // 2026-10-05.)
+  const peopleFacing = actions.some((a) => a.type === "notify");
+  if (!exec.escalation && !exec.repeat && peopleFacing) {
     // Fails toward "deliver" (no hold, no drop), logged: the same posture the
     // hold service takes for its own reads — a read error here must never
     // cost an alert its audience.
