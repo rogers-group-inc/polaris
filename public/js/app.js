@@ -1303,7 +1303,7 @@ function renderNav() {
 
   sidebar.innerHTML = `
     <div class="sidebar-brand">
-      <img src="/img/brand/polaris-vert-dark.png" alt="" class="sidebar-logo brand-mark brand-mark-sidebar" style="visibility:hidden">
+      <img src="/img/brand/polaris-vert-dark.png" alt="" class="sidebar-logo brand-mark brand-mark-sidebar" decoding="sync" style="visibility:hidden">
       <h1 style="font-size:1.1rem;font-weight:600;margin:0.5rem 0 0;color:var(--color-text-primary);text-align:center;visibility:hidden;display:none">Polaris</h1>
       <p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0.15rem 0 0;text-align:center;visibility:hidden">Network Management Tool</p>
     </div>

@@ -11,6 +11,8 @@
  * route surface is unchanged.
  */
 
+import { createHash } from "node:crypto";
+import { stat } from "node:fs/promises";
 import { prisma } from "../db.js";
 import { getAppVersion } from "../utils/version.js";
 
@@ -126,7 +128,51 @@ export function displayAppName(branding: { appName?: string | null }): string {
 
 const APP_VERSION: string = getAppVersion();
 
-export async function getBranding(): Promise<BrandingSettings & { version: string; customLogo: boolean }> {
+/**
+ * A short version for the custom logo's URL (`?v=`), so the image can be
+ * cached for good. The upload route writes a FIXED filename, which is why the
+ * logo used to be served `no-cache`: the URL could not tell a new upload from
+ * the old one, so every page load had to ask again — and the sidebar painted
+ * with no logo while it did, popping it in on every page change. The file's
+ * mtime and size change on every upload (the same signal appIconService and
+ * brandLogoService key their caches on); the app version covers the Polaris
+ * symbol the accent composite draws in, which changes only with Polaris.
+ */
+export function logoVersionStamp(mtimeMs: number, size: number, appVersion: string): string {
+  return createHash("sha256").update(`${mtimeMs}|${size}|${appVersion}`).digest("hex").slice(0, 12);
+}
+
+/** The custom logo's version, or null with no custom logo or no readable file. */
+export async function getLogoVersion(logoUrl: string): Promise<string | null> {
+  if (!hasCustomLogo(logoUrl)) return null;
+  try {
+    // Lazy: appIconService imports this module, so a static import here would
+    // be a cycle. resolveBrandingLogoFile is the one definition of "which file
+    // is the logo", including the inside-UPLOADS_DIR check.
+    const { resolveBrandingLogoFile } = await import("./appIconService.js");
+    const resolved = resolveBrandingLogoFile(logoUrl);
+    if (!resolved.ok) return null;
+    const st = await stat(resolved.path);
+    return logoVersionStamp(st.mtimeMs, st.size, APP_VERSION);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Cache-Control for a logo response. Long-lived and immutable ONLY when the
+ * request names the current version: that URL can never mean different bytes,
+ * because a new upload changes the version and so the URL. Anything else — no
+ * `v` (a payload cached before this field existed) or a stale one — keeps the
+ * old revalidate-every-time behaviour, so a stale URL can never pin old bytes.
+ */
+export function logoCacheControl(requestedVersion: unknown, currentVersion: string | null): string {
+  return typeof requestedVersion === "string" && currentVersion !== null && requestedVersion === currentVersion
+    ? "public, max-age=31536000, immutable"
+    : "no-cache";
+}
+
+export async function getBranding(): Promise<BrandingSettings & { version: string; customLogo: boolean; logoVersion: string | null }> {
   const row = await prisma.setting.findUnique({ where: { key: "branding" } });
   const saved = row ? (row.value as Record<string, unknown>) : {};
   const logoUrl = (saved.logoUrl as string) || BRANDING_DEFAULTS.logoUrl;
@@ -142,6 +188,9 @@ export async function getBranding(): Promise<BrandingSettings & { version: strin
     // Derived, so the frontends never hardcode the default logo's path to
     // work out whether a custom one is in play.
     customLogo: hasCustomLogo(logoUrl),
+    // Derived too: the frontends append it to the logo URL (brand-logo.js) so
+    // the image routes can answer it as immutable. See logoVersionStamp.
+    logoVersion: await getLogoVersion(logoUrl),
     version:  APP_VERSION,
   };
 }
