@@ -3,6 +3,33 @@
    overrides it wholesale for `morning`/`noon`. Neither is a theme on its own —
    theme-init.js always sets a data-theme, and the retired `dark`/`light` ids
    are no longer recognized anywhere. */
+
+/* The page glow's geometry and stops, registered so they can TRANSITION. A
+   gradient is a background-image, and a background-image cuts from one value
+   to the next. Typed custom properties interpolate, so the theme crossfade
+   moves these and the one gradient built from them (--page-glow below) is
+   repainted at every step. That is what carries morning's sun up from the
+   bottom edge to noon's wash at the top. Values and the transition are in
+   :root and the data-theme-fading block; mobile.css registers the same set. */
+@property --page-glow-y   { syntax: "<percentage>"; inherits: true; initial-value: 0%; }
+@property --page-glow-w   { syntax: "<length>"; inherits: true; initial-value: 0px; }
+@property --page-glow-h   { syntax: "<length>"; inherits: true; initial-value: 0px; }
+@property --page-glow-c0  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-c1  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-c2  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-c3  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-p1  { syntax: "<percentage>"; inherits: true; initial-value: 9%; }
+@property --page-glow-p2  { syntax: "<percentage>"; inherits: true; initial-value: 26%; }
+@property --page-glow-p3  { syntax: "<percentage>"; inherits: true; initial-value: 50%; }
+@property --page-glow-end { syntax: "<percentage>"; inherits: true; initial-value: 70%; }
+/* Nightfall's glow is a second layer that SLIDES rather than fades: in from
+   off the left edge on the turn from noon, out past the right edge on the
+   turn to morning. Only its horizontal centre moves; see --night-glow. */
+@property --night-glow-x  { syntax: "<percentage>"; inherits: true; initial-value: -100%; }
+@property --night-glow-c { syntax: "<color>"; inherits: true; initial-value: rgba(255,255,255,.35); }
+@property --night-glow-w { syntax: "<percentage>"; inherits: true; initial-value: 70%; }
+@property --night-glow-h { syntax: "<percentage>"; inherits: true; initial-value: 30%; }
+
 :root {
   --color-bg-primary: #151528;
   --color-bg-secondary: #0d0d1a;
@@ -102,13 +129,72 @@
      resolves to each theme's own accent. The daylight base thins it (a wash
      that reads as light on indigo reads as a stain on a pale ground), and
      noon swaps the hue for sunlight yellow — its ground is near-white and a
-     terracotta wash there reads as rust, not light. The phone carries the
+     terracotta wash there reads as rust, not light. Morning resets the
+     glow's parts into a sunrise rising from the bottom, and nightfall
+     turns it off for a second, sliding layer (--night-glow). The phone carries the
      same recipe in mobile.css (--page-glow there, off --md-primary). */
   --page-glow-color: var(--color-accent);
   --page-glow-strength: 17.6%;
-  --page-glow: radial-gradient(ellipse 140% 60% at 50% 0%,
-    color-mix(in srgb, var(--page-glow-color) var(--page-glow-strength), transparent) 0%,
+  /* A theme normally sets only the colour and strength above; these derive
+     the stops from them. The intermediate stops sit on the straight line from
+     the core to transparent at --page-glow-end (alpha x 0.871 / 0.629 / 0.286
+     at 9 / 26 / 50 of 70), so the five-stop gradient paints exactly the
+     two-stop wash it replaced. They exist so morning can bend them. */
+  --page-glow-y: 0%;
+  /* Viewport units, NOT percentages, though they paint the same oval (the
+     glow's box is the viewport). The morning -> noon rounding animates the
+     size through a vmin circle, and a percentage-to-length animation
+     passes through mixed values like calc(70% + 230px), which Chromium
+     rejects as a radial-gradient size: the WHOLE gradient goes to `none`
+     and both glows vanish for the turn. Registered as <length>, these
+     resolve to plain px, which every frame accepts. */
+  --page-glow-w: 140vw;
+  --page-glow-h: 60vh;
+  --page-glow-c0: color-mix(in srgb, var(--page-glow-color) var(--page-glow-strength), transparent);
+  --page-glow-c1: color-mix(in srgb, var(--page-glow-c0) 87.1%, transparent);
+  --page-glow-c2: color-mix(in srgb, var(--page-glow-c0) 62.9%, transparent);
+  --page-glow-c3: color-mix(in srgb, var(--page-glow-c0) 28.6%, transparent);
+  --page-glow-p1: 9%;
+  --page-glow-p2: 26%;
+  --page-glow-p3: 50%;
+  --page-glow-end: 70%;
+  /* Nightfall's moonlight-blue wash, its own layer so it can slide while the
+     main glow fades. Parked off-screen in every other theme: -100% (left of
+     the viewport, waiting to slide in) on noon, 50% on nightfall AND on the
+     afternoon waypoint (so the one 2 s slide spans both legs of
+     noon → nightfall unbroken), and 200% (gone past the right edge) on morning. Its visible
+     radius is 70% of a 140% radius, ~98% of the width, so -100% / 200% are
+     JUST clear of the screen. Further out and the slide spends its fast
+     first half off-screen: at ±200% the exit was over in a quarter of the
+     fade. Saturated blue rather than nightfall's pastel accent, which went
+     grey slate at this faintness. */
+  --night-glow-x: -100%;
+  /* WHITE at 35% parked here on noon, the entry, and a MOONLIGHT blue,
+     #6d97ff at 12.3% — the electric #2f6bff with 30% white mixed in,
+     duller and softer — at rest on nightfall and parked on morning. The
+     glow's 2 s transition carries the one colour with the slide: it comes
+     in as a white light and cools to the blue as it lands, and leaves for
+     morning still blue (the exit changes position and size only). A stronger blue was tried first and still read as nothing over
+     the grounds it crosses mid-turn (the afternoon tan into indigo); white
+     is what shows against both. One registered <color>, not a hue plus a
+     strength, so hue and alpha move together. */
+  --night-glow-c: rgba(255,255,255,.35);
+  /* HALF size wherever it is parked (70% x 30% against nightfall's 140% x 60%):
+     the white light comes in small and grows to the full wash as it cools
+     to blue, and shrinks back as it leaves. */
+  --night-glow-w: 70%;
+  --night-glow-h: 30%;
+  --night-glow: radial-gradient(ellipse var(--night-glow-w) var(--night-glow-h) at var(--night-glow-x) 0%,
+    var(--night-glow-c) 0%,
     transparent 70%);
+  --page-glow:
+    var(--night-glow),
+    radial-gradient(ellipse var(--page-glow-w) var(--page-glow-h) at 50% var(--page-glow-y),
+      var(--page-glow-c0) 0%,
+      var(--page-glow-c1) var(--page-glow-p1),
+      var(--page-glow-c2) var(--page-glow-p2),
+      var(--page-glow-c3) var(--page-glow-p3),
+      transparent var(--page-glow-end));
   /* ── Frosted panel surfaces ────────────────────────────────────────────────
      Modals and slide-overs are 50% of the theme's own panel colour over a
      blurred backdrop, so the page stays faintly legible behind them. Declared
@@ -314,9 +400,10 @@
      of the control — and never hard-code a width here: the art is a 2x asset
      sized by height, so what it renders at depends on this band's height and
      the display's pixel ratio.
-   - The edge fades live on the WINDOW and never on the track. A mask on the
-     track travels with it and would fade a moving slice of the artwork instead
-     of the ends of the window. ──────────────────────────────── */
+   - The edge fades live on the WINDOW and never on the track, as a mask to
+     transparent. A mask on the track travels with it and would fade a moving
+     slice of the artwork instead of the ends of the window; a colour painted
+     over the ends shows as a block on the glass rail. ──────────────────────────────── */
 .theme-band {
   display: block;
   width: 100%;
@@ -339,6 +426,15 @@
   height: 32px;
   overflow: hidden;
   border-radius: var(--radius-sm);
+  /* Both ends fade to TRANSPARENT, so the strip reads as continuing past the
+     sidebar rather than being cropped by it, and whatever the rail shows
+     comes through at the ends. A mask, not a colour painted over the art:
+     the rail is frosted glass over the page glow, so no single token
+     matches what is behind it, and the old --color-bg-tertiary overlay
+     showed as two solid blocks at the ends. On the window, never the track
+     (see the block comment). */
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 18%, #000 82%, transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 18%, #000 82%, transparent 100%);
 }
 .theme-band-track {
   position: absolute;
@@ -359,18 +455,6 @@
   pointer-events: none;
   user-select: none;
   -webkit-user-drag: none;
-}
-/* Both ends fade into the rail's own token, so the strip reads as continuing
-   past the sidebar rather than being cropped by it. Painted ON TOP of the
-   track — see the block comment. */
-.theme-band-window::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(to right,
-    var(--color-bg-tertiary) 0%, rgba(0,0,0,0) 18%,
-    rgba(0,0,0,0) 82%, var(--color-bg-tertiary) 100%);
 }
 /* Hover is a tint on the button and nothing else — the same affordance the
    sidebar's other bottom links carry, and with the caption gone there is no
@@ -412,7 +496,122 @@ html[data-theme-fading] *:not(.theme-band-track)::after {
               box-shadow 800ms cubic-bezier(0.22, 0.61, 0.36, 1);
   transition-delay: 0s;
 }
+/* The page glow's parts live on <html> itself, which the rule above does not
+   match (it selects descendants). Transitioning them here is what moves the
+   glow: morning → noon climbs the sun from the bottom edge to the top, and
+   every other change fades its glow instead of cutting it. Children inherit
+   the in-between values, so nothing below needs to list them.
+
+   On its OWN clock, deliberately longer than the 800 ms palette crossfade:
+   at 800 ms the light moved while the whole page was swinging from white to
+   indigo, and nobody saw it. So the palette and the band land together as
+   before, and the light keeps drifting into place after them. Two things
+   follow:
+   - The rule is on bare `html`, NOT html[data-theme-fading]. That attribute
+     comes off at 880 ms, and a transition whose property leaves
+     transition-property is cancelled on the spot, so a 2 s glow would jump to
+     its end the moment the palette landed.
+   - No phase easing (the in/mid/out rules below leave html out). The glow
+     does not stop at a waypoint: afternoon carries nightfall's glow values,
+     so the turn from noon starts ONE 2 s glow transition and the second leg,
+     changing nothing, lets it run on. A per-leg curve on it would lurch. */
+/* Keyed on data-glow-turn, which ONLY a theme change sets (the band /
+   strip step, for the glow's own clock): never page load. The app pages
+   apply the saved theme from app.js at the end of <body>, after the first
+   style pass ran with no data-theme at all, so an always-on transition
+   here played the dark base's glow into the real one on EVERY page load —
+   sky blue fading to noon's yellow, the night glow sliding in on
+   nightfall. Gated, a page load just paints the theme's glow. The noon and
+   morning rules below only narrow the property list, which does nothing
+   without this rule's duration. */
+html[data-glow-turn] {
+  transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
+    --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
+    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
+    --night-glow-x, --night-glow-w, --night-glow-h, --night-glow-c;
+  transition-duration: 2000ms;
+  /* One curve per property, in transition-property's order. Position and
+     the main glow ease in and out; the night glow's size and colour (the
+     last three) take a gentle sine curve, so the white light grows and
+     cools to blue evenly across the whole 2 s rather than mostly at one
+     end. Rules with shorter property lists (noon's) cut this list to fit,
+     which is why the night glow's parts must stay LAST. */
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
+    cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
+  transition-delay: 0s;
+}
+/* What must NOT move, by destination — each one a jump made while the
+   thing jumping is invisible, so it never shows:
+   - into noon (from morning): the night glow jumps from the right edge back
+     to the left, ready for the next nightfall. Animated, it would sweep
+     across the page right to left.
+   - into morning (from nightfall): the main glow is transparent on
+     nightfall, so its geometry jumps to the sunrise's and only the colours
+     fade, bringing the sun up in place at the bottom while the blue slides
+     out to the right. */
+/* Noon → nightfall's glow move takes 2.5 s, half a second longer than the
+   other turns' 2 s; the palette keeps its 1.6 s. Keyed on the AFTERNOON
+   waypoint because that is where the turn's one glow transition starts —
+   afternoon carries nightfall's glow values, so the second leg changes
+   nothing and the transition runs on at this duration. Duration only;
+   the property list and curves are the bare html rule's. */
+html[data-glow-turn][data-theme="afternoon"] {
+  transition-duration: 2500ms;
+}
+html[data-theme="noon"] {
+  transition-property: --page-glow-y,
+    --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
+    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
+}
+/* Morning → noon: the sun's glow ROUNDS as it climbs — morning's oval, a
+   circle half way up, noon's oval — instead of going straight from one
+   oval to the other. A transition only runs start → end, so the shape is
+   a keyframe animation, on the glow's own 2 s and a per-half ease, so the
+   circle comes half way through (the climb runs ahead of it, so the sun
+   is near the top by then, ~18% down). Two things keep it working:
+   - The noon rule above does NOT transition --page-glow-w / -h: a running
+     transition outranks an animation in the cascade and would flatten the
+     circle back into a straight oval-to-oval.
+   - It keys on data-glow-turn, which the theme script holds for the
+     glow's 2 s (GLOW_MS); data-theme-fading comes off at 880 ms and would
+     cut it short. The end frame equals noon's own values, so nothing
+     jumps when the attribute drops.
+   The height reaching the width (140vw) is a true circle on any screen
+   shape, which a percentage pair (of width, of height) never is. */
+html[data-glow-turn="morning-noon"] {
+  animation: page-glow-round 2000ms cubic-bezier(0.37, 0, 0.63, 1);
+}
+@keyframes page-glow-round {
+  /* Round by 12.5% (0.25 s), and HELD round until three quarters (1.5 s):
+     the sun is a circle almost as soon as it leaves the horizon and for
+     most of its climb, not for an instant half way. The WIDTH never
+     moves (140vw, the oval's own): the height swells to match it, so the
+     circle is as wide as the oval it grew from. Shrinking the width to a
+     small circle read as the glow narrowing. */
+  0%   { --page-glow-h: 75vh; }
+  12.5%, 75% { --page-glow-h: 140vw; }
+  100% { --page-glow-h: 60vh; }
+}
+html[data-theme="morning"] {
+  transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
+    --night-glow-x, --night-glow-w, --night-glow-h, --night-glow-c;
+  /* The exit is the entrance played backwards: same path, mirrored. Its
+     position takes the REVERSED ease (STD's control points swapped and
+     flipped), so it eases off the centre slowly the way the entrance eased
+     in to land, and speeds up as it leaves. On the same curve as the
+     entrance it looked ~40% faster: the glow is big and already on screen
+     at the start, so the fast middle of the ease was the part you saw, and
+     it was gone in 1.05 s against the entrance's 1.46 s on screen. Mirrored,
+     both are on screen 1.46 s at the same speeds. Size and colour keep the
+     gentle sine, which is symmetric already: it shrinks to half size
+     evenly, and stays the moonlight blue (morning parks it in that colour). */
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
+    cubic-bezier(0.8, 0, 0.6, 1),
+    cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
+}
 @media (prefers-reduced-motion: reduce) {
+  html, html[data-theme], html[data-glow-turn], html[data-glow-turn][data-theme] { transition: none; }
+  html[data-glow-turn] { animation: none; }
   html[data-theme-fading] *:not(.theme-band-track),
   html[data-theme-fading] *:not(.theme-band-track)::before,
   html[data-theme-fading] *:not(.theme-band-track)::after { transition: none; }
@@ -453,6 +652,48 @@ html[data-theme-fading="out"] *:not(.theme-band-track)::before,
 html[data-theme-fading="out"] *:not(.theme-band-track)::after,
 html[data-theme-fading="out"] .theme-band-track { transition-timing-function: cubic-bezier(0, 0, 0.36, 1); }
 
+/* ─── The slow step: nightfall → morning ──────────────────────
+   Twice THEME_FADE_MS. It is a single step where noon → nightfall gets two,
+   so dark to light came in a snap; at 1.6 s the two big turns of the day
+   take the same time. Duration only — the curve stays whatever the phase
+   rules above give it — and the palette and the band's travel together, so
+   they still land as one. The number lives in THEME_LEG_MS in app.js too,
+   which holds the fading attribute (and the seam) for the same 1.6 s:
+   change one, change both. The two extra attribute selectors are what
+   outrank the crossfade and phase rules. */
+html[data-theme-fading][data-theme="morning"] *:not(.theme-band-track),
+html[data-theme-fading][data-theme="morning"] *:not(.theme-band-track)::before,
+html[data-theme-fading][data-theme="morning"] *:not(.theme-band-track)::after,
+html[data-theme-fading][data-theme="morning"] .theme-band-track { transition-duration: 1600ms; }
+
+/* ─── Page changes: a crossfade, not a reload ──────────────────────────────
+   Every sidebar link is a full page load. A cross-document view transition
+   makes the browser crossfade old page to new instead of cutting, and the
+   rail — named below — is captured on its own, so it holds still while the
+   page beside it changes. Progressive: Chromium 126+ and Safari 18.2+; any
+   other browser ignores the at-rule and loads as before.
+
+   It only works because the NEW page's first paint already has a finished,
+   themed rail, which is what the transition snapshots. Three things make it
+   so, and losing any one brings the blink back:
+   - theme-init.js in each page's <head> applies the saved theme before the
+     first style pass (app.js used to, from the end of <body>);
+   - app.js builds the nav and brand from the cached user at the END of the
+     file, before first paint, not at DOMContentLoaded (_renderNavFromCache);
+   - <link rel="expect" href="#polaris-nav-ready" blocking="render"> holds
+     the first paint until the parser reaches the marker after app.js.
+   A new app page needs all three. */
+@view-transition { navigation: auto; }
+.sidebar { view-transition-name: polaris-sidebar; }
+/* Short: long enough to read as one surface changing, short enough that a
+   quick click-through never waits on it. */
+::view-transition-group(root),
+::view-transition-old(root),
+::view-transition-new(root) { animation-duration: 180ms; }
+@media (prefers-reduced-motion: reduce) {
+  @view-transition { navigation: none; }
+}
+
 /* ─── Reset ────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { font-size: 14px; color-scheme: dark; }
@@ -460,9 +701,15 @@ html { font-size: 14px; color-scheme: dark; }
 body {
   font-family: var(--font-sans);
   color: var(--color-text-primary);
-  /* Fixed so the glow stays at the top of the viewport as the page scrolls —
-     it is light from above the screen, not a mark on the first screenful. */
-  background: var(--page-glow) no-repeat fixed, var(--color-bg-secondary);
+  /* Fixed so the glow stays put in the viewport as the page scrolls (at the
+     top, or morning's at the bottom) — it is light, not a mark on the first
+     screenful. */
+  /* Longhands, not `var(--page-glow) no-repeat fixed` in the shorthand: the
+     glow is two layers, and a shorthand's per-layer keywords apply to the
+     layer they follow, so the night layer would scroll and tile. */
+  background: var(--page-glow), var(--color-bg-secondary);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -513,14 +760,32 @@ code {
   --shadow-panel: 0 24px 64px rgba(70,45,10,.32), 0 2px 10px rgba(70,45,10,.20);
   --shadow-control: 0 2px 5px rgba(70,45,10,.30), 0 1px 2px rgba(70,45,10,.20), inset 0 1px 0 rgba(255,255,255,.55);
   --shadow-card: 0 8px 32px rgba(70,45,10,.22), 0 2px 6px rgba(70,45,10,.18), inset 0 1px 0 rgba(255,255,255,.55);
-  /* Warm white (this theme's own --color-surface), clearly LIGHTER than the
-     parchment ground, so it reads as early sun brightening the top of the
-     page. Lightness is what shows here, not hue. All three earlier attempts
-     failed on that: the brown-orange accent (#b25e0a) darkened the top into
-     mud, vivid orange (#ff8a00 at 7.8%) matched the orange-tan ground, and
-     pale gold (#ffe08a at 30%) was no lighter than it. */
-  --page-glow-color: #fff8e8;
-  --page-glow-strength: 50%;
+  /* Sunrise: the one theme whose glow rises from the BOTTOM centre, a sun on
+     the horizon rather than light from above. Sets the glow's parts (see
+     the @property block at the top of this file), not just its colour,
+     because the anchor and every stop differ. A warm-white core (lightness is
+     what reads on parchment; the brown accent darkened into mud, vivid orange
+     alone matched the tan ground) through gold into an orange haze that
+     fades out by mid-screen. On the turn to noon the crossfade carries every
+     one of these to noon's values, so the sun climbs to the top as it pales.
+     Never override --page-glow itself here: a whole gradient cannot
+     transition, and the climb would become a cut. */
+  --page-glow-y: 100%;
+  --page-glow-h: 75vh;
+  --page-glow-c0: rgba(255,246,220,.90);
+  --page-glow-c1: rgba(255,210,122,.55);
+  --page-glow-c2: rgba(243,154,76,.34);
+  --page-glow-c3: rgba(238,154,90,.14);
+  --page-glow-end: 78%;
+  /* Night glow gone past the right edge: the turn from nightfall slides it
+     out that way. */
+  --night-glow-x: 200%;
+  /* The exit to morning keeps nightfall's moonlight blue: the glow slides
+     out and shrinks, but its colour does not change. Only the entry from
+     noon is white (35%). Morning -> noon swaps blue for white while the
+     glow is parked off-screen (the noon rule does not transition it), so
+     it never shows. */
+  --night-glow-c: rgba(109,151,255,.123);
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────
@@ -596,6 +861,21 @@ code {
   --shadow-panel: 0 24px 64px rgba(90,30,10,.28), 0 2px 10px rgba(90,30,10,.16);
   --shadow-control: 0 2px 5px rgba(90,30,10,.26), 0 1px 2px rgba(90,30,10,.16), inset 0 1px 0 rgba(255,255,255,.55);
   --shadow-card: 0 8px 32px rgba(90,30,10,.20), 0 2px 6px rgba(90,30,10,.15), inset 0 1px 0 rgba(255,255,255,.55);
+  /* NIGHTFALL'S glow values, not a half-way point. The glow runs on its own
+     2 s clock (see the html rule in the crossfade block), so the turn from
+     noon starts a single glow transition here, and the second leg into
+     nightfall changes none of these values and lets it run on unbroken —
+     noon's sunlight rising up and away as it fades, the blue sliding in
+     bright and settling. A half-way value here would restart the glow mid-
+     flight at 800 ms and lurch. The colour stays noon's sunlight (not this
+     palette's clay accent) so the fade never turns into a colour change. */
+  --page-glow-color: #ffc928;
+  --page-glow-strength: 0%;
+  --page-glow-y: -45%;
+  --night-glow-x: 50%;
+  --night-glow-c: rgba(109,151,255,.123);
+  --night-glow-w: 140%;
+  --night-glow-h: 60%;
 }
 
 /* ─── Nightfall ──────────────────────────────────────────────────────────────
@@ -632,12 +912,18 @@ code {
      pushed hardest and still does almost nothing — the inset rim is carrying
      this one, and it is a hair brighter here than in the :root dark base. */
   --shadow-card: 0 8px 32px rgba(0,0,0,.65), 0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
-  /* 30% under the dark family's 17.6%. At that strength the sky-blue
-     accent (#4bbcee), a light pastel, mixed into near-black came out a grey
-     slate haze (~rgb(21,35,54) at the peak), so nightfall's glow takes a
-     deep saturated electric blue instead: same faintness, real colour. */
-  --page-glow-color: #2f6bff;
-  --page-glow-strength: 12.3%;
+  /* Nightfall's glow is the sliding --night-glow layer (moonlight blue at
+     12.3%, see :root), centred here. The main glow is off and parked above
+     the top edge: on the turn from noon its sunlight rises up and away as it
+     fades (afternoon carries the same values), while the blue slides in from
+     the left. Its visible half-height is 70% of a 60% radius, 42% of the
+     viewport, so -45% is just clear. */
+  --page-glow-strength: 0%;
+  --page-glow-y: -45%;
+  --night-glow-x: 50%;
+  --night-glow-c: rgba(109,151,255,.123);
+  --night-glow-w: 140%;
+  --night-glow-h: 60%;
 }
 
 /* ─── Layout ───────────────────────────────────────────────────────────────── */

@@ -75,6 +75,45 @@ describe("the band and the strip read the same clock", () => {
     expect(MOBILE_APP_JS).toContain("var THEME_FADE_MS = 800;");
   });
 
+  it("rounds the sun's glow on morning -> noon on both, keyed on the glow's own 2 s", () => {
+    // The shape is a keyframe animation on data-glow-turn, which both scripts
+    // hold for GLOW_MS. Noon's rule must not transition the glow's size: a
+    // running transition outranks the animation and would flatten the circle.
+    for (const js of [APP_JS, MOBILE_APP_JS]) {
+      expect(js).toContain("var GLOW_MS = 2000;");
+      expect(js).toContain('root.setAttribute("data-glow-turn", fromId + "-" + toId);');
+    }
+    for (const name of ["styles.css", "mobile.css"]) {
+      const css = readFileSync(join(process.cwd(), "public", "css", name), "utf-8");
+      expect(css).toContain('html[data-glow-turn="morning-noon"] {\n  animation: page-glow-round 2000ms');
+      // Round at constant width: only the height moves, up to the oval's width.
+      expect(css).toMatch(/12\.5%, 75% \{ --page-glow-h: 1[48]0vw; \}/);
+      const keyframes = css.slice(css.indexOf("@keyframes page-glow-round"), css.indexOf("}\n}", css.indexOf("@keyframes page-glow-round")));
+      expect(keyframes).not.toContain("--page-glow-w");
+      // Noon -> nightfall's glow runs 2.5 s, keyed on the afternoon waypoint.
+      expect(css).toContain('html[data-glow-turn][data-theme="afternoon"] {\n  transition-duration: 2500ms;\n}');
+      // Glow transitions only during a theme change, never on page load.
+      expect(css).toContain("html[data-glow-turn] {\n  transition-property: --page-glow-y,");
+      expect(css).not.toContain("html {\n  transition-property: --page-glow-y,");
+      const noon = css.slice(css.indexOf('html[data-theme="noon"] {'), css.indexOf("}", css.indexOf('html[data-theme="noon"] {')));
+      expect(noon).not.toContain("--page-glow-w");
+      expect(noon).not.toContain("--page-glow-h");
+    }
+  });
+
+  it("slows the same step on both, by the same amount, in JS and CSS alike", () => {
+    // Nightfall -> morning takes 1.6 s. The JS holds the fading attribute (and
+    // the seam) that long; the CSS gives the palette and the travel the same
+    // duration. A mismatch either cuts the fade short or lands the band early.
+    const decl = "var THEME_LEG_MS = { morning: 1600 };";
+    expect(APP_JS).toContain(decl);
+    expect(MOBILE_APP_JS).toContain(decl);
+    const styles = readFileSync(join(process.cwd(), "public", "css", "styles.css"), "utf-8");
+    const mobile = readFileSync(join(process.cwd(), "public", "css", "mobile.css"), "utf-8");
+    expect(styles).toContain('html[data-theme-fading][data-theme="morning"] .theme-band-track { transition-duration: 1600ms; }');
+    expect(mobile).toContain('html[data-theme-fading][data-theme="morning"] .theme-strip-track { transition-duration: 1600ms; }');
+  });
+
   it("anchors both tracks one strip width left of the marker", () => {
     // The `+ 1` is the anchor, and it is what the three copies of the art
     // exist to cover. Drop it on one side and that screen shows bare surface

@@ -79,6 +79,10 @@ const harness = [
   'var DEFAULT_THEME = "nightfall";',
   'var THEME_BAND_ART = "/img/brand/time-strip.png";',
   "var THEME_FADE_MS = 800;",
+  extractDecl("var THEME_LEG_MS = {", "};"),
+  extractFn("_themeLegMs"),
+  "var GLOW_MS = 2000, _glowTurnTimer = null;",
+  extractFn("_markGlowTurn"),
   "var _bandPos = null, _bandSeamTimer = null, _themeFadeTimer = null;",
   "var _themeDest = null, _themeChainTimer = null;",
   extractFn("_getTheme"),
@@ -230,8 +234,15 @@ describe("sidebar theme band placement", () => {
 describe("theme band CSS", () => {
   it("fades the window's edges and never the track", () => {
     // A mask on the track travels with it and would fade a moving slice of the
-    // artwork instead of the ends of the window.
-    expect(STYLES_CSS).toContain(".theme-band-window::after");
+    // artwork instead of the ends of the window. The window's fade is a mask to
+    // TRANSPARENT, not a colour painted over the ends: the rail is glass, and a
+    // token-coloured overlay showed as solid blocks on it.
+    const win = STYLES_CSS.slice(
+      STYLES_CSS.indexOf(".theme-band-window {"),
+      STYLES_CSS.indexOf(".theme-band-track {"),
+    );
+    expect(win).toMatch(/\bmask-image:\s*linear-gradient\(to right, transparent 0%/);
+    expect(STYLES_CSS).not.toContain(".theme-band-window::after");
     const track = STYLES_CSS.slice(
       STYLES_CSS.indexOf(".theme-band-track {"),
       STYLES_CSS.indexOf(".theme-band-track img"),
@@ -450,6 +461,32 @@ describe("the band travels", () => {
     expect(document.documentElement.getAttribute("data-theme-fading")).toBe("out");
     // Only the real theme is remembered.
     expect(localStorage.getItem("polaris-theme")).toBe("nightfall");
+  });
+
+  it("names the glow's turn for the glow's whole 2 s, past the palette fade", () => {
+    api.advanceTheme(); // morning -> noon
+    const root = document.documentElement;
+    expect(root.getAttribute("data-glow-turn")).toBe("morning-noon");
+    // data-theme-fading is gone by now; the glow's rounding is not done.
+    vi.advanceTimersByTime(1500);
+    expect(root.hasAttribute("data-theme-fading")).toBe(false);
+    expect(root.getAttribute("data-glow-turn")).toBe("morning-noon");
+    vi.advanceTimersByTime(700);
+    expect(root.hasAttribute("data-glow-turn")).toBe(false);
+  });
+
+  it("holds nightfall -> morning for 1.6 s, twice the other steps", () => {
+    api.setTheme("nightfall");
+    vi.advanceTimersByTime(800 * 3);
+    expect(document.documentElement.hasAttribute("data-theme-fading")).toBe(false);
+    api.advanceTheme(); // -> morning, the slow step
+    expect(document.documentElement.getAttribute("data-theme")).toBe("morning");
+    // Past an ordinary step's 880 ms the fade is still armed: removing the
+    // attribute there would cut the 1.6 s palette transition short.
+    vi.advanceTimersByTime(1200);
+    expect(document.documentElement.getAttribute("data-theme-fading")).toBe("solo");
+    vi.advanceTimersByTime(600);
+    expect(document.documentElement.hasAttribute("data-theme-fading")).toBe(false);
   });
 
   it("only ever travels FORWARD through the day, a quarter per leg", () => {

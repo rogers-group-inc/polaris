@@ -238,7 +238,7 @@ function _advanceThemeBands(id, prevId) {
       _bandSeamTimer = null;
       _bandPos -= 1;
       _paintThemeBands(false);
-    }, THEME_FADE_MS);
+    }, _themeLegMs(id));
   }
 }
 
@@ -256,11 +256,39 @@ if (!window.__polarisBandResize) {
 // Matches the crossfade duration in styles.css (the data-theme-fading block).
 // Change one, change the other.
 var THEME_FADE_MS = 800;
+// Steps that take longer than THEME_FADE_MS, by DESTINATION. Nightfall →
+// morning is one 800 ms step where noon → nightfall gets two (1.6 s), so dark
+// to light came in a snap; it takes the same 1.6 s here. Every timer tied to a
+// step's length reads _themeLegMs() — the fading attribute's removal (a
+// transition whose rule leaves is cut short), the seam normalisation (never
+// mid-travel) and the next leg's start — and the [data-theme="morning"] rule
+// in the crossfade block of styles.css carries the same number for the
+// palette and the band's travel. MIRRORS THEME_LEG_MS in mobile/app.js
+// (themeBandParity.test.ts).
+var THEME_LEG_MS = { morning: 1600 };
+function _themeLegMs(id) { return THEME_LEG_MS[id] || THEME_FADE_MS; }
 var _themeFadeTimer = null;
+
+// The page glows run on their own, longer clock (the bare `html` rule in the
+// crossfade block of styles.css). data-glow-turn names the turn — "morning-
+// noon" — for that long, so a glow animation can key on WHICH turn it is
+// (the sun rounding to a circle as it climbs) and outlive data-theme-fading,
+// which comes off at 880 ms. Change GLOW_MS with the CSS's 2000ms.
+var GLOW_MS = 2000;
+var _glowTurnTimer = null;
+function _markGlowTurn(fromId, toId) {
+  var root = document.documentElement;
+  root.setAttribute("data-glow-turn", fromId + "-" + toId);
+  if (_glowTurnTimer) clearTimeout(_glowTurnTimer);
+  _glowTurnTimer = setTimeout(function () {
+    root.removeAttribute("data-glow-turn");
+    _glowTurnTimer = null;
+  }, GLOW_MS + 80);
+}
 
 // Arms the palette crossfade for the length of one change. Called before
 // data-theme moves, so the new values are what gets transitioned TO.
-function _beginThemeFade(phase) {
+function _beginThemeFade(phase, ms) {
   try {
     if (window.matchMedia &&
         window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -271,7 +299,7 @@ function _beginThemeFade(phase) {
   _themeFadeTimer = setTimeout(function () {
     root.removeAttribute("data-theme-fading");
     _themeFadeTimer = null;
-  }, THEME_FADE_MS + 80);
+  }, (ms || THEME_FADE_MS) + 80);
 }
 
 /**
@@ -284,7 +312,7 @@ function _setTheme(theme, phase) {
   var prevId = document.documentElement.getAttribute("data-theme") || DEFAULT_THEME;
   // Only fade a real change — re-applying the current theme (a page re-boot,
   // another tab syncing) should be instant.
-  if (t.id !== prevId) _beginThemeFade(phase);
+  if (t.id !== prevId) { _beginThemeFade(phase, _themeLegMs(t.id)); _markGlowTurn(prevId, t.id); }
   document.documentElement.setAttribute("data-theme", t.id);
   // Waypoints are never saved: a reload mid-turn must land on a real theme.
   if (!t.transit) { try { localStorage.setItem("polaris-theme", t.id); } catch (e) {} }
@@ -362,9 +390,10 @@ function advanceTheme() {
     // rather than two changes with a stop in the middle.
     var phase = legs === 1 ? "solo" : (n === 0 ? "in" : (n === legs - 1 ? "out" : "mid"));
     n++;
-    _setTheme(queue.shift(), phase);
+    var leg = queue.shift();
+    _setTheme(leg, phase);
     if (!queue.length) { _themeDest = null; return; }
-    _themeChainTimer = setTimeout(step, THEME_FADE_MS);
+    _themeChainTimer = setTimeout(step, _themeLegMs(leg));
   })();
 }
 window.advanceTheme = advanceTheme;
@@ -2482,7 +2511,9 @@ if (window.PolarisBrandLogo) {
 async function fetchBranding() {
   try {
     var cached = JSON.parse(localStorage.getItem("polaris-branding") || "null");
-    if (cached) applyBranding(cached, true);
+    // Skipped when the early rail render (_renderNavFromCache) already put it
+    // on the page: each apply kicks an admin update check.
+    if (cached && !_branding) applyBranding(cached, true);
   } catch (_) {}
   try {
     var b = await api.serverSettings.getBranding();
@@ -5273,15 +5304,14 @@ function initSlideoverResize(panelEl, storageKey) {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
-document.addEventListener("DOMContentLoaded", async function () {
-  // Render nav immediately from cache so the sidebar doesn't flash on navigation.
-  // Restore the permission matrix + regions alongside the role NAME so the
-  // first `hideAdminOnlyElements()` call gates correctly — without this, every
-  // permission-gated element (Conflicts button, etc.) would be hidden until
-  // the post-fetch re-render and the change-detection branch below skipped
-  // re-rendering when only the matrix shifted.
-  var roleBeforeFetch = null;
-  var permsBeforeFetch = null;
+// Render nav immediately from cache so the sidebar doesn't flash on navigation.
+// Restore the permission matrix + regions alongside the role NAME so the
+// first `hideAdminOnlyElements()` call gates correctly — without this, every
+// permission-gated element (Conflicts button, etc.) would be hidden until
+// the post-fetch re-render and the change-detection branch below skipped
+// re-rendering when only the matrix shifted. Returns what it rendered from,
+// for the DOMContentLoaded handler's change detection; null on a cold cache.
+function _renderNavFromCache() {
   try {
     var cachedUser = JSON.parse(localStorage.getItem("polaris-user") || "null");
     if (cachedUser && cachedUser.role) {
@@ -5290,12 +5320,28 @@ document.addEventListener("DOMContentLoaded", async function () {
       currentUsername = cachedUser.username;
       currentRolePermissions = cachedUser.permissions || {};
       currentEffectiveRegions = Array.isArray(cachedUser.regions) ? cachedUser.regions : [];
-      roleBeforeFetch = cachedUser.role;
-      permsBeforeFetch = JSON.stringify(currentRolePermissions);
       renderNav();
       hideAdminOnlyElements();
+      // The cached logo and name too: renderNav paints them hidden until
+      // branding arrives, so without this the rail would blink its brand
+      // out and back on every page change.
+      try {
+        var cachedBranding = JSON.parse(localStorage.getItem("polaris-branding") || "null");
+        if (cachedBranding) applyBranding(cachedBranding, true);
+      } catch (_) {}
+      return { role: cachedUser.role, perms: JSON.stringify(currentRolePermissions) };
     }
   } catch (_) {}
+  return null;
+}
+var _navFromCache = null;
+
+document.addEventListener("DOMContentLoaded", async function () {
+  // Normally already done — at the end of this file, before first paint (see
+  // the bottom). Here for a page whose #sidebar was not in the DOM yet then.
+  if (!_navFromCache) _navFromCache = _renderNavFromCache();
+  var roleBeforeFetch = _navFromCache ? _navFromCache.role : null;
+  var permsBeforeFetch = _navFromCache ? _navFromCache.perms : null;
 
   // Wires the observer + backdrop guard and loads the preference under whatever
   // username the cache gave us (possibly none).
@@ -5325,3 +5371,16 @@ document.addEventListener("DOMContentLoaded", async function () {
   // any #view=<type>:<id> or #ip=... hash a search click-through left us.
   setTimeout(processSearchHash, 0);
 });
+
+// ─── Build the rail before first paint ────────────────────────────────────────
+// app.js loads at the end of <body>, so #sidebar is already in the DOM when this
+// runs and everything above is defined. Building the rail from the cached user
+// and branding HERE, rather than at DOMContentLoaded, puts a finished rail in
+// the page's first paint. That is what the cross-document view transition
+// (@view-transition in styles.css) snapshots: the sidebar is a named element
+// that holds still across a page change, and a rail painted empty and filled
+// a moment later would crossfade to blank and pop back in. Each page also
+// holds its first paint until the parser reaches #polaris-nav-ready, the
+// marker right after this script (<link rel="expect" blocking="render"> in
+// its <head>), so the snapshot cannot be taken before this has run.
+if (document.getElementById("sidebar")) _navFromCache = _renderNavFromCache();

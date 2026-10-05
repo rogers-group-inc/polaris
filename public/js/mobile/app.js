@@ -154,7 +154,7 @@ function _advanceThemeStrips(id, prevId) {
       _stripSeamTimer = null;
       _stripPos -= 1;
       _paintThemeStrips(false);
-    }, THEME_FADE_MS);
+    }, _themeLegMs(id));
   }
 }
 
@@ -170,11 +170,33 @@ if (!window.__polarisStripResize) {
 
 // Matches the crossfade duration in mobile.css. Change one, change the other.
 var THEME_FADE_MS = 800;
+// Steps that take longer than THEME_FADE_MS, by destination: nightfall →
+// morning takes 1.6 s, as long as noon → nightfall's two steps. MIRRORS
+// THEME_LEG_MS in public/js/app.js (reasoning there; themeBandParity.test.ts
+// holds them equal), and mobile.css carries the number for the palette and
+// the strip's travel.
+var THEME_LEG_MS = { morning: 1600 };
+function _themeLegMs(id) { return THEME_LEG_MS[id] || THEME_FADE_MS; }
 var _themeFadeTimer = null;
+
+// The glows' own 2 s clock, and the turn they are on, held on <html> for that
+// long so a glow animation can key on it (mobile.css: the sun rounding as it
+// climbs from morning to noon). MIRRORS _markGlowTurn in public/js/app.js.
+var GLOW_MS = 2000;
+var _glowTurnTimer = null;
+function _markGlowTurn(fromId, toId) {
+  var root = document.documentElement;
+  root.setAttribute("data-glow-turn", fromId + "-" + toId);
+  if (_glowTurnTimer) clearTimeout(_glowTurnTimer);
+  _glowTurnTimer = setTimeout(function () {
+    root.removeAttribute("data-glow-turn");
+    _glowTurnTimer = null;
+  }, GLOW_MS + 80);
+}
 
 // Arms the palette crossfade for the length of one change. Called before
 // data-theme moves, so the new values are what gets transitioned TO.
-function _beginThemeFade(phase) {
+function _beginThemeFade(phase, ms) {
   try {
     if (window.matchMedia &&
         window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -185,7 +207,7 @@ function _beginThemeFade(phase) {
   _themeFadeTimer = setTimeout(function () {
     root.removeAttribute("data-theme-fading");
     _themeFadeTimer = null;
-  }, THEME_FADE_MS + 80);
+  }, (ms || THEME_FADE_MS) + 80);
 }
 
 // Where the strip is headed: the destination of a sweep still in flight, or
@@ -213,7 +235,7 @@ window.PolarisTheme = {
     var t = _mobileTheme(MOBILE_THEME_IDS[theme] || theme);
     var prevId = document.documentElement.getAttribute("data-theme") || "nightfall";
     // Only fade a real change — re-applying the current theme should be instant.
-    if (t.id !== prevId) _beginThemeFade(phase);
+    if (t.id !== prevId) { _beginThemeFade(phase, _themeLegMs(t.id)); _markGlowTurn(prevId, t.id); }
     document.documentElement.setAttribute("data-theme", t.id);
     // Waypoints are never saved: a reload mid-sweep must land on a real theme.
     if (!t.transit) { try { localStorage.setItem("polaris-theme", t.id); } catch (e) {} }
@@ -265,9 +287,10 @@ window.PolarisTheme = {
       // changes with a stop in the middle.
       var phase = legs === 1 ? "solo" : (n === 0 ? "in" : (n === legs - 1 ? "out" : "mid"));
       n++;
-      window.PolarisTheme.set(queue.shift(), phase);
+      var leg = queue.shift();
+      window.PolarisTheme.set(leg, phase);
       if (!queue.length) { _themeDest = null; return; }
-      _themeChainTimer = setTimeout(step, THEME_FADE_MS);
+      _themeChainTimer = setTimeout(step, _themeLegMs(leg));
     })();
   },
   // The name of the theme showing, for a caller rendering the strip caption.
