@@ -140,7 +140,8 @@ change-triggered automations are carved out — one that wrote an Event would fe
 its own trigger.
 
 `notification.superseded` records an alert cleared by a carve-out, a
-device-down supersession or a saturated reading.
+device-down supersession (any metric or device-state alert on a device that went
+`down`) or a saturated reading.
 
 ### Security and audit
 

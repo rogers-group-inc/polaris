@@ -109,6 +109,22 @@ Two things deliberately do NOT change. `readMonitorHistory.stats.packetLossRate`
 
 <a id="rule-30"></a>
 
+### Rule 29(i) — every reading the device reports hands off on `down` (2026-10-05)
+
+**Incident.** An SD-WAN SLA packet-loss alert (`sdwanPacketLoss >= 5`) was live on a gate's overlay when the gate itself went down. The asset-down alert fired. The SLA alert did not clear: `ANSWERING_ONLY_METRICS` held `probeLossPct` alone, and an in-scope asset with no readings stays FROZEN in `clearVanishedStates`, so the SLA alert sat beside the asset-down alert for twelve hours. When the modem was power-cycled the gate came back, asset-down resolved, the next SD-WAN poll read the overlay healthy, and the frozen alert recovered through its own automation, mailing a second "resolved" for an outage the operator had already been told was over. The old comment's reasoning ("every other metric is derived from SUCCESSFUL polls, so a dark device simply stops producing readings and its alerts freeze rather than newly firing") was right about new fires and silent about an alert that was ALREADY live when the device went dark.
+
+**Rule.** A device that is `down` hands every live alert about something it reports to asset-down, with the same contract as (a)/(e): `clearedBy="system:device-down"`, a `notification.superseded` Event with `reason:"device-down"`, no reset actions, pending rows reset, and the asset is left out of evaluation, so nothing new fires while it is dark. If the condition is still bad when the device comes back, it re-earns its debounce and fires a fresh alert. That is correct, because it is a new observation after the outage. `notificationEngine → triggerHandsOffWhenDeviceDown` decides which triggers this applies to, and `assetIsDown` decides which assets. Both `evaluateThresholdRule` (into `notAnsweringIds`) and `evaluateCompositeRule` (its own `deviceDownIds`) apply it.
+
+- **`down` alone**, not "not answering". `passive` and `unknown` have no asset-down alert to hand to (the (a) reasoning for `passive`). `recovering` is answering again, so its readings are real. `probeLossPct` keeps its own wider gate from (a).
+- **Hands off:** every `asset_metric` except the `path*` metrics, and every `asset_state` field the device reports (`ifOperStatus` / `ifAdminStatus` / `ifIpAddress` / `poeStatus` / `ipsecStatus` / `sdwanRuleStatus` / `sdwanSelectedMember` / `sdwanMemberState` / `fortilinkStatus`).
+- **Kept** (`DEVICE_DOWN_KEEPS_STATE_FIELDS`): the outage itself (`monitorStatus`, `consecutiveFailures`), which is the alert everything hands to. Also facts Polaris holds about the device rather than reads from it (`status`, `dependencySuppressed`, `quarantined`, `firmwareVsPrimary`). An outage changes none of those, and clearing one would only re-fire it as a fresh alert when the device came back.
+- **Path checks are kept**: the asset is the vantage point, not the subject, and a server-sourced check keeps measuring while that host is dark.
+- **A composite** hands off only when EVERY leaf would. One `monitorStatus` or held-fact leaf makes the tree about that leaf too.
+- Precedence is unchanged: maintenance / dependency suppression (rule 16) is tested first, then the more-specific-automation carve-out, then this.
+- The handoff marks the snapshot row `clear` in place. Otherwise the timed-reset sweep, which reads the same pre-loop snapshot, would time out a row cleared in the same tick and run the reset actions the handoff withholds. The same gap existed for packet loss before this change.
+
+Pinned by `tests/unit/notificationDeviceDownHandoff.test.ts`.
+
 ### Rule 29 — the invariant as stated in full until 2026-09-22
 > Moved here verbatim from the invariants file on 2026-09-22, when the invariant layer was cut back to the contract alone; the short invariant now points here for the reasoning and the dated history. Nothing below was rewritten.
 

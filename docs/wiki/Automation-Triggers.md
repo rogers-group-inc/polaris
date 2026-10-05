@@ -176,6 +176,31 @@ someone.
 > under an alert that fired at 8 %. They answer different questions, and only
 > the caption's is reconstructible from the picture.
 
+### A device that goes down takes its other alerts with it
+
+When a device goes **down**, any alert already open about something that device
+reports (CPU, memory, an interface, a sensor, an SD-WAN SLA or member, an IPsec
+tunnel, FortiLink) **clears as *superseded***, and the asset-down alert speaks
+for the outage ([rule 29](Business-Rules#rule-29)). It sends no "resolved"
+message and runs no reset actions, because the condition has not recovered.
+Nothing new fires about the device while it is down. If the condition is still
+bad when the device comes back, it fires again as a fresh alert once its hold
+is met.
+
+Without this, an alert that was open when the device went dark froze, because
+no readings arrived to recover it. It then sat beside the asset-down alert for
+the whole outage and mailed "resolved" the moment the device returned.
+
+This does **not** apply to:
+
+- the asset-down alert itself (`monitorStatus`, `consecutiveFailures`);
+- facts about the device that an outage does not change (`status`,
+  `quarantined`, `firmwareVsPrimary`, `dependencySuppressed`);
+- path checks, which are measured *from* the device rather than *about* it;
+- a multiple-condition automation with any of those in its tree;
+- a device that is `passive`, `unknown` or `recovering`. Only a confirmed
+  `down` has an asset-down alert to hand to.
+
 ### 0/1 metrics render differently
 
 For `customStateValue` and `hwSensorAlarm` the builder swaps the numeric
