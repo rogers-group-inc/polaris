@@ -168,7 +168,13 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   because a gradient cuts on a theme change while typed custom properties interpolate.
   `:root` derives the four colour stops from `--page-glow-color` / `--page-glow-strength` on the
   straight line to transparent, so a theme that sets only those two paints the same two-stop
-  wash as before. **Bare `html` transitions the parts, on its own 2 s clock** (ease-in-out,
+  wash as before. **`html[data-glow-turn]` transitions the parts, on its own 2 s clock** — keyed on the attribute
+  only a theme change sets (`_markGlowTurn`), NEVER on bare `html`: the app pages apply the saved
+  theme from app.js at the end of `<body>`, after a first style pass with no `data-theme`, so an
+  always-on transition played the dark base's glow into the real one on every page load (sky blue
+  fading to noon's yellow; the night glow sliding in on nightfall) — user-reported, then measured
+  live with a page-load sampler. The noon / morning / afternoon rules only narrow the list or set a
+  duration, which does nothing without it (ease-in-out,
   no phase easing), NOT `html[data-theme-fading]` and not the 800 ms crossfade: at 800 ms the
   light moved while the whole page swung from white to indigo and could not be seen, and the
   fading attribute comes off at 880 ms, which would CANCEL a longer transition (a property
@@ -180,7 +186,8 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   mid-screen; lightness is what reads on its mid-tone parchment, and the accent, a vivid orange
   alone and pale gold all vanished into it). So the turn to noon climbs the sun from the bottom
   edge to noon's top wash over the glow's 2 s, and ROUNDS on the way: morning's oval → a
-  `65vmin` circle by 12.5% (0.25 s), HELD round to 75% (1.5 s) → noon's oval, as the `page-glow-round` keyframe animation on
+  circle by 12.5% (0.25 s), HELD round to 75% (1.5 s), at CONSTANT width — only `--page-glow-h`
+  moves, up to the oval's own width (`140vw`; a `65vmin` circle read as the glow narrowing) — → noon's oval, as the `page-glow-round` keyframe animation on
   `html[data-glow-turn="morning-noon"]`. A transition only runs start → end, so a mid-point shape
   needs keyframes. The theme script (`_markGlowTurn`, both app.js files) holds `data-glow-turn`
   (`"<from>-<to>"`) for `GLOW_MS` = 2000, because `data-theme-fading` comes off at 880 ms and

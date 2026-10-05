@@ -86,9 +86,15 @@ describe("the band and the strip read the same clock", () => {
     for (const name of ["styles.css", "mobile.css"]) {
       const css = readFileSync(join(process.cwd(), "public", "css", name), "utf-8");
       expect(css).toContain('html[data-glow-turn="morning-noon"] {\n  animation: page-glow-round 2000ms');
-      expect(css).toContain("12.5%, 75% { --page-glow-w: 65vmin; --page-glow-h: 65vmin; }");
+      // Round at constant width: only the height moves, up to the oval's width.
+      expect(css).toMatch(/12\.5%, 75% \{ --page-glow-h: 1[48]0vw; \}/);
+      const keyframes = css.slice(css.indexOf("@keyframes page-glow-round"), css.indexOf("}\n}", css.indexOf("@keyframes page-glow-round")));
+      expect(keyframes).not.toContain("--page-glow-w");
       // Noon -> nightfall's glow runs 2.5 s, keyed on the afternoon waypoint.
-      expect(css).toContain('html[data-theme="afternoon"] {\n  transition-duration: 2500ms;\n}');
+      expect(css).toContain('html[data-glow-turn][data-theme="afternoon"] {\n  transition-duration: 2500ms;\n}');
+      // Glow transitions only during a theme change, never on page load.
+      expect(css).toContain("html[data-glow-turn] {\n  transition-property: --page-glow-y,");
+      expect(css).not.toContain("html {\n  transition-property: --page-glow-y,");
       const noon = css.slice(css.indexOf('html[data-theme="noon"] {'), css.indexOf("}", css.indexOf('html[data-theme="noon"] {')));
       expect(noon).not.toContain("--page-glow-w");
       expect(noon).not.toContain("--page-glow-h");

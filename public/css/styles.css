@@ -515,7 +515,16 @@ html[data-theme-fading] *:not(.theme-band-track)::after {
      does not stop at a waypoint: afternoon carries nightfall's glow values,
      so the turn from noon starts ONE 2 s glow transition and the second leg,
      changing nothing, lets it run on. A per-leg curve on it would lurch. */
-html {
+/* Keyed on data-glow-turn, which ONLY a theme change sets (the band /
+   strip step, for the glow's own clock): never page load. The app pages
+   apply the saved theme from app.js at the end of <body>, after the first
+   style pass ran with no data-theme at all, so an always-on transition
+   here played the dark base's glow into the real one on EVERY page load —
+   sky blue fading to noon's yellow, the night glow sliding in on
+   nightfall. Gated, a page load just paints the theme's glow. The noon and
+   morning rules below only narrow the property list, which does nothing
+   without this rule's duration. */
+html[data-glow-turn] {
   transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
@@ -546,7 +555,7 @@ html {
    afternoon carries nightfall's glow values, so the second leg changes
    nothing and the transition runs on at this duration. Duration only;
    the property list and curves are the bare html rule's. */
-html[data-theme="afternoon"] {
+html[data-glow-turn][data-theme="afternoon"] {
   transition-duration: 2500ms;
 }
 html[data-theme="noon"] {
@@ -567,18 +576,21 @@ html[data-theme="noon"] {
      glow's 2 s (GLOW_MS); data-theme-fading comes off at 880 ms and would
      cut it short. The end frame equals noon's own values, so nothing
      jumps when the attribute drops.
-   65vmin both ways is a true circle on any screen shape, which a
-   percentage pair (of width, of height) never is. */
+   The height reaching the width (140vw) is a true circle on any screen
+   shape, which a percentage pair (of width, of height) never is. */
 html[data-glow-turn="morning-noon"] {
   animation: page-glow-round 2000ms cubic-bezier(0.37, 0, 0.63, 1);
 }
 @keyframes page-glow-round {
-  0%   { --page-glow-w: 140vw;   --page-glow-h: 75vh; }
   /* Round by 12.5% (0.25 s), and HELD round until three quarters (1.5 s):
      the sun is a circle almost as soon as it leaves the horizon and for
-     most of its climb, not for an instant half way. */
-  12.5%, 75% { --page-glow-w: 65vmin; --page-glow-h: 65vmin; }
-  100% { --page-glow-w: 140vw;   --page-glow-h: 60vh; }
+     most of its climb, not for an instant half way. The WIDTH never
+     moves (140vw, the oval's own): the height swells to match it, so the
+     circle is as wide as the oval it grew from. Shrinking the width to a
+     small circle read as the glow narrowing. */
+  0%   { --page-glow-h: 75vh; }
+  12.5%, 75% { --page-glow-h: 140vw; }
+  100% { --page-glow-h: 60vh; }
 }
 html[data-theme="morning"] {
   transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
@@ -598,7 +610,7 @@ html[data-theme="morning"] {
     cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
 }
 @media (prefers-reduced-motion: reduce) {
-  html, html[data-theme] { transition: none; }
+  html, html[data-theme], html[data-glow-turn], html[data-glow-turn][data-theme] { transition: none; }
   html[data-glow-turn] { animation: none; }
   html[data-theme-fading] *:not(.theme-band-track),
   html[data-theme-fading] *:not(.theme-band-track)::before,
