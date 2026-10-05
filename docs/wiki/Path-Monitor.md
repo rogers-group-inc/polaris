@@ -225,11 +225,11 @@ how many of the recent traces passed through it.
 
 ## Alerting — setting an SLA
 
-A check has no threshold of its own. Automations alert on the **agent hosts'**
-results. The Polaris server's results are charted and listed, but in this
-version they raise no automation alert, because the server is not an asset an
-automation can pick. To be alerted, create an
-[automation](Automations) on one of the path-check metrics:
+A check has no threshold of its own. To be alerted, create an
+[automation](Automations) and pick **Path Monitor** as its trigger type
+([details](Automation-Triggers#path-monitor)). It watches the agent hosts'
+results and, when **Include the Polaris server's own runs** is ticked, the
+server's too. Its conditions are the path-check metrics:
 
 | Metric | Meaning |
 |---|---|
@@ -241,16 +241,17 @@ automation can pick. To be alerted, create an
 | **TLS certificate days remaining** | days until the target's certificate expires |
 
 Pick the check in the condition's **Check** picker, or leave it blank to watch
-every check each host runs (one alert per check). In the **Devices** step,
-*Polaris Agent installed is equal to yes* selects every agent host. Holds,
-severity bands, resets, maintenance windows and dependency suppression all work
-as for any other automation.
+every check each host runs (one alert per check). The automation only ever
+watches hosts with an active Polaris Agent; the **Devices** step narrows those.
+Holds, severity bands, resets, maintenance windows and dependency suppression
+all work as for any other automation. The Polaris server is the exception: no
+device filter, maintenance window or dependency applies to it.
 
-For route changes, use a **Change** trigger with **Path changed
-(traceroute)**. Polaris writes this event (`path_check.path_changed`) at most
-once every 10 minutes per host and check, naming the host. A route change seen
-from the Polaris server is written too, naming the check instead. It appears in
-Events, but an automation filtered to devices does not match it.
+For route changes, set the Path Monitor trigger to fire when **a check's route
+changes (traceroute)**. Polaris writes this event (`path_check.path_changed`) at
+most once every 10 minutes per host and check, naming the host. A route change
+seen from the Polaris server is written too, naming the check instead. It fires
+the automation when the server is ticked.
 
 ## What is stored
 

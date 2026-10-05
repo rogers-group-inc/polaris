@@ -1147,9 +1147,11 @@ describes whether that source can reach the target, so:
 - **It never changes the host's status.** A laptop that cannot reach the
   intranet is not a laptop that is down. The host's own Up / Down comes only
   from its agent's response time, exactly as before.
-- **A check has no threshold.** You set the SLA in an automation on the
-  path-check metrics (latency, failure rate, HTTP status, pass / fail, hop
-  count, TLS days remaining). Holds, severity bands, resets, maintenance
+- **A check has no threshold.** You set the SLA in a **Path Monitor**
+  automation on the path-check metrics (latency, failure rate, HTTP status,
+  pass / fail, hop count, TLS days remaining). It only ever watches hosts with
+  the Polaris Agent installed; the Devices step narrows those, and a tree can't
+  mix path conditions with device conditions. Holds, severity bands, resets, maintenance
   windows and dependency suppression all work the same as for any other
   automation. One difference from packet loss: the failure rate has no
   "ignore readings at or above" ceiling, so a target that fails **every** run
@@ -1165,11 +1167,14 @@ describes whether that source can reach the target, so:
 - **A route change is an Event, not an alert state.** When an agent's
   traceroute takes a different set of hops from last time, Polaris writes
   `path_check.path_changed` to Events (at most once every 10 minutes per host
-  and check). You can alert on it with a *Path changed* trigger.
+  and check). You can alert on it with a Path Monitor automation set to fire
+  when the route changes.
 - **The Polaris server is a source, not an asset.** Its results are charted
-  and listed under the check's Results, but in this version they raise no
-  automation alert, and a route change it sees names the check rather than a
-  device. Pointing the server at a target needs *Read-Write* on **Network
+  and listed under the check's Results. They alert only through a Path Monitor
+  automation with *Include the Polaris server's own runs* ticked. That works
+  for a single condition, not alongside a custom reset condition, and no device
+  filter, maintenance window or dependency applies to the server. A route
+  change it sees names the check rather than a device. Pointing the server at a target needs *Read-Write* on **Network
   Discovery** as well as on Path Monitor, because the server probes from its
   own network, where no agent host may be able to reach. Turning the server
   off, renaming the check or changing its agent hosts does not.

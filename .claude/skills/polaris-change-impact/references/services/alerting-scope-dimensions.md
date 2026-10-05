@@ -170,7 +170,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **When changing this**
 
-**`checkId` (path* metrics)** is strict and labelled like `stateProbeId`, but its pairs come from MEMBERSHIP (`path_check_sources`) rather than samples, and its `labelOf` is ASYNC (one read of the check registry) — `labelOf` may return a Promise since 2026-09-23. Candidates are hosts with an active agent.
+**`checkId` (path* metrics)** is strict and labelled like `stateProbeId`, but its pairs come from MEMBERSHIP (`path_check_sources`) rather than samples, and its `labelOf` is ASYNC (one read of the check registry) — `labelOf` may return a Promise since 2026-09-23. Candidates are hosts with an active agent. A path metric's scope is narrowed by `pathMonitorScope` before resolving (the engine's pool); `narrow.includeServer` (Path Monitor with the server ticked) also reads the server's membership row (`assetId` NULL, counted as `POLARIS_SERVER_SUBJECT`) and skips the empty-scope early return.
 
 1. Adding a dimension → walk the lockstep list above, then add a `DIMENSION_SOURCES` entry + a case to `tests/unit/automationDimensionValues.test.ts`.
 2. Changing the window/caps → re-reason at 100 AND 2000 assets (default scope is every asset) and update the numbers quoted in the skill references (formerly ARCHITECTURE.md).
