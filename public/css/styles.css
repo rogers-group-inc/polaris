@@ -26,7 +26,7 @@
    off the left edge on the turn from noon, out past the right edge on the
    turn to morning. Only its horizontal centre moves; see --night-glow. */
 @property --night-glow-x  { syntax: "<percentage>"; inherits: true; initial-value: -100%; }
-@property --night-glow-c { syntax: "<color>"; inherits: true; initial-value: rgba(255,255,255,.5); }
+@property --night-glow-c { syntax: "<color>"; inherits: true; initial-value: rgba(255,255,255,.35); }
 @property --night-glow-w { syntax: "<percentage>"; inherits: true; initial-value: 70%; }
 @property --night-glow-h { syntax: "<percentage>"; inherits: true; initial-value: 30%; }
 
@@ -151,7 +151,7 @@
   --page-glow-p2: 26%;
   --page-glow-p3: 50%;
   --page-glow-end: 70%;
-  /* Nightfall's electric-blue wash, its own layer so it can slide while the
+  /* Nightfall's moonlight-blue wash, its own layer so it can slide while the
      main glow fades. Parked off-screen in every other theme: -100% (left of
      the viewport, waiting to slide in) on noon, 50% on nightfall AND on the
      afternoon waypoint (so the one 2 s slide spans both legs of
@@ -162,15 +162,17 @@
      fade. Saturated blue rather than nightfall's pastel accent, which went
      grey slate at this faintness. */
   --night-glow-x: -100%;
-  /* WHITE at 50% wherever it is parked, the electric blue (#2f6bff at
-     12.3%) only at rest on nightfall. The glow's 2 s transition carries the
-     one colour between them with the slide: it comes in as a white light and
-     cools to the blue as it lands, and pales back to white as it leaves for
-     morning. A stronger blue was tried first and still read as nothing over
+  /* WHITE wherever it is parked (35% here, which is noon's, the entry; 50%
+     on morning, where the exit ends), and the blue only at rest on
+     nightfall: a MOONLIGHT blue, #6d97ff at 12.3% — the electric #2f6bff
+     with 30% white mixed in, duller and softer. The glow's 2 s transition
+     carries the one colour between them with the slide: it comes in as a
+     white light and cools to the blue as it lands, and pales back to white
+     as it leaves for morning. A stronger blue was tried first and still read as nothing over
      the grounds it crosses mid-turn (the afternoon tan into indigo); white
      is what shows against both. One registered <color>, not a hue plus a
      strength, so hue and alpha move together. */
-  --night-glow-c: rgba(255,255,255,.5);
+  --night-glow-c: rgba(255,255,255,.35);
   /* HALF size wherever it is parked (70% x 30% against nightfall's 140% x 60%):
      the white light comes in small and grows to the full wash as it cools
      to blue, and shrinks back as it leaves. */
@@ -696,6 +698,10 @@ code {
   /* Night glow gone past the right edge: the turn from nightfall slides it
      out that way. */
   --night-glow-x: 200%;
+  /* The exit to morning still ends at 50% white; only the entry from noon
+     starts at 35%. Morning -> noon swaps the two while the glow is parked
+     off-screen (the noon rule does not transition it), so it never shows. */
+  --night-glow-c: rgba(255,255,255,.5);
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────
@@ -783,7 +789,7 @@ code {
   --page-glow-strength: 0%;
   --page-glow-y: -45%;
   --night-glow-x: 50%;
-  --night-glow-c: rgba(47,107,255,.123);
+  --night-glow-c: rgba(109,151,255,.123);
   --night-glow-w: 140%;
   --night-glow-h: 60%;
 }
@@ -822,7 +828,7 @@ code {
      pushed hardest and still does almost nothing — the inset rim is carrying
      this one, and it is a hair brighter here than in the :root dark base. */
   --shadow-card: 0 8px 32px rgba(0,0,0,.65), 0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
-  /* Nightfall's glow is the sliding --night-glow layer (electric blue at
+  /* Nightfall's glow is the sliding --night-glow layer (moonlight blue at
      12.3%, see :root), centred here. The main glow is off and parked above
      the top edge: on the turn from noon its sunlight rises up and away as it
      fades (afternoon carries the same values), while the blue slides in from
@@ -831,7 +837,7 @@ code {
   --page-glow-strength: 0%;
   --page-glow-y: -45%;
   --night-glow-x: 50%;
-  --night-glow-c: rgba(47,107,255,.123);
+  --night-glow-c: rgba(109,151,255,.123);
   --night-glow-w: 140%;
   --night-glow-h: 60%;
 }

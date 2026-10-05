@@ -28,7 +28,7 @@
 @property --page-glow-end { syntax: "<percentage>"; inherits: true; initial-value: 70%; }
 /* Nightfall's sliding glow layer (see styles.css). */
 @property --night-glow-x  { syntax: "<percentage>"; inherits: true; initial-value: -130%; }
-@property --night-glow-c { syntax: "<color>"; inherits: true; initial-value: rgba(255,255,255,.5); }
+@property --night-glow-c { syntax: "<color>"; inherits: true; initial-value: rgba(255,255,255,.35); }
 @property --night-glow-w { syntax: "<percentage>"; inherits: true; initial-value: 90%; }
 @property --night-glow-h { syntax: "<percentage>"; inherits: true; initial-value: 33%; }
 
@@ -159,16 +159,17 @@
   --page-glow-p2: 26%;
   --page-glow-p3: 50%;
   --page-glow-end: 70%;
-  /* Nightfall's electric-blue wash as its own sliding layer, parked by
+  /* Nightfall's moonlight-blue wash as its own sliding layer, parked by
      theme as on the desktop: -130% noon, 50% nightfall (and afternoon, its waypoint),
      230% morning. Wider apart than the desktop's -100% / 200% because the
      phone's visible radius is 70% of 180%, ~126% of the width; these are
      just clear of the screen, so the slide is all visible travel. */
   --night-glow-x: -130%;
-  /* White at 50% wherever it is parked, the electric blue only at rest on
-     nightfall: it slides in white and cools to blue as it lands, and pales
-     back to white as it leaves (styles.css has the reasoning). */
-  --night-glow-c: rgba(255,255,255,.5);
+  /* White wherever it is parked (35% here on noon's entry, 50% on morning
+     where the exit ends), the moonlight blue #6d97ff at 12.3% only at rest
+     on nightfall: it slides in white and cools to blue as it lands, and
+     pales back to white as it leaves (styles.css has the reasoning). */
+  --night-glow-c: rgba(255,255,255,.35);
   /* HALF size wherever it is parked (90% x 33% against nightfall's 180% x 66%):
      the white light comes in small and grows to the full wash as it cools
      to blue, and shrinks back as it leaves. */
@@ -327,6 +328,10 @@
   --page-glow-c3: rgba(238,154,90,.14);
   --page-glow-end: 78%;
   --night-glow-x: 230%;
+  /* The exit to morning still ends at 50% white; only the entry from noon
+     starts at 35%. Morning -> noon swaps the two while the glow is parked
+     off-screen (the noon rule does not transition it), so it never shows. */
+  --night-glow-c: rgba(255,255,255,.5);
 }
 /* Noon — neutral near-white, terracotta, the highest contrast of any palette.
    The cool daylight palette; cream here and it reads as morning. */
@@ -401,7 +406,7 @@
   --page-glow-strength: 0%;
   --page-glow-y: -50%;
   --night-glow-x: 50%;
-  --night-glow-c: rgba(47,107,255,.123);
+  --night-glow-c: rgba(109,151,255,.123);
   --night-glow-w: 180%;
   --night-glow-h: 66%;
 }
@@ -456,7 +461,7 @@
   --page-glow-strength: 0%;
   --page-glow-y: -50%;
   --night-glow-x: 50%;
-  --night-glow-c: rgba(47,107,255,.123);
+  --night-glow-c: rgba(109,151,255,.123);
   --night-glow-w: 180%;
   --night-glow-h: 66%;
 }

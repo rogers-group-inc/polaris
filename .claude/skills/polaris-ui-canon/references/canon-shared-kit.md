@@ -160,7 +160,7 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
 - **The page ground carries a glow; nothing full-width may paint over it opaquely.** Since
   2026-10-04 `body` paints `--page-glow` (a radial wash from the top centre of the viewport,
   `background-attachment: fixed`) over `--color-bg-secondary`. The glow is `--page-glow-color`
-  (the theme's accent, except nightfall — electric blue `#2f6bff`, since its pastel accent goes grey slate at 12.3% — and noon, which takes sunlight yellow `#ffc928` because a terracotta
+  (the theme's accent, except nightfall — whose glow is the sliding night layer below, in moonlight blue `#6d97ff` — and noon, which takes sunlight yellow `#ffc928` because a terracotta
   wash on its near-white ground reads as rust) at `--page-glow-strength` (17.6% dark family, 12.3% nightfall, 11.2%
   daylight base, 24% noon; a wide horizontal ellipse, 140% × 60% of the viewport). **The glow is
   built from eleven `@property`-registered parts** (`--page-glow-y` / `-w` / `-h`, colours
@@ -180,10 +180,13 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   mid-screen; lightness is what reads on its mid-tone parchment, and the accent, a vivid orange
   alone and pale gold all vanished into it). So the turn to noon climbs the sun from the bottom
   edge to noon's top wash over the glow's 2 s. A theme that overrides `--page-glow` whole goes back to cutting.
-  **Nightfall's glow is a second, SLIDING layer** (`--night-glow`, electric blue `#2f6bff` at
+  **Nightfall's glow is a second, SLIDING layer** (`--night-glow`, moonlight blue `#6d97ff` at
   12.3% at rest, with four registered parts: `--night-glow-x`, its size `--night-glow-w` /
-  `--night-glow-h`, and `--night-glow-c`, ONE `<color>` that is WHITE at 50%
-  (`rgba(255,255,255,.5)`) wherever the glow is parked and the blue only at rest on nightfall.
+  `--night-glow-h`, and `--night-glow-c`, ONE `<color>` that is WHITE wherever the glow is parked —
+  35% on noon (`rgba(255,255,255,.35)`, the entry; the `:root` default) and 50% on morning (where
+  the exit ends; swapped unseen on morning → noon, whose rule does not transition it) — and the
+  blue only at rest on nightfall. That blue is the old electric `#2f6bff` with 30% white mixed
+  in (`#6d97ff`, still 12.3%), duller and closer to moonlight, at the user's call.
   Parked it is also HALF size (70% × 30% desktop, 90% × 33% phone, against 140% × 60% /
   180% × 66%): the white light slides in small and grows to the full wash as it cools to blue,
   and shrinks and pales back to white as it leaves. A stronger blue was tried first and still
