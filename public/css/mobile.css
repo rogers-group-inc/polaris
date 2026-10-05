@@ -2234,6 +2234,13 @@ html[data-theme-fading="out"] *:not(.theme-strip-track),
 html[data-theme-fading="out"] *:not(.theme-strip-track)::before,
 html[data-theme-fading="out"] *:not(.theme-strip-track)::after,
 html[data-theme-fading="out"] .theme-strip-track { transition-timing-function: cubic-bezier(0, 0, 0.36, 1); }
+/* The slow step: nightfall → morning takes 1.6 s, twice THEME_FADE_MS, for
+   the palette and the strip's travel alike (styles.css has the reasoning;
+   THEME_LEG_MS in mobile/app.js holds the fading attribute as long). */
+html[data-theme-fading][data-theme="morning"] *:not(.theme-strip-track),
+html[data-theme-fading][data-theme="morning"] *:not(.theme-strip-track)::before,
+html[data-theme-fading][data-theme="morning"] *:not(.theme-strip-track)::after,
+html[data-theme-fading][data-theme="morning"] .theme-strip-track { transition-duration: 1600ms; }
 @media (prefers-reduced-motion: reduce) {
   html, html[data-theme] { transition: none; }
   html[data-theme-fading] *:not(.theme-strip-track),

@@ -75,6 +75,19 @@ describe("the band and the strip read the same clock", () => {
     expect(MOBILE_APP_JS).toContain("var THEME_FADE_MS = 800;");
   });
 
+  it("slows the same step on both, by the same amount, in JS and CSS alike", () => {
+    // Nightfall -> morning takes 1.6 s. The JS holds the fading attribute (and
+    // the seam) that long; the CSS gives the palette and the travel the same
+    // duration. A mismatch either cuts the fade short or lands the band early.
+    const decl = "var THEME_LEG_MS = { morning: 1600 };";
+    expect(APP_JS).toContain(decl);
+    expect(MOBILE_APP_JS).toContain(decl);
+    const styles = readFileSync(join(process.cwd(), "public", "css", "styles.css"), "utf-8");
+    const mobile = readFileSync(join(process.cwd(), "public", "css", "mobile.css"), "utf-8");
+    expect(styles).toContain('html[data-theme-fading][data-theme="morning"] .theme-band-track { transition-duration: 1600ms; }');
+    expect(mobile).toContain('html[data-theme-fading][data-theme="morning"] .theme-strip-track { transition-duration: 1600ms; }');
+  });
+
   it("anchors both tracks one strip width left of the marker", () => {
     // The `+ 1` is the anchor, and it is what the three copies of the art
     // exist to cover. Drop it on one side and that screen shows bare surface

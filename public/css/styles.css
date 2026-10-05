@@ -596,6 +596,20 @@ html[data-theme-fading="out"] *:not(.theme-band-track)::before,
 html[data-theme-fading="out"] *:not(.theme-band-track)::after,
 html[data-theme-fading="out"] .theme-band-track { transition-timing-function: cubic-bezier(0, 0, 0.36, 1); }
 
+/* ─── The slow step: nightfall → morning ──────────────────────
+   Twice THEME_FADE_MS. It is a single step where noon → nightfall gets two,
+   so dark to light came in a snap; at 1.6 s the two big turns of the day
+   take the same time. Duration only — the curve stays whatever the phase
+   rules above give it — and the palette and the band's travel together, so
+   they still land as one. The number lives in THEME_LEG_MS in app.js too,
+   which holds the fading attribute (and the seam) for the same 1.6 s:
+   change one, change both. The two extra attribute selectors are what
+   outrank the crossfade and phase rules. */
+html[data-theme-fading][data-theme="morning"] *:not(.theme-band-track),
+html[data-theme-fading][data-theme="morning"] *:not(.theme-band-track)::before,
+html[data-theme-fading][data-theme="morning"] *:not(.theme-band-track)::after,
+html[data-theme-fading][data-theme="morning"] .theme-band-track { transition-duration: 1600ms; }
+
 /* ─── Reset ────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { font-size: 14px; color-scheme: dark; }

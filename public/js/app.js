@@ -238,7 +238,7 @@ function _advanceThemeBands(id, prevId) {
       _bandSeamTimer = null;
       _bandPos -= 1;
       _paintThemeBands(false);
-    }, THEME_FADE_MS);
+    }, _themeLegMs(id));
   }
 }
 
@@ -256,11 +256,22 @@ if (!window.__polarisBandResize) {
 // Matches the crossfade duration in styles.css (the data-theme-fading block).
 // Change one, change the other.
 var THEME_FADE_MS = 800;
+// Steps that take longer than THEME_FADE_MS, by DESTINATION. Nightfall →
+// morning is one 800 ms step where noon → nightfall gets two (1.6 s), so dark
+// to light came in a snap; it takes the same 1.6 s here. Every timer tied to a
+// step's length reads _themeLegMs() — the fading attribute's removal (a
+// transition whose rule leaves is cut short), the seam normalisation (never
+// mid-travel) and the next leg's start — and the [data-theme="morning"] rule
+// in the crossfade block of styles.css carries the same number for the
+// palette and the band's travel. MIRRORS THEME_LEG_MS in mobile/app.js
+// (themeBandParity.test.ts).
+var THEME_LEG_MS = { morning: 1600 };
+function _themeLegMs(id) { return THEME_LEG_MS[id] || THEME_FADE_MS; }
 var _themeFadeTimer = null;
 
 // Arms the palette crossfade for the length of one change. Called before
 // data-theme moves, so the new values are what gets transitioned TO.
-function _beginThemeFade(phase) {
+function _beginThemeFade(phase, ms) {
   try {
     if (window.matchMedia &&
         window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -271,7 +282,7 @@ function _beginThemeFade(phase) {
   _themeFadeTimer = setTimeout(function () {
     root.removeAttribute("data-theme-fading");
     _themeFadeTimer = null;
-  }, THEME_FADE_MS + 80);
+  }, (ms || THEME_FADE_MS) + 80);
 }
 
 /**
@@ -284,7 +295,7 @@ function _setTheme(theme, phase) {
   var prevId = document.documentElement.getAttribute("data-theme") || DEFAULT_THEME;
   // Only fade a real change — re-applying the current theme (a page re-boot,
   // another tab syncing) should be instant.
-  if (t.id !== prevId) _beginThemeFade(phase);
+  if (t.id !== prevId) _beginThemeFade(phase, _themeLegMs(t.id));
   document.documentElement.setAttribute("data-theme", t.id);
   // Waypoints are never saved: a reload mid-turn must land on a real theme.
   if (!t.transit) { try { localStorage.setItem("polaris-theme", t.id); } catch (e) {} }
@@ -362,9 +373,10 @@ function advanceTheme() {
     // rather than two changes with a stop in the middle.
     var phase = legs === 1 ? "solo" : (n === 0 ? "in" : (n === legs - 1 ? "out" : "mid"));
     n++;
-    _setTheme(queue.shift(), phase);
+    var leg = queue.shift();
+    _setTheme(leg, phase);
     if (!queue.length) { _themeDest = null; return; }
-    _themeChainTimer = setTimeout(step, THEME_FADE_MS);
+    _themeChainTimer = setTimeout(step, _themeLegMs(leg));
   })();
 }
 window.advanceTheme = advanceTheme;
