@@ -26,7 +26,7 @@
    off the left edge on the turn from noon, out past the right edge on the
    turn to morning. Only its horizontal centre moves; see --night-glow. */
 @property --night-glow-x  { syntax: "<percentage>"; inherits: true; initial-value: -100%; }
-@property --night-glow-strength { syntax: "<percentage>"; inherits: true; initial-value: 35%; }
+@property --night-glow-c { syntax: "<color>"; inherits: true; initial-value: rgba(255,255,255,.5); }
 
 :root {
   --color-bg-primary: #151528;
@@ -160,14 +160,17 @@
      fade. Saturated blue rather than nightfall's pastel accent, which went
      grey slate at this faintness. */
   --night-glow-x: -100%;
-  /* Brighter while it travels: 35% wherever it is parked, 12.3% at rest on
-     nightfall. The crossfade carries it between the two with the slide, so
-     the blue arrives bright and settles as it lands, and brightens again as
-     it leaves for morning. On the lighter grounds it crosses mid-turn (the
-     afternoon tan into indigo), 12.3% all but vanished. */
-  --night-glow-strength: 35%;
+  /* WHITE at 50% wherever it is parked, the electric blue (#2f6bff at
+     12.3%) only at rest on nightfall. The glow's 2 s transition carries the
+     one colour between them with the slide: it comes in as a white light and
+     cools to the blue as it lands, and pales back to white as it leaves for
+     morning. A stronger blue was tried first and still read as nothing over
+     the grounds it crosses mid-turn (the afternoon tan into indigo); white
+     is what shows against both. One registered <color>, not a hue plus a
+     strength, so hue and alpha move together. */
+  --night-glow-c: rgba(255,255,255,.5);
   --night-glow: radial-gradient(ellipse 140% 60% at var(--night-glow-x) 0%,
-    color-mix(in srgb, #2f6bff var(--night-glow-strength), transparent) 0%,
+    var(--night-glow-c) 0%,
     transparent 70%);
   --page-glow:
     var(--night-glow),
@@ -501,9 +504,17 @@ html {
   transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
-    --night-glow-x, --night-glow-strength;
+    --night-glow-x, --night-glow-c;
   transition-duration: 2000ms;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  /* One curve per property, in transition-property's order. Everything
+     eases in and out, except the night glow's colour (last), which holds
+     its START value and changes late: sliding in from noon it stays white
+     for most of the slide and only cools to the blue as it lands. On the
+     same curve as the position, the white was spent while the glow was
+     still off-screen. Rules with shorter property lists (noon's) cut this
+     list to fit, which is why the colour must stay LAST. */
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
+    cubic-bezier(0.7, 0, 0.84, 0);
   transition-delay: 0s;
 }
 /* What must NOT move, by destination — each one a jump made while the
@@ -522,7 +533,11 @@ html[data-theme="noon"] {
 }
 html[data-theme="morning"] {
   transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
-    --night-glow-x, --night-glow-strength;
+    --night-glow-x, --night-glow-c;
+  /* Leaving for morning the colour turns EARLY instead, so the glow goes
+     white at once and slides out white, ending at 50% white off-screen. */
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
+    cubic-bezier(0.16, 1, 0.3, 1);
 }
 @media (prefers-reduced-motion: reduce) {
   html, html[data-theme] { transition: none; }
@@ -739,7 +754,7 @@ code {
   --page-glow-strength: 0%;
   --page-glow-y: -45%;
   --night-glow-x: 50%;
-  --night-glow-strength: 12.3%;
+  --night-glow-c: rgba(47,107,255,.123);
 }
 
 /* ─── Nightfall ──────────────────────────────────────────────────────────────
@@ -785,7 +800,7 @@ code {
   --page-glow-strength: 0%;
   --page-glow-y: -45%;
   --night-glow-x: 50%;
-  --night-glow-strength: 12.3%;
+  --night-glow-c: rgba(47,107,255,.123);
 }
 
 /* ─── Layout ───────────────────────────────────────────────────────────────── */

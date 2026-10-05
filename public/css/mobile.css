@@ -28,7 +28,7 @@
 @property --page-glow-end { syntax: "<percentage>"; inherits: true; initial-value: 70%; }
 /* Nightfall's sliding glow layer (see styles.css). */
 @property --night-glow-x  { syntax: "<percentage>"; inherits: true; initial-value: -130%; }
-@property --night-glow-strength { syntax: "<percentage>"; inherits: true; initial-value: 35%; }
+@property --night-glow-c { syntax: "<color>"; inherits: true; initial-value: rgba(255,255,255,.5); }
 
 :root {
   /* Key colors */
@@ -163,14 +163,12 @@
      phone's visible radius is 70% of 180%, ~126% of the width; these are
      just clear of the screen, so the slide is all visible travel. */
   --night-glow-x: -130%;
-  /* Brighter while it travels: 35% wherever it is parked, 12.3% at rest on
-     nightfall. The crossfade carries it between the two with the slide, so
-     the blue arrives bright and settles as it lands, and brightens again as
-     it leaves for morning. On the lighter grounds it crosses mid-turn (the
-     afternoon tan into indigo), 12.3% all but vanished. */
-  --night-glow-strength: 35%;
+  /* White at 50% wherever it is parked, the electric blue only at rest on
+     nightfall: it slides in white and cools to blue as it lands, and pales
+     back to white as it leaves (styles.css has the reasoning). */
+  --night-glow-c: rgba(255,255,255,.5);
   --night-glow: radial-gradient(ellipse 180% 66% at var(--night-glow-x) 0%,
-    color-mix(in srgb, #2f6bff var(--night-glow-strength), transparent) 0%,
+    var(--night-glow-c) 0%,
     transparent 70%);
   --page-glow:
     var(--night-glow),
@@ -396,7 +394,7 @@
   --page-glow-strength: 0%;
   --page-glow-y: -50%;
   --night-glow-x: 50%;
-  --night-glow-strength: 12.3%;
+  --night-glow-c: rgba(47,107,255,.123);
 }
 /* Nightfall — indigo ground, sky-blue accent: the desktop's nightfall hues
    (styles.css). Without this block the phone painted the neutral Material
@@ -449,7 +447,7 @@
   --page-glow-strength: 0%;
   --page-glow-y: -50%;
   --night-glow-x: 50%;
-  --night-glow-strength: 12.3%;
+  --night-glow-c: rgba(47,107,255,.123);
 }
 
 * { box-sizing: border-box; }
@@ -2169,9 +2167,17 @@ html {
   transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
-    --night-glow-x, --night-glow-strength;
+    --night-glow-x, --night-glow-c;
   transition-duration: 2000ms;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  /* One curve per property, in transition-property's order. Everything
+     eases in and out, except the night glow's colour (last), which holds
+     its START value and changes late: sliding in from noon it stays white
+     for most of the slide and only cools to the blue as it lands. On the
+     same curve as the position, the white was spent while the glow was
+     still off-screen. Rules with shorter property lists (noon's) cut this
+     list to fit, which is why the colour must stay LAST. */
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
+    cubic-bezier(0.7, 0, 0.84, 0);
 }
 /* What must not move, by destination (reasoning in styles.css): into noon
    the night glow jumps back to the left edge unseen; into morning the
@@ -2184,7 +2190,11 @@ html[data-theme="noon"] {
 }
 html[data-theme="morning"] {
   transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
-    --night-glow-x, --night-glow-strength;
+    --night-glow-x, --night-glow-c;
+  /* Leaving for morning the colour turns EARLY instead, so the glow goes
+     white at once and slides out white, ending at 50% white off-screen. */
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
+    cubic-bezier(0.16, 1, 0.3, 1);
 }
 /* Phase easing for a multi-leg turn: accelerate once at the start, run at
    constant speed through the waypoint, decelerate once at the end, so
