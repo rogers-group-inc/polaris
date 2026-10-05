@@ -134,7 +134,7 @@ describe("the Settings modal", () => {
     const row = doc.querySelector("#aqs-quiet tbody tr")!;
     expect(row.textContent).toContain("Nights");
     expect(row.textContent).toContain("All devices");
-    expect(row.textContent).toContain("notice, warning, serious · any alert");
+    expect(row.textContent).toContain("everything for notice, warning, serious · any alert");
     expect(row.textContent).toContain("Daily 22:00–06:00");
     expect(row.textContent).toContain("at 07:30");
     expect(row.textContent).toContain("Quiet now until Oct 3 06:00");
@@ -186,9 +186,11 @@ describe("the global quiet-time wizard", () => {
     await tick();
     expect(doc.querySelector("#qtw-step-3.visible")).toBeTruthy();
 
-    // 3 Alerts — the default leaves critical unticked; kinds are "any".
-    const sevs = Array.from(doc.querySelectorAll(".qtw-sev")) as unknown as { value: string; checked: boolean }[];
+    // 3 Alerts — the per-severity tree; the default leaves critical unticked
+    // and every kind ticked under the rest; kinds of alert are "any".
+    const sevs = Array.from(doc.querySelectorAll("#qtw-step-3 .qte-sev")) as unknown as { value: string; checked: boolean }[];
     expect(sevs.filter((s) => s.checked).map((s) => s.value)).toEqual(["notice", "informational", "warning", "serious"]);
+    expect(doc.querySelectorAll('#qtw-step-3 .qte-sevrow[data-sev="warning"] .qte-kind:checked')).toHaveLength(4);
     expect(doc.querySelector("#qtw-kinds-list")).toBeTruthy();
     expect(doc.querySelector("#qtw-kinds-list")!.textContent).toContain("CPU");
     click("#qtw-next");
@@ -222,7 +224,9 @@ describe("the global quiet-time wizard", () => {
     expect(quiet.alertKinds).toBeNull();
     expect(quiet.summaryAt).toBe("07:30");
     expect(quiet.recurrenceThreshold).toBe(2);
-    expect(quiet.holds).toBe("all");
+    expect(quiet.holds).toBeUndefined();
+    expect(Object.keys(quiet.held!)).toEqual(["notice", "informational", "warning", "serious"]);
+    expect(quiet.held!.warning).toEqual({ alerts: true, alertReminders: true, escalations: true, escalationReminders: true });
     expect(done).toBe(1);
   });
 

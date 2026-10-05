@@ -626,8 +626,7 @@ var _rulesPage = 1;
     if (mode === "override") {
       var QE = window.PolarisQuietTimeEditor;
       var summary = QE ? QE.summary(r.quietTime) : "its own quiet time";
-      var holds = r.quietTime.holds === "followUps" ? "holds reminders and escalations" : "holds every send";
-      return '<span class="badge badge-level-informational" title="' + escapeHtml("Overrides the global quiet times with its own: " + summary + " (" + holds + ")") + '">OVERRIDES GLOBAL</span>';
+      return '<span class="badge badge-level-informational" title="' + escapeHtml("Overrides the global quiet times with its own: " + summary) + '">OVERRIDES GLOBAL</span>';
     }
     return '<span style="color:var(--color-text-tertiary)" title="No quiet time of its own — the global quiet times under Settings apply">Global</span>';
   }

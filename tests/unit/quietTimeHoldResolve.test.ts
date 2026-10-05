@@ -56,7 +56,23 @@ describe("resolveQuietHold precedence", () => {
 
   it("never holds an automation that ignores the global quiet times", async () => {
     expect(await resolveQuietHold({ ruleId: "r-ignore", severity: "warning", metric: "cpuPct", assetId: "a1", now: NIGHT })).toBeNull();
-    expect(await resolveQuietHold({ ruleId: "r-ignore", severity: "critical", metric: "cpuPct", assetId: "a1", now: NIGHT, send: "followUp" })).toBeNull();
+    expect(await resolveQuietHold({ ruleId: "r-ignore", severity: "critical", metric: "cpuPct", assetId: "a1", now: NIGHT, send: "reminder" })).toBeNull();
+  });
+
+  it("answers per kind of send from the policy's per-severity map", async () => {
+    db.rules.push({ id: "r-tree", name: "Tree", quietTime: { windows: [NIGHTLY], held: {
+      warning: { alerts: true, alertReminders: true, escalations: false, escalationReminders: false },
+    } } });
+    bumpQuietTimeCache();
+    const ask = (send: "fire" | "reminder" | "escalation" | "escalationReminder", severity = "warning") =>
+      resolveQuietHold({ ruleId: "r-tree", severity, metric: "cpuPct", assetId: "a1", now: NIGHT, send });
+    expect((await ask("fire"))?.source.id).toBe("r-tree");
+    expect((await ask("reminder"))?.source.id).toBe("r-tree");
+    expect(await ask("escalation")).toBeNull();
+    expect(await ask("escalationReminder")).toBeNull();
+    // A severity with no entry is not held — and the global schedule does not
+    // step in, because the automation has a quiet time of its own.
+    expect(await ask("fire", "critical")).toBeNull();
   });
 
   it("judges an automation with its own policy by that policy alone", async () => {

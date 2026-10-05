@@ -114,25 +114,33 @@ waits.
 
 ### What goes quiet
 
-Each quiet time says how much of the automation it silences:
+Each quiet time says, **per severity**, which sends it holds. Under every
+severity you tick are four boxes:
 
-- **Everything.** No email, push or chat message leaves while the period is
-  open — not the first alert, not the escalation tiers, not the reminders. When
-  it ends, one **summary email** goes out (below).
-- **Only reminders and escalations.** The first alert and the all-clear still
-  send; the chasing waits for the period to end, then goes out on the first
-  sweep after it. This is what the old reminder-only quiet time became, with the
-  escalation tiers added.
+| | Means |
+|---|---|
+| **Alerts** | the first alert (and a grouped alert's growth update) — the one send that owes a **summary email** afterwards |
+| ↳ **Reminders** | the alert's own reminders ("Repeat this action") |
+| **Escalation alerts** | each escalation tier's first run |
+| ↳ **Reminders** | a tier's own repeats |
 
-Both modes hold, never skip: nothing in the alert's escalation clock moves while
-it is quiet. The reminder that ends a hold still says *"Reminders resumed after a
-quiet period — this alert has been active for 9h 12m"* and carries
-`· ACTIVE 9h 12m` in its subject ([rule 44](Business-Rules#rule-44)).
+Ticking a severity ticks all four; a ticked box is **held** during the quiet
+period, an unticked one goes out live whatever the hour. Untick a severity to
+let it through entirely — the usual shape is everything but critical, and a new
+global quiet time starts that way. Untick **Alerts** but leave the rest to get
+the old reminder-only quiet time: the first alert and the all-clear still send,
+the chasing waits for the period to end. With no severity holding its first
+alert there is nothing to report, and the summary section disappears.
+
+Held means held, never skipped: nothing in the alert's escalation clock moves
+while a send is quiet. The reminder that ends a hold still says *"Reminders
+resumed after a quiet period — this alert has been active for 9h 12m"* and
+carries `· ACTIVE 9h 12m` in its subject ([rule 44](Business-Rules#rule-44)).
 
 ### Which alerts
 
-- **Severities.** Untick a severity to let it through whatever the hour. The
-  usual shape is everything but critical; a new global quiet time starts that way.
+- **Severities.** The tree above. Untick a severity to let it through whatever
+  the hour.
 - **Kinds of alert** (global quiet times only). Any alert, or only the metrics
   and device states you pick — CPU, interface status, PoE, and so on. Audit-event
   and change automations carry no kind and match only "Any alert".

@@ -71,7 +71,10 @@
         "</p></div>";
     } else {
       table = '<div class="table-wrapper"><table class="data-table"><thead><tr>' +
-        "<th>Name</th><th>Devices</th><th>Alerts</th><th>When</th><th>Summary</th><th>Status</th><th></th>" +
+        // Widths: Devices and Alerts carry prose ("All devices", the per-severity
+        // phrasing) and must not wrap mid-word; When is a short window summary.
+        '<th style="width:16%">Name</th><th style="width:18%;min-width:9rem">Devices</th><th style="width:26%">Alerts</th>' +
+        '<th style="width:14%">When</th><th style="width:12%">Summary</th><th style="width:8%">Status</th><th></th>' +
         "</tr></thead><tbody>" + schedules.map(rowHtml).join("") + "</tbody></table></div>";
     }
 
@@ -128,7 +131,8 @@
   }
 
   function alertsPhrase(q) {
-    var sev = q && q.severities && q.severities.length ? q.severities.join(", ") : "every severity";
+    var QE = window.PolarisQuietTimeEditor;
+    var sev = QE ? QE.describeHeld(q || {}) : (q && q.severities && q.severities.length ? q.severities.join(", ") : "every severity");
     var kinds = q && q.alertKinds && q.alertKinds.length
       ? q.alertKinds.length + " alert kind" + (q.alertKinds.length === 1 ? "" : "s")
       : "any alert";
@@ -158,13 +162,14 @@
         : s.nextWindow
           ? '<span class="badge badge-active">Next ' + escapeHtml(fmtLocal(s.nextWindow.start)) + "</span>"
           : '<span class="badge badge-deprecated">No upcoming period</span>';
-    var summary = q.holds === "followUps"
-      ? '<span style="color:var(--color-text-tertiary)">none — only reminders and escalations held</span>'
+    var QE = window.PolarisQuietTimeEditor;
+    var summary = !(QE ? QE.policySummarises(q) : q.holds !== "followUps")
+      ? '<span style="color:var(--color-text-tertiary)">none — no first alert is held, so there is nothing to report</span>'
       : (q.summaryAt ? "at " + escapeHtml(q.summaryAt) : "when it ends") +
         (q.recurrenceThreshold ? '<div style="font-size:0.78rem;color:var(--color-text-tertiary)">recurring &gt; ' + q.recurrenceThreshold + "× reported</div>" : "");
     return "<tr>" +
       "<td><strong>" + escapeHtml(s.name) + "</strong>" + (s.configValid === false ? ' <span class="badge badge-deprecated" title="This schedule’s stored config could not be read and is ignored">unreadable</span>' : "") + "</td>" +
-      "<td>" + escapeHtml(scopePhrase(s.scope)) + "</td>" +
+      '<td style="white-space:nowrap">' + escapeHtml(scopePhrase(s.scope)) + "</td>" +
       "<td>" + escapeHtml(alertsPhrase(q)) + "</td>" +
       "<td>" + escapeHtml(whenPhrase(q)) + "</td>" +
       "<td>" + summary + "</td>" +

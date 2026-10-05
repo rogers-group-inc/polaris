@@ -1380,10 +1380,12 @@ reported when it ends.** A quiet time belongs to an automation (its Quiet time
 step) or to the install (Automations → Settings → Global Quiet Times, which
 applies only to automations with no quiet time of their own). While one is open,
 an alert it covers is still raised and shown — with a QUIET pill — and its
-scripts, API calls and audit event still run; what is held is every email, push
-and chat message, including the escalation tiers and reminders. A quiet time may
-instead hold **only** the reminders and escalations, letting the first alert and
-the all-clear through. Nothing in the alert's clocks moves while it is held.
+scripts, API calls and audit event still run; what is held is, per severity,
+whichever of the four people-facing sends the quiet time ticks — the first
+alert, its reminders, the escalation tiers' first runs, the tiers' own repeats.
+Holding everything but the first alert is the old reminder-only quiet time: the
+first alert and the all-clear go through, the chasing waits. Only a held first
+alert owes a summary. Nothing in the alert's clocks moves while a send is held.
 
 When the quiet period ends (or at a chosen send time, which may not fall inside
 a quiet period), **one summary email per person** goes to everyone the held

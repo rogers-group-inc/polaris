@@ -40,6 +40,18 @@ quiet time covered every severity had no way to say "never quiet" short of inven
 that never opens. The middle setting is that sentence, stored as `{ignoreGlobal: true}` in the
 same column (`ruleQuietTimeSchema`), so the resolver still asks one question of one column.
 
+Two days later (2026-10-05) the `holds` mode itself went: *"when a severity is selected, then
+underneath each selection is 'alerts' and 'escalation alerts' and underneath each of those are
+their own 'reminders'. by default if a severity is selected, then all of those are selected
+also, but then the user can de-select 'reminders' or 'escalations'."* One mode for the whole
+policy could not say "hold warning entirely but let critical's escalation tier through", and
+the engine already told the four kinds of send apart — a tier's first run and its repeats are
+different code paths from the base reminder pass. So the policy carries `held`, a per-severity
+map of the four kinds, the sweep asks the resolver per DUE send naming its kind, and the
+legacy pair is read as "every kind" or "every kind but the fire" until the editor re-saves it.
+Ticked means held and, for the first alert, reported in the summary — the user confirmed that
+reading over the inverse, so an unticked box is simply a send that goes out live.
+
 ### What rule 44 was, and why it had to widen rather than be joined
 
 Rule 44 lived inside a notify action's reminder settings and paused REMINDERS only. Its own
@@ -54,7 +66,7 @@ The alternative was to leave rule 44's control where it was and add a second one
 That would have put two things called "quiet time" on one automation that mean different
 things, one inside each reminder block and one on its own step. So quiet time became ONE
 policy of the automation (`NotificationRule.quietTime`) and of the install (`QuietTimeSchedule`),
-with a `holds` mode that says how much of the automation it silences — and rule 44's
+with a `holds` mode (since 2026-10-05 the per-severity `held` map) that says how much of the automation it silences — and rule 44's
 machinery survives inside it as the part that still makes sense: a held send is an overdue
 one, the hold is stamped, and the reminder that ends it says how long the alert has been going.
 

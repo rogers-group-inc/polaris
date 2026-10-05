@@ -52,6 +52,10 @@
       // page, hold the rest", so that is what the first screen says.
       : { name: "", enabled: true, scope: { allAssets: true }, quiet: { windows: [], severities: ["notice", "informational", "warning", "serious"], alertKinds: null } };
     draft.severities = (draft.quiet && draft.quiet.severities) || null;
+    // The per-severity hold map (business rule 92). null = "everything for
+    // the severities above" — a stored legacy pair, or an untouched default,
+    // reads that way through the editor's heldOf.
+    draft.held = (draft.quiet && draft.quiet.held) || null;
     draft.alertKinds = (draft.quiet && draft.quiet.alertKinds) || null;
 
     var step = 1;
@@ -147,23 +151,21 @@
       });
       return out;
     }
+    /** The tree's current map: the draft's `held`, else what its severity list means. */
+    function draftHeldMap() {
+      var sevs = (schema && schema.severities) || ALL_SEVERITIES;
+      return window.PolarisQuietTimeEditor.heldOf({ held: draft.held, severities: draft.severities, holds: draft.quiet && draft.quiet.holds }, sevs);
+    }
     function step3Html() {
       var sevs = (schema && schema.severities) || ALL_SEVERITIES;
-      var chosen = draft.severities;
       var kinds = kindCatalog();
       var picked = draft.alertKinds;
       var groups = {};
       kinds.forEach(function (k) { (groups[k.group] = groups[k.group] || []).push(k); });
       return '<h3 style="margin:0 0 0.25rem">Which alerts?</h3>' +
-        '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">Untick a severity to let it through whatever the hour — the usual shape is everything but critical.</p>' +
+        '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">Per severity: the first alert, the escalation tiers, and each one’s reminders. Untick a severity to let it through whatever the hour — the usual shape is everything but critical.</p>' +
         '<div class="form-group"><label style="font-weight:600">Severities</label>' +
-          '<div style="display:flex;gap:0.9rem;flex-wrap:wrap">' +
-          sevs.map(function (sv) {
-            var on = !chosen || chosen.indexOf(sv) >= 0;
-            return '<label style="display:inline-flex;align-items:center;gap:5px;margin:0;font-weight:400;cursor:pointer">' +
-              '<input type="checkbox" class="qtw-sev" value="' + escapeHtml(sv) + '"' + (on ? " checked" : "") + ' style="width:auto"> ' +
-              '<span class="sev-select sev-' + escapeHtml(sv) + '" style="padding:1px 8px;border-radius:999px;font-size:0.78rem">' + escapeHtml(sv) + "</span></label>";
-          }).join("") + "</div></div>" +
+          window.PolarisQuietTimeEditor.severityTreeHtml("qtw", draftHeldMap(), sevs) + "</div>" +
         '<div class="form-group" style="margin-top:0.9rem"><label style="font-weight:600">Kinds of alert</label>' +
           '<label style="display:block;font-weight:400;margin:0.2rem 0 0;cursor:pointer"><input type="radio" name="qtw-kinds" value="any"' + (picked ? "" : " checked") + ' style="width:auto"> Any alert</label>' +
           '<label style="display:block;font-weight:400;margin:0.2rem 0 0;cursor:pointer"><input type="radio" name="qtw-kinds" value="some"' + (picked ? " checked" : "") + ' style="width:auto"> Only these kinds</label>' +
@@ -182,6 +184,7 @@
     }
     function wireStep3() {
       var panel = document.getElementById("qtw-step-3");
+      window.PolarisQuietTimeEditor.wireSeverityTree(panel.querySelector(".qte-sevtree"), null);
       panel.querySelectorAll('input[name="qtw-kinds"]').forEach(function (r) {
         r.addEventListener("change", function () {
           panel.querySelector("#qtw-kinds-list").style.display = (panel.querySelector('input[name="qtw-kinds"]:checked') || {}).value === "some" ? "" : "none";
@@ -190,10 +193,15 @@
     }
     function collectStep3() {
       var panel = document.getElementById("qtw-step-3");
-      var all = panel.querySelectorAll(".qtw-sev");
-      var on = Array.prototype.filter.call(all, function (b) { return b.checked; }).map(function (b) { return b.value; });
-      draft.severities = on.length === all.length ? null : on;
-      draft._noSeverity = on.length === 0;
+      var got = window.PolarisQuietTimeEditor.collectSeverityTree(panel.querySelector(".qte-sevtree"));
+      draft._noSeverity = !!got.error;
+      if (!got.error) {
+        draft.held = got.held;
+        draft.severities = got.severities;
+        // The legacy mode is superseded by the tree once the operator has
+        // visited this step; a stored `holds` must not outlive it.
+        if (draft.quiet) delete draft.quiet.holds;
+      }
       var some = (panel.querySelector('input[name="qtw-kinds"]:checked') || {}).value === "some";
       var kinds = Array.prototype.filter.call(panel.querySelectorAll(".qtw-kind"), function (b) { return b.checked; }).map(function (b) { return b.value; });
       draft.alertKinds = some ? kinds : null;
@@ -208,7 +216,7 @@
     // ── Step 4 ───────────────────────────────────────────────────────────────
     function editorMeta() {
       var qm = schema && schema.repeatMeta && schema.repeatMeta.quietMeta;
-      return { severities: schema && schema.severities, channels: channels, serverClock: qm && qm.serverClock, showSeverities: false };
+      return { severities: schema && schema.severities, channels: channels, serverClock: qm && qm.serverClock, showSeverities: false, held: draftHeldMap() };
     }
     function renderStep4() {
       var panel = document.getElementById("qtw-step-4");
@@ -220,7 +228,7 @@
     function collectStep4() {
       var host = document.querySelector("#qtw-step-4 #qtw-editor");
       if (!host) return;
-      var got = window.PolarisQuietTimeEditor.collect(host, { severities: draft.severities });
+      var got = window.PolarisQuietTimeEditor.collect(host, { held: draft.held, severities: draft.severities });
       draft._quietProblem = got.error || null;
       if (got.config) {
         got.config.alertKinds = draft.alertKinds;
@@ -238,15 +246,17 @@
         return (meta && meta.label) || k;
       }).join(", ") : "any alert";
       var ch = channels.filter(function (c) { return c.id === q.summaryChannelId; })[0];
+      var QE = window.PolarisQuietTimeEditor;
+      var policy = { held: draft.held, severities: draft.severities, holds: q.holds };
       var rows = [
         ["Name", draft.name + (draft.enabled ? "" : " (disabled)")],
         ["Devices", scopeIsAll(draft.scope) ? "All devices" : "Filtered devices"],
         ["Severities", draft.severities ? draft.severities.join(", ") : "every severity"],
         ["Kinds of alert", kinds],
         ["When", (q.windows || []).map(function (w) { return window.PolarisRecurrence.summary(w); }).join("; ")],
-        ["Holds", q.holds === "followUps" ? "Only reminders and escalations (the first alert still sends)" : "Everything — summary email afterwards"],
+        ["Holds", QE.describeHeld(policy)],
       ];
-      if (q.holds !== "followUps") {
+      if (QE.policySummarises(policy)) {
         rows.push(["Summary sent", q.summaryAt ? "at " + q.summaryAt + " (server time)" : "when each quiet period ends"]);
         rows.push(["Recurring alerts", q.recurrenceThreshold ? "reported when fired more than " + q.recurrenceThreshold + " times" : "not reported separately"]);
         rows.push(["Email channel", ch ? ch.name : "Automatic"]);
@@ -336,6 +346,7 @@
         }
       }
       var quiet = Object.assign({}, draft.quiet, { severities: draft.severities, alertKinds: draft.alertKinds });
+      if (draft.held) quiet.held = draft.held; else delete quiet.held;
       var payload = { name: draft.name.trim(), enabled: draft.enabled, scope: draft.scope, quiet: quiet };
       btn.disabled = true;
       try {
