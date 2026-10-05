@@ -1117,19 +1117,26 @@ router.get("/oui/overrides", async (_req, res, next) => {
   }
 });
 
+// The prefix feeds a fleet-wide asset.updateMany, so it must be a plain string
+// before anything reads it — a non-string body field used to surface as a 500.
+const OuiOverrideSchema = z.object({
+  prefix: z.string().trim().min(1, "prefix is required").max(32),
+  manufacturer: z.string().trim().min(1, "manufacturer is required").max(255),
+  device: z.string().trim().max(255).nullish(),
+});
+
 router.post("/oui/overrides", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
   try {
-    const { prefix, manufacturer, device } = req.body;
-    if (!prefix || !manufacturer) throw new AppError(400, "prefix and manufacturer are required");
+    const { prefix, manufacturer, device } = OuiOverrideSchema.parse(req.body);
     const clean = prefix.replace(/[:\-.\s]/g, "").toUpperCase();
     if (!/^[0-9A-F]{6}$/.test(clean)) throw new AppError(400, "prefix must be 6 hex characters (e.g. AA:BB:CC)");
-    const deviceTrim = typeof device === "string" ? device.trim() : "";
-    const result = await setOuiOverride(prefix, manufacturer.trim(), deviceTrim || undefined);
+    const deviceTrim = device ?? "";
+    const result = await setOuiOverride(prefix, manufacturer, deviceTrim || undefined);
 
     // Update matching assets — match MAC addresses starting with this prefix
     // MAC format in DB is uppercase colon-separated: "AA:BB:CC:DD:EE:FF"
     const macPrefix = clean.match(/.{2}/g)!.join(":");
-    const updateData: { manufacturer: string; model?: string } = { manufacturer: manufacturer.trim() };
+    const updateData: { manufacturer: string; model?: string } = { manufacturer };
     if (deviceTrim) updateData.model = deviceTrim;
     const updated = await prisma.asset.updateMany({
       where: { macAddress: { startsWith: macPrefix } },
@@ -1143,7 +1150,7 @@ router.post("/oui/overrides", requirePermission("serverSettingsSystem", "write")
       resourceId: clean,
       resourceName: macPrefix,
       actor: req.session?.username,
-      message: `OUI override set for ${macPrefix} → ${manufacturer.trim()}${deviceTrim ? ` / ${deviceTrim}` : ""} (${updated.count} assets rewritten)`,
+      message: `OUI override set for ${macPrefix} → ${manufacturer}${deviceTrim ? ` / ${deviceTrim}` : ""} (${updated.count} assets rewritten)`,
     });
 
     res.json({ ...result, assetsUpdated: updated.count });
