@@ -139,11 +139,20 @@
   function resolve(b, surface) {
     var assets = ASSETS[surface] || ASSETS.login;
     if (customOn(b, surface)) {
+      // The logo's version (server-derived from the upload's mtime + size),
+      // so the URL changes when the file does and the image routes can serve
+      // it immutable. Without it a fixed-filename upload was `no-cache`, and
+      // every page change asked again — the sidebar painting with no logo and
+      // popping it in. A payload cached before the field existed has none and
+      // gets the old revalidating behaviour.
+      var v = b.logoVersion ? "v=" + encodeURIComponent(b.logoVersion) : "";
       return {
         // The accent symbol is theme-paired too, so the composite is requested
         // per theme — which also makes the URL change on a theme flip, so the
         // <img> re-fetches without any cache-busting of its own.
-        src: b.logoAccent ? apiBase() + ACCENT_PATH + "?theme=" + currentTheme() : b.logoUrl,
+        src: b.logoAccent
+          ? apiBase() + ACCENT_PATH + "?theme=" + currentTheme() + (v ? "&" + v : "")
+          : b.logoUrl + (v ? (b.logoUrl.indexOf("?") === -1 ? "?" : "&") + v : ""),
         custom: true,
         showName: Boolean((b.appName || "").trim()),
         showSubtitle: Boolean((b.subtitle || "").trim()),

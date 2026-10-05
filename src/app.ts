@@ -30,6 +30,7 @@ import { isAzureSsoConfiguredAsync, getSsoSettings } from "./services/azureAuthS
 import { isLoginSourceAllowed } from "./services/loginAccessService.js";
 import { isApiDocsSourceAllowed } from "./services/apiDocsAccessService.js";
 import { logEvent } from "./services/eventLogService.js";
+import { getBranding, logoCacheControl } from "./services/brandingService.js";
 import { isOidcEnabled } from "./services/oidcAuthService.js";
 import { isEntraProxyLoginAvailable } from "./services/entraProxyAuthService.js";
 import { stripUntrustedEntraProxyHeaders } from "./api/middleware/entraProxyHeaders.js";
@@ -885,7 +886,23 @@ app.use(pwaRouter);
 // same files the express.static(public) mount below also serves, so the
 // explicit mount is a redundant no-op. On the Docker image it points at
 // /app/state/public/uploads so logos persist across container rebuilds.
-app.use("/uploads", express.static(UPLOADS_DIR));
+//
+// Cache-Control is set here, not by express.static: the logo is written to a
+// fixed filename, so its URL carries a version (?v=, brand-logo.js) and a
+// request naming the CURRENT one is answered immutable — a page change then
+// paints the logo from cache rather than revalidating while the sidebar sits
+// empty. Anything else revalidates every time (logoCacheControl), which is
+// what express.static's default max-age=0 meant anyway.
+app.use("/uploads", async (req, res, next) => {
+  try {
+    const v = req.query.v;
+    const current = typeof v === "string" ? (await getBranding()).logoVersion : null;
+    res.setHeader("Cache-Control", logoCacheControl(v, current));
+  } catch {
+    res.setHeader("Cache-Control", "no-cache");
+  }
+  next();
+}, express.static(UPLOADS_DIR, { cacheControl: false }));
 app.use(express.static(path.resolve(__dirname, "..", "public")));
 
 // Bearer gate shared by /health, /health/ready and /metrics: each endpoint is

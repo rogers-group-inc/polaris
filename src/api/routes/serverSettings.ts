@@ -115,12 +115,11 @@ import {
 } from "../../services/queueService.js";
 import { BACKUP_DIR, UPLOADS_DIR } from "../../utils/paths.js";
 import { maintenanceLimiter } from "../middleware/rateLimits.js";
-import { getAppVersion } from "../../utils/version.js";
 import { parsePostgresVersion } from "../../utils/platformVersions.js";
 import { getTableSizes, getDatabaseSizeBreakdown } from "../../services/dbSizeService.js";
 import { formatBytes } from "../../utils/haAdvisories.js";
 import { detectImageMagic } from "../../utils/imageMagic.js";
-import { BRANDING_DEFAULTS, getBranding, hasCustomLogo, normalizeBrandingFlag, normalizeTemperatureUnit } from "../../services/brandingService.js";
+import { BRANDING_DEFAULTS, getBranding, normalizeBrandingFlag, normalizeTemperatureUnit } from "../../services/brandingService.js";
 import type { BrandingSettings } from "../../services/brandingService.js";
 // Re-exported for the existing importers of this module (src/api/router.ts
 // mounts a public /branding alias via a dynamic import of this file).
@@ -162,8 +161,6 @@ const restoreUpload = multer({
     filename: (_req, _file, cb) => cb(null, `polaris-restore-upload-${Date.now()}`),
   }),
 });
-
-const APP_VERSION: string = getAppVersion();
 
 // ─── Database ──────────────────────────────────────────────────────────────
 
@@ -2123,7 +2120,10 @@ router.put("/branding", requirePermission("serverSettingsSystem", "write"), asyn
       actor: req.session?.username,
       message: `Branding updated: appName="${updated.appName}", subtitle="${updated.subtitle}", temperatureUnit=${updated.temperatureUnit}, logoAccent=${updated.logoAccent}, logoOnLogin=${updated.logoOnLogin}, logoOnSidebar=${updated.logoOnSidebar}`,
     });
-    res.json({ ...updated, version: APP_VERSION, customLogo: hasCustomLogo(updated.logoUrl) });
+    // Re-read rather than echo `updated`: the response must carry the derived
+    // fields (customLogo, and logoVersion, which a new upload changes) exactly
+    // as GET /branding does, and the Customization tab renders straight off it.
+    res.json(await getBranding());
   } catch (err) {
     next(err);
   }
@@ -2166,7 +2166,10 @@ router.post("/branding/logo", maintenanceLimiter, requirePermission("serverSetti
       actor: req.session?.username,
       message: `Custom logo set (${filename})`,
     });
-    res.json({ ...updated, version: APP_VERSION, customLogo: hasCustomLogo(updated.logoUrl) });
+    // Re-read rather than echo `updated`: the response must carry the derived
+    // fields (customLogo, and logoVersion, which a new upload changes) exactly
+    // as GET /branding does, and the Customization tab renders straight off it.
+    res.json(await getBranding());
   } catch (err) {
     next(err);
   }
@@ -2203,7 +2206,10 @@ router.delete("/branding/logo", maintenanceLimiter, requirePermission("serverSet
       actor: req.session?.username,
       message: "Custom logo removed — reverted to default",
     });
-    res.json({ ...updated, version: APP_VERSION, customLogo: hasCustomLogo(updated.logoUrl) });
+    // Re-read rather than echo `updated`: the response must carry the derived
+    // fields (customLogo, and logoVersion, which a new upload changes) exactly
+    // as GET /branding does, and the Customization tab renders straight off it.
+    res.json(await getBranding());
   } catch (err) {
     next(err);
   }

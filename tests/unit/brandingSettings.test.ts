@@ -13,9 +13,40 @@ import {
   displayAppName,
   hasCustomLogo,
   isDefaultLogoUrl,
+  logoCacheControl,
+  logoVersionStamp,
   normalizeBrandingFlag,
   normalizeTemperatureUnit,
 } from "../../src/services/brandingService.js";
+
+describe("logoVersionStamp", () => {
+  it("is stable for the same file and changes with any upload", () => {
+    const v = logoVersionStamp(1_700_000_000_000, 4096, "0.9.123");
+    expect(v).toMatch(/^[0-9a-f]{12}$/);
+    expect(logoVersionStamp(1_700_000_000_000, 4096, "0.9.123")).toBe(v);
+    // A new upload rewrites the fixed filename: new mtime, usually a new size.
+    expect(logoVersionStamp(1_700_000_000_001, 4096, "0.9.123")).not.toBe(v);
+    expect(logoVersionStamp(1_700_000_000_000, 4097, "0.9.123")).not.toBe(v);
+    // A Polaris update can change the symbol the accent composite draws in.
+    expect(logoVersionStamp(1_700_000_000_000, 4096, "0.9.124")).not.toBe(v);
+  });
+});
+
+describe("logoCacheControl", () => {
+  it("is immutable only for a request naming the CURRENT version", () => {
+    expect(logoCacheControl("abc", "abc")).toBe("public, max-age=31536000, immutable");
+  });
+
+  it("revalidates for no version, a stale one, or no custom logo", () => {
+    // A payload cached before logoVersion existed asks without one.
+    expect(logoCacheControl(undefined, "abc")).toBe("no-cache");
+    // A stale version must never pin old bytes for a year.
+    expect(logoCacheControl("old", "abc")).toBe("no-cache");
+    expect(logoCacheControl("abc", null)).toBe("no-cache");
+    // A repeated query param arrives as an array; never immutable.
+    expect(logoCacheControl(["abc", "abc"], "abc")).toBe("no-cache");
+  });
+});
 
 describe("normalizeBrandingFlag", () => {
   it("keeps a stored false, defaults only when nothing is stored", () => {
