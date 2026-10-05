@@ -102,7 +102,8 @@
      resolves to each theme's own accent. The daylight base thins it (a wash
      that reads as light on indigo reads as a stain on a pale ground), and
      noon swaps the hue for sunlight yellow — its ground is near-white and a
-     terracotta wash there reads as rust, not light. The phone carries the
+     terracotta wash there reads as rust, not light. Morning replaces the
+     whole token with a sunrise rising from the bottom. The phone carries the
      same recipe in mobile.css (--page-glow there, off --md-primary). */
   --page-glow-color: var(--color-accent);
   --page-glow-strength: 17.6%;
@@ -460,8 +461,9 @@ html { font-size: 14px; color-scheme: dark; }
 body {
   font-family: var(--font-sans);
   color: var(--color-text-primary);
-  /* Fixed so the glow stays at the top of the viewport as the page scrolls —
-     it is light from above the screen, not a mark on the first screenful. */
+  /* Fixed so the glow stays put in the viewport as the page scrolls (at the
+     top, or morning's at the bottom) — it is light, not a mark on the first
+     screenful. */
   background: var(--page-glow) no-repeat fixed, var(--color-bg-secondary);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -513,14 +515,20 @@ code {
   --shadow-panel: 0 24px 64px rgba(70,45,10,.32), 0 2px 10px rgba(70,45,10,.20);
   --shadow-control: 0 2px 5px rgba(70,45,10,.30), 0 1px 2px rgba(70,45,10,.20), inset 0 1px 0 rgba(255,255,255,.55);
   --shadow-card: 0 8px 32px rgba(70,45,10,.22), 0 2px 6px rgba(70,45,10,.18), inset 0 1px 0 rgba(255,255,255,.55);
-  /* Warm white (this theme's own --color-surface), clearly LIGHTER than the
-     parchment ground, so it reads as early sun brightening the top of the
-     page. Lightness is what shows here, not hue. All three earlier attempts
-     failed on that: the brown-orange accent (#b25e0a) darkened the top into
-     mud, vivid orange (#ff8a00 at 7.8%) matched the orange-tan ground, and
-     pale gold (#ffe08a at 30%) was no lighter than it. */
-  --page-glow-color: #fff8e8;
-  --page-glow-strength: 50%;
+  /* Sunrise: the one theme whose glow rises from the BOTTOM centre, a sun on
+     the horizon rather than light from above. Overrides the whole
+     --page-glow, not just its colour, because both the anchor and the stops
+     differ. A warm-white core (lightness is what reads on parchment; the
+     brown accent darkened into mud, vivid orange alone matched the tan
+     ground) through gold into an orange haze that fades out by mid-screen.
+     One layer on purpose: body's shorthand applies `no-repeat fixed` to the
+     last layer only, so a second layer would scroll and tile. */
+  --page-glow: radial-gradient(ellipse 140% 75% at 50% 100%,
+    rgba(255,246,220,.90) 0%,
+    rgba(255,210,122,.55) 9%,
+    rgba(243,154,76,.34) 26%,
+    rgba(238,154,90,.14) 50%,
+    transparent 78%);
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────

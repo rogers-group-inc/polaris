@@ -101,7 +101,8 @@
      daylight block thins it — a wash that reads as light on indigo reads as a
      stain on a white ground. Noon swaps the hue for sunlight yellow: its
      ground is near-white, and a terracotta wash there reads as a rust mark,
-     not light. */
+     not light. Morning replaces the whole token with a sunrise rising from
+     the bottom. */
   /* Opacity of the frosted bottom navbar's tint: the desktop sidebar's
      --rail-glass-bg mix (40% dark family, 30% daylight, where a light panel
      over a light page has less to hide behind). */
@@ -255,10 +256,15 @@
 
   --shadow-card:  0 8px 32px rgba(70,45,10,.22), 0 2px 6px rgba(70,45,10,.18), inset 0 1px 0 rgba(255,255,255,.55);
   --shadow-sheet: 0 -8px 32px rgba(70,45,10,.28), 0 -2px 6px rgba(70,45,10,.18), inset 0 1px 0 rgba(255,255,255,.55);
-  /* Warm white, clearly lighter than the parchment ground, as on the
-     desktop (where the reasoning is written out). */
-  --page-glow-color: #fff8e8;
-  --page-glow-strength: 50%;
+  /* Sunrise from the bottom centre, as on the desktop (where the reasoning
+     is written out). Taller than the phone's top wash is wide: the screen is
+     portrait, and the frosted nav bar sits over the brightest part. */
+  --page-glow: radial-gradient(ellipse 180% 60% at 50% 100%,
+    rgba(255,246,220,.90) 0%,
+    rgba(255,210,122,.55) 9%,
+    rgba(243,154,76,.34) 26%,
+    rgba(238,154,90,.14) 50%,
+    transparent 78%);
 }
 /* Noon — neutral near-white, terracotta, the highest contrast of any palette.
    The cool daylight palette; cream here and it reads as morning. */

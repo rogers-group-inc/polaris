@@ -160,9 +160,14 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
 - **The page ground carries a glow; nothing full-width may paint over it opaquely.** Since
   2026-10-04 `body` paints `--page-glow` (a radial wash from the top centre of the viewport,
   `background-attachment: fixed`) over `--color-bg-secondary`. The glow is `--page-glow-color`
-  (the theme's accent, except nightfall — electric blue `#2f6bff`, since its pastel accent goes grey slate at 12.3% — morning — warm white `#fff8e8` at 50%, clearly lighter than its parchment ground; on a mid-tone ground lightness shows and hue does not, and the accent, a vivid orange and pale gold all vanished — and noon, which takes sunlight yellow `#ffc928` because a terracotta
+  (the theme's accent, except nightfall — electric blue `#2f6bff`, since its pastel accent goes grey slate at 12.3% — and noon, which takes sunlight yellow `#ffc928` because a terracotta
   wash on its near-white ground reads as rust) at `--page-glow-strength` (17.6% dark family, 12.3% nightfall, 11.2%
-  daylight base, 24% noon; a wide horizontal ellipse, 140% × 60% of the viewport). A sticky band pinned at the top of the page sits exactly where the
+  daylight base, 24% noon; a wide horizontal ellipse, 140% × 60% of the viewport). **Morning
+  overrides the whole `--page-glow`, not its colour: a sunrise rising from the BOTTOM centre**
+  (140% × 75%, a warm-white core through gold into an orange haze that is gone by mid-screen —
+  lightness is what reads on its mid-tone parchment; the accent, a vivid orange alone and pale
+  gold all vanished into it). It stays ONE gradient layer: `body`'s shorthand applies
+  `no-repeat fixed` to the last layer only, so a second layer would scroll and tile. A sticky band pinned at the top of the page sits exactly where the
   glow is brightest, so `.page-header-sticky` is BLURRED and UNFILLED — a bare `blur(20px)`, no
   tint. A 70% `--color-bg-secondary` tint was tried and rejected on 2026-10-04: it read as a
   dark box sitting on the glow. With no tint the blur can't be seen at rest (blurring a smooth
