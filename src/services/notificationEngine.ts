@@ -668,6 +668,56 @@ function triggerNeedsAnsweringDevice(trigger: Trigger): boolean {
 }
 
 /**
+ * One outage is one alert, for EVERY reading the device itself reports
+ * (business rule 29(i)). A metric alert already live when its device goes
+ * `down` used to freeze — the readings stop, so nothing recovered it — and sat
+ * next to the asset-down alert for the whole outage, then mailed "resolved"
+ * the moment the device came back and reported healthy (an SD-WAN SLA alert
+ * resolving twelve hours after its gate's modem was power-cycled). A device
+ * that is `down` hands every such alert to asset-down, exactly as packet loss
+ * does above: cleared as superseded, no reset actions, no new fire while dark.
+ *
+ * Gated on `down` alone, not "not answering": `passive` and `unknown` have no
+ * asset-down alert to hand to (see assetIsAnsweringProbes), and `recovering`
+ * is answering again — its readings are real.
+ *
+ * Kept out, because they are not the device reporting:
+ *   - the outage itself (`monitorStatus`, `consecutiveFailures`) — that alert
+ *     IS the one everything hands to;
+ *   - facts Polaris holds about the device rather than reads from it
+ *     (`status`, `dependencySuppressed`, `quarantined`, `firmwareVsPrimary`) —
+ *     an outage changes none of them, and clearing one would only re-fire it,
+ *     a fresh alert, when the device came back;
+ *   - path checks (`path*`) — the asset is the vantage point, not the subject,
+ *     and a server-sourced check keeps measuring while that host is dark.
+ */
+const DEVICE_DOWN_KEEPS_STATE_FIELDS = new Set<string>([
+  "monitorStatus", "consecutiveFailures",
+  "status", "dependencySuppressed", "quarantined", "firmwareVsPrimary",
+]);
+
+function leafHandsOffWhenDeviceDown(leaf: { type: string; metric?: string; field?: string }): boolean {
+  if (leaf.type === "asset_metric") return !!leaf.metric && !leaf.metric.startsWith("path");
+  if (leaf.type === "asset_state") return !!leaf.field && !DEVICE_DOWN_KEEPS_STATE_FIELDS.has(leaf.field);
+  return false;
+}
+
+/** Does a live alert on this trigger hand off to asset-down when its device
+ *  goes `down` (see above)? A composite does only when EVERY leaf would — one
+ *  leaf about the outage or a held fact makes the tree about it too. */
+export function triggerHandsOffWhenDeviceDown(trigger: Trigger): boolean {
+  if (trigger.type === "composite") {
+    return trigger.kind === "asset" && collectLeafRefs(trigger).every((r) => leafHandsOffWhenDeviceDown(r.leaf));
+  }
+  return leafHandsOffWhenDeviceDown(trigger);
+}
+
+/** Is the device in a confirmed outage — the state asset-down alerts on? */
+export function assetIsDown(a: { monitorStatus: string | null }): boolean {
+  return a.monitorStatus === "down";
+}
+
+/**
  * An interface alert only ever concerns a MONITORED interface — the pin set in
  * `Asset.monitoredInterfaces` (the same join the Down Interfaces widget uses).
  * A device reports every port it has, most of them idle or unplugged, so an
@@ -2507,7 +2557,8 @@ async function evaluateThresholdRule(
   // all-cores CPU alert this tick. Handed off like a carve-out.
   const coreSupersededIds = new Set<string>();
   // Assets whose device isn't answering, on a rule whose metric needs it to be
-  // (packet loss — business rule 29). Handed off to asset-down alerting.
+  // (packet loss — business rule 29), or that is `down` on a rule reading
+  // anything else the device reports (29(i)). Handed off to asset-down alerting.
   const notAnsweringIds = new Set<string>();
   // Assets whose reading sat at or above the trigger's saturation ceiling, so
   // there is no reading this tick. Handled like notAnswering: cleared, not
@@ -2527,6 +2578,7 @@ async function evaluateThresholdRule(
   // The rows behind suppressedIds — the frozen-recovery pass re-reads them.
   const suppressedAssets: ScopeAssetRow[] = [];
   const needsAnswering = triggerNeedsAnsweringDevice(trigger);
+  const handsOffWhenDown = !needsAnswering && triggerHandsOffWhenDeviceDown(trigger);
 
   if (trigger.type === "host_metric") {
     const r = await resolveHostMetricReading(trigger);
@@ -2560,7 +2612,7 @@ async function evaluateThresholdRule(
       const spokenFor = speaksForSuppressed && a.dependencySuppressed && String(a.status) !== "maintenance";
       if (isSuppressedForNotifications(a) && !spokenFor) { suppressedIds.add(a.id); suppressedAssets.push(a); }
       else if (shadowable && isAssetShadowed(shadowIndex!, rule, sig!, rank, a)) shadowedIds.add(a.id);
-      else if (needsAnswering && !assetIsAnsweringProbes(a)) notAnsweringIds.add(a.id);
+      else if (needsAnswering ? !assetIsAnsweringProbes(a) : handsOffWhenDown && assetIsDown(a)) notAnsweringIds.add(a.id);
       else active.push(a);
     }
     if (trigger.type === "asset_metric" && trigger.metric === "cpuCorePct" && active.length > 0) {
@@ -2898,14 +2950,17 @@ async function evaluateThresholdRule(
     }
   }
 
-  // TWO HANDOFFS TO ASSET-DOWN ALERTING, both on a rule whose metric needs an
-  // answering device (packet loss). Like the carve-out and unlike maintenance,
-  // the live alert CLEARS rather than freezing — freezing is what used to leave
-  // a packet-loss alert sitting next to the asset-down alert for a whole
-  // outage, which is the duplicate operators were seeing.
+  // TWO HANDOFFS TO ASSET-DOWN ALERTING. Like the carve-out and unlike
+  // maintenance, the live alert CLEARS rather than freezing — freezing is what
+  // used to leave a packet-loss alert sitting next to the asset-down alert for
+  // a whole outage, which is the duplicate operators were seeing.
   //
-  //   device-down       — the device stopped answering, so it produces no
-  //                       reading at all (assetIsAnsweringProbes).
+  //   device-down       — packet loss: the device stopped answering, so it
+  //                       produces no reading at all (assetIsAnsweringProbes).
+  //                       Every other reading the device reports: it is
+  //                       `down` (triggerHandsOffWhenDeviceDown, 29(i)) — the
+  //                       readings stopped with it, and a frozen alert would
+  //                       mail "resolved" the moment it came back.
   //   reading-saturated — it IS answering, but the ratio reached the rule's
   //                       own `ignoreAtOrAbove` ceiling, so the number has
   //                       stopped describing a lossy link. This is the case
@@ -2913,7 +2968,7 @@ async function evaluateThresholdRule(
   //                       from a 55-minute outage really does read ~92% for
   //                       the rest of the window, and an operator who does not
   //                       want an alert trailing every outage sets the ceiling
-  //                       below that (business rule 29).
+  //                       below that (business rule 29). Packet loss only.
   //
   // Deliberately no reset actions (matching the carve-out): the alert isn't
   // recovering, and mailing "packet loss resolved" about a device that just went
@@ -2941,6 +2996,9 @@ async function evaluateThresholdRule(
           : `Cleared: ${rule.name} — the reading reached the automation's ignore-at-or-above ceiling, so it describes an outage rather than a lossy link`,
         details: { ruleId: rule.id, assetId: st.assetId, reason: handoff },
       }).catch(() => {});
+      // The timed sweep below reads this snapshot; a row cleared here must not
+      // then time out and run the reset actions this handoff withholds.
+      st.state = "clear";
     } else if (st.state === "pending") {
       await prisma.notificationRuleState.update({
         where: { id: st.id },
@@ -3440,6 +3498,9 @@ async function evaluateCompositeRule(
 ): Promise<void> {
   const trigger = rule.trigger as CompositeTrigger;
   const suppressedIds = new Set<string>();
+  // Devices that are `down`, on a tree whose every leaf the device itself
+  // reports — handed off to asset-down (business rule 29(i)).
+  const deviceDownIds = new Set<string>();
   let scopeAssets: ScopeAssetRow[] = [];
   let activeAssets: ScopeAssetRow[];
   if (trigger.kind === "host") {
@@ -3447,8 +3508,10 @@ async function evaluateCompositeRule(
   } else {
     scopeAssets = await loadScopeAssets(rule.scope, { monitoredOnly: true });
     activeAssets = [];
+    const handsOffWhenDown = triggerHandsOffWhenDeviceDown(trigger);
     for (const a of scopeAssets) {
       if (isSuppressedForNotifications(a)) suppressedIds.add(a.id);
+      else if (handsOffWhenDown && assetIsDown(a)) deviceDownIds.add(a.id);
       else activeAssets.push(a);
     }
   }
@@ -3601,6 +3664,32 @@ async function evaluateCompositeRule(
   // a state row must never be left `firing` with no notification behind it.
   if (groupBuf?.size) await flushGroupFires(rule, groupBuf, liveByAsset, now, pendingSends, tickIndex);
 
+  // Device-down handoff (business rule 29(i)) — same contract as the
+  // per-reading path: the live alert CLEARS as superseded with no reset
+  // actions, and a pending debounce restarts once the device is back.
+  for (const st of states) {
+    if (st.dimensionKey !== "" || !st.assetId || !deviceDownIds.has(st.assetId)) continue;
+    if (st.state === "firing") {
+      await clearActiveNotification(st, "system:device-down", rule);
+      await prisma.notificationRuleState.update({
+        where: { id: st.id },
+        data: { state: "clear", conditionMetSince: null, recoveredSince: null, notificationId: null, bandMetSince: Prisma.DbNull, ...CLEARED_RUNS },
+      });
+      await logEvent({
+        action: "notification.superseded",
+        resourceType: "notification",
+        resourceId: st.notificationId ?? undefined,
+        resourceName: rule.name,
+        actor: "system:notification-engine",
+        message: `Cleared: ${rule.name} — the device is no longer answering, so its outage is the asset-down alert`,
+        details: { ruleId: rule.id, assetId: st.assetId, reason: "device-down" },
+      }).catch(() => {});
+      st.state = "clear"; // the timed sweep below reads this snapshot
+    } else if (st.state === "pending") {
+      await prisma.notificationRuleState.update({ where: { id: st.id }, data: { state: "clear", conditionMetSince: null, ...CLEARED_RUNS } });
+    }
+  }
+
   // Vanished states: assets that left the rule's scope (composite state lives
   // at dimensionKey "", so only the scope reason applies here — an evaluated
   // asset is always `seen`). Same freeze contracts as the legacy path.
@@ -3610,7 +3699,7 @@ async function evaluateCompositeRule(
       states.filter((s) => s.dimensionKey === ""),
       new Set(Array.from(evaluatedIds, (id) => `${id}|`)),
       new Set(scopeAssets.map((a) => a.id)),
-      suppressedIds,
+      deviceDownIds.size ? new Set([...suppressedIds, ...deviceDownIds]) : suppressedIds,
       evaluatedIds,
       // Composite state has no dimensionKey, so the pin-test carve-out never
       // applies here (pinTestForTrigger is null for composite triggers anyway).

@@ -216,6 +216,11 @@ of failures that reached `down` is **dropped whole**, onset included.
 probe because a picture of a window has to be continuous. See
 [Triggers](Automation-Triggers#packet-loss-is-special).
 
+**The same holds for every other reading the device reports.** When a device
+goes `down`, its open metric and device-state alerts clear as *superseded*, with
+no "resolved" message, and the asset-down alert speaks for the outage. See
+[Triggers](Automation-Triggers#a-device-that-goes-down-takes-its-other-alerts-with-it).
+
 ---
 
 ## Rules 30–48
