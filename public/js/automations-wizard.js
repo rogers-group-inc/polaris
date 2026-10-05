@@ -6058,6 +6058,22 @@ async function openAutomationWizard(existing, opts) {
     });
     // Reset list: hydrate, then keep it following the trigger actions.
     var resetHost = panel.querySelector("#aw-reset-actions");
+    // A STORED automation comes back with no mirror marks (they are stripped
+    // at save), so its reset rows would all read as operator-authored and the
+    // first change on the trigger list would mirror every Notify in AGAIN — a
+    // duplicate per edit, saved and compounded on the next one. So, once per
+    // draft: re-attach the rows that still equal their trigger Notify, and opt
+    // every other trigger Notify out of mirroring (its reset counterpart was
+    // edited, removed, or never wanted — the saved list is the answer).
+    if (draft._resetMirrorOptOut === undefined) {
+      if (draft.resetActions === undefined) {
+        draft._resetMirrorOptOut = [];
+      } else {
+        var reattached = reattachResetMirrors(draft.actions, draft.resetActions || []);
+        draft.resetActions = draft.resetActions ? reattached.rows : draft.resetActions;
+        draft._resetMirrorOptOut = reattached.optOut;
+      }
+    }
     var resetSeed = draft.resetActions === undefined
       // Brand-new automation: the audit Event is present by default on BOTH
       // halves, so a recovery is recorded the way the firing is (the draft's
@@ -6287,6 +6303,11 @@ async function openAutomationWizard(existing, opts) {
   }
 
   function adoptLegacyResolvedActions() {
+    // The engine only ever ran the resolved policy on a BANDED rule (fireResolved
+    // sits behind hasBands). Without bands there was no recovery announcement
+    // to carry over, and adopting one here put the trigger's Notify actions into
+    // the reset list of every automation saved with none, on every open.
+    if (!(draft.severityBands || []).length) return;
     var bn = draft.bandNotify || {};
     if (bn.onResolved === false) return;
     if ((draft.resetActions || []).length) return;
@@ -8576,7 +8597,12 @@ async function openAutomationWizard(existing, opts) {
         row.addEventListener("input", function () { detachMirror(row, panel); }, true);
         row.addEventListener("change", function () { detachMirror(row, panel); }, true);
         var rm = row.querySelector(".aw-action-remove");
-        if (rm) rm.addEventListener("click", function () { setTimeout(function () { refreshMirrorNote(panel); }, 0); });
+        if (rm) rm.addEventListener("click", function () {
+          // Removed is as much the operator's answer as edited: the next
+          // trigger change must not put it back.
+          optOutOfResetMirror(row._mirrorOf);
+          setTimeout(function () { refreshMirrorNote(panel); }, 0);
+        });
       }
     });
     refreshMirrorNote(panel);
@@ -8584,8 +8610,59 @@ async function openAutomationWizard(existing, opts) {
 
   function detachMirror(row, panel) {
     if (!row._mirrorOf) return;
+    // The edited row now speaks for that destination; without the opt-out the
+    // next trigger change would mirror a fresh copy in beside it.
+    optOutOfResetMirror(row._mirrorOf);
     row._mirrorOf = null;
     refreshMirrorNote(panel);
+  }
+
+  /** Trigger Notify destinations (channel-list keys) whose reset counterpart
+   *  the operator owns — edited, removed, or saved differently. The mirror
+   *  never adds a row for one of these. Draft-only; never posted. */
+  function optOutOfResetMirror(key) {
+    if (!key) return;
+    if (!Array.isArray(draft._resetMirrorOptOut)) draft._resetMirrorOptOut = [];
+    if (draft._resetMirrorOptOut.indexOf(key) === -1) draft._resetMirrorOptOut.push(key);
+  }
+
+  /** Key-order-independent JSON of an action, minus what mirroring drops. */
+  function mirrorComparable(a) {
+    var sortKeys = function (v) {
+      if (Array.isArray(v)) return v.map(sortKeys);
+      if (v && typeof v === "object") {
+        var o = {};
+        Object.keys(v).sort().forEach(function (k) { o[k] = sortKeys(v[k]); });
+        return o;
+      }
+      return v;
+    };
+    var copy = JSON.parse(JSON.stringify(a || {}));
+    delete copy.escalation;
+    delete copy._mirrorOf;
+    return JSON.stringify(sortKeys(copy));
+  }
+
+  /**
+   * A stored automation's reset list, with the rows that still EQUAL a mirror
+   * of a trigger Notify marked as following it again, and the keys of every
+   * trigger Notify that has no such row returned as opt-outs.
+   */
+  function reattachResetMirrors(triggerActions, resetActions) {
+    var rows = (resetActions || []).map(function (a) { return JSON.parse(JSON.stringify(a)); });
+    var optOut = [];
+    (triggerActions || []).forEach(function (a) {
+      if (!a || a.type !== "notify" || !actionChannelIds(a).length) return;
+      var key = actionChannelIds(a).join(",");
+      var want = mirrorComparable(a);
+      // A row already marked for this key (the legacy band-resolved adoption
+      // marks its rows before this runs) is following as it is.
+      if (rows.some(function (r) { return r._mirrorOf === key; })) return;
+      var match = rows.find(function (r) { return !r._mirrorOf && mirrorComparable(r) === want; });
+      if (match) match._mirrorOf = key;
+      else if (optOut.indexOf(key) === -1) optOut.push(key);
+    });
+    return { rows: rows, optOut: optOut };
   }
 
   /** Re-mirror after the TRIGGER action list changes (add / remove / channel). */
@@ -8623,7 +8700,11 @@ async function openAutomationWizard(existing, opts) {
   }
 
   function mirroredResetActions(triggerActions, existing) {
-    var notifies = (triggerActions || []).filter(function (a) { return a.type === "notify" && actionChannelIds(a).length; });
+    var optOut = Array.isArray(draft._resetMirrorOptOut) ? draft._resetMirrorOptOut : [];
+    var notifies = (triggerActions || []).filter(function (a) {
+      return a.type === "notify" && actionChannelIds(a).length &&
+        optOut.indexOf(actionChannelIds(a).join(",")) === -1;
+    });
     var kept = (existing || []).filter(function (a) { return !a._mirrorOf; });
     var stillMirrored = notifies.map(function (a) {
       var clone = JSON.parse(JSON.stringify(a));

@@ -941,6 +941,60 @@ describe("automation wizard DOM render", () => {
     expect(p.bandNotify.onResolved).toBe(false);
   });
 
+  // A stored automation comes back with its mirror marks stripped, so every
+  // reset row used to read as operator-authored — and the first change on the
+  // trigger list mirrored each Notify in AGAIN. Saved, then compounded by the
+  // next edit: one more "When it clears" notification per edit.
+  const openStoredWithReset = async (resetActions: unknown[]) => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors = [];
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-mirror",
+      name: "Mirror",
+      description: null,
+      enabled: true,
+      severity: "warning",
+      trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">=", threshold: 80, forDurationSec: 300 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      actions: [{ type: "event" }, { type: "notify", channelId: "c1", addresses: ["noc@example.invalid"] }],
+      resetActions,
+    });
+    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 20));
+    // Any change on the trigger's action list re-runs the mirror.
+    doc.querySelector("#aw-actions")!.dispatchEvent(new (doc.defaultView as any).Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 20));
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    return savedPayloads[0]! as Record<string, any>;
+  };
+
+  it("re-opening a saved automation never mirrors a trigger Notify into the reset list twice", async () => {
+    const p = await openStoredWithReset([
+      { type: "event" },
+      { type: "notify", channelId: "c1", addresses: ["noc@example.invalid"] },
+    ]);
+    expect(p.resetActions).toHaveLength(2);
+    expect(p.resetActions.filter((a: any) => a.type === "notify")).toHaveLength(1);
+    expect(p.resetActions.filter((a: any) => a.type === "event")).toHaveLength(1);
+    expect(() => ruleInputSchema.parse(p)).not.toThrow();
+  });
+
+  it("a saved reset Notify the operator edited is theirs — no mirrored copy appears beside it", async () => {
+    const p = await openStoredWithReset([{ type: "notify", channelId: "c1", addresses: ["ops@example.invalid"] }]);
+    expect(p.resetActions).toHaveLength(1);
+    expect(p.resetActions[0].addresses).toEqual(["ops@example.invalid"]);
+  });
+
+  it("a saved automation with no reset actions stays that way through a trigger change", async () => {
+    const p = await openStoredWithReset(null as unknown as unknown[]);
+    expect(p.resetActions).toBeNull();
+  });
+
   it("a new automation seeds an audit Event on BOTH halves, and emptying the reset list saves as null", async () => {
     // The fire actions have carried a default "Create an Event" row since the
     // Event became an action; the reset list now does too, so a recovery is
