@@ -159,6 +159,45 @@ export async function deleteQuietTimeSchedule(id: string, actor?: string) {
 }
 
 /** Recent summary runs, newest first — the Settings tab's "Recent summaries" list. */
+/**
+ * One summary run in full, for the Settings modal's drill-down: the row with
+ * its `details` and `recipients`, plus the COVERED alerts read live (the row
+ * holds their ids; a hostname or a cleared flag that changed since is shown
+ * as it is now, which is what "is this still broken" wants). An id the row
+ * names that no longer exists is simply absent from `covered`.
+ */
+export async function getQuietTimeSummary(id: string) {
+  const row = await prisma.quietTimeSummary.findUnique({
+    where: { id },
+    select: {
+      id: true, sourceKind: true, sourceId: true, sourceName: true, coveredFrom: true, coveredTo: true,
+      notificationIds: true, listedCount: true, recurringCount: true, details: true, recipients: true,
+      channelId: true, status: true, createdAt: true, sentAt: true,
+    },
+  });
+  if (!row) throw new AppError(404, "Quiet-time summary not found");
+  const covered = row.notificationIds.length
+    ? await prisma.notification.findMany({
+        where: { id: { in: row.notificationIds } },
+        select: {
+          id: true, assetId: true, assetHostname: true, severity: true, message: true, dimension: true,
+          triggeredAt: true, cleared: true, clearedAt: true, acknowledged: true, quietHeldAt: true,
+          rule: { select: { name: true } },
+        },
+        orderBy: { triggeredAt: "asc" },
+      })
+    : [];
+  const details = (row.details && typeof row.details === "object" ? row.details : {}) as {
+    outstanding?: unknown[]; recurring?: unknown[]; recurrenceThreshold?: number | null; allQuiet?: boolean; heldCount?: number;
+  };
+  const listedIds = new Set((details.outstanding ?? []).map((o) => (o as { notificationId?: string }).notificationId).filter((x): x is string => !!x));
+  return {
+    summary: row,
+    covered: covered.map((n) => ({ ...n, ruleName: n.rule?.name ?? null, rule: undefined, listed: listedIds.has(n.id) })),
+    listed: { outstanding: details.outstanding ?? [], recurring: details.recurring ?? [], recurrenceThreshold: details.recurrenceThreshold ?? null },
+  };
+}
+
 export async function listQuietTimeSummaries(limit = 20) {
   return prisma.quietTimeSummary.findMany({
     select: {

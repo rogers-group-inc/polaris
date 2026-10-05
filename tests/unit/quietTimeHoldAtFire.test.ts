@@ -118,6 +118,18 @@ describe("executeActions inside a quiet window", () => {
     expect(db.deliveries.find((d) => d.transport === "email").status).toBe("held");
   });
 
+  it("never holds or stamps a fire with no notify action — nothing people-facing to withhold, so nothing for a summary to report", async () => {
+    holdAnswer.value = HOLD;
+    await executeActions("n1", [
+      { type: "event" } as any,
+      { type: "script", scriptId: "s1", runOn: "server" } as any,
+    ], CTX, { ruleId: "r1" });
+    expect(holdQuestions).toHaveLength(0);
+    expect(db.notifUpdates).toHaveLength(0);
+    expect(db.events.map((e) => e.action)).not.toContain("notification.quiet_held");
+    expect(db.scriptRuns).toHaveLength(1);
+  });
+
   it("writes an ordinary pending row when nothing is quiet", async () => {
     await executeActions("n1", [NOTIFY], CTX, { ruleId: "r1" });
     expect(db.deliveries[0].status).toBeUndefined();

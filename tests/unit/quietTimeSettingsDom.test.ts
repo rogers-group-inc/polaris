@@ -20,6 +20,7 @@ import { resolve } from "node:path";
 import { Window } from "happy-dom";
 import { buildSchemaCatalog, scopeSchema } from "../../src/services/notificationTypes.js";
 import { quietTimeConfigSchema } from "../../src/utils/quietTime.js";
+import { installAppOverlay } from "../fixtures/appOverlay.js";
 
 const g = globalThis as Record<string, unknown>;
 let doc: Window["document"];
@@ -70,6 +71,18 @@ beforeAll(() => {
       summaries: async () => ({ summaries: [
         { id: "s1", sourceKind: "global", sourceName: "Nights", coveredFrom: "2026-10-02T22:00:00Z", coveredTo: "2026-10-03T06:00:00Z", notificationIds: ["n1", "n2"], listedCount: 1, recurringCount: 0, recipients: [{ address: "a@x.com", status: "sent" }], status: "sent", createdAt: "2026-10-03T06:00:00Z", sentAt: "2026-10-03T06:00:05Z" },
       ] }),
+      summary: async (id: string) => ({
+        summary: { id, sourceKind: "global", sourceName: "Nights", coveredFrom: "2026-10-02T22:00:00Z", coveredTo: "2026-10-03T06:00:00Z", notificationIds: ["n1", "n2"], listedCount: 1, recurringCount: 0, details: { outstanding: [], recurring: [] }, recipients: [{ address: "a@x.com", status: "sent", attempts: 1 }, { address: "b@x.com", userId: "u2", status: "failed", attempts: 10, error: "smtp down" }], status: "partial-failed" },
+        covered: [
+          { id: "n1", assetId: "a1", assetHostname: "sw-1", severity: "serious", message: "port12 is down", dimension: "port12", triggeredAt: "2026-10-03T02:00:00Z", cleared: false, acknowledged: false, ruleName: "Port down", listed: true },
+          { id: "n2", assetId: "a2", assetHostname: "ap-7", severity: "warning", message: "AP flapping", dimension: null, triggeredAt: "2026-10-03T03:00:00Z", cleared: true, clearedAt: "2026-10-03T03:30:00Z", acknowledged: false, ruleName: "AP flap", listed: false },
+        ],
+        listed: {
+          outstanding: [{ notificationId: "n1", severity: "serious", assetId: "a1", assetHostname: "sw-1", ruleName: "Port down", message: "port12 is down", dimension: "port12", triggeredAt: "2026-10-03T02:00:00Z" }],
+          recurring: [{ assetId: "a2", assetHostname: "ap-7", ruleName: "AP flap", dimension: null, severity: "warning", count: 3, times: ["2026-10-03T01:00:00Z", "2026-10-03T02:00:00Z", "2026-10-03T03:00:00Z"], stillActive: false }],
+          recurrenceThreshold: 2,
+        },
+      }),
       create: async (body: Record<string, unknown>) => { posted.push(body); return { id: "new" }; },
       update: async (id: string, body: Record<string, unknown>) => { put.push({ id, body }); return { id }; },
       delete: async () => {},
@@ -139,6 +152,57 @@ describe("the Settings modal", () => {
     expect(row.textContent).toContain("at 07:30");
     expect(row.textContent).toContain("Quiet now until Oct 3 06:00");
     expect(row.querySelector("[data-qt-edit]")).toBeTruthy();
+  });
+
+  it("a summary's Covered, Listed and Recipients counts open the lists behind them over the modal", async () => {
+    // The real stacked-overlay builder, so the assertions about structure hold.
+    g._trapFocus = () => () => {};
+    g._focusFirstIn = () => {};
+    g.requestAnimationFrame = (fn: () => void) => setTimeout(fn, 0);
+    installAppOverlay();
+    settings().open();
+    await tick();
+    const btn = (kind: string) => doc.querySelector(`[data-qt-detail="${kind}"][data-qt-id="s1"]`)! as unknown as { click: () => void };
+    const overlay = () => Array.from(doc.querySelectorAll(".modal-overlay")).pop()! as HTMLElement;
+
+    btn("covered").click();
+    await tick(20);
+    expect(overlay().style.zIndex).toBe("1300");
+    expect(overlay().querySelector(".modal-header h3")!.textContent).toBe("Alerts covered");
+    const coveredRows = Array.from(overlay().querySelectorAll("tbody tr"));
+    expect(coveredRows).toHaveLength(2);
+    // Severity order, the listed one marked, the device linked to its page, the recovered one saying so.
+    expect(coveredRows[0]!.textContent).toContain("sw-1");
+    expect(coveredRows[0]!.querySelector(".badge-active")!.textContent).toBe("LISTED");
+    expect(coveredRows[0]!.querySelector("a")!.getAttribute("href")).toBe("/assets/a1");
+    expect(coveredRows[0]!.textContent).toContain("Still active");
+    expect(coveredRows[1]!.textContent).toContain("Recovered");
+    (overlay().querySelector("#qt-detail-close") as unknown as { click: () => void }).click();
+    await tick(450);
+    expect(doc.querySelectorAll(".modal-overlay")).toHaveLength(0);
+
+    btn("listed").click();
+    await tick(20);
+    expect(overlay().querySelector(".modal-header h3")!.textContent).toBe("What the email listed");
+    expect(overlay().textContent).toContain("Still outstanding (1)");
+    expect(overlay().textContent).toContain("Recurring (1)");
+    expect(overlay().textContent).toContain("fired more than 2 times");
+    expect(overlay().querySelectorAll("tbody tr")).toHaveLength(2);
+    (overlay().querySelector("#qt-detail-close") as unknown as { click: () => void }).click();
+    await tick(450);
+
+    btn("recipients").click();
+    await tick(20);
+    expect(overlay().querySelector(".modal-header h3")!.textContent).toBe("Recipients");
+    const recipRows = Array.from(overlay().querySelectorAll("tbody tr"));
+    expect(recipRows).toHaveLength(2);
+    expect(recipRows[1]!.textContent).toContain("b@x.com");
+    expect(recipRows[1]!.textContent).toContain("failed");
+    expect(recipRows[1]!.textContent).toContain("smtp down");
+    // The Settings modal underneath is untouched.
+    expect(doc.querySelector("#aqs-quiet")!.textContent).toContain("Recent summaries");
+    (overlay().querySelector("#qt-detail-close") as unknown as { click: () => void }).click();
+    await tick(450);
   });
 
   it("the enable toggle PUTs the whole record", async () => {

@@ -212,7 +212,12 @@ The all-clear of a held alert that was **never** summarised sends nothing —
 there is no inbox to resolve it in.
 
 The Settings modal lists recent summaries: when, which quiet time, how many
-alerts it covered, how many it listed, and who it reached. A send that fails is
+alerts it covered, how many it listed, and who it reached. **Covered**,
+**Listed** and **Recipients** are clickable: Covered opens every alert the
+summary stamped, as it is now, marking the ones the email named; Listed opens
+what the email said, the outstanding rows and the recurring ones with every
+fire time; Recipients opens who it went to, with each address's sent / failed
+state and the error if there was one. A send that fails is
 retried for about ten minutes; a summary that still did not reach everyone
 shows **Resend**, which sends it again to the recipients it missed (and nobody
 else) once the channel is fixed.
@@ -225,6 +230,9 @@ whole window ([rule 16](Business-Rules#rule-16)). Quiet time keeps watching and
 keeps raising; it only decides who is told, and when.
 
 A wizard **test delivery** is never held — it exists to show you the email.
+Nor is an automation with **no notify action** — one that only writes the audit
+event or only runs a script has nothing for quiet time to withhold, so its
+alerts never appear in a summary.
 
 ### Validation
 
