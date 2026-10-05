@@ -162,12 +162,21 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   `background-attachment: fixed`) over `--color-bg-secondary`. The glow is `--page-glow-color`
   (the theme's accent, except nightfall — electric blue `#2f6bff`, since its pastel accent goes grey slate at 12.3% — and noon, which takes sunlight yellow `#ffc928` because a terracotta
   wash on its near-white ground reads as rust) at `--page-glow-strength` (17.6% dark family, 12.3% nightfall, 11.2%
-  daylight base, 24% noon; a wide horizontal ellipse, 140% × 60% of the viewport). **Morning
-  overrides the whole `--page-glow`, not its colour: a sunrise rising from the BOTTOM centre**
-  (140% × 75%, a warm-white core through gold into an orange haze that is gone by mid-screen —
-  lightness is what reads on its mid-tone parchment; the accent, a vivid orange alone and pale
-  gold all vanished into it). It stays ONE gradient layer: `body`'s shorthand applies
-  `no-repeat fixed` to the last layer only, so a second layer would scroll and tile. A sticky band pinned at the top of the page sits exactly where the
+  daylight base, 24% noon; a wide horizontal ellipse, 140% × 60% of the viewport). **The glow is
+  built from eleven `@property`-registered parts** (`--page-glow-y` / `-w` / `-h`, colours
+  `-c0`..`-c3`, stops `-p1`..`-p3`, `-end`; registered at the top of styles.css AND mobile.css),
+  because a gradient cuts on a theme change while typed custom properties interpolate.
+  `:root` derives the four colour stops from `--page-glow-color` / `--page-glow-strength` on the
+  straight line to transparent, so a theme that sets only those two paints the same two-stop
+  wash as before. `html[data-theme-fading]` transitions the parts (the `*` crossfade rule
+  matches only descendants of `<html>`, where they live), and the phase rules include `html` itself. **Morning
+  sets the parts, never a whole `--page-glow`: a sunrise rising from the BOTTOM centre**
+  (y 100%, 140% × 75%, a warm-white core through gold into an orange haze that is gone by
+  mid-screen; lightness is what reads on its mid-tone parchment, and the accent, a vivid orange
+  alone and pale gold all vanished into it). So the turn to noon climbs the sun from the bottom
+  edge to noon's top wash in the 800 ms fade; nightfall → morning brings the glow down to the
+  horizon the same way. A theme that overrides `--page-glow` whole goes back to cutting. It stays ONE gradient layer: `body`'s
+  shorthand applies `no-repeat fixed` to the last layer only, so a second layer would scroll and tile. A sticky band pinned at the top of the page sits exactly where the
   glow is brightest, so `.page-header-sticky` is BLURRED and UNFILLED — a bare `blur(20px)`, no
   tint. A 70% `--color-bg-secondary` tint was tried and rejected on 2026-10-04: it read as a
   dark box sitting on the glow. With no tint the blur can't be seen at rest (blurring a smooth

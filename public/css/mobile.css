@@ -10,6 +10,23 @@
  * the token block at top stays canonical.
  * ────────────────────────────────────────────────────────────────────── */
 
+/* The page glow's geometry and stops, registered so the theme crossfade can
+   move them: a gradient cuts, typed custom properties interpolate. Same set
+   and reasoning as the @property block at the top of styles.css, repeated
+   because a phone document loads only this stylesheet. Only the initial
+   ellipse differs (180% x 66%, the phone's portrait wash). */
+@property --page-glow-y   { syntax: "<percentage>"; inherits: true; initial-value: 0%; }
+@property --page-glow-w   { syntax: "<percentage>"; inherits: true; initial-value: 180%; }
+@property --page-glow-h   { syntax: "<percentage>"; inherits: true; initial-value: 66%; }
+@property --page-glow-c0  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-c1  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-c2  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-c3  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-p1  { syntax: "<percentage>"; inherits: true; initial-value: 9%; }
+@property --page-glow-p2  { syntax: "<percentage>"; inherits: true; initial-value: 26%; }
+@property --page-glow-p3  { syntax: "<percentage>"; inherits: true; initial-value: 50%; }
+@property --page-glow-end { syntax: "<percentage>"; inherits: true; initial-value: 70%; }
+
 :root {
   /* Key colors */
   --md-primary:                 #a3c9ff;
@@ -101,7 +118,7 @@
      daylight block thins it — a wash that reads as light on indigo reads as a
      stain on a white ground. Noon swaps the hue for sunlight yellow: its
      ground is near-white, and a terracotta wash there reads as a rust mark,
-     not light. Morning replaces the whole token with a sunrise rising from
+     not light. Morning resets the glow's parts into a sunrise rising from
      the bottom. */
   /* Opacity of the frosted bottom navbar's tint: the desktop sidebar's
      --rail-glass-bg mix (40% dark family, 30% daylight, where a light panel
@@ -123,9 +140,26 @@
 
   --page-glow-color: var(--md-primary);
   --page-glow-strength: 17.6%;
-  --page-glow: radial-gradient(ellipse 180% 66% at 50% 0%,
-    color-mix(in srgb, var(--page-glow-color) var(--page-glow-strength), transparent) 0%,
-    transparent 70%);
+  /* Stops derived from colour + strength, on the straight line to
+     transparent at 70% — the same two-stop wash, in the five-stop shape
+     morning bends. See :root in styles.css. */
+  --page-glow-y: 0%;
+  --page-glow-w: 180%;
+  --page-glow-h: 66%;
+  --page-glow-c0: color-mix(in srgb, var(--page-glow-color) var(--page-glow-strength), transparent);
+  --page-glow-c1: color-mix(in srgb, var(--page-glow-c0) 87.1%, transparent);
+  --page-glow-c2: color-mix(in srgb, var(--page-glow-c0) 62.9%, transparent);
+  --page-glow-c3: color-mix(in srgb, var(--page-glow-c0) 28.6%, transparent);
+  --page-glow-p1: 9%;
+  --page-glow-p2: 26%;
+  --page-glow-p3: 50%;
+  --page-glow-end: 70%;
+  --page-glow: radial-gradient(ellipse var(--page-glow-w) var(--page-glow-h) at 50% var(--page-glow-y),
+    var(--page-glow-c0) 0%,
+    var(--page-glow-c1) var(--page-glow-p1),
+    var(--page-glow-c2) var(--page-glow-p2),
+    var(--page-glow-c3) var(--page-glow-p3),
+    transparent var(--page-glow-end));
 
   /* Layout */
   --topbar-h:  64px;
@@ -257,14 +291,16 @@
   --shadow-card:  0 8px 32px rgba(70,45,10,.22), 0 2px 6px rgba(70,45,10,.18), inset 0 1px 0 rgba(255,255,255,.55);
   --shadow-sheet: 0 -8px 32px rgba(70,45,10,.28), 0 -2px 6px rgba(70,45,10,.18), inset 0 1px 0 rgba(255,255,255,.55);
   /* Sunrise from the bottom centre, as on the desktop (where the reasoning
-     is written out). Taller than the phone's top wash is wide: the screen is
-     portrait, and the frosted nav bar sits over the brightest part. */
-  --page-glow: radial-gradient(ellipse 180% 60% at 50% 100%,
-    rgba(255,246,220,.90) 0%,
-    rgba(255,210,122,.55) 9%,
-    rgba(243,154,76,.34) 26%,
-    rgba(238,154,90,.14) 50%,
-    transparent 78%);
+     is written out): the glow's parts, never a whole --page-glow, so the
+     turn to noon climbs the sun to the top instead of cutting. The frosted
+     nav bar sits over the brightest part. */
+  --page-glow-y: 100%;
+  --page-glow-h: 60%;
+  --page-glow-c0: rgba(255,246,220,.90);
+  --page-glow-c1: rgba(255,210,122,.55);
+  --page-glow-c2: rgba(243,154,76,.34);
+  --page-glow-c3: rgba(238,154,90,.14);
+  --page-glow-end: 78%;
 }
 /* Noon — neutral near-white, terracotta, the highest contrast of any palette.
    The cool daylight palette; cream here and it reads as morning. */
@@ -2090,6 +2126,16 @@ html[data-theme-fading] *:not(.theme-strip-track)::after {
               stroke 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
               box-shadow 800ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
+/* The glow's parts live on <html>, which the rule above does not match.
+   Moving them here climbs morning's sun to noon's top wash and fades every
+   other glow instead of cutting it (styles.css has the same rule). */
+html[data-theme-fading] {
+  transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
+    --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
+    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
+  transition-duration: 800ms;
+  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
 /* Phase easing for a multi-leg turn: accelerate once at the start, run at
    constant speed through the waypoint, decelerate once at the end, so
    noon → afternoon → nightfall is one sweep and not two changes with a stop
@@ -2097,19 +2143,23 @@ html[data-theme-fading] *:not(.theme-strip-track)::after {
    gives these rules the specificity of the block above, whose shorthand
    `transition` would otherwise re-assert the full ease. The track is then
    matched again by name so it keeps the same curve. */
+html[data-theme-fading="in"],
 html[data-theme-fading="in"] *:not(.theme-strip-track),
 html[data-theme-fading="in"] *:not(.theme-strip-track)::before,
 html[data-theme-fading="in"] *:not(.theme-strip-track)::after,
 html[data-theme-fading="in"] .theme-strip-track { transition-timing-function: cubic-bezier(0.4, 0, 1, 1); }
+html[data-theme-fading="mid"],
 html[data-theme-fading="mid"] *:not(.theme-strip-track),
 html[data-theme-fading="mid"] *:not(.theme-strip-track)::before,
 html[data-theme-fading="mid"] *:not(.theme-strip-track)::after,
 html[data-theme-fading="mid"] .theme-strip-track { transition-timing-function: linear; }
+html[data-theme-fading="out"],
 html[data-theme-fading="out"] *:not(.theme-strip-track),
 html[data-theme-fading="out"] *:not(.theme-strip-track)::before,
 html[data-theme-fading="out"] *:not(.theme-strip-track)::after,
 html[data-theme-fading="out"] .theme-strip-track { transition-timing-function: cubic-bezier(0, 0, 0.36, 1); }
 @media (prefers-reduced-motion: reduce) {
+  html[data-theme-fading] { transition: none; }
   html[data-theme-fading] *:not(.theme-strip-track),
   html[data-theme-fading] *:not(.theme-strip-track)::before,
   html[data-theme-fading] *:not(.theme-strip-track)::after { transition: none; }

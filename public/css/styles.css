@@ -3,6 +3,26 @@
    overrides it wholesale for `morning`/`noon`. Neither is a theme on its own —
    theme-init.js always sets a data-theme, and the retired `dark`/`light` ids
    are no longer recognized anywhere. */
+
+/* The page glow's geometry and stops, registered so they can TRANSITION. A
+   gradient is a background-image, and a background-image cuts from one value
+   to the next. Typed custom properties interpolate, so the theme crossfade
+   moves these and the one gradient built from them (--page-glow below) is
+   repainted at every step. That is what carries morning's sun up from the
+   bottom edge to noon's wash at the top. Values and the transition are in
+   :root and the data-theme-fading block; mobile.css registers the same set. */
+@property --page-glow-y   { syntax: "<percentage>"; inherits: true; initial-value: 0%; }
+@property --page-glow-w   { syntax: "<percentage>"; inherits: true; initial-value: 140%; }
+@property --page-glow-h   { syntax: "<percentage>"; inherits: true; initial-value: 60%; }
+@property --page-glow-c0  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-c1  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-c2  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-c3  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-p1  { syntax: "<percentage>"; inherits: true; initial-value: 9%; }
+@property --page-glow-p2  { syntax: "<percentage>"; inherits: true; initial-value: 26%; }
+@property --page-glow-p3  { syntax: "<percentage>"; inherits: true; initial-value: 50%; }
+@property --page-glow-end { syntax: "<percentage>"; inherits: true; initial-value: 70%; }
+
 :root {
   --color-bg-primary: #151528;
   --color-bg-secondary: #0d0d1a;
@@ -102,14 +122,33 @@
      resolves to each theme's own accent. The daylight base thins it (a wash
      that reads as light on indigo reads as a stain on a pale ground), and
      noon swaps the hue for sunlight yellow — its ground is near-white and a
-     terracotta wash there reads as rust, not light. Morning replaces the
-     whole token with a sunrise rising from the bottom. The phone carries the
+     terracotta wash there reads as rust, not light. Morning resets the
+     glow's parts into a sunrise rising from the bottom. The phone carries the
      same recipe in mobile.css (--page-glow there, off --md-primary). */
   --page-glow-color: var(--color-accent);
   --page-glow-strength: 17.6%;
-  --page-glow: radial-gradient(ellipse 140% 60% at 50% 0%,
-    color-mix(in srgb, var(--page-glow-color) var(--page-glow-strength), transparent) 0%,
-    transparent 70%);
+  /* A theme normally sets only the colour and strength above; these derive
+     the stops from them. The intermediate stops sit on the straight line from
+     the core to transparent at --page-glow-end (alpha x 0.871 / 0.629 / 0.286
+     at 9 / 26 / 50 of 70), so the five-stop gradient paints exactly the
+     two-stop wash it replaced. They exist so morning can bend them. */
+  --page-glow-y: 0%;
+  --page-glow-w: 140%;
+  --page-glow-h: 60%;
+  --page-glow-c0: color-mix(in srgb, var(--page-glow-color) var(--page-glow-strength), transparent);
+  --page-glow-c1: color-mix(in srgb, var(--page-glow-c0) 87.1%, transparent);
+  --page-glow-c2: color-mix(in srgb, var(--page-glow-c0) 62.9%, transparent);
+  --page-glow-c3: color-mix(in srgb, var(--page-glow-c0) 28.6%, transparent);
+  --page-glow-p1: 9%;
+  --page-glow-p2: 26%;
+  --page-glow-p3: 50%;
+  --page-glow-end: 70%;
+  --page-glow: radial-gradient(ellipse var(--page-glow-w) var(--page-glow-h) at 50% var(--page-glow-y),
+    var(--page-glow-c0) 0%,
+    var(--page-glow-c1) var(--page-glow-p1),
+    var(--page-glow-c2) var(--page-glow-p2),
+    var(--page-glow-c3) var(--page-glow-p3),
+    transparent var(--page-glow-end));
   /* ── Frosted panel surfaces ────────────────────────────────────────────────
      Modals and slide-overs are 50% of the theme's own panel colour over a
      blurred backdrop, so the page stays faintly legible behind them. Declared
@@ -413,7 +452,21 @@ html[data-theme-fading] *:not(.theme-band-track)::after {
               box-shadow 800ms cubic-bezier(0.22, 0.61, 0.36, 1);
   transition-delay: 0s;
 }
+/* The page glow's parts live on <html> itself, which the rule above does not
+   match (it selects descendants). Transitioning them here is what moves the
+   glow: morning → noon climbs the sun from the bottom edge to the top, and
+   every other change fades its glow instead of cutting it. Children inherit
+   the in-between values, so nothing below needs to list them. */
+html[data-theme-fading] {
+  transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
+    --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
+    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
+  transition-duration: 800ms;
+  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition-delay: 0s;
+}
 @media (prefers-reduced-motion: reduce) {
+  html[data-theme-fading] { transition: none; }
   html[data-theme-fading] *:not(.theme-band-track),
   html[data-theme-fading] *:not(.theme-band-track)::before,
   html[data-theme-fading] *:not(.theme-band-track)::after { transition: none; }
@@ -441,14 +494,17 @@ html[data-theme-fading] *:not(.theme-band-track)::after {
    on every color property, so the light eases to a stop at the waypoint while
    the band glides past — the exact pause the phase exists to remove. The track
    is then matched again by name so it keeps the same curve. ─────────────── */
+html[data-theme-fading="in"],
 html[data-theme-fading="in"] *:not(.theme-band-track),
 html[data-theme-fading="in"] *:not(.theme-band-track)::before,
 html[data-theme-fading="in"] *:not(.theme-band-track)::after,
 html[data-theme-fading="in"] .theme-band-track { transition-timing-function: cubic-bezier(0.4, 0, 1, 1); }
+html[data-theme-fading="mid"],
 html[data-theme-fading="mid"] *:not(.theme-band-track),
 html[data-theme-fading="mid"] *:not(.theme-band-track)::before,
 html[data-theme-fading="mid"] *:not(.theme-band-track)::after,
 html[data-theme-fading="mid"] .theme-band-track { transition-timing-function: linear; }
+html[data-theme-fading="out"],
 html[data-theme-fading="out"] *:not(.theme-band-track),
 html[data-theme-fading="out"] *:not(.theme-band-track)::before,
 html[data-theme-fading="out"] *:not(.theme-band-track)::after,
@@ -516,19 +572,22 @@ code {
   --shadow-control: 0 2px 5px rgba(70,45,10,.30), 0 1px 2px rgba(70,45,10,.20), inset 0 1px 0 rgba(255,255,255,.55);
   --shadow-card: 0 8px 32px rgba(70,45,10,.22), 0 2px 6px rgba(70,45,10,.18), inset 0 1px 0 rgba(255,255,255,.55);
   /* Sunrise: the one theme whose glow rises from the BOTTOM centre, a sun on
-     the horizon rather than light from above. Overrides the whole
-     --page-glow, not just its colour, because both the anchor and the stops
-     differ. A warm-white core (lightness is what reads on parchment; the
-     brown accent darkened into mud, vivid orange alone matched the tan
-     ground) through gold into an orange haze that fades out by mid-screen.
-     One layer on purpose: body's shorthand applies `no-repeat fixed` to the
-     last layer only, so a second layer would scroll and tile. */
-  --page-glow: radial-gradient(ellipse 140% 75% at 50% 100%,
-    rgba(255,246,220,.90) 0%,
-    rgba(255,210,122,.55) 9%,
-    rgba(243,154,76,.34) 26%,
-    rgba(238,154,90,.14) 50%,
-    transparent 78%);
+     the horizon rather than light from above. Sets the glow's parts (see
+     the @property block at the top of this file), not just its colour,
+     because the anchor and every stop differ. A warm-white core (lightness is
+     what reads on parchment; the brown accent darkened into mud, vivid orange
+     alone matched the tan ground) through gold into an orange haze that
+     fades out by mid-screen. On the turn to noon the crossfade carries every
+     one of these to noon's values, so the sun climbs to the top as it pales.
+     Never override --page-glow itself here: a whole gradient cannot
+     transition, and the climb would become a cut. */
+  --page-glow-y: 100%;
+  --page-glow-h: 75%;
+  --page-glow-c0: rgba(255,246,220,.90);
+  --page-glow-c1: rgba(255,210,122,.55);
+  --page-glow-c2: rgba(243,154,76,.34);
+  --page-glow-c3: rgba(238,154,90,.14);
+  --page-glow-end: 78%;
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────
