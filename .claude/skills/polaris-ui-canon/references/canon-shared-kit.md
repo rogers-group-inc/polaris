@@ -206,8 +206,12 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   so its blur is on the tab itself. A page's `.page-tabs` strip opts into the same look with
   the `.page-tabs-glass` modifier: rounded-top chips, glass on hover, and the frosted
   surface chip with the accent underline when active. The strip scrolls instead of wrapping.
-  Automations (`#auto-tabs`) is the only user so far. It is a modifier, not a change to
-  `.page-tab`, because that class is also every modal's tab strip and the Server Settings tabs.
+  Every page-level strip wears it: Automations (`#auto-tabs`), Server Settings
+  (`#settings-tabs`), IPAM (`#ipam-tabs`) and Integrations (`#integration-tabs`). The
+  Dashboard's own `.dashboard-tab` strip (rendered by `dashboard.js`) copies the same rules
+  rather than the modifier, because its tabs carry a grip, rename input and remove button. It
+  is a modifier, not a change to `.page-tab`, because that class is also every modal's tab
+  strip.
 
 ## Settings-card layout (one card, a fixed row, or a reflowing deck)
 

@@ -4227,8 +4227,9 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
    whose tab strip sits over glass tables and cards gets the same material
    rounded-top chip, glass on hover, and a frosted --color-surface chip
    with the accent underline when active. A modifier rather than a change to
-   .page-tab, because that class is also every modal's tab strip and the
-   Server Settings tabs. Used by the Automations page (#auto-tabs). */
+   .page-tab, because that class is also every modal's tab strip. Used by
+   every page-level strip: Automations, Server Settings, IPAM, Integrations
+   (the Dashboard's .dashboard-tab copies the same rules). */
 /* A strip too long for its width scrolls rather than wrapping a label onto a
    second line — the same rule .table-tabs follows. */
 .page-tabs-glass {
@@ -5495,32 +5496,49 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   letter-spacing: 0.3px;
 }
 
-/* Dashboard tabs (multiple named dashboards) — shown only when >1 exists. */
+/* Dashboard tabs (multiple named dashboards) — shown only when >1 exists.
+   Drawn like the Assets view tabs (.table-tab) and .page-tabs-glass: rounded-
+   top chips, glass on hover, a frosted chip with the accent underline when
+   active. A long strip scrolls rather than wrapping, like .table-tabs. */
 .dashboard-tabs {
   display: flex;
-  gap: 4px;
+  align-items: flex-end;
+  gap: 2px;
   margin-bottom: 14px;
-  border-bottom: 1px solid var(--color-border, rgba(255,255,255,0.08));
-  flex-wrap: wrap;
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
 .dashboard-tab {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: transparent;
-  border: 0;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  background: none;
+  border: 1px solid transparent;
   border-bottom: 2px solid transparent;
-  color: var(--color-text-secondary);
-  padding: 7px 12px;
-  font-size: 0.9rem;
-  font-weight: 600;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  color: var(--color-text-tertiary);
+  padding: 0.45rem 0.9rem;
+  font-size: 0.84rem;
+  font-weight: 500;
   cursor: pointer;
-  margin-bottom: -1px;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
-.dashboard-tab:hover { color: var(--color-text-primary); }
+.dashboard-tab:hover { color: var(--color-text-secondary); background: var(--rail-glass-bg); }
+.dashboard-tab:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+/* The blur sits on the tab itself: nothing inside it is frosted or
+   position:fixed (a name or rename input, a grip, a remove button). */
 .dashboard-tab.active {
   color: var(--color-accent);
+  border-color: var(--color-border);
   border-bottom-color: var(--color-accent);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  background: var(--chip-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
 }
 /* Edit-mode drag handle on each tab — the tab itself isn't draggable (the
    active tab is mostly the rename input), so the grip is the grab target. */
@@ -5548,7 +5566,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   border-radius: 3px;
   color: inherit;
   font: inherit;
-  font-weight: 600;
+  font-weight: 500;
   padding: 1px 4px;
   cursor: text;
 }
