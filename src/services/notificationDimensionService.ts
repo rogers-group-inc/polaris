@@ -31,7 +31,8 @@
 import { prisma } from "../db.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
-import { triggerDimensionApplicable, type RuleScope } from "./notificationTypes.js";
+import { triggerDimensionApplicable, isPathMetric, pathMonitorScope, type RuleScope } from "./notificationTypes.js";
+import { POLARIS_SERVER_SUBJECT } from "./pathCheckIngestService.js";
 import { poeIsFault } from "../utils/poePorts.js";
 import { sdwanDimensionTerms } from "../utils/sdwanDimensions.js";
 import { loadScopeAssetIds } from "./notificationEngine.js";
@@ -117,6 +118,9 @@ export interface DimensionNarrow {
    */
   stateOperator?: string;
   stateValue?: string;
+  /** Path Monitor: the automation also watches the Polaris server, so the
+   *  check picker offers the checks the server runs (checkId only). */
+  includeServer?: boolean;
 }
 
 interface DimensionSource {
@@ -400,13 +404,16 @@ const DIMENSION_SOURCES: Record<string, DimensionSource> = {
       const byId = new Map(rows.map((r) => [r.id, `${r.name} (${r.kind.toUpperCase()})`]));
       return (value: string) => byId.get(value);
     },
-    pairs: async (ids) =>
+    // The server's own row (assetId NULL) is no asset a scope can select, so it
+    // is asked for separately: only when the Path Monitor automation includes
+    // the Polaris server (narrow.includeServer), counted as one more source.
+    pairs: async (ids, _since, narrow) =>
       (await prisma.pathCheckSource.findMany({
-        where: { assetId: { in: ids } },
+        where: narrow?.includeServer
+          ? { OR: [{ assetId: { in: ids } }, { assetId: null }] }
+          : { assetId: { in: ids } },
         select: { assetId: true, checkId: true },
-      // `in: ids` never matches the server's own row (assetId NULL) — it is
-      // no asset an automation can scope.
-      })).map((r) => ({ value: r.checkId, assetId: r.assetId as string })),
+      })).map((r) => ({ value: r.checkId, assetId: r.assetId ?? POLARIS_SERVER_SUBJECT })),
   },
 };
 
@@ -522,9 +529,13 @@ export async function listDimensionValues(
   // can never produce an alert (business rule 37). candidateWhere below is an
   // optimization that only kicks in above the sample cap, so it can't be the
   // gate — this is.
-  const scopedIds = await loadScopeAssetIds(scope, { monitoredOnly: true });
+  // A path metric's pool is agent hosts only — the engine's scopeForTrigger.
+  const scopedIds = await loadScopeAssetIds(isPathMetric(metric) ? pathMonitorScope(scope) : scope, { monitoredOnly: true });
   // Deterministic subset so repeated opens of the picker agree with each other.
   let sorted = [...scopedIds].sort();
+  // The server is a source no scope selects; with it included, an empty agent
+  // pool still has checks to offer.
+  const serverToo = dimension === "checkId" && narrow.includeServer === true;
   const base = {
     metric,
     dimension,
@@ -533,7 +544,7 @@ export async function listDimensionValues(
     narrowLabel: source.narrowLabel?.(narrow) || "",
     scopedAssets: scopedIds.length,
   };
-  if (sorted.length === 0) {
+  if (sorted.length === 0 && !serverToo) {
     return { ...base, values: [], sampledAssets: 0, assetsWithData: 0, windowHours: RECENT_WINDOW_HOURS };
   }
 
