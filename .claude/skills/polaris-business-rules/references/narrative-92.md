@@ -137,7 +137,18 @@ the `QuietTimeSummary` row: uncleared alerts are listed; an alert that fired mor
 threshold times for one (automation, device, component) is listed with every fire time and
 whether it is still active, and is not repeated under outstanding. Every held alert of the
 source is stamped `quietSummarizedAt`, listed or not — "covered" is not "named". Nothing
-outstanding and nothing recurring writes an `empty` row and no email.
+outstanding and nothing recurring writes an `empty` row and no email — until 2026-10-05, when the
+operator asked for the opposite: *"I do want to send a summary email even if nothing happened,
+just letting the user know that emails are still working and that nothing outstanding happened
+overnight."* That is the ALL-QUIET email (`summaryAlways`, on by default, the operator's call).
+It covers two cases the old rule treated as silence: every held alert recovered (the email goes
+to whoever those alerts would have reached, with the count) and NOTHING was held at all — which
+has no held alert to anchor a summary on, so `createAllQuietSummaries` walks the recurrence
+instead (`lastQuietStretch`: the stretch that most recently ended), writes one row per stretch
+(deduped on `coveredTo`, never for a stretch that ended before the policy's last edit), and
+derives the audience from the automations the policy covers: the static recipients of their
+notify actions. Device-dependent recipients — the asset's region users, its address-book
+contacts — cannot be resolved without an alert and are left out; the wiki says so.
 
 **The all-clear of an alert nobody was told about says nothing.** `fireReset`, `fireResolved`
 and the operator clear all converge on `executeActions`, which already knows an all-clear by

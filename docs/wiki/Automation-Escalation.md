@@ -181,7 +181,18 @@ push). **One email per person, in that person's own time zone.** It lists:
   it has recovered. It is not repeated under Still outstanding.
 
 No graphs and no Acknowledge button; each device name opens the device in
-Polaris. Nothing outstanding and nothing recurring means no email.
+Polaris.
+
+**The all-quiet email.** When the quiet period ends with nothing to list —
+every held alert recovered, or nothing was held at all — the summary still
+goes out, saying so: nothing is outstanding, how many alerts fired and
+recovered (or that none were held), and that its arriving confirms the quiet
+time and your email delivery are working. It goes to everyone the covered
+automations notify: the people, addresses, roles, tags and regions their
+notify actions name (recipients that depend on the triggering device cannot be
+worked out without an alert and are left out). It is on by default; untick
+**Send the summary even when nothing was held** on the quiet time to get a
+summary only when something was held.
 
 **When it is sent.** When the quiet period ends, or at a **send time** you
 choose — a time of day. On a day it falls inside the quiet period the summary

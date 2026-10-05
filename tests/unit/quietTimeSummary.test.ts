@@ -51,7 +51,9 @@ vi.mock("../../src/db.js", () => {
       findUnique: vi.fn(async ({ where }: any) => db.channels.find((c) => c.id === where.id) ?? null),
     },
     user: {
-      findMany: vi.fn(async ({ where }: any) => {
+      findMany: vi.fn(async ({ where }: any = {}) => {
+        // The recipient service's user index loads everyone with no filter.
+        if (!where || (!where.id && !where.OR && !where.email)) return db.users;
         const ids: string[] = where?.id?.in ?? where?.OR?.find((o: any) => o.id)?.id?.in ?? [];
         const emails: string[] = where?.OR?.find((o: any) => o.email)?.email?.in ?? [];
         return db.users.filter((u) => ids.includes(u.id) || (u.email && emails.includes(u.email.toLowerCase())));
@@ -60,6 +62,8 @@ vi.mock("../../src/db.js", () => {
     quietTimeSummary: {
       create: vi.fn(async ({ data }: any) => { const row = { id: `s${db.summaries.length + 1}`, createdAt: new Date(), ...data }; db.summaries.push(row); return { id: row.id }; }),
       findMany: vi.fn(async ({ where }: any) => db.summaries.filter((s) => where.status.in.includes(s.status))),
+      findFirst: vi.fn(async ({ where }: any) => db.summaries.find((s) =>
+        s.sourceKind === where.sourceKind && s.sourceId === where.sourceId && s.coveredTo.getTime() >= where.coveredTo.gte.getTime()) ?? null),
       findUnique: vi.fn(async ({ where }: any) => db.summaries.find((s) => s.id === where.id) ?? null),
       update: vi.fn(async ({ where, data }: any) => { Object.assign(db.summaries.find((s) => s.id === where.id), data); return {}; }),
     },
@@ -78,6 +82,22 @@ vi.mock("../../src/db.js", () => {
 vi.mock("../../src/services/eventLogService.js", () => ({
   logEvent: vi.fn(async (e: any) => { db.events.push(e); }),
 }));
+// The static-recipient resolvers are the recipient service's own, tested
+// there; here they read the in-memory users so the all-quiet audience can be
+// asserted without the user index's role / group-mapping reads.
+vi.mock("../../src/services/notificationRecipientService.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../../src/services/notificationRecipientService.js")>();
+  const byIds = async (ids?: string[]) => db.users.filter((u) => (ids ?? []).includes(u.id));
+  return {
+    ...real,
+    resolveRecipientUsersByIds: vi.fn(byIds),
+    resolveAllUsers: vi.fn(async () => db.users),
+    resolveUsersInAnyRegion: vi.fn(async () => []),
+    resolveUsersByRegions: vi.fn(async () => []),
+    resolveUsersByRoles: vi.fn(async () => []),
+    resolveRecipientUsers: vi.fn(async () => []),
+  };
+});
 vi.mock("../../src/services/notificationChannels/emailChannel.js", () => ({
   sendSmtpEmail: vi.fn(async (_cfg: any, msg: any) => {
     const to = Array.isArray(msg.to) ? msg.to[0] : msg.to;
@@ -105,6 +125,7 @@ import {
   SUMMARY_MAX_ATTEMPTS,
 } from "../../src/services/quietTimeSummaryService.js";
 import { bumpQuietTimeCache } from "../../src/services/quietTimeHoldService.js";
+import { bumpRecipientIndex } from "../../src/services/notificationRecipientService.js";
 import { quietTimeConfigSchema } from "../../src/utils/quietTime.js";
 
 const at = (y: number, m: number, d: number, hh = 0, mm = 0) => new Date(y, m - 1, d, hh, mm, 0, 0);
@@ -141,7 +162,10 @@ function heldAlert(over: Record<string, unknown> = {}) {
 beforeEach(() => {
   for (const k of ["notifs", "notifUpdates", "deliveries", "channels", "users", "summaries", "schedules", "rules", "events", "sent", "failNext"] as const) (db as any)[k].length = 0;
   bumpQuietTimeCache();
-  db.schedules.push({ id: "g1", name: "Nights", scope: {}, quiet: { windows: [NIGHTLY] }, enabled: true, createdAt: new Date() });
+  // The recipient resolvers read a cached user index; a test that seeds users
+  // after an earlier test built it would otherwise resolve nobody.
+  bumpRecipientIndex();
+  db.schedules.push({ id: "g1", name: "Nights", scope: {}, quiet: { windows: [NIGHTLY] }, enabled: true, createdAt: at(2026, 10, 1), updatedAt: at(2026, 10, 1) });
   db.channels.push({ id: "ch-email", type: "smtp", enabled: true, config: { host: "mail", from: "polaris@example.com" }, createdAt: new Date() });
 });
 
@@ -252,8 +276,23 @@ describe("createDueSummaries", () => {
     expect(db.notifs[0].quietSummarizedAt).toBeNull();
   });
 
-  it("writes an EMPTY row (no email) when everything recovered under the threshold", async () => {
-    heldAlert({ cleared: true });
+  it("everything recovered under the threshold is the ALL-QUIET email, to everyone the covered alerts would have reached", async () => {
+    const gone = heldAlert({ cleared: true });
+    db.deliveries.push({ notificationId: gone.id, status: "held", transport: "email", target: "oncall@example.com", meta: {}, channelId: "ch-email" });
+    await createDueSummaries(at(2026, 10, 3, 6, 1));
+    const s = db.summaries[0];
+    expect(s.status).toBe("pending");
+    expect(s.listedCount).toBe(0);
+    expect(s.details.allQuiet).toBe(true);
+    expect(s.details.heldCount).toBe(1);
+    expect(s.recipients.map((r: any) => r.address)).toEqual(["oncall@example.com"]);
+    expect(db.notifs[0].quietSummarizedAt).toBeTruthy();
+  });
+
+  it("with the all-quiet email turned off, everything recovered writes an EMPTY row and nobody is mailed", async () => {
+    db.schedules[0].quiet = { windows: [NIGHTLY], summaryAlways: false };
+    const gone = heldAlert({ cleared: true });
+    db.deliveries.push({ notificationId: gone.id, status: "held", transport: "email", target: "oncall@example.com", meta: {}, channelId: "ch-email" });
     await createDueSummaries(at(2026, 10, 3, 6, 1));
     expect(db.summaries[0].status).toBe("empty");
     expect(db.summaries[0].recipients).toEqual([]);
@@ -295,6 +334,82 @@ describe("createDueSummaries", () => {
     expect(db.summaries[0].sourceKind).toBe("automation");
     expect(db.summaries[0].recurringCount).toBe(1);
     expect(db.summaries[0].listedCount).toBe(0);
+  });
+});
+
+describe("the all-quiet summary when NOTHING was held", () => {
+  const NOTIFY_TO = { type: "notify", channelId: "ch-email", recipientUserIds: ["u1"], addresses: ["NOC@example.com"] };
+  function seedRules() {
+    db.users.push({ id: "u1", email: "phone@example.com", username: "phone", timezone: "auto", detectedTimezone: "America/Chicago" });
+    // Covered: enabled, no quiet time of its own, a severity the policy holds.
+    db.rules.push({ id: "r-a", name: "Port down", enabled: true, severity: "serious", trigger: { type: "asset_state", field: "ifOperStatus" }, scope: {}, quietTime: null, updatedAt: at(2026, 10, 1), actions: [NOTIFY_TO], escalation: null, severityBands: null, bandNotify: null, resetActions: null });
+    // Not covered: exempt from the global schedules.
+    db.rules.push({ id: "r-b", name: "Core down", enabled: true, severity: "serious", trigger: { type: "asset_state", field: "monitorStatus" }, scope: {}, quietTime: { ignoreGlobal: true }, updatedAt: at(2026, 10, 1), actions: [{ ...NOTIFY_TO, addresses: ["exempt@example.com"] }], escalation: null, severityBands: null, bandNotify: null, resetActions: null });
+    // Not covered: a severity the policy lets through.
+    db.rules.push({ id: "r-c", name: "Critical only", enabled: true, severity: "critical", trigger: { type: "asset_metric", metric: "cpuPct" }, scope: {}, quietTime: null, updatedAt: at(2026, 10, 1), actions: [{ ...NOTIFY_TO, addresses: ["critical@example.com"] }], escalation: null, severityBands: null, bandNotify: null, resetActions: null });
+    // Not covered: disabled.
+    db.rules.push({ id: "r-d", name: "Off", enabled: false, severity: "serious", trigger: {}, scope: {}, quietTime: null, updatedAt: at(2026, 10, 1), actions: [{ ...NOTIFY_TO, addresses: ["off@example.com"] }], escalation: null, severityBands: null, bandNotify: null, resetActions: null });
+  }
+
+  it("writes one all-quiet row per ended stretch, to the covered automations' static recipients, once", async () => {
+    db.schedules[0].quiet = { windows: [NIGHTLY], severities: ["serious", "warning"] };
+    seedRules();
+    expect(await createDueSummaries(at(2026, 10, 3, 6, 1))).toBe(1);
+    const s = db.summaries[0];
+    expect(s.sourceKind).toBe("global");
+    expect(s.sourceName).toBe("Nights");
+    expect(s.coveredFrom).toEqual(at(2026, 10, 2, 22, 0));
+    expect(s.coveredTo).toEqual(at(2026, 10, 3, 6, 0));
+    expect(s.notificationIds).toEqual([]);
+    expect(s.details).toMatchObject({ allQuiet: true, heldCount: 0, outstanding: [], recurring: [] });
+    expect(JSON.stringify(s.recipients.map((r: any) => r.address).sort())).toBe(JSON.stringify(["noc@example.com", "phone@example.com"]));
+    expect(s.recipients.find((r: any) => r.address === "phone@example.com").userId).toBe("u1");
+    expect(s.status).toBe("pending");
+    // The same stretch is never summarised twice.
+    expect(await createDueSummaries(at(2026, 10, 3, 6, 5))).toBe(0);
+    expect(db.summaries).toHaveLength(1);
+  });
+
+  it("waits for the stretch to end and for the send time", async () => {
+    seedRules();
+    expect(await createDueSummaries(at(2026, 10, 3, 4, 0))).toBe(0); // still quiet
+    db.schedules[0].quiet = { windows: [NIGHTLY], summaryAt: "07:30" };
+    expect(await createDueSummaries(at(2026, 10, 3, 6, 1))).toBe(0); // ended, send time not yet
+    expect(await createDueSummaries(at(2026, 10, 3, 7, 31))).toBe(1);
+  });
+
+  it("is not sent when turned off, when the policy holds no first alert, or for a stretch that ended before the policy's last edit", async () => {
+    seedRules();
+    db.schedules[0].quiet = { windows: [NIGHTLY], summaryAlways: false };
+    expect(await createDueSummaries(at(2026, 10, 3, 6, 1))).toBe(0);
+    db.schedules[0].quiet = { windows: [NIGHTLY], holds: "followUps" };
+    expect(await createDueSummaries(at(2026, 10, 3, 6, 1))).toBe(0);
+    db.schedules[0].quiet = { windows: [NIGHTLY] };
+    db.schedules[0].updatedAt = at(2026, 10, 3, 9, 0);
+    expect(await createDueSummaries(at(2026, 10, 3, 9, 5))).toBe(0);
+  });
+
+  it("an automation's own quiet time gets its own all-quiet email, to its own recipients", async () => {
+    db.schedules.length = 0;
+    seedRules();
+    db.rules[1].quietTime = { windows: [NIGHTLY] }; // r-b now has a policy of its own
+    expect(await createDueSummaries(at(2026, 10, 3, 6, 1))).toBe(1);
+    expect(db.summaries[0].sourceKind).toBe("automation");
+    expect(db.summaries[0].sourceId).toBe("r-b");
+    expect(db.summaries[0].recipients.map((r: any) => r.address).sort()).toEqual(["exempt@example.com", "phone@example.com"]);
+  });
+
+  it("drains as an all-quiet email that says nothing was held", async () => {
+    seedRules();
+    await createDueSummaries(at(2026, 10, 3, 6, 1));
+    const r = await drainPendingSummaries(at(2026, 10, 3, 6, 1));
+    // Every severity is held here, so the critical-only automation's recipient is reached too.
+    expect(r).toEqual({ sent: 3, failed: 0 });
+    const m = db.sent[0];
+    expect(m.subject).toBe("[QUIET TIME SUMMARY] all quiet · Nights");
+    expect(m.text).toContain("no alerts were held during the quiet period");
+    expect(m.text).toContain("confirms that the quiet time and your email delivery are working");
+    expect(m.html).toContain("All quiet");
   });
 });
 
