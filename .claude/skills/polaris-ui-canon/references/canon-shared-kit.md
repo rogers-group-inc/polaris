@@ -176,7 +176,7 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   alone and pale gold all vanished into it). So the turn to noon climbs the sun from the bottom
   edge to noon's top wash in the 800 ms fade. A theme that overrides `--page-glow` whole goes back to cutting.
   **Nightfall's glow is a second, SLIDING layer** (`--night-glow`, electric blue `#2f6bff` at
-  12.3%, whose only registered part is `--night-glow-x`); nightfall turns the main glow off
+  12.3% at rest, with two registered parts: `--night-glow-x` and `--night-glow-strength`, which is 35% wherever the glow is parked so it travels bright and settles to 12.3% as it lands on nightfall — at 12.3% it all but vanished over the lighter grounds it crosses mid-turn); nightfall turns the main glow off
   (`--page-glow-strength: 0%`) and centres it. It is parked just past an edge everywhere else:
   left on noon (−100% desktop / −130% phone), part-way in on the afternoon waypoint (−25% / −40%,
   so the slide spans both legs of noon → nightfall), right on morning (200% / 230%). "Just past"
@@ -186,9 +186,8 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   12%), not its clay accent, so noon → nightfall reads as one fade — and noon's glow RISES UP
   AND AWAY while it fades: nightfall parks the (transparent) main glow above the top edge
   (`--page-glow-y` −45% desktop / −50% phone, just clear of a visible half-height of 42% / 46%)
-  and afternoon holds it half way (−20% / −22%). The night glow's colour never changes during
-  any of this; only `--night-glow-x` moves, and it reads differently only because the ground under
-  it is crossfading. Two destination rules say
+  and afternoon holds it half way (−20% / −22%). The night glow's HUE never changes during
+  any of this; its position and strength move, and the ground under it is crossfading too. Two destination rules say
   what must NOT move, each a jump made while the jumping thing is invisible:
   `[data-theme="noon"]` drops `--night-glow-x` (back from the right edge to the left; animated it
   would sweep the page), `[data-theme="morning"]` keeps only the four colours and

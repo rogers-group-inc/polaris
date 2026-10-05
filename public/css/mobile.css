@@ -28,6 +28,7 @@
 @property --page-glow-end { syntax: "<percentage>"; inherits: true; initial-value: 70%; }
 /* Nightfall's sliding glow layer (see styles.css). */
 @property --night-glow-x  { syntax: "<percentage>"; inherits: true; initial-value: -130%; }
+@property --night-glow-strength { syntax: "<percentage>"; inherits: true; initial-value: 35%; }
 
 :root {
   /* Key colors */
@@ -162,8 +163,14 @@
      phone's visible radius is 70% of 180%, ~126% of the width; these are
      just clear of the screen, so the slide is all visible travel. */
   --night-glow-x: -130%;
+  /* Brighter while it travels: 35% wherever it is parked, 12.3% at rest on
+     nightfall. The crossfade carries it between the two with the slide, so
+     the blue arrives bright and settles as it lands, and brightens again as
+     it leaves for morning. On the lighter grounds it crosses mid-turn (the
+     afternoon tan into indigo), 12.3% all but vanished. */
+  --night-glow-strength: 35%;
   --night-glow: radial-gradient(ellipse 180% 66% at var(--night-glow-x) 0%,
-    color-mix(in srgb, #2f6bff 12.3%, transparent) 0%,
+    color-mix(in srgb, #2f6bff var(--night-glow-strength), transparent) 0%,
     transparent 70%);
   --page-glow:
     var(--night-glow),
@@ -440,6 +447,7 @@
   --page-glow-strength: 0%;
   --page-glow-y: -50%;
   --night-glow-x: 50%;
+  --night-glow-strength: 12.3%;
 }
 
 * { box-sizing: border-box; }
@@ -2155,7 +2163,7 @@ html[data-theme-fading] {
   transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
-    --night-glow-x;
+    --night-glow-x, --night-glow-strength;
   transition-duration: 800ms;
   transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
@@ -2170,7 +2178,7 @@ html[data-theme-fading][data-theme="noon"] {
 }
 html[data-theme-fading][data-theme="morning"] {
   transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
-    --night-glow-x;
+    --night-glow-x, --night-glow-strength;
 }
 /* Phase easing for a multi-leg turn: accelerate once at the start, run at
    constant speed through the waypoint, decelerate once at the end, so

@@ -26,6 +26,7 @@
    off the left edge on the turn from noon, out past the right edge on the
    turn to morning. Only its horizontal centre moves; see --night-glow. */
 @property --night-glow-x  { syntax: "<percentage>"; inherits: true; initial-value: -100%; }
+@property --night-glow-strength { syntax: "<percentage>"; inherits: true; initial-value: 35%; }
 
 :root {
   --color-bg-primary: #151528;
@@ -159,8 +160,14 @@
      fade. Saturated blue rather than nightfall's pastel accent, which went
      grey slate at this faintness. */
   --night-glow-x: -100%;
+  /* Brighter while it travels: 35% wherever it is parked, 12.3% at rest on
+     nightfall. The crossfade carries it between the two with the slide, so
+     the blue arrives bright and settles as it lands, and brightens again as
+     it leaves for morning. On the lighter grounds it crosses mid-turn (the
+     afternoon tan into indigo), 12.3% all but vanished. */
+  --night-glow-strength: 35%;
   --night-glow: radial-gradient(ellipse 140% 60% at var(--night-glow-x) 0%,
-    color-mix(in srgb, #2f6bff 12.3%, transparent) 0%,
+    color-mix(in srgb, #2f6bff var(--night-glow-strength), transparent) 0%,
     transparent 70%);
   --page-glow:
     var(--night-glow),
@@ -480,7 +487,7 @@ html[data-theme-fading] {
   transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
-    --night-glow-x;
+    --night-glow-x, --night-glow-strength;
   transition-duration: 800ms;
   transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
   transition-delay: 0s;
@@ -501,7 +508,7 @@ html[data-theme-fading][data-theme="noon"] {
 }
 html[data-theme-fading][data-theme="morning"] {
   transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
-    --night-glow-x;
+    --night-glow-x, --night-glow-strength;
 }
 @media (prefers-reduced-motion: reduce) {
   html[data-theme-fading] { transition: none; }
@@ -763,6 +770,7 @@ code {
   --page-glow-strength: 0%;
   --page-glow-y: -45%;
   --night-glow-x: 50%;
+  --night-glow-strength: 12.3%;
 }
 
 /* ─── Layout ───────────────────────────────────────────────────────────────── */
