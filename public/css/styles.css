@@ -151,9 +151,9 @@
   --page-glow-end: 70%;
   /* Nightfall's electric-blue wash, its own layer so it can slide while the
      main glow fades. Parked off-screen in every other theme: -100% (left of
-     the viewport, waiting to slide in) on noon, -25% on the afternoon
-     waypoint so the slide spans both legs of noon → nightfall, 50% on
-     nightfall, and 200% (gone past the right edge) on morning. Its visible
+     the viewport, waiting to slide in) on noon, 50% on nightfall AND on the
+     afternoon waypoint (so the one 2 s slide spans both legs of
+     noon → nightfall unbroken), and 200% (gone past the right edge) on morning. Its visible
      radius is 70% of a 140% radius, ~98% of the width, so -100% / 200% are
      JUST clear of the screen. Further out and the slide spends its fast
      first half off-screen: at ±200% the exit was over in a quarter of the
@@ -482,14 +482,28 @@ html[data-theme-fading] *:not(.theme-band-track)::after {
    match (it selects descendants). Transitioning them here is what moves the
    glow: morning → noon climbs the sun from the bottom edge to the top, and
    every other change fades its glow instead of cutting it. Children inherit
-   the in-between values, so nothing below needs to list them. */
-html[data-theme-fading] {
+   the in-between values, so nothing below needs to list them.
+
+   On its OWN clock, deliberately longer than the 800 ms palette crossfade:
+   at 800 ms the light moved while the whole page was swinging from white to
+   indigo, and nobody saw it. So the palette and the band land together as
+   before, and the light keeps drifting into place after them. Two things
+   follow:
+   - The rule is on bare `html`, NOT html[data-theme-fading]. That attribute
+     comes off at 880 ms, and a transition whose property leaves
+     transition-property is cancelled on the spot, so a 2 s glow would jump to
+     its end the moment the palette landed.
+   - No phase easing (the in/mid/out rules below leave html out). The glow
+     does not stop at a waypoint: afternoon carries nightfall's glow values,
+     so the turn from noon starts ONE 2 s glow transition and the second leg,
+     changing nothing, lets it run on. A per-leg curve on it would lurch. */
+html {
   transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
     --night-glow-x, --night-glow-strength;
-  transition-duration: 800ms;
-  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition-duration: 2000ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-delay: 0s;
 }
 /* What must NOT move, by destination — each one a jump made while the
@@ -501,17 +515,17 @@ html[data-theme-fading] {
      nightfall, so its geometry jumps to the sunrise's and only the colours
      fade, bringing the sun up in place at the bottom while the blue slides
      out to the right. */
-html[data-theme-fading][data-theme="noon"] {
+html[data-theme="noon"] {
   transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
 }
-html[data-theme-fading][data-theme="morning"] {
+html[data-theme="morning"] {
   transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --night-glow-x, --night-glow-strength;
 }
 @media (prefers-reduced-motion: reduce) {
-  html[data-theme-fading] { transition: none; }
+  html, html[data-theme] { transition: none; }
   html[data-theme-fading] *:not(.theme-band-track),
   html[data-theme-fading] *:not(.theme-band-track)::before,
   html[data-theme-fading] *:not(.theme-band-track)::after { transition: none; }
@@ -539,17 +553,14 @@ html[data-theme-fading][data-theme="morning"] {
    on every color property, so the light eases to a stop at the waypoint while
    the band glides past — the exact pause the phase exists to remove. The track
    is then matched again by name so it keeps the same curve. ─────────────── */
-html[data-theme-fading="in"],
 html[data-theme-fading="in"] *:not(.theme-band-track),
 html[data-theme-fading="in"] *:not(.theme-band-track)::before,
 html[data-theme-fading="in"] *:not(.theme-band-track)::after,
 html[data-theme-fading="in"] .theme-band-track { transition-timing-function: cubic-bezier(0.4, 0, 1, 1); }
-html[data-theme-fading="mid"],
 html[data-theme-fading="mid"] *:not(.theme-band-track),
 html[data-theme-fading="mid"] *:not(.theme-band-track)::before,
 html[data-theme-fading="mid"] *:not(.theme-band-track)::after,
 html[data-theme-fading="mid"] .theme-band-track { transition-timing-function: linear; }
-html[data-theme-fading="out"],
 html[data-theme-fading="out"] *:not(.theme-band-track),
 html[data-theme-fading="out"] *:not(.theme-band-track)::before,
 html[data-theme-fading="out"] *:not(.theme-band-track)::after,
@@ -716,15 +727,19 @@ code {
   --shadow-panel: 0 24px 64px rgba(90,30,10,.28), 0 2px 10px rgba(90,30,10,.16);
   --shadow-control: 0 2px 5px rgba(90,30,10,.26), 0 1px 2px rgba(90,30,10,.16), inset 0 1px 0 rgba(255,255,255,.55);
   --shadow-card: 0 8px 32px rgba(90,30,10,.20), 0 2px 6px rgba(90,30,10,.15), inset 0 1px 0 rgba(255,255,255,.55);
-  /* The half-way point of noon → nightfall, so the glow reads as ONE fade
-     and one slide across both legs: noon's sunlight at half its strength
-     (not this palette's clay accent, which would turn the fade into a
-     colour change), half way up and away (y -20%), and the night glow half
-     way in from the left. */
+  /* NIGHTFALL'S glow values, not a half-way point. The glow runs on its own
+     2 s clock (see the html rule in the crossfade block), so the turn from
+     noon starts a single glow transition here, and the second leg into
+     nightfall changes none of these values and lets it run on unbroken —
+     noon's sunlight rising up and away as it fades, the blue sliding in
+     bright and settling. A half-way value here would restart the glow mid-
+     flight at 800 ms and lurch. The colour stays noon's sunlight (not this
+     palette's clay accent) so the fade never turns into a colour change. */
   --page-glow-color: #ffc928;
-  --page-glow-strength: 12%;
-  --page-glow-y: -20%;
-  --night-glow-x: -25%;
+  --page-glow-strength: 0%;
+  --page-glow-y: -45%;
+  --night-glow-x: 50%;
+  --night-glow-strength: 12.3%;
 }
 
 /* ─── Nightfall ──────────────────────────────────────────────────────────────
@@ -764,7 +779,7 @@ code {
   /* Nightfall's glow is the sliding --night-glow layer (electric blue at
      12.3%, see :root), centred here. The main glow is off and parked above
      the top edge: on the turn from noon its sunlight rises up and away as it
-     fades (afternoon holds it half way, -20%), while the blue slides in from
+     fades (afternoon carries the same values), while the blue slides in from
      the left. Its visible half-height is 70% of a 60% radius, 42% of the
      viewport, so -45% is just clear. */
   --page-glow-strength: 0%;

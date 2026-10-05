@@ -158,7 +158,7 @@
   --page-glow-p3: 50%;
   --page-glow-end: 70%;
   /* Nightfall's electric-blue wash as its own sliding layer, parked by
-     theme as on the desktop: -130% noon, -40% afternoon, 50% nightfall,
+     theme as on the desktop: -130% noon, 50% nightfall (and afternoon, its waypoint),
      230% morning. Wider apart than the desktop's -100% / 200% because the
      phone's visible radius is 70% of 180%, ~126% of the width; these are
      just clear of the screen, so the slide is all visible travel. */
@@ -388,13 +388,15 @@
 
   --shadow-card:  0 8px 32px rgba(90,30,10,.20), 0 2px 6px rgba(90,30,10,.15), inset 0 1px 0 rgba(255,255,255,.55);
   --shadow-sheet: 0 -8px 32px rgba(90,30,10,.24), 0 -2px 6px rgba(90,30,10,.15), inset 0 1px 0 rgba(255,255,255,.55);
-  /* Half way through noon → nightfall: noon's sunlight at half strength and
-     half way up and away, the night glow half way in, so the turn is one
-     fade-and-rise and one slide. */
+  /* Nightfall's glow values, not a half-way point: the glow's own 2 s
+     transition starts on the turn into this waypoint and runs on unbroken
+     through the leg into nightfall, which changes none of them (styles.css
+     has the reasoning). */
   --page-glow-color: #ffc928;
-  --page-glow-strength: 12%;
-  --page-glow-y: -22%;
-  --night-glow-x: -40%;
+  --page-glow-strength: 0%;
+  --page-glow-y: -50%;
+  --night-glow-x: 50%;
+  --night-glow-strength: 12.3%;
 }
 /* Nightfall — indigo ground, sky-blue accent: the desktop's nightfall hues
    (styles.css). Without this block the phone painted the neutral Material
@@ -441,7 +443,7 @@
   --shadow-sheet: 0 -8px 32px rgba(0,0,0,.7), 0 -2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.08);
   /* The glow is the sliding --night-glow layer, centred; the main glow is
      off and parked above the top edge, so noon's sunlight rises up and away
-     on the turn (afternoon holds it at -22%). The phone's visible half-height
+     on the turn (afternoon carries the same values). The phone's visible half-height
      is 70% of 66%, 46% of the screen, so -50% is just clear. Same as the
      desktop otherwise. */
   --page-glow-strength: 0%;
@@ -2158,25 +2160,29 @@ html[data-theme-fading] *:not(.theme-strip-track)::after {
 }
 /* The glow's parts live on <html>, which the rule above does not match.
    Moving them here climbs morning's sun to noon's top wash and fades every
-   other glow instead of cutting it (styles.css has the same rule). */
-html[data-theme-fading] {
+   other glow instead of cutting it. On bare `html` and its own 2 s clock,
+   longer than the 800 ms palette, with no phase easing — styles.css has the
+   reasoning (the fading attribute comes off at 880 ms and would cancel a
+   longer transition; afternoon carries nightfall's values so the turn is
+   one unbroken glow transition). */
+html {
   transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
     --night-glow-x, --night-glow-strength;
-  transition-duration: 800ms;
-  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition-duration: 2000ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 /* What must not move, by destination (reasoning in styles.css): into noon
    the night glow jumps back to the left edge unseen; into morning the
    transparent main glow takes the sunrise's shape at once and only its
    colours fade. */
-html[data-theme-fading][data-theme="noon"] {
+html[data-theme="noon"] {
   transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
 }
-html[data-theme-fading][data-theme="morning"] {
+html[data-theme="morning"] {
   transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --night-glow-x, --night-glow-strength;
 }
@@ -2187,23 +2193,20 @@ html[data-theme-fading][data-theme="morning"] {
    gives these rules the specificity of the block above, whose shorthand
    `transition` would otherwise re-assert the full ease. The track is then
    matched again by name so it keeps the same curve. */
-html[data-theme-fading="in"],
 html[data-theme-fading="in"] *:not(.theme-strip-track),
 html[data-theme-fading="in"] *:not(.theme-strip-track)::before,
 html[data-theme-fading="in"] *:not(.theme-strip-track)::after,
 html[data-theme-fading="in"] .theme-strip-track { transition-timing-function: cubic-bezier(0.4, 0, 1, 1); }
-html[data-theme-fading="mid"],
 html[data-theme-fading="mid"] *:not(.theme-strip-track),
 html[data-theme-fading="mid"] *:not(.theme-strip-track)::before,
 html[data-theme-fading="mid"] *:not(.theme-strip-track)::after,
 html[data-theme-fading="mid"] .theme-strip-track { transition-timing-function: linear; }
-html[data-theme-fading="out"],
 html[data-theme-fading="out"] *:not(.theme-strip-track),
 html[data-theme-fading="out"] *:not(.theme-strip-track)::before,
 html[data-theme-fading="out"] *:not(.theme-strip-track)::after,
 html[data-theme-fading="out"] .theme-strip-track { transition-timing-function: cubic-bezier(0, 0, 0.36, 1); }
 @media (prefers-reduced-motion: reduce) {
-  html[data-theme-fading] { transition: none; }
+  html, html[data-theme] { transition: none; }
   html[data-theme-fading] *:not(.theme-strip-track),
   html[data-theme-fading] *:not(.theme-strip-track)::before,
   html[data-theme-fading] *:not(.theme-strip-track)::after { transition: none; }

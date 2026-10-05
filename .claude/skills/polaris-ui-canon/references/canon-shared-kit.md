@@ -168,30 +168,38 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   because a gradient cuts on a theme change while typed custom properties interpolate.
   `:root` derives the four colour stops from `--page-glow-color` / `--page-glow-strength` on the
   straight line to transparent, so a theme that sets only those two paints the same two-stop
-  wash as before. `html[data-theme-fading]` transitions the parts (the `*` crossfade rule
-  matches only descendants of `<html>`, where they live), and the phase rules include `html` itself. **Morning
+  wash as before. **Bare `html` transitions the parts, on its own 2 s clock** (ease-in-out,
+  no phase easing), NOT `html[data-theme-fading]` and not the 800 ms crossfade: at 800 ms the
+  light moved while the whole page swung from white to indigo and could not be seen, and the
+  fading attribute comes off at 880 ms, which would CANCEL a longer transition (a property
+  leaving `transition-property` jumps to its end). So the palette and the band land together and
+  the light drifts on after them. Verified live in the dev app over CDP, not only in a frozen
+  mock. **Morning
   sets the parts, never a whole `--page-glow`: a sunrise rising from the BOTTOM centre**
   (y 100%, 140% × 75%, a warm-white core through gold into an orange haze that is gone by
   mid-screen; lightness is what reads on its mid-tone parchment, and the accent, a vivid orange
   alone and pale gold all vanished into it). So the turn to noon climbs the sun from the bottom
-  edge to noon's top wash in the 800 ms fade. A theme that overrides `--page-glow` whole goes back to cutting.
+  edge to noon's top wash over the glow's 2 s. A theme that overrides `--page-glow` whole goes back to cutting.
   **Nightfall's glow is a second, SLIDING layer** (`--night-glow`, electric blue `#2f6bff` at
   12.3% at rest, with two registered parts: `--night-glow-x` and `--night-glow-strength`, which is 35% wherever the glow is parked so it travels bright and settles to 12.3% as it lands on nightfall — at 12.3% it all but vanished over the lighter grounds it crosses mid-turn); nightfall turns the main glow off
   (`--page-glow-strength: 0%`) and centres it. It is parked just past an edge everywhere else:
-  left on noon (−100% desktop / −130% phone), part-way in on the afternoon waypoint (−25% / −40%,
-  so the slide spans both legs of noon → nightfall), right on morning (200% / 230%). "Just past"
+  left on noon (−100% desktop / −130% phone) and right on morning (200% / 230%). **The afternoon
+  waypoint carries NIGHTFALL's glow values** (main strength 0%, y −45% / −50%, night x 50%,
+  strength 12.3%), never half-way ones: the turn from noon starts ONE 2 s glow transition on its
+  first leg, and the second leg changes nothing, so it runs on unbroken. A half-way value
+  restarts the glow at 800 ms and lurches. "Just past"
   matters: the visible radius is 70% of the ellipse's horizontal radius (~98% of the width
   on desktop, ~126% on the phone), and parking further out spends the fast first half of the
-  ease off-screen. The afternoon waypoint takes noon's sunlight at half strength (`#ffc928`
-  12%), not its clay accent, so noon → nightfall reads as one fade — and noon's glow RISES UP
-  AND AWAY while it fades: nightfall parks the (transparent) main glow above the top edge
-  (`--page-glow-y` −45% desktop / −50% phone, just clear of a visible half-height of 42% / 46%)
-  and afternoon holds it half way (−20% / −22%). The night glow's HUE never changes during
+  ease off-screen. The afternoon waypoint keeps noon's sunlight HUE (`#ffc928`), not its clay
+  accent, so the fade never turns into a colour change — and noon's glow RISES UP AND AWAY while
+  it fades: nightfall (and afternoon) park the transparent main glow above the top edge
+  (`--page-glow-y` −45% desktop / −50% phone, just clear of a visible half-height of 42% / 46%). The night glow's HUE never changes during
   any of this; its position and strength move, and the ground under it is crossfading too. Two destination rules say
   what must NOT move, each a jump made while the jumping thing is invisible:
-  `[data-theme="noon"]` drops `--night-glow-x` (back from the right edge to the left; animated it
-  would sweep the page), `[data-theme="morning"]` keeps only the four colours and
-  `--night-glow-x` (the transparent main glow takes the sunrise's shape at once and fades up in
+  `html[data-theme="noon"]` drops `--night-glow-x` (back from the right edge to the left; animated it
+  would sweep the page), `html[data-theme="morning"]` keeps only the four colours and the
+  night glow's two parts (keyed on the destination theme alone, since the transition outlives the
+  fading attribute; a transition takes its property list from the after-change style) (the transparent main glow takes the sunrise's shape at once and fades up in
   place while the blue slides out right). Because the glow is two layers, `body` sets
   `background-repeat` / `background-attachment` as LONGHANDS — in the shorthand, `no-repeat fixed`
   binds to the layer it follows and the other would scroll and tile. A sticky band pinned at the top of the page sits exactly where the
