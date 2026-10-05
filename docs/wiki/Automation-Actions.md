@@ -496,7 +496,17 @@ rule's **reset actions** — which every automation has, banded or not — and
 running both told people twice.
 
 What the old policy announced is adopted into the reset actions **when they are
-empty**; an operator who already wrote reset actions is left alone.
+empty** on an automation **with severity levels** (the only kind the old policy
+ever fired on); an operator who already wrote reset actions is left alone.
+
+### How the reset list follows your Notify actions
+
+Adding a Notify to the trigger list puts the same Notify in the **Reset
+Action** list, so the people told it broke are told it came back. A reset row
+follows its trigger Notify until you edit or remove it; from then on it is
+yours, and the list never adds a second copy beside it. Re-opening a saved
+automation keeps that: a reset Notify that still matches its trigger Notify
+carries on following it, and one you changed or removed stays as saved.
 
 ---
 
