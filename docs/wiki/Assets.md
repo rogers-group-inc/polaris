@@ -534,8 +534,9 @@ shows **one at a time**:
 
 When more than one source has a list, a picker beside **Refresh** chooses
 between them; the agent's list is shown first because it reads the host
-directly. The line above the table says which source you are looking at, how
-many programs it reported, and when it was read.
+directly. Beside the **Installed software** heading you see how many programs
+the source reported and when it was last read (with a single source, its name
+too); a short note under it explains a source's limits.
 
 Things to know:
 

@@ -20484,14 +20484,23 @@ var _assetEventsLoaded = false;     // lazy-load guard (first tab click)
 var _SOFTWARE_SOURCE_LABELS = { agent: "Polaris Agent", intune: "Intune", arc: "Azure Arc" };
 
 function _assetSoftwareTabHTML() {
+  // The current-state strip's layout (_currentStateStripHTML — the MAC / ARP
+  // tabs): a plain row, heading + tertiary stamp left, controls right. Not
+  // .filter-bar, which is the page-level sticky bar with its own opaque
+  // background and reads as a slab inside the slide-over. The strip helper
+  // itself is not reused because its Refresh re-probes the device; this one
+  // only re-reads what the sources last reported.
   return '<div class="section-block">' +
-    '<div class="filter-bar" style="justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:0.5rem">' +
-      '<p class="hint" style="margin:0;max-width:600px" id="asset-view-sw-hint">Installed software and versions.</p>' +
-      '<div style="display:flex;align-items:center;gap:0.75rem;flex:none">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;margin:0 0 0.5rem">' +
+      '<div id="asset-view-sw-head" style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">' +
+        '<h4 style="margin:0">Installed software</h4>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:0.5rem;flex:none">' +
         '<select id="asset-view-sw-source" class="form-input" style="display:none;padding:2px 6px;font-size:0.82rem;width:auto" aria-label="Software source"></select>' +
-        '<button class="btn btn-secondary btn-sm" id="asset-view-sw-refresh">Refresh</button>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="asset-view-sw-refresh" title="Re-read the stored lists">Refresh</button>' +
       '</div>' +
     '</div>' +
+    '<p id="asset-view-sw-hint" style="margin:-0.25rem 0 0.5rem;font-size:0.78rem;color:var(--color-text-tertiary);display:none"></p>' +
     '<div class="table-wrapper table-wrapper-panel-sticky" id="asset-view-sw-wrapper">' +
       '<table id="asset-view-sw-table">' +
         '<thead><tr>' +
@@ -20523,22 +20532,32 @@ function _sizeAssetSwTableWrapper() {
 }
 window.addEventListener("resize", _sizeAssetSwTableWrapper);
 
-// The hint line: where the shown list came from and how old it is, or — with
-// no list at all — the three ways to get one.
+// The strip's left half after the heading: count · source, then the same
+// "updated …" stamp the MAC / ARP strips carry. With one source the picker is
+// hidden, so the source is named here.
+function _softwareHeadSuffixHTML(sources, shown) {
+  if (!sources.length) return _freshnessStampHTML(null, null, "nothing reported yet");
+  var s = sources.filter(function (x) { return x.source === shown; })[0] || sources[0];
+  var label = _SOFTWARE_SOURCE_LABELS[s.source] || s.source;
+  return '<span style="font-size:0.72rem;color:var(--color-text-tertiary)">' +
+      escapeHtml(String(s.count)) + ' program' + (s.count === 1 ? '' : 's') +
+      (sources.length > 1 ? '' : ' · ' + escapeHtml(label)) + '</span>' +
+    _freshnessStampHTML(s.scrapedAt, null, "not read yet");
+}
+
+// The hint under the strip — only when there is something to say: with no
+// list, the three ways to get one; for Intune / Arc, the caveat that explains
+// a list that looks short or stale. The agent's list needs no note.
 function _softwareHintHTML(sources, shown) {
   if (!sources.length) {
-    return 'No installed-software list for this asset yet. One comes from the <strong>Polaris Agent</strong> (read every six hours), ' +
-      'from <strong>Intune</strong>\'s detected apps (turn on <em>Installed software</em> on the Entra ID integration), ' +
+    return 'One comes from the <strong>Polaris Agent</strong> (read every six hours), ' +
+      'from <strong>Intune</strong>\'s detected apps (turn on <em>Read installed software</em> on the Entra ID integration), ' +
       'or from <strong>Azure Change Tracking</strong> (turn it on on the Azure Arc integration).';
   }
   var s = sources.filter(function (x) { return x.source === shown; })[0] || sources[0];
-  var label = _SOFTWARE_SOURCE_LABELS[s.source] || s.source;
-  var when = s.scrapedAt && typeof timeAgo === "function" ? timeAgo(s.scrapedAt) : "an unknown time ago";
-  var extra = s.source === "intune"
-    ? ' Intune lists unmanaged apps only on corporate-owned devices.'
-    : s.source === "arc" ? ' An uninstalled program can stay listed for up to three days.' : '';
-  return escapeHtml(String(s.count)) + ' program' + (s.count === 1 ? '' : 's') + ' reported by <strong>' + escapeHtml(label) +
-    '</strong>, read ' + escapeHtml(when) + '.' + extra;
+  if (s.source === "intune") return 'Intune lists unmanaged apps only on corporate-owned devices.';
+  if (s.source === "arc") return 'An uninstalled program can stay listed for up to three days.';
+  return "";
 }
 
 function _wireAssetSoftwareTab(asset) {
@@ -20596,8 +20615,14 @@ function _wireAssetSoftwareTab(asset) {
   }
 
   function renderHeader() {
+    var head = document.getElementById("asset-view-sw-head");
+    if (head) head.innerHTML = '<h4 style="margin:0">Installed software</h4>' + _softwareHeadSuffixHTML(sources, shown);
     var hint = document.getElementById("asset-view-sw-hint");
-    if (hint) hint.innerHTML = _softwareHintHTML(sources, shown);
+    if (hint) {
+      var text = _softwareHintHTML(sources, shown);
+      hint.innerHTML = text;
+      hint.style.display = text ? "" : "none";
+    }
     var sel = document.getElementById("asset-view-sw-source");
     if (!sel) return;
     if (sources.length > 1) {
