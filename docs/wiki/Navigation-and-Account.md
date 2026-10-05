@@ -29,7 +29,8 @@ Below Server Settings sits the **theme band** and the version line.
 **Changing pages crossfades** rather than cutting: the sidebar holds still while
 the page beside it fades from one to the next. This needs a current Chrome, Edge
 or Safari; other browsers load each page as a plain page load, and it is off when
-your system asks for reduced motion. Each page still fetches its own data after
+your system asks for reduced motion. Signing in is a plain page load — the
+crossfade is only between pages of the app. Each page still fetches its own data after
 it appears, so tables and widgets fill in a moment later.
 
 ### Global search

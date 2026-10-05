@@ -1,0 +1,37 @@
+/* ─── Page changes: a crossfade, not a reload ──────────────────────────────
+   Linked ONLY by the app pages — the ones with the sidebar, which load
+   app.js. A cross-document view transition plays only when BOTH the page
+   being left and the page being opened opt in, so keeping the opt-in out of
+   styles.css (which login, signed-out, setup, alert-ack, api and dash load
+   too) is what stops the crossfade on logging in: login.html never opts in,
+   so Login → Dashboard is a plain load and the rail does not fade in from a
+   page that had none. App page ↔ app page still crossfades.
+
+   Every sidebar link is a full page load. The transition makes the browser
+   crossfade old page to new instead of cutting, and the rail —
+   `.sidebar { view-transition-name: polaris-sidebar }` in styles.css — is
+   captured on its own, so it holds still while the page beside it changes.
+   Progressive: Chromium 126+ and Safari 18.2+; any other browser ignores the
+   at-rule and loads as before.
+
+   It only works because the NEW page's first paint already has a finished,
+   themed rail, which is what the transition snapshots. Three things make it
+   so, and losing any one brings the blink back:
+   - theme-init.js in each page's <head> applies the saved theme before the
+     first style pass (app.js used to, from the end of <body>);
+   - app.js builds the nav and brand from the cached user at the END of the
+     file, before first paint, not at DOMContentLoaded (_renderNavFromCache);
+   - <link rel="expect" href="#polaris-nav-ready" blocking="render"> holds
+     the first paint until the parser reaches the marker after app.js.
+   A new app page needs all three AND this stylesheet;
+   tests/unit/pageTransitionWiring.test.ts checks every page that loads
+   app.js, and that no other page links this file. */
+@view-transition { navigation: auto; }
+/* Short: long enough to read as one surface changing, short enough that a
+   quick click-through never waits on it. */
+::view-transition-group(root),
+::view-transition-old(root),
+::view-transition-new(root) { animation-duration: 180ms; }
+@media (prefers-reduced-motion: reduce) {
+  @view-transition { navigation: none; }
+}

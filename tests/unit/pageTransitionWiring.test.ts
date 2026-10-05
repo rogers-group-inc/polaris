@@ -29,6 +29,7 @@ describe("page-change view transition wiring", () => {
     it(`${page} paints a finished, themed rail on its first frame`, () => {
       const html = readFileSync(join(PUBLIC, page), "utf-8");
       const head = html.slice(0, html.indexOf("</head>"));
+      expect(head).toContain('<link rel="stylesheet" href="/css/page-transitions.css">');
       expect(head).toContain('<script src="/js/theme-init.js"></script>');
       expect(head).toContain('<link rel="expect" href="#polaris-nav-ready" blocking="render">');
       // The marker must come AFTER app.js, or the render-block releases first.
@@ -40,10 +41,26 @@ describe("page-change view transition wiring", () => {
   }
 
   it("styles the transition, holds the rail still, and stands down under reduced motion", () => {
+    const vt = readFileSync(join(PUBLIC, "css", "page-transitions.css"), "utf-8");
+    expect(vt).toContain("@view-transition { navigation: auto; }");
+    expect(vt).toMatch(/prefers-reduced-motion: reduce\)\s*\{\s*@view-transition \{ navigation: none; \}/);
     const css = readFileSync(join(PUBLIC, "css", "styles.css"), "utf-8");
-    expect(css).toContain("@view-transition { navigation: auto; }");
     expect(css).toContain(".sidebar { view-transition-name: polaris-sidebar; }");
-    expect(css).toMatch(/prefers-reduced-motion: reduce\)\s*\{\s*@view-transition \{ navigation: none; \}/);
+  });
+
+  it("never opts a non-app page in, so logging in does not crossfade", () => {
+    // A cross-document transition needs BOTH pages to opt in. styles.css is
+    // shared by login, signed-out, setup, alert-ack, api and dash, so the
+    // opt-in must never live there: it made Login -> Dashboard crossfade, the
+    // rail fading in from a page that had none.
+    const css = readFileSync(join(PUBLIC, "css", "styles.css"), "utf-8");
+    expect(css).not.toMatch(/@view-transition\s*\{/);
+    const others = readdirSync(PUBLIC)
+      .filter((f) => f.endsWith(".html") && !appPages.includes(f));
+    expect(others).toEqual(expect.arrayContaining(["login.html", "signed-out.html", "setup.html"]));
+    for (const page of others) {
+      expect(readFileSync(join(PUBLIC, page), "utf-8"), page).not.toContain("page-transitions.css");
+    }
   });
 
   it("builds the rail from cache at the END of app.js, not only at DOMContentLoaded", () => {
