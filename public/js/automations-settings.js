@@ -1,4 +1,4 @@
-/* global api, escapeHtml, showToast, showConfirm, openModal, closeModal, tabbedBodyHTML, wireModalTabs, permAtLeast */
+/* global api, escapeHtml, showToast, showConfirm, openModal, closeModal, tabbedBodyHTML, wireModalTabs, permAtLeast, buildOverlay */
 /**
  * public/js/automations-settings.js — the Automations page's Settings modal.
  *
@@ -93,6 +93,9 @@
         var row = schedules.filter(function (s) { return s.id === el.getAttribute("data-qt-edit"); })[0];
         if (row) openWizard(row);
       });
+    });
+    host.querySelectorAll("[data-qt-detail]").forEach(function (el) {
+      el.addEventListener("click", function () { openDetail(el.getAttribute("data-qt-id"), el.getAttribute("data-qt-detail")); });
     });
     host.querySelectorAll("[data-qt-delete]").forEach(function (el) {
       el.addEventListener("click", function () { confirmDelete(el.getAttribute("data-qt-delete"), el.getAttribute("data-qt-name")); });
@@ -198,9 +201,12 @@
     return "<tr>" +
       "<td>" + (d ? escapeHtml(d.toLocaleString()) : "—") + "</td>" +
       "<td>" + escapeHtml(r.sourceName) + ' <span style="font-size:0.78rem;color:var(--color-text-tertiary)">(' + (r.sourceKind === "global" ? "global" : "automation") + ")</span></td>" +
-      "<td>" + escapeHtml((r.notificationIds || []).length + " alert" + ((r.notificationIds || []).length === 1 ? "" : "s")) + "</td>" +
-      "<td>" + escapeHtml(r.listedCount + " outstanding" + (r.recurringCount ? ", " + r.recurringCount + " recurring" : "")) + "</td>" +
-      "<td>" + (recips.length ? escapeHtml(sent + "/" + recips.length) : "—") + "</td>" +
+      // The three counts open the lists behind them (a stacked overlay over
+      // this modal): which alerts the summary stamped, what the email said,
+      // and who it went to with each address's outcome.
+      "<td>" + detailBtn(r.id, "covered", (r.notificationIds || []).length + " alert" + ((r.notificationIds || []).length === 1 ? "" : "s"), "Every alert this summary covered") + "</td>" +
+      "<td>" + detailBtn(r.id, "listed", r.listedCount + " outstanding" + (r.recurringCount ? ", " + r.recurringCount + " recurring" : ""), "What the email listed") + "</td>" +
+      "<td>" + (recips.length ? detailBtn(r.id, "recipients", sent + "/" + recips.length, "Who it went to, and whether it arrived") : "—") + "</td>" +
       '<td><span class="badge ' + statusCls + '"' + (firstErr ? ' title="' + escapeHtml(firstErr) + '"' : "") + '>' + escapeHtml(r.status) + "</span></td>" +
       '<td style="text-align:right;white-space:nowrap">' +
         (failed && canEdit() && recips.length
@@ -208,6 +214,116 @@
           : "") +
       "</td>" +
     "</tr>";
+  }
+
+  function detailBtn(id, kind, label, title) {
+    return '<button type="button" class="qt-detail" data-qt-detail="' + kind + '" data-qt-id="' + escapeHtml(id) + '" title="' + escapeHtml(title) + '" ' +
+      'style="background:none;border:none;padding:0;font:inherit;color:var(--color-accent);cursor:pointer;text-decoration:underline dotted">' + escapeHtml(label) + "</button>";
+  }
+
+  var SEV_ORDER = { critical: 0, serious: 1, warning: 2, informational: 3, notice: 4 };
+  function sevPill(sev) {
+    return '<span class="badge badge-level-' + escapeHtml(sev) + '">' + escapeHtml(String(sev || "").toUpperCase()) + "</span>";
+  }
+  function fmtAt(v) {
+    if (!v) return "—";
+    var d = new Date(v);
+    return isNaN(d.getTime()) ? String(v) : d.toLocaleString();
+  }
+  function deviceCell(assetId, hostname, dimension) {
+    var name = escapeHtml(hostname || "(no device)");
+    // The same landing path the summary email links (`assetOpenPath`).
+    var link = assetId ? '<a href="/assets/' + encodeURIComponent(assetId) + '" target="_blank" rel="noopener">' + name + "</a>" : name;
+    return link + (dimension ? ' <span style="color:var(--color-text-tertiary)">· ' + escapeHtml(dimension) + "</span>" : "");
+  }
+  var TH = 'style="text-align:left;padding:6px 10px;font-size:0.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--color-text-tertiary)"';
+  var TD = 'style="padding:6px 10px;border-top:1px solid var(--color-border);font-size:0.85rem;vertical-align:top"';
+
+  /** The Covered list: every alert the summary stamped, as it is now. */
+  function coveredHtml(d) {
+    var rows = (d.covered || []).slice().sort(function (a, b) {
+      return (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9) || String(a.triggeredAt).localeCompare(String(b.triggeredAt));
+    });
+    if (!rows.length) return '<p class="hint">Nothing was held during this quiet period — this was an all-quiet summary.</p>';
+    return '<p class="hint" style="margin:0 0 8px">Every alert held and covered by this summary, as it is now. <strong>Listed</strong> marks the ones the email named; the rest had recovered under the threshold by the time it was sent.</p>' +
+      '<table style="width:100%;border-collapse:collapse"><thead><tr><th ' + TH + '>Severity</th><th ' + TH + '>Device</th><th ' + TH + '>What</th><th ' + TH + '>Fired</th><th ' + TH + '>Now</th></tr></thead><tbody>' +
+      rows.map(function (n) {
+        var now = n.cleared
+          ? '<span style="color:var(--color-success,#15803d)">Recovered' + (n.clearedAt ? " " + escapeHtml(fmtAt(n.clearedAt)) : "") + "</span>"
+          : '<span style="color:var(--color-sev-critical,#dc2626);font-weight:600">Still active</span>' + (n.acknowledged ? ' <span class="badge badge-active">ACK</span>' : "");
+        return "<tr><td " + TD + ">" + sevPill(n.severity) + (n.listed ? ' <span class="badge badge-active" title="Named in the summary email">LISTED</span>' : "") + "</td>" +
+          "<td " + TD + ">" + deviceCell(n.assetId, n.assetHostname, n.dimension) + "</td>" +
+          "<td " + TD + ">" + escapeHtml(n.message || "") + (n.ruleName ? '<div style="font-size:0.78rem;color:var(--color-text-tertiary)">' + escapeHtml(n.ruleName) + "</div>" : "") + "</td>" +
+          "<td " + TD + ' style="white-space:nowrap">' + escapeHtml(fmtAt(n.triggeredAt)) + "</td>" +
+          "<td " + TD + ">" + now + "</td></tr>";
+      }).join("") + "</tbody></table>";
+  }
+
+  /** The Listed view: what the email said — outstanding rows, then recurring ones with every fire time. */
+  function listedHtml(d) {
+    var out = (d.listed && d.listed.outstanding) || [];
+    var rec = (d.listed && d.listed.recurring) || [];
+    if (!out.length && !rec.length) {
+      var held = d.summary && d.summary.details && d.summary.details.heldCount;
+      return '<p class="hint">The email listed nothing: ' + (held ? held + " alert" + (held === 1 ? "" : "s") + " fired and recovered during the quiet period" : "no alerts were held") + ". It was sent as the all-quiet summary.</p>";
+    }
+    var html = "";
+    if (out.length) {
+      html += '<h4 style="margin:0 0 6px;font-size:0.85rem">Still outstanding (' + out.length + ")</h4>" +
+        '<table style="width:100%;border-collapse:collapse;margin-bottom:14px"><thead><tr><th ' + TH + '>Severity</th><th ' + TH + '>Device</th><th ' + TH + '>What</th><th ' + TH + '>Since</th></tr></thead><tbody>' +
+        out.map(function (r) {
+          return "<tr><td " + TD + ">" + sevPill(r.severity) + "</td><td " + TD + ">" + deviceCell(r.assetId, r.assetHostname, r.dimension) + "</td>" +
+            "<td " + TD + ">" + escapeHtml(r.message || "") + (r.ruleName ? '<div style="font-size:0.78rem;color:var(--color-text-tertiary)">' + escapeHtml(r.ruleName) + "</div>" : "") + "</td>" +
+            "<td " + TD + ' style="white-space:nowrap">' + escapeHtml(fmtAt(r.triggeredAt)) + "</td></tr>";
+        }).join("") + "</tbody></table>";
+    }
+    if (rec.length) {
+      var th = d.listed.recurrenceThreshold;
+      html += '<h4 style="margin:0 0 6px;font-size:0.85rem">Recurring (' + rec.length + ")" + (th ? ' <span style="font-weight:400;color:var(--color-text-tertiary)">— fired more than ' + th + " time" + (th === 1 ? "" : "s") + "</span>" : "") + "</h4>" +
+        '<table style="width:100%;border-collapse:collapse"><thead><tr><th ' + TH + '>Device</th><th ' + TH + '>What</th><th ' + TH + '>Fired</th><th ' + TH + '>When</th></tr></thead><tbody>' +
+        rec.map(function (r) {
+          return "<tr><td " + TD + ">" + deviceCell(r.assetId, r.assetHostname, r.dimension) + "</td>" +
+            "<td " + TD + ">" + sevPill(r.severity) + " " + escapeHtml(r.ruleName || "") + '<div style="font-size:0.78rem;color:' + (r.stillActive ? "var(--color-sev-critical,#dc2626)" : "var(--color-success,#15803d)") + '">' + (r.stillActive ? "Still active" : "Recovered") + "</div></td>" +
+            "<td " + TD + ' style="white-space:nowrap"><strong>' + r.count + "</strong> time" + (r.count === 1 ? "" : "s") + "</td>" +
+            "<td " + TD + ">" + (r.times || []).map(function (t) { return escapeHtml(fmtAt(t)); }).join("<br>") + "</td></tr>";
+        }).join("") + "</tbody></table>";
+    }
+    return html;
+  }
+
+  /** The Recipients view: every address with its outcome. */
+  function recipientsHtml(d) {
+    var recips = (d.summary && Array.isArray(d.summary.recipients)) ? d.summary.recipients : [];
+    if (!recips.length) return '<p class="hint">This summary had no recipients.</p>';
+    return '<table style="width:100%;border-collapse:collapse"><thead><tr><th ' + TH + '>Address</th><th ' + TH + '>Status</th><th ' + TH + '>Attempts</th><th ' + TH + '>Error</th></tr></thead><tbody>' +
+      recips.map(function (r) {
+        var cls = r.status === "sent" ? "badge-active" : r.status === "pending" ? "badge-warning" : "badge-deprecated";
+        return "<tr><td " + TD + ">" + escapeHtml(r.address) + (r.userId ? ' <span style="font-size:0.78rem;color:var(--color-text-tertiary)">(account)</span>' : "") + "</td>" +
+          "<td " + TD + '><span class="badge ' + cls + '">' + escapeHtml(r.status) + "</span></td>" +
+          "<td " + TD + ">" + escapeHtml(String(r.attempts == null ? "—" : r.attempts)) + "</td>" +
+          "<td " + TD + ">" + (r.error ? escapeHtml(r.error) : "—") + "</td></tr>";
+      }).join("") + "</tbody></table>";
+  }
+
+  /** Open one of the three lists over the Settings modal. */
+  async function openDetail(id, kind) {
+    var d;
+    try {
+      d = await api.quietTimes.summary(id);
+    } catch (err) {
+      showToast((err && err.message) || "Could not load the summary", "error");
+      return;
+    }
+    var s = d.summary || {};
+    var range = fmtAt(s.coveredFrom) + " → " + fmtAt(s.coveredTo);
+    var titles = { covered: "Alerts covered", listed: "What the email listed", recipients: "Recipients" };
+    var body = '<p style="margin:0 0 10px;font-size:0.85rem;color:var(--color-text-secondary)">' + escapeHtml(s.sourceName || "") +
+      ' <span style="color:var(--color-text-tertiary)">(' + (s.sourceKind === "global" ? "global quiet time" : "automation quiet time") + ") · " + escapeHtml(range) + "</span></p>" +
+      (kind === "covered" ? coveredHtml(d) : kind === "listed" ? listedHtml(d) : recipientsHtml(d));
+    if (typeof buildOverlay !== "function") { showToast("The dialog helper did not load", "error"); return; }
+    var layer = buildOverlay(1300, titles[kind] || "Summary", body, '<button type="button" class="btn btn-secondary" id="qt-detail-close">Close</button>', null, kind !== "recipients");
+    var closeBtn = layer.dialog.querySelector("#qt-detail-close");
+    if (closeBtn) closeBtn.addEventListener("click", layer.close);
   }
 
   function openWizard(row) {

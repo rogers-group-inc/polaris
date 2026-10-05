@@ -27,6 +27,7 @@ import {
   updateQuietTimeSchedule,
   deleteQuietTimeSchedule,
   listQuietTimeSummaries,
+  getQuietTimeSummary,
 } from "../../services/quietTimeScheduleService.js";
 import { resendSummary } from "../../services/quietTimeSummaryService.js";
 import { scopeSchema, SEVERITIES } from "../../services/notificationTypes.js";
@@ -68,6 +69,14 @@ quietTimeSchedulesRouter.get("/summaries", requirePermission("automationManageme
   try {
     const limit = Number(req.query.limit) || 20;
     res.json({ summaries: await listQuietTimeSummaries(limit) });
+  } catch (err) { next(err); }
+});
+
+/** One summary in full — the covered alerts (read live), what the email listed,
+ *  and every recipient with its status — for the Settings modal's drill-down. */
+quietTimeSchedulesRouter.get("/summaries/:id", requirePermission("automationManagement", "read"), async (req, res, next) => {
+  try {
+    res.json(await getQuietTimeSummary(req.params.id as string));
   } catch (err) { next(err); }
 });
 
