@@ -32,7 +32,13 @@ import { eventSubjectLabel } from "../utils/alertSubject.js";
 import { sensorReadingDisplay, chartKeysForChangeEvent } from "./alertChartService.js";
 import { poeIsFault } from "../utils/poePorts.js";
 import { REGION_TAG_PREFIX } from "./notificationService.js";
+import { POLARIS_SERVER_SUBJECT } from "./pathCheckIngestService.js";
 import {
+  isPathTrigger,
+  pathTriggerIncludesServer,
+  eventMatchesPathServer,
+  scopeForTrigger,
+  PATH_SERVER_LABEL,
   type Trigger,
   type RuleScope,
   type PreviewRuleInput,
@@ -2393,12 +2399,25 @@ async function clearVanishedStates(
   handledIds: Set<string>,
   assetsWithReadings: Set<string>,
   assetIndex: Map<string, ScopeAssetRow>,
+  /** A Path Monitor rule's Polaris-server rows (subject ""): null for every
+   *  other rule. `included` false = the operator turned the server off, so its
+   *  rows have left the scope; true with readings = a check the server no
+   *  longer reports has vanished, the same test an asset's dimension gets. */
+  pathServer: { included: boolean; hasReadings: boolean } | null = null,
 ): Promise<void> {
   const pinTest = pinTestForTrigger(rule.trigger);
   const vanished: Array<{ st: SweepStateRow; reason: "scope" | "dimension" }> = [];
   const scopeChecks: SweepStateRow[] = [];
   for (const st of states) {
-    if (!st.assetId) continue; // host/global rows have no scope to leave
+    if (!st.assetId) {
+      // host/global rows have no scope to leave — except the server's rows on
+      // a Path Monitor rule, which can leave it.
+      if (!pathServer || (st.state !== "firing" && st.state !== "pending")) continue;
+      if (seenKeys.has(`|${st.dimensionKey}`)) continue;
+      if (!pathServer.included) vanished.push({ st, reason: "scope" });
+      else if (pathServer.hasReadings) vanished.push({ st, reason: "dimension" });
+      continue;
+    }
     if (st.state !== "firing" && st.state !== "pending") continue;
     if (seenKeys.has(`${st.assetId}|${st.dimensionKey}`)) continue;
     if (handledIds.has(st.assetId)) continue; // suppressed freeze / carve-out handoff own these
@@ -2527,13 +2546,17 @@ async function evaluateThresholdRule(
   // The rows behind suppressedIds — the frozen-recovery pass re-reads them.
   const suppressedAssets: ScopeAssetRow[] = [];
   const needsAnswering = triggerNeedsAnsweringDevice(trigger);
+  // Path Monitor: the Polaris server's readings, keyed to subject "" — kept
+  // apart so the vanished sweep can tell the server's rows from a host rule's.
+  let serverReadings: Reading[] | null = null;
 
   if (trigger.type === "host_metric") {
     const r = await resolveHostMetricReading(trigger);
     readings = r ? [r] : [];
     activeAssets = [HOST_PSEUDO_ASSET];
   } else if (trigger.type === "asset_metric" || trigger.type === "asset_state") {
-    const assets = await loadScopeAssets(rule.scope, { monitoredOnly: true });
+    // A Path Monitor rule's pool is agent hosts only (scopeForTrigger).
+    const assets = await loadScopeAssets(scopeForTrigger(rule.scope, trigger), { monitoredOnly: true });
     scopeIds = new Set(assets.map((a) => a.id));
     // Precedence: only worth checking when this rule isn't already the most
     // specific in its signature group (and the group has a higher-rank peer).
@@ -2570,6 +2593,10 @@ async function evaluateThresholdRule(
     readings = trigger.type === "asset_metric"
       ? await resolveAssetMetricReadings(trigger, activeAssets, saturatedIds, sdwanYielded)
       : await resolveAssetStateReadings(trigger, activeAssets, { dependencyDownReadsDown: speaksForSuppressed, sdwanYielded });
+    if (trigger.type === "asset_metric" && pathTriggerIncludesServer(trigger)) {
+      serverReadings = await serverPathReadings(trigger);
+      readings = [...readings, ...serverReadings];
+    }
   } else {
     return;
   }
@@ -2992,9 +3019,12 @@ async function evaluateThresholdRule(
   if (scopeIds) {
     const handled = new Set([...suppressedIds, ...shadowedIds, ...coreSupersededIds, ...notAnsweringIds, ...saturatedIds]);
     const assetsWithReadings = new Set(readings.map((r) => r.assetId).filter(Boolean));
+    const pathServer = trigger.type === "asset_metric" && isPathTrigger(trigger)
+      ? { included: serverReadings !== null, hasReadings: (serverReadings?.length ?? 0) > 0 }
+      : null;
     // activeAssets suffices as the pin-test index: any state row that passes
     // the handled/scope checks belongs to an active asset by construction.
-    await clearVanishedStates(rule, states, seen, scopeIds, handled, assetsWithReadings, new Map(activeAssets.map((a) => [a.id, a])));
+    await clearVanishedStates(rule, states, seen, scopeIds, handled, assetsWithReadings, new Map(activeAssets.map((a) => [a.id, a])), pathServer);
   }
 
   // ── Custom reset conditions ──────────────────────────────────────────────
@@ -3374,6 +3404,24 @@ const HOST_PSEUDO_ASSET: ScopeAssetRow = {
   fortilinkStatus: null, fortilinkCheckedAt: null,
 };
 
+/**
+ * The Polaris server as a Path Monitor source (business rule 85, 2026-10-05).
+ * Its samples are stored under the reserved subject POLARIS_SERVER_SUBJECT, so
+ * this row's id is what the path resolvers query by; the readings it yields are
+ * then re-keyed to assetId "" (serverPathReadings) — the subject shape of a
+ * Polaris-host alert, which every fire / clear / email path already handles
+ * without an asset: no assetDetail, no maintenance or dependency suppression,
+ * Notification.assetId null. Never put through the scope, suppression or
+ * carve-out filters: it is not a device and no device condition describes it.
+ */
+const PATH_SERVER_PSEUDO_ASSET: ScopeAssetRow = { ...HOST_PSEUDO_ASSET, id: POLARIS_SERVER_SUBJECT, hostname: PATH_SERVER_LABEL };
+
+/** Resolve a path metric for the Polaris server, re-keyed to the "" subject. */
+async function serverPathReadings(trigger: Extract<Trigger, { type: "asset_metric" }>): Promise<Reading[]> {
+  const raw = await resolveAssetMetricReadings(trigger, [PATH_SERVER_PSEUDO_ASSET], new Set(), new Map());
+  return raw.map((r) => ({ ...r, assetId: "", hostname: PATH_SERVER_LABEL, tags: [] }));
+}
+
 /** The auto/condition clear-sustain ladder — shared by both recovery signals
  *  (auto: !triggerTree; condition: the reset tree). Mirrors the legacy
  *  per-reading sustain block exactly. */
@@ -3445,7 +3493,7 @@ async function evaluateCompositeRule(
   if (trigger.kind === "host") {
     activeAssets = [HOST_PSEUDO_ASSET];
   } else {
-    scopeAssets = await loadScopeAssets(rule.scope, { monitoredOnly: true });
+    scopeAssets = await loadScopeAssets(scopeForTrigger(rule.scope, trigger), { monitoredOnly: true });
     activeAssets = [];
     for (const a of scopeAssets) {
       if (isSuppressedForNotifications(a)) suppressedIds.add(a.id);
@@ -5306,7 +5354,7 @@ async function runEventTail(rules: DbRule[]): Promise<void> {
     // joining those relations onto every primed row. Same contract the
     // threshold path and downDetectionService use, for the same reason: at
     // 2000 assets the relations dwarf the rows they hang off.
-    const scopedTrees = compiled.filter((c) => c.scoped).map((c) => c.rule.scope?.condition);
+    const scopedTrees = compiled.filter((c) => c.scoped).map((c) => scopeForTrigger(c.rule.scope, c.trigger)?.condition);
     if (scopedTrees.length > 0) {
       const rows = eventAssetIds.map((id) => _assetDetailCache.get(id)).filter((r): r is AssetDetailRow => !!r);
       await decorateRelationLeafHits(rows, scopedTrees);
@@ -5346,7 +5394,12 @@ async function runEventTail(rules: DbRule[]): Promise<void> {
       // asset row is already gone (`asset.deleted`), because there is nothing
       // left to test the filter against. Unfiltered automations (`{}` or
       // "All assets") take neither branch and behave exactly as before.
-      if (c.scoped && (!detail || !scopeMatchesAsset(c.rule.scope, detail))) continue;
+      // Path Monitor: the Polaris server's own route change names the CHECK,
+      // not a host, so no device filter can match it — whether it counts is
+      // the automation's includeServer (eventMatchesPathServer).
+      const serverPath = eventMatchesPathServer(c.trigger, c.scoped, ev.resourceType);
+      if (serverPath === false) continue;
+      if (serverPath === null && c.scoped && (!detail || !scopeMatchesAsset(scopeForTrigger(c.rule.scope, c.trigger), detail))) continue;
       // Stamped as soon as the TRIGGER matches, ahead of the gate and the
       // cooldown: "this event raises this automation" is a property of the two
       // globs overlapping, and a cooldown-suppressed fire must block the reset
@@ -6088,8 +6141,9 @@ export async function previewRule(input: PreviewRuleInput): Promise<PreviewResul
     const r = await resolveHostMetricReading(trigger);
     readings = r ? [r] : [];
   } else if (trigger.type === "asset_metric") {
-    scopeAssets = await loadScopeAssets(input.scope, { monitoredOnly: true });
+    scopeAssets = await loadScopeAssets(scopeForTrigger(input.scope, trigger), { monitoredOnly: true });
     readings = await resolveAssetMetricReadings(trigger, scopeAssets);
+    if (pathTriggerIncludesServer(trigger)) readings = [...readings, ...(await serverPathReadings(trigger))];
   } else if (trigger.type === "asset_state") {
     scopeAssets = await loadScopeAssets(input.scope, { monitoredOnly: true });
     readings = await resolveAssetStateReadings(trigger, scopeAssets);
@@ -6171,7 +6225,7 @@ export async function previewRule(input: PreviewRuleInput): Promise<PreviewResul
  *  (met / measured-false / noData) in tree order. Suppression is NOT applied —
  *  preview answers "would this fire on current data", not "is it silenced". */
 async function previewCompositeRule(trigger: CompositeTrigger, input: PreviewRuleInput): Promise<PreviewResult> {
-  const assets = trigger.kind === "host" ? [HOST_PSEUDO_ASSET] : await loadScopeAssets(input.scope, { monitoredOnly: true });
+  const assets = trigger.kind === "host" ? [HOST_PSEUDO_ASSET] : await loadScopeAssets(scopeForTrigger(input.scope, trigger), { monitoredOnly: true });
   const leaves = collectLeafRefs(trigger);
   const truths = await resolveLeafTruths(leaves, assets);
 
@@ -6259,7 +6313,7 @@ export interface MessageExampleResult {
 export async function previewAlertMessage(input: PreviewRuleInput, assetId?: string | null): Promise<MessageExampleResult> {
   const trigger = input.trigger;
   const isHost = !!trigger && (trigger.type === "host_metric" || (trigger.type === "composite" && trigger.kind === "host"));
-  const scopeAssets = isHost ? [] : await loadScopeAssets(input.scope, { monitoredOnly: true });
+  const scopeAssets = isHost ? [] : await loadScopeAssets(scopeForTrigger(input.scope, trigger), { monitoredOnly: true });
   const candidates = scopeAssets
     .map((a) => ({ id: a.id, hostname: a.hostname }))
     .sort((a, b) => (a.hostname ?? a.id).localeCompare(b.hostname ?? b.id));

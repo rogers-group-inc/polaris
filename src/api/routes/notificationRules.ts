@@ -173,6 +173,8 @@ const dimensionValuesSchema = z.object({
     // interface list differs from every other PoE comparison's.
     stateOperator: z.string().max(10).optional(),
     stateValue: z.string().max(200).optional(),
+    // Path Monitor: offer the checks the Polaris server runs too (checkId).
+    includeServer: z.boolean().optional(),
   }).optional(),
 });
 

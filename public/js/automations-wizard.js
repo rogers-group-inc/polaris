@@ -745,6 +745,7 @@ function makeAutomationSentences(s) {
     if (tr.type === "asset_metric" && isBooleanMetric(tr.metric)) {
       out = "When <strong>" + escapeHtml(stateLeafClause(tr)) + "</strong>";
       if (tr.forDurationSec > 0) out += ", sustained for <strong>" + holdPhrase(tr) + "</strong>";
+      if (tr.includeServer === true) out += ", including the <strong>Polaris server</strong>’s own runs";
       return out + tail + ".";
     }
     if (tr.type === "asset_metric" || tr.type === "host_metric") {
@@ -806,6 +807,11 @@ function makeAutomationSentences(s) {
     // two down automations in the list is otherwise looking at identical prose.
     if (leafAlertsWhenDependencyDown(tr)) {
       out += " — and still when the device is <strong>dependency-down</strong>, naming the upstream device";
+    }
+    // Path Monitor: the server is a source no device filter names, so the
+    // sentence is the one place an operator reading the list learns it counts.
+    if (tr.includeServer === true && (tr.type === "asset_metric" || tr.type === "change")) {
+      out += ", including the <strong>Polaris server</strong>’s own runs";
     }
     return out + tail + ".";
   }
@@ -1432,7 +1438,9 @@ function awDimNarrow(dim, df, state) {
 function awDimNote(res) {
   if (!res || res.loading) return { text: "Checking what the selected devices report…", warn: false };
   if (res.error) return { text: "", warn: false };
-  if (!res.scopedAssets) {
+  // The Polaris server can supply values with no device in scope (a Path
+  // Monitor check picker), so an empty scope only warns when nothing came back.
+  if (!res.scopedAssets && !(res.values || []).length) {
     return { text: "No devices match the filter on the Devices step yet, so there is nothing to list.", warn: true };
   }
   if (!(res.values || []).length) {
@@ -2354,8 +2362,20 @@ async function openAutomationWizard(existing, opts) {
     maxDepth: 3, maxLeaves: 10,
     anyDimensionNote: "With multiple conditions, an automation alerts once per device; a per-sensor/per-interface condition counts as met when any of them crosses.",
   };
+  // The Path Monitor category's vocabulary (see isPathTriggerC).
+  var PATH_MONITOR = s.pathMonitor || {
+    metrics: ["pathLatencyMs", "pathHttpStatus", "pathOk", "pathFailurePct", "pathHopCount", "pathTlsDaysLeft"],
+    changeTypes: ["path_check_path_changed"],
+    agentRule: { field: "agentInstalled", operator: "equals", value: "yes" },
+    serverLabel: "Polaris server",
+  };
+  // Which half of Path Monitor the trigger step shows: a measurement crossing
+  // a threshold (the condition tree) or the route changing (the traceroute
+  // change Event). Seeded from the stored trigger.
+  var _pathMode = draft.trigger && draft.trigger.type === "change" ? "route" : "measure";
   var TRIGGER_CATEGORIES = [
     { value: "device", label: "Device conditions" },
+    { value: "path", label: "Path Monitor" },
     { value: "host", label: "Polaris host conditions" },
     { value: "event", label: (findType("event") || {}).label || "Audit event match" },
     { value: "change", label: (findType("change") || {}).label || "Change detection" },
@@ -2629,6 +2649,9 @@ async function openAutomationWizard(existing, opts) {
     if (t.type === "event") {
       return "This automation fires only about the devices this filter selects. Audit events that name no device — an integration, a user, the Polaris host — only match while this is set to All assets.";
     }
+    if (isPathTriggerC(t)) {
+      return "Path Monitor watches path checks run from devices with the Polaris Agent installed — this filter narrows those. The Polaris server's own runs are chosen on the Trigger step.";
+    }
     return "Which devices this automation watches.";
   }
 
@@ -2707,7 +2730,10 @@ async function openAutomationWizard(existing, opts) {
     collectStep2();
     box.innerHTML = scopePreviewHtml('<span class="aw-preview-muted">Checking…</span>');
     try {
-      var res = await api.automations.preview({ scope: draft.scope });
+      // A Path Monitor draft's pool is agent hosts — preview the scope the
+      // engine will actually resolve (pathMonitorScopeC).
+      var pathPool = isPathTriggerC(draft.trigger);
+      var res = await api.automations.preview({ scope: pathPool ? pathMonitorScopeC(draft.scope) : draft.scope });
       var rows = (res.matches || []).slice(0, 15).map(function (m) {
         return '<tr><td>' + escapeHtml(m.hostname || m.assetId || "") + '</td></tr>';
       }).join("");
@@ -2720,7 +2746,7 @@ async function openAutomationWizard(existing, opts) {
       // scrolling body it would sit below the fold, i.e. exactly where an
       // operator wondering whether the list is complete can't see it.
       box.innerHTML = scopePreviewHtml(
-        '<strong>' + res.totalEvaluated + '</strong> monitored device(s) match this filter.' +
+        '<strong>' + res.totalEvaluated + '</strong> monitored device(s)' + (pathPool ? ' with the Polaris Agent' : '') + ' match this filter.' +
           (un ? ' <span class="aw-preview-muted">(+' + un + ' unmonitored — automations never fire on those.)</span>' : "") +
           (res.totalEvaluated > 15 ? ' <span class="aw-preview-muted">Showing the first 15.</span>' : ""),
         rows ? '<table><tbody>' + rows + '</tbody></table>' : ""
@@ -2740,23 +2766,72 @@ async function openAutomationWizard(existing, opts) {
   // keep their flat fields.
   function triggerCategoryOf(tr) {
     if (!tr || !tr.type) return "device";
+    if (isPathTriggerC(tr)) return "path";
     if (tr.type === "composite") return tr.kind === "host" ? "host" : "device";
     if (tr.type === "host_metric") return "host";
     if (tr.type === "event" || tr.type === "change") return tr.type;
     return "device";
   }
+  // ── Path Monitor (business rule 85, 2026-10-05) ──────────────────────────
+  // Its conditions are stored as plain asset_metric / change triggers (the
+  // server's `pathMonitor` block names which), so the category is decided by
+  // WHAT a trigger watches, not by its type. The condition tree gets a third
+  // kind, "path": built and collected exactly like the device tree, but its
+  // dropdown offers the path metrics only and the device tree no longer does.
+  // A path tree still stores as a composite of kind "asset". The vocabulary
+  // (PATH_MONITOR) is initialized up with tgMeta — the body assembly reads it.
+  function isPathMetricC(m) { return PATH_MONITOR.metrics.indexOf(m) !== -1; }
+  function isPathTriggerC(tr) {
+    if (!tr || !tr.type) return false;
+    if (tr.type === "asset_metric") return isPathMetricC(tr.metric);
+    if (tr.type === "change") return PATH_MONITOR.changeTypes.indexOf(tr.changeType) !== -1;
+    if (tr.type === "composite" && tr.kind !== "host") {
+      var ls = tgLeaves(tr) || [];
+      return ls.length > 0 && ls.every(function (l) { return l.type === "asset_metric" && isPathMetricC(l.metric); });
+    }
+    return false;
+  }
+  /** The condition-tree kind a stored trigger renders as. */
+  function treeKindOf(tr) {
+    if (tr && (tr.type === "host_metric" || (tr.type === "composite" && tr.kind === "host"))) return "host";
+    return isPathTriggerC(tr) ? "path" : "asset";
+  }
+  /** The tree kind a trigger-type category renders as. */
+  function treeKindForCategory(cat) { return cat === "host" ? "host" : cat === "path" ? "path" : "asset"; }
+  /** The scope a Path Monitor draft's devices are chosen from: the operator's
+   *  own conditions ANDed with "Polaris Agent installed" — the server's
+   *  pathMonitorScope, so the Devices-step count is the pool the engine reads.
+   *  A scope that selects nothing keeps selecting nothing. */
+  function pathMonitorScopeC(scope) {
+    var base = scope || {};
+    var own = base.condition && (base.condition.children || []).length ? base.condition : null;
+    var lists = [base.assetTypes, base.tags, base.assetIds, base.integrationIds, base.manufacturers, base.models, base.subnetCidrs];
+    if (!base.allAssets && !own && !lists.some(function (l) { return l && l.length; })) return base;
+    var out = JSON.parse(JSON.stringify(base));
+    out.condition = { op: "and", children: own ? [PATH_MONITOR.agentRule, own] : [PATH_MONITOR.agentRule] };
+    return out;
+  }
   function tgDefaultLeaf(kind) {
+    if (kind === "path") {
+      // Unreachable is the headline case — every run to the target failing.
+      return { type: "asset_metric", metric: "pathOk", aggregation: "latest", windowSec: 0, operator: "==", threshold: 0 };
+    }
     return kind === "host"
       ? { type: "host_metric", metric: "cpuPct", aggregation: "latest", windowSec: 0, operator: ">=", threshold: null }
       : { type: "asset_metric", metric: "cpuPct", aggregation: "latest", windowSec: 0, operator: ">=", threshold: null };
   }
   function triggerToTree(tr, kind) {
+    // A stored trigger only seeds the tree of its own kind — a path trigger
+    // never opens in the device tree, nor a device trigger in the path tree.
+    if (tr && tr.type && tr.type !== "event" && tr.type !== "change" && treeKindOf(tr) !== kind) {
+      return { op: "and", children: [tgDefaultLeaf(kind)] };
+    }
     // Both stored shapes render through tgLift, so a uniform dimensionFilter
     // comes back as the filter row the operator authored it as.
-    if (tr && tr.type === "composite" && (tr.kind || "asset") === kind) {
+    if (tr && tr.type === "composite" && (tr.kind || "asset") === (kind === "host" ? "host" : "asset")) {
       return tgLift({ op: tr.op || "and", children: JSON.parse(JSON.stringify(tr.children || [])) });
     }
-    var leafKinds = kind === "host" ? ["host_metric"] : ["asset_metric", "asset_state"];
+    var leafKinds = kind === "host" ? ["host_metric"] : kind === "path" ? ["asset_metric"] : ["asset_metric", "asset_state"];
     if (tr && leafKinds.indexOf(tr.type) !== -1) {
       var leaf = JSON.parse(JSON.stringify(tr));
       delete leaf.forDurationSec;
@@ -2843,7 +2918,19 @@ async function openAutomationWizard(existing, opts) {
         return '<option value="' + escapeHtml(v) + '"' + (v === selWhat ? " selected" : "") + '>' + escapeHtml(metricLabel(m)) + '</option>';
       }).join("");
     }
-    var metrics = (findType("asset_metric") || {}).metrics || [];
+    var allMetrics = (findType("asset_metric") || {}).metrics || [];
+    if (kind === "path") {
+      // Path Monitor: the path conditions and nothing else — no device state,
+      // and no CPU or memory beside them.
+      return '<optgroup label="Path check">' + allMetrics.filter(isPathMetricC).map(function (m) {
+        var v = "m:" + m;
+        return '<option value="' + escapeHtml(v) + '"' + (v === selWhat ? " selected" : "") + '>' + escapeHtml(metricLabel(m)) + '</option>';
+      }).join("") + '</optgroup>';
+    }
+    // The device tree no longer offers the path conditions — they moved to
+    // their own trigger type. A stored device rule can't name one either:
+    // triggerToTree sends any path trigger to the path tree.
+    var metrics = allMetrics.filter(function (m) { return !isPathMetricC(m); });
     var fields = (findType("asset_state") || {}).fields || [];
     var html = '<optgroup label="Metrics">' + metrics.map(function (m) {
       var v = "m:" + m;
@@ -3141,6 +3228,9 @@ async function openAutomationWizard(existing, opts) {
       var metric = dimMetricOf(el);
       if (!metric) return;
       var narrow = awDimNarrow(d, dimFilterOfRow(el.closest(".scr-row")), dimStateOfRow(el.closest(".scr-row")));
+      // Path Monitor with the server ticked: offer the checks it runs too.
+      var serverCb = d === "checkId" ? panel.querySelector("#tf-path-server") : null;
+      if (serverCb && serverCb.checked) narrow = Object.assign({}, narrow, { includeServer: true });
       var key = dimKeyFor(metric, d, narrow);
       if (!_dimValues[key]) need[key] = { metric: metric, dimension: d, narrow: narrow };
     });
@@ -4367,6 +4457,50 @@ async function openAutomationWizard(existing, opts) {
     }
     syncPollFields(panel, false);
   }
+  /** The Path Monitor trigger's header: what it fires on (a measurement or a
+   *  route change), whether the Polaris server's own runs count, and the pool
+   *  it watches. A stored path rule without the flag never watched the server,
+   *  so it opens unticked; a new one opens ticked — the server is the one
+   *  vantage point every install has. */
+  function pathTriggerHeaderHtml(tr) {
+    var serverOn = isPathTriggerC(tr) ? tr.includeServer === true : true;
+    return '<div class="form-group"><label>Fire when</label><select id="tf-path-mode">' +
+        '<option value="measure">A path check result meets the conditions below</option>' +
+        '<option value="route">A check’s route changes (traceroute)</option>' +
+      '</select></div>' +
+      '<div class="form-group" style="margin-bottom:0.25rem"><label><input type="checkbox" id="tf-path-server"' + (serverOn ? " checked" : "") + '> Include the ' + escapeHtml(PATH_MONITOR.serverLabel) + '’s own runs</label>' +
+        '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 24px">The server isn’t a device, so the Devices-step filter doesn’t apply to it, nor do maintenance windows. With more than one condition only agent hosts are evaluated.</p></div>' +
+      '<p id="aw-path-pool" style="font-size:0.82rem;margin:0 0 0.5rem"><span class="aw-preview-muted">Checking…</span></p>';
+  }
+  var _pathPoolKey = null;
+  var _pathPoolCount = null;
+  /** "Watches N agent hosts (+ the Polaris server)" — the pool the engine
+   *  resolves: the Devices step ANDed with "Polaris Agent installed". */
+  async function refreshPathPool() {
+    var el = document.getElementById("aw-path-pool");
+    if (!el) return;
+    var serverCb = document.getElementById("tf-path-server");
+    var paint = function () {
+      var n = _pathPoolCount;
+      var server = serverCb && serverCb.checked ? ' + the ' + escapeHtml(PATH_MONITOR.serverLabel) : '';
+      el.innerHTML = n == null
+        ? '<span class="aw-preview-muted">Pool unavailable</span>'
+        : 'Watches <strong>' + n + '</strong> device(s) with the Polaris Agent that match the Devices step' + server + '.';
+    };
+    var scope = pathMonitorScopeC(draft.scope);
+    var key = JSON.stringify(scope);
+    if (key === _pathPoolKey) { paint(); return; }
+    _pathPoolKey = key;
+    try {
+      var res = await api.automations.preview({ scope: scope });
+      if (_pathPoolKey !== key) return; // a newer request owns the line
+      _pathPoolCount = res.totalEvaluated || 0;
+    } catch (_e) {
+      _pathPoolCount = null;
+      _pathPoolKey = null;
+    }
+    paint();
+  }
   function step3Html() {
     var cat = triggerCategoryOf(draft.trigger);
     var typeOpts = TRIGGER_CATEGORIES.map(function (t) {
@@ -4394,8 +4528,9 @@ async function openAutomationWizard(existing, opts) {
     var box = panel.querySelector("#aw-trigger-fields");
     var tr = draft.trigger || {};
     var html = "";
-    if (cat === "device" || cat === "host") {
-      var kind = cat === "host" ? "host" : "asset";
+    if (cat === "path") html += pathTriggerHeaderHtml(tr);
+    if (cat === "device" || cat === "host" || (cat === "path" && _pathMode !== "route")) {
+      var kind = treeKindForCategory(cat);
       var tree = triggerToTree(tr, kind);
       html += '<p style="font-size:0.82rem;color:var(--color-text-tertiary);margin:0 0 0.5rem">Add conditions and combine them with AND/OR groups — drag the <span class="aw-grip" style="cursor:default">&#x2842;</span> handle to move them. ' + escapeHtml(tgMeta.anyDimensionNote || "") + '</p>' +
         '<div id="aw-trig-root">' + tgGroupHtml(tree, 0, kind) + '</div>' +
@@ -4439,12 +4574,19 @@ async function openAutomationWizard(existing, opts) {
     } else if (cat === "change") {
       var ch = tr.type === "change" ? tr : {};
       var def = findType("change");
-      html += '<div class="form-group"><label>Change type</label><select id="tf-changetype">' + optLabeled((def && def.changeTypes) || [], ch.changeType, changeLabel) + '</select></div>';
+      // The path change lives under Path Monitor now.
+      var chTypes = ((def && def.changeTypes) || []).filter(function (c) { return PATH_MONITOR.changeTypes.indexOf(c) === -1; });
+      html += '<div class="form-group"><label>Change type</label><select id="tf-changetype">' + optLabeled(chTypes, ch.changeType, changeLabel) + '</select></div>';
     }
     box.innerHTML = html;
     // Stored selects must agree with the model before the first collection
     // (refreshTriggerSentence collects) — see pinTreeSelects.
-    if (cat === "device" || cat === "host") pinTreeSelects(box.querySelector("#aw-trig-root"), tree);
+    if (tree) pinTreeSelects(box.querySelector("#aw-trig-root"), tree);
+    if (cat === "path") {
+      var modeSel = box.querySelector("#tf-path-mode");
+      if (modeSel) modeSel.value = _pathMode;
+      refreshPathPool();
+    }
     // The unit picker is one of those selects, and from here it is the
     // AUTHORITY on the window's unit — syncDurationRequirement reads it rather
     // than the draft. So it has to be pinned from the model on the way in, or a
@@ -4494,8 +4636,20 @@ async function openAutomationWizard(existing, opts) {
     panel.querySelector("#aw-trigger-type").addEventListener("change", function () {
       renderTriggerFields(); // category swap renders fresh from the draft
     });
+    // Path Monitor's two controls. Delegated, like the event-detail rows: the
+    // fields' innerHTML is replaced on every re-render.
+    panel.addEventListener("change", function (e) {
+      var t = e.target;
+      if (!t || !t.id) return;
+      if (t.id === "tf-path-mode") {
+        _pathMode = t.value === "route" ? "route" : "measure";
+        renderTriggerFields();
+      } else if (t.id === "tf-path-server") {
+        refreshPathPool();
+      }
+    });
     wireTgTree(panel, "#aw-trig-root", function () {
-      return panel.querySelector("#aw-trigger-type").value === "host" ? "host" : "asset";
+      return treeKindForCategory(panel.querySelector("#aw-trigger-type").value);
     }, function () {
       // Adding, removing or retyping a condition can change what the duration
       // field IS — a sole `monitor status is down` condition makes it the
@@ -4574,8 +4728,12 @@ async function openAutomationWizard(existing, opts) {
     var typeSel = panel.querySelector("#aw-trigger-type");
     if (!typeSel) return;
     var cat = typeSel.value;
-    if (cat === "device" || cat === "host") {
-      var kind = cat === "host" ? "host" : "asset";
+    var pathServerCb = panel.querySelector("#tf-path-server");
+    var pathServer = !!(pathServerCb && pathServerCb.checked);
+    if (cat === "path" && _pathMode === "route") {
+      draft.trigger = { type: "change", changeType: PATH_MONITOR.changeTypes[0], includeServer: pathServer };
+    } else if (cat === "device" || cat === "host" || cat === "path") {
+      var kind = treeKindForCategory(cat);
       var root = panel.querySelector("#aw-trig-root > .scg-group");
       if (root) {
         // Fold filter rows (device identifiers / component names) into their
@@ -4638,10 +4796,14 @@ async function openAutomationWizard(existing, opts) {
         var ddMeta = dependencyDownMeta();
         var prevDepDown = !!(ddMeta && draft.trigger && draft.trigger[ddMeta.dependencyDownKey] === true);
         draft.trigger = tgCollapse({
-          type: "composite", kind: kind, op: tree.op, children: tree.children,
+          // A path tree stores as a device composite (see PATH_MONITOR).
+          type: "composite", kind: kind === "host" ? "host" : "asset", op: tree.op, children: tree.children,
           forDurationSec: aggregated ? (secondField ? sustainSec : 0) : holdSec,
           forPolls: holdPolls,
         });
+        // The server rides a single path condition only — a composite is
+        // evaluated per device row, and the server has none.
+        if (cat === "path" && draft.trigger && draft.trigger.type === "asset_metric") draft.trigger.includeServer = pathServer;
         // A count only means something on a BARE trigger; the server rejects
         // one inside a multi-condition trigger. tgCollapse has already folded a
         // single-leaf tree down to that bare trigger, so anything still
@@ -5305,7 +5467,7 @@ async function openAutomationWizard(existing, opts) {
 
       var condExtra = "";
       if (customModes.indexOf("condition") !== -1) {
-        var kind = tr.kind === "host" || tr.type === "host_metric" ? "host" : "asset";
+        var kind = treeKindOf(tr);
         // Seeded with the trigger INVERTED (severity bands ignored — a ladder's
         // tiers all recover at tier 0, so the base condition is the one there is
         // anything to invert). That is the same clause the automatic reset uses,
@@ -5364,8 +5526,7 @@ async function openAutomationWizard(existing, opts) {
       // for a Polaris-host automation's reset and the save would be refused.
       pinTreeSelects(panel.querySelector("#aw-reset-root"), condTree);
       wireTgTree(panel, "#aw-reset-root", function () {
-        var t = draft.trigger || {};
-        return t.kind === "host" || t.type === "host_metric" ? "host" : "asset";
+        return treeKindOf(draft.trigger || {});
       }, function () { refreshResetSentence(); refreshDimOptions(panel); });
       refreshDimOptions(panel);
     }
@@ -5424,7 +5585,7 @@ async function openAutomationWizard(existing, opts) {
         var mins = am && am.value !== "" ? Number(am.value) : 60;
         reset.afterSec = (isNaN(mins) || mins < 1 ? 60 : mins) * 60;
       } else if (mode === "condition") {
-        var kind = tr.kind === "host" || tr.type === "host_metric" ? "host" : "asset";
+        var kind = treeKindOf(tr);
         var root = panel.querySelector("#aw-reset-root > .scg-group");
         if (root) {
           // Same filter-row folding the trigger tree gets (the stored reset
@@ -5475,6 +5636,9 @@ async function openAutomationWizard(existing, opts) {
       // event/change fire on an instant and carry no reading, so there is nothing
       // for a reset condition to watch — the server rejects the same shape.
       if (tr.type === "event" || tr.type === "change") return "A custom reset condition needs a trigger with a continuous condition — an " + tr.type + " automation resets on a timer or by hand.";
+      // Resolved per device row, and the server has none — its alert could
+      // never recover. The server refuses the same shape.
+      if (tr.includeServer === true) return "A custom reset condition can't watch the " + PATH_MONITOR.serverLabel + " — reset automatically, or untick it on the Trigger step.";
       if (!r.condition || !(r.condition.children || []).length) return "Custom reset: add at least one condition.";
       var leaves = tgLeaves(r.condition);
       if (!leaves.length) return "Custom reset: add at least one condition.";
@@ -6591,7 +6755,7 @@ async function openAutomationWizard(existing, opts) {
   function syncBandsToBase(panel) {
     var host = panel.querySelector("#aw-bands");
     if (!host || !host.querySelector(".aw-band")) return;
-    var kind = panel.querySelector("#aw-trigger-type").value === "host" ? "host" : "asset";
+    var kind = treeKindForCategory(panel.querySelector("#aw-trigger-type").value);
     // Collect + COMPILE the base group so filter rows fold into the condition
     // before tiers mirror it — a tier's locked row then shows the identifier /
     // name filters the base carries, and adding a filter row doesn't read as a
@@ -6626,7 +6790,7 @@ async function openAutomationWizard(existing, opts) {
     band = band || { threshold: "", severity: nextTierSeverity(host), actions: [] };
     var sev0 = band.severity || nextTierSeverity(host);
     var tr = draft.trigger || {};
-    var kind = tr.type === "host_metric" ? "host" : "asset";
+    var kind = treeKindOf(tr);
     // Each tier is a full condition GROUP on the SAME metric + sampling as the
     // base condition — only severity / operator / value vary (shared sampling).
     var tierLeaf = {
@@ -8646,7 +8810,7 @@ async function openAutomationWizard(existing, opts) {
     var bandsHost = panel.querySelector("#aw-bands");
     if (!bandsHost) return; // section not rendered
     var baseOp = (draft.trigger && draft.trigger.operator) || ">=";
-    var kind = (draft.trigger && draft.trigger.type === "host_metric") ? "host" : "asset";
+    var kind = treeKindOf(draft.trigger);
     var bands = [];
     bandsHost.querySelectorAll(":scope > .aw-band").forEach(function (row) {
       // The tier's operator + threshold come from its (locked-metric) condition

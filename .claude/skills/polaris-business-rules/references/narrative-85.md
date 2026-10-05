@@ -9,6 +9,7 @@ Each rule records the decision *and the constraint that forced it*. The invarian
 
 - [Rule 85](#rule-85) — A path check measures a PATH from a host, not the host — it never moves `monitorStatus`, and the automation, not the check, says what failing means
   - [The Polaris server as a source (2026-09-30)](#rule-85-server-source)
+  - [The Path Monitor trigger type (2026-10-05)](#rule-85-path-monitor-trigger)
 
 <a id="rule-85"></a>
 
@@ -169,7 +170,9 @@ automation alert** in this version. It is charted and listed (Path Monitor → R
 "Polaris server" row, drawn by the same renderer as a host's Paths tab), and a changed path
 is still an Event — naming the CHECK (`resourceType: "path-check"`), because there is no
 host for an event automation's device filter to match (rule 46). Alerting on the server
-source is a follow-up that needs a subject kind the engine does not have.
+source is a follow-up that needs a subject kind the engine does not have. *(Superseded
+2026-10-05: the Path Monitor trigger type gave it one — see
+[below](#rule-85-path-monitor-trigger).)*
 
 **Why aiming the server takes a second key.** An agent probes from a host people sit at. The
 server probes from ITS network position — often a management segment no agent reaches —
@@ -229,6 +232,55 @@ and the traceroute the system tracer (`traceroute`, then `tracepath`, then Windo
 never a failing target (rule 71). Pinned by `tests/unit/pathCheckServerRunner.test.ts`,
 `serverTraceroute.test.ts`, the "the Polaris server" blocks of `pathCheckService.test.ts`
 and `pathCheckIngest.test.ts`, and `pathCheckWizardDom.test.ts`.
+
+<a id="rule-85-path-monitor-trigger"></a>
+
+### The Path Monitor trigger type (2026-10-05)
+
+**What was asked for.** The operator wanted path monitoring to be its own kind of automation:
+pick it as the trigger type and the devices it can be about are only the hosts with the agent
+installed, plus the Polaris server itself; the Devices-step conditions still narrow that pool;
+the condition dropdown lists path conditions and nothing else; and the path conditions leave
+the Device dropdown, where they had sat beside CPU and memory.
+
+**Why it is a category, not a stored type.** The path* metrics already rode every piece of the
+threshold machine — holds, count windows, bands, hysteresis, carve-outs, cadence, the Alerts
+tab, portability — and every one of those keys on `type: "asset_metric"`. A new stored type
+would have meant a second copy of each switch, or a data migration rewriting every path
+automation and every export file. The wizard already files several stored types under one
+category ("Device conditions" is asset_metric + asset_state + composite), so Path Monitor is
+another category over the same storage: `isPathTrigger` decides it by WHAT a trigger watches,
+and the server serves the vocabulary as `/schema`'s `pathMonitor`. The API shape is unchanged.
+
+**Why the agent condition is ANDed at read time.** "Only agent hosts" is a property of the
+trigger, not of anything the operator wrote, so it is never stored in the scope:
+`scopeForTrigger` ANDs `AGENT_INSTALLED_RULE` in wherever the engine, the preview, the message
+example and the dimension picker resolve a path rule's devices, and the wizard's Devices-step
+count does the same client-side. A scope that selects nothing keeps selecting nothing — the
+added leaf would otherwise be the one dimension that made an empty scope select every agent.
+
+**How the server alerts.** `includeServer` on a single path condition (or on the path change)
+adds the server as a source. It is resolved through a pseudo row whose id is
+`POLARIS_SERVER_SUBJECT` (what the samples are stored under) and its readings are re-keyed to
+the subject `""` — the Polaris-host alert's shape — so fire, recover, the email and the
+Alerts table all handle it with no asset: `Notification.assetId` null, hostname
+"Polaris server". It is outside the device filter, maintenance windows and dependency
+suppression, because none of them can describe it. The vanished sweep gives its rows the
+asset test: the server reporting other checks but not this one clears it; the operator
+unticking the server clears it as out of scope. A rule stored before the flag reads it as
+absent = agent hosts only, which is what it always did.
+
+**What it refuses, and why.** A composite cannot include the server — it is evaluated per
+device row and the server has none — so `includeServer` lives on single conditions only. A
+custom reset condition beside `includeServer` is refused at save: the reset tree is resolved
+per device row too, and the server's alert could never recover. A composite mixing path and
+device conditions is refused (`validateCompositeTrigger`): the two halves would be evaluated
+over two different device pools. For the path change, a server-side Event
+(`resourceType: "path-check"`) matches when `includeServer` is set; with the flag absent the
+event tail keeps its old answer — an unfiltered automation matched it, a filtered one could not
+(`eventMatchesPathServer`). Pinned by `tests/unit/pathMonitorTrigger.test.ts`, the "Path
+Monitor pool" block of `pathFailureRateCeiling.test.ts`, and the wizard DOM tests on the path
+category.
 
 ### Rule 85 — the invariant as stated in full
 

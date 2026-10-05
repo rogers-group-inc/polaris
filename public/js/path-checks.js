@@ -503,7 +503,7 @@
         num("pc-tr-maxhops", "Max hops", t.maxHops || 30, 1, 64) +
         num("pc-tr-probes", "Probes per hop", t.probesPerHop || 3, 1, 5) +
       "</div>" +
-      '<p class="hint">A changed hop sequence is written to Events as <code>path_check.path_changed</code>, which an automation can alert on. macOS agents do not trace in this version.</p>';
+      '<p class="hint">A changed hop sequence is written to Events as <code>path_check.path_changed</code>; a <strong>Path Monitor</strong> automation set to fire when the route changes alerts on it. macOS agents do not trace in this version.</p>';
   }
 
   /** The step's question, then one line of explanation (the wizard canon). */
@@ -521,7 +521,7 @@
         '<span class="toggle-switch"><input type="checkbox" id="pc-server"><span class="toggle-slider"></span></span>' +
         "Run from this Polaris server</label>" +
         '<p class="hint" style="margin:2px 0 0 42px">On: the server that hosts Polaris runs the check itself, whether it is installed on Linux or in a container, with no agent needed. ' +
-        "Its results appear as the <strong>Polaris server</strong> row in Results, with the same charts and path graph; automations alert on agent hosts only, because the server is not an asset. " +
+        "Its results appear as the <strong>Polaris server</strong> row in Results, with the same charts and path graph; a <strong>Path Monitor</strong> automation alerts on them when it includes the Polaris server. " +
         "Off: the agent hosts you pick below run it." +
         (mayServer ? "" : " <strong>Needs Read-Write on Network Discovery</strong> as well as Path Monitor to turn on, because the server probes from its own network.") + "</p></div>" +
       '<div id="pc-server-only-note" style="display:none">' + infoBox("This check <strong>authenticates</strong>, so it runs only from this Polaris server — its credential is never sent to an agent. To run it from agent hosts instead, set Authentication to <em>None</em> on the General step.") + "</div>" +

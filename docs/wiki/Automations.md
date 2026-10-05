@@ -141,7 +141,10 @@ A debounced preview shows the devices currently matched.
 its filter **discarded** at save. Today that is `host_metric` and a host-kind
 composite — those are about the Polaris server, not about your devices. The
 step's lead line says which case you are in. `event` automations **are** scoped
-since 2026-09 ([rule 46](Business-Rules#rule-46)).
+since 2026-09 ([rule 46](Business-Rules#rule-46)). A
+[Path Monitor](Automation-Triggers#path-monitor) automation only ever watches
+devices with the Polaris Agent installed: the filter narrows those, and the
+preview counts only them.
 
 ---
 
