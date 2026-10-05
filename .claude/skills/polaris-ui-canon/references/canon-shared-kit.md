@@ -183,7 +183,12 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   matters: the visible radius is 70% of the ellipse's horizontal radius (~98% of the width
   on desktop, ~126% on the phone), and parking further out spends the fast first half of the
   ease off-screen. The afternoon waypoint takes noon's sunlight at half strength (`#ffc928`
-  12%), not its clay accent, so noon → nightfall reads as one fade. Two destination rules say
+  12%), not its clay accent, so noon → nightfall reads as one fade — and noon's glow RISES UP
+  AND AWAY while it fades: nightfall parks the (transparent) main glow above the top edge
+  (`--page-glow-y` −45% desktop / −50% phone, just clear of a visible half-height of 42% / 46%)
+  and afternoon holds it half way (−20% / −22%). The night glow's colour never changes during
+  any of this; only `--night-glow-x` moves, and it reads differently only because the ground under
+  it is crossfading. Two destination rules say
   what must NOT move, each a jump made while the jumping thing is invisible:
   `[data-theme="noon"]` drops `--night-glow-x` (back from the right edge to the left; animated it
   would sweep the page), `[data-theme="morning"]` keeps only the four colours and

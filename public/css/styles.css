@@ -714,9 +714,11 @@ code {
   /* The half-way point of noon → nightfall, so the glow reads as ONE fade
      and one slide across both legs: noon's sunlight at half its strength
      (not this palette's clay accent, which would turn the fade into a
-     colour change), and the night glow half way in from the left. */
+     colour change), half way up and away (y -20%), and the night glow half
+     way in from the left. */
   --page-glow-color: #ffc928;
   --page-glow-strength: 12%;
+  --page-glow-y: -20%;
   --night-glow-x: -25%;
 }
 
@@ -755,9 +757,13 @@ code {
      this one, and it is a hair brighter here than in the :root dark base. */
   --shadow-card: 0 8px 32px rgba(0,0,0,.65), 0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
   /* Nightfall's glow is the sliding --night-glow layer (electric blue at
-     12.3%, see :root), centred here. The main glow is off: noon's sunlight
-     fades out over the turn while the blue slides in from the left. */
+     12.3%, see :root), centred here. The main glow is off and parked above
+     the top edge: on the turn from noon its sunlight rises up and away as it
+     fades (afternoon holds it half way, -20%), while the blue slides in from
+     the left. Its visible half-height is 70% of a 60% radius, 42% of the
+     viewport, so -45% is just clear. */
   --page-glow-strength: 0%;
+  --page-glow-y: -45%;
   --night-glow-x: 50%;
 }
 

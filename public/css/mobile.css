@@ -382,9 +382,11 @@
   --shadow-card:  0 8px 32px rgba(90,30,10,.20), 0 2px 6px rgba(90,30,10,.15), inset 0 1px 0 rgba(255,255,255,.55);
   --shadow-sheet: 0 -8px 32px rgba(90,30,10,.24), 0 -2px 6px rgba(90,30,10,.15), inset 0 1px 0 rgba(255,255,255,.55);
   /* Half way through noon → nightfall: noon's sunlight at half strength and
-     the night glow half way in, so the turn is one fade and one slide. */
+     half way up and away, the night glow half way in, so the turn is one
+     fade-and-rise and one slide. */
   --page-glow-color: #ffc928;
   --page-glow-strength: 12%;
+  --page-glow-y: -22%;
   --night-glow-x: -40%;
 }
 /* Nightfall — indigo ground, sky-blue accent: the desktop's nightfall hues
@@ -431,8 +433,12 @@
   --shadow-card:  0 8px 32px rgba(0,0,0,.65), 0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
   --shadow-sheet: 0 -8px 32px rgba(0,0,0,.7), 0 -2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.08);
   /* The glow is the sliding --night-glow layer, centred; the main glow is
-     off. Same as the desktop. */
+     off and parked above the top edge, so noon's sunlight rises up and away
+     on the turn (afternoon holds it at -22%). The phone's visible half-height
+     is 70% of 66%, 46% of the screen, so -50% is just clear. Same as the
+     desktop otherwise. */
   --page-glow-strength: 0%;
+  --page-glow-y: -50%;
   --night-glow-x: 50%;
 }
 
