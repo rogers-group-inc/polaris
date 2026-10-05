@@ -32,8 +32,9 @@ agent_id         = 7f2e9a1c-...            # assetId, used for WS subprotocol
 Optional knobs (defaults if omitted):
 
 ```ini
-response_time_interval_sec = 60
-heartbeat_interval_sec     = 300
+response_time_interval_sec      = 60
+heartbeat_interval_sec          = 300
+software_inventory_interval_sec = 21600   # installed-software list (0.24.0)
 ```
 
 A cadence set here is the INTERVAL, not the phase. Each loop starts at its
@@ -143,6 +144,28 @@ a pool of 4, and pushes one batch per stream. The probes are in
 - Results describe the path from the host — the server never lets them touch
   the host's `monitorStatus` (business rule 85).
 
+### Installed software (`softwareInventory` stream, 0.24.0)
+
+The full installed-program list, for the asset's Software tab. One loop
+(`softwareInventoryLoop` in `main.go`, phase 23) wakes every 5 minutes and
+collects only when the server's `/config` carries `streams.software.enabled`
+(off until the first `/config`, and against a server too old to send the
+block) and 6 hours (`software_inventory_interval_sec`) have passed since the
+last attempt. The readers are in `internal/collectors/software*.go`.
+
+- **Windows**: the HKLM `Uninstall` registry keys in both the 64-bit and the
+  32-bit (WOW6432Node) views — the list *Apps & features* draws from.
+  Entries with no `DisplayName`, `SystemComponent=1`, a `ParentKeyName` or an
+  update `ReleaseType` are skipped; `EstimatedSize` is KiB. Never
+  `Win32_Product` (enumerating it makes Windows Installer consistency-check
+  every MSI package). Per-user installs (HKU) are not read.
+- **Linux**: `dpkg-query` when the host has dpkg, else `rpm`, with a 60 s
+  subprocess timeout. Only installed dpkg states (`ii` / `hi`); `gpg-pubkey`
+  skipped; an rpm epoch is kept as `E:V-R`.
+- The collector has `2 × collectionTimeout`. A nil result (no supported
+  package database, or the read failed) is never pushed — the server treats
+  an empty list as "nothing installed" and deletes the stored inventory.
+
 ## Security
 
 - **TLS leaf pinning** — agent does NOT trust system roots; only the SHA-256 baked into `agent.conf` at install time matches. Rotating the pin requires the operator to re-run install with a re-keyed Polaris server.
@@ -162,5 +185,6 @@ a pool of 4, and pushes one batch per stream. The probes are in
 | 7b | Per-pinned-program CPU/RAM telemetry (`processTelemetry` stream, 1/min): instantaneous CPU via prime→sleep→read delta over the pinned PIDs, summed by name, into the AssetProcessSample time-series. Pinned set + log config delivered via `/config`'s `pinnedProcesses`. |
 | 7c | Per-pinned-program log tailing (`processLog` stream): journald-by-`_COMM` (Linux, cursored) + cross-platform file-glob tailing (per-file byte offset; rotation-aware), per `pinnedProcesses[].logSource`/`logPathGlob`. Cursors in `processlog-cursors.json`; first run seeds at tail (no history dump). |
 | 7d (0.22.0) | Service inventory (`serviceInventory` stream) carries per-service `cpuPct` (mean since the previous scrape; systemd `CPUUsageNSec`, else the main PID; Windows the service process) and Windows `memBytes` / `mainProcess` / `description` / `auto-delayed` start mode. Pinned-service logs (`serviceLog` stream) now read on Windows too: the service's Event Log entries via `wevtutil /f:RenderedXml` (SCM entries naming it in System + its own event source in System/Application), cursor = highest EventRecordID per unit per channel in `servicelog-cursors.json`, first read backfills the newest 50. |
+| 10 (0.24.0) | Installed-software inventory (`softwareInventory` stream, server-gated by `streams.software`): HKLM Uninstall keys (both registry views) on Windows, `dpkg-query` / `rpm` on Linux, every 6 h on a 5-minute wake at phase 23 (see *Installed software* above). |
 | 9 (0.21.0) | Agent-run path checks: `pathCheck` + `pathCheckTraceroute` streams, server-shipped definitions in `/config` → `pathChecks`, unprivileged ICMP / traceroute (see *Path checks* above). |
 | 8 | Process control (Phase 4): service/unit resolution in the inventory collector (Linux `/proc/<pid>/cgroup` → `*.service`; Windows `tasklist /svc` → service short-name) sets `controllable`. `commandLoop` polls `GET /agents/commands`, executes via `systemctl <action> <unit>` (Linux) / `net stop|start` + `sc query` (Windows), and reports to `POST /agents/command-result`. Action + target re-validated agent-side (strict charset, exec-with-args — no shell). Operator-initiated only. |

@@ -28,6 +28,9 @@ var defaultIntervalSec = map[string]int{
 	"eventLog":           defaultEventLogIntervalSec,
 	"processInventory":   defaultProcessInventoryIntervalSec,
 	"serviceInventory":   defaultServiceInventoryIntervalSec,
+	// The loop wakes on this cadence; a collection happens on at most one
+	// wake in every defaultSoftwareInventoryIntervalSec, always on this phase.
+	"softwareInventory":  softwareInventoryCheckSec,
 	"processTelemetry":   defaultProcessTelemetryIntervalSec,
 	"processLog":         defaultProcessLogIntervalSec,
 	"serviceLog":         defaultProcessLogIntervalSec,
@@ -198,7 +201,7 @@ func TestNoTwoExpensiveLoopsEverCoincide(t *testing.T) {
 	// holds a core for a measurable moment. Two of these landing on the
 	// same second is the bug.
 	expensive := []string{
-		"processInventory", "serviceInventory", "systemInfo", "eventLog",
+		"processInventory", "serviceInventory", "softwareInventory", "systemInfo", "eventLog",
 		"processLog", "serviceLog", "processTelemetry", "processConnections",
 		"telemetry", "pathCheck",
 	}

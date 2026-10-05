@@ -750,6 +750,9 @@ const EntraIdConfigSchema = z.object({
   clientId:      z.string().optional().default(""),
   clientSecret:  z.string().optional().default(""),
   enableIntune:  z.boolean().optional().default(false),
+  // Read each Intune device's detected apps into its Software tab. Needs
+  // enableIntune; no extra Graph permission.
+  pullSoftware:  z.boolean().optional().default(false),
   deviceInclude: z.array(z.string()).optional().default([]),
   deviceExclude: z.array(z.string()).optional().default([]),
   // The modal has posted this since the integration shipped and
@@ -861,6 +864,10 @@ const AzureArcConfigSchema = z.object({
   // row per machine. azureTagKeys narrows by key wildcard; empty = every key.
   importAzureTags: z.boolean().optional().default(false),
   azureTagKeys: z.array(z.string()).optional().default([]),
+  // Installed software from Change Tracking & Inventory, read from these Log
+  // Analytics workspaces (needs Log Analytics Reader on each).
+  pullSoftware: z.boolean().optional().default(false),
+  logAnalyticsWorkspaceIds: z.array(z.string().trim().uuid("Each Log Analytics workspace ID is a GUID")).max(20).optional().default([]),
   // Post-sync network-presence verification — see EntraIdConfigSchema note.
   verifyPresence: z.boolean().optional().default(true),
   workstationMonitor: WorkstationServerClassMonitorSchema,

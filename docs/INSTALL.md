@@ -71,7 +71,8 @@ successful run keeps working until one dependency version changes. The first pac
 misses the cache is the first to fail.
 
 The same trust gap affects the app's own outbound calls once it is running: Entra/Graph and
-Azure Arc discovery, the weekly IEEE OUI refresh, weather and map tiles, location geocoding
+Azure Arc discovery (including Log Analytics, `api.loganalytics.io`, when Arc's installed-software
+read is on), the weekly IEEE OUI refresh, weather and map tiles, location geocoding
 (OpenStreetMap Nominatim and the US Census geocoder — see `POLARIS_GEOCODER_PROVIDERS`), and
 webhook delivery.
 
@@ -1494,6 +1495,26 @@ authority, the reconciler, the systemd drop-ins, `setup-rhel-ha.sh`).
 trade-off, the network and hardware requirements, exactly what a failover
 loses, the split-brain proof, the build walkthrough, the update procedure, the
 rollback out of Patroni, and the drills.
+
+---
+
+## Optional: installed-software inventory (Intune / Azure Arc)
+
+The asset **Software** tab is filled by the Polaris Agent with no setup. Two integrations can
+fill it for hosts without an agent; both are off by default, and only Arc needs a new grant.
+
+- **Entra ID / Intune** — tick *Read installed software (Intune detected apps)* on the
+  integration. It reads Graph's `detectedApps` per managed device, which the
+  `DeviceManagementManagedDevices.Read.All` application permission the Intune device read already
+  holds covers — **no new permission**. Intune lists unmanaged apps only on corporate-owned devices.
+- **Azure Arc** — needs **Azure Change Tracking & Inventory** already enabled for the machines,
+  sending to a Log Analytics workspace. Assign the integration's service principal the built-in
+  **Log Analytics Reader** role on **each** workspace (an Azure RBAC role assignment, on top of the
+  Reader role discovery already uses), then tick *Read installed software from Change Tracking*
+  and list the workspaces' **Workspace ID** GUIDs (Overview page, not the resource ID; up to 20).
+  Polaris calls `https://api.loganalytics.io` for it, so a proxy or firewall allow-list needs that
+  host as well as `management.azure.com`. An uninstalled program can stay listed for up to three
+  days.
 
 ---
 

@@ -35,6 +35,7 @@ import {
 } from "../../utils/assetInvariants.js";
 import { getIpHistory, getHistorySettings, updateHistorySettings, pruneOldHistory } from "../../services/assetIpHistoryService.js";
 import { getSightingsForAsset, getSightingSettings, updateSightingSettings } from "../../services/assetSightingService.js";
+import { getAssetSoftware } from "../../services/softwareInventoryService.js";
 import {
   quarantineAsset,
   releaseQuarantine,
@@ -3054,6 +3055,15 @@ router.get("/:id/services", requirePermission("assets", "read"), async (req, res
       // Services tab disables that checkbox and says why.
       unitAttribution: asset.managedAgent != null,
     });
+  } catch (err) { next(err); }
+});
+
+// GET /assets/:id/software — installed software, every source's list (agent /
+// intune / arc) with each source's last-read time. The Software tab shows one
+// source at a time; the service decides nothing about which.
+router.get("/:id/software", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    res.json(await getAssetSoftware(req.params.id as string));
   } catch (err) { next(err); }
 });
 

@@ -5495,6 +5495,10 @@ async function openViewModal(id, opts) {
     var isInfraProc = a.assetType === "firewall" || a.assetType === "switch" || a.assetType === "access_point" || a.assetType === "other";
     if (!isInfraProc) {
       tabs.push({ key: "services", label: "Services", html: _assetServicesTabHTML(a.id) });
+      // Software tab — installed programs + versions, from whichever sources
+      // hold a list (agent, Intune detected apps, Azure Change Tracking).
+      // Same host-only rule as Services; lazy-loaded on first click.
+      tabs.push({ key: "software", label: "Software", html: _assetSoftwareTabHTML() });
     }
     // Quarantine tab — assets-admin only, shown for any asset that has MACs or is quarantined.
     // Infrastructure assets (firewall/switch/access_point) only get the tab if they're
@@ -5628,6 +5632,7 @@ async function openViewModal(id, opts) {
     if (a.assetType === "switch") _wireAssetMacTableTab(a.id);
     if (a.assetType === "firewall") _wireAssetArpTableTab(a.id);
     if (!isInfraProc) _wireAssetServicesTab(a);
+    if (!isInfraProc) _wireAssetSoftwareTab(a);
     if (permAtLeast("events", "read")) _wireAssetEventsTab(a.id);
     if (permAtLeast("alerts", "read")) _loadAssetNotificationsTab(a.id);
     _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML, firmwareAvail);
@@ -20469,6 +20474,194 @@ var _assetEventsLoaded = false;     // lazy-load guard (first tab click)
 //   Map     — both (mappedProcesses / mappedServices: Application Map)
 // (Process alerting moved to Automations, so there's no Alert column.)
 // Client-side TableSF for sort/filter; lazy-loaded on first tab click.
+// ─── Software tab ───────────────────────────────────────────────────────────
+// Installed programs + versions (GET /assets/:id/software). Up to three
+// sources hold a list — the Polaris Agent, Intune detected apps, Azure Change
+// Tracking — and the tab shows ONE at a time: the server lists them in
+// preference order (agent first, it reads the host itself) and a picker
+// appears only when there is more than one. Read-only.
+
+var _SOFTWARE_SOURCE_LABELS = { agent: "Polaris Agent", intune: "Intune", arc: "Azure Arc" };
+
+function _assetSoftwareTabHTML() {
+  return '<div class="section-block">' +
+    '<div class="filter-bar" style="justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:0.5rem">' +
+      '<p class="hint" style="margin:0;max-width:600px" id="asset-view-sw-hint">Installed software and versions.</p>' +
+      '<div style="display:flex;align-items:center;gap:0.75rem;flex:none">' +
+        '<select id="asset-view-sw-source" class="form-input" style="display:none;padding:2px 6px;font-size:0.82rem;width:auto" aria-label="Software source"></select>' +
+        '<button class="btn btn-secondary btn-sm" id="asset-view-sw-refresh">Refresh</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="table-wrapper table-wrapper-panel-sticky" id="asset-view-sw-wrapper">' +
+      '<table id="asset-view-sw-table">' +
+        '<thead><tr>' +
+          // Name declares its width: the last visible column auto-fills the
+          // leftover, so an undeclared Name would be the one starved.
+          '<th style="width:230px" data-col-id="name"      data-col-required="true" data-sf-key="sortName" data-sf-type="string">Name</th>' +
+          '<th style="width:110px" data-col-id="version"   data-sf-key="version"     data-sf-type="string">Version</th>' +
+          '<th style="width:140px" data-col-id="publisher" data-sf-key="publisher"   data-sf-type="string">Publisher</th>' +
+          // Arch and Size start hidden (column chooser): six columns starve
+          // Name in the slide-over's width, and most names carry the arch.
+          '<th style="width:64px"  data-col-id="arch"      data-col-default-hidden="true" data-sf-key="architecture" data-sf-type="string">Arch</th>' +
+          '<th style="width:96px"  data-col-id="installed" data-sf-key="installDate" data-sf-type="string" data-sf-nofilter>Installed</th>' +
+          '<th style="width:84px"  data-col-id="size"      data-col-default-hidden="true" data-sf-key="sizeSort" data-sf-type="number" data-sf-nofilter>Size</th>' +
+        '</tr></thead>' +
+        '<tbody id="asset-view-sw-tbody">' +
+          '<tr><td colspan="6" class="empty-state">Loading…</td></tr>' +
+        '</tbody>' +
+      '</table>' +
+    '</div>' +
+  '</div>';
+}
+
+function _sizeAssetSwTableWrapper() {
+  var w = document.getElementById("asset-view-sw-wrapper");
+  var body = document.getElementById("asset-panel-body");
+  if (!w || !body || !w.offsetParent) return;
+  var h = body.getBoundingClientRect().bottom - w.getBoundingClientRect().top - 18;
+  w.style.maxHeight = Math.max(260, Math.round(h)) + "px";
+}
+window.addEventListener("resize", _sizeAssetSwTableWrapper);
+
+// The hint line: where the shown list came from and how old it is, or — with
+// no list at all — the three ways to get one.
+function _softwareHintHTML(sources, shown) {
+  if (!sources.length) {
+    return 'No installed-software list for this asset yet. One comes from the <strong>Polaris Agent</strong> (read every six hours), ' +
+      'from <strong>Intune</strong>\'s detected apps (turn on <em>Installed software</em> on the Entra ID integration), ' +
+      'or from <strong>Azure Change Tracking</strong> (turn it on on the Azure Arc integration).';
+  }
+  var s = sources.filter(function (x) { return x.source === shown; })[0] || sources[0];
+  var label = _SOFTWARE_SOURCE_LABELS[s.source] || s.source;
+  var when = s.scrapedAt && typeof timeAgo === "function" ? timeAgo(s.scrapedAt) : "an unknown time ago";
+  var extra = s.source === "intune"
+    ? ' Intune lists unmanaged apps only on corporate-owned devices.'
+    : s.source === "arc" ? ' An uninstalled program can stay listed for up to three days.' : '';
+  return escapeHtml(String(s.count)) + ' program' + (s.count === 1 ? '' : 's') + ' reported by <strong>' + escapeHtml(label) +
+    '</strong>, read ' + escapeHtml(when) + '.' + extra;
+}
+
+function _wireAssetSoftwareTab(asset) {
+  var btn = document.querySelector('#asset-view-tabs [data-tab="software"]');
+  if (!btn) return;
+  var assetId = asset.id;
+  var loaded = false;
+  var sf = null;
+  var layoutApplied = false;
+  var sources = [];
+  var allRows = [];
+  var shown = null;
+
+  function rowsForShown() {
+    return allRows.filter(function (r) { return r.source === shown; }).map(function (r) {
+      return {
+        name: r.name,
+        sortName: (r.name || "").toLowerCase(),
+        version: r.version || "",
+        publisher: r.publisher || "",
+        architecture: r.architecture || "",
+        installDate: r.installDate || "",
+        sizeSort: r.sizeBytes != null ? Number(r.sizeBytes) : -1,
+        sizeBytes: r.sizeBytes,
+      };
+    });
+  }
+
+  function renderRows(rows) {
+    var tbody = document.getElementById("asset-view-sw-tbody");
+    if (!tbody) return;
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">' +
+        (sources.length ? "No programs match the filters." : "No installed software reported.") + '</td></tr>';
+      return;
+    }
+    var html = "";
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      html += '<tr>' +
+        '<td title="' + escapeHtml(r.name) + '">' + escapeHtml(r.name) + '</td>' +
+        '<td class="mono" title="' + escapeHtml(r.version) + '">' + escapeHtml(r.version || "—") + '</td>' +
+        '<td title="' + escapeHtml(r.publisher) + '">' + escapeHtml(r.publisher || "—") + '</td>' +
+        '<td>' + escapeHtml(r.architecture || "—") + '</td>' +
+        '<td>' + escapeHtml(r.installDate || "—") + '</td>' +
+        '<td>' + (r.sizeBytes != null ? escapeHtml(_fmtBytes(Number(r.sizeBytes))) : "—") + '</td>' +
+      '</tr>';
+    }
+    tbody.innerHTML = html;
+  }
+
+  function apply() {
+    var rows = rowsForShown();
+    renderRows(sf ? sf.apply(rows) : rows);
+  }
+
+  function renderHeader() {
+    var hint = document.getElementById("asset-view-sw-hint");
+    if (hint) hint.innerHTML = _softwareHintHTML(sources, shown);
+    var sel = document.getElementById("asset-view-sw-source");
+    if (!sel) return;
+    if (sources.length > 1) {
+      sel.innerHTML = sources.map(function (s) {
+        return '<option value="' + escapeHtml(s.source) + '"' + (s.source === shown ? " selected" : "") + '>' +
+          escapeHtml(_SOFTWARE_SOURCE_LABELS[s.source] || s.source) + ' (' + escapeHtml(String(s.count)) + ')</option>';
+      }).join("");
+      sel.value = shown;
+      sel.style.display = "";
+    } else {
+      sel.style.display = "none";
+    }
+  }
+
+  // Order matters (see _wireAssetServicesTab): TableSF first, then the layout.
+  function ensureTableWiring() {
+    if (!sf && typeof TableSF !== "undefined") {
+      sf = new TableSF("asset-view-sw-tbody", apply);
+    }
+    if (!layoutApplied && typeof applyTableLayout === "function") {
+      var t = document.getElementById("asset-view-sw-table");
+      if (t) {
+        applyTableLayout(t, "asset-software", {
+          onScreenshot: function (el) { _screenshotTableEl(el, "Software"); },
+        });
+        layoutApplied = true;
+      }
+    }
+  }
+
+  async function reload() {
+    var tbody = document.getElementById("asset-view-sw-tbody");
+    try {
+      var resp = await api.assets.software(assetId);
+      sources = (resp && resp.sources) || [];
+      allRows = (resp && resp.rows) || [];
+      var still = sources.some(function (s) { return s.source === shown; });
+      if (!still) shown = sources.length ? sources[0].source : null;
+      renderHeader();
+      ensureTableWiring();
+      apply();
+      _sizeAssetSwTableWrapper();
+    } catch (err) {
+      if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Error: ' + escapeHtml(err && err.message ? err.message : String(err)) + '</td></tr>';
+    }
+  }
+
+  var sel = document.getElementById("asset-view-sw-source");
+  if (sel) sel.addEventListener("change", function () {
+    shown = sel.value;
+    renderHeader();
+    apply();
+  });
+  var refresh = document.getElementById("asset-view-sw-refresh");
+  if (refresh) refresh.addEventListener("click", function () { reload(); });
+
+  btn.addEventListener("click", function () {
+    _sizeAssetSwTableWrapper();
+    if (loaded) return;
+    loaded = true;
+    reload();
+  });
+}
+
 function _assetServicesTabHTML() {
   return '<div class="section-block">' +
     '<div class="filter-bar" style="justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:0.5rem">' +

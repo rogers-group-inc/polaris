@@ -67,6 +67,10 @@ const RESOURCE_GRAPH_API_VERSION = "2022-10-01";
 const ARM_HOST = "management.azure.com";
 const ARM_BASE = `https://${ARM_HOST}`;
 const ARM_SCOPE = "https://management.azure.com/.default";
+// Log Analytics query API — the installed-software read (Change Tracking's
+// ConfigurationData table). A different token audience from ARM.
+const LOG_ANALYTICS_HOST = "api.loganalytics.io";
+const LOG_ANALYTICS_SCOPE = "https://api.loganalytics.io/.default";
 
 /** Upper bound on machines pulled in one run — mirrors Entra's DEVICES_HARD_CAP. */
 const MACHINES_HARD_CAP = 20_000;
@@ -106,6 +110,11 @@ export interface AzureArcConfig {
   // owner email) that would flood the tag registry.
   importAzureTags?: boolean;
   azureTagKeys?: string[];         // Key wildcards to import; empty = every key
+  // Installed software from Azure Change Tracking & Inventory, read from the
+  // Log Analytics workspaces below (ConfigurationData). Needs Log Analytics
+  // Reader on each workspace, on top of Reader for discovery. Default off.
+  pullSoftware?: boolean;
+  logAnalyticsWorkspaceIds?: string[];
 }
 
 /**
@@ -226,8 +235,8 @@ export type ArcDiscoveryProgressCallback = (
 ) => void;
 
 // ─── Access token cache ─────────────────────────────────────────────────────
-// Keyed tenantId:clientId (the scope is fixed for this service, unlike the
-// shared entraClientCredentials helper which several scopes ride).
+// Keyed tenantId:clientId for ARM, and tenantId:clientId:scope for any other
+// audience (Log Analytics) — a token is minted for exactly one audience.
 
 interface CachedToken {
   token: string;
@@ -235,12 +244,12 @@ interface CachedToken {
 }
 const tokenCache = new Map<string, CachedToken>();
 
-function cacheKey(config: AzureArcConfig): string {
-  return `${config.tenantId}:${config.clientId}`;
+function cacheKey(config: AzureArcConfig, scope: string = ARM_SCOPE): string {
+  return scope === ARM_SCOPE ? `${config.tenantId}:${config.clientId}` : `${config.tenantId}:${config.clientId}:${scope}`;
 }
 
-async function getAccessToken(config: AzureArcConfig, signal?: AbortSignal): Promise<string> {
-  const key = cacheKey(config);
+async function getAccessToken(config: AzureArcConfig, signal?: AbortSignal, scope: string = ARM_SCOPE): Promise<string> {
+  const key = cacheKey(config, scope);
   const cached = tokenCache.get(key);
   if (cached && cached.expiresAt > Date.now() + 60_000) {
     return cached.token;
@@ -252,7 +261,7 @@ async function getAccessToken(config: AzureArcConfig, signal?: AbortSignal): Pro
     tenantId: config.tenantId,
     clientId: config.clientId,
     clientSecret: config.clientSecret,
-    scope: ARM_SCOPE,
+    scope,
   });
 
   const controller = new AbortController();
@@ -287,8 +296,8 @@ async function getAccessToken(config: AzureArcConfig, signal?: AbortSignal): Pro
 }
 
 /** Invalidate the cached token for this config (e.g. after a 401). */
-function invalidateToken(config: AzureArcConfig): void {
-  tokenCache.delete(cacheKey(config));
+function invalidateToken(config: AzureArcConfig, scope: string = ARM_SCOPE): void {
+  tokenCache.delete(cacheKey(config, scope));
 }
 
 /**
@@ -1635,6 +1644,184 @@ export async function discoverMachines(
   }
 
   return { machines, clusters, subscriptionsQueried: subscriptions.length, usedFallback };
+}
+
+// ─── Installed software (Change Tracking → Log Analytics) ───────────────────
+//
+// Azure keeps no software inventory on the machine resource itself: it is
+// Change Tracking & Inventory's, uploaded by the Azure Monitor Agent into a
+// Log Analytics workspace's ConfigurationData table (ConfigDataType ==
+// "Software"). So this reads the workspaces the operator named — one query to
+// list the Arc machines a workspace holds software for, then the software in
+// chunks of machines, which keeps every response far under the API's 500k-row
+// cap at 2000 machines × several hundred programs.
+//
+// ConfigurationData is a stream of snapshots, not a current-state table: a
+// program is "installed" when a snapshot inside the window reported it, so an
+// uninstalled program can stay listed for up to SOFTWARE_WINDOW. Updates
+// (SoftwareType "Update" — KBs, hotfixes) are left out, matching the agent's
+// registry read.
+
+/** Window a snapshot must fall in to count as current. */
+const SOFTWARE_WINDOW = "P3D";
+/** Machines per software query. */
+const SOFTWARE_MACHINE_CHUNK = 100;
+/** Machines whose software is read, per workspace — mirrors MACHINES_HARD_CAP. */
+const SOFTWARE_MACHINES_CAP = MACHINES_HARD_CAP;
+
+/**
+ * An Arc machine's lowercased ARM id, safe to embed in a KQL string literal:
+ * only the characters ARM allows in subscription, group and machine names.
+ */
+const ARC_MACHINE_ID_RE = /^\/subscriptions\/[0-9a-f-]{36}\/resourcegroups\/[a-z0-9._()-]+\/providers\/microsoft\.hybridcompute\/machines\/[a-z0-9._-]+$/;
+const WORKSPACE_ID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+export interface ArcSoftwareRow {
+  name: string;
+  version: string | null;
+  publisher: string | null;
+  architecture: string | null;
+  softwareType: string | null;
+}
+
+/** KQL: the Arc machines a workspace holds a software snapshot for. Pure. */
+export function buildArcSoftwareMachinesQuery(): string {
+  return [
+    "ConfigurationData",
+    "| where ConfigDataType == \"Software\"",
+    "| where _ResourceId has \"/providers/microsoft.hybridcompute/machines/\"",
+    "| distinct rid = tolower(_ResourceId)",
+  ].join("\n");
+}
+
+/**
+ * KQL: the latest software snapshot rows for the given machines. Ids that do
+ * not match ARC_MACHINE_ID_RE are dropped, never quoted — nothing unchecked
+ * reaches the query. Pure; returns null when no id survives.
+ */
+export function buildArcSoftwareQuery(resourceIds: string[]): string | null {
+  const ids = resourceIds.map((r) => r.toLowerCase()).filter((r) => ARC_MACHINE_ID_RE.test(r));
+  if (ids.length === 0) return null;
+  return [
+    "ConfigurationData",
+    "| where ConfigDataType == \"Software\"",
+    "| where SoftwareType != \"Update\"",
+    "| extend rid = tolower(_ResourceId)",
+    `| where rid in (${ids.map((r) => `'${r}'`).join(", ")})`,
+    "| summarize arg_max(TimeGenerated, Publisher, SoftwareType) by rid, SoftwareName, CurrentVersion, Architecture",
+    "| project rid, SoftwareName, CurrentVersion, Publisher, Architecture, SoftwareType",
+  ].join("\n");
+}
+
+/** Turn a Log Analytics table into row objects keyed by column name. Pure. */
+export function logAnalyticsRows(res: any): Array<Record<string, unknown>> {
+  const table = Array.isArray(res?.tables) ? res.tables[0] : null;
+  if (!table || !Array.isArray(table.columns) || !Array.isArray(table.rows)) return [];
+  const names: string[] = table.columns.map((c: any) => String(c?.name ?? ""));
+  return table.rows.map((row: unknown[]) => {
+    const o: Record<string, unknown> = {};
+    names.forEach((n, i) => { o[n] = Array.isArray(row) ? row[i] : undefined; });
+    return o;
+  });
+}
+
+function strOrNull(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+async function logAnalyticsQuery(
+  config: AzureArcConfig,
+  workspaceId: string,
+  query: string,
+  signal?: AbortSignal,
+  retryOn401 = true,
+  throttleAttempt = 0,
+): Promise<Array<Record<string, unknown>>> {
+  if (!WORKSPACE_ID_RE.test(workspaceId)) {
+    throw new AppError(400, `"${workspaceId}" is not a Log Analytics workspace ID (a GUID)`);
+  }
+  const token = await getAccessToken(config, signal, LOG_ANALYTICS_SCOPE);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60_000);
+  const onExternalAbort = () => controller.abort();
+  signal?.addEventListener("abort", onExternalAbort, { once: true });
+  try {
+    const res = await fetch(`https://${LOG_ANALYTICS_HOST}/v1/workspaces/${workspaceId}/query`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}`, "Accept": "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ query, timespan: SOFTWARE_WINDOW }),
+      signal: controller.signal,
+    });
+    if (res.status === 401 && retryOn401) {
+      invalidateToken(config, LOG_ANALYTICS_SCOPE);
+      return logAnalyticsQuery(config, workspaceId, query, signal, false, throttleAttempt);
+    }
+    if (res.status === 429 && throttleAttempt < MAX_THROTTLE_RETRIES) {
+      await sleep(throttleDelayMs(res.headers), signal);
+      if (signal?.aborted) throw new AppError(502, "Log Analytics query aborted while throttled");
+      return logAnalyticsQuery(config, workspaceId, query, signal, retryOn401, throttleAttempt + 1);
+    }
+    if (res.status === 403) {
+      throw new AppError(502, `Log Analytics permission denied (403) on workspace ${workspaceId} — grant the app Log Analytics Reader on it: ${extractArmError(await res.text())}`);
+    }
+    if (!res.ok) {
+      throw new AppError(502, `Log Analytics HTTP ${res.status} on workspace ${workspaceId}: ${extractArmError(await res.text())}`);
+    }
+    return logAnalyticsRows(await res.json());
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", onExternalAbort);
+  }
+}
+
+/**
+ * Installed software per Arc machine (lowercased ARM id) across the configured
+ * workspaces. A machine reported by two workspaces gets both lists merged (the
+ * writer de-duplicates). `failedWorkspaces` counts workspaces whose read
+ * failed outright; a machine absent from `byResourceId` must keep its stored
+ * list — the caller cannot tell "no snapshot" from "this workspace failed".
+ */
+export async function fetchArcSoftware(
+  config: AzureArcConfig,
+  signal?: AbortSignal,
+  onProgress?: ArcDiscoveryProgressCallback,
+): Promise<{ byResourceId: Map<string, ArcSoftwareRow[]>; failedWorkspaces: number; workspaceCount: number }> {
+  const log: ArcDiscoveryProgressCallback = onProgress ?? (() => {});
+  const workspaces = [...new Set((config.logAnalyticsWorkspaceIds ?? []).map((w) => w.trim()).filter(Boolean))];
+  const byResourceId = new Map<string, ArcSoftwareRow[]>();
+  let failedWorkspaces = 0;
+  for (const ws of workspaces) {
+    if (signal?.aborted) break;
+    try {
+      const machines = (await logAnalyticsQuery(config, ws, buildArcSoftwareMachinesQuery(), signal))
+        .map((r) => String(r.rid ?? ""))
+        .filter((r) => ARC_MACHINE_ID_RE.test(r))
+        .slice(0, SOFTWARE_MACHINES_CAP);
+      for (let i = 0; i < machines.length && !signal?.aborted; i += SOFTWARE_MACHINE_CHUNK) {
+        const query = buildArcSoftwareQuery(machines.slice(i, i + SOFTWARE_MACHINE_CHUNK));
+        if (!query) continue;
+        for (const r of await logAnalyticsQuery(config, ws, query, signal)) {
+          const rid = String(r.rid ?? "");
+          const name = strOrNull(r.SoftwareName);
+          if (!rid || !name) continue;
+          let list = byResourceId.get(rid);
+          if (!list) byResourceId.set(rid, (list = []));
+          list.push({
+            name,
+            version: strOrNull(r.CurrentVersion),
+            publisher: strOrNull(r.Publisher),
+            architecture: strOrNull(r.Architecture),
+            softwareType: strOrNull(r.SoftwareType),
+          });
+        }
+      }
+      log("discover.arc.software", "info", `Azure Arc: workspace ${ws} holds a software inventory for ${machines.length} machine(s)`);
+    } catch (err: any) {
+      failedWorkspaces++;
+      log("discover.arc.software", "error", `Azure Arc: software read from workspace ${ws} failed — its machines keep their stored list: ${err?.message || err}`);
+    }
+  }
+  return { byResourceId, failedWorkspaces, workspaceCount: workspaces.length };
 }
 
 // ─── Run Command (the ONLY ARM write in this file) ──────────────────────────

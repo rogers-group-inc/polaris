@@ -70,6 +70,8 @@ type Config struct {
 	ProcessTelemetryIntervalSec int
 	ProcessLogIntervalSec       int
 	ServiceInventoryIntervalSec int
+	// Installed-software cadence (default six hours, see main.go).
+	SoftwareInventoryIntervalSec int
 	CommandPollIntervalSec      int
 
 	// Verbose turns on per-push lifecycle logging (connect / send / validate
@@ -167,6 +169,8 @@ func Load(path string) (*Config, error) {
 			fmt.Sscanf(val, "%d", &cfg.ProcessLogIntervalSec)
 		case "service_inventory_interval_sec":
 			fmt.Sscanf(val, "%d", &cfg.ServiceInventoryIntervalSec)
+		case "software_inventory_interval_sec":
+			fmt.Sscanf(val, "%d", &cfg.SoftwareInventoryIntervalSec)
 		case "command_poll_interval_sec":
 			fmt.Sscanf(val, "%d", &cfg.CommandPollIntervalSec)
 		case "verbose":
@@ -304,6 +308,9 @@ func (c *Config) Save() error {
 	}
 	if c.ServiceInventoryIntervalSec > 0 {
 		fmt.Fprintf(w, "service_inventory_interval_sec = %d\n", c.ServiceInventoryIntervalSec)
+	}
+	if c.SoftwareInventoryIntervalSec > 0 {
+		fmt.Fprintf(w, "software_inventory_interval_sec = %d\n", c.SoftwareInventoryIntervalSec)
 	}
 	if c.CommandPollIntervalSec > 0 {
 		fmt.Fprintf(w, "command_poll_interval_sec      = %d\n", c.CommandPollIntervalSec)

@@ -839,6 +839,7 @@ const api = {
     processConnections:   (id, name) => request("GET", `/assets/${id}/process-connections` + (name ? "?name=" + encodeURIComponent(name) : "")),
     setProcessConfig:     (id, name, body) => request("PUT", `/assets/${id}/processes/${encodeURIComponent(name)}/config`, body),
     services:             (id)  => request("GET", `/assets/${id}/services`),
+    software:             (id)  => request("GET", `/assets/${id}/software`),
     serviceLogs:          (id, unit, opts) => {
       opts = opts || {};
       var qs = ["unit=" + encodeURIComponent(unit)];

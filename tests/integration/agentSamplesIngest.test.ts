@@ -198,6 +198,35 @@ d("POST /agents/samples", () => {
     expect(row.enabledState).toBe("auto-delayed");
   });
 
+  it("softwareInventory: writes the agent's list as a delta and stamps the scrape", async () => {
+    let resp = await post({
+      stream: "softwareInventory",
+      samples: [
+        { name: "7-Zip 24.08 (x64)", platform: "windows", version: "24.08", publisher: "Igor Pavlov", architecture: "x64", installDate: "2024-08-01", sizeBytes: 5_000_000 },
+        { name: "Git", platform: "windows", version: "2.46.0", architecture: "x64" },
+      ],
+    });
+    expect(resp.status).toBe(200);
+    expect(resp.body.accepted).toBe(2);
+    let rows = await prisma.assetSoftware.findMany({ where: { assetId, source: "agent" }, orderBy: { name: "asc" } });
+    expect(rows.map((r) => r.name)).toEqual(["7-Zip 24.08 (x64)", "Git"]);
+    expect(rows[0].installDate?.toISOString().slice(0, 10)).toBe("2024-08-01");
+    expect(rows[0].sizeBytes).toBe(5_000_000n);
+    const stamp = await prisma.assetInventoryScrape.findUnique({ where: { assetId_kind: { assetId, kind: "software" } } });
+    expect(stamp).not.toBeNull();
+
+    // Git upgraded, 7-Zip uninstalled: the old rows go, the new one lands.
+    resp = await post({ stream: "softwareInventory", samples: [{ name: "Git", platform: "windows", version: "2.47.0", architecture: "x64" }] });
+    expect(resp.status).toBe(200);
+    rows = await prisma.assetSoftware.findMany({ where: { assetId, source: "agent" } });
+    expect(rows.map((r) => `${r.name} ${r.version}`)).toEqual(["Git 2.47.0"]);
+  });
+
+  it("softwareInventory: rejects an unknown platform", async () => {
+    const resp = await post({ stream: "softwareInventory", samples: [{ name: "x", platform: "brew" }] });
+    expect(resp.status).toBe(400);
+  });
+
   it("processConnections: keeps only rows whose name or unit is mapped", async () => {
     await prisma.asset.update({
       where: { id: assetId },

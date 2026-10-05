@@ -20,6 +20,7 @@ import * as fortigate from "../fortigateService.js";
 import * as windowsServer from "../windowsServerService.js";
 import * as entraId from "../entraIdService.js";
 import * as activeDirectory from "../activeDirectoryService.js";
+import { syncArcSoftware, syncIntuneSoftware } from "../softwareInventoryService.js";
 import * as vcenter from "../vcenterService.js";
 import * as azureArc from "../azureArcService.js";
 import { ipInCidr, normalizeCidr, cidrContains, cidrOverlaps } from "../../utils/cidr.js";
@@ -859,6 +860,11 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.updated.push(...r.updated);
         syncTotals.skipped.push(...r.skipped);
         syncTotals.decommissionedAssets.push(...r.decommissioned);
+        // Detected apps → the Software tab. After the device sync, so a new
+        // device's asset (and its intune source row) already exists.
+        await syncIntuneSoftware(integrationId, config as any, result.devices, {
+          intuneRead: result.intuneRead, scoped: result.scoped, signal: ac.signal, log: onProgress,
+        });
       }
     } else if (integration.type === "activedirectory") {
       // Active Directory discovery produces assets only — no subnets, reservations, or VIPs.
@@ -903,6 +909,11 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.updated.push(...rc.updated);
         syncTotals.skipped.push(...rc.skipped);
         await syncAzureTagRegistry();
+        // Change Tracking software → the Software tab (tenant-wide; skipped
+        // on a scoped run).
+        await syncArcSoftware(integrationId, config as any, {
+          scoped: scope?.kind === "arc-machine", signal: ac.signal, log: onProgress,
+        });
       }
     } else if (integration.type === "windowsserver") {
       const subnets = await windowsServer.discoverDhcpScopes(config as any, ac.signal);
