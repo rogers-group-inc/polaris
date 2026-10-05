@@ -84,7 +84,10 @@ describe("the band and the strip read the same clock", () => {
       expect(js).toContain('root.setAttribute("data-glow-turn", fromId + "-" + toId);');
     }
     for (const name of ["styles.css", "mobile.css"]) {
-      const css = readFileSync(join(process.cwd(), "public", "css", name), "utf-8");
+      // Line endings normalised: the multi-line snippets below are written with
+      // "\n", and a Windows checkout (core.autocrlf) has "\r\n" — it failed
+      // there while passing in CI, the outageMarkers trap.
+      const css = readFileSync(join(process.cwd(), "public", "css", name), "utf-8").replace(/\r\n/g, "\n");
       expect(css).toContain('html[data-glow-turn="morning-noon"] {\n  animation: page-glow-round 2000ms');
       // Round at constant width: only the height moves, up to the oval's width.
       expect(css).toMatch(/12\.5%, 75% \{ --page-glow-h: 1[48]0vw; \}/);
