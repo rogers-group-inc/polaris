@@ -190,3 +190,16 @@ export const contactSearchLimiter = makeRateLimiter({
   max: 600,
   message: "Too many recipient searches — please slow down.",
 });
+
+/**
+ * The `/assets/:id` open-target redirect that alert emails and the mobile SPA
+ * link to. Reachable signed out (it remembers the login target, which touches
+ * the session store), so it must be bounded — but a whole office clicking one
+ * alert email arrives from a single NAT address, so the ceiling sits with the
+ * SSO callback's rather than the login limiter's.
+ */
+export const assetLinkLimiter = makeRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  max: 300,
+  message: "Too many requests — please try again shortly.",
+});
