@@ -5845,22 +5845,30 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   cursor: pointer;
 }
 .dashboard-tab-remove:hover { color: var(--color-danger); background: var(--color-hover-tint); }
-/* Inline rename input on the active tab — looks like the tab text until focused. */
-.dashboard-tab-name-input {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 3px;
-  color: inherit;
+/* Inline rename input on the active tab (edit mode) — the same field as the
+   global search (.global-search input): --color-bg-primary ground, hairline,
+   control shadow, accent ring on focus. Scoped under .dashboard-tab because
+   the bare class loses to the global input[type="text"] rule, which painted
+   it --color-bg-secondary — a near-black void on nightfall. */
+.dashboard-tab .dashboard-tab-name-input {
+  width: auto;
+  padding: 0.2rem 0.5rem;
   font: inherit;
   font-weight: 500;
-  padding: 1px 4px;
-  cursor: text;
-}
-.dashboard-tab-name-input:hover { border-color: var(--color-border, rgba(255,255,255,0.18)); }
-.dashboard-tab-name-input:focus {
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-control);
   outline: none;
+  cursor: text;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+/* box-shadow REPLACES, so the ring re-states the drop shadow — the same
+   reason the .global-search focus rule does. */
+.dashboard-tab .dashboard-tab-name-input:focus {
   border-color: var(--color-accent);
-  background: var(--color-bg-primary); /* --color-bg doesn't exist; the #0f1115 fallback clashed with the navy theme */
+  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.18), var(--shadow-control);
 }
 
 /* Column canvas. The dashboard is a 12-col grid of COLUMNS; each column is a
