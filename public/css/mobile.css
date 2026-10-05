@@ -2232,7 +2232,10 @@ html[data-glow-turn="morning-noon"] {
 }
 @keyframes page-glow-round {
   0%   { --page-glow-w: 180vw;   --page-glow-h: 60vh; }
-  50%  { --page-glow-w: 65vmin; --page-glow-h: 65vmin; }
+  /* Round by a quarter of the way (0.5 s), and HELD round until three
+     quarters (1.5 s): the sun is a circle for most of its climb, not for
+     an instant half way. */
+  25%, 75% { --page-glow-w: 65vmin; --page-glow-h: 65vmin; }
   100% { --page-glow-w: 180vw;   --page-glow-h: 66vh; }
 }
 html[data-theme="morning"] {

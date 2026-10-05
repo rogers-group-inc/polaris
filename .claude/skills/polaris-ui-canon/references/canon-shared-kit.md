@@ -180,7 +180,7 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   mid-screen; lightness is what reads on its mid-tone parchment, and the accent, a vivid orange
   alone and pale gold all vanished into it). So the turn to noon climbs the sun from the bottom
   edge to noon's top wash over the glow's 2 s, and ROUNDS on the way: morning's oval → a
-  `65vmin` circle half way → noon's oval, as the `page-glow-round` keyframe animation on
+  `65vmin` circle by 25% (0.5 s), HELD round to 75% (1.5 s) → noon's oval, as the `page-glow-round` keyframe animation on
   `html[data-glow-turn="morning-noon"]`. A transition only runs start → end, so a mid-point shape
   needs keyframes. The theme script (`_markGlowTurn`, both app.js files) holds `data-glow-turn`
   (`"<from>-<to>"`) for `GLOW_MS` = 2000, because `data-theme-fading` comes off at 880 ms and

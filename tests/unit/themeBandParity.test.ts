@@ -86,7 +86,7 @@ describe("the band and the strip read the same clock", () => {
     for (const name of ["styles.css", "mobile.css"]) {
       const css = readFileSync(join(process.cwd(), "public", "css", name), "utf-8");
       expect(css).toContain('html[data-glow-turn="morning-noon"] {\n  animation: page-glow-round 2000ms');
-      expect(css).toContain("50%  { --page-glow-w: 65vmin; --page-glow-h: 65vmin; }");
+      expect(css).toContain("25%, 75% { --page-glow-w: 65vmin; --page-glow-h: 65vmin; }");
       const noon = css.slice(css.indexOf('html[data-theme="noon"] {'), css.indexOf("}", css.indexOf('html[data-theme="noon"] {')));
       expect(noon).not.toContain("--page-glow-w");
       expect(noon).not.toContain("--page-glow-h");
