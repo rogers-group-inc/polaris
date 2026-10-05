@@ -75,6 +75,24 @@ describe("the band and the strip read the same clock", () => {
     expect(MOBILE_APP_JS).toContain("var THEME_FADE_MS = 800;");
   });
 
+  it("rounds the sun's glow on morning -> noon on both, keyed on the glow's own 2 s", () => {
+    // The shape is a keyframe animation on data-glow-turn, which both scripts
+    // hold for GLOW_MS. Noon's rule must not transition the glow's size: a
+    // running transition outranks the animation and would flatten the circle.
+    for (const js of [APP_JS, MOBILE_APP_JS]) {
+      expect(js).toContain("var GLOW_MS = 2000;");
+      expect(js).toContain('root.setAttribute("data-glow-turn", fromId + "-" + toId);');
+    }
+    for (const name of ["styles.css", "mobile.css"]) {
+      const css = readFileSync(join(process.cwd(), "public", "css", name), "utf-8");
+      expect(css).toContain('html[data-glow-turn="morning-noon"] {\n  animation: page-glow-round 2000ms');
+      expect(css).toContain("50%  { --page-glow-w: 65vmin; --page-glow-h: 65vmin; }");
+      const noon = css.slice(css.indexOf('html[data-theme="noon"] {'), css.indexOf("}", css.indexOf('html[data-theme="noon"] {')));
+      expect(noon).not.toContain("--page-glow-w");
+      expect(noon).not.toContain("--page-glow-h");
+    }
+  });
+
   it("slows the same step on both, by the same amount, in JS and CSS alike", () => {
     // Nightfall -> morning takes 1.6 s. The JS holds the fading attribute (and
     // the seam) that long; the CSS gives the palette and the travel the same

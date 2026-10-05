@@ -179,7 +179,18 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   (y 100%, 140% × 75%, a warm-white core through gold into an orange haze that is gone by
   mid-screen; lightness is what reads on its mid-tone parchment, and the accent, a vivid orange
   alone and pale gold all vanished into it). So the turn to noon climbs the sun from the bottom
-  edge to noon's top wash over the glow's 2 s. A theme that overrides `--page-glow` whole goes back to cutting.
+  edge to noon's top wash over the glow's 2 s, and ROUNDS on the way: morning's oval → a
+  `65vmin` circle half way → noon's oval, as the `page-glow-round` keyframe animation on
+  `html[data-glow-turn="morning-noon"]`. A transition only runs start → end, so a mid-point shape
+  needs keyframes. The theme script (`_markGlowTurn`, both app.js files) holds `data-glow-turn`
+  (`"<from>-<to>"`) for `GLOW_MS` = 2000, because `data-theme-fading` comes off at 880 ms and
+  would cut the animation short; the noon rule leaves `--page-glow-w` / `-h` out of its
+  transition list, because a running transition outranks an animation and would flatten the
+  circle. **The main glow's size is in viewport units (`140vw 75vh` etc.), registered as
+  `<length>`, never percentages**, though both paint the same oval: Chromium rejects a
+  `radial-gradient` ellipse size that mixes percent and length (`calc(70% + 230px)`), which is
+  what a %-to-vmin animation passes through, and it drops the WHOLE background to `none`, both
+  glows gone for the turn. Caught live over CDP; a frozen-mock check never sees it. A theme that overrides `--page-glow` whole goes back to cutting.
   **Nightfall's glow is a second, SLIDING layer** (`--night-glow`, moonlight blue `#6d97ff` at
   12.3% at rest, with four registered parts: `--night-glow-x`, its size `--night-glow-w` /
   `--night-glow-h`, and `--night-glow-c`, ONE `<color>`: WHITE at 35% parked on noon

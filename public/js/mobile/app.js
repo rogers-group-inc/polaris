@@ -179,6 +179,21 @@ var THEME_LEG_MS = { morning: 1600 };
 function _themeLegMs(id) { return THEME_LEG_MS[id] || THEME_FADE_MS; }
 var _themeFadeTimer = null;
 
+// The glows' own 2 s clock, and the turn they are on, held on <html> for that
+// long so a glow animation can key on it (mobile.css: the sun rounding as it
+// climbs from morning to noon). MIRRORS _markGlowTurn in public/js/app.js.
+var GLOW_MS = 2000;
+var _glowTurnTimer = null;
+function _markGlowTurn(fromId, toId) {
+  var root = document.documentElement;
+  root.setAttribute("data-glow-turn", fromId + "-" + toId);
+  if (_glowTurnTimer) clearTimeout(_glowTurnTimer);
+  _glowTurnTimer = setTimeout(function () {
+    root.removeAttribute("data-glow-turn");
+    _glowTurnTimer = null;
+  }, GLOW_MS + 80);
+}
+
 // Arms the palette crossfade for the length of one change. Called before
 // data-theme moves, so the new values are what gets transitioned TO.
 function _beginThemeFade(phase, ms) {
@@ -220,7 +235,7 @@ window.PolarisTheme = {
     var t = _mobileTheme(MOBILE_THEME_IDS[theme] || theme);
     var prevId = document.documentElement.getAttribute("data-theme") || "nightfall";
     // Only fade a real change — re-applying the current theme should be instant.
-    if (t.id !== prevId) _beginThemeFade(phase, _themeLegMs(t.id));
+    if (t.id !== prevId) { _beginThemeFade(phase, _themeLegMs(t.id)); _markGlowTurn(prevId, t.id); }
     document.documentElement.setAttribute("data-theme", t.id);
     // Waypoints are never saved: a reload mid-sweep must land on a real theme.
     if (!t.transit) { try { localStorage.setItem("polaris-theme", t.id); } catch (e) {} }

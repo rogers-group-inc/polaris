@@ -269,6 +269,23 @@ var THEME_LEG_MS = { morning: 1600 };
 function _themeLegMs(id) { return THEME_LEG_MS[id] || THEME_FADE_MS; }
 var _themeFadeTimer = null;
 
+// The page glows run on their own, longer clock (the bare `html` rule in the
+// crossfade block of styles.css). data-glow-turn names the turn — "morning-
+// noon" — for that long, so a glow animation can key on WHICH turn it is
+// (the sun rounding to a circle as it climbs) and outlive data-theme-fading,
+// which comes off at 880 ms. Change GLOW_MS with the CSS's 2000ms.
+var GLOW_MS = 2000;
+var _glowTurnTimer = null;
+function _markGlowTurn(fromId, toId) {
+  var root = document.documentElement;
+  root.setAttribute("data-glow-turn", fromId + "-" + toId);
+  if (_glowTurnTimer) clearTimeout(_glowTurnTimer);
+  _glowTurnTimer = setTimeout(function () {
+    root.removeAttribute("data-glow-turn");
+    _glowTurnTimer = null;
+  }, GLOW_MS + 80);
+}
+
 // Arms the palette crossfade for the length of one change. Called before
 // data-theme moves, so the new values are what gets transitioned TO.
 function _beginThemeFade(phase, ms) {
@@ -295,7 +312,7 @@ function _setTheme(theme, phase) {
   var prevId = document.documentElement.getAttribute("data-theme") || DEFAULT_THEME;
   // Only fade a real change — re-applying the current theme (a page re-boot,
   // another tab syncing) should be instant.
-  if (t.id !== prevId) _beginThemeFade(phase, _themeLegMs(t.id));
+  if (t.id !== prevId) { _beginThemeFade(phase, _themeLegMs(t.id)); _markGlowTurn(prevId, t.id); }
   document.documentElement.setAttribute("data-theme", t.id);
   // Waypoints are never saved: a reload mid-turn must land on a real theme.
   if (!t.transit) { try { localStorage.setItem("polaris-theme", t.id); } catch (e) {} }

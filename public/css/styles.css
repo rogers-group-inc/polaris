@@ -12,8 +12,8 @@
    bottom edge to noon's wash at the top. Values and the transition are in
    :root and the data-theme-fading block; mobile.css registers the same set. */
 @property --page-glow-y   { syntax: "<percentage>"; inherits: true; initial-value: 0%; }
-@property --page-glow-w   { syntax: "<percentage>"; inherits: true; initial-value: 140%; }
-@property --page-glow-h   { syntax: "<percentage>"; inherits: true; initial-value: 60%; }
+@property --page-glow-w   { syntax: "<length>"; inherits: true; initial-value: 0px; }
+@property --page-glow-h   { syntax: "<length>"; inherits: true; initial-value: 0px; }
 @property --page-glow-c0  { syntax: "<color>"; inherits: true; initial-value: transparent; }
 @property --page-glow-c1  { syntax: "<color>"; inherits: true; initial-value: transparent; }
 @property --page-glow-c2  { syntax: "<color>"; inherits: true; initial-value: transparent; }
@@ -141,8 +141,15 @@
      at 9 / 26 / 50 of 70), so the five-stop gradient paints exactly the
      two-stop wash it replaced. They exist so morning can bend them. */
   --page-glow-y: 0%;
-  --page-glow-w: 140%;
-  --page-glow-h: 60%;
+  /* Viewport units, NOT percentages, though they paint the same oval (the
+     glow's box is the viewport). The morning -> noon rounding animates the
+     size through a vmin circle, and a percentage-to-length animation
+     passes through mixed values like calc(70% + 230px), which Chromium
+     rejects as a radial-gradient size: the WHOLE gradient goes to `none`
+     and both glows vanish for the turn. Registered as <length>, these
+     resolve to plain px, which every frame accepts. */
+  --page-glow-w: 140vw;
+  --page-glow-h: 60vh;
   --page-glow-c0: color-mix(in srgb, var(--page-glow-color) var(--page-glow-strength), transparent);
   --page-glow-c1: color-mix(in srgb, var(--page-glow-c0) 87.1%, transparent);
   --page-glow-c2: color-mix(in srgb, var(--page-glow-c0) 62.9%, transparent);
@@ -534,9 +541,32 @@ html {
      fade, bringing the sun up in place at the bottom while the blue slides
      out to the right. */
 html[data-theme="noon"] {
-  transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
+  transition-property: --page-glow-y,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
+}
+/* Morning → noon: the sun's glow ROUNDS as it climbs — morning's oval, a
+   circle half way up, noon's oval — instead of going straight from one
+   oval to the other. A transition only runs start → end, so the shape is
+   a keyframe animation, on the glow's own 2 s and a per-half ease, so the
+   circle comes half way through (the climb runs ahead of it, so the sun
+   is near the top by then, ~18% down). Two things keep it working:
+   - The noon rule above does NOT transition --page-glow-w / -h: a running
+     transition outranks an animation in the cascade and would flatten the
+     circle back into a straight oval-to-oval.
+   - It keys on data-glow-turn, which the theme script holds for the
+     glow's 2 s (GLOW_MS); data-theme-fading comes off at 880 ms and would
+     cut it short. The end frame equals noon's own values, so nothing
+     jumps when the attribute drops.
+   65vmin both ways is a true circle on any screen shape, which a
+   percentage pair (of width, of height) never is. */
+html[data-glow-turn="morning-noon"] {
+  animation: page-glow-round 2000ms cubic-bezier(0.37, 0, 0.63, 1);
+}
+@keyframes page-glow-round {
+  0%   { --page-glow-w: 140vw;   --page-glow-h: 75vh; }
+  50%  { --page-glow-w: 65vmin; --page-glow-h: 65vmin; }
+  100% { --page-glow-w: 140vw;   --page-glow-h: 60vh; }
 }
 html[data-theme="morning"] {
   transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
@@ -557,6 +587,7 @@ html[data-theme="morning"] {
 }
 @media (prefers-reduced-motion: reduce) {
   html, html[data-theme] { transition: none; }
+  html[data-glow-turn] { animation: none; }
   html[data-theme-fading] *:not(.theme-band-track),
   html[data-theme-fading] *:not(.theme-band-track)::before,
   html[data-theme-fading] *:not(.theme-band-track)::after { transition: none; }
@@ -688,7 +719,7 @@ code {
      Never override --page-glow itself here: a whole gradient cannot
      transition, and the climb would become a cut. */
   --page-glow-y: 100%;
-  --page-glow-h: 75%;
+  --page-glow-h: 75vh;
   --page-glow-c0: rgba(255,246,220,.90);
   --page-glow-c1: rgba(255,210,122,.55);
   --page-glow-c2: rgba(243,154,76,.34);

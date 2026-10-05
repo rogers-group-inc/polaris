@@ -81,6 +81,8 @@ const harness = [
   "var THEME_FADE_MS = 800;",
   extractDecl("var THEME_LEG_MS = {", "};"),
   extractFn("_themeLegMs"),
+  "var GLOW_MS = 2000, _glowTurnTimer = null;",
+  extractFn("_markGlowTurn"),
   "var _bandPos = null, _bandSeamTimer = null, _themeFadeTimer = null;",
   "var _themeDest = null, _themeChainTimer = null;",
   extractFn("_getTheme"),
@@ -459,6 +461,18 @@ describe("the band travels", () => {
     expect(document.documentElement.getAttribute("data-theme-fading")).toBe("out");
     // Only the real theme is remembered.
     expect(localStorage.getItem("polaris-theme")).toBe("nightfall");
+  });
+
+  it("names the glow's turn for the glow's whole 2 s, past the palette fade", () => {
+    api.advanceTheme(); // morning -> noon
+    const root = document.documentElement;
+    expect(root.getAttribute("data-glow-turn")).toBe("morning-noon");
+    // data-theme-fading is gone by now; the glow's rounding is not done.
+    vi.advanceTimersByTime(1500);
+    expect(root.hasAttribute("data-theme-fading")).toBe(false);
+    expect(root.getAttribute("data-glow-turn")).toBe("morning-noon");
+    vi.advanceTimersByTime(700);
+    expect(root.hasAttribute("data-glow-turn")).toBe(false);
   });
 
   it("holds nightfall -> morning for 1.6 s, twice the other steps", () => {
