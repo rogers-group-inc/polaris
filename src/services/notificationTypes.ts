@@ -533,6 +533,104 @@ export const BOOLEAN_METRIC_LABELS: Record<string, { trueLabel: string; falseLab
   pathOk: { trueLabel: "Reachable", falseLabel: "Unreachable", trueIsProblem: false },
 };
 
+// ─── Path Monitor (business rule 85, 2026-10-05 addendum) ───────────────────
+// The path* metrics and the traceroute change are STORED as `asset_metric` /
+// `change` triggers — they ride the same threshold, hold, band and hysteresis
+// machinery as every other metric, and every consumer keyed on the stored type
+// (cadence, charts, the Alerts tab, portability) keeps working unchanged. What
+// makes them their own kind of automation is everything AROUND the condition:
+//  - the wizard authors them under their own trigger category, "Path Monitor",
+//    and the Device category no longer offers them;
+//  - the devices they are about are only ever agent hosts — the rule's device
+//    conditions are ANDed with "Polaris Agent installed" (pathMonitorScope), so
+//    the preview counts and the engine both read the pool the operator meant;
+//  - the Polaris server's own run of a check is a source too, opted in per
+//    automation with `includeServer`. It has no asset row (it never is one —
+//    see narrative-85 "The Polaris server as a source"), so it is evaluated as
+//    a pseudo subject and its alert carries no assetId, exactly like a
+//    Polaris-host metric alert.
+// A composite tree is either all path conditions or none — a path reading is
+// about a path from an agent, a device reading about the device, and an AND
+// across the two would be evaluated over two different device pools.
+export const PATH_METRICS = [
+  "pathLatencyMs", "pathHttpStatus", "pathOk", "pathFailurePct", "pathHopCount", "pathTlsDaysLeft",
+] as const;
+export const PATH_CHANGE_TYPES = ["path_check_path_changed"] as const;
+
+/** What the server's readings are called ({asset}, the alert's hostname). */
+export const PATH_SERVER_LABEL = "Polaris server";
+
+export function isPathMetric(metric: string | null | undefined): boolean {
+  return !!metric && (PATH_METRICS as readonly string[]).includes(metric);
+}
+
+/** Is this a Path Monitor automation — a path metric, the path change, or a
+ *  composite of path metrics only? Tolerant of raw JSON (stored rows). */
+export function isPathTrigger(trigger: unknown): boolean {
+  const t = trigger as { type?: string; metric?: string; changeType?: string; children?: unknown[] } | null | undefined;
+  if (!t || typeof t !== "object") return false;
+  if (t.type === "asset_metric") return isPathMetric(t.metric);
+  if (t.type === "change") return (PATH_CHANGE_TYPES as readonly string[]).includes(t.changeType ?? "");
+  if (t.type === "composite" && Array.isArray(t.children)) {
+    const leaves = collectTriggerLeaves(t as { children: (TriggerConditionGroup | CompositeLeaf)[] });
+    return leaves.length > 0 && leaves.every((l) => l.type === "asset_metric" && isPathMetric(l.metric));
+  }
+  return false;
+}
+
+/** Does this automation also watch the Polaris server's own run of its checks?
+ *  Only a single-condition path trigger can: a composite is evaluated per
+ *  device row and the server has none. */
+export function pathTriggerIncludesServer(trigger: unknown): boolean {
+  const t = trigger as { type?: string; includeServer?: boolean } | null | undefined;
+  if (!t || (t.type !== "asset_metric" && t.type !== "change")) return false;
+  return t.includeServer === true && isPathTrigger(t);
+}
+
+/** The scope condition every Path Monitor automation is ANDed with. */
+export const AGENT_INSTALLED_RULE: ScopeConditionRule = { field: "agentInstalled", operator: "equals", value: "yes" };
+
+/** A scope narrowed to agent hosts — the pool a Path Monitor automation's
+ *  device conditions choose from. Never stored: applied at read time, so an
+ *  operator's own conditions stay exactly what they wrote. */
+export function pathMonitorScope(scope: RuleScope | null | undefined): RuleScope {
+  const base = scope ?? {};
+  const own = base.condition && base.condition.children.length > 0 ? base.condition : null;
+  // A scope that selects nothing (no dimension, not "all devices") must keep
+  // selecting nothing — the added condition would otherwise count as the
+  // dimension that makes it select every agent host.
+  const lists = [base.assetTypes, base.tags, base.assetIds, base.integrationIds, base.manufacturers, base.models, base.subnetCidrs];
+  if (!base.allAssets && !own && !lists.some((l) => l && l.length > 0)) return base;
+  return {
+    ...base,
+    condition: { op: "and", children: own ? [AGENT_INSTALLED_RULE, own] : [AGENT_INSTALLED_RULE] },
+  };
+}
+
+/**
+ * Does a server-side path change (`path_check.path_changed` with resourceType
+ * "path-check" — the Polaris server's own traceroute) fire this automation?
+ * true / false decide it; null = not that case, apply the device filter as
+ * usual. `includeServer` decides when set. Absent (every rule authored before
+ * the flag) keeps what the event tail always did: an unfiltered automation
+ * matched it, a filtered one could not.
+ */
+export function eventMatchesPathServer(
+  trigger: { type: string; changeType?: string; includeServer?: boolean },
+  scoped: boolean,
+  resourceType: string | null | undefined,
+): boolean | null {
+  if (trigger.type !== "change" || !isPathTrigger(trigger) || resourceType !== "path-check") return null;
+  if (trigger.includeServer != null) return trigger.includeServer;
+  return !scoped;
+}
+
+/** The scope the engine resolves for a rule: its own, narrowed to agent hosts
+ *  for a Path Monitor trigger. */
+export function scopeForTrigger(scope: RuleScope, trigger: unknown): RuleScope {
+  return isPathTrigger(trigger) ? pathMonitorScope(scope) : scope;
+}
+
 // ─── Asset-state trigger ────────────────────────────────────────────────────
 // Current Asset (or current-state child row) field conditions.
 export const ASSET_STATE_FIELDS = [
@@ -758,6 +856,10 @@ const assetMetricTrigger = z.object({
   ignoreAtOrAbove: z.number().min(0).max(100).optional(),
   /** SKIP UNUSED PORTS — see SKIP_UNUSED_PORT_TARGETS. SD-WAN metrics only. */
   skipUnusedPorts: z.boolean().optional(),
+  /** PATH MONITOR — also evaluate the Polaris server's own run of the check
+   *  (see PATH_METRICS). Path metrics only; absent = agent hosts only, which
+   *  is every automation authored before the server could alert. */
+  includeServer: z.boolean().optional(),
 });
 
 /**
@@ -859,6 +961,10 @@ const changeTrigger = z.object({
   type: z.literal("change"),
   changeType: z.enum(CHANGE_TYPES),
   dimensionFilter: dimensionFilterSchema,
+  /** PATH MONITOR — `path_check_path_changed` only: also fire on a change in
+   *  the Polaris server's own traceroute (an Event naming the CHECK, not a
+   *  host). Absent keeps the pre-flag behaviour — see eventMatchesPathServer. */
+  includeServer: z.boolean().optional(),
 });
 
 // ─── Composite trigger (nested AND/OR over metric/state leaves) ─────────────
@@ -882,7 +988,7 @@ export type TriggerGroupOp = (typeof TRIGGER_GROUP_OPS)[number];
 // Leaves are the existing threshold conditions minus the hold in BOTH its
 // spellings (the sustain applies to the whole composite, not per leaf) — a leaf
 // that kept `forPolls` would be a second hold the tree's own count already owns.
-const compositeAssetMetricLeaf = assetMetricTrigger.omit({ forDurationSec: true, forPolls: true });
+const compositeAssetMetricLeaf = assetMetricTrigger.omit({ forDurationSec: true, forPolls: true, includeServer: true });
 const compositeAssetStateLeaf = assetStateTrigger.omit({ forDurationSec: true, forPolls: true });
 const compositeHostMetricLeaf = hostMetricTrigger.omit({ forDurationSec: true, forPolls: true });
 export const compositeLeafSchema = z.discriminatedUnion("type", [
@@ -995,7 +1101,16 @@ export function validateCompositeTrigger(trigger: CompositeTrigger, ctx: z.Refin
     // the transform — reject rather than store a degenerate tree.
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["trigger"], message: "a composite trigger needs at least 2 conditions" });
   }
-  const badLeaf = collectTriggerLeaves(trigger).find((l) =>
+  const allLeaves = collectTriggerLeaves(trigger);
+  const pathLeaves = allLeaves.filter((l) => l.type === "asset_metric" && isPathMetric(l.metric)).length;
+  if (pathLeaves > 0 && pathLeaves < allLeaves.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["trigger"],
+      message: "Path Monitor conditions cannot be combined with device conditions — make them separate automations",
+    });
+  }
+  const badLeaf = allLeaves.find((l) =>
     trigger.kind === "host" ? l.type !== "host_metric" : l.type === "host_metric",
   );
   if (badLeaf) {
@@ -3196,6 +3311,27 @@ function validateSkipUnusedPorts(trigger: Trigger | undefined, ctx: z.Refinement
   }
 }
 
+/** `includeServer` is a Path Monitor flag: a path metric or the path change. */
+function validateIncludeServer(trigger: Trigger | undefined, reset: ResetConfig, ctx: z.RefinementCtx): void {
+  if (!trigger || (trigger.type !== "asset_metric" && trigger.type !== "change")) return;
+  if (trigger.includeServer != null && !isPathTrigger(trigger)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["trigger", "includeServer"],
+      message: "including the Polaris server only applies to Path Monitor conditions",
+    });
+  }
+  // A custom reset tree is resolved per DEVICE row, and the server has none —
+  // its alert could never recover. Refused rather than left to hang.
+  if (trigger.includeServer === true && reset.mode === "condition") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["reset", "mode"],
+      message: "a custom reset condition can't watch the Polaris server — reset automatically, or leave the server out",
+    });
+  }
+}
+
 function validateRuleV2(
   v: {
     trigger?: Trigger;
@@ -3216,6 +3352,7 @@ function validateRuleV2(
   validateMissedPolls(trigger, ctx);
   validateGrouping(v, ctx);
   validateSkipUnusedPorts(trigger, ctx);
+  validateIncludeServer(trigger, reset, ctx);
   if (reset.mode === "timed" && reset.afterSec == null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reset", "afterSec"], message: "timed reset requires afterSec" });
   }
@@ -5104,6 +5241,16 @@ export function buildSchemaCatalog() {
       { type: "change", label: "Change detection", scoped: true, changeTypes: CHANGE_TYPES },
       { type: "composite", label: "Multiple conditions (AND/OR)", scoped: true },
     ],
+    // The Path Monitor category (see PATH_METRICS): which stored metrics and
+    // change types the wizard files under it rather than under Device / Change,
+    // and the scope rule its pool is ANDed with — served so the client's
+    // preview narrows exactly as the engine does.
+    pathMonitor: {
+      metrics: PATH_METRICS,
+      changeTypes: PATH_CHANGE_TYPES,
+      agentRule: AGENT_INSTALLED_RULE,
+      serverLabel: PATH_SERVER_LABEL,
+    },
     // Composite-trigger builder vocabulary (the wizard's trigger tree).
     compositeMeta: {
       kinds: ["asset", "host"],
