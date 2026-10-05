@@ -375,9 +375,10 @@
      of the control — and never hard-code a width here: the art is a 2x asset
      sized by height, so what it renders at depends on this band's height and
      the display's pixel ratio.
-   - The edge fades live on the WINDOW and never on the track. A mask on the
-     track travels with it and would fade a moving slice of the artwork instead
-     of the ends of the window. ──────────────────────────────── */
+   - The edge fades live on the WINDOW and never on the track, as a mask to
+     transparent. A mask on the track travels with it and would fade a moving
+     slice of the artwork instead of the ends of the window; a colour painted
+     over the ends shows as a block on the glass rail. ──────────────────────────────── */
 .theme-band {
   display: block;
   width: 100%;
@@ -400,6 +401,15 @@
   height: 32px;
   overflow: hidden;
   border-radius: var(--radius-sm);
+  /* Both ends fade to TRANSPARENT, so the strip reads as continuing past the
+     sidebar rather than being cropped by it, and whatever the rail shows
+     comes through at the ends. A mask, not a colour painted over the art:
+     the rail is frosted glass over the page glow, so no single token
+     matches what is behind it, and the old --color-bg-tertiary overlay
+     showed as two solid blocks at the ends. On the window, never the track
+     (see the block comment). */
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 18%, #000 82%, transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 18%, #000 82%, transparent 100%);
 }
 .theme-band-track {
   position: absolute;
@@ -420,18 +430,6 @@
   pointer-events: none;
   user-select: none;
   -webkit-user-drag: none;
-}
-/* Both ends fade into the rail's own token, so the strip reads as continuing
-   past the sidebar rather than being cropped by it. Painted ON TOP of the
-   track — see the block comment. */
-.theme-band-window::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(to right,
-    var(--color-bg-tertiary) 0%, rgba(0,0,0,0) 18%,
-    rgba(0,0,0,0) 82%, var(--color-bg-tertiary) 100%);
 }
 /* Hover is a tint on the button and nothing else — the same affordance the
    sidebar's other bottom links carry, and with the caption gone there is no

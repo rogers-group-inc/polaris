@@ -230,8 +230,15 @@ describe("sidebar theme band placement", () => {
 describe("theme band CSS", () => {
   it("fades the window's edges and never the track", () => {
     // A mask on the track travels with it and would fade a moving slice of the
-    // artwork instead of the ends of the window.
-    expect(STYLES_CSS).toContain(".theme-band-window::after");
+    // artwork instead of the ends of the window. The window's fade is a mask to
+    // TRANSPARENT, not a colour painted over the ends: the rail is glass, and a
+    // token-coloured overlay showed as solid blocks on it.
+    const win = STYLES_CSS.slice(
+      STYLES_CSS.indexOf(".theme-band-window {"),
+      STYLES_CSS.indexOf(".theme-band-track {"),
+    );
+    expect(win).toMatch(/\bmask-image:\s*linear-gradient\(to right, transparent 0%/);
+    expect(STYLES_CSS).not.toContain(".theme-band-window::after");
     const track = STYLES_CSS.slice(
       STYLES_CSS.indexOf(".theme-band-track {"),
       STYLES_CSS.indexOf(".theme-band-track img"),

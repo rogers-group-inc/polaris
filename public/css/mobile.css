@@ -2096,17 +2096,15 @@ button, .list-item, .chip { touch-action: manipulation; }
     linear-gradient(var(--md-primary), var(--md-primary)) top / 2px 10px no-repeat,
     linear-gradient(var(--md-primary), var(--md-primary)) bottom / 2px 10px no-repeat;
 }
-/* Edge fades, on the window and never on the track — a mask on the track
-   travels with it and would fade a moving slice of the art instead of the
-   ends of the window. */
-.theme-strip::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(to right,
-    var(--md-surface) 0%, rgba(0,0,0,0) 18%,
-    rgba(0,0,0,0) 82%, var(--md-surface) 100%);
+/* Edge fades to TRANSPARENT, as a mask on the window and never on the track
+   — a mask on the track travels with it and would fade a moving slice of the
+   art instead of the ends of the window. A mask rather than a colour painted
+   over the art: the glass surfaces and page glow behind the strip match no
+   single token, and the old --md-surface overlay read as solid blocks. The
+   strip's own ground fades with the art. */
+.theme-strip {
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 18%, #000 82%, transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 18%, #000 82%, transparent 100%);
 }
 .theme-strip-row { background: var(--md-surface); }
 .theme-strip-caption {
