@@ -174,9 +174,23 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   (y 100%, 140% × 75%, a warm-white core through gold into an orange haze that is gone by
   mid-screen; lightness is what reads on its mid-tone parchment, and the accent, a vivid orange
   alone and pale gold all vanished into it). So the turn to noon climbs the sun from the bottom
-  edge to noon's top wash in the 800 ms fade; nightfall → morning brings the glow down to the
-  horizon the same way. A theme that overrides `--page-glow` whole goes back to cutting. It stays ONE gradient layer: `body`'s
-  shorthand applies `no-repeat fixed` to the last layer only, so a second layer would scroll and tile. A sticky band pinned at the top of the page sits exactly where the
+  edge to noon's top wash in the 800 ms fade. A theme that overrides `--page-glow` whole goes back to cutting.
+  **Nightfall's glow is a second, SLIDING layer** (`--night-glow`, electric blue `#2f6bff` at
+  12.3%, whose only registered part is `--night-glow-x`); nightfall turns the main glow off
+  (`--page-glow-strength: 0%`) and centres it. It is parked just past an edge everywhere else:
+  left on noon (−100% desktop / −130% phone), part-way in on the afternoon waypoint (−25% / −40%,
+  so the slide spans both legs of noon → nightfall), right on morning (200% / 230%). "Just past"
+  matters: the visible radius is 70% of the ellipse's horizontal radius (~98% of the width
+  on desktop, ~126% on the phone), and parking further out spends the fast first half of the
+  ease off-screen. The afternoon waypoint takes noon's sunlight at half strength (`#ffc928`
+  12%), not its clay accent, so noon → nightfall reads as one fade. Two destination rules say
+  what must NOT move, each a jump made while the jumping thing is invisible:
+  `[data-theme="noon"]` drops `--night-glow-x` (back from the right edge to the left; animated it
+  would sweep the page), `[data-theme="morning"]` keeps only the four colours and
+  `--night-glow-x` (the transparent main glow takes the sunrise's shape at once and fades up in
+  place while the blue slides out right). Because the glow is two layers, `body` sets
+  `background-repeat` / `background-attachment` as LONGHANDS — in the shorthand, `no-repeat fixed`
+  binds to the layer it follows and the other would scroll and tile. A sticky band pinned at the top of the page sits exactly where the
   glow is brightest, so `.page-header-sticky` is BLURRED and UNFILLED — a bare `blur(20px)`, no
   tint. A 70% `--color-bg-secondary` tint was tried and rejected on 2026-10-04: it read as a
   dark box sitting on the glow. With no tint the blur can't be seen at rest (blurring a smooth

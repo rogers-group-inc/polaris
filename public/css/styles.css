@@ -22,6 +22,10 @@
 @property --page-glow-p2  { syntax: "<percentage>"; inherits: true; initial-value: 26%; }
 @property --page-glow-p3  { syntax: "<percentage>"; inherits: true; initial-value: 50%; }
 @property --page-glow-end { syntax: "<percentage>"; inherits: true; initial-value: 70%; }
+/* Nightfall's glow is a second layer that SLIDES rather than fades: in from
+   off the left edge on the turn from noon, out past the right edge on the
+   turn to morning. Only its horizontal centre moves; see --night-glow. */
+@property --night-glow-x  { syntax: "<percentage>"; inherits: true; initial-value: -100%; }
 
 :root {
   --color-bg-primary: #151528;
@@ -123,7 +127,8 @@
      that reads as light on indigo reads as a stain on a pale ground), and
      noon swaps the hue for sunlight yellow — its ground is near-white and a
      terracotta wash there reads as rust, not light. Morning resets the
-     glow's parts into a sunrise rising from the bottom. The phone carries the
+     glow's parts into a sunrise rising from the bottom, and nightfall
+     turns it off for a second, sliding layer (--night-glow). The phone carries the
      same recipe in mobile.css (--page-glow there, off --md-primary). */
   --page-glow-color: var(--color-accent);
   --page-glow-strength: 17.6%;
@@ -143,12 +148,28 @@
   --page-glow-p2: 26%;
   --page-glow-p3: 50%;
   --page-glow-end: 70%;
-  --page-glow: radial-gradient(ellipse var(--page-glow-w) var(--page-glow-h) at 50% var(--page-glow-y),
-    var(--page-glow-c0) 0%,
-    var(--page-glow-c1) var(--page-glow-p1),
-    var(--page-glow-c2) var(--page-glow-p2),
-    var(--page-glow-c3) var(--page-glow-p3),
-    transparent var(--page-glow-end));
+  /* Nightfall's electric-blue wash, its own layer so it can slide while the
+     main glow fades. Parked off-screen in every other theme: -100% (left of
+     the viewport, waiting to slide in) on noon, -25% on the afternoon
+     waypoint so the slide spans both legs of noon → nightfall, 50% on
+     nightfall, and 200% (gone past the right edge) on morning. Its visible
+     radius is 70% of a 140% radius, ~98% of the width, so -100% / 200% are
+     JUST clear of the screen. Further out and the slide spends its fast
+     first half off-screen: at ±200% the exit was over in a quarter of the
+     fade. Saturated blue rather than nightfall's pastel accent, which went
+     grey slate at this faintness. */
+  --night-glow-x: -100%;
+  --night-glow: radial-gradient(ellipse 140% 60% at var(--night-glow-x) 0%,
+    color-mix(in srgb, #2f6bff 12.3%, transparent) 0%,
+    transparent 70%);
+  --page-glow:
+    var(--night-glow),
+    radial-gradient(ellipse var(--page-glow-w) var(--page-glow-h) at 50% var(--page-glow-y),
+      var(--page-glow-c0) 0%,
+      var(--page-glow-c1) var(--page-glow-p1),
+      var(--page-glow-c2) var(--page-glow-p2),
+      var(--page-glow-c3) var(--page-glow-p3),
+      transparent var(--page-glow-end));
   /* ── Frosted panel surfaces ────────────────────────────────────────────────
      Modals and slide-overs are 50% of the theme's own panel colour over a
      blurred backdrop, so the page stays faintly legible behind them. Declared
@@ -460,10 +481,29 @@ html[data-theme-fading] *:not(.theme-band-track)::after {
 html[data-theme-fading] {
   transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
-    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
+    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
+    --night-glow-x;
   transition-duration: 800ms;
   transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
   transition-delay: 0s;
+}
+/* What must NOT move, by destination — each one a jump made while the
+   thing jumping is invisible, so it never shows:
+   - into noon (from morning): the night glow jumps from the right edge back
+     to the left, ready for the next nightfall. Animated, it would sweep
+     across the page right to left.
+   - into morning (from nightfall): the main glow is transparent on
+     nightfall, so its geometry jumps to the sunrise's and only the colours
+     fade, bringing the sun up in place at the bottom while the blue slides
+     out to the right. */
+html[data-theme-fading][data-theme="noon"] {
+  transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
+    --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
+    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
+}
+html[data-theme-fading][data-theme="morning"] {
+  transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
+    --night-glow-x;
 }
 @media (prefers-reduced-motion: reduce) {
   html[data-theme-fading] { transition: none; }
@@ -520,7 +560,12 @@ body {
   /* Fixed so the glow stays put in the viewport as the page scrolls (at the
      top, or morning's at the bottom) — it is light, not a mark on the first
      screenful. */
-  background: var(--page-glow) no-repeat fixed, var(--color-bg-secondary);
+  /* Longhands, not `var(--page-glow) no-repeat fixed` in the shorthand: the
+     glow is two layers, and a shorthand's per-layer keywords apply to the
+     layer they follow, so the night layer would scroll and tile. */
+  background: var(--page-glow), var(--color-bg-secondary);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -588,6 +633,9 @@ code {
   --page-glow-c2: rgba(243,154,76,.34);
   --page-glow-c3: rgba(238,154,90,.14);
   --page-glow-end: 78%;
+  /* Night glow gone past the right edge: the turn from nightfall slides it
+     out that way. */
+  --night-glow-x: 200%;
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────
@@ -663,6 +711,13 @@ code {
   --shadow-panel: 0 24px 64px rgba(90,30,10,.28), 0 2px 10px rgba(90,30,10,.16);
   --shadow-control: 0 2px 5px rgba(90,30,10,.26), 0 1px 2px rgba(90,30,10,.16), inset 0 1px 0 rgba(255,255,255,.55);
   --shadow-card: 0 8px 32px rgba(90,30,10,.20), 0 2px 6px rgba(90,30,10,.15), inset 0 1px 0 rgba(255,255,255,.55);
+  /* The half-way point of noon → nightfall, so the glow reads as ONE fade
+     and one slide across both legs: noon's sunlight at half its strength
+     (not this palette's clay accent, which would turn the fade into a
+     colour change), and the night glow half way in from the left. */
+  --page-glow-color: #ffc928;
+  --page-glow-strength: 12%;
+  --night-glow-x: -25%;
 }
 
 /* ─── Nightfall ──────────────────────────────────────────────────────────────
@@ -699,12 +754,11 @@ code {
      pushed hardest and still does almost nothing — the inset rim is carrying
      this one, and it is a hair brighter here than in the :root dark base. */
   --shadow-card: 0 8px 32px rgba(0,0,0,.65), 0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
-  /* 30% under the dark family's 17.6%. At that strength the sky-blue
-     accent (#4bbcee), a light pastel, mixed into near-black came out a grey
-     slate haze (~rgb(21,35,54) at the peak), so nightfall's glow takes a
-     deep saturated electric blue instead: same faintness, real colour. */
-  --page-glow-color: #2f6bff;
-  --page-glow-strength: 12.3%;
+  /* Nightfall's glow is the sliding --night-glow layer (electric blue at
+     12.3%, see :root), centred here. The main glow is off: noon's sunlight
+     fades out over the turn while the blue slides in from the left. */
+  --page-glow-strength: 0%;
+  --night-glow-x: 50%;
 }
 
 /* ─── Layout ───────────────────────────────────────────────────────────────── */

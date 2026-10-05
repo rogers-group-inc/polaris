@@ -26,6 +26,8 @@
 @property --page-glow-p2  { syntax: "<percentage>"; inherits: true; initial-value: 26%; }
 @property --page-glow-p3  { syntax: "<percentage>"; inherits: true; initial-value: 50%; }
 @property --page-glow-end { syntax: "<percentage>"; inherits: true; initial-value: 70%; }
+/* Nightfall's sliding glow layer (see styles.css). */
+@property --night-glow-x  { syntax: "<percentage>"; inherits: true; initial-value: -130%; }
 
 :root {
   /* Key colors */
@@ -119,7 +121,7 @@
      stain on a white ground. Noon swaps the hue for sunlight yellow: its
      ground is near-white, and a terracotta wash there reads as a rust mark,
      not light. Morning resets the glow's parts into a sunrise rising from
-     the bottom. */
+     the bottom; nightfall turns it off for the sliding --night-glow. */
   /* Opacity of the frosted bottom navbar's tint: the desktop sidebar's
      --rail-glass-bg mix (40% dark family, 30% daylight, where a light panel
      over a light page has less to hide behind). */
@@ -154,12 +156,23 @@
   --page-glow-p2: 26%;
   --page-glow-p3: 50%;
   --page-glow-end: 70%;
-  --page-glow: radial-gradient(ellipse var(--page-glow-w) var(--page-glow-h) at 50% var(--page-glow-y),
-    var(--page-glow-c0) 0%,
-    var(--page-glow-c1) var(--page-glow-p1),
-    var(--page-glow-c2) var(--page-glow-p2),
-    var(--page-glow-c3) var(--page-glow-p3),
-    transparent var(--page-glow-end));
+  /* Nightfall's electric-blue wash as its own sliding layer, parked by
+     theme as on the desktop: -130% noon, -40% afternoon, 50% nightfall,
+     230% morning. Wider apart than the desktop's -100% / 200% because the
+     phone's visible radius is 70% of 180%, ~126% of the width; these are
+     just clear of the screen, so the slide is all visible travel. */
+  --night-glow-x: -130%;
+  --night-glow: radial-gradient(ellipse 180% 66% at var(--night-glow-x) 0%,
+    color-mix(in srgb, #2f6bff 12.3%, transparent) 0%,
+    transparent 70%);
+  --page-glow:
+    var(--night-glow),
+    radial-gradient(ellipse var(--page-glow-w) var(--page-glow-h) at 50% var(--page-glow-y),
+      var(--page-glow-c0) 0%,
+      var(--page-glow-c1) var(--page-glow-p1),
+      var(--page-glow-c2) var(--page-glow-p2),
+      var(--page-glow-c3) var(--page-glow-p3),
+      transparent var(--page-glow-end));
 
   /* Layout */
   --topbar-h:  64px;
@@ -301,6 +314,7 @@
   --page-glow-c2: rgba(243,154,76,.34);
   --page-glow-c3: rgba(238,154,90,.14);
   --page-glow-end: 78%;
+  --night-glow-x: 230%;
 }
 /* Noon — neutral near-white, terracotta, the highest contrast of any palette.
    The cool daylight palette; cream here and it reads as morning. */
@@ -367,6 +381,11 @@
 
   --shadow-card:  0 8px 32px rgba(90,30,10,.20), 0 2px 6px rgba(90,30,10,.15), inset 0 1px 0 rgba(255,255,255,.55);
   --shadow-sheet: 0 -8px 32px rgba(90,30,10,.24), 0 -2px 6px rgba(90,30,10,.15), inset 0 1px 0 rgba(255,255,255,.55);
+  /* Half way through noon → nightfall: noon's sunlight at half strength and
+     the night glow half way in, so the turn is one fade and one slide. */
+  --page-glow-color: #ffc928;
+  --page-glow-strength: 12%;
+  --night-glow-x: -40%;
 }
 /* Nightfall — indigo ground, sky-blue accent: the desktop's nightfall hues
    (styles.css). Without this block the phone painted the neutral Material
@@ -411,11 +430,10 @@
 
   --shadow-card:  0 8px 32px rgba(0,0,0,.65), 0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
   --shadow-sheet: 0 -8px 32px rgba(0,0,0,.7), 0 -2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.08);
-  /* 30% under the dark family's 17.6%, in a saturated electric blue rather
-     than the pastel accent, which went grey at this strength. Same as the
-     desktop. */
-  --page-glow-color: #2f6bff;
-  --page-glow-strength: 12.3%;
+  /* The glow is the sliding --night-glow layer, centred; the main glow is
+     off. Same as the desktop. */
+  --page-glow-strength: 0%;
+  --night-glow-x: 50%;
 }
 
 * { box-sizing: border-box; }
@@ -2132,9 +2150,23 @@ html[data-theme-fading] *:not(.theme-strip-track)::after {
 html[data-theme-fading] {
   transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
-    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
+    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
+    --night-glow-x;
   transition-duration: 800ms;
   transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+/* What must not move, by destination (reasoning in styles.css): into noon
+   the night glow jumps back to the left edge unseen; into morning the
+   transparent main glow takes the sunrise's shape at once and only its
+   colours fade. */
+html[data-theme-fading][data-theme="noon"] {
+  transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
+    --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
+    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
+}
+html[data-theme-fading][data-theme="morning"] {
+  transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
+    --night-glow-x;
 }
 /* Phase easing for a multi-leg turn: accelerate once at the start, run at
    constant speed through the waypoint, decelerate once at the end, so
