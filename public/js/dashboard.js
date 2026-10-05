@@ -221,7 +221,7 @@
 
     var bodyHTML =
       '<p style="font-size:0.9rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
-        'Polaris is your central registry for IP address space and network assets — a fixed reference point the rest of the infrastructure navigates by. A couple of steps get it working for you:' +
+        'Polaris pulls the systems you already run into one dashboard — your assets, the address space they live in, and how they are doing. A couple of steps get it working for you:' +
       '</p>' +
       stepHTML(1, hasBlocks, 'Add an IP block',
         'On the <a href="/ipam.html">IPAM</a> page, create a top-level block for the address space you manage (e.g. <code>10.0.0.0/8</code>). Blocks are the namespaces every network and reservation lives under.') +
