@@ -58,7 +58,7 @@ function stubGraph(s: Scenario) {
   batchBodies = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: any = {}) => {
     const json = (obj: unknown, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
-    if (url.includes("login.microsoftonline.com")) return json({ access_token: "tok", expires_in: 3600 });
+    if (new URL(url).hostname === "login.microsoftonline.com") return json({ access_token: "tok", expires_in: 3600 });
     if (url.includes("/v1.0/devices")) return json({ value: s.entra });
     if (url.includes("/v1.0/deviceManagement/managedDevices")) return json({ value: s.intune });
     if (url.endsWith("/v1.0/$batch")) {

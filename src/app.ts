@@ -34,6 +34,7 @@ import { getBranding, logoCacheControl } from "./services/brandingService.js";
 import { isOidcEnabled } from "./services/oidcAuthService.js";
 import { isEntraProxyLoginAvailable } from "./services/entraProxyAuthService.js";
 import { stripUntrustedEntraProxyHeaders } from "./api/middleware/entraProxyHeaders.js";
+import { assetLinkLimiter } from "./api/middleware/rateLimits.js";
 import {
   renderMetrics,
   startHttpRequestTimer,
@@ -642,7 +643,7 @@ app.use((req, res, next) => {
 // login finishes in the page).
 // UA-dependent, so never cacheable; an id that is not a UUID falls through to
 // the static handler's 404 rather than redirecting anywhere.
-app.get("/assets/:id", async (req, res, next) => {
+app.get("/assets/:id", assetLinkLimiter, async (req: express.Request<{ id: string }>, res, next) => {
   const target = resolveAssetOpenTarget({
     id: req.params.id,
     userAgent: req.get("user-agent"),

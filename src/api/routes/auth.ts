@@ -508,7 +508,9 @@ router.post("/login/totp", async (req, res, next) => {
 // credentials by another name (see LOGIN_CREDENTIAL_PATHS there).
 
 // GET /api/v1/auth/passkeys/config
-router.get("/passkeys/config", async (req, res, next) => {
+// ssoCallbackLimiter, like /entra-proxy/config: a login-page probe every
+// user behind a shared NAT or App Proxy connector reads, that hits the DB.
+router.get("/passkeys/config", ssoCallbackLimiter, async (req, res, next) => {
   try {
     const availability = await getPasskeyAvailability(req);
     // Only asked when the button could otherwise be drawn — a disabled or
