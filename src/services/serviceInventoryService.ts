@@ -147,3 +147,25 @@ function pickServiceFields(r: ReturnType<typeof storedServiceRow>) {
     controllable: r.controllable,
   };
 }
+
+/**
+ * Whether an asset has anything for the Services and Software tabs to show —
+ * the asset slide-over draws each tab only when this says so, so a host
+ * nothing reports on (no agent, no agentless process polling, no Intune / Arc
+ * software read) does not carry two permanently empty tabs.
+ *
+ * A scrape stamp counts as well as rows: a source that reported an EMPTY list
+ * is still pulling that information in, and its tab should say so. Services
+ * covers the process inventory too, which that tab folds in. Five indexed
+ * existence reads; no rows are loaded.
+ */
+export async function getInventoryPresence(assetId: string): Promise<{ services: boolean; software: boolean }> {
+  const [svc, proc, sw, svcScrape, swScrape] = await Promise.all([
+    prisma.assetService.findFirst({ where: { assetId }, select: { id: true } }),
+    prisma.assetProcess.findFirst({ where: { assetId }, select: { id: true } }),
+    prisma.assetSoftware.findFirst({ where: { assetId }, select: { id: true } }),
+    prisma.assetInventoryScrape.findFirst({ where: { assetId, kind: { in: ["services", "processes"] } }, select: { kind: true } }),
+    prisma.assetInventoryScrape.findFirst({ where: { assetId, kind: { startsWith: "software" } }, select: { kind: true } }),
+  ]);
+  return { services: !!(svc || proc || svcScrape), software: !!(sw || swScrape) };
+}

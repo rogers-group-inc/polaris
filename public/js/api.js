@@ -840,6 +840,7 @@ const api = {
     setProcessConfig:     (id, name, body) => request("PUT", `/assets/${id}/processes/${encodeURIComponent(name)}/config`, body),
     services:             (id)  => request("GET", `/assets/${id}/services`),
     software:             (id)  => request("GET", `/assets/${id}/software`),
+    inventoryPresence:    (id)  => request("GET", `/assets/${id}/inventory-presence`),
     serviceLogs:          (id, unit, opts) => {
       opts = opts || {};
       var qs = ["unit=" + encodeURIComponent(unit)];

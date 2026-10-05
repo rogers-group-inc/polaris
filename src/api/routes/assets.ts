@@ -36,6 +36,7 @@ import {
 import { getIpHistory, getHistorySettings, updateHistorySettings, pruneOldHistory } from "../../services/assetIpHistoryService.js";
 import { getSightingsForAsset, getSightingSettings, updateSightingSettings } from "../../services/assetSightingService.js";
 import { getAssetSoftware } from "../../services/softwareInventoryService.js";
+import { getInventoryPresence } from "../../services/serviceInventoryService.js";
 import {
   quarantineAsset,
   releaseQuarantine,
@@ -3064,6 +3065,15 @@ router.get("/:id/services", requirePermission("assets", "read"), async (req, res
 router.get("/:id/software", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     res.json(await getAssetSoftware(req.params.id as string));
+  } catch (err) { next(err); }
+});
+
+// GET /assets/:id/inventory-presence — { services, software }: whether the
+// Services / Software tabs have anything to show. The slide-over prefetches it
+// so each tab is present on first paint or absent, never an empty shell.
+router.get("/:id/inventory-presence", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    res.json(await getInventoryPresence(req.params.id as string));
   } catch (err) { next(err); }
 });
 

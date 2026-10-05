@@ -5404,6 +5404,11 @@ async function openViewModal(id, opts) {
       // Path checks this host runs — prefetched so the tab is present
       // on first paint or absent, never flashing in and out.
       api.assets.pathChecks(id).catch(function () { return null; }),
+      // Whether the Services / Software tabs have anything to show — they
+      // are drawn only when something is pulling that information in. A
+      // failed read shows both (the behaviour before the gate). Keep this the
+      // LAST slot: every index above is read positionally.
+      api.assets.inventoryPresence(id).catch(function () { return { services: true, software: true }; }),
     ]);
 
     var a = wave[0];
@@ -5421,6 +5426,7 @@ async function openViewModal(id, opts) {
     var sdwanMembers = wave[11].members;
     var sdwanMeta    = wave[11].meta || {};
     var pathPayload  = wave[13];
+    var inventoryPresence = wave[14] || { services: true, software: true };
 
     _currentAssetForRefresh = a;
     // Name the entry now that the hostname is known, so the tooltips read
@@ -5493,11 +5499,19 @@ async function openViewModal(id, opts) {
     // asset lands in when nothing identified it as a host (cameras, PDUs,
     // sensors), which likewise reports no inventory.
     var isInfraProc = a.assetType === "firewall" || a.assetType === "switch" || a.assetType === "access_point" || a.assetType === "other";
-    if (!isInfraProc) {
+    // Both tabs also need something actually pulling the information in
+    // (GET /assets/:id/inventory-presence): a host with no agent, no
+    // agentless process polling and no Intune / Arc software read would
+    // otherwise carry two tabs that can never fill.
+    var showServicesTab = !isInfraProc && inventoryPresence.services;
+    var showSoftwareTab = !isInfraProc && inventoryPresence.software;
+    if (showServicesTab) {
       tabs.push({ key: "services", label: "Services", html: _assetServicesTabHTML(a.id) });
+    }
+    if (showSoftwareTab) {
       // Software tab — installed programs + versions, from whichever sources
       // hold a list (agent, Intune detected apps, Azure Change Tracking).
-      // Same host-only rule as Services; lazy-loaded on first click.
+      // Lazy-loaded on first click.
       tabs.push({ key: "software", label: "Software", html: _assetSoftwareTabHTML() });
     }
     // Quarantine tab — assets-admin only, shown for any asset that has MACs or is quarantined.
@@ -5631,8 +5645,8 @@ async function openViewModal(id, opts) {
     if (_pathTabEligible(pathPayload)) _wireAssetPathCheckTab(a, pathPayload);
     if (a.assetType === "switch") _wireAssetMacTableTab(a.id);
     if (a.assetType === "firewall") _wireAssetArpTableTab(a.id);
-    if (!isInfraProc) _wireAssetServicesTab(a);
-    if (!isInfraProc) _wireAssetSoftwareTab(a);
+    if (showServicesTab) _wireAssetServicesTab(a);
+    if (showSoftwareTab) _wireAssetSoftwareTab(a);
     if (permAtLeast("events", "read")) _wireAssetEventsTab(a.id);
     if (permAtLeast("alerts", "read")) _loadAssetNotificationsTab(a.id);
     _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML, firmwareAvail);
