@@ -540,9 +540,18 @@ html[data-theme="noon"] {
 html[data-theme="morning"] {
   transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --night-glow-x, --night-glow-w, --night-glow-h, --night-glow-c;
-  /* The same gentle curve on the way out: the blue pales to white and
-     shrinks to half size evenly as it slides off, ending at 50% white. */
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
+  /* The exit is the entrance played backwards: same path, mirrored. Its
+     position takes the REVERSED ease (STD's control points swapped and
+     flipped), so it eases off the centre slowly the way the entrance eased
+     in to land, and speeds up as it leaves. On the same curve as the
+     entrance it looked ~40% faster: the glow is big and already on screen
+     at the start, so the fast middle of the ease was the part you saw, and
+     it was gone in 1.05 s against the entrance's 1.46 s on screen. Mirrored,
+     both are on screen 1.46 s at the same speeds. Size and colour keep the
+     gentle sine, which is symmetric already: it pales to white and shrinks
+     to half size evenly, ending at 50% white. */
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
+    cubic-bezier(0.8, 0, 0.6, 1),
     cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
 }
 @media (prefers-reduced-motion: reduce) {

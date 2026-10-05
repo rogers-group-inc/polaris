@@ -190,7 +190,11 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   read as nothing over the grounds crossed mid-turn. Size and colour take a gentle sine curve
   (`cubic-bezier(0.37, 0, 0.63, 1)`) so they change evenly across the whole 2 s both ways (a
   late/early colour curve was tried and replaced at the user's call); position keeps the
-  ease-in-out. The curves are per-property lists in `transition-property` order with the night
+  ease-in-out on the way in and takes its exact REVERSE on the way out
+  (`cubic-bezier(0.8, 0, 0.6, 1)`, in the morning rule), so the exit is the entrance played
+  backwards. On the same curve both ways the exit looked ~40% faster — big and already on screen,
+  so you saw the fast middle, gone in 1.05 s against the entrance's 1.46 s on screen; mirrored,
+  both are on screen 1.46 s. The curves are per-property lists in `transition-property` order with the night
   glow's size and colour LAST, because a rule with a shorter property list (noon's) cuts the
   inherited list to fit); nightfall turns the main glow off
   (`--page-glow-strength: 0%`) and centres it. It is parked just past an edge everywhere else:
