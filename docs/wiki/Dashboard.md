@@ -52,7 +52,7 @@ NOC wallboard that has no session at all. See
 |---|---|
 | **Status Summary** | at-a-glance counts of monitored assets by state, infra uptime %, active alerts |
 | **Active Alerts** | alerts your automations have raised and nothing has cleared, most severe first — **with Acknowledge and Clear in place** |
-| **Down Assets** | monitored assets currently down, newest outages first, grouped by site or division. Dependency-down assets are excluded unless the gear says otherwise |
+| **Down Assets** | monitored assets currently down, newest outages first, grouped by site or division. Dependency-down assets are excluded unless the gear says otherwise. An outage whose alert has been acknowledged stays listed but is greyed out, with an **ack** pill naming who took it, so unowned outages stand out |
 | **Sites With Issues** | sites with assets down or in warning, worst first; expand for the nodes |
 | **Asset Types** | breakdown of monitored assets by type; click a slice to drill into the matching asset list |
 

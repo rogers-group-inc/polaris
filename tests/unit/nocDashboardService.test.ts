@@ -194,7 +194,7 @@ describe("getDownNodes", () => {
     notifFindMany.mockReset();
     notifFindMany.mockResolvedValueOnce([
       { id: "n-a", assetId: "a", severity: "critical", acknowledged: false, rule: { trigger: { type: "asset_state", field: "monitorStatus" } } },
-      { id: "n-b", assetId: "b", severity: "warning", acknowledged: true, rule: { trigger: { type: "asset_state", field: "monitorStatus" } } },
+      { id: "n-b", assetId: "b", severity: "warning", acknowledged: true, acknowledgedBy: "jsmith", rule: { trigger: { type: "asset_state", field: "monitorStatus" } } },
       // c is down with no automation covering it (business rule 36's `passive`)
       // — nothing to acknowledge, so the row must carry no alert id at all.
     ]);
@@ -204,6 +204,9 @@ describe("getDownNodes", () => {
     expect(byId.a.alertAcknowledged).toBe(false);
     expect(byId.b.alertId).toBe("n-b");
     expect(byId.b.alertAcknowledged).toBe(true);
+    // The owner the row's "ack <name>" pill prints; null on an unowned alert.
+    expect(byId.b.alertAcknowledgedBy).toBe("jsmith");
+    expect(byId.a.alertAcknowledgedBy).toBeNull();
     expect(byId.c.alertId).toBeUndefined();
     expect(byId.c.alertAcknowledged).toBeUndefined();
   });
@@ -1095,9 +1098,9 @@ describe("alert-severity-aware ordering", () => {
     const m = await noc.activeAlertSeverityByAsset(["a", "b", "c"]);
     // The winner names itself and says whether someone has it, so a widget row
     // can offer Acknowledge for the same alert its pill is showing.
-    expect(m.get("a")).toEqual({ severity: "critical", rank: 5, id: "n2", acknowledged: false });
-    expect(m.get("b")).toEqual({ severity: "info", rank: 2, id: "n3", acknowledged: false });
-    expect(m.get("c")).toEqual({ severity: "error", rank: 5, id: "n4", acknowledged: true });
+    expect(m.get("a")).toEqual({ severity: "critical", rank: 5, id: "n2", acknowledged: false, acknowledgedBy: null });
+    expect(m.get("b")).toEqual({ severity: "info", rank: 2, id: "n3", acknowledged: false, acknowledgedBy: null });
+    expect(m.get("c")).toEqual({ severity: "error", rank: 5, id: "n4", acknowledged: true, acknowledgedBy: null });
     expect(m.has("")).toBe(false);
   });
 
@@ -1202,7 +1205,7 @@ describe("per-widget alert relevance (pill only when a matching automation fires
       { id: "n-c", assetId: "c", severity: "warning", acknowledged: false, rule: null }, // rule deleted → matches nothing specific
     ]);
     const m = await noc.activeAlertSeverityByAsset(["a", "b", "c"], { kind: "metric", metrics: ["cpuPct"] });
-    expect(m.get("a")).toEqual({ severity: "critical", rank: 5, id: "n-a", acknowledged: false });
+    expect(m.get("a")).toEqual({ severity: "critical", rank: 5, id: "n-a", acknowledged: false, acknowledgedBy: null });
     expect(m.has("b")).toBe(false);
     expect(m.has("c")).toBe(false);
   });

@@ -335,12 +335,12 @@ async function contributingTriggers(
 export async function activeAlertSeverityByAsset(
   assetIds: string[] | null,
   relevance: AlertRelevance = { kind: "any" },
-): Promise<Map<string, { severity: string; rank: number; id: string; acknowledged: boolean }>> {
+): Promise<Map<string, { severity: string; rank: number; id: string; acknowledged: boolean; acknowledgedBy: string | null }>> {
   if (relevance.kind === "none") return new Map();
   const rows = await prisma.notification.findMany({
     where: { cleared: false, assetId: assetIds ? { in: assetIds } : { not: null } },
     select: {
-      id: true, assetId: true, severity: true, acknowledged: true,
+      id: true, assetId: true, severity: true, acknowledged: true, acknowledgedBy: true,
       rule: { select: { trigger: true } },
       // A GROUPED alert (business rule 75) may be raised by several
       // automations, so "is this alert about the thing this widget measures?"
@@ -353,7 +353,7 @@ export async function activeAlertSeverityByAsset(
     },
   });
   const triggersByGroupAlert = await contributingTriggers(rows);
-  const out = new Map<string, { severity: string; rank: number; id: string; acknowledged: boolean }>();
+  const out = new Map<string, { severity: string; rank: number; id: string; acknowledged: boolean; acknowledgedBy: string | null }>();
   for (const r of rows) {
     if (!r.assetId) continue;
     const contributed = triggersByGroupAlert.get(r.id);
@@ -365,7 +365,7 @@ export async function activeAlertSeverityByAsset(
     const acknowledged = r.acknowledged === true;
     const cur = out.get(r.assetId);
     const wins = !cur || rank > cur.rank || (rank === cur.rank && cur.acknowledged && !acknowledged);
-    if (wins) out.set(r.assetId, { severity: r.severity, rank, id: r.id, acknowledged });
+    if (wins) out.set(r.assetId, { severity: r.severity, rank, id: r.id, acknowledged, acknowledgedBy: acknowledged ? r.acknowledgedBy ?? null : null });
   }
   return out;
 }
@@ -387,15 +387,16 @@ export async function downAlertAcknowledgedByAsset(assetIds: string[]): Promise<
  *  capped, so this stays small at 2000 assets).
  *
  *  `withAlertRef` additionally names that alert on the row (`alertId` +
- *  `alertAcknowledged`), for a feed whose rows are ACTED on rather than only
- *  read — Down Assets, whose click-through offers Acknowledge. Opt-in so the
- *  other feeds' payload shapes are untouched. */
+ *  `alertAcknowledged` + `alertAcknowledgedBy`), for a feed whose rows are
+ *  ACTED on rather than only read — Down Assets, whose click-through offers
+ *  Acknowledge and whose acknowledged rows fade behind an "ack <owner>" pill.
+ *  Opt-in so the other feeds' payload shapes are untouched. */
 async function attachAlertSeverity<T extends object>(
   rows: T[],
   idOf: (r: T) => string | null | undefined,
   relevance: AlertRelevance = { kind: "any" },
   withAlertRef = false,
-): Promise<Array<T & { alertSeverity?: string; alertRank: number; alertId?: string; alertAcknowledged?: boolean }>> {
+): Promise<Array<T & { alertSeverity?: string; alertRank: number; alertId?: string; alertAcknowledged?: boolean; alertAcknowledgedBy?: string | null }>> {
   const ids = Array.from(new Set(rows.map(idOf).filter((x): x is string => !!x)));
   if (ids.length === 0 || relevance.kind === "none") return rows.map((r) => ({ ...r, alertRank: 0 }));
   const sev = await activeAlertSeverityByAsset(ids, relevance);
@@ -405,7 +406,7 @@ async function attachAlertSeverity<T extends object>(
     return {
       ...r,
       ...(s ? { alertSeverity: s.severity } : {}),
-      ...(s && withAlertRef ? { alertId: s.id, alertAcknowledged: s.acknowledged } : {}),
+      ...(s && withAlertRef ? { alertId: s.id, alertAcknowledged: s.acknowledged, alertAcknowledgedBy: s.acknowledgedBy } : {}),
       alertRank: s?.rank ?? 0,
     };
   });
@@ -501,6 +502,9 @@ export interface DownNode {
   // already owns is nothing to act on, so the click just opens the device).
   alertId?: string;
   alertAcknowledged?: boolean;
+  // Who took it — the name the row's "ack <owner>" pill prints, so a wallboard
+  // (which never hovers) says whose outage it is. Null when unacknowledged.
+  alertAcknowledgedBy?: string | null;
 }
 
 function siteOf(a: { location: string | null; learnedLocation: string | null; snmpLocation: string | null }): string {
