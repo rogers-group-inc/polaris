@@ -2734,6 +2734,19 @@ describe("automation wizard DOM render", () => {
     await pickMetric("probeLossPct");
     expect(ceiling().style.display).toBe("");
     (doc.querySelector("#tf-ratio-ceiling") as unknown as { value: string }).value = "90";
+    // The path failure rate is no longer a device condition — it lives under
+    // the Path Monitor trigger type, whose dropdown offers nothing else.
+    const whatOpts = () =>
+      Array.from(doc.querySelectorAll("#aw-trig-root .tgl-what option")).map((o) => (o as unknown as { value: string }).value);
+    expect(whatOpts()).not.toContain("m:pathFailurePct");
+    const win = g.window as InstanceType<typeof Window>;
+    const typeSel = doc.querySelector("#aw-trigger-type") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    typeSel.value = "path";
+    typeSel.dispatchEvent(new win.Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(whatOpts()).toContain("m:pathFailurePct");
+    expect(whatOpts()).not.toContain("m:probeLossPct");
+    expect(whatOpts().every((v) => v.startsWith("m:path"))).toBe(true);
     await pickMetric("pathFailurePct");
     expect(ceiling().style.display).toBe("none");
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
@@ -2742,6 +2755,32 @@ describe("automation wizard DOM render", () => {
     const saved = savedPayloads[0]! as Record<string, any>;
     expect(saved.trigger.metric).toBe("pathFailurePct");
     expect(saved.trigger.ignoreAtOrAbove).toBeUndefined();
+    // A new Path Monitor condition watches the Polaris server's runs too.
+    expect(saved.trigger.includeServer).toBe(true);
+  });
+
+  it("opens a stored path automation under Path Monitor, keeping its server choice", async () => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      ...LOSS_BASE, id: "r-path-stored", name: "ERP unreachable",
+      trigger: { type: "asset_metric", metric: "pathOk", aggregation: "latest", windowSec: 0, operator: "==", threshold: 0, forDurationSec: 0 },
+      reset: { mode: "auto" }, severityBands: null, bandNotify: null,
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect((doc.querySelector("#aw-trigger-type") as unknown as { value: string }).value).toBe("path");
+    // Stored before the flag existed: it never watched the server, so it opens unticked.
+    expect((doc.querySelector("#tf-path-server") as unknown as { checked: boolean }).checked).toBe(false);
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.metric).toBe("pathOk");
+    expect(saved.trigger.includeServer).toBe(false);
   });
 });
 
