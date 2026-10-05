@@ -11,6 +11,8 @@
   <!-- No <link rel="manifest"> on desktop pages: the install identity is
        mobile-only (/manifest.webmanifest has start_url=/mobile.html). This
        page previously pointed at a manifest whose only icon 404'd. -->
+  <script src="/js/theme-init.js"></script>
+  <link rel="expect" href="#polaris-nav-ready" blocking="render">
   <link rel="stylesheet" href="/css/styles.css">
 </head>
 <body>
@@ -166,6 +168,7 @@
   <script src="/js/api.js"></script>
   <script src="/js/brand-logo.js"></script>
   <script src="/js/app.js"></script>
+  <span id="polaris-nav-ready" hidden></span>
   <script src="/js/table-sf.js"></script>
   <script src="/js/favorites.js"></script>
   <script src="/js/monitor-states.js"></script>

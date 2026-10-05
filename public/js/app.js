@@ -2511,7 +2511,9 @@ if (window.PolarisBrandLogo) {
 async function fetchBranding() {
   try {
     var cached = JSON.parse(localStorage.getItem("polaris-branding") || "null");
-    if (cached) applyBranding(cached, true);
+    // Skipped when the early rail render (_renderNavFromCache) already put it
+    // on the page: each apply kicks an admin update check.
+    if (cached && !_branding) applyBranding(cached, true);
   } catch (_) {}
   try {
     var b = await api.serverSettings.getBranding();
@@ -5302,15 +5304,14 @@ function initSlideoverResize(panelEl, storageKey) {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
-document.addEventListener("DOMContentLoaded", async function () {
-  // Render nav immediately from cache so the sidebar doesn't flash on navigation.
-  // Restore the permission matrix + regions alongside the role NAME so the
-  // first `hideAdminOnlyElements()` call gates correctly — without this, every
-  // permission-gated element (Conflicts button, etc.) would be hidden until
-  // the post-fetch re-render and the change-detection branch below skipped
-  // re-rendering when only the matrix shifted.
-  var roleBeforeFetch = null;
-  var permsBeforeFetch = null;
+// Render nav immediately from cache so the sidebar doesn't flash on navigation.
+// Restore the permission matrix + regions alongside the role NAME so the
+// first `hideAdminOnlyElements()` call gates correctly — without this, every
+// permission-gated element (Conflicts button, etc.) would be hidden until
+// the post-fetch re-render and the change-detection branch below skipped
+// re-rendering when only the matrix shifted. Returns what it rendered from,
+// for the DOMContentLoaded handler's change detection; null on a cold cache.
+function _renderNavFromCache() {
   try {
     var cachedUser = JSON.parse(localStorage.getItem("polaris-user") || "null");
     if (cachedUser && cachedUser.role) {
@@ -5319,12 +5320,28 @@ document.addEventListener("DOMContentLoaded", async function () {
       currentUsername = cachedUser.username;
       currentRolePermissions = cachedUser.permissions || {};
       currentEffectiveRegions = Array.isArray(cachedUser.regions) ? cachedUser.regions : [];
-      roleBeforeFetch = cachedUser.role;
-      permsBeforeFetch = JSON.stringify(currentRolePermissions);
       renderNav();
       hideAdminOnlyElements();
+      // The cached logo and name too: renderNav paints them hidden until
+      // branding arrives, so without this the rail would blink its brand
+      // out and back on every page change.
+      try {
+        var cachedBranding = JSON.parse(localStorage.getItem("polaris-branding") || "null");
+        if (cachedBranding) applyBranding(cachedBranding, true);
+      } catch (_) {}
+      return { role: cachedUser.role, perms: JSON.stringify(currentRolePermissions) };
     }
   } catch (_) {}
+  return null;
+}
+var _navFromCache = null;
+
+document.addEventListener("DOMContentLoaded", async function () {
+  // Normally already done — at the end of this file, before first paint (see
+  // the bottom). Here for a page whose #sidebar was not in the DOM yet then.
+  if (!_navFromCache) _navFromCache = _renderNavFromCache();
+  var roleBeforeFetch = _navFromCache ? _navFromCache.role : null;
+  var permsBeforeFetch = _navFromCache ? _navFromCache.perms : null;
 
   // Wires the observer + backdrop guard and loads the preference under whatever
   // username the cache gave us (possibly none).
@@ -5354,3 +5371,16 @@ document.addEventListener("DOMContentLoaded", async function () {
   // any #view=<type>:<id> or #ip=... hash a search click-through left us.
   setTimeout(processSearchHash, 0);
 });
+
+// ─── Build the rail before first paint ────────────────────────────────────────
+// app.js loads at the end of <body>, so #sidebar is already in the DOM when this
+// runs and everything above is defined. Building the rail from the cached user
+// and branding HERE, rather than at DOMContentLoaded, puts a finished rail in
+// the page's first paint. That is what the cross-document view transition
+// (@view-transition in styles.css) snapshots: the sidebar is a named element
+// that holds still across a page change, and a rail painted empty and filled
+// a moment later would crossfade to blank and pop back in. Each page also
+// holds its first paint until the parser reaches #polaris-nav-ready, the
+// marker right after this script (<link rel="expect" blocking="render"> in
+// its <head>), so the snapshot cannot be taken before this has run.
+if (document.getElementById("sidebar")) _navFromCache = _renderNavFromCache();

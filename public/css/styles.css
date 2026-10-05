@@ -666,6 +666,34 @@ html[data-theme-fading][data-theme="morning"] *:not(.theme-band-track)::before,
 html[data-theme-fading][data-theme="morning"] *:not(.theme-band-track)::after,
 html[data-theme-fading][data-theme="morning"] .theme-band-track { transition-duration: 1600ms; }
 
+/* ─── Page changes: a crossfade, not a reload ──────────────────────────────
+   Every sidebar link is a full page load. A cross-document view transition
+   makes the browser crossfade old page to new instead of cutting, and the
+   rail — named below — is captured on its own, so it holds still while the
+   page beside it changes. Progressive: Chromium 126+ and Safari 18.2+; any
+   other browser ignores the at-rule and loads as before.
+
+   It only works because the NEW page's first paint already has a finished,
+   themed rail, which is what the transition snapshots. Three things make it
+   so, and losing any one brings the blink back:
+   - theme-init.js in each page's <head> applies the saved theme before the
+     first style pass (app.js used to, from the end of <body>);
+   - app.js builds the nav and brand from the cached user at the END of the
+     file, before first paint, not at DOMContentLoaded (_renderNavFromCache);
+   - <link rel="expect" href="#polaris-nav-ready" blocking="render"> holds
+     the first paint until the parser reaches the marker after app.js.
+   A new app page needs all three. */
+@view-transition { navigation: auto; }
+.sidebar { view-transition-name: polaris-sidebar; }
+/* Short: long enough to read as one surface changing, short enough that a
+   quick click-through never waits on it. */
+::view-transition-group(root),
+::view-transition-old(root),
+::view-transition-new(root) { animation-duration: 180ms; }
+@media (prefers-reduced-motion: reduce) {
+  @view-transition { navigation: none; }
+}
+
 /* ─── Reset ────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { font-size: 14px; color-scheme: dark; }

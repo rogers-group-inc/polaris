@@ -8,6 +8,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="icon" type="image/png" href="/img/brand/polaris-symbol-light.png">
   <link rel="icon" type="image/png" href="/img/brand/polaris-symbol-dark.png" media="(prefers-color-scheme: dark)">
+  <script src="/js/theme-init.js"></script>
+  <link rel="expect" href="#polaris-nav-ready" blocking="render">
   <link rel="stylesheet" href="/css/styles.css">
   <!-- Leaflet + markercluster for the siteMap dashboard widget. -->
   <link rel="stylesheet" href="/css/vendor/leaflet/leaflet.css">
@@ -75,6 +77,7 @@
   <script src="/js/passkeys-self.js"></script>
   <script src="/js/brand-logo.js"></script>
   <script src="/js/app.js"></script>
+  <span id="polaris-nav-ready" hidden></span>
   <!-- Canonical asset-details slide-in (openViewModal in assets.js), reused
        in-place by the Down Assets widget. Same dependency set map.html loads to
        reuse the same component; assets.js + integrations.js guard their
