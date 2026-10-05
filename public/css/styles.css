@@ -540,6 +540,15 @@ html {
      nightfall, so its geometry jumps to the sunrise's and only the colours
      fade, bringing the sun up in place at the bottom while the blue slides
      out to the right. */
+/* Noon → nightfall's glow move takes 2.5 s, half a second longer than the
+   other turns' 2 s; the palette keeps its 1.6 s. Keyed on the AFTERNOON
+   waypoint because that is where the turn's one glow transition starts —
+   afternoon carries nightfall's glow values, so the second leg changes
+   nothing and the transition runs on at this duration. Duration only;
+   the property list and curves are the bare html rule's. */
+html[data-theme="afternoon"] {
+  transition-duration: 2500ms;
+}
 html[data-theme="noon"] {
   transition-property: --page-glow-y,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
@@ -565,10 +574,10 @@ html[data-glow-turn="morning-noon"] {
 }
 @keyframes page-glow-round {
   0%   { --page-glow-w: 140vw;   --page-glow-h: 75vh; }
-  /* Round by a quarter of the way (0.5 s), and HELD round until three
-     quarters (1.5 s): the sun is a circle for most of its climb, not for
-     an instant half way. */
-  25%, 75% { --page-glow-w: 65vmin; --page-glow-h: 65vmin; }
+  /* Round by 12.5% (0.25 s), and HELD round until three quarters (1.5 s):
+     the sun is a circle almost as soon as it leaves the horizon and for
+     most of its climb, not for an instant half way. */
+  12.5%, 75% { --page-glow-w: 65vmin; --page-glow-h: 65vmin; }
   100% { --page-glow-w: 140vw;   --page-glow-h: 60vh; }
 }
 html[data-theme="morning"] {

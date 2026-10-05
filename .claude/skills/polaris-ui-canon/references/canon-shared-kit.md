@@ -180,7 +180,7 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   mid-screen; lightness is what reads on its mid-tone parchment, and the accent, a vivid orange
   alone and pale gold all vanished into it). So the turn to noon climbs the sun from the bottom
   edge to noon's top wash over the glow's 2 s, and ROUNDS on the way: morning's oval → a
-  `65vmin` circle by 25% (0.5 s), HELD round to 75% (1.5 s) → noon's oval, as the `page-glow-round` keyframe animation on
+  `65vmin` circle by 12.5% (0.25 s), HELD round to 75% (1.5 s) → noon's oval, as the `page-glow-round` keyframe animation on
   `html[data-glow-turn="morning-noon"]`. A transition only runs start → end, so a mid-point shape
   needs keyframes. The theme script (`_markGlowTurn`, both app.js files) holds `data-glow-turn`
   (`"<from>-<to>"`) for `GLOW_MS` = 2000, because `data-theme-fading` comes off at 880 ms and
@@ -216,7 +216,7 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   left on noon (−100% desktop / −130% phone) and right on morning (200% / 230%). **The afternoon
   waypoint carries NIGHTFALL's glow values** (main strength 0%, y −45% / −50%, night x 50%,
   strength 12.3%), never half-way ones: the turn from noon starts ONE 2 s glow transition on its
-  first leg, and the second leg changes nothing, so it runs on unbroken. A half-way value
+  first leg, and the second leg changes nothing, so it runs on unbroken. That one transition is 2.5 s, not 2 (`html[data-theme="afternoon"] { transition-duration: 2500ms }`, by the user's call: the 1.6 s palette was right, the glow wanted half a second more). A half-way value
   restarts the glow at 800 ms and lurches. "Just past"
   matters: the visible radius is 70% of the ellipse's horizontal radius (~98% of the width
   on desktop, ~126% on the phone), and parking further out spends the fast first half of the
