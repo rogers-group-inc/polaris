@@ -59,11 +59,31 @@ import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { chunkArray } from "../utils/chunk.js";
 import { logEvent } from "./eventLogService.js";
-import { isQuietNow, quietResumesAt, summarySendAt, type QuietTimeConfig } from "../utils/quietTime.js";
-import { quietSourceConfig, type QuietSourceKind } from "./quietTimeHoldService.js";
+import {
+  isQuietNow,
+  quietResumesAt,
+  summarySendAt,
+  quietSummaryAlways,
+  quietHoldsFires,
+  quietHoldsSend,
+  quietHoldsKind,
+  lastQuietStretch,
+  type QuietTimeConfig,
+} from "../utils/quietTime.js";
+import { quietSourceConfig, parseQuietTimeConfig, type QuietSourceKind } from "./quietTimeHoldService.js";
 import { resolveTimeZone, serverTimeZone } from "./userTimezoneService.js";
 import { applyBrandLetterhead, sendEmailThroughChannel } from "./notificationDeliveryService.js";
-import { CHANNEL_TRANSPORT, type ChannelType } from "./notificationTypes.js";
+import {
+  resolveAllUsers,
+  resolveUsersInAnyRegion,
+  resolveUsersByRegions,
+  resolveUsersByRoles,
+  resolveRecipientUsersByIds,
+  resolveRecipientUsers,
+  scopeRegionTagsOf,
+} from "./notificationRecipientService.js";
+import { CHANNEL_TRANSPORT, allRuleActionRefs, type ChannelType, type RuleActionCarrier } from "./notificationTypes.js";
+import { isIgnoreGlobalQuietTime } from "../utils/quietTime.js";
 
 function isChannelType(t: string): t is ChannelType {
   return Object.prototype.hasOwnProperty.call(CHANNEL_TRANSPORT, t);
@@ -96,6 +116,10 @@ interface SummaryDetails {
   outstanding: SummaryOutstandingRow[];
   recurring: SummaryRecurringRow[];
   recurrenceThreshold: number | null;
+  /** The all-quiet email (`summaryAlways`): nothing listed; `heldCount` alerts
+   *  fired and recovered during the stretch, 0 = none were held at all. */
+  allQuiet?: boolean;
+  heldCount?: number;
 }
 
 type HeldRow = Prisma.NotificationGetPayload<{ select: typeof HELD_SELECT }>;
@@ -257,7 +281,6 @@ export async function createDueSummaries(now: Date = new Date()): Promise<number
     orderBy: { quietHeldAt: "asc" },
     take: HELD_BATCH,
   });
-  if (held.length === 0) return 0;
 
   const bySource = new Map<string, { source: SourceStamp; alerts: HeldRow[] }>();
   for (const h of held) {
@@ -302,11 +325,20 @@ export async function createDueSummaries(now: Date = new Date()): Promise<number
     let recipients: SummaryRecipient[] = [];
     let channel: EmailChannelRow | null = null;
     let status = "pending";
-    if (listedIds.length === 0) {
+    // Nothing to list: everything recovered under the threshold. With
+    // `summaryAlways` (the default) that is still an email — the all-quiet
+    // one, to everyone the covered alerts would have reached — because its
+    // arriving is the point. Turned off, the row is written and nobody mailed.
+    const allQuiet = listedIds.length === 0;
+    if (allQuiet) {
+      details.allQuiet = true;
+      details.heldCount = covered.length;
+    }
+    if (allQuiet && !(config && quietSummaryAlways(config))) {
       status = "empty";
     } else {
       const heldRows = await prisma.notificationDelivery.findMany({
-        where: { notificationId: { in: listedIds }, status: "held" },
+        where: { notificationId: { in: allQuiet ? covered.map((c) => c.id) : listedIds }, status: "held" },
         select: { transport: true, target: true, meta: true, channelId: true },
       });
       const { addresses, userIds } = recipientsFromHeldRows(heldRows);
@@ -360,7 +392,169 @@ export async function createDueSummaries(now: Date = new Date()): Promise<number
       "quiet-time summary created",
     );
   }
+  created += await createAllQuietSummaries(now, new Set(bySource.keys()));
   return created;
+}
+
+// ─── THE ALL-QUIET SUMMARY ───────────────────────────────────────────────────
+//
+// A quiet stretch nothing was held in has no held alert to anchor a summary
+// on, so nothing above ever fires for it — and the operator wants the email
+// anyway: "nothing happened overnight, and the fact you are reading this
+// means the quiet time and email are working". This pass walks every enabled
+// source whose policy holds first alerts somewhere and has `summaryAlways`
+// (the default), finds the stretch that most recently ENDED
+// (`lastQuietStretch`), and when its send time has arrived writes an all-quiet
+// row once per stretch. Recipients are derived from the automations the
+// source covers: the static recipients of their notify actions (named users,
+// typed addresses, roles, tags, regions, scope-region users). Recipients that
+// depend on the triggering device — its region users, its address-book
+// contacts — cannot be resolved without an alert and are left out.
+
+interface SourceRow {
+  kind: QuietSourceKind;
+  id: string;
+  name: string;
+  config: QuietTimeConfig;
+  /** The last edit — a stretch that ended before it is not this policy's to report. */
+  since: Date;
+}
+
+const RULE_RECIPIENT_SELECT = {
+  id: true, name: true, enabled: true, severity: true, trigger: true, scope: true, quietTime: true, updatedAt: true,
+  actions: true, escalation: true, severityBands: true, bandNotify: true, resetActions: true,
+} as const;
+type RuleRecipientRow = Prisma.NotificationRuleGetPayload<{ select: typeof RULE_RECIPIENT_SELECT }>;
+
+async function createAllQuietSummaries(now: Date, handled: Set<string>): Promise<number> {
+  const [schedules, rules] = await Promise.all([
+    prisma.quietTimeSchedule.findMany({
+      where: { enabled: true },
+      select: { id: true, name: true, enabled: true, quiet: true, updatedAt: true },
+    }),
+    prisma.notificationRule.findMany({ where: { enabled: true }, select: RULE_RECIPIENT_SELECT }),
+  ]);
+  const sources: SourceRow[] = [];
+  for (const s of schedules) {
+    if (!s.enabled) continue;
+    const config = parseQuietTimeConfig(s.quiet);
+    if (config) sources.push({ kind: "global", id: s.id, name: s.name, config, since: s.updatedAt });
+  }
+  for (const r of rules) {
+    if (!r.enabled || r.quietTime == null || isIgnoreGlobalQuietTime(r.quietTime)) continue;
+    const config = parseQuietTimeConfig(r.quietTime);
+    if (config) sources.push({ kind: "automation", id: r.id, name: r.name, config, since: r.updatedAt });
+  }
+
+  let created = 0;
+  for (const src of sources) {
+    if (handled.has(`${src.kind}:${src.id}`)) continue;
+    if (!quietSummaryAlways(src.config) || !quietHoldsFires(src.config)) continue;
+    const stretch = lastQuietStretch(src.config, now);
+    if (!stretch) continue;
+    if (stretch.end.getTime() < src.since.getTime()) continue;
+    if (now.getTime() < summarySendAt(src.config, stretch.end).getTime()) continue;
+    const already = await prisma.quietTimeSummary.findFirst({
+      where: { sourceKind: src.kind, sourceId: src.id, coveredTo: { gte: stretch.end } },
+      select: { id: true },
+    });
+    if (already) continue;
+
+    const covered = src.kind === "automation"
+      ? rules.filter((r) => r.id === src.id)
+      : rules.filter((r) => r.enabled && r.quietTime == null && ruleCoveredByGlobal(r, src.config));
+    const { addresses, userIds } = await staticRecipientsOfRules(covered);
+    const recipients = await resolveRecipients(addresses, userIds, src.name);
+    const channel = await resolveSummaryChannel(src.config.summaryChannelId, []);
+    const details: SummaryDetails = { outstanding: [], recurring: [], recurrenceThreshold: src.config.recurrenceThreshold ?? null, allQuiet: true, heldCount: 0 };
+    let status = "pending";
+    if (!channel) {
+      status = "unroutable";
+      await logEvent({
+        action: "quiet_time.summary_unroutable",
+        resourceType: src.kind === "global" ? "quiet-time-schedule" : "notification-rule",
+        resourceId: src.id,
+        resourceName: src.name,
+        actor: "system:quiet-time",
+        level: "warning",
+        message: `All-quiet summary for "${src.name}" could not be sent: no enabled email channel.`,
+        details: { recipients: recipients.length },
+      }).catch(() => {});
+    } else if (recipients.length === 0) {
+      status = "empty";
+    }
+    const row = await prisma.quietTimeSummary.create({
+      data: {
+        sourceKind: src.kind,
+        sourceId: src.id,
+        sourceName: src.name,
+        coveredFrom: stretch.start,
+        coveredTo: stretch.end,
+        notificationIds: [],
+        listedCount: 0,
+        recurringCount: 0,
+        details: details as unknown as Prisma.InputJsonValue,
+        recipients: recipients as unknown as Prisma.InputJsonValue,
+        channelId: channel?.id ?? null,
+        status,
+        ...(status === "empty" ? { sentAt: now } : {}),
+      },
+      select: { id: true },
+    });
+    created++;
+    logger.info({ summaryId: row.id, source: `${src.kind}:${src.id}`, recipients: recipients.length, status }, "all-quiet summary created");
+  }
+  return created;
+}
+
+/** Does a global policy cover this automation at all — any severity the rule
+ *  can produce whose first alert it holds, and the rule's kind of alert? */
+function ruleCoveredByGlobal(rule: RuleRecipientRow, config: QuietTimeConfig): boolean {
+  const bands = Array.isArray(rule.severityBands) ? (rule.severityBands as Array<{ severity?: string }>) : [];
+  const severities = [rule.severity, ...bands.map((b) => b.severity).filter((s): s is string => typeof s === "string")];
+  if (!severities.some((s) => quietHoldsSend(config, s, "fire"))) return false;
+  const trig = (rule.trigger && typeof rule.trigger === "object" ? rule.trigger : {}) as { metric?: string; field?: string };
+  return quietHoldsKind(config, trig.metric ?? trig.field ?? null);
+}
+
+/** The static recipients of every notify action on these rules: addresses and
+ *  account ids, deduped. Device-dependent routing is skipped (see above). */
+async function staticRecipientsOfRules(rules: RuleRecipientRow[]): Promise<{ addresses: string[]; userIds: string[] }> {
+  const addresses = new Set<string>();
+  const userIds = new Set<string>();
+  for (const rule of rules) {
+    const carrier: RuleActionCarrier = {
+      actions: rule.actions as RuleActionCarrier["actions"],
+      escalation: rule.escalation,
+      severityBands: rule.severityBands as RuleActionCarrier["severityBands"],
+      bandNotify: rule.bandNotify as RuleActionCarrier["bandNotify"],
+      // The all-clear's recipients are not the summary's audience.
+      resetActions: null,
+    };
+    const scopeRegions = scopeRegionTagsOf(rule.scope as never);
+    for (const ref of allRuleActionRefs(carrier)) {
+      const a = ref.action as Record<string, unknown>;
+      if (a.type !== "notify") continue;
+      for (const addr of Array.isArray(a.addresses) ? (a.addresses as string[]) : []) {
+        const t = addr.trim().toLowerCase();
+        if (t) addresses.add(t);
+      }
+      const users: Array<{ id: string }> = [];
+      try {
+        if (a.recipientAllUsers) users.push(...(await resolveAllUsers()));
+        if (a.recipientAllRegions) users.push(...(await resolveUsersInAnyRegion()));
+        if (Array.isArray(a.recipientRegions) && a.recipientRegions.length) users.push(...(await resolveUsersByRegions(a.recipientRegions as string[])));
+        if (Array.isArray(a.recipientRoles) && a.recipientRoles.length) users.push(...(await resolveUsersByRoles(a.recipientRoles as string[])));
+        if (Array.isArray(a.recipientUserIds) && a.recipientUserIds.length) users.push(...(await resolveRecipientUsersByIds(a.recipientUserIds as string[])));
+        if (Array.isArray(a.recipientTags) && a.recipientTags.length) users.push(...(await resolveRecipientUsers(a.recipientTags as string[])));
+        if (a.recipientScopeRegion && scopeRegions?.length) users.push(...(await resolveRecipientUsers(scopeRegions)));
+      } catch (err) {
+        logger.warn({ ruleId: rule.id, err: (err as Error)?.message }, "all-quiet summary: a recipient lookup failed; continuing with the rest");
+      }
+      for (const u of users) userIds.add(u.id);
+    }
+  }
+  return { addresses: Array.from(addresses), userIds: Array.from(userIds) };
 }
 
 /** Addresses → recipients with their account (for the zone), plus push
@@ -453,6 +647,8 @@ export async function drainPendingSummaries(now: Date = new Date()): Promise<{ s
             outstanding: details.outstanding ?? [],
             recurring: details.recurring ?? [],
             recurrenceThreshold: details.recurrenceThreshold ?? null,
+            allQuiet: details.allQuiet === true,
+            heldCount: details.heldCount ?? 0,
             now,
           });
           const msg = await applyBrandLetterhead({ to: [r.address], subject: rendered.subject, text: rendered.text, html: rendered.html });

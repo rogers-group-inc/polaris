@@ -1387,14 +1387,18 @@ Holding everything but the first alert is the old reminder-only quiet time: the
 first alert and the all-clear go through, the chasing waits. Only a held first
 alert owes a summary. Nothing in the alert's clocks moves while a send is held.
 
-When the quiet period ends (or at a chosen send time, which may not fall inside
-a quiet period), **one summary email per person** goes to everyone the held
-alerts would have reached — by email even for people who prefer push, in each
-reader's own time zone — listing the alerts **still outstanding** and any that
-**recurred more than X times** for one device and component, with every time
-they fired. No graphs; each device opens in Polaris. A held alert that recovers
-before the summary is not listed, and its all-clear is not sent; once an alert
-has been named in a summary it behaves like any other. A test delivery is never
+When the quiet period ends (or at a chosen send time — refused only when it is
+inside the quiet period on every day it occurs), **one summary email per
+person** goes to everyone the held alerts would have reached — by email even
+for people who prefer push, in each reader's own time zone — listing the alerts
+**still outstanding** and any that **recurred more than X times** for one
+device and component, with every time they fired. No graphs; each device opens
+in Polaris. A held alert that recovers before the summary is not listed, and
+its all-clear is not sent; once an alert has been named in a summary it behaves
+like any other. With nothing to list — everything recovered, or nothing was
+held at all — the summary still goes out as the **all-quiet email** (on by
+default), to the people the covered automations notify, saying nothing is
+outstanding and, by arriving, that the quiet time and email delivery work. A test delivery is never
 held. Rule 44 is the hold mechanics inside this.
 
 See [Escalation, reminders and quiet time → Quiet time](Automation-Escalation#quiet-time).

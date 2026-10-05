@@ -23,6 +23,8 @@ import {
   heldKindsFor,
   quietHoldsSend,
   quietHeldSeverities,
+  quietSummaryAlways,
+  lastQuietStretch,
   MAX_QUIET_WINDOWS,
 } from "../../src/utils/quietTime.js";
 
@@ -93,6 +95,27 @@ describe("the per-severity hold map (`held`)", () => {
     expect(quietHeldSeverities({ windows: [NIGHTLY] } as never)).toBeNull();
     // `held` wins over the pair when both are present.
     expect(quietHoldsFires({ windows: [NIGHTLY], holds: "all", held: { warning: FOLLOW } } as never)).toBe(false);
+  });
+});
+
+describe("the all-quiet summary setting and the stretch it covers", () => {
+  it("summaryAlways is on unless written false", () => {
+    expect(quietSummaryAlways(quietTimeConfigSchema.parse({ windows: [NIGHTLY] }))).toBe(true);
+    expect(quietSummaryAlways(quietTimeConfigSchema.parse({ windows: [NIGHTLY], summaryAlways: false }))).toBe(false);
+    expect(quietSummaryAlways({ summaryAlways: true })).toBe(true);
+  });
+
+  it("lastQuietStretch is the most recent ended stretch, chained, or null while quiet", () => {
+    const nightly = { windows: [NIGHTLY] } as never;
+    expect(lastQuietStretch(nightly, at(2026, 10, 3, 7, 0))).toEqual({ start: at(2026, 10, 2, 22, 0), end: at(2026, 10, 3, 6, 0) });
+    expect(lastQuietStretch(nightly, at(2026, 10, 3, 23, 0))).toBeNull(); // quiet right now
+    expect(lastQuietStretch(nightly, at(2026, 10, 3, 6, 0))).toEqual({ start: at(2026, 10, 2, 22, 0), end: at(2026, 10, 3, 6, 0) }); // half-open end
+    // Nights and weekends: Friday 22:00 through Monday 06:00 is ONE stretch.
+    // 2026-10-03 is a Saturday.
+    const nightsAndWeekends = { windows: [NIGHTLY, WEEKEND] } as never;
+    expect(lastQuietStretch(nightsAndWeekends, at(2026, 10, 5, 7, 0))).toEqual({ start: at(2026, 10, 2, 22, 0), end: at(2026, 10, 5, 6, 0) });
+    expect(lastQuietStretch(nightsAndWeekends, at(2026, 10, 4, 12, 0))).toBeNull(); // Sunday noon is quiet
+    expect(lastQuietStretch({ windows: [MONTHLY] } as never, at(2026, 10, 15, 12, 0))).toBeNull(); // nothing in the look-back
   });
 });
 

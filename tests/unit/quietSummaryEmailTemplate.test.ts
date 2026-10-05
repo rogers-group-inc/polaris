@@ -33,7 +33,7 @@ afterEach(() => { delete process.env.POLARIS_PUBLIC_URL; });
 describe("quietSummarySubject", () => {
   it("counts what is outstanding and what recurred", () => {
     expect(quietSummarySubject({ sourceName: "Nights", outstanding: OUTSTANDING, recurring: RECURRING })).toBe("[QUIET TIME SUMMARY] 1 outstanding · 1 recurring · Nights");
-    expect(quietSummarySubject({ sourceName: "Nights", outstanding: [], recurring: [] })).toBe("[QUIET TIME SUMMARY] nothing outstanding · Nights");
+    expect(quietSummarySubject({ sourceName: "Nights", outstanding: [], recurring: [] })).toBe("[QUIET TIME SUMMARY] all quiet · Nights");
   });
 });
 
@@ -72,9 +72,16 @@ describe("renderQuietSummaryEmail", () => {
     expect(r.html).toContain("&lt;b&gt;down&lt;/b&gt;");
   });
 
-  it("says so when nothing is outstanding and nothing recurred", () => {
-    const r = render({ outstanding: [], recurring: [] });
-    expect(r.text).toContain("Nothing is outstanding");
-    expect(r.html).toContain("Nothing is outstanding");
+  it("is the ALL-QUIET email when nothing is outstanding and nothing recurred — with the count of what fired and recovered", () => {
+    const r = render({ outstanding: [], recurring: [], allQuiet: true, heldCount: 3 });
+    expect(r.subject).toBe("[QUIET TIME SUMMARY] all quiet · Nights");
+    expect(r.text).toContain("Nothing is outstanding: 3 alerts fired during the quiet period and have all recovered.");
+    expect(r.text).toContain("confirms that the quiet time and your email delivery are working");
+    expect(r.html).toContain("All quiet");
+    expect(r.html).not.toContain("Still outstanding");
+    // Nothing held at all reads differently from everything-recovered.
+    const none = render({ outstanding: [], recurring: [], allQuiet: true, heldCount: 0 });
+    expect(none.text).toContain("no alerts were held during the quiet period");
+    expect(none.text).toContain('ran from');
   });
 });

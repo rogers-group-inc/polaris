@@ -257,6 +257,15 @@ describe("PolarisQuietTimeEditor", () => {
     expect(got.config.summaryAt).toBe("07:30");
   });
 
+  it("the all-quiet email is on by default and only the opt-out is written", () => {
+    const root = mountEditor(null);
+    expect((root.querySelector(".qte-always") as HTMLInputElement).checked).toBe(true);
+    expect(qte.collect(root).config.summaryAlways).toBeUndefined();
+    set(root, ".qte-always", false);
+    expect(qte.collect(root).config.summaryAlways).toBe(false);
+    expect((mountEditor({ windows: [{ version: 1, kind: "recurring", freq: "daily" }], summaryAlways: false }).querySelector(".qte-always") as HTMLInputElement).checked).toBe(false);
+  });
+
   it("the channel picker offers only email channels", () => {
     const root = mountEditor(null);
     const opts = Array.from(root.querySelectorAll(".qte-channel option")).map((o) => (o as HTMLOptionElement).value);

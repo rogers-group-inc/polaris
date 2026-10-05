@@ -323,6 +323,10 @@
             (channels.length ? "" : '<span class="hint" style="display:block;color:var(--color-warning)">No email channel is configured — add one under Delivery or the summary cannot be sent.</span>') +
           '</div>' +
         '</div>' +
+        '<label style="display:flex;align-items:flex-start;gap:6px;margin:0.7rem 0 0;font-weight:400;cursor:pointer">' +
+          '<input type="checkbox" class="qte-always"' + (!cfg || cfg.summaryAlways !== false ? " checked" : "") + ' style="width:auto;margin-top:0.2rem"> ' +
+          '<span>Send the summary even when nothing was held <span style="font-size:0.78rem;color:var(--color-text-tertiary)">— an "all quiet" email saying nothing is outstanding, which also confirms the quiet time and email delivery are working. It goes to the people the covered automations notify.</span></span>' +
+        '</label>' +
         '<p class="qte-problem" style="font-size:0.8rem;color:var(--color-warning);margin:6px 0 0"></p>' +
       '</div>' +
     '</div>';
@@ -353,7 +357,7 @@
         fire();
       });
     });
-    [".qte-summary-time", ".qte-threshold", ".qte-channel"].forEach(function (sel) {
+    [".qte-summary-time", ".qte-threshold", ".qte-channel", ".qte-always"].forEach(function (sel) {
       var el = host.querySelector(sel);
       if (el) el.addEventListener(el.tagName === "SELECT" ? "change" : "input", fire);
     });
@@ -451,6 +455,9 @@
       out.recurrenceThreshold = th !== "" && th != null && !isNaN(Number(th)) ? Number(th) : null;
       var ch = (host.querySelector(".qte-channel") || {}).value || "";
       out.summaryChannelId = ch || null;
+      // On by default; only the opt-out is written (the server reads absent as true).
+      var always = host.querySelector(".qte-always");
+      if (always && !always.checked) out.summaryAlways = false;
     } else {
       out.summaryAt = null;
       out.recurrenceThreshold = null;
@@ -474,7 +481,7 @@
       ? cfg.windows.map(function (w) { return R().summary(w); }).join(" and ")
       : cfg.windows.length + " quiet periods");
     bits.push("holds " + describeHeld(cfg));
-    if (policySummarises(cfg)) bits.push("summary " + (cfg.summaryAt ? "at " + cfg.summaryAt : "when it ends"));
+    if (policySummarises(cfg)) bits.push("summary " + (cfg.summaryAt ? "at " + cfg.summaryAt : "when it ends") + (cfg.summaryAlways === false ? ", only when something was held" : ""));
     if (cfg.recurrenceThreshold) bits.push("recurring > " + cfg.recurrenceThreshold + "× reported");
     return bits.join(" · ");
   }

@@ -254,6 +254,8 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
  *   recurrenceThreshold an alert that fired MORE THAN this many times during
  *                       the window is reported even if it has recovered, with
  *                       every fire time; null = off.
+ *   summaryAlways       send the summary even when nothing was held (the
+ *                       "all quiet" email). Absent = true.
  *
  * Severity values are plain strings here because `SEVERITIES` lives in
  * notificationTypes, which imports this module; the two consumers refine
@@ -289,6 +291,11 @@ export const quietTimeConfigSchema = z
     summaryAt: z.string().regex(TIME_RE, "expected 24h time like 07:30").optional().nullable(),
     summaryChannelId: z.string().min(1).max(100).optional().nullable(),
     recurrenceThreshold: z.number().int().min(1).max(100).optional().nullable(),
+    // Send the summary even when nothing was held — an "all quiet" email that
+    // says nothing is outstanding and, by arriving, that the quiet time and
+    // the email path are working. Absent = true (on by default, the operator's
+    // call 2026-10-05); only `false` is ever written.
+    summaryAlways: z.boolean().optional(),
   })
   .strict()
   .superRefine((cfg, ctx) => {
@@ -412,6 +419,48 @@ type HoldPolicy = { held?: Record<string, HeldKinds> | null; holds?: "all" | "fo
 
 function anyKind(k: HeldKinds): boolean {
   return k.alerts || k.alertReminders || k.escalations || k.escalationReminders;
+}
+
+/** Does the policy want an "all quiet" summary when nothing was held? On unless turned off. */
+export function quietSummaryAlways(cfg: { summaryAlways?: boolean | null }): boolean {
+  return cfg.summaryAlways !== false;
+}
+
+/** How far back `lastQuietStretch` looks for the stretch that just ended. */
+const LAST_STRETCH_LOOKBACK_DAYS = 8;
+
+/**
+ * The most recent quiet stretch that has ENDED by `now` — its start and end —
+ * or null when it is quiet right now or no window has occurred lately. The
+ * all-quiet summary is for a stretch nothing was held in, so there is no held
+ * alert to anchor the covered range on; this walks the recurrence instead.
+ * Abutting and overlapping occurrences are one stretch, as everywhere else in
+ * this module: nights and weekends read as one silence from Friday 22:00 to
+ * Monday 06:00, not three.
+ */
+export function lastQuietStretch(quiet: QuietConfig | null | undefined, now: Date): { start: Date; end: Date } | null {
+  if (!quiet || isQuietNow(quiet, now)) return null;
+  const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - LAST_STRETCH_LOOKBACK_DAYS, 0, 0, 0, 0);
+  const occs: MaintenanceOccurrence[] = [];
+  for (const w of quiet.windows) {
+    for (const o of expandOccurrences(w, from, now, LAST_STRETCH_LOOKBACK_DAYS * MAX_QUIET_WINDOWS * 8 + 8)) {
+      if (o.end.getTime() <= now.getTime()) occs.push(o);
+    }
+  }
+  if (occs.length === 0) return null;
+  let end = occs[0]!.end;
+  for (const o of occs) if (o.end.getTime() > end.getTime()) end = o.end;
+  // Walk back through everything that touches the stretch.
+  let start = end;
+  for (const o of occs) if (o.end.getTime() === end.getTime() && o.start.getTime() < start.getTime()) start = o.start;
+  for (let i = 0; i < MAX_QUIET_CHAIN * 8; i++) {
+    let extended = false;
+    for (const o of occs) {
+      if (o.end.getTime() >= start.getTime() && o.start.getTime() < start.getTime()) { start = o.start; extended = true; }
+    }
+    if (!extended) break;
+  }
+  return { start, end };
 }
 
 /** LEGACY reading: does the policy hold the FIRST alert? "followUps" lets it

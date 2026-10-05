@@ -260,6 +260,7 @@
         rows.push(["Summary sent", q.summaryAt ? "at " + q.summaryAt + " (server time)" : "when each quiet period ends"]);
         rows.push(["Recurring alerts", q.recurrenceThreshold ? "reported when fired more than " + q.recurrenceThreshold + " times" : "not reported separately"]);
         rows.push(["Email channel", ch ? ch.name : "Automatic"]);
+        rows.push(["When nothing was held", q.summaryAlways === false ? "no email" : "an all-quiet email, confirming the quiet time and email delivery are working"]);
       }
       panel.innerHTML = '<h3 style="margin:0 0 0.25rem">Review &amp; save</h3>' +
         '<dl class="aw-summary-dl" style="display:grid;grid-template-columns:max-content 1fr;gap:0.35rem 1rem;font-size:0.9rem">' +

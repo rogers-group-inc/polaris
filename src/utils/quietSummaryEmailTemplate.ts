@@ -20,6 +20,10 @@
  *                 the policy's threshold during the window: device, what, the
  *                 count, every fire time, and whether it is still active. An
  *                 alert listed here is NOT repeated above.
+ * With neither it is the ALL-QUIET email (`summaryAlways`, on by default):
+ * nothing outstanding, how many alerts fired and recovered (or that none were
+ * held), and the line that this arriving proves the quiet time and the email
+ * path work — the morning heartbeat the operator asked for on 2026-10-05.
  *
  * `{brand.header}` is left in both bodies for `applyBrandLetterhead`, exactly
  * as the alert templates leave it for the drain.
@@ -61,6 +65,10 @@ export interface QuietSummaryInput {
   outstanding: SummaryOutstandingRow[];
   recurring: SummaryRecurringRow[];
   recurrenceThreshold: number | null;
+  /** The "all quiet" email: nothing to list. `heldCount` says how many alerts
+   *  fired and recovered during the stretch (0 = none were held at all). */
+  allQuiet?: boolean;
+  heldCount?: number;
   now: Date;
 }
 
@@ -104,8 +112,15 @@ export function quietSummarySubject(input: Pick<QuietSummaryInput, "sourceName" 
   const parts: string[] = [];
   if (input.outstanding.length > 0) parts.push(`${input.outstanding.length} outstanding`);
   if (input.recurring.length > 0) parts.push(`${input.recurring.length} recurring`);
-  if (parts.length === 0) parts.push("nothing outstanding");
+  if (parts.length === 0) parts.push("all quiet");
   return `[QUIET TIME SUMMARY] ${parts.join(" · ")} · ${input.sourceName}`;
+}
+
+/** The one-liner of an all-quiet email, from how many alerts fired and recovered. */
+function allQuietLine(heldCount: number): string {
+  return heldCount > 0
+    ? `Nothing is outstanding: ${plural(heldCount, "alert")} fired during the quiet period and ${heldCount === 1 ? "has" : "have all"} recovered.`
+    : "Nothing is outstanding: no alerts were held during the quiet period.";
 }
 
 /** Render the summary for one reader. */
@@ -113,9 +128,12 @@ export function renderQuietSummaryEmail(input: QuietSummaryInput): RenderedSumma
   const { zone, now } = input;
   const fmt = (d: Date | string) => formatLocalTime(d, zone);
   const kind = input.sourceKind === "global" ? "global quiet time" : "automation quiet time";
-  const intro =
-    `Alerts held by ${kind} "${input.sourceName}" between ${fmt(input.coveredFrom)} and ${fmt(input.coveredTo)}. ` +
-    `Times are shown in ${zone}.`;
+  const allQuiet = input.outstanding.length === 0 && input.recurring.length === 0;
+  const heldCount = input.heldCount ?? 0;
+  const intro = allQuiet
+    ? `${kind.charAt(0).toUpperCase()}${kind.slice(1)} "${input.sourceName}" ran from ${fmt(input.coveredFrom)} to ${fmt(input.coveredTo)}. Times are shown in ${zone}.`
+    : `Alerts held by ${kind} "${input.sourceName}" between ${fmt(input.coveredFrom)} and ${fmt(input.coveredTo)}. ` +
+      `Times are shown in ${zone}.`;
 
   // ── text ──────────────────────────────────────────────────────────────────
   const text: string[] = ["{brand.header}", "", intro, ""];
@@ -147,8 +165,8 @@ export function renderQuietSummaryEmail(input: QuietSummaryInput): RenderedSumma
     }
     text.push("");
   }
-  if (input.outstanding.length === 0 && input.recurring.length === 0) {
-    text.push("Nothing is outstanding: every alert held during this quiet period has recovered.", "");
+  if (allQuiet) {
+    text.push(allQuietLine(heldCount), "", "This email also confirms that the quiet time and your email delivery are working.", "");
   }
   text.push(`Sent by Polaris · quiet time "${input.sourceName}"`);
 
@@ -219,8 +237,14 @@ export function renderQuietSummaryEmail(input: QuietSummaryInput): RenderedSumma
     html.push("</table>", "</td></tr>");
   }
 
-  if (input.outstanding.length === 0 && input.recurring.length === 0) {
-    html.push('<tr><td style="padding:14px 22px;font-size:14px;color:#15803d;font-weight:600">Nothing is outstanding: every alert held during this quiet period has recovered.</td></tr>');
+  if (allQuiet) {
+    html.push(
+      '<tr><td style="padding:14px 22px 4px">',
+      `<div style="font-size:16px;color:#15803d;font-weight:700">All quiet</div>`,
+      `<div style="font-size:14px;color:#1f2430;margin-top:4px">${escapeHtml(allQuietLine(heldCount))}</div>`,
+      '<div style="font-size:12px;color:#6b7280;margin-top:8px">This email also confirms that the quiet time and your email delivery are working.</div>',
+      "</td></tr>",
+    );
   }
 
   html.push(
