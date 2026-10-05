@@ -182,14 +182,15 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   edge to noon's top wash over the glow's 2 s. A theme that overrides `--page-glow` whole goes back to cutting.
   **Nightfall's glow is a second, SLIDING layer** (`--night-glow`, moonlight blue `#6d97ff` at
   12.3% at rest, with four registered parts: `--night-glow-x`, its size `--night-glow-w` /
-  `--night-glow-h`, and `--night-glow-c`, ONE `<color>` that is WHITE wherever the glow is parked —
-  35% on noon (`rgba(255,255,255,.35)`, the entry; the `:root` default) and 50% on morning (where
-  the exit ends; swapped unseen on morning → noon, whose rule does not transition it) — and the
-  blue only at rest on nightfall. That blue is the old electric `#2f6bff` with 30% white mixed
-  in (`#6d97ff`, still 12.3%), duller and closer to moonlight, at the user's call.
+  `--night-glow-h`, and `--night-glow-c`, ONE `<color>`: WHITE at 35% parked on noon
+  (`rgba(255,255,255,.35)`, the entry; the `:root` default), and the moonlight blue on nightfall
+  AND parked on morning, so the exit never changes colour (by the user's call; it whitened to 50%
+  before). Morning → noon swaps blue for white unseen, the glow off-screen and the noon rule not
+  transitioning it. That blue is the old electric `#2f6bff` with 30% white mixed in (`#6d97ff`,
+  still 12.3%), duller and closer to moonlight, at the user's call.
   Parked it is also HALF size (70% × 30% desktop, 90% × 33% phone, against 140% × 60% /
   180% × 66%): the white light slides in small and grows to the full wash as it cools to blue,
-  and shrinks and pales back to white as it leaves. A stronger blue was tried first and still
+  and shrinks, still blue, as it leaves. A stronger blue was tried first and still
   read as nothing over the grounds crossed mid-turn. Size and colour take a gentle sine curve
   (`cubic-bezier(0.37, 0, 0.63, 1)`) so they change evenly across the whole 2 s both ways (a
   late/early colour curve was tried and replaced at the user's call); position keeps the

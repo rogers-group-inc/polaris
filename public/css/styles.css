@@ -162,13 +162,12 @@
      fade. Saturated blue rather than nightfall's pastel accent, which went
      grey slate at this faintness. */
   --night-glow-x: -100%;
-  /* WHITE wherever it is parked (35% here, which is noon's, the entry; 50%
-     on morning, where the exit ends), and the blue only at rest on
-     nightfall: a MOONLIGHT blue, #6d97ff at 12.3% — the electric #2f6bff
-     with 30% white mixed in, duller and softer. The glow's 2 s transition
-     carries the one colour between them with the slide: it comes in as a
-     white light and cools to the blue as it lands, and pales back to white
-     as it leaves for morning. A stronger blue was tried first and still read as nothing over
+  /* WHITE at 35% parked here on noon, the entry, and a MOONLIGHT blue,
+     #6d97ff at 12.3% — the electric #2f6bff with 30% white mixed in,
+     duller and softer — at rest on nightfall and parked on morning. The
+     glow's 2 s transition carries the one colour with the slide: it comes
+     in as a white light and cools to the blue as it lands, and leaves for
+     morning still blue (the exit changes position and size only). A stronger blue was tried first and still read as nothing over
      the grounds it crosses mid-turn (the afternoon tan into indigo); white
      is what shows against both. One registered <color>, not a hue plus a
      strength, so hue and alpha move together. */
@@ -550,8 +549,8 @@ html[data-theme="morning"] {
      at the start, so the fast middle of the ease was the part you saw, and
      it was gone in 1.05 s against the entrance's 1.46 s on screen. Mirrored,
      both are on screen 1.46 s at the same speeds. Size and colour keep the
-     gentle sine, which is symmetric already: it pales to white and shrinks
-     to half size evenly, ending at 50% white. */
+     gentle sine, which is symmetric already: it shrinks to half size
+     evenly, and stays the moonlight blue (morning parks it in that colour). */
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
     cubic-bezier(0.8, 0, 0.6, 1),
     cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
@@ -698,10 +697,12 @@ code {
   /* Night glow gone past the right edge: the turn from nightfall slides it
      out that way. */
   --night-glow-x: 200%;
-  /* The exit to morning still ends at 50% white; only the entry from noon
-     starts at 35%. Morning -> noon swaps the two while the glow is parked
-     off-screen (the noon rule does not transition it), so it never shows. */
-  --night-glow-c: rgba(255,255,255,.5);
+  /* The exit to morning keeps nightfall's moonlight blue: the glow slides
+     out and shrinks, but its colour does not change. Only the entry from
+     noon is white (35%). Morning -> noon swaps blue for white while the
+     glow is parked off-screen (the noon rule does not transition it), so
+     it never shows. */
+  --night-glow-c: rgba(109,151,255,.123);
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────
