@@ -181,16 +181,18 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   alone and pale gold all vanished into it). So the turn to noon climbs the sun from the bottom
   edge to noon's top wash over the glow's 2 s. A theme that overrides `--page-glow` whole goes back to cutting.
   **Nightfall's glow is a second, SLIDING layer** (`--night-glow`, electric blue `#2f6bff` at
-  12.3% at rest, with two registered parts: `--night-glow-x` and `--night-glow-c`, ONE `<color>` that is
-  WHITE at 50% (`rgba(255,255,255,.5)`) wherever the glow is parked and the blue only at rest on
-  nightfall — it slides in white and cools to blue as it lands, and pales back to white as it
-  leaves. A stronger blue was tried first and still read as nothing over the grounds crossed
-  mid-turn. The colour has its OWN timing curve: late (`cubic-bezier(0.7, 0, 0.84, 0)`) in the
-  bare `html` rule, so it holds white for most of the slide in, early
-  (`cubic-bezier(0.16, 1, 0.3, 1)`) in the morning rule, so it whitens at once on the way out. On
-  the position's curve the white was spent while the glow was still off-screen. The curves are
-  per-property lists in `transition-property` order with the colour LAST, because a rule with a
-  shorter property list (noon's) cuts the inherited list to fit); nightfall turns the main glow off
+  12.3% at rest, with four registered parts: `--night-glow-x`, its size `--night-glow-w` /
+  `--night-glow-h`, and `--night-glow-c`, ONE `<color>` that is WHITE at 50%
+  (`rgba(255,255,255,.5)`) wherever the glow is parked and the blue only at rest on nightfall.
+  Parked it is also HALF size (70% × 30% desktop, 90% × 33% phone, against 140% × 60% /
+  180% × 66%): the white light slides in small and grows to the full wash as it cools to blue,
+  and shrinks and pales back to white as it leaves. A stronger blue was tried first and still
+  read as nothing over the grounds crossed mid-turn. Size and colour take a gentle sine curve
+  (`cubic-bezier(0.37, 0, 0.63, 1)`) so they change evenly across the whole 2 s both ways (a
+  late/early colour curve was tried and replaced at the user's call); position keeps the
+  ease-in-out. The curves are per-property lists in `transition-property` order with the night
+  glow's size and colour LAST, because a rule with a shorter property list (noon's) cuts the
+  inherited list to fit); nightfall turns the main glow off
   (`--page-glow-strength: 0%`) and centres it. It is parked just past an edge everywhere else:
   left on noon (−100% desktop / −130% phone) and right on morning (200% / 230%). **The afternoon
   waypoint carries NIGHTFALL's glow values** (main strength 0%, y −45% / −50%, night x 50%,

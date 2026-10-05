@@ -27,6 +27,8 @@
    turn to morning. Only its horizontal centre moves; see --night-glow. */
 @property --night-glow-x  { syntax: "<percentage>"; inherits: true; initial-value: -100%; }
 @property --night-glow-c { syntax: "<color>"; inherits: true; initial-value: rgba(255,255,255,.5); }
+@property --night-glow-w { syntax: "<percentage>"; inherits: true; initial-value: 70%; }
+@property --night-glow-h { syntax: "<percentage>"; inherits: true; initial-value: 30%; }
 
 :root {
   --color-bg-primary: #151528;
@@ -169,7 +171,12 @@
      is what shows against both. One registered <color>, not a hue plus a
      strength, so hue and alpha move together. */
   --night-glow-c: rgba(255,255,255,.5);
-  --night-glow: radial-gradient(ellipse 140% 60% at var(--night-glow-x) 0%,
+  /* HALF size wherever it is parked (70% x 30% against nightfall's 140% x 60%):
+     the white light comes in small and grows to the full wash as it cools
+     to blue, and shrinks back as it leaves. */
+  --night-glow-w: 70%;
+  --night-glow-h: 30%;
+  --night-glow: radial-gradient(ellipse var(--night-glow-w) var(--night-glow-h) at var(--night-glow-x) 0%,
     var(--night-glow-c) 0%,
     transparent 70%);
   --page-glow:
@@ -504,17 +511,16 @@ html {
   transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
-    --night-glow-x, --night-glow-c;
+    --night-glow-x, --night-glow-w, --night-glow-h, --night-glow-c;
   transition-duration: 2000ms;
-  /* One curve per property, in transition-property's order. Everything
-     eases in and out, except the night glow's colour (last), which holds
-     its START value and changes late: sliding in from noon it stays white
-     for most of the slide and only cools to the blue as it lands. On the
-     same curve as the position, the white was spent while the glow was
-     still off-screen. Rules with shorter property lists (noon's) cut this
-     list to fit, which is why the colour must stay LAST. */
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
-    cubic-bezier(0.7, 0, 0.84, 0);
+  /* One curve per property, in transition-property's order. Position and
+     the main glow ease in and out; the night glow's size and colour (the
+     last three) take a gentle sine curve, so the white light grows and
+     cools to blue evenly across the whole 2 s rather than mostly at one
+     end. Rules with shorter property lists (noon's) cut this list to fit,
+     which is why the night glow's parts must stay LAST. */
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
+    cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
   transition-delay: 0s;
 }
 /* What must NOT move, by destination — each one a jump made while the
@@ -533,11 +539,11 @@ html[data-theme="noon"] {
 }
 html[data-theme="morning"] {
   transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
-    --night-glow-x, --night-glow-c;
-  /* Leaving for morning the colour turns EARLY instead, so the glow goes
-     white at once and slides out white, ending at 50% white off-screen. */
+    --night-glow-x, --night-glow-w, --night-glow-h, --night-glow-c;
+  /* The same gentle curve on the way out: the blue pales to white and
+     shrinks to half size evenly as it slides off, ending at 50% white. */
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
-    cubic-bezier(0.16, 1, 0.3, 1);
+    cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
 }
 @media (prefers-reduced-motion: reduce) {
   html, html[data-theme] { transition: none; }
@@ -755,6 +761,8 @@ code {
   --page-glow-y: -45%;
   --night-glow-x: 50%;
   --night-glow-c: rgba(47,107,255,.123);
+  --night-glow-w: 140%;
+  --night-glow-h: 60%;
 }
 
 /* ─── Nightfall ──────────────────────────────────────────────────────────────
@@ -801,6 +809,8 @@ code {
   --page-glow-y: -45%;
   --night-glow-x: 50%;
   --night-glow-c: rgba(47,107,255,.123);
+  --night-glow-w: 140%;
+  --night-glow-h: 60%;
 }
 
 /* ─── Layout ───────────────────────────────────────────────────────────────── */
