@@ -133,9 +133,12 @@ Two tabs are conditional:
 
 - **SNMP Walk** — admins only, **and** only when at least one monitoring stream
   actually resolves to SNMP for this asset.
-- **Services** and **Software** — hidden on Fortinet infrastructure (firewall
-  / switch / access point) and on the `other` catch-all, none of which report
-  a unit list or an installed-program list.
+- **Services** and **Software** — only when something is actually pulling
+  that information in for this asset: **Services** when the Polaris Agent
+  reports its services or processes, or agentless process polling does;
+  **Software** when the agent, Intune or Azure Arc reports installed software.
+  A host none of them cover has neither tab. Never on Fortinet infrastructure
+  (firewall / switch / access point) or the `other` catch-all.
 
 Three are device-type specific: **Wireless** on a monitored access point, **MAC
 Table** on a switch, **ARP Table** on a firewall.
