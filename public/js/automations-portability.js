@@ -472,6 +472,7 @@
     if (isPlainObject(src.quietTime) && Array.isArray(src.quietTime.windows) && src.quietTime.windows.length) {
       var qt = { windows: clone(src.quietTime.windows) };
       if (src.quietTime.holds === "followUps") qt.holds = "followUps";
+      if (isPlainObject(src.quietTime.held)) qt.held = clone(src.quietTime.held);
       if (Array.isArray(src.quietTime.severities) && src.quietTime.severities.length) qt.severities = src.quietTime.severities.slice();
       if (src.quietTime.summaryAt) qt.summaryAt = src.quietTime.summaryAt;
       if (src.quietTime.recurrenceThreshold != null) qt.recurrenceThreshold = src.quietTime.recurrenceThreshold;

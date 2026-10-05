@@ -594,6 +594,33 @@ describe("the sweep's quiet time", () => {
     expect(db.deliveries.map((d) => d.meta.subject.slice(0, 12)).sort()).toEqual(["[ESCALATION ", "[REMINDER 1 "]);
   });
 
+  it("the per-severity map holds each kind of send on its own: reminders held, the escalation tier goes out", async () => {
+    seedRule({
+      actions: [NOTIFY],
+      repeat: QUIET_REPEAT,
+      quietTime: { ...QUIET_TIME, held: { warning: { alerts: true, alertReminders: true, escalations: false, escalationReminders: false } } },
+      escalation: {
+        stopOn: "acknowledge",
+        tiers: [{ afterMin: 30, actions: [{ type: "notify", channelId: "ch-email", addresses: ["boss@example.com"] }] }],
+      },
+    });
+    seedNotif({ triggeredAt: firedAt });
+
+    // Mid-window: the tier sends, the reminder is held — and the hold is stamped.
+    expect(await runEscalationSweep(NIGHT)).toBe(1);
+    expect(db.deliveries.map((d) => d.meta.subject.slice(0, 12))).toEqual(["[ESCALATION "]);
+    const state = db.notifUpdates[0].data.escalationState;
+    expect(state.quietHeldCount).toBe(1);
+    expect(state.quietHeldSince).toBe(NIGHT.toISOString());
+
+    // After the window the held reminder goes out and reports the silence.
+    db.notifs[0].escalationState = state;
+    db.notifUpdates.length = 0;
+    db.deliveries.length = 0;
+    expect(await runEscalationSweep(MORNING)).toBe(1);
+    expect(db.deliveries[0].meta.subject.slice(0, 12)).toBe("[REMINDER 1 ");
+  });
+
   it("the follow-ups-only mode holds the chasing in the same way", async () => {
     seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT, quietTime: { ...QUIET_TIME, holds: "followUps" } });
     seedNotif({ triggeredAt: firedAt });

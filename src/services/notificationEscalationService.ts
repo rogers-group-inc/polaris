@@ -51,11 +51,13 @@
  * Repeats land on the 60s tick, so real spacing is everyMin + up to 60s of
  * jitter. That is fine at a 5-minute floor — don't "fix" the drift.
  *
- * QUIET TIME (business rule 92, which widened rule 44): an alert that is quiet
- * right now — by its automation's own quiet time, else by a global schedule
- * (quietTimeHoldService.resolveQuietHold) — has BOTH passes HELD, not skipped:
- * nothing advances, so every due tier and reminder goes out on the first
- * sweep after the window ends. That is the whole mechanism, and it is why
+ * QUIET TIME (business rule 92, which widened rule 44): every DUE send in both
+ * passes asks the one resolver (quietTimeHoldService.resolveQuietHold) — the
+ * automation's own quiet time, else a global schedule — naming its KIND: a
+ * tier's first run is an `escalation`, a tier's repeat an `escalationReminder`,
+ * the repeat pass a `reminder`; the policy holds each kind per severity. A
+ * held send is HELD, not skipped: its state does not move, so it goes out on
+ * the first sweep after the window ends. That is the whole mechanism, and it is why
  * nothing here needs to know when the window ends in order to schedule
  * anything: a held send is simply an overdue one. The hold is recorded on
  * `escalationState.quietHeldSince` / `quietHeldCount`, and that stamp is what
@@ -82,6 +84,7 @@ import {
 } from "../utils/notificationTemplate.js";
 import { formatLocalIsoMinute } from "../utils/maintenanceRecurrence.js";
 import { resolveQuietHold, newQuietHoldMemo, primeQuietHoldAssets } from "./quietTimeHoldService.js";
+import type { QuietSend } from "../utils/quietTime.js";
 import { logEvent } from "./eventLogService.js";
 import { isSuppressedForNotifications } from "./notificationEngine.js";
 import { executeActions } from "./automationActionService.js";
@@ -411,33 +414,27 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
 
     const state = stateOf(n.escalationState);
 
-    // QUIET TIME (business rule 92) — above BOTH passes, like suppression: a
-    // quiet window holds the escalation tiers as well as the reminders, since
-    // the first alert itself is held and a tier chasing someone harder about
-    // an alert nobody was told of is the loudest possible way to break the
-    // silence. HELD, not skipped: nothing below advances, so every due tier
-    // and reminder goes out on the first sweep after the window ends.
+    // QUIET TIME (business rule 92) — asked of every DUE send in both passes,
+    // per kind: a tier's first run is an `escalation`, its repeat runs are
+    // `escalationReminder`s, the repeat pass is `reminder`s, and the policy
+    // says per severity which of them it holds. A due send that is held is
+    // HELD, not skipped: its state does not move, so it goes out on the first
+    // sweep after the window ends. A due send that is not held goes out as
+    // usual, even mid-window — that is what "untick Escalation alerts" means.
     //
     // The hold stamp survives from rule 44 and still does its one job: the
     // reminder that ends a hold says how long the alert has been active. It is
     // stamped once per hold, with ONE `reminders_paused` Event — an eight-hour
     // window ticks 480 times.
-    const quietHold = await resolveQuietHold({ ruleId: n.ruleId, severity: n.severity, metric: n.metric, assetId: n.assetId, send: "followUp", now, memo: quietMemo });
-    if (quietHold) {
-      state.quietHeldCount = (state.quietHeldCount ?? 0) + 1;
-      if (!state.quietHeldSince) {
-        state.quietHeldSince = now.toISOString();
-        quietPausedEvents.push({
-          notificationId: n.id,
-          ruleName: rule.name,
-          assetId: n.assetId,
-          assetHostname: n.assetHostname,
-          resumesAt: formatLocalIsoMinute(quietHold.windowEnd),
-        });
-      }
-      stateUpdates.push({ id: n.id, state });
-      continue;
-    }
+    let heldSomething = false;
+    let quietWindowEnd: Date | null = null;
+    const quietHeld = async (send: QuietSend): Promise<boolean> => {
+      const hold = await resolveQuietHold({ ruleId: n.ruleId, severity: n.severity, metric: n.metric, assetId: n.assetId, send, now, memo: quietMemo });
+      if (!hold) return false;
+      heldSomething = true;
+      quietWindowEnd = quietWindowEnd ?? hold.windowEnd;
+      return true;
+    };
 
     // Value-driven escalation: the alert's CURRENT band (its severity) selects
     // which chains apply — the band's level chain + its actions' chains (empty
@@ -467,11 +464,13 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
         // per-action chains key as "a<i>:t<j>".
         const tierKey = escalationTierStateKey(chain.key, idx);
         if (!tierIsDue(tier, startAt, state.tiers[tierKey], now)) continue;
+        const prev = state.tiers[tierKey];
+        // A tier's first run is an escalation alert; its repeats are its reminders.
+        if (await quietHeld(prev ? "escalationReminder" : "escalation")) continue;
 
         // Context: fire-time snapshot + live escalation tokens. Pre-feature
         // notifications (no templateCtx) get a minimal context from the row.
         const base = followUpContext(n, rule);
-        const prev = state.tiers[tierKey];
         const attempt = (prev?.count ?? 0) + 1;
         const ctx: Record<string, string> = {
           ...base,
@@ -535,6 +534,7 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
       const prevRepeat = state.tiers[stateKey] ?? state.tiers[REPEAT_STATE_KEY];
       if (stopsOnAck && n.acknowledged) continue;
       if (!repeatIsDue(repeatCfg, startAt, prevRepeat, now)) continue;
+      if (await quietHeld("reminder")) continue;
       const attempt = (prevRepeat?.count ?? 0) + 1;
       const elapsed = formatElapsed(now.getTime() - n.triggeredAt.getTime());
       // The reminder that ENDS a hold says so, and says how long the alert has
@@ -577,6 +577,23 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
         dirty = true;
         repeatRuns++;
       }
+    }
+
+    // Something due was held this sweep: stamp the hold (once per hold, one
+    // Event) so the send that ends it can report the silence.
+    if (heldSomething) {
+      state.quietHeldCount = (state.quietHeldCount ?? 0) + 1;
+      if (!state.quietHeldSince) {
+        state.quietHeldSince = now.toISOString();
+        quietPausedEvents.push({
+          notificationId: n.id,
+          ruleName: rule.name,
+          assetId: n.assetId,
+          assetHostname: n.assetHostname,
+          resumesAt: quietWindowEnd ? formatLocalIsoMinute(quietWindowEnd) : null,
+        });
+      }
+      dirty = true;
     }
 
     if (dirty) stateUpdates.push({ id: n.id, state });

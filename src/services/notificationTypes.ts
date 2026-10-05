@@ -2763,6 +2763,11 @@ const ruleInputBaseSchema = z.object({
             ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["severities"], message: `Unknown severity "${s}"` });
           }
         }
+        for (const s of Object.keys(q.held ?? {})) {
+          if (!(SEVERITIES as readonly string[]).includes(s)) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["held", s], message: `Unknown severity "${s}"` });
+          }
+        }
       }),
     ])
     .optional()

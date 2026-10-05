@@ -44,9 +44,9 @@ import {
   isIgnoreGlobalQuietTime,
   quietWindowNow,
   quietResumesAt,
-  quietHoldsSeverity,
   quietHoldsKind,
-  quietHoldsFires,
+  quietHoldsSend,
+  type QuietSend,
   type QuietTimeConfig,
 } from "../utils/quietTime.js";
 import {
@@ -238,18 +238,18 @@ export interface QuietHoldQuestion {
   metric: string | null | undefined;
   assetId: string | null | undefined;
   /**
-   * What is about to be sent. A `fire` (the first alert, or a grouped alert's
-   * growth update) is held only by a policy that holds everything; a
-   * `followUp` (an escalation tier or a reminder) is held by either mode.
-   * Default `fire`.
+   * What is about to be sent: `fire` (the first alert, or a grouped alert's
+   * growth update), `reminder` (the repeat pass), `escalation` (a tier's first
+   * run) or `escalationReminder` (a tier's repeat run). The policy says, per
+   * severity, which of the four it holds (`heldKindsFor`). Default `fire`.
    */
-  send?: "fire" | "followUp";
+  send?: QuietSend;
   now?: Date;
   memo?: QuietHoldMemo;
 }
 
-function holdFromConfig(source: QuietSource, config: QuietTimeConfig, now: Date, send: "fire" | "followUp"): QuietHold | null {
-  if (send === "fire" && !quietHoldsFires(config)) return null;
+function holdFromConfig(source: QuietSource, config: QuietTimeConfig, severity: string, now: Date, send: QuietSend): QuietHold | null {
+  if (!quietHoldsSend(config, severity, send)) return null;
   if (!quietWindowNow(config, now)) return null;
   const windowEnd = quietResumesAt(config, now);
   return windowEnd ? { source, config, windowEnd } : null;
@@ -274,15 +274,14 @@ export async function resolveQuietHold(q: QuietHoldQuestion): Promise<QuietHold 
   if (own) {
     // The automation's own setting is the whole answer, matching or not — and
     // "ignore the global quiet times" (config null) is the answer "never quiet".
-    answer = own.config && quietHoldsSeverity(own.config, q.severity)
-      ? holdFromConfig({ kind: "automation", id: own.id, name: own.name }, own.config, now, send)
+    answer = own.config
+      ? holdFromConfig({ kind: "automation", id: own.id, name: own.name }, own.config, q.severity, now, send)
       : null;
   } else {
     for (const s of catalog.schedules) {
-      if (!quietHoldsSeverity(s.config, q.severity)) continue;
       if (!quietHoldsKind(s.config, q.metric)) continue;
-      // Cheapest test last-but-one: the window. Scope needs a device read.
-      const hold = holdFromConfig({ kind: "global", id: s.id, name: s.name }, s.config, now, send);
+      // Severity + send kind, then the window. Scope last: it needs a device read.
+      const hold = holdFromConfig({ kind: "global", id: s.id, name: s.name }, s.config, q.severity, now, send);
       if (!hold) continue;
       if (!scopeIsUnconstrained(s.scope)) {
         if (!q.assetId) continue;

@@ -20,6 +20,9 @@ import {
   quietHoldsSeverity,
   quietHoldsKind,
   quietHoldsFires,
+  heldKindsFor,
+  quietHoldsSend,
+  quietHeldSeverities,
   MAX_QUIET_WINDOWS,
 } from "../../src/utils/quietTime.js";
 
@@ -48,6 +51,48 @@ describe("ruleQuietTimeSchema — what an automation's quietTime column may hold
     expect(ruleQuietConfig({ ignoreGlobal: true })).toBeNull();
     expect(ruleQuietConfig(null)).toBeNull();
     expect(ruleQuietConfig(quietTimeConfigSchema.parse({ windows: [NIGHTLY] }))!.windows).toHaveLength(1);
+  });
+});
+
+describe("the per-severity hold map (`held`)", () => {
+  const ALL = { alerts: true, alertReminders: true, escalations: true, escalationReminders: true };
+  const FOLLOW = { alerts: false, alertReminders: true, escalations: true, escalationReminders: true };
+
+  it("is accepted, strict, and refuses a half-written entry", () => {
+    const cfg = quietTimeConfigSchema.parse({ windows: [NIGHTLY], held: { warning: ALL, critical: FOLLOW } });
+    expect(cfg.held!.critical!.alerts).toBe(false);
+    expect(() => quietTimeConfigSchema.parse({ windows: [NIGHTLY], held: { warning: { alerts: true } } })).toThrow();
+    expect(() => quietTimeConfigSchema.parse({ windows: [NIGHTLY], held: { warning: { ...ALL, scripts: true } } })).toThrow();
+  });
+
+  it("answers per severity and per kind of send", () => {
+    const cfg = { windows: [NIGHTLY], held: { warning: ALL, critical: { alerts: false, alertReminders: true, escalations: false, escalationReminders: false } } } as never;
+    expect(heldKindsFor(cfg, "warning")).toEqual(ALL);
+    expect(heldKindsFor(cfg, "serious")).toBeNull();
+    expect(quietHoldsSend(cfg, "warning", "fire")).toBe(true);
+    expect(quietHoldsSend(cfg, "critical", "fire")).toBe(false);
+    expect(quietHoldsSend(cfg, "critical", "reminder")).toBe(true);
+    expect(quietHoldsSend(cfg, "critical", "escalation")).toBe(false);
+    expect(quietHoldsSend(cfg, "critical", "escalationReminder")).toBe(false);
+    expect(quietHoldsSend(cfg, "serious", "reminder")).toBe(false);
+    expect(quietHoldsSeverity(cfg, "critical")).toBe(true);
+    expect(quietHoldsSeverity(cfg, "serious")).toBe(false);
+    expect(quietHeldSeverities(cfg)).toEqual(["warning", "critical"]);
+    // An entry with nothing ticked is no entry.
+    const empty = { windows: [NIGHTLY], held: { warning: { alerts: false, alertReminders: false, escalations: false, escalationReminders: false } } } as never;
+    expect(heldKindsFor(empty, "warning")).toBeNull();
+    expect(quietHeldSeverities(empty)).toEqual([]);
+  });
+
+  it("derives the map from the legacy severities + holds pair", () => {
+    expect(heldKindsFor({ windows: [NIGHTLY] } as never, "warning")).toEqual(ALL);
+    expect(heldKindsFor({ windows: [NIGHTLY], holds: "followUps" } as never, "warning")).toEqual(FOLLOW);
+    expect(heldKindsFor({ windows: [NIGHTLY], severities: ["critical"] } as never, "warning")).toBeNull();
+    expect(quietHoldsSend({ windows: [NIGHTLY], holds: "followUps" } as never, "warning", "fire")).toBe(false);
+    expect(quietHoldsSend({ windows: [NIGHTLY], holds: "followUps" } as never, "warning", "escalationReminder")).toBe(true);
+    expect(quietHeldSeverities({ windows: [NIGHTLY] } as never)).toBeNull();
+    // `held` wins over the pair when both are present.
+    expect(quietHoldsFires({ windows: [NIGHTLY], holds: "all", held: { warning: FOLLOW } } as never)).toBe(false);
   });
 });
 

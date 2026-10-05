@@ -222,15 +222,24 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
  * an automation's own.
  *
  *   windows             the recurrence shapes, any one active = quiet
- *   holds               "all" (default): the first alert, its escalation tiers
- *                       and its reminders are all held, and a summary email
- *                       of what is still outstanding goes out afterwards.
- *                       "followUps": only the chasing goes quiet — reminders
- *                       and escalation tiers wait for the window, the first
- *                       alert and the all-clear send as usual, and there is
- *                       nothing to summarise (rule 44's behaviour, widened to
- *                       the tiers).
- *   severities          which alert severities the window holds; null = all
+ *   held                PER SEVERITY, which of the four kinds of people-facing
+ *                       send the window holds: `alerts` (the first alert and a
+ *                       grouped alert's growth update), `alertReminders` (the
+ *                       repeat pass), `escalations` (a tier's first run) and
+ *                       `escalationReminders` (a tier's repeat runs). A
+ *                       severity with no entry is not held at all. A held
+ *                       `alerts` is what owes a summary — an alert nobody was
+ *                       told of is reported when the window ends; a reminder
+ *                       or tier held on its own just waits (rule 44's
+ *                       behaviour, widened to the tiers). Absent = the legacy
+ *                       pair below decides.
+ *   holds               LEGACY (pre-2026-10-05 rows; still read): "all" =
+ *                       every kind held for every severity in `severities`,
+ *                       "followUps" = everything but `alerts`.
+ *   severities          LEGACY with `holds`: which severities the window
+ *                       holds; null = all. Still WRITTEN beside `held` as the
+ *                       list of severities with any hold, for readers that
+ *                       only want the list.
  *   alertKinds          GLOBAL ONLY — Notification.metric names the window
  *                       holds ("cpuPct", "monitorStatus", …); null = any kind.
  *                       An event/change alert carries no metric and so matches
@@ -250,9 +259,30 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
  * notificationTypes, which imports this module; the two consumers refine
  * membership against that list themselves (`severitiesKnown`).
  */
+/** The four kinds of people-facing send a quiet time can hold, per severity. */
+export const heldKindsSchema = z
+  .object({
+    alerts: z.boolean(),
+    alertReminders: z.boolean(),
+    escalations: z.boolean(),
+    escalationReminders: z.boolean(),
+  })
+  .strict();
+export type HeldKinds = z.infer<typeof heldKindsSchema>;
+
+/** What is about to be sent, as the hold decision sees it. */
+export type QuietSend = "fire" | "reminder" | "escalation" | "escalationReminder";
+const SEND_TO_KIND: Record<QuietSend, keyof HeldKinds> = {
+  fire: "alerts",
+  reminder: "alertReminders",
+  escalation: "escalations",
+  escalationReminder: "escalationReminders",
+};
+
 export const quietTimeConfigSchema = z
   .object({
     windows: z.array(scheduleShapeSchema).min(1).max(MAX_QUIET_WINDOWS),
+    held: z.record(z.string().min(1).max(32), heldKindsSchema).optional().nullable(),
     holds: z.enum(["all", "followUps"]).optional(),
     severities: z.array(z.string().min(1).max(32)).min(1).max(8).optional().nullable(),
     alertKinds: z.array(z.string().min(1).max(64)).min(1).max(50).optional().nullable(),
@@ -378,15 +408,52 @@ export function summarySendAt(cfg: { summaryAt?: string | null }, windowEnd: Dat
   return sameDay.getTime() >= windowEnd.getTime() ? sameDay : new Date(sameDay.getTime() + 86_400_000);
 }
 
-/** Does the policy hold the FIRST alert (and so owe a summary)? "followUps"
- *  lets it through and quiets only the reminders and escalation tiers. */
-export function quietHoldsFires(cfg: { holds?: "all" | "followUps" | null }): boolean {
+type HoldPolicy = { held?: Record<string, HeldKinds> | null; holds?: "all" | "followUps" | null; severities?: string[] | null };
+
+function anyKind(k: HeldKinds): boolean {
+  return k.alerts || k.alertReminders || k.escalations || k.escalationReminders;
+}
+
+/** LEGACY reading: does the policy hold the FIRST alert? "followUps" lets it
+ *  through and quiets only the reminders and escalation tiers. With `held`
+ *  present the answer is per severity — see `quietHoldsSend`. */
+export function quietHoldsFires(cfg: HoldPolicy): boolean {
+  if (cfg.held) return Object.values(cfg.held).some((k) => k.alerts);
   return cfg.holds !== "followUps";
 }
 
-/** Is `severity` one the policy holds? A null list holds every severity. */
-export function quietHoldsSeverity(cfg: { severities?: string[] | null }, severity: string): boolean {
-  return !cfg.severities || cfg.severities.includes(severity);
+/**
+ * What the policy holds for one severity, or null when it holds nothing of
+ * that severity. The per-severity `held` map answers directly; a legacy row
+ * derives it from `severities` + `holds` (all four kinds, or all but the
+ * first alert).
+ */
+export function heldKindsFor(cfg: HoldPolicy, severity: string): HeldKinds | null {
+  if (cfg.held) {
+    const k = cfg.held[severity];
+    return k && anyKind(k) ? k : null;
+  }
+  if (cfg.severities && !cfg.severities.includes(severity)) return null;
+  const fires = cfg.holds !== "followUps";
+  return { alerts: fires, alertReminders: true, escalations: true, escalationReminders: true };
+}
+
+/** Does the policy hold THIS send of THIS severity? The one question the hold
+ *  decision asks of a policy once the window is known to be open. */
+export function quietHoldsSend(cfg: HoldPolicy, severity: string, send: QuietSend): boolean {
+  const k = heldKindsFor(cfg, severity);
+  return !!k && k[SEND_TO_KIND[send]];
+}
+
+/** Is `severity` one the policy holds anything of? */
+export function quietHoldsSeverity(cfg: HoldPolicy, severity: string): boolean {
+  return heldKindsFor(cfg, severity) !== null;
+}
+
+/** The severities the policy holds anything of; null = every severity. */
+export function quietHeldSeverities(cfg: HoldPolicy): string[] | null {
+  if (cfg.held) return Object.keys(cfg.held).filter((s) => anyKind(cfg.held![s]!));
+  return cfg.severities ?? null;
 }
 
 /** Is an alert of `metric` one the policy holds? A null list holds every kind;

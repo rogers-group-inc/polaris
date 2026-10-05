@@ -129,15 +129,74 @@ describe("PolarisQuietTimeEditor", () => {
   it("a fresh editor collects the server's own defaults", () => {
     const got = qte.collect(mountEditor(null));
     expect(got.error).toBeUndefined();
+    // Every severity ticked with every kind is the server's "everything":
+    // no `held` map, null severities.
     expect(got.config).toEqual({
       windows: [{ version: 1, kind: "recurring", freq: "daily", hours: [{ startTime: "22:00", endTime: "06:00" }] }],
-      holds: "all",
       severities: null,
       summaryAt: null,
       recurrenceThreshold: null,
       summaryChannelId: null,
     });
     expect(() => quietTimeConfigSchema.parse(got.config)).not.toThrow();
+  });
+
+  const ALL = { alerts: true, alertReminders: true, escalations: true, escalationReminders: true };
+
+  it("renders the per-severity tree: ticking a severity ticks all four kinds, unticking its last kind unticks it", () => {
+    const root = mountEditor({ windows: [{ version: 1, kind: "recurring", freq: "daily" }], severities: ["warning"] });
+    const rows = Array.from(root.querySelectorAll(".qte-sevrow")) as HTMLElement[];
+    expect(rows.map((r) => r.getAttribute("data-sev"))).toEqual(["notice", "informational", "warning", "serious", "critical"]);
+    const warning = root.querySelector('.qte-sevrow[data-sev="warning"]')!;
+    const critical = root.querySelector('.qte-sevrow[data-sev="critical"]')!;
+    expect((warning.querySelector(".qte-sev") as HTMLInputElement).checked).toBe(true);
+    expect((warning.querySelector(".qte-sev-kinds") as HTMLElement).hidden).toBe(false);
+    expect(Array.from(warning.querySelectorAll(".qte-kind")).every((k) => (k as HTMLInputElement).checked)).toBe(true);
+    expect((critical.querySelector(".qte-sev") as HTMLInputElement).checked).toBe(false);
+    expect((critical.querySelector(".qte-sev-kinds") as HTMLElement).hidden).toBe(true);
+    // Each parent has its own Reminders beneath it.
+    expect(Array.from(warning.querySelectorAll(".qte-kind")).map((k) => k.getAttribute("data-kind")))
+      .toEqual(["alerts", "escalations", "alertReminders", "escalationReminders"]);
+
+    // Tick critical → all four on, kinds shown.
+    set(critical, ".qte-sev", true);
+    expect((critical.querySelector(".qte-sev-kinds") as HTMLElement).hidden).toBe(false);
+    expect(Array.from(critical.querySelectorAll(".qte-kind")).every((k) => (k as HTMLInputElement).checked)).toBe(true);
+    // Untick every kind on warning → the severity unticks itself.
+    warning.querySelectorAll(".qte-kind").forEach((k) => { (k as HTMLInputElement).checked = false; });
+    set(warning, '.qte-kind[data-kind="escalationReminders"]', false);
+    expect((warning.querySelector(".qte-sev") as HTMLInputElement).checked).toBe(false);
+    expect(qte.collect(root).config.held).toEqual({ critical: ALL });
+    expect(qte.collect(root).config.severities).toEqual(["critical"]);
+  });
+
+  it("unticking Alerts everywhere leaves nothing to summarise: the summary section hides and saves no summary fields", () => {
+    const root = mountEditor(null);
+    root.querySelectorAll(".qte-sevrow").forEach((row) => set(row, '.qte-kind[data-kind="alerts"]', false));
+    expect((root.querySelector(".qte-summary") as HTMLElement).hidden).toBe(true);
+    const got = qte.collect(root);
+    expect(got.config.held.warning).toEqual({ alerts: false, alertReminders: true, escalations: true, escalationReminders: true });
+    expect(Object.keys(got.config.held)).toHaveLength(5);
+    expect(got.config.summaryAt).toBeNull();
+    expect(got.config.recurrenceThreshold).toBeNull();
+    expect(() => quietTimeConfigSchema.parse(got.config)).not.toThrow();
+    // Ticking Alerts back on one severity brings the summary section back.
+    set(root.querySelector('.qte-sevrow[data-sev="serious"]')!, '.qte-kind[data-kind="alerts"]', true);
+    expect((root.querySelector(".qte-summary") as HTMLElement).hidden).toBe(false);
+  });
+
+  it("reads a legacy follow-ups policy as every kind but Alerts, and re-saves it as the tree", () => {
+    const root = mountEditor({ windows: [{ version: 1, kind: "recurring", freq: "daily" }], holds: "followUps", severities: ["warning", "serious"] });
+    const warning = root.querySelector('.qte-sevrow[data-sev="warning"]')!;
+    expect((warning.querySelector('.qte-kind[data-kind="alerts"]') as HTMLInputElement).checked).toBe(false);
+    expect((warning.querySelector('.qte-kind[data-kind="alertReminders"]') as HTMLInputElement).checked).toBe(true);
+    expect((root.querySelector(".qte-summary") as HTMLElement).hidden).toBe(true);
+    const got = qte.collect(root);
+    expect(got.config.holds).toBeUndefined();
+    expect(got.config.held).toEqual({
+      warning: { alerts: false, alertReminders: true, escalations: true, escalationReminders: true },
+      serious: { alerts: false, alertReminders: true, escalations: true, escalationReminders: true },
+    });
   });
 
   it("round-trips a stored policy, extras included", () => {
@@ -157,17 +216,10 @@ describe("PolarisQuietTimeEditor", () => {
     expect(root.querySelectorAll(".qte-extra")).toHaveLength(1);
     expect(root.querySelector(".qte-extra")!.textContent).toContain("One-time");
     const got = qte.collect(root);
-    expect(got.config).toEqual(stored);
-  });
-
-  it("the follow-ups mode hides the summary section and saves no summary fields", () => {
-    const root = mountEditor(null);
-    set(root, '.qte-holds[value="followUps"]', true);
-    expect((root.querySelector(".qte-summary") as HTMLElement).hidden).toBe(true);
-    const got = qte.collect(root);
-    expect(got.config.holds).toBe("followUps");
-    expect(got.config.summaryAt).toBeNull();
-    expect(got.config.recurrenceThreshold).toBeNull();
+    // The legacy `holds: "all"` + severities pair re-saves as the per-severity
+    // tree saying the same thing; everything else is byte-identical.
+    const { holds: _legacy, ...rest } = stored;
+    expect(got.config).toEqual({ ...rest, held: { warning: ALL, serious: ALL } });
   });
 
   it("every severity ticked saves null; a subset saves the subset; none is refused", () => {
@@ -213,8 +265,12 @@ describe("PolarisQuietTimeEditor", () => {
 
   it("summarises a policy in one line both surfaces can print", () => {
     expect(qte.summary({ windows: [{ version: 1, kind: "recurring", freq: "daily", hours: [{ startTime: "22:00", endTime: "06:00" }] }], holds: "all", summaryAt: "07:30", severities: ["warning"], recurrenceThreshold: 2 }))
-      .toBe("Daily 22:00–06:00 · everything held, summary at 07:30 · warning · recurring > 2× reported");
+      .toBe("Daily 22:00–06:00 · holds everything for warning · summary at 07:30 · recurring > 2× reported");
     expect(qte.summary({ windows: [{ version: 1, kind: "recurring", freq: "daily" }], holds: "followUps" }))
-      .toBe("Daily all day · only reminders and escalations held");
+      .toBe("Daily all day · holds reminders and escalations only for every severity");
+    expect(qte.summary({ windows: [{ version: 1, kind: "recurring", freq: "daily" }], held: {
+      warning: ALL, serious: ALL,
+      critical: { alerts: false, alertReminders: true, escalations: false, escalationReminders: false },
+    } })).toBe("Daily all day · holds warning, serious: everything · critical: alert reminders · summary when it ends");
   });
 });

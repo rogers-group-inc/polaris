@@ -16,14 +16,17 @@
  *                set through the API, say — are listed read-only with Remove
  *                and re-sent verbatim; this editor never rewrites what it
  *                cannot express.
- *   WHAT GOES QUIET  "everything, summary afterwards" or "only reminders and
- *                escalations" (the first alert still sends).
- *   SEVERITIES   which alert severities the window holds (hidden when the host
- *                asks its own severity question, as the global wizard does).
+ *   WHAT GOES QUIET  the per-severity tree (`severityTreeHtml`): each severity,
+ *                and under it Alerts and Escalation alerts, each with its own
+ *                Reminders — ticked = held. Ticking a severity ticks all four;
+ *                unticking its last kind unticks the severity. Hidden when the
+ *                host asks the question itself (the global wizard's Alerts
+ *                step renders the same tree through the exported helpers).
  *   SUMMARY      when the summary email goes out (at the end of each period,
  *                or at a time of day), which email channel carries it, and the
- *                recurrence threshold. Shown only while "everything" is held —
- *                a follow-ups-only quiet time has nothing to summarise.
+ *                recurrence threshold. Shown only while some severity holds
+ *                its first alert — a reminders-and-escalations-only quiet
+ *                time has nothing to summarise.
  *
  * Times are the SERVER's wall clock; the zone label the host passes in is
  * printed beside the hours for the same reason the recurrence editor prints
@@ -45,6 +48,160 @@
   var R = function () { return window.PolarisRecurrence; };
 
   var SEVERITY_LABELS = { notice: "Notice", informational: "Informational", warning: "Warning", serious: "Serious", critical: "Critical" };
+  var ALL_SEVERITIES = ["notice", "informational", "warning", "serious", "critical"];
+
+  // The four kinds of people-facing send a quiet time can hold, per severity
+  // (`held` in utils/quietTime.ts): the first alert, its reminders, the
+  // escalation tiers' first runs, and the tiers' own repeats.
+  var KIND_KEYS = ["alerts", "alertReminders", "escalations", "escalationReminders"];
+  var KIND_LABELS = { alerts: "Alerts", alertReminders: "Reminders", escalations: "Escalation alerts", escalationReminders: "Reminders" };
+  var ALL_KINDS = { alerts: true, alertReminders: true, escalations: true, escalationReminders: true };
+
+  function anyKind(k) { return !!k && KIND_KEYS.some(function (x) { return !!k[x]; }); }
+  function allKinds(k) { return !!k && KIND_KEYS.every(function (x) { return !!k[x]; }); }
+
+  /**
+   * The per-severity hold map a stored policy means, over `sevs`: its `held`
+   * verbatim, else derived from the legacy `severities` + `holds` pair (every
+   * kind, or every kind but the first alert). A null policy holds everything.
+   */
+  function heldOf(cfg, sevs) {
+    var out = {};
+    (sevs || ALL_SEVERITIES).forEach(function (sv) {
+      var k = null;
+      if (cfg && cfg.held) {
+        if (cfg.held[sv] && anyKind(cfg.held[sv])) k = cfg.held[sv];
+      } else if (!cfg || !Array.isArray(cfg.severities) || !cfg.severities.length || cfg.severities.indexOf(sv) >= 0) {
+        k = Object.assign({}, ALL_KINDS, { alerts: !cfg || cfg.holds !== "followUps" });
+      }
+      if (k) out[sv] = Object.assign({}, k);
+    });
+    return out;
+  }
+
+  /** Does any severity hold its first alert — i.e. is a summary email owed? */
+  function anyAlertsHeld(held) {
+    return !!held && Object.keys(held).some(function (sv) { return held[sv] && held[sv].alerts; });
+  }
+
+  /** A policy's summary-owing answer, legacy pair included. */
+  function policySummarises(cfg) {
+    if (!cfg) return true;
+    if (cfg.held) return anyAlertsHeld(cfg.held);
+    return cfg.holds !== "followUps";
+  }
+
+  function kindsText(k) {
+    if (allKinds(k)) return "everything";
+    if (!k.alerts && k.alertReminders && k.escalations && k.escalationReminders) return "reminders and escalations only";
+    var parts = [];
+    if (k.alerts) parts.push("alerts");
+    if (k.alertReminders) parts.push("alert reminders");
+    if (k.escalations) parts.push("escalation alerts");
+    if (k.escalationReminders) parts.push("escalation reminders");
+    return parts.join(", ");
+  }
+
+  /** "everything for warning, serious" / "warning, serious: everything · critical: reminders and escalations only". */
+  function describeHeld(cfg) {
+    var held = cfg && cfg.held;
+    if (!held) {
+      var sevs = cfg && Array.isArray(cfg.severities) && cfg.severities.length ? cfg.severities.join(", ") : "every severity";
+      return (cfg && cfg.holds === "followUps" ? "reminders and escalations only" : "everything") + " for " + sevs;
+    }
+    var groups = {}, order = [];
+    Object.keys(held).forEach(function (sv) {
+      if (!anyKind(held[sv])) return;
+      var sig = kindsText(held[sv]);
+      if (!groups[sig]) { groups[sig] = []; order.push(sig); }
+      groups[sig].push(sv);
+    });
+    if (!order.length) return "nothing";
+    return order.map(function (sig) { return groups[sig].join(", ") + ": " + sig; }).join(" · ");
+  }
+
+  /**
+   * The per-severity tree: a severity, and under it Alerts and Escalation
+   * alerts, each with its own Reminders. Ticked = held during the quiet
+   * period (and, for Alerts, reported in the summary email); unticked = that
+   * send goes out live. Ticking a severity ticks all four; unticking its last
+   * kind unticks the severity.
+   */
+  function severityTreeHtml(prefix, held, sevs) {
+    sevs = sevs || ALL_SEVERITIES;
+    var kind = function (sv, key, indent) {
+      var on = !!(held[sv] && held[sv][key]);
+      return '<label style="display:inline-flex;align-items:center;gap:5px;margin:0' + (indent ? ";margin-left:1.4rem" : "") + ';font-weight:400;cursor:pointer;font-size:0.85rem">' +
+        '<input type="checkbox" class="qte-kind" data-kind="' + key + '"' + (on ? " checked" : "") + ' style="width:auto"> ' + esc(KIND_LABELS[key]) + '</label>';
+    };
+    return '<div class="qte-sevtree" data-qte-prefix="' + esc(prefix || "qte") + '" style="display:grid;gap:6px">' +
+      sevs.map(function (sv) {
+        var on = !!held[sv];
+        return '<div class="qte-sevrow" data-sev="' + esc(sv) + '" style="border:1px solid var(--color-border);border-radius:6px;padding:6px 10px">' +
+          '<label style="display:inline-flex;align-items:center;gap:6px;margin:0;font-weight:600;cursor:pointer">' +
+            '<input type="checkbox" class="qte-sev" value="' + esc(sv) + '"' + (on ? " checked" : "") + ' style="width:auto"> ' +
+            '<span class="sev-select sev-' + esc(sv) + '" style="padding:1px 8px;border-radius:999px;font-size:0.78rem">' + esc(SEVERITY_LABELS[sv] || sv) + '</span>' +
+          '</label>' +
+          '<div class="qte-sev-kinds" style="display:grid;grid-template-columns:repeat(2,minmax(0,max-content));gap:3px 2.5rem;margin:5px 0 0 1.6rem"' + (on ? "" : " hidden") + '>' +
+            kind(sv, "alerts", false) + kind(sv, "escalations", false) +
+            kind(sv, "alertReminders", true) + kind(sv, "escalationReminders", true) +
+          '</div>' +
+        '</div>';
+      }).join("") +
+    '</div>' +
+    '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:6px 0 0">Ticked = held during the quiet period and, for Alerts, reported in the summary email. Untick a box to let that send go out live; untick a severity to let it through entirely — critical usually should. Scripts, API calls and the audit event always run.</p>';
+  }
+
+  /** Delegated handlers for the tree; `onChange` fires after every edit. */
+  function wireSeverityTree(root, onChange) {
+    if (!root) return;
+    root.addEventListener("change", function (ev) {
+      var t = ev.target;
+      var row = t && t.closest ? t.closest(".qte-sevrow") : null;
+      if (!row) return;
+      var kinds = row.querySelector(".qte-sev-kinds");
+      var sev = row.querySelector(".qte-sev");
+      if (t.classList.contains("qte-sev")) {
+        if (t.checked) row.querySelectorAll(".qte-kind").forEach(function (k) { k.checked = true; });
+        if (kinds) kinds.hidden = !t.checked;
+      } else if (t.classList.contains("qte-kind")) {
+        var any = Array.prototype.some.call(row.querySelectorAll(".qte-kind"), function (k) { return k.checked; });
+        if (!any && sev) { sev.checked = false; if (kinds) kinds.hidden = true; }
+      }
+      if (typeof onChange === "function") onChange();
+    });
+  }
+
+  /** The tree as drawn: sev → kinds for every ticked severity with a kind. */
+  function readTree(root) {
+    var held = {};
+    if (!root) return held;
+    root.querySelectorAll(".qte-sevrow").forEach(function (row) {
+      var sev = row.querySelector(".qte-sev");
+      if (!sev || !sev.checked) return;
+      var k = {};
+      KIND_KEYS.forEach(function (key) {
+        var box = row.querySelector('.qte-kind[data-kind="' + key + '"]');
+        k[key] = !!(box && box.checked);
+      });
+      if (anyKind(k)) held[row.getAttribute("data-sev")] = k;
+    });
+    return held;
+  }
+
+  /**
+   * The tree → `{ held, severities }` or `{ error }`. Every severity ticked
+   * with every kind collapses to `held: null, severities: null` — the server's
+   * "everything" — so an untouched default re-saves as the compact form.
+   */
+  function collectSeverityTree(root) {
+    var held = readTree(root);
+    var sevs = Object.keys(held);
+    if (!sevs.length) return { error: "Pick at least one severity to hold, or turn quiet time off." };
+    var rows = root.querySelectorAll(".qte-sevrow").length;
+    if (sevs.length === rows && sevs.every(function (sv) { return allKinds(held[sv]); })) return { held: null, severities: null };
+    return { held: held, severities: sevs };
+  }
 
   // One-click starting points for the rules editor. Each is the whole rule
   // list; "Outside business hours" is the one that INVERTS — its rules say
@@ -102,26 +259,21 @@
     meta = meta || {};
     var p = esc(prefix || "qte");
     var split = splitWindows(cfg);
-    var holdsAll = !cfg || cfg.holds !== "followUps";
-    var sevs = (meta.severities || ["notice", "informational", "warning", "serious", "critical"]);
-    var chosen = cfg && Array.isArray(cfg.severities) && cfg.severities.length ? cfg.severities : null;
+    var sevs = (meta.severities || ALL_SEVERITIES);
     var channels = emailChannels(meta);
     var summaryAt = (cfg && cfg.summaryAt) || "";
     var threshold = cfg && cfg.recurrenceThreshold != null ? cfg.recurrenceThreshold : "";
+    // The host that asks the severity question itself (the global wizard)
+    // hands its current map in as `meta.held`, so the summary section can
+    // still hide when no first alert is held.
+    var held = meta.showSeverities === false && meta.held ? meta.held : heldOf(cfg, sevs);
+    var summarises = meta.showSeverities === false && !meta.held ? policySummarises(cfg) : anyAlertsHeld(held);
 
     var sevHtml = meta.showSeverities === false ? "" :
       '<div class="form-group" style="margin-top:0.9rem">' +
-        '<label style="font-weight:600">Which severities go quiet</label>' +
-        '<p style="font-size:0.8rem;color:var(--color-text-tertiary);margin:0 0 0.4rem">Untick a severity to let it through whatever the hour — critical alerts usually should.</p>' +
-        '<div class="qte-severities" style="display:flex;gap:0.9rem;flex-wrap:wrap">' +
-          sevs.map(function (sv) {
-            var on = !chosen || chosen.indexOf(sv) >= 0;
-            return '<label style="display:inline-flex;align-items:center;gap:5px;margin:0;font-weight:400;cursor:pointer">' +
-              '<input type="checkbox" class="qte-sev" value="' + esc(sv) + '"' + (on ? " checked" : "") + ' style="width:auto"> ' +
-              '<span class="sev-select sev-' + esc(sv) + '" style="padding:1px 8px;border-radius:999px;font-size:0.78rem">' + esc(SEVERITY_LABELS[sv] || sv) + '</span>' +
-            '</label>';
-          }).join("") +
-        '</div>' +
+        '<label style="font-weight:600">What goes quiet</label>' +
+        '<p style="font-size:0.8rem;color:var(--color-text-tertiary);margin:0 0 0.4rem">Per severity: the first alert, the escalation tiers, and each one’s reminders. The alert is still raised and shows on the Active Alerts page; what changes is who hears about it, and when.</p>' +
+        severityTreeHtml(p, held, sevs) +
       '</div>';
 
     return '<div class="qte" data-qte-prefix="' + p + '">' +
@@ -141,22 +293,9 @@
         '<div class="qte-extras">' + split.extras.map(extraRowHtml).join("") + '</div>' +
       '</div>' +
 
-      '<div class="form-group" style="margin-top:0.9rem">' +
-        '<label style="font-weight:600">What goes quiet</label>' +
-        '<label style="display:block;margin:0.3rem 0 0;font-weight:400;cursor:pointer">' +
-          '<input type="radio" name="' + p + '-holds" class="qte-holds" value="all"' + (holdsAll ? " checked" : "") + ' style="width:auto"> ' +
-          '<strong>Everything.</strong> The alert is raised and shows on the Active Alerts page, but no email, push or chat message goes out until the quiet period ends — then one <strong>summary email</strong> lists what is still outstanding.' +
-        '</label>' +
-        '<label style="display:block;margin:0.3rem 0 0;font-weight:400;cursor:pointer">' +
-          '<input type="radio" name="' + p + '-holds" class="qte-holds" value="followUps"' + (holdsAll ? "" : " checked") + ' style="width:auto"> ' +
-          '<strong>Only reminders and escalations.</strong> The first alert and the all-clear still send; the chasing waits for the quiet period to end.' +
-        '</label>' +
-        '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:4px 0 0">Scripts, API calls and the audit event always run. A quiet period never drops an alert.</p>' +
-      '</div>' +
-
       sevHtml +
 
-      '<div class="form-group qte-summary" style="margin-top:0.9rem;border-top:1px solid var(--color-border);padding-top:0.75rem"' + (holdsAll ? "" : " hidden") + '>' +
+      '<div class="form-group qte-summary" style="margin-top:0.9rem;border-top:1px solid var(--color-border);padding-top:0.75rem"' + (summarises ? "" : " hidden") + '>' +
         '<label style="font-weight:600">The summary email</label>' +
         '<p style="font-size:0.8rem;color:var(--color-text-tertiary);margin:0 0 0.4rem">Sent to everyone the held alerts would have reached — always by email, even for people who prefer push — listing the alerts still active, each linking to the device in Polaris. No graphs.</p>' +
         '<label style="display:block;margin:0.2rem 0 0;font-weight:400;cursor:pointer">' +
@@ -200,12 +339,12 @@
     var fire = function () { refreshProblem(host); if (typeof onChange === "function") onChange(); };
     stashExtras(host, cfg || null);
     R().wireScheduleEditor(host.querySelector(".qte-window .rc-schedule"), fire, QUIET_PRESETS);
-    host.querySelectorAll(".qte-holds").forEach(function (r) {
-      r.addEventListener("change", function () {
-        var sum = host.querySelector(".qte-summary");
-        if (sum) sum.hidden = r.value !== "all";
-        fire();
-      });
+    // The summary section is only for a quiet time that holds a FIRST alert
+    // somewhere — a reminders-and-escalations-only one has nothing to report.
+    wireSeverityTree(host.querySelector(".qte-sevtree"), function () {
+      var sum = host.querySelector(".qte-summary");
+      if (sum) sum.hidden = !anyAlertsHeld(readTree(host.querySelector(".qte-sevtree")));
+      fire();
     });
     host.querySelectorAll(".qte-sendat").forEach(function (r) {
       r.addEventListener("change", function () {
@@ -218,7 +357,6 @@
       var el = host.querySelector(sel);
       if (el) el.addEventListener(el.tagName === "SELECT" ? "change" : "input", fire);
     });
-    host.querySelectorAll(".qte-sev").forEach(function (el) { el.addEventListener("change", fire); });
     var extras = host.querySelector(".qte-extras");
     if (extras) {
       extras.addEventListener("click", function (ev) {
@@ -266,8 +404,10 @@
   }
 
   /**
-   * The host → `{ config }` or `{ error }`. `opts.severities` lets a host that
-   * asked the severity question itself hand the answer in.
+   * The host → `{ config }` or `{ error }`. A host that asked the severity
+   * question itself hands its answer in as `opts.held` (+ `opts.severities`),
+   * or — a list only — `opts.severities`, which the server reads as every
+   * kind held for those severities.
    */
   function collect(host, opts) {
     opts = opts || {};
@@ -282,21 +422,25 @@
     if (!windows.length) return { error: "Quiet period: pick the days and hours." };
     out.windows = windows;
 
-    var holds = (host.querySelector(".qte-holds:checked") || {}).value || "all";
-    out.holds = holds;
-
-    var sevBoxes = host.querySelectorAll(".qte-sev");
-    if (opts.severities !== undefined) {
+    var tree = host.querySelector(".qte-sevtree");
+    var summarises = true;
+    if (opts.held !== undefined) {
+      if (opts.held) out.held = opts.held;
+      out.severities = opts.severities !== undefined ? opts.severities : (opts.held ? Object.keys(opts.held) : null);
+      summarises = opts.held ? anyAlertsHeld(opts.held) : true;
+    } else if (opts.severities !== undefined) {
       out.severities = opts.severities;
-    } else if (sevBoxes.length) {
-      var picked = Array.prototype.filter.call(sevBoxes, function (b) { return b.checked; }).map(function (b) { return b.value; });
-      if (!picked.length) return { error: "Pick at least one severity to hold, or turn quiet time off." };
-      out.severities = picked.length === sevBoxes.length ? null : picked;
+    } else if (tree) {
+      var got = collectSeverityTree(tree);
+      if (got.error) return { error: got.error };
+      if (got.held) out.held = got.held;
+      out.severities = got.severities;
+      summarises = got.held ? anyAlertsHeld(got.held) : true;
     } else {
       out.severities = null;
     }
 
-    if (holds === "all") {
+    if (summarises) {
       var sendAt = (host.querySelector(".qte-sendat:checked") || {}).value || "end";
       var t = (host.querySelector(".qte-summary-time") || {}).value || "";
       out.summaryAt = sendAt === "time" && t ? t : null;
@@ -322,19 +466,22 @@
     el.textContent = got.error && /summary/i.test(got.error) ? got.error : "";
   }
 
-  /** One line: "Daily 22:00–06:00 · everything held, summary at 07:30 · warning, serious". */
+  /** One line: "Daily 22:00–06:00 · holds everything for warning, serious · summary at 07:30". */
   function summary(cfg) {
     if (!cfg || !cfg.windows || !cfg.windows.length) return "";
     var bits = [];
     bits.push(cfg.windows.length <= 2
       ? cfg.windows.map(function (w) { return R().summary(w); }).join(" and ")
       : cfg.windows.length + " quiet periods");
-    if (cfg.holds === "followUps") bits.push("only reminders and escalations held");
-    else bits.push("everything held, summary " + (cfg.summaryAt ? "at " + cfg.summaryAt : "when it ends"));
-    if (cfg.severities && cfg.severities.length) bits.push(cfg.severities.join(", "));
+    bits.push("holds " + describeHeld(cfg));
+    if (policySummarises(cfg)) bits.push("summary " + (cfg.summaryAt ? "at " + cfg.summaryAt : "when it ends"));
     if (cfg.recurrenceThreshold) bits.push("recurring > " + cfg.recurrenceThreshold + "× reported");
     return bits.join(" · ");
   }
 
-  window.PolarisQuietTimeEditor = { html: html, wire: wire, collect: collect, summary: summary };
+  window.PolarisQuietTimeEditor = {
+    html: html, wire: wire, collect: collect, summary: summary,
+    severityTreeHtml: severityTreeHtml, wireSeverityTree: wireSeverityTree, collectSeverityTree: collectSeverityTree,
+    heldOf: heldOf, describeHeld: describeHeld, anyAlertsHeld: anyAlertsHeld, policySummarises: policySummarises,
+  };
 })();
