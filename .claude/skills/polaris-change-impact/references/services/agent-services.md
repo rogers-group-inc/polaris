@@ -87,6 +87,39 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/softwareInventoryService.ts
+
+**What it owns:** The `AssetSoftware` current-state table (installed software, one row per `(asset, source, key)`) and its three `AssetInventoryScrape` stamps (`software` / `software:intune` / `software:arc`), plus the two integration passes that fill the non-agent sources. Three writers share the table and **each owns only its own `source` rows** — `agent` (the agent's `softwareInventory` stream), `intune` (Intune detected apps, read during an Entra/Intune run) and `arc` (Azure Change Tracking software, read from Log Analytics during an Arc run). Every write is a DELTA (`utils/inventoryDelta` `diffInventory` + `sameFields`, every field exact — no dead band) in one interactive transaction that also upserts the source's scrape stamp, the `serviceInventoryService` shape. The read side never merges sources: `getAssetSoftware` returns every source's rows plus `{source, scrapedAt, count}` per source in `SOFTWARE_SOURCES` order (agent → intune → arc), and the tab shows one at a time.
+
+**Public API:** SoftwareSource, SOFTWARE_SOURCES, softwareScrapeKind, AssetSoftwareInput, softwareKey, storedSoftwareRow, persistAssetSoftware, clearAssetSoftware, sweepOrphanedSoftware, AssetSoftwareView, getAssetSoftware, AGENT_SOFTWARE_FRESH_MS, INTUNE_SOFTWARE_MAX_AGE_MS, IntuneSoftwareCandidate, planIntuneSoftwareFetch, intuneAppToInput, arcSoftwareToInput, syncIntuneSoftware, syncArcSoftware.
+
+**Cross-service deps:** `prisma.assetSoftware` / `assetInventoryScrape` / `assetSource`, `retryOnDeadlock` (utils/dbRetry), `entraIdService.fetchIntuneDetectedApps` (Graph beta `$batch` of `/deviceManagement/managedDevices/{id}/detectedApps`), `azureArcService.fetchArcSoftware` (Log Analytics KQL over `ConfigurationData`).
+
+**Used by:**
+- `src/api/routes/agents.ts` — the `softwareInventory` sample-stream arm (`SoftwareSampleSchema`, max 20 000 rows, no min) → `ingestSoftwareInventory` → `persistAssetSoftware(assetId, "agent", rows)`. `GET /agents/config` ships `streams.software {enabled: true, intervalSec: 21600}` — a constant, like `streams.services`, and deliberately not folded into `computeConfigEtag` because it never changes.
+- `src/api/routes/assets.ts` — `GET /assets/:id/software` (gate `assets:read`, thin → `getAssetSoftware`).
+- `src/services/discovery/discoveryEngine.ts` — the Entra branch calls `syncIntuneSoftware` after `syncEntraDevices`, passing the run's device list, the Intune list read's outcome (`intuneRead`) and whether the run is scoped; the Azure Arc branch calls `syncArcSoftware` after `syncAzureTagRegistry`.
+- `agent/internal/collectors/software*.go` — the agent-side producer (`SoftwareInventoryOnce`: HKLM Uninstall keys in both registry views on Windows, `dpkg-query` else `rpm` on Linux).
+- `public/js/assets.js` — the asset **Software** tab (`_wireAssetSoftwareTab`), through `api.assets.software`.
+
+**Invariants:**
+- **A source never writes another source's rows.** Every query in the writers is scoped `where: { assetId, source }`; the key is unique per `(assetId, source, key)`, not per `(assetId, key)`, so the same program reported by the agent and by Intune is two rows.
+- **An empty list is a delete-all for that source; a failed read passes nothing.** The agent never pushes a nil collector result; the Intune pass skips a device absent from `fetchIntuneDetectedApps`'s result (its sub-request failed), keeping its list AND its stamp so the next run retries it; the Arc pass clears machines with no snapshot ONLY when `failedWorkspaces === 0`.
+- **Both integration passes never throw.** Failures are progress-log `error` lines at steps `discover.intune.software` / `discover.arc.software`; the run's device sync stands.
+- **Intune read plan (`planIntuneSoftwareFetch`, pure):** an asset whose agent list is younger than `AGENT_SOFTWARE_FRESH_MS` (2 d) is skipped — the agent reads the host itself; a device whose stored `stamp` equals its current `lastSyncDateTime` and whose list is younger than `INTUNE_SOFTWARE_MAX_AGE_MS` (7 d) is skipped — it has not checked in, so its apps cannot have changed. A scoped run (Discover Now) forces the read, but the agent skip still applies. Reads in chunks of 200 devices, persists with concurrency 4.
+- **Toggle off clears, not freezes.** `pullSoftware` off (or `enableIntune` off) → `clearAssetSoftware` over this integration's Intune assets, except on a scoped run; Arc `pullSoftware` off or no workspace IDs → clears this integration's Arc lists. The pass only runs at all when the Intune list read itself succeeded (`intuneRead === "ok"`).
+- **The Arc pass is tenant-wide, so a scoped run skips it entirely.**
+- **Orphans:** `sweepOrphanedSoftware(source)` (raw SQL) deletes intune / arc rows and stamps for assets that no longer carry an `AssetSource` of that `sourceKind` — run at the end of every full Intune / Arc pass. The FK cascade covers a deleted asset; this covers an asset that left the integration but still exists.
+- Real FK to Asset with cascade — unlike `AssetService` / `AssetProcess`.
+
+**When changing this:**
+- Adding a field: the Prisma model + migration, `SoftwareSample` (Go transport) + the platform readers, `SoftwareSampleSchema` + `ingestSoftwareInventory` (agents.ts), `AssetSoftwareInput` + `storedSoftwareRow`, `SOFTWARE_FIELDS` + `pickSoftwareFields`, the two integration mappers (`intuneAppToInput` / `arcSoftwareToInput`) and the `getAssetSoftware` projection — in lockstep; bump `agent/VERSION`. **Miss `SOFTWARE_FIELDS` and the delta never sees the column change** (the `SERVICE_FIELDS` trap).
+- Changing the key (what makes two rows "the same program") rewrites every stored list on the next scrape of each source — every row is a delete plus an insert, and `firstSeenAt` restarts.
+- A fourth source: add it to `SoftwareSource` / `SOFTWARE_SOURCES` (its position is the UI preference), a scrape kind, the tab's source labels and empty-state copy in `public/js/assets.js`, and — if it is integration-fed — an orphan sweep keyed on its `AssetSource.sourceKind`.
+- Scale: the Intune pass at 2000 devices is ten 200-device chunks, each one `$batch` round (20 per request, concurrency 4) plus four concurrent short transactions; `loadScrapes` reads stamps in 5000-id IN chunks. Keep per-device work out of the sequential path.
+
+---
+
 ## services/agentInstallScripts.ts
 
 **What it owns:** The curated catalog of Polaris Agent install-method VARIANTS (metadata only — id / osPlatform / label / description / isDefault) plus the OS-lock validator. One vetted variant per OS today (`linux-systemd`, `darwin-launchd`, `windows-service`). Script BODIES stay inline in `agentInstallService.ts` (version-coupled to the binary); this module owns the picker vocabulary + validation.

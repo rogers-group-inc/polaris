@@ -342,6 +342,7 @@ single-pin key, so a downgrade to an older binary keeps working.
 | — *per-core CPU and the memory breakdown* | the agent's own accounting — see below. [vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) reports both too, in its own vocabulary |
 | **processes** | **agent-default-ON** — an installed agent collects its process inventory automatically |
 | services | the unit / service inventory for the asset's [Services tab](Assets#services), with per-service CPU and memory (agent 0.22.0+ on Windows). Ticking a service's Monitor box also collects its log: the journal on Linux, its Event Log entries on Windows (0.22.0+) |
+| installed software | agent **0.24.0+**; the program list for the asset's [Software tab](Assets#software), read every six hours — the Windows *Apps & features* list (machine-wide installs; per-user installs are not seen) or the dpkg / rpm package database on Linux. Change the interval with `software_inventory_interval_sec` in agent.conf |
 | eventLog | opt-in, behind a global master switch (PII and volume) |
 | Application Map connections | needs the **`ptrace`** tier on Linux |
 | [Path checks](Path-Monitor) | agent **0.21.0+**; runs only the checks an operator created and pointed at this host. HTTP / HTTPS / TCP / ICMP plus traceroute, **no extra privilege** on any tier |

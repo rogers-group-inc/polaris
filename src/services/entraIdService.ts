@@ -26,6 +26,9 @@ export interface EntraIdConfig {
   clientId: string;
   clientSecret: string;
   enableIntune?: boolean;
+  // Read each Intune device's detected apps into its Software tab (requires
+  // enableIntune). Same Graph permission as the device read.
+  pullSoftware?: boolean;
   includeDisabled?: boolean;  // Default true — disabled (accountEnabled=false) devices become `decommissioned` assets
   /**
    * Opt-in disappearance sweep (business rule 70, default OFF): decommission
@@ -53,6 +56,10 @@ export interface DiscoveredEntraDevice {
   entraDisplayName?: string;
   // Original intune-side deviceName. Undefined when intune didn't contribute.
   intuneDeviceName?: string;
+  // Intune's own managedDevice id — NOT the Entra deviceId. The per-device
+  // Graph reads (detected apps) are addressed by it. Undefined when intune
+  // didn't contribute.
+  intuneManagedDeviceId?: string;
   deviceId: string;            // Azure AD deviceId — stable identifier across both endpoints
   displayName: string;         // Hostname in Entra; deviceName in Intune
   operatingSystem: string;
@@ -780,6 +787,35 @@ async function fetchEthernetMacs(
   log: EntraDiscoveryProgressCallback,
 ): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
+  const { bodies, failedBatches, batchCount, lastError } = await graphBatchGet(
+    config, "v1.0", managedDeviceIds,
+    (id) => `/deviceManagement/managedDevices/${id}?$select=id,ethernetMacAddress`, signal,
+  );
+  for (const [id, body] of bodies) out.set(id, body?.ethernetMacAddress ? String(body.ethernetMacAddress) : null);
+  if (failedBatches > 0) {
+    log("discover.intune.ethernet_mac", "error", `Intune: ${failedBatches} of ${batchCount} Ethernet MAC batch read(s) failed — those devices keep their stored MAC and are retried next run (last error: ${lastError})`);
+  }
+  return out;
+}
+
+/**
+ * One GET per managed device id through Graph JSON batching (20 per $batch
+ * call, ETHERNET_MAC_BATCH_CONCURRENCY calls in flight). Returns the response
+ * body for every read that SUCCEEDED; a device missing from `bodies` failed
+ * (404 for a device retired mid-run, 403, 5xx, a batch call that threw) and
+ * the caller keeps whatever it had. A 429 inside a batch is retried up to
+ * MAX_GRAPH_THROTTLE_RETRIES times after the longest Retry-After the throttled
+ * responses asked for; the outer $batch call's own 401/403/429 handling is
+ * graphRequest's. `pathFor` must only interpolate a GUID_RE-checked id.
+ */
+async function graphBatchGet(
+  config: EntraIdConfig,
+  version: "v1.0" | "beta",
+  managedDeviceIds: string[],
+  pathFor: (id: string) => string,
+  signal: AbortSignal | undefined,
+): Promise<{ bodies: Map<string, any>; failedBatches: number; batchCount: number; lastError: string }> {
+  const out = new Map<string, any>();
   const batches: string[][] = [];
   for (let i = 0; i < managedDeviceIds.length; i += GRAPH_BATCH_SIZE) {
     batches.push(managedDeviceIds.slice(i, i + GRAPH_BATCH_SIZE));
@@ -791,15 +827,11 @@ async function fetchEthernetMacs(
     let pending = ids;
     for (let attempt = 0; pending.length > 0 && attempt <= MAX_GRAPH_THROTTLE_RETRIES; attempt++) {
       if (signal?.aborted) return;
-      const res = await graphRequest(config, "https://graph.microsoft.com/v1.0/$batch", {
+      const res = await graphRequest(config, `https://graph.microsoft.com/${version}/$batch`, {
         method: "POST",
         signal,
         body: {
-          requests: pending.map((id) => ({
-            id,
-            method: "GET",
-            url: `/deviceManagement/managedDevices/${id}?$select=id,ethernetMacAddress`,
-          })),
+          requests: pending.map((id) => ({ id, method: "GET", url: pathFor(id) })),
         },
       });
       const throttled: string[] = [];
@@ -808,7 +840,7 @@ async function fetchEthernetMacs(
         const id = String(r?.id ?? "");
         if (!pending.includes(id)) continue;
         if (r.status === 200) {
-          out.set(id, r.body?.ethernetMacAddress ? String(r.body.ethernetMacAddress) : null);
+          out.set(id, r.body ?? null);
         } else if (r.status === 429) {
           throttled.push(id);
           // A batch sub-response's headers are a plain object with Graph's
@@ -841,11 +873,86 @@ async function fetchEthernetMacs(
     }
   };
   await Promise.all(Array.from({ length: Math.min(ETHERNET_MAC_BATCH_CONCURRENCY, batches.length) }, worker));
+  return { bodies: out, failedBatches, batchCount: batches.length, lastError };
+}
 
-  if (failedBatches > 0) {
-    log("discover.intune.ethernet_mac", "error", `Intune: ${failedBatches} of ${batches.length} Ethernet MAC batch read(s) failed — those devices keep their stored MAC and are retried next run (last error: ${lastError})`);
+// ─── Intune detected apps (installed software) ──────────────────────────────
+//
+// Intune's "Discovered apps": what the Intune Management Extension / MDM
+// channel inventoried on each device. Read per device from the managedDevice's
+// detectedApps navigation, which exists on Graph BETA only (v1.0 lists apps
+// tenant-wide and devices per app, which at 2000 devices × hundreds of apps is
+// the expensive direction). Same permission as the device list:
+// DeviceManagementManagedDevices.Read.All. Intune reports UNMANAGED apps only
+// for corporate-owned devices — a personal device lists the apps Intune
+// deployed and nothing else.
+
+export interface IntuneDetectedApp {
+  displayName: string;
+  version: string | null;
+  publisher: string | null;
+  sizeInByte: number | null;
+  platform: string | null;
+}
+
+function toDetectedApp(a: any): IntuneDetectedApp | null {
+  const displayName = typeof a?.displayName === "string" ? a.displayName.trim() : "";
+  if (!displayName) return null;
+  const size = Number(a?.sizeInByte);
+  return {
+    displayName,
+    version: typeof a?.version === "string" && a.version.trim() ? a.version.trim() : null,
+    publisher: typeof a?.publisher === "string" && a.publisher.trim() ? a.publisher.trim() : null,
+    sizeInByte: Number.isFinite(size) && size > 0 ? size : null,
+    platform: typeof a?.platform === "string" && a.platform && a.platform !== "unknown" ? a.platform : null,
+  };
+}
+
+/** Pages one device's detectedApps past the first batch response. */
+const DETECTED_APPS_PAGE_CAP = 5_000;
+
+/**
+ * Read the detected apps of each managed device id. Returns the list for every
+ * device whose read SUCCEEDED (an empty list is a real answer); a device
+ * missing from `apps` failed and must keep its stored list. Ids that are not
+ * GUIDs are skipped outright — nothing unchecked goes into a URL.
+ */
+export async function fetchIntuneDetectedApps(
+  config: EntraIdConfig,
+  managedDeviceIds: string[],
+  signal?: AbortSignal,
+): Promise<{ apps: Map<string, IntuneDetectedApp[]>; failedBatches: number; batchCount: number; lastError: string }> {
+  const ids = managedDeviceIds.filter((id) => GUID_RE.test(id));
+  const { bodies, failedBatches, batchCount, lastError } = await graphBatchGet(
+    config, "beta", ids, (id) => `/deviceManagement/managedDevices/${id}/detectedApps`, signal,
+  );
+  const apps = new Map<string, IntuneDetectedApp[]>();
+  for (const [id, body] of bodies) {
+    const rows: IntuneDetectedApp[] = [];
+    for (const a of Array.isArray(body?.value) ? body.value : []) {
+      const app = toDetectedApp(a);
+      if (app) rows.push(app);
+    }
+    // A device with more apps than one page: follow nextLink directly. Rare —
+    // a page is hundreds of rows — and a failure keeps the stored list.
+    let next: unknown = body?.["@odata.nextLink"];
+    let ok = true;
+    while (typeof next === "string" && next && rows.length < DETECTED_APPS_PAGE_CAP && !signal?.aborted) {
+      try {
+        const page = await graphGet(config, next, signal);
+        for (const a of Array.isArray(page?.value) ? page.value : []) {
+          const app = toDetectedApp(a);
+          if (app) rows.push(app);
+        }
+        next = page?.["@odata.nextLink"];
+      } catch {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) apps.set(id, rows);
   }
-  return out;
+  return { apps, failedBatches, batchCount, lastError };
 }
 
 /**
@@ -1022,6 +1129,7 @@ export async function discoverDevices(
       sources,
       entraDisplayName: e.displayName ? String(e.displayName) : undefined,
       intuneDeviceName: intune?.deviceName ? String(intune.deviceName) : undefined,
+      intuneManagedDeviceId: intune?.id ? String(intune.id) : undefined,
       deviceId,
       displayName: (intune?.deviceName || e.displayName || "") as string,
       operatingSystem: (intune?.operatingSystem || e.operatingSystem || "") as string,
@@ -1060,6 +1168,7 @@ export async function discoverDevices(
     merged.push({
       sources: ["intune"],
       intuneDeviceName: intune.deviceName ? String(intune.deviceName) : undefined,
+      intuneManagedDeviceId: intune.id ? String(intune.id) : undefined,
       deviceId,
       displayName: String(intune.deviceName || ""),
       operatingSystem: String(intune.operatingSystem || ""),

@@ -131,6 +131,13 @@ not a bug.
 Directory sync runs **last**, so a directory outage cannot affect the asset
 passes, and it is never its own scheduler job.
 
+Installed software is **not** one of these passes. It is read inside the
+Entra ID / Intune and Azure Arc runs themselves, right after their devices are
+written, and only when it is turned on for that integration — see
+[Integration-Directory](Integration-Directory#installed-software) and
+[Integration-Azure-Arc](Integration-Azure-Arc#installed-software). A failure
+there is logged and never fails the run.
+
 ---
 
 ## `Asset.lastSeen` means verified network presence

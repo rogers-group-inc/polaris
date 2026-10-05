@@ -1244,6 +1244,7 @@ model Asset {
   sources            AssetSource[]
   associatedIpRows   AssetAssociatedIp[]
   macAddressRows     AssetMacAddress[]
+  softwareRows       AssetSoftware[]
   dependencyParents  AssetDependencyParent[]  @relation("AssetDependencyChild")
   dependencyChildren AssetDependencyParent[]  @relation("AssetDependencyParent")
   managedAgent       ManagedAgent?
@@ -2136,12 +2137,62 @@ model AssetService {
 // here instead. No FK to Asset — the AssetProcess / AssetService convention.
 model AssetInventoryScrape {
   assetId   String
-  // "processes" | "services"
+  // "processes" | "services" | "software" (the agent) | "software:intune" |
+  // "software:arc" — one installed-software stamp per source.
   kind      String
   scrapedAt DateTime
+  // The SOURCE's own version of the list when it has one — Intune's
+  // lastSyncDateTime for "software:intune", so a discovery run re-reads a
+  // device's detected apps only after the device has checked in again. Null
+  // for the agent kinds, which push on their own cadence.
+  stamp     String?
 
   @@id([assetId, kind])
   @@map("asset_inventory_scrapes")
+}
+
+// Installed software per asset — CURRENT STATE, one row per (asset, source,
+// program). Three writers, each owning only its own `source` rows:
+//   "agent"  — the agent's softwareInventory stream (Windows Uninstall keys,
+//              dpkg / rpm), every six hours;
+//   "intune" — Intune detected apps, read per device during an Entra/Intune
+//              discovery run when the integration's pullSoftware is on;
+//   "arc"    — Azure Change Tracking's software inventory (Log Analytics
+//              ConfigurationData), read during an Azure Arc discovery run.
+// Delta-written (utils/inventoryDelta) by softwareInventoryService, so
+// updatedAt is last-CHANGED; freshness per source is AssetInventoryScrape
+// (kind "software" / "software:intune" / "software:arc"). Unlike the process
+// and service tables this one has a real FK: deleting an asset deletes its
+// software, and nothing else ever has to sweep orphans.
+model AssetSoftware {
+  id           String    @id @default(uuid())
+  assetId      String
+  asset        Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  // "agent" | "intune" | "arc"
+  source       String
+  // Identity within (asset, source): lower(name) + U+001F + lower(version) +
+  // U+001F + lower(architecture). Two versions of one program, or its x86 and
+  // x64 builds, are two rows.
+  key          String
+  name         String
+  version      String?
+  publisher    String?
+  // x64 / x86 / arm64 (Windows), amd64 / x86_64 / noarch / all (Linux); null
+  // when the source does not say (Intune).
+  architecture String?
+  // Where the row was read: windows | dpkg | rpm (agent); the Intune
+  // detectedApp platform (windows / macOS / ios / androidOSP …); the Change
+  // Tracking SoftwareType (Application / Package / Update) for arc.
+  platform     String?
+  installDate  DateTime? @db.Date
+  sizeBytes    BigInt?
+  // First time this source reported this (name, version, arch) on the asset.
+  firstSeenAt  DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([assetId, source, key])
+  @@index([assetId])
+  @@map("asset_software")
 }
 
 // ACCUMULATE + AGE connection map for MAPPED processes (Asset.mappedProcesses).
