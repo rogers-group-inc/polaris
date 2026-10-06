@@ -104,6 +104,28 @@ describe("the band and the strip read the same clock", () => {
     }
   });
 
+  it("keeps the glow off the inherited style of the page, on both", () => {
+    // Inheriting glow parts restyled all ~4,200 elements of a busy page on
+    // every frame of a 2-2.5 s turn (1.6-2 s of style recalculation). The
+    // parts must not inherit, and the gradient tokens must live on the one
+    // fixed layer that paints them — on :root an unregistered token is
+    // inherited by everything and brings the full-page restyle back.
+    for (const name of ["styles.css", "mobile.css"]) {
+      const css = readFileSync(join(process.cwd(), "public", "css", name), "utf-8").replace(/\r\n/g, "\n");
+      const glowProps = css.match(/@property --(?:page|night)-glow-[a-z0-9]+ *\{[^}]*\}/g) || [];
+      expect(glowProps.length).toBe(15);
+      for (const p of glowProps) expect(p, p).toContain("inherits: false;");
+      const layer = css.slice(css.indexOf("html::before {"), css.indexOf("\n}\n", css.indexOf("html::before {")));
+      expect(layer).toContain("position: fixed;");
+      expect(layer).toContain("z-index: -1;");
+      expect(layer).toContain("--page-glow:");
+      expect(layer).toContain("background: var(--page-glow);");
+      const root = css.slice(css.indexOf(":root {"), css.indexOf("\n}\n", css.indexOf(":root {")));
+      expect(root).not.toMatch(/\n {2}--page-glow:/);
+      expect(root).not.toMatch(/\n {2}--night-glow:/);
+    }
+  });
+
   it("slides the night glow in as a circle and out into one, on both", () => {
     // A circle while it slides, an oval at rest — keyframes on data-glow-turn,
     // the slide-in keyed on BOTH legs' values so the waypoint does not restart

@@ -92,8 +92,11 @@ const harness = [
   extractFn("_paintThemeBands"),
   extractFn("_seatThemeBands"),
   extractFn("_advanceThemeBands"),
+  extractFn("_prefersReducedMotion"),
+  extractFn("_themeViewTransitions"),
   extractFn("_beginThemeFade"),
   extractFn("_setTheme"),
+  extractFn("_applyTheme"),
   extractFn("_bandForwardGap"),
   extractFn("advanceTheme"),
   extractFn("_sunIcon"),
@@ -254,7 +257,9 @@ describe("theme band CSS", () => {
   it("keeps the track's travel out of the crossfade's transition shorthand", () => {
     // That rule outspecifies the track's own `transition: transform`; replacing
     // it kills the travel, the one animation that must survive a theme change.
-    expect(STYLES_CSS).toContain("html[data-theme-fading] *:not(.theme-band-track)");
+    // (Gated on data-theme-xfade: the per-element crossfade is the fallback
+    // for browsers without same-document view transitions.)
+    expect(STYLES_CSS).toContain("html[data-theme-fading][data-theme-xfade] *:not(.theme-band-track)");
     // ...and re-asserts the per-leg easing on it by name, so palette and band
     // stay locked together across a multi-leg sweep.
     expect(STYLES_CSS).toContain('html[data-theme-fading="in"] .theme-band-track');
@@ -405,6 +410,35 @@ describe("_setTheme", () => {
     expect(document.documentElement.hasAttribute("data-theme-fading")).toBe(false);
     api.setTheme("morning");
     expect(document.documentElement.getAttribute("data-theme-fading")).toBe("solo");
+    // No view transitions here (happy-dom): the per-element fallback is armed.
+    expect(document.documentElement.hasAttribute("data-theme-xfade")).toBe(true);
+  });
+
+  it("crossfades as ONE view transition where the browser can, per-element nowhere", () => {
+    // On a busy page the per-element colour transitions were 100-150 ms
+    // frames; a same-document view transition is one compositor fade. The
+    // types carry the step's easing and length to the CSS.
+    const doc = document as Document & { startViewTransition?: unknown };
+    const g = globalThis as unknown as { ViewTransition?: unknown };
+    const calls: Array<{ update: () => void; types: string[] }> = [];
+    function VT() {}
+    (VT as unknown as { prototype: Record<string, unknown> }).prototype.types = null;
+    g.ViewTransition = VT;
+    doc.startViewTransition = (opts: { update: () => void; types: string[] }) => { calls.push(opts); opts.update(); };
+    try {
+      document.documentElement.removeAttribute("data-theme-fading");
+      api.setTheme("morning"); // from nightfall: the slow step
+      expect(calls).toHaveLength(1);
+      expect(calls[0].types).toEqual(["polaris-theme", "polaris-theme-solo", "polaris-theme-slow"]);
+      expect(document.documentElement.getAttribute("data-theme")).toBe("morning");
+      expect(document.documentElement.getAttribute("data-theme-fading")).toBe("solo");
+      expect(document.documentElement.hasAttribute("data-theme-xfade")).toBe(false);
+      api.setTheme("noon", "in");
+      expect(calls[1].types).toEqual(["polaris-theme", "polaris-theme-in", "polaris-theme-std"]);
+    } finally {
+      delete doc.startViewTransition;
+      delete g.ViewTransition;
+    }
   });
 
   it("announces the change on document so cached palettes can repaint", () => {

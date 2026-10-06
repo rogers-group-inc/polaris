@@ -11,24 +11,24 @@
    repainted at every step. That is what carries morning's sun up from the
    bottom edge to noon's wash at the top. Values and the transition are in
    :root and the data-theme-fading block; mobile.css registers the same set. */
-@property --page-glow-y   { syntax: "<percentage>"; inherits: true; initial-value: 0%; }
-@property --page-glow-w   { syntax: "<length>"; inherits: true; initial-value: 0px; }
-@property --page-glow-h   { syntax: "<length>"; inherits: true; initial-value: 0px; }
-@property --page-glow-c0  { syntax: "<color>"; inherits: true; initial-value: transparent; }
-@property --page-glow-c1  { syntax: "<color>"; inherits: true; initial-value: transparent; }
-@property --page-glow-c2  { syntax: "<color>"; inherits: true; initial-value: transparent; }
-@property --page-glow-c3  { syntax: "<color>"; inherits: true; initial-value: transparent; }
-@property --page-glow-p1  { syntax: "<percentage>"; inherits: true; initial-value: 9%; }
-@property --page-glow-p2  { syntax: "<percentage>"; inherits: true; initial-value: 26%; }
-@property --page-glow-p3  { syntax: "<percentage>"; inherits: true; initial-value: 50%; }
-@property --page-glow-end { syntax: "<percentage>"; inherits: true; initial-value: 70%; }
+@property --page-glow-y   { syntax: "<percentage>"; inherits: false; initial-value: 0%; }
+@property --page-glow-w   { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --page-glow-h   { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --page-glow-c0  { syntax: "<color>"; inherits: false; initial-value: transparent; }
+@property --page-glow-c1  { syntax: "<color>"; inherits: false; initial-value: transparent; }
+@property --page-glow-c2  { syntax: "<color>"; inherits: false; initial-value: transparent; }
+@property --page-glow-c3  { syntax: "<color>"; inherits: false; initial-value: transparent; }
+@property --page-glow-p1  { syntax: "<percentage>"; inherits: false; initial-value: 9%; }
+@property --page-glow-p2  { syntax: "<percentage>"; inherits: false; initial-value: 26%; }
+@property --page-glow-p3  { syntax: "<percentage>"; inherits: false; initial-value: 50%; }
+@property --page-glow-end { syntax: "<percentage>"; inherits: false; initial-value: 70%; }
 /* Nightfall's glow is a second layer that SLIDES rather than fades: in from
    off the left edge on the turn from noon, out past the right edge on the
    turn to morning. Only its horizontal centre moves; see --night-glow. */
-@property --night-glow-x  { syntax: "<percentage>"; inherits: true; initial-value: -100%; }
-@property --night-glow-c { syntax: "<color>"; inherits: true; initial-value: rgba(109,151,255,.25); }
-@property --night-glow-w { syntax: "<length>"; inherits: true; initial-value: 0px; }
-@property --night-glow-h { syntax: "<length>"; inherits: true; initial-value: 0px; }
+@property --night-glow-x  { syntax: "<percentage>"; inherits: false; initial-value: -100%; }
+@property --night-glow-c { syntax: "<color>"; inherits: false; initial-value: rgba(109,151,255,.25); }
+@property --night-glow-w { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --night-glow-h { syntax: "<length>"; inherits: false; initial-value: 0px; }
 
 :root {
   --color-bg-primary: #151528;
@@ -186,17 +186,6 @@
      back as it leaves. */
   --night-glow-w: 70vw;
   --night-glow-h: 30vh;
-  --night-glow: radial-gradient(ellipse var(--night-glow-w) var(--night-glow-h) at var(--night-glow-x) 0%,
-    var(--night-glow-c) 0%,
-    transparent 70%);
-  --page-glow:
-    var(--night-glow),
-    radial-gradient(ellipse var(--page-glow-w) var(--page-glow-h) at 50% var(--page-glow-y),
-      var(--page-glow-c0) 0%,
-      var(--page-glow-c1) var(--page-glow-p1),
-      var(--page-glow-c2) var(--page-glow-p2),
-      var(--page-glow-c3) var(--page-glow-p3),
-      transparent var(--page-glow-end));
   /* ── Frosted panel surfaces ────────────────────────────────────────────────
      Modals and slide-overs are 70% of the theme's own panel colour over a
      blurred backdrop, so the page stays faintly visible behind them. Raised
@@ -489,9 +478,9 @@
      `transition: transform`, and replacing it would kill the band’s travel —
      the one animation that must survive a theme change.
    Keep the duration in step with THEME_FADE_MS in app.js. ───────────────── */
-html[data-theme-fading] *:not(.theme-band-track),
-html[data-theme-fading] *:not(.theme-band-track)::before,
-html[data-theme-fading] *:not(.theme-band-track)::after {
+html[data-theme-fading][data-theme-xfade] *:not(.theme-band-track),
+html[data-theme-fading][data-theme-xfade] *:not(.theme-band-track)::before,
+html[data-theme-fading][data-theme-xfade] *:not(.theme-band-track)::after {
   transition: background-color 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
               border-color 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
               color 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
@@ -653,10 +642,49 @@ html[data-theme="morning"] {
 @media (prefers-reduced-motion: reduce) {
   html, html[data-theme], html[data-glow-turn], html[data-glow-turn][data-theme] { transition: none; }
   html[data-glow-turn] { animation: none; }
-  html[data-theme-fading] *:not(.theme-band-track),
-  html[data-theme-fading] *:not(.theme-band-track)::before,
-  html[data-theme-fading] *:not(.theme-band-track)::after { transition: none; }
+  html[data-theme-fading][data-theme-xfade] *:not(.theme-band-track),
+  html[data-theme-fading][data-theme-xfade] *:not(.theme-band-track)::before,
+  html[data-theme-fading][data-theme-xfade] *:not(.theme-band-track)::after { transition: none; }
 }
+
+/* ─── Theme changes as one crossfade ──────────────────────────────────────
+   Where the browser has same-document view transitions with types
+   (Chromium 125+, Safari 18.2+), _setTheme runs the change inside
+   document.startViewTransition: the page is captured once before and
+   crossfaded to the live page after, as ONE picture. The per-element
+   crossfade above then stays off — it keys on data-theme-xfade, which is
+   only set on the fallback path. Measured on a 100-row Assets list (~4,200
+   elements): the per-element transitions were 100-150 ms frames and up to
+   1.5 s of style recalculation per turn; this is one compositor fade.
+   The types carry what the per-element rules got from data-theme-fading:
+   the step's length (polaris-theme-slow = THEME_LEG_MS, 1.6 s) and its
+   easing (in / mid / out / solo, the same curves as the phase rules).
+   The band is named for the length of a theme change and its outgoing
+   picture hidden, so it travels live and never ghosts. Clicks pass
+   through the overlay to the page, so the strip can be clicked mid-turn
+   as before. Under reduced motion _setTheme never starts one. */
+html:active-view-transition-type(polaris-theme)::view-transition { pointer-events: none; }
+html:active-view-transition-type(polaris-theme)::view-transition-group(*),
+html:active-view-transition-type(polaris-theme)::view-transition-old(*),
+html:active-view-transition-type(polaris-theme)::view-transition-new(*) {
+  animation-duration: 800ms;
+  animation-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+html:active-view-transition-type(polaris-theme-slow)::view-transition-group(*),
+html:active-view-transition-type(polaris-theme-slow)::view-transition-old(*),
+html:active-view-transition-type(polaris-theme-slow)::view-transition-new(*) { animation-duration: 1600ms; }
+html:active-view-transition-type(polaris-theme-in)::view-transition-group(*),
+html:active-view-transition-type(polaris-theme-in)::view-transition-old(*),
+html:active-view-transition-type(polaris-theme-in)::view-transition-new(*) { animation-timing-function: cubic-bezier(0.4, 0, 1, 1); }
+html:active-view-transition-type(polaris-theme-mid)::view-transition-group(*),
+html:active-view-transition-type(polaris-theme-mid)::view-transition-old(*),
+html:active-view-transition-type(polaris-theme-mid)::view-transition-new(*) { animation-timing-function: linear; }
+html:active-view-transition-type(polaris-theme-out)::view-transition-group(*),
+html:active-view-transition-type(polaris-theme-out)::view-transition-old(*),
+html:active-view-transition-type(polaris-theme-out)::view-transition-new(*) { animation-timing-function: cubic-bezier(0, 0, 0.36, 1); }
+html:active-view-transition-type(polaris-theme) .theme-band-window { view-transition-name: polaris-theme-band; }
+html:active-view-transition-type(polaris-theme)::view-transition-old(polaris-theme-band) { animation: none; opacity: 0; }
+html:active-view-transition-type(polaris-theme)::view-transition-new(polaris-theme-band) { animation: none; }
 
 /* ─── Multi-leg turns ──────────────────────────────────────────
    A click from noon to nightfall is two legs — noon→afternoon, afternoon→
@@ -680,17 +708,17 @@ html[data-theme="morning"] {
    on every color property, so the light eases to a stop at the waypoint while
    the band glides past — the exact pause the phase exists to remove. The track
    is then matched again by name so it keeps the same curve. ─────────────── */
-html[data-theme-fading="in"] *:not(.theme-band-track),
-html[data-theme-fading="in"] *:not(.theme-band-track)::before,
-html[data-theme-fading="in"] *:not(.theme-band-track)::after,
+html[data-theme-fading="in"][data-theme-xfade] *:not(.theme-band-track),
+html[data-theme-fading="in"][data-theme-xfade] *:not(.theme-band-track)::before,
+html[data-theme-fading="in"][data-theme-xfade] *:not(.theme-band-track)::after,
 html[data-theme-fading="in"] .theme-band-track { transition-timing-function: cubic-bezier(0.4, 0, 1, 1); }
-html[data-theme-fading="mid"] *:not(.theme-band-track),
-html[data-theme-fading="mid"] *:not(.theme-band-track)::before,
-html[data-theme-fading="mid"] *:not(.theme-band-track)::after,
+html[data-theme-fading="mid"][data-theme-xfade] *:not(.theme-band-track),
+html[data-theme-fading="mid"][data-theme-xfade] *:not(.theme-band-track)::before,
+html[data-theme-fading="mid"][data-theme-xfade] *:not(.theme-band-track)::after,
 html[data-theme-fading="mid"] .theme-band-track { transition-timing-function: linear; }
-html[data-theme-fading="out"] *:not(.theme-band-track),
-html[data-theme-fading="out"] *:not(.theme-band-track)::before,
-html[data-theme-fading="out"] *:not(.theme-band-track)::after,
+html[data-theme-fading="out"][data-theme-xfade] *:not(.theme-band-track),
+html[data-theme-fading="out"][data-theme-xfade] *:not(.theme-band-track)::before,
+html[data-theme-fading="out"][data-theme-xfade] *:not(.theme-band-track)::after,
 html[data-theme-fading="out"] .theme-band-track { transition-timing-function: cubic-bezier(0, 0, 0.36, 1); }
 
 /* ─── The slow step: nightfall → morning ──────────────────────
@@ -702,9 +730,9 @@ html[data-theme-fading="out"] .theme-band-track { transition-timing-function: cu
    which holds the fading attribute (and the seam) for the same 1.6 s:
    change one, change both. The two extra attribute selectors are what
    outrank the crossfade and phase rules. */
-html[data-theme-fading][data-theme="morning"] *:not(.theme-band-track),
-html[data-theme-fading][data-theme="morning"] *:not(.theme-band-track)::before,
-html[data-theme-fading][data-theme="morning"] *:not(.theme-band-track)::after,
+html[data-theme-fading][data-theme="morning"][data-theme-xfade] *:not(.theme-band-track),
+html[data-theme-fading][data-theme="morning"][data-theme-xfade] *:not(.theme-band-track)::before,
+html[data-theme-fading][data-theme="morning"][data-theme-xfade] *:not(.theme-band-track)::after,
 html[data-theme-fading][data-theme="morning"] .theme-band-track { transition-duration: 1600ms; }
 
 /* ─── Page changes ──────────────────────────────────────────────────────────
@@ -721,17 +749,64 @@ html { font-size: 14px; color-scheme: dark; }
 body {
   font-family: var(--font-sans);
   color: var(--color-text-primary);
-  /* Fixed so the glow stays put in the viewport as the page scrolls (at the
-     top, or morning's at the bottom) — it is light, not a mark on the first
-     screenful. */
-  /* Longhands, not `var(--page-glow) no-repeat fixed` in the shorthand: the
-     glow is two layers, and a shorthand's per-layer keywords apply to the
-     layer they follow, so the night layer would scroll and tile. */
-  background: var(--page-glow), var(--color-bg-secondary);
-  background-repeat: no-repeat;
-  background-attachment: fixed;
+  /* The ground only: the glow is the fixed html::before layer below. This
+     colour propagates to the canvas (html has no background), so it sits
+     under that layer rather than over it. */
+  background: var(--color-bg-secondary);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+/* ─── The page glow's layer ───────────────────────────────────────────────
+   The glows are painted HERE, on one fixed layer behind everything, not as
+   the body's background. Their animated parts (the @property block at the
+   top of this file) are registered `inherits: false` and pulled onto this
+   layer alone with an explicit `inherit`. That is the whole point: when
+   they inherited, every frame of a 2-2.5 s glow turn restyled every element
+   on the page — ~12 ms a frame on a 100-row Assets list, 1.6-2 s of style
+   recalculation per turn, the lag a busy page showed on a theme change.
+   Now a frame restyles <html> and this layer. The values are still set,
+   transitioned and animated on <html> (the theme blocks, the
+   html[data-glow-turn] rules); this layer only reads them. Never declare
+   --page-glow or --night-glow back on :root — an unregistered token there
+   is inherited by everything and brings the full-page restyle back. On
+   html::before, not body::before: its parent is <html>, where the values
+   live, so nothing in between has to forward them. z-index -1 paints it
+   over the canvas and under all content, so no element's background may
+   sit between them (the body's colour propagates to the canvas). */
+html::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  --page-glow-y: inherit;
+  --page-glow-w: inherit;
+  --page-glow-h: inherit;
+  --page-glow-c0: inherit;
+  --page-glow-c1: inherit;
+  --page-glow-c2: inherit;
+  --page-glow-c3: inherit;
+  --page-glow-p1: inherit;
+  --page-glow-p2: inherit;
+  --page-glow-p3: inherit;
+  --page-glow-end: inherit;
+  --night-glow-x: inherit;
+  --night-glow-c: inherit;
+  --night-glow-w: inherit;
+  --night-glow-h: inherit;
+  --night-glow: radial-gradient(ellipse var(--night-glow-w) var(--night-glow-h) at var(--night-glow-x) 0%,
+    var(--night-glow-c) 0%,
+    transparent 70%);
+  --page-glow:
+    var(--night-glow),
+    radial-gradient(ellipse var(--page-glow-w) var(--page-glow-h) at 50% var(--page-glow-y),
+      var(--page-glow-c0) 0%,
+      var(--page-glow-c1) var(--page-glow-p1),
+      var(--page-glow-c2) var(--page-glow-p2),
+      var(--page-glow-c3) var(--page-glow-p3),
+      transparent var(--page-glow-end));
+  background: var(--page-glow);
+  background-repeat: no-repeat;
 }
 a { color: var(--color-accent); text-decoration: none; }
 a:hover { text-decoration: underline; }

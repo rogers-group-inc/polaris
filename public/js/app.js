@@ -286,18 +286,40 @@ function _markGlowTurn(fromId, toId) {
   }, GLOW_MS + 80);
 }
 
+function _prefersReducedMotion() {
+  try {
+    return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  } catch (e) { return false; /* no matchMedia — animate */ }
+}
+
+// Can this browser crossfade the theme change as ONE picture — a same-document
+// view transition WITH types (the types carry the step's easing and length to
+// the CSS)? Chromium 125+, Safari 18.2+. Anything else takes the per-element
+// crossfade (data-theme-xfade). See the "Theme changes as one crossfade" block
+// in styles.css for why: per-element transitions on a busy page were the
+// 100-150 ms frames.
+function _themeViewTransitions() {
+  try {
+    return typeof document.startViewTransition === "function" &&
+      typeof ViewTransition !== "undefined" && "types" in ViewTransition.prototype;
+  } catch (e) { return false; }
+}
+
 // Arms the palette crossfade for the length of one change. Called before
 // data-theme moves, so the new values are what gets transitioned TO.
-function _beginThemeFade(phase, ms) {
-  try {
-    if (window.matchMedia &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  } catch (e) { /* no matchMedia — fade anyway */ }
+// data-theme-fading drives the band's travel and the timers either way;
+// data-theme-xfade switches on the per-element colour transitions, and only
+// when the change is NOT a view transition (which crossfades the page whole).
+function _beginThemeFade(phase, ms, viaViewTransition) {
+  if (_prefersReducedMotion()) return;
   var root = document.documentElement;
   root.setAttribute("data-theme-fading", phase || "solo");
+  if (viaViewTransition) root.removeAttribute("data-theme-xfade");
+  else root.setAttribute("data-theme-xfade", "");
   if (_themeFadeTimer) clearTimeout(_themeFadeTimer);
   _themeFadeTimer = setTimeout(function () {
     root.removeAttribute("data-theme-fading");
+    root.removeAttribute("data-theme-xfade");
     _themeFadeTimer = null;
   }, (ms || THEME_FADE_MS) + 80);
 }
@@ -312,7 +334,29 @@ function _setTheme(theme, phase) {
   var prevId = document.documentElement.getAttribute("data-theme") || DEFAULT_THEME;
   // Only fade a real change — re-applying the current theme (a page re-boot,
   // another tab syncing) should be instant.
-  if (t.id !== prevId) { _beginThemeFade(phase, _themeLegMs(t.id)); _markGlowTurn(prevId, t.id); }
+  var change = t.id !== prevId;
+  var legMs = _themeLegMs(t.id);
+  var viaVT = change && !_prefersReducedMotion() && _themeViewTransitions();
+  if (change) { _beginThemeFade(phase, legMs, viaVT); _markGlowTurn(prevId, t.id); }
+  if (viaVT) {
+    // One crossfade of the whole page instead of thousands of per-element
+    // colour transitions. The update runs after the browser has captured the
+    // outgoing picture; the incoming one is live, so the glow and the band
+    // keep moving inside it. The types give the CSS this step's easing and
+    // length (styles.css, "Theme changes as one crossfade").
+    document.startViewTransition({
+      update: function () { _applyTheme(t, prevId); },
+      types: ["polaris-theme", "polaris-theme-" + (phase || "solo"),
+              legMs > THEME_FADE_MS ? "polaris-theme-slow" : "polaris-theme-std"],
+    });
+  } else {
+    _applyTheme(t, prevId);
+  }
+}
+
+// The DOM half of _setTheme, split out so a view transition can run it as its
+// update callback (after the outgoing picture is captured).
+function _applyTheme(t, prevId) {
   document.documentElement.setAttribute("data-theme", t.id);
   // Waypoints are never saved: a reload mid-turn must land on a real theme.
   if (!t.transit) { try { localStorage.setItem("polaris-theme", t.id); } catch (e) {} }

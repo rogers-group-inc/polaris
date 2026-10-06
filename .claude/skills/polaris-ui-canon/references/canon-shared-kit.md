@@ -162,8 +162,17 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   the title, the endpoint search box and the icon row read through it. Both rules lift only the
   opacity of the theme's own token — never a literal colour — so a new theme keeps its palette.
 - **The page ground carries a glow; nothing full-width may paint over it opaquely.** Since
-  2026-10-04 `body` paints `--page-glow` (a radial wash from the top centre of the viewport,
-  `background-attachment: fixed`) over `--color-bg-secondary`. The glow is `--page-glow-color`
+  2026-10-06 the glow is painted by ONE fixed layer, `html::before` (`position: fixed; inset: 0;
+  z-index: -1`), over the ground colour (`body`'s `--color-bg-secondary`, which propagates to the
+  canvas; on the phone `html` paints `--md-surface` and `body` is transparent, or its own
+  background would cover the layer). **Performance rule, measured:** every glow part is an
+  `@property` with `inherits: false`, pulled onto that layer alone with an explicit `inherit`,
+  and `--page-glow` / `--night-glow` are declared ON the layer, never on `:root`. When the parts
+  inherited (and the tokens sat on `:root`), every frame of a 2-2.5 s glow turn restyled every
+  element — on a 100-row Assets list (~4,200 elements) ~12 ms a frame, 1.6-2 s of style
+  recalculation per turn; now 0.15-0.25 s and a steady 60 fps. `themeBandParity.test.ts` fails
+  if a part inherits or a token returns to `:root`. Before 2026-10-06 `body` painted it
+  (`background-attachment: fixed`). The glow is `--page-glow-color`
   (the theme's accent, except nightfall — whose glow is the sliding night layer below, moonlight blue `#6d97ff` at 25% — and noon, which takes sunlight yellow `#ffc928` because a terracotta
   wash on its near-white ground reads as rust) at `--page-glow-strength` (17.6% dark family, 12.3% nightfall, 11.2%
   daylight base, 24% noon; a wide horizontal ellipse, 140% × 60% of the viewport). **The glow is
@@ -172,7 +181,8 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   because a gradient cuts on a theme change while typed custom properties interpolate.
   `:root` derives the four colour stops from `--page-glow-color` / `--page-glow-strength` on the
   straight line to transparent, so a theme that sets only those two paints the same two-stop
-  wash as before. **`html[data-glow-turn]` transitions the parts, on its own 2 s clock** — keyed on the attribute
+  wash as before. The parts are SET, transitioned and animated on `<html>`; only the layer reads them.
+  **`html[data-glow-turn]` transitions the parts, on its own 2 s clock** — keyed on the attribute
   only a theme change sets (`_markGlowTurn`), NEVER on bare `html`: the app pages apply the saved
   theme from app.js at the end of `<body>`, after a first style pass with no `data-theme`, so an
   always-on transition played the dark base's glow into the real one on every page load (sky blue
