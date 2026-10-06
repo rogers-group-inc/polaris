@@ -71,7 +71,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `runQuietTimeSummaries(now?)` (job entry), `createDueSummaries(now?)`, `drainPendingSummaries(now?)`, `resendSummary(id, actor?)`, and the pure `summaryDue`, `buildSummaryDetails`, `recipientsFromHeldRows`, `resolveSummaryChannel`, `SUMMARY_MAX_ATTEMPTS`.
 
-**Cross-service deps:** `prisma` (notification, notificationDelivery, notificationChannel, user, quietTimeSummary), `quietTimeHoldService.quietSourceConfig`, `userTimezoneService.{resolveTimeZone, serverTimeZone}`, `notificationDeliveryService.{applyBrandLetterhead, sendEmailThroughChannel}`, `utils/quietSummaryEmailTemplate.ts`, `utils/quietTime.ts`, `eventLogService`.
+**Cross-service deps:** `prisma` (notification, notificationDelivery, notificationChannel, user, quietTimeSummary), `quietTimeHoldService.quietSourceConfig`, `userTimezoneService.{resolveTimeZone, serverTimeZone}`, `notificationDeliveryService.{applyBrandLetterhead, sendEmailThroughChannel}`, `utils/quietSummaryEmailTemplate.ts`, `utils/quietTime.ts`, `eventLogService`, `notificationRecipientService` (the static-recipient resolvers), `notificationEngine.loadScopeRegionSnapshots` + `regionHierarchyService.{regionLevelIndex, deviceRegionsAtLevels}` (device-region routing for the all-quiet audience).
 
 **Used by:** `src/jobs/sendQuietTimeSummaries.ts` (60 s, web/all role).
 
