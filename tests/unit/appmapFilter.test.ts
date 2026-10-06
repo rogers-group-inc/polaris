@@ -37,7 +37,7 @@ interface Node {
 interface Port { proto: string; port: number; count?: number; firstSeen?: string; lastSeen?: string }
 interface Edge { id: string; source: string; target: string; kind: string; ports: Port[]; portOverflow?: number; lastSeen: string }
 interface Pill { kind: string; value: string }
-interface Filter { ageMs: number; hideExternal: boolean; hideWorkstations?: boolean; pills: Pill[] }
+interface Filter { ageMs: number; hideExternal: boolean; hideWorkstations?: boolean; pills: Pill[]; excludeEdges?: Record<string, boolean> }
 interface Result { nodes: Node[]; edges: Array<{ edge: Edge; ports: Port[] }> }
 
 let applyGraphFilter: (n: Node[], e: Edge[], f: Filter, now: number) => Result;
@@ -66,7 +66,16 @@ beforeAll(() => {
   edgePortKey = sandbox.window.PolarisAppMap.edgePortKey;
   assignPortColors = sandbox.window.PolarisAppMap.assignPortColors;
   PORT_PALETTE = sandbox.window.PolarisAppMap.PORT_PALETTE;
+  buildPortLegend = sandbox.window.PolarisAppMap.buildPortLegend;
+  portHiddenEdges = sandbox.window.PolarisAppMap.portHiddenEdges;
+  cleanHiddenPorts = sandbox.window.PolarisAppMap.cleanHiddenPorts;
 });
+
+interface LegendRow { key: string; color: string | null; count: number; hidden: boolean }
+interface Legend { colors: Record<string, string>; rows: LegendRow[]; other: { count: number; hidden: boolean } }
+let buildPortLegend: (keys: Array<string | null>, prev: Record<string, string>, hidden: string[], palette?: string[]) => Legend;
+let portHiddenEdges: (edges: Array<{ edge: Edge; ports: Port[] }>, legend: Legend) => Record<string, boolean>;
+let cleanHiddenPorts: (list: unknown) => string[];
 
 let edgePortKey: (p: Port[]) => string | null;
 let assignPortColors: (keys: Array<string | null>, prev: Record<string, string>, palette?: string[]) => {
@@ -436,5 +445,78 @@ describe("assignPortColors", () => {
       const isRed = r === max && r - Math.max(g, b) > 90 && Math.abs(g - b) < 40;
       expect(isRed, `${hex} reads as red`).toBe(false);
     }
+  });
+});
+
+describe("applyGraphFilter — excludeEdges (Ports key switched a row off)", () => {
+  it("drops the edge and prunes an external node it alone referenced", () => {
+    const r = run(noFilter({ excludeEdges: { e2: true, e3: true } }));
+    expect(edgeIds(r)).toEqual(["e1"]);
+    expect(nodeIds(r)).not.toContain("ip:203.0.113.9");
+    // Mapped asset boxes stay, exactly as they do for any filtered-out edge.
+    expect(nodeIds(r)).toContain("svc:A:myapp");
+  });
+});
+
+describe("buildPortLegend", () => {
+  const PAL = ["#a", "#b"];
+  const keys = ["tcp/443", "tcp/443", "tcp/443", "tcp/22", "tcp/22", "udp/53", "tcp/3389", null];
+
+  it("marks hidden rows without moving colours or counts", () => {
+    const shown = buildPortLegend(keys, {}, [], PAL);
+    const hidden = buildPortLegend(keys, {}, ["tcp/443"], PAL);
+    expect(hidden.colors).toEqual(shown.colors);
+    expect(hidden.rows.map((r) => [r.key, r.count, r.hidden])).toEqual([
+      ["tcp/443", 3, true],
+      ["tcp/22", 2, false],
+    ]);
+    expect(hidden.other).toEqual({ count: 2, hidden: false });
+  });
+
+  it("gives a hidden port outside the coloured set its own row, out of Other", () => {
+    const l = buildPortLegend(keys, {}, ["udp/53"], PAL);
+    expect(l.rows[2]).toEqual({ key: "udp/53", color: null, count: 1, hidden: true });
+    expect(l.other.count).toBe(1);
+  });
+
+  it("ignores a hidden port that is not in view, and flags a hidden Other", () => {
+    const l = buildPortLegend(keys, {}, ["tcp/9999", "other"], PAL);
+    expect(l.rows.map((r) => r.key)).toEqual(["tcp/443", "tcp/22"]);
+    expect(l.other).toEqual({ count: 2, hidden: true });
+  });
+});
+
+describe("portHiddenEdges", () => {
+  const E = (id: string, port: number, proto = "tcp") =>
+    ({ edge: { id, source: "a", target: "b", kind: "process", ports: [{ proto, port, count: 1 }], lastSeen: iso(1) }, ports: [{ proto, port, count: 1 }] });
+  const edges = [E("x1", 443), E("x2", 443), E("x3", 22), E("x4", 53, "udp"), E("x5", 3389)];
+  const keys = ["tcp/443", "tcp/443", "tcp/22", "udp/53", "tcp/3389"];
+
+  it("returns the edges of a hidden coloured row", () => {
+    const l = buildPortLegend(keys, {}, ["tcp/443"], ["#a", "#b"]);
+    expect(portHiddenEdges(edges, l)).toEqual({ x1: true, x2: true });
+  });
+
+  it("hiding Other removes the uncoloured tail but not an explicitly listed port", () => {
+    const l = buildPortLegend(keys, {}, ["other"], ["#a", "#b"]);
+    expect(portHiddenEdges(edges, l)).toEqual({ x4: true, x5: true });
+  });
+
+  it("never hides a port-less edge", () => {
+    const bare = { edge: { id: "z", source: "a", target: "b", kind: "asset", ports: [], lastSeen: iso(1) }, ports: [] };
+    const l = buildPortLegend([null], {}, ["other"], ["#a"]);
+    expect(portHiddenEdges([bare], l)).toEqual({});
+  });
+});
+
+describe("cleanHiddenPorts", () => {
+  it("keeps proto/port keys and Other, dropping junk and duplicates", () => {
+    expect(cleanHiddenPorts(["tcp/443", "other", "tcp/443", "", 5, "443", "tcp/abc", "tcp/1234567"]))
+      .toEqual(["tcp/443", "other"]);
+  });
+
+  it("treats a missing list (a filter saved before ports could be hidden) as none", () => {
+    expect(cleanHiddenPorts(undefined)).toEqual([]);
+    expect(cleanHiddenPorts("tcp/443")).toEqual([]);
   });
 });

@@ -86,6 +86,11 @@
   // process | service | external | text. `value` is the match target — for
   // node-scope kinds it's the label the catalog offered.
   var filterPills = [];
+  // Ports switched off in the Ports key: proto/port keys ("tcp/443"), plus
+  // OTHER_KEY for the uncoloured tail. Persisted with the pills — in the
+  // toolbar prefs and in each saved filter.
+  var hiddenPorts = [];
+  var OTHER_KEY = "other";
   var suggestItems = [];      // current dropdown contents
   var suggestIndex = -1;      // highlighted row, -1 = none
 
@@ -158,6 +163,7 @@
         legend: !!(legend && !legend.hidden),
         portLegendCollapsed: portLegendCollapsed(),
         pills: filterPills,
+        hiddenPorts: hiddenPorts,
       }));
     } catch (e) { /* quota / private mode — prefs are best-effort */ }
   }
@@ -196,6 +202,22 @@
     var legend = document.getElementById("appmap-legend");
     if (legend && p.legend === true) legend.hidden = false;
     if (p.portLegendCollapsed === true) setPortLegendCollapsed(true);
+    hiddenPorts = cleanHiddenPorts(p.hiddenPorts);
+  }
+
+  // PURE (exposed for tests): a stored hidden-port list, validated. Anything
+  // that is not "proto/port" or OTHER_KEY (a hand-edited or stale blob) is
+  // dropped — a key that can never match would hide nothing while the Show
+  // all link insisted something was hidden.
+  function cleanHiddenPorts(list) {
+    if (!Array.isArray(list)) return [];
+    var seen = {};
+    return list.filter(function (k) {
+      if (typeof k !== "string" || seen[k]) return false;
+      if (k !== OTHER_KEY && !/^[a-z0-9]+\/\d{1,5}$/.test(k)) return false;
+      seen[k] = true;
+      return true;
+    });
   }
 
   function portLegendCollapsed() {
@@ -374,6 +396,9 @@
     var edges = [];
     for (var i = 0; i < allEdges.length; i++) {
       var e = allEdges[i];
+      // Edges switched off in the Ports key (see portHiddenEdges). Dropped here,
+      // not after, so node pruning treats them exactly like filtered-out edges.
+      if (f.excludeEdges && f.excludeEdges[e.id]) continue;
       if (f.ageMs > 0 && now - Date.parse(e.lastSeen) > f.ageMs) continue;
       var ports = e.ports.filter(function (p) {
         if (protoAny && !protoVals[String(p.proto).toLowerCase()]) return false;
@@ -611,30 +636,87 @@
     return PORT_NAMES[n] || "";
   }
 
-  // Bottom-left legend for the edge colours. Built from what is DRAWN, so a
-  // filter that drops a port drops its row too.
-  function renderPortLegend(assign) {
+  // PURE (exposed for tests): the Ports key's rows, with show/hide state.
+  // `keys` is one dominant key per edge BEFORE anything is hidden — colours and
+  // counts must not shift as rows are clicked off, or the key would reshuffle
+  // under the pointer. A hidden port that is not in the coloured top set
+  // still gets a row of its own (uncoloured), otherwise it would vanish into
+  // "Other" with no way to switch it back on. Returns
+  // { colors, rows: [{key, color|null, count, hidden}], other: {count, hidden} }.
+  function buildPortLegend(keys, prev, hidden, palette) {
+    var assign = assignPortColors(keys, prev, palette);
+    var hid = {};
+    (hidden || []).forEach(function (k) { hid[k] = true; });
+    var rows = assign.legend.map(function (r) {
+      return { key: r.key, color: r.color, count: r.count, hidden: !!hid[r.key] };
+    });
+    var counts = {};
+    (keys || []).forEach(function (k) { if (k) counts[k] = (counts[k] || 0) + 1; });
+    var otherCount = assign.otherCount;
+    Object.keys(hid).sort().forEach(function (k) {
+      if (k === OTHER_KEY || assign.colors[k] || !counts[k]) return;
+      rows.push({ key: k, color: null, count: counts[k], hidden: true });
+      otherCount -= counts[k];
+    });
+    return { colors: assign.colors, rows: rows, other: { count: otherCount, hidden: !!hid[OTHER_KEY] } };
+  }
+
+  // PURE (exposed for tests): which legend row an edge belongs to — its own
+  // key when that key has a row, OTHER_KEY when it is in the uncoloured tail,
+  // null for a port-less edge (never hidden: no row speaks for it).
+  function portLegendRowKey(pkey, legend) {
+    if (!pkey) return null;
+    for (var i = 0; i < legend.rows.length; i++) if (legend.rows[i].key === pkey) return pkey;
+    return OTHER_KEY;
+  }
+
+  // PURE (exposed for tests): ids of the edges the Ports key has switched off.
+  // `edges` are filter results ({edge, ports}).
+  function portHiddenEdges(edges, legend) {
+    var off = {};
+    legend.rows.forEach(function (r) { if (r.hidden) off[r.key] = true; });
+    if (legend.other.hidden) off[OTHER_KEY] = true;
+    var out = {};
+    (edges || []).forEach(function (r) {
+      var k = portLegendRowKey(edgePortKey(r.ports.length ? r.ports : r.edge.ports), legend);
+      if (k && off[k]) out[r.edge.id] = true;
+    });
+    return out;
+  }
+
+  function togglePortHidden(key) {
+    var i = hiddenPorts.indexOf(key);
+    if (i >= 0) hiddenPorts.splice(i, 1); else hiddenPorts.push(key);
+    savePrefs();
+    if (payload) render(capturePositions());
+  }
+
+  // Bottom-left legend for the edge colours. Built from what the FILTERS let
+  // through, before any port is switched off, so a switched-off row stays put
+  // (struck through) and can be clicked back on.
+  function renderPortLegend(legend) {
     var el = document.getElementById("appmap-port-legend");
     if (!el) return;
-    if (!assign || (!assign.legend.length && !assign.otherCount)) { el.hidden = true; return; }
-    var rows = assign.legend.map(function (r) {
-      var svc = portServiceName(r.key);
-      return '<div class="appmap-port-legend-row">' +
-        '<span class="appmap-port-legend-line" style="border-color:' + r.color + '"></span>' +
-        '<span class="appmap-port-legend-key">' + esc(r.key) + "</span>" +
+    if (!legend || (!legend.rows.length && !legend.other.count)) { el.hidden = true; return; }
+    function row(key, label, color, count, hidden, svc) {
+      return '<button type="button" class="appmap-port-legend-row' + (hidden ? " is-off" : "") + '"' +
+        ' data-port-key="' + esc(key) + '" aria-pressed="' + (hidden ? "false" : "true") + '"' +
+        ' title="' + (hidden ? "Show" : "Hide") + " " + esc(label) + ' connections">' +
+        '<span class="appmap-port-legend-line" style="border-color:' + color + '"></span>' +
+        '<span class="appmap-port-legend-key">' + esc(label) + "</span>" +
         (svc ? '<span class="appmap-port-legend-svc">' + esc(svc) + "</span>" : "") +
-        '<span class="appmap-port-legend-count" title="Connections drawn in this colour">' + r.count + "</span>" +
-        "</div>";
-    }).join("");
-    if (assign.otherCount) {
-      rows += '<div class="appmap-port-legend-row">' +
-        '<span class="appmap-port-legend-line" style="border-color:' + neutralEdgeColor(pageTheme()) + '"></span>' +
-        '<span class="appmap-port-legend-key">Other</span>' +
-        '<span class="appmap-port-legend-count" title="Connections drawn in this colour">' + assign.otherCount + "</span>" +
-        "</div>";
+        '<span class="appmap-port-legend-count">' + count + "</span>" +
+        "</button>";
     }
+    var neutral = neutralEdgeColor(pageTheme());
+    var html = legend.rows.map(function (r) {
+      return row(r.key, r.key, r.color || neutral, r.count, r.hidden, portServiceName(r.key));
+    }).join("");
+    if (legend.other.count) html += row(OTHER_KEY, "Other", neutral, legend.other.count, legend.other.hidden, "");
     var body = el.querySelector(".appmap-port-legend-body");
-    if (body) body.innerHTML = rows;
+    if (body) body.innerHTML = html;
+    var showAll = document.getElementById("appmap-port-legend-showall");
+    if (showAll) showAll.hidden = !hiddenPorts.length;
     el.hidden = false;
   }
 
@@ -1052,7 +1134,19 @@
     var mappedAssets = payload.nodes.filter(function (n) { return n.kind === "asset" && n.hasMappedProcesses; });
     var emptyEl = document.getElementById("appmap-empty");
     var f = currentFilters();
-    var g = filterGraph(f);
+    // Two passes. The Ports key (colours, counts, rows) is built from what the
+    // filters let through; THEN the rows switched off in it are removed. One
+    // pass would build the key from the already-hidden graph, and a hidden
+    // row would vanish with nothing left to click it back on.
+    var unhidden = filterGraph(f);
+    var legend = buildPortLegend(unhidden.edges.map(function (r) {
+      return edgePortKey(r.ports.length ? r.ports : r.edge.ports);
+    }), portColorByKey, hiddenPorts);
+    portColorByKey = legend.colors;
+    var excluded = portHiddenEdges(unhidden.edges, legend);
+    var g = Object.keys(excluded).length
+      ? filterGraph(Object.assign({}, f, { excludeEdges: excluded }))
+      : unhidden;
 
     if (mappedAssets.length === 0) {
       showEmpty("No mapped processes or services yet", null);
@@ -1061,7 +1155,12 @@
       setStatus("");
       return;
     }
-    if (g.edges.length === 0 && payload.edges.length > 0) {
+    if (g.edges.length === 0 && unhidden.edges.length > 0) {
+      showEmpty(
+        "Every port is switched off",
+        "Click a row in the Ports key (bottom left) to show its connections again, or use Show all.",
+      );
+    } else if (g.edges.length === 0 && payload.edges.length > 0) {
       showEmpty(
         filterPills.length ? "No connections match these filters" : "No connections in this window",
         filterPills.length
@@ -1073,17 +1172,13 @@
     }
 
     var positions = resolvePositions(g, preserved);
-    var portAssign = assignPortColors(g.edges.map(function (r) {
-      return edgePortKey(r.ports.length ? r.ports : r.edge.ports);
-    }), portColorByKey);
-    portColorByKey = portAssign.colors;
-    renderPortLegend(portAssign);
+    renderPortLegend(legend);
     if (cy) { cy.destroy(); cy = null; }
     cy = cytoscape({
       // The inner div, never #appmap-graph itself: destroy() empties its
       // container, and the legends and empty state live in #appmap-graph.
       container: document.getElementById("appmap-cy"),
-      elements: buildElements(g, portAssign.colors),
+      elements: buildElements(g, legend.colors),
       wheelSensitivity: 0.2,
       // maxZoom bounds the preset layout's fit too — without it a 3-node
       // graph fit-zooms to fill the whole canvas with giant nodes.
@@ -1093,7 +1188,7 @@
       layout: { name: "preset", positions: function (n) { return positions[n.id()] || undefined; }, fit: true, padding: 40 },
     });
     wireGraphEvents();
-    if (filterPills.length) {
+    if (filterPills.length || hiddenPorts.length) {
       // The pills themselves show WHAT is filtered — repeating them here just
       // duplicated a long row of text. "Filtered" + the surviving counts is
       // enough to read the effect.
@@ -1337,6 +1432,22 @@
       portLegendBtn.addEventListener("click", function () {
         setPortLegendCollapsed(!portLegendCollapsed());
         savePrefs();
+      });
+    }
+    // Rows are re-rendered every pass, so one delegated listener on the body.
+    var portLegendBody = document.querySelector("#appmap-port-legend .appmap-port-legend-body");
+    if (portLegendBody) {
+      portLegendBody.addEventListener("click", function (ev) {
+        var row = ev.target.closest ? ev.target.closest("[data-port-key]") : null;
+        if (row) togglePortHidden(row.getAttribute("data-port-key"));
+      });
+    }
+    var showAllBtn = document.getElementById("appmap-port-legend-showall");
+    if (showAllBtn) {
+      showAllBtn.addEventListener("click", function () {
+        hiddenPorts = [];
+        savePrefs();
+        if (payload) render(capturePositions());
       });
     }
 
@@ -1671,9 +1782,11 @@
   //
   // A named pill set, per user, in its own localStorage key (the toolbar prefs
   // blob is last-state; these are deliberate, named recalls — same split as the
-  // integrations page's saved queries). Stores ONLY the pills: "Seen within" and
-  // Hide external are separate controls, and silently moving the operator's time
-  // window on recall would be a surprise.
+  // integrations page's saved queries). Stores the pills AND the ports switched
+  // off in the Ports key (`hiddenPorts`; an entry saved before that existed has
+  // none, and recalls as "every port shown"). Nothing else: "Seen within" and
+  // Hide external are separate controls, and silently moving the operator's
+  // time window on recall would be a surprise.
 
   function savedFiltersKey() {
     var u = (typeof currentUsername !== "undefined" && currentUsername) ? currentUsername : "";
@@ -1700,19 +1813,21 @@
     var menu = document.getElementById("appmap-saved-menu");
     if (!menu) return;
     var list = readSavedFilters();
-    var canSave = filterPills.length > 0;
+    var canSave = filterPills.length > 0 || hiddenPorts.length > 0;
     var html =
       '<div class="appmap-saved-new">' +
         '<input type="text" id="appmap-saved-name" class="input" maxlength="48" ' +
-               'placeholder="' + (canSave ? "Name this filter…" : "Add a pill first") + '"' +
+               'placeholder="' + (canSave ? "Name this filter…" : "Add a pill or hide a port first") + '"' +
                (canSave ? "" : " disabled") + '>' +
         '<button type="button" class="btn btn-primary btn-sm" id="appmap-saved-add"' +
           (canSave ? "" : " disabled") + ">Save</button>" +
       "</div>";
     html += list.length
       ? list.map(function (f, i) {
+          var nHidden = cleanHiddenPorts(f.hiddenPorts).length;
           return '<div class="appmap-saved-item" data-saved-index="' + i + '" role="menuitem" ' +
-            'title="Apply “' + esc(f.name) + '” (' + f.pills.length + ' pill(s))">' +
+            'title="Apply “' + esc(f.name) + '” (' + f.pills.length + ' pill(s)' +
+              (nHidden ? ", " + nHidden + " port(s) hidden" : "") + ')">' +
             '<span class="appmap-saved-name">' + esc(f.name) + "</span>" +
             '<button type="button" class="tag-chip-delete" data-saved-delete="' + i +
               '" aria-label="Delete saved filter" title="Delete">&times;</button>' +
@@ -1752,14 +1867,14 @@
       var nameEl = document.getElementById("appmap-saved-name");
       if (!nameEl) return;
       var name = nameEl.value.trim();
-      if (!name || !filterPills.length) return;
+      if (!name || (!filterPills.length && !hiddenPorts.length)) return;
       var list = readSavedFilters();
       var idx = -1;
       for (var i = 0; i < list.length; i++) {
         if (list[i].name.toLowerCase() === name.toLowerCase()) { idx = i; break; }
       }
       // Same name overwrites rather than accumulating near-duplicates.
-      var entry = { name: name, pills: filterPills.slice() };
+      var entry = { name: name, pills: filterPills.slice(), hiddenPorts: hiddenPorts.slice() };
       if (idx >= 0) list[idx] = entry; else list.push(entry);
       writeSavedFilters(list);
       renderSavedMenu();
@@ -1793,9 +1908,11 @@
       ev.preventDefault();
       var hit = readSavedFilters()[Number(row.getAttribute("data-saved-index"))];
       if (!hit) return;
-      // REPLACES the current pills rather than merging — a saved filter is a
-      // whole view, and merging would quietly AND it with whatever was there.
+      // REPLACES the current pills and hidden ports rather than merging — a
+      // saved filter is a whole view, and merging would quietly AND it with
+      // whatever was there.
       filterPills = hit.pills.slice();
+      hiddenPorts = cleanHiddenPorts(hit.hiddenPorts);
       renderPills();
       savePrefs();
       closeSavedMenu();
@@ -1851,6 +1968,9 @@
     consolidatePorts: consolidatePorts,
     edgePortKey: edgePortKey,
     assignPortColors: assignPortColors,
+    buildPortLegend: buildPortLegend,
+    portHiddenEdges: portHiddenEdges,
+    cleanHiddenPorts: cleanHiddenPorts,
     PORT_PALETTE: PORT_PALETTE,
   };
 })();

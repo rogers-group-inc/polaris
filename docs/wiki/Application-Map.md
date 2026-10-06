@@ -41,6 +41,15 @@ and filter changes for as long as it stays in that top eight. The edge *kind* is
 carried by the stroke instead: heavier for process → process, dashed for
 external. Collapse the key with its `−` button; the choice is remembered per user.
 
+**Click a row in the Ports key to hide that port's connections**, and click it
+again to bring them back. A hidden row stays in the key, faded and struck
+through, and **Show all** in the key's header turns every port back on. Hiding
+**Other** hides the whole uncoloured tail. Colours and counts never move while
+you click: they are worked out before anything is hidden. A port you hid that
+falls out of the coloured eight keeps a row of its own, so it can always be
+switched back on. The hidden set is remembered per user like the pills, and is
+**saved with a saved filter** (see below).
+
 Listening ports are consolidated into ranges — a run of three or more collapses
 to `tcp/9000-9004`, a pair stays listed because "9000, 9001" reads better, and
 protocols never merge.
@@ -134,8 +143,11 @@ removed.** On by default.
 
 ### Saved
 
-Named pill sets, per user and per browser. **Pills only** — recalling one must
-not move your time window — and it **replaces** rather than merges.
+Named views, per user and per browser: the **pills plus the ports hidden in the
+Ports key** (a filter can be only hidden ports, with no pills). Nothing else is
+stored — recalling one must not move your time window — and it **replaces**
+rather than merges, so recalling a filter saved with no hidden ports shows every
+port again.
 
 ### Screenshot
 
