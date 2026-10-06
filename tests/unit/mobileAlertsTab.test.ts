@@ -171,22 +171,23 @@ describe("alerts tab filtering", () => {
 });
 
 const REGIONAL = [
-  { id: "r1", severity: "critical", message: "down", assetHostname: "east-fw", triggeredAt: "2026-10-05T10:00:00Z", acknowledged: false, regionTags: ["East"] },
-  { id: "r2", severity: "critical", message: "down", assetHostname: "west-fw", triggeredAt: "2026-10-05T09:00:00Z", acknowledged: false, regionTags: ["West"] },
-  { id: "r3", severity: "warning",  message: "cpu",  assetHostname: "lab-sw",  triggeredAt: "2026-10-05T08:00:00Z", acknowledged: false, regionTags: [] },
+  { id: "r1", severity: "critical", message: "down", assetId: "a1", assetHostname: "east-fw", triggeredAt: "2026-10-05T10:00:00Z", acknowledged: false, regionTags: ["East"] },
+  { id: "r2", severity: "critical", message: "down", assetId: "a2", assetHostname: "west-fw", triggeredAt: "2026-10-05T09:00:00Z", acknowledged: false, regionTags: ["West"] },
+  { id: "r3", severity: "warning",  message: "cpu",  assetId: "a3", assetHostname: "lab-sw",  triggeredAt: "2026-10-05T08:00:00Z", acknowledged: false, regionTags: [] },
+  { id: "r4", severity: "warning",  message: "backup failed", assetId: null, assetHostname: null, triggeredAt: "2026-10-05T07:00:00Z", acknowledged: false, regionTags: [] },
 ];
 const EAST_USER = { regions: ["East"], permissions: { alerts: "write" } };
 
 describe("alerts tab region scope", () => {
-  it("'mine' keeps my regions AND untagged alerts — the server's own viewer scope", () => {
+  it("'mine' keeps my regions and device-less system alerts, not untagged devices", () => {
     const tab = load();
-    expect(tab.filterRows(REGIONAL, "", "all", [], ["east"]).map((r: any) => r.id)).toEqual(["r1", "r3"]);
-    expect(tab.filterRows(REGIONAL, "", "all", [], null).map((r: any) => r.id)).toEqual(["r1", "r2", "r3"]);
+    expect(tab.filterRows(REGIONAL, "", "all", [], ["east"]).map((r: any) => r.id)).toEqual(["r1", "r4"]);
+    expect(tab.filterRows(REGIONAL, "", "all", [], null).map((r: any) => r.id)).toEqual(["r1", "r2", "r3", "r4"]);
   });
 
   it("defaults a regional viewer to My regions, named on the chip", async () => {
     await render(REGIONAL, undefined, EAST_USER);
-    expect(shownIds()).toEqual(["CRITICAL · east-fw", "WARNING · lab-sw"]);
+    expect(shownIds()).toEqual(["CRITICAL · east-fw", "WARNING"]);
     const chip = document.getElementById("alerts-sort")!;
     expect(chip.textContent!.trim()).toBe("Time · My regions");
     expect(chip.classList.contains("selected")).toBe(true);
@@ -196,14 +197,14 @@ describe("alerts tab region scope", () => {
     await render(REGIONAL, undefined, EAST_USER);
     (document.getElementById("alerts-sort") as HTMLElement).click();
     (document.querySelector('#list-sort-sheet [data-filter="region"][data-value="all"]') as HTMLElement).click();
-    expect(shownIds()).toEqual(["CRITICAL · east-fw", "CRITICAL · west-fw", "WARNING · lab-sw"]);
+    expect(shownIds()).toEqual(["CRITICAL · east-fw", "CRITICAL · west-fw", "WARNING · lab-sw", "WARNING"]);
     expect(document.getElementById("alerts-sort")!.textContent!.trim()).toBe("Time");
     expect(JSON.parse(localStorage.getItem("polaris-mobile-alerts-list-v2")!).region).toBe("all");
   });
 
   it("offers no region choice to a viewer with no regions", async () => {
     await render(REGIONAL);
-    expect(shownIds()).toHaveLength(3);
+    expect(shownIds()).toHaveLength(4);
     (document.getElementById("alerts-sort") as HTMLElement).click();
     expect(document.querySelector('#list-sort-sheet [data-filter="region"]')).toBeNull();
     expect(document.getElementById("alerts-sort")!.textContent!.trim()).toBe("Time");

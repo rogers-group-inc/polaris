@@ -36,9 +36,11 @@ the *Sort & filter* sheet orders by **Time**, **Severity** or **Device** and
 narrows to one or more **severities** (Critical also catches alerts recorded as
 "error"). If your account carries [region tags](Users-Roles-and-Permissions#tags-and-region-scope),
 the sheet also offers **My regions** (the default) or **All regions**. My
-regions shows alerts in your regions plus alerts that belong to no region. If
-your role limits you to your regions, All regions shows nothing more; for an
-administrator it is the whole fleet. Whatever the sheet is narrowing by is
+regions shows alerts on devices in your regions plus system alerts that aren't
+about any one device; alerts on devices with no region tag only appear under
+All regions. If
+your role limits you to your regions, All regions adds only those untagged
+devices; for an administrator it is the whole fleet. Whatever the sheet is narrowing by is
 named on the sort chip, so the list is never filtered by something you can't
 see. Your choices are remembered on that phone.
 
