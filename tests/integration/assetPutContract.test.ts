@@ -166,6 +166,21 @@ d("PUT /assets/:id contract", () => {
     expect(row?.ipAddress).toBeNull(); // no sources to project from
   });
 
+  // The edit form used to fold an emptied Location to undefined, which dropped
+  // the key, so the stored value survived every save. It now always sends the
+  // field and "" must clear it, letting the display fall back to learnedLocation.
+  it("location: an empty string clears it to null, a value is trimmed", async () => {
+    let resp = await put({ location: "  Mount Olive Road 1041, Whiteland  " });
+    expect(resp.status).toBe(200);
+    let row = await prisma.asset.findUnique({ where: { id: assetId } });
+    expect(row?.location).toBe("Mount Olive Road 1041, Whiteland");
+
+    resp = await put({ location: "" });
+    expect(resp.status).toBe(200);
+    row = await prisma.asset.findUnique({ where: { id: assetId } });
+    expect(row?.location).toBeNull();
+  });
+
   it("a status change stamps statusChangedAt/By, and decommissioned clamps monitored off", async () => {
     await prisma.asset.update({ where: { id: assetId }, data: { monitored: true } });
     const resp = await put({ status: "decommissioned" });
