@@ -1094,8 +1094,8 @@ Merging needs full read-write on Assets, because it deletes a record.
 
 Serials that identify nothing are ignored rather than reported: the placeholders
 some hardware ships (`To Be Filled By O.E.M.`, `Default string`, `System Serial
-Number`, and a serial that is one character repeated), and any serial shared by
-more than eight assets — past that count the serial is the problem, not the
+Number`, in any capitalisation, spacing or punctuation, and a serial that is one
+character repeated), and any serial shared by more than three assets — past that count the serial is the problem, not the
 assets. If two genuinely different units do report one serial, Reject the card
 and that pair will not come back.
 
@@ -1113,7 +1113,8 @@ when something later reads it.**
 Hardware is supposed to carry a serial number programmed at the factory.
 Plenty of it does not, and reports a placeholder instead — `To Be Filled By
 O.E.M.`, `Default string`, `System Serial Number`, a row of zeroes. Every unit
-of that model reports the same one.
+of that model reports the same one. Spelling does not matter: `DEFAULTSTRING`
+and `Default_String` are the same placeholder as `Default string`.
 
 Polaris refuses those values wherever a serial would be recorded, rather than
 storing them and filtering them later. Three things follow, and they are what

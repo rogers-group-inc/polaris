@@ -37,6 +37,13 @@ func TestUsableSerialRejectsPlaceholders(t *testing.T) {
 		"INVALID",
 		"0123456789",
 		"null",
+		// Squashed spellings — case, spacing and punctuation differ from the
+		// list entry. DEFAULTSTRING is the Intune spelling that slipped past an
+		// exact match and put one "serial" on eight machines.
+		"DEFAULTSTRING",
+		"Default_String",
+		"SYSTEM-SERIAL-NUMBER",
+		"To Be Filled By OEM",
 	} {
 		if got := usableSerial(s); got != "" {
 			t.Errorf("usableSerial(%q) = %q, want empty", s, got)

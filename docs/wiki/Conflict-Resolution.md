@@ -294,9 +294,9 @@ Accept: there is nothing to adopt.
 
 Polaris ignores serials that identify nothing rather than reporting them: the
 placeholders some hardware ships (`To Be Filled By O.E.M.`, `Default string`,
-`System Serial Number`, `Not Specified`, and any serial that is one character
-repeated), anything under four characters, and any serial shared by **more than
-eight** assets — past that count the serial is the problem, not the assets.
+`System Serial Number`, `Not Specified` — in any capitalisation, spacing or
+punctuation — and any serial that is one character repeated), anything under
+four characters, and any serial shared by **more than three** assets — past that count the serial is the problem, not the assets.
 
 Both serial conflicts are swept every 30 minutes and are covered by business
 rule [83](Business-Rules#rule-83).
