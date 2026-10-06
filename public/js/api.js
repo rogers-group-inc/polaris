@@ -956,12 +956,21 @@ const api = {
     vips:                 (id) => request("GET", `/assets/${id}/vips`),
     virtualization:       (id) => request("GET", `/assets/${id}/virtualization`),
     // Firmware upgrade (business rule 87): what the Repository can offer this
-    // switch / AP, the start (fullwrite; `imageId` is the image the operator
-    // approved by name), and the asset's run history.
+    // device (plus its pending booking, `schedule`), the start (assets:write;
+    // `imageId` is the image the operator approved by name), and the asset's
+    // run history.
     firmwareUpgrade:      (id)       => request("GET",  `/assets/${id}/firmware-upgrade`),
     startFirmwareUpgrade: (id, body) => request("POST", `/assets/${id}/firmware-upgrade`, body),
     firmwareUpgradeRuns:  (id)       => request("GET",  `/assets/${id}/firmware-upgrade/runs`),
     firmwareUpgradeRun:   (id, runId) => request("GET", `/assets/${id}/firmware-upgrade/runs/${encodeURIComponent(runId)}`),
+    // Scheduled upgrades (business rule 93): book (`{ imageId, scheduledFor
+    // ISO, notifyEmails }`), change, cancel; `defaults` is the booker's own
+    // email for the modal to pre-fill.
+    firmwareSchedules:        (id)            => request("GET",    `/assets/${id}/firmware-upgrade/schedules`),
+    firmwareScheduleDefaults: (id)            => request("GET",    `/assets/${id}/firmware-upgrade/schedules/defaults`),
+    scheduleFirmwareUpgrade:  (id, body)      => request("POST",   `/assets/${id}/firmware-upgrade/schedules`, body),
+    updateFirmwareSchedule:   (id, sid, body) => request("PATCH",  `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`, body),
+    cancelFirmwareSchedule:   (id, sid)       => request("DELETE", `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`),
     // Polaris Agent — operator-facing endpoints (see the polaris-agent skill "Polaris
     // Agent API surface"). `agent.get` returns 404 when no agent is
     // installed yet; the caller should treat that as "no install" rather

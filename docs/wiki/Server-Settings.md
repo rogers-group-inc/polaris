@@ -168,7 +168,9 @@ wins: a model's own login beats the device type's, which beats the
 manufacturer's, and every node says which one applies to it and where it came
 from. A binding whose credential has since been deleted is skipped, not
 inherited — the next level up applies. Upgrades are never automatic: an
-operator with the permission starts each one from the device's Firmware card.
+operator with the permission starts each one from the device's Firmware card,
+either now or booked for a chosen time
+([Assets → Firmware](Assets#firmware), [rule 93](Business-Rules#rule-93)).
 A device with no login at any level cannot be upgraded until one is bound, and
 its card says *No login bound*; the tree marks such a node *No device login*.
 

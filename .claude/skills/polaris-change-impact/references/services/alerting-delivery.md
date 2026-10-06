@@ -149,7 +149,7 @@ Also note the two storage conventions: user/role/group `regionTags` are stored *
 
 **Cross-service deps:** `prisma` (User), `eventLogService.logEvent`. It no longer touches `notificationRecipientService` at all — the import cycle those two formed is gone with the per-recipient email zone.
 
-**Used by:** `src/api/routes/userTimezone.ts` (`GET|PUT /me/timezone`, `POST /me/timezone/detected`), `src/api/routes/auth.ts` (`/auth/me` echoes `timezone`, `serverTimezone` and `detectedTimezone` so the client can format from the first paint and skip a redundant detected-POST), nothing on the ALERTING path, deliberately — see the first invariant.
+**Used by:** `src/api/routes/userTimezone.ts` (`GET|PUT /me/timezone`, `POST /me/timezone/detected`), `src/api/routes/auth.ts` (`/auth/me` echoes `timezone`, `serverTimezone` and `detectedTimezone` so the client can format from the first paint and skip a redundant detected-POST), `src/services/quietTimeSummaryService.ts` and `src/services/firmwareScheduleService.ts` (per-reader digests — the quiet-time summary and the business-rule-93 firmware results email — via `resolveTimeZone` / `serverTimeZone`), nothing on the ALERTING path, deliberately — see the first invariant.
 
 **Invariants:**
 - **ALERT EMAIL DOES NOT CONSUME THIS, and that is a decision, not an oversight** (2026-09-15). A composed alert is ONE message to one To line (business rule 25), so it renders in the INSTALL's zone and says which zone that is — `{time.zone}` in the default footer. Rendering per recipient meant one copy per distinct zone among the recipients, and since an account that has never signed in on a browser has no `detectedTimezone` and falls back to the server's zone, two colleagues at one desk landed in different copies, each seeing only themselves on the To line. Reintroducing a per-recipient zone on the email path means reopening that decision, not just re-adding a closure.
@@ -397,7 +397,7 @@ Also note the two storage conventions: user/role/group `regionTags` are stored *
 
 **Cross-service deps:** the channel senders (`notificationChannels/emailChannel.{sendSmtpEmail,sendM365Email}`, `webhookChannel.sendWebhook`, `pushbulletChannel.sendPushbullet`, `webPushChannel.sendWebPush`), `prisma` (delivery rows + notificationChannel config + pushSubscription prune), `eventLogService.logEvent`.
 
-**Used by:** `src/jobs/deliverNotifications.ts` (15s tick).
+**Used by:** `src/jobs/deliverNotifications.ts` (15s tick); `quietTimeSummaryService` and `firmwareScheduleService` (business rule 93 results email) call `sendEmailThroughChannel` + `applyBrandLetterhead` directly.
 
 **Invariants:**
 - Each delivery's destination secrets (SMTP password, webhook URL, VAPID key, …) are read from its `NotificationChannel` at send time, NOT stored on the delivery row.

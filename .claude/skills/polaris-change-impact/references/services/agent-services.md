@@ -1,6 +1,6 @@
 # Services — Polaris Agent install, build, channel, commands; the firmware repository
 
-Per-service touches (What it owns / Public API / Cross-service deps / Used by / Invariants / When changing this), verbatim from TOUCHES.md. Code references are `path/file.ts → symbolName()` — grep the symbol. The two firmware services sit here because `firmwareUpgradeService` copies `agentInstallService.startUpgrade`'s shape — synchronous refusals, a row, a kickoff Event, a rule-80 hold, a `setImmediate` runner on the web process.
+Per-service touches (What it owns / Public API / Cross-service deps / Used by / Invariants / When changing this), verbatim from TOUCHES.md. Code references are `path/file.ts → symbolName()` — grep the symbol. The three firmware services sit here because `firmwareUpgradeService` copies `agentInstallService.startUpgrade`'s shape — synchronous refusals, a row, a kickoff Event, a rule-80 hold, a `setImmediate` runner on the web process.
 
 ## services/firmwareRepositoryService.ts
 
@@ -34,17 +34,19 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** One asset, one flash (business rule 87): what the asset card is told (`getUpgradeAvailability`), the SYNCHRONOUS gates and the kickoff (`startFirmwareUpgrade`), the runner that drives an engine and keeps the run row current, the reads, and the boot sweep for runs a restart orphaned. Copies `agentInstallService.startUpgrade`'s shape.
 
-**Public API:** `getUpgradeAvailability`, `startFirmwareUpgrade`, `getRun`, `listRunsForAsset`, `failOrphanedFirmwareRuns`; `UpgradeAvailability` / `UpgradeAvailabilityState` / `RunSummary` / `StartUpgradeInput`.
+**Public API:** `getUpgradeAvailability`, `startFirmwareUpgrade`, `checkSchedulableUpgrade` (what a BOOKING takes when it is made — business rule 93: the image gates + a bound login, returning `{ approved, fromVersion, warnings }` where `warnings` are today's `healthBlockers`, NOT a refusal), `getRun`, `listRunsForAsset`, `failOrphanedFirmwareRuns`; `FirmwareRunConflictError` (the 409 subclass for a refusal that clears on its own — a live run on the device, on a connection-path ancestor/descendant or MCLAG peer, and the P2002 race; a click answers it like any 409, a booking waits on it); `UpgradeAvailability` / `UpgradeAvailabilityState` / `RunSummary` / `StartUpgradeInput` (`scheduleId?` — the booking this start fires). The private `approvedImageFor` (engine → address → platform → candidates → the approved image) is the ONE copy of the image gates, shared by a start and by a booking.
 
 **Cross-service deps:** `firmwareRepositoryService` (candidates, credential, image path); `firmwareEngines/index` (`engineFor`, `engineByKind`) and `firmwareEngines/types` (`DEFAULT_FIRMWARE_TIMEOUTS`); `maintenanceScheduleService.openMaintenanceHold` / `releaseMaintenanceHold` (kind `firmware-upgrade`, rule 80); `connectionPathService.resolveConnectionPath` + `prisma.assetMclagPeer` (the topology gate); `utils/assetInvariants.UNMONITORABLE_STATUSES` (rule 10); `eventLogService.logEvent`; a dynamic import of `discovery/assetDiscoveryScope.resolveDiscoveryScopeForAsset` + `discovery/discoveryEngine.triggerDiscovery` (the scoped rediscover on success); `node:fs/promises.stat`.
 
 **Used by:**
 - `src/api/routes/firmware.ts` — `firmwareAssetRouter` (`GET /`, `POST /`, `GET /runs`) and `GET /server-settings/firmware/runs/:id`.
 - `src/jobs/failOrphanedFirmwareRuns.ts` — the boot sweep.
+- `src/services/firmwareScheduleService.ts` — `checkSchedulableUpgrade` at booking, `startFirmwareUpgrade({ scheduleId })` when a booking fires, `FirmwareRunConflictError` to tell "wait" from "refused" (rule 93). The reverse edge is a LAZY import: the runner's `.finally` and `failOrphanedFirmwareRuns` call `notifyScheduledRunFinished` through `notifyScheduledRun`, like `requestRediscover`, because the schedule service imports this one.
 - `public/js/assets.js` — the Firmware card, through the routes (`_startFirmwarePoll` polls the run).
 
 **Invariants:**
-- **The gates are synchronous and ordered** (engine → address → platform → candidates → the REQUIRED approved `imageId` must be the offered primary or the eligible backup → health → login → one live run per asset, none on a connection-path ancestor/descendant or MCLAG peer → the image file exists), each an `AppError` answered to the click; the partial unique index on `(assetId) WHERE status IN (queued, running)` answers the race (P2002 → 409). `tests/unit/firmwareUpgradeGates.test.ts` pins the order.
+- **The gates are synchronous and ordered** (engine → address → platform → candidates → the REQUIRED approved `imageId` must be the offered primary or the eligible backup → health → login → one live run per asset, none on a connection-path ancestor/descendant or MCLAG peer → the image file exists), each an `AppError` answered to the click; the partial unique index on `(assetId) WHERE status IN (queued, running)` answers the race (P2002 → 409). `tests/unit/firmwareUpgradeGates.test.ts` pins the order. The three "a related flash is live" refusals (one live run, topology, P2002) are `FirmwareRunConflictError` and NOTHING else is — a booking retries on that class and settles `refused` on every other, so widening it turns a permanent refusal into a two-hour retry loop.
+- **A booked start is the same start** (rule 93): `scheduleId` changes the Event's wording ("Scheduled firmware upgrade started", `details.scheduleId`), links `FirmwareUpgradeSchedule.runId` BEFORE the runner is scheduled (so a crash between the two still lets the boot sweep find the booking), and after the runner settles — success or failure, after the terminal row and Event — the booking's recipients are emailed. It takes no gate a click does not.
 - **`maintenance` is allowed; unmonitored is allowed** (the hold no-ops, as it does for an agent upgrade). Down / warning / recovering / dependency-suppressed / unmonitorable are refused.
 - **The hold outlives the engine on a run that reached the reboot** (`holdUntilMonitorAnswers`): after an `upgraded` or `unverified` outcome the run sits in stage `recovering` and polls `assetMonitorSample.findFirst({success:true, timestamp > engine end})` every `recoveryPollMs` until one lands or `recoveryWaitMs` (10 min) passes, first pushing the hold's `expiresAt` past the cap. The engine proves the device over its WEB UI, which on a FortiAP answered minutes before the SNMP agent monitoring polls; releasing on "engine done" let the next polls miss outside the window. A `failed` run skips the wait (an incident); no hold row = unmonitored = nothing to wait for. The two timeouts live on `FirmwareEngineTimeouts` so tests shrink them through `overrides`, but no ENGINE reads them.
 - **The hold is taken BEFORE the runner is scheduled** and released in the runner's `finally` BEFORE the terminal Event (the `failUpgrade` ordering, rule 80a), by `failOrphanedFirmwareRuns` at boot, and by the reconcile's 45-minute expiry as the backstop.
@@ -56,8 +58,37 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **When changing this:**
 - A new blocker: add it to `healthBlockers` (so availability and start agree), to the gates test, and to the wiki's list.
 - A new engine: `firmwareEngines/index.ts` `engineFor` + `engineKindForType`, the run row's `engine` vocabulary, the file map, and the docs' "Fortinet only" sentence.
-- A new terminal outcome: `finish`, the Event table (`firmware.upgrade_*`), the card's `_fwRunResultHTML`, and `dropHold` ordering.
+- A new terminal outcome: `finish`, the Event table (`firmware.upgrade_*`), the card's `_fwRunResultHTML`, and `dropHold` ordering — and `notifyScheduledRunFinished`'s status → outcome mapping plus `utils/firmwareResultEmailTemplate.ts` (a booked run's email).
+- A new image gate goes in `approvedImageFor`, so a booking takes it at booking AND at firing; a new device-STATE gate goes after it in `startFirmwareUpgrade` only (and, if it is a health blocker, `healthBlockers` so the booking modal warns about it).
 - If a queue ever replaces `setImmediate`, the image must travel with the job (it lives on the web host's disk) and the boot sweep's "this process was driving it" premise changes.
+
+## services/firmwareScheduleService.ts
+
+**What it owns:** A firmware flash BOOKED for later (business rule 93) and the email that says how it went. Booking (`createSchedule` / `updateSchedule` / `cancelSchedule`) from the asset's Firmware card: the image approved BY NAME as for a flash now (rule 87), a time (`assertSchedulableTime`: ≥ `MIN_LEAD_MS` 1 min ahead, ≤ `MAX_LEAD_MS` ~a year), and recipients (`normalizeRecipients`: lower-cased, de-duplicated, 1…`MAX_RECIPIENTS` 20; the modal pre-fills `defaultRecipientsFor` = the booker's profile email). Firing (`runDueSchedules`, the job's tick): due `pending` rows oldest first, up to 50, ONE AT A TIME — first seen more than `LATE_GRACE_MS` (15 min) late → `missed`; waiting on a conflict more than `CONFLICT_WAIT_MS` (2 h) → `refused`; else CLAIM (`pending` → `started`, conditional) and hand to `startFirmwareUpgrade({ scheduleId })` — success stays `started`, a `FirmwareRunConflictError` goes back to `pending` with `error` = what it waits on, any other error → `refused`. Notifying (`notifyScheduledRunFinished` for a run; the private `settle` for refused / missed): claim `notifiedAt`, resolve the channel, render per recipient.
+
+**Public API:** `normalizeRecipients`, `assertSchedulableTime` (both pure, throw 400), `defaultRecipientsFor`, `getPendingSchedule`, `listSchedulesForAsset`, `createSchedule`, `updateSchedule`, `cancelSchedule`, `runDueSchedules` (+ `DueRunResult`), `notifyScheduledRunFinished`; `LATE_GRACE_MS`, `CONFLICT_WAIT_MS`, `MIN_LEAD_MS`, `MAX_LEAD_MS`, `MAX_RECIPIENTS`; `ScheduleSummary`, `CreateScheduleInput`, `UpdateScheduleInput`.
+
+**Cross-service deps:** `prisma` (firmwareUpgradeSchedule, firmwareUpgradeRun, asset, user); `firmwareUpgradeService.{checkSchedulableUpgrade, startFirmwareUpgrade, FirmwareRunConflictError}`; `quietTimeSummaryService.resolveSummaryChannel(null, [])` (with no policy and no held rows it falls through to the oldest enabled email channel); `notificationDeliveryService.{applyBrandLetterhead, sendEmailThroughChannel}`; `userTimezoneService.{resolveTimeZone, serverTimeZone}`; `utils/firmwareResultEmailTemplate.renderFirmwareResultEmail`; `eventLogService.logEvent`.
+
+**Used by:**
+- `src/api/routes/firmware.ts` — `firmwareAssetRouter`: `GET /` folds in `getPendingSchedule` as `schedule`; `GET /schedules`, `GET /schedules/defaults`, `POST /schedules`, `PATCH /schedules/:scheduleId`, `DELETE /schedules/:scheduleId`.
+- `src/jobs/startScheduledFirmwareUpgrades.ts` — `runDueSchedules` every 60 s (web/all role).
+- `src/services/firmwareUpgradeService.ts` — `notifyScheduledRunFinished`, lazily, from the runner's `.finally` and from `failOrphanedFirmwareRuns`.
+- `public/js/assets.js` — the Firmware card's Schedule… / Change… / Cancel scheduled upgrade, through the routes.
+
+**Invariants:**
+- **Approved at booking, judged at firing.** Booking takes only `checkSchedulableUpgrade` (image gates + a bound login); health and topology are NOT taken then and come back as `warnings` for the modal. Firing goes through `startFirmwareUpgrade`, which re-takes EVERY gate — so a newer primary uploaded after booking makes the booked image no longer offered and the booking is REFUSED, never silently retargeted.
+- **Every transition out of `pending` is conditional on `status = 'pending'`** (claim, update, cancel), so a tick racing a cancel fires or cancels, never both, and two ticks never fire one booking twice. The DB backs the service's 409: one `pending` per asset (partial unique) and ≥ 1 recipient (CHECK).
+- **Refused is final; a conflict waits.** Only `FirmwareRunConflictError` puts a booking back; the wait is measured from `scheduledFor`, and a waiting booking (non-null `error`) is exempt from the 15-min late rule.
+- **Sequential on purpose.** One booking at a time inside a tick is what lets the topology gate see the run the previous booking just started — a batch of switches booked for one minute flashes in turn. Each start is a few point queries before `setImmediate`, so 50 is seconds.
+- **Emailed once, whatever happened.** `notifiedAt` is claimed (conditional) BEFORE sending; started→finished, refused, missed and orphaned all reach `sendResults`. One message per recipient, each in that reader's zone when the address is a Polaris user's (else the install's) — like the quiet-time summary, a per-reader message, not a split alert (rule 25 untouched). No channel or a failed send = `notifyError` + `firmware.upgrade_schedule_email_failed`; the booking's own status is unaffected.
+- The device link in the email degrades to plain text when `POLARIS_PUBLIC_URL` is unset (`assetPageUrl`).
+
+**When changing this:**
+- A new terminal booking status: the migration's status CHECK, `settle`'s Event action, the template's `FirmwareResultOutcome`, the card's `_fwScheduleHTML`, and the wiki's Firmware section.
+- Changing the grace or the wait: the constants, the rule-93 invariant + narrative, the wiki, and `tests/unit/firmwareSchedule.test.ts`.
+- Running bookings anywhere but the web role breaks the `setImmediate` premise (the image is on that host's disk) — see firmwareUpgradeService's queue note.
+- Scale: one indexed query (`status, scheduledFor`) per minute; nothing per asset unless a booking is due.
 
 ---
 

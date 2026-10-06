@@ -21,6 +21,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 - **DeviceIcon** — operator-uploaded topology icon blobs (scope + key), served to the Device Map / topology renderer.
 
 - **FirmwareImage** / **FirmwareCredentialBinding** / **FirmwareUpgradeRun** — the firmware repository for switches and access points (Server Settings → Repository; business rule 87). An **image** is one uploaded `.out`, bytes under `FIRMWARE_DIR` (`data/firmware`, never the public uploads dir), filed under a manufacturer › device type (`switch` / `access_point` only, CHECK) › model node; its identity — `platform` (the header's serial-prefix token), version parts, `build` — is parsed from the image header, and the MODEL NODE is only where it is filed: an asset is matched on `platform === platformFromSerial(serial)`, never on the model string. **A node holds at most one `primary` and one `backup`** (two partial unique indexes); a new upload becomes primary, the displaced primary becomes backup, the displaced backup is removed by the rotation. Only the primary is offered unasked. A **binding** names which device-admin login (an `http` Credential in authMode `form`) signs in at manufacturer, device-type or model scope — one row per scope (three partial uniques), `model` requires `assetType` (CHECK), FK `SetNull` so a deleted credential's binding is SKIPPED by resolution rather than shadowing a wider one. A **run** is one flash: identity snapshotted so history survives rotation; at most one queued/running per asset (partial unique); `verifiedVersion` is what the device reported after reboot and is **never written onto `Asset.osVersion`** — projection owns that, via the scoped rediscover the run requests.
+- **FirmwareUpgradeSchedule** — a flash BOOKED for a date and time from the asset's Firmware card (business rule 93): the image approved by name at booking (`imageId`, FK `SetNull`, with `toVersion` snapshotted so the booking still names it after a delete), `scheduledFor` (an absolute instant), `notifyEmails` (lower-cased, de-duplicated, **never empty** — CHECK), and `status` ∈ `pending` / `started` / `cancelled` / `refused` / `missed` (CHECK). **At most one `pending` booking per asset** (partial unique). It is NOT a `FirmwareUpgradeRun` with a "scheduled" status: when the scheduler job fires it, `startFirmwareUpgrade` creates the run and links it back (`runId`, unique, `SetNull`). `error` says why it was refused / missed — or, while `pending` again after a `FirmwareRunConflictError`, what it is waiting for; `notifiedAt` is claimed before the results email is sent, so the outcome is emailed once; `notifyError` records a failed send.
 
 - **UserPasskey** — one registered WebAuthn credential on a local account. The row holds only what verifying a later assertion needs (credential id, COSE public key, signature counter, transports) plus what an operator deciding whether to rely on it needs to see (name, last used, whether it syncs through a credential manager). It is a credential, not a device: the same security key registered by two people is two rows. Whether a passkey may sign in on its own, act as a second factor, both, or nothing is the install-wide `passkeyConfig` Setting, never a property of the row — see `polaris-api-rbac` for the endpoints and business rules 63–64.
 - **User** / **Role** — dynamic-role RBAC; `User.roleId` → `Role`; permissions matrix on Role over 34 function keys. `User.notificationPreference` (`email` | `push` | `any`, default `email`) is the account's own answer to how it wants to be alerted — stored here rather than per browser so a sign-in on a new device knows to enroll or un-enroll itself; see business rule 39. `User.timezone` (an IANA name or the literal `auto`, default `auto`) is the zone this account reads times in, and `User.detectedTimezone` (nullable) is the zone its BROWSER last reported — client-posted on boot, never operator-set and never offered as a choice. The pair exists because an alert EMAIL has no browser to ask: `auto` resolves explicit-choice → detected → server zone, so an operator who never opens the picker still gets mail on their own wall clock instead of a UTC-clocked host's. Both are free-form TEXT, not an enum — the tz database moves on its own schedule and an unresolvable name degrades to `auto` on READ (`normalizeUserTimezone`) rather than failing a render or a send.
@@ -522,8 +523,29 @@ FirmwareUpgradeRun              -- One flash of one asset. Identity snapshotted 
   heartbeatAt     DateTime?
   startedAt       DateTime
   finishedAt      DateTime?
+  schedule        FirmwareUpgradeSchedule?   -- back-relation: the booking that fired this run, if any (rule 93)
   @@index([assetId, startedAt]); @@index([status])
   -- SQL only: UNIQUE (assetId) WHERE status IN ('queued','running') — one live run per asset; the concurrency guard's last line.
+
+FirmwareUpgradeSchedule         -- A flash booked for later (business rule 93). Approved by name when booked; every gate re-taken when it fires.
+  id            UUID PK
+  assetId       UUID FK → Asset (cascade)
+  imageId       UUID? FK → FirmwareImage (SetNull) -- null = the image was deleted; the booking is REFUSED when it fires
+  toVersion     String          -- snapshotted so the booking still names its image after a delete
+  scheduledFor  DateTime        -- absolute instant (the route takes ISO with an offset)
+  notifyEmails  String[]        -- lower-cased, de-duplicated, ≤ 20; CHECK cardinality ≥ 1 — someone always hears the outcome
+  status        String          -- pending | started | cancelled | refused | missed (CHECK firmware_upgrade_schedules_status_check)
+  runId         UUID? @unique FK → FirmwareUpgradeRun (SetNull) -- linked by startFirmwareUpgrade before the runner is scheduled
+  error         String?         -- why refused / missed; while pending, what a conflict-wait is waiting on
+  createdBy     String          -- the booker; also the run's startedBy when it fires
+  createdAt, updatedBy, updatedAt
+  cancelledBy   String?
+  cancelledAt   DateTime?
+  firedAt       DateTime?       -- when the job acted on it (started, refused or missed)
+  notifiedAt    DateTime?       -- claimed BEFORE the results email is sent: once per booking
+  notifyError   String?         -- no email channel, or per-recipient send failures
+  @@index([status, scheduledFor]); @@index([assetId, createdAt])
+  -- SQL only: UNIQUE (assetId) WHERE status = 'pending' — one pending booking per asset (firmware_upgrade_schedules_pending_key).
 ```
 
 ---
@@ -564,6 +586,10 @@ FirmwareUpgradeRun              -- One flash of one asset. Identity snapshotted 
 - **Reset to baseline** — `DELETE …/topology/layout?view=…`. A row carrying a restore point is EMPTIED (`positions` → `{}`, which restores nothing at render, so the column solver's own placement stands) rather than deleted; a row without one is deleted outright, which is the pre-checkpoint behavior. Emptying is what lets an operator reset to baseline and still change their mind.
 
 NULL `savedPositions` means this (site, view) was never saved — the state every pre-existing row starts in (migration `20260904030000_topology_layout_checkpoint` backfills nothing), and what greys out the menu's last-save entry. The browser mirrors both blobs: `polaris.topology.positions:<siteId>[:<view>]` for the live layout and `polaris.topology.saved:<siteId>[:<view>]` for the restore point, which is the only half a non-writer gets (their drags were already local-only).
+
+#### FirmwareUpgradeSchedule
+
+**FirmwareUpgradeSchedule** (migration `20261006000000_firmware_upgrade_schedules`, business rule 93) is the fourth firmware table, deliberately separate from `FirmwareUpgradeRun`: folding a booking into the run table as a "scheduled" status would have muddied `startedAt` and the one-live-run partial index, which must only ever see a flash that is actually happening. Written only by `services/firmwareScheduleService.ts` (create / update / cancel from the Firmware card; claim / settle from `jobs/startScheduledFirmwareUpgrades.ts`) and by `firmwareUpgradeService.startFirmwareUpgrade`, which sets `runId` when it starts a booked run. Every status change out of `pending` is a conditional `updateMany` on `status = 'pending'`, so a tick racing a cancel or an edit fires or changes it exactly once; a `FirmwareRunConflictError` puts a claimed row back to `pending` with `error` set and `firedAt` cleared. Two DB constraints are load-bearing: the partial unique on `assetId WHERE status = 'pending'` (two bookings a second apart still yield one) and `cardinality(notifyEmails) >= 1`. Deleting the asset cascades its bookings; deleting the image nulls `imageId` and the booking is refused when it fires.
 
 #### Event
 

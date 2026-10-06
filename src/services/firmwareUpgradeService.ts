@@ -246,19 +246,40 @@ async function topologyConflicts(a: AssetRow): Promise<string[]> {
   return others.filter((o) => related.has(o.assetId)).map((o) => o.asset.hostname || o.asset.ipAddress || o.assetId);
 }
 
+/**
+ * A 409 that will clear on its own: a live run on this device, or on one
+ * above, below or paired with it. A click is answered with it like any other
+ * refusal; a BOOKING that meets it waits and retries (business rule 93).
+ */
+export class FirmwareRunConflictError extends AppError {
+  constructor(message: string) {
+    super(409, message);
+    this.name = "FirmwareRunConflictError";
+  }
+}
+
 export interface StartUpgradeInput {
   assetId: string;
   /** The image the operator APPROVED by name — required. */
   imageId: string;
   actor: string;
+  /**
+   * The booking this start fires (business rule 93). Linked to the run before
+   * the runner is scheduled, and its recipients are emailed when the run ends.
+   */
+  scheduleId?: string;
   /** Tests: a fake device and short clocks. */
   overrides?: { scheme?: "https" | "http"; port?: number; timeouts?: Partial<FirmwareEngineTimeouts> };
 }
 
-export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<RunSummary> {
-  const a = await prisma.asset.findUnique({ where: { id: input.assetId }, select: ASSET_SELECT }) as AssetRow | null;
-  if (!a) throw new AppError(404, "Asset not found");
-
+/**
+ * The gates that read the device and the Repository, but not the device's
+ * live STATE: engine → address → platform → candidates → the approved image
+ * must be the offered primary or its eligible backup. Shared by a start and by
+ * a booking (rule 93), which takes these when it is made and all of
+ * startFirmwareUpgrade's when it fires.
+ */
+async function approvedImageFor(a: AssetRow, imageId: string | undefined | null): Promise<{ engine: NonNullable<ReturnType<typeof engineFor>>; platform: string; approved: FirmwareImageRow }> {
   const engine = engineFor(a.manufacturer, a.assetType, a.serialNumber);
   if (!engine) throw new AppError(400, `No upgrade engine for ${a.manufacturer ?? "this manufacturer"} ${a.assetType} devices`);
   if (!a.ipAddress && !a.dnsName) throw new AppError(400, "The asset has no IP address to reach the web UI at");
@@ -270,13 +291,36 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
     const r = reasonFor(candidates, a);
     throw new AppError(409, r.reason);
   }
-  if (!input.imageId) throw new AppError(400, "imageId is required — approve the image to push");
-  const approved = input.imageId === candidates.primary.id ? candidates.primary
-    : candidates.backup && input.imageId === candidates.backup.id ? candidates.backup
+  if (!imageId) throw new AppError(400, "imageId is required — approve the image to push");
+  const approved = imageId === candidates.primary.id ? candidates.primary
+    : candidates.backup && imageId === candidates.backup.id ? candidates.backup
     : null;
   if (!approved) {
-    throw new AppError(400, `Image ${input.imageId} is not offered for this device — only the model's primary image (${candidates.primary.versionLabel})${candidates.backup ? ` or its backup (${candidates.backup.versionLabel})` : ""} can be pushed, and never a downgrade`);
+    throw new AppError(400, `Image ${imageId} is not offered for this device — only the model's primary image (${candidates.primary.versionLabel})${candidates.backup ? ` or its backup (${candidates.backup.versionLabel})` : ""} can be pushed, and never a downgrade`);
   }
+  return { engine, platform, approved };
+}
+
+/**
+ * What a BOOKING checks when it is made (business rule 93): the image gates
+ * and that a login is bound. Health and topology are deliberately not checked
+ * — the device may be down now and fine at the booked time — they are taken
+ * when the booking fires. Returned as `warnings` so the modal can say so.
+ */
+export async function checkSchedulableUpgrade(assetId: string, imageId: string): Promise<{ approved: FirmwareImageRow; fromVersion: string | null; warnings: string[] }> {
+  const a = await prisma.asset.findUnique({ where: { id: assetId }, select: ASSET_SELECT }) as AssetRow | null;
+  if (!a) throw new AppError(404, "Asset not found");
+  const { approved } = await approvedImageFor(a, imageId);
+  const credential = await resolveFirmwareCredential(a, { revealSecrets: false });
+  if (!credential) throw new AppError(400, `No device admin login is bound for ${a.manufacturer} at the model, device-type or manufacturer level — bind one under Server Settings → Repository`);
+  return { approved, fromVersion: a.osVersion, warnings: healthBlockers(a) };
+}
+
+export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<RunSummary> {
+  const a = await prisma.asset.findUnique({ where: { id: input.assetId }, select: ASSET_SELECT }) as AssetRow | null;
+  if (!a) throw new AppError(404, "Asset not found");
+
+  const { engine, platform, approved } = await approvedImageFor(a, input.imageId);
 
   const blockers = healthBlockers(a);
   if (blockers.length > 0) throw new AppError(409, `Cannot start: ${blockers.join("; ")}`);
@@ -284,10 +328,10 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
   const cred = (await resolveFirmwareCredential(a, { revealSecrets: true })) as ResolvedFirmwareCredential | null;
   if (!cred) throw new AppError(400, `No device admin login is bound for ${a.manufacturer} at the model, device-type or manufacturer level — bind one under Server Settings → Repository`);
 
-  if (await activeRunFor(a.id)) throw new AppError(409, "A firmware upgrade is already running on this device");
+  if (await activeRunFor(a.id)) throw new FirmwareRunConflictError("A firmware upgrade is already running on this device");
   const conflicts = await topologyConflicts(a);
   if (conflicts.length > 0) {
-    throw new AppError(409, `A firmware upgrade is running on ${conflicts.join(", ")}, which is above, below or paired with this device — wait for it to finish`);
+    throw new FirmwareRunConflictError(`A firmware upgrade is running on ${conflicts.join(", ")}, which is above, below or paired with this device — wait for it to finish`);
   }
 
   const imagePath = resolveImagePath(`${approved.id}.out`);
@@ -314,8 +358,13 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
       },
     });
   } catch (err: any) {
-    if (err?.code === "P2002") throw new AppError(409, "A firmware upgrade is already running on this device");
+    if (err?.code === "P2002") throw new FirmwareRunConflictError("A firmware upgrade is already running on this device");
     throw err;
+  }
+
+  if (input.scheduleId) {
+    await prisma.firmwareUpgradeSchedule.update({ where: { id: input.scheduleId }, data: { runId: run.id } })
+      .catch((err) => logger.warn({ err, runId: run.id, scheduleId: input.scheduleId }, "firmware upgrade: could not link the run to its booking"));
   }
 
   await logEvent({
@@ -325,8 +374,8 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
     resourceName: assetLabel(a),
     actor: input.actor,
     level: "info",
-    message: `Firmware upgrade started: ${a.osVersion ?? "unknown"} → ${approved.versionLabel} (${approved.role} image for ${approved.model}) via ${engine.label}, signing in with "${cred.credentialName}" (${cred.scope} binding)`,
-    details: { runId: run.id, imageId: approved.id, platform, fromVersion: a.osVersion, toVersion: approved.versionLabel, engine: engine.kind, credentialId: cred.credentialId, credentialScope: cred.scope, imageRole: approved.role },
+    message: `${input.scheduleId ? "Scheduled firmware upgrade" : "Firmware upgrade"} started: ${a.osVersion ?? "unknown"} → ${approved.versionLabel} (${approved.role} image for ${approved.model}) via ${engine.label}, signing in with "${cred.credentialName}" (${cred.scope} binding)`,
+    details: { runId: run.id, imageId: approved.id, platform, fromVersion: a.osVersion, toVersion: approved.versionLabel, engine: engine.kind, credentialId: cred.credentialId, credentialScope: cred.scope, imageRole: approved.role, scheduleId: input.scheduleId ?? null },
   });
 
   // Best-effort, like takeAgentHold: a hold failure must never be the reason a
@@ -339,11 +388,27 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
   }
 
   setImmediate(() => {
-    runUpgrade(run.id, a, approved, cred, imagePath, size, input.overrides).catch((err) => {
-      logger.error({ err, runId: run.id }, "Firmware upgrade runner crashed unexpectedly");
-    });
+    runUpgrade(run.id, a, approved, cred, imagePath, size, input.overrides)
+      .catch((err) => {
+        logger.error({ err, runId: run.id }, "Firmware upgrade runner crashed unexpectedly");
+      })
+      // A booked flash reports its outcome to the booking's recipients (rule
+      // 93) — after the terminal row and Event are written, whatever they say.
+      .finally(() => {
+        if (input.scheduleId) void notifyScheduledRun(run.id);
+      });
   });
   return summarize(run);
+}
+
+/** Lazy, like requestRediscover: the schedule service imports this one. */
+async function notifyScheduledRun(runId: string): Promise<void> {
+  try {
+    const { notifyScheduledRunFinished } = await import("./firmwareScheduleService.js");
+    await notifyScheduledRunFinished(runId);
+  } catch (err) {
+    logger.warn({ err, runId }, "firmware upgrade: the scheduled-run results email could not be sent");
+  }
 }
 
 async function runUpgrade(
@@ -628,6 +693,9 @@ export async function failOrphanedFirmwareRuns(): Promise<number> {
       message: `Firmware upgrade to ${o.toVersion} orphaned: ${msg}`,
       details: { runId: o.id, orphaned: true },
     });
+    // A booked run's recipients hear about the orphan too (rule 93); a run
+    // nobody booked has no booking and this is a no-op.
+    await notifyScheduledRun(o.id);
   }
   return orphans.length;
 }

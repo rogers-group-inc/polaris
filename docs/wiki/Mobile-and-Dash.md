@@ -96,8 +96,8 @@ uploading, erasing / writing / verifying with a percent on a switch,
 rebooting, verifying, waiting for monitoring to answer — and ends on the
 result. The button needs **Read-Write on Assets**; below that the row says
 the version is available. The phone offers the model's **primary** image
-only: picking its backup, the run history and its log are on the desktop's
-Firmware card, and the Repository itself is desktop-only. See
+only: picking its backup, the run history and its log, and scheduling an
+upgrade for later are on the desktop's Firmware card, and the Repository itself is desktop-only. See
 [Assets → Firmware](Assets#firmware).
 
 Networks replaced the old **Reservations** tab: a reservation is now seen and

@@ -1299,7 +1299,9 @@ Starting an upgrade needs **Read-Write on Assets**: whoever may edit an
 asset may upgrade it. The `firmware` key covers the Repository only — Read
 to see it, Read-Write to upload and manage images. Every role with Assets
 Read-Write can therefore reboot a switch or access point; the approval
-dialog and the checks above are what stand between a click and a flash.
+dialog and the checks above are what stand between a click and a flash. An
+upgrade booked for later takes the same approval and the same checks — see
+[rule 93](#rule-93).
 
 See [Server Settings → Repository](Server-Settings#repository) and
 [Assets → Firmware](Assets#firmware).
@@ -1431,3 +1433,25 @@ outstanding and, by arriving, that the quiet time and email delivery work. A tes
 held. Rule 44 is the hold mechanics inside this.
 
 See [Escalation, reminders and quiet time → Quiet time](Automation-Escalation#quiet-time).
+
+### Rule 93
+**A booked flash is approved when it is booked and judged when it fires — on
+time or not at all, and its recipients hear the outcome either way.** A
+firmware upgrade can be scheduled from a switch or access point's Firmware card
+by anyone with Read-Write on Assets. You approve the exact image by name when
+you book, as for an upgrade now ([rule 87](#rule-87)); if a newer image becomes
+the model's primary before the booked time, the booked one is no longer offered
+and the upgrade is not started — it never switches image on its own. The
+device's health, its login and other upgrades nearby are not checked when you
+book (a device down now may be fine at the booked hour) but are all checked
+again when the time comes. If a check fails then, it is not started and not
+retried — except when an upgrade is still running on the same device, one
+above or below it, or its MCLAG peer: then it waits and retries every minute
+for up to two hours past its time. If Polaris was not running at the booked time
+and only gets to it more than 15 minutes late, it is not started. A device has
+at most one scheduled upgrade, and every booking names at least one email
+address. Whatever happens — finished, failed, not started, missed — each
+address gets one results email, in that reader's own time zone when they have a
+Polaris account.
+
+See [Assets → Firmware](Assets#firmware).

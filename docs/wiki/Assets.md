@@ -394,7 +394,8 @@ device. It is one of:
 - **No login bound** — an image is available but no device login is bound at
   the model, device-type or manufacturer level.
 - **Blocked** — an image is available but the device is down, warning,
-  recovering, behind a parent that is down, or has no address.
+  recovering, behind a parent that is down, or has no address. Unless the
+  address is what is missing, it can still be scheduled for later (below).
 - **Upgrade available** — the running version, the image on offer (its
   version, platform and which model node it came from), the login that will be
   used and where it is inherited from.
@@ -438,6 +439,65 @@ reads the new version, and until it does the card says *Flashed*. **Run
 history** lists every attempt with a **View log**. No bulk upgrade exists; it
 is this device, from this card. On the phone the upgrade lives in the
 asset's OS row instead — see [Mobile and Dash](Mobile-and-Dash#assets-and-networks).
+
+**Scheduling an upgrade for later**
+([rule 93](Business-Rules#rule-93)). Beside **Upgrade firmware to …** is
+**Schedule…**; on a *Blocked* card, where the upgrade-now button is not
+offered, it reads **Schedule upgrade to …** — a device that is down this
+afternoon may be fine at 2 am. It needs the same **Read-Write on Assets**. The
+dialog is the same approval as an upgrade now — the device, the exact image,
+the backup choice, the tick box — plus:
+
+- **Run at** — a date and time in your browser's time zone (the dialog names
+  it). It must be at least a minute ahead and within a year.
+- **Email the results to** — filled in with your own profile email; add more
+  addresses separated by commas. At least one is required.
+- If the device is blocked right now, the dialog says why, and that it will be
+  checked again when the upgrade is due.
+
+You approve the image when you book, and Polaris pushes **that image** — if a
+newer image is made the model's primary before the booked time, the scheduled
+upgrade is not started (it does not switch to the newer one), and the
+recipients are told. Everything else — the device's health, the login, other
+upgrades running nearby — is checked again when the time comes, exactly as for
+an upgrade started by hand. A device has at most one scheduled upgrade at a
+time.
+
+While it is waiting the card shows the version, the time (in your clock, with
+"in N h"), who gets the results and who booked it, with **Change…** (a new
+time, new recipients, or the other offered image) and **Cancel scheduled
+upgrade** (nothing is sent to the device and no email goes out). Once it has
+started it can no longer be changed or cancelled.
+
+When the time comes:
+
+- It starts within about a minute, and from there it is an ordinary upgrade:
+  the card shows the progress and **Run history** lists it.
+- If an upgrade is still running on the same device, on a device above or
+  below it, or on its MCLAG peer, it **waits** — the card says what it is
+  waiting for — and tries again every minute for up to **2 hours** past the
+  booked time, then gives up. So several switches booked for the same minute
+  upgrade one after another rather than all but one being turned away.
+- If Polaris was not running at the booked time and only gets to it **more than
+  15 minutes late**, it is **not started**: an upgrade hours outside the time
+  you chose is not the one you approved. Book it again.
+- If any other check fails at that moment — the device is down, no login is
+  bound, the image is no longer offered or was deleted — it is **not started**
+  and is not retried.
+
+**The results email.** Every recipient gets one email when there is an
+outcome: the upgrade *succeeded*, came back *unverified*, *failed* (with the
+end of the run log), or was *not started* and why (including *missed* for a
+late start, or a restart of Polaris during the upgrade). Each recipient who
+has a Polaris account sees the times in their own time zone; other addresses
+see the server's. It is sent through the oldest enabled email channel
+([Delivery channels](Delivery-Channels)); with no email channel configured,
+nothing is sent and an Event on the asset says so. The device name links to
+the asset when Polaris knows its own public address.
+
+Booking, changing, cancelling, and a scheduled upgrade that was not started
+or whose email could not be sent, each write an Event on the asset.
+Scheduling is on the desktop card only; the phone cannot book.
 
 **Managed by** names the integration that owns this asset's monitoring
 configuration — whose class settings and stored credential it inherits, whose

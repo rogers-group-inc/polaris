@@ -109,7 +109,7 @@ vi.mock("node:fs/promises", async (orig) => ({ ...(await orig<typeof import("nod
 vi.mock("../../src/services/discovery/assetDiscoveryScope.js", () => ({ resolveDiscoveryScopeForAsset: vi.fn(async () => ({ ok: false, reason: "no source" })) }));
 vi.mock("../../src/services/discovery/discoveryEngine.js", () => ({ triggerDiscovery: vi.fn(async () => true) }));
 
-import { startFirmwareUpgrade, getUpgradeAvailability } from "../../src/services/firmwareUpgradeService.js";
+import { startFirmwareUpgrade, getUpgradeAvailability, FirmwareRunConflictError } from "../../src/services/firmwareUpgradeService.js";
 import { resolveFirmwareCredential } from "../../src/services/firmwareRepositoryService.js";
 
 const bind = (scope: "manufacturer" | "assetType" | "model", credentialId: string | null, name = "cred") => ({
@@ -247,6 +247,8 @@ describe("startFirmwareUpgrade — the gates, in order", () => {
     h.state.activeRuns = [{ assetId: "sw-core", asset: { hostname: "core-1", ipAddress: null } }];
     h.state.paths.set("asset-1", ["sw-core", "fw-1"]);
     await expect(start()).rejects.toThrow(/running on core-1, which is above, below or paired/);
+    // A conflict clears on its own, so a booking waits on it instead of being refused (rule 93).
+    await expect(start()).rejects.toBeInstanceOf(FirmwareRunConflictError);
   });
 
   it("refuses while a run is live on a device BELOW it", async () => {
