@@ -249,12 +249,30 @@
   white-space: nowrap;
 }
 
+/* The page is exactly one viewport tall and the canvas takes whatever the
+   header and toolbar leave, so the window never scrolls. It used to be
+   calc(100vh - 170px), a guess at the header + toolbar height that the
+   three-row toolbar (and a wrapped pill row) outgrew, which pushed the page
+   past the fold. Below the min-height a short window still scrolls rather
+   than crushing the graph. */
+.appmap-main {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.appmap-main > .page-header,
+.appmap-main > .appmap-toolbar {
+  flex: 0 0 auto;
+}
+
 .appmap-layout {
   display: flex;
   gap: 12px;
-  /* Fill the viewport below header + toolbar. */
-  height: calc(100vh - 170px);
-  min-height: 420px;
+  /* Zero basis: an `auto` basis would start from the info rail's content
+     height, and a long port list would size the row instead of scrolling. */
+  flex: 1 1 0;
+  min-height: 320px;
 }
 
 /* Both panes take the shared card lift (--shadow-card in styles.css) so the
@@ -493,7 +511,9 @@
 }
 
 @media (max-width: 900px) {
-  .appmap-layout { flex-direction: column; height: auto; }
+  /* Stacked graph + rail is taller than a viewport by design; let it scroll. */
+  .appmap-main   { height: auto; }
+  .appmap-layout { flex-direction: column; flex: none; height: auto; }
   .appmap-graph  { height: 60vh; }
   .appmap-info   { flex: none; max-width: none; }
 }
