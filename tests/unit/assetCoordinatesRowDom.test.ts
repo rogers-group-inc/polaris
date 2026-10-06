@@ -96,3 +96,17 @@ describe("coordinatesRowHTML", () => {
     expect(el.querySelector("img")).toBeNull();
   });
 });
+
+// The row's only caller is _assetGeneralTabHTML, a helper split out of
+// openViewModal that "closes over nothing beyond its params". It first shipped
+// calling coordinatesRowHTML(a, sources) without taking `sources`, so every
+// asset slide-over threw "sources is not defined" and never opened — the tests
+// above exercise the row in isolation and could not see it.
+describe("coordinatesRowHTML call site", () => {
+  it("_assetGeneralTabHTML takes sources, and openViewModal passes them", () => {
+    const helper = fnSrc("_assetGeneralTabHTML");
+    expect(helper).toContain("coordinatesRowHTML(a, sources)");
+    expect(helper.split("\n")[0]).toMatch(/^function _assetGeneralTabHTML\(a, sources\)/);
+    expect(lines.join("\n")).toContain("_assetGeneralTabHTML(a, sources);");
+  });
+});
