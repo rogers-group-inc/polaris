@@ -211,6 +211,10 @@ with a source-IP scope: `rfc1918` (the default), `all`, or custom CIDRs.
 The wallboard answers as the built-in **`readonly`** role. Widgets that role
 cannot read **hide themselves**.
 
+**Acknowledgement notes are never shown on the wallboard.** They are typed by
+operators about live incidents, and the wallboard has no login, so its **ack**
+pills name the owner but hovering them shows no note.
+
 Its **Dashboards ▾** menu offers:
 
 - **"My layout — this browser"**, kept in that browser's storage;

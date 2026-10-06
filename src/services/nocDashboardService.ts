@@ -335,12 +335,12 @@ async function contributingTriggers(
 export async function activeAlertSeverityByAsset(
   assetIds: string[] | null,
   relevance: AlertRelevance = { kind: "any" },
-): Promise<Map<string, { severity: string; rank: number; id: string; acknowledged: boolean; acknowledgedBy: string | null }>> {
+): Promise<Map<string, { severity: string; rank: number; id: string; acknowledged: boolean; acknowledgedBy: string | null; acknowledgeNote: string | null }>> {
   if (relevance.kind === "none") return new Map();
   const rows = await prisma.notification.findMany({
     where: { cleared: false, assetId: assetIds ? { in: assetIds } : { not: null } },
     select: {
-      id: true, assetId: true, severity: true, acknowledged: true, acknowledgedBy: true,
+      id: true, assetId: true, severity: true, acknowledged: true, acknowledgedBy: true, acknowledgeNote: true,
       rule: { select: { trigger: true } },
       // A GROUPED alert (business rule 75) may be raised by several
       // automations, so "is this alert about the thing this widget measures?"
@@ -353,7 +353,7 @@ export async function activeAlertSeverityByAsset(
     },
   });
   const triggersByGroupAlert = await contributingTriggers(rows);
-  const out = new Map<string, { severity: string; rank: number; id: string; acknowledged: boolean; acknowledgedBy: string | null }>();
+  const out = new Map<string, { severity: string; rank: number; id: string; acknowledged: boolean; acknowledgedBy: string | null; acknowledgeNote: string | null }>();
   for (const r of rows) {
     if (!r.assetId) continue;
     const contributed = triggersByGroupAlert.get(r.id);
@@ -365,7 +365,7 @@ export async function activeAlertSeverityByAsset(
     const acknowledged = r.acknowledged === true;
     const cur = out.get(r.assetId);
     const wins = !cur || rank > cur.rank || (rank === cur.rank && cur.acknowledged && !acknowledged);
-    if (wins) out.set(r.assetId, { severity: r.severity, rank, id: r.id, acknowledged, acknowledgedBy: acknowledged ? r.acknowledgedBy ?? null : null });
+    if (wins) out.set(r.assetId, { severity: r.severity, rank, id: r.id, acknowledged, acknowledgedBy: acknowledged ? r.acknowledgedBy ?? null : null, acknowledgeNote: acknowledged ? r.acknowledgeNote ?? null : null });
   }
   return out;
 }
@@ -387,16 +387,18 @@ export async function downAlertAcknowledgedByAsset(assetIds: string[]): Promise<
  *  capped, so this stays small at 2000 assets).
  *
  *  `withAlertRef` additionally names that alert on the row (`alertId` +
- *  `alertAcknowledged` + `alertAcknowledgedBy`), for a feed whose rows are
- *  ACTED on rather than only read — Down Assets, whose click-through offers
- *  Acknowledge and whose acknowledged rows fade behind an "ack <owner>" pill.
+ *  `alertAcknowledged` + `alertAcknowledgedBy` + `alertAcknowledgeNote`), for
+ *  a feed whose rows are ACTED on rather than only read — Down Assets, whose
+ *  click-through offers Acknowledge and whose acknowledged rows fade behind an
+ *  "ack <owner>" pill that hovers the note. The note is withheld from the
+ *  unauthenticated /dash listener by getNocSummaryPayload, not here.
  *  Opt-in so the other feeds' payload shapes are untouched. */
 async function attachAlertSeverity<T extends object>(
   rows: T[],
   idOf: (r: T) => string | null | undefined,
   relevance: AlertRelevance = { kind: "any" },
   withAlertRef = false,
-): Promise<Array<T & { alertSeverity?: string; alertRank: number; alertId?: string; alertAcknowledged?: boolean; alertAcknowledgedBy?: string | null }>> {
+): Promise<Array<T & { alertSeverity?: string; alertRank: number; alertId?: string; alertAcknowledged?: boolean; alertAcknowledgedBy?: string | null; alertAcknowledgeNote?: string | null }>> {
   const ids = Array.from(new Set(rows.map(idOf).filter((x): x is string => !!x)));
   if (ids.length === 0 || relevance.kind === "none") return rows.map((r) => ({ ...r, alertRank: 0 }));
   const sev = await activeAlertSeverityByAsset(ids, relevance);
@@ -406,7 +408,7 @@ async function attachAlertSeverity<T extends object>(
     return {
       ...r,
       ...(s ? { alertSeverity: s.severity } : {}),
-      ...(s && withAlertRef ? { alertId: s.id, alertAcknowledged: s.acknowledged, alertAcknowledgedBy: s.acknowledgedBy } : {}),
+      ...(s && withAlertRef ? { alertId: s.id, alertAcknowledged: s.acknowledged, alertAcknowledgedBy: s.acknowledgedBy, alertAcknowledgeNote: s.acknowledgeNote } : {}),
       alertRank: s?.rank ?? 0,
     };
   });
@@ -505,6 +507,9 @@ export interface DownNode {
   // Who took it — the name the row's "ack <owner>" pill prints, so a wallboard
   // (which never hovers) says whose outage it is. Null when unacknowledged.
   alertAcknowledgedBy?: string | null;
+  // The note typed when it was acknowledged — the pill's hover. Withheld (null)
+  // for a caller that did not sign in; see NOC_FEEDS.withholdAckNotes.
+  alertAcknowledgeNote?: string | null;
 }
 
 function siteOf(a: { location: string | null; learnedLocation: string | null; snmpLocation: string | null }): string {
@@ -1204,6 +1209,10 @@ export interface AlertRow {
   triggerType: string | null;
   acknowledged: boolean;
   acknowledgedBy: string | null;
+  /** The note typed when the alert was acknowledged — the ack pill's hover.
+   *  Operator-typed incident text, so getNocSummaryPayload withholds it from
+   *  a caller that did not sign in (the /dash wallboard listener). */
+  acknowledgeNote: string | null;
   /** Business rule 78 — raised for a dependency-suppressed device by a down
    *  automation that opted in; the widget badges it "Dep. Down" and names the
    *  upstream device in the badge's tooltip. */
@@ -1274,7 +1283,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     select: {
       id: true, ruleId: true, assetId: true, assetHostname: true, dimension: true, message: true,
       severity: true, triggeredAt: true,
-      acknowledged: true, acknowledgedBy: true, rule: { select: { name: true } },
+      acknowledged: true, acknowledgedBy: true, acknowledgeNote: true, rule: { select: { name: true } },
       // Grouped alerts (business rule 75): the widget's row TITLE is what kind
       // of problem this is, and for a grouped alert that is the group's name —
       // without it the row renders titleless. `dimensionCount` drives the "+N"
@@ -1307,6 +1316,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     triggerType: (n.ruleId && triggerTypeByRule.get(n.ruleId)) || null,
     acknowledged: n.acknowledged,
     acknowledgedBy: n.acknowledgedBy ?? null,
+    acknowledgeNote: n.acknowledged ? n.acknowledgeNote ?? null : null,
     dependencyDown: n.dependencyDown === true,
     dependencyUpstream: dependencyUpstreamOf(n.dependencyBlame),
     testRun: n.testRun === true,
@@ -1563,6 +1573,10 @@ const EMPTY_STATUS: StatusSummary = {
  *             `status` fans out to three top-level keys and `downNodes`
  *             unwraps `.nodes`, both preserved from the pre-feeds response
  *             shape so existing consumers (and the kiosk token) see no change.
+ *   withholdAckNotes — strip acknowledgement notes from the (cached, shared)
+ *             value for a caller that did not sign in. Required on every feed
+ *             that carries one: the note is operator-typed incident text and
+ *             /dash serves this payload with no login at all.
  */
 const NOC_FEEDS: Record<NocFeedName, {
   gate: "assets" | "events" | "alerts" | "maintenance";
@@ -1571,6 +1585,7 @@ const NOC_FEEDS: Record<NocFeedName, {
   usesDepDown?: true;
   run: (L: (n: number) => number | null, assetIds: string[] | null, samples: number, depDown: boolean) => Promise<unknown>;
   flatten?: (value: unknown) => Record<string, unknown>;
+  withholdAckNotes?: (value: unknown) => unknown;
 }> = {
   status: {
     gate: "assets",
@@ -1591,6 +1606,10 @@ const NOC_FEEDS: Record<NocFeedName, {
     flatten: (v) => {
       const d = v as { nodes: DownNode[]; total: number };
       return { downNodes: d.nodes, downNodesTotal: d.total };
+    },
+    withholdAckNotes: (v) => {
+      const d = v as { nodes: DownNode[]; total: number };
+      return { ...d, nodes: d.nodes.map((n) => (n.alertAcknowledgeNote ? { ...n, alertAcknowledgeNote: null } : n)) };
     },
   },
   downInterfaces:   { gate: "assets", empty: [], run: (L, ids) => getDownInterfaces(L(100), 240, ids) },
@@ -1625,6 +1644,10 @@ const NOC_FEEDS: Record<NocFeedName, {
     flatten: (v) => {
       const d = v as ActiveAlerts;
       return { activeAlerts: d.alerts, activeAlertsTotal: d.total };
+    },
+    withholdAckNotes: (v) => {
+      const d = v as ActiveAlerts;
+      return { ...d, alerts: d.alerts.map((a) => (a.acknowledgeNote ? { ...a, acknowledgeNote: null } : a)) };
     },
   },
 };
@@ -1674,6 +1697,10 @@ export async function getNocSummaryPayload(opts: {
   capLimit: number | null;
   sampleCount?: number | null;
   includeDependencyDown?: boolean;
+  /** Serve acknowledgement notes. Only a signed-in caller (a session or a
+   *  bearer token) qualifies; omitted withholds them, which is what the
+   *  unauthenticated /dash listener gets. */
+  includeAckNotes?: boolean;
 }): Promise<Record<string, unknown>> {
   const requested: NocFeedName[] = opts.feeds === null
     ? [...NOC_FEED_NAMES]
@@ -1726,9 +1753,12 @@ export async function getNocSummaryPayload(opts: {
     // doesn't fragment the cache for feeds the param can't affect.
     const key = feed + "|" + (opts.capLimit ?? "") + "|" + (def.usesSamples ? samples : "")
       + "|" + (def.usesDepDown && depDown ? "dep" : "") + "|" + fKey;
-    const value = allowed(def.gate)
+    let value = allowed(def.gate)
       ? await nocFeedCache.getOrCompute(key, () => def.run(L, assetIds, samples, depDown))
       : def.empty;
+    // The cache is shared by every caller, so notes are stripped per request
+    // from a copy, never from the cached value.
+    if (def.withholdAckNotes && opts.includeAckNotes !== true) value = def.withholdAckNotes(value);
     Object.assign(out, def.flatten ? def.flatten(value) : { [feed]: value });
   }));
   return out;

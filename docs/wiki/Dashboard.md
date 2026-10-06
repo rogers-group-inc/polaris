@@ -52,7 +52,7 @@ NOC wallboard that has no session at all. See
 |---|---|
 | **Status Summary** | at-a-glance counts of monitored assets by state, infra uptime %, active alerts |
 | **Active Alerts** | alerts your automations have raised and nothing has cleared, most severe first — **with Acknowledge and Clear in place** |
-| **Down Assets** | monitored assets currently down, newest outages first, grouped by site or division. Dependency-down assets are excluded unless the gear says otherwise. An outage whose alert has been acknowledged stays listed but is greyed out, with an **ack** pill naming who took it, so unowned outages stand out |
+| **Down Assets** | monitored assets currently down, newest outages first, grouped by site or division. Dependency-down assets are excluded unless the gear says otherwise. An outage whose alert has been acknowledged stays listed but is greyed out, with an **ack** pill naming who took it, so unowned outages stand out. Hover the pill to read the acknowledgement note |
 | **Sites With Issues** | sites with assets down or in warning, worst first; expand for the nodes |
 | **Asset Types** | breakdown of monitored assets by type; click a slice to drill into the matching asset list |
 
@@ -176,6 +176,9 @@ The **Active Alerts** widget is not read-only. Each unacknowledged row carries:
 - **Acknowledge** (`alerts:write`) — puts your name on the alert without
   leaving the dashboard. A note is collected in a proper modal, and is
   *required* when the automation demands one.
+
+  An acknowledged row keeps an **ack** pill naming its owner; hover it to read
+  the note they wrote.
 - **Clear** (`alerts:fullwrite`) — ends the alert. This stops escalation and
   runs the automation's reset actions, so it is confirmed first.
 
