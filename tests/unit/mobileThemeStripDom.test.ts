@@ -319,7 +319,10 @@ describe("the More tab's strip markup", () => {
       MORE_TAB_JS.indexOf('theme-strip-row'),
       MORE_TAB_JS.indexOf("theme-strip-marker"),
     );
-    expect(row.match(/time-strip\.png/g)).toHaveLength(3);
+    // The three copies come from stripImg() (versioned src, intrinsic size).
+    expect(row.match(/stripImg\(\)/g)).toHaveLength(3);
+    const helper = MORE_TAB_JS.slice(MORE_TAB_JS.indexOf("function stripImg()"), MORE_TAB_JS.indexOf("function backTopbar("));
+    expect(helper).toContain('"/img/brand/time-strip.png"');
   });
 
   it("delegates the tap instead of wiring its own listener", () => {

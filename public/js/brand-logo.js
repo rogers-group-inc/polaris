@@ -159,7 +159,10 @@
       };
     }
     return {
-      src: assets[currentTheme()],
+      // The shipped art carries the running version (the payload's `version`)
+      // as ?v=, which the server answers immutable (src/app.ts, /img/brand):
+      // a page change paints it from cache instead of revalidating first.
+      src: assets[currentTheme()] + (b && b.version ? "?v=" + encodeURIComponent(b.version) : ""),
       custom: false,
       showName: false,
       showSubtitle: Boolean(b && (b.subtitle || "").trim()),

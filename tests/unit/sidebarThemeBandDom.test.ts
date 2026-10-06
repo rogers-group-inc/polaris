@@ -181,7 +181,14 @@ describe("sidebar theme band placement", () => {
       APP_JS.indexOf('id="btn-theme-band"'),
       APP_JS.indexOf('<div id="sidebar-version"'),
     );
-    expect(markup.match(/\$\{THEME_BAND_ART\}/g)).toHaveLength(3);
+    expect(markup.match(/src="\$\{bandSrc\}"/g)).toHaveLength(3);
+    // The art URL is versioned so it paints from cache, and every copy carries
+    // the intrinsic size so the band can be measured and seated in the first
+    // paint — without it the band painted unseated and jumped into place on
+    // every page change.
+    expect(APP_JS).toContain("var bandSrc = _brandArtUrl(THEME_BAND_ART);");
+    expect(markup.match(/width="\$\{THEME_BAND_ART_W\}" height="\$\{THEME_BAND_ART_H\}"/g)).toHaveLength(3);
+    expect(APP_JS).toContain("var THEME_BAND_ART_W = 3456, THEME_BAND_ART_H = 132;");
   });
 
   it("draws nothing but the artwork — no caption, no centre marker", () => {

@@ -17,6 +17,9 @@ import { router } from "./api/router.js";
 import { pwaRouter } from "./api/routes/pwa.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// The running version, as the branding payload reports it — the ?v= the
+// shipped brand art is requested with (the /img/brand mount below).
+const APP_VERSION: string = getAppVersion();
 import { errorHandler } from "./api/middleware/errorHandler.js";
 import { csrfMiddleware } from "./api/middleware/csrf.js";
 import { AppError } from "./utils/errors.js";
@@ -31,6 +34,7 @@ import { isLoginSourceAllowed } from "./services/loginAccessService.js";
 import { isApiDocsSourceAllowed } from "./services/apiDocsAccessService.js";
 import { logEvent } from "./services/eventLogService.js";
 import { getBranding, logoCacheControl } from "./services/brandingService.js";
+import { getAppVersion } from "./utils/version.js";
 import { isOidcEnabled } from "./services/oidcAuthService.js";
 import { isEntraProxyLoginAvailable } from "./services/entraProxyAuthService.js";
 import { stripUntrustedEntraProxyHeaders } from "./api/middleware/entraProxyHeaders.js";
@@ -904,6 +908,17 @@ app.use("/uploads", async (req, res, next) => {
   }
   next();
 }, express.static(UPLOADS_DIR, { cacheControl: false }));
+// The shipped brand art (the theme strip's engraving, the Polaris marks) is
+// requested with the running version as ?v= (brand-logo.js; app.js and the
+// phone's more-tab.js for the strip), and answered immutable when it names the
+// CURRENT version — the same rule as the custom logo above. Served max-age=0
+// it was revalidated on every page load, so the sidebar's first paint went out
+// without it: the strip popped in and jumped into place on each page change.
+// An update changes the version, so the art is fetched once more and kept.
+app.use("/img/brand", (req, res, next) => {
+  res.setHeader("Cache-Control", logoCacheControl(req.query.v, APP_VERSION));
+  next();
+}, express.static(path.resolve(__dirname, "..", "public", "img", "brand"), { cacheControl: false }));
 app.use(express.static(path.resolve(__dirname, "..", "public")));
 
 // Bearer gate shared by /health, /health/ready and /metrics: each endpoint is

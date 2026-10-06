@@ -63,6 +63,15 @@ describe("the band and the strip read the same clock", () => {
     }
   });
 
+  it("sizes the strip's art up front on both, so it seats before it decodes", () => {
+    // 3456 x 132 is the engraving's intrinsic size; with width/height on each
+    // <img> the strip can be measured and seated in the first paint.
+    const moreTab = readFileSync(join(process.cwd(), "public", "js", "mobile", "more-tab.js"), "utf-8");
+    expect(moreTab).toContain('width="3456" height="132"');
+    expect(moreTab).toContain("stripImg() + stripImg() + stripImg()");
+    expect(APP_JS).toContain("var THEME_BAND_ART_W = 3456, THEME_BAND_ART_H = 132;");
+  });
+
   it("renders the same artwork on both", () => {
     expect(APP_JS).toContain('"/img/brand/time-strip.png"');
     expect(MOBILE_APP_JS + readFileSync(

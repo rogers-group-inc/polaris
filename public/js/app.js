@@ -54,6 +54,25 @@ var TRANSIT_THEMES = [
 // keeping the quarter spacing and moving the anchor.
 var THEME_BAND_POS = { noon: 0.056, afternoon: 0.306, nightfall: 0.556, morning: 0.806 };
 var THEME_BAND_ART = "/img/brand/time-strip.png";
+// The art's intrinsic size, written onto each <img> so the band can be
+// MEASURED (and seated) in the first paint, before the image has decoded —
+// with width/height the browser knows the aspect ratio up front. Without
+// them the width read 0 until load, and the band painted unseated and jumped
+// into place on every page change.
+var THEME_BAND_ART_W = 3456, THEME_BAND_ART_H = 132;
+
+// A shipped /img/brand/ file's URL with the running version as ?v=, from the
+// cached branding payload. The server answers that immutable (src/app.ts), so
+// a page change paints the art from cache instead of revalidating it first.
+// No cached version yet (a first visit): the plain URL, revalidated as before.
+function _brandArtUrl(path) {
+  var v = "";
+  try {
+    var b = JSON.parse(localStorage.getItem("polaris-branding") || "null");
+    if (b && b.version) v = String(b.version);
+  } catch (e) { /* storage blocked — unversioned */ }
+  return v ? path + "?v=" + encodeURIComponent(v) : path;
+}
 
 // The fallback for an unknown or retired saved value. Deliberately NOT
 // THEMES[0]: display order and the default move independently, so reordering
@@ -1345,9 +1364,11 @@ function renderNav() {
     return true;
   });
 
+  // The strip's art URL, versioned so it paints from cache (see _brandArtUrl).
+  var bandSrc = _brandArtUrl(THEME_BAND_ART);
   sidebar.innerHTML = `
     <div class="sidebar-brand">
-      <img src="/img/brand/polaris-vert-dark.png" alt="" class="sidebar-logo brand-mark brand-mark-sidebar" decoding="sync" style="visibility:hidden">
+      <img alt="" class="sidebar-logo brand-mark brand-mark-sidebar" decoding="sync" style="visibility:hidden">
       <h1 style="font-size:1.1rem;font-weight:600;margin:0.5rem 0 0;color:var(--color-text-primary);text-align:center;visibility:hidden;display:none">Polaris</h1>
       <p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0.15rem 0 0;text-align:center;visibility:hidden">Network Management Tool</p>
     </div>
@@ -1421,9 +1442,9 @@ function renderNav() {
         <button type="button" id="btn-theme-band" class="theme-band" aria-label="Time of day: ${_getTheme(_getCurrentTheme()).label}. Move through the day.">
           <span class="theme-band-window">
             <span class="theme-band-track" id="theme-band-track">
-              <img src="${THEME_BAND_ART}" alt="" draggable="false">
-              <img src="${THEME_BAND_ART}" alt="" draggable="false">
-              <img src="${THEME_BAND_ART}" alt="" draggable="false">
+              <img src="${bandSrc}" width="${THEME_BAND_ART_W}" height="${THEME_BAND_ART_H}" decoding="sync" alt="" draggable="false">
+              <img src="${bandSrc}" width="${THEME_BAND_ART_W}" height="${THEME_BAND_ART_H}" decoding="sync" alt="" draggable="false">
+              <img src="${bandSrc}" width="${THEME_BAND_ART_W}" height="${THEME_BAND_ART_H}" decoding="sync" alt="" draggable="false">
             </span>
           </span>
         </button>
