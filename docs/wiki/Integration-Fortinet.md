@@ -126,6 +126,15 @@ descriptions still sync, so the feature can look like it partly works. System
 Read-Write also covers administrators and global settings, so treat that token
 as an admin-grade credential.
 
+**The same token can upgrade FortiGate firmware.** In
+[Server Settings → Repository](Server-Settings#repository), a Firewall node
+can be bound to **Integration API token**: each gate is then upgraded with the
+FortiOS API token of the integration that discovered it (a standalone
+FortiGate's API token, or the FortiManager's *FortiGate API token*), sent
+straight to the gate, never through FortiManager. Firmware upgrade is a
+System write, so this too needs **System → Read-Write** on the token's access
+profile ([rule 87](Business-Rules#rule-87)).
+
 **`arpPresenceSweep` is IDS-visible.** It also requires Polaris→subnet routing
 and a permitting policy to have any effect; where the packet cannot reach, the
 sweep silently does nothing — and **absence of an ARP entry is never treated as

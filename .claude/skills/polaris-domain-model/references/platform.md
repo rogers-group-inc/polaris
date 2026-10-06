@@ -20,7 +20,8 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 
 - **DeviceIcon** — operator-uploaded topology icon blobs (scope + key), served to the Device Map / topology renderer.
 
-- **FirmwareImage** / **FirmwareCredentialBinding** / **FirmwareUpgradeRun** — the firmware repository for switches and access points (Server Settings → Repository; business rule 87). An **image** is one uploaded `.out`, bytes under `FIRMWARE_DIR` (`data/firmware`, never the public uploads dir), filed under a manufacturer › device type (`switch` / `access_point` only, CHECK) › model node; its identity — `platform` (the header's serial-prefix token), version parts, `build` — is parsed from the image header, and the MODEL NODE is only where it is filed: an asset is matched on `platform === platformFromSerial(serial)`, never on the model string. **A node holds at most one `primary` and one `backup`** (two partial unique indexes); a new upload becomes primary, the displaced primary becomes backup, the displaced backup is removed by the rotation. Only the primary is offered unasked. A **binding** names which device-admin login (an `http` Credential in authMode `form`) signs in at manufacturer, device-type or model scope — one row per scope (three partial uniques), `model` requires `assetType` (CHECK), FK `SetNull` so a deleted credential's binding is SKIPPED by resolution rather than shadowing a wider one. A **run** is one flash: identity snapshotted so history survives rotation; at most one queued/running per asset (partial unique); `verifiedVersion` is what the device reported after reboot and is **never written onto `Asset.osVersion`** — projection owns that, via the scoped rediscover the run requests.
+- **FirmwareImage** / **FirmwareCredentialBinding** / **FirmwareUpgradeRun** — the firmware repository for switches, access points and (2026-10-06) FortiGate firewalls (Server Settings → Repository; business rule 87). An **image** is one uploaded `.out`, bytes under `FIRMWARE_DIR` (`data/firmware`, never the public uploads dir), filed under a manufacturer › device type (`switch` / `access_point` / `firewall` only, CHECK) › model node; its identity — `platform` (the header's serial-prefix token), version parts, `build` — is parsed from the image header, and the MODEL NODE is only where it is filed: an asset is matched on `platform === platformFromSerial(serial)`, never on the model string. **A node holds at most one `primary` and one `backup`** (two partial unique indexes); a new upload becomes primary, the displaced primary becomes backup, the displaced backup is removed by the rotation. Only the primary is offered unasked. A **binding** names what signs in at manufacturer, device-type or model scope — one row per scope (three partial uniques), `model` requires `assetType` (CHECK), FK `SetNull` so a deleted credential's binding is SKIPPED by resolution rather than shadowing a wider one. Its `source` (2026-10-06) is `credential` — a device-admin login (an `http` Credential in authMode `form`), or on a firewall scope a `restapi` Credential — or `integration-token`: no Credential row (`credentialId` null, CHECK-enforced to firewall scopes only), resolved at run time to the FortiOS API token of the integration in `Asset.discoveredByIntegrationId`. A **run** is one flash: identity snapshotted so history survives rotation; at most one queued/running per asset (partial unique); `verifiedVersion` is what the device reported after reboot and is **never written onto `Asset.osVersion`** — projection owns that, via the scoped rediscover the run requests.
+- **FirmwareUpgradeSchedule** — a flash BOOKED for a date and time from the asset's Firmware card (business rule 93): the image approved by name at booking (`imageId`, FK `SetNull`, with `toVersion` snapshotted so the booking still names it after a delete), `scheduledFor` (an absolute instant), `notifyEmails` (lower-cased, de-duplicated, **never empty** — CHECK), and `status` ∈ `pending` / `started` / `cancelled` / `refused` / `missed` (CHECK). **At most one `pending` booking per asset** (partial unique). It is NOT a `FirmwareUpgradeRun` with a "scheduled" status: when the scheduler job fires it, `startFirmwareUpgrade` creates the run and links it back (`runId`, unique, `SetNull`). `error` says why it was refused / missed — or, while `pending` again after a `FirmwareRunConflictError`, what it is waiting for; `notifiedAt` is claimed before the results email is sent, so the outcome is emailed once; `notifyError` records a failed send.
 
 - **UserPasskey** — one registered WebAuthn credential on a local account. The row holds only what verifying a later assertion needs (credential id, COSE public key, signature counter, transports) plus what an operator deciding whether to rely on it needs to see (name, last used, whether it syncs through a credential manager). It is a credential, not a device: the same security key registered by two people is two rows. Whether a passkey may sign in on its own, act as a second factor, both, or nothing is the install-wide `passkeyConfig` Setting, never a property of the row — see `polaris-api-rbac` for the endpoints and business rules 63–64.
 - **User** / **Role** — dynamic-role RBAC; `User.roleId` → `Role`; permissions matrix on Role over 34 function keys. `User.notificationPreference` (`email` | `push` | `any`, default `email`) is the account's own answer to how it wants to be alerted — stored here rather than per browser so a sign-in on a new device knows to enroll or un-enroll itself; see business rule 39. `User.timezone` (an IANA name or the literal `auto`, default `auto`) is the zone this account reads times in, and `User.detectedTimezone` (nullable) is the zone its BROWSER last reported — client-posted on boot, never operator-set and never offered as a choice. The pair exists because an alert EMAIL has no browser to ask: `auto` resolves explicit-choice → detected → server zone, so an operator who never opens the picker still gets mail on their own wall clock instead of a UTC-clocked host's. Both are free-form TEXT, not an enum — the tz database moves on its own schedule and an unresolvable name degrades to `auto` on READ (`normalizeUserTimezone`) rather than failing a render or a send.
@@ -469,10 +470,10 @@ DeviceIcon                      -- Operator-uploaded topology node icons; resolv
   uploadedAt    DateTime
   @@unique([scope, key])
 
-FirmwareImage                   -- One uploaded switch / AP firmware image (business rule 87). Bytes live on disk under FIRMWARE_DIR as "<id>.out".
+FirmwareImage                   -- One uploaded switch / AP / FortiGate firmware image (business rule 87). Bytes live on disk under FIRMWARE_DIR as "<id>.out".
   id            UUID PK
   manufacturer  String          -- alias-canonicalised; the spelling Asset.manufacturer carries
-  assetType     String          -- "switch" | "access_point" (CHECK firmware_images_asset_type_check)
+  assetType     String          -- "switch" | "access_point" | "firewall" (CHECK firmware_images_asset_type_check; firewall since 20261006010000_firmware_fortigate)
   model         String          -- tree placement ONLY (an FMG-discovered switch may carry the literal "FortiSwitch")
   platform      String?         -- image-header token, e.g. S108FF / FP231K = the SERIAL PREFIX it fits; null = filename-only parse, never offered
   versionMajor  Int?
@@ -483,7 +484,7 @@ FirmwareImage                   -- One uploaded switch / AP firmware image (busi
   parsedFrom    String          -- "header" | "filename"
   role          String          -- "primary" | "backup" (CHECK also allows the transient "swapping" the make-primary transaction steps through)
   filename      String
-  sizeBytes     Int             -- ≤ 104857600 (the FortiSwitch upload endpoint's ceiling; multer enforces it)
+  sizeBytes     Int             -- per type (FIRMWARE_MAX_IMAGE_BYTES_BY_TYPE): ≤ 104857600 switch / AP (the FortiSwitch upload endpoint's ceiling), ≤ 314572800 firewall; multer stops at the largest
   sha256        String @unique  -- the same bytes filed twice is a 409 naming where they live
   storagePath   String          -- relative to FIRMWARE_DIR
   notes         String?
@@ -493,15 +494,17 @@ FirmwareImage                   -- One uploaded switch / AP firmware image (busi
   @@index([manufacturer, assetType, model])      -- the tree
   -- SQL only: UNIQUE (manufacturer, assetType, model) WHERE role='primary', and the same WHERE role='backup' — the two-image cap.
 
-FirmwareCredentialBinding       -- Which device-admin login (an `http` Credential, authMode "form") an upgrade signs in with, at one scope
+FirmwareCredentialBinding       -- What an upgrade signs in with, at one scope: a device-admin login (an `http` Credential, authMode "form"), or on a FortiGate a FortiOS API token
   id            UUID PK
   manufacturer  String
-  assetType     String?         -- null = manufacturer-wide
+  assetType     String?         -- null = manufacturer-wide; "switch" | "access_point" | "firewall" (CHECK firmware_credential_bindings_type_check)
   model         String?         -- non-null only with assetType (CHECK firmware_credential_bindings_scope_check)
-  credentialId  UUID? FK → Credential (SetNull) -- null = the credential was deleted; resolution SKIPS the row
+  source        String @default("credential") -- "credential" | "integration-token" (CHECK firmware_credential_bindings_source_check). integration-token = the discovering integration's FortiOS API token, resolved at run time via Asset.discoveredByIntegrationId (a standalone fortigate integration's apiToken, or a fortimanager's fortigateApiToken)
+  credentialId  UUID? FK → Credential (SetNull) -- a `form` login on any type, or a `restapi` Credential on a firewall scope; null on a credential-source row = the credential was deleted (resolution SKIPS the row); always null on integration-token
+  -- CHECK firmware_credential_bindings_token_scope_check: source = 'credential' OR (assetType = 'firewall' AND credentialId IS NULL)
   createdBy     String?
   createdAt, updatedAt
-  -- SQL only: three partial unique indexes, one per scope shape (manufacturer / type / model). Resolution: model › type › manufacturer, most specific LIVE row wins.
+  -- SQL only: three partial unique indexes, one per scope shape (manufacturer / type / model). Resolution: model › type › manufacturer, most specific LIVE row that can sign in to THIS device wins (a token kind on a switch / AP, or an integration with no token, falls through).
 
 FirmwareUpgradeRun              -- One flash of one asset. Identity snapshotted so history survives the image being rotated out.
   id              UUID PK
@@ -510,7 +513,7 @@ FirmwareUpgradeRun              -- One flash of one asset. Identity snapshotted 
   platform        String
   fromVersion     String?
   toVersion       String
-  engine          String        -- "fortiswitch-https" | "fortiap-https"
+  engine          String        -- "fortiswitch-https" | "fortiap-https" | "fortigate-https"
   status          String        -- queued | running | succeeded | failed | unverified
   stage           String?       -- preflight | staging | compat | deploying | rebooting | verifying
   progress        Json?         -- { erase, write, verify, restart, curStep, totStep, lastMsgAt } (FortiSwitch reports percentages while flashing)
@@ -522,8 +525,29 @@ FirmwareUpgradeRun              -- One flash of one asset. Identity snapshotted 
   heartbeatAt     DateTime?
   startedAt       DateTime
   finishedAt      DateTime?
+  schedule        FirmwareUpgradeSchedule?   -- back-relation: the booking that fired this run, if any (rule 93)
   @@index([assetId, startedAt]); @@index([status])
   -- SQL only: UNIQUE (assetId) WHERE status IN ('queued','running') — one live run per asset; the concurrency guard's last line.
+
+FirmwareUpgradeSchedule         -- A flash booked for later (business rule 93). Approved by name when booked; every gate re-taken when it fires.
+  id            UUID PK
+  assetId       UUID FK → Asset (cascade)
+  imageId       UUID? FK → FirmwareImage (SetNull) -- null = the image was deleted; the booking is REFUSED when it fires
+  toVersion     String          -- snapshotted so the booking still names its image after a delete
+  scheduledFor  DateTime        -- absolute instant (the route takes ISO with an offset)
+  notifyEmails  String[]        -- lower-cased, de-duplicated, ≤ 20; CHECK cardinality ≥ 1 — someone always hears the outcome
+  status        String          -- pending | started | cancelled | refused | missed (CHECK firmware_upgrade_schedules_status_check)
+  runId         UUID? @unique FK → FirmwareUpgradeRun (SetNull) -- linked by startFirmwareUpgrade before the runner is scheduled
+  error         String?         -- why refused / missed; while pending, what a conflict-wait is waiting on
+  createdBy     String          -- the booker; also the run's startedBy when it fires
+  createdAt, updatedBy, updatedAt
+  cancelledBy   String?
+  cancelledAt   DateTime?
+  firedAt       DateTime?       -- when the job acted on it (started, refused or missed)
+  notifiedAt    DateTime?       -- claimed BEFORE the results email is sent: once per booking
+  notifyError   String?         -- no email channel, or per-recipient send failures
+  @@index([status, scheduledFor]); @@index([assetId, createdAt])
+  -- SQL only: UNIQUE (assetId) WHERE status = 'pending' — one pending booking per asset (firmware_upgrade_schedules_pending_key).
 ```
 
 ---
@@ -564,6 +588,10 @@ FirmwareUpgradeRun              -- One flash of one asset. Identity snapshotted 
 - **Reset to baseline** — `DELETE …/topology/layout?view=…`. A row carrying a restore point is EMPTIED (`positions` → `{}`, which restores nothing at render, so the column solver's own placement stands) rather than deleted; a row without one is deleted outright, which is the pre-checkpoint behavior. Emptying is what lets an operator reset to baseline and still change their mind.
 
 NULL `savedPositions` means this (site, view) was never saved — the state every pre-existing row starts in (migration `20260904030000_topology_layout_checkpoint` backfills nothing), and what greys out the menu's last-save entry. The browser mirrors both blobs: `polaris.topology.positions:<siteId>[:<view>]` for the live layout and `polaris.topology.saved:<siteId>[:<view>]` for the restore point, which is the only half a non-writer gets (their drags were already local-only).
+
+#### FirmwareUpgradeSchedule
+
+**FirmwareUpgradeSchedule** (migration `20261006000000_firmware_upgrade_schedules`, business rule 93) is the fourth firmware table, deliberately separate from `FirmwareUpgradeRun`: folding a booking into the run table as a "scheduled" status would have muddied `startedAt` and the one-live-run partial index, which must only ever see a flash that is actually happening. Written only by `services/firmwareScheduleService.ts` (create / update / cancel from the Firmware card; claim / settle from `jobs/startScheduledFirmwareUpgrades.ts`) and by `firmwareUpgradeService.startFirmwareUpgrade`, which sets `runId` when it starts a booked run. Every status change out of `pending` is a conditional `updateMany` on `status = 'pending'`, so a tick racing a cancel or an edit fires or changes it exactly once; a `FirmwareRunConflictError` puts a claimed row back to `pending` with `error` set and `firedAt` cleared. Two DB constraints are load-bearing: the partial unique on `assetId WHERE status = 'pending'` (two bookings a second apart still yield one) and `cardinality(notifyEmails) >= 1`. Deleting the asset cascades its bookings; deleting the image nulls `imageId` and the booking is refused when it fires.
 
 #### Event
 

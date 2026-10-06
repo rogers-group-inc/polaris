@@ -24,7 +24,9 @@
 import { request as httpsRequest, type RequestOptions } from "node:https";
 import { request as httpRequest } from "node:http";
 import { createReadStream } from "node:fs";
+import { Transform, type Readable, type TransformCallback } from "node:stream";
 import { constants as cryptoConstants } from "node:crypto";
+import { gunzipSync } from "node:zlib";
 import { randomBytes } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 
@@ -38,6 +40,11 @@ export interface DeviceHttpClientOptions {
   uploadIdleMs: number;
   /** Cap on a response body. */
   maxBodyBytes?: number;
+  /**
+   * Verify the device's certificate. Default false (self-signed devices);
+   * true only when the integration a FortiGate token came from verifies.
+   */
+  verifyTls?: boolean;
 }
 
 export interface DeviceHttpResponse {
@@ -104,6 +111,12 @@ export class DeviceHttpClient {
     return this.cookies.has(name);
   }
 
+  /** The value of the first cookie whose NAME matches — FortiOS suffixes its CSRF cookie per port. */
+  cookieMatching(name: RegExp): string | null {
+    for (const [k, v] of this.cookies) if (name.test(k)) return v;
+    return null;
+  }
+
   get(path: string, timeoutMs = this.opts.commandMs): Promise<DeviceHttpResponse> {
     return this.send("GET", path, null, {}, timeoutMs);
   }
@@ -112,6 +125,37 @@ export class DeviceHttpClient {
   postForm(path: string, fields: MultipartField[], timeoutMs = this.opts.commandMs): Promise<DeviceHttpResponse> {
     const body = fields.map((f) => `${encodeURIComponent(f.name)}=${encodeURIComponent(f.value)}`).join("&");
     return this.send("POST", path, Buffer.from(body, "utf8"), { "content-type": "application/x-www-form-urlencoded" }, timeoutMs);
+  }
+
+  /** A bodiless DELETE — the FortiOS 7.4+ logout. */
+  delete(path: string, timeoutMs = this.opts.commandMs): Promise<DeviceHttpResponse> {
+    return this.send("DELETE", path, null, {}, timeoutMs);
+  }
+
+  /** A JSON POST (FortiOS REST). */
+  postJson(path: string, payload: unknown, timeoutMs = this.opts.commandMs): Promise<DeviceHttpResponse> {
+    return this.send("POST", path, Buffer.from(JSON.stringify(payload), "utf8"), { "content-type": "application/json" }, timeoutMs);
+  }
+
+  /**
+   * A JSON POST whose one string field is a FILE, base64-encoded on the fly:
+   * `{ ...fields, [fileField]: "<base64 of the file>" }` — the FortiOS REST
+   * upload shape (`file_content`). The body is ~4/3 of the image — 330 MB for
+   * a 250 MB FortiGate image — so it is streamed with a precomputed
+   * Content-Length and never held in memory.
+   */
+  async postJsonBase64File(
+    path: string,
+    fields: Record<string, string | boolean | number>,
+    fileField: string,
+    file: { path: string; size: number },
+    onProgress?: (sent: number, total: number) => void,
+  ): Promise<DeviceHttpResponse> {
+    const prefix = JSON.stringify(fields).slice(0, -1); // "{...fields" without the closing brace
+    const head = Buffer.from(`${prefix}${prefix.length > 1 ? "," : ""}${JSON.stringify(fileField)}:"`, "utf8");
+    const tail = Buffer.from(`"}`, "utf8");
+    const total = head.length + base64Length(file.size) + tail.length;
+    return this.sendStreamed(path, { "content-type": "application/json" }, total, head, () => createReadStream(file.path).pipe(new Base64Encode()), tail, onProgress);
   }
 
   /** A bodiless POST — the FortiAP UI probe. */
@@ -139,7 +183,7 @@ export class DeviceHttpClient {
     );
     const tail = Buffer.from(`\r\n--${boundary}--\r\n`, "utf8");
     const total = head.length + file.size + tail.length;
-    return this.sendStreamed(path, { "content-type": `multipart/form-data; boundary=${boundary}` }, total, head, file, tail, onProgress);
+    return this.sendStreamed(path, { "content-type": `multipart/form-data; boundary=${boundary}` }, total, head, () => createReadStream(file.path), tail, onProgress);
   }
 
   // ─── transport ─────────────────────────────────────────────────────────────
@@ -161,7 +205,7 @@ export class DeviceHttpClient {
       path: url.pathname + url.search,
       method,
       headers: h,
-      rejectUnauthorized: false,
+      rejectUnauthorized: this.opts.verifyTls === true,
       // Never reuse a socket: the devices close them unpredictably and a
       // stale keep-alive turns into an ECONNRESET on the next call.
       agent: false,
@@ -210,7 +254,7 @@ export class DeviceHttpClient {
           res.on("end", () => resolve({
             status: res.statusCode ?? 0,
             headers: res.headers,
-            body: Buffer.concat(chunks).toString("utf8"),
+            body: decodeBody(Buffer.concat(chunks), res.headers["content-encoding"]),
             location: typeof res.headers.location === "string" ? res.headers.location : null,
           }));
           res.on("error", (err) => reject(new DeviceConnectionError(err.message, (err as NodeJS.ErrnoException).code)));
@@ -233,7 +277,7 @@ export class DeviceHttpClient {
     headers: Record<string, string>,
     total: number,
     head: Buffer,
-    file: MultipartFile,
+    openBody: () => Readable,
     tail: Buffer,
     onProgress?: (sent: number, total: number) => void,
   ): Promise<DeviceHttpResponse> {
@@ -273,7 +317,7 @@ export class DeviceHttpClient {
           resolve({
             status: res.statusCode ?? 0,
             headers: res.headers,
-            body: Buffer.concat(chunks).toString("utf8"),
+            body: decodeBody(Buffer.concat(chunks), res.headers["content-encoding"]),
             location: typeof res.headers.location === "string" ? res.headers.location : null,
           });
         });
@@ -283,7 +327,7 @@ export class DeviceHttpClient {
       armIdle();
       req.write(head);
       sent += head.length;
-      const stream = createReadStream(file.path);
+      const stream = openBody();
       stream.on("error", (err) => { req.destroy(err); });
       stream.on("data", (chunk: Buffer | string) => {
         const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
@@ -307,6 +351,45 @@ export class DeviceHttpClient {
         });
       });
     });
+  }
+}
+
+/**
+ * A response body as text. FortiOS 7.6 gzips its HTML answers (the login
+ * page a failed /logincheck returns) even when the request named no
+ * Accept-Encoding; a body that does not inflate is returned as it came.
+ */
+export function decodeBody(raw: Buffer, encoding: string | string[] | undefined): string {
+  const gz = (Array.isArray(encoding) ? encoding.join(",") : encoding ?? "").toLowerCase().includes("gzip")
+    || (raw.length > 2 && raw[0] === 0x1f && raw[1] === 0x8b);
+  if (gz) {
+    try { return gunzipSync(raw).toString("utf8"); } catch { /* not really gzip — fall through */ }
+  }
+  return raw.toString("utf8");
+}
+
+/** Length of the padded base64 encoding of `n` bytes. Pure. */
+export function base64Length(n: number): number {
+  return 4 * Math.ceil(n / 3);
+}
+
+/**
+ * Streaming base64: carries the 0–2 bytes that do not fill a 3-byte group to
+ * the next chunk, so the output is byte-identical to encoding the whole file
+ * at once, whatever the chunk boundaries.
+ */
+export class Base64Encode extends Transform {
+  private carry: Buffer = Buffer.alloc(0);
+  override _transform(chunk: Buffer, _enc: BufferEncoding, cb: TransformCallback): void {
+    const buf = this.carry.length ? Buffer.concat([this.carry, chunk]) : chunk;
+    const whole = buf.length - (buf.length % 3);
+    this.carry = Buffer.from(buf.subarray(whole));
+    if (whole > 0) this.push(buf.subarray(0, whole).toString("base64"));
+    cb();
+  }
+  override _flush(cb: TransformCallback): void {
+    if (this.carry.length) this.push(this.carry.toString("base64"));
+    cb();
   }
 }
 

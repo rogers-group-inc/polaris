@@ -298,12 +298,13 @@ function _csrfHeaders(extra) {
 // A multipart upload that REPORTS PROGRESS. `fetch` cannot: it has no upload
 // progress event, and every other upload on the page (MIB, logo, restore) is
 // small enough to live with a static "Uploading…" span. A firmware image is
-// up to 100 MiB over whatever link the operator is on, so the Repository tab
+// up to 300 MiB (a FortiGate) over whatever link the operator is on, so the Repository tab
 // drives one XMLHttpRequest and draws a bar from `upload.onprogress`.
 // Everything else matches `request`: CSRF header, the 401 redirect, JSON
 // bodies resolved or rejected on `error`, and a proxy's HTML error page
 // turned into a sentence by `_proxyErrorMessage` (a 413 here is the sign an
-// nginx-fronted install is missing the firmware location block).
+// nginx-fronted install is missing the firmware location block, or still has
+// its pre-FortiGate 100m ceiling — re-apply Server Settings → Web Server).
 function _uploadWithProgress(path, formData, onProgress) {
   return new Promise(function (resolve, reject) {
     var xhr = new XMLHttpRequest();
@@ -956,12 +957,21 @@ const api = {
     vips:                 (id) => request("GET", `/assets/${id}/vips`),
     virtualization:       (id) => request("GET", `/assets/${id}/virtualization`),
     // Firmware upgrade (business rule 87): what the Repository can offer this
-    // switch / AP, the start (fullwrite; `imageId` is the image the operator
-    // approved by name), and the asset's run history.
+    // device (plus its pending booking, `schedule`), the start (assets:write;
+    // `imageId` is the image the operator approved by name), and the asset's
+    // run history.
     firmwareUpgrade:      (id)       => request("GET",  `/assets/${id}/firmware-upgrade`),
     startFirmwareUpgrade: (id, body) => request("POST", `/assets/${id}/firmware-upgrade`, body),
     firmwareUpgradeRuns:  (id)       => request("GET",  `/assets/${id}/firmware-upgrade/runs`),
     firmwareUpgradeRun:   (id, runId) => request("GET", `/assets/${id}/firmware-upgrade/runs/${encodeURIComponent(runId)}`),
+    // Scheduled upgrades (business rule 93): book (`{ imageId, scheduledFor
+    // ISO, notifyEmails }`), change, cancel; `defaults` is the booker's own
+    // email for the modal to pre-fill.
+    firmwareSchedules:        (id)            => request("GET",    `/assets/${id}/firmware-upgrade/schedules`),
+    firmwareScheduleDefaults: (id)            => request("GET",    `/assets/${id}/firmware-upgrade/schedules/defaults`),
+    scheduleFirmwareUpgrade:  (id, body)      => request("POST",   `/assets/${id}/firmware-upgrade/schedules`, body),
+    updateFirmwareSchedule:   (id, sid, body) => request("PATCH",  `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`, body),
+    cancelFirmwareSchedule:   (id, sid)       => request("DELETE", `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`),
     // Polaris Agent — operator-facing endpoints (see the polaris-agent skill "Polaris
     // Agent API surface"). `agent.get` returns 404 when no agent is
     // installed yet; the caller should treat that as "no install" rather

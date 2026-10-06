@@ -53,9 +53,12 @@ presentation pass) under "Demo data and documentation screenshots" in `DEVELOPME
 That section also covers `scripts/capture-screenshots.mjs`, which shoots the docs images
 off such a stack, and "Mock switches and access points for the firmware repository" —
 `scripts/seed-firmware-mock.ts` + `scripts/mock-firmware-devices.mjs`, both run INSIDE the
-app container (`podman exec`), which put three Fortinet devices on loopback aliases, a
-device-login credential and firmware images in place so an upgrade can be clicked through
-end to end (business rule 87). **`podman exec -d <c> node script.mjs` loses the process** —
+app container (`podman exec`), which put Fortinet devices on loopback aliases — switches,
+APs and (2026-10-06) a fake FortiGate REST API at 127.0.0.5 (`MOCK-FGT60F-1`; admin login,
+or bearer `MOCK_FW_TOKEN`, default `mock-token`; `MOCK_FW_GATE_HA=a-p` fakes an HA member) —
+a device-login credential and firmware images in place so an upgrade can be clicked through
+end to end (business rule 87). The fake gate is NOT captured from real hardware; it speaks
+what `fortigateHttps.ts` expects, so it proves the UI and the engine agree, not that FortiOS does. **`podman exec -d <c> node script.mjs` loses the process** —
 it is gone before its first log line; background it inside the container instead
 (`podman exec <c> sh -c 'cd /app && (nohup node scripts/… > /tmp/x.log 2>&1 &)'`) and read
 the log file, since `podman logs` never shows an exec'd process either way.

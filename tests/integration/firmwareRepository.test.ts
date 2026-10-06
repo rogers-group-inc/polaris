@@ -100,7 +100,7 @@ d("firmware repository routes", () => {
 
   afterAll(async () => {
     if (!dbReachable) return;
-    const imgs = await prisma.firmwareImage.findMany({ where: { manufacturer: MFR, model: { startsWith: "FortiSwitch S108FF" } } });
+    const imgs = await prisma.firmwareImage.findMany({ where: { OR: [{ manufacturer: MFR, model: { startsWith: "FortiSwitch S108FF" } }, { id: { in: createdImageIds } }] } });
     for (const i of imgs) await rm(`${FIRMWARE_DIR}/${i.storagePath}`, { force: true }).catch(() => undefined);
     await prisma.firmwareUpgradeRun.deleteMany({ where: { assetId: { in: createdAssetIds } } });
     await prisma.firmwareImage.deleteMany({ where: { id: { in: [...createdImageIds, ...imgs.map((i) => i.id)] } } });
@@ -112,7 +112,7 @@ d("firmware repository routes", () => {
     await prisma.role.deleteMany({ where: { name: { startsWith: PFX + "-role-" } } });
   });
 
-  it("the tree is reachable on firmware=read alone, lists switches and APs only, and 403s at none", async () => {
+  it("the tree is reachable on firmware=read alone, lists switches, APs and firewalls, and 403s at none", async () => {
     const reader = await loginAs(readerU);
     const r = await reader.agent.get("/api/v1/server-settings/firmware/tree");
     expect(r.status).toBe(200);
@@ -120,7 +120,9 @@ d("firmware repository routes", () => {
     expect(fortinet).toBeTruthy();
     const types = fortinet.assetTypes.map((t: { assetType: string }) => t.assetType);
     expect(types).toContain("switch");
-    expect(types).not.toContain("firewall");
+    // FortiGates joined the repository (2026-10-06), with their own engine.
+    expect(types).toContain("firewall");
+    expect(fortinet.assetTypes.find((t: { assetType: string }) => t.assetType === "firewall").engine).toBe("fortigate-https");
     const sw = fortinet.assetTypes.find((t: { assetType: string }) => t.assetType === "switch");
     const model = sw.models.find((m: { model: string }) => m.model === "FortiSwitch S108FF");
     expect(model.assetCount).toBe(2);
@@ -157,7 +159,7 @@ d("firmware repository routes", () => {
     const enc = encodeURIComponent;
     const all = await list(`manufacturer=${enc(LM)}`);
     expect(all.total).toBe(m.assetCount);
-    expect(all.assets.map((a) => a.hostname).sort()).toEqual(["fwlist-ap", "fwlist-sw-a", "fwlist-sw-blank", "fwlist-sw-null"]);
+    expect(all.assets.map((a) => a.hostname).sort()).toEqual(["fwlist-ap", "fwlist-fg", "fwlist-sw-a", "fwlist-sw-blank", "fwlist-sw-null"]);
     expect((await list(`manufacturer=${enc(LM)}&assetType=switch`)).total).toBe(sw.assetCount);
     const nm = await list(`manufacturer=${enc(LM)}&assetType=switch&noModel=1`);
     expect(nm.total).toBe(noModel.assetCount);
@@ -208,11 +210,26 @@ d("firmware repository routes", () => {
       .field("manufacturer", MFR).field("assetType", "switch").field("model", "FortiSwitch S108FF")
       .attach("file", Buffer.alloc(1024, 0x00), "notes.bin");
     expect(junk.status).toBe(400);
-    // A firewall is not a repository device type.
+    // A FortiGate image files under a firewall model, its family read from the
+    // FG… platform token; filed under a switch model it carries a warning.
     const fw = await writer.agent.post("/api/v1/server-settings/firmware/images").set("X-CSRF-Token", writer.csrf)
       .field("manufacturer", MFR).field("assetType", "firewall").field("model", "FortiGate 60F")
       .attach("file", image("FGT60F-7.04-FW-build2500-250101", 0x02), "fg.out");
-    expect(fw.status).toBe(400);
+    expect(fw.status, JSON.stringify(fw.body)).toBe(201);
+    expect(fw.body.image.platform).toBe("FGT60F");
+    createdImageIds.push(fw.body.image.id);
+    const misfiled = await writer.agent.post("/api/v1/server-settings/firmware/images").set("X-CSRF-Token", writer.csrf)
+      .field("manufacturer", MFR).field("assetType", "switch").field("model", "FortiSwitch S108FF fg-misfiled")
+      .attach("file", image("FGT60F-7.04-FW-build2501-250101", 0x03), "fg2.out");
+    expect(misfiled.status).toBe(201);
+    expect(misfiled.body.warnings.join(" ")).toMatch(/FortiGate image, but it is being filed under a switch model/);
+    createdImageIds.push(misfiled.body.image.id);
+    // A switch image over the switch ceiling is refused even though the route takes 300 MiB.
+    const big = await writer.agent.post("/api/v1/server-settings/firmware/images").set("X-CSRF-Token", writer.csrf)
+      .field("manufacturer", MFR).field("assetType", "switch").field("model", "FortiSwitch S108FF big")
+      .attach("file", Buffer.concat([image("S108FF-7.06-FW-build1199-260709", 0x04), Buffer.alloc(104_857_601 - 2048)]), "big.out");
+    expect(big.status).toBe(413);
+    expect(big.body.error).toMatch(/Switch firmware images are limited to 104857600 bytes \(100 MiB\)/);
   });
 
   it("a second upload rotates roles; make-primary swaps them; the reader may look and not touch", async () => {
@@ -270,9 +287,38 @@ d("firmware repository routes", () => {
     expect(model.effectiveBinding).toMatchObject({ credentialId: credId, scope: "model" });
     expect(model.binding.credentialName).toBe(PFX + "-login");
     expect(sw.effectiveBinding).toBeNull();
+
+    // FortiGate bindings: the integration's API token, and a restapi token
+    // credential — both firewall-only; on a switch node both are refused.
+    const integ = await writer.agent.put("/api/v1/server-settings/firmware/bindings").set("X-CSRF-Token", writer.csrf)
+      .send({ manufacturer: MFR, assetType: "firewall", credentialId: null, source: "integration-token" });
+    expect(integ.status, JSON.stringify(integ.body)).toBe(200);
+    expect(integ.body.binding).toMatchObject({ source: "integration-token", credentialId: null, credentialName: "Integration API token", stale: false });
+    const integOnSwitch = await writer.agent.put("/api/v1/server-settings/firmware/bindings").set("X-CSRF-Token", writer.csrf)
+      .send({ manufacturer: MFR, assetType: "switch", credentialId: null, source: "integration-token" });
+    expect(integOnSwitch.status).toBe(400);
+    expect(integOnSwitch.body.error).toMatch(/only sign in to FortiGates/);
+    const token = await prisma.credential.create({ data: { name: PFX + "-token", type: "restapi", config: { baseUrl: "https://gate.example", apiToken: "t0k" } } });
+    try {
+      const tokOnSwitch = await writer.agent.put("/api/v1/server-settings/firmware/bindings").set("X-CSRF-Token", writer.csrf)
+        .send({ manufacturer: MFR, assetType: "switch", model: "FortiSwitch S108FF tok", credentialId: token.id });
+      expect(tokOnSwitch.status).toBe(400);
+      const tokOnGate = await writer.agent.put("/api/v1/server-settings/firmware/bindings").set("X-CSRF-Token", writer.csrf)
+        .send({ manufacturer: MFR, assetType: "firewall", model: "FortiGate 60F", credentialId: token.id });
+      expect(tokOnGate.status, JSON.stringify(tokOnGate.body)).toBe(200);
+      const t2 = await writer.agent.get("/api/v1/server-settings/firmware/tree");
+      const fwNode = t2.body.manufacturers.find((m: { name: string }) => m.name === MFR).assetTypes.find((t: { assetType: string }) => t.assetType === "firewall");
+      expect(fwNode.effectiveBinding).toMatchObject({ source: "integration-token", scope: "assetType" });
+      expect(fwNode.models.find((m: { model: string }) => m.model === "FortiGate 60F").effectiveBinding).toMatchObject({ source: "credential", credentialId: token.id, scope: "model" });
+    } finally {
+      await prisma.firmwareCredentialBinding.deleteMany({ where: { manufacturer: MFR, assetType: "firewall" } });
+      await prisma.credential.delete({ where: { id: token.id } });
+    }
+    // The database holds the line too: no integration token outside a firewall scope.
+    await expect(prisma.firmwareCredentialBinding.create({ data: { manufacturer: MFR, assetType: "access_point", model: "x-check", source: "integration-token" } })).rejects.toThrow();
   });
 
-  it("per-asset availability at assets:read; POST is assets:write and needs the approved imageId; a firewall gets nothing", async () => {
+  it("per-asset availability at assets:read; POST is assets:write and needs the approved imageId; a FortiGate in HA gets nothing", async () => {
     const [sw1, , , fg] = createdAssetIds;
     const reader = await loginAs(readerU);
     const avail = await reader.agent.get(`/api/v1/assets/${sw1}/firmware-upgrade`);
@@ -301,9 +347,17 @@ d("firmware repository routes", () => {
     expect(blocked.body.error).toMatch(/no IP address/);
     expect(await prisma.firmwareUpgradeRun.count({ where: { assetId: sw1 } })).toBe(0);
 
+    // A FortiGate has an engine now; the only FGT60F image is older than it runs.
     const fgAvail = await reader.agent.get(`/api/v1/assets/${fg}/firmware-upgrade`);
     expect(fgAvail.status).toBe(200);
-    expect(fgAvail.body.state).toBe("unsupported");
+    expect(fgAvail.body.engine).toBe("fortigate-https");
+    expect(fgAvail.body.state).toBe("up-to-date");
+    // An HA cluster member is not upgraded at all — not blocked-for-now, unsupported.
+    await prisma.asset.update({ where: { id: fg! }, data: { fortinetTopology: { role: "fortigate", deviceName: "fwrepo-fg1", haMode: "a-p", haRole: "primary" } } });
+    const ha = await reader.agent.get(`/api/v1/assets/${fg}/firmware-upgrade`);
+    expect(ha.body.state).toBe("unsupported");
+    expect(ha.body.reason).toMatch(/HA cluster member \(a-p, primary\)/);
+    await prisma.asset.update({ where: { id: fg! }, data: { fortinetTopology: { role: "fortigate", deviceName: "fwrepo-fg1" } } });
 
     const runs = await reader.agent.get(`/api/v1/assets/${sw1}/firmware-upgrade/runs`);
     expect(runs.status).toBe(200);

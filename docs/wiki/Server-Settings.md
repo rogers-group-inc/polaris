@@ -9,7 +9,7 @@ or only `firmware` sees that tab and nothing else.
 |---|---|---|
 | **Identification** | `serverSettingsSystem` | what this install calls itself |
 | **Credentials** | `credentials` | stored SNMP / SSH / WinRM / REST / HTTP secrets |
-| **Repository** | `firmware` | firmware images for switches and access points, and the device logins that apply them |
+| **Repository** | `firmware` | firmware images for switches, access points and FortiGates, and the device logins or API tokens that apply them |
 | **Customization** | `serverSettingsSystem` | branding, logo, units |
 | **Time & NTP** | `serverSettingsSystem` | server clock and timezone |
 | **Web Server** | `serverSettingsSystem` | HTTPS, nginx, Dash wallboard |
@@ -70,7 +70,7 @@ secret.**
 ### Device admin logins
 
 An HTTP credential in **Device admin login (form)** mode is the username and
-password a switch or access point's *own* web UI takes. It is not an HTTP
+password a switch, access point or FortiGate's *own* web UI takes. It is not an HTTP
 authentication scheme: an HTTP-check widget will not accept it, and nothing
 ever turns it into a header. Its one consumer is the [Repository](#repository),
 which posts it to the device's login page when it upgrades firmware. Test
@@ -81,25 +81,38 @@ signing in is what proves it.
 
 ## Repository
 
-Firmware images for the **switches and access points** in the inventory
-([rule 87](Business-Rules#rule-87)). Gated on the `firmware` key: **Read** sees
-the tab and which devices have an upgrade waiting, **Read-Write** manages the
-repository, **Full Read-Write** — on the asset itself, never here — starts an
-upgrade.
+Firmware images for the **switches, access points and FortiGate firewalls** in
+the inventory ([rule 87](Business-Rules#rule-87)). Gated on the `firmware` key:
+**Read** sees the tab and which devices have an upgrade waiting, **Read-Write**
+manages the repository. Starting an upgrade is **Read-Write on Assets**, from
+the device itself — never here.
 
 ### The tree
 
-Manufacturer › device type (Switch, Access Point) › model, built from the
+Manufacturer › device type (Switch, Access Point, Firewall) › model, built from the
 assets Polaris has. It is not a list you maintain: a model appears because a
 device carries it. Each node shows how many assets sit under it, which device
 login applies and where that login is inherited from.
 
-**Only Fortinet devices can be upgraded, over HTTPS to the device's own web
-UI.** A device-type node for another manufacturer says *No upgrade engine*;
-you may still store images under it, and its assets show no upgrade action.
-A FortiGate-managed FortiAP usually has its local web UI disabled, and an
-upgrade attempt will report the device as unreachable — that is the AP, not
-the repository.
+**Only Fortinet devices can be upgraded, over HTTPS straight to the device.**
+FortiSwitches and FortiAPs through their own web UI; standalone FortiGates
+through the FortiOS REST API. A device-type node for another manufacturer says
+*No upgrade engine*; you may still store images under it, and its assets show
+no upgrade action. A FortiGate-managed FortiAP usually has its local web UI
+disabled, and an upgrade attempt will report the device as unreachable — that
+is the AP, not the repository.
+
+**FortiGates — read this first.** FortiGate upgrades are new. They have been
+run on two lab FortiGate 61F gates (FortiOS 7.6.7 → 8.0.1, once with an API
+token and once with an admin login), but not yet on older FortiOS builds or
+on any other model; try one on a lab or spare gate before a production one,
+and have console access ready. A gate in an **HA
+cluster is not upgraded** — its Firmware card says so. FortiGate-VM is not
+offered images (its serial does not name a hardware platform). Polaris checks
+that an image is newer and fits the gate's platform; it does **not** check
+Fortinet's supported upgrade path, so pick an image that is a supported step
+from the running version. A FortiGate image goes straight to the gate, never
+through FortiManager.
 
 ### Images
 
@@ -123,23 +136,29 @@ same bytes cannot be filed twice, and an image a device is flashing right now
 cannot be removed by anything.
 
 **Which devices differ from the primary** is also an automation field:
-`firmwareVsPrimary` reads `current`, `older` or `newer` for every switch and
-access point the Repository can place, and the baseline automation **Firmware
-differs from repository primary** (informational) raises one in-app alert per
-device that is not on the primary, clearing on its own once it is upgraded or
-the primary is changed. See
+`firmwareVsPrimary` reads `current`, `older` or `newer` for every switch,
+access point and FortiGate the Repository can place, and the baseline
+automation **Firmware differs from repository primary** (informational) raises
+one in-app alert per device that is not on the primary, clearing on its own
+once it is upgraded or the primary is changed. The baseline is scoped to
+switches and access points; add **Firewall** to its scope to hear about gates. See
 [Automation triggers](Automation-Triggers#firmwarevsprimary--what-the-repository-would-push).
 
 A model with images but **no assets carrying it any more** is flagged amber
 and opened for you, with **Delete firmware for this model** — the images are
 still on disk, and the flag is the only thing telling you so.
 
-Images are up to 100 MiB and live on the host under `data/firmware` (outside
-the database backup, like the agent binaries; a Docker install keeps them in
-the state volume). An nginx-fronted install needs the shipped config's
-firmware location block, or the upload is rejected at the edge with a 413.
-An update installs it only on an install whose nginx is managed from the
-**Web Server** tab and has not been edited by hand since.
+Switch and access-point images are up to 100 MiB, FortiGate images up to
+300 MiB, and they live on the host under `data/firmware` (outside the database
+backup, like the agent binaries; a Docker install keeps them in the state
+volume). An nginx-fronted install needs the shipped config's firmware location
+block, or the upload is rejected at the edge with a 413. An update installs it
+only on an install whose nginx is managed from the **Web Server** tab and has
+not been edited by hand since. That block said `100m` until FortiGate support
+arrived and says `300m` now: an install still carrying `100m` takes switch and
+AP images but refuses a FortiGate image over 100 MB at nginx, and the upload's
+error message says so — re-apply the **Web Server** tab, or change the number
+by hand as below.
 
 **Known problem on systemd installs (the split-role layout):** neither the
 update nor the Web Server tab's **Save & Apply** can currently rewrite nginx
@@ -150,7 +169,7 @@ this inside the `server { }` block after `location / { … }`, then run
 
 ```
   location = /api/v1/server-settings/firmware/images {
-    client_max_body_size 100m;
+    client_max_body_size 300m;
     proxy_request_buffering off;
     proxy_pass http://127.0.0.1:3000;
   }
@@ -158,7 +177,7 @@ this inside the `server { }` block after `location / { … }`, then run
 
 Use the same address and port as your file's own `location /` block. A load
 balancer in front of nginx has its own request-body limit, which must allow
-100 MiB as well.
+300 MiB as well (100 MiB if you never upload FortiGate images).
 
 ### Device logins
 
@@ -167,8 +186,31 @@ credential in *Device admin login (form)* mode there. The most specific level
 wins: a model's own login beats the device type's, which beats the
 manufacturer's, and every node says which one applies to it and where it came
 from. A binding whose credential has since been deleted is skipped, not
-inherited — the next level up applies. Upgrades are never automatic: an
-operator with the permission starts each one from the device's Firmware card.
+inherited — the next level up applies.
+
+On a **Firewall** device type or model the picker is labelled **Sign in with**
+and offers three kinds of thing:
+
+- **Integration API token** — the REST API token of the FortiGate or
+  FortiManager integration that discovered each gate (a FortiManager's
+  *FortiGate API token* from its Monitoring tab). Nothing is copied: the token
+  is read from the integration when the upgrade runs, so rotating it there is
+  enough. A gate that no FortiGate / FortiManager integration discovered, or
+  whose integration holds no token, skips this binding and uses the next level
+  up.
+- **Device admin logins** — the same *Device admin login (form)* credentials
+  switches use. An admin with two-factor authentication, a pre-login
+  disclaimer or a forced password change cannot sign in this way; the upgrade
+  stops after one attempt rather than count toward the admin lockout.
+- **REST API tokens** — a stored *REST API* credential.
+
+The token's admin profile needs **System: Read-Write** on the gate (firmware
+upgrade is a system write). A token or a REST API credential is offered only
+on Firewall nodes and never applies to a switch or access point — bound
+anywhere a switch would inherit it, it is skipped for the switch. Upgrades are never automatic: an
+operator with the permission starts each one from the device's Firmware card,
+either now or booked for a chosen time
+([Assets → Firmware](Assets#firmware), [rule 93](Business-Rules#rule-93)).
 A device with no login at any level cannot be upgraded until one is bound, and
 its card says *No login bound*; the tree marks such a node *No device login*.
 

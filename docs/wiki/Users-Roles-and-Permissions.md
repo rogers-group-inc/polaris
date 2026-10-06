@@ -82,7 +82,7 @@ the only thing that justifies the rung existing.
 
 | Key | Top rung | |
 |---|---|---|
-| `assets` | Full RW | inventory CRUD and export. **Read-Write also starts a firmware upgrade** on a switch or access point. **Full RW = deploy the agent, and merge assets** (a merge edits one record and deletes another) |
+| `assets` | Full RW | inventory CRUD and export. **Read-Write also starts a firmware upgrade** on a switch, access point or FortiGate, or schedules, changes and cancels one for later. **Full RW = deploy the agent, and merge assets** (a merge edits one record and deletes another) |
 | `assetsQuarantine` | Read-Write | push MAC quarantine to FortiGates, release, verify |
 | `assetsProbe` | **Read-Only** | probe-now, SNMP walk, DNS lookup — a probe writes nothing here |
 | `assetMonitorSettings` | Full RW | monitor cadence and retention overrides at every tier, plus the auto-decommission thresholds. **Full RW = the outage simulation** |
@@ -98,7 +98,7 @@ the only thing that justifies the rung existing.
 | `mibDatabase` | Read-Write | upload / browse / walk SNMP MIBs |
 | `manufacturerProfiles` | Read-Write | per-vendor telemetry profiles — CPU/memory/temperature OIDs, custom widgets — **and the manufacturer alias map**, which decides which profile a device gets |
 | `credentials` | Full RW | stored SNMP / WinRM / SSH / REST / HTTP credentials — **ownership** |
-| `firmware` | RW | the firmware repository for switches and access points. Read = see the Repository tab; Read-Write = upload / delete images, choose the primary and bind device logins. **Starting an upgrade is not on this key** — it needs Read-Write on **Assets** ([rule 87](Business-Rules#rule-87)) |
+| `firmware` | RW | the firmware repository for switches, access points and FortiGates. Read = see the Repository tab; Read-Write = upload / delete images, choose the primary and bind device logins (or, for FortiGates, an API token — including the discovering integration's). **Starting an upgrade is not on this key** — it needs Read-Write on **Assets** ([rule 87](Business-Rules#rule-87)) |
 | `deviceIcons` | Read-Write | operator-uploaded topology icons |
 
 > `manufacturerAliases` was **folded into `manufacturerProfiles`** on

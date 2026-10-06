@@ -162,7 +162,10 @@ describe("device platform from the serial", () => {
     expect(isFortiApSerial("S108FFTF23001234")).toBe(false);
     expect(firmwareFamilyForSerial("S108FFTF23001234")).toBe("switch");
     expect(firmwareFamilyForSerial("FP231KTF24005678")).toBe("ap");
-    expect(firmwareFamilyForSerial("FGT60FTK20001234")).toBeNull();
+    // FortiGates joined the repository (rule 87); a FortiGate-VM never matches an image.
+    expect(firmwareFamilyForSerial("FGT60FTK20001234")).toBe("firewall");
+    expect(firmwareFamilyForSerial("FG100FTK20001234")).toBe("firewall");
+    expect(firmwareFamilyForSerial("FGVM04TM20001234")).toBeNull();
     expect(firmwareFamilyForSerial(null)).toBeNull();
   });
 });

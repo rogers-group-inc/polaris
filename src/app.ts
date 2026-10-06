@@ -1260,6 +1260,9 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // Quiet-time summaries (business rule 92): the email that ends a quiet
       // window. Same role as the three above — the hold was taken here.
       "./jobs/sendQuietTimeSummaries.js",
+      // Scheduled firmware upgrades (business rule 93): the flash runs on
+      // this role with setImmediate, beside the image on disk.
+      "./jobs/startScheduledFirmwareUpgrades.js",
       "./jobs/runAutomationScripts.js",
       "./jobs/resolvePolarisPushedConflicts.js",
       "./jobs/resolveStaleReservationConflicts.js",

@@ -10,9 +10,11 @@
  *   firmwareAssetRouter  mounted at /assets/:id/firmware-upgrade, BEFORE
  *                        /assets so the literal path is never an asset id.
  *
- * Gates on the `firmware` key: read = look, write = images and bindings,
- * fullwrite = POST an upgrade (the named act, rule 43(d)). Handlers are thin;
- * every rule lives in firmwareRepositoryService / firmwareUpgradeService.
+ * The Repository gates on the `firmware` key: read = look, write = images
+ * and bindings. The asset side gates on `assets` (rule 43(g)): read = the
+ * card, write = flash it now or book a flash for later (rule 93). Handlers are
+ * thin; every rule lives in firmwareRepositoryService /
+ * firmwareUpgradeService / firmwareScheduleService.
  */
 
 import { Router, type Request, type Response, type NextFunction } from "express";
@@ -27,6 +29,7 @@ import { FIRMWARE_INCOMING_DIR } from "../../utils/paths.js";
 import {
   FIRMWARE_ASSET_TYPES,
   FIRMWARE_MAX_IMAGE_BYTES,
+  FIRMWARE_BINDING_SOURCES,
   getFirmwareTree,
   listImages,
   getImage,
@@ -48,6 +51,15 @@ import {
   getRunForAsset,
   listRunsForAsset,
 } from "../../services/firmwareUpgradeService.js";
+import {
+  getPendingSchedule,
+  listSchedulesForAsset,
+  createSchedule,
+  updateSchedule,
+  cancelSchedule,
+  defaultRecipientsFor,
+  MAX_RECIPIENTS,
+} from "../../services/firmwareScheduleService.js";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -88,6 +100,9 @@ const BindingUpsertSchema = z.object({
   assetType: AssetTypeSchema.optional().nullable(),
   model: z.string().max(200).optional().nullable(),
   credentialId: z.string().uuid().nullable(),
+  // "integration-token" binds the discovering integration's FortiOS API token
+  // (a firewall scope only; credentialId is then null).
+  source: z.enum(FIRMWARE_BINDING_SOURCES).optional(),
 });
 
 const RunsQuerySchema = z.object({
@@ -97,6 +112,27 @@ const RunsQuerySchema = z.object({
 
 const StartUpgradeSchema = z.object({
   imageId: z.string().uuid({ message: "imageId is required — approve the image to push" }),
+});
+
+// An absolute instant (the browser converts its local pick to ISO with an
+// offset), so the booking means the same moment whatever zone reads it.
+const ScheduledForSchema = z.string().datetime({ offset: true, message: "scheduledFor must be an ISO date-time with a zone offset" });
+const RecipientsSchema = z.array(z.string().trim().max(254)).max(MAX_RECIPIENTS);
+
+const CreateScheduleSchema = z.object({
+  imageId: z.string().uuid({ message: "imageId is required — approve the image to push" }),
+  scheduledFor: ScheduledForSchema,
+  notifyEmails: RecipientsSchema,
+});
+
+const UpdateScheduleSchema = z.object({
+  imageId: z.string().uuid().optional(),
+  scheduledFor: ScheduledForSchema.optional(),
+  notifyEmails: RecipientsSchema.optional(),
+}).refine((v) => v.imageId || v.scheduledFor || v.notifyEmails, { message: "Nothing to change" });
+
+const ScheduleListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
 });
 
 function handle(fn: (req: Request, res: Response) => Promise<void>) {
@@ -111,7 +147,7 @@ function firstIssue(err: z.ZodError): string {
 
 // ─── Upload storage ───────────────────────────────────────────────────────────
 
-// Disk, never memory: an image is up to 100 MiB. Into FIRMWARE_DIR/.incoming
+// Disk, never memory: an image is up to 300 MiB (a FortiGate). Into FIRMWARE_DIR/.incoming
 // (not os.tmpdir()) so the service's final rename is on one filesystem and
 // atomic. The ceiling here is the FortiSwitch upload endpoint's own; multer
 // answers LIMIT_FILE_SIZE before the handler sees anything.
@@ -132,7 +168,7 @@ function uploadSingle(field: string) {
     mw(req, res, (err: unknown) => {
       if (!err) return next();
       const code = (err as { code?: string }).code;
-      if (code === "LIMIT_FILE_SIZE") return next(new AppError(413, "Firmware images are limited to 100 MiB"));
+      if (code === "LIMIT_FILE_SIZE") return next(new AppError(413, `Firmware images are limited to ${Math.round(FIRMWARE_MAX_IMAGE_BYTES / 1_048_576)} MiB`));
       if (code === "LIMIT_FILE_COUNT" || code === "LIMIT_UNEXPECTED_FILE") return next(new AppError(400, `Send exactly one file in the "${field}" field`));
       next(err);
     });
@@ -239,7 +275,9 @@ export const firmwareAssetRouter: Router = Router({ mergeParams: true });
 // 2026-09-26: whoever may edit an asset may upgrade it); the `firmware` key
 // governs the repository, not the device.
 firmwareAssetRouter.get("/", requirePermission("assets", "read"), handle(async (req, res) => {
-  res.json(await getUpgradeAvailability(String(req.params.id)));
+  const assetId = String(req.params.id);
+  const [availability, schedule] = await Promise.all([getUpgradeAvailability(assetId), getPendingSchedule(assetId)]);
+  res.json({ ...availability, schedule });
 }));
 
 // Flashing a device. 202 — the run is watched, not awaited.
@@ -261,6 +299,53 @@ firmwareAssetRouter.get("/runs", requirePermission("assets", "read"), handle(asy
 // an assets:read caller cannot read any run by guessing an id.
 firmwareAssetRouter.get("/runs/:runId", requirePermission("assets", "read"), handle(async (req, res) => {
   res.json({ run: await getRunForAsset(String(req.params.id), String(req.params.runId)) });
+}));
+
+// ─── Scheduled upgrades (business rule 93) ───────────────────────────────────
+// Booking, changing and cancelling are `assets:write` — the same grant as
+// flashing now, because a booking IS a flash, approved by name, deferred.
+
+firmwareAssetRouter.get("/schedules", requirePermission("assets", "read"), handle(async (req, res) => {
+  const q = ScheduleListQuerySchema.safeParse(req.query);
+  if (!q.success) throw new AppError(400, firstIssue(q.error));
+  res.json({ schedules: await listSchedulesForAsset(String(req.params.id), q.data.limit ?? 20) });
+}));
+
+// The address the booking modal pre-fills: the caller's own profile email.
+firmwareAssetRouter.get("/schedules/defaults", requirePermission("assets", "write"), handle(async (req, res) => {
+  res.json({ notifyEmails: await defaultRecipientsFor(req.session?.userId ?? null), maxRecipients: MAX_RECIPIENTS });
+}));
+
+firmwareAssetRouter.post("/schedules", requirePermission("assets", "write"), handle(async (req, res) => {
+  const body = CreateScheduleSchema.safeParse(req.body ?? {});
+  if (!body.success) throw new AppError(400, firstIssue(body.error));
+  const schedule = await createSchedule({
+    assetId: String(req.params.id),
+    imageId: body.data.imageId,
+    scheduledFor: new Date(body.data.scheduledFor),
+    notifyEmails: body.data.notifyEmails,
+    actor: requestActor(req) ?? "unknown",
+  });
+  res.status(201).json({ schedule });
+}));
+
+firmwareAssetRouter.patch("/schedules/:scheduleId", requirePermission("assets", "write"), handle(async (req, res) => {
+  const body = UpdateScheduleSchema.safeParse(req.body ?? {});
+  if (!body.success) throw new AppError(400, firstIssue(body.error));
+  const schedule = await updateSchedule({
+    assetId: String(req.params.id),
+    scheduleId: String(req.params.scheduleId),
+    scheduledFor: body.data.scheduledFor ? new Date(body.data.scheduledFor) : undefined,
+    notifyEmails: body.data.notifyEmails,
+    imageId: body.data.imageId,
+    actor: requestActor(req) ?? "unknown",
+  });
+  res.json({ schedule });
+}));
+
+firmwareAssetRouter.delete("/schedules/:scheduleId", requirePermission("assets", "write"), handle(async (req, res) => {
+  const schedule = await cancelSchedule(String(req.params.id), String(req.params.scheduleId), requestActor(req) ?? "unknown");
+  res.json({ schedule });
 }));
 
 export default firmwareRouter;

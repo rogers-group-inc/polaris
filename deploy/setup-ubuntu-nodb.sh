@@ -211,7 +211,7 @@ fi
 # ─── 4b. Bootstrap Polaris Agent build directories ──────────────────────────
 mkdir -p "$APP_DIR/data/agents" "$APP_DIR/.cache/go-build"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/agents" "$APP_DIR/.cache"
-# The firmware repository (Server Settings → Repository) stores switch / AP
+# The firmware repository (Server Settings → Repository) stores switch / AP / FortiGate
 # images under $APP_DIR/data/firmware/ — same posture as data/agents.
 mkdir -p "$APP_DIR/data/firmware"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/firmware"

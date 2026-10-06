@@ -86,7 +86,7 @@ A client or neighbour Polaris matched to a known device links to it, and tapping
 it opens that asset. The sheets are read-only; the reload button re-reads what
 Polaris has stored, not the device itself.
 
-**A switch or access point can be upgraded from its sheet.** When the
+**A switch, access point or FortiGate can be upgraded from its sheet.** When the
 [Repository](Server-Settings#repository) holds newer firmware for the device,
 its **OS** row under *General* carries **Upgrade to &lt;version&gt;**. Tapping it
 opens a confirm sheet naming the device, its serial, what it runs now, the
@@ -96,8 +96,8 @@ uploading, erasing / writing / verifying with a percent on a switch,
 rebooting, verifying, waiting for monitoring to answer — and ends on the
 result. The button needs **Read-Write on Assets**; below that the row says
 the version is available. The phone offers the model's **primary** image
-only: picking its backup, the run history and its log are on the desktop's
-Firmware card, and the Repository itself is desktop-only. See
+only: picking its backup, the run history and its log, and scheduling an
+upgrade for later are on the desktop's Firmware card, and the Repository itself is desktop-only. See
 [Assets → Firmware](Assets#firmware).
 
 Networks replaced the old **Reservations** tab: a reservation is now seen and

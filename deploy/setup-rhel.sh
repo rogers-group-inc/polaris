@@ -382,7 +382,7 @@ fi
 # first click doesn't crash trying to mkdir under root-owned ancestors.
 mkdir -p "$APP_DIR/data/agents" "$APP_DIR/.cache/go-build"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/agents" "$APP_DIR/.cache"
-# The firmware repository (Server Settings → Repository) stores switch / AP
+# The firmware repository (Server Settings → Repository) stores switch / AP / FortiGate
 # images under $APP_DIR/data/firmware/ — same posture as data/agents: never
 # served, preserved across in-app updates, outside the database backup.
 mkdir -p "$APP_DIR/data/firmware"

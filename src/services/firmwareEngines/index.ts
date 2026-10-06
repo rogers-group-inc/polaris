@@ -4,15 +4,18 @@
  *
  * Fortinet only, for now: a FortiSwitch (assetType "switch" + an S…/FS…/FR…
  * serial) or a FortiAP (assetType "access_point" + an FP…/PU…/PS… serial),
- * each over its own HTTPS UI. Any other manufacturer's images may be STORED in
+ * each over its own HTTPS UI, or a FortiGate (assetType "firewall" + an FG…
+ * serial, never FGVM…) over FortiOS REST — with a bound admin login or the
+ * discovering integration's API token. Any other manufacturer's images may be STORED in
  * the repository, but no upgrade is offered — the asset panel says so.
  */
 
 import { normalizeManufacturer } from "../../utils/manufacturerNormalize.js";
-import { isFortiSwitchSerial, isFortiApSerial } from "../../utils/firmwareVersion.js";
+import { isFortiSwitchSerial, isFortiApSerial, isFortiGateSerial } from "../../utils/firmwareVersion.js";
 import type { FirmwareEngine, FirmwareEngineKind } from "./types.js";
 import { upgradeFortiSwitch } from "./fortiswitchHttps.js";
 import { upgradeFortiAp } from "./fortiapHttps.js";
+import { upgradeFortiGate } from "./fortigateHttps.js";
 
 export type { FirmwareEngineKind } from "./types.js";
 
@@ -25,6 +28,7 @@ export interface ResolvedFirmwareEngine {
 const ENGINES: Record<FirmwareEngineKind, ResolvedFirmwareEngine> = {
   "fortiswitch-https": { kind: "fortiswitch-https", label: "FortiSwitch (HTTPS)", run: upgradeFortiSwitch },
   "fortiap-https":     { kind: "fortiap-https",     label: "FortiAP (HTTPS)",     run: upgradeFortiAp },
+  "fortigate-https":   { kind: "fortigate-https",   label: "FortiGate (FortiOS REST)", run: upgradeFortiGate },
 };
 
 function isFortinet(manufacturer: string | null | undefined): boolean {
@@ -41,6 +45,7 @@ export function engineFor(manufacturer: string | null | undefined, assetType: st
   if (!isFortinet(manufacturer)) return null;
   if (assetType === "switch" && isFortiSwitchSerial(serial)) return ENGINES["fortiswitch-https"];
   if (assetType === "access_point" && isFortiApSerial(serial)) return ENGINES["fortiap-https"];
+  if (assetType === "firewall" && isFortiGateSerial(serial)) return ENGINES["fortigate-https"];
   return null;
 }
 
@@ -53,6 +58,7 @@ export function engineKindForType(manufacturer: string | null | undefined, asset
   if (!isFortinet(manufacturer)) return null;
   if (assetType === "switch") return "fortiswitch-https";
   if (assetType === "access_point") return "fortiap-https";
+  if (assetType === "firewall") return "fortigate-https";
   return null;
 }
 

@@ -111,12 +111,44 @@ export interface UpgradeAvailability {
 const ASSET_SELECT = {
   id: true, hostname: true, ipAddress: true, dnsName: true, serialNumber: true, manufacturer: true, assetType: true,
   model: true, osVersion: true, status: true, monitored: true, monitorStatus: true, dependencySuppressed: true,
+  discoveredByIntegrationId: true, fortinetTopology: true,
 } as const;
 type AssetRow = {
   id: string; hostname: string | null; ipAddress: string | null; dnsName: string | null; serialNumber: string | null;
   manufacturer: string | null; assetType: string; model: string | null; osVersion: string | null; status: string;
   monitored: boolean; monitorStatus: string | null; dependencySuppressed: boolean;
+  discoveredByIntegrationId: string | null; fortinetTopology: unknown;
 };
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** Why no login resolved — a FortiGate's binding may also be a token, and an integration-token binding needs its integration to hold one. */
+function noLoginPhrase(a: AssetRow): string {
+  return a.assetType === "firewall"
+    ? `no device admin login or API token is bound for ${a.manufacturer} firewalls at the model, device-type or manufacturer level, or the bound integration API token is missing (the gate's discovering FortiGate / FortiManager integration has none)`
+    : `no device admin login is bound for ${a.manufacturer} at the model, device-type or manufacturer level`;
+}
+
+function typeWord(assetType: string): string {
+  return assetType === "access_point" ? "access points" : assetType === "firewall" ? "firewalls" : "switches";
+}
+
+/**
+ * A FortiGate discovery recorded as an HA cluster member (`fortinetTopology`
+ * haMode / haRole). Upgrading one member reboots the whole cluster, which this
+ * version does not orchestrate — refused here, and again by the engine from
+ * the gate's own HA configuration.
+ */
+function haClusterOf(a: AssetRow): string | null {
+  if (a.assetType !== "firewall") return null;
+  const t = (a.fortinetTopology && typeof a.fortinetTopology === "object" ? a.fortinetTopology : {}) as Record<string, unknown>;
+  const mode = typeof t.haMode === "string" ? t.haMode : null;
+  const role = typeof t.haRole === "string" ? t.haRole : null;
+  if (!mode && !role) return null;
+  return `the FortiGate is an HA cluster member (${[mode, role].filter(Boolean).join(", ")}) — upgrading HA clusters is not supported yet`;
+}
 
 function summarize(r: {
   id: string; assetId: string; imageId: string | null; platform: string; fromVersion: string | null; toVersion: string; engine: string;
@@ -158,13 +190,13 @@ async function lastRunFor(assetId: string) {
 function reasonFor(c: UpgradeCandidates, a: AssetRow): { state: UpgradeAvailabilityState; reason: string } {
   switch (c.reason) {
     case "no-engine":
-      return { state: "unsupported", reason: `No upgrade engine for ${a.manufacturer ?? "this manufacturer"} ${a.assetType === "access_point" ? "access points" : "switches"} — images can be stored in the Repository but Polaris cannot apply them.` };
+      return { state: "unsupported", reason: `No upgrade engine for ${a.manufacturer ?? "this manufacturer"} ${typeWord(a.assetType)} — images can be stored in the Repository but Polaris cannot apply them.` };
     case "no-serial":
       return { state: "no-serial", reason: "The asset has no usable serial number, so no image can be matched to its platform." };
     case "no-version":
       return { state: "no-version", reason: "The asset's firmware version is unknown; an upgrade is offered only forward from a known version." };
     case "no-images":
-      return { state: "no-image", reason: `No firmware is in the Repository for ${a.manufacturer} ${a.assetType === "access_point" ? "access points" : "switches"}.` };
+      return { state: "no-image", reason: `No firmware is in the Repository for ${a.manufacturer} ${typeWord(a.assetType)}.` };
     case "platform-unmatched":
       return { state: "no-image", reason: `The Repository holds ${a.manufacturer} images, but none for platform ${c.platform} (the first six characters of this device's serial).` };
     case "current":
@@ -198,6 +230,8 @@ export async function getUpgradeAvailability(assetId: string): Promise<UpgradeAv
     lastRun: last ? summarize(last) : null,
   };
   if (active) return { ...base, state: "running", reason: "A firmware upgrade is running on this device." };
+  const ha = haClusterOf(a);
+  if (ha) return { ...base, state: "unsupported", reason: `${ha.charAt(0).toUpperCase()}${ha.slice(1)}.` };
   if (candidates.reason !== "ok") {
     const r = reasonFor(candidates, a);
     return { ...base, state: r.state, reason: r.reason };
@@ -212,7 +246,7 @@ export async function getUpgradeAvailability(assetId: string): Promise<UpgradeAv
   const credential = (await resolveFirmwareCredential(a, { revealSecrets: false })) as EffectiveBinding | null;
   const blockers = healthBlockers(a);
   if (!credential) {
-    return { ...base, state: "no-credential", image: primary, backupImage: candidates.backup, blockers, reason: `${primary.versionLabel} is available, but no device admin login is bound for ${a.manufacturer} at the model, device-type or manufacturer level (Server Settings → Repository).` };
+    return { ...base, state: "no-credential", image: primary, backupImage: candidates.backup, blockers, reason: `${primary.versionLabel} is available, but ${noLoginPhrase(a)} (Server Settings → Repository).` };
   }
   if (blockers.length > 0) {
     return { ...base, state: "blocked", image: primary, backupImage: candidates.backup, credential, blockers, reason: `${primary.versionLabel} is available, but ${blockers[0]}.` };
@@ -246,21 +280,44 @@ async function topologyConflicts(a: AssetRow): Promise<string[]> {
   return others.filter((o) => related.has(o.assetId)).map((o) => o.asset.hostname || o.asset.ipAddress || o.assetId);
 }
 
+/**
+ * A 409 that will clear on its own: a live run on this device, or on one
+ * above, below or paired with it. A click is answered with it like any other
+ * refusal; a BOOKING that meets it waits and retries (business rule 93).
+ */
+export class FirmwareRunConflictError extends AppError {
+  constructor(message: string) {
+    super(409, message);
+    this.name = "FirmwareRunConflictError";
+  }
+}
+
 export interface StartUpgradeInput {
   assetId: string;
   /** The image the operator APPROVED by name — required. */
   imageId: string;
   actor: string;
+  /**
+   * The booking this start fires (business rule 93). Linked to the run before
+   * the runner is scheduled, and its recipients are emailed when the run ends.
+   */
+  scheduleId?: string;
   /** Tests: a fake device and short clocks. */
   overrides?: { scheme?: "https" | "http"; port?: number; timeouts?: Partial<FirmwareEngineTimeouts> };
 }
 
-export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<RunSummary> {
-  const a = await prisma.asset.findUnique({ where: { id: input.assetId }, select: ASSET_SELECT }) as AssetRow | null;
-  if (!a) throw new AppError(404, "Asset not found");
-
+/**
+ * The gates that read the device and the Repository, but not the device's
+ * live STATE: engine → address → platform → candidates → the approved image
+ * must be the offered primary or its eligible backup. Shared by a start and by
+ * a booking (rule 93), which takes these when it is made and all of
+ * startFirmwareUpgrade's when it fires.
+ */
+async function approvedImageFor(a: AssetRow, imageId: string | undefined | null): Promise<{ engine: NonNullable<ReturnType<typeof engineFor>>; platform: string; approved: FirmwareImageRow }> {
   const engine = engineFor(a.manufacturer, a.assetType, a.serialNumber);
   if (!engine) throw new AppError(400, `No upgrade engine for ${a.manufacturer ?? "this manufacturer"} ${a.assetType} devices`);
+  const ha = haClusterOf(a);
+  if (ha) throw new AppError(400, `Cannot upgrade: ${ha}`);
   if (!a.ipAddress && !a.dnsName) throw new AppError(400, "The asset has no IP address to reach the web UI at");
   const platform = platformFromSerial(a.serialNumber);
   if (!platform) throw new AppError(400, "The asset has no usable serial number, so no image can be matched to its platform");
@@ -270,24 +327,47 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
     const r = reasonFor(candidates, a);
     throw new AppError(409, r.reason);
   }
-  if (!input.imageId) throw new AppError(400, "imageId is required — approve the image to push");
-  const approved = input.imageId === candidates.primary.id ? candidates.primary
-    : candidates.backup && input.imageId === candidates.backup.id ? candidates.backup
+  if (!imageId) throw new AppError(400, "imageId is required — approve the image to push");
+  const approved = imageId === candidates.primary.id ? candidates.primary
+    : candidates.backup && imageId === candidates.backup.id ? candidates.backup
     : null;
   if (!approved) {
-    throw new AppError(400, `Image ${input.imageId} is not offered for this device — only the model's primary image (${candidates.primary.versionLabel})${candidates.backup ? ` or its backup (${candidates.backup.versionLabel})` : ""} can be pushed, and never a downgrade`);
+    throw new AppError(400, `Image ${imageId} is not offered for this device — only the model's primary image (${candidates.primary.versionLabel})${candidates.backup ? ` or its backup (${candidates.backup.versionLabel})` : ""} can be pushed, and never a downgrade`);
   }
+  return { engine, platform, approved };
+}
+
+/**
+ * What a BOOKING checks when it is made (business rule 93): the image gates
+ * and that a login is bound. Health and topology are deliberately not checked
+ * — the device may be down now and fine at the booked time — they are taken
+ * when the booking fires. Returned as `warnings` so the modal can say so.
+ */
+export async function checkSchedulableUpgrade(assetId: string, imageId: string): Promise<{ approved: FirmwareImageRow; fromVersion: string | null; warnings: string[] }> {
+  const a = await prisma.asset.findUnique({ where: { id: assetId }, select: ASSET_SELECT }) as AssetRow | null;
+  if (!a) throw new AppError(404, "Asset not found");
+  const { approved } = await approvedImageFor(a, imageId);
+  const credential = await resolveFirmwareCredential(a, { revealSecrets: false });
+  if (!credential) throw new AppError(400, `${capitalize(noLoginPhrase(a))} — bind one under Server Settings → Repository`);
+  return { approved, fromVersion: a.osVersion, warnings: healthBlockers(a) };
+}
+
+export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<RunSummary> {
+  const a = await prisma.asset.findUnique({ where: { id: input.assetId }, select: ASSET_SELECT }) as AssetRow | null;
+  if (!a) throw new AppError(404, "Asset not found");
+
+  const { engine, platform, approved } = await approvedImageFor(a, input.imageId);
 
   const blockers = healthBlockers(a);
   if (blockers.length > 0) throw new AppError(409, `Cannot start: ${blockers.join("; ")}`);
 
   const cred = (await resolveFirmwareCredential(a, { revealSecrets: true })) as ResolvedFirmwareCredential | null;
-  if (!cred) throw new AppError(400, `No device admin login is bound for ${a.manufacturer} at the model, device-type or manufacturer level — bind one under Server Settings → Repository`);
+  if (!cred) throw new AppError(400, `${capitalize(noLoginPhrase(a))} — bind one under Server Settings → Repository`);
 
-  if (await activeRunFor(a.id)) throw new AppError(409, "A firmware upgrade is already running on this device");
+  if (await activeRunFor(a.id)) throw new FirmwareRunConflictError("A firmware upgrade is already running on this device");
   const conflicts = await topologyConflicts(a);
   if (conflicts.length > 0) {
-    throw new AppError(409, `A firmware upgrade is running on ${conflicts.join(", ")}, which is above, below or paired with this device — wait for it to finish`);
+    throw new FirmwareRunConflictError(`A firmware upgrade is running on ${conflicts.join(", ")}, which is above, below or paired with this device — wait for it to finish`);
   }
 
   const imagePath = resolveImagePath(`${approved.id}.out`);
@@ -314,8 +394,13 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
       },
     });
   } catch (err: any) {
-    if (err?.code === "P2002") throw new AppError(409, "A firmware upgrade is already running on this device");
+    if (err?.code === "P2002") throw new FirmwareRunConflictError("A firmware upgrade is already running on this device");
     throw err;
+  }
+
+  if (input.scheduleId) {
+    await prisma.firmwareUpgradeSchedule.update({ where: { id: input.scheduleId }, data: { runId: run.id } })
+      .catch((err) => logger.warn({ err, runId: run.id, scheduleId: input.scheduleId }, "firmware upgrade: could not link the run to its booking"));
   }
 
   await logEvent({
@@ -325,8 +410,8 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
     resourceName: assetLabel(a),
     actor: input.actor,
     level: "info",
-    message: `Firmware upgrade started: ${a.osVersion ?? "unknown"} → ${approved.versionLabel} (${approved.role} image for ${approved.model}) via ${engine.label}, signing in with "${cred.credentialName}" (${cred.scope} binding)`,
-    details: { runId: run.id, imageId: approved.id, platform, fromVersion: a.osVersion, toVersion: approved.versionLabel, engine: engine.kind, credentialId: cred.credentialId, credentialScope: cred.scope, imageRole: approved.role },
+    message: `${input.scheduleId ? "Scheduled firmware upgrade" : "Firmware upgrade"} started: ${a.osVersion ?? "unknown"} → ${approved.versionLabel} (${approved.role} image for ${approved.model}) via ${engine.label}, signing in with "${cred.credentialName}" (${cred.scope} binding)`,
+    details: { runId: run.id, imageId: approved.id, platform, fromVersion: a.osVersion, toVersion: approved.versionLabel, engine: engine.kind, credentialId: cred.credentialId, credentialScope: cred.scope, imageRole: approved.role, scheduleId: input.scheduleId ?? null },
   });
 
   // Best-effort, like takeAgentHold: a hold failure must never be the reason a
@@ -339,11 +424,27 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
   }
 
   setImmediate(() => {
-    runUpgrade(run.id, a, approved, cred, imagePath, size, input.overrides).catch((err) => {
-      logger.error({ err, runId: run.id }, "Firmware upgrade runner crashed unexpectedly");
-    });
+    runUpgrade(run.id, a, approved, cred, imagePath, size, input.overrides)
+      .catch((err) => {
+        logger.error({ err, runId: run.id }, "Firmware upgrade runner crashed unexpectedly");
+      })
+      // A booked flash reports its outcome to the booking's recipients (rule
+      // 93) — after the terminal row and Event are written, whatever they say.
+      .finally(() => {
+        if (input.scheduleId) void notifyScheduledRun(run.id);
+      });
   });
   return summarize(run);
+}
+
+/** Lazy, like requestRediscover: the schedule service imports this one. */
+async function notifyScheduledRun(runId: string): Promise<void> {
+  try {
+    const { notifyScheduledRunFinished } = await import("./firmwareScheduleService.js");
+    await notifyScheduledRunFinished(runId);
+  } catch (err) {
+    logger.warn({ err, runId }, "firmware upgrade: the scheduled-run results email could not be sent");
+  }
 }
 
 async function runUpgrade(
@@ -398,9 +499,12 @@ async function runUpgrade(
     if (!engine) throw new Error("engine vanished");
     const ctx: FirmwareEngineContext = {
       host: a.ipAddress || a.dnsName!,
-      port: overrides?.port,
+      port: overrides?.port ?? cred.port,
       scheme: overrides?.scheme ?? "https",
       credential: { username: cred.username, password: cred.password },
+      // A FortiGate token binding (rule 87): never logged, never in an Event.
+      ...(cred.bearerToken ? { bearerToken: cred.bearerToken } : {}),
+      verifyTls: cred.verifyTls === true,
       imagePath,
       imageSize,
       image: { platform: image.platform ?? "", versionLabel: image.versionLabel, version: image.version ?? { major: 0 } },
@@ -628,6 +732,9 @@ export async function failOrphanedFirmwareRuns(): Promise<number> {
       message: `Firmware upgrade to ${o.toVersion} orphaned: ${msg}`,
       details: { runId: o.id, orphaned: true },
     });
+    // A booked run's recipients hear about the orphan too (rule 93); a run
+    // nobody booked has no booking and this is a no-op.
+    await notifyScheduledRun(o.id);
   }
   return orphans.length;
 }

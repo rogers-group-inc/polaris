@@ -9,6 +9,7 @@
  *       MOCK-S108FF-1   switch        S108FFTF23000001  127.0.0.2  7.4.3 build0542
  *       MOCK-S548DF-1   switch        S548DFTF19000001  127.0.0.3  7.4.3 build0542
  *       MOCK-FAP231K-1  access_point  FP231KTF24000001  127.0.0.4  FP231K-v7.4.3-build0542
+ *       MOCK-FGT60F-1   firewall      FGT60FTK20000001  127.0.0.5  7.4.4 build2662
  *     plus a "FortiSwitch S224EN" model node that only holds an image — no
  *     asset carries it, so the orphaned-node flag has something to show.
  *   - an `http` credential "Mock device login" in form mode (admin / admin),
@@ -39,11 +40,16 @@ const ASSETS = [
   { hostname: "MOCK-S108FF-1",  assetType: "switch",       model: "FortiSwitch S108FF", serialNumber: "S108FFTF23000001", ipAddress: "127.0.0.2", osVersion: "7.4.3 build0542", os: "FortiSwitchOS" },
   { hostname: "MOCK-S548DF-1",  assetType: "switch",       model: "FortiSwitch S548DF", serialNumber: "S548DFTF19000001", ipAddress: "127.0.0.3", osVersion: "7.4.3 build0542", os: "FortiSwitchOS" },
   { hostname: "MOCK-FAP231K-1", assetType: "access_point", model: "FortiAP 231K",       serialNumber: "FP231KTF24000001", ipAddress: "127.0.0.4", osVersion: "FP231K-v7.4.3-build0542", os: "FortiAP" },
+  { hostname: "MOCK-FGT60F-1",  assetType: "firewall",     model: "FortiGate 60F",      serialNumber: "FGT60FTK20000001", ipAddress: "127.0.0.5", osVersion: "7.4.4 build2662", os: "FortiOS" },
 ];
 
 // (node, header token, filename, filler byte) — uploaded in order, so the
 // LAST one per node is the primary and the one before it the backup.
-const IMAGES: Array<{ assetType: "switch" | "access_point"; model: string; token: string; filename: string; filler: number }> = [
+const IMAGES: Array<{ assetType: "switch" | "access_point" | "firewall"; model: string; token: string; filename: string; filler: number }> = [
+  // A FortiGate image header token — real-shaped by analogy with the switch
+  // header; never yet compared against a real FortiGate .out (rule 87).
+  { assetType: "firewall", model: "FortiGate 60F", token: "FGT60F-7.06-FW-build3401-250801-patch05", filename: "FGT_60F-v7.6.5.F-build3401-FORTINET.out", filler: 0x17 },
+  { assetType: "firewall", model: "FortiGate 60F", token: "FGT60F-7.06-FW-build3500-251001-patch08", filename: "FGT_60F-v7.6.8.F-build3500-FORTINET.out", filler: 0x18 },
   { assetType: "switch", model: "FortiSwitch S108FF", token: "S108FF-7.06-FW-build1105-260519-patch05", filename: "FSW_108F_FPOE-v7-build1105-FORTINET.out", filler: 0x11 },
   { assetType: "switch", model: "FortiSwitch S108FF", token: "S108FF-7.06-FW-build1164-260709-patch08", filename: "FSW_108F_FPOE-v7-build1164-FORTINET.out", filler: 0x12 },
   { assetType: "switch", model: "FortiSwitch S548DF", token: "S548DF-7.06-FW-build1164-260709-patch08", filename: "FSW_548D_FPOE-v7-build1164-FORTINET.out", filler: 0x13 },

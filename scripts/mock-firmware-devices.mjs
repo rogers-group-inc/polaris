@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * scripts/mock-firmware-devices.mjs — fake FortiSwitch / FortiAP web UIs for a
+ * scripts/mock-firmware-devices.mjs — fake FortiSwitch / FortiAP web UIs and a
+ * fake FortiGate REST API for a
  * dev stack, so the Repository tab and the asset Firmware card can be driven
  * end to end without touching hardware (business rule 87).
  *
@@ -49,6 +50,7 @@ const DEVICES = [
   { kind: "switch", host: "127.0.0.2", hostname: "MOCK-S108FF-1", serial: "S108FFTF23000001", model: "FS-108F-FPOE", osVersion: "7.4.3", build: "0542" },
   { kind: "switch", host: "127.0.0.3", hostname: "MOCK-S548DF-1", serial: "S548DFTF19000001", model: "FS-548D-FPOE", osVersion: "7.4.3", build: "0542" },
   { kind: "ap",     host: "127.0.0.4", hostname: "MOCK-FAP231K-1", serial: "FP231KTF24000001", model: "FAP-231K", firmwareVersion: "FP231K-v7.4.3-build0542" },
+  { kind: "gate",   host: "127.0.0.5", hostname: "MOCK-FGT60F-1", serial: "FGT60FTK20000001", model: "FortiGate-60F", version: "v7.4.4", build: 2662 },
 ];
 
 // Timings — long enough to watch on the card, short enough to demo.
@@ -56,6 +58,8 @@ const SWITCH_FLASH_MS = 40_000;   // progress polls answer for this long after d
 const SWITCH_DOWN_MS  = 20_000;   // then the switch drops every socket
 const AP_ACCEPT_MS    = 10_000;   // after the upload, before the AP restarts
 const AP_DOWN_MS      = 15_000;
+const GATE_WRITE_MS   = 8_000;    // after the upload answer, before the gate reboots
+const GATE_DOWN_MS    = 25_000;
 
 function log(dev, msg) {
   console.log(`[${new Date().toISOString()}] ${dev.hostname} (${dev.host}) ${msg}`);
@@ -231,6 +235,67 @@ function fortiAp(dev) {
   };
 }
 
+// ─── FortiGate ───────────────────────────────────────────────────────────────
+// The FortiOS REST surface the fortigate-https engine speaks — NOT captured
+// from a real gate; a stand-in for demoing the card. Admin login, or a bearer
+// token (MOCK_FW_TOKEN, default "mock-token") for an integration-token binding.
+
+const GATE_TOKEN = process.env.MOCK_FW_TOKEN || "mock-token";
+
+function fortiGate(dev) {
+  const state = { session: null, down: false, haMode: process.env.MOCK_FW_GATE_HA || "standalone" };
+  const json = (res, status, body) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+  return async (req, res) => {
+    if (state.down) { req.socket.destroy(); return; }
+    const url = new URL(req.url, "https://x");
+    const path = url.pathname;
+    const cookie = req.headers.cookie || "";
+    const bearer = req.headers.authorization === `Bearer ${GATE_TOKEN}`;
+    const authed = bearer || (state.session && cookie.includes(`APSCOOKIE_MOCK=${state.session}`));
+
+    if (req.method === "GET" && path === "/") { res.writeHead(302, { location: "/login" }); return res.end(); }
+    if (req.method === "POST" && path === "/logincheck") {
+      const f = parseForm((await readBody(req)).toString());
+      if (f.username !== USER || f.secretkey !== PASS) { log(dev, `login REJECTED (${f.username})`); res.writeHead(200); return res.end("0"); }
+      state.session = Math.random().toString(36).slice(2);
+      log(dev, "login ok");
+      res.writeHead(200, { "set-cookie": [`APSCOOKIE_MOCK=${state.session}; path=/`, `ccsrftoken_443_mock="csrf-${state.session}"; path=/`] });
+      return res.end("1");
+    }
+    if (req.method === "POST" && path === "/logout") { state.session = null; res.writeHead(200); return res.end(); }
+    if (!authed) return json(res, 401, { status: "error", http_status: 401 });
+    if (req.method === "GET" && path === "/api/v2/monitor/system/status") {
+      return json(res, 200, { http_status: 200, status: "success", serial: dev.serial, version: dev.version, build: dev.build, results: { hostname: dev.hostname, model_name: "FortiGate", model_number: "60F" } });
+    }
+    if (req.method === "GET" && path === "/api/v2/cmdb/system/ha") return json(res, 200, { http_status: 200, results: { mode: state.haMode } });
+    if (req.method === "POST" && path === "/api/v2/monitor/system/firmware/upgrade") {
+      const body = await readBody(req);
+      const isJson = String(req.headers["content-type"] || "").startsWith("application/json");
+      const bytes = isJson ? Buffer.from(JSON.parse(body.toString("utf8")).file_content || "", "base64") : body;
+      const parsed = versionFromUpload(bytes);
+      if (!parsed || !dev.serial.startsWith(parsed.platform)) {
+        log(dev, "firmware upgrade REJECTED");
+        return json(res, 500, { http_status: 500, status: "error", results: { status: "error", error: "Image validation failed" } });
+      }
+      log(dev, `accepted ${parsed.osVersion} build${parsed.build} as ${isJson ? "JSON/base64" : "multipart"} (${bytes.length} bytes) — rebooting in ${GATE_WRITE_MS / 1000} s`);
+      json(res, 200, { http_status: 200, status: "success", results: { status: "success" } });
+      setTimeout(() => {
+        state.session = null;
+        state.down = true;
+        log(dev, `rebooting — down for ${GATE_DOWN_MS / 1000} s`);
+        setTimeout(() => {
+          dev.version = `v${parsed.osVersion}`;
+          dev.build = Number(parsed.build);
+          state.down = false;
+          log(dev, `back up at ${dev.version} build${dev.build}`);
+        }, GATE_DOWN_MS);
+      }, GATE_WRITE_MS);
+      return;
+    }
+    return json(res, 404, { status: "error", http_status: 404 });
+  };
+}
+
 // ─── boot ────────────────────────────────────────────────────────────────────
 
 function selfSignedCert() {
@@ -243,9 +308,9 @@ function selfSignedCert() {
 
 const tls = selfSignedCert();
 for (const dev of DEVICES) {
-  const handler = dev.kind === "switch" ? fortiSwitch(dev) : fortiAp(dev);
+  const handler = dev.kind === "switch" ? fortiSwitch(dev) : dev.kind === "gate" ? fortiGate(dev) : fortiAp(dev);
   const server = createServer(tls, (req, res) => { handler(req, res).catch((err) => { console.error(err); try { res.writeHead(500); res.end(); } catch { /* gone */ } }); });
   server.keepAliveTimeout = 1000;
-  server.listen(PORT, dev.host, () => log(dev, `listening on https://${dev.host}:${PORT} (${dev.kind}, ${dev.serial}, ${dev.kind === "switch" ? dev.osVersion + " build" + dev.build : dev.firmwareVersion})`));
+  server.listen(PORT, dev.host, () => log(dev, `listening on https://${dev.host}:${PORT} (${dev.kind}, ${dev.serial}, ${dev.kind === "switch" ? dev.osVersion + " build" + dev.build : dev.kind === "gate" ? dev.version + " build" + dev.build : dev.firmwareVersion})`));
   server.on("error", (err) => { console.error(`${dev.hostname}: ${err.message}`); process.exitCode = 1; });
 }

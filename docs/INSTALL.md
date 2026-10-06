@@ -470,7 +470,7 @@ The largest single driver is usually **how many interfaces operators pin** for f
 | Volume | Minimum | Recommended | What lives here |
 |---|---|---|---|
 | **DB data volume** | 50 GB | 100 GB+ | PostgreSQL `data_directory`. On RHEL: `/var/lib/pgsql/data`. On Ubuntu: `/var/lib/postgresql/<ver>/main`. |
-| **App / state volume** | 5 GB | 20 GB | Polaris install dir, encrypted DB backups (`data/backups/`), uploaded device icons, update staging (one extra copy of the bundle per update). |
+| **App / state volume** | 5 GB | 20 GB | Polaris install dir, encrypted DB backups (`data/backups/`), uploaded device icons, update staging (one extra copy of the bundle per update), and the firmware repository (`data/firmware/`): two images per model — up to 100 MiB each for a switch or access point, up to 300 MiB for a FortiGate — so a dozen FortiGate models alone can take several GB. |
 | **`/var/log` (Linux only, if separate)** | 5 GB | 10 GB | systemd journal, audit logs, syslog forwarding spool. |
 | **`/var/log/audit` (RHEL STIG only, if separate)** | 5 GB | 10 GB | auditd events. Fills faster than expected on busy hosts. |
 
@@ -1140,9 +1140,15 @@ card (unchanged).
 > **Upgrade note (request-body limits):** the shipped nginx config gained a
 > server-level `client_max_body_size 8m` plus one `location` that lifts the
 > limit for the database-restore upload (7 → 8 locations), and later a second
-> `location` that raises it to 100m for the firmware-image upload
+> `location` that raises it for the firmware-image upload
 > (`/api/v1/server-settings/firmware/images`, 9 → 10 locations, after the
-> `/api` docs block; the app's own multer limit is the same number). Before
+> `/api` docs block; the app's own multer limit is the same number) — 100m at
+> first, **300m since FortiGate firmware upgrades** (a FortiGate image runs to
+> ~250 MB). An install whose nginx config has not been re-rendered since still
+> says 100m there, and a FortiGate image over 100 MB is refused at nginx with a
+> 413 before Polaris sees it; re-apply Server Settings → **Web Server**, or edit
+> that location's `client_max_body_size` to `300m` by hand and reload nginx
+> (the only option on a split-role host today). Before
 > this, nginx
 > enforced its 1 MB default on every request — **below** what Polaris's own
 > handlers accept — so a branding logo over 1 MB and *any* database restore

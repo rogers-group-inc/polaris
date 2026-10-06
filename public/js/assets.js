@@ -6621,7 +6621,7 @@ function _rerenderAgentSubpanel(a, agent) {
 // card never regexes a sentence to decide what to draw.
 
 function _assetFirmwareEligible(a) {
-  return !!a && (a.assetType === "switch" || a.assetType === "access_point");
+  return !!a && (a.assetType === "switch" || a.assetType === "access_point" || a.assetType === "firewall");
 }
 
 var _FW_STAGE_LABELS = {
@@ -6749,6 +6749,11 @@ function assetFirmwarePanelHTML(a, fw) {
   } else if (fw.state === "blocked") {
     badge = _fwBadge("Blocked", "var(--color-text-tertiary)");
     body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + '</p>';
+    // Blocked is about NOW (down, suppressed…); a booking re-takes every gate
+    // when it fires (rule 93), so it may still be booked for later.
+    if (canFlash && fw.image && !fw.schedule) {
+      body += '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem"><button type="button" class="btn btn-secondary" id="btn-fw-schedule">Schedule upgrade to ' + escapeHtml(fw.image.versionLabel) + '…</button></div>';
+    }
   } else if (fw.state === "available" && fw.image) {
     badge = _fwBadge("Upgrade available", "var(--color-accent)");
     body =
@@ -6761,9 +6766,11 @@ function assetFirmwarePanelHTML(a, fw) {
         (fw.backupImage ? '<div style="grid-column:1 / -1;color:var(--color-text-secondary)">Also eligible: ' + _fwImageLine(fw.backupImage) + ' (the model’s backup)</div>' : '') +
       '</div>' +
       (canFlash
-        ? '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem"><button type="button" class="btn btn-primary" id="btn-fw-upgrade">Upgrade firmware to ' + escapeHtml(fw.image.versionLabel) + '…</button></div>'
+        ? '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem"><button type="button" class="btn btn-primary" id="btn-fw-upgrade">Upgrade firmware to ' + escapeHtml(fw.image.versionLabel) + '…</button>' +
+            (fw.schedule ? '' : '<button type="button" class="btn btn-secondary" id="btn-fw-schedule">Schedule…</button>') + '</div>'
         : '<p class="hint" style="margin:0">Starting an upgrade needs Read-Write on Assets — ask an administrator.</p>');
   }
+  if (!fw.error && fw.schedule) body += _fwScheduleHTML(fw.schedule, canFlash);
   if (!fw.error && fw.state !== "running" && fw.lastRun) body += _fwRunResultHTML(fw.lastRun);
   return '<div id="asset-firmware-panel" data-asset-id="' + escapeHtml(a.id) + '" style="margin:0 0 1.5rem;padding:1rem;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface)">' +
     '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.5rem">' +
@@ -6808,7 +6815,10 @@ function _fwApprovalModalHTML(a, fw) {
     _fwApprovalBlockHTML(fw.image, true, withRadio) +
     (withRadio ? _fwApprovalBlockHTML(fw.backupImage, false, true) : '') +
     '<div class="alert alert-warning" style="padding:0.6rem 0.75rem;border-radius:6px;background:rgba(214,137,16,0.12);border:1px solid var(--color-warning,#d68910);font-size:0.82rem;margin:0.5rem 0 0.75rem">' +
-      'The device reboots during the upgrade and will be unreachable for a few minutes — everything behind a switch goes with it. ' +
+      (a.assetType === "firewall"
+        ? 'The FortiGate reboots during the upgrade and will be unreachable for several minutes — every network, tunnel and device behind it goes with it. ' +
+          'Follow Fortinet’s supported upgrade path: Polaris checks that the image is newer and fits this platform, not that the jump from the running version is a supported one. '
+        : 'The device reboots during the upgrade and will be unreachable for a few minutes — everything behind a switch goes with it. ') +
       'Polaris holds its alerts for this device while it works on it. A flash that fails partway can leave a device unbootable; do not power-cycle it while it is writing.' +
     '</div>' +
     '<label style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:pointer">' +
@@ -6853,6 +6863,164 @@ function _openFirmwareApprovalModal(a, fw) {
     });
   });
   sync();
+}
+
+// ─── Scheduled upgrades (business rule 93) ───────────────────────────────────
+// A flash booked for later: the image is approved by name in the same dialog
+// as a flash now, plus a time and the addresses that get the results email.
+// Every gate is re-taken when the booking fires; the card only shows it,
+// changes it and cancels it.
+
+/** "YYYY-MM-DDTHH:MM" in the browser's zone — a datetime-local input's value. */
+function _fwLocalInputValue(d) {
+  function p(n) { return (n < 10 ? "0" : "") + n; }
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
+function _fwBrowserZone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { return ""; }
+}
+
+/** "Tue, Oct 7, 2026, 2:00 AM CDT (in 9 h)" — the booking as the reader's clock shows it. */
+function _fwWhenText(iso) {
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  var txt = d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+  var mins = Math.round((d.getTime() - Date.now()) / 60000);
+  var rel = mins <= 0 ? "due now"
+    : mins < 60 ? "in " + mins + " min"
+    : mins < 48 * 60 ? "in " + Math.round(mins / 60) + " h"
+    : "in " + Math.round(mins / 1440) + " days";
+  return txt + " (" + rel + ")";
+}
+
+function _fwScheduleHTML(sched, canFlash) {
+  return '<div id="asset-fw-schedule" style="margin:0.6rem 0 0.2rem;padding:0.55rem 0.75rem;border:1px solid var(--color-border);border-left:3px solid var(--color-accent);border-radius:4px;font-size:0.85rem">' +
+    '<div><strong>Scheduled:</strong> upgrade to <strong>' + escapeHtml(sched.toVersion) + '</strong> at ' + escapeHtml(_fwWhenText(sched.scheduledFor)) + '</div>' +
+    '<div style="color:var(--color-text-secondary);margin-top:0.2rem">Results emailed to ' + escapeHtml((sched.notifyEmails || []).join(", ")) +
+      ' · booked by ' + escapeHtml(sched.createdBy || "—") + '</div>' +
+    (sched.error
+      ? '<div style="color:var(--color-warning);margin-top:0.2rem">Waiting: ' + escapeHtml(sched.error) + '</div>'
+      : '') +
+    (canFlash
+      ? '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.45rem">' +
+          '<button type="button" class="btn btn-sm btn-secondary" id="btn-fw-schedule-edit">Change…</button>' +
+          '<button type="button" class="btn btn-sm btn-danger" id="btn-fw-schedule-cancel">Cancel scheduled upgrade</button>' +
+        '</div>'
+      : '') +
+  '</div>';
+}
+
+/**
+ * The booking dialog's body — pure, so the DOM test can render it. `existing`
+ * is the pending booking when changing one: its time and recipients are
+ * pre-filled, and its image is the one selected when it is still offered.
+ */
+function _fwScheduleModalHTML(a, fw, existing, defaults) {
+  var when = existing ? new Date(existing.scheduledFor) : (function () { var d = new Date(Date.now() + 60 * 60000); d.setMinutes(0, 0, 0); return d; })();
+  var min = _fwLocalInputValue(new Date(Date.now() + 2 * 60000));
+  var emails = existing ? (existing.notifyEmails || []) : ((defaults && defaults.notifyEmails) || []);
+  var zone = _fwBrowserZone();
+  var imagePart;
+  if (fw.image) {
+    imagePart = _fwApprovalModalHTML(a, fw);
+  } else {
+    // Nothing is offered right now (e.g. already current): the booking keeps
+    // its image, and only its time and recipients can change.
+    imagePart = '<p style="font-size:0.85rem;margin:0 0 0.6rem"><strong>Firmware to push:</strong> ' + escapeHtml(existing ? existing.toVersion : "—") +
+      ' <span style="color:var(--color-text-secondary)">(as booked — the Repository offers nothing else for this device right now)</span></p>';
+  }
+  var warn = (fw.blockers && fw.blockers.length)
+    ? '<div class="hint" style="margin:0 0 0.6rem;color:var(--color-warning)">Right now ' + escapeHtml(fw.blockers.join("; ")) + '. That is checked again when the upgrade is due — if it still holds then, the upgrade is not started and the recipients are told why.</div>'
+    : '';
+  return imagePart +
+    '<div style="margin-top:0.9rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
+      warn +
+      '<div class="form-group">' +
+        '<label for="fw-sched-when">Run at</label>' +
+        '<input type="datetime-local" id="fw-sched-when" min="' + escapeHtml(min) + '" value="' + escapeHtml(_fwLocalInputValue(when)) + '">' +
+        '<p class="hint" style="margin:0.25rem 0 0">Your time' + (zone ? ' (' + escapeHtml(zone) + ')' : '') + '. If Polaris is not running at that time and only gets to it more than 15 minutes late, the upgrade is not started. If an upgrade on a related device is still running, this one waits up to 2 hours for it.</p>' +
+      '</div>' +
+      '<div class="form-group">' +
+        '<label for="fw-sched-emails">Email the results to</label>' +
+        '<input type="text" id="fw-sched-emails" placeholder="you@example.com, team@example.com" value="' + escapeHtml(emails.join(", ")) + '">' +
+        '<p class="hint" style="margin:0.25rem 0 0">Comma-separated. Sent when the upgrade finishes — succeeded or failed — or if it could not be started.</p>' +
+      '</div>' +
+    '</div>';
+}
+
+function _fwParseEmails(text) {
+  return String(text || "").split(/[\s,;]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+}
+
+async function _openFirmwareScheduleModal(a, fw, existing) {
+  var defaults = null;
+  if (!existing) {
+    try { defaults = await api.assets.firmwareScheduleDefaults(a.id); } catch (e) { defaults = null; }
+  }
+  var verb = existing ? "Save changes" : "Schedule upgrade";
+  var footer =
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn btn-primary" id="btn-fw-schedule-save" disabled>' + escapeHtml(verb) + '</button>';
+  openModal((existing ? "Change scheduled upgrade — " : "Schedule firmware upgrade — ") + (a.hostname || a.ipAddress || "device"),
+    _fwScheduleModalHTML(a, fw, existing, defaults), footer);
+  var ack = document.getElementById("fw-approve-ack");
+  var btn = document.getElementById("btn-fw-schedule-save");
+  var whenEl = document.getElementById("fw-sched-when");
+  var emailsEl = document.getElementById("fw-sched-emails");
+  // Changing a booking pre-selects the image it was approved with, and that
+  // approval stands — the box is ticked; picking another image unticks it.
+  var bookedImage = existing ? existing.imageId : null;
+  if (bookedImage) {
+    var pre = document.getElementById("fw-approve-" + bookedImage);
+    if (pre) { pre.checked = true; if (ack) ack.checked = true; }
+  }
+  function sync(ev) {
+    var sel = fw.image ? _fwSelectedApproval() : null;
+    if (ev && ev.target && ev.target.name === "fw-approve-image" && ack && sel && sel.imageId !== bookedImage) ack.checked = false;
+    var imageOk = !fw.image || !!(ack && ack.checked && sel);
+    btn.disabled = !(imageOk && whenEl.value && _fwParseEmails(emailsEl.value).length > 0);
+    document.querySelectorAll(".fw-approve-block").forEach(function (b) {
+      var r = b.querySelector('input[name="fw-approve-image"]');
+      if (r) b.classList.toggle("is-selected", r.checked);
+    });
+  }
+  if (ack) ack.addEventListener("change", sync);
+  document.querySelectorAll('input[name="fw-approve-image"]').forEach(function (r) { r.addEventListener("change", sync); });
+  whenEl.addEventListener("input", sync);
+  emailsEl.addEventListener("input", sync);
+  btn.addEventListener("click", function () {
+    var when = new Date(whenEl.value); // datetime-local parses as the browser's local time
+    if (isNaN(when.getTime())) { showToast("Pick a date and time", "error"); return; }
+    var sel = fw.image ? _fwSelectedApproval() : null;
+    var body = { scheduledFor: when.toISOString(), notifyEmails: _fwParseEmails(emailsEl.value) };
+    if (sel && (!existing || sel.imageId !== existing.imageId)) body.imageId = sel.imageId;
+    btn.disabled = true;
+    var call = existing
+      ? api.assets.updateFirmwareSchedule(a.id, existing.id, body)
+      : api.assets.scheduleFirmwareUpgrade(a.id, body);
+    call.then(function () {
+      closeModal();
+      showToast(existing ? "Scheduled upgrade changed" : "Upgrade scheduled for " + when.toLocaleString(), "success");
+      return api.assets.firmwareUpgrade(a.id).then(function (next) { _rerenderFirmwarePanel(a, next); });
+    }).catch(function (err) {
+      btn.disabled = false;
+      showToast((err && err.message) || "Could not save the schedule", "error");
+    });
+  });
+  sync();
+}
+
+async function _cancelFirmwareSchedule(a, sched) {
+  var ok = await showConfirm("Cancel the upgrade to " + sched.toVersion + " scheduled for " + _fwWhenText(sched.scheduledFor) + "?\nNothing is sent to the device and no email goes out.");
+  if (!ok) return;
+  try {
+    await api.assets.cancelFirmwareSchedule(a.id, sched.id);
+    showToast("Scheduled upgrade cancelled", "success");
+  } catch (err) {
+    showToast((err && err.message) || "Could not cancel the scheduled upgrade", "error");
+  }
+  try { _rerenderFirmwarePanel(a, await api.assets.firmwareUpgrade(a.id)); } catch (e) { /* next open re-reads */ }
 }
 
 async function _loadFirmwareHistory(a) {
@@ -6902,6 +7070,12 @@ async function _openFwRunLogModal(assetId, runId) {
 function _wireFirmwarePanel(a, fw) {
   var up = document.getElementById("btn-fw-upgrade");
   if (up) up.addEventListener("click", function () { _openFirmwareApprovalModal(a, fw); });
+  var sch = document.getElementById("btn-fw-schedule");
+  if (sch) sch.addEventListener("click", function () { _openFirmwareScheduleModal(a, fw, null); });
+  var schEdit = document.getElementById("btn-fw-schedule-edit");
+  if (schEdit && fw.schedule) schEdit.addEventListener("click", function () { _openFirmwareScheduleModal(a, fw, fw.schedule); });
+  var schCancel = document.getElementById("btn-fw-schedule-cancel");
+  if (schCancel && fw.schedule) schCancel.addEventListener("click", function () { _cancelFirmwareSchedule(a, fw.schedule); });
   var hist = document.getElementById("btn-fw-history");
   if (hist) {
     hist.addEventListener("click", function () {

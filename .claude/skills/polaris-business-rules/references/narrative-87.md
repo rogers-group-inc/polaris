@@ -214,10 +214,96 @@ nine-minute flash, and so did prod. The fake switch in `fortiswitchHttpsEngine.t
 `scripts/mock-firmware-devices.mjs` now report fractions and a pinned 6/40 like the real one;
 the happy-path test fails against the old engine (`expected 1 to be 100`).
 
+### 2026-10-06 — FortiGates
+
+The operator asked to "add the ability to upgrade the firmware of FortiGate firewalls", and
+for the binding: "in the repository, when the user sets the credential to be used they can
+select from the existing credentials as well as from the integration's api token". FortiGate
+images run to ~250 MB. HA cluster members are refused for now (operator decision).
+
+**A third engine, `fortigate-https`** (`services/firmwareEngines/fortigateHttps.ts →
+upgradeFortiGate`). Unlike the switch and AP engines it is not a transcription of a captured
+browser session — it is the documented FortiOS REST surface, and it has **never run against a
+real FortiGate**. Auth is a bearer API token, or an admin login through `POST /logincheck`
+whose `ccsrftoken` / `ccsrftoken_<port>_<id>` cookie is echoed as `X-CSRFTOKEN`; no CSRF
+cookie (two-factor, a pre-login disclaimer, a forced password change) is refused after ONE
+attempt, because every attempt counts toward the admin lockout — and the verify loop stops
+after two auth rejections for the same reason. Preflight reads `monitor/system/status` (serial
+cross-check, version + build), `cmdb/system/ha` (anything but `standalone`, or unreadable, is
+refused) and the already-current check. The image goes to `monitor/system/firmware/upgrade`
+(`source=upload`) as streamed multipart; a non-auth refusal is retried ONCE as JSON with
+`file_content` base64-encoded on the fly (`deviceHttp.ts → Base64Encode`, Content-Length
+precomputed by `base64Length`) — no 330 MB buffer. A connection dropped after the whole body
+went counts as taken: the gate reboots as soon as it has written the image.
+
+**The lab run, same day (2026-10-06).** The operator put `FGT_61F-v8.0.1.F-build0245-FORTINET.out`
+(99.7 MB) on the workstation and asked for the two lab spokes to be upgraded, one through the
+API token and one through an admin login — FortiGate 61F, FortiOS 7.6.7 build3704 → 8.0.1
+build245, driven by the engine directly (not through a Polaris stack). What it settled:
+
+- **The header guess held.** A FortiGate `.out` is a gzip stream whose embedded file NAME is
+  the token — `FGT61F-8.00-FW-build0245-260909-patch01-F-260421` — inside the first 512 bytes,
+  so `parseFortinetImageHeader` reads platform `FGT61F`, 8.0.1 build 245, family `firewall`,
+  unchanged, and the platform equals both spokes' serial prefix.
+- **Multipart is accepted.** Both gates took the streamed multipart upload (~7 s for 99.7 MB);
+  the JSON-base64 retry never fired, so it remains unproven on hardware.
+- **The token path worked first time:** upload answered at 15 s, the gate stopped answering by
+  46 s, and answered on v8.0.1 build245 at 274 s.
+- **The login path was WRONG, twice.** On 7.6.7, `POST /logincheck` answers 200 with the
+  (gzipped) login page and sets no cookie whatever the password — the browser login moved to
+  `POST /api/v2/authentication`, JSON `{ username, password }` (found by reading the gate's own
+  `/login/main.js`; `secretkey` is refused with LOGIN_FAILED). The verdict is the body's
+  `status_message`: LOGIN_FAILED still sets `session_key_<port>_<hash>` and
+  `ccsrf_token_<port>_<hash>` cookies, so "a CSRF cookie was issued" — the old success test —
+  would have passed a failed login. And the cookie is `ccsrf_token_…`, which the original
+  `/^ccsrftoken/` never matched (the gate names it in `GET /api/v2/service/login-config` →
+  `ccsrf_token_cookie_name`). Logout is `DELETE /api/v2/authentication`; it did not require the
+  CSRF header, the firmware POST was sent with it and was accepted. The engine now tries the
+  JSON login first and falls back to `/logincheck` only when no JSON verdict comes back (an older
+  build answers an unknown `/api/v2` path with 401 or 404, which says nothing about the password).
+  `deviceHttp.ts → decodeBody` inflates gzip answers, which FortiOS sends unasked.
+- **The login path then worked end to end on SPK2:** upload answered at 16 s, down by 47 s, the
+  first verify at 275 s met "socket hang up" (the web server was up before the REST API), the
+  retry 20 s later read v8.0.1 build245 — `verifyRetries` earning its keep.
+- **Still unproven:** the `/logincheck` fallback on a pre-7.4 gate, the base64 retry, HA refusal
+  against a real cluster, and any of it run through Polaris itself (holds, the card, the run row).
+
+**HA members are refused twice.** `firmwareUpgradeService.ts → haClusterOf` reads
+`fortinetTopology.haMode` / `haRole` and marks the card `unsupported` and refuses at start and
+at booking (rule 93); the engine refuses again from the gate's own `system/ha`, because
+discovery's record can lag a cluster being formed.
+
+**Bindings gain a `source`.** `credential` names a form login (any type) or, on a Firewall
+scope only, a `restapi` Credential; `integration-token` (Firewall scope only, `credentialId`
+null — a CHECK) resolves at run time to the token of the integration that discovered the gate
+(`Asset.discoveredByIntegrationId`): a standalone FortiGate integration's `apiToken` /
+`verifySsl` / `port`, or a FortiManager's `fortigateApiToken` / `fortigateVerifySsl` — the
+FMG/FortiGate parity is in that one resolver. A binding that cannot sign in to THIS device
+falls through to the next scope rather than shadowing it (rule 49's posture, as for a deleted
+credential): a token on a switch or AP, an integration-token whose integration has no token or
+no longer exists. The token is the API admin's: its profile needs System read-write.
+
+**Size.** `FIRMWARE_MAX_IMAGE_BYTES_BY_TYPE` — 100 MiB switch / AP (the FortiSwitch endpoint's
+own ceiling), 300 MiB firewall; multer and nginx's firmware `location` take the largest (300m).
+An install whose nginx config is not re-rendered keeps 100m and a FortiGate upload dies at
+nginx with 413; the Repository's error names the fix.
+
+**Consequence.** `firmwareVsPrimary` reads `FIRMWARE_ASSET_TYPES`, so FortiGates now get
+readings; the baseline automation is still scoped to switches + access points (seed
+unchanged), so it fires for a gate only once an operator adds Firewall to its scope.
+
+**Rejected.** *A FortiGuard-download source* (`source=fortiguard`): the gate fetches its own
+image, which bypasses the Repository's approve-by-name — the operator would approve a version
+string, not bytes with a sha256. *An FMG-proxied upload*: a 250 MB body through FortiManager's
+JSON-RPC proxy. *An HA cluster upgrade*: deferred — one member's upgrade reboots the cluster
+and needs its own orchestration. **Nothing here has been validated on hardware**; the
+`fortinet-api-conventions` plugin gets an entry after the first lab run.
+
 ### What is deliberately not here
 
 The bulk / fleet run fortiupgrade's scheduler performs (deepest-first ordering, concurrency);
-the SSH + SFTP/TFTP fallback; a FortiGate-controller push for managed APs; an "available"
+the SSH + SFTP/TFTP fallback; a FortiGate-controller push for managed APs; an HA-cluster
+FortiGate upgrade (2026-10-06); an "available"
 badge on the assets list (no per-row query on the list); the Repository on the mobile SPA
 (the phone gained the per-asset upgrade on 2026-09-26 — the asset sheet's OS row, primary
 image only, the same POST and gates; `public/js/mobile/asset-detail.js` → Firmware upgrade

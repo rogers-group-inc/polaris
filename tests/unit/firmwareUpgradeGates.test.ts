@@ -109,7 +109,7 @@ vi.mock("node:fs/promises", async (orig) => ({ ...(await orig<typeof import("nod
 vi.mock("../../src/services/discovery/assetDiscoveryScope.js", () => ({ resolveDiscoveryScopeForAsset: vi.fn(async () => ({ ok: false, reason: "no source" })) }));
 vi.mock("../../src/services/discovery/discoveryEngine.js", () => ({ triggerDiscovery: vi.fn(async () => true) }));
 
-import { startFirmwareUpgrade, getUpgradeAvailability } from "../../src/services/firmwareUpgradeService.js";
+import { startFirmwareUpgrade, getUpgradeAvailability, FirmwareRunConflictError } from "../../src/services/firmwareUpgradeService.js";
 import { resolveFirmwareCredential } from "../../src/services/firmwareRepositoryService.js";
 
 const bind = (scope: "manufacturer" | "assetType" | "model", credentialId: string | null, name = "cred") => ({
@@ -144,7 +144,7 @@ const flushRunner = () => new Promise((r) => setTimeout(r, 30));
 describe("credential precedence — model › device type › manufacturer, live rows only", () => {
   const asset = { manufacturer: "Fortinet", assetType: "switch", model: "FortiSwitch S108FF" };
   it("the manufacturer binding is the fallback", async () => {
-    expect(await resolveFirmwareCredential(asset, { revealSecrets: false })).toEqual({ credentialId: "cred-m", credentialName: "mfr login", scope: "manufacturer" });
+    expect(await resolveFirmwareCredential(asset, { revealSecrets: false })).toEqual({ source: "credential", credentialId: "cred-m", credentialName: "mfr login", scope: "manufacturer" });
   });
   it("a device-type binding beats it, and a model binding beats both", async () => {
     h.state.bindings = [bind("manufacturer", "cred-m"), bind("assetType", "cred-t", "type login")];
@@ -247,6 +247,8 @@ describe("startFirmwareUpgrade — the gates, in order", () => {
     h.state.activeRuns = [{ assetId: "sw-core", asset: { hostname: "core-1", ipAddress: null } }];
     h.state.paths.set("asset-1", ["sw-core", "fw-1"]);
     await expect(start()).rejects.toThrow(/running on core-1, which is above, below or paired/);
+    // A conflict clears on its own, so a booking waits on it instead of being refused (rule 93).
+    await expect(start()).rejects.toBeInstanceOf(FirmwareRunConflictError);
   });
 
   it("refuses while a run is live on a device BELOW it", async () => {
@@ -372,7 +374,7 @@ describe("getUpgradeAvailability", () => {
     expect(a.available).toBe(true);
     expect(a.image?.id).toBe("img-primary");
     expect(a.backupImage?.id).toBe("img-backup");
-    expect(a.credential).toEqual({ credentialId: "cred-m", credentialName: "mfr login", scope: "manufacturer" });
+    expect(a.credential).toEqual({ source: "credential", credentialId: "cred-m", credentialName: "mfr login", scope: "manufacturer" });
   });
   it("is unsupported for another manufacturer without touching the images", async () => {
     h.state.asset.manufacturer = "Aruba";

@@ -112,13 +112,13 @@ describe("renderNginxConfig — defaults", () => {
     expect(block).toMatch(/^\s*proxy_request_buffering off;/m);
   });
 
-  it("raises the body limit for the firmware image upload to the app's own 100 MiB ceiling", () => {
+  it("raises the body limit for the firmware image upload to the app's own 300 MiB ceiling (a FortiGate image)", () => {
     // Server Settings → Repository (business rule 87): a switch / AP image is
     // up to 100 MiB and the route's multer limit is exactly that, so the edge
     // gets the same finite number rather than the restore's "unlimited".
     expect(contents).toMatch(/^\s*location = \/api\/v1\/server-settings\/firmware\/images \{/m);
     const block = contents.split("location = /api/v1/server-settings/firmware/images {")[1]!.split("}")[0]!;
-    expect(block).toMatch(/^\s*client_max_body_size 100m;/m);
+    expect(block).toMatch(/^\s*client_max_body_size 300m;/m);
     expect(block).toMatch(/^\s*proxy_request_buffering off;/m);
     expect(block).toMatch(/proxy_pass http:\/\/127\.0\.0\.1:3000;/);
   });

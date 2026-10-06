@@ -284,7 +284,7 @@ A null produces **no reading at all** — not a reading of null, which would mak
 
 ### `firmwareVsPrimary` — what the Repository would push
 
-How a switch or access point's running firmware stands against the **primary**
+How a switch, access point or FortiGate's running firmware stands against the **primary**
 image the [Repository](Server-Settings#repository) holds for its platform:
 `current`, `older` or `newer` ([rule 87](Business-Rules#rule-87)). Polaris makes
 the comparison from the parsed versions, so those three words are the only
@@ -292,13 +292,15 @@ readings — the picker is closed.
 
 The usual rule is `!= current`, and the baseline automation **Firmware differs
 from repository primary** (informational, switches and access points) is
-exactly that. It is a to-do list, not a fault: the alert clears on its own once
+exactly that. FortiGates have readings too (since FortiGate upgrades arrived),
+but the baseline's scope was not widened — add **Firewall** to its scope, or
+write a rule of your own, to be told about gates. It is a to-do list, not a fault: the alert clears on its own once
 the device is upgraded, or once a different image is made primary. `== newer`
 names the fleet that is *ahead* of the image someone selected — useful the day
 an older image is made primary on purpose.
 
 A device the Repository cannot place produces **no reading at all**: not a
-switch or access point, no usable serial number (the platform is its first six
+switch, access point or firewall, no usable serial number (the platform is its first six
 characters), no version Polaris can parse, or no primary image for its
 platform. So a fleet-wide `!= current` is true only of devices that really
 differ, never of every printer and VM the Repository knows nothing about.

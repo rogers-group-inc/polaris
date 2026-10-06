@@ -73,7 +73,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `prisma` (notification, notificationDelivery, notificationChannel, user, quietTimeSummary), `quietTimeHoldService.quietSourceConfig`, `userTimezoneService.{resolveTimeZone, serverTimeZone}`, `notificationDeliveryService.{applyBrandLetterhead, sendEmailThroughChannel}`, `utils/quietSummaryEmailTemplate.ts`, `utils/quietTime.ts`, `eventLogService`, `notificationRecipientService` (the static-recipient resolvers), `notificationEngine.loadScopeRegionSnapshots` + `regionHierarchyService.{regionLevelIndex, deviceRegionsAtLevels}` (device-region routing for the all-quiet audience).
 
-**Used by:** `src/jobs/sendQuietTimeSummaries.ts` (60 s, web/all role).
+**Used by:** `src/jobs/sendQuietTimeSummaries.ts` (60 s, web/all role); `src/services/firmwareScheduleService.ts` borrows `resolveSummaryChannel(null, [])` for the scheduled firmware upgrade results email (business rule 93) — with no policy and no held rows it is the oldest enabled email channel, so a change to the fallback order moves that email too.
 
 **Invariants:**
 - **One email per reader, in the reader's zone** — the one place alert mail renders in anything but the install's zone, and NOT a reopening of rule 25: that rule forbids splitting ONE alert's audience; a summary is already addressed to one person, and `userTimezoneService` reserved `resolveTimeZone` for exactly this digest.

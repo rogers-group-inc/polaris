@@ -381,20 +381,25 @@ without the buttons.
 
 #### Firmware
 
-Under the agent card, a **switch or access point** gets a **Firmware** card
-([rule 87](Business-Rules#rule-87)) — the answer to whether the
-[Repository](Server-Settings#repository) holds something newer for this
+Under the agent card, a **switch, access point or firewall** gets a
+**Firmware** card ([rule 87](Business-Rules#rule-87)) — the answer to whether
+the [Repository](Server-Settings#repository) holds something newer for this
 device. It is one of:
 
 - **Not supported** — no upgrade engine for this manufacturer (Fortinet only,
-  over HTTPS to the device's own web UI). Images can still be stored.
+  over HTTPS straight to the device). Images can still be stored. A
+  **FortiGate in an HA cluster** also reads *Not supported*, with the cluster
+  mode and role: upgrading HA clusters is not supported yet.
 - **No image** — nothing in the repository for this device's platform, with a
   link to the Repository.
 - **Current** — nothing newer than what it runs.
 - **No login bound** — an image is available but no device login is bound at
-  the model, device-type or manufacturer level.
+  the model, device-type or manufacturer level (on a FortiGate: no login or API
+  token, or the bound integration API token is missing on the integration that
+  discovered the gate).
 - **Blocked** — an image is available but the device is down, warning,
-  recovering, behind a parent that is down, or has no address.
+  recovering, behind a parent that is down, or has no address. Unless the
+  address is what is missing, it can still be scheduled for later (below).
 - **Upgrade available** — the running version, the image on offer (its
   version, platform and which model node it came from), the login that will be
   used and where it is inherited from.
@@ -410,12 +415,25 @@ the model's backup image is also newer than the device, lets you choose that
 instead. Nothing is pushed until you tick that you checked the version and
 platform and click **Approve and upgrade**.
 
+**On a FortiGate** the dialog warns that every network, tunnel and device
+behind the gate goes down with it for several minutes, and that Polaris does
+**not** check Fortinet's supported upgrade path — only that the image is
+newer and fits the gate's platform — so choosing an image that is a supported
+step from the running version is up to you. FortiGate upgrades have only been
+run on lab gates so far; see the warning on
+[Server Settings → Repository](Server-Settings#repository) before using one
+on a production gate. The upgrade signs in to the gate itself (its own admin
+login, a REST API token, or the API token of the integration that discovered
+it), checks the gate's serial and that it is standalone (not HA) before
+sending anything, sends the image over the FortiOS REST API — never through
+FortiManager — then waits for the reboot and reads the new version back.
+
 While it runs the card shows the stage and, on a switch, the erase / write /
 verify percentages, then *Rebooting*, *Verifying new version* and *Waiting
 for monitoring to answer*. The device is in a maintenance window for the
 duration
 ([Maintenance Windows](Maintenance-Windows#windows-polaris-opens-for-itself)),
-so everything behind a switch is suppressed with it. The last stage is the
+so everything behind a switch or gate is suppressed with it. The last stage is the
 window staying open after the device has confirmed its new version: its web
 interface, which the upgrade uses, usually answers before the SNMP agent
 Polaris monitors it with. The run finishes when monitoring gets its first
@@ -424,8 +442,9 @@ straight away.
 
 **How the version is confirmed.** The upgrade never takes the device's word
 from before the reboot. It waits for the device's old web session to be
-refused, which only happens once it has restarted, then signs in afresh and
-reads the running version. That can succeed while the device's monitoring
+refused (a FortiGate: for the gate to stop answering and answer again), which
+only happens once it has restarted, then signs in afresh and reads the running
+version. That can succeed while the device's monitoring
 still shows missed polls; the two use different services on the device. Polaris does not offer a
 cancel — a flash mid-write must finish — and **you must not power-cycle the
 device while it is writing.**
@@ -438,6 +457,65 @@ reads the new version, and until it does the card says *Flashed*. **Run
 history** lists every attempt with a **View log**. No bulk upgrade exists; it
 is this device, from this card. On the phone the upgrade lives in the
 asset's OS row instead — see [Mobile and Dash](Mobile-and-Dash#assets-and-networks).
+
+**Scheduling an upgrade for later**
+([rule 93](Business-Rules#rule-93)). Beside **Upgrade firmware to …** is
+**Schedule…**; on a *Blocked* card, where the upgrade-now button is not
+offered, it reads **Schedule upgrade to …** — a device that is down this
+afternoon may be fine at 2 am. It needs the same **Read-Write on Assets**. The
+dialog is the same approval as an upgrade now — the device, the exact image,
+the backup choice, the tick box — plus:
+
+- **Run at** — a date and time in your browser's time zone (the dialog names
+  it). It must be at least a minute ahead and within a year.
+- **Email the results to** — filled in with your own profile email; add more
+  addresses separated by commas. At least one is required.
+- If the device is blocked right now, the dialog says why, and that it will be
+  checked again when the upgrade is due.
+
+You approve the image when you book, and Polaris pushes **that image** — if a
+newer image is made the model's primary before the booked time, the scheduled
+upgrade is not started (it does not switch to the newer one), and the
+recipients are told. Everything else — the device's health, the login, other
+upgrades running nearby — is checked again when the time comes, exactly as for
+an upgrade started by hand. A device has at most one scheduled upgrade at a
+time.
+
+While it is waiting the card shows the version, the time (in your clock, with
+"in N h"), who gets the results and who booked it, with **Change…** (a new
+time, new recipients, or the other offered image) and **Cancel scheduled
+upgrade** (nothing is sent to the device and no email goes out). Once it has
+started it can no longer be changed or cancelled.
+
+When the time comes:
+
+- It starts within about a minute, and from there it is an ordinary upgrade:
+  the card shows the progress and **Run history** lists it.
+- If an upgrade is still running on the same device, on a device above or
+  below it, or on its MCLAG peer, it **waits** — the card says what it is
+  waiting for — and tries again every minute for up to **2 hours** past the
+  booked time, then gives up. So several switches booked for the same minute
+  upgrade one after another rather than all but one being turned away.
+- If Polaris was not running at the booked time and only gets to it **more than
+  15 minutes late**, it is **not started**: an upgrade hours outside the time
+  you chose is not the one you approved. Book it again.
+- If any other check fails at that moment — the device is down, no login is
+  bound, the image is no longer offered or was deleted — it is **not started**
+  and is not retried.
+
+**The results email.** Every recipient gets one email when there is an
+outcome: the upgrade *succeeded*, came back *unverified*, *failed* (with the
+end of the run log), or was *not started* and why (including *missed* for a
+late start, or a restart of Polaris during the upgrade). Each recipient who
+has a Polaris account sees the times in their own time zone; other addresses
+see the server's. It is sent through the oldest enabled email channel
+([Delivery channels](Delivery-Channels)); with no email channel configured,
+nothing is sent and an Event on the asset says so. The device name links to
+the asset when Polaris knows its own public address.
+
+Booking, changing, cancelling, and a scheduled upgrade that was not started
+or whose email could not be sent, each write an Event on the asset.
+Scheduling is on the desktop card only; the phone cannot book.
 
 **Managed by** names the integration that owns this asset's monitoring
 configuration — whose class settings and stored credential it inherits, whose

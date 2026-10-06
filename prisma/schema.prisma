@@ -1254,6 +1254,7 @@ model Asset {
   maintenanceWindows AssetMaintenanceWindow[]
   maintenanceHolds   MaintenanceHold[]
   firmwareUpgradeRuns FirmwareUpgradeRun[]
+  firmwareUpgradeSchedules FirmwareUpgradeSchedule[]
   topologyLayouts    TopologyLayout[]
   processConnections AssetProcessConnection[]
 
@@ -5991,7 +5992,7 @@ model MaintenanceHold {
 model FirmwareImage {
   id           String   @id @default(uuid())
   manufacturer String   // alias-canonicalised, the same spelling Asset.manufacturer carries
-  assetType    String   // "switch" | "access_point" — CHECK in the migration; not the whole registry
+  assetType    String   // "switch" | "access_point" | "firewall" — CHECK in the migration; not the whole registry
   model        String   // tree placement only (an FMG-discovered switch may carry the literal "FortiSwitch")
   platform     String?  // header token, e.g. S108FF / FP231K — the SERIAL PREFIX it fits; null = unrecognised, never offered
   versionMajor Int?
@@ -6010,6 +6011,7 @@ model FirmwareImage {
   uploadedAt   DateTime @default(now())
 
   runs FirmwareUpgradeRun[]
+  schedules FirmwareUpgradeSchedule[]
 
   @@index([manufacturer, assetType, platform]) // the per-asset candidate lookup
   @@index([manufacturer, assetType, model])    // the tree
@@ -6026,6 +6028,10 @@ model FirmwareCredentialBinding {
   manufacturer String
   assetType    String?     // null = manufacturer-wide
   model        String?     // non-null only with assetType
+  // "credential" (credentialId names a form login, or a restapi token on a
+  // FortiGate) | "integration-token" (the discovering integration's FortiOS API
+  // token; firewall scopes only, credentialId null) — CHECKs in the migration.
+  source       String      @default("credential")
   credentialId String?
   credential   Credential? @relation("FirmwareBindingCredential", fields: [credentialId], references: [id], onDelete: SetNull)
   createdBy    String?
@@ -6048,7 +6054,7 @@ model FirmwareUpgradeRun {
   platform        String
   fromVersion     String?
   toVersion       String
-  engine          String         // "fortiswitch-https" | "fortiap-https"
+  engine          String         // "fortiswitch-https" | "fortiap-https" | "fortigate-https"
   status          String         @default("queued") // queued | running | succeeded | failed | unverified
   stage           String?        // preflight | staging | compat | deploying | rebooting | verifying
   progress        Json?          // { erase, write, verify, restart, curStep, totStep, lastMsgAt }
@@ -6060,10 +6066,46 @@ model FirmwareUpgradeRun {
   heartbeatAt     DateTime?
   startedAt       DateTime       @default(now())
   finishedAt      DateTime?
+  schedule        FirmwareUpgradeSchedule?
 
   @@index([assetId, startedAt])
   @@index([status])
   @@map("firmware_upgrade_runs")
+}
+
+// A flash booked for later (business rule 93). The operator approves the image
+// by name when booking, exactly as for a click-to-run flash (rule 87); when the
+// time comes the scheduler job hands it to startFirmwareUpgrade, so every gate
+// is re-taken THEN. A booking that is late by more than the grace never runs
+// (status "missed"); one a gate refuses never runs ("refused"). Either way, and
+// when the run it started finishes, the recipients get an email.
+// At most one pending booking per asset (partial unique index in the migration).
+model FirmwareUpgradeSchedule {
+  id           String                @id @default(uuid())
+  assetId      String
+  asset        Asset                 @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  imageId      String?
+  image        FirmwareImage?        @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  toVersion    String                // snapshotted so the booking still names its image if the image is deleted
+  scheduledFor DateTime
+  notifyEmails String[]              // lower-cased, de-duplicated; never empty
+  status       String                @default("pending") // pending | started | cancelled | refused | missed
+  runId        String?               @unique
+  run          FirmwareUpgradeRun?   @relation(fields: [runId], references: [id], onDelete: SetNull)
+  error        String?               @db.Text // why it was refused / missed
+  createdBy    String
+  createdAt    DateTime              @default(now())
+  updatedBy    String?
+  updatedAt    DateTime              @updatedAt
+  cancelledBy  String?
+  cancelledAt  DateTime?
+  firedAt      DateTime?             // when the scheduler acted on it (started, refused or missed)
+  notifiedAt   DateTime?             // when the results email went out
+  notifyError  String?               @db.Text
+
+  @@index([status, scheduledFor])
+  @@index([assetId, createdAt])
+  @@map("firmware_upgrade_schedules")
 }
 
 // One realized maintenance window per (asset, holder), where a holder is a
