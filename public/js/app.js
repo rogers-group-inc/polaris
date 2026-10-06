@@ -28,7 +28,7 @@ var TRANSIT_THEMES = [
   { id: "afternoon", label: "Afternoon", family: "light", icon: _sunIcon, transit: true },
 ];
 
-// Where each palette sits along /img/brand/time-strip.png, as a fraction of
+// Where each palette sits along the strip art (/img/brand/time-strip-desktop.webp), as a fraction of
 // the strip's width. The engraving is a 24-hour clock unrolled, so six hours
 // is a quarter of it and the two faces land half a strip apart the way noon
 // and midnight should:
@@ -53,7 +53,31 @@ var TRANSIT_THEMES = [
 // why there are two tables and not one; changing one means changing both,
 // keeping the quarter spacing and moving the anchor.
 var THEME_BAND_POS = { noon: 0.056, afternoon: 0.306, nightfall: 0.556, morning: 0.806 };
-var THEME_BAND_ART = "/img/brand/time-strip.png";
+// The desktop's own copy of the engraving: 1676 x 64, twice the band's 32 px
+// height for high-density screens, WebP at quality 90 — 31 KB, where the
+// shared 3456 x 132 PNG it replaced was 757 KB. The phone keeps a full-size
+// one (/img/brand/time-strip.webp), since it draws the strip 72 px tall. Positions are
+// fractions of the strip's width, so the resolution changes nothing else.
+var THEME_BAND_ART = "/img/brand/time-strip-desktop.webp";
+// The art's intrinsic size, written onto each <img> so the band can be
+// MEASURED (and seated) in the first paint, before the image has decoded —
+// with width/height the browser knows the aspect ratio up front. Without
+// them the width read 0 until load, and the band painted unseated and jumped
+// into place on every page change.
+var THEME_BAND_ART_W = 1676, THEME_BAND_ART_H = 64;
+
+// A shipped /img/brand/ file's URL with the running version as ?v=, from the
+// cached branding payload. The server answers that immutable (src/app.ts), so
+// a page change paints the art from cache instead of revalidating it first.
+// No cached version yet (a first visit): the plain URL, revalidated as before.
+function _brandArtUrl(path) {
+  var v = "";
+  try {
+    var b = JSON.parse(localStorage.getItem("polaris-branding") || "null");
+    if (b && b.version) v = String(b.version);
+  } catch (e) { /* storage blocked — unversioned */ }
+  return v ? path + "?v=" + encodeURIComponent(v) : path;
+}
 
 // The fallback for an unknown or retired saved value. Deliberately NOT
 // THEMES[0]: display order and the default move independently, so reordering
@@ -286,18 +310,40 @@ function _markGlowTurn(fromId, toId) {
   }, GLOW_MS + 80);
 }
 
+function _prefersReducedMotion() {
+  try {
+    return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  } catch (e) { return false; /* no matchMedia — animate */ }
+}
+
+// Can this browser crossfade the theme change as ONE picture — a same-document
+// view transition WITH types (the types carry the step's easing and length to
+// the CSS)? Chromium 125+, Safari 18.2+. Anything else takes the per-element
+// crossfade (data-theme-xfade). See the "Theme changes as one crossfade" block
+// in styles.css for why: per-element transitions on a busy page were the
+// 100-150 ms frames.
+function _themeViewTransitions() {
+  try {
+    return typeof document.startViewTransition === "function" &&
+      typeof ViewTransition !== "undefined" && "types" in ViewTransition.prototype;
+  } catch (e) { return false; }
+}
+
 // Arms the palette crossfade for the length of one change. Called before
 // data-theme moves, so the new values are what gets transitioned TO.
-function _beginThemeFade(phase, ms) {
-  try {
-    if (window.matchMedia &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  } catch (e) { /* no matchMedia — fade anyway */ }
+// data-theme-fading drives the band's travel and the timers either way;
+// data-theme-xfade switches on the per-element colour transitions, and only
+// when the change is NOT a view transition (which crossfades the page whole).
+function _beginThemeFade(phase, ms, viaViewTransition) {
+  if (_prefersReducedMotion()) return;
   var root = document.documentElement;
   root.setAttribute("data-theme-fading", phase || "solo");
+  if (viaViewTransition) root.removeAttribute("data-theme-xfade");
+  else root.setAttribute("data-theme-xfade", "");
   if (_themeFadeTimer) clearTimeout(_themeFadeTimer);
   _themeFadeTimer = setTimeout(function () {
     root.removeAttribute("data-theme-fading");
+    root.removeAttribute("data-theme-xfade");
     _themeFadeTimer = null;
   }, (ms || THEME_FADE_MS) + 80);
 }
@@ -312,7 +358,29 @@ function _setTheme(theme, phase) {
   var prevId = document.documentElement.getAttribute("data-theme") || DEFAULT_THEME;
   // Only fade a real change — re-applying the current theme (a page re-boot,
   // another tab syncing) should be instant.
-  if (t.id !== prevId) { _beginThemeFade(phase, _themeLegMs(t.id)); _markGlowTurn(prevId, t.id); }
+  var change = t.id !== prevId;
+  var legMs = _themeLegMs(t.id);
+  var viaVT = change && !_prefersReducedMotion() && _themeViewTransitions();
+  if (change) { _beginThemeFade(phase, legMs, viaVT); _markGlowTurn(prevId, t.id); }
+  if (viaVT) {
+    // One crossfade of the whole page instead of thousands of per-element
+    // colour transitions. The update runs after the browser has captured the
+    // outgoing picture; the incoming one is live, so the glow and the band
+    // keep moving inside it. The types give the CSS this step's easing and
+    // length (styles.css, "Theme changes as one crossfade").
+    document.startViewTransition({
+      update: function () { _applyTheme(t, prevId); },
+      types: ["polaris-theme", "polaris-theme-" + (phase || "solo"),
+              legMs > THEME_FADE_MS ? "polaris-theme-slow" : "polaris-theme-std"],
+    });
+  } else {
+    _applyTheme(t, prevId);
+  }
+}
+
+// The DOM half of _setTheme, split out so a view transition can run it as its
+// update callback (after the outgoing picture is captured).
+function _applyTheme(t, prevId) {
   document.documentElement.setAttribute("data-theme", t.id);
   // Waypoints are never saved: a reload mid-turn must land on a real theme.
   if (!t.transit) { try { localStorage.setItem("polaris-theme", t.id); } catch (e) {} }
@@ -1301,9 +1369,11 @@ function renderNav() {
     return true;
   });
 
+  // The strip's art URL, versioned so it paints from cache (see _brandArtUrl).
+  var bandSrc = _brandArtUrl(THEME_BAND_ART);
   sidebar.innerHTML = `
     <div class="sidebar-brand">
-      <img src="/img/brand/polaris-vert-dark.png" alt="" class="sidebar-logo brand-mark brand-mark-sidebar" decoding="sync" style="visibility:hidden">
+      <img alt="" class="sidebar-logo brand-mark brand-mark-sidebar" decoding="sync" style="visibility:hidden">
       <h1 style="font-size:1.1rem;font-weight:600;margin:0.5rem 0 0;color:var(--color-text-primary);text-align:center;visibility:hidden;display:none">Polaris</h1>
       <p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0.15rem 0 0;text-align:center;visibility:hidden">Network Management Tool</p>
     </div>
@@ -1377,9 +1447,9 @@ function renderNav() {
         <button type="button" id="btn-theme-band" class="theme-band" aria-label="Time of day: ${_getTheme(_getCurrentTheme()).label}. Move through the day.">
           <span class="theme-band-window">
             <span class="theme-band-track" id="theme-band-track">
-              <img src="${THEME_BAND_ART}" alt="" draggable="false">
-              <img src="${THEME_BAND_ART}" alt="" draggable="false">
-              <img src="${THEME_BAND_ART}" alt="" draggable="false">
+              <img src="${bandSrc}" width="${THEME_BAND_ART_W}" height="${THEME_BAND_ART_H}" decoding="sync" alt="" draggable="false">
+              <img src="${bandSrc}" width="${THEME_BAND_ART_W}" height="${THEME_BAND_ART_H}" decoding="sync" alt="" draggable="false">
+              <img src="${bandSrc}" width="${THEME_BAND_ART_W}" height="${THEME_BAND_ART_H}" decoding="sync" alt="" draggable="false">
             </span>
           </span>
         </button>

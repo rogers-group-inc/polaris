@@ -15,22 +15,22 @@
    and reasoning as the @property block at the top of styles.css, repeated
    because a phone document loads only this stylesheet. Only the initial
    ellipse differs (180% x 66%, the phone's portrait wash). */
-@property --page-glow-y   { syntax: "<percentage>"; inherits: true; initial-value: 0%; }
-@property --page-glow-w   { syntax: "<length>"; inherits: true; initial-value: 0px; }
-@property --page-glow-h   { syntax: "<length>"; inherits: true; initial-value: 0px; }
-@property --page-glow-c0  { syntax: "<color>"; inherits: true; initial-value: transparent; }
-@property --page-glow-c1  { syntax: "<color>"; inherits: true; initial-value: transparent; }
-@property --page-glow-c2  { syntax: "<color>"; inherits: true; initial-value: transparent; }
-@property --page-glow-c3  { syntax: "<color>"; inherits: true; initial-value: transparent; }
-@property --page-glow-p1  { syntax: "<percentage>"; inherits: true; initial-value: 9%; }
-@property --page-glow-p2  { syntax: "<percentage>"; inherits: true; initial-value: 26%; }
-@property --page-glow-p3  { syntax: "<percentage>"; inherits: true; initial-value: 50%; }
-@property --page-glow-end { syntax: "<percentage>"; inherits: true; initial-value: 70%; }
+@property --page-glow-y   { syntax: "<percentage>"; inherits: false; initial-value: 0%; }
+@property --page-glow-w   { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --page-glow-h   { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --page-glow-c0  { syntax: "<color>"; inherits: false; initial-value: transparent; }
+@property --page-glow-c1  { syntax: "<color>"; inherits: false; initial-value: transparent; }
+@property --page-glow-c2  { syntax: "<color>"; inherits: false; initial-value: transparent; }
+@property --page-glow-c3  { syntax: "<color>"; inherits: false; initial-value: transparent; }
+@property --page-glow-p1  { syntax: "<percentage>"; inherits: false; initial-value: 9%; }
+@property --page-glow-p2  { syntax: "<percentage>"; inherits: false; initial-value: 26%; }
+@property --page-glow-p3  { syntax: "<percentage>"; inherits: false; initial-value: 50%; }
+@property --page-glow-end { syntax: "<percentage>"; inherits: false; initial-value: 70%; }
 /* Nightfall's sliding glow layer (see styles.css). */
-@property --night-glow-x  { syntax: "<percentage>"; inherits: true; initial-value: -130%; }
-@property --night-glow-c { syntax: "<color>"; inherits: true; initial-value: rgba(255,255,255,.35); }
-@property --night-glow-w { syntax: "<percentage>"; inherits: true; initial-value: 90%; }
-@property --night-glow-h { syntax: "<percentage>"; inherits: true; initial-value: 33%; }
+@property --night-glow-x  { syntax: "<percentage>"; inherits: false; initial-value: -130%; }
+@property --night-glow-c { syntax: "<color>"; inherits: false; initial-value: rgba(109,151,255,.25); }
+@property --night-glow-w { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --night-glow-h { syntax: "<length>"; inherits: false; initial-value: 0px; }
 
 :root {
   /* Key colors */
@@ -126,9 +126,10 @@
      not light. Morning resets the glow's parts into a sunrise rising from
      the bottom; nightfall turns it off for the sliding --night-glow. */
   /* Opacity of the frosted bottom navbar's tint: the desktop sidebar's
-     --rail-glass-bg mix (40% dark family, 30% daylight, where a light panel
-     over a light page has less to hide behind). */
-  --nav-glass-mix: 40%;
+     --rail-glass-bg mix, 30% in every theme. Nightfall used to run 10 points
+     heavier here, on the cards and on the sheets (40% / 40% / 50%); by the
+     user's call (2026-10-06) it matches morning and noon, as on the desktop. */
+  --nav-glass-mix: 30%;
 
   /* The desktop's glass materials, under the phone's surface names.
      --rail-glass-bg is what the desktop sidebar, cards and tables wear: the
@@ -139,8 +140,8 @@
      glass: it is mostly the chart and detail panels INSIDE a sheet, and a
      translucent box inside a frosted panel is a window onto the page behind
      it (the desktop keeps its .chart-box opaque for the same reason). */
-  --rail-glass-bg:  color-mix(in srgb, var(--md-surface-cont-low) 40%, transparent);
-  --panel-glass-bg: color-mix(in srgb, var(--md-surface-cont-low) 50%, transparent);
+  --rail-glass-bg:  color-mix(in srgb, var(--md-surface-cont-low) 30%, transparent);
+  --panel-glass-bg: color-mix(in srgb, var(--md-surface-cont-low) 40%, transparent);
   --glass-blur: blur(12px) saturate(1.3);
 
   --page-glow-color: var(--md-primary);
@@ -172,27 +173,18 @@
      phone's visible radius is 70% of 180%, ~126% of the width; these are
      just clear of the screen, so the slide is all visible travel. */
   --night-glow-x: -130%;
-  /* White at 35% here on noon's entry, the moonlight blue #6d97ff at 12.3%
-     at rest on nightfall and parked on morning: it slides in white and
-     cools to blue as it lands, and leaves still blue (styles.css has the
-     reasoning). */
-  --night-glow-c: rgba(255,255,255,.35);
-  /* HALF size wherever it is parked (90% x 33% against nightfall's 180% x 66%):
-     the white light comes in small and grows to the full wash as it cools
-     to blue, and shrinks back as it leaves. */
-  --night-glow-w: 90%;
-  --night-glow-h: 33%;
-  --night-glow: radial-gradient(ellipse var(--night-glow-w) var(--night-glow-h) at var(--night-glow-x) 0%,
-    var(--night-glow-c) 0%,
-    transparent 70%);
-  --page-glow:
-    var(--night-glow),
-    radial-gradient(ellipse var(--page-glow-w) var(--page-glow-h) at 50% var(--page-glow-y),
-      var(--page-glow-c0) 0%,
-      var(--page-glow-c1) var(--page-glow-p1),
-      var(--page-glow-c2) var(--page-glow-p2),
-      var(--page-glow-c3) var(--page-glow-p3),
-      transparent var(--page-glow-end));
+  /* Moonlight blue #6d97ff at 25% everywhere — parked on noon and morning,
+     at rest on nightfall — so the glow never changes colour, only position
+     and size (styles.css has the reasoning). */
+  --night-glow-c: rgba(109,151,255,.25);
+  /* HALF size wherever it is parked (90vw x 33vh against nightfall's 180vw x 66vh),
+     viewport units because the slide's circle mixes vw and vh. The SIZE
+     is not transitioned: the night-glow-in / -out keyframes own it (a
+     circle while it slides, an oval at rest). In words:
+     the blue light comes in small and grows to the full wash, and
+     shrinks back as it leaves. */
+  --night-glow-w: 90vw;
+  --night-glow-h: 33vh;
 
   /* Layout */
   --topbar-h:  64px;
@@ -258,9 +250,8 @@
   --shadow-card:  0 8px 32px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.6);
   --shadow-sheet: 0 -8px 32px rgba(0,0,0,.16), 0 -2px 6px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.6);
   --page-glow-strength: 11.2%;
-  --nav-glass-mix: 30%;
-  --rail-glass-bg:  color-mix(in srgb, var(--md-surface-cont-low) 30%, transparent);
-  --panel-glass-bg: color-mix(in srgb, var(--md-surface-cont-low) 40%, transparent);
+  /* The glass mixes (nav bar, cards, sheets) are :root's in every theme now;
+     nothing to re-declare here. */
 }
 
 /* ─── Daylight palettes, mapped from the desktop set ───────────────────────
@@ -335,12 +326,10 @@
   --page-glow-c3: rgba(238,154,90,.14);
   --page-glow-end: 78%;
   --night-glow-x: 230%;
-  /* The exit to morning keeps nightfall's moonlight blue: the glow slides
-     out and shrinks, but its colour does not change. Only the entry from
-     noon is white (35%). Morning -> noon swaps blue for white while the
-     glow is parked off-screen (the noon rule does not transition it), so
-     it never shows. */
-  --night-glow-c: rgba(109,151,255,.123);
+  /* The exit to morning keeps nightfall's moonlight blue (25%), the same
+     blue it arrived in: the glow slides out and shrinks, but its colour
+     does not change. */
+  --night-glow-c: rgba(109,151,255,.25);
 }
 /* Noon — neutral near-white, terracotta, the highest contrast of any palette.
    The cool daylight palette; cream here and it reads as morning. */
@@ -415,9 +404,9 @@
   --page-glow-strength: 0%;
   --page-glow-y: -50%;
   --night-glow-x: 50%;
-  --night-glow-c: rgba(109,151,255,.123);
-  --night-glow-w: 180%;
-  --night-glow-h: 66%;
+  --night-glow-c: rgba(109,151,255,.25);
+  --night-glow-w: 180vw;
+  --night-glow-h: 66vh;
 }
 /* Nightfall — indigo ground, sky-blue accent: the desktop's nightfall hues
    (styles.css). Without this block the phone painted the neutral Material
@@ -470,21 +459,74 @@
   --page-glow-strength: 0%;
   --page-glow-y: -50%;
   --night-glow-x: 50%;
-  --night-glow-c: rgba(109,151,255,.123);
-  --night-glow-w: 180%;
-  --night-glow-h: 66%;
+  --night-glow-c: rgba(109,151,255,.25);
+  --night-glow-w: 180vw;
+  --night-glow-h: 66vh;
 }
 
 * { box-sizing: border-box; }
+/* The ground on <html> only; <body> stays transparent, or its own
+   background would paint OVER the fixed glow layer (html::before, below),
+   which sits at z-index -1 under all content. */
+html { background: var(--md-surface); }
+body { background: transparent; }
+/* ─── The page glow's layer ───────────────────────────────────────────────
+   The glows are painted HERE, on one fixed layer behind everything, not as
+   the body's background. Their animated parts (the @property block at the
+   top of this file) are registered `inherits: false` and pulled onto this
+   layer alone with an explicit `inherit`. That is the whole point: when
+   they inherited, every frame of a 2-2.5 s glow turn restyled every element
+   on the page — ~12 ms a frame on a 100-row Assets list, 1.6-2 s of style
+   recalculation per turn, the lag a busy page showed on a theme change.
+   Now a frame restyles <html> and this layer. The values are still set,
+   transitioned and animated on <html> (the theme blocks, the
+   html[data-glow-turn] rules); this layer only reads them. Never declare
+   --page-glow or --night-glow back on :root — an unregistered token there
+   is inherited by everything and brings the full-page restyle back. On
+   html::before, not body::before: its parent is <html>, where the values
+   live, so nothing in between has to forward them. z-index -1 paints it
+   over the canvas and under all content, so no element's background may
+   sit between them (the body's colour propagates to the canvas). */
+html::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  --page-glow-y: inherit;
+  --page-glow-w: inherit;
+  --page-glow-h: inherit;
+  --page-glow-c0: inherit;
+  --page-glow-c1: inherit;
+  --page-glow-c2: inherit;
+  --page-glow-c3: inherit;
+  --page-glow-p1: inherit;
+  --page-glow-p2: inherit;
+  --page-glow-p3: inherit;
+  --page-glow-end: inherit;
+  --night-glow-x: inherit;
+  --night-glow-c: inherit;
+  --night-glow-w: inherit;
+  --night-glow-h: inherit;
+  --night-glow: radial-gradient(ellipse var(--night-glow-w) var(--night-glow-h) at var(--night-glow-x) 0%,
+    var(--night-glow-c) 0%,
+    transparent 70%);
+  --page-glow:
+    var(--night-glow),
+    radial-gradient(ellipse var(--page-glow-w) var(--page-glow-h) at 50% var(--page-glow-y),
+      var(--page-glow-c0) 0%,
+      var(--page-glow-c1) var(--page-glow-p1),
+      var(--page-glow-c2) var(--page-glow-p2),
+      var(--page-glow-c3) var(--page-glow-p3),
+      transparent var(--page-glow-end));
+  background: var(--page-glow);
+  background-repeat: no-repeat;
+}
 
 html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  /* The glow over the ground. body is locked to the viewport (below), so the
-     gradient is sized to the screen and stays put while .app-body scrolls. */
-  background: var(--page-glow), var(--md-surface);
-  background-repeat: no-repeat;
   color: var(--md-on-surface);
   font-family: "Roboto", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -2075,7 +2117,7 @@ button, .list-item, .chip { touch-action: manipulation; }
 /* ─── Theme strip ───────────────────────────────────────────────
    The phone’s version of the desktop’s theme dial, unrolled. Same clock, same
    palettes, same one-way rule — a flat 24-hour engraving
-   (/img/brand/time-strip.png) that always travels LEFT, so the window advances
+   (/img/brand/time-strip.webp) that always travels LEFT, so the window advances
    forward through the day: sun face → red afternoon → moon face → dawn rays →
    sun again. Positions live in THEME_STRIP_POS (mobile/app.js) as fractions of
    the strip’s width, and a tap moves the strip to the next selectable theme’s
@@ -2188,9 +2230,9 @@ button, .list-item, .chip { touch-action: manipulation; }
    and dropped when the fade lands. Color properties only, never `all`: `all`
    would animate layout on anything that also changes size with the theme.
    Keep the duration in step with THEME_FADE_MS. ──────────────────────── */
-html[data-theme-fading] *:not(.theme-strip-track),
-html[data-theme-fading] *:not(.theme-strip-track)::before,
-html[data-theme-fading] *:not(.theme-strip-track)::after {
+html[data-theme-fading][data-theme-xfade] *:not(.theme-strip-track),
+html[data-theme-fading][data-theme-xfade] *:not(.theme-strip-track)::before,
+html[data-theme-fading][data-theme-xfade] *:not(.theme-strip-track)::after {
   transition: background-color 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
               border-color 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
               color 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
@@ -2218,16 +2260,16 @@ html[data-glow-turn] {
   transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
-    --night-glow-x, --night-glow-w, --night-glow-h, --night-glow-c;
+    --night-glow-x, --night-glow-c;
   transition-duration: 2000ms;
   /* One curve per property, in transition-property's order. Position and
-     the main glow ease in and out; the night glow's size and colour (the
-     last three) take a gentle sine curve, so the white light grows and
-     cools to blue evenly across the whole 2 s rather than mostly at one
-     end. Rules with shorter property lists (noon's) cut this list to fit,
+     the main glow ease in and out; the night glow's colour (last) takes a
+     gentle sine curve, inert while it is one value in every theme. Its
+     SIZE is not here at all: the night-glow-in / -out keyframes own it,
+     and a running transition would outrank them. Rules with shorter property lists (noon's) cut this list to fit,
      which is why the night glow's parts must stay LAST. */
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
-    cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
+    cubic-bezier(0.37, 0, 0.63, 1);
 }
 /* What must not move, by destination (reasoning in styles.css): into noon
    the night glow jumps back to the left edge unseen; into morning the
@@ -2276,9 +2318,46 @@ html[data-glow-turn="morning-noon"] {
   12.5%, 75% { --page-glow-h: 180vw; }
   100% { --page-glow-h: 66vh; }
 }
+/* The night glow's SHAPE, after the sun's rounding above: a circle while
+   it slides, an oval at rest. Slide-in (noon → nightfall, 2.5 s): a
+   circle from the first frame, held to 75%, easing into nightfall's oval
+   over the last quarter as it lands — the window in which morning → noon
+   turns its circle back into an oval. Slide-out (nightfall → morning,
+   2 s) mirrors it: the oval rounds into a circle over the first quarter,
+   while still on screen, and leaves as one. (Copied literally, the
+   change would fall in the first / last 12.5%, while the glow is still
+   off-screen — it is on screen only from 27% of the slide-in and until
+   73% of the slide-out.) The circle keeps the width, as the sun's does:
+   the height matches it. The width still grows from half size to full
+   across the turn; the 75% / 25% frames sit on the same sine the size
+   used to transition on (166.8vw). Same two rules as the sun's:
+   --night-glow-w / -h are OUT of every transition list (a running
+   transition outranks an animation), and the size is in viewport units
+   registered as <length> (a percentage-to-vw frame is a mixed calc()
+   Chromium rejects as a gradient size, blanking the whole background).
+   The slide-in keys on BOTH legs' data-glow-turn values: one rule, one
+   animation name, so the change of value at the waypoint lets it run on
+   rather than restarting it. */
+html[data-glow-turn="noon-afternoon"],
+html[data-glow-turn="afternoon-nightfall"] {
+  animation: night-glow-in 2500ms cubic-bezier(0.37, 0, 0.63, 1);
+}
+@keyframes night-glow-in {
+  0%   { --night-glow-w: 90vw;   --night-glow-h: 90vw; }
+  75%  { --night-glow-w: 166.8vw; --night-glow-h: 166.8vw; }
+  100% { --night-glow-w: 180vw;  --night-glow-h: 66vh; }
+}
+html[data-glow-turn="nightfall-morning"] {
+  animation: night-glow-out 2000ms cubic-bezier(0.37, 0, 0.63, 1);
+}
+@keyframes night-glow-out {
+  0%   { --night-glow-w: 180vw;  --night-glow-h: 66vh; }
+  25%  { --night-glow-w: 166.8vw; --night-glow-h: 166.8vw; }
+  100% { --night-glow-w: 90vw;   --night-glow-h: 90vw; }
+}
 html[data-theme="morning"] {
   transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
-    --night-glow-x, --night-glow-w, --night-glow-h, --night-glow-c;
+    --night-glow-x, --night-glow-c;
   /* The exit is the entrance played backwards: same path, mirrored. Its
      position takes the REVERSED ease (STD's control points swapped and
      flipped), so it eases off the centre slowly the way the entrance eased
@@ -2288,10 +2367,10 @@ html[data-theme="morning"] {
      it was gone in 1.05 s against the entrance's 1.46 s on screen. Mirrored,
      both are on screen 1.46 s at the same speeds. Size and colour keep the
      gentle sine, which is symmetric already: it shrinks to half size
-     evenly, and stays the moonlight blue (morning parks it in that colour). */
+     evenly, and stays moonlight blue (morning parks it in that colour). */
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
     cubic-bezier(0.8, 0, 0.6, 1),
-    cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
+    cubic-bezier(0.37, 0, 0.63, 1);
 }
 /* Phase easing for a multi-leg turn: accelerate once at the start, run at
    constant speed through the waypoint, decelerate once at the end, so
@@ -2300,32 +2379,71 @@ html[data-theme="morning"] {
    gives these rules the specificity of the block above, whose shorthand
    `transition` would otherwise re-assert the full ease. The track is then
    matched again by name so it keeps the same curve. */
-html[data-theme-fading="in"] *:not(.theme-strip-track),
-html[data-theme-fading="in"] *:not(.theme-strip-track)::before,
-html[data-theme-fading="in"] *:not(.theme-strip-track)::after,
+html[data-theme-fading="in"][data-theme-xfade] *:not(.theme-strip-track),
+html[data-theme-fading="in"][data-theme-xfade] *:not(.theme-strip-track)::before,
+html[data-theme-fading="in"][data-theme-xfade] *:not(.theme-strip-track)::after,
 html[data-theme-fading="in"] .theme-strip-track { transition-timing-function: cubic-bezier(0.4, 0, 1, 1); }
-html[data-theme-fading="mid"] *:not(.theme-strip-track),
-html[data-theme-fading="mid"] *:not(.theme-strip-track)::before,
-html[data-theme-fading="mid"] *:not(.theme-strip-track)::after,
+html[data-theme-fading="mid"][data-theme-xfade] *:not(.theme-strip-track),
+html[data-theme-fading="mid"][data-theme-xfade] *:not(.theme-strip-track)::before,
+html[data-theme-fading="mid"][data-theme-xfade] *:not(.theme-strip-track)::after,
 html[data-theme-fading="mid"] .theme-strip-track { transition-timing-function: linear; }
-html[data-theme-fading="out"] *:not(.theme-strip-track),
-html[data-theme-fading="out"] *:not(.theme-strip-track)::before,
-html[data-theme-fading="out"] *:not(.theme-strip-track)::after,
+html[data-theme-fading="out"][data-theme-xfade] *:not(.theme-strip-track),
+html[data-theme-fading="out"][data-theme-xfade] *:not(.theme-strip-track)::before,
+html[data-theme-fading="out"][data-theme-xfade] *:not(.theme-strip-track)::after,
 html[data-theme-fading="out"] .theme-strip-track { transition-timing-function: cubic-bezier(0, 0, 0.36, 1); }
 /* The slow step: nightfall → morning takes 1.6 s, twice THEME_FADE_MS, for
    the palette and the strip's travel alike (styles.css has the reasoning;
    THEME_LEG_MS in mobile/app.js holds the fading attribute as long). */
-html[data-theme-fading][data-theme="morning"] *:not(.theme-strip-track),
-html[data-theme-fading][data-theme="morning"] *:not(.theme-strip-track)::before,
-html[data-theme-fading][data-theme="morning"] *:not(.theme-strip-track)::after,
+html[data-theme-fading][data-theme="morning"][data-theme-xfade] *:not(.theme-strip-track),
+html[data-theme-fading][data-theme="morning"][data-theme-xfade] *:not(.theme-strip-track)::before,
+html[data-theme-fading][data-theme="morning"][data-theme-xfade] *:not(.theme-strip-track)::after,
 html[data-theme-fading][data-theme="morning"] .theme-strip-track { transition-duration: 1600ms; }
 @media (prefers-reduced-motion: reduce) {
   html, html[data-theme], html[data-glow-turn], html[data-glow-turn][data-theme] { transition: none; }
   html[data-glow-turn] { animation: none; }
-  html[data-theme-fading] *:not(.theme-strip-track),
-  html[data-theme-fading] *:not(.theme-strip-track)::before,
-  html[data-theme-fading] *:not(.theme-strip-track)::after { transition: none; }
+  html[data-theme-fading][data-theme-xfade] *:not(.theme-strip-track),
+  html[data-theme-fading][data-theme-xfade] *:not(.theme-strip-track)::before,
+  html[data-theme-fading][data-theme-xfade] *:not(.theme-strip-track)::after { transition: none; }
 }
+
+/* ─── Theme changes as one crossfade ──────────────────────────────────────
+   Where the browser has same-document view transitions with types
+   (Chromium 125+, Safari 18.2+), _setTheme runs the change inside
+   document.startViewTransition: the page is captured once before and
+   crossfaded to the live page after, as ONE picture. The per-element
+   crossfade above then stays off — it keys on data-theme-xfade, which is
+   only set on the fallback path. Measured on a 100-row Assets list (~4,200
+   elements): the per-element transitions were 100-150 ms frames and up to
+   1.5 s of style recalculation per turn; this is one compositor fade.
+   The types carry what the per-element rules got from data-theme-fading:
+   the step's length (polaris-theme-slow = THEME_LEG_MS, 1.6 s) and its
+   easing (in / mid / out / solo, the same curves as the phase rules).
+   The strip is named for the length of a theme change and its outgoing
+   picture hidden, so it travels live and never ghosts. Clicks pass
+   through the overlay to the page, so the strip can be clicked mid-turn
+   as before. Under reduced motion _setTheme never starts one. */
+html:active-view-transition-type(polaris-theme)::view-transition { pointer-events: none; }
+html:active-view-transition-type(polaris-theme)::view-transition-group(*),
+html:active-view-transition-type(polaris-theme)::view-transition-old(*),
+html:active-view-transition-type(polaris-theme)::view-transition-new(*) {
+  animation-duration: 800ms;
+  animation-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+html:active-view-transition-type(polaris-theme-slow)::view-transition-group(*),
+html:active-view-transition-type(polaris-theme-slow)::view-transition-old(*),
+html:active-view-transition-type(polaris-theme-slow)::view-transition-new(*) { animation-duration: 1600ms; }
+html:active-view-transition-type(polaris-theme-in)::view-transition-group(*),
+html:active-view-transition-type(polaris-theme-in)::view-transition-old(*),
+html:active-view-transition-type(polaris-theme-in)::view-transition-new(*) { animation-timing-function: cubic-bezier(0.4, 0, 1, 1); }
+html:active-view-transition-type(polaris-theme-mid)::view-transition-group(*),
+html:active-view-transition-type(polaris-theme-mid)::view-transition-old(*),
+html:active-view-transition-type(polaris-theme-mid)::view-transition-new(*) { animation-timing-function: linear; }
+html:active-view-transition-type(polaris-theme-out)::view-transition-group(*),
+html:active-view-transition-type(polaris-theme-out)::view-transition-old(*),
+html:active-view-transition-type(polaris-theme-out)::view-transition-new(*) { animation-timing-function: cubic-bezier(0, 0, 0.36, 1); }
+html:active-view-transition-type(polaris-theme) .theme-strip { view-transition-name: polaris-theme-strip; }
+html:active-view-transition-type(polaris-theme)::view-transition-old(polaris-theme-strip) { animation: none; opacity: 0; }
+html:active-view-transition-type(polaris-theme)::view-transition-new(polaris-theme-strip) { animation: none; }
 
 /* ─── List toolbar (Assets + Networks) ────────────────────────────────────
    Filter field + "Sort & filter" chip on one row above a list's chips —

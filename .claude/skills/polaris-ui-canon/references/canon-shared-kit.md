@@ -86,7 +86,7 @@ chrome that merely sits ON the page. Added 2026-09 when those surfaces went tran
 before that each rule picked its own background and shadow.
 
 **Canonical implementation:** the token block at the top of
-[public/css/styles.css](public/css/styles.css). `--panel-glass-bg` (modal + slide-over body; 78%, 70% on the daylight base),
+[public/css/styles.css](public/css/styles.css). `--panel-glass-bg` (modal + slide-over body; 70% in every theme),
 `--panel-glass-chrome` (their header/footer bands), `--menu-glass-bg` (every menu),
 `--panel-glass-blur` (the `backdrop-filter` value all of them share), `--shadow-panel` (a
 frosted surface floating free of a screen edge), `--shadow-control` (buttons, page search
@@ -121,9 +121,13 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   `--menu-glass-bg` + `--panel-glass-blur` + `--shadow-panel` rather than inventing a mix.
   `.widget-export-menu` mixed its own `--color-bg-elevated` for exactly one commit, which was
   enough for it to silently ignore the next change to the shared token.
-- **The daylight pair overrides the glass, and only the glass** (panels 40%, menus 30%, in the
-  `:is([data-theme="morning"],[data-theme="noon"])` base block). A light panel over a light
-  page has far less to hide behind, so the dark family's mix reads as nearly solid there.
+- **One glass mix for all three themes** (panels 70%, header/footer bands 40%, rail and cards
+  30%, menus 30%, all on `:root`; the phone's nav bar 30%, cards 30%, sheets 40%). Nightfall used
+  to run 8-10 points heavier, on the theory that dark glass needs more colour to hide what is
+  behind it, and the daylight base re-declared thinner mixes; by the user's call (2026-10-06)
+  nightfall matches morning and noon and the re-declarations are gone. The ONE per-family glass
+  left is the selected chip (`--chip-glass-bg`), because it mixes a different COLOUR per family,
+  not a different amount — see the chip bullet below.
 - **An overlay wrapping a frosted surface must reach opacity EXACTLY 1.** Any value below it
   makes the overlay a backdrop root, and the child's `backdrop-filter` then samples nothing but
   the scrim. This binds every standalone overlay a stacking surface builds for itself, not just
@@ -158,9 +162,18 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   the title, the endpoint search box and the icon row read through it. Both rules lift only the
   opacity of the theme's own token — never a literal colour — so a new theme keeps its palette.
 - **The page ground carries a glow; nothing full-width may paint over it opaquely.** Since
-  2026-10-04 `body` paints `--page-glow` (a radial wash from the top centre of the viewport,
-  `background-attachment: fixed`) over `--color-bg-secondary`. The glow is `--page-glow-color`
-  (the theme's accent, except nightfall — whose glow is the sliding night layer below, in moonlight blue `#6d97ff` — and noon, which takes sunlight yellow `#ffc928` because a terracotta
+  2026-10-06 the glow is painted by ONE fixed layer, `html::before` (`position: fixed; inset: 0;
+  z-index: -1`), over the ground colour (`body`'s `--color-bg-secondary`, which propagates to the
+  canvas; on the phone `html` paints `--md-surface` and `body` is transparent, or its own
+  background would cover the layer). **Performance rule, measured:** every glow part is an
+  `@property` with `inherits: false`, pulled onto that layer alone with an explicit `inherit`,
+  and `--page-glow` / `--night-glow` are declared ON the layer, never on `:root`. When the parts
+  inherited (and the tokens sat on `:root`), every frame of a 2-2.5 s glow turn restyled every
+  element — on a 100-row Assets list (~4,200 elements) ~12 ms a frame, 1.6-2 s of style
+  recalculation per turn; now 0.15-0.25 s and a steady 60 fps. `themeBandParity.test.ts` fails
+  if a part inherits or a token returns to `:root`. Before 2026-10-06 `body` painted it
+  (`background-attachment: fixed`). The glow is `--page-glow-color`
+  (the theme's accent, except nightfall — whose glow is the sliding night layer below, moonlight blue `#6d97ff` at 25% — and noon, which takes sunlight yellow `#ffc928` because a terracotta
   wash on its near-white ground reads as rust) at `--page-glow-strength` (17.6% dark family, 12.3% nightfall, 11.2%
   daylight base, 24% noon; a wide horizontal ellipse, 140% × 60% of the viewport). **The glow is
   built from eleven `@property`-registered parts** (`--page-glow-y` / `-w` / `-h`, colours
@@ -168,7 +181,8 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   because a gradient cuts on a theme change while typed custom properties interpolate.
   `:root` derives the four colour stops from `--page-glow-color` / `--page-glow-strength` on the
   straight line to transparent, so a theme that sets only those two paints the same two-stop
-  wash as before. **`html[data-glow-turn]` transitions the parts, on its own 2 s clock** — keyed on the attribute
+  wash as before. The parts are SET, transitioned and animated on `<html>`; only the layer reads them.
+  **`html[data-glow-turn]` transitions the parts, on its own 2 s clock** — keyed on the attribute
   only a theme change sets (`_markGlowTurn`), NEVER on bare `html`: the app pages apply the saved
   theme from app.js at the end of `<body>`, after a first style pass with no `data-theme`, so an
   always-on transition played the dark base's glow into the real one on every page load (sky blue
@@ -198,26 +212,41 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   `radial-gradient` ellipse size that mixes percent and length (`calc(70% + 230px)`), which is
   what a %-to-vmin animation passes through, and it drops the WHOLE background to `none`, both
   glows gone for the turn. Caught live over CDP; a frozen-mock check never sees it. A theme that overrides `--page-glow` whole goes back to cutting.
-  **Nightfall's glow is a second, SLIDING layer** (`--night-glow`, moonlight blue `#6d97ff` at
-  12.3% at rest, with four registered parts: `--night-glow-x`, its size `--night-glow-w` /
-  `--night-glow-h`, and `--night-glow-c`, ONE `<color>`: WHITE at 35% parked on noon
-  (`rgba(255,255,255,.35)`, the entry; the `:root` default), and the moonlight blue on nightfall
-  AND parked on morning, so the exit never changes colour (by the user's call; it whitened to 50%
-  before). Morning → noon swaps blue for white unseen, the glow off-screen and the noon rule not
-  transitioning it. That blue is the old electric `#2f6bff` with 30% white mixed in (`#6d97ff`,
-  still 12.3%), duller and closer to moonlight, at the user's call.
-  Parked it is also HALF size (70% × 30% desktop, 90% × 33% phone, against 140% × 60% /
-  180% × 66%): the white light slides in small and grows to the full wash as it cools to blue,
-  and shrinks, still blue, as it leaves. A stronger blue was tried first and still
-  read as nothing over the grounds crossed mid-turn. Size and colour take a gentle sine curve
-  (`cubic-bezier(0.37, 0, 0.63, 1)`) so they change evenly across the whole 2 s both ways (a
+  **Nightfall's glow is a second, SLIDING layer** (`--night-glow`, MOONLIGHT BLUE at 25%,
+  `rgba(109,151,255,.25)` — `#6d97ff`, the electric `#2f6bff` with 30% white — with four registered
+  parts: `--night-glow-x`, its size `--night-glow-w` / `--night-glow-h`, and `--night-glow-c`, ONE
+  `<color>` that is that same blue EVERYWHERE — parked on noon (the `:root` default), at rest on
+  nightfall and its afternoon waypoint, parked on morning — so the glow never changes colour and
+  the turns move only its position and size (by the user's call, 2026-10-06). History, so it is
+  not re-proposed: white 35% throughout (too bright at rest, replaced the same day); before that a
+  white 35% slide-in cooling into this blue at a fainter 12.3%; before that an electric blue
+  whitening to 50% on the way out. The colour
+  stays registered and in the transition lists, so a future colour turn is one value per theme.
+  Parked it is also HALF size (70vw × 30vh desktop, 90vw × 33vh phone, against 140vw × 60vh /
+  180vw × 66vh). **Its SHAPE is a keyframe animation, after the sun's rounding:** a CIRCLE while
+  it slides, an oval at rest (by the user's call, 2026-10-06). `night-glow-in` (2.5 s, on
+  `html[data-glow-turn="noon-afternoon"], html[data-glow-turn="afternoon-nightfall"]` — ONE
+  rule for both legs, so the waypoint's value change does not restart it) is a circle from the
+  first frame, held to 75%, easing into nightfall's oval over the last quarter as it lands;
+  `night-glow-out` (2 s, `nightfall-morning`) mirrors it, rounding over the first quarter and
+  leaving as a circle. The circle keeps the width and the height matches it, as the sun's does;
+  the width still grows half → full, its 75% / 25% frames on the sine the size used to
+  transition on (129.8vw desktop, 166.8vw phone). Morning's literal 12.5% windows were
+  rejected because the glow is on screen only from 27% of the slide-in and until 73% of the
+  slide-out, so the change would be invisible. Two rules keep it working, both the sun's:
+  `--night-glow-w` / `-h` are in NO transition list (a running transition outranks an
+  animation; `themeBandParity.test.ts` checks every list), and they are viewport-unit `<length>`s,
+  never percentages (a %-to-vw frame is the mixed calc() that blanks the background). A stronger
+  blue was tried first and still
+  read as nothing over the grounds crossed mid-turn. The colour takes a gentle sine curve
+  (`cubic-bezier(0.37, 0, 0.63, 1)`), inert while it is one value everywhere (a
   late/early colour curve was tried and replaced at the user's call); position keeps the
   ease-in-out on the way in and takes its exact REVERSE on the way out
   (`cubic-bezier(0.8, 0, 0.6, 1)`, in the morning rule), so the exit is the entrance played
   backwards. On the same curve both ways the exit looked ~40% faster — big and already on screen,
   so you saw the fast middle, gone in 1.05 s against the entrance's 1.46 s on screen; mirrored,
   both are on screen 1.46 s. The curves are per-property lists in `transition-property` order with the night
-  glow's size and colour LAST, because a rule with a shorter property list (noon's) cuts the
+  glow's colour LAST, because a rule with a shorter property list (noon's) cuts the
   inherited list to fit); nightfall turns the main glow off
   (`--page-glow-strength: 0%`) and centres it. It is parked just past an edge everywhere else:
   left on noon (−100% desktop / −130% phone) and right on morning (200% / 230%). **The afternoon

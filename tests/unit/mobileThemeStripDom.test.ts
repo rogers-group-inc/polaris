@@ -77,7 +77,10 @@ const harness = [
   extractFn("_themeStripTracks"),
   extractFn("_paintThemeStrips"),
   extractFn("_advanceThemeStrips"),
+  extractFn("_prefersReducedMotion"),
+  extractFn("_themeViewTransitions"),
   extractFn("_beginThemeFade"),
+  extractFn("_applyMobileTheme"),
   extractBlock(MOBILE_APP_JS, "window.PolarisTheme = {") + ";",
   "return { POS: THEME_STRIP_POS, THEMES: MOBILE_THEMES, TRANSIT: MOBILE_TRANSIT_THEMES,",
   "         theme: _mobileTheme, api: window.PolarisTheme };",
@@ -105,7 +108,7 @@ const STRIP_HTML =
   '<div class="theme-strip-row">' +
   '<button class="theme-strip" id="theme-strip">' +
   '<span class="theme-strip-track">' +
-  '<img src="/img/brand/time-strip.png"><img src="/img/brand/time-strip.png"><img src="/img/brand/time-strip.png">' +
+  '<img src="/img/brand/time-strip.webp"><img src="/img/brand/time-strip.webp"><img src="/img/brand/time-strip.webp">' +
   "</span>" +
   '<span class="theme-strip-marker"></span>' +
   "</button>" +
@@ -316,7 +319,10 @@ describe("the More tab's strip markup", () => {
       MORE_TAB_JS.indexOf('theme-strip-row'),
       MORE_TAB_JS.indexOf("theme-strip-marker"),
     );
-    expect(row.match(/time-strip\.png/g)).toHaveLength(3);
+    // The three copies come from stripImg() (versioned src, intrinsic size).
+    expect(row.match(/stripImg\(\)/g)).toHaveLength(3);
+    const helper = MORE_TAB_JS.slice(MORE_TAB_JS.indexOf("function stripImg()"), MORE_TAB_JS.indexOf("function backTopbar("));
+    expect(helper).toContain('"/img/brand/time-strip.webp"');
   });
 
   it("delegates the tap instead of wiring its own listener", () => {

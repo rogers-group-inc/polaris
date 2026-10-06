@@ -30,6 +30,7 @@ interface Branding {
   logoOnLogin?: boolean;
   logoOnSidebar?: boolean;
   logoVersion?: string | null;
+  version?: string;
 }
 interface Resolved { src: string; custom: boolean; showName: boolean; showSubtitle: boolean }
 
@@ -146,6 +147,13 @@ describe("custom logo placement", () => {
     expect(BrandLogo.resolve(custom({ logoAccent: true }), "login").src)
       .toBe("/api/v1/server-settings/branding/logo-accent.png?theme=light");
     theme = "nightfall";
+  });
+
+  it("versions the shipped Polaris art with the running version, so it paints from cache", () => {
+    theme = "nightfall";
+    expect(BrandLogo.resolve({ version: "0.9.123" }, "sidebar").src).toBe(BrandLogo.ASSETS.sidebar.dark + "?v=0.9.123");
+    // No version in the payload (an old cached one): the plain, revalidated URL.
+    expect(BrandLogo.resolve({}, "sidebar").src).toBe(BrandLogo.ASSETS.sidebar.dark);
   });
 
   it("carries the logo's version in its URL, so the image can be cached for good", () => {

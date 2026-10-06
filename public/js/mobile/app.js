@@ -69,7 +69,7 @@ function _mobileTheme(id) {
 
 // ─── Theme strip ────────────────────────────────────────────────
 //
-// Where each palette sits along /img/brand/time-strip.png, as a fraction of
+// Where each palette sits along the strip art (/img/brand/time-strip.webp), as a fraction of
 // the strip’s width. The anchor was set by eye on the two FACES (the marker has
 // to sit on the face, not beside it) and then stepped by exactly a quarter: the
 // engraving is a 24-hour clock unrolled, so six hours is a quarter of it, and
@@ -194,20 +194,60 @@ function _markGlowTurn(fromId, toId) {
   }, GLOW_MS + 80);
 }
 
+function _prefersReducedMotion() {
+  try {
+    return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  } catch (e) { return false; /* no matchMedia — animate */ }
+}
+
+// Can this browser crossfade the theme change as ONE picture (a same-document
+// view transition with types)? MIRRORS _themeViewTransitions in
+// public/js/app.js — the reasoning is there and in mobile.css's "Theme
+// changes as one crossfade" block.
+function _themeViewTransitions() {
+  try {
+    return typeof document.startViewTransition === "function" &&
+      typeof ViewTransition !== "undefined" && "types" in ViewTransition.prototype;
+  } catch (e) { return false; }
+}
+
 // Arms the palette crossfade for the length of one change. Called before
 // data-theme moves, so the new values are what gets transitioned TO.
-function _beginThemeFade(phase, ms) {
-  try {
-    if (window.matchMedia &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  } catch (e) { /* no matchMedia — fade anyway */ }
+// data-theme-xfade (the per-element colour transitions) only off a view
+// transition, which crossfades the page whole.
+function _beginThemeFade(phase, ms, viaViewTransition) {
+  if (_prefersReducedMotion()) return;
   var root = document.documentElement;
   root.setAttribute("data-theme-fading", phase || "solo");
+  if (viaViewTransition) root.removeAttribute("data-theme-xfade");
+  else root.setAttribute("data-theme-xfade", "");
   if (_themeFadeTimer) clearTimeout(_themeFadeTimer);
   _themeFadeTimer = setTimeout(function () {
     root.removeAttribute("data-theme-fading");
+    root.removeAttribute("data-theme-xfade");
     _themeFadeTimer = null;
   }, (ms || THEME_FADE_MS) + 80);
+}
+
+// The DOM half of PolarisTheme.set, split out so a view transition can run it
+// as its update callback (after the outgoing picture is captured).
+function _applyMobileTheme(t, prevId) {
+  document.documentElement.setAttribute("data-theme", t.id);
+  // Waypoints are never saved: a reload mid-sweep must land on a real theme.
+  if (!t.transit) { try { localStorage.setItem("polaris-theme", t.id); } catch (e) {} }
+  _advanceThemeStrips(t.id, prevId);
+  var names = document.querySelectorAll(".theme-strip-name");
+  for (var i = 0; i < names.length; i++) names[i].textContent = t.label;
+  var strips = document.querySelectorAll(".theme-strip");
+  for (i = 0; i < strips.length; i++) {
+    strips[i].setAttribute("aria-label", "Time of day: " + t.label + ". Tap to move through the day.");
+  }
+  // Keep the installed app’s chrome (Android status bar / task switcher) in
+  // step with the theme. The manifest colour itself is frozen at install time
+  // and only affects the launch splash, so a light-mode user still gets a dark
+  // splash — cosmetic and unavoidable.
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", t.family === "dark" ? "#1d2244" : "#eef0f7");
 }
 
 // Where the strip is headed: the destination of a sweep still in flight, or
@@ -235,23 +275,20 @@ window.PolarisTheme = {
     var t = _mobileTheme(MOBILE_THEME_IDS[theme] || theme);
     var prevId = document.documentElement.getAttribute("data-theme") || "nightfall";
     // Only fade a real change — re-applying the current theme should be instant.
-    if (t.id !== prevId) { _beginThemeFade(phase, _themeLegMs(t.id)); _markGlowTurn(prevId, t.id); }
-    document.documentElement.setAttribute("data-theme", t.id);
-    // Waypoints are never saved: a reload mid-sweep must land on a real theme.
-    if (!t.transit) { try { localStorage.setItem("polaris-theme", t.id); } catch (e) {} }
-    _advanceThemeStrips(t.id, prevId);
-    var names = document.querySelectorAll(".theme-strip-name");
-    for (var i = 0; i < names.length; i++) names[i].textContent = t.label;
-    var strips = document.querySelectorAll(".theme-strip");
-    for (i = 0; i < strips.length; i++) {
-      strips[i].setAttribute("aria-label", "Time of day: " + t.label + ". Tap to move through the day.");
+    var change = t.id !== prevId;
+    var legMs = _themeLegMs(t.id);
+    var viaVT = change && !_prefersReducedMotion() && _themeViewTransitions();
+    if (change) { _beginThemeFade(phase, legMs, viaVT); _markGlowTurn(prevId, t.id); }
+    if (viaVT) {
+      // One crossfade of the whole screen; see _setTheme in public/js/app.js.
+      document.startViewTransition({
+        update: function () { _applyMobileTheme(t, prevId); },
+        types: ["polaris-theme", "polaris-theme-" + (phase || "solo"),
+                legMs > THEME_FADE_MS ? "polaris-theme-slow" : "polaris-theme-std"],
+      });
+    } else {
+      _applyMobileTheme(t, prevId);
     }
-    // Keep the installed app’s chrome (Android status bar / task switcher) in
-    // step with the theme. The manifest colour itself is frozen at install time
-    // and only affects the launch splash, so a light-mode user still gets a dark
-    // splash — cosmetic and unavoidable.
-    var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", t.family === "dark" ? "#1d2244" : "#eef0f7");
   },
   // One tap, one step — but the step can have waypoints. Lands only on a
   // selectable theme; any transit position between here and there is faded
