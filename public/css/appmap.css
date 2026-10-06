@@ -249,12 +249,30 @@
   white-space: nowrap;
 }
 
+/* The page is exactly one viewport tall and the canvas takes whatever the
+   header and toolbar leave, so the window never scrolls. It used to be
+   calc(100vh - 170px), a guess at the header + toolbar height that the
+   three-row toolbar (and a wrapped pill row) outgrew, which pushed the page
+   past the fold. Below the min-height a short window still scrolls rather
+   than crushing the graph. */
+.appmap-main {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.appmap-main > .page-header,
+.appmap-main > .appmap-toolbar {
+  flex: 0 0 auto;
+}
+
 .appmap-layout {
   display: flex;
   gap: 12px;
-  /* Fill the viewport below header + toolbar. */
-  height: calc(100vh - 170px);
-  min-height: 420px;
+  /* Zero basis: an `auto` basis would start from the info rail's content
+     height, and a long port list would size the row instead of scrolling. */
+  flex: 1 1 0;
+  min-height: 320px;
 }
 
 /* Both panes take the shared card lift (--shadow-card in styles.css) so the
@@ -379,16 +397,87 @@
   border-top: 2px solid #4fc3f7;
 }
 
-.appmap-legend-line-process  { border-color: #66bb6a; }
-.appmap-legend-line-asset    { border-color: #4fc3f7; }
-.appmap-legend-line-external { border-top-style: dashed; border-color: #9e9e9e; }
-.appmap-legend-line-stale    { border-color: #4fc3f7; opacity: 0.35; }
+/* Edge colour is the port (see the Ports key); these rows show stroke only. */
+.appmap-legend-line          { border-color: var(--color-text-secondary); }
+.appmap-legend-line-process  { border-top-width: 3px; }
+.appmap-legend-line-external { border-top-style: dashed; }
+.appmap-legend-line-stale    { opacity: 0.35; }
+
+/* Ports key (bottom-left of the canvas): the edge colour → protocol/port. */
+.appmap-port-legend {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 20;
+  min-width: 170px;
+  max-width: 260px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  font-size: 12px;
+}
+
+.appmap-port-legend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 4px 10px;
+  font-weight: 600;
+}
+
+.appmap-port-legend:not(.collapsed) .appmap-port-legend-header {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.appmap-port-legend-body {
+  padding: 6px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.appmap-port-legend.collapsed .appmap-port-legend-body { display: none; }
+
+.appmap-port-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.appmap-port-legend-line {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 0;
+  border-top: 3px solid;
+  border-radius: 2px;
+}
+
+.appmap-port-legend-key {
+  font-family: "Roboto Mono", monospace;
+  color: var(--color-text-primary);
+}
+
+.appmap-port-legend-svc { opacity: 0.8; }
+
+.appmap-port-legend-count {
+  margin-left: auto;
+  padding-left: 8px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
 
 /* The display rules on these overlay classes would otherwise beat the UA
    stylesheet's [hidden] { display: none } (class > attribute at equal
    origin), leaving the panels permanently visible. */
 .appmap-empty[hidden],
 .appmap-legend[hidden],
+.appmap-port-legend[hidden],
 .appmap-info[hidden] {
   display: none;
 }
@@ -422,7 +511,9 @@
 }
 
 @media (max-width: 900px) {
-  .appmap-layout { flex-direction: column; height: auto; }
+  /* Stacked graph + rail is taller than a viewport by design; let it scroll. */
+  .appmap-main   { height: auto; }
+  .appmap-layout { flex-direction: column; flex: none; height: auto; }
   .appmap-graph  { height: 60vh; }
   .appmap-info   { flex: none; max-width: none; }
 }

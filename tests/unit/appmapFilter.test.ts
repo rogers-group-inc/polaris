@@ -63,7 +63,18 @@ beforeAll(() => {
   buildFilterCatalog = sandbox.window.PolarisAppMap.buildFilterCatalog;
   rankSuggestions = sandbox.window.PolarisAppMap.rankSuggestions;
   consolidatePorts = sandbox.window.PolarisAppMap.consolidatePorts;
+  edgePortKey = sandbox.window.PolarisAppMap.edgePortKey;
+  assignPortColors = sandbox.window.PolarisAppMap.assignPortColors;
+  PORT_PALETTE = sandbox.window.PolarisAppMap.PORT_PALETTE;
 });
+
+let edgePortKey: (p: Port[]) => string | null;
+let assignPortColors: (keys: Array<string | null>, prev: Record<string, string>, palette?: string[]) => {
+  colors: Record<string, string>;
+  legend: Array<{ key: string; color: string; count: number }>;
+  otherCount: number;
+};
+let PORT_PALETTE: string[];
 
 const NOW = Date.parse("2026-07-28T12:00:00Z");
 const iso = (minutesAgo: number) => new Date(NOW - minutesAgo * 60_000).toISOString();
@@ -366,5 +377,64 @@ describe("consolidatePorts", () => {
     expect(consolidatePorts([])).toEqual([]);
     expect(consolidatePorts(undefined as never)).toEqual([]);
     expect(consolidatePorts([{ proto: "tcp", port: NaN }])).toEqual([]);
+  });
+});
+
+describe("edgePortKey", () => {
+  it("picks the most-seen port, ties to the lower port number", () => {
+    expect(edgePortKey([{ proto: "tcp", port: 8443, count: 2 }, { proto: "tcp", port: 443, count: 9 }])).toBe("tcp/443");
+    expect(edgePortKey([{ proto: "udp", port: 161, count: 3 }, { proto: "udp", port: 53, count: 3 }])).toBe("udp/53");
+  });
+
+  it("keys protocol and port together and tolerates a missing proto/count", () => {
+    expect(edgePortKey([{ proto: "UDP", port: 53 }])).toBe("udp/53");
+    expect(edgePortKey([{ port: 22 } as Port])).toBe("tcp/22");
+  });
+
+  it("returns null for a port-less edge", () => {
+    expect(edgePortKey([])).toBeNull();
+    expect(edgePortKey(undefined as never)).toBeNull();
+  });
+});
+
+describe("assignPortColors", () => {
+  const PAL = ["#a", "#b", "#c"];
+
+  it("colours the most common keys, in rank order, and counts the rest as Other", () => {
+    const keys = ["tcp/443", "tcp/443", "tcp/443", "tcp/22", "tcp/22", "udp/53", "tcp/3389", null];
+    const r = assignPortColors(keys, {}, PAL);
+    expect(r.legend).toEqual([
+      { key: "tcp/443", color: "#a", count: 3 },
+      { key: "tcp/22", color: "#b", count: 2 },
+      { key: "udp/53", color: "#c", count: 1 },
+    ]);
+    expect(r.colors["tcp/3389"]).toBeUndefined();
+    expect(r.otherCount).toBe(1);
+  });
+
+  it("keeps a port's previous colour and gives newcomers the free ones", () => {
+    const r = assignPortColors(["tcp/443", "tcp/22", "tcp/22"], { "tcp/443": "#c", "tcp/1433": "#a" }, PAL);
+    expect(r.colors).toEqual({ "tcp/22": "#a", "tcp/443": "#c" });
+  });
+
+  it("never hands one colour to two keys, even from a corrupt previous map", () => {
+    const r = assignPortColors(["tcp/443", "tcp/22"], { "tcp/443": "#a", "tcp/22": "#a" }, PAL);
+    expect(new Set(Object.values(r.colors)).size).toBe(2);
+  });
+
+  it("ignores a stale colour that is not in the palette", () => {
+    const r = assignPortColors(["tcp/443"], { "tcp/443": "#zzz" }, PAL);
+    expect(r.colors["tcp/443"]).toBe("#a");
+  });
+
+  it("ships a palette of distinct colours with no red and no grey", () => {
+    expect(new Set(PORT_PALETTE).size).toBe(PORT_PALETTE.length);
+    for (const hex of PORT_PALETTE) {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      expect(max - min, `${hex} is too grey`).toBeGreaterThan(60);
+      const isRed = r === max && r - Math.max(g, b) > 90 && Math.abs(g - b) < 40;
+      expect(isRed, `${hex} reads as red`).toBe(false);
+    }
   });
 });

@@ -58,6 +58,25 @@
   // to be readable — at the default gap the edge is ~18px and unreadable.
   var INTRA_EDGE_ROW_GAP = 140;
 
+  // Edge colours by protocol/port. Eight hues and no more: past that, two
+  // ports start reading as the same colour, so the long tail draws in the
+  // neutral edge colour as "Other". No red (failure vocabulary) and no grey
+  // (that IS "Other"); none collides with the node fills (lilac process, teal
+  // service, light-blue asset) or the amber selection ring.
+  var PORT_PALETTE = ["#2f7fe0", "#f07c1e", "#2fa84f", "#a05ad8", "#e2539b", "#d4a514", "#1fb3c8", "#a87a4c"];
+  // proto/port key → palette colour. Survives re-renders (the 60s refresh, a
+  // filter change) so a port keeps its colour while it stays in the top set.
+  var portColorByKey = {};
+  var PORT_NAMES = {
+    20: "ftp-data", 21: "ftp", 22: "ssh", 23: "telnet", 25: "smtp", 53: "dns", 67: "dhcp", 69: "tftp",
+    80: "http", 88: "kerberos", 110: "pop3", 123: "ntp", 135: "msrpc", 137: "netbios", 139: "netbios",
+    143: "imap", 161: "snmp", 162: "snmp-trap", 389: "ldap", 443: "https", 445: "smb", 464: "kpasswd",
+    514: "syslog", 587: "smtp", 636: "ldaps", 993: "imaps", 1433: "mssql", 1521: "oracle",
+    2049: "nfs", 3268: "gc", 3269: "gc-tls", 3306: "mysql", 3389: "rdp", 5432: "postgres",
+    5671: "amqps", 5672: "amqp", 5985: "winrm", 5986: "winrm-tls", 6379: "redis", 8080: "http-alt",
+    8443: "https-alt", 9200: "elastic", 27017: "mongodb",
+  };
+
   var cy = null;
   var payload = null;         // last server payload
   var refreshTimer = null;
@@ -137,6 +156,7 @@
         hideWorkstations: !!(document.getElementById("appmap-hide-workstations") || {}).checked,
         fadeStale: fadeStaleEnabled(),
         legend: !!(legend && !legend.hidden),
+        portLegendCollapsed: portLegendCollapsed(),
         pills: filterPills,
       }));
     } catch (e) { /* quota / private mode — prefs are best-effort */ }
@@ -175,6 +195,25 @@
     if (fs && typeof p.fadeStale === "boolean") fs.checked = p.fadeStale;
     var legend = document.getElementById("appmap-legend");
     if (legend && p.legend === true) legend.hidden = false;
+    if (p.portLegendCollapsed === true) setPortLegendCollapsed(true);
+  }
+
+  function portLegendCollapsed() {
+    var el = document.getElementById("appmap-port-legend");
+    return !!(el && el.classList.contains("collapsed"));
+  }
+
+  function setPortLegendCollapsed(collapsed) {
+    var el = document.getElementById("appmap-port-legend");
+    if (!el) return;
+    el.classList.toggle("collapsed", collapsed);
+    var btn = document.getElementById("appmap-port-legend-toggle");
+    if (btn) {
+      btn.innerHTML = collapsed ? "+" : "&minus;";
+      btn.title = collapsed ? "Expand" : "Collapse";
+      btn.setAttribute("aria-label", collapsed ? "Expand ports key" : "Collapse ports key");
+      btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    }
   }
 
   // ─── "Seen within" options (bounded by the server's retention window) ──
@@ -513,6 +552,92 @@
     return parts.join(", ") + (extra > 0 ? " +" + extra : "");
   }
 
+  // ─── Port colours ──────────────────────────────────────────────────
+  //
+  // An edge can carry several ports; it is drawn in the colour of its DOMINANT
+  // one — the most-seen, ties to the lower port number. That is the order
+  // applicationMapService sorts an edge's ports in, so the colour always
+  // names the FIRST port in the edge's label.
+  //
+  // PURE (exposed for tests): [{proto, port, count}] → "tcp/443" | null.
+  function edgePortKey(ports) {
+    var best = null;
+    (ports || []).forEach(function (p) {
+      if (!p || p.port == null) return;
+      var c = Number(p.count) || 0;
+      if (!best || c > best.c || (c === best.c && Number(p.port) < best.port)) {
+        best = { c: c, port: Number(p.port), key: String(p.proto || "tcp").toLowerCase() + "/" + p.port };
+      }
+    });
+    return best ? best.key : null;
+  }
+
+  // PURE (exposed for tests): which keys get a colour, and which colour.
+  // `keys` is one dominant key per visible edge (nulls ignored). The most
+  // common keys — up to the palette size — are coloured; a key already in
+  // `prev` keeps its colour so a refresh or a filter change never repaints a
+  // port the operator has learned, and newcomers take the free colours in rank
+  // order. Returns { colors: {key → colour}, legend: [{key, color, count}],
+  // otherCount } with the legend in rank order.
+  function assignPortColors(keys, prev, palette) {
+    palette = palette || PORT_PALETTE;
+    prev = prev || {};
+    var counts = {};
+    (keys || []).forEach(function (k) { if (k) counts[k] = (counts[k] || 0) + 1; });
+    var ranked = Object.keys(counts).sort(function (a, b) {
+      if (counts[b] !== counts[a]) return counts[b] - counts[a];
+      var pa = Number(a.split("/")[1]), pb = Number(b.split("/")[1]);
+      return pa !== pb ? pa - pb : (a < b ? -1 : a > b ? 1 : 0);
+    });
+    var top = ranked.slice(0, palette.length);
+    var colors = {}, used = {};
+    top.forEach(function (k) {
+      var c = prev[k];
+      if (c && palette.indexOf(c) >= 0 && !used[c]) { colors[k] = c; used[c] = true; }
+    });
+    var free = palette.filter(function (c) { return !used[c]; });
+    top.forEach(function (k) { if (!colors[k]) colors[k] = free.shift(); });
+    var otherCount = 0;
+    ranked.slice(palette.length).forEach(function (k) { otherCount += counts[k]; });
+    return {
+      colors: colors,
+      legend: top.map(function (k) { return { key: k, color: colors[k], count: counts[k] }; }),
+      otherCount: otherCount,
+    };
+  }
+
+  function portServiceName(key) {
+    var n = Number(String(key).split("/")[1]);
+    return PORT_NAMES[n] || "";
+  }
+
+  // Bottom-left legend for the edge colours. Built from what is DRAWN, so a
+  // filter that drops a port drops its row too.
+  function renderPortLegend(assign) {
+    var el = document.getElementById("appmap-port-legend");
+    if (!el) return;
+    if (!assign || (!assign.legend.length && !assign.otherCount)) { el.hidden = true; return; }
+    var rows = assign.legend.map(function (r) {
+      var svc = portServiceName(r.key);
+      return '<div class="appmap-port-legend-row">' +
+        '<span class="appmap-port-legend-line" style="border-color:' + r.color + '"></span>' +
+        '<span class="appmap-port-legend-key">' + esc(r.key) + "</span>" +
+        (svc ? '<span class="appmap-port-legend-svc">' + esc(svc) + "</span>" : "") +
+        '<span class="appmap-port-legend-count" title="Connections drawn in this colour">' + r.count + "</span>" +
+        "</div>";
+    }).join("");
+    if (assign.otherCount) {
+      rows += '<div class="appmap-port-legend-row">' +
+        '<span class="appmap-port-legend-line" style="border-color:' + neutralEdgeColor(pageTheme()) + '"></span>' +
+        '<span class="appmap-port-legend-key">Other</span>' +
+        '<span class="appmap-port-legend-count" title="Connections drawn in this colour">' + assign.otherCount + "</span>" +
+        "</div>";
+    }
+    var body = el.querySelector(".appmap-port-legend-body");
+    if (body) body.innerHTML = rows;
+    el.hidden = false;
+  }
+
   // Distinct observed addresses across an edge's ports (server caps each
   // port's list; this is display-side dedup only).
   function edgeIps(ports) {
@@ -537,7 +662,8 @@
     return "\nvia " + ips[0] + (ips.length > 1 ? " +" + (ips.length - 1) : "");
   }
 
-  function buildElements(g) {
+  function buildElements(g, portColors) {
+    portColors = portColors || {};
     var now = Date.now();
     var els = [];
     var parentById = {};
@@ -572,25 +698,32 @@
       var stale = fadeStaleEnabled() && now - Date.parse(e.lastSeen) > STALE_MS;
       var ports = r.ports.length ? r.ports : e.ports;
       var intra = parentById[e.source] && parentById[e.source] === parentById[e.target];
-      els.push({
-        group: "edges",
-        data: {
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          kind: e.kind,
-          label: edgeLabel(ports, e.portOverflow) + (intra ? edgeViaSuffix(ports) : ""),
-          stale: stale ? 1 : 0,
-        },
-      });
+      var data = {
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        kind: e.kind,
+        label: edgeLabel(ports, e.portOverflow) + (intra ? edgeViaSuffix(ports) : ""),
+        stale: stale ? 1 : 0,
+      };
+      // Only coloured ports carry `pcolor`; the rest fall through to the
+      // neutral edge colour, which the legend calls "Other".
+      var pkey = edgePortKey(ports);
+      if (pkey && portColors[pkey]) data.pcolor = portColors[pkey];
+      els.push({ group: "edges", data: data });
     });
     return els;
+  }
+
+  // The uncoloured edge — also the Ports key's "Other" swatch.
+  function neutralEdgeColor(theme) {
+    return theme === "dark" ? "#6a7388" : "#9aa2b1";
   }
 
   function appmapStylesheet(theme) {
     var isDark = theme === "dark";
     var textColor = isDark ? "#eef0f4" : "#1a1a1a";
-    var edgeColor = isDark ? "#6a7388" : "#9aa2b1";
+    var edgeColor = neutralEdgeColor(theme);
     return [
       // Compound asset parent — translucent rounded box, label top-left.
       {
@@ -708,8 +841,11 @@
           "text-rotation": "autorotate",
         },
       },
-      { selector: 'edge[kind="process"]', style: { "line-color": "#66bb6a", "target-arrow-color": "#66bb6a", width: 2.2 } },
-      { selector: 'edge[kind="asset"]',   style: { "line-color": "#4fc3f7", "target-arrow-color": "#4fc3f7" } },
+      // Colour says WHICH protocol/port (the bottom-left legend); the edge kind
+      // is carried by stroke instead — heavier for process → process, dashed
+      // for external — so the two readings never fight over one channel.
+      { selector: "edge[pcolor]", style: { "line-color": "data(pcolor)", "target-arrow-color": "data(pcolor)" } },
+      { selector: 'edge[kind="process"]', style: { width: 2.6 } },
       { selector: 'edge[kind="external"], edge[kind="external-inbound"]', style: { "line-style": "dashed" } },
       { selector: "edge[stale = 1]", style: { opacity: 0.35 } },
       { selector: "node:selected", style: { "border-width": 3, "border-color": "#ffb300" } },
@@ -920,6 +1056,7 @@
 
     if (mappedAssets.length === 0) {
       showEmpty("No mapped processes or services yet", null);
+      renderPortLegend(null);
       if (cy) { cy.destroy(); cy = null; }
       setStatus("");
       return;
@@ -936,10 +1073,15 @@
     }
 
     var positions = resolvePositions(g, preserved);
+    var portAssign = assignPortColors(g.edges.map(function (r) {
+      return edgePortKey(r.ports.length ? r.ports : r.edge.ports);
+    }), portColorByKey);
+    portColorByKey = portAssign.colors;
+    renderPortLegend(portAssign);
     if (cy) { cy.destroy(); cy = null; }
     cy = cytoscape({
       container: document.getElementById("appmap-graph"),
-      elements: buildElements(g),
+      elements: buildElements(g, portAssign.colors),
       wheelSensitivity: 0.2,
       // maxZoom bounds the preset layout's fit too — without it a 3-node
       // graph fit-zooms to fill the whole canvas with giant nodes.
@@ -1187,6 +1329,13 @@
       legendBtn.addEventListener("click", function () { legend.hidden = !legend.hidden; savePrefs(); });
       var legendClose = document.getElementById("appmap-legend-close");
       if (legendClose) legendClose.addEventListener("click", function () { legend.hidden = true; savePrefs(); });
+    }
+    var portLegendBtn = document.getElementById("appmap-port-legend-toggle");
+    if (portLegendBtn) {
+      portLegendBtn.addEventListener("click", function () {
+        setPortLegendCollapsed(!portLegendCollapsed());
+        savePrefs();
+      });
     }
 
     var reset = document.getElementById("appmap-reset-layout");
@@ -1460,15 +1609,40 @@
         }
       }
 
+      // The Ports key, so the colours still mean something once the picture
+      // leaves the page. Always expanded in the capture, whatever its state on
+      // screen; skipped when there are no edges to explain.
+      var portLegend = document.getElementById("appmap-port-legend");
+      var keyCanvas = null;
+      if (portLegend && !portLegend.hidden &&
+          typeof htmlToImage !== "undefined" && htmlToImage.toCanvas) {
+        var wasCollapsed = portLegendCollapsed();
+        if (wasCollapsed) setPortLegendCollapsed(false);
+        try {
+          keyCanvas = await htmlToImage.toCanvas(portLegend, { pixelRatio: SCALE, backgroundColor: bg });
+        } catch (e) {
+          keyCanvas = null;
+        } finally {
+          if (wasCollapsed) setPortLegendCollapsed(true);
+        }
+      }
+
       var railW = railCanvas ? railCanvas.width : 0;
       var out = document.createElement("canvas");
-      out.width = graphImg.width + (railW ? GAP + railW : 0);
-      out.height = Math.max(graphImg.height, railCanvas ? railCanvas.height : 0);
+      // A tiny graph can be narrower than the key under it.
+      var leftW = Math.max(graphImg.width, keyCanvas ? keyCanvas.width : 0);
+      out.width = leftW + (railW ? GAP + railW : 0);
+      // The key sits BELOW the graph (bottom-left, as on screen) rather than
+      // over it: cy.png({full:true}) is cropped to the elements, so an overlay
+      // would land on top of nodes.
+      var keyH = keyCanvas ? GAP + keyCanvas.height : 0;
+      out.height = Math.max(graphImg.height + keyH, railCanvas ? railCanvas.height : 0);
       var ctx = out.getContext("2d");
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, out.width, out.height);
       ctx.drawImage(graphImg, 0, 0);
-      if (railCanvas) ctx.drawImage(railCanvas, graphImg.width + GAP, 0);
+      if (keyCanvas) ctx.drawImage(keyCanvas, 0, graphImg.height + GAP);
+      if (railCanvas) ctx.drawImage(railCanvas, leftW + GAP, 0);
 
       var blob = await new Promise(function (resolve) { out.toBlob(resolve, "image/png"); });
       if (!blob) { showToast("Screenshot failed", "error"); return; }
@@ -1673,5 +1847,8 @@
     buildFilterCatalog: buildFilterCatalog,
     rankSuggestions: rankSuggestions,
     consolidatePorts: consolidatePorts,
+    edgePortKey: edgePortKey,
+    assignPortColors: assignPortColors,
+    PORT_PALETTE: PORT_PALETTE,
   };
 })();
