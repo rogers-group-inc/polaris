@@ -71,10 +71,10 @@ Each theme also lights the page differently, and the light moves with the turn:
 |---|---|
 | **Morning** | a sunrise glowing up from the bottom edge |
 | **Noon** | a soft sunlight wash across the top |
-| **Nightfall** | a soft white glow across the top |
+| **Nightfall** | a moonlight-blue glow across the top |
 
 Morning → Noon climbs the sun from the bottom edge to the top, rounding out as it
-rises. Noon → Nightfall lifts the sunlight off the top while nightfall's white
+rises. Noon → Nightfall lifts the sunlight off the top while nightfall's moonlight
 glow slides in from the left, small at first and growing as it lands. Nightfall →
 Morning slides it out to the right, shrinking, as the sunrise comes up. The palette
 itself takes 1.6 s for Noon → Nightfall and Nightfall → Morning and 0.8 s for

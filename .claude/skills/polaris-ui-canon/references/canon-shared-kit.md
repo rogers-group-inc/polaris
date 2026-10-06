@@ -160,7 +160,7 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
 - **The page ground carries a glow; nothing full-width may paint over it opaquely.** Since
   2026-10-04 `body` paints `--page-glow` (a radial wash from the top centre of the viewport,
   `background-attachment: fixed`) over `--color-bg-secondary`. The glow is `--page-glow-color`
-  (the theme's accent, except nightfall — whose glow is the sliding night layer below, white at 35% — and noon, which takes sunlight yellow `#ffc928` because a terracotta
+  (the theme's accent, except nightfall — whose glow is the sliding night layer below, moonlight blue `#6d97ff` at 25% — and noon, which takes sunlight yellow `#ffc928` because a terracotta
   wash on its near-white ground reads as rust) at `--page-glow-strength` (17.6% dark family, 12.3% nightfall, 11.2%
   daylight base, 24% noon; a wide horizontal ellipse, 140% × 60% of the viewport). **The glow is
   built from eleven `@property`-registered parts** (`--page-glow-y` / `-w` / `-h`, colours
@@ -198,17 +198,18 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   `radial-gradient` ellipse size that mixes percent and length (`calc(70% + 230px)`), which is
   what a %-to-vmin animation passes through, and it drops the WHOLE background to `none`, both
   glows gone for the turn. Caught live over CDP; a frozen-mock check never sees it. A theme that overrides `--page-glow` whole goes back to cutting.
-  **Nightfall's glow is a second, SLIDING layer** (`--night-glow`, WHITE at 35%,
-  `rgba(255,255,255,.35)`, with four registered parts: `--night-glow-x`, its size `--night-glow-w` /
-  `--night-glow-h`, and `--night-glow-c`, ONE `<color>` that is that same white EVERYWHERE — parked
-  on noon (the `:root` default), at rest on nightfall and its afternoon waypoint, parked on
-  morning — so the glow never changes colour and the turns move only its position and size (by
-  the user's call, 2026-10-06). History, so it is not re-proposed: it rested as a moonlight blue
-  (`#6d97ff`, the electric `#2f6bff` with 30% white, at 12.3%) that the slide-in cooled into and
-  the slide-out kept, and before that an electric blue whitening to 50% on the way out. The colour
+  **Nightfall's glow is a second, SLIDING layer** (`--night-glow`, MOONLIGHT BLUE at 25%,
+  `rgba(109,151,255,.25)` — `#6d97ff`, the electric `#2f6bff` with 30% white — with four registered
+  parts: `--night-glow-x`, its size `--night-glow-w` / `--night-glow-h`, and `--night-glow-c`, ONE
+  `<color>` that is that same blue EVERYWHERE — parked on noon (the `:root` default), at rest on
+  nightfall and its afternoon waypoint, parked on morning — so the glow never changes colour and
+  the turns move only its position and size (by the user's call, 2026-10-06). History, so it is
+  not re-proposed: white 35% throughout (too bright at rest, replaced the same day); before that a
+  white 35% slide-in cooling into this blue at a fainter 12.3%; before that an electric blue
+  whitening to 50% on the way out. The colour
   stays registered and in the transition lists, so a future colour turn is one value per theme.
   Parked it is also HALF size (70% × 30% desktop, 90% × 33% phone, against 140% × 60% /
-  180% × 66%): the white light slides in small and grows to the full wash, and shrinks back as
+  180% × 66%): the blue light slides in small and grows to the full wash, and shrinks back as
   it leaves. A stronger blue was tried first and still
   read as nothing over the grounds crossed mid-turn. Size and colour take a gentle sine curve
   (`cubic-bezier(0.37, 0, 0.63, 1)`) so they change evenly across the whole 2 s both ways (a
