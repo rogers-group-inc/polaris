@@ -147,6 +147,7 @@
       _state.user = (ctx && ctx.user) || null;
       var p = prefs();
       body.innerHTML = ''
+        + '<div class="sev-summary hidden" id="alerts-summary" role="group" aria-label="Alerts by severity"></div>'
         + PolarisListControls.toolbarHTML({
             id: "alerts",
             placeholder: "Filter alerts",
@@ -327,6 +328,64 @@
     return timeAgo(iso);
   }
 
+  // ─── Severity breakdown ────────────────────────────────────────────────
+  // One tile per severity above the toolbar, counting what the list would
+  // show under every filter EXCEPT severity — so the counts hold still while
+  // the operator taps through them. A tile is a toggle on the same severity
+  // pick the sheet edits. A severity with nothing in it is left out unless it
+  // is picked (it must stay reachable to un-pick); rank 0 (an unrecognised
+  // severity) is not a level and gets no tile.
+  var SEV_LEVELS = [
+    { rank: 5, name: "critical",      label: "Critical" },
+    { rank: 4, name: "serious",       label: "Serious" },
+    { rank: 3, name: "warning",       label: "Warning" },
+    { rank: 2, name: "informational", label: "Info" },
+    { rank: 1, name: "notice",        label: "Notice" },
+  ];
+
+  function severityCounts(rows) {
+    var counts = {};
+    rows.forEach(function (n) {
+      var r = sevRank(n.severity);
+      if (r) counts[r] = (counts[r] || 0) + 1;
+    });
+    return counts;
+  }
+
+  function renderSummary(scoped) {
+    var host = document.getElementById("alerts-summary");
+    if (!host) return;
+    var picked = prefs().severity;
+    var counts = severityCounts(scoped || []);
+    var html = "";
+    SEV_LEVELS.forEach(function (lv) {
+      var n = counts[lv.rank] || 0;
+      var sel = picked.indexOf(String(lv.rank)) !== -1;
+      if (!n && !sel) return;
+      var color = window.PolarisMobileAlerts && PolarisMobileAlerts.sevColor ? PolarisMobileAlerts.sevColor(lv.name) : "currentColor";
+      html += ''
+        + '<button type="button" class="sev-tile' + (sel ? ' selected' : '') + '" data-sev="' + lv.rank + '"'
+        + ' style="--sev-color:' + color + '" aria-pressed="' + (sel ? "true" : "false") + '"'
+        + ' aria-label="' + n + ' ' + lv.label + (sel ? ', filtering' : '') + '">'
+        + '<span class="sev-count">' + n + '</span>'
+        + '<span class="sev-label">' + escapeHtml(lv.label) + '</span>'
+        + '</button>';
+    });
+    host.innerHTML = html;
+    host.classList.toggle("hidden", !html);
+    if (host.dataset.wired !== "1") {
+      host.dataset.wired = "1";
+      host.addEventListener("click", function (ev) {
+        var tile = ev.target && ev.target.closest ? ev.target.closest("[data-sev]") : null;
+        if (!tile) return;
+        _state.prefs.severity = PolarisListControls.toggleValue(prefs().severity, tile.dataset.sev);
+        PolarisListControls.savePrefs(PREFS_KEY, _state.prefs);
+        PolarisListControls.updateSortChip("alerts", sortLabel(), prefs().sortDir, sheetNarrows());
+        renderList();
+      });
+    }
+  }
+
   function renderList() {
     var host = document.getElementById("alerts-list-host");
     if (!host) return;
@@ -344,12 +403,14 @@
     }
 
     if (_state.rows.length === 0) {
+      renderSummary([]);
       host.innerHTML = emptyState("No active alerts", "Nothing is firing right now.");
       return;
     }
 
     var p = prefs();
     var regions = activeRegions();
+    renderSummary(filterRows(_state.rows, _state.filter, p.state, [], regions));
     var shown = sortRows(filterRows(_state.rows, _state.filter, p.state, p.severity, regions), p.sortKey, p.sortDir);
 
     if (shown.length === 0) {

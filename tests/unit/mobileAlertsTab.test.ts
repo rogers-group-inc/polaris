@@ -209,6 +209,44 @@ describe("alerts tab clear", () => {
   });
 });
 
+describe("alerts tab severity breakdown", () => {
+  const tiles = () =>
+    Array.from(document.querySelectorAll("#alerts-summary .sev-tile")).map((t) =>
+      `${(t.querySelector(".sev-label") as HTMLElement).textContent} ${(t.querySelector(".sev-count") as HTMLElement).textContent}`);
+
+  it("counts each severity by rank, above the list, skipping empty ones", async () => {
+    await render();
+    // error + critical are one rank; info is Info; nothing Serious or Notice.
+    expect(tiles()).toEqual(["Critical 2", "Warning 1", "Info 1"]);
+    const summary = document.getElementById("alerts-summary")!;
+    expect(summary.compareDocumentPosition(document.querySelector(".list-toolbar")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("a tile toggles the severity filter, and the counts hold still", async () => {
+    await render();
+    (document.querySelector('#alerts-summary [data-sev="5"]') as HTMLElement).click();
+    expect(shownIds()).toEqual(["ERROR · core-1", "CRITICAL · fw-1"]);
+    expect(tiles()).toEqual(["Critical 2", "Warning 1", "Info 1"]);
+    expect(document.querySelector('#alerts-summary [data-sev="5"]')!.classList.contains("selected")).toBe(true);
+    expect(document.getElementById("alerts-sort")!.textContent!.trim()).toBe("Time · Critical");
+    (document.querySelector('#alerts-summary [data-sev="5"]') as HTMLElement).click();
+    expect(shownIds()).toHaveLength(4);
+  });
+
+  it("follows the other filters — ack state and region", async () => {
+    await render();
+    (document.querySelector('#alerts-chips [data-key="unack"]') as HTMLElement).click();
+    expect(tiles()).toEqual(["Critical 1", "Warning 1", "Info 1"]);
+    await render(REGIONAL, undefined, EAST_USER);
+    expect(tiles()).toEqual(["Critical 1", "Warning 1"]);
+  });
+
+  it("is hidden when nothing is active", async () => {
+    await render([]);
+    expect(document.getElementById("alerts-summary")!.classList.contains("hidden")).toBe(true);
+  });
+});
+
 describe("mobile navbar", () => {
   it("is Search · Alerts · Assets · Networks · More, and the map lives under More", () => {
     g.PolarisAlertsTab = { spec: { title: "Alerts" } };
