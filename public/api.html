@@ -409,7 +409,10 @@
             each <code>effectiveParents[].parent</code>, <code>haPeer</code>, each child and
             grandchild &mdash; carries <code>activeAlert</code>: <code>{ severity, count,
             unacknowledged }</code> for its uncleared alerts (worst severity first), or
-            <code>null</code> when nothing is firing.</p>
+            <code>null</code> when nothing is firing. Every node also carries
+            <code>serialNumber</code> and <code>ipAddress</code>: a hostname is not an identity
+            (FortiLink fleets name their switch-ids per site, so two switches in one tree can both
+            read "IDF-1"), and a client telling them apart needs one of those two fields.</p>
         </div>
 
         <h3>Device onboarding (writes)</h3>
@@ -729,7 +732,14 @@
           (<code>runOnServer: true</code>), alone or beside agent hosts. The server is not an
           asset: its results come back as the first <code>/results</code> row
           (<code>server: true</code>, <code>assetId: null</code>) and through the three
-          <code>/path-checks/:id/server…</code> readings, and they raise no automation alert.
+          <code>/path-checks/:id/server…</code> readings. They raise an automation alert only on
+          a <code>path*</code> trigger (or the <code>path_check_path_changed</code> change trigger)
+          carrying <code>"includeServer": true</code> — a single condition, never with a
+          <code>reset.mode</code> of <code>condition</code> — and that alert has
+          <code>assetId: null</code> and <code>assetHostname: "Polaris server"</code>. A
+          <code>path*</code> automation's devices are always its scope ANDed with
+          <em>Polaris Agent installed</em>, and a composite may not mix <code>path*</code>
+          conditions with any other.
           <strong>Pointing the server at a target also needs <code>networkScan:write</code></strong>
           — creating a server-run check, turning the server on, changing what a server-run check
           sends, or re-enabling one returns <code>403</code> without it. Turning the server off,

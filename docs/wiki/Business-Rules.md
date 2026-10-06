@@ -1,6 +1,6 @@
 # Business rules
 
-Polaris carries **78 numbered rules**. Each one records a decision *and* the
+Polaris carries **90 numbered rules** (81 is a deliberate gap). Each one records a decision *and* the
 incident or constraint that forced it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
 where the reasons live.
@@ -114,7 +114,9 @@ fall-through — and **discovery never writes notes on an existing asset**.
 **Maintenance windows pause everything**, and status flips are scheduler-managed.
 An alert **already open when the window starts stays open** — it is silenced
 (no new alerts, escalation and reminders paused) and, once polling resumes,
-resolves normally through its own automation if the device is healthy. A window
+resolves normally through its own automation if the device is healthy — or
+sooner, if a reading taken during the window (an agent push, a Poll Now) shows
+it healthy. A window
 never clears an alert; only a genuine outage upstream clears a silenced child's
 alerts ([rule 38](#rule-38)). A day carries a **list** of hour ranges, and each range is its
 own occurrence with its own start. See [Maintenance windows](Maintenance-Windows).
@@ -213,6 +215,11 @@ of failures that reached `down` is **dropped whole**, onset included.
 **The chart and the alert can legitimately disagree** — the chart counts every
 probe because a picture of a window has to be continuous. See
 [Triggers](Automation-Triggers#packet-loss-is-special).
+
+**The same holds for every other reading the device reports.** When a device
+goes `down`, its open metric and device-state alerts clear as *superseded*, with
+no "resolved" message, and the asset-down alert speaks for the outage. See
+[Triggers](Automation-Triggers#a-device-that-goes-down-takes-its-other-alerts-with-it).
 
 ---
 
@@ -360,10 +367,12 @@ Profiles**. A custom role that held the two at different levels kept the
 lower one; no built-in role changed.
 
 ### Rule 44
-**A quiet window withholds the reminder, not the alert — and the reminder that
+**A quiet window holds the reminder, never skips it — and the reminder that
 follows says how long.** Held, never skipped. The hold is closed by the **send**,
-not by the window ending. It does not touch the first alert, the escalation
-tiers, or the reset notifications.
+not by the window ending. Since October 2026 this is the mechanics inside
+[rule 92](#rule-92): the windows belong to the automation (or to a global quiet
+time), and quiet reaches the escalation tiers too — and, when the quiet time
+holds everything, the first alert.
 
 ### Rule 45
 **An address places a device only through the gate that owns it, and only a
@@ -1144,9 +1153,11 @@ describes whether that source can reach the target, so:
 - **It never changes the host's status.** A laptop that cannot reach the
   intranet is not a laptop that is down. The host's own Up / Down comes only
   from its agent's response time, exactly as before.
-- **A check has no threshold.** You set the SLA in an automation on the
-  path-check metrics (latency, failure rate, HTTP status, pass / fail, hop
-  count, TLS days remaining). Holds, severity bands, resets, maintenance
+- **A check has no threshold.** You set the SLA in a **Path Monitor**
+  automation on the path-check metrics (latency, failure rate, HTTP status,
+  pass / fail, hop count, TLS days remaining). It only ever watches hosts with
+  the Polaris Agent installed; the Devices step narrows those, and a tree can't
+  mix path conditions with device conditions. Holds, severity bands, resets, maintenance
   windows and dependency suppression all work the same as for any other
   automation. One difference from packet loss: the failure rate has no
   "ignore readings at or above" ceiling, so a target that fails **every** run
@@ -1162,11 +1173,14 @@ describes whether that source can reach the target, so:
 - **A route change is an Event, not an alert state.** When an agent's
   traceroute takes a different set of hops from last time, Polaris writes
   `path_check.path_changed` to Events (at most once every 10 minutes per host
-  and check). You can alert on it with a *Path changed* trigger.
+  and check). You can alert on it with a Path Monitor automation set to fire
+  when the route changes.
 - **The Polaris server is a source, not an asset.** Its results are charted
-  and listed under the check's Results, but in this version they raise no
-  automation alert, and a route change it sees names the check rather than a
-  device. Pointing the server at a target needs *Read-Write* on **Network
+  and listed under the check's Results. They alert only through a Path Monitor
+  automation with *Include the Polaris server's own runs* ticked. That works
+  for a single condition, not alongside a custom reset condition, and no device
+  filter, maintenance window or dependency applies to the server. A route
+  change it sees names the check rather than a device. Pointing the server at a target needs *Read-Write* on **Network
   Discovery** as well as on Path Monitor, because the server probes from its
   own network, where no agent host may be able to reach. Turning the server
   off, renaming the check or changing its agent hosts does not.
@@ -1344,3 +1358,58 @@ recovered, its parent's alert covers it. An overlay whose underlay is
 healthy alerts as usual.
 
 See [Automation Triggers → SD-WAN](Automation-Triggers#sd-wan).
+
+### Rule 91
+
+**A hostname is not an identity. A name that several switches or access points
+share is resolved by where the device sits, or not at all.**
+
+On a FortiLink fleet the switch name is often set per site, so "IDF-1" exists
+behind every FortiGate. A device's *Last Seen Switch*, its *Last Seen AP* and an
+access point's uplink switch are all recorded by name, and Polaris used to turn
+such a name into whichever same-named device it happened to find first, which
+could be at another site. The dependency tree then drifted: devices were shown
+under, and silenced behind, a switch they never sat under.
+
+Now a shared name is settled by evidence about the device itself: first the
+switch whose MAC table currently holds the device's MAC, then the FortiGate that
+last saw the device (or, for an access point, its own controller), then the
+FortiGate that owns the device's network. When none of those singles out one
+device, Polaris places nothing rather than guessing. The device then hangs off
+the FortiGate that saw it, so it is still at the right site. A name that is
+unique never needs any of this.
+
+Two switches with different serial numbers are never merged for sharing a
+hostname. In the dependency tree, rows that share a name show their serial
+number (or address) beside it, so you can tell them apart before you click.
+
+See [Dependency suppression → Rules that keep the graph honest](Dependency-Suppression#rules-that-keep-the-graph-honest).
+
+### Rule 92
+**Quiet time withholds the send, never the alert — and what it withheld is
+reported when it ends.** A quiet time belongs to an automation (its Quiet time
+step) or to the install (Automations → Settings → Global Quiet Times, which
+applies only to automations with no quiet time of their own). While one is open,
+an alert it covers is still raised and shown — with a QUIET pill — and its
+scripts, API calls and audit event still run; what is held is, per severity,
+whichever of the four people-facing sends the quiet time ticks — the first
+alert, its reminders, the escalation tiers' first runs, the tiers' own repeats.
+Holding everything but the first alert is the old reminder-only quiet time: the
+first alert and the all-clear go through, the chasing waits. Only a held first
+alert owes a summary. Nothing in the alert's clocks moves while a send is held.
+
+When the quiet period ends (or at a chosen send time — refused only when it is
+inside the quiet period on every day it occurs), **one summary email per
+person** goes to everyone the held alerts would have reached — by email even
+for people who prefer push, in each reader's own time zone — listing the alerts
+**still outstanding** and any that **recurred more than X times** for one
+device and component, with every time they fired. No graphs; each device opens
+in Polaris. A held alert that recovers before the summary is not listed, and
+its all-clear is not sent; once an alert has been named in a summary it behaves
+like any other. With nothing to list — everything recovered, or nothing was
+held at all — the summary still goes out as the **all-quiet email** (on by
+default), to the people the covered automations notify, saying nothing is
+outstanding and, by arriving, that the quiet time and email delivery work. A test delivery is never
+held. Rule 44 is the hold mechanics inside this.
+
+See [Escalation, reminders and quiet time → Quiet time](Automation-Escalation#quiet-time).

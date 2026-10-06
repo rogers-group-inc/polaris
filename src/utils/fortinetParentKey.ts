@@ -33,6 +33,19 @@
  *      switch-id that IS the serial while `Asset.hostname` may be an
  *      operator-set label.
  *
+ * A HOSTNAME IS NOT AN IDENTITY (business rule 91). A FortiSwitch's hostname
+ * is its `switch-id`, which FortiLink fleets rename per site — so "IDF-1" exists
+ * once behind every gate — and the name-keyed stamps (`lastSeenSwitch`,
+ * `lastSeenAp`, an AP's `parentSwitch`, an LLDP `systemName`) carry nothing
+ * else. The hostname step used to be first-writer-wins, which parented half of
+ * one site's endpoints to another site's switch and silenced their alerts
+ * behind a device they never sat under. Now a name matching several candidates
+ * of the expected type is resolved by SCOPE — the controller FortiGate each
+ * candidate stamps against the gate(s) the caller already knows the child sits
+ * under — and when no scope picks exactly one, the answer is NULL (ambiguous),
+ * never a guess. Within one gate the `switch-id` is unique, so a scope that
+ * names the right gate always settles it.
+ *
  * IMPORTANT — `controllerFortigate` has a second, unrelated class of consumer
  * that must keep using the NAME: anything addressing an FMG/FortiOS API
  * (monitoringService's parent-FortiGate polling, the discovery decommission
@@ -66,9 +79,52 @@ export interface InfraParentStamp {
 
 export interface InfraParentIndex {
   bySerial: Map<string, InfraParentCandidate>;
+  /** First writer per hostname — kept for callers that only want A candidate.
+   *  Resolution itself reads `byHostnameAll` so a duplicate is seen, not hidden. */
   byHostname: Map<string, InfraParentCandidate>;
+  /** EVERY candidate carrying each hostname (rule 91). */
+  byHostnameAll: Map<string, InfraParentCandidate[]>;
   /** Keyed on each candidate's own `fortinetTopology.deviceName`. */
   byDeviceName: Map<string, InfraParentCandidate>;
+  /** Memo for `controllerGateIdOf`: candidate id → resolved controller gate id. */
+  gateIdMemo: Map<string, string | null>;
+}
+
+/**
+ * What the caller already knows about WHERE the device it is resolving sits —
+ * the disambiguator for a hostname several candidates share (rule 91).
+ */
+export interface InfraParentScope {
+  /**
+   * Candidate asset ids the caller has DIRECT evidence for — e.g. the switches
+   * whose forwarding table currently holds the endpoint's MAC. Consulted before
+   * `gateIds`: an observation of the device on the candidate outranks knowing
+   * which site it is at. Kept only when exactly one same-named candidate is in
+   * the list.
+   */
+  preferIds?: readonly string[];
+  /**
+   * Asset ids of the FortiGate(s) the child is known to sit under, MOST
+   * PREFERRED FIRST (an endpoint's sightings freshest-first, then the gate IPAM
+   * says owns its address; an AP's own controller). A hostname match is kept
+   * only when exactly one of the same-named candidates stamps one of these
+   * gates as its controller; the earliest gate in the list that singles out a
+   * candidate wins.
+   */
+  gateIds?: readonly string[];
+}
+
+export interface InfraParentResolution {
+  hit: InfraParentCandidate | null;
+  /**
+   * True when the NAME matched several candidates of the expected type and
+   * neither the scope nor the serial step could pick one. `hit` is null then.
+   * Callers that log should count these: an ambiguous name is a device the
+   * tree silently cannot place.
+   */
+  ambiguous: boolean;
+  /** The same-named candidates when `ambiguous`; empty otherwise. */
+  candidates: InfraParentCandidate[];
 }
 
 /** Normalize a serial for comparison. Serials are compared case-insensitively
@@ -87,26 +143,58 @@ export function normalizeNameKey(v: string | null | undefined): string {
 /**
  * Build the lookup index once per pass.
  *
- * First writer wins on a duplicate key so the index is stable in whatever order
- * the caller supplies (the dependency recompute sorts by id for determinism).
- * Duplicate serials shouldn't exist — discovery's serial-mismatch guards
- * prevent two assets sharing one — but a duplicate HOSTNAME absolutely can
- * (that's what `mergeDuplicateHostnameAssets` cleans up), so this must not
- * throw or churn on one.
+ * First writer wins on a duplicate serial or device name so the index is stable
+ * in whatever order the caller supplies (the dependency recompute sorts by id
+ * for determinism). Duplicate serials shouldn't exist — discovery's
+ * serial-mismatch guards prevent two assets sharing one — and FMG device names
+ * are unique within an ADOM. A duplicate HOSTNAME absolutely can exist (two
+ * switches named `IDF-1` at two sites; a workstation ghost beside its real
+ * record), so every hostname's full candidate set is kept in `byHostnameAll`
+ * for `resolveInfraParentAsset` to disambiguate (rule 91). Never throws.
  */
 export function buildInfraParentIndex(candidates: InfraParentCandidate[]): InfraParentIndex {
   const bySerial = new Map<string, InfraParentCandidate>();
   const byHostname = new Map<string, InfraParentCandidate>();
+  const byHostnameAll = new Map<string, InfraParentCandidate[]>();
   const byDeviceName = new Map<string, InfraParentCandidate>();
   for (const c of candidates) {
     const s = normalizeSerialKey(c.serialNumber);
     if (s && !bySerial.has(s)) bySerial.set(s, c);
     const h = normalizeNameKey(c.hostname);
-    if (h && !byHostname.has(h)) byHostname.set(h, c);
+    if (h) {
+      if (!byHostname.has(h)) byHostname.set(h, c);
+      const list = byHostnameAll.get(h);
+      if (list) list.push(c);
+      else byHostnameAll.set(h, [c]);
+    }
     const d = normalizeNameKey(readFirewallDeviceName(c.fortinetTopology));
     if (d && !byDeviceName.has(d)) byDeviceName.set(d, c);
   }
-  return { bySerial, byHostname, byDeviceName };
+  return { bySerial, byHostname, byHostnameAll, byDeviceName, gateIdMemo: new Map() };
+}
+
+/**
+ * The FortiGate a switch / AP candidate sits under, as an asset id — its own
+ * `controllerSerial` / `controllerFortigate` stamp resolved against the
+ * firewalls in the same index (serial first, per the order above). Null for a
+ * firewall (it IS a gate), for a candidate with no stamp, and when the stamp
+ * names a gate the index does not hold. Memoized per index.
+ */
+export function controllerGateIdOf(index: InfraParentIndex, c: InfraParentCandidate): string | null {
+  if (c.assetType === "firewall") return null;
+  const memo = index.gateIdMemo.get(c.id);
+  if (memo !== undefined) return memo;
+  const stamp = readControllerStamp(c.fortinetTopology);
+  // No scope here on purpose: a controller stamp names a FIREWALL, and the
+  // firewall steps (serial, FMG device name) are unique keys. A gate whose
+  // hostname is itself duplicated and unstamped resolves to nothing — the
+  // safe side.
+  const gate = (stamp.serial || stamp.name)
+    ? resolveInfraParentAssetDetailed(index, stamp, "firewall").hit
+    : null;
+  const id = gate ? gate.id : null;
+  index.gateIdMemo.set(c.id, id);
+  return id;
 }
 
 /**
@@ -118,47 +206,110 @@ export function buildInfraParentIndex(candidates: InfraParentCandidate[]): Infra
  * edge, which is what the pre-fix `parent.assetType === "firewall"` checks did
  * inline. Pass undefined to accept any type.
  *
- * Returns null when nothing matches, which every caller must treat as "no
- * parent" — NOT as an error. An unadopted switch, a gate discovered by another
- * integration that hasn't run yet, and a genuinely orphaned device all land
- * here legitimately.
+ * `scope` is what the caller knows about where the child sits (rule 91). It is
+ * consulted ONLY when the hostname step finds several candidates of the
+ * expected type; a unique name never needs it.
+ *
+ * Returns null when nothing matches — OR when the name is shared and nothing
+ * singles a candidate out — which every caller must treat as "no parent", NOT
+ * as an error. An unadopted switch, a gate discovered by another integration
+ * that hasn't run yet, a genuinely orphaned device and a same-named switch at
+ * a site the caller cannot name all land here legitimately. Use
+ * `resolveInfraParentAssetDetailed` to tell the last case apart for logging.
  */
 export function resolveInfraParentAsset(
   index: InfraParentIndex,
   stamp: InfraParentStamp,
   expectedType?: string,
+  scope?: InfraParentScope,
 ): InfraParentCandidate | null {
+  return resolveInfraParentAssetDetailed(index, stamp, expectedType, scope).hit;
+}
+
+/** As `resolveInfraParentAsset`, reporting an ambiguous hostname as such. */
+export function resolveInfraParentAssetDetailed(
+  index: InfraParentIndex,
+  stamp: InfraParentStamp,
+  expectedType?: string,
+  scope?: InfraParentScope,
+): InfraParentResolution {
   const typeOk = (c: InfraParentCandidate | undefined): InfraParentCandidate | null => {
     if (!c) return null;
     if (expectedType && c.assetType !== expectedType) return null;
     return c;
   };
+  const found = (hit: InfraParentCandidate | null): InfraParentResolution =>
+    ({ hit, ambiguous: false, candidates: [] });
 
   // 1) Definitive: the stamped serial.
   const serialKey = normalizeSerialKey(stamp.serial);
   if (serialKey) {
     const hit = typeOk(index.bySerial.get(serialKey));
-    if (hit) return hit;
+    if (hit) return found(hit);
   }
 
   const nameKey = normalizeNameKey(stamp.name);
-  if (!nameKey) return null;
+  if (!nameKey) return found(null);
 
   // 2) The stamped name against each candidate's OWN FMG device name. This is
   //    the like-for-like comparison (`controllerFortigate` and `deviceName` are
   //    both FMG's name for the gate) and the one that works on data written
   //    before `controllerSerial` existed.
   const byDevice = typeOk(index.byDeviceName.get(nameKey));
-  if (byDevice) return byDevice;
+  if (byDevice) return found(byDevice);
 
   // 3) Pre-fix behavior: the name against hostnames. Correct whenever the FMG
-  //    device name and the gate's configured hostname agree.
-  const byName = typeOk(index.byHostname.get(nameKey));
-  if (byName) return byName;
+  //    device name and the gate's configured hostname agree — and, for a
+  //    switch or AP, whenever the name is unique among its kind. Filtered by
+  //    type BEFORE counting, so a workstation ghost carrying a switch's name
+  //    neither shadows the switch nor makes it ambiguous.
+  const sameName = (index.byHostnameAll.get(nameKey) ?? []).filter(c => typeOk(c) !== null);
+  if (sameName.length === 1) return found(sameName[0]);
+  if (sameName.length > 1) {
+    const picked = pickByScope(index, sameName, scope);
+    if (picked) return found(picked);
+  }
 
   // 4) The name may itself BE a serial (a FortiSwitch's switch-id is its
   //    serial, and that's what an AP's LLDP table reports as parentSwitch).
-  return typeOk(index.bySerial.get(normalizeSerialKey(stamp.name)));
+  //    Definitive, so it is allowed to settle a name step 3 found ambiguous.
+  const asSerial = typeOk(index.bySerial.get(normalizeSerialKey(stamp.name)));
+  if (asSerial) return found(asSerial);
+
+  return sameName.length > 1
+    ? { hit: null, ambiguous: true, candidates: sameName }
+    : found(null);
+}
+
+/**
+ * Rule 91's tie-break: among several same-named candidates, first the one the
+ * caller directly observed (`scope.preferIds`), then the one whose controller
+ * is the earliest gate in `scope.gateIds` that singles out exactly one of
+ * them. Two same-named candidates under ONE gate cannot happen for a managed
+ * switch (`switch-id` is the gate's mkey) and is refused when it does. No
+ * scope, or a scope naming none of them, picks nothing.
+ */
+function pickByScope(
+  index: InfraParentIndex,
+  sameName: InfraParentCandidate[],
+  scope: InfraParentScope | undefined,
+): InfraParentCandidate | null {
+  const preferIds = scope?.preferIds ?? [];
+  if (preferIds.length > 0) {
+    const preferred = sameName.filter(c => preferIds.includes(c.id));
+    if (preferred.length === 1) return preferred[0];
+  }
+  const gateIds = scope?.gateIds ?? [];
+  if (gateIds.length === 0) return null;
+  const gateOf = new Map<string, string | null>();
+  for (const c of sameName) gateOf.set(c.id, controllerGateIdOf(index, c));
+  for (const gateId of gateIds) {
+    if (!gateId) continue;
+    const under = sameName.filter(c => gateOf.get(c.id) === gateId);
+    if (under.length === 1) return under[0];
+    if (under.length > 1) return null;
+  }
+  return null;
 }
 
 /**

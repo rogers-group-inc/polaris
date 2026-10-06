@@ -8,7 +8,10 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="icon" type="image/png" href="/img/brand/polaris-symbol-light.png">
   <link rel="icon" type="image/png" href="/img/brand/polaris-symbol-dark.png" media="(prefers-color-scheme: dark)">
+  <script src="/js/theme-init.js"></script>
+  <link rel="expect" href="#polaris-nav-ready" blocking="render">
   <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="/css/page-transitions.css">
   <link rel="stylesheet" href="/css/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/css/vendor/leaflet/MarkerCluster.css">
   <link rel="stylesheet" href="/css/vendor/leaflet/MarkerCluster.Default.css">
@@ -146,6 +149,7 @@
   <script src="/js/passkeys-self.js"></script>
   <script src="/js/brand-logo.js"></script>
   <script src="/js/app.js"></script>
+  <span id="polaris-nav-ready" hidden></span>
   <!-- assets.js + its UI deps power the canonical asset details slide-in
        (openViewModal) that the Device Map reuses for node click-through.
        Each file's DOMContentLoaded handler self-guards on its own page DOM,
@@ -172,6 +176,7 @@
   <!-- Asset modal's Maintenance tab (ad-hoc "enter maintenance until…") needs
        maintCreateAdhoc; the Maintenance MODAL itself is wired on assets.html only. -->
   <script src="/js/recurrence-editor.js"></script>
+  <script src="/js/quiet-time-editor.js"></script>
   <script src="/js/assets-maintenance.js"></script>
   <script src="/js/topology-render.js"></script>
   <script src="/js/map.js"></script>

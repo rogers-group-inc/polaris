@@ -839,6 +839,8 @@ const api = {
     processConnections:   (id, name) => request("GET", `/assets/${id}/process-connections` + (name ? "?name=" + encodeURIComponent(name) : "")),
     setProcessConfig:     (id, name, body) => request("PUT", `/assets/${id}/processes/${encodeURIComponent(name)}/config`, body),
     services:             (id)  => request("GET", `/assets/${id}/services`),
+    software:             (id)  => request("GET", `/assets/${id}/software`),
+    inventoryPresence:    (id)  => request("GET", `/assets/${id}/inventory-presence`),
     serviceLogs:          (id, unit, opts) => {
       opts = opts || {};
       var qs = ["unit=" + encodeURIComponent(unit)];
@@ -1152,6 +1154,21 @@ const api = {
     /** What deleting it would change — live alerts, members, and which members
      *  would go SILENT because the group was doing the telling. */
     removalImpact: (id) => request("GET", `/automations/groups/${id}/removal-impact`),
+  },
+  // Global quiet times (business rule 92) — Automations → Settings. Mounted
+  // ABOVE /automations server-side like groups and scripts.
+  quietTimes: {
+    list:      ()      => request("GET", "/automations/quiet-times"),
+    get:       (id)    => request("GET", `/automations/quiet-times/${id}`),
+    /** Recent summary runs across every source — the Settings tab's list. */
+    summaries: (limit) => request("GET", "/automations/quiet-times/summaries" + (limit ? `?limit=${encodeURIComponent(limit)}` : "")),
+    /** One summary in full: covered alerts, what was listed, every recipient. */
+    summary:   (id)    => request("GET", `/automations/quiet-times/summaries/${id}`),
+    /** Send a failed summary again to every recipient not yet reached. */
+    resendSummary: (id) => request("POST", `/automations/quiet-times/summaries/${id}/resend`, {}),
+    create:    (body)  => request("POST", "/automations/quiet-times", body),
+    update:    (id, b) => request("PUT", `/automations/quiet-times/${id}`, b),
+    delete:    (id)    => request("DELETE", `/automations/quiet-times/${id}`),
   },
   automationScripts: {
     list:    ()      => request("GET", "/automations/scripts"),

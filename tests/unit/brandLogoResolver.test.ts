@@ -29,6 +29,7 @@ interface Branding {
   logoAccent?: boolean;
   logoOnLogin?: boolean;
   logoOnSidebar?: boolean;
+  logoVersion?: string | null;
 }
 interface Resolved { src: string; custom: boolean; showName: boolean; showSubtitle: boolean }
 
@@ -145,6 +146,21 @@ describe("custom logo placement", () => {
     expect(BrandLogo.resolve(custom({ logoAccent: true }), "login").src)
       .toBe("/api/v1/server-settings/branding/logo-accent.png?theme=light");
     theme = "nightfall";
+  });
+
+  it("carries the logo's version in its URL, so the image can be cached for good", () => {
+    // The upload is written to a fixed filename: without a version the URL
+    // never changes, so it had to be served no-cache, and every page change
+    // painted the sidebar with no logo while the browser asked again.
+    theme = "nightfall";
+    expect(BrandLogo.resolve(custom({ logoVersion: "abc123" }), "sidebar").src)
+      .toBe("/uploads/custom-logo.png?v=abc123");
+    expect(BrandLogo.resolve(custom({ logoVersion: "abc123", logoAccent: true }), "sidebar").src)
+      .toBe("/api/v1/server-settings/branding/logo-accent.png?theme=dark&v=abc123");
+    // A payload cached before the field existed: the old, unversioned URL.
+    expect(BrandLogo.resolve(custom(), "sidebar").src).toBe("/uploads/custom-logo.png");
+    // The shipped art is static and never versioned.
+    expect(BrandLogo.resolve({ logoVersion: "abc123" }, "sidebar").src).toBe(BrandLogo.ASSETS.sidebar.dark);
   });
 
   it("treats a payload cached before these fields existed as 'show my logo'", () => {

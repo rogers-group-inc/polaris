@@ -30,9 +30,11 @@ import { isAzureSsoConfiguredAsync, getSsoSettings } from "./services/azureAuthS
 import { isLoginSourceAllowed } from "./services/loginAccessService.js";
 import { isApiDocsSourceAllowed } from "./services/apiDocsAccessService.js";
 import { logEvent } from "./services/eventLogService.js";
+import { getBranding, logoCacheControl } from "./services/brandingService.js";
 import { isOidcEnabled } from "./services/oidcAuthService.js";
 import { isEntraProxyLoginAvailable } from "./services/entraProxyAuthService.js";
 import { stripUntrustedEntraProxyHeaders } from "./api/middleware/entraProxyHeaders.js";
+import { assetLinkLimiter } from "./api/middleware/rateLimits.js";
 import {
   renderMetrics,
   startHttpRequestTimer,
@@ -641,7 +643,7 @@ app.use((req, res, next) => {
 // login finishes in the page).
 // UA-dependent, so never cacheable; an id that is not a UUID falls through to
 // the static handler's 404 rather than redirecting anywhere.
-app.get("/assets/:id", async (req, res, next) => {
+app.get("/assets/:id", assetLinkLimiter, async (req: express.Request<{ id: string }>, res, next) => {
   const target = resolveAssetOpenTarget({
     id: req.params.id,
     userAgent: req.get("user-agent"),
@@ -885,7 +887,23 @@ app.use(pwaRouter);
 // same files the express.static(public) mount below also serves, so the
 // explicit mount is a redundant no-op. On the Docker image it points at
 // /app/state/public/uploads so logos persist across container rebuilds.
-app.use("/uploads", express.static(UPLOADS_DIR));
+//
+// Cache-Control is set here, not by express.static: the logo is written to a
+// fixed filename, so its URL carries a version (?v=, brand-logo.js) and a
+// request naming the CURRENT one is answered immutable — a page change then
+// paints the logo from cache rather than revalidating while the sidebar sits
+// empty. Anything else revalidates every time (logoCacheControl), which is
+// what express.static's default max-age=0 meant anyway.
+app.use("/uploads", async (req, res, next) => {
+  try {
+    const v = req.query.v;
+    const current = typeof v === "string" ? (await getBranding()).logoVersion : null;
+    res.setHeader("Cache-Control", logoCacheControl(v, current));
+  } catch {
+    res.setHeader("Cache-Control", "no-cache");
+  }
+  next();
+}, express.static(UPLOADS_DIR, { cacheControl: false }));
 app.use(express.static(path.resolve(__dirname, "..", "public")));
 
 // Bearer gate shared by /health, /health/ready and /metrics: each endpoint is
@@ -1177,6 +1195,9 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // cooldown" control was retired from the wizard, and a value nothing on
       // screen states must not keep governing when an automation may re-fire.
       "./jobs/clearNotificationCooldowns.js",
+      // Promotes per-action reminder quiet windows (rule 44) into the
+      // automation's own quiet time (rule 92), which holds every send.
+      "./jobs/migrateRepeatQuietToQuietTime.js",
       "./jobs/seedBaselineAutomations.js",
       // Seals previously-plaintext secrets in Credential / Integration /
       // NotificationChannel config + Setting values. Not marker-guarded: the
@@ -1221,6 +1242,9 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       "./jobs/evaluateNotificationRules.js",
       "./jobs/escalateNotifications.js",
       "./jobs/deliverNotifications.js",
+      // Quiet-time summaries (business rule 92): the email that ends a quiet
+      // window. Same role as the three above — the hold was taken here.
+      "./jobs/sendQuietTimeSummaries.js",
       "./jobs/runAutomationScripts.js",
       "./jobs/resolvePolarisPushedConflicts.js",
       "./jobs/resolveStaleReservationConflicts.js",

@@ -78,6 +78,7 @@ const FULL_PARTS: TemplateContextParts = {
   repeatElapsed: "45m",
   // The reminder that ends a quiet-time hold (business rule 44).
   repeatQuiet: "Reminders resumed after a quiet period — this alert has been active for 9h 12m.",
+  groupChange: "Update: port7 is in fault again after recovering for 32m.",
   // The follow-up policy the alert was RAISED under — snapshotted at fire
   // time so a reminder describes the same automation the first email did.
   repeatPolicy: "Reminders every 15 minutes until acknowledged.",

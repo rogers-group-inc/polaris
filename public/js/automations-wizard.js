@@ -745,6 +745,7 @@ function makeAutomationSentences(s) {
     if (tr.type === "asset_metric" && isBooleanMetric(tr.metric)) {
       out = "When <strong>" + escapeHtml(stateLeafClause(tr)) + "</strong>";
       if (tr.forDurationSec > 0) out += ", sustained for <strong>" + holdPhrase(tr) + "</strong>";
+      if (tr.includeServer === true) out += ", including the <strong>Polaris server</strong>’s own runs";
       return out + tail + ".";
     }
     if (tr.type === "asset_metric" || tr.type === "host_metric") {
@@ -806,6 +807,11 @@ function makeAutomationSentences(s) {
     // two down automations in the list is otherwise looking at identical prose.
     if (leafAlertsWhenDependencyDown(tr)) {
       out += " — and still when the device is <strong>dependency-down</strong>, naming the upstream device";
+    }
+    // Path Monitor: the server is a source no device filter names, so the
+    // sentence is the one place an operator reading the list learns it counts.
+    if (tr.includeServer === true && (tr.type === "asset_metric" || tr.type === "change")) {
+      out += ", including the <strong>Polaris server</strong>’s own runs";
     }
     return out + tail + ".";
   }
@@ -1432,7 +1438,9 @@ function awDimNarrow(dim, df, state) {
 function awDimNote(res) {
   if (!res || res.loading) return { text: "Checking what the selected devices report…", warn: false };
   if (res.error) return { text: "", warn: false };
-  if (!res.scopedAssets) {
+  // The Polaris server can supply values with no device in scope (a Path
+  // Monitor check picker), so an empty scope only warns when nothing came back.
+  if (!res.scopedAssets && !(res.values || []).length) {
     return { text: "No devices match the filter on the Devices step yet, so there is nothing to list.", warn: true };
   }
   if (!(res.values || []).length) {
@@ -1656,6 +1664,7 @@ async function openAutomationWizard(existing, opts) {
       trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "latest", windowSec: 0, operator: ">=", threshold: null, forDurationSec: 0 },
       reset: null, // defaulted per trigger type on Step-4 entry
       cooldownSec: null, messageTemplate: null, requireAckNote: false, groupByAsset: false, repeat: null,
+      quietTime: null,
       // The audit Event is an action now, present by default — a new
       // automation behaves like every existing one until someone removes it.
       actions: [{ type: "event" }], escalation: null,
@@ -1674,8 +1683,11 @@ async function openAutomationWizard(existing, opts) {
   _awDraftStash = null;
 
   var step = 1;
-  var visited = (editing || cloning) ? 6 : 1;
-  var STEPS = ["Name", "Devices", "Trigger", "Reset", "Actions", "Summary"];
+  // Quiet time (business rule 92) is its own step between Actions and the
+  // review: it governs every action's sends, so it is a property of the
+  // automation, not of one notify row's reminder clock.
+  var STEPS = ["Name", "Devices", "Trigger", "Reset", "Actions", "Quiet time", "Summary"];
+  var visited = (editing || cloning) ? STEPS.length : 1;
   var scopePreviewTimer = null;
   var trigPreviewTimer = null;
 
@@ -2350,8 +2362,20 @@ async function openAutomationWizard(existing, opts) {
     maxDepth: 3, maxLeaves: 10,
     anyDimensionNote: "With multiple conditions, an automation alerts once per device; a per-sensor/per-interface condition counts as met when any of them crosses.",
   };
+  // The Path Monitor category's vocabulary (see isPathTriggerC).
+  var PATH_MONITOR = s.pathMonitor || {
+    metrics: ["pathLatencyMs", "pathHttpStatus", "pathOk", "pathFailurePct", "pathHopCount", "pathTlsDaysLeft"],
+    changeTypes: ["path_check_path_changed"],
+    agentRule: { field: "agentInstalled", operator: "equals", value: "yes" },
+    serverLabel: "Polaris server",
+  };
+  // Which half of Path Monitor the trigger step shows: a measurement crossing
+  // a threshold (the condition tree) or the route changing (the traceroute
+  // change Event). Seeded from the stored trigger.
+  var _pathMode = draft.trigger && draft.trigger.type === "change" ? "route" : "measure";
   var TRIGGER_CATEGORIES = [
     { value: "device", label: "Device conditions" },
+    { value: "path", label: "Path Monitor" },
     { value: "host", label: "Polaris host conditions" },
     { value: "event", label: (findType("event") || {}).label || "Audit event match" },
     { value: "change", label: (findType("change") || {}).label || "Change detection" },
@@ -2400,9 +2424,10 @@ async function openAutomationWizard(existing, opts) {
     '<div class="step-panel" id="aw-step-3">' + step3Html() + '</div>' +
     '<div class="step-panel" id="aw-step-4"></div>' + // rendered on entry (depends on trigger type)
     '<div class="step-panel" id="aw-step-5"></div>' + // rendered on entry (actions/escalation)
+    '<div class="step-panel" id="aw-step-6"></div>' + // rendered on entry (quiet time, business rule 92)
     // The notif-email-suggest datalist went with the Cc/Bcc text inputs it fed —
     // the recipient fields now use the .aw-suggest typeahead over /contacts/search.
-    '<div class="step-panel" id="aw-step-6"></div>'; // rendered on entry (summary + affected devices)
+    '<div class="step-panel" id="aw-step-7"></div>'; // rendered on entry (summary + affected devices)
 
   var footer =
     '<button class="btn btn-secondary" id="aw-cancel">Cancel</button>' +
@@ -2624,6 +2649,9 @@ async function openAutomationWizard(existing, opts) {
     if (t.type === "event") {
       return "This automation fires only about the devices this filter selects. Audit events that name no device — an integration, a user, the Polaris host — only match while this is set to All assets.";
     }
+    if (isPathTriggerC(t)) {
+      return "Path Monitor watches path checks run from devices with the Polaris Agent installed — this filter narrows those. The Polaris server's own runs are chosen on the Trigger step.";
+    }
     return "Which devices this automation watches.";
   }
 
@@ -2702,7 +2730,10 @@ async function openAutomationWizard(existing, opts) {
     collectStep2();
     box.innerHTML = scopePreviewHtml('<span class="aw-preview-muted">Checking…</span>');
     try {
-      var res = await api.automations.preview({ scope: draft.scope });
+      // A Path Monitor draft's pool is agent hosts — preview the scope the
+      // engine will actually resolve (pathMonitorScopeC).
+      var pathPool = isPathTriggerC(draft.trigger);
+      var res = await api.automations.preview({ scope: pathPool ? pathMonitorScopeC(draft.scope) : draft.scope });
       var rows = (res.matches || []).slice(0, 15).map(function (m) {
         return '<tr><td>' + escapeHtml(m.hostname || m.assetId || "") + '</td></tr>';
       }).join("");
@@ -2715,7 +2746,7 @@ async function openAutomationWizard(existing, opts) {
       // scrolling body it would sit below the fold, i.e. exactly where an
       // operator wondering whether the list is complete can't see it.
       box.innerHTML = scopePreviewHtml(
-        '<strong>' + res.totalEvaluated + '</strong> monitored device(s) match this filter.' +
+        '<strong>' + res.totalEvaluated + '</strong> monitored device(s)' + (pathPool ? ' with the Polaris Agent' : '') + ' match this filter.' +
           (un ? ' <span class="aw-preview-muted">(+' + un + ' unmonitored — automations never fire on those.)</span>' : "") +
           (res.totalEvaluated > 15 ? ' <span class="aw-preview-muted">Showing the first 15.</span>' : ""),
         rows ? '<table><tbody>' + rows + '</tbody></table>' : ""
@@ -2735,23 +2766,72 @@ async function openAutomationWizard(existing, opts) {
   // keep their flat fields.
   function triggerCategoryOf(tr) {
     if (!tr || !tr.type) return "device";
+    if (isPathTriggerC(tr)) return "path";
     if (tr.type === "composite") return tr.kind === "host" ? "host" : "device";
     if (tr.type === "host_metric") return "host";
     if (tr.type === "event" || tr.type === "change") return tr.type;
     return "device";
   }
+  // ── Path Monitor (business rule 85, 2026-10-05) ──────────────────────────
+  // Its conditions are stored as plain asset_metric / change triggers (the
+  // server's `pathMonitor` block names which), so the category is decided by
+  // WHAT a trigger watches, not by its type. The condition tree gets a third
+  // kind, "path": built and collected exactly like the device tree, but its
+  // dropdown offers the path metrics only and the device tree no longer does.
+  // A path tree still stores as a composite of kind "asset". The vocabulary
+  // (PATH_MONITOR) is initialized up with tgMeta — the body assembly reads it.
+  function isPathMetricC(m) { return PATH_MONITOR.metrics.indexOf(m) !== -1; }
+  function isPathTriggerC(tr) {
+    if (!tr || !tr.type) return false;
+    if (tr.type === "asset_metric") return isPathMetricC(tr.metric);
+    if (tr.type === "change") return PATH_MONITOR.changeTypes.indexOf(tr.changeType) !== -1;
+    if (tr.type === "composite" && tr.kind !== "host") {
+      var ls = tgLeaves(tr) || [];
+      return ls.length > 0 && ls.every(function (l) { return l.type === "asset_metric" && isPathMetricC(l.metric); });
+    }
+    return false;
+  }
+  /** The condition-tree kind a stored trigger renders as. */
+  function treeKindOf(tr) {
+    if (tr && (tr.type === "host_metric" || (tr.type === "composite" && tr.kind === "host"))) return "host";
+    return isPathTriggerC(tr) ? "path" : "asset";
+  }
+  /** The tree kind a trigger-type category renders as. */
+  function treeKindForCategory(cat) { return cat === "host" ? "host" : cat === "path" ? "path" : "asset"; }
+  /** The scope a Path Monitor draft's devices are chosen from: the operator's
+   *  own conditions ANDed with "Polaris Agent installed" — the server's
+   *  pathMonitorScope, so the Devices-step count is the pool the engine reads.
+   *  A scope that selects nothing keeps selecting nothing. */
+  function pathMonitorScopeC(scope) {
+    var base = scope || {};
+    var own = base.condition && (base.condition.children || []).length ? base.condition : null;
+    var lists = [base.assetTypes, base.tags, base.assetIds, base.integrationIds, base.manufacturers, base.models, base.subnetCidrs];
+    if (!base.allAssets && !own && !lists.some(function (l) { return l && l.length; })) return base;
+    var out = JSON.parse(JSON.stringify(base));
+    out.condition = { op: "and", children: own ? [PATH_MONITOR.agentRule, own] : [PATH_MONITOR.agentRule] };
+    return out;
+  }
   function tgDefaultLeaf(kind) {
+    if (kind === "path") {
+      // Unreachable is the headline case — every run to the target failing.
+      return { type: "asset_metric", metric: "pathOk", aggregation: "latest", windowSec: 0, operator: "==", threshold: 0 };
+    }
     return kind === "host"
       ? { type: "host_metric", metric: "cpuPct", aggregation: "latest", windowSec: 0, operator: ">=", threshold: null }
       : { type: "asset_metric", metric: "cpuPct", aggregation: "latest", windowSec: 0, operator: ">=", threshold: null };
   }
   function triggerToTree(tr, kind) {
+    // A stored trigger only seeds the tree of its own kind — a path trigger
+    // never opens in the device tree, nor a device trigger in the path tree.
+    if (tr && tr.type && tr.type !== "event" && tr.type !== "change" && treeKindOf(tr) !== kind) {
+      return { op: "and", children: [tgDefaultLeaf(kind)] };
+    }
     // Both stored shapes render through tgLift, so a uniform dimensionFilter
     // comes back as the filter row the operator authored it as.
-    if (tr && tr.type === "composite" && (tr.kind || "asset") === kind) {
+    if (tr && tr.type === "composite" && (tr.kind || "asset") === (kind === "host" ? "host" : "asset")) {
       return tgLift({ op: tr.op || "and", children: JSON.parse(JSON.stringify(tr.children || [])) });
     }
-    var leafKinds = kind === "host" ? ["host_metric"] : ["asset_metric", "asset_state"];
+    var leafKinds = kind === "host" ? ["host_metric"] : kind === "path" ? ["asset_metric"] : ["asset_metric", "asset_state"];
     if (tr && leafKinds.indexOf(tr.type) !== -1) {
       var leaf = JSON.parse(JSON.stringify(tr));
       delete leaf.forDurationSec;
@@ -2838,7 +2918,19 @@ async function openAutomationWizard(existing, opts) {
         return '<option value="' + escapeHtml(v) + '"' + (v === selWhat ? " selected" : "") + '>' + escapeHtml(metricLabel(m)) + '</option>';
       }).join("");
     }
-    var metrics = (findType("asset_metric") || {}).metrics || [];
+    var allMetrics = (findType("asset_metric") || {}).metrics || [];
+    if (kind === "path") {
+      // Path Monitor: the path conditions and nothing else — no device state,
+      // and no CPU or memory beside them.
+      return '<optgroup label="Path check">' + allMetrics.filter(isPathMetricC).map(function (m) {
+        var v = "m:" + m;
+        return '<option value="' + escapeHtml(v) + '"' + (v === selWhat ? " selected" : "") + '>' + escapeHtml(metricLabel(m)) + '</option>';
+      }).join("") + '</optgroup>';
+    }
+    // The device tree no longer offers the path conditions — they moved to
+    // their own trigger type. A stored device rule can't name one either:
+    // triggerToTree sends any path trigger to the path tree.
+    var metrics = allMetrics.filter(function (m) { return !isPathMetricC(m); });
     var fields = (findType("asset_state") || {}).fields || [];
     var html = '<optgroup label="Metrics">' + metrics.map(function (m) {
       var v = "m:" + m;
@@ -3136,6 +3228,9 @@ async function openAutomationWizard(existing, opts) {
       var metric = dimMetricOf(el);
       if (!metric) return;
       var narrow = awDimNarrow(d, dimFilterOfRow(el.closest(".scr-row")), dimStateOfRow(el.closest(".scr-row")));
+      // Path Monitor with the server ticked: offer the checks it runs too.
+      var serverCb = d === "checkId" ? panel.querySelector("#tf-path-server") : null;
+      if (serverCb && serverCb.checked) narrow = Object.assign({}, narrow, { includeServer: true });
       var key = dimKeyFor(metric, d, narrow);
       if (!_dimValues[key]) need[key] = { metric: metric, dimension: d, narrow: narrow };
     });
@@ -4362,6 +4457,50 @@ async function openAutomationWizard(existing, opts) {
     }
     syncPollFields(panel, false);
   }
+  /** The Path Monitor trigger's header: what it fires on (a measurement or a
+   *  route change), whether the Polaris server's own runs count, and the pool
+   *  it watches. A stored path rule without the flag never watched the server,
+   *  so it opens unticked; a new one opens ticked — the server is the one
+   *  vantage point every install has. */
+  function pathTriggerHeaderHtml(tr) {
+    var serverOn = isPathTriggerC(tr) ? tr.includeServer === true : true;
+    return '<div class="form-group"><label>Fire when</label><select id="tf-path-mode">' +
+        '<option value="measure">A path check result meets the conditions below</option>' +
+        '<option value="route">A check’s route changes (traceroute)</option>' +
+      '</select></div>' +
+      '<div class="form-group" style="margin-bottom:0.25rem"><label><input type="checkbox" id="tf-path-server"' + (serverOn ? " checked" : "") + '> Include the ' + escapeHtml(PATH_MONITOR.serverLabel) + '’s own runs</label>' +
+        '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 24px">The server isn’t a device, so the Devices-step filter doesn’t apply to it, nor do maintenance windows. With more than one condition only agent hosts are evaluated.</p></div>' +
+      '<p id="aw-path-pool" style="font-size:0.82rem;margin:0 0 0.5rem"><span class="aw-preview-muted">Checking…</span></p>';
+  }
+  var _pathPoolKey = null;
+  var _pathPoolCount = null;
+  /** "Watches N agent hosts (+ the Polaris server)" — the pool the engine
+   *  resolves: the Devices step ANDed with "Polaris Agent installed". */
+  async function refreshPathPool() {
+    var el = document.getElementById("aw-path-pool");
+    if (!el) return;
+    var serverCb = document.getElementById("tf-path-server");
+    var paint = function () {
+      var n = _pathPoolCount;
+      var server = serverCb && serverCb.checked ? ' + the ' + escapeHtml(PATH_MONITOR.serverLabel) : '';
+      el.innerHTML = n == null
+        ? '<span class="aw-preview-muted">Pool unavailable</span>'
+        : 'Watches <strong>' + n + '</strong> device(s) with the Polaris Agent that match the Devices step' + server + '.';
+    };
+    var scope = pathMonitorScopeC(draft.scope);
+    var key = JSON.stringify(scope);
+    if (key === _pathPoolKey) { paint(); return; }
+    _pathPoolKey = key;
+    try {
+      var res = await api.automations.preview({ scope: scope });
+      if (_pathPoolKey !== key) return; // a newer request owns the line
+      _pathPoolCount = res.totalEvaluated || 0;
+    } catch (_e) {
+      _pathPoolCount = null;
+      _pathPoolKey = null;
+    }
+    paint();
+  }
   function step3Html() {
     var cat = triggerCategoryOf(draft.trigger);
     var typeOpts = TRIGGER_CATEGORIES.map(function (t) {
@@ -4389,8 +4528,9 @@ async function openAutomationWizard(existing, opts) {
     var box = panel.querySelector("#aw-trigger-fields");
     var tr = draft.trigger || {};
     var html = "";
-    if (cat === "device" || cat === "host") {
-      var kind = cat === "host" ? "host" : "asset";
+    if (cat === "path") html += pathTriggerHeaderHtml(tr);
+    if (cat === "device" || cat === "host" || (cat === "path" && _pathMode !== "route")) {
+      var kind = treeKindForCategory(cat);
       var tree = triggerToTree(tr, kind);
       html += '<p style="font-size:0.82rem;color:var(--color-text-tertiary);margin:0 0 0.5rem">Add conditions and combine them with AND/OR groups — drag the <span class="aw-grip" style="cursor:default">&#x2842;</span> handle to move them. ' + escapeHtml(tgMeta.anyDimensionNote || "") + '</p>' +
         '<div id="aw-trig-root">' + tgGroupHtml(tree, 0, kind) + '</div>' +
@@ -4434,12 +4574,19 @@ async function openAutomationWizard(existing, opts) {
     } else if (cat === "change") {
       var ch = tr.type === "change" ? tr : {};
       var def = findType("change");
-      html += '<div class="form-group"><label>Change type</label><select id="tf-changetype">' + optLabeled((def && def.changeTypes) || [], ch.changeType, changeLabel) + '</select></div>';
+      // The path change lives under Path Monitor now.
+      var chTypes = ((def && def.changeTypes) || []).filter(function (c) { return PATH_MONITOR.changeTypes.indexOf(c) === -1; });
+      html += '<div class="form-group"><label>Change type</label><select id="tf-changetype">' + optLabeled(chTypes, ch.changeType, changeLabel) + '</select></div>';
     }
     box.innerHTML = html;
     // Stored selects must agree with the model before the first collection
     // (refreshTriggerSentence collects) — see pinTreeSelects.
-    if (cat === "device" || cat === "host") pinTreeSelects(box.querySelector("#aw-trig-root"), tree);
+    if (tree) pinTreeSelects(box.querySelector("#aw-trig-root"), tree);
+    if (cat === "path") {
+      var modeSel = box.querySelector("#tf-path-mode");
+      if (modeSel) modeSel.value = _pathMode;
+      refreshPathPool();
+    }
     // The unit picker is one of those selects, and from here it is the
     // AUTHORITY on the window's unit — syncDurationRequirement reads it rather
     // than the draft. So it has to be pinned from the model on the way in, or a
@@ -4489,8 +4636,20 @@ async function openAutomationWizard(existing, opts) {
     panel.querySelector("#aw-trigger-type").addEventListener("change", function () {
       renderTriggerFields(); // category swap renders fresh from the draft
     });
+    // Path Monitor's two controls. Delegated, like the event-detail rows: the
+    // fields' innerHTML is replaced on every re-render.
+    panel.addEventListener("change", function (e) {
+      var t = e.target;
+      if (!t || !t.id) return;
+      if (t.id === "tf-path-mode") {
+        _pathMode = t.value === "route" ? "route" : "measure";
+        renderTriggerFields();
+      } else if (t.id === "tf-path-server") {
+        refreshPathPool();
+      }
+    });
     wireTgTree(panel, "#aw-trig-root", function () {
-      return panel.querySelector("#aw-trigger-type").value === "host" ? "host" : "asset";
+      return treeKindForCategory(panel.querySelector("#aw-trigger-type").value);
     }, function () {
       // Adding, removing or retyping a condition can change what the duration
       // field IS — a sole `monitor status is down` condition makes it the
@@ -4569,8 +4728,12 @@ async function openAutomationWizard(existing, opts) {
     var typeSel = panel.querySelector("#aw-trigger-type");
     if (!typeSel) return;
     var cat = typeSel.value;
-    if (cat === "device" || cat === "host") {
-      var kind = cat === "host" ? "host" : "asset";
+    var pathServerCb = panel.querySelector("#tf-path-server");
+    var pathServer = !!(pathServerCb && pathServerCb.checked);
+    if (cat === "path" && _pathMode === "route") {
+      draft.trigger = { type: "change", changeType: PATH_MONITOR.changeTypes[0], includeServer: pathServer };
+    } else if (cat === "device" || cat === "host" || cat === "path") {
+      var kind = treeKindForCategory(cat);
       var root = panel.querySelector("#aw-trig-root > .scg-group");
       if (root) {
         // Fold filter rows (device identifiers / component names) into their
@@ -4633,10 +4796,14 @@ async function openAutomationWizard(existing, opts) {
         var ddMeta = dependencyDownMeta();
         var prevDepDown = !!(ddMeta && draft.trigger && draft.trigger[ddMeta.dependencyDownKey] === true);
         draft.trigger = tgCollapse({
-          type: "composite", kind: kind, op: tree.op, children: tree.children,
+          // A path tree stores as a device composite (see PATH_MONITOR).
+          type: "composite", kind: kind === "host" ? "host" : "asset", op: tree.op, children: tree.children,
           forDurationSec: aggregated ? (secondField ? sustainSec : 0) : holdSec,
           forPolls: holdPolls,
         });
+        // The server rides a single path condition only — a composite is
+        // evaluated per device row, and the server has none.
+        if (cat === "path" && draft.trigger && draft.trigger.type === "asset_metric") draft.trigger.includeServer = pathServer;
         // A count only means something on a BARE trigger; the server rejects
         // one inside a multi-condition trigger. tgCollapse has already folded a
         // single-leaf tree down to that bare trigger, so anything still
@@ -5300,7 +5467,7 @@ async function openAutomationWizard(existing, opts) {
 
       var condExtra = "";
       if (customModes.indexOf("condition") !== -1) {
-        var kind = tr.kind === "host" || tr.type === "host_metric" ? "host" : "asset";
+        var kind = treeKindOf(tr);
         // Seeded with the trigger INVERTED (severity bands ignored — a ladder's
         // tiers all recover at tier 0, so the base condition is the one there is
         // anything to invert). That is the same clause the automatic reset uses,
@@ -5359,8 +5526,7 @@ async function openAutomationWizard(existing, opts) {
       // for a Polaris-host automation's reset and the save would be refused.
       pinTreeSelects(panel.querySelector("#aw-reset-root"), condTree);
       wireTgTree(panel, "#aw-reset-root", function () {
-        var t = draft.trigger || {};
-        return t.kind === "host" || t.type === "host_metric" ? "host" : "asset";
+        return treeKindOf(draft.trigger || {});
       }, function () { refreshResetSentence(); refreshDimOptions(panel); });
       refreshDimOptions(panel);
     }
@@ -5419,7 +5585,7 @@ async function openAutomationWizard(existing, opts) {
         var mins = am && am.value !== "" ? Number(am.value) : 60;
         reset.afterSec = (isNaN(mins) || mins < 1 ? 60 : mins) * 60;
       } else if (mode === "condition") {
-        var kind = tr.kind === "host" || tr.type === "host_metric" ? "host" : "asset";
+        var kind = treeKindOf(tr);
         var root = panel.querySelector("#aw-reset-root > .scg-group");
         if (root) {
           // Same filter-row folding the trigger tree gets (the stored reset
@@ -5470,6 +5636,9 @@ async function openAutomationWizard(existing, opts) {
       // event/change fire on an instant and carry no reading, so there is nothing
       // for a reset condition to watch — the server rejects the same shape.
       if (tr.type === "event" || tr.type === "change") return "A custom reset condition needs a trigger with a continuous condition — an " + tr.type + " automation resets on a timer or by hand.";
+      // Resolved per device row, and the server has none — its alert could
+      // never recover. The server refuses the same shape.
+      if (tr.includeServer === true) return "A custom reset condition can't watch the " + PATH_MONITOR.serverLabel + " — reset automatically, or untick it on the Trigger step.";
       if (!r.condition || !(r.condition.children || []).length) return "Custom reset: add at least one condition.";
       var leaves = tgLeaves(r.condition);
       if (!leaves.length) return "Custom reset: add at least one condition.";
@@ -5606,7 +5775,8 @@ async function openAutomationWizard(existing, opts) {
                  'placeholder="never" value="' + escapeHtml(r && r.stopAfterHours != null ? String(r.stopAfterHours) : "") + '" style="width:5rem">' +
           '<span style="font-size:0.85rem">hours (optional)</span>' +
         '</div>' +
-        quietControlHtml(r) +
+        // Quiet time used to sit here, inside each action's reminder settings
+        // (business rule 44). It is the automation's own step now (rule 92).
         '<p class="aw-repeat-note" style="font-size:0.78rem;color:var(--color-text-tertiary);margin:4px 0 0"></p>' +
         '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0">' +
           'Reminders re-send the notifications only — API calls and scripts run once, when the alert first fires. ' +
@@ -5697,147 +5867,20 @@ async function openAutomationWizard(existing, opts) {
   }
 
   // ─── Quiet time ───────────────────────────────────────────────────────────
-  // Windows during which a DUE reminder is held rather than sent, and after
-  // which the next one states how long the alert has been active (business
-  // rule 44). The stored shape is the Maintenance scheduler's recurrence JSON,
-  // which is why the summary line comes from PolarisRecurrence rather than
-  // from a formatter of our own.
+  // The automation's own quiet periods (business rule 92) are edited on step
+  // 6 through the shared PolarisQuietTimeEditor; what this step still needs is
+  // the SERVER clock the schema payload carries, because every hour in a
+  // window is the server's wall clock.
 
   function quietMeta() {
     var m = repeatMeta();
     return (m && m.quietMeta) || { maxWindows: 8, serverClock: null, help: "" };
   }
 
-  /** A recurrence shape in words, through the shared summariser. */
-  function quietSummary(w) {
-    var r = window.PolarisRecurrence;
-    if (r && typeof r.summary === "function") return r.summary(w);
-    return "quiet period";
-  }
-
-  /**
-   * Can the shared day/hours editor express this window?
-   *
-   * It edits ONE weekly recurrence — each day off, all day, or carrying its
-   * own hour ranges — which is every quiet time anyone has asked for now that
-   * a day can hold several ranges ("nights, and all weekend" is one window,
-   * not two). The SERVER still accepts the whole recurrence vocabulary, so an
-   * API-authored rule can carry a one-time window, a monthly change freeze or
-   * active-date bounds; those are listed read-only and re-sent VERBATIM.
-   * Rewriting one into what these rows can say would silently destroy a policy
-   * whose author never opened this wizard.
-   */
-  function quietWindowEditable(w) {
-    if (!w || w.kind !== "recurring") return false;
-    if (w.freq !== "daily" && w.freq !== "weekly") return false;
-    if (w.activeFrom || w.activeUntil) return false;
-    return true;
-  }
-
-  /** The window the day/hours editor owns — the first one it can express. */
-  function quietEditableWindow(r) {
-    var q = (r && r.quiet) || null;
-    return ((q && q.windows) || []).filter(quietWindowEditable)[0] || null;
-  }
-
-  /** The rest: windows only the API can express, shown but never rewritten. */
-  function quietExtraWindows(r) {
-    var q = (r && r.quiet) || null;
-    var editable = quietEditableWindow(r);
-    return ((q && q.windows) || []).filter(function (w) { return w !== editable; });
-  }
-
-  function quietExtraRowHtml(w) {
-    return '<div class="aw-quiet-extra" style="display:flex;align-items:center;gap:8px;border:1px solid var(--color-border);' +
-        'border-radius:6px;padding:5px 8px;margin-top:6px">' +
-      '<span style="font-size:0.85rem">' + escapeHtml(quietSummary(w)) + '</span>' +
-      '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">— set through the API; edit it there</span>' +
-      '<button type="button" class="aw-quiet-extra-remove btn-icon" title="Remove this quiet period" ' +
-        'aria-label="Remove this quiet period" style="margin-left:auto;border:1px solid var(--color-border);' +
-        'border-radius:4px;background:transparent;color:var(--color-text-secondary);cursor:pointer;width:26px;height:26px">×</button>' +
-    '</div>';
-  }
-
-  function quietControlHtml(r) {
-    var q = (r && r.quiet) || null;
-    var wins = (q && q.windows) || [];
-    var editable = quietEditableWindow(r);
-    var extras = quietExtraWindows(r);
-    var clock = quietMeta().serverClock;
-    // The zone is NOT decoration: the hours are the server's wall clock, and an
-    // operator in another zone picking 22:00 from their own head is the trap
-    // maintenanceRecurrence.serverClockInfo exists for.
-    var zone = clock ? (clock.timeZone || ("UTC" + (clock.offsetMinutes >= 0 ? "+" : "-") +
-      Math.floor(Math.abs(clock.offsetMinutes) / 60))) : "";
-    return '' +
-      '<label style="display:block;margin:0.5rem 0 0;font-weight:400">' +
-        '<input type="checkbox" class="aw-quiet-on"' + (wins.length ? " checked" : "") + '> ' +
-        'Quiet time' +
-      '</label>' +
-      '<div class="aw-quiet-fields" style="margin:4px 0 0 1.4rem"' + (wins.length ? "" : ' hidden') + '>' +
-        // The SAME editor the Maintenance modal uses — one day per row, each
-        // off, all day, or carrying its own hour ranges.
-        '<div class="aw-quiet-editor">' +
-          window.PolarisRecurrence.dayEditorHtml({
-            shape: editable,
-            allOff: !editable && extras.length > 0,
-            zone: zone,
-          }) +
-        '</div>' +
-        '<div class="aw-quiet-extras">' + extras.map(quietExtraRowHtml).join("") + '</div>' +
-        '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:6px 0 0">' +
-          'Reminders due during a quiet period are <strong>held, not skipped</strong>: when it ends, the next reminder ' +
-          'goes out straight away and says how long the alert has been active. The first alert, escalations and ' +
-          'reset notifications are never quiet.' +
-        '</p>' +
-      '</div>';
-  }
-
-  /** Stash each read-only row's source shape so it is re-sent verbatim. */
-  function stashQuietWindows(block, r) {
-    var extras = quietExtraWindows(r);
-    var rows = block.querySelectorAll(".aw-quiet-extras .aw-quiet-extra");
-    for (var i = 0; i < rows.length; i++) rows[i]._quietWindow = extras[i] || null;
-  }
-
-  /**
-   * The whole quiet time: the day/hours editor's window first, then whatever
-   * read-only rows survive.
-   *
-   * A day editor with nothing ticked contributes NO window rather than an
-   * error — a quiet time whose only window came from the API is a real state
-   * (see `allOff`). validateStep5 is what refuses a ticked Quiet time with
-   * nothing behind it at all.
-   */
-  function collectQuiet(block) {
-    var on = block.querySelector(".aw-quiet-on");
-    if (!on || !on.checked) return null;
-    var out = [];
-    var host = block.querySelector(".aw-quiet-editor");
-    if (host) {
-      var got = window.PolarisRecurrence.collectDayEditor(host);
-      if (!got.error && !got.empty) {
-        out.push(Object.assign({ version: 1, kind: "recurring" }, got));
-      }
-    }
-    block.querySelectorAll(".aw-quiet-extras .aw-quiet-extra").forEach(function (row) {
-      if (row._quietWindow) out.push(row._quietWindow);
-    });
-    return out.length ? { windows: out } : null;
-  }
-
-  /** The day editor's own problem with what is typed, or "" when it is fine. */
-  function quietEditorProblem(block) {
-    var host = block && block.querySelector(".aw-quiet-editor");
-    if (!host) return "";
-    var got = window.PolarisRecurrence.collectDayEditor(host);
-    if (got.error) return "Quiet time — " + got.error;
-    // "No days" is only a problem when nothing else supplies a window.
-    if (got.empty && block.querySelectorAll(".aw-quiet-extras .aw-quiet-extra").length === 0) {
-      return "Quiet time: pick the days and hours, or untick Quiet time.";
-    }
-    return "";
-  }
+  // The per-action quiet-time controls that used to follow here (the day/hours
+  // editor inside each reminder block, business rule 44) moved to the
+  // automation's own Quiet time step — renderStep6 — through the shared
+  // PolarisQuietTimeEditor (business rule 92).
 
   /**
    * One follow-up block → `{ requireAckNote }`, the shape a band's `followUp`
@@ -5868,11 +5911,6 @@ async function openAutomationWizard(existing, opts) {
     if (afterRaw !== "" && afterRaw != null && !isNaN(Number(afterRaw))) {
       rep.stopAfterHours = Number(afterRaw);
     }
-    // Quiet time rides INSIDE repeat — it modifies the reminder clock and
-    // nothing else, so it cannot outlive the control that owns it: turning
-    // reminders off drops the windows with them.
-    var quiet = collectQuiet(block);
-    if (quiet) rep.quiet = quiet;
     return rep;
   }
 
@@ -5887,18 +5925,14 @@ async function openAutomationWizard(existing, opts) {
   }
 
   /**
-   * Wire ONE repeat block: the four inputs, the quiet-time editor and the live
-   * volume note.
-   *
-   * `cfg` is the config the block was RENDERED from — needed only to re-stash
-   * the API-authored quiet windows the editor shows read-only and re-sends
-   * verbatim. Everything else is read back out of the DOM.
+   * Wire ONE repeat block: the four inputs and the live volume note.
    *
    * Called from addActionRow rather than from the step render, because a notify
    * row can be added, have its type changed, or have its channels re-rendered
-   * at any point after the panel is built.
+   * at any point after the panel is built. (`cfg` is unused since quiet time
+   * left this block — kept so the call sites read the same.)
    */
-  function wireRepeatBlock(block, cfg) {
+  function wireRepeatBlock(block, cfg) { // eslint-disable-line no-unused-vars
     if (!block) return;
     [".aw-repeat-on", ".aw-repeat-every", ".aw-repeat-stopon", ".aw-repeat-stopafter"].forEach(function (sel) {
       var el = block.querySelector(sel);
@@ -5907,35 +5941,6 @@ async function openAutomationWizard(existing, opts) {
         syncRepeatNote(block);
       });
     });
-    // Quiet time: the shared editor owns its own rows and their handlers
-    // (window.PolarisRecurrence.wire delegates on the host, so adding and removing
-    // hour ranges needs nothing from here) and calls back on every change.
-    stashQuietWindows(block, cfg || null);
-    var quietOn = block.querySelector(".aw-quiet-on");
-    var quietFields = block.querySelector(".aw-quiet-fields");
-    var quietHost = block.querySelector(".aw-quiet-editor");
-    if (quietOn) {
-      quietOn.addEventListener("change", function () {
-        if (quietFields) quietFields.hidden = !quietOn.checked;
-        syncRepeatNote(block);
-      });
-    }
-    if (quietHost) {
-      window.PolarisRecurrence.wire(quietHost, function () { syncRepeatNote(block); });
-    }
-    var quietExtras = block.querySelector(".aw-quiet-extras");
-    if (quietExtras) {
-      quietExtras.addEventListener("click", function (ev) {
-        var btn = ev.target.closest && ev.target.closest(".aw-quiet-extra-remove");
-        if (!btn) return;
-        // Removing an API-authored window is explicit, and only removal is
-        // offered: this wizard cannot express one, so any "edit" it allowed
-        // would be a rewrite into something else.
-        var row = btn.closest(".aw-quiet-extra");
-        if (row) row.remove();
-        syncRepeatNote(block);
-      });
-    }
     syncRepeatNote(block);
   }
 
@@ -5957,7 +5962,9 @@ async function openAutomationWizard(existing, opts) {
 
     var every = Number((block.querySelector(".aw-repeat-every") || {}).value) || 0;
     var stopAfter = Number((block.querySelector(".aw-repeat-stopafter") || {}).value) || 0;
-    var quiet = collectQuiet(block);
+    // The automation's quiet time (its own step now, rule 92) — read off the
+    // draft so this note can still warn about the pairing with "give up after".
+    var quiet = draft.quietTime && draft.quietTime.windows && draft.quietTime.windows.length ? draft.quietTime : null;
     var bits = [];
     if (every >= 1) {
       var perDay = Math.round((24 * 60) / every);
@@ -5974,7 +5981,7 @@ async function openAutomationWizard(existing, opts) {
     }
     if (draftHasAnyEscalation()) {
       bits.push("This automation also escalates; a reminder and an escalation can arrive in the same minute." +
-        (quiet ? " Escalations are not held by quiet time." : ""));
+        (quiet ? " Both wait for the quiet period on the next step." : ""));
     }
     if (quiet && stopAfter) {
       // The give-up clock is wall time from the FIRE, quiet included. Worth
@@ -5984,20 +5991,6 @@ async function openAutomationWizard(existing, opts) {
       bits.push('<span style="color:var(--color-warning)">“Give up after ' + stopAfter + ' hour' +
         (stopAfter === 1 ? "" : "s") + '” counts quiet time too — if the quiet period outlasts it, no further ' +
         'reminders are sent and the held one is dropped.</span>');
-    }
-    // Every day, and no hours on any of them, is a quiet time with no gaps for
-    // a reminder to arrive in. Read through the shared resolver rather than by
-    // testing one field, since "all day" can be said three ways now (no
-    // `hours`, an empty per-day list, or the absent legacy pair).
-    if (quiet && (quiet.windows || []).some(function (w) {
-      if (w.kind !== "recurring" || (w.freq !== "daily" && (w.daysOfWeek || []).length !== 7)) return false;
-      for (var d = 0; d < 7; d++) {
-        if (window.PolarisRecurrence.dayRanges(w, d) !== null) return false;
-      }
-      return true;
-    })) {
-      bits.push('<span style="color:var(--color-warning)">A quiet period covering every day, all day holds every ' +
-        'reminder indefinitely — untick “Repeat this notification” instead if that is what you want.</span>');
     }
     note.innerHTML = bits.join(" ");
   }
@@ -6229,6 +6222,22 @@ async function openAutomationWizard(existing, opts) {
     });
     // Reset list: hydrate, then keep it following the trigger actions.
     var resetHost = panel.querySelector("#aw-reset-actions");
+    // A STORED automation comes back with no mirror marks (they are stripped
+    // at save), so its reset rows would all read as operator-authored and the
+    // first change on the trigger list would mirror every Notify in AGAIN — a
+    // duplicate per edit, saved and compounded on the next one. So, once per
+    // draft: re-attach the rows that still equal their trigger Notify, and opt
+    // every other trigger Notify out of mirroring (its reset counterpart was
+    // edited, removed, or never wanted — the saved list is the answer).
+    if (draft._resetMirrorOptOut === undefined) {
+      if (draft.resetActions === undefined) {
+        draft._resetMirrorOptOut = [];
+      } else {
+        var reattached = reattachResetMirrors(draft.actions, draft.resetActions || []);
+        draft.resetActions = draft.resetActions ? reattached.rows : draft.resetActions;
+        draft._resetMirrorOptOut = reattached.optOut;
+      }
+    }
     var resetSeed = draft.resetActions === undefined
       // Brand-new automation: the audit Event is present by default on BOTH
       // halves, so a recovery is recorded the way the firing is (the draft's
@@ -6458,6 +6467,11 @@ async function openAutomationWizard(existing, opts) {
   }
 
   function adoptLegacyResolvedActions() {
+    // The engine only ever ran the resolved policy on a BANDED rule (fireResolved
+    // sits behind hasBands). Without bands there was no recovery announcement
+    // to carry over, and adopting one here put the trigger's Notify actions into
+    // the reset list of every automation saved with none, on every open.
+    if (!(draft.severityBands || []).length) return;
     var bn = draft.bandNotify || {};
     if (bn.onResolved === false) return;
     if ((draft.resetActions || []).length) return;
@@ -6762,7 +6776,7 @@ async function openAutomationWizard(existing, opts) {
   function syncBandsToBase(panel) {
     var host = panel.querySelector("#aw-bands");
     if (!host || !host.querySelector(".aw-band")) return;
-    var kind = panel.querySelector("#aw-trigger-type").value === "host" ? "host" : "asset";
+    var kind = treeKindForCategory(panel.querySelector("#aw-trigger-type").value);
     // Collect + COMPILE the base group so filter rows fold into the condition
     // before tiers mirror it — a tier's locked row then shows the identifier /
     // name filters the base carries, and adding a filter row doesn't read as a
@@ -6797,7 +6811,7 @@ async function openAutomationWizard(existing, opts) {
     band = band || { threshold: "", severity: nextTierSeverity(host), actions: [] };
     var sev0 = band.severity || nextTierSeverity(host);
     var tr = draft.trigger || {};
-    var kind = tr.type === "host_metric" ? "host" : "asset";
+    var kind = treeKindOf(tr);
     // Each tier is a full condition GROUP on the SAME metric + sampling as the
     // base condition — only severity / operator / value vary (shared sampling).
     var tierLeaf = {
@@ -6993,8 +7007,79 @@ async function openAutomationWizard(existing, opts) {
     Object.keys(next).forEach(function (k) { draft[k] = next[k]; });
   }
 
+  // ── Step 6: Quiet time (business rule 92) ──────────────────────────────
+  // The automation's OWN quiet periods: while one is open, what this
+  // automation sends is held (or only its chasing is), and a summary email
+  // goes out when it ends. Rendered through the shared editor, which the
+  // global quiet-time wizard renders too, so the two never describe the same
+  // policy two ways. An automation with a quiet time here is exempt from the
+  // global schedules in Automations → Settings.
+  function quietEditorMeta() {
+    return {
+      severities: s.severities,
+      channels: _ruleChannels || [],
+      serverClock: quietMeta().serverClock,
+      showSeverities: true,
+    };
+  }
   function renderStep6() {
     var panel = document.getElementById("aw-step-6");
+    var QE = window.PolarisQuietTimeEditor;
+    var cfg = draft.quietTime && draft.quietTime.windows && draft.quietTime.windows.length ? draft.quietTime : null;
+    // Three settings, one radio group: Off (the global quiet times apply),
+    // Ignore (no quiet time at all — this automation always sends) and
+    // Override (its own windows, the global ones stand aside). Stored as null,
+    // `{ignoreGlobal: true}` and a full policy respectively.
+    var mode = cfg ? "own" : draft.quietTime && draft.quietTime.ignoreGlobal ? "ignore" : "off";
+    var radio = function (val, label, help) {
+      return '<label class="aw-quiet-mode" style="display:flex;gap:0.5rem;align-items:flex-start;margin:0 0 0.5rem;cursor:pointer">' +
+        '<input type="radio" name="aw-quiet-mode" id="aw-quiet-' + val + '" value="' + val + '"' + (mode === val ? " checked" : "") + ' style="margin-top:0.2rem">' +
+        '<span><span style="font-weight:600">' + label + '</span><br><span style="font-size:0.8rem;color:var(--color-text-tertiary)">' + help + '</span></span></label>';
+    };
+    panel.innerHTML = '<h3 style="margin:0 0 0.25rem">Quiet time?</h3>' +
+      '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">' +
+        'Hours during which this automation stays quiet. The alert is still raised and shows on the Active Alerts page; ' +
+        'what changes is who hears about it and when.' +
+      '</p>' +
+      '<div class="form-group" role="radiogroup" aria-label="Quiet time">' +
+        radio("off", "Off", "No quiet time of its own. The global quiet times under Automations → Settings apply to this automation.") +
+        radio("ignore", "Ignore Global Quiet Time", "No quiet time at all. This automation sends whatever the hour, even inside a global quiet time — what a critical automation usually wants.") +
+        radio("own", "Override Global Quiet Time", "Its own quiet time, below. The global quiet times do not apply to this automation.") +
+      '</div>' +
+      '<div id="aw-quiet-fields"' + (mode === "own" ? "" : " hidden") + '>' +
+        (QE ? QE.html("awq", cfg, quietEditorMeta()) : '<p class="hint">The quiet-time editor did not load on this page.</p>') +
+      '</div>';
+    var fields = panel.querySelector("#aw-quiet-fields");
+    panel.querySelectorAll('input[name="aw-quiet-mode"]').forEach(function (r) {
+      r.addEventListener("change", function () {
+        fields.hidden = awQuietMode() !== "own";
+        syncRepeatNote();
+      });
+    });
+    if (QE) QE.wire(fields.firstElementChild, cfg, function () { syncRepeatNote(); });
+  }
+  /** "off" | "ignore" | "own" — what step 6's radio group says right now. */
+  function awQuietMode() {
+    var picked = document.querySelector('input[name="aw-quiet-mode"]:checked');
+    var v = picked ? picked.value : "off";
+    return v === "own" || v === "ignore" ? v : "off";
+  }
+  function collectStep6() {
+    var host = document.querySelector("#aw-quiet-fields .qte");
+    draft._quietProblem = null;
+    var mode = document.querySelector('input[name="aw-quiet-mode"]') ? awQuietMode() : "off";
+    if (mode === "ignore") { draft.quietTime = { ignoreGlobal: true }; return; }
+    if (mode !== "own" || !host || !window.PolarisQuietTimeEditor) { draft.quietTime = null; return; }
+    var got = window.PolarisQuietTimeEditor.collect(host);
+    if (got.error) { draft._quietProblem = got.error; return; }
+    draft.quietTime = got.config;
+  }
+  function validateStep6() {
+    return draft._quietProblem || null;
+  }
+
+  function renderStep7() {
+    var panel = document.getElementById("aw-step-7");
     panel.innerHTML = '<h3 style="margin:0 0 0.25rem">Review &amp; save</h3>' +
       '<div class="form-group" style="border:1px solid var(--color-border);border-radius:6px;padding:0.75rem">' +
         '<div style="display:flex;align-items:center;gap:0.5rem;margin:0 0 6px;flex-wrap:wrap">' +
@@ -8676,7 +8761,12 @@ async function openAutomationWizard(existing, opts) {
         row.addEventListener("input", function () { detachMirror(row, panel); }, true);
         row.addEventListener("change", function () { detachMirror(row, panel); }, true);
         var rm = row.querySelector(".aw-action-remove");
-        if (rm) rm.addEventListener("click", function () { setTimeout(function () { refreshMirrorNote(panel); }, 0); });
+        if (rm) rm.addEventListener("click", function () {
+          // Removed is as much the operator's answer as edited: the next
+          // trigger change must not put it back.
+          optOutOfResetMirror(row._mirrorOf);
+          setTimeout(function () { refreshMirrorNote(panel); }, 0);
+        });
       }
     });
     refreshMirrorNote(panel);
@@ -8684,8 +8774,59 @@ async function openAutomationWizard(existing, opts) {
 
   function detachMirror(row, panel) {
     if (!row._mirrorOf) return;
+    // The edited row now speaks for that destination; without the opt-out the
+    // next trigger change would mirror a fresh copy in beside it.
+    optOutOfResetMirror(row._mirrorOf);
     row._mirrorOf = null;
     refreshMirrorNote(panel);
+  }
+
+  /** Trigger Notify destinations (channel-list keys) whose reset counterpart
+   *  the operator owns — edited, removed, or saved differently. The mirror
+   *  never adds a row for one of these. Draft-only; never posted. */
+  function optOutOfResetMirror(key) {
+    if (!key) return;
+    if (!Array.isArray(draft._resetMirrorOptOut)) draft._resetMirrorOptOut = [];
+    if (draft._resetMirrorOptOut.indexOf(key) === -1) draft._resetMirrorOptOut.push(key);
+  }
+
+  /** Key-order-independent JSON of an action, minus what mirroring drops. */
+  function mirrorComparable(a) {
+    var sortKeys = function (v) {
+      if (Array.isArray(v)) return v.map(sortKeys);
+      if (v && typeof v === "object") {
+        var o = {};
+        Object.keys(v).sort().forEach(function (k) { o[k] = sortKeys(v[k]); });
+        return o;
+      }
+      return v;
+    };
+    var copy = JSON.parse(JSON.stringify(a || {}));
+    delete copy.escalation;
+    delete copy._mirrorOf;
+    return JSON.stringify(sortKeys(copy));
+  }
+
+  /**
+   * A stored automation's reset list, with the rows that still EQUAL a mirror
+   * of a trigger Notify marked as following it again, and the keys of every
+   * trigger Notify that has no such row returned as opt-outs.
+   */
+  function reattachResetMirrors(triggerActions, resetActions) {
+    var rows = (resetActions || []).map(function (a) { return JSON.parse(JSON.stringify(a)); });
+    var optOut = [];
+    (triggerActions || []).forEach(function (a) {
+      if (!a || a.type !== "notify" || !actionChannelIds(a).length) return;
+      var key = actionChannelIds(a).join(",");
+      var want = mirrorComparable(a);
+      // A row already marked for this key (the legacy band-resolved adoption
+      // marks its rows before this runs) is following as it is.
+      if (rows.some(function (r) { return r._mirrorOf === key; })) return;
+      var match = rows.find(function (r) { return !r._mirrorOf && mirrorComparable(r) === want; });
+      if (match) match._mirrorOf = key;
+      else if (optOut.indexOf(key) === -1) optOut.push(key);
+    });
+    return { rows: rows, optOut: optOut };
   }
 
   /** Re-mirror after the TRIGGER action list changes (add / remove / channel). */
@@ -8723,7 +8864,11 @@ async function openAutomationWizard(existing, opts) {
   }
 
   function mirroredResetActions(triggerActions, existing) {
-    var notifies = (triggerActions || []).filter(function (a) { return a.type === "notify" && actionChannelIds(a).length; });
+    var optOut = Array.isArray(draft._resetMirrorOptOut) ? draft._resetMirrorOptOut : [];
+    var notifies = (triggerActions || []).filter(function (a) {
+      return a.type === "notify" && actionChannelIds(a).length &&
+        optOut.indexOf(actionChannelIds(a).join(",")) === -1;
+    });
     var kept = (existing || []).filter(function (a) { return !a._mirrorOf; });
     var stillMirrored = notifies.map(function (a) {
       var clone = JSON.parse(JSON.stringify(a));
@@ -8746,7 +8891,7 @@ async function openAutomationWizard(existing, opts) {
     var bandsHost = panel.querySelector("#aw-bands");
     if (!bandsHost) return; // section not rendered
     var baseOp = (draft.trigger && draft.trigger.operator) || ">=";
-    var kind = (draft.trigger && draft.trigger.type === "host_metric") ? "host" : "asset";
+    var kind = treeKindOf(draft.trigger);
     var bands = [];
     bandsHost.querySelectorAll(":scope > .aw-band").forEach(function (row) {
       // The tier's operator + threshold come from its (locked-metric) condition
@@ -8896,32 +9041,6 @@ async function openAutomationWizard(existing, opts) {
     // "no quiet time" — the operator would have to notice the reminders still
     // arriving overnight to find out. `quietEditorProblem` names the day, and
     // the overlapping pair of hours, in the same words the server would.
-    var panel5 = document.getElementById("aw-step-5");
-    // Each repeating notify action states its own quiet time, so each gets
-    // checked — but only the ones that SAVE. With the per-severity toggle off
-    // the band sections are hidden and payloadBands drops their actions
-    // wholesale, so a half-typed day inside one must not block the save.
-    var blocks = repeatBlocks(panel5).filter(function (b) {
-      return bandActionsPerSeverityOn() || !b.closest(".aw-band-actions");
-    });
-    for (var q = 0; q < blocks.length; q++) {
-      var repeatOn = blocks[q].querySelector(".aw-repeat-on");
-      var quietOn = blocks[q].querySelector(".aw-quiet-on");
-      // Only while reminders are ON: with the repeat control unticked the whole
-      // block is hidden and its windows are dropped on purpose, so a leftover
-      // tick in the DOM must not block the save.
-      if (repeatOn && repeatOn.checked && quietOn && quietOn.checked) {
-        var quietProblem = quietEditorProblem(blocks[q]);
-        if (quietProblem) {
-          // Name the action, or the operator has one message and several rows
-          // to look through for the day it is about.
-          var owner = blocks[q].closest(".aw-action");
-          var summary = owner && owner.querySelector(".aw-action-summary");
-          var label = summary && summary.textContent ? summary.textContent.trim() : "";
-          return (label ? label + " — " : "") + quietProblem;
-        }
-      }
-    }
     return null;
   }
   function condText(g) {
@@ -9024,21 +9143,23 @@ async function openAutomationWizard(existing, opts) {
       return x.action && x.action.type === "notify" && x.action.repeat;
     }).map(function (x) {
       var r = x.action.repeat;
-      var quietWins = (r.quiet && r.quiet.windows) || [];
       return sevPrefix(x.label) + escapeHtml(actionSummary(x.action)) +
         '<br><span style="margin-left:1rem">every ' + escapeHtml(String(r.everyMin)) + ' min until ' +
         (r.stopOn === "clear" ? "cleared" : "acknowledged") +
         (r.stopAfterHours ? ", giving up after " + escapeHtml(String(r.stopAfterHours)) + "h" : " — no limit") +
-        '</span>' +
-        (quietWins.length
-          ? '<br><span style="margin-left:1rem;color:var(--color-text-tertiary)">held during ' +
-              quietWins.map(function (w) { return escapeHtml(quietSummary(w)); }).join("; ") +
-              ' (server time); the next reminder after that says how long the alert has been active</span>'
-          : "");
+        '</span>';
     });
-    var repeatRow = repeatLines.length
+    // The automation's quiet time (business rule 92) — one row, through the
+    // shared editor's own summariser so this page and the Settings list agree.
+    var QE = window.PolarisQuietTimeEditor;
+    var quietRow = draft.quietTime && draft.quietTime.windows && draft.quietTime.windows.length
+      ? '<dt>Quiet time</dt><dd>' + escapeHtml(QE ? QE.summary(draft.quietTime) : "configured") + ' <span style="color:var(--color-text-tertiary)">(server time; global quiet times do not apply to this automation)</span></dd>'
+      : draft.quietTime && draft.quietTime.ignoreGlobal
+        ? '<dt>Quiet time</dt><dd>None <span style="color:var(--color-text-tertiary)">(ignores the global quiet times — this automation always sends)</span></dd>'
+        : "";
+    var repeatRow = (repeatLines.length
       ? '<dt>Reminders</dt><dd>' + repeatLines.join("<br>") + '</dd>'
-      : "";
+      : "") + quietRow;
     var resetRow = (draft.resetActions && draft.resetActions.length)
       ? '<dt>When it resets</dt><dd>' + draft.resetActions.map(function (a) { return escapeHtml(actionSummary(a)); }).join("<br>") + '</dd>'
       : '<dt>When it resets</dt><dd><span style="color:var(--color-text-tertiary)">nothing — the alert just clears</span></dd>';
@@ -9099,8 +9220,8 @@ async function openAutomationWizard(existing, opts) {
   }
 
   // ── Navigation ─────────────────────────────────────────────────────────
-  var COLLECT = { 1: collectStep1, 2: collectStep2, 3: collectStep3, 4: collectStep4, 5: collectStep5, 6: function () {} };
-  var VALIDATE = { 1: validateStep1, 2: validateStep2, 3: validateStep3, 4: validateStep4, 5: validateStep5, 6: function () { return null; } };
+  var COLLECT = { 1: collectStep1, 2: collectStep2, 3: collectStep3, 4: collectStep4, 5: collectStep5, 6: collectStep6, 7: function () {} };
+  var VALIDATE = { 1: validateStep1, 2: validateStep2, 3: validateStep3, 4: validateStep4, 5: validateStep5, 6: validateStep6, 7: function () { return null; } };
 
   function updateStepper() {
     document.querySelectorAll("#aw-stepper .stepper-step").forEach(function (el) {
@@ -9133,10 +9254,11 @@ async function openAutomationWizard(existing, opts) {
     document.getElementById("aw-step-" + step).classList.remove("visible");
     step = n;
     visited = Math.max(visited, n);
-    // Steps 4–6 re-render on entry (they depend on earlier steps' state).
+    // Steps 4–7 re-render on entry (they depend on earlier steps' state).
     if (n === 4) renderStep4();
     if (n === 5) renderStep5();
     if (n === 6) renderStep6();
+    if (n === 7) renderStep7();
     document.getElementById("aw-step-" + n).classList.add("visible");
     updateStepper();
     syncFooter();
@@ -9211,6 +9333,9 @@ async function openAutomationWizard(existing, opts) {
       // server schema is strict.
       resetActions: draft.resetActions && draft.resetActions.length ? stripMirrorMarks(draft.resetActions) : null,
       repeat: draft.repeat || null,
+      // The automation's own quiet time (business rule 92); null = the global
+      // schedules apply.
+      quietTime: draft.quietTime || null,
     };
   }
 
@@ -9298,6 +9423,7 @@ function _awDraftFromRule(r) {
     // seeds its reset list from the trigger, a stored rule shows what it saved.
     resetActions: Array.isArray(r.resetActions) && r.resetActions.length ? JSON.parse(JSON.stringify(r.resetActions)) : null,
     repeat: r.repeat ? JSON.parse(JSON.stringify(r.repeat)) : null,
+    quietTime: r.quietTime && (r.quietTime.windows || r.quietTime.ignoreGlobal) ? JSON.parse(JSON.stringify(r.quietTime)) : null,
     // Per-severity actions are opt-in on the Actions step; a stored rule opts in
     // iff any band actually carries its own actions, escalation or follow-up
     // pair. `followUp` counts on its own: a band may state only its own reminder

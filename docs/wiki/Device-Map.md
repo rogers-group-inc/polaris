@@ -166,6 +166,16 @@ Two overrides worth knowing: a **mesh-leaf AP** depends on its root AP rather
 than its controller, and a **FortiLink switch bridged behind a FortiAP** depends
 on the AP.
 
+### Endpoints under a switch
+
+Each switch's info panel lists the endpoints learned on its ports (a count and
+the 25 most recently seen), and the search box finds an endpoint and pulses
+its switch. A device is placed under the switch the dependency tree resolved
+for it — so when several sites name a switch "IDF-1", each site's panel shows
+only its own devices ([rule 91](Business-Rules#rule-91)). A device whose
+switch name is shared and that nothing could settle is left off the panel
+rather than shown under the wrong site.
+
 ---
 
 ## The Site Map widget

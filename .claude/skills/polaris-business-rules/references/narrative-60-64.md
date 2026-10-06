@@ -555,7 +555,10 @@ real alert leads with — the very thing they are testing.
 
 - A test belongs to no device, so it can never appear on a real asset's alert list — the one
   place a stray test alert used to be visible for the hour before
-  `clearExpiredTestAlerts` sweeps it.
+  `clearExpiredTestAlerts` sweeps it. It is still an uncleared row, so for that hour it IS
+  listed by the Active Alerts widget (`getRecentAlerts` reads every uncleared row, asset or
+  not); the feed carries `testRun` and the widget pills the row **TEST** beside its severity,
+  because a "critical" pill over a `[TEST]`-prefixed message read as an outage on a wallboard.
 - `{asset.link}` renders empty, so `pruneDeadLinks` drops the "Open device" button. A button
   that opens nothing is worse than no button; the acknowledge page falls back to
   `/automations.html` the same way.

@@ -16,7 +16,9 @@ import { describe, it, expect } from "vitest";
 
 import {
   buildInfraParentIndex,
+  controllerGateIdOf,
   resolveInfraParentAsset,
+  resolveInfraParentAssetDetailed,
   readControllerStamp,
   readParentSwitchStamp,
   readFirewallDeviceName,
@@ -238,5 +240,98 @@ describe("parentAssetWhereOr", () => {
   it("returns empty for a stamp that names nothing", () => {
     expect(parentAssetWhereOr({})).toEqual([]);
     expect(parentAssetWhereOr({ serial: null, name: null })).toEqual([]);
+  });
+});
+
+// Business rule 91 — a hostname is not an identity. A FortiLink fleet that
+// renames its switch-ids per site has an "IDF-1" behind every gate, and the
+// name-keyed stamps carry nothing else. The resolver used to hand back the
+// first writer; now it picks by the gate the child is known to sit under, and
+// refuses to guess when nothing settles it.
+describe("resolveInfraParentAsset — shared hostnames (rule 91)", () => {
+  const gateA = fw("fgA", { hostname: "SITE-A-FW", serial: "FG100F000A", deviceName: "SITE-A" });
+  const gateB = fw("fgB", { hostname: "SITE-B-FW", serial: "FG100F000B", deviceName: "SITE-B" });
+  function sw(id: string, serial: string, controllerSerial: string): InfraParentCandidate {
+    return {
+      id, hostname: "IDF-1", serialNumber: serial, assetType: "switch",
+      fortinetTopology: { role: "fortiswitch", controllerSerial },
+    };
+  }
+  const swA = sw("swA", "S248EPTF000A", "FG100F000A");
+  const swB = sw("swB", "S248EPTF000B", "FG100F000B");
+  const index = () => buildInfraParentIndex([gateA, gateB, swA, swB]);
+
+  it("keeps every same-named candidate in the index, first writer still first", () => {
+    const idx = index();
+    expect(idx.byHostnameAll.get("idf-1")?.map(c => c.id)).toEqual(["swA", "swB"]);
+    expect(idx.byHostname.get("idf-1")?.id).toBe("swA");
+  });
+
+  it("returns null, not the first writer, when a shared name has no scope", () => {
+    expect(resolveInfraParentAsset(index(), { name: "IDF-1" }, "switch")).toBeNull();
+    const detailed = resolveInfraParentAssetDetailed(index(), { name: "IDF-1" }, "switch");
+    expect(detailed.hit).toBeNull();
+    expect(detailed.ambiguous).toBe(true);
+    expect(detailed.candidates.map(c => c.id)).toEqual(["swA", "swB"]);
+  });
+
+  it("picks the candidate under the scoped gate — either site", () => {
+    expect(resolveInfraParentAsset(index(), { name: "IDF-1" }, "switch", { gateIds: ["fgB"] })?.id).toBe("swB");
+    expect(resolveInfraParentAsset(index(), { name: "idf-1" }, "switch", { gateIds: ["fgA"] })?.id).toBe("swA");
+  });
+
+  it("walks the gate list in order and takes the first gate that singles one out", () => {
+    // A laptop sighted at site B last week and at site A today lists A first.
+    expect(resolveInfraParentAsset(index(), { name: "IDF-1" }, "switch", { gateIds: ["fg-unknown", "fgA", "fgB"] })?.id).toBe("swA");
+  });
+
+  it("a scope naming neither gate leaves the name ambiguous", () => {
+    const r = resolveInfraParentAssetDetailed(index(), { name: "IDF-1" }, "switch", { gateIds: ["fg-elsewhere"] });
+    expect(r.hit).toBeNull();
+    expect(r.ambiguous).toBe(true);
+  });
+
+  it("direct evidence (preferIds) outranks the gate scope", () => {
+    // The MAC table of swB holds the device even though the freshest sighting
+    // names gate A — the observation wins.
+    expect(resolveInfraParentAsset(index(), { name: "IDF-1" }, "switch", { preferIds: ["swB"], gateIds: ["fgA"] })?.id).toBe("swB");
+  });
+
+  it("preferIds naming both candidates picks nothing on its own, then the gate decides", () => {
+    expect(resolveInfraParentAsset(index(), { name: "IDF-1" }, "switch", { preferIds: ["swA", "swB"], gateIds: ["fgB"] })?.id).toBe("swB");
+  });
+
+  it("resolves a shared name by the gate's FMG device-name stamp when the switch has no controllerSerial", () => {
+    // Pre-2026-08 rows: the switch stamps only `controllerFortigate`.
+    const swOld: InfraParentCandidate = {
+      id: "swOld", hostname: "IDF-1", serialNumber: "S248EPTF00LD", assetType: "switch",
+      fortinetTopology: { controllerFortigate: "SITE-B" },
+    };
+    const idx = buildInfraParentIndex([gateA, gateB, swA, swOld]);
+    expect(resolveInfraParentAsset(idx, { name: "IDF-1" }, "switch", { gateIds: ["fgB"] })?.id).toBe("swOld");
+    expect(controllerGateIdOf(idx, swOld)).toBe("fgB");
+    expect(controllerGateIdOf(idx, gateA)).toBeNull();
+  });
+
+  it("a workstation ghost carrying the switch's name neither shadows it nor makes it ambiguous", () => {
+    const ghost: InfraParentCandidate = { id: "ghost", hostname: "IDF-1", serialNumber: null, assetType: "workstation" };
+    const idx = buildInfraParentIndex([gateA, ghost, swA]);
+    expect(resolveInfraParentAsset(idx, { name: "IDF-1" }, "switch")?.id).toBe("swA");
+  });
+
+  it("the name-as-serial step still settles a shared name", () => {
+    // Two switches named after one serial (an operator label collision): the
+    // stamp that IS that serial is definitive.
+    const idx = buildInfraParentIndex([
+      { id: "x", hostname: "S248EPTF0001", serialNumber: "S248EPTF0001", assetType: "switch" },
+      { id: "y", hostname: "S248EPTF0001", serialNumber: "S248EPTF0002", assetType: "switch" },
+    ]);
+    expect(resolveInfraParentAsset(idx, { name: "S248EPTF0001" }, "switch")?.id).toBe("x");
+  });
+
+  it("two same-named candidates under ONE gate are refused, not guessed", () => {
+    const twin = sw("swA2", "S248EPTF00A2", "FG100F000A");
+    const idx = buildInfraParentIndex([gateA, swA, twin]);
+    expect(resolveInfraParentAsset(idx, { name: "IDF-1" }, "switch", { gateIds: ["fgA"] })).toBeNull();
   });
 });

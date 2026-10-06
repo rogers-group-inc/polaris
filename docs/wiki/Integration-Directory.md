@@ -19,6 +19,7 @@ Intune is enabled.
 | Client ID | — | |
 | Client secret | — | secret |
 | **Enable Intune** | off | adds the managed-device read |
+| **Read installed software (Intune detected apps)** | off | needs Intune; see [Installed software](#installed-software) |
 | `deviceInclude` / `deviceExclude` | — | wildcards against the device name |
 | **Include disabled** | **on** | a disabled device syncs as *decommissioned*; off skips it entirely |
 | **Decommission devices that leave Entra ID** | **off** | see [Decommissioning what leaves the directory](#decommissioning-what-leaves-the-directory) |
@@ -37,6 +38,56 @@ read, and admin consent. Directory search and sync need **additional**
 directory-read permissions that device discovery has never required — which is
 exactly why they are off by default: without the grant, every keystroke would
 403.
+
+### Wi-Fi and Ethernet MACs
+
+Intune reports two MACs per managed device, and both land in the asset's
+**All MACs** list as *Intune — Wi-Fi* and *Intune — Ethernet*. The Ethernet MAC
+becomes the asset's primary MAC, because Wi-Fi MACs can be randomized per network.
+
+Microsoft Graph leaves the Ethernet MAC out of its device list, so Polaris reads
+it for each device separately, 20 devices per request. After the first run it
+re-reads only the devices that have synced with Intune since the last run.
+That makes the first sync after enabling Intune noticeably longer on a large
+fleet. The permission the device read already uses covers these reads too. A
+failed read keeps the MAC Polaris already has, and the device is retried on
+the next run.
+
+**A FortiGate duplicate is merged automatically.** A computer that plugs into
+the wired network behind a FortiGate before Polaris knows its Ethernet MAC gets
+a second asset: FortiGate discovery records the unmatched MAC as a new
+endpoint. On the next Entra sync, once the Ethernet MAC is known, that endpoint
+asset is merged into the Intune asset. Its MACs, IPs and FortiGate sighting
+history move across, and an *asset.duplicate_merged* Event records the merge.
+Only a pure FortiGate endpoint record is ever merged this way. An asset with an
+authoritative source of its own (AD, Entra, an agent, a managed Fortinet
+device) is never touched. If the duplicate was monitored, the Intune asset is
+switched to monitored. The duplicate's chart history is not carried over.
+
+### Installed software
+
+With **Read installed software (Intune detected apps)** ticked (under Intune
+sync on the General tab), each run reads every managed device's **detected
+apps** — the programs and versions Intune has inventoried on it — and shows
+them on the asset's **Software** tab ([Assets](Assets)).
+
+- **No extra permission.** `DeviceManagementManagedDevices.Read.All`, which the
+  device read already needs, covers it.
+- **Intune lists unmanaged apps only on corporate-owned devices.** On a device
+  enrolled as personal it reports only the apps Intune itself deployed. This
+  is Microsoft's privacy rule; nothing in Polaris can widen it. Set the
+  device's ownership to *Corporate* in Intune if you need the full list.
+- **A device is re-read only after it checks in with Intune again** (and at
+  least once a week regardless), because its detected apps cannot have changed
+  in between. Like the Ethernet MAC read, the first run after turning this on
+  takes longer on a large fleet.
+- **A device with a Polaris Agent is skipped** while the agent's own list is
+  less than two days old — the agent reads the host directly and more often.
+- **Discover Now** on one device always re-reads its apps.
+- A device whose read failed keeps the list it had, and is retried next run.
+  The run's log shows the failure under *discover.intune.software*.
+- Turning the option off removes the Intune lists from this integration's
+  devices on the next run.
 
 ---
 

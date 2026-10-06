@@ -194,7 +194,7 @@ describe("getDownNodes", () => {
     notifFindMany.mockReset();
     notifFindMany.mockResolvedValueOnce([
       { id: "n-a", assetId: "a", severity: "critical", acknowledged: false, rule: { trigger: { type: "asset_state", field: "monitorStatus" } } },
-      { id: "n-b", assetId: "b", severity: "warning", acknowledged: true, rule: { trigger: { type: "asset_state", field: "monitorStatus" } } },
+      { id: "n-b", assetId: "b", severity: "warning", acknowledged: true, acknowledgedBy: "jsmith", rule: { trigger: { type: "asset_state", field: "monitorStatus" } } },
       // c is down with no automation covering it (business rule 36's `passive`)
       // — nothing to acknowledge, so the row must carry no alert id at all.
     ]);
@@ -204,6 +204,9 @@ describe("getDownNodes", () => {
     expect(byId.a.alertAcknowledged).toBe(false);
     expect(byId.b.alertId).toBe("n-b");
     expect(byId.b.alertAcknowledged).toBe(true);
+    // The owner the row's "ack <name>" pill prints; null on an unowned alert.
+    expect(byId.b.alertAcknowledgedBy).toBe("jsmith");
+    expect(byId.a.alertAcknowledgedBy).toBeNull();
     expect(byId.c.alertId).toBeUndefined();
     expect(byId.c.alertAcknowledged).toBeUndefined();
   });
@@ -491,11 +494,30 @@ describe("getRecentAlerts", () => {
       groupName: null, dimensionCount: null,
       // Business rule 78 — a plain alert reads neither.
       dependencyDown: false, dependencyUpstream: null,
+      // A real fire, not a wizard delivery test (business rule 65).
+      testRun: false,
+      // Not held for quiet time (business rule 92).
+      quietHeld: false,
     });
     // It reads ALERTS, never audit Events — the whole point of the feed.
     expect(eventFindMany).not.toHaveBeenCalled();
     expect(notifFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ cleared: false }),
+    }));
+  });
+
+  it("marks a wizard delivery test, so the widget can pill it TEST", async () => {
+    // Rule 65: the test is a real uncleared row about the sample device that
+    // only the one-hour TTL sweep retires — it sits in the feed meanwhile.
+    const t = new Date("2026-06-20T00:00:00Z");
+    notifFindMany.mockReset();
+    notifFindMany.mockResolvedValueOnce([
+      { id: "n1", ruleId: null, assetId: null, assetHostname: "EXAMPLE-SWITCH-01", message: "[TEST] x", severity: "critical", triggeredAt: t, acknowledged: false, acknowledgedBy: null, rule: null, testRun: true },
+    ]);
+    const r = await noc.getRecentAlerts();
+    expect(r.alerts[0].testRun).toBe(true);
+    expect(notifFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({ testRun: true }),
     }));
   });
 
@@ -1076,9 +1098,9 @@ describe("alert-severity-aware ordering", () => {
     const m = await noc.activeAlertSeverityByAsset(["a", "b", "c"]);
     // The winner names itself and says whether someone has it, so a widget row
     // can offer Acknowledge for the same alert its pill is showing.
-    expect(m.get("a")).toEqual({ severity: "critical", rank: 5, id: "n2", acknowledged: false });
-    expect(m.get("b")).toEqual({ severity: "info", rank: 2, id: "n3", acknowledged: false });
-    expect(m.get("c")).toEqual({ severity: "error", rank: 5, id: "n4", acknowledged: true });
+    expect(m.get("a")).toEqual({ severity: "critical", rank: 5, id: "n2", acknowledged: false, acknowledgedBy: null });
+    expect(m.get("b")).toEqual({ severity: "info", rank: 2, id: "n3", acknowledged: false, acknowledgedBy: null });
+    expect(m.get("c")).toEqual({ severity: "error", rank: 5, id: "n4", acknowledged: true, acknowledgedBy: null });
     expect(m.has("")).toBe(false);
   });
 
@@ -1183,7 +1205,7 @@ describe("per-widget alert relevance (pill only when a matching automation fires
       { id: "n-c", assetId: "c", severity: "warning", acknowledged: false, rule: null }, // rule deleted → matches nothing specific
     ]);
     const m = await noc.activeAlertSeverityByAsset(["a", "b", "c"], { kind: "metric", metrics: ["cpuPct"] });
-    expect(m.get("a")).toEqual({ severity: "critical", rank: 5, id: "n-a", acknowledged: false });
+    expect(m.get("a")).toEqual({ severity: "critical", rank: 5, id: "n-a", acknowledged: false, acknowledgedBy: null });
     expect(m.has("b")).toBe(false);
     expect(m.has("c")).toBe(false);
   });
@@ -1197,6 +1219,38 @@ describe("per-widget alert relevance (pill only when a matching automation fires
     ]);
     const r = await noc.getRecentReboots();
     expect(r[0].alertSeverity).toBe("notice");
+  });
+});
+
+describe("downAlertAcknowledgedByAsset (Status Map / Device Map fade)", () => {
+  const down = { trigger: { type: "asset_state", field: "monitorStatus", operator: "eq", value: "down" } };
+
+  it("skips the query entirely for an empty id set", async () => {
+    const m = await noc.downAlertAcknowledgedByAsset([]);
+    expect(m.size).toBe(0);
+    expect(notifFindMany).not.toHaveBeenCalled();
+  });
+
+  it("answers acknowledged per asset from its active monitorStatus alert only", async () => {
+    notifFindMany.mockResolvedValueOnce([
+      { id: "n-a", assetId: "a", severity: "critical", acknowledged: true, rule: down },
+      { id: "n-b", assetId: "b", severity: "critical", acknowledged: false, rule: down },
+      // An acknowledged CPU alert says nothing about whether the outage is owned.
+      { id: "n-c", assetId: "c", severity: "critical", acknowledged: true, rule: { trigger: { type: "asset_metric", metric: "cpuPct", operator: ">", threshold: 90 } } },
+    ]);
+    const m = await noc.downAlertAcknowledgedByAsset(["a", "b", "c"]);
+    expect(m.get("a")).toBe(true);
+    expect(m.get("b")).toBe(false);
+    expect(m.has("c")).toBe(false);
+  });
+
+  it("reads unacknowledged when an equal-severity down alert on the asset is still unowned", async () => {
+    notifFindMany.mockResolvedValueOnce([
+      { id: "n-1", assetId: "a", severity: "critical", acknowledged: true, rule: down },
+      { id: "n-2", assetId: "a", severity: "critical", acknowledged: false, rule: down },
+    ]);
+    const m = await noc.downAlertAcknowledgedByAsset(["a"]);
+    expect(m.get("a")).toBe(false);
   });
 });
 

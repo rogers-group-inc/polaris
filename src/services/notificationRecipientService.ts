@@ -619,6 +619,20 @@ export interface ExpandDeliveriesOptions {
    * before and the footer falls back to alert scope (see buildRecipientBlocks).
    */
   dispatchId?: string;
+  /**
+   * This send is inside a QUIET window (business rule 92): write every row
+   * with `status: "held"` instead of `pending`, stamped with the source that
+   * held it and when its window ends.
+   *
+   * Everything else about the fan-out is unchanged on purpose — the seven
+   * recipient arms, the rule-39 preference filter, the composed body, the
+   * dispatch stamp — because the held rows ARE the record of who this alert
+   * was for: the quiet-time summary reads them to address itself, and the
+   * one resolver that knows who an action reaches must not be rebuilt beside
+   * itself. The drain never picks a held row up (it filters `pending`), so
+   * nothing leaves; the summary is what reports the alert.
+   */
+  hold?: { kind: "automation" | "global"; id: string; windowEnd: Date };
 }
 
 export async function expandDeliveries(
@@ -626,7 +640,7 @@ export async function expandDeliveries(
   targets: DeliveryTarget[] | undefined,
   opts: ExpandDeliveriesOptions = {},
 ): Promise<number> {
-  const { scopeRegionTags, assetRegionTags, assetContactEmails, composedEmail, escalation, repeat, enforceUserPreference, followUp, noAck, dispatchId } = opts;
+  const { scopeRegionTags, assetRegionTags, assetContactEmails, composedEmail, escalation, repeat, enforceUserPreference, followUp, noAck, dispatchId, hold } = opts;
   if (!targets || targets.length === 0) return 0;
 
   // Resolve the referenced channels once (type + enabled).
@@ -656,15 +670,22 @@ export async function expandDeliveries(
     // getting its own column: it is read by exactly one consumer (the footer,
     // at drain time) and it has to travel on rows that otherwise carry no meta
     // at all, which is what the `?? undefined` tail below would drop.
-    const provenance = escalation || repeat || dispatchId
+    const provenance = escalation || repeat || dispatchId || hold
       ? ({
           ...(meta && typeof meta === "object" ? (meta as Record<string, unknown>) : {}),
           ...(escalation ? { escalation } : {}),
           ...(repeat ? { repeat } : {}),
           ...(dispatchId ? { dispatch: dispatchId } : {}),
+          ...(hold ? { quietHold: { kind: hold.kind, id: hold.id, windowEnd: hold.windowEnd.toISOString() } } : {}),
         } as Prisma.InputJsonValue)
       : meta;
-    rows.push({ notificationId, channelId, transport, target, meta: provenance ?? undefined });
+    rows.push({
+      notificationId, channelId, transport, target, meta: provenance ?? undefined,
+      // A held row is terminal for the drain and the whole point for the
+      // summary (business rule 92). Omitted — not `"pending"` — otherwise, so
+      // a caller that never holds writes a byte-identical row.
+      ...(hold ? { status: "held" } : {}),
+    });
   };
 
   // Recipient users for a target = union of: specific user ids + (if opted in)

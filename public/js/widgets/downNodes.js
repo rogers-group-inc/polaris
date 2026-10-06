@@ -94,13 +94,26 @@
     var alertAttrs = n.alertId
       ? ' data-alert-id="' + escapeHtml(n.alertId) + '" data-alert-ack="' + (n.alertAcknowledged ? "1" : "0") + '"'
       : "";
-    return '<a class="dash-alert-item" href="' + href + '" data-asset-id="' + escapeHtml(n.id) + '"' + alertAttrs + ' style="text-decoration:none">' +
+    // An acknowledged outage stays listed — the device is still down — but it
+    // dims and says who has it, so the unowned outages lead on a wallboard.
+    // Same treatment as the Active Alerts widget and the Status / Device Map
+    // fade: the dim lands on the outage's own parts, never on the owner pill,
+    // which has to stay readable (wallboards never hover, so the name is IN
+    // the pill rather than only in its title).
+    var acked = !!(n.alertId && n.alertAcknowledged);
+    var fadeAttr = acked ? ' style="opacity:.6"' : "";
+    var ack = acked
+      ? '<span class="widget-pill widget-pill-neutral" style="margin-left:6px" title="' +
+        escapeHtml("Acknowledged" + (n.alertAcknowledgedBy ? " by " + n.alertAcknowledgedBy : "")) + '">' +
+        escapeHtml(n.alertAcknowledgedBy ? "ack " + n.alertAcknowledgedBy : "ack") + '</span>'
+      : "";
+    return '<a class="dash-alert-item' + (acked ? " dash-alert-item-acked" : "") + '" href="' + href + '" data-asset-id="' + escapeHtml(n.id) + '"' + alertAttrs + ' style="text-decoration:none">' +
       '<div class="dash-alert-row" style="width:100%">' +
         '<div class="dash-alert-body">' +
-          '<div class="dash-alert-title">' + (PolarisWidgets.alertSeverityPill ? PolarisWidgets.alertSeverityPill(n.alertSeverity) : "") + escapeHtml(name) + '</div>' +
-          '<div class="dash-alert-sub">' + sub.join(" · ") + '</div>' +
+          '<div class="dash-alert-title"><span' + fadeAttr + '>' + (PolarisWidgets.alertSeverityPill ? PolarisWidgets.alertSeverityPill(n.alertSeverity) : "") + escapeHtml(name) + '</span>' + ack + '</div>' +
+          '<div class="dash-alert-sub"' + fadeAttr + '>' + sub.join(" · ") + '</div>' +
         '</div>' +
-        '<div class="dash-alert-time" data-changed-at="' + (n.monitorStatusChangedAt || "") + '">' + PolarisWidgets.durationSince(n.monitorStatusChangedAt) + '</div>' +
+        '<div class="dash-alert-time"' + fadeAttr + ' data-changed-at="' + (n.monitorStatusChangedAt || "") + '">' + PolarisWidgets.durationSince(n.monitorStatusChangedAt) + '</div>' +
       '</div>' +
     '</a>';
   }
@@ -136,6 +149,7 @@
         { header: "Division", get: function (n) { return n.division || ""; } },
         { header: "Down Since", get: function (n) { return n.monitorStatusChangedAt ? new Date(n.monitorStatusChangedAt).toISOString() : ""; } },
         { header: "Dependency Down", get: function (n) { return n.dependencySuppressed ? "yes" : "no"; } },
+        { header: "Acknowledged By", get: function (n) { return (n.alertId && n.alertAcknowledged && n.alertAcknowledgedBy) || ""; } },
       ],
       rows: nodes,
     });
@@ -241,7 +255,7 @@
       render(el, { nodes: [
         { id: "p1", hostname: "fs-aisle-3", ipAddress: "10.1.2.5", assetType: "switch", site: "Plant A", division: "Ops", monitorStatus: "down", monitorStatusChangedAt: new Date(now - 9 * 60000).toISOString() },
         { id: "p2", hostname: "fap-conf-rm", ipAddress: "10.1.2.42", assetType: "access_point", site: "Plant A", division: "Ops", monitorStatus: "down", monitorStatusChangedAt: new Date(now - 22 * 60000).toISOString() },
-        { id: "p3", hostname: "rtr-wan-2", ipAddress: "10.9.0.1", assetType: "router", site: "DC West", division: "Core", monitorStatus: "down", monitorStatusChangedAt: new Date(now - 2 * 3600000).toISOString() },
+        { id: "p3", hostname: "rtr-wan-2", ipAddress: "10.9.0.1", assetType: "router", site: "DC West", division: "Core", monitorStatus: "down", monitorStatusChangedAt: new Date(now - 2 * 3600000).toISOString(), alertSeverity: "critical", alertId: "pa3", alertAcknowledged: true, alertAcknowledgedBy: "jsmith" },
       ], total: 3 }, { groupBy: "site", rowLimit: 5 });
     },
 

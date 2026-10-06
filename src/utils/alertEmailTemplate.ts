@@ -62,6 +62,11 @@ export const DEFAULT_ALERT_TEXT = [
   // and it renders away — collapsing its blank line with it — on every other
   // send, including every ordinary reminder.
   "{repeat.quiet}",
+  // What an [UPDATED] send of a grouped alert is about (business rule 75): the
+  // component that joined, or came back after recovering. Without it an update
+  // whose count did not move was the first email again. Renders away on every
+  // other send.
+  "{alert.change}",
   // The dependency-down notice (business rule 78): the device is unreachable
   // because of a device above it, named. Above the facts because on that one
   // kind of alert it is the fact. Renders away, blank line and all, on every
@@ -118,6 +123,10 @@ export const DEFAULT_ALERT_TEXT = [
   // reminder, which is the send where the reader's own clock is no longer the
   // answer.
   "Active for: {repeat.elapsed}",
+  "",
+  // The chain a dependency-down alert blames, on one line (alertDependencyPathService;
+  // the HTML body draws it). Renders away, blank line and all, on every other alert.
+  "{dependency.path}",
   "",
   // What was on the port, when the alert is about ONE port. Renders away for
   // every other alert — and for a port that advertised no neighbour — so it
@@ -226,6 +235,10 @@ export const DEFAULT_ALERT_HTML = [
   // and its whole band of padding disappear rather than leaving a grey stripe.
   // No token but this one inside it, or the div is never exactly empty.
   '<div style="font-size:13px;font-weight:600;color:#374151;background:#f3f4f6;border-left:3px solid {severity.color};padding:8px 10px;margin-top:10px">{repeat.quiet}</div>',
+  // The [UPDATED] notice of a grouped alert (business rule 75) — what changed
+  // since the last email. Same shape and the same prune as the quiet-period
+  // div: this token alone inside it, so it disappears on every other send.
+  '<div style="font-size:13px;font-weight:600;color:#374151;background:#f3f4f6;border-left:3px solid {severity.color};padding:8px 10px;margin-top:10px">{alert.change}</div>',
   // The dependency-down notice (business rule 78) — the same shape as the
   // quiet-period div above and for the same two reasons: it belongs above the
   // facts on the one kind of alert it appears on, and with that token alone
@@ -333,6 +346,13 @@ export const DEFAULT_ALERT_HTML = [
   factRow("Escalation", "{escalation.policy}"),
   "</table>",
   "</td></tr>",
+  // The dependency path (business rule 78): the chain this alert blames, drawn
+  // as the Device Map draws it — root cause left, this device right, each in
+  // its location box. A complete <tr> with its own heading, or nothing: filled
+  // at DELIVERY (alertDependencyPathService) and empty on every alert that is
+  // not dependency-down. Under the facts, because the Upstream / Root cause
+  // rows name the two ends and this shows what lies between and where.
+  "{dependency.path}",
   // The LLDP neighbours on the interface this alert is about — a complete <tr>
   // with its own heading, or nothing at all. It is filled at DELIVERY time
   // (alertInterfaceService, like the charts) and is the substance of an

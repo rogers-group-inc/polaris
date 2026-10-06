@@ -209,3 +209,20 @@ describe("Addresses column", () => {
     expect(S.addressesTooltip({ actions: [{ type: "event" }] })).toMatch(/in-app alert/i);
   });
 });
+
+describe("Quiet time column", () => {
+  // The three settings of the wizard's Quiet time step (business rule 92),
+  // read off `quietTime` exactly as the hold resolver reads it.
+  const quietMode = () => (globalThis as unknown as { window: { _quietMode: (r: unknown) => string } }).window._quietMode;
+  it("reads Off as 'global' — the global quiet times apply", () => {
+    expect(quietMode()({})).toBe("global");
+    expect(quietMode()({ quietTime: null })).toBe("global");
+  });
+  it("reads the exemption marker as 'ignore'", () => {
+    expect(quietMode()({ quietTime: { ignoreGlobal: true } })).toBe("ignore");
+  });
+  it("reads a policy with windows as 'override', and an empty one as the default", () => {
+    expect(quietMode()({ quietTime: { windows: [{ version: 1, kind: "recurring", freq: "daily" }] } })).toBe("override");
+    expect(quietMode()({ quietTime: { windows: [] } })).toBe("global");
+  });
+});

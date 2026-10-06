@@ -195,8 +195,8 @@ describe("openAutomationWizard — clone mode", () => {
   });
 
   it("unlocks every step, like edit mode", () => {
-    // A populated draft shouldn't force a 6-step walk to change one threshold.
-    expect(doc.querySelectorAll("#aw-stepper .stepper-step").length).toBe(6);
+    // A populated draft shouldn't force a 7-step walk to change one threshold.
+    expect(doc.querySelectorAll("#aw-stepper .stepper-step").length).toBe(7);
     expect((doc.querySelector("#aw-save") as unknown as { style: { display: string } }).style.display).not.toBe("none");
   });
 

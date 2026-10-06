@@ -428,12 +428,14 @@ function _maintEditorHTML() {
           '</div>' +
         '</div>' +
         // Days AND their hours, from the shared recurrence editor
-        // (public/js/recurrence-editor.js) — the same widget the automations
-        // wizard's quiet time uses, because both edit the same stored shape.
-        // Each day is off, all day, or carries one or more hour ranges.
+        // (public/js/recurrence-editor.js) — the RULES editor the quiet-time
+        // editors use too, because all three edit the same stored shape: each
+        // rule is a set of days plus all day or hour ranges, with presets and
+        // a week strip that shows what the rules mean before the save does.
+        // Rendered ONCE; a loaded schedule re-seeds it through fillRulesEditor.
         '<div id="maint-weekly-block" style="margin-top:8px">' +
           '<label>Days and hours</label>' +
-          '<div id="maint-days">' + window.PolarisRecurrence.dayEditorHtml({ hint: false, defaultStart: "20:00", defaultEnd: "02:00" }) + '</div>' +
+          '<div id="maint-days">' + window.PolarisRecurrence.rulesEditorHtml("maint-rules", { hint: false, defaultStart: "20:00", defaultEnd: "02:00", presets: _MAINT_PRESETS }) + '</div>' +
         '</div>' +
         // Monthly / yearly match ONE day per period, so they have no per-day
         // rows — but they still need hours, and several ranges on that day is
@@ -487,16 +489,23 @@ function _maintFooterHTML() {
  * the shared editor's delegated handlers — which is the whole reason the
  * wiring sits on the host rather than on the rows.
  */
+// One-click starting points for the maintenance rules editor. 20:00–02:00 is
+// this modal's long-standing evening default (the calendar's click-to-create
+// says the same), so the presets are built on it.
+var _MAINT_PRESETS = [
+  { key: "everynight", label: "Every night 20:00–02:00", rules: [{ days: [0, 1, 2, 3, 4, 5, 6], ranges: [{ startTime: "20:00", endTime: "02:00" }] }] },
+  { key: "weeknights", label: "Weeknights 20:00–02:00", rules: [{ days: [1, 2, 3, 4, 5], ranges: [{ startTime: "20:00", endTime: "02:00" }] }] },
+  { key: "sunday", label: "Sunday early hours", rules: [{ days: [0], ranges: [{ startTime: "00:00", endTime: "06:00" }] }] },
+  { key: "weekends", label: "Weekends all day", rules: [{ days: [0, 6], ranges: [] }] },
+];
+
 function _maintRenderDayEditor(shape) {
-  var host = document.getElementById("maint-days");
+  var host = document.querySelector("#maint-days .rc-rules");
   if (!host) return;
-  // 20:00–02:00 is this modal's own long-standing evening default (the
-  // calendar's click-to-create says the same), so it is passed on every render
-  // rather than left to the shared editor's.
-  host.innerHTML = window.PolarisRecurrence.dayEditorHtml({
-    shape: shape, hint: false, defaultStart: "20:00", defaultEnd: "02:00",
-  });
-  window.PolarisRecurrence.refreshSummary(host);
+  // Re-seed the rules from the stored shape (null = the editor's default). The
+  // host is kept and its delegated handlers with it; only the rule list is
+  // rewritten.
+  window.PolarisRecurrence.fillRulesEditor(host, shape);
 }
 
 /** The monthly/yearly hour list, seeded through the same resolution order. */
@@ -535,7 +544,7 @@ function _maintCollectSchedule() {
     // decides between the compact form (every chosen day keeps the same
     // hours → `hours`, and `freq: "daily"` when that is all seven) and
     // per-day `hoursByDay`. Its error text names the day at fault.
-    var collected = window.PolarisRecurrence.collectDayEditor(document.getElementById("maint-days"));
+    var collected = window.PolarisRecurrence.collectRulesEditor(document.querySelector("#maint-days .rc-rules"));
     if (collected.empty) throw new Error("Pick at least one day of the week");
     if (collected.error) throw new Error(collected.error);
     Object.keys(collected).forEach(function (k) { out[k] = collected[k]; });
@@ -726,7 +735,7 @@ function _maintWireEditor() {
   });
   // Wired ONCE on the stable hosts: the shared editor delegates its handlers,
   // so re-rendering their contents (reset, or loading a schedule) keeps them.
-  window.PolarisRecurrence.wire(document.getElementById("maint-days"));
+  window.PolarisRecurrence.wireRulesEditor(document.querySelector("#maint-days .rc-rules"), null, _MAINT_PRESETS);
   window.PolarisRecurrence.wire(document.getElementById("maint-period-hours-host"));
   _maintSyncScheduleBlocks();
 
@@ -952,8 +961,10 @@ async function _maintReloadList() {
 // instants: day bucketing is string arithmetic on "YYYY-MM-DD".
 
 var _MAINT_DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-/** Visible month, as {y, m} with m 0-based. Null before the modal opens. */
+/** Visible month, as {y, m} with m 0-based. Null before the modal opens. Derived from the cursor. */
 var _maintCalMonth = null;
+/** The day the calendar is looking at — the month, week or day around it is what is drawn. */
+var _maintCalCursor = null;
 /** Has the grid been painted at least once? Gates the post-write refresh. */
 var _maintCalRendered = false;
 /** Day keys the operator expanded past the 3-chip fold. */
@@ -1008,19 +1019,40 @@ function _maintCalendarHTML() {
         '<strong id="maint-cal-title" class="maint-cal-title">…</strong>' +
         '<button type="button" class="btn btn-secondary btn-sm" id="maint-cal-next" aria-label="Next month">&rsaquo;</button>' +
         '<button type="button" class="btn btn-secondary btn-sm" id="maint-cal-today">Today</button>' +
+        // Month grid or a readable list of the same windows. The choice is a
+        // per-browser convenience, remembered in localStorage.
+        '<div class="maint-cal-view" role="group" aria-label="View">' +
+          ["day", "week", "month", "list"].map(function (v) {
+            var on = _maintCalView === v;
+            return '<button type="button" class="btn btn-sm ' + (on ? "btn-primary" : "btn-secondary") + '" data-view="' + v + '" aria-pressed="' + on + '">' +
+              v.charAt(0).toUpperCase() + v.slice(1) + "</button>";
+          }).join("") +
+        '</div>' +
         '<span class="hint maint-cal-hint">Server local time — click a day to schedule a window, or a window to edit it.</span>' +
       '</div>' +
       '<div class="maint-cal-dow">' +
         _MAINT_DOW.map(function (d) { return "<div>" + d + "</div>"; }).join("") +
       '</div>' +
       '<div id="maint-cal-grid" class="maint-cal-grid"><div class="empty-state" style="grid-column:1/-1">Loading…</div></div>' +
+      '<div class="maint-cal-legend">' +
+        '<span><i class="maint-cal-key"></i>Planned schedule</span>' +
+        '<span><i class="maint-cal-key maint-cal-key-adhoc"></i>Ad-hoc window</span>' +
+        '<span><i class="maint-cal-key maint-cal-key-off"></i>Disabled</span>' +
+        '<span class="hint maint-cal-legend-note">A window a day or longer is drawn once as a bar across the week; shorter ones are chips on the day they start.</span>' +
+      '</div>' +
       '<div id="maint-cal-note" class="hint" style="margin-top:6px"></div>' +
     '</div>'
   );
 }
 
+/** "month" | "list" — remembered per browser. */
+var _maintCalView = (function () {
+  try { return _maintCalViewOf(localStorage.getItem("polaris.maintCalView")); } catch (e) { return "month"; }
+})();
+
 function _maintWireCalendar() {
   var today = new Date();
+  _maintCalCursor = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   _maintCalMonth = { y: today.getFullYear(), m: today.getMonth() };
   _maintCalExpanded = {};
   _maintCalRendered = false;
@@ -1033,6 +1065,7 @@ function _maintWireCalendar() {
   });
   document.getElementById("maint-cal-today").addEventListener("click", function () {
     var now = new Date();
+    _maintCalCursor = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     _maintCalMonth = { y: now.getFullYear(), m: now.getMonth() };
     _maintRenderCalendar();
   });
@@ -1042,17 +1075,43 @@ function _maintWireCalendar() {
   var tabBtn = document.querySelector('#maint-tabs .page-tab[data-tab="calendar"]');
   if (tabBtn) tabBtn.addEventListener("click", function () { _maintRenderCalendar(); });
 
+  var viewEl = document.querySelector(".maint-cal-view");
+  if (viewEl) {
+    viewEl.addEventListener("click", function (e) {
+      var b = e.target.closest ? e.target.closest("[data-view]") : null;
+      if (!b) return;
+      _maintCalView = _maintCalViewOf(b.getAttribute("data-view"));
+      try { localStorage.setItem("polaris.maintCalView", _maintCalView); } catch (err) { /* per-browser convenience only */ }
+      viewEl.querySelectorAll("[data-view]").forEach(function (x) {
+        var on = x.getAttribute("data-view") === _maintCalView;
+        x.setAttribute("aria-pressed", String(on));
+        x.classList.toggle("btn-primary", on);
+        x.classList.toggle("btn-secondary", !on);
+      });
+      _maintRenderCalendar();
+    });
+  }
+
   var grid = document.getElementById("maint-cal-grid");
   grid.addEventListener("click", function (e) {
     var more = e.target.closest ? e.target.closest(".maint-cal-more") : null;
     if (more) {
-      _maintCalExpanded[more.getAttribute("data-day")] = true;
+      _maintCalExpanded[more.getAttribute("data-week") || more.getAttribute("data-day")] = true;
       _maintRenderCalendar();
       return;
     }
-    var chip = e.target.closest ? e.target.closest(".maint-cal-chip") : null;
+    var chip = e.target.closest ? e.target.closest(".maint-cal-chip, .maint-cal-span, .maint-cal-row") : null;
     if (chip) {
       _maintCalOpenSchedule(chip.getAttribute("data-schedule-id"));
+      return;
+    }
+    var col = e.target.closest ? e.target.closest(".maint-cal-time-col") : null;
+    if (col) {
+      // The hour under the pointer; without layout (or on a keyboard activation) fall back to the day default.
+      var hour;
+      var rect = col.getBoundingClientRect ? col.getBoundingClientRect() : null;
+      if (rect && rect.height > 0 && typeof e.clientY === "number") hour = (e.clientY - rect.top) / _MAINT_HOUR_PX;
+      _maintCalNewOnDay(col.getAttribute("data-day"), hour);
       return;
     }
     var cell = e.target.closest ? e.target.closest(".maint-cal-day") : null;
@@ -1060,11 +1119,23 @@ function _maintWireCalendar() {
   });
 }
 
+/** Previous / Next move by the unit the view shows: a day, a week, or a month. */
 function _maintCalShift(delta) {
-  var d = new Date(_maintCalMonth.y, _maintCalMonth.m + delta, 1);
-  _maintCalMonth = { y: d.getFullYear(), m: d.getMonth() };
+  var c = _maintCalCursor;
+  if (_maintCalView === "day") c = new Date(c.getFullYear(), c.getMonth(), c.getDate() + delta);
+  else if (_maintCalView === "week") c = new Date(c.getFullYear(), c.getMonth(), c.getDate() + 7 * delta);
+  else {
+    // Month steps keep the 1st, so Jan 31 → Feb does not skip to March.
+    c = new Date(c.getFullYear(), c.getMonth() + delta, 1);
+  }
+  _maintCalCursor = c;
+  _maintCalMonth = { y: c.getFullYear(), m: c.getMonth() };
   _maintCalExpanded = {};
   _maintRenderCalendar();
+}
+
+function _maintCalViewOf(v) {
+  return v === "day" || v === "week" || v === "list" ? v : "month";
 }
 
 /** Open the schedule behind a calendar chip in the editor tab. */
@@ -1089,15 +1160,17 @@ async function _maintCalOpenSchedule(scheduleId) {
  * day starts at 20:00, the same evening-window default the recurring editor
  * uses.
  */
-function _maintCalNewOnDay(dayKey) {
+function _maintCalNewOnDay(dayKey, hour) {
   _maintResetEditor();
   // The grid's day keys are server-local (occurrences are expanded server-side),
   // so "is this cell today?" is a question about the SERVER's date.
   var now = maintServerNow();
   var p = dayKey.split("-").map(Number);
-  var start = _maintDayKey(now) === dayKey
-    ? now
-    : new Date(p[0], p[1] - 1, p[2], 20, 0, 0, 0);
+  // From the Week / Day grid the click names an hour; a past hour today still means "now".
+  var start = typeof hour === "number" && isFinite(hour)
+    ? new Date(p[0], p[1] - 1, p[2], Math.max(0, Math.min(23, Math.floor(hour))), 0, 0, 0)
+    : _maintDayKey(now) === dayKey ? now : new Date(p[0], p[1] - 1, p[2], 20, 0, 0, 0);
+  if (start.getTime() < now.getTime() && _maintDayKey(now) === dayKey) start = now;
   // An operator-picked day is a deliberate time — never re-prefilled.
   _maintOneshotTouched = true;
   document.getElementById("maint-kind-oneshot").checked = true;
@@ -1115,15 +1188,35 @@ async function _maintRenderCalendar() {
   var grid = document.getElementById("maint-cal-grid");
   var titleEl = document.getElementById("maint-cal-title");
   var noteEl = document.getElementById("maint-cal-note");
-  if (!grid || !_maintCalMonth) return;
+  if (!grid || !_maintCalCursor) return;
+  _maintCalMonth = { y: _maintCalCursor.getFullYear(), m: _maintCalCursor.getMonth() };
 
   var first = new Date(_maintCalMonth.y, _maintCalMonth.m, 1);
-  titleEl.textContent = _MAINT_MONTHS[_maintCalMonth.m] + " " + _maintCalMonth.y;
-  // Grid always starts on the Sunday on/before the 1st and runs whole weeks.
+  // Month grid always starts on the Sunday on/before the 1st and runs whole weeks.
   var gridStart = new Date(_maintCalMonth.y, _maintCalMonth.m, 1 - first.getDay());
   var daysInMonth = new Date(_maintCalMonth.y, _maintCalMonth.m + 1, 0).getDate();
   var cells = Math.ceil((first.getDay() + daysInMonth) / 7) * 7;
   var gridEnd = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + cells - 1);
+  // The Week and Day views fetch only what they show.
+  var dayCols = 0;
+  if (_maintCalView === "week") {
+    gridStart = new Date(_maintCalCursor.getFullYear(), _maintCalCursor.getMonth(), _maintCalCursor.getDate() - _maintCalCursor.getDay());
+    gridEnd = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + 6);
+    dayCols = 7;
+  } else if (_maintCalView === "day") {
+    gridStart = _maintCalCursor;
+    gridEnd = _maintCalCursor;
+    dayCols = 1;
+  }
+  titleEl.textContent = _maintCalTitle(gridStart, gridEnd);
+  var prevEl = document.getElementById("maint-cal-prev"), nextEl = document.getElementById("maint-cal-next");
+  var unit = _maintCalView === "day" ? "day" : _maintCalView === "week" ? "week" : "month";
+  if (prevEl) prevEl.setAttribute("aria-label", "Previous " + unit);
+  if (nextEl) nextEl.setAttribute("aria-label", "Next " + unit);
+  var noteHint = document.querySelector(".maint-cal-legend-note");
+  if (noteHint) noteHint.textContent = dayCols
+    ? "Windows a day or longer sit in the all-day band; shorter ones are blocks at their hours. Click an empty hour to schedule a window there."
+    : "A window a day or longer is drawn once as a bar across the week; shorter ones are chips on the day they start.";
 
   _maintCalRendered = true;
   var byDay = {};
@@ -1143,37 +1236,315 @@ async function _maintRenderCalendar() {
     return;
   }
 
+  var all = (res.occurrences || []).slice().sort(function (a, b) {
+    return a.start < b.start ? -1 : a.start > b.start ? 1 : a.name.localeCompare(b.name);
+  });
+  var dowEl = document.querySelector(".maint-cal-dow");
+  grid.classList.toggle("maint-cal-grid-list", _maintCalView === "list");
+  grid.classList.toggle("maint-cal-grid-time", !!dayCols);
+  if (_maintCalView === "list") {
+    if (dowEl) dowEl.style.display = "none";
+    grid.innerHTML = _maintCalListHTML(all);
+    return;
+  }
+  if (dayCols) {
+    if (dowEl) dowEl.style.display = "none";
+    grid.innerHTML = _maintCalTimeGridHTML(all, gridStart, dayCols);
+    // Open on the working day, not on midnight; the operator can scroll up.
+    var scroller = grid.querySelector(".maint-cal-time-scroll");
+    if (scroller) scroller.scrollTop = Math.round(6 * _MAINT_HOUR_PX);
+    return;
+  }
+  if (dowEl) dowEl.style.display = "";
+
+  // TWO kinds of occurrence, drawn two ways. A TIMED window — anything
+  // shorter than a day, an overnight 22:00 → 02:00 included — is ONE chip on
+  // the day it starts, labelled with its hours; painting it on both days it
+  // touches is how a nightly schedule became two chips a day and read as twice
+  // the work. A window a day or longer (a change freeze, an ad-hoc "until next
+  // month") is a BAR spanning the week row, once, the way a calendar draws an
+  // all-day event — not the same chip repeated in thirty cells with "+9 more"
+  // under each.
   var todayKey = _maintDayKey(new Date());
-  var html = "";
-  for (var i = 0; i < cells; i++) {
-    var d = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i);
-    var key = _maintDayKey(d);
-    var outside = d.getMonth() !== _maintCalMonth.m;
-    var occs = (byDay[key] || []).slice().sort(function (a, b) {
-      return a.start < b.start ? -1 : a.start > b.start ? 1 : a.name.localeCompare(b.name);
-    });
-    var expanded = !!_maintCalExpanded[key];
-    var shown = expanded ? occs : occs.slice(0, 3);
-    var chips = shown.map(function (occ) {
-      var cls = "maint-cal-chip" + (occ.enabled ? "" : " maint-cal-chip-off") + (occ.adhoc ? " maint-cal-chip-adhoc" : "");
-      var tip = occ.name + "\n" + _maintFmtLocal(occ.start) + " → " + _maintFmtLocal(occ.end) +
-        (occ.enabled ? "" : "\n(disabled)");
-      return '<button type="button" class="' + cls + '" data-schedule-id="' + escapeHtml(occ.scheduleId) + '" title="' + escapeHtml(tip) + '">' +
-        '<span class="maint-cal-chip-time">' + escapeHtml(_maintChipTime(occ, key)) + "</span> " +
-        escapeHtml(occ.name) +
-        "</button>";
-    }).join("");
-    if (!expanded && occs.length > shown.length) {
-      chips += '<button type="button" class="maint-cal-more" data-day="' + key + '">+' +
-        (occs.length - shown.length) + " more</button>";
+  var weeks = cells / 7;
+  var chipsByDay = {};
+  var barsByWeek = [];
+  for (var w = 0; w < weeks; w++) barsByWeek.push([]);
+  var weekIndexOf = function (dayKey) {
+    var p = dayKey.split("-").map(Number);
+    var d = new Date(p[0], p[1] - 1, p[2]);
+    return Math.floor(Math.round((d.getTime() - gridStart.getTime()) / 86400000) / 7);
+  };
+  all.forEach(function (occ) {
+    var days = _maintOccurrenceDays(occ);
+    if (!_maintIsMultiDay(occ)) {
+      (chipsByDay[days[0]] = chipsByDay[days[0]] || []).push(occ);
+      return;
     }
-    html += '<div class="maint-cal-day' + (outside ? " maint-cal-day-out" : "") +
-      (key === todayKey ? " maint-cal-day-today" : "") + '" data-day="' + key + '" title="Click to schedule a window on ' + escapeHtml(_maintFmtDate(key)) + '">' +
-      '<div class="maint-cal-daynum">' + d.getDate() + "</div>" +
-      '<div class="maint-cal-chips">' + chips + "</div>" +
-      "</div>";
+    // One bar per week the window touches, clipped to the grid.
+    var firstKey = _maintDayKey(gridStart), lastKey = _maintDayKey(gridEnd);
+    var inGrid = days.filter(function (k) { return k >= firstKey && k <= lastKey; });
+    if (!inGrid.length) return;
+    var byWeek = {};
+    inGrid.forEach(function (k) { var wi = weekIndexOf(k); (byWeek[wi] = byWeek[wi] || []).push(k); });
+    Object.keys(byWeek).forEach(function (wi) {
+      var ks = byWeek[wi];
+      var col0 = new Date(ks[0].split("-")[0], ks[0].split("-")[1] - 1, ks[0].split("-")[2]).getDay();
+      barsByWeek[Number(wi)].push({
+        occ: occ, col: col0 + 1, span: ks.length,
+        fromBefore: ks[0] !== days[0], toAfter: ks[ks.length - 1] !== days[days.length - 1],
+      });
+    });
+  });
+
+  var html = "";
+  for (var w2 = 0; w2 < weeks; w2++) {
+    // Lanes: first lane whose occupied columns do not overlap this bar.
+    var lanes = [];
+    var placed = barsByWeek[w2].map(function (b) {
+      var lane = 0;
+      for (; lane < lanes.length; lane++) {
+        var clash = lanes[lane].some(function (o) { return b.col < o.col + o.span && o.col < b.col + b.span; });
+        if (!clash) break;
+      }
+      (lanes[lane] = lanes[lane] || []).push(b);
+      return { bar: b, lane: lane };
+    });
+    var weekKey = "w" + w2;
+    var weekExpanded = !!_maintCalExpanded[weekKey];
+    var maxLanes = weekExpanded ? lanes.length : Math.min(lanes.length, 3);
+    var hidden = placed.filter(function (p) { return p.lane >= maxLanes; }).length;
+    var laneHtml = placed.filter(function (p) { return p.lane < maxLanes; }).map(function (p) {
+      var o = p.bar.occ;
+      var cls = "maint-cal-span" + (o.enabled ? "" : " maint-cal-chip-off") + (o.adhoc ? " maint-cal-chip-adhoc" : "") +
+        (p.bar.fromBefore ? " maint-cal-span-from" : "") + (p.bar.toAfter ? " maint-cal-span-to" : "");
+      var startT = String(o.start).slice(11, 16), endT = String(o.end).slice(11, 16);
+      var edge = (p.bar.fromBefore ? "" : startT + " ") + (p.bar.toAfter ? "" : "→ " + endT + " ");
+      return '<button type="button" class="' + cls + '" style="grid-column:' + p.bar.col + ' / span ' + p.bar.span + ';grid-row:' + (p.lane + 1) + '" ' +
+        'data-schedule-id="' + escapeHtml(o.scheduleId) + '" title="' + escapeHtml(_maintOccTip(o)) + '">' +
+        (edge ? '<span class="maint-cal-chip-time">' + escapeHtml(edge.trim()) + '</span> ' : "") + escapeHtml(o.name) + "</button>";
+    }).join("");
+    if (hidden) {
+      laneHtml += '<button type="button" class="maint-cal-more maint-cal-more-week" style="grid-column:1 / -1;grid-row:' + (maxLanes + 1) + '" data-week="' + weekKey + '">+' + hidden + " more window" + (hidden === 1 ? "" : "s") + "</button>";
+    }
+
+    var cellsHtml = "";
+    for (var c = 0; c < 7; c++) {
+      var d = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + w2 * 7 + c);
+      var key = _maintDayKey(d);
+      var outside = d.getMonth() !== _maintCalMonth.m;
+      var occs = chipsByDay[key] || [];
+      var expanded = !!_maintCalExpanded[key];
+      var shown = expanded ? occs : occs.slice(0, 3);
+      var chips = shown.map(function (occ) {
+        var cls = "maint-cal-chip" + (occ.enabled ? "" : " maint-cal-chip-off") + (occ.adhoc ? " maint-cal-chip-adhoc" : "");
+        return '<button type="button" class="' + cls + '" data-schedule-id="' + escapeHtml(occ.scheduleId) + '" title="' + escapeHtml(_maintOccTip(occ)) + '">' +
+          '<span class="maint-cal-chip-time">' + escapeHtml(_maintChipTime(occ, key)) + "</span> " +
+          escapeHtml(occ.name) +
+          "</button>";
+      }).join("");
+      if (!expanded && occs.length > shown.length) {
+        chips += '<button type="button" class="maint-cal-more" data-day="' + key + '">+' +
+          (occs.length - shown.length) + " more</button>";
+      }
+      cellsHtml += '<div class="maint-cal-day' + (outside ? " maint-cal-day-out" : "") +
+        (key === todayKey ? " maint-cal-day-today" : "") + '" data-day="' + key + '" title="Click to schedule a window on ' + escapeHtml(_maintFmtDate(key)) + '">' +
+        '<div class="maint-cal-daynum">' + d.getDate() + "</div>" +
+        '<div class="maint-cal-chips">' + chips + "</div>" +
+        "</div>";
+    }
+    html += '<div class="maint-cal-week">' +
+      (laneHtml ? '<div class="maint-cal-lanes">' + laneHtml + "</div>" : "") +
+      '<div class="maint-cal-days">' + cellsHtml + "</div>" +
+    "</div>";
   }
   grid.innerHTML = html;
+}
+
+/** Title for the toolbar: "Aug 2026", "Aug 9 – 15, 2026", "Aug 30 – Sep 5, 2026", "Wed Aug 12 2026". */
+function _maintCalTitle(gridStart, gridEnd) {
+  if (_maintCalView === "day") return _MAINT_DOW[gridStart.getDay()] + " " + _MAINT_MONTHS[gridStart.getMonth()] + " " + gridStart.getDate() + " " + gridStart.getFullYear();
+  if (_maintCalView === "week") {
+    var a = _MAINT_MONTHS[gridStart.getMonth()] + " " + gridStart.getDate();
+    var b = (gridStart.getMonth() === gridEnd.getMonth() ? "" : _MAINT_MONTHS[gridEnd.getMonth()] + " ") + gridEnd.getDate();
+    return a + " – " + b + ", " + gridEnd.getFullYear();
+  }
+  return _MAINT_MONTHS[_maintCalMonth.m] + " " + _maintCalMonth.y;
+}
+
+/** Pixels per hour in the Week / Day time grid — the CSS row height, mirrored here for click → hour. */
+var _MAINT_HOUR_PX = 28;
+
+/**
+ * Week / Day view: hours down the side, one column per day, each timed window
+ * a block at its hours (an overnight window is two blocks, 22:00 → midnight and
+ * midnight → 02:00, the way every calendar draws it). Windows a day or longer
+ * sit in an all-day band above the hours, spanning the columns they cover.
+ */
+function _maintCalTimeGridHTML(all, gridStart, dayCols) {
+  var todayKey = _maintDayKey(new Date());
+  var days = [];
+  for (var i = 0; i < dayCols; i++) {
+    var d = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i);
+    days.push({ d: d, key: _maintDayKey(d) });
+  }
+  var firstKey = days[0].key, lastKey = days[days.length - 1].key;
+  var colTemplate = "3.2rem repeat(" + dayCols + ", minmax(0, 1fr))";
+
+  // All-day band: bars with lanes, as in the month grid.
+  var bars = [];
+  all.forEach(function (occ) {
+    if (!_maintIsMultiDay(occ)) return;
+    var occDays = _maintOccurrenceDays(occ);
+    var inGrid = occDays.filter(function (k) { return k >= firstKey && k <= lastKey; });
+    if (!inGrid.length) return;
+    var col = days.findIndex(function (x) { return x.key === inGrid[0]; }) + 1;
+    bars.push({ occ: occ, col: col, span: inGrid.length, fromBefore: inGrid[0] !== occDays[0], toAfter: inGrid[inGrid.length - 1] !== occDays[occDays.length - 1] });
+  });
+  var lanes = [];
+  var barHtml = bars.map(function (b) {
+    var lane = 0;
+    for (; lane < lanes.length; lane++) {
+      var clash = lanes[lane].some(function (o) { return b.col < o.col + o.span && o.col < b.col + b.span; });
+      if (!clash) break;
+    }
+    (lanes[lane] = lanes[lane] || []).push(b);
+    var o = b.occ;
+    var cls = "maint-cal-span" + (o.enabled ? "" : " maint-cal-chip-off") + (o.adhoc ? " maint-cal-chip-adhoc" : "") +
+      (b.fromBefore ? " maint-cal-span-from" : "") + (b.toAfter ? " maint-cal-span-to" : "");
+    var startT = String(o.start).slice(11, 16), endT = String(o.end).slice(11, 16);
+    var edge = ((b.fromBefore ? "" : startT + " ") + (b.toAfter ? "" : "→ " + endT)).trim();
+    return '<button type="button" class="' + cls + '" style="grid-column:' + b.col + ' / span ' + b.span + ';grid-row:' + (lane + 1) + '" data-schedule-id="' + escapeHtml(o.scheduleId) + '" title="' + escapeHtml(_maintOccTip(o)) + '">' +
+      (edge ? '<span class="maint-cal-chip-time">' + escapeHtml(edge) + "</span> " : "") + escapeHtml(o.name) + "</button>";
+  }).join("");
+
+  // Timed blocks, per day column, clipped to that day.
+  var blocksByDay = {};
+  all.forEach(function (occ) {
+    if (_maintIsMultiDay(occ)) return;
+    var a = _maintParseLocalIso(occ.start), b = _maintParseLocalIso(occ.end);
+    if (!a || !b) return;
+    _maintOccurrenceDays(occ).forEach(function (k) {
+      if (k < firstKey || k > lastKey) return;
+      var p = k.split("-").map(Number);
+      var dayStart = new Date(p[0], p[1] - 1, p[2]).getTime();
+      var from = Math.max(0, (a.getTime() - dayStart) / 60000);
+      var to = Math.min(1440, (b.getTime() - dayStart) / 60000);
+      if (to <= from) return;
+      (blocksByDay[k] = blocksByDay[k] || []).push({ occ: occ, from: from, to: to, cont: a.getTime() < dayStart, runs: b.getTime() > dayStart + 86400000 });
+    });
+  });
+
+  var now = new Date();
+  var nowMin = now.getHours() * 60 + now.getMinutes();
+  var hourLabels = "";
+  for (var h = 0; h < 24; h++) hourLabels += '<div class="maint-cal-hour">' + (h ? _maintPad(h) + ":00" : "") + "</div>";
+
+  var head = '<div class="maint-cal-time-head" style="grid-template-columns:' + colTemplate + '"><div></div>' +
+    days.map(function (x) {
+      return '<div class="maint-cal-time-dayhead' + (x.key === todayKey ? " maint-cal-day-today" : "") + '">' +
+        '<span class="maint-cal-time-dow">' + _MAINT_DOW[x.d.getDay()] + '</span> <span class="maint-cal-time-daynum">' + x.d.getDate() + "</span></div>";
+    }).join("") + "</div>";
+  var band = barHtml
+    ? '<div class="maint-cal-time-band" style="grid-template-columns:' + colTemplate + '"><div class="maint-cal-hour">all day</div>' +
+      '<div class="maint-cal-lanes" style="grid-template-columns:repeat(' + dayCols + ', minmax(0, 1fr))">' + barHtml + "</div></div>"
+    : "";
+  var cols = days.map(function (x) {
+    var blocks = (blocksByDay[x.key] || []).sort(function (p, q) { return p.from - q.from || p.to - q.to; });
+    // Side-by-side lanes for overlapping blocks within the day.
+    var ends = [];
+    blocks.forEach(function (blk) {
+      var lane = ends.findIndex(function (e) { return e <= blk.from; });
+      if (lane < 0) { lane = ends.length; ends.push(blk.to); } else ends[lane] = blk.to;
+      blk.lane = lane;
+    });
+    var nLanes = Math.max(1, ends.length);
+    var inner = blocks.map(function (blk) {
+      var o = blk.occ;
+      var cls = "maint-cal-block" + (o.enabled ? "" : " maint-cal-chip-off") + (o.adhoc ? " maint-cal-chip-adhoc" : "") +
+        (blk.cont ? " maint-cal-block-cont" : "") + (blk.runs ? " maint-cal-block-runs" : "");
+      var top = (blk.from / 60) * _MAINT_HOUR_PX, height = Math.max(14, ((blk.to - blk.from) / 60) * _MAINT_HOUR_PX - 2);
+      var label = _maintPad(Math.floor(blk.from / 60)) + ":" + _maintPad(Math.round(blk.from % 60)) + "–" +
+        (blk.to >= 1440 ? "00:00" : _maintPad(Math.floor(blk.to / 60)) + ":" + _maintPad(Math.round(blk.to % 60)));
+      return '<button type="button" class="' + cls + '" style="top:' + top + 'px;height:' + height + 'px;left:' + (blk.lane * 100 / nLanes) + '%;width:calc(' + (100 / nLanes) + '% - 2px)" ' +
+        'data-schedule-id="' + escapeHtml(o.scheduleId) + '" title="' + escapeHtml(_maintOccTip(o)) + '">' +
+        '<span class="maint-cal-chip-time">' + label + "</span> " + escapeHtml(o.name) + "</button>";
+    }).join("");
+    var nowLine = x.key === todayKey ? '<div class="maint-cal-nowline" style="top:' + ((nowMin / 60) * _MAINT_HOUR_PX) + 'px"></div>' : "";
+    return '<div class="maint-cal-time-col' + (x.key === todayKey ? " maint-cal-time-col-today" : "") + '" data-day="' + x.key + '" title="Click an hour to schedule a window on ' + escapeHtml(_maintFmtDate(x.key)) + '">' + inner + nowLine + "</div>";
+  }).join("");
+  var body = '<div class="maint-cal-time-scroll"><div class="maint-cal-time-body" style="grid-template-columns:' + colTemplate + ';height:' + (24 * _MAINT_HOUR_PX) + 'px">' +
+    '<div class="maint-cal-hours">' + hourLabels + "</div>" + cols + "</div></div>";
+  return '<div class="maint-cal-time">' + head + band + body + "</div>";
+}
+
+/** Is this window a day or longer? Those are drawn as bars; shorter ones are chips. */
+function _maintIsMultiDay(occ) {
+  var a = _maintParseLocalIso(occ.start), b = _maintParseLocalIso(occ.end);
+  if (!a || !b) return false;
+  // 23h rather than 24h, so a DST night cannot demote a one-day window to a chip.
+  return b.getTime() - a.getTime() >= 23 * 3600 * 1000;
+}
+
+/** "28d 3h" / "4h" / "45m" between two local-ISO minutes. */
+function _maintDuration(startIso, endIso) {
+  var a = _maintParseLocalIso(startIso), b = _maintParseLocalIso(endIso);
+  if (!a || !b) return "";
+  var mins = Math.max(0, Math.round((b.getTime() - a.getTime()) / 60000));
+  var d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60), m = mins % 60;
+  if (d) return d + "d" + (h ? " " + h + "h" : "");
+  if (h) return h + "h" + (m ? " " + m + "m" : "");
+  return m + "m";
+}
+
+function _maintOccTip(occ) {
+  return occ.name + "\n" + _maintFmtLocal(occ.start) + " → " + _maintFmtLocal(occ.end) + " (" + _maintDuration(occ.start, occ.end) + ")" +
+    (occ.adhoc ? "\nAd-hoc window" : "") + (occ.enabled ? "" : "\n(disabled)");
+}
+
+/**
+ * The List view: the same occurrences as readable rows — full names, dates,
+ * durations — grouped by the day they start. Windows already running when the
+ * month opens sit under their own heading, since "what is in maintenance right
+ * now" is the first question the tab is opened to answer.
+ */
+function _maintCalListHTML(all) {
+  var monthFirst = _maintDayKey(new Date(_maintCalMonth.y, _maintCalMonth.m, 1));
+  var monthLast = _maintDayKey(new Date(_maintCalMonth.y, _maintCalMonth.m + 1, 0));
+  var inMonth = all.filter(function (o) {
+    var days = _maintOccurrenceDays(o);
+    return days[days.length - 1] >= monthFirst && days[0] <= monthLast;
+  });
+  if (!inMonth.length) return '<div class="empty-state">No maintenance windows this month.</div>';
+  var groups = [];
+  var running = inMonth.filter(function (o) { return String(o.start).slice(0, 10) < monthFirst; });
+  if (running.length) groups.push({ label: "Already running when the month opens", items: running });
+  var byDay = {};
+  inMonth.forEach(function (o) {
+    var k = String(o.start).slice(0, 10);
+    if (k < monthFirst) return;
+    (byDay[k] = byDay[k] || []).push(o);
+  });
+  Object.keys(byDay).sort().forEach(function (k) { groups.push({ label: _maintFmtDate(k), key: k, items: byDay[k] }); });
+  var todayKey = _maintDayKey(new Date());
+  return groups.map(function (g) {
+    var rows = g.items.map(function (o) {
+      var cls = "maint-cal-row" + (o.enabled ? "" : " maint-cal-chip-off") + (o.adhoc ? " maint-cal-chip-adhoc" : "");
+      // A timed window — an overnight 22:00 → 02:00 included — reads as its hours.
+      var when = !_maintIsMultiDay(o)
+        ? String(o.start).slice(11, 16) + " – " + String(o.end).slice(11, 16)
+        : _maintFmtLocal(o.start) + " → " + _maintFmtLocal(o.end);
+      return '<button type="button" class="' + cls + '" data-schedule-id="' + escapeHtml(o.scheduleId) + '" title="' + escapeHtml(_maintOccTip(o)) + '">' +
+        '<span class="maint-cal-row-when">' + escapeHtml(when) + '</span>' +
+        '<span class="maint-cal-row-name">' + escapeHtml(o.name) + '</span>' +
+        '<span class="maint-cal-row-meta">' + escapeHtml(_maintDuration(o.start, o.end)) +
+          (o.adhoc ? ' · ad-hoc' : '') + (o.enabled ? '' : ' · disabled') + '</span>' +
+      "</button>";
+    }).join("");
+    return '<section class="maint-cal-group' + (g.key === todayKey ? " maint-cal-group-today" : "") + '">' +
+      '<h4 class="maint-cal-group-title">' + escapeHtml(g.label) + (g.key === todayKey ? ' <span class="badge badge-active">today</span>' : "") + "</h4>" +
+      rows + "</section>";
+  }).join("");
 }
 
 // ─── Ad-hoc entry (status pill / edit modal) ────────────────────────────────

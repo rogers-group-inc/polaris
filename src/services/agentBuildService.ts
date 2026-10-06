@@ -178,7 +178,8 @@ export interface GoAvailability {
  * and failed later inside `go build` — surfacing as a bare compiler error or
  * "missing go.sum entry" instead of the preflight message that already
  * existed. bookworm-slim shipping Go 1.21 is exactly that case, which is why
- * the Dockerfile pulls golang from backports.
+ * the Dockerfile copies Go from the official golang image instead of the
+ * distro package.
  *
  * An UNPARSEABLE version is treated as meeting the minimum, on purpose:
  * refusing to build on a vendored or `devel` toolchain we simply failed to

@@ -743,7 +743,10 @@ async function loadIntegrations() {
           '<div class="detail-row"><span class="detail-label">Extra Resources</span><span class="detail-value">' + escapeHtml(arcExtras) + '</span></div>' +
           filterRow("Resource Groups", config.resourceGroupInclude, config.resourceGroupExclude) +
           filterRow("Machines", config.deviceInclude, config.deviceExclude) +
-          filterRow("Tags", config.tagInclude, config.tagExclude);
+          filterRow("Tags", config.tagInclude, config.tagExclude) +
+          '<div class="detail-row"><span class="detail-label">Import Azure Tags</span><span class="detail-value">' + (config.importAzureTags === true
+            ? ((config.azureTagKeys || []).length > 0 ? escapeHtml((config.azureTagKeys || []).join(", ")) : "All keys")
+            : "No") + '</span></div>';
       } else if (intg.type === "windowsserver") {
         detailRows =
           '<div class="detail-row"><span class="detail-label">Host</span><span class="detail-value mono">' + escapeHtml(config.host || "-") + ':' + (config.port || defaultPort) + '</span></div>' +
@@ -4938,6 +4941,7 @@ function entraIdFormHTML(defaults) {
   var devMode = (d.deviceInclude && d.deviceInclude.length > 0) ? "include" : "exclude";
   var devNames = devMode === "include" ? (d.deviceInclude || []) : (d.deviceExclude || []);
   var intuneChecked = d.enableIntune ? "checked" : "";
+  var pullSoftware = d.pullSoftware === true;
   var includeDisabled = d.includeDisabled !== false;
   var decommissionMissing = d.decommissionMissing === true;
   var enabledChecked = d.enabled !== false ? "checked" : "";
@@ -4954,6 +4958,8 @@ function entraIdFormHTML(defaults) {
       '<label for="f-enableIntune" style="margin:0">Enable Intune device sync</label>' +
     '</div>' +
     '<div style="background:color-mix(in srgb, var(--color-accent) 8%, transparent);border:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-top:0.5rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">When on, overlays richer data (serial, MAC, model, primary user, compliance) from <code>/deviceManagement/managedDevices</code> onto Entra devices. Requires an Intune license and the extra Graph permission above.</div>' +
+    checkboxRow("f-pullSoftware", "Read installed software (Intune detected apps)", pullSoftware) +
+    '<p class="hint">Lists each Intune device\'s detected apps and versions on its <strong>Software</strong> tab. Needs Intune device sync on and no extra permission. A device is re-read only after it checks in with Intune again, and skipped while a Polaris Agent on it reports its own list. Intune lists unmanaged apps only on <em>corporate-owned</em> devices.</p>' +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
       '<input type="checkbox" id="f-includeDisabled" ' + (includeDisabled ? "checked" : "") + ' style="width:auto">' +
       '<label for="f-includeDisabled" style="margin:0">Include disabled devices (as <em>disabled</em>)</label>' +
@@ -4993,6 +4999,7 @@ function getEntraFormConfig() {
     clientId: val("f-clientId"),
     clientSecret: val("f-clientSecret"),
     enableIntune: document.getElementById("f-enableIntune").checked,
+    pullSoftware: document.getElementById("f-pullSoftware").checked,
     includeDisabled: document.getElementById("f-includeDisabled").checked,
     decommissionMissing: document.getElementById("f-decommissionMissing").checked,
     deviceInclude: devMode === "include" ? devNames : [],
@@ -5113,6 +5120,8 @@ function azureArcFormHTML(defaults) {
   var vmInst = d.enableVmInstances === true;
   var sqlSrv = d.enableSqlServer === true;
   var k8s = d.enableKubernetes === true;
+  var importTags = d.importAzureTags === true;
+  var pullSoftware = d.pullSoftware === true;
 
   var rgMode = (d.resourceGroupInclude && d.resourceGroupInclude.length > 0) ? "include" : "exclude";
   var rgNames = rgMode === "include" ? (d.resourceGroupInclude || []) : (d.resourceGroupExclude || []);
@@ -5214,7 +5223,23 @@ function azureArcFormHTML(defaults) {
         '<span style="font-size:0.85rem;color:var(--color-text-secondary)">machines carrying these Azure tags</span>' +
       '</div>' +
       '<textarea id="f-tagFilters" rows="2" placeholder="One per line — key=value&#10;e.g. env=prod&#10;managedBy=*">' + escapeHtml(tagLines.join("\n")) + '</textarea>' +
-      '<p class="hint">Each line is <code>key=value</code>; use <code>key=*</code> to match any value of that tag, and wildcards work on the value (<code>env=prod*</code>). <strong>Include</strong> keeps only machines matching at least one line; <strong>Exclude</strong> drops machines matching any. Azure tags are stored on the discovered source record — they are not copied into Polaris tags.</p>' +
+      '<p class="hint">Each line is <code>key=value</code>; use <code>key=*</code> to match any value of that tag, and wildcards work on the value (<code>env=prod*</code>). <strong>Include</strong> keeps only machines matching at least one line; <strong>Exclude</strong> drops machines matching any. This filter decides which machines are discovered; to copy the tags themselves onto devices, use <em>Azure Tags</em> below.</p>' +
+    '</div>' +
+    formDivider() +
+    sectionHeading("Azure Tags") +
+    checkboxRow("f-importAzureTags", "Add Azure tags to devices", importTags) +
+    '<p class="hint">Each Azure resource tag becomes a Polaris tag named <code>azure:Key=Value</code> (e.g. <code>azure:DefenderPlan=P1</code>) on the machine or cluster that carries it, and appears in the tag pickers and filters under <em>Azure Tags</em>. Polaris keeps them in step with Azure on every discovery run: a tag removed or changed in Azure is removed or changed here. Turn this off and the next run takes them all back off. Tags you add by hand are never touched.</p>' +
+    '<div class="form-group"><label>Tag keys to add</label>' +
+      '<textarea id="f-azureTagKeys" rows="2" placeholder="One key per line — e.g.&#10;DefenderPlan&#10;Environment&#10;Cost*">' + escapeHtml((d.azureTagKeys || []).join("\n")) + '</textarea>' +
+      '<p class="hint">Leave empty to add every key. Listing the keys you care about keeps tags that differ on every machine (a creation date, an owner email) from filling the tag list. Matching ignores case; wildcards work (<code>Cost*</code>).</p>' +
+    '</div>' +
+    formDivider() +
+    sectionHeading("Installed Software") +
+    checkboxRow("f-pullSoftware", "Read installed software from Change Tracking", pullSoftware) +
+    '<p class="hint">Lists each Arc machine\'s installed programs and versions on its <strong>Software</strong> tab, read from the Log Analytics workspaces where <strong>Azure Change Tracking &amp; Inventory</strong> stores them (the <code>ConfigurationData</code> table). Change Tracking must already be enabled on the machines. Grant this app the <strong>Log Analytics Reader</strong> role on each workspace listed below &mdash; Reader on the subscription does not cover workspace data. An uninstalled program can stay listed for up to three days.</p>' +
+    '<div class="form-group"><label>Log Analytics workspace IDs</label>' +
+      '<textarea id="f-logAnalyticsWorkspaceIds" rows="2" placeholder="One workspace ID per line — e.g.&#10;00000000-0000-0000-0000-000000000000">' + escapeHtml((d.logAnalyticsWorkspaceIds || []).join("\n")) + '</textarea>' +
+      '<p class="hint">The <strong>Workspace ID</strong> GUID from the workspace\'s Overview page (not its resource ID). Up to 20.</p>' +
     '</div>' +
     verboseLoggingFormHTML(d);
 }
@@ -5237,6 +5262,10 @@ function getArcFormConfig() {
     enableVmInstances: document.getElementById("f-enableVmInstances").checked,
     enableSqlServer: document.getElementById("f-enableSqlServer").checked,
     enableKubernetes: document.getElementById("f-enableKubernetes").checked,
+    importAzureTags: document.getElementById("f-importAzureTags").checked,
+    azureTagKeys: linesToArray("f-azureTagKeys"),
+    pullSoftware: document.getElementById("f-pullSoftware").checked,
+    logAnalyticsWorkspaceIds: linesToArray("f-logAnalyticsWorkspaceIds"),
     resourceGroupInclude: rgMode === "include" ? rgNames : [],
     resourceGroupExclude: rgMode === "exclude" ? rgNames : [],
     deviceInclude: devMode === "include" ? devNames : [],
@@ -5971,6 +6000,7 @@ function _intgEditFormSpec(intg, config) {
         clientSecret: "",
         clientSecretPlaceholder: "Leave blank to keep current secret",
         enableIntune: config.enableIntune,
+        pullSoftware: config.pullSoftware === true,
         includeDisabled: config.includeDisabled !== false,
         decommissionMissing: config.decommissionMissing === true,
         enabled: intg.enabled,
@@ -6001,6 +6031,10 @@ function _intgEditFormSpec(intg, config) {
         enableVmInstances: config.enableVmInstances === true,
         enableSqlServer: config.enableSqlServer === true,
         enableKubernetes: config.enableKubernetes === true,
+        importAzureTags: config.importAzureTags === true,
+        azureTagKeys: config.azureTagKeys || [],
+        pullSoftware: config.pullSoftware === true,
+        logAnalyticsWorkspaceIds: config.logAnalyticsWorkspaceIds || [],
         resourceGroupInclude: config.resourceGroupInclude || [],
         resourceGroupExclude: config.resourceGroupExclude || [],
         deviceInclude: config.deviceInclude || [],

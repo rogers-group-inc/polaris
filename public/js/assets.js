@@ -5404,6 +5404,11 @@ async function openViewModal(id, opts) {
       // Path checks this host runs — prefetched so the tab is present
       // on first paint or absent, never flashing in and out.
       api.assets.pathChecks(id).catch(function () { return null; }),
+      // Whether the Services / Software tabs have anything to show — they
+      // are drawn only when something is pulling that information in. A
+      // failed read shows both (the behaviour before the gate). Keep this the
+      // LAST slot: every index above is read positionally.
+      api.assets.inventoryPresence(id).catch(function () { return { services: true, software: true }; }),
     ]);
 
     var a = wave[0];
@@ -5421,6 +5426,7 @@ async function openViewModal(id, opts) {
     var sdwanMembers = wave[11].members;
     var sdwanMeta    = wave[11].meta || {};
     var pathPayload  = wave[13];
+    var inventoryPresence = wave[14] || { services: true, software: true };
 
     _currentAssetForRefresh = a;
     // Name the entry now that the hostname is known, so the tooltips read
@@ -5493,8 +5499,20 @@ async function openViewModal(id, opts) {
     // asset lands in when nothing identified it as a host (cameras, PDUs,
     // sensors), which likewise reports no inventory.
     var isInfraProc = a.assetType === "firewall" || a.assetType === "switch" || a.assetType === "access_point" || a.assetType === "other";
-    if (!isInfraProc) {
+    // Both tabs also need something actually pulling the information in
+    // (GET /assets/:id/inventory-presence): a host with no agent, no
+    // agentless process polling and no Intune / Arc software read would
+    // otherwise carry two tabs that can never fill.
+    var showServicesTab = !isInfraProc && inventoryPresence.services;
+    var showSoftwareTab = !isInfraProc && inventoryPresence.software;
+    if (showServicesTab) {
       tabs.push({ key: "services", label: "Services", html: _assetServicesTabHTML(a.id) });
+    }
+    if (showSoftwareTab) {
+      // Software tab — installed programs + versions, from whichever sources
+      // hold a list (agent, Intune detected apps, Azure Change Tracking).
+      // Lazy-loaded on first click.
+      tabs.push({ key: "software", label: "Software", html: _assetSoftwareTabHTML() });
     }
     // Quarantine tab — assets-admin only, shown for any asset that has MACs or is quarantined.
     // Infrastructure assets (firewall/switch/access_point) only get the tab if they're
@@ -5627,7 +5645,8 @@ async function openViewModal(id, opts) {
     if (_pathTabEligible(pathPayload)) _wireAssetPathCheckTab(a, pathPayload);
     if (a.assetType === "switch") _wireAssetMacTableTab(a.id);
     if (a.assetType === "firewall") _wireAssetArpTableTab(a.id);
-    if (!isInfraProc) _wireAssetServicesTab(a);
+    if (showServicesTab) _wireAssetServicesTab(a);
+    if (showSoftwareTab) _wireAssetSoftwareTab(a);
     if (permAtLeast("events", "read")) _wireAssetEventsTab(a.id);
     if (permAtLeast("alerts", "read")) _loadAssetNotificationsTab(a.id);
     _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML, firmwareAvail);
@@ -20166,13 +20185,22 @@ function _depTreeNodeRow(node, opts) {
   var levelBit = (node.dependencyLayer != null)
     ? ' <span class="dep-tree-level" title="Dependency level ' + node.dependencyLayer + '">L' + node.dependencyLayer + '</span>'
     : "";
+  // Two rows reading the same name are two devices (business rule 91 — a
+  // FortiLink fleet names its switch-ids per site, so "IDF-1" sits behind
+  // every gate). renderDependencyTreeBlock passes the serial (or, failing
+  // that, the address) for every node whose hostname another rendered node
+  // shares, and it rides the link's tooltip too so the pivot says where it goes.
+  var disambigHTML = opts.disambig
+    ? ' <span class="dep-tree-disambig" title="Shares its name with another device in this tree — this is the one with ' + (opts.disambigKind === "ip" ? "address " : "serial ") + escapeHtml(opts.disambig) + '">' + escapeHtml(opts.disambig) + '</span>'
+    : "";
+  var openTitle = "Open " + safeName + (opts.disambig ? " (" + escapeHtml(opts.disambig) + ")" : "");
   var hostHTML;
   if (opts.self) {
     // Current asset — bold + non-clickable, with the level annotation.
     var layerBit = (node.dependencyLayer != null) ? ' <span class="dep-tree-self-meta">— level ' + node.dependencyLayer + '</span>' : "";
-    hostHTML = '<strong class="dep-tree-self">' + safeName + '</strong>' + layerBit;
+    hostHTML = '<strong class="dep-tree-self">' + safeName + '</strong>' + disambigHTML + layerBit;
   } else {
-    hostHTML = '<button type="button" class="dep-tree-link" data-asset-id="' + escapeHtml(node.id) + '" title="Open ' + safeName + '">' + safeName + '</button>';
+    hostHTML = '<button type="button" class="dep-tree-link" data-asset-id="' + escapeHtml(node.id) + '" title="' + openTitle + '">' + safeName + '</button>' + disambigHTML;
   }
   var sourceTag = (node.source === "override") ? ' <span class="dep-tree-source-tag" title="Operator override">override</span>' : "";
   // How the edge was detected. Shown for the endpoint-half signals and the
@@ -20243,11 +20271,42 @@ function renderDependencyTreeBlock(payload, selfId) {
       '</div>';
   }
 
+  // Rule 91: which hostnames appear on more than one node of THIS tree. Every
+  // such node gets its serial (or address) beside the name — a tree reading
+  // "IDF-1 → IDF-1" is otherwise unreadable, and the operator opening one of
+  // them has to know which site they are about to pivot to.
+  var nameCounts = {};
+  function countName(n) {
+    if (!n || !n.hostname) return;
+    var k = String(n.hostname).toLowerCase();
+    nameCounts[k] = (nameCounts[k] || 0) + 1;
+  }
+  parents.forEach(function (p) { countName(p.parent); });
+  countName(self);
+  countName(haPeer);
+  children.forEach(function (c) {
+    countName(c);
+    (Array.isArray(c.grandchildren) ? c.grandchildren : []).forEach(countName);
+  });
+  function disambigOpts(n) {
+    if (!n || !n.hostname || (nameCounts[String(n.hostname).toLowerCase()] || 0) < 2) return {};
+    if (n.serialNumber) return { disambig: n.serialNumber, disambigKind: "serial" };
+    if (n.ipAddress) return { disambig: n.ipAddress, disambigKind: "ip" };
+    return {};
+  }
+  function withDisambig(opts, n) {
+    var d = disambigOpts(n);
+    if (d.disambig) { opts.disambig = d.disambig; opts.disambigKind = d.disambigKind; }
+    return opts;
+  }
+
   var subtitle;
   if (parents.length === 0) subtitle = "Level 1 — root of the dependency tree";
   else if (parents.length === 1) {
     var p0 = parents[0].parent;
-    subtitle = "Level " + (self.dependencyLayer != null ? self.dependencyLayer : "?") + " · directly under " + escapeHtml(p0.hostname || p0.id);
+    var p0d = disambigOpts(p0);
+    subtitle = "Level " + (self.dependencyLayer != null ? self.dependencyLayer : "?") + " · directly under " + escapeHtml(p0.hostname || p0.id) +
+      (p0d.disambig ? " (" + escapeHtml(p0d.disambig) + ")" : "");
   } else {
     subtitle = "Level " + (self.dependencyLayer != null ? self.dependencyLayer : "?") + " · " + parents.length + " parents";
   }
@@ -20256,18 +20315,20 @@ function renderDependencyTreeBlock(payload, selfId) {
   if (parents.length > 0) {
     parentsHTML = parents.map(function (p) { return _depTreeNodeRow({
       id: p.parent.id, hostname: p.parent.hostname, assetType: p.parent.assetType,
+      serialNumber: p.parent.serialNumber, ipAddress: p.parent.ipAddress,
       dependencyLayer: p.parent.dependencyLayer, monitorStatus: p.parent.monitorStatus,
       monitored: p.parent.monitored, dependencySuppressed: false /* we don't have it on parent */, source: p.source,
       dependencyTestUntil: p.parent.dependencyTestUntil, activeAlert: p.parent.activeAlert,
-    }, { via: p.detectedVia }); }).join("");
+    }, withDisambig({ via: p.detectedVia }, p.parent)); }).join("");
     parentsHTML += '<div class="dep-tree-connector">│</div>';
   }
   var selfHTML = _depTreeNodeRow({
     id: self.id, hostname: self.hostname, assetType: self.assetType,
+    serialNumber: self.serialNumber, ipAddress: self.ipAddress,
     dependencyLayer: self.dependencyLayer, monitorStatus: self.monitorStatus,
     monitored: self.monitored !== false, dependencySuppressed: !!self.dependencySuppressed,
     dependencyTestUntil: self.dependencyTestUntil, activeAlert: self.activeAlert,
-  }, { self: true });
+  }, withDisambig({ self: true }, self));
 
   // HA peer row — rendered directly under the self row at the same level
   // (no connector: it's a redundant sibling, not a parent or child). The
@@ -20280,9 +20341,10 @@ function renderDependencyTreeBlock(payload, selfId) {
                 : "HA peer";
     haPeerHTML = _depTreeNodeRow({
       id: haPeer.id, hostname: haPeer.hostname, assetType: haPeer.assetType,
+      serialNumber: haPeer.serialNumber, ipAddress: haPeer.ipAddress,
       dependencyLayer: haPeer.dependencyLayer, monitorStatus: haPeer.monitorStatus,
       monitored: haPeer.monitored, activeAlert: haPeer.activeAlert,
-    }, { tag: peerTag, tagTitle: "HA cluster peer of " + (self.hostname || "this firewall") + " — redundant sibling, not a dependency" });
+    }, withDisambig({ tag: peerTag, tagTitle: "HA cluster peer of " + (self.hostname || "this firewall") + " — redundant sibling, not a dependency" }, haPeer));
   }
 
   var childrenHTML = "";
@@ -20294,9 +20356,9 @@ function renderDependencyTreeBlock(payload, selfId) {
       // workstations and printers that hang off this switch.
       var gcs = Array.isArray(c.grandchildren) ? c.grandchildren : [];
       var more = (typeof c.childCount === "number") ? Math.max(0, c.childCount - gcs.length) : 0;
-      var row = _depTreeNodeRow(c, { depth: 1, via: c.detectedVia, moreCount: more });
+      var row = _depTreeNodeRow(c, withDisambig({ depth: 1, via: c.detectedVia, moreCount: more }, c));
       if (gcs.length === 0) return row;
-      var gcRows = gcs.map(function (gc) { return _depTreeNodeRow(gc, { depth: 2, via: gc.detectedVia }); }).join("");
+      var gcRows = gcs.map(function (gc) { return _depTreeNodeRow(gc, withDisambig({ depth: 2, via: gc.detectedVia }, gc)); }).join("");
       return row + gcRows;
     }).join("");
     if (payload.childrenTruncated) {
@@ -20426,6 +20488,219 @@ var _assetEventsLoaded = false;     // lazy-load guard (first tab click)
 //   Map     — both (mappedProcesses / mappedServices: Application Map)
 // (Process alerting moved to Automations, so there's no Alert column.)
 // Client-side TableSF for sort/filter; lazy-loaded on first tab click.
+// ─── Software tab ───────────────────────────────────────────────────────────
+// Installed programs + versions (GET /assets/:id/software). Up to three
+// sources hold a list — the Polaris Agent, Intune detected apps, Azure Change
+// Tracking — and the tab shows ONE at a time: the server lists them in
+// preference order (agent first, it reads the host itself) and a picker
+// appears only when there is more than one. Read-only.
+
+var _SOFTWARE_SOURCE_LABELS = { agent: "Polaris Agent", intune: "Intune", arc: "Azure Arc" };
+
+function _assetSoftwareTabHTML() {
+  // The current-state strip's layout (_currentStateStripHTML — the MAC / ARP
+  // tabs): a plain row, heading + tertiary stamp left, controls right. Not
+  // .filter-bar, which is the page-level sticky bar with its own opaque
+  // background and reads as a slab inside the slide-over. The strip helper
+  // itself is not reused because its Refresh re-probes the device; this one
+  // only re-reads what the sources last reported.
+  return '<div class="section-block">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;margin:0 0 0.5rem">' +
+      '<div id="asset-view-sw-head" style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">' +
+        '<h4 style="margin:0">Installed software</h4>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:0.5rem;flex:none">' +
+        '<select id="asset-view-sw-source" class="form-input" style="display:none;padding:2px 6px;font-size:0.82rem;width:auto" aria-label="Software source"></select>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="asset-view-sw-refresh" title="Re-read the stored lists">Refresh</button>' +
+      '</div>' +
+    '</div>' +
+    '<p id="asset-view-sw-hint" style="margin:-0.25rem 0 0.5rem;font-size:0.78rem;color:var(--color-text-tertiary);display:none"></p>' +
+    '<div class="table-wrapper table-wrapper-panel-sticky" id="asset-view-sw-wrapper">' +
+      '<table id="asset-view-sw-table">' +
+        '<thead><tr>' +
+          // Name declares its width: the last visible column auto-fills the
+          // leftover, so an undeclared Name would be the one starved.
+          '<th style="width:230px" data-col-id="name"      data-col-required="true" data-sf-key="sortName" data-sf-type="string">Name</th>' +
+          '<th style="width:110px" data-col-id="version"   data-sf-key="version"     data-sf-type="string">Version</th>' +
+          '<th style="width:140px" data-col-id="publisher" data-sf-key="publisher"   data-sf-type="string">Publisher</th>' +
+          // Arch and Size start hidden (column chooser): six columns starve
+          // Name in the slide-over's width, and most names carry the arch.
+          '<th style="width:64px"  data-col-id="arch"      data-col-default-hidden="true" data-sf-key="architecture" data-sf-type="string">Arch</th>' +
+          '<th style="width:96px"  data-col-id="installed" data-sf-key="installDate" data-sf-type="string" data-sf-nofilter>Installed</th>' +
+          '<th style="width:84px"  data-col-id="size"      data-col-default-hidden="true" data-sf-key="sizeSort" data-sf-type="number" data-sf-nofilter>Size</th>' +
+        '</tr></thead>' +
+        '<tbody id="asset-view-sw-tbody">' +
+          '<tr><td colspan="6" class="empty-state">Loading…</td></tr>' +
+        '</tbody>' +
+      '</table>' +
+    '</div>' +
+  '</div>';
+}
+
+function _sizeAssetSwTableWrapper() {
+  var w = document.getElementById("asset-view-sw-wrapper");
+  var body = document.getElementById("asset-panel-body");
+  if (!w || !body || !w.offsetParent) return;
+  var h = body.getBoundingClientRect().bottom - w.getBoundingClientRect().top - 18;
+  w.style.maxHeight = Math.max(260, Math.round(h)) + "px";
+}
+window.addEventListener("resize", _sizeAssetSwTableWrapper);
+
+// The strip's left half after the heading: count · source, then the same
+// "updated …" stamp the MAC / ARP strips carry. With one source the picker is
+// hidden, so the source is named here.
+function _softwareHeadSuffixHTML(sources, shown) {
+  if (!sources.length) return _freshnessStampHTML(null, null, "nothing reported yet");
+  var s = sources.filter(function (x) { return x.source === shown; })[0] || sources[0];
+  var label = _SOFTWARE_SOURCE_LABELS[s.source] || s.source;
+  return '<span style="font-size:0.72rem;color:var(--color-text-tertiary)">' +
+      escapeHtml(String(s.count)) + ' program' + (s.count === 1 ? '' : 's') +
+      (sources.length > 1 ? '' : ' · ' + escapeHtml(label)) + '</span>' +
+    _freshnessStampHTML(s.scrapedAt, null, "not read yet");
+}
+
+// The hint under the strip — only when there is something to say: with no
+// list, the three ways to get one; for Intune / Arc, the caveat that explains
+// a list that looks short or stale. The agent's list needs no note.
+function _softwareHintHTML(sources, shown) {
+  if (!sources.length) {
+    return 'One comes from the <strong>Polaris Agent</strong> (read every six hours), ' +
+      'from <strong>Intune</strong>\'s detected apps (turn on <em>Read installed software</em> on the Entra ID integration), ' +
+      'or from <strong>Azure Change Tracking</strong> (turn it on on the Azure Arc integration).';
+  }
+  var s = sources.filter(function (x) { return x.source === shown; })[0] || sources[0];
+  if (s.source === "intune") return 'Intune lists unmanaged apps only on corporate-owned devices.';
+  if (s.source === "arc") return 'An uninstalled program can stay listed for up to three days.';
+  return "";
+}
+
+function _wireAssetSoftwareTab(asset) {
+  var btn = document.querySelector('#asset-view-tabs [data-tab="software"]');
+  if (!btn) return;
+  var assetId = asset.id;
+  var loaded = false;
+  var sf = null;
+  var layoutApplied = false;
+  var sources = [];
+  var allRows = [];
+  var shown = null;
+
+  function rowsForShown() {
+    return allRows.filter(function (r) { return r.source === shown; }).map(function (r) {
+      return {
+        name: r.name,
+        sortName: (r.name || "").toLowerCase(),
+        version: r.version || "",
+        publisher: r.publisher || "",
+        architecture: r.architecture || "",
+        installDate: r.installDate || "",
+        sizeSort: r.sizeBytes != null ? Number(r.sizeBytes) : -1,
+        sizeBytes: r.sizeBytes,
+      };
+    });
+  }
+
+  function renderRows(rows) {
+    var tbody = document.getElementById("asset-view-sw-tbody");
+    if (!tbody) return;
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">' +
+        (sources.length ? "No programs match the filters." : "No installed software reported.") + '</td></tr>';
+      return;
+    }
+    var html = "";
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      html += '<tr>' +
+        '<td title="' + escapeHtml(r.name) + '">' + escapeHtml(r.name) + '</td>' +
+        '<td class="mono" title="' + escapeHtml(r.version) + '">' + escapeHtml(r.version || "—") + '</td>' +
+        '<td title="' + escapeHtml(r.publisher) + '">' + escapeHtml(r.publisher || "—") + '</td>' +
+        '<td>' + escapeHtml(r.architecture || "—") + '</td>' +
+        '<td>' + escapeHtml(r.installDate || "—") + '</td>' +
+        '<td>' + (r.sizeBytes != null ? escapeHtml(_fmtBytes(Number(r.sizeBytes))) : "—") + '</td>' +
+      '</tr>';
+    }
+    tbody.innerHTML = html;
+  }
+
+  function apply() {
+    var rows = rowsForShown();
+    renderRows(sf ? sf.apply(rows) : rows);
+  }
+
+  function renderHeader() {
+    var head = document.getElementById("asset-view-sw-head");
+    if (head) head.innerHTML = '<h4 style="margin:0">Installed software</h4>' + _softwareHeadSuffixHTML(sources, shown);
+    var hint = document.getElementById("asset-view-sw-hint");
+    if (hint) {
+      var text = _softwareHintHTML(sources, shown);
+      hint.innerHTML = text;
+      hint.style.display = text ? "" : "none";
+    }
+    var sel = document.getElementById("asset-view-sw-source");
+    if (!sel) return;
+    if (sources.length > 1) {
+      sel.innerHTML = sources.map(function (s) {
+        return '<option value="' + escapeHtml(s.source) + '"' + (s.source === shown ? " selected" : "") + '>' +
+          escapeHtml(_SOFTWARE_SOURCE_LABELS[s.source] || s.source) + ' (' + escapeHtml(String(s.count)) + ')</option>';
+      }).join("");
+      sel.value = shown;
+      sel.style.display = "";
+    } else {
+      sel.style.display = "none";
+    }
+  }
+
+  // Order matters (see _wireAssetServicesTab): TableSF first, then the layout.
+  function ensureTableWiring() {
+    if (!sf && typeof TableSF !== "undefined") {
+      sf = new TableSF("asset-view-sw-tbody", apply);
+    }
+    if (!layoutApplied && typeof applyTableLayout === "function") {
+      var t = document.getElementById("asset-view-sw-table");
+      if (t) {
+        applyTableLayout(t, "asset-software", {
+          onScreenshot: function (el) { _screenshotTableEl(el, "Software"); },
+        });
+        layoutApplied = true;
+      }
+    }
+  }
+
+  async function reload() {
+    var tbody = document.getElementById("asset-view-sw-tbody");
+    try {
+      var resp = await api.assets.software(assetId);
+      sources = (resp && resp.sources) || [];
+      allRows = (resp && resp.rows) || [];
+      var still = sources.some(function (s) { return s.source === shown; });
+      if (!still) shown = sources.length ? sources[0].source : null;
+      renderHeader();
+      ensureTableWiring();
+      apply();
+      _sizeAssetSwTableWrapper();
+    } catch (err) {
+      if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Error: ' + escapeHtml(err && err.message ? err.message : String(err)) + '</td></tr>';
+    }
+  }
+
+  var sel = document.getElementById("asset-view-sw-source");
+  if (sel) sel.addEventListener("change", function () {
+    shown = sel.value;
+    renderHeader();
+    apply();
+  });
+  var refresh = document.getElementById("asset-view-sw-refresh");
+  if (refresh) refresh.addEventListener("click", function () { reload(); });
+
+  btn.addEventListener("click", function () {
+    _sizeAssetSwTableWrapper();
+    if (loaded) return;
+    loaded = true;
+    reload();
+  });
+}
+
 function _assetServicesTabHTML() {
   return '<div class="section-block">' +
     '<div class="filter-bar" style="justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:0.5rem">' +
@@ -24737,7 +25012,9 @@ function _renderPathLatestCard(check) {
   var mount = document.getElementById("path-latest");
   if (!mount) return;
   var l = check.latest || {};
-  var row = function (k, v) { return '<div class="asset-view-row"><span class="asset-view-label">' + k + '</span><span class="asset-view-value">' + v + "</span></div>"; };
+  // The asset-details key/value row (label left, value right). This used
+  // asset-view-row/-label/-value, which have no CSS — label and value ran together.
+  var row = function (k, v) { return '<div class="detail-row"><span class="detail-label">' + k + '</span><span class="detail-value">' + v + "</span></div>"; };
   mount.innerHTML = '<div class="chart-label">Latest result</div><div class="asset-view-grid">' +
     row("Result", _pathResultPill(l)) +
     row("When", escapeHtml(_pathFmtWhen(l.lastSampleAt))) +

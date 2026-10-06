@@ -258,7 +258,8 @@ describe that asset.
   `networkScan:write` (`403` otherwise). The server is not an asset: it is the
   first `/results` row (`server: true`, `assetId: null`), its readings are the
   three `/path-checks/:id/server…` endpoints (on `pathChecks:read`), and its
-  results raise no automation alert.
+  results raise an automation alert only when the trigger carries
+  `"includeServer": true` (below).
 - **Targets** are a full URL for HTTP / HTTPS, `host:port` for TCP and a bare
   host for ICMP, IPv4 only. Loopback, link-local, cloud-metadata and multicast
   addresses, and the Polaris server itself, are refused with `400`.
@@ -281,7 +282,13 @@ describe that asset.
   caller (`429` past that).
 - A check has no threshold and never changes a host's Up / Down status. To be
   alerted, build an automation on the `path*` metrics or the
-  `path_check.path_changed` event.
+  `path_check_path_changed` change type — the wizard's **Path Monitor** trigger.
+  Its devices are always the rule's `scope` ANDed with *Polaris Agent
+  installed*, and a composite may not mix `path*` conditions with any other.
+  `"includeServer": true` on a single `path*` condition (or on the change
+  trigger) adds the Polaris server as a source; it is refused beside a
+  `reset.mode` of `condition`, and its alerts carry `assetId: null` and
+  `assetHostname: "Polaris server"`.
 
 `path-check-history` takes the same `range=` presets and `from` / `to` as the
 other history endpoints and returns per-run samples on the detail tier, or

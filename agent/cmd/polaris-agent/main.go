@@ -94,6 +94,16 @@ const (
 	// Service-inventory snapshot cadence — current-state unit/service list,
 	// same rhythm as the process inventory.
 	defaultServiceInventoryIntervalSec = 300
+	// Installed-software cadence — six hours. The list changes when someone
+	// installs or patches something, not minute to minute, and it is a
+	// registry walk / package-database query; the first pass runs at start.
+	defaultSoftwareInventoryIntervalSec = 21600
+	// How often the software loop WAKES to ask whether a pass is due. Five
+	// minutes, so a pass the server's /config had not yet enabled at start
+	// (or an operator enabling the stream later) lands minutes later, not
+	// one full six-hour interval later. A wake that is not due is an atomic
+	// read and a clock compare.
+	softwareInventoryCheckSec = 300
 	// Per-pinned-program CPU/RAM cadence — 60 s like host telemetry.
 	defaultProcessTelemetryIntervalSec = 60
 	// Per-pinned-program log-tail cadence — 60 s.
@@ -194,6 +204,7 @@ var loopPhaseSec = map[string]int{
 	"pathCheck":       16, // network-bound; see path_check.go
 	"interfaces":         18,
 	"storage":            22,
+	"softwareInventory":  23, // registry walk / dpkg-query or rpm; collects every 6 h
 	"eventLog":           27, // journalctl / Get-WinEvent
 	"processTelemetry":   32,
 	"processLog":         37,
@@ -308,6 +319,11 @@ type servicesRuntimeCfg struct {
 	mapped    []string
 }
 
+// softwareCfg holds whether the server wants the installed-software stream
+// (streams.software on /config). Off until the first /config, and off against
+// a server too old to know the stream — it would reject the push.
+var softwareCfg atomic.Bool
+
 var (
 	eventLogCfg      atomic.Value // eventLogRuntimeCfg
 	processesCfg     atomic.Value // processesRuntimeCfg
@@ -370,6 +386,11 @@ func applyServerStreams(resp *transport.ConfigResponse) {
 		servicesCfg.Store(servicesRuntimeCfg{enabled: s.Enabled, monitored: resp.MonitoredServices, mapped: resp.MappedServices})
 	} else {
 		servicesCfg.Store(servicesRuntimeCfg{monitored: resp.MonitoredServices, mapped: resp.MappedServices})
+	}
+	if s, ok := resp.Streams["software"]; ok {
+		softwareCfg.Store(s.Enabled)
+	} else {
+		softwareCfg.Store(false)
 	}
 	// Path checks: the definition list IS the enable signal (an older
 	// server sends none, so the loop idles). An explicit streams.pathCheck
@@ -478,6 +499,7 @@ func runAgent(ctx context.Context, confPath string) {
 	go eventLogLoop(ctx, cfg, client)
 	go processInventoryLoop(ctx, cfg, client)
 	go serviceInventoryLoop(ctx, cfg, client)
+	go softwareInventoryLoop(ctx, cfg, client)
 	go serviceLogLoop(ctx, cfg, client)
 	go processTelemetryLoop(ctx, cfg, client)
 	go processLogLoop(ctx, cfg, client)
@@ -814,6 +836,60 @@ func serviceInventoryLoop(ctx context.Context, cfg *config.Config, client *trans
 	runLoop(ctx, "serviceInventory", intervalOr(cfg.ServiceInventoryIntervalSec, defaultServiceInventoryIntervalSec), true, func() {
 		pushServiceInventoryOne(client)
 	})
+}
+
+// softwareInventoryLoop pushes the installed-software list. It wakes every
+// softwareInventoryCheckSec and collects only when the stream is enabled and a
+// full interval has passed since the last ATTEMPT — an attempt, not a
+// success, so a host whose package query keeps failing is not asked again
+// every five minutes.
+func softwareInventoryLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
+	interval := intervalOr(cfg.SoftwareInventoryIntervalSec, defaultSoftwareInventoryIntervalSec)
+	var lastAttempt time.Time
+	runLoop(ctx, "softwareInventory", softwareInventoryCheckSec*time.Second, true, func() {
+		if !softwareCfg.Load() {
+			return
+		}
+		if !lastAttempt.IsZero() && time.Since(lastAttempt) < interval {
+			return
+		}
+		lastAttempt = time.Now()
+		pushSoftwareInventoryOne(client)
+	})
+}
+
+func pushSoftwareInventoryOne(client *transport.Client) {
+	type res struct{ s []*transport.SoftwareSample }
+	ch := make(chan res, 1)
+	go func() { ch <- res{collectors.SoftwareInventoryOnce()} }()
+	var r res
+	select {
+	case r = <-ch:
+	// A dpkg/rpm query on a host with thousands of packages can outlast the
+	// shared 30 s budget; the Linux reader caps its own subprocess at 60 s.
+	case <-time.After(2 * collectionTimeout):
+		log.Printf("push softwareInventory samples: collector timed out after %.0fs", (2 * collectionTimeout).Seconds())
+		return
+	}
+	if r.s == nil {
+		// No supported package database, or the read failed. Never push an
+		// empty list for that — the server would delete the whole inventory.
+		if verbose {
+			log.Printf("softwareInventory: collector returned no data — skipping (inventory left unchanged)")
+		}
+		return
+	}
+	resp, err := client.PushSamples(&transport.SamplesBody{
+		Stream:  "softwareInventory",
+		Samples: r.s,
+	})
+	if err != nil {
+		log.Printf("push softwareInventory samples: %v", err)
+		return
+	}
+	if verbose {
+		log.Printf("softwareInventory sent: rows=%d -> accepted=%d rejected=%d", len(r.s), resp.Accepted, resp.Rejected)
+	}
 }
 
 func pushServiceInventoryOne(client *transport.Client) {

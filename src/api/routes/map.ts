@@ -33,11 +33,15 @@ import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
 import { controllerStampWhereOr, readFirewallDeviceName } from "../../utils/fortinetParentKey.js";
 import {
+  attributeEndpointToSiteSwitch,
+  buildSiteEndpointAttribution,
   buildSiteTopology,
   monitorStatusToHealth,
   fetchRecentSampleStats,
+  portOfLastSeenSwitch,
 } from "../../services/topologyGraphService.js";
 import { getRegionHierarchy } from "../../services/mapRegionService.js";
+import { downAlertAcknowledgedByAsset } from "../../services/nocDashboardService.js";
 import {
   saveLayout,
   saveCheckpoint,
@@ -161,6 +165,12 @@ router.get("/sites", async (req, res, next) => {
       sites.filter((s) => s.monitored).map((s) => s.id),
     );
 
+    // Acknowledged-ness of each DOWN site's down alert, so the map widgets can
+    // fade an outage someone already owns. Bounded to the down sites only.
+    const downAck = await downAlertAcknowledgedByAsset(
+      sites.filter((s) => s.monitored && s.monitorStatus === "down").map((s) => s.id),
+    );
+
     // Subnet counts per FortiGate — the `fortigateDevice` column on Subnet
     // stores the FMG-side device name, which (for auto-discovered FortiGates)
     // matches the Asset's hostname or learnedLocation. One query, grouped.
@@ -191,6 +201,9 @@ router.get("/sites", async (req, res, next) => {
           monitorHealth: s.monitored ? monitorStatusToHealth(s.monitorStatus) : null,
           monitorRecentSamples: stats?.samples ?? 0,
           monitorRecentFailures: stats?.failures ?? 0,
+          // true = the down alert is acknowledged; false = unacknowledged;
+          // absent = no active down alert (or the site isn't down).
+          ...(downAck.has(s.id) ? { alertAcknowledged: downAck.get(s.id) } : {}),
         };
       }),
     );
@@ -252,17 +265,21 @@ router.get("/sites/:id/topology/search", async (req, res, next) => {
           select: { id: true, hostname: true },
         })
       : [];
-    const switchHostnames = siblingSwitches.map((s) => s.hostname).filter((h): h is string => !!h);
-    if (switchHostnames.length === 0) return res.json({ q, results: [] });
+    // Which switch an endpoint sits on is its `switch-port` dependency edge,
+    // or a hostname prefix only when the name is unique fleet-wide (business
+    // rule 91 — the per-site "IDF-1" of a FortiLink fleet). Same rule as the
+    // topology payload's `endpointCount` / `endpoints[]`.
+    const attribution = await buildSiteEndpointAttribution(siblingSwitches);
+    if (attribution.whereOr.length === 0) return res.json({ q, results: [] });
 
-    // Anchored prefix-OR for switch attribution AND substring match across
-    // common identity fields. Capped at 25 results — search is for finding
-    // a specific endpoint, not for browsing.
+    // Site attribution AND substring match across common identity fields.
+    // Capped at 25 results — search is for finding a specific endpoint, not
+    // for browsing.
     const matches = await prisma.asset.findMany({
       where: {
         assetType: { notIn: ["firewall", "switch", "access_point"] },
         status: { notIn: EXCLUDED_LIFECYCLE_STATUSES },
-        OR: switchHostnames.map((h) => ({ lastSeenSwitch: { startsWith: `${h}/` } })),
+        OR: attribution.whereOr,
         AND: [
           {
             OR: [
@@ -278,20 +295,16 @@ router.get("/sites/:id/topology/search", async (req, res, next) => {
       select: {
         id: true, hostname: true, ipAddress: true, macAddress: true,
         assetType: true, assignedTo: true, lastSeenSwitch: true, lastSeen: true,
+        dependencyParents: attribution.edgeSelect,
       },
       orderBy: { lastSeen: "desc" },
       take: 25,
     });
 
-    const switchIdByHost = new Map<string, string>();
-    for (const s of siblingSwitches) {
-      if (s.hostname) switchIdByHost.set(s.hostname, s.id);
-    }
+    const switchHostById = new Map<string, string | null>();
+    for (const s of siblingSwitches) switchHostById.set(s.id, s.hostname);
     const results = matches.map((m) => {
-      const lss = m.lastSeenSwitch || "";
-      const slashIdx = lss.indexOf("/");
-      const swHost  = slashIdx > 0 ? lss.slice(0, slashIdx) : "";
-      const port    = slashIdx > 0 ? lss.slice(slashIdx + 1) : "";
+      const switchId = attributeEndpointToSiteSwitch(m, attribution);
       return {
         id:         m.id,
         hostname:   m.hostname,
@@ -299,9 +312,11 @@ router.get("/sites/:id/topology/search", async (req, res, next) => {
         macAddress: m.macAddress,
         assetType:  String(m.assetType),
         assignedTo: m.assignedTo,
-        switchId:   switchIdByHost.get(swHost) ?? null,
-        switchHostname: swHost || null,
-        port,
+        switchId,
+        // The RESOLVED switch's name — the same string as the stamp except
+        // when two sites share it, where this is the one the device sits on.
+        switchHostname: switchId ? (switchHostById.get(switchId) ?? null) : null,
+        port: portOfLastSeenSwitch(m.lastSeenSwitch),
         lastSeen:   m.lastSeen,
       };
     });

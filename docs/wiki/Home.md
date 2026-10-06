@@ -5,9 +5,6 @@ systems you already run into one dashboard: it discovers what is on your
 network, keeps one record per device, watches those devices, and tells the right
 people when something breaks.
 
-The name is the point: a fixed reference you navigate by when wiring up
-everything else.
-
 ---
 
 ## What it actually does

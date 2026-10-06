@@ -71,6 +71,7 @@ async function cleanup(): Promise<void> {
   // The prefix-guard cases mint rows named `region:<PFX>-...`, which the
   // startsWith above cannot see.
   await prisma.tag.deleteMany({ where: { name: { startsWith: `region:${PFX}` } } });
+  await prisma.tag.deleteMany({ where: { name: { startsWith: `azure:${PFX}`, mode: "insensitive" } } });
   await prisma.asset.deleteMany({ where: { hostname: { startsWith: PFX } } });
 }
 
@@ -80,6 +81,39 @@ function post(body: unknown) {
 function put(id: string, body: unknown) {
   return agent.put(`/api/v1/server-settings/tags/${id}`).set("X-CSRF-Token", csrf).send(body as never);
 }
+
+d("tag registry — the azure: prefix belongs to the Arc sync", () => {
+  // Each Arc run adds and prunes the `azure:` rows from what the assets carry;
+  // a hand-made one would be pruned, and one carrying a device filter would be
+  // a second reconciler on a string the Arc sync strips every run.
+  const AZ = `azure:${PFX}=P1`;
+
+  it("refuses to CREATE an azure:-named tag, case-insensitively", async () => {
+    expect((await post({ name: AZ, category: "General" })).status).toBe(409);
+    expect((await post({ name: `Azure:${PFX}=x`, category: "General" })).status).toBe(409);
+    expect(await prisma.tag.findUnique({ where: { name: AZ } })).toBeNull();
+  });
+
+  it("refuses to RENAME a plain tag into the prefix", async () => {
+    const created = await post({ name: TAG_NAME, category: "General" });
+    expect(created.status).toBe(201);
+    expect((await put(created.body.id, { name: AZ })).status).toBe(409);
+  });
+
+  it("refuses to rename a mirrored row, but lets it be recoloured", async () => {
+    const row = await prisma.tag.create({ data: { name: AZ, category: "Azure Tags", color: "#4fc3f7" } });
+    expect((await put(row.id, { name: `${PFX}-out` })).status).toBe(409);
+    const recolour = await put(row.id, { color: "#ff0000" });
+    expect(recolour.status).toBe(200);
+    expect(recolour.body.name).toBe(AZ);
+  });
+
+  it("refuses a device filter on a mirrored row", async () => {
+    const row = await prisma.tag.create({ data: { name: AZ, category: "Azure Tags", color: "#4fc3f7" } });
+    expect((await put(row.id, { assetCondition: TREE })).status).toBe(409);
+    expect((await prisma.tag.findUnique({ where: { id: row.id } }))!.assetCondition).toBeNull();
+  });
+});
 
 d("tag registry — the Map Regions lock", () => {
   it("refuses to CREATE a tag in the Device Map's category", async () => {

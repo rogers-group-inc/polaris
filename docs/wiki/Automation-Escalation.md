@@ -7,7 +7,7 @@ three different places because they are three different questions.
 |---|---|---|
 | **Escalation** | if this stays unhandled, who *else* should hear? | the **severity section** |
 | **Reminder** (`repeat`) | how often should this delivery chase? | the **notify action** |
-| **Quiet time** | when should the chasing pause? | inside the reminder block |
+| **Quiet time** | when should nobody be told — and told what, afterwards? | its own step (**Quiet time**), or **Automations → Settings** for every automation at once |
 
 ---
 
@@ -54,8 +54,9 @@ One automation, two honest audiences, no duplication.
 
 ## Reminders
 
-**"Repeat this action"** at the foot of a notify row: *re-send every N minutes*,
-*give up after N hours*, plus the quiet-time editor.
+**"Repeat this action"** at the foot of a notify row: *re-send every N minutes*
+and *give up after N hours*. (Quiet time used to sit here too; it is the
+automation's own step now — [below](#quiet-time).)
 
 A reminder re-sends **notify actions and nothing else**, which is why it belongs
 to the action ([rule 56](Business-Rules#rule-56)). *"Page the on-call every five
@@ -87,60 +88,159 @@ warns about that pairing rather than extending the deadline.
 
 ## Quiet time
 
-Up to 8 recurring windows per reminder, edited with the same day/hours editor
-the Maintenance modal uses: seven day rows, each **off**, **all day**, or
-carrying **one or more hour ranges**.
+Hours during which an automation stays quiet ([rule 92](Business-Rules#rule-92)).
+**A quiet period never drops an alert.** The alert is still raised, shows on the
+Active Alerts page with a **QUIET** pill, and writes its audit event; scripts and
+API calls still run. What changes is who hears about it, and when.
 
-Because a day carries a *list* of ranges, one window says *"nights during the
-week, all weekend"*. That is why the wizard edits a **single** window and lists
-any others read-only — a one-shot, a monthly freeze, a window with active-date
-bounds — rather than offering to rewrite them into something the rows cannot
-say.
+There are two places to set one:
 
-### Five things quiet time is
+| Where | Applies to | Set from |
+|---|---|---|
+| **An automation's own quiet time** | that automation only | the wizard's **Quiet time** step (step 6) |
+| **A global quiet time** | every automation that has **no** quiet time of its own | **Automations → Settings → Global Quiet Times** |
 
-1. **Held, never skipped.** The sweep does not advance the reminder's clock on
-   one it withholds, so that reminder stays **due** and goes out on the first
-   tick after the window ends. There is nothing to schedule — a held reminder is
-   simply an overdue one.
-2. **The reminder that ends a hold reports the silence.** It carries
-   *"Reminders resumed after a quiet period — this alert has been active for
-   9h 12m"* in the body and `· ACTIVE 9h 12m` in the subject. The question after
-   a silent night is how long this has been going on, not which reminder number
-   arrived. That marker rides **only** that reminder.
-3. **The hold is closed by the send, not by the window ending** — a reminder
-   whose channel was dead retries next sweep and must still be the one that
-   reports the silence.
-4. **A hold only exists where a reminder was actually withheld.** Quiet with
-   nothing due stamps nothing, so a reminder that comes due 20 minutes after the
-   window ended is an ordinary reminder and says so.
-5. **Times are server-local wall clock.** The zone comes from the server on the
-   automations schema payload, not from your browser — a browser prefilling
-   22:00 from its own clock is the whole trap. A 22:00–06:00 window survives DST
-   and midnight.
+The automation's **Quiet time** step is a three-way choice:
+
+| Setting | Means |
+|---|---|
+| **Off** | No quiet time of its own. The global quiet times apply to it. |
+| **Ignore Global Quiet Time** | No quiet time at all. It sends whatever the hour, even inside a global quiet time — what a critical automation usually wants. |
+| **Override Global Quiet Time** | Its own quiet time, set below the choice. The global ones do not apply to it. |
+
+Either of the last two leaves the automation alone when a global quiet time
+opens — that is how a critical automation keeps paging while everything else
+waits.
+
+### What goes quiet
+
+Each quiet time says, **per severity**, which sends it holds. Under every
+severity you tick are four boxes:
+
+| | Means |
+|---|---|
+| **Alerts** | the first alert (and a grouped alert's growth update) — the one send that owes a **summary email** afterwards |
+| ↳ **Reminders** | the alert's own reminders ("Repeat this action") |
+| **Escalation alerts** | each escalation tier's first run |
+| ↳ **Reminders** | a tier's own repeats |
+
+Ticking a severity ticks all four; a ticked box is **held** during the quiet
+period, an unticked one goes out live whatever the hour. Untick a severity to
+let it through entirely — the usual shape is everything but critical, and a new
+global quiet time starts that way. Untick **Alerts** but leave the rest to get
+the old reminder-only quiet time: the first alert and the all-clear still send,
+the chasing waits for the period to end. With no severity holding its first
+alert there is nothing to report, and the summary section disappears.
+
+Held means held, never skipped: nothing in the alert's escalation clock moves
+while a send is quiet. The reminder that ends a hold still says *"Reminders
+resumed after a quiet period — this alert has been active for 9h 12m"* and
+carries `· ACTIVE 9h 12m` in its subject ([rule 44](Business-Rules#rule-44)).
+
+### Which alerts
+
+- **Severities.** The tree above. Untick a severity to let it through whatever
+  the hour.
+- **Kinds of alert** (global quiet times only). Any alert, or only the metrics
+  and device states you pick — CPU, interface status, PoE, and so on. Audit-event
+  and change automations carry no kind and match only "Any alert".
+- **Devices** (global quiet times only). The same device filter the automation
+  wizard uses.
+
+### When
+
+The schedule editor is the Maintenance modal's. For specific days of the week
+you write **periods** — "Mon–Fri 22:00–06:00", "Sat, Sun all day" — each a
+row of day chips with either *all day* or one or more hour ranges; add as many
+periods as the week needs, or start from a preset (*Nights*, *Every night*,
+*Weekends*, *Outside business hours*). **Quiet outside these hours** turns the
+periods inside out, so working hours are what you type and the quiet time is
+everything else. A week strip and a per-day breakdown under the periods show
+exactly what will be quiet. Monthly and yearly schedules take a day of the
+period and an hour list, and every schedule can carry a first and last date.
+Times are **server-local wall clock** —
+the zone is printed beside the hours, and a browser prefilling 22:00 from its
+own clock is the whole trap. A 22:00–06:00 window survives DST and midnight.
+A window set through the API that the editor cannot express (a one-shot) is
+listed read-only and kept as it is.
+
+### The summary email
+
+When a quiet period that held everything ends, Polaris emails **everyone the
+held alerts would have reached** — the people on the notify actions, address-book
+contacts, typed addresses, and anyone who would have been pushed (reached by
+their account's email; a push preference is ignored, since there is no summary
+push). **One email per person, in that person's own time zone.** It lists:
+
+- **Still outstanding** — the held alerts that have not recovered or been
+  cleared by the time it is sent: severity, device, what, since when, how long.
+  An alert that came and went inside the period is **not** listed.
+- **Recurring** — an alert that fired **more than X times** during the period
+  for the same automation, device and component (the *recurrence threshold* on
+  the quiet time), listed with the count and every time it fired, whether or not
+  it has recovered. It is not repeated under Still outstanding.
+
+No graphs and no Acknowledge button; each device name opens the device in
+Polaris.
+
+**The all-quiet email.** When the quiet period ends with nothing to list —
+every held alert recovered, or nothing was held at all — the summary still
+goes out, saying so: nothing is outstanding, how many alerts fired and
+recovered (or that none were held), and that its arriving confirms the quiet
+time and your email delivery are working. It goes to everyone the covered
+automations notify: the people, addresses, roles, tags and regions their
+notify actions name (recipients that depend on the triggering device cannot be
+worked out without an alert and are left out). It is on by default; untick
+**Send the summary even when nothing was held** on the quiet time to get a
+summary only when something was held.
+
+**When it is sent.** When the quiet period ends, or at a **send time** you
+choose — a time of day. On a day it falls inside the quiet period the summary
+waits: *nights and weekends* with a 07:30 send time summarises each weekday
+night at 07:30 and rolls the weekend into Monday's. A send time that is inside
+the quiet period on **every** day it occurs could never go out on time, so the
+editor and the server refuse it. Alerts held until the send time roll into
+that summary; if another quiet period opens first, they roll into *its* summary.
+**Through which channel:** the one you pick on the quiet time, else the alert's
+own email channel, else the first enabled email channel. With no email channel
+at all the summary cannot be sent, an Event says so, and the alerts are still
+on the Active Alerts page.
+
+Once an alert has been named in a summary it behaves like any other: its
+reminders and escalation count from the summary, and its all-clear is sent.
+The all-clear of a held alert that was **never** summarised sends nothing —
+there is no inbox to resolve it in.
+
+The Settings modal lists recent summaries: when, which quiet time, how many
+alerts it covered, how many it listed, and who it reached. **Covered**,
+**Listed** and **Recipients** are clickable: Covered opens every alert the
+summary stamped, as it is now, marking the ones the email named; Listed opens
+what the email said, the outstanding rows and the recurring ones with every
+fire time; Recipients opens who it went to, with each address's sent / failed
+state and the error if there was one. A send that fails is
+retried for about ten minutes; a summary that still did not reach everyone
+shows **Resend**, which sends it again to the recipients it missed (and nobody
+else) once the channel is fixed.
 
 ### What quiet time is not
 
-It does **not** touch the first alert, the escalation tiers, or the reset
-notifications. A tier exists to chase a specific person harder, so silencing it
-from a control that says "reminders" would weaken an escalation you configured
-somewhere you were not looking. `escalation.stopOn` and `repeat.stopOn` are
-still the only things that stop either.
+A **maintenance window** is not a quiet time. It stops polling the device, so no
+new alerts are raised about it at all, and it freezes an open alert for the
+whole window ([rule 16](Business-Rules#rule-16)). Quiet time keeps watching and
+keeps raising; it only decides who is told, and when.
 
-A **maintenance window** is not a quiet hold. It pauses reminders and
-escalation on an open alert for the whole window, and they resume afterwards if
-the alert is still open ([rule 16](Business-Rules#rule-16)).
+A wizard **test delivery** is never held — it exists to show you the email.
+Nor is an automation with **no notify action** — one that only writes the audit
+event or only runs a script has nothing for quiet time to withhold, so its
+alerts never appear in a summary.
 
 ### Validation
 
-A half-typed day contributes no window, so the step asks what is wrong and
-**names the day** — and the overlapping pair of hours — in the same words the
-server would. Without that, a ticked box with nothing behind it saves silently
-as "no quiet time" and you find out from the reminders still arriving overnight.
-
-The live note warns about the two pairings that surprise people: `stopAfterHours`
-counts quiet time too, and an all-day-every-day window holds every reminder
-indefinitely.
+A half-typed day contributes no window, so the step names the day — and the
+overlapping pair of hours — in the same words the server would, and a day
+listed both all day and with hours is refused by name. A send time inside the
+quiet period on every day it occurs is refused. The reminder note on
+the Actions step still warns that `stopAfterHours` counts quiet time too.
 
 ---
 
@@ -158,7 +258,6 @@ indefinitely.
 | **A more specific automation carves the device out** | cleared as `superseded` ([rule 18](Business-Rules#rule-18)) |
 | **The pin is removed** | a dimensioned alert clears ([rule 57](Business-Rules#rule-57)) |
 
-Note that a maintenance window **ends** an alert rather than pausing it. A still
-bad condition re-earns its debounce and fires anew after the window — which is
-correct, because the alert that was live before the window is about a device
-nobody was working on yet.
+A **quiet period** is not in this table on purpose: it ends nothing and pauses
+nothing about the alert itself. It holds the sends, and the summary email
+reports what is still outstanding when it ends ([rule 92](Business-Rules#rule-92)).

@@ -66,6 +66,7 @@ import { ingestOsEventLog, getAgentEventLogConfig } from "./osEventLogService.js
 import type { WinRmConnection } from "../utils/winrm.js";
 import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
+import { bareInterfaceIp, interfaceIpIsUnaddressed } from "../utils/cidr.js";
 import { applyTransform } from "../utils/symbolTransforms.js";
 import { createTtlCache } from "../utils/ttlCache.js";
 import { expandMacRange } from "../utils/macAddresses.js";
@@ -204,6 +205,8 @@ import {
   responseTimeProbeShouldQueue,
 } from "../utils/pollingCompatibility.js";
 import { propagateAfterStatusChange } from "./dependencyTreeService.js";
+import { buildInfraParentIndex, controllerGateIdOf, type InfraParentCandidate } from "../utils/fortinetParentKey.js";
+import { indexLldpHostname, pickLldpHostnameMatch, type LldpHostnameMatchIndex } from "../utils/lldpHostnameMatch.js";
 import { triggerRetryAfterStatusChange } from "./reservationService.js";
 import { recordIpHistoryEntries } from "./assetIpHistoryService.js";
 import { snmpTicksToSeconds, formatUptimeLong } from "../utils/uptime.js";
@@ -5912,6 +5915,15 @@ export interface FortiCmdbInterfaceEntry {
    *  gates — the monitor payload's `status` is `undefined` on every entry,
    *  while the CMDB's is "up"/"down" on all of them. */
   adminStatus: string | null;
+  /** The CMDB's configured IPv4 address, bare (mask stripped), or null when
+   *  unset / 0.0.0.0. Only read for interfaces the monitor endpoint omits —
+   *  see `backfillFortiCmdbOnlyTunnels`; the monitor's runtime IP wins
+   *  everywhere else. */
+  ipAddress: string | null;
+  /** A `type tunnel` interface's underlay (CMDB `interface`, e.g. "wan1");
+   *  null for every other type and for FortiOS's built-in per-VDOM
+   *  pseudo-tunnels (`ssl.root`, `l2t.root`, `naf.root`), which carry none. */
+  tunnelUnderlay: string | null;
 }
 
 /**
@@ -5958,6 +5970,12 @@ export function parseFortiCmdbInterfaceTable(cmdbRes: unknown): Map<string, Fort
     // unknown rather than passed through, for the same reason `mode` is.
     const rawStatus = typeof c.status === "string" ? c.status.trim().toLowerCase() : "";
     const adminStatus = rawStatus === "up" || rawStatus === "down" ? rawStatus : null;
+    // FortiOS REST gives `ip` as "x.x.x.x y.y.y.y"; tolerate the [ip, mask]
+    // array shape the FMG device DB uses.
+    const rawIp = Array.isArray(c.ip) ? c.ip[0] : c.ip;
+    const ipAddress = typeof rawIp === "string" && !interfaceIpIsUnaddressed(rawIp)
+      ? bareInterfaceIp(rawIp)
+      : null;
     cmdbByName.set(c.name, {
       type:    t,
       parent:  t === "vlan" && typeof c.interface === "string" ? c.interface : null,
@@ -5967,6 +5985,8 @@ export function parseFortiCmdbInterfaceTable(cmdbRes: unknown): Map<string, Fort
       description,
       addressingMode,
       adminStatus,
+      ipAddress,
+      tunnelUnderlay: t === "tunnel" && typeof c.interface === "string" && c.interface.trim() ? c.interface.trim() : null,
     });
   }
   return cmdbByName;
@@ -6093,6 +6113,60 @@ export function backfillFortiAggregateMembers(
   }
 }
 
+/**
+ * Synthesize rows for CMDB `type tunnel` interfaces the monitor endpoint
+ * omitted — IPsec phase1-interfaces (site-to-site, dial-up and ADVPN hub /
+ * spoke overlays), plus GRE / VXLAN, which FortiOS also types `tunnel`.
+ *
+ * `/api/v2/monitor/system/interface` leaves these out, so on a REST-polled
+ * gate they never reached `asset_interfaces`: the System tab didn't list
+ * them and the overlay addresses configured on them (`set ip 10.255.0.1
+ * 255.255.255.255`) were never tied to the firewall. The CMDB read that
+ * already runs alongside the monitor one carries both the name and the `ip`.
+ *
+ * Runtime fields stay null — the CMDB has no link state or counters, and the
+ * tunnel's real state is its SA, which the IPsec stream owns (an SNMP
+ * ifOperStatus "up" is meaningless for the same reason). The per-instance
+ * shortcut interfaces ADVPN spawns at runtime (`<name>_0`, `<name>_1`…) are
+ * not CMDB rows and are not synthesized; they carry the parent's address.
+ * A tunnel the monitor DID report is left alone. Mutates `interfaces` in place.
+ *
+ * A tunnel with neither an address nor an underlay is skipped: that is the
+ * shape of FortiOS's built-in per-VDOM pseudo-tunnels (`ssl.root`,
+ * `l2t.root`, `naf.root`), present on every gate and never what an operator
+ * means by a tunnel. An unnumbered route-based IPsec interface still has its
+ * underlay, so it is kept. Confirmed against the FortiOS 7.6.7 lab gates.
+ */
+export function backfillFortiCmdbOnlyTunnels(
+  interfaces: InterfaceSample[],
+  cmdbByName: Map<string, FortiCmdbInterfaceEntry>,
+): void {
+  const present = new Set(interfaces.map((s) => s.ifName));
+  for (const [name, c] of cmdbByName) {
+    if (c.type !== "tunnel" || present.has(name)) continue;
+    if (!c.ipAddress && !c.tunnelUnderlay) continue;
+    interfaces.push({
+      ifName:      name,
+      adminStatus: c.adminStatus,
+      operStatus:  null,
+      speedBps:    null,
+      ipAddress:   c.ipAddress,
+      macAddress:  null,
+      inOctets:    null,
+      outOctets:   null,
+      inErrors:    null,
+      outErrors:   null,
+      ifType:      "tunnel",
+      ifParent:    null,
+      vlanId:      null,
+      alias:       c.alias,
+      description: c.description,
+      addressingMode: c.addressingMode,
+    });
+    present.add(name);
+  }
+}
+
 async function collectSystemInfoFortinet(
   host: string,
   integration: { type: string; config: Record<string, unknown> },
@@ -6177,6 +6251,7 @@ async function collectSystemInfoFortinet(
     const obj = (res && typeof res === "object" && !Array.isArray(res)) ? res as Record<string, any> : {};
     interfaces = buildFortiInterfaceSamples(obj, cmdbByName);
     backfillFortiAggregateMembers(interfaces, obj, cmdbByName);
+    backfillFortiCmdbOnlyTunnels(interfaces, cmdbByName);
   } else if (interfaces.length === 0) {
     // Monitor failed AND we have no interfaces from the (also-failing) cmdb
     // synthesis path — re-throw the original error to match the prior
@@ -10662,17 +10737,20 @@ async function persistLldpNeighbors(
       const m = matchIndex.byMac.get(mac);
       if (m && m !== assetId) return m;
     }
+    // Hostname arms (business rule 91): a name several assets share — the
+    // per-site switch-id of a FortiLink fleet — is matched only to the
+    // candidate under the same gate as this asset, else to nothing. The
+    // belt-and-suspenders FQDN → leftmost-label retry is kept: the index
+    // builder already adds short forms when it sees FQDNs, but both
+    // directions are defended.
+    const byName = (lower: string): string | null => {
+      let m = pickLldpHostnameMatch(matchIndex, assetId, lower);
+      if (!m && lower.includes(".")) m = pickLldpHostnameMatch(matchIndex, assetId, lower.split(".")[0]);
+      return m;
+    };
     if (n.systemName) {
-      const lower = n.systemName.toLowerCase();
-      let m = matchIndex.byHostname.get(lower);
-      // Belt-and-suspenders: if LLDP reports FQDN ("device.contoso.com")
-      // and the index only has the short form, try the leftmost label too.
-      // The index builder already adds short forms when it sees FQDNs, but
-      // both directions defended.
-      if (!m && lower.includes(".")) {
-        m = matchIndex.byHostname.get(lower.split(".")[0]);
-      }
-      if (m && m !== assetId) return m;
+      const m = byName(n.systemName.toLowerCase());
+      if (m) return m;
     }
     // Some LLDP implementations leave systemName empty and put the hostname
     // in chassisId with subtype local(7) or chassisComponent(1). Treat any
@@ -10683,12 +10761,8 @@ async function persistLldpNeighbors(
       // match a hostname index entry anyway, and we don't want to pollute
       // logs with bogus lookups.
       if (raw && !/\s/.test(raw) && !/^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(raw)) {
-        const lower = raw.toLowerCase();
-        let m = matchIndex.byHostname.get(lower);
-        if (!m && lower.includes(".")) {
-          m = matchIndex.byHostname.get(lower.split(".")[0]);
-        }
-        if (m && m !== assetId) return m;
+        const m = byName(raw.toLowerCase());
+        if (m) return m;
       }
     }
     return null;
@@ -11296,7 +11370,8 @@ async function bulkUpsertWirelessStations(
  *
  * - byIp: ipAddress + every row in asset_associated_ips (manual + monitor-discovered)
  * - byMac: macAddress (uppercased) + every entry in macAddresses
- * - byHostname: hostname (lowercased) — first wins on duplicates
+ * - byHostnameAll: hostname (lowercased) → EVERY asset carrying it (rule 91);
+ *   `gateIdByAssetId` is what picks between them
  */
 // ─── LLDP match-index cache ───────────────────────────────────────────────
 //
@@ -11318,10 +11393,9 @@ async function bulkUpsertWirelessStations(
 // explicit invalidation is optional, and most discovery writes don't need
 // it. Currently nobody calls it; the TTL is the source of truth.
 const LLDP_MATCH_CACHE_TTL_MS = 60_000;
-interface LldpMatchIndex {
+interface LldpMatchIndex extends LldpHostnameMatchIndex {
   byIp: Map<string, string>;
   byMac: Map<string, string>;
-  byHostname: Map<string, string>;
 }
 // createTtlCache (2026-08 audit) — the hand-rolled cache+inflight trio it
 // replaces re-implemented exactly the promise-coalescing the shared util
@@ -11341,11 +11415,7 @@ export function invalidateLldpMatchCache(): void {
   lldpMatchCache.invalidate();
 }
 
-async function buildLldpAssetMatchIndex(): Promise<{
-  byIp: Map<string, string>;
-  byMac: Map<string, string>;
-  byHostname: Map<string, string>;
-}> {
+async function buildLldpAssetMatchIndex(): Promise<LldpMatchIndex> {
   // Always-on logging around the full-fleet findMany: the rebuild fires at
   // most every 60 s on TTL miss, so log volume is bounded, and "the rebuild
   // wedged" is one of the leading hypotheses for systemInfo handler stalls
@@ -11354,37 +11424,61 @@ async function buildLldpAssetMatchIndex(): Promise<{
   // complete lines gives the operator wall-clock for the rebuild itself.
   const startedAt = Date.now();
   logger.info({ phase: "lldp_match_index.rebuild_start" }, "LLDP match index rebuild started");
-  const rows = await prisma.asset.findMany({
-    select: {
-      id: true, ipAddress: true, macAddress: true, hostname: true, dnsName: true,
-      associatedIpRows: { select: { ip: true } },
-      macAddressRows:   { select: { mac: true, macEnd: true } },
-    },
-  });
+  // Two reads: the identity columns for every asset, and — for the Fortinet
+  // infra rows only — the three `fortinetTopology` keys that say which gate
+  // each sits under (rule 91's tie-break for a shared hostname). A JSON-path
+  // projection rather than selecting the whole blob: a gate's topology stamp
+  // carries its managed-member serial lists, far more than this index needs
+  // every 60 s.
+  type InfraKeyRow = {
+    id: string; hostname: string | null; serialNumber: string | null; assetType: string;
+    controllerSerial: string | null; controllerFortigate: string | null; deviceName: string | null;
+  };
+  const [rows, infraRows] = await Promise.all([
+    prisma.asset.findMany({
+      select: {
+        id: true, ipAddress: true, macAddress: true, hostname: true, dnsName: true,
+        associatedIpRows: { select: { ip: true } },
+        macAddressRows:   { select: { mac: true, macEnd: true } },
+      },
+    }),
+    prisma.$queryRaw<InfraKeyRow[]>`
+      SELECT id, hostname, "serialNumber", "assetType"::text AS "assetType",
+             "fortinetTopology"->>'controllerSerial'    AS "controllerSerial",
+             "fortinetTopology"->>'controllerFortigate' AS "controllerFortigate",
+             "fortinetTopology"->>'deviceName'          AS "deviceName"
+      FROM assets
+      WHERE "assetType"::text IN ('firewall', 'switch', 'access_point')
+    `,
+  ]);
   logger.info(
     { phase: "lldp_match_index.rebuild_complete", elapsedMs: Date.now() - startedAt, assets: rows.length },
     "LLDP match index rebuild complete",
   );
   const byIp = new Map<string, string>();
   const byMac = new Map<string, string>();
-  const byHostname = new Map<string, string>();
-  // Helper: index a hostname-shaped string under the asset id, including
-  // the leftmost label when it's an FQDN. Symmetric coverage matters for
-  // LLDP matching: a FortiGate's `Asset.hostname` is "HARBOR-61F-1" (short
-  // form, set by the fortigate-firewall source) but the device advertises
-  // itself via LLDP as "HARBOR-61F-1.example.com" (FQDN). The
-  // lookup side already lowercases; we just need both forms in the index.
-  const idxHostname = (raw: string | null, assetId: string) => {
-    if (!raw) return;
-    const lower = raw.toLowerCase().trim();
-    if (!lower) return;
-    if (!byHostname.has(lower)) byHostname.set(lower, assetId);
-    const dotIdx = lower.indexOf(".");
-    if (dotIdx > 0) {
-      const shortForm = lower.slice(0, dotIdx);
-      if (!byHostname.has(shortForm)) byHostname.set(shortForm, assetId);
-    }
-  };
+  const byHostnameAll = new Map<string, string[]>();
+  // Index a hostname-shaped string under the asset id, including the leftmost
+  // label when it's an FQDN. Symmetric coverage matters for LLDP matching: a
+  // FortiGate's `Asset.hostname` is "HARBOR-61F-1" (short form, set by the
+  // fortigate-firewall source) but the device advertises itself via LLDP as
+  // "HARBOR-61F-1.example.com" (FQDN). The lookup side already lowercases; we
+  // just need both forms in the index.
+  const idxHostname = (raw: string | null, assetId: string) => indexLldpHostname(byHostnameAll, raw, assetId);
+  // Which gate each infra asset sits under, through the shared resolver (a
+  // controller stamp is serial-first, FMG device name second, hostname last).
+  const gateIdByAssetId = new Map<string, string>();
+  const infraCandidates: InfraParentCandidate[] = infraRows.map(r => ({
+    id: r.id, hostname: r.hostname, serialNumber: r.serialNumber, assetType: r.assetType,
+    fortinetTopology: {
+      controllerSerial: r.controllerSerial, controllerFortigate: r.controllerFortigate, deviceName: r.deviceName,
+    },
+  }));
+  const infraIndex = buildInfraParentIndex(infraCandidates);
+  for (const c of infraCandidates) {
+    const gate = c.assetType === "firewall" ? c.id : controllerGateIdOf(infraIndex, c);
+    if (gate) gateIdByAssetId.set(c.id, gate);
+  }
   for (const a of rows) {
     if (a.ipAddress && !byIp.has(a.ipAddress)) byIp.set(a.ipAddress, a.id);
     for (const row of a.associatedIpRows) {
@@ -11410,7 +11504,7 @@ async function buildLldpAssetMatchIndex(): Promise<{
     // form which might differ.
     idxHostname(a.dnsName, a.id);
   }
-  return { byIp, byMac, byHostname };
+  return { byIp, byMac, byHostnameAll, gateIdByAssetId };
 }
 
 /**

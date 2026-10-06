@@ -198,7 +198,7 @@
     if (_sf) data = _sf.apply(data);
     if (!data.length) {
       tbody.innerHTML = '<tr><td colspan="10" class="empty-state">' +
-        (_checks.length ? "No checks match the filters." : "No path checks yet" + (editor ? ' — click "+ Add check" to create one.' : ".")) +
+        (_checks.length ? "No checks match the filters." : "No path checks yet" + (editor ? ' — click "+ Add monitor" to create one.' : ".")) +
         "</td></tr>";
       if (typeof clearPageControls === "function") clearPageControls("path-pagination");
       return;
@@ -503,7 +503,7 @@
         num("pc-tr-maxhops", "Max hops", t.maxHops || 30, 1, 64) +
         num("pc-tr-probes", "Probes per hop", t.probesPerHop || 3, 1, 5) +
       "</div>" +
-      '<p class="hint">A changed hop sequence is written to Events as <code>path_check.path_changed</code>, which an automation can alert on. macOS agents do not trace in this version.</p>';
+      '<p class="hint">A changed hop sequence is written to Events as <code>path_check.path_changed</code>; a <strong>Path Monitor</strong> automation set to fire when the route changes alerts on it. macOS agents do not trace in this version.</p>';
   }
 
   /** The step's question, then one line of explanation (the wizard canon). */
@@ -521,7 +521,7 @@
         '<span class="toggle-switch"><input type="checkbox" id="pc-server"><span class="toggle-slider"></span></span>' +
         "Run from this Polaris server</label>" +
         '<p class="hint" style="margin:2px 0 0 42px">On: the server that hosts Polaris runs the check itself, whether it is installed on Linux or in a container, with no agent needed. ' +
-        "Its results appear as the <strong>Polaris server</strong> row in Results, with the same charts and path graph; automations alert on agent hosts only, because the server is not an asset. " +
+        "Its results appear as the <strong>Polaris server</strong> row in Results, with the same charts and path graph; a <strong>Path Monitor</strong> automation alerts on them when it includes the Polaris server. " +
         "Off: the agent hosts you pick below run it." +
         (mayServer ? "" : " <strong>Needs Read-Write on Network Discovery</strong> as well as Path Monitor to turn on, because the server probes from its own network.") + "</p></div>" +
       '<div id="pc-server-only-note" style="display:none">' + infoBox("This check <strong>authenticates</strong>, so it runs only from this Polaris server — its credential is never sent to an agent. To run it from agent hosts instead, set Authentication to <em>None</em> on the General step.") + "</div>" +
@@ -593,7 +593,7 @@
       return '<div class="step-panel' + (i === 0 ? " visible" : "") + '" id="pc-step-' + (i + 1) + '">' +
         stepHead(st.question, st.explain) + panels[st.key] + "</div>";
     }).join("");
-    var title = editingId ? "Edit Path Check" : "Add Path Check";
+    var title = editingId ? "Edit Path Monitor" : "Add Path Monitor";
     var footer = '<button type="button" class="btn btn-secondary" id="pc-cancel">Cancel</button>' +
       '<button type="button" class="btn btn-secondary" id="pc-back" style="display:none">&larr; Back</button>' +
       '<button type="button" class="btn btn-primary" id="pc-next">Next &rarr;</button>' +
@@ -630,7 +630,11 @@
     body.querySelector("#pc-follow-note").style.display = legacyFollow && existing ? "" : "none";
     var condRoot = body.querySelector("#pc-cond-root");
     condRoot.innerHTML = builder.groupHtml(scope.condition || (c.sourceFilter && c.sourceFilter.condition) || { op: "and", children: [] }, 0);
-    builder.wire(body, "#pc-cond-root");
+    // Bind to #pc-agent-sources, NEVER to the modal body: openModal reuses one
+    // persistent .modal-body, so listeners there outlive the dialog and stack
+    // up per open — the second open's "+ Condition" appended two rows, and the
+    // hidden blank one kept the host list stuck on "needs a value".
+    builder.wire(body.querySelector("#pc-agent-sources"), "#pc-cond-root");
     // The blank condition row is seeded only while the agent filter is the
     // source: seeding it under a server-run check left an unfilled row that
     // then refused the save.
@@ -751,6 +755,7 @@
       if (serverCb.checked || allCb.checked) { ++previewSeq; return; } // nothing to pick
       var finder = collectFinder();
       if (!finder.condition && !pins.size) {
+        ++previewSeq; // a reply still in flight must not overwrite this hint
         previewShell('<span class="hint">' + esc(finder.error || "Add a condition to find agent hosts, then tick the ones that should run this check.") + "</span>");
         return;
       }

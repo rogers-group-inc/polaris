@@ -72,7 +72,7 @@ import {
   type TagCriteria,
 } from "../../services/tagAssignmentService.js";
 import { REGION_TAG_CATEGORY } from "../../services/mapRegionService.js";
-import { REGION_TAG_PREFIX } from "../../utils/tagNormalize.js";
+import { REGION_TAG_PREFIX, AZURE_TAG_PREFIX, isAzureTag } from "../../utils/tagNormalize.js";
 import {
   DEVICE_FILTER_FIELD_OPS,
   scopeConditionMeta,
@@ -115,12 +115,11 @@ import {
 } from "../../services/queueService.js";
 import { BACKUP_DIR, UPLOADS_DIR } from "../../utils/paths.js";
 import { maintenanceLimiter } from "../middleware/rateLimits.js";
-import { getAppVersion } from "../../utils/version.js";
 import { parsePostgresVersion } from "../../utils/platformVersions.js";
 import { getTableSizes, getDatabaseSizeBreakdown } from "../../services/dbSizeService.js";
 import { formatBytes } from "../../utils/haAdvisories.js";
 import { detectImageMagic } from "../../utils/imageMagic.js";
-import { BRANDING_DEFAULTS, getBranding, hasCustomLogo, normalizeBrandingFlag, normalizeTemperatureUnit } from "../../services/brandingService.js";
+import { BRANDING_DEFAULTS, getBranding, normalizeBrandingFlag, normalizeTemperatureUnit } from "../../services/brandingService.js";
 import type { BrandingSettings } from "../../services/brandingService.js";
 // Re-exported for the existing importers of this module (src/api/router.ts
 // mounts a public /branding alias via a dynamic import of this file).
@@ -162,8 +161,6 @@ const restoreUpload = multer({
     filename: (_req, _file, cb) => cb(null, `polaris-restore-upload-${Date.now()}`),
   }),
 });
-
-const APP_VERSION: string = getAppVersion();
 
 // ─── Database ──────────────────────────────────────────────────────────────
 
@@ -538,6 +535,27 @@ function assertNotRegionPrefix(name: string, verb: string): void {
 }
 
 /**
+ * The `azure:` prefix belongs to the Azure Arc sync, in every category.
+ *
+ * Each Arc run strips every `azure:` tag off the assets it touches and
+ * re-adds the set Azure currently reports, and it adds and prunes the
+ * registry rows to match. A hand-made `azure:` row would be pruned on the next
+ * run; one carrying an auto-assign filter would put a second managed-sync
+ * reconciler on a string the Arc sync already strips. So the registry refuses
+ * minting one by create or by rename, refuses renaming a mirrored row (the
+ * next run would re-add the old name beside it), and refuses a device filter
+ * on one. Colour and category edits stay open.
+ */
+function assertNotAzurePrefix(name: string, verb: string): void {
+  if (!isAzureTag(name.trim())) return;
+  throw new AppError(
+    409,
+    `Tag names starting with "${AZURE_TAG_PREFIX}" are mirrored from Azure resource tags by the Azure Arc integration — ` +
+      `set the tag in Azure to ${verb} it, or pick another name.`,
+  );
+}
+
+/**
  * How the audit Event describes the filter a write left on the tag. Counts
  * only — the tree itself is on the row, and an Event is shipped off-host by the
  * syslog / SFTP archivers.
@@ -610,6 +628,7 @@ router.post("/tags", requirePermission("serverSettingsSystem", "write"), async (
     const category = req.body.category || "General";
     assertNotRegionCategory(category, "add");
     assertNotRegionPrefix(name, "add");
+    assertNotAzurePrefix(name, "add");
 
     // Validate + normalize the optional auto-assignment device filter
     // (neither shape set = an ordinary manual tag).
@@ -734,6 +753,12 @@ router.put("/tags/:id", requirePermission("serverSettingsSystem", "write"), asyn
       if (!existing.name.trim().toLowerCase().startsWith(REGION_TAG_PREFIX)) {
         assertNotRegionPrefix(name, "rename");
       }
+      // Both directions: into the prefix mints an orphan the next Arc run
+      // prunes; out of it, the next run re-adds the old name beside it.
+      if (isAzureTag(existing.name.trim())) {
+        throw new AppError(409, `"${existing.name}" is mirrored from an Azure resource tag — rename it in Azure instead.`);
+      }
+      assertNotAzurePrefix(name, "rename");
     }
 
     const category = req.body.category ?? existing.category;
@@ -744,6 +769,9 @@ router.put("/tags/:id", requirePermission("serverSettingsSystem", "write"), asyn
     // The filter only changes when a shape key is present in the body. Absent =
     // leave as-is; explicit null / an empty tree = clear (becomes a manual tag).
     const posted = readPostedTagFilter(req.body, category);
+    if ((posted.condition || posted.criteria) && isAzureTag(name)) {
+      throw new AppError(409, `"${name}" is mirrored from an Azure resource tag — it cannot also carry a device filter.`);
+    }
     const filterWrite = posted.provided
       ? {
           assetCondition: posted.condition
@@ -1089,19 +1117,26 @@ router.get("/oui/overrides", async (_req, res, next) => {
   }
 });
 
+// The prefix feeds a fleet-wide asset.updateMany, so it must be a plain string
+// before anything reads it — a non-string body field used to surface as a 500.
+const OuiOverrideSchema = z.object({
+  prefix: z.string().trim().min(1, "prefix is required").max(32),
+  manufacturer: z.string().trim().min(1, "manufacturer is required").max(255),
+  device: z.string().trim().max(255).nullish(),
+});
+
 router.post("/oui/overrides", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
   try {
-    const { prefix, manufacturer, device } = req.body;
-    if (!prefix || !manufacturer) throw new AppError(400, "prefix and manufacturer are required");
+    const { prefix, manufacturer, device } = OuiOverrideSchema.parse(req.body);
     const clean = prefix.replace(/[:\-.\s]/g, "").toUpperCase();
     if (!/^[0-9A-F]{6}$/.test(clean)) throw new AppError(400, "prefix must be 6 hex characters (e.g. AA:BB:CC)");
-    const deviceTrim = typeof device === "string" ? device.trim() : "";
-    const result = await setOuiOverride(prefix, manufacturer.trim(), deviceTrim || undefined);
+    const deviceTrim = device ?? "";
+    const result = await setOuiOverride(prefix, manufacturer, deviceTrim || undefined);
 
     // Update matching assets — match MAC addresses starting with this prefix
     // MAC format in DB is uppercase colon-separated: "AA:BB:CC:DD:EE:FF"
     const macPrefix = clean.match(/.{2}/g)!.join(":");
-    const updateData: { manufacturer: string; model?: string } = { manufacturer: manufacturer.trim() };
+    const updateData: { manufacturer: string; model?: string } = { manufacturer };
     if (deviceTrim) updateData.model = deviceTrim;
     const updated = await prisma.asset.updateMany({
       where: { macAddress: { startsWith: macPrefix } },
@@ -1115,7 +1150,7 @@ router.post("/oui/overrides", requirePermission("serverSettingsSystem", "write")
       resourceId: clean,
       resourceName: macPrefix,
       actor: req.session?.username,
-      message: `OUI override set for ${macPrefix} → ${manufacturer.trim()}${deviceTrim ? ` / ${deviceTrim}` : ""} (${updated.count} assets rewritten)`,
+      message: `OUI override set for ${macPrefix} → ${manufacturer}${deviceTrim ? ` / ${deviceTrim}` : ""} (${updated.count} assets rewritten)`,
     });
 
     res.json({ ...result, assetsUpdated: updated.count });
@@ -2092,7 +2127,10 @@ router.put("/branding", requirePermission("serverSettingsSystem", "write"), asyn
       actor: req.session?.username,
       message: `Branding updated: appName="${updated.appName}", subtitle="${updated.subtitle}", temperatureUnit=${updated.temperatureUnit}, logoAccent=${updated.logoAccent}, logoOnLogin=${updated.logoOnLogin}, logoOnSidebar=${updated.logoOnSidebar}`,
     });
-    res.json({ ...updated, version: APP_VERSION, customLogo: hasCustomLogo(updated.logoUrl) });
+    // Re-read rather than echo `updated`: the response must carry the derived
+    // fields (customLogo, and logoVersion, which a new upload changes) exactly
+    // as GET /branding does, and the Customization tab renders straight off it.
+    res.json(await getBranding());
   } catch (err) {
     next(err);
   }
@@ -2135,7 +2173,10 @@ router.post("/branding/logo", maintenanceLimiter, requirePermission("serverSetti
       actor: req.session?.username,
       message: `Custom logo set (${filename})`,
     });
-    res.json({ ...updated, version: APP_VERSION, customLogo: hasCustomLogo(updated.logoUrl) });
+    // Re-read rather than echo `updated`: the response must carry the derived
+    // fields (customLogo, and logoVersion, which a new upload changes) exactly
+    // as GET /branding does, and the Customization tab renders straight off it.
+    res.json(await getBranding());
   } catch (err) {
     next(err);
   }
@@ -2172,7 +2213,10 @@ router.delete("/branding/logo", maintenanceLimiter, requirePermission("serverSet
       actor: req.session?.username,
       message: "Custom logo removed — reverted to default",
     });
-    res.json({ ...updated, version: APP_VERSION, customLogo: hasCustomLogo(updated.logoUrl) });
+    // Re-read rather than echo `updated`: the response must carry the derived
+    // fields (customLogo, and logoVersion, which a new upload changes) exactly
+    // as GET /branding does, and the Customization tab renders straight off it.
+    res.json(await getBranding());
   } catch (err) {
     next(err);
   }

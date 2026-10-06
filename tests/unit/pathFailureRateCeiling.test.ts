@@ -20,6 +20,9 @@ const h = vi.hoisted(() => ({
     notificationRuleState: { findMany: vi.fn(), update: vi.fn(), upsert: vi.fn(), findUnique: vi.fn() },
     notification: { create: vi.fn(), createMany: vi.fn(), updateMany: vi.fn() },
     asset: { findMany: vi.fn(), findUnique: vi.fn() },
+    // A Path Monitor rule's pool is agent hosts (pathMonitorScope) — the
+    // agentInstalled leaf is prefetched from here.
+    managedAgent: { findMany: vi.fn() },
     assetTelemetrySample: { findMany: vi.fn() },
     assetPathCheckSample: { groupBy: vi.fn(), findMany: vi.fn() },
     pathCheck: { findMany: vi.fn() },
@@ -98,7 +101,46 @@ beforeEach(() => {
   h.prisma.event.findMany.mockResolvedValue([]);
   h.prisma.assetTelemetrySample.findMany.mockResolvedValue([]);
   h.prisma.asset.findMany.mockResolvedValue([scopeAsset(HOST)]);
+  h.prisma.managedAgent.findMany.mockResolvedValue([{ assetId: HOST }]);
   h.prisma.pathCheck.findMany.mockResolvedValue([{ id: CHECK, name: "ERP" }]);
+});
+
+describe("Path Monitor pool (business rule 85, 2026-10-05)", () => {
+  /** Grouped counts per subject — the server's samples are stored under "polaris-server". */
+  function runsBy(rows: Array<[subject: string, failed: number, passed: number]>) {
+    const at = new Date();
+    h.prisma.assetPathCheckSample.groupBy.mockImplementation(async (args: any) => {
+      const ids: string[] = args.where.assetId.in;
+      return rows.filter(([s]) => ids.includes(s)).flatMap(([s, failed, passed]) => [
+        ...(failed ? [{ assetId: s, checkId: CHECK, ok: false, _count: { _all: failed }, _max: { timestamp: at } }] : []),
+        ...(passed ? [{ assetId: s, checkId: CHECK, ok: true, _count: { _all: passed }, _max: { timestamp: at } }] : []),
+      ]);
+    });
+  }
+
+  it("leaves out a host with no active agent", async () => {
+    h.prisma.managedAgent.findMany.mockResolvedValue([]);
+    runs(10, 0);
+    await evaluateAllNotificationRules();
+    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+  });
+
+  it("fires on the Polaris server's own runs when the rule includes it — with no asset", async () => {
+    h.prisma.notificationRule.findMany.mockResolvedValue([pathRule({ includeServer: true })]);
+    runsBy([[HOST, 0, 10], ["polaris-server", 10, 0]]);
+    await evaluateAllNotificationRules();
+    expect(h.prisma.notification.create).toHaveBeenCalledTimes(1);
+    const data = h.prisma.notification.create.mock.calls[0]![0].data;
+    expect(data.assetId).toBeNull();
+    expect(data.assetHostname).toBe("Polaris server");
+    expect(data.dimension).toBe(CHECK);
+  });
+
+  it("ignores the server's runs when the rule leaves it out", async () => {
+    runsBy([[HOST, 0, 10], ["polaris-server", 10, 0]]);
+    await evaluateAllNotificationRules();
+    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+  });
 });
 
 describe("path failure rate has no saturation ceiling", () => {

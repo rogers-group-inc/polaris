@@ -106,9 +106,9 @@ happily take a major downgrade to clear a dev-only advisory.
 
 ## The overrides block
 
-`package.json` carries seven `overrides`, each a hand-placed floor patching a transitive
-advisory. The first five are runtime-reachable; the last two are not, and are floored anyway
-for the reason in the second table:
+`package.json` carries eight `overrides`, each a hand-placed floor patching a transitive
+advisory. The first five are runtime-reachable; the last three are not, and are floored anyway
+for the reasons in the second and third tables:
 
 | Override | Why |
 |---|---|
@@ -125,6 +125,12 @@ Both of the following reach the tree ONLY through `prisma`, which is a **devDepe
 |---|---|
 | `mysql2` | GHSA-3f6p-5ww8-9rcr: the client honours a server's auth-plugin switch to `mysql_clear_password`, leaking the plaintext password to a hostile or MITM server. Polaris has no MySQL datasource; the Prisma CLI just bundles every driver it can speak. Floored because `npm audit`'s suggested fix is a **prisma downgrade** — nonsense it will offer again every run |
 | `deepmerge-ts` | stack exhaustion on recursive object graphs. `@prisma/config` **exact-pins** `7.1.5`, so an override is the only lever and it forces a major on a pinned transitive of the CLI. The merged graph is our own `prisma.config.ts`, not attacker input |
+
+Lint-only, through `eslint` → `minimatch`:
+
+| Override | Why |
+|---|---|
+| `brace-expansion` | quadratic-time `{a},b}` expansion (CPU DoS). The only consumer is `minimatch` under eslint / typescript-eslint, matching our own lint globs, so nothing attacker-supplied reaches it. Floored (2026-10-05) when the lockfile still held 5.0.9 under an open Dependabot alert, so a lock regeneration cannot drop back below the fix |
 
 **Forcing a major on a Prisma-CLI transitive needs a positive test, not a green install.**
 `npm install` succeeding proves nothing — `@prisma/config` is what consumes `deepmerge-ts`, and

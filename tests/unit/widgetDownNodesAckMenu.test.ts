@@ -42,6 +42,7 @@ interface Node {
   alertSeverity?: string;
   alertId?: string;
   alertAcknowledged?: boolean;
+  alertAcknowledgedBy?: string | null;
 }
 interface Cfg { groupBy?: string; rowLimit?: number | null }
 interface WidgetModule {
@@ -145,6 +146,54 @@ describe("the row carries the alert its severity pill is showing", () => {
   it("keeps the href so ctrl/middle-click can still open the Assets page", () => {
     const { row } = clickFirstRow([node({ id: "a", alertId: "n-1" })]);
     expect(row.getAttribute("href")).toBe("/assets.html#view=asset:a");
+  });
+});
+
+// An acknowledged outage is still an outage, so it stays listed — but it has
+// to LOOK owned, or an operator glancing at the wallboard re-takes alerts a
+// colleague already has. Same treatment as the Active Alerts widget.
+describe("an acknowledged row reads as owned", () => {
+  function renderRows(nodes: Node[]) {
+    const el = mountWidget();
+    const cleanups: Array<() => void> = [];
+    mod.renderInstance(el, { groupBy: "none", rowLimit: 10 }, { nodes, total: nodes.length }, { onUnmount: (fn) => cleanups.push(fn) });
+    cleanups.forEach((fn) => fn());
+    return Array.from(el.querySelectorAll(".dash-alert-item")) as unknown as HTMLElement[];
+  }
+  const ackPill = (row: HTMLElement) => row.querySelector(".dash-alert-title .widget-pill-neutral");
+
+  it("dims the outage and names its owner in a pill", () => {
+    const [row] = renderRows([node({ id: "a", alertId: "n-1", alertAcknowledged: true, alertAcknowledgedBy: "jsmith", alertSeverity: "critical" })]);
+    expect(row.classList.contains("dash-alert-item-acked")).toBe(true);
+    expect(ackPill(row)?.textContent).toBe("ack jsmith");
+    expect((row.querySelector(".dash-alert-sub") as HTMLElement).getAttribute("style")).toContain("opacity:.6");
+    expect((row.querySelector(".dash-alert-time") as HTMLElement).getAttribute("style")).toContain("opacity:.6");
+  });
+
+  it("never dims the owner pill itself — a wallboard has to read the name", () => {
+    const [row] = renderRows([node({ id: "a", alertId: "n-1", alertAcknowledged: true, alertAcknowledgedBy: "jsmith" })]);
+    let p: Element | null = ackPill(row);
+    while (p && p !== row) {
+      expect((p.getAttribute("style") || "")).not.toContain("opacity");
+      p = p.parentElement;
+    }
+  });
+
+  it("falls back to a bare 'ack' when the feed names nobody", () => {
+    const [row] = renderRows([node({ id: "a", alertId: "n-1", alertAcknowledged: true, alertAcknowledgedBy: null })]);
+    expect(ackPill(row)?.textContent).toBe("ack");
+  });
+
+  it("leaves unacknowledged and alert-less rows at full strength", () => {
+    const rows = renderRows([
+      node({ id: "a", alertId: "n-1", alertAcknowledged: false }),
+      node({ id: "b" }),
+    ]);
+    for (const row of rows) {
+      expect(row.classList.contains("dash-alert-item-acked")).toBe(false);
+      expect(ackPill(row)).toBeNull();
+      expect(row.innerHTML).not.toContain("opacity");
+    }
   });
 });
 

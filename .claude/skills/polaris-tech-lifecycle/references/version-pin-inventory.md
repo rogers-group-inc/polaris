@@ -193,8 +193,9 @@ first: an extension move and a chunk-interval change must not land together.
 
 ## Go (agent toolchain)
 
-**Floor 1.26, pinned 1.27** across 14 sites — two numbers, the same arrangement as Node and for
-a similar reason. Was 1.22 until 2026-09-09, by then two years past upstream support: Go keeps
+**Floor 1.26, pinned 1.26** — `check:versions` reads 9 sites: floors everywhere plus the one
+checked pin, the Dockerfile's `golang:` stage (added 2026-10-04). No surviving install path
+provisions 1.27, so floor and pin sit on the same number for now. Was 1.22 until 2026-09-09, by then two years past upstream support: Go keeps
 only the two most recent majors alive.
 
 | Site | Form | Kind |
@@ -203,7 +204,7 @@ only the two most recent majors alive.
 | four Linux setup scripts | `go version \| grep -qE 'go1\.(2[6-9]\|[3-9][0-9])'` | accept-range |
 | `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `dnf module enable -y go-toolset` then `dnf install -y golang` | pin (module stream) |
 | `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | `golang-go`, re-verified against the same regex, then `snap install --channel=1.26/stable go` — which is the branch that actually runs, since neither LTS archive reaches 1.26 | accept-range |
-| `Dockerfile` | `golang-go` from `trixie-backports`, because trixie ships 1.24. The backports SUITE must track the base image — a `bookworm-backports` line on a trixie base resolves to nothing and the build fails at `apt-get install` | pin (suite) |
+| `Dockerfile` | `FROM golang:1.26-trixie AS gotoolchain`, then `COPY --from=gotoolchain /usr/local/go` + `ENV PATH` in the runtime stage — the family's only checked PIN. Was `golang-go` from `trixie-backports` (trixie itself ships 1.24) until 2026-10-04, when backports published the `golang-go` 1.26 metapackage without the `golang-1.26-go` it depends on and every image build failed at `apt-get install`. The upstream toolchain is self-contained: no apt suite to track, nothing to half-sync. The `-trixie` suffix is cosmetic (only `/usr/local/go` is copied) | pin |
 | `agent/Makefile` | `go-winres@v0.3.3` for the Windows resource files | pin |
 | `docs/INSTALL.md` | "Go 1.26+" — three occurrences, plus the supported-versions row | prose (floor) |
 

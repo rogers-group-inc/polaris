@@ -1,0 +1,237 @@
+/**
+ * tests/unit/quietTimeConfig.test.ts
+ *
+ * The quiet-time POLICY shape (business rule 92): the config a global schedule
+ * or an automation carries, the one cross-field rule it has — the summary time
+ * may not fall inside a quiet period — and the arithmetic that turns a window
+ * end into the summary's send time. Pure functions; all times server-local,
+ * as the recurrence module's contract requires.
+ */
+
+import { describe, it, expect } from "vitest";
+
+import {
+  quietTimeConfigSchema,
+  ruleQuietTimeSchema,
+  isIgnoreGlobalQuietTime,
+  ruleQuietConfig,
+  summaryTimeConflicts,
+  summarySendAt,
+  quietHoldsSeverity,
+  quietHoldsKind,
+  quietHoldsFires,
+  heldKindsFor,
+  quietHoldsSend,
+  quietHeldSeverities,
+  quietSummaryAlways,
+  lastQuietStretch,
+  MAX_QUIET_WINDOWS,
+} from "../../src/utils/quietTime.js";
+
+function at(y: number, m: number, d: number, hh = 0, mm = 0): Date {
+  return new Date(y, m - 1, d, hh, mm, 0, 0);
+}
+
+const NIGHTLY = { version: 1, kind: "recurring", freq: "daily", hours: [{ startTime: "22:00", endTime: "06:00" }] };
+const LUNCH = { version: 1, kind: "recurring", freq: "daily", hours: [{ startTime: "12:00", endTime: "13:00" }] };
+const WEEKEND = { version: 1, kind: "recurring", freq: "weekly", daysOfWeek: [0, 6] };
+const MONTHLY = { version: 1, kind: "recurring", freq: "monthly", dayOfMonth: 1, hours: [{ startTime: "01:00", endTime: "03:00" }] };
+
+describe("ruleQuietTimeSchema — what an automation's quietTime column may hold", () => {
+  it("accepts the exemption marker, a full policy, and nothing in between", () => {
+    expect(ruleQuietTimeSchema.parse({ ignoreGlobal: true })).toEqual({ ignoreGlobal: true });
+    expect(ruleQuietTimeSchema.parse({ windows: [NIGHTLY] }).windows).toHaveLength(1);
+    expect(() => ruleQuietTimeSchema.parse({ ignoreGlobal: false })).toThrow();
+    expect(() => ruleQuietTimeSchema.parse({ ignoreGlobal: true, windows: [NIGHTLY] })).toThrow();
+    expect(() => ruleQuietTimeSchema.parse({})).toThrow();
+  });
+
+  it("tells the two apart", () => {
+    expect(isIgnoreGlobalQuietTime({ ignoreGlobal: true })).toBe(true);
+    expect(isIgnoreGlobalQuietTime({ windows: [NIGHTLY] })).toBe(false);
+    expect(isIgnoreGlobalQuietTime(null)).toBe(false);
+    expect(ruleQuietConfig({ ignoreGlobal: true })).toBeNull();
+    expect(ruleQuietConfig(null)).toBeNull();
+    expect(ruleQuietConfig(quietTimeConfigSchema.parse({ windows: [NIGHTLY] }))!.windows).toHaveLength(1);
+  });
+});
+
+describe("the per-severity hold map (`held`)", () => {
+  const ALL = { alerts: true, alertReminders: true, escalations: true, escalationReminders: true };
+  const FOLLOW = { alerts: false, alertReminders: true, escalations: true, escalationReminders: true };
+
+  it("is accepted, strict, and refuses a half-written entry", () => {
+    const cfg = quietTimeConfigSchema.parse({ windows: [NIGHTLY], held: { warning: ALL, critical: FOLLOW } });
+    expect(cfg.held!.critical!.alerts).toBe(false);
+    expect(() => quietTimeConfigSchema.parse({ windows: [NIGHTLY], held: { warning: { alerts: true } } })).toThrow();
+    expect(() => quietTimeConfigSchema.parse({ windows: [NIGHTLY], held: { warning: { ...ALL, scripts: true } } })).toThrow();
+  });
+
+  it("answers per severity and per kind of send", () => {
+    const cfg = { windows: [NIGHTLY], held: { warning: ALL, critical: { alerts: false, alertReminders: true, escalations: false, escalationReminders: false } } } as never;
+    expect(heldKindsFor(cfg, "warning")).toEqual(ALL);
+    expect(heldKindsFor(cfg, "serious")).toBeNull();
+    expect(quietHoldsSend(cfg, "warning", "fire")).toBe(true);
+    expect(quietHoldsSend(cfg, "critical", "fire")).toBe(false);
+    expect(quietHoldsSend(cfg, "critical", "reminder")).toBe(true);
+    expect(quietHoldsSend(cfg, "critical", "escalation")).toBe(false);
+    expect(quietHoldsSend(cfg, "critical", "escalationReminder")).toBe(false);
+    expect(quietHoldsSend(cfg, "serious", "reminder")).toBe(false);
+    expect(quietHoldsSeverity(cfg, "critical")).toBe(true);
+    expect(quietHoldsSeverity(cfg, "serious")).toBe(false);
+    expect(quietHeldSeverities(cfg)).toEqual(["warning", "critical"]);
+    // An entry with nothing ticked is no entry.
+    const empty = { windows: [NIGHTLY], held: { warning: { alerts: false, alertReminders: false, escalations: false, escalationReminders: false } } } as never;
+    expect(heldKindsFor(empty, "warning")).toBeNull();
+    expect(quietHeldSeverities(empty)).toEqual([]);
+  });
+
+  it("derives the map from the legacy severities + holds pair", () => {
+    expect(heldKindsFor({ windows: [NIGHTLY] } as never, "warning")).toEqual(ALL);
+    expect(heldKindsFor({ windows: [NIGHTLY], holds: "followUps" } as never, "warning")).toEqual(FOLLOW);
+    expect(heldKindsFor({ windows: [NIGHTLY], severities: ["critical"] } as never, "warning")).toBeNull();
+    expect(quietHoldsSend({ windows: [NIGHTLY], holds: "followUps" } as never, "warning", "fire")).toBe(false);
+    expect(quietHoldsSend({ windows: [NIGHTLY], holds: "followUps" } as never, "warning", "escalationReminder")).toBe(true);
+    expect(quietHeldSeverities({ windows: [NIGHTLY] } as never)).toBeNull();
+    // `held` wins over the pair when both are present.
+    expect(quietHoldsFires({ windows: [NIGHTLY], holds: "all", held: { warning: FOLLOW } } as never)).toBe(false);
+  });
+});
+
+describe("the all-quiet summary setting and the stretch it covers", () => {
+  it("summaryAlways is on unless written false", () => {
+    expect(quietSummaryAlways(quietTimeConfigSchema.parse({ windows: [NIGHTLY] }))).toBe(true);
+    expect(quietSummaryAlways(quietTimeConfigSchema.parse({ windows: [NIGHTLY], summaryAlways: false }))).toBe(false);
+    expect(quietSummaryAlways({ summaryAlways: true })).toBe(true);
+  });
+
+  it("lastQuietStretch is the most recent ended stretch, chained, or null while quiet", () => {
+    const nightly = { windows: [NIGHTLY] } as never;
+    expect(lastQuietStretch(nightly, at(2026, 10, 3, 7, 0))).toEqual({ start: at(2026, 10, 2, 22, 0), end: at(2026, 10, 3, 6, 0) });
+    expect(lastQuietStretch(nightly, at(2026, 10, 3, 23, 0))).toBeNull(); // quiet right now
+    expect(lastQuietStretch(nightly, at(2026, 10, 3, 6, 0))).toEqual({ start: at(2026, 10, 2, 22, 0), end: at(2026, 10, 3, 6, 0) }); // half-open end
+    // Nights and weekends: Friday 22:00 through Monday 06:00 is ONE stretch.
+    // 2026-10-03 is a Saturday.
+    const nightsAndWeekends = { windows: [NIGHTLY, WEEKEND] } as never;
+    expect(lastQuietStretch(nightsAndWeekends, at(2026, 10, 5, 7, 0))).toEqual({ start: at(2026, 10, 2, 22, 0), end: at(2026, 10, 5, 6, 0) });
+    expect(lastQuietStretch(nightsAndWeekends, at(2026, 10, 4, 12, 0))).toBeNull(); // Sunday noon is quiet
+    expect(lastQuietStretch({ windows: [MONTHLY] } as never, at(2026, 10, 15, 12, 0))).toBeNull(); // nothing in the look-back
+  });
+});
+
+describe("quietTimeConfigSchema", () => {
+  it("accepts the minimal policy and fills nothing in", () => {
+    const cfg = quietTimeConfigSchema.parse({ windows: [NIGHTLY] });
+    expect(cfg.windows).toHaveLength(1);
+    expect(cfg.severities).toBeUndefined();
+    expect(cfg.summaryAt).toBeUndefined();
+  });
+
+  it("accepts the full policy", () => {
+    const cfg = quietTimeConfigSchema.parse({
+      windows: [NIGHTLY, LUNCH],
+      holds: "followUps",
+      severities: ["notice", "warning", "serious"],
+      alertKinds: ["cpuPct", "monitorStatus"],
+      summaryAt: "07:30",
+      summaryChannelId: "ch-1",
+      recurrenceThreshold: 3,
+    });
+    expect(cfg.recurrenceThreshold).toBe(3);
+  });
+
+  it("refuses an empty window list, an unknown key, a bad time and a zero threshold", () => {
+    expect(() => quietTimeConfigSchema.parse({ windows: [] })).toThrow();
+    expect(() => quietTimeConfigSchema.parse({ windows: [NIGHTLY], holdScripts: true })).toThrow();
+    expect(() => quietTimeConfigSchema.parse({ windows: [NIGHTLY], summaryAt: "7:30" })).toThrow();
+    expect(() => quietTimeConfigSchema.parse({ windows: [NIGHTLY], recurrenceThreshold: 0 })).toThrow();
+    expect(() => quietTimeConfigSchema.parse({ windows: Array(MAX_QUIET_WINDOWS + 1).fill(NIGHTLY) })).toThrow();
+  });
+
+  it("refuses a summary time that is inside the quiet period on every day it occurs", () => {
+    const r = quietTimeConfigSchema.safeParse({ windows: [NIGHTLY], summaryAt: "05:00" });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      expect(r.error.issues[0]!.path).toEqual(["summaryAt"]);
+      expect(r.error.issues[0]!.message).toMatch(/05:00 is inside the quiet period on every day it occurs/);
+    }
+  });
+});
+
+describe("summaryTimeConflicts", () => {
+  it("is null with no summary time at all", () => {
+    expect(summaryTimeConflicts({ windows: [NIGHTLY as never] })).toBeNull();
+  });
+
+  it("is null for a time outside every window", () => {
+    expect(summaryTimeConflicts({ windows: [NIGHTLY, LUNCH] as never, summaryAt: "07:30" })).toBeNull();
+    expect(summaryTimeConflicts({ windows: [NIGHTLY, LUNCH] as never, summaryAt: "13:00" })).toBeNull(); // half-open end
+  });
+
+  it("catches both sides of a midnight-spanning window", () => {
+    expect(summaryTimeConflicts({ windows: [NIGHTLY] as never, summaryAt: "23:30" })).toMatch(/every day it occurs/);
+    expect(summaryTimeConflicts({ windows: [NIGHTLY] as never, summaryAt: "05:59" })).toMatch(/every day it occurs/);
+    expect(summaryTimeConflicts({ windows: [NIGHTLY] as never, summaryAt: "22:00" })).toMatch(/every day it occurs/); // inclusive start
+  });
+
+  it("catches an all-day weekend window at any time, and a monthly window on its day", () => {
+    expect(summaryTimeConflicts({ windows: [WEEKEND] as never, summaryAt: "14:00" })).toMatch(/every day it occurs/);
+    expect(summaryTimeConflicts({ windows: [MONTHLY] as never, summaryAt: "02:00" })).toMatch(/every day it occurs/);
+    expect(summaryTimeConflicts({ windows: [MONTHLY] as never, summaryAt: "03:00" })).toBeNull();
+  });
+
+  it("allows a time that is free on SOME day the quiet time occurs — nights and weekends with a morning summary", () => {
+    // The shape the first operator built: every night plus the whole weekend,
+    // summary at 07:30. Saturday and Sunday 07:30 are quiet; Monday to Friday
+    // 07:30 are free, so weekday nights summarise at 07:30 and a weekend's
+    // alerts roll into Monday's. Refusing it left no sane morning time at all.
+    expect(summaryTimeConflicts({ windows: [NIGHTLY, WEEKEND] as never, summaryAt: "07:30" })).toBeNull();
+    // Still refused when every occurring day covers the time.
+    const LONG_NIGHT = { version: 1, kind: "recurring", freq: "daily", hours: [{ startTime: "22:00", endTime: "08:00" }] };
+    expect(summaryTimeConflicts({ windows: [LONG_NIGHT, WEEKEND] as never, summaryAt: "07:30" })).toMatch(/every day it occurs/);
+  });
+
+  it("ignores a one-shot window that has already passed", () => {
+    const past = { version: 1, kind: "oneshot", startAt: "2020-01-01T00:00", endAt: "2020-01-02T00:00" };
+    expect(summaryTimeConflicts({ windows: [past] as never, summaryAt: "12:00" }, at(2026, 10, 3, 9))).toBeNull();
+  });
+});
+
+describe("summarySendAt", () => {
+  const end = at(2026, 10, 3, 6, 0); // the nightly window's end, a Saturday
+
+  it("is the window end when no time is set", () => {
+    expect(summarySendAt({}, end)).toEqual(end);
+    expect(summarySendAt({ summaryAt: null }, end)).toEqual(end);
+  });
+
+  it("is the same day's time when that is at or after the end", () => {
+    expect(summarySendAt({ summaryAt: "07:30" }, end)).toEqual(at(2026, 10, 3, 7, 30));
+    expect(summarySendAt({ summaryAt: "06:00" }, end)).toEqual(end);
+  });
+
+  it("rolls to the next day when the time has already passed — a daily appointment, not an offset", () => {
+    expect(summarySendAt({ summaryAt: "07:30" }, at(2026, 10, 3, 13, 0))).toEqual(at(2026, 10, 4, 7, 30));
+  });
+});
+
+describe("quietHoldsSeverity / quietHoldsKind / quietHoldsFires", () => {
+  it("a null list holds everything", () => {
+    expect(quietHoldsSeverity({}, "critical")).toBe(true);
+    expect(quietHoldsKind({}, null)).toBe(true);
+  });
+
+  it("holds the first alert unless the policy says follow-ups only", () => {
+    expect(quietHoldsFires({})).toBe(true);
+    expect(quietHoldsFires({ holds: "all" })).toBe(true);
+    expect(quietHoldsFires({ holds: "followUps" })).toBe(false);
+  });
+
+  it("a list holds only its members, and an alert with no metric matches only 'any'", () => {
+    expect(quietHoldsSeverity({ severities: ["warning", "serious"] }, "critical")).toBe(false);
+    expect(quietHoldsSeverity({ severities: ["warning", "serious"] }, "serious")).toBe(true);
+    expect(quietHoldsKind({ alertKinds: ["cpuPct"] }, "cpuPct")).toBe(true);
+    expect(quietHoldsKind({ alertKinds: ["cpuPct"] }, "monitorStatus")).toBe(false);
+    expect(quietHoldsKind({ alertKinds: ["cpuPct"] }, null)).toBe(false);
+  });
+});

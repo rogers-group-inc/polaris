@@ -12,13 +12,17 @@
 import { z } from "zod";
 import { isValidCidr, isValidIpAddress, ipInCidr } from "../utils/cidr.js";
 import { compileWildcard } from "../utils/wildcard.js";
-import { TEMPLATE_VARIABLES } from "../utils/notificationTemplate.js";
+import { TEMPLATE_VARIABLES, formatElapsed } from "../utils/notificationTemplate.js";
 import { defaultAlertEmailTemplate } from "../utils/alertEmailTemplate.js";
 import { SENSOR_CLASS_UNITS } from "../utils/hardwareSensors.js";
 import { POE_STATUS_VALUES } from "../utils/poePorts.js";
 import {
   quietConfigSchema,
+  quietTimeConfigSchema,
+  quietTimeIgnoreGlobalSchema,
   describeQuietTime,
+  type QuietTimeConfig,
+  type RuleQuietTime,
   MAX_QUIET_WINDOWS,
   type QuietConfig,
 } from "../utils/quietTime.js";
@@ -529,6 +533,104 @@ export const BOOLEAN_METRIC_LABELS: Record<string, { trueLabel: string; falseLab
   pathOk: { trueLabel: "Reachable", falseLabel: "Unreachable", trueIsProblem: false },
 };
 
+// ─── Path Monitor (business rule 85, 2026-10-05 addendum) ───────────────────
+// The path* metrics and the traceroute change are STORED as `asset_metric` /
+// `change` triggers — they ride the same threshold, hold, band and hysteresis
+// machinery as every other metric, and every consumer keyed on the stored type
+// (cadence, charts, the Alerts tab, portability) keeps working unchanged. What
+// makes them their own kind of automation is everything AROUND the condition:
+//  - the wizard authors them under their own trigger category, "Path Monitor",
+//    and the Device category no longer offers them;
+//  - the devices they are about are only ever agent hosts — the rule's device
+//    conditions are ANDed with "Polaris Agent installed" (pathMonitorScope), so
+//    the preview counts and the engine both read the pool the operator meant;
+//  - the Polaris server's own run of a check is a source too, opted in per
+//    automation with `includeServer`. It has no asset row (it never is one —
+//    see narrative-85 "The Polaris server as a source"), so it is evaluated as
+//    a pseudo subject and its alert carries no assetId, exactly like a
+//    Polaris-host metric alert.
+// A composite tree is either all path conditions or none — a path reading is
+// about a path from an agent, a device reading about the device, and an AND
+// across the two would be evaluated over two different device pools.
+export const PATH_METRICS = [
+  "pathLatencyMs", "pathHttpStatus", "pathOk", "pathFailurePct", "pathHopCount", "pathTlsDaysLeft",
+] as const;
+export const PATH_CHANGE_TYPES = ["path_check_path_changed"] as const;
+
+/** What the server's readings are called ({asset}, the alert's hostname). */
+export const PATH_SERVER_LABEL = "Polaris server";
+
+export function isPathMetric(metric: string | null | undefined): boolean {
+  return !!metric && (PATH_METRICS as readonly string[]).includes(metric);
+}
+
+/** Is this a Path Monitor automation — a path metric, the path change, or a
+ *  composite of path metrics only? Tolerant of raw JSON (stored rows). */
+export function isPathTrigger(trigger: unknown): boolean {
+  const t = trigger as { type?: string; metric?: string; changeType?: string; children?: unknown[] } | null | undefined;
+  if (!t || typeof t !== "object") return false;
+  if (t.type === "asset_metric") return isPathMetric(t.metric);
+  if (t.type === "change") return (PATH_CHANGE_TYPES as readonly string[]).includes(t.changeType ?? "");
+  if (t.type === "composite" && Array.isArray(t.children)) {
+    const leaves = collectTriggerLeaves(t as { children: (TriggerConditionGroup | CompositeLeaf)[] });
+    return leaves.length > 0 && leaves.every((l) => l.type === "asset_metric" && isPathMetric(l.metric));
+  }
+  return false;
+}
+
+/** Does this automation also watch the Polaris server's own run of its checks?
+ *  Only a single-condition path trigger can: a composite is evaluated per
+ *  device row and the server has none. */
+export function pathTriggerIncludesServer(trigger: unknown): boolean {
+  const t = trigger as { type?: string; includeServer?: boolean } | null | undefined;
+  if (!t || (t.type !== "asset_metric" && t.type !== "change")) return false;
+  return t.includeServer === true && isPathTrigger(t);
+}
+
+/** The scope condition every Path Monitor automation is ANDed with. */
+export const AGENT_INSTALLED_RULE: ScopeConditionRule = { field: "agentInstalled", operator: "equals", value: "yes" };
+
+/** A scope narrowed to agent hosts — the pool a Path Monitor automation's
+ *  device conditions choose from. Never stored: applied at read time, so an
+ *  operator's own conditions stay exactly what they wrote. */
+export function pathMonitorScope(scope: RuleScope | null | undefined): RuleScope {
+  const base = scope ?? {};
+  const own = base.condition && base.condition.children.length > 0 ? base.condition : null;
+  // A scope that selects nothing (no dimension, not "all devices") must keep
+  // selecting nothing — the added condition would otherwise count as the
+  // dimension that makes it select every agent host.
+  const lists = [base.assetTypes, base.tags, base.assetIds, base.integrationIds, base.manufacturers, base.models, base.subnetCidrs];
+  if (!base.allAssets && !own && !lists.some((l) => l && l.length > 0)) return base;
+  return {
+    ...base,
+    condition: { op: "and", children: own ? [AGENT_INSTALLED_RULE, own] : [AGENT_INSTALLED_RULE] },
+  };
+}
+
+/**
+ * Does a server-side path change (`path_check.path_changed` with resourceType
+ * "path-check" — the Polaris server's own traceroute) fire this automation?
+ * true / false decide it; null = not that case, apply the device filter as
+ * usual. `includeServer` decides when set. Absent (every rule authored before
+ * the flag) keeps what the event tail always did: an unfiltered automation
+ * matched it, a filtered one could not.
+ */
+export function eventMatchesPathServer(
+  trigger: { type: string; changeType?: string; includeServer?: boolean },
+  scoped: boolean,
+  resourceType: string | null | undefined,
+): boolean | null {
+  if (trigger.type !== "change" || !isPathTrigger(trigger) || resourceType !== "path-check") return null;
+  if (trigger.includeServer != null) return trigger.includeServer;
+  return !scoped;
+}
+
+/** The scope the engine resolves for a rule: its own, narrowed to agent hosts
+ *  for a Path Monitor trigger. */
+export function scopeForTrigger(scope: RuleScope, trigger: unknown): RuleScope {
+  return isPathTrigger(trigger) ? pathMonitorScope(scope) : scope;
+}
+
 // ─── Asset-state trigger ────────────────────────────────────────────────────
 // Current Asset (or current-state child row) field conditions.
 export const ASSET_STATE_FIELDS = [
@@ -754,6 +856,10 @@ const assetMetricTrigger = z.object({
   ignoreAtOrAbove: z.number().min(0).max(100).optional(),
   /** SKIP UNUSED PORTS — see SKIP_UNUSED_PORT_TARGETS. SD-WAN metrics only. */
   skipUnusedPorts: z.boolean().optional(),
+  /** PATH MONITOR — also evaluate the Polaris server's own run of the check
+   *  (see PATH_METRICS). Path metrics only; absent = agent hosts only, which
+   *  is every automation authored before the server could alert. */
+  includeServer: z.boolean().optional(),
 });
 
 /**
@@ -855,6 +961,10 @@ const changeTrigger = z.object({
   type: z.literal("change"),
   changeType: z.enum(CHANGE_TYPES),
   dimensionFilter: dimensionFilterSchema,
+  /** PATH MONITOR — `path_check_path_changed` only: also fire on a change in
+   *  the Polaris server's own traceroute (an Event naming the CHECK, not a
+   *  host). Absent keeps the pre-flag behaviour — see eventMatchesPathServer. */
+  includeServer: z.boolean().optional(),
 });
 
 // ─── Composite trigger (nested AND/OR over metric/state leaves) ─────────────
@@ -878,7 +988,7 @@ export type TriggerGroupOp = (typeof TRIGGER_GROUP_OPS)[number];
 // Leaves are the existing threshold conditions minus the hold in BOTH its
 // spellings (the sustain applies to the whole composite, not per leaf) — a leaf
 // that kept `forPolls` would be a second hold the tree's own count already owns.
-const compositeAssetMetricLeaf = assetMetricTrigger.omit({ forDurationSec: true, forPolls: true });
+const compositeAssetMetricLeaf = assetMetricTrigger.omit({ forDurationSec: true, forPolls: true, includeServer: true });
 const compositeAssetStateLeaf = assetStateTrigger.omit({ forDurationSec: true, forPolls: true });
 const compositeHostMetricLeaf = hostMetricTrigger.omit({ forDurationSec: true, forPolls: true });
 export const compositeLeafSchema = z.discriminatedUnion("type", [
@@ -991,7 +1101,16 @@ export function validateCompositeTrigger(trigger: CompositeTrigger, ctx: z.Refin
     // the transform — reject rather than store a degenerate tree.
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["trigger"], message: "a composite trigger needs at least 2 conditions" });
   }
-  const badLeaf = collectTriggerLeaves(trigger).find((l) =>
+  const allLeaves = collectTriggerLeaves(trigger);
+  const pathLeaves = allLeaves.filter((l) => l.type === "asset_metric" && isPathMetric(l.metric)).length;
+  if (pathLeaves > 0 && pathLeaves < allLeaves.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["trigger"],
+      message: "Path Monitor conditions cannot be combined with device conditions — make them separate automations",
+    });
+  }
+  const badLeaf = allLeaves.find((l) =>
     trigger.kind === "host" ? l.type !== "host_metric" : l.type === "host_metric",
   );
   if (badLeaf) {
@@ -2742,6 +2861,32 @@ const ruleInputBaseSchema = z.object({
   // Re-send this alert's notifications while it stays unhandled. Absent/null =
   // never repeats, which is every pre-feature automation.
   repeat: repeatConfigSchema.optional().nullable(),
+  // This automation's OWN quiet time (business rule 92). Three settings, as the
+  // wizard's step 6 offers them: absent/null = Off, the global schedules apply;
+  // `{ignoreGlobal: true}` = no quiet time at all, this automation always
+  // sends; a full policy = windows during which every people-facing send of
+  // its alerts is held and a summary goes out afterwards, the global schedules
+  // ignored. `alertKinds` is a global-schedule filter and is refused here —
+  // the automation IS the kind.
+  quietTime: z
+    .union([
+      quietTimeIgnoreGlobalSchema,
+      quietTimeConfigSchema.superRefine((q, ctx) => {
+        if (q.alertKinds) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["alertKinds"], message: "An automation's quiet time has no alert-kind filter" });
+        for (const s of q.severities ?? []) {
+          if (!(SEVERITIES as readonly string[]).includes(s)) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["severities"], message: `Unknown severity "${s}"` });
+          }
+        }
+        for (const s of Object.keys(q.held ?? {})) {
+          if (!(SEVERITIES as readonly string[]).includes(s)) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["held", s], message: `Unknown severity "${s}"` });
+          }
+        }
+      }),
+    ])
+    .optional()
+    .nullable(),
 });
 
 type RuleInputRaw = z.infer<typeof ruleInputBaseSchema>;
@@ -2776,6 +2921,9 @@ export interface RuleInput {
   resetActions: AutomationAction[] | null;
   /** Re-send while unhandled; null = never repeats. */
   repeat: RepeatConfig | null;
+  /** The automation's own quiet time (business rule 92): null = global schedules apply,
+   *  `{ignoreGlobal: true}` = none at all, a policy = its own windows. */
+  quietTime: RuleQuietTime | null;
 }
 
 /** Preview input = RuleInput with trigger optional (scope-only preview mode).
@@ -2917,7 +3065,38 @@ function normalizeRuleInputCore(raw: Omit<RuleInputRaw, "trigger">): Omit<RuleIn
     // Anything not copied here is silently dropped by the transform.
     resetActions: raw.resetActions?.length ? raw.resetActions : null,
     repeat: raw.repeat ?? null,
+    quietTime: raw.quietTime ?? legacyQuietTimeOf(raw),
   };
+}
+
+/**
+ * A body written BEFORE quiet time was its own policy (business rule 92) may
+ * still carry windows inside a `repeat.quiet` — an export file from an older
+ * build, or an API client that never moved. Those windows become the
+ * automation's quiet time in the `followUps` mode (reminders and escalation
+ * tiers pause, the first alert still sends), the same promotion
+ * `migrateRepeatQuietToQuietTime` applied to stored rows, so an old file
+ * imports into the same policy it would have had on an upgraded install. The
+ * stale `quiet` keys themselves are harmless: nothing reads them.
+ */
+function legacyQuietTimeOf(raw: { repeat?: RepeatConfig | null; actions?: unknown; severityBands?: unknown }): QuietTimeConfig | null {
+  const windows: unknown[] = [];
+  const seen = new Set<string>();
+  const take = (rep: unknown) => {
+    const q = (rep as { quiet?: { windows?: unknown[] } | null } | null | undefined)?.quiet;
+    for (const w of q?.windows ?? []) {
+      const key = JSON.stringify(w);
+      if (!seen.has(key)) { seen.add(key); windows.push(w); }
+    }
+  };
+  take(raw.repeat);
+  for (const a of Array.isArray(raw.actions) ? raw.actions : []) take((a as { repeat?: unknown })?.repeat);
+  for (const b of Array.isArray(raw.severityBands) ? raw.severityBands : []) {
+    for (const a of Array.isArray((b as { actions?: unknown[] })?.actions) ? (b as { actions: unknown[] }).actions : []) take((a as { repeat?: unknown })?.repeat);
+  }
+  if (windows.length === 0) return null;
+  const parsed = quietTimeConfigSchema.safeParse({ windows: windows.slice(0, MAX_QUIET_WINDOWS), holds: "followUps" });
+  return parsed.success ? parsed.data : null;
 }
 
 /** Cross-field validation over the NORMALIZED v2 shape. */
@@ -3132,6 +3311,27 @@ function validateSkipUnusedPorts(trigger: Trigger | undefined, ctx: z.Refinement
   }
 }
 
+/** `includeServer` is a Path Monitor flag: a path metric or the path change. */
+function validateIncludeServer(trigger: Trigger | undefined, reset: ResetConfig, ctx: z.RefinementCtx): void {
+  if (!trigger || (trigger.type !== "asset_metric" && trigger.type !== "change")) return;
+  if (trigger.includeServer != null && !isPathTrigger(trigger)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["trigger", "includeServer"],
+      message: "including the Polaris server only applies to Path Monitor conditions",
+    });
+  }
+  // A custom reset tree is resolved per DEVICE row, and the server has none —
+  // its alert could never recover. Refused rather than left to hang.
+  if (trigger.includeServer === true && reset.mode === "condition") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["reset", "mode"],
+      message: "a custom reset condition can't watch the Polaris server — reset automatically, or leave the server out",
+    });
+  }
+}
+
 function validateRuleV2(
   v: {
     trigger?: Trigger;
@@ -3152,6 +3352,7 @@ function validateRuleV2(
   validateMissedPolls(trigger, ctx);
   validateGrouping(v, ctx);
   validateSkipUnusedPorts(trigger, ctx);
+  validateIncludeServer(trigger, reset, ctx);
   if (reset.mode === "timed" && reset.afterSec == null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reset", "afterSec"], message: "timed reset requires afterSec" });
   }
@@ -3787,7 +3988,7 @@ function humanMinutes(min: number): string {
 const stopWord = (stopOn: string): string => (stopOn === "clear" ? "cleared" : "acknowledged");
 
 export function followUpPolicy(
-  rule: RuleActionCarrier & { severity: string; repeat?: RepeatConfig | null },
+  rule: RuleActionCarrier & { severity: string; repeat?: RepeatConfig | null; quietTime?: unknown },
   severity: string,
 ): FollowUpPolicy {
   let repeat = "";
@@ -3809,7 +4010,10 @@ export function followUpPolicy(
     // own: "every 15 minutes" and "paused overnight" are one answer to one
     // question ("when will this chase me again?"), and a reader who sees only
     // the cadence plans their night around a reminder that isn't coming.
-    const quiet = describeQuietTime(r.quiet);
+    // The windows are the AUTOMATION's quiet time now (business rule 92);
+    // a legacy `repeat.quiet` is read only when nothing was promoted.
+    const ownQuiet = quietTimeConfigSchema.safeParse(rule.quietTime ?? null);
+    const quiet = describeQuietTime(ownQuiet.success ? ownQuiet.data : r.quiet);
     repeat = `Reminders every ${humanMinutes(r.everyMin)} until ${stopWord(r.stopOn)}` +
       (quiet ? `, paused ${quiet}` : "") +
       (r.stopAfterHours ? `, for up to ${r.stopAfterHours === 1 ? "1 hour" : `${r.stopAfterHours} hours`}.` : ".");
@@ -4541,6 +4745,95 @@ export function markMemberLeft(
   );
 }
 
+/** What one later contribution did to a grouped alert: arrived for the first
+ *  time, or came back after recovering inside the same alert. */
+export interface GroupChange {
+  label: string;
+  /** "joined": never on this alert before. "returned": it recovered (its
+   *  member row carries `leftAt`) and has faulted again. */
+  kind: "joined" | "returned";
+  /** How long it had been recovered, for a "returned" contribution. */
+  awayMs?: number;
+}
+
+/**
+ * Classify the contributions joining an alert against the snapshot they join.
+ *
+ * Read BEFORE `mergeMembers`, which clears `leftAt` and so erases the very
+ * difference this reports. A contribution already active in the snapshot is
+ * not a change and is left out.
+ */
+export function classifyGroupChanges(
+  prev: AlertMember[] | null | undefined,
+  joining: AlertMember[],
+  now: Date,
+): GroupChange[] {
+  const byId = new Map((prev ?? []).map((m) => [memberIdentity(m), m]));
+  const out: GroupChange[] = [];
+  for (const m of joining) {
+    const before = byId.get(memberIdentity(m));
+    if (!before) { out.push({ label: m.label || m.key, kind: "joined" }); continue; }
+    if (!before.leftAt) continue;
+    const left = Date.parse(before.leftAt);
+    out.push({
+      label: m.label || m.key,
+      kind: "returned",
+      ...(Number.isNaN(left) ? {} : { awayMs: Math.max(0, now.getTime() - left) }),
+    });
+  }
+  return out;
+}
+
+/** How many components an update's subject tag names before "+N more". The
+ *  subject already carries the device and the automation; past three names it
+ *  stops being readable on a phone. */
+const CHANGE_SUBJECT_CAP = 3;
+
+/**
+ * What an `[UPDATED]` email says changed — the `{alert.change}` sentence and
+ * the short tag the default subject carries.
+ *
+ * Exists because an update used to be byte-identical to the first send apart
+ * from the count, and a port that recovers and faults again inside one alert
+ * leaves the count where it was: the reader got the same email again with
+ * nothing to say why. Null when there is nothing to report.
+ */
+export function describeGroupChanges(
+  changes: GroupChange[],
+  opts: { reopenedFrom?: string | null } = {},
+): { sentence: string; subjectTag: string } | null {
+  if (!changes.length) return null;
+  const joined = changes.filter((c) => c.kind === "joined");
+  const returned = changes.filter((c) => c.kind === "returned");
+  const clauses: string[] = [];
+  if (joined.length) {
+    clauses.push(`${listLabels(joined.map((c) => c.label))} joined this alert`);
+  }
+  for (const c of returned) {
+    clauses.push(c.awayMs !== undefined
+      ? `${c.label} is in fault again after recovering for ${formatElapsed(c.awayMs)}`
+      : `${c.label} is in fault again after recovering`);
+  }
+  let sentence = `Update: ${clauses.join("; ")}.`;
+  if (opts.reopenedFrom !== undefined) {
+    sentence += ` Re-opened — ${opts.reopenedFrom || "someone"} had acknowledged it.`;
+  }
+  const tags = changes.map((c) => (c.kind === "joined" ? `+${c.label}` : `${c.label} back`));
+  const subjectTag = tags.length > CHANGE_SUBJECT_CAP
+    ? `${tags.slice(0, CHANGE_SUBJECT_CAP).join(", ")} +${tags.length - CHANGE_SUBJECT_CAP} more`
+    : tags.join(", ");
+  return { sentence, subjectTag };
+}
+
+/** "a", "a and b", "a, b and c" — capped at GROUP_LABEL_CAP like the message. */
+function listLabels(labels: string[]): string {
+  const shown = labels.slice(0, GROUP_LABEL_CAP);
+  const extra = labels.length - shown.length;
+  if (extra > 0) return `${shown.join(", ")} and ${extra} more`;
+  if (shown.length <= 1) return shown.join("");
+  return `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
+}
+
 /** A contribution is identified by (automation, component), not by component
  *  alone — two automations may both be about port12 and they are two findings. */
 function memberIdentity(m: AlertMember): string {
@@ -4948,6 +5241,16 @@ export function buildSchemaCatalog() {
       { type: "change", label: "Change detection", scoped: true, changeTypes: CHANGE_TYPES },
       { type: "composite", label: "Multiple conditions (AND/OR)", scoped: true },
     ],
+    // The Path Monitor category (see PATH_METRICS): which stored metrics and
+    // change types the wizard files under it rather than under Device / Change,
+    // and the scope rule its pool is ANDed with — served so the client's
+    // preview narrows exactly as the engine does.
+    pathMonitor: {
+      metrics: PATH_METRICS,
+      changeTypes: PATH_CHANGE_TYPES,
+      agentRule: AGENT_INSTALLED_RULE,
+      serverLabel: PATH_SERVER_LABEL,
+    },
     // Composite-trigger builder vocabulary (the wizard's trigger tree).
     compositeMeta: {
       kinds: ["asset", "host"],

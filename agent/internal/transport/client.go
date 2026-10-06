@@ -283,6 +283,20 @@ type ServiceSample struct {
 	Description *string `json:"description,omitempty"`
 }
 
+// SoftwareSample matches the server's SoftwareSampleSchema — one installed
+// program (Windows Uninstall key) or package (dpkg / rpm). Current-state
+// inventory: the full list every push, the server writes only the change.
+type SoftwareSample struct {
+	Name         string  `json:"name"`
+	Platform     string  `json:"platform"` // "windows" | "dpkg" | "rpm"
+	Version      *string `json:"version,omitempty"`
+	Publisher    *string `json:"publisher,omitempty"`
+	Architecture *string `json:"architecture,omitempty"`
+	// InstallDate is YYYY-MM-DD; omitted where the platform records none (dpkg).
+	InstallDate *string `json:"installDate,omitempty"`
+	SizeBytes   *uint64 `json:"sizeBytes,omitempty"`
+}
+
 // ServiceLogSample matches the server's ServiceLogSampleSchema — one journalctl
 // line for a pinned unit (Phase 2). Same shape as ProcessLogSample with `unit`.
 type ServiceLogSample struct {

@@ -3,6 +3,33 @@
    overrides it wholesale for `morning`/`noon`. Neither is a theme on its own —
    theme-init.js always sets a data-theme, and the retired `dark`/`light` ids
    are no longer recognized anywhere. */
+
+/* The page glow's geometry and stops, registered so they can TRANSITION. A
+   gradient is a background-image, and a background-image cuts from one value
+   to the next. Typed custom properties interpolate, so the theme crossfade
+   moves these and the one gradient built from them (--page-glow below) is
+   repainted at every step. That is what carries morning's sun up from the
+   bottom edge to noon's wash at the top. Values and the transition are in
+   :root and the data-theme-fading block; mobile.css registers the same set. */
+@property --page-glow-y   { syntax: "<percentage>"; inherits: true; initial-value: 0%; }
+@property --page-glow-w   { syntax: "<length>"; inherits: true; initial-value: 0px; }
+@property --page-glow-h   { syntax: "<length>"; inherits: true; initial-value: 0px; }
+@property --page-glow-c0  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-c1  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-c2  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-c3  { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --page-glow-p1  { syntax: "<percentage>"; inherits: true; initial-value: 9%; }
+@property --page-glow-p2  { syntax: "<percentage>"; inherits: true; initial-value: 26%; }
+@property --page-glow-p3  { syntax: "<percentage>"; inherits: true; initial-value: 50%; }
+@property --page-glow-end { syntax: "<percentage>"; inherits: true; initial-value: 70%; }
+/* Nightfall's glow is a second layer that SLIDES rather than fades: in from
+   off the left edge on the turn from noon, out past the right edge on the
+   turn to morning. Only its horizontal centre moves; see --night-glow. */
+@property --night-glow-x  { syntax: "<percentage>"; inherits: true; initial-value: -100%; }
+@property --night-glow-c { syntax: "<color>"; inherits: true; initial-value: rgba(255,255,255,.35); }
+@property --night-glow-w { syntax: "<percentage>"; inherits: true; initial-value: 70%; }
+@property --night-glow-h { syntax: "<percentage>"; inherits: true; initial-value: 30%; }
+
 :root {
   --color-bg-primary: #151528;
   --color-bg-secondary: #0d0d1a;
@@ -95,6 +122,79 @@
      Distinct from --shadow-md, which stays the value for surfaces that float
      OVER the page (menus, dropdowns) and must not carry a rim. */
   --shadow-card: 0 8px 32px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.05);
+  /* Background glow — a soft wash of the accent rising from the top centre of
+     the viewport, painted by body over --color-bg-secondary and pinned there
+     (background-attachment: fixed) while the page scrolls. Declared once:
+     every theme block targets the root element too, so var(--color-accent)
+     resolves to each theme's own accent. The daylight base thins it (a wash
+     that reads as light on indigo reads as a stain on a pale ground), and
+     noon swaps the hue for sunlight yellow — its ground is near-white and a
+     terracotta wash there reads as rust, not light. Morning resets the
+     glow's parts into a sunrise rising from the bottom, and nightfall
+     turns it off for a second, sliding layer (--night-glow). The phone carries the
+     same recipe in mobile.css (--page-glow there, off --md-primary). */
+  --page-glow-color: var(--color-accent);
+  --page-glow-strength: 17.6%;
+  /* A theme normally sets only the colour and strength above; these derive
+     the stops from them. The intermediate stops sit on the straight line from
+     the core to transparent at --page-glow-end (alpha x 0.871 / 0.629 / 0.286
+     at 9 / 26 / 50 of 70), so the five-stop gradient paints exactly the
+     two-stop wash it replaced. They exist so morning can bend them. */
+  --page-glow-y: 0%;
+  /* Viewport units, NOT percentages, though they paint the same oval (the
+     glow's box is the viewport). The morning -> noon rounding animates the
+     size through a vmin circle, and a percentage-to-length animation
+     passes through mixed values like calc(70% + 230px), which Chromium
+     rejects as a radial-gradient size: the WHOLE gradient goes to `none`
+     and both glows vanish for the turn. Registered as <length>, these
+     resolve to plain px, which every frame accepts. */
+  --page-glow-w: 140vw;
+  --page-glow-h: 60vh;
+  --page-glow-c0: color-mix(in srgb, var(--page-glow-color) var(--page-glow-strength), transparent);
+  --page-glow-c1: color-mix(in srgb, var(--page-glow-c0) 87.1%, transparent);
+  --page-glow-c2: color-mix(in srgb, var(--page-glow-c0) 62.9%, transparent);
+  --page-glow-c3: color-mix(in srgb, var(--page-glow-c0) 28.6%, transparent);
+  --page-glow-p1: 9%;
+  --page-glow-p2: 26%;
+  --page-glow-p3: 50%;
+  --page-glow-end: 70%;
+  /* Nightfall's moonlight-blue wash, its own layer so it can slide while the
+     main glow fades. Parked off-screen in every other theme: -100% (left of
+     the viewport, waiting to slide in) on noon, 50% on nightfall AND on the
+     afternoon waypoint (so the one 2 s slide spans both legs of
+     noon → nightfall unbroken), and 200% (gone past the right edge) on morning. Its visible
+     radius is 70% of a 140% radius, ~98% of the width, so -100% / 200% are
+     JUST clear of the screen. Further out and the slide spends its fast
+     first half off-screen: at ±200% the exit was over in a quarter of the
+     fade. Saturated blue rather than nightfall's pastel accent, which went
+     grey slate at this faintness. */
+  --night-glow-x: -100%;
+  /* WHITE at 35% parked here on noon, the entry, and a MOONLIGHT blue,
+     #6d97ff at 12.3% — the electric #2f6bff with 30% white mixed in,
+     duller and softer — at rest on nightfall and parked on morning. The
+     glow's 2 s transition carries the one colour with the slide: it comes
+     in as a white light and cools to the blue as it lands, and leaves for
+     morning still blue (the exit changes position and size only). A stronger blue was tried first and still read as nothing over
+     the grounds it crosses mid-turn (the afternoon tan into indigo); white
+     is what shows against both. One registered <color>, not a hue plus a
+     strength, so hue and alpha move together. */
+  --night-glow-c: rgba(255,255,255,.35);
+  /* HALF size wherever it is parked (70% x 30% against nightfall's 140% x 60%):
+     the white light comes in small and grows to the full wash as it cools
+     to blue, and shrinks back as it leaves. */
+  --night-glow-w: 70%;
+  --night-glow-h: 30%;
+  --night-glow: radial-gradient(ellipse var(--night-glow-w) var(--night-glow-h) at var(--night-glow-x) 0%,
+    var(--night-glow-c) 0%,
+    transparent 70%);
+  --page-glow:
+    var(--night-glow),
+    radial-gradient(ellipse var(--page-glow-w) var(--page-glow-h) at 50% var(--page-glow-y),
+      var(--page-glow-c0) 0%,
+      var(--page-glow-c1) var(--page-glow-p1),
+      var(--page-glow-c2) var(--page-glow-p2),
+      var(--page-glow-c3) var(--page-glow-p3),
+      transparent var(--page-glow-end));
   /* ── Frosted panel surfaces ────────────────────────────────────────────────
      Modals and slide-overs are 50% of the theme's own panel colour over a
      blurred backdrop, so the page stays faintly legible behind them. Declared
@@ -117,6 +217,30 @@
      leaving shapes and colour behind it recognisable. saturate() compensates
      for the wash-out a large blur radius causes. */
   --panel-glass-blur: blur(12px) saturate(1.3);
+  /* Ground of every content card that rests on the page (.card, .kpi-card,
+     .integration-card, .empty-state-card, .settings-card, .dashboard-widget):
+     the SIDEBAR's glass, so the rail and the cards read as one material. It
+     is the tint without the blur, deliberately. What sits behind a card is
+     only the page ground and the glow, a smooth gradient, and blurring that
+     changes nothing, so the card looks exactly like the frosted rail. A
+     backdrop-filter on the card itself would make it the containing block
+     and backdrop root for its widget menus and Leaflet panes.
+     NOT for .chart-box: that sits inside the frosted asset slide-over, where
+     a translucent plot becomes a window onto the page ("a transparent box
+     inside a frosted panel" in canon-shared-kit.md). */
+  --card-bg: var(--rail-glass-bg);
+  /* The sidebar's glass: its own --color-bg-tertiary, ten points thinner
+     than the panels' --panel-glass-chrome (40% here, 30% on the daylight
+     base). A token of its own so the rail can be tuned without moving every
+     modal and slide-over header band, which share --panel-glass-chrome. */
+  --rail-glass-bg: color-mix(in srgb, var(--color-bg-tertiary) 40%, transparent);
+  /* The glass of a SELECTED chip that has to stand out from that rail glass:
+     the active Assets / Automations tab and the lit bulk-select bar. In the
+     dark family it is the raised --color-bg-elevated at 70%. The daylight
+     value (--color-surface at 55%) was tried here first, and on nightfall it
+     came out within a few points of the near-black ground, so the active tab
+     all but vanished. The daylight base keeps that mix, which reads there. */
+  --chip-glass-bg: color-mix(in srgb, var(--color-bg-elevated) 70%, transparent);
   --sidebar-width: 220px;
 }
 
@@ -156,6 +280,7 @@
   --shadow-md: 0 8px 32px rgba(0,0,0,.12);
   --shadow-panel: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.10);
   --shadow-control: 0 2px 5px rgba(0,0,0,.18), 0 1px 2px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.6);
+  --page-glow-strength: 11.2%;
   /* Thinner glass than the dark family's 50% / 40%. These are the only tokens
      :root derives that the daylight pair re-derives rather than inheriting, and
      the reason is contrast, not taste: a light panel over a light page has far
@@ -166,6 +291,8 @@
      version in :root. */
   --panel-glass-bg: color-mix(in srgb, var(--color-bg-primary) 40%, transparent);
   --panel-glass-chrome: color-mix(in srgb, var(--color-bg-tertiary) 40%, transparent);
+  --rail-glass-bg: color-mix(in srgb, var(--color-bg-tertiary) 30%, transparent);
+  --chip-glass-bg: color-mix(in srgb, var(--color-surface) 55%, transparent);
   --menu-glass-bg: color-mix(in srgb, var(--color-surface) 30%, transparent);
 }
 /* The five headings that used to hardcode #fff and needed rescuing here now
@@ -173,6 +300,22 @@
    was wrong in the dark family too — nightfall's text is #e4e7f6, not #fff. */
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .btn-primary {
   color: #fff;
+}
+/* Noon's primary buttons are GOLDEN rather than the terracotta accent — the
+   sun at its height. Only the button: links, active tabs and underlines keep
+   --color-accent. Derived from #9f8a46, the mean of the gold pixels in the
+   theme strip's art at noon's position (/img/brand/time-strip.png, the sun
+   engraving under Server Settings), made 20% more saturated and nudged from
+   hue 46 to 48 for a more yellow gold at the same lightness: #a9933d. White
+   text holds about 3:1 on it, the floor for bold button labels; any
+   lighter or yellower and the label would need to go dark. */
+[data-theme="noon"] .btn-primary {
+  background: #a9933d;
+  border-color: #a9933d;
+}
+[data-theme="noon"] .btn-primary:hover:not(:disabled) {
+  background: #8e7c33;
+  border-color: #8e7c33;
 }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-available  { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-active     { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
@@ -257,9 +400,10 @@
      of the control — and never hard-code a width here: the art is a 2x asset
      sized by height, so what it renders at depends on this band's height and
      the display's pixel ratio.
-   - The edge fades live on the WINDOW and never on the track. A mask on the
-     track travels with it and would fade a moving slice of the artwork instead
-     of the ends of the window. ──────────────────────────────── */
+   - The edge fades live on the WINDOW and never on the track, as a mask to
+     transparent. A mask on the track travels with it and would fade a moving
+     slice of the artwork instead of the ends of the window; a colour painted
+     over the ends shows as a block on the glass rail. ──────────────────────────────── */
 .theme-band {
   display: block;
   width: 100%;
@@ -274,13 +418,23 @@
    carries no caption and no marker, so this height IS the control. It also
    sets how much of the day is visible, and not the way round you would guess:
    taller art is wider art, so a taller band shows LESS of the clock, not more.
-   At 48px roughly a sixth of the strip is in the rail. */
+   At 32px (two-thirds of the 48px it shipped at) roughly a quarter of the
+   strip is in the rail. */
 .theme-band-window {
   position: relative;
   display: block;
-  height: 48px;
+  height: 32px;
   overflow: hidden;
   border-radius: var(--radius-sm);
+  /* Both ends fade to TRANSPARENT, so the strip reads as continuing past the
+     sidebar rather than being cropped by it, and whatever the rail shows
+     comes through at the ends. A mask, not a colour painted over the art:
+     the rail is frosted glass over the page glow, so no single token
+     matches what is behind it, and the old --color-bg-tertiary overlay
+     showed as two solid blocks at the ends. On the window, never the track
+     (see the block comment). */
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 18%, #000 82%, transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 18%, #000 82%, transparent 100%);
 }
 .theme-band-track {
   position: absolute;
@@ -301,18 +455,6 @@
   pointer-events: none;
   user-select: none;
   -webkit-user-drag: none;
-}
-/* Both ends fade into the rail's own token, so the strip reads as continuing
-   past the sidebar rather than being cropped by it. Painted ON TOP of the
-   track — see the block comment. */
-.theme-band-window::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(to right,
-    var(--color-bg-tertiary) 0%, rgba(0,0,0,0) 18%,
-    rgba(0,0,0,0) 82%, var(--color-bg-tertiary) 100%);
 }
 /* Hover is a tint on the button and nothing else — the same affordance the
    sidebar's other bottom links carry, and with the caption gone there is no
@@ -354,7 +496,122 @@ html[data-theme-fading] *:not(.theme-band-track)::after {
               box-shadow 800ms cubic-bezier(0.22, 0.61, 0.36, 1);
   transition-delay: 0s;
 }
+/* The page glow's parts live on <html> itself, which the rule above does not
+   match (it selects descendants). Transitioning them here is what moves the
+   glow: morning → noon climbs the sun from the bottom edge to the top, and
+   every other change fades its glow instead of cutting it. Children inherit
+   the in-between values, so nothing below needs to list them.
+
+   On its OWN clock, deliberately longer than the 800 ms palette crossfade:
+   at 800 ms the light moved while the whole page was swinging from white to
+   indigo, and nobody saw it. So the palette and the band land together as
+   before, and the light keeps drifting into place after them. Two things
+   follow:
+   - The rule is on bare `html`, NOT html[data-theme-fading]. That attribute
+     comes off at 880 ms, and a transition whose property leaves
+     transition-property is cancelled on the spot, so a 2 s glow would jump to
+     its end the moment the palette landed.
+   - No phase easing (the in/mid/out rules below leave html out). The glow
+     does not stop at a waypoint: afternoon carries nightfall's glow values,
+     so the turn from noon starts ONE 2 s glow transition and the second leg,
+     changing nothing, lets it run on. A per-leg curve on it would lurch. */
+/* Keyed on data-glow-turn, which ONLY a theme change sets (the band /
+   strip step, for the glow's own clock): never page load. The app pages
+   apply the saved theme from app.js at the end of <body>, after the first
+   style pass ran with no data-theme at all, so an always-on transition
+   here played the dark base's glow into the real one on EVERY page load —
+   sky blue fading to noon's yellow, the night glow sliding in on
+   nightfall. Gated, a page load just paints the theme's glow. The noon and
+   morning rules below only narrow the property list, which does nothing
+   without this rule's duration. */
+html[data-glow-turn] {
+  transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
+    --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
+    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
+    --night-glow-x, --night-glow-w, --night-glow-h, --night-glow-c;
+  transition-duration: 2000ms;
+  /* One curve per property, in transition-property's order. Position and
+     the main glow ease in and out; the night glow's size and colour (the
+     last three) take a gentle sine curve, so the white light grows and
+     cools to blue evenly across the whole 2 s rather than mostly at one
+     end. Rules with shorter property lists (noon's) cut this list to fit,
+     which is why the night glow's parts must stay LAST. */
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
+    cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
+  transition-delay: 0s;
+}
+/* What must NOT move, by destination — each one a jump made while the
+   thing jumping is invisible, so it never shows:
+   - into noon (from morning): the night glow jumps from the right edge back
+     to the left, ready for the next nightfall. Animated, it would sweep
+     across the page right to left.
+   - into morning (from nightfall): the main glow is transparent on
+     nightfall, so its geometry jumps to the sunrise's and only the colours
+     fade, bringing the sun up in place at the bottom while the blue slides
+     out to the right. */
+/* Noon → nightfall's glow move takes 2.5 s, half a second longer than the
+   other turns' 2 s; the palette keeps its 1.6 s. Keyed on the AFTERNOON
+   waypoint because that is where the turn's one glow transition starts —
+   afternoon carries nightfall's glow values, so the second leg changes
+   nothing and the transition runs on at this duration. Duration only;
+   the property list and curves are the bare html rule's. */
+html[data-glow-turn][data-theme="afternoon"] {
+  transition-duration: 2500ms;
+}
+html[data-theme="noon"] {
+  transition-property: --page-glow-y,
+    --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
+    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
+}
+/* Morning → noon: the sun's glow ROUNDS as it climbs — morning's oval, a
+   circle half way up, noon's oval — instead of going straight from one
+   oval to the other. A transition only runs start → end, so the shape is
+   a keyframe animation, on the glow's own 2 s and a per-half ease, so the
+   circle comes half way through (the climb runs ahead of it, so the sun
+   is near the top by then, ~18% down). Two things keep it working:
+   - The noon rule above does NOT transition --page-glow-w / -h: a running
+     transition outranks an animation in the cascade and would flatten the
+     circle back into a straight oval-to-oval.
+   - It keys on data-glow-turn, which the theme script holds for the
+     glow's 2 s (GLOW_MS); data-theme-fading comes off at 880 ms and would
+     cut it short. The end frame equals noon's own values, so nothing
+     jumps when the attribute drops.
+   The height reaching the width (140vw) is a true circle on any screen
+   shape, which a percentage pair (of width, of height) never is. */
+html[data-glow-turn="morning-noon"] {
+  animation: page-glow-round 2000ms cubic-bezier(0.37, 0, 0.63, 1);
+}
+@keyframes page-glow-round {
+  /* Round by 12.5% (0.25 s), and HELD round until three quarters (1.5 s):
+     the sun is a circle almost as soon as it leaves the horizon and for
+     most of its climb, not for an instant half way. The WIDTH never
+     moves (140vw, the oval's own): the height swells to match it, so the
+     circle is as wide as the oval it grew from. Shrinking the width to a
+     small circle read as the glow narrowing. */
+  0%   { --page-glow-h: 75vh; }
+  12.5%, 75% { --page-glow-h: 140vw; }
+  100% { --page-glow-h: 60vh; }
+}
+html[data-theme="morning"] {
+  transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
+    --night-glow-x, --night-glow-w, --night-glow-h, --night-glow-c;
+  /* The exit is the entrance played backwards: same path, mirrored. Its
+     position takes the REVERSED ease (STD's control points swapped and
+     flipped), so it eases off the centre slowly the way the entrance eased
+     in to land, and speeds up as it leaves. On the same curve as the
+     entrance it looked ~40% faster: the glow is big and already on screen
+     at the start, so the fast middle of the ease was the part you saw, and
+     it was gone in 1.05 s against the entrance's 1.46 s on screen. Mirrored,
+     both are on screen 1.46 s at the same speeds. Size and colour keep the
+     gentle sine, which is symmetric already: it shrinks to half size
+     evenly, and stays the moonlight blue (morning parks it in that colour). */
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
+    cubic-bezier(0.8, 0, 0.6, 1),
+    cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
+}
 @media (prefers-reduced-motion: reduce) {
+  html, html[data-theme], html[data-glow-turn], html[data-glow-turn][data-theme] { transition: none; }
+  html[data-glow-turn] { animation: none; }
   html[data-theme-fading] *:not(.theme-band-track),
   html[data-theme-fading] *:not(.theme-band-track)::before,
   html[data-theme-fading] *:not(.theme-band-track)::after { transition: none; }
@@ -395,6 +652,27 @@ html[data-theme-fading="out"] *:not(.theme-band-track)::before,
 html[data-theme-fading="out"] *:not(.theme-band-track)::after,
 html[data-theme-fading="out"] .theme-band-track { transition-timing-function: cubic-bezier(0, 0, 0.36, 1); }
 
+/* ─── The slow step: nightfall → morning ──────────────────────
+   Twice THEME_FADE_MS. It is a single step where noon → nightfall gets two,
+   so dark to light came in a snap; at 1.6 s the two big turns of the day
+   take the same time. Duration only — the curve stays whatever the phase
+   rules above give it — and the palette and the band's travel together, so
+   they still land as one. The number lives in THEME_LEG_MS in app.js too,
+   which holds the fading attribute (and the seam) for the same 1.6 s:
+   change one, change both. The two extra attribute selectors are what
+   outrank the crossfade and phase rules. */
+html[data-theme-fading][data-theme="morning"] *:not(.theme-band-track),
+html[data-theme-fading][data-theme="morning"] *:not(.theme-band-track)::before,
+html[data-theme-fading][data-theme="morning"] *:not(.theme-band-track)::after,
+html[data-theme-fading][data-theme="morning"] .theme-band-track { transition-duration: 1600ms; }
+
+/* ─── Page changes ──────────────────────────────────────────────────────────
+   The rail's name for the cross-document view transition. The opt-in itself
+   (@view-transition) lives in page-transitions.css, which only the app pages
+   link — here it opted in login.html too, and logging in crossfaded the
+   rail in from a page that had none. The name is inert without it. */
+.sidebar { view-transition-name: polaris-sidebar; }
+
 /* ─── Reset ────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { font-size: 14px; color-scheme: dark; }
@@ -402,7 +680,15 @@ html { font-size: 14px; color-scheme: dark; }
 body {
   font-family: var(--font-sans);
   color: var(--color-text-primary);
-  background: var(--color-bg-secondary);
+  /* Fixed so the glow stays put in the viewport as the page scrolls (at the
+     top, or morning's at the bottom) — it is light, not a mark on the first
+     screenful. */
+  /* Longhands, not `var(--page-glow) no-repeat fixed` in the shorthand: the
+     glow is two layers, and a shorthand's per-layer keywords apply to the
+     layer they follow, so the night layer would scroll and tile. */
+  background: var(--page-glow), var(--color-bg-secondary);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -448,11 +734,37 @@ code {
   --color-danger: #b0301d;
   --color-danger-hover: #8e2314;
   --color-deprecated: #8a7a5e;
-  --shadow-sm: 0 1px 4px rgba(70,45,10,.10);
-  --shadow-md: 0 8px 32px rgba(70,45,10,.16);
-  --shadow-panel: 0 24px 64px rgba(70,45,10,.24), 0 2px 10px rgba(70,45,10,.14);
-  --shadow-control: 0 2px 5px rgba(70,45,10,.22), 0 1px 2px rgba(70,45,10,.14), inset 0 1px 0 rgba(255,255,255,.55);
-  --shadow-card: 0 8px 32px rgba(70,45,10,.16), 0 2px 6px rgba(70,45,10,.13), inset 0 1px 0 rgba(255,255,255,.55);
+  --shadow-sm: 0 1px 4px rgba(70,45,10,.14);
+  --shadow-md: 0 8px 32px rgba(70,45,10,.22);
+  --shadow-panel: 0 24px 64px rgba(70,45,10,.32), 0 2px 10px rgba(70,45,10,.20);
+  --shadow-control: 0 2px 5px rgba(70,45,10,.30), 0 1px 2px rgba(70,45,10,.20), inset 0 1px 0 rgba(255,255,255,.55);
+  --shadow-card: 0 8px 32px rgba(70,45,10,.22), 0 2px 6px rgba(70,45,10,.18), inset 0 1px 0 rgba(255,255,255,.55);
+  /* Sunrise: the one theme whose glow rises from the BOTTOM centre, a sun on
+     the horizon rather than light from above. Sets the glow's parts (see
+     the @property block at the top of this file), not just its colour,
+     because the anchor and every stop differ. A warm-white core (lightness is
+     what reads on parchment; the brown accent darkened into mud, vivid orange
+     alone matched the tan ground) through gold into an orange haze that
+     fades out by mid-screen. On the turn to noon the crossfade carries every
+     one of these to noon's values, so the sun climbs to the top as it pales.
+     Never override --page-glow itself here: a whole gradient cannot
+     transition, and the climb would become a cut. */
+  --page-glow-y: 100%;
+  --page-glow-h: 75vh;
+  --page-glow-c0: rgba(255,246,220,.90);
+  --page-glow-c1: rgba(255,210,122,.55);
+  --page-glow-c2: rgba(243,154,76,.34);
+  --page-glow-c3: rgba(238,154,90,.14);
+  --page-glow-end: 78%;
+  /* Night glow gone past the right edge: the turn from nightfall slides it
+     out that way. */
+  --night-glow-x: 200%;
+  /* The exit to morning keeps nightfall's moonlight blue: the glow slides
+     out and shrinks, but its colour does not change. Only the entry from
+     noon is white (35%). Morning -> noon swaps blue for white while the
+     glow is parked off-screen (the noon rule does not transition it), so
+     it never shows. */
+  --night-glow-c: rgba(109,151,255,.123);
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────
@@ -484,6 +796,9 @@ code {
   --shadow-panel: 0 24px 64px rgba(40,20,10,.26), 0 2px 10px rgba(40,20,10,.15);
   --shadow-control: 0 2px 5px rgba(40,20,10,.24), 0 1px 2px rgba(40,20,10,.15), inset 0 1px 0 rgba(255,255,255,.6);
   --shadow-card: 0 8px 32px rgba(40,20,10,.18), 0 2px 6px rgba(40,20,10,.14), inset 0 1px 0 rgba(255,255,255,.6);
+  /* Sunlight on a white ground — see --page-glow in :root. */
+  --page-glow-color: #ffc928;
+  --page-glow-strength: 24%;
 }
 
 /* ─── Afternoon — the clockface’s red-rust flank, an hour before dusk. NOT
@@ -525,6 +840,21 @@ code {
   --shadow-panel: 0 24px 64px rgba(90,30,10,.28), 0 2px 10px rgba(90,30,10,.16);
   --shadow-control: 0 2px 5px rgba(90,30,10,.26), 0 1px 2px rgba(90,30,10,.16), inset 0 1px 0 rgba(255,255,255,.55);
   --shadow-card: 0 8px 32px rgba(90,30,10,.20), 0 2px 6px rgba(90,30,10,.15), inset 0 1px 0 rgba(255,255,255,.55);
+  /* NIGHTFALL'S glow values, not a half-way point. The glow runs on its own
+     2 s clock (see the html rule in the crossfade block), so the turn from
+     noon starts a single glow transition here, and the second leg into
+     nightfall changes none of these values and lets it run on unbroken —
+     noon's sunlight rising up and away as it fades, the blue sliding in
+     bright and settling. A half-way value here would restart the glow mid-
+     flight at 800 ms and lurch. The colour stays noon's sunlight (not this
+     palette's clay accent) so the fade never turns into a colour change. */
+  --page-glow-color: #ffc928;
+  --page-glow-strength: 0%;
+  --page-glow-y: -45%;
+  --night-glow-x: 50%;
+  --night-glow-c: rgba(109,151,255,.123);
+  --night-glow-w: 140%;
+  --night-glow-h: 60%;
 }
 
 /* ─── Nightfall ──────────────────────────────────────────────────────────────
@@ -561,6 +891,18 @@ code {
      pushed hardest and still does almost nothing — the inset rim is carrying
      this one, and it is a hair brighter here than in the :root dark base. */
   --shadow-card: 0 8px 32px rgba(0,0,0,.65), 0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
+  /* Nightfall's glow is the sliding --night-glow layer (moonlight blue at
+     12.3%, see :root), centred here. The main glow is off and parked above
+     the top edge: on the turn from noon its sunlight rises up and away as it
+     fades (afternoon carries the same values), while the blue slides in from
+     the left. Its visible half-height is 70% of a 60% radius, 42% of the
+     viewport, so -45% is just clear. */
+  --page-glow-strength: 0%;
+  --page-glow-y: -45%;
+  --night-glow-x: 50%;
+  --night-glow-c: rgba(109,151,255,.123);
+  --night-glow-w: 140%;
+  --night-glow-h: 60%;
 }
 
 /* ─── Layout ───────────────────────────────────────────────────────────────── */
@@ -585,7 +927,18 @@ code {
 .sidebar {
   width: var(--sidebar-width);
   flex-shrink: 0;
-  background: var(--color-bg-tertiary);
+  /* Frosted glass: --rail-glass-bg is this same --color-bg-tertiary at 40%
+     (30% daylight), so the page glow shows through the rail instead of
+     stopping at its edge. The cards paint it too (--card-bg). The blur is on the sidebar itself, NOT a ::before as on the
+     sticky header: the sidebar scrolls (overflow-y below), and an absolute
+     pseudo-element would scroll away with the nav and leave the lower rail
+     unfrosted. That is safe only while nothing frosted or position:fixed is
+     mounted INSIDE it — every menu, popover and tooltip is appended to body
+     today. One mounted in here would be backdrop-rooted to the rail (a menu
+     going clear over the page) and positioned against it. */
+  background: var(--rail-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
   border-right: 1px solid var(--color-border);
   /* Cast RIGHT, onto the content area — the sidebar is full-height and the
      leftmost element of .layout, so that is the only edge with anything to
@@ -1256,21 +1609,37 @@ code {
 /* Frozen top bar (Dashboard): the header stays pinned while the widgets scroll,
    so Add Widgets / Done Editing / search stay reachable. z-index sits above the
    widgets + their Leaflet panes/controls (~1000) but below the widget picker
-   (1100), gear popover (1200), and the Status Map fullscreen (4000). The page
-   background + bottom border keep scrolled content from showing through. */
+   (1100), gear popover (1200), and the Status Map fullscreen (4000). A blur, not
+   a fill, keeps scrolled content illegible beneath it (see ::before). */
 .page-header-sticky {
   position: sticky;
   top: 0;
   z-index: 1050;
-  /* Must match the body background (the surface scrolling beneath it) in
-     BOTH themes. Note: --color-bg does not exist — the theme defines
-     --color-bg-primary/-secondary/-tertiary — so a var(--color-bg, #hex)
-     here silently renders its hardcoded fallback (a near-black that clashes
-     with the Polaris navy) in every theme. */
-  background: var(--color-bg-secondary);
+  /* No fill. The bar is pinned at the top of the viewport, exactly where the
+     page glow is brightest: an opaque band cut the glow off, and a tinted one
+     (tried at 70% of --color-bg-secondary) read as a dark box sitting on it.
+     Blur alone is invisible at rest — blurring a smooth gradient changes
+     nothing — and only shows once a widget scrolls under the bar. */
+  background: transparent;
   padding: 1rem 0 0.85rem;
   margin-top: -1rem;
   border-bottom: 1px solid var(--color-border);
+}
+/* The blur lives on ::before, NOT the bar: a backdrop-filter makes its element
+   the backdrop root of everything inside it, so the frosted "Dashboards ▾" menu
+   that drops out of this bar would blur only the bar and go clear over the
+   widgets below it. Heavier than --panel-glass-blur because there is no tint
+   behind it to help hide what scrolls past — and WITHOUT that token's
+   saturate(): saturating the glow under the bar deepens its colour there, so
+   the bar shows as a box again even with no fill. */
+.page-header-sticky::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
 }
 .page-header h2 {
   /* The actions row is what wraps, so the title is what must not: with the
@@ -1510,7 +1879,7 @@ code {
 
 /* ─── Cards ────────────────────────────────────────────────────────────────── */
 .card {
-  background: var(--color-bg-primary);
+  background: var(--card-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 1rem 1.25rem;
@@ -1533,7 +1902,7 @@ code {
   margin-bottom: 1.5rem;
 }
 .kpi-card {
-  background: var(--color-bg-primary);
+  background: var(--card-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: 14px 16px;
@@ -1802,12 +2171,22 @@ code {
   cursor: pointer;
   transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
-.table-tab:hover { color: var(--color-text-secondary); background: var(--color-bg-secondary); }
+.table-tab:hover { color: var(--color-text-secondary); background: var(--rail-glass-bg); }
 .table-tab:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+/* Glass rather than an opaque --color-surface chip, so the active tab reads
+   as the same material as the table and bulk bar below it. The blur sits on
+   the tab itself: nothing inside a tab is frosted or position:fixed (a name,
+   a dot, a close button and the rename input). */
 .table-tab.active {
   color: var(--color-accent);
+  /* Hairline on the top and sides plus the inset top rim the cards carry:
+     on a near-black ground the tint alone leaves the chip's edge to guess. */
+  border-color: var(--color-border);
   border-bottom-color: var(--color-accent);
-  background: var(--color-surface);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  background: var(--chip-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
 }
 .table-tab-name {
   overflow: hidden;
@@ -1874,7 +2253,7 @@ code {
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }
-.table-tab-add:hover { color: var(--color-accent); background: var(--color-bg-secondary); }
+.table-tab-add:hover { color: var(--color-accent); background: var(--rail-glass-bg); }
 
 /* ─── Named-preset menu (Assets → Filters ▾, Dashboard → Dashboards ▾) ─────
    A dropdown whose list rows carry a trailing delete button, so each row is a
@@ -2078,7 +2457,12 @@ code {
    instead of it, so the background / border / shadow here reach every list
    table — including the ones inside a modal or slide-over. */
 .table-wrapper {
-  background: var(--color-bg-primary);
+  /* The sidebar's glass (--rail-glass-bg), tint without blur, as on the cards
+     (--card-bg): behind a page-level table there is only the smooth ground and
+     glow, so a blur would change nothing. It would also make the wrapper the
+     containing block for the position:fixed TableSF popovers mounted inside
+     its header cells. Opaque again inside a modal or slide-over (rule below). */
+  background: var(--rail-glass-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   overflow-x: auto;
@@ -2119,14 +2503,49 @@ code {
    resize / page-control render, and the panel variant's sizers measure rects
    that are garbage while the tab is display:none. */
 .table-wrapper-modal-sticky { overflow: auto; }
-.table-wrapper-sticky thead th,
-.table-wrapper-panel-sticky thead th,
-.table-wrapper-modal-sticky thead th {
+/* The HEADER ROW is the sticky element, not each cell: the header is glass,
+   so the rows that scroll under it must be blurred out of the way, and one
+   blur across the whole row is the only way to get that without seams. A
+   per-cell blur sampled each cell's own patch and drew every header cell as
+   a separate rectangle. The th stay static (TableSF gives them its own
+   position:relative fallback for the resize handles and gear), and the
+   z-index that was on each cell is on the row. */
+.table-wrapper-sticky thead,
+.table-wrapper-panel-sticky thead,
+.table-wrapper-modal-sticky thead {
   position: sticky;
   top: 0;
   z-index: 10;
+}
+.table-wrapper-sticky thead th,
+.table-wrapper-panel-sticky thead th,
+.table-wrapper-modal-sticky thead th {
   box-shadow: 0 1px 0 var(--color-border);
 }
+/* The blur is on the row's ::before, not on the thead: a backdrop-filter on
+   the thead would make it the containing block for the position:fixed
+   TableSF popover (.sf-multi-popover) mounted inside its cells. The sticky
+   thead is positioned and a stacking context (z-index 10), so inset 0 with
+   z-index -1 lands under the cells' tint and labels. Heavier than
+   --panel-glass-blur because at 12px the row text scrolled beneath still
+   showed as grey smudges beside the column labels through the rail's thin
+   tint. */
+.table-wrapper-sticky thead::before,
+.table-wrapper-panel-sticky thead::before,
+.table-wrapper-modal-sticky thead::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: blur(28px);
+}
+/* Inside a frosted modal or slide-over a translucent table is a window onto
+   the page behind the panel (canon-shared-kit.md, "a transparent box inside a
+   frosted panel"), so there the table keeps its opaque grounds. */
+:is(.modal, .slideover) .table-wrapper { background: var(--color-bg-primary); }
+:is(.modal, .slideover) thead th { background: var(--color-bg-tertiary); }
 /* Narrow center-aligned pin/checkbox columns (asset Services tab: Monitor /
    Logs / Map). Tight horizontal padding + no header wrap so the labels stay on
    one line and the checkboxes sit close together instead of spread across wide
@@ -2151,7 +2570,10 @@ thead th {
   text-transform: uppercase;
   letter-spacing: 1px;
   border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-tertiary);
+  /* The rail's glass again, over the wrapper's: the two tints stack, so the
+     header still reads a step denser than the rows, as it did when it was an
+     opaque --color-bg-tertiary band. */
+  background: var(--rail-glass-bg);
   white-space: normal;
   overflow-wrap: anywhere;
 }
@@ -2334,7 +2756,7 @@ body.sf-resizing * { user-select: none !important; }
   position: absolute;
   right: 8px;          /* JS refines this on reveal to clear the wrapper's scrollbar */
   top: 5px;
-  /* Above the sticky header cells (.table-wrapper-sticky thead th, z-index 10). */
+  /* Above the sticky header row (.table-wrapper-sticky thead, z-index 10). */
   z-index: 30;
   display: none;
   gap: 4px;            /* space between the optional screenshot button and the gear */
@@ -2567,7 +2989,10 @@ body.sf-resizing * { user-select: none !important; }
   align-items: center;
   gap: 10px;
   padding: 7px 12px;
-  background: var(--color-surface);
+  /* Glass, like the table it sits on: --chip-glass-bg (the selected-chip
+     glass, denser than the table's), frosted by ::before below. The table rows scroll under this sticky bar, so it is
+     the blur that keeps them from reading through. */
+  background: var(--chip-glass-bg);
   border: 1px solid var(--color-accent);
   border-radius: var(--radius-sm);
   margin-bottom: 8px;
@@ -2575,6 +3000,21 @@ body.sf-resizing * { user-select: none !important; }
   top: 8px;
   z-index: 50;
   box-shadow: 0 4px 16px rgba(0,0,0,0.35), 0 0 0 1px var(--color-accent);
+}
+/* The frost is on ::before, not the bar: its Type / State / Monitoring
+   menus are frosted glass themselves, and a backdrop-filter on the bar would
+   make it their backdrop root, so they would blur only the bar and go clear
+   over the table. The bar is sticky with z-index 50, so it is a stacking
+   context, and z-index -1 lands under its tint and buttons. */
+.bulk-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
 }
 /* Idle state for an always-visible action bar (e.g. Notifications View tab):
    nothing is selected, so the bar recedes into the page rather than floating
@@ -2586,8 +3026,9 @@ body.sf-resizing * { user-select: none !important; }
   /* Matches the unselected rows below it, i.e. .table-wrapper's fill — idle,
      the bar reads as the table's own top edge rather than a floating control.
      Note this is NOT the body fill (--color-bg-secondary), which is a step
-     darker and would read as a gap. */
-  background: var(--color-bg-primary);
+     darker and would read as a gap. The table wears the sidebar's glass now,
+     so the idle bar does too. */
+  background: var(--rail-glass-bg);
   border-color: var(--color-border);
   box-shadow: none;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
@@ -3269,7 +3710,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
    one column beside Web Push instead of spanning under it. */
 .delivery-grid > #channels-list > .empty-state-card { grid-column: auto; }
 .integration-card {
-  background: var(--color-bg-primary);
+  background: var(--card-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 1.25rem;
@@ -3372,7 +3813,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 }
 .detail-row.stacked .detail-value { text-align: left; }
 .empty-state-card {
-  background: var(--color-bg-primary);
+  background: var(--card-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 3rem;
@@ -3819,6 +4260,16 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   opacity: 0.75;
   font-family: var(--font-mono, monospace);
 }
+/* Rule 91 — the serial / address beside a hostname another row in the same
+   tree shares. Muted and mono, sized like the level tag: it tells two IDF-1s
+   apart without competing with the name. */
+.dep-tree-disambig {
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+  font-size: 0.72rem;
+  font-family: var(--font-mono, monospace);
+  letter-spacing: 0.2px;
+  cursor: help;
+}
 .dep-tree-source-tag,
 .dep-tree-override-tag {
   font-size: 0.7rem;
@@ -4037,9 +4488,45 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 .page-tab.active { color: var(--color-accent); border-bottom-color: var(--color-accent); }
 .page-tab-panel { display: none; }
 .page-tab-panel.active { display: block; }
+/* Opt-in: page tabs drawn like the Assets view tabs (.table-tab), so a page
+   whose tab strip sits over glass tables and cards gets the same material
+   rounded-top chip, glass on hover, and a frosted --color-surface chip
+   with the accent underline when active. A modifier rather than a change to
+   .page-tab, because that class is also every modal's tab strip. Used by
+   every page-level strip: Automations, Server Settings, IPAM, Integrations
+   (the Dashboard's .dashboard-tab copies the same rules). */
+/* A strip too long for its width scrolls rather than wrapping a label onto a
+   second line — the same rule .table-tabs follows. */
+.page-tabs-glass {
+  gap: 2px;
+  align-items: flex-end;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.page-tabs-glass .page-tab {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.84rem;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.page-tabs-glass .page-tab:hover { color: var(--color-text-secondary); background: var(--rail-glass-bg); }
+.page-tabs-glass .page-tab.active {
+  color: var(--color-accent);
+  border-color: var(--color-border);
+  border-bottom-color: var(--color-accent);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  background: var(--chip-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
+}
 
 .settings-card {
-  background: var(--color-bg-primary);
+  background: var(--card-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 1.25rem;
@@ -5274,32 +5761,49 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   letter-spacing: 0.3px;
 }
 
-/* Dashboard tabs (multiple named dashboards) — shown only when >1 exists. */
+/* Dashboard tabs (multiple named dashboards) — shown only when >1 exists.
+   Drawn like the Assets view tabs (.table-tab) and .page-tabs-glass: rounded-
+   top chips, glass on hover, a frosted chip with the accent underline when
+   active. A long strip scrolls rather than wrapping, like .table-tabs. */
 .dashboard-tabs {
   display: flex;
-  gap: 4px;
+  align-items: flex-end;
+  gap: 2px;
   margin-bottom: 14px;
-  border-bottom: 1px solid var(--color-border, rgba(255,255,255,0.08));
-  flex-wrap: wrap;
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
 .dashboard-tab {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: transparent;
-  border: 0;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  background: none;
+  border: 1px solid transparent;
   border-bottom: 2px solid transparent;
-  color: var(--color-text-secondary);
-  padding: 7px 12px;
-  font-size: 0.9rem;
-  font-weight: 600;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  color: var(--color-text-tertiary);
+  padding: 0.45rem 0.9rem;
+  font-size: 0.84rem;
+  font-weight: 500;
   cursor: pointer;
-  margin-bottom: -1px;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
-.dashboard-tab:hover { color: var(--color-text-primary); }
+.dashboard-tab:hover { color: var(--color-text-secondary); background: var(--rail-glass-bg); }
+.dashboard-tab:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+/* The blur sits on the tab itself: nothing inside it is frosted or
+   position:fixed (a name or rename input, a grip, a remove button). */
 .dashboard-tab.active {
   color: var(--color-accent);
+  border-color: var(--color-border);
   border-bottom-color: var(--color-accent);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  background: var(--chip-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
 }
 /* Edit-mode drag handle on each tab — the tab itself isn't draggable (the
    active tab is mostly the rename input), so the grip is the grab target. */
@@ -5320,22 +5824,30 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   cursor: pointer;
 }
 .dashboard-tab-remove:hover { color: var(--color-danger); background: var(--color-hover-tint); }
-/* Inline rename input on the active tab — looks like the tab text until focused. */
-.dashboard-tab-name-input {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 3px;
-  color: inherit;
+/* Inline rename input on the active tab (edit mode) — the same field as the
+   global search (.global-search input): --color-bg-primary ground, hairline,
+   control shadow, accent ring on focus. Scoped under .dashboard-tab because
+   the bare class loses to the global input[type="text"] rule, which painted
+   it --color-bg-secondary — a near-black void on nightfall. */
+.dashboard-tab .dashboard-tab-name-input {
+  width: auto;
+  padding: 0.2rem 0.5rem;
   font: inherit;
-  font-weight: 600;
-  padding: 1px 4px;
-  cursor: text;
-}
-.dashboard-tab-name-input:hover { border-color: var(--color-border, rgba(255,255,255,0.18)); }
-.dashboard-tab-name-input:focus {
+  font-weight: 500;
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-control);
   outline: none;
+  cursor: text;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+/* box-shadow REPLACES, so the ring re-states the drop shadow — the same
+   reason the .global-search focus rule does. */
+.dashboard-tab .dashboard-tab-name-input:focus {
   border-color: var(--color-accent);
-  background: var(--color-bg-primary); /* --color-bg doesn't exist; the #0f1115 fallback clashed with the navy theme */
+  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.18), var(--shadow-control);
 }
 
 /* Column canvas. The dashboard is a 12-col grid of COLUMNS; each column is a
@@ -5453,10 +5965,8 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 
 .dashboard-widget {
   position: relative;
-  /* Match the Assets table surface (.table-wrapper) so cards stay uniform
-     across the app; --color-bg-elevated was never defined and fell back to a
-     grey (#1c1f24) that didn't match the navy table. */
-  background: var(--color-bg-primary);
+  /* The sidebar's glass, like every card (--card-bg in :root). */
+  background: var(--card-bg);
   border: 1px solid var(--color-border, rgba(255,255,255,0.08));
   border-radius: 6px;
   padding: 14px 16px 16px;
@@ -5970,6 +6480,11 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .fg-cluster.monitor-dep-down    { background: #607d8b; }
 .fg-cluster.monitor-maintenance { background: #9575cd; }
 .fg-cluster.monitor-passive     { background: #5c6bc0; }
+/* Down, but the down alert is acknowledged — someone owns it. Faded so the
+   unowned outages are the ones that read at a glance (a cluster fades only
+   when every down child is acknowledged). */
+.fg-marker.monitor-down.acked,
+.fg-cluster.monitor-down.acked  { opacity: 0.4; }
 
 /* ── Dark basemap ─────────────────────────────────────────────── */
 /* Every Leaflet surface renders OpenStreetMap tiles — the only unkeyed tile
@@ -6055,6 +6570,8 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .leaflet-tooltip.sitemap-tip-down { background: rgba(40,8,12,0.92); border-color: #ff1744; color: #ff6b85; pointer-events: auto; cursor: grab; }
 .leaflet-tooltip.sitemap-tip-down.dragging { cursor: grabbing; }
 .leaflet-tooltip.sitemap-tip-down.leaflet-tooltip-top::before { display: none; }
+/* Acknowledged outage: same label, faded (the dot drops its pulse ring). */
+.leaflet-tooltip.sitemap-tip-down.sitemap-tip-acked { opacity: 0.45 !important; }
 
 /* Fullscreen: the widget body fills the viewport. !important beats the inline
    position:relative set on the body at render time. */
@@ -6571,10 +7088,176 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .maint-cal-title { min-width: 9rem; text-align: center; font-size: 0.95rem; }
 .maint-cal-hint { margin-left: auto; }
 .maint-cal-dow,
-.maint-cal-grid {
+.maint-cal-days,
+.maint-cal-lanes {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 4px;
+}
+/* The grid is a column of WEEKS. Each week is an optional lane block of
+   multi-day bars (one bar per window, spanning the columns it covers) over
+   the row of seven day cells. */
+.maint-cal-grid { display: grid; gap: 6px; }
+.maint-cal-grid-list { gap: 10px; }
+.maint-cal-week { display: grid; gap: 2px; }
+.maint-cal-lanes { gap: 2px 4px; }
+.maint-cal-span {
+  display: block;
+  min-width: 0;
+  text-align: left;
+  font-size: 0.7rem;
+  line-height: 1.25;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: inherit;
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  color: var(--color-text-primary);
+  border-left: 3px solid var(--color-accent);
+}
+.maint-cal-span:hover { background: color-mix(in srgb, var(--color-accent) 44%, transparent); }
+/* A bar continuing from the previous week / into the next loses the rounded
+   edge on that side, so the eye reads one window across rows. */
+.maint-cal-span-from { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left-style: dashed; }
+.maint-cal-span-to { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.maint-cal-more-week { text-align: left; }
+.maint-cal-view { display: inline-flex; gap: 2px; margin-left: 0.5rem; }
+.maint-cal-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  align-items: center;
+  margin-top: 8px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+.maint-cal-key {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  margin-right: 5px;
+  vertical-align: -2px;
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  border-left: 3px solid var(--color-accent);
+}
+.maint-cal-key-adhoc { background: color-mix(in srgb, var(--color-sev-serious) 20%, transparent); border-left-color: var(--color-sev-serious); }
+.maint-cal-key-off { background: var(--color-bg-tertiary); border-left-color: var(--color-deprecated); }
+/* List view rows: when · name · duration, one line each, full names. */
+.maint-cal-group-title { margin: 0 0 4px; font-size: 0.8rem; color: var(--color-text-secondary); font-weight: 600; }
+.maint-cal-row {
+  display: grid;
+  grid-template-columns: minmax(9rem, auto) minmax(0, 1fr) auto;
+  gap: 0 12px;
+  width: 100%;
+  align-items: baseline;
+  text-align: left;
+  font-size: 0.8rem;
+  padding: 5px 8px;
+  margin-bottom: 3px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  color: var(--color-text-primary);
+  border-left: 3px solid var(--color-accent);
+}
+.maint-cal-row:hover { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
+.maint-cal-row.maint-cal-chip-adhoc { background: color-mix(in srgb, var(--color-sev-serious) 16%, transparent); }
+.maint-cal-row-when { font-variant-numeric: tabular-nums; color: var(--color-text-secondary); white-space: nowrap; }
+.maint-cal-row-name { font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
+.maint-cal-row-meta { color: var(--color-text-tertiary); white-space: nowrap; font-size: 0.75rem; }
+@media (max-width: 820px) {
+  .maint-cal-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}
+/* Week / Day view: a time grid. The hour row is 28px — mirrored by
+   _MAINT_HOUR_PX in assets-maintenance.js, which turns a click into an hour. */
+.maint-cal-grid-time { display: block; }
+.maint-cal-time { border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden; }
+.maint-cal-time-head,
+.maint-cal-time-band,
+.maint-cal-time-body { display: grid; }
+.maint-cal-time-head { border-bottom: 1px solid var(--color-border); background: var(--color-bg-secondary); }
+.maint-cal-time-dayhead {
+  padding: 4px 6px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  text-align: center;
+  border-left: 1px solid var(--color-border);
+}
+.maint-cal-time-dayhead.maint-cal-day-today { color: var(--color-accent); box-shadow: none; border-left-color: var(--color-border); }
+.maint-cal-time-daynum { font-weight: 600; font-size: 0.9rem; color: var(--color-text-primary); }
+.maint-cal-time-dayhead.maint-cal-day-today .maint-cal-time-daynum { color: var(--color-accent); }
+.maint-cal-time-band { border-bottom: 1px solid var(--color-border); padding: 3px 0; }
+.maint-cal-time-band .maint-cal-lanes { grid-column: 2 / -1; gap: 2px 4px; padding: 0 2px; }
+.maint-cal-time-scroll { max-height: 60vh; overflow-y: auto; }
+.maint-cal-hours { position: relative; }
+.maint-cal-hour {
+  height: 28px;
+  font-size: 0.65rem;
+  color: var(--color-text-tertiary);
+  text-align: right;
+  padding-right: 6px;
+  transform: translateY(-0.5em);
+  font-variant-numeric: tabular-nums;
+}
+.maint-cal-time-band .maint-cal-hour { height: auto; transform: none; align-self: center; }
+.maint-cal-time-col {
+  position: relative;
+  border-left: 1px solid var(--color-border);
+  cursor: pointer;
+  /* Hour lines, 28px apart. */
+  background-image: linear-gradient(to bottom, var(--color-border) 1px, transparent 1px);
+  background-size: 100% 28px;
+}
+.maint-cal-time-col:hover { background-color: color-mix(in srgb, var(--color-accent) 5%, transparent); }
+.maint-cal-time-col-today { background-color: color-mix(in srgb, var(--color-accent) 4%, transparent); }
+.maint-cal-block {
+  position: absolute;
+  box-sizing: border-box;
+  margin-left: 1px;
+  text-align: left;
+  font-size: 0.68rem;
+  line-height: 1.2;
+  padding: 2px 5px;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  overflow: hidden;
+  font-family: inherit;
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  color: var(--color-text-primary);
+  border-left: 3px solid var(--color-accent);
+}
+.maint-cal-block:hover { background: color-mix(in srgb, var(--color-accent) 44%, transparent); z-index: 2; }
+.maint-cal-block.maint-cal-chip-adhoc { background: color-mix(in srgb, var(--color-sev-serious) 22%, transparent); border-left-color: var(--color-sev-serious); }
+.maint-cal-block.maint-cal-chip-off { background: var(--color-bg-tertiary); border-left-color: var(--color-deprecated); color: var(--color-text-secondary); text-decoration: line-through; }
+/* A block continuing from the previous day / into the next loses the rounded edge on that side. */
+.maint-cal-block-cont { border-top-left-radius: 0; border-top-right-radius: 0; }
+.maint-cal-block-runs { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.maint-cal-nowline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 2px solid var(--color-sev-critical, #d33);
+  pointer-events: none;
+  z-index: 1;
+}
+.maint-cal-nowline::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: -5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-sev-critical, #d33);
 }
 .maint-cal-dow {
   margin-bottom: 4px;

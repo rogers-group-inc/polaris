@@ -33,9 +33,26 @@ Five tabs:
 | **Scripts** | the [script registry](Automation-Scripts) |
 | **Address Book** | [contacts and the directory](Address-Book) |
 
+### Settings
+
+The **Settings** button beside **+ New automation** opens the automation
+settings. Its one tab, **Global Quiet Times**, lists the quiet periods that
+apply to every automation without a quiet time of its own: which devices, which
+severities and kinds of alert, when, and how the summary email goes out. **+ New
+quiet time** walks the same five steps the automation wizard does — Name,
+Devices, Alerts, Schedule, Review. The list shows whether each one is quiet right
+now and when it next will be, and below it the recent summary emails. Reading
+needs `automationManagement:read`; creating, editing, toggling and deleting need
+`write`. See [Quiet time](Automation-Escalation#quiet-time).
+
 ### The list
 
-Columns: **Devices · Trigger · Reset · Actions · Addresses · Type**.
+Columns: **Devices · Trigger · Reset · Actions · Addresses · Type · Quiet time**.
+
+**Quiet time** shows what the automation's Quiet time step says: *Global*
+(the global quiet times apply), **IGNORES GLOBAL** (no quiet time at all — it
+sends whatever the hour) or **OVERRIDES GLOBAL** (its own quiet time; hover for
+the schedule). Filter on it to see which automations page through the night.
 
 The first four each hold that part of the automation **in the builder's own
 words**, so two automations can be told apart without opening either. Trigger
@@ -124,7 +141,10 @@ A debounced preview shows the devices currently matched.
 its filter **discarded** at save. Today that is `host_metric` and a host-kind
 composite — those are about the Polaris server, not about your devices. The
 step's lead line says which case you are in. `event` automations **are** scoped
-since 2026-09 ([rule 46](Business-Rules#rule-46)).
+since 2026-09 ([rule 46](Business-Rules#rule-46)). A
+[Path Monitor](Automation-Triggers#path-monitor) automation only ever watches
+devices with the Polaris Agent installed: the filter narrows those, and the
+preview counts only them.
 
 ---
 
@@ -271,7 +291,7 @@ automation. The editor says so.
 
 ## Testing an automation
 
-Step 6 carries a **Test delivery** block (`automationManagement:write`;
+Step 7 (the review) carries a **Test delivery** block (`automationManagement:write`;
 omitted entirely otherwise), with one button per distinct delivery the draft
 would perform: *Send Test Web Push*, *Send Test Email*, *Send Test <channel>*,
 *Write a Test Event*. Deduplicated by channel across base actions, band actions,
@@ -285,6 +305,11 @@ escalation tiers, resolved and reset actions.
   data (`EXAMPLE-SWITCH-01` at `192.0.2.51`, and so on), so a test email can be
   forwarded to a vendor or a colleague without carrying any of your inventory.
   It is attached to no asset, so it never appears on a real device's alert list.
+- **It does appear in the Dashboard's Active Alerts widget, for up to an hour.**
+  Nothing can recover a test, so Polaris clears it automatically an hour after
+  it fired. Until then the row carries a grey **TEST** pill beside its severity,
+  so a wallboard doesn't read it as an outage. Clear it by hand if you don't
+  want to wait.
 - **It says so in three places** — `[TEST]` in the subject, a banner at the head
   of the body, and a line in the plain-text alternative. The marking is added at
   send time, so customizing the email template cannot remove it.

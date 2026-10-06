@@ -35,6 +35,8 @@ import {
 } from "../../utils/assetInvariants.js";
 import { getIpHistory, getHistorySettings, updateHistorySettings, pruneOldHistory } from "../../services/assetIpHistoryService.js";
 import { getSightingsForAsset, getSightingSettings, updateSightingSettings } from "../../services/assetSightingService.js";
+import { getAssetSoftware } from "../../services/softwareInventoryService.js";
+import { getInventoryPresence } from "../../services/serviceInventoryService.js";
 import {
   quarantineAsset,
   releaseQuarantine,
@@ -3057,6 +3059,24 @@ router.get("/:id/services", requirePermission("assets", "read"), async (req, res
   } catch (err) { next(err); }
 });
 
+// GET /assets/:id/software — installed software, every source's list (agent /
+// intune / arc) with each source's last-read time. The Software tab shows one
+// source at a time; the service decides nothing about which.
+router.get("/:id/software", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    res.json(await getAssetSoftware(req.params.id as string));
+  } catch (err) { next(err); }
+});
+
+// GET /assets/:id/inventory-presence — { services, software }: whether the
+// Services / Software tabs have anything to show. The slide-over prefetches it
+// so each tab is present on first paint or absent, never an empty shell.
+router.get("/:id/inventory-presence", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    res.json(await getInventoryPresence(req.params.id as string));
+  } catch (err) { next(err); }
+});
+
 // GET /assets/:id/process-connections?name=&unit= — Ports & Connections for the
 // process detail slide-in AND the Services detail panel (Application Map data,
 // per-asset view). Optional `name` filters to one process; optional `unit`
@@ -5619,6 +5639,11 @@ interface BoundChildRow {
   parentAssetId: string;
   id: string;
   hostname: string | null;
+  // Serial + address ride every tree node so the renderer can tell two
+  // same-named switches apart (business rule 91) — the hostname alone is not
+  // an identity on a FortiLink fleet that names its switch-ids per site.
+  serialNumber: string | null;
+  ipAddress: string | null;
   assetType: string;
   dependencyLayer: number | null;
   monitorStatus: string | null;
@@ -5662,6 +5687,8 @@ async function loadBoundChildRows(
         select: {
           id: true,
           hostname: true,
+          serialNumber: true,
+          ipAddress: true,
           assetType: true,
           dependencyLayer: true,
           monitorStatus: true,
@@ -5691,6 +5718,8 @@ async function loadBoundChildRows(
       parentAssetId:        r.parentAssetId,
       id:                   r.asset.id,
       hostname:             r.asset.hostname,
+      serialNumber:         r.asset.serialNumber,
+      ipAddress:            r.asset.ipAddress,
       assetType:            r.asset.assetType,
       dependencyLayer:      r.asset.dependencyLayer,
       monitorStatus:        r.asset.monitorStatus,
@@ -5719,7 +5748,7 @@ async function loadDependencyHaPeer(asset: { assetType: string; fortinetTopology
   const peer = await prisma.asset.findFirst({
     where: { serialNumber: { equals: peerSerial, mode: "insensitive" } },
     select: {
-      id: true, hostname: true, assetType: true, dependencyLayer: true,
+      id: true, hostname: true, serialNumber: true, ipAddress: true, assetType: true, dependencyLayer: true,
       monitorStatus: true, monitored: true, fortinetTopology: true,
     },
   });
@@ -5728,6 +5757,8 @@ async function loadDependencyHaPeer(asset: { assetType: string; fortinetTopology
   return {
     id: peer.id,
     hostname: peer.hostname,
+    serialNumber: peer.serialNumber,
+    ipAddress: peer.ipAddress,
     assetType: peer.assetType,
     dependencyLayer: peer.dependencyLayer,
     monitorStatus: peer.monitorStatus,
@@ -5744,6 +5775,8 @@ router.get("/:id/dependencies", requirePermission("assets", "read"), async (req,
       select: {
         id: true,
         hostname: true,
+        serialNumber: true,
+        ipAddress: true,
         assetType: true,
         monitorStatus: true,
         monitored: true,
@@ -5766,6 +5799,8 @@ router.get("/:id/dependencies", requirePermission("assets", "read"), async (req,
           select: {
             id: true,
             hostname: true,
+            serialNumber: true,
+            ipAddress: true,
             assetType: true,
             dependencyLayer: true,
             monitorStatus: true,
@@ -5784,6 +5819,8 @@ router.get("/:id/dependencies", requirePermission("assets", "read"), async (req,
           ? {
               id:                  r.parent.id,
               hostname:            r.parent.hostname,
+              serialNumber:        r.parent.serialNumber,
+              ipAddress:           r.parent.ipAddress,
               assetType:           r.parent.assetType,
               dependencyLayer:     r.parent.dependencyLayer,
               monitorStatus:       r.parent.monitorStatus,
@@ -5919,6 +5956,8 @@ router.get("/:id/dependencies", requirePermission("assets", "read"), async (req,
       asset: {
         id:                      asset.id,
         hostname:                asset.hostname,
+        serialNumber:            asset.serialNumber,
+        ipAddress:               asset.ipAddress,
         assetType:               asset.assetType,
         monitorStatus:           asset.monitorStatus,
         monitored:               asset.monitored,

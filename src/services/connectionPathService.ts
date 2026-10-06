@@ -94,7 +94,7 @@ export async function resolveConnectionPath(assetId: string): Promise<Connection
   if (leafKind === "endpoint") {
     const parsed = parseLastSeenSwitch(asset.lastSeenSwitch);
     if (parsed) {
-      const sw = await findSwitchByName(parsed.switchId);
+      const sw = await findSwitchByName(parsed.switchId, asset);
       if (sw && !seen.has(sw.id)) {
         seen.add(sw.id);
         const swHop = toHop(sw, "switch");
@@ -160,17 +160,52 @@ function parseLastSeenSwitch(s: string | null): { switchId: string; port: string
   return { switchId: s.substring(0, idx).trim(), port: s.substring(idx + 1).trim() };
 }
 
-async function findSwitchByName(switchId: string): Promise<Asset | null> {
+async function findSwitchByName(switchId: string, endpoint: Asset): Promise<Asset | null> {
   // FortiSwitch discovery stamps the device's `switch-id` (a hostname-like
   // FS-XXXX-NN form) into Asset.hostname, and the device serial into
   // Asset.serialNumber. lastSeenSwitch can carry either form depending on
   // which discovery path stamped it; check both.
-  return prisma.asset.findFirst({
+  const candidates = await prisma.asset.findMany({
     where: {
       assetType: "switch",
       OR: [{ hostname: switchId }, { serialNumber: switchId }],
     },
   });
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0];
+
+  // Several switches carry this name (business rule 91 — a FortiLink fleet
+  // naming its switch-ids per site). Pick by what this endpoint is known to
+  // sit behind, the same way the dependency tree does: the switches whose
+  // forwarding tables hold its MAC, then the gates that sighted it (freshest
+  // first). Nothing decisive ⇒ no switch hop, never the first row returned.
+  const controllerOr = candidates.flatMap((c) => parentAssetWhereOr(readControllerStamp(c.fortinetTopology)));
+  const [controllers, macTableRows, sightings] = await Promise.all([
+    controllerOr.length > 0
+      ? prisma.asset.findMany({ where: { assetType: "firewall", OR: controllerOr } })
+      : Promise.resolve([] as Asset[]),
+    prisma.assetMacTableEntry.findMany({
+      where:   { matchedAssetId: endpoint.id, status: "learned", lastSeen: { gte: new Date(Date.now() - 48 * 60 * 60 * 1000) } },
+      select:  { assetId: true },
+      orderBy: { lastSeen: "desc" },
+    }),
+    prisma.assetFortigateSighting.findMany({
+      where:   { assetId: endpoint.id, NOT: { fortigateDevice: "" } },
+      select:  { fortigateDevice: true },
+      orderBy: { lastSeen: "desc" },
+    }),
+  ]);
+  const index = buildInfraParentIndex([...candidates, ...controllers]);
+  const gateIds: string[] = [];
+  for (const s of sightings) {
+    const gate = resolveInfraParentAsset(index, { name: s.fortigateDevice }, "firewall");
+    if (gate && !gateIds.includes(gate.id)) gateIds.push(gate.id);
+  }
+  const hit = resolveInfraParentAsset(index, { name: switchId }, "switch", {
+    preferIds: [...new Set(macTableRows.map((r) => r.assetId))],
+    gateIds,
+  });
+  return hit ? (candidates.find((c) => c.id === hit.id) ?? null) : null;
 }
 
 async function getEffectiveParents(assetId: string): Promise<Asset[]> {

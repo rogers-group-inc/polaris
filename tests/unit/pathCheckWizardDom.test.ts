@@ -1,5 +1,5 @@
 /**
- * tests/unit/pathCheckWizardDom.test.ts — the Add / Edit Path Check wizard
+ * tests/unit/pathCheckWizardDom.test.ts — the Add / Edit Path Monitor wizard
  * (public/js/path-checks.js → openCheckModal).
  *
  * The modal was four peer tabs; it is now the automations wizard's stepper
@@ -35,6 +35,7 @@ let posted: any[];
 let seeded = 0;
 let filledTree: any = null; // a finder condition the mock builder "holds"
 let previewCalls: any[] = [];
+let wiredTo: any = null; // the element the builder's listeners were bound to
 const EMPTY_PREVIEW = { total: 0, ids: [], pinned: 0, matchedWithoutAgent: 0, agents: [], pinnedWithoutAgent: [], minAgentVersion: "0.21.0" };
 let previewRes: any = EMPTY_PREVIEW;
 
@@ -73,11 +74,12 @@ function load(opts: { networkScan?: "read" | "write" } = {}) {
   seeded = 0;
   filledTree = null;
   previewCalls = [];
+  wiredTo = null;
   previewRes = EMPTY_PREVIEW;
   (win as any).PolarisConditionBuilder = {
     create: () => ({
       groupHtml: () => '<div class="scg-group"></div>',
-      wire: () => {},
+      wire: (panel: any) => { wiredTo = panel; },
       collect: () => filledTree || ({ op: "and", children: seeded ? [{ field: "", op: "eq", value: "" }] : [] }),
       validate: (tree: any) => (tree.children.some((r: any) => !r.field) ? "Pick a field" : null),
       seedIfEmpty: () => { seeded++; },
@@ -126,6 +128,24 @@ describe("path check wizard — shell", () => {
     expect(PC.STEPS.map((s: any) => s.key)).toEqual(["general", "expect", "trace", "sources"]);
     // Every step leads with its question.
     for (let i = 1; i <= 4; i++) expect(doc.querySelector(`#pc-step-${i} > h3`)).not.toBeNull();
+  });
+
+  it("titles the dialog Add Path Monitor, and Edit Path Monitor on an existing check", async () => {
+    const PC = load();
+    await PC.openCheckModal(null);
+    expect(doc.querySelector("#modal-overlay .modal-header h3")!.textContent).toBe("Add Path Monitor");
+  });
+
+  it("wires the condition builder to a container that dies with the dialog, not the reused modal body", async () => {
+    // openModal keeps ONE .modal-body across opens; listeners bound there
+    // stacked up, so the second open's "+ Condition" appended two rows and
+    // the blank one froze the host preview on "needs a value".
+    const PC = load();
+    await PC.openCheckModal(null);
+    expect(wiredTo).not.toBeNull();
+    expect(wiredTo).not.toBe(body());
+    expect(wiredTo.id).toBe("pc-agent-sources");
+    expect(wiredTo.querySelector("#pc-cond-root")).not.toBeNull();
   });
 
   it("walks forward with Next, back with Back, and marks the lines it passed", async () => {

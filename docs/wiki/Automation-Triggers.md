@@ -4,16 +4,21 @@ Step 3 of the wizard. What the automation watches, at what severity.
 
 ---
 
-## The five trigger kinds
+## The trigger kinds
 
 | Kind | Watches | Scoped to devices? |
 |---|---|---|
 | **Asset metric** | a number a device reports | yes |
 | **Asset state** | a field on the Asset row, or a per-dimension state | yes |
+| **Path Monitor** | a [path check](Path-Monitor)'s results, or its route changing | agent hosts only, plus the Polaris server if ticked |
 | **Host metric** | the Polaris server's own health | **no** |
 | **Event** | an audit Event arriving | yes (since 2026-09) |
 | **Change** | a tracked field changing | yes |
 | **Composite** | a tree of the above | yes (device-kind) |
+
+In the wizard the **Trigger type** dropdown groups these: *Device conditions*
+(asset metric, asset state, and trees of them), *Path Monitor*, *Polaris host
+conditions*, *Audit event match* and *Change detection*.
 
 ---
 
@@ -41,17 +46,57 @@ A number, compared against a threshold.
 | `ipsecThroughputBps` | bps | tunnel name |
 | `customWidgetValue` | — | widget |
 | `customStateValue` — Device state flag | 0/1 | state probe, row |
-| `pathLatencyMs` — Path latency | ms | path check |
-| `pathFailurePct` — Path failure rate | % | path check (windowed ratio, like packet loss) |
-| `pathOk` — Path check result | Reachable / Unreachable | path check |
-| `pathHttpStatus` — Path HTTP status | — | path check |
-| `pathHopCount` — Traceroute hop count | hops | path check |
-| `pathTlsDaysLeft` — TLS certificate days remaining | days | path check |
 
-The `path*` metrics come from [agent-run path checks](Path-Monitor).
-The device they are about is the **host that ran the check**, not the target, and
-they never change that host's Up / Down status. Pick the check on the condition
-row; blank means every check the host runs, one alert each.
+The path check metrics are not here — they have their own trigger type,
+[Path Monitor](#path-monitor).
+
+---
+
+## Path Monitor
+
+Alerts on [path checks](Path-Monitor): whether a URL or service answers, how
+fast, and the route traffic takes to it. Pick **Path Monitor** as the trigger
+type, then choose what fires it:
+
+- **A path check result meets the conditions below.** The condition dropdown
+  lists the path conditions and nothing else:
+
+  | Condition | Unit | Notes |
+  |---|---|---|
+  | `pathOk` — Path check result | Reachable / Unreachable | the default: *Unreachable* |
+  | `pathLatencyMs` — Path latency | ms | a failed run has no latency — that is `pathOk`'s to report |
+  | `pathFailurePct` — Path failure rate | % | windowed ratio, like packet loss, but no ceiling — 100% failing is the alert |
+  | `pathHttpStatus` — Path HTTP status | — | |
+  | `pathHopCount` — Traceroute hop count | hops | from the traceroutes, not every run |
+  | `pathTlsDaysLeft` — TLS certificate days remaining | days | HTTPS checks only |
+
+  Pick the check on the condition row; blank means every check, one alert each.
+- **A check's route changes (traceroute).** Fires each time a source's
+  traceroute takes a different set of hops (at most once per 10 minutes per
+  source and check).
+
+**Which sources it watches.** Only devices with an active **Polaris Agent** —
+the Devices step's conditions narrow those, and its preview counts only agent
+hosts once the automation is a Path Monitor one. The Trigger step shows the
+pool it will watch.
+
+**Include the Polaris server's own runs** adds the server as a source when a
+check [runs from the Polaris server](Path-Monitor). A new Path Monitor
+automation has it ticked. Its alerts say **Polaris server** where a device name
+would be, and:
+
+- the Devices-step filter, maintenance windows and dependency suppression do
+  not apply to it — it is not a device;
+- with more than one condition, only agent hosts are evaluated;
+- it cannot be combined with a **custom reset condition** (the wizard refuses
+  the save) — reset automatically instead.
+
+Automations made before Path Monitor existed keep working unchanged. They open
+under Path Monitor with the server **unticked**, which is what they always did.
+
+The device a path alert is about is the **host that ran the check**, not the
+target. Path results never change that host's Up / Down status. A tree can't
+mix path conditions with device conditions — make them separate automations.
 
 ### CPU core utilization
 
@@ -130,6 +175,31 @@ someone.
 > "no loss" when the truth was "totally dark". So a caption can read *avg 40 %*
 > under an alert that fired at 8 %. They answer different questions, and only
 > the caption's is reconstructible from the picture.
+
+### A device that goes down takes its other alerts with it
+
+When a device goes **down**, any alert already open about something that device
+reports (CPU, memory, an interface, a sensor, an SD-WAN SLA or member, an IPsec
+tunnel, FortiLink) **clears as *superseded***, and the asset-down alert speaks
+for the outage ([rule 29](Business-Rules#rule-29)). It sends no "resolved"
+message and runs no reset actions, because the condition has not recovered.
+Nothing new fires about the device while it is down. If the condition is still
+bad when the device comes back, it fires again as a fresh alert once its hold
+is met.
+
+Without this, an alert that was open when the device went dark froze, because
+no readings arrived to recover it. It then sat beside the asset-down alert for
+the whole outage and mailed "resolved" the moment the device returned.
+
+This does **not** apply to:
+
+- the asset-down alert itself (`monitorStatus`, `consecutiveFailures`);
+- facts about the device that an outage does not change (`status`,
+  `quarantined`, `firmwareVsPrimary`, `dependencySuppressed`);
+- path checks, which are measured *from* the device rather than *about* it;
+- a multiple-condition automation with any of those in its tree;
+- a device that is `passive`, `unknown` or `recovering`. Only a confirmed
+  `down` has an asset-down alert to hand to.
 
 ### 0/1 metrics render differently
 
@@ -337,10 +407,11 @@ Sugar over the change Events Polaris emits:
 | `wireless_ap_changed` | a roam |
 | `gateway_firewall_changed` | the gate in front of the device changed |
 | `fortilink_changed` | controller link changed |
-| `path_check_path_changed` | an agent's traceroute for a [path check](Path-Monitor) took a different set of hops (at most once per 10 minutes per host and check) |
+
+A path check's route changing is under [Path Monitor](#path-monitor).
 
 The Devices step's **Polaris Agent installed** field (*yes* / *no*) selects hosts
-with an active Polaris Agent — the natural scope for path-check automations.
+with an active Polaris Agent. A Path Monitor automation applies it for you.
 
 ---
 
@@ -734,7 +805,7 @@ that severity. See [Assets](Assets#sd-wan-fortigate-firewalls).
 
 ## Testing the trigger
 
-**"Test against current data"** on the step, and on step 6 a full
+**"Test against current data"** on the step, and on step 7 (the review) a full
 *Devices this automation affects* preview:
 
 - Headlined by **distinct devices**, with **readings** spelled out separately —

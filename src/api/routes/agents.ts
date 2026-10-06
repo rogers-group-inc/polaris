@@ -52,6 +52,7 @@ import {
   enqueueServiceLogSamples,
 } from "../../services/sampleWriteBuffer.js";
 import { persistAssetServices } from "../../services/serviceInventoryService.js";
+import { persistAssetSoftware } from "../../services/softwareInventoryService.js";
 import { persistInterfaceRows } from "../../services/interfaceInventoryService.js";
 import { reconcileMacAddresses, reconcileInterfaceMacs } from "../../services/macAddressService.js";
 import { selectPrimaryMac } from "../../utils/macAddresses.js";
@@ -319,6 +320,19 @@ const ServiceSampleSchema = z.object({
   cpuPct:       z.number().min(0).nullable().optional(),
 });
 
+// Current-state installed software — one row per program (Windows Uninstall
+// key) or package (dpkg / rpm). The whole list every push; written as a delta
+// by persistAssetSoftware under source "agent".
+const SoftwareSampleSchema = z.object({
+  name:         z.string().min(1).max(512),
+  platform:     z.enum(["windows", "dpkg", "rpm"]),
+  version:      z.string().max(255).nullable().optional(),
+  publisher:    z.string().max(255).nullable().optional(),
+  architecture: z.string().max(32).nullable().optional(),
+  installDate:  z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  sizeBytes:    z.number().int().min(0).nullable().optional(),
+});
+
 // Per-pinned-unit journalctl log lines (Phase 2, service dimension). Same shape
 // as ProcessLogSampleSchema with `unit` for `name`.
 const ServiceLogSampleSchema = z.object({
@@ -391,6 +405,10 @@ const SamplesBodySchema = z.discriminatedUnion("stream", [
   // Current-state service/unit inventory. "All loaded units" is ~150-200 rows
   // on a typical host; cap generously (delete-replace per push).
   z.object({ stream: z.literal("serviceInventory"), samples: z.array(ServiceSampleSchema).max(5000) }),
+  // Installed software. A Windows host carries a few hundred programs, a
+  // Linux server one to three thousand packages; no .min(1) — an empty list
+  // is a real (if unlikely) answer, a failed read is never pushed.
+  z.object({ stream: z.literal("softwareInventory"), samples: z.array(SoftwareSampleSchema).max(20000) }),
   // Per-pinned-unit journalctl lines. Bounded like processLog.
   z.object({ stream: z.literal("serviceLog"), samples: z.array(ServiceLogSampleSchema).min(1).max(2000) }),
   // Path checks: one row per run (the agent caps at 64 checks, so a
@@ -724,6 +742,23 @@ async function ingestServiceInventory(assetId: string, samples: StreamSamples<"s
   return samples.length;
 }
 
+async function ingestSoftwareInventory(assetId: string, samples: StreamSamples<"softwareInventory">): Promise<number> {
+  await persistAssetSoftware(
+    assetId,
+    "agent",
+    samples.map((s) => ({
+      name:         s.name,
+      version:      s.version ?? null,
+      publisher:    s.publisher ?? null,
+      architecture: s.architecture ?? null,
+      platform:     s.platform,
+      installDate:  s.installDate ?? null,
+      sizeBytes:    s.sizeBytes != null ? BigInt(Math.round(s.sizeBytes)) : null,
+    })),
+  );
+  return samples.length;
+}
+
 async function ingestServiceLog(assetId: string, samples: StreamSamples<"serviceLog">, now: Date): Promise<number> {
   const rows = samples.map((s) => ({
     assetId,
@@ -800,6 +835,7 @@ agentsRouter.post("/samples", async (req, res, next) => {
     else if (body.stream === "processConnections") accepted = await ingestProcessConnections(assetId, body.samples);
     else if (body.stream === "serviceInventory")   accepted = await ingestServiceInventory(assetId, body.samples);
     else if (body.stream === "serviceLog")         accepted = await ingestServiceLog(assetId, body.samples, now);
+    else if (body.stream === "softwareInventory")  accepted = await ingestSoftwareInventory(assetId, body.samples);
     else                                           accepted = await ingestStorage(assetId, body.samples, now);
 
     res.json({ accepted, rejected: 0 });
@@ -993,6 +1029,13 @@ agentsRouter.get("/config", async (req, res, next) => {
           // cadence (the agent falls back to its own default when 0).
           enabled:     true,
           intervalSec: 300,
+        },
+        software: {
+          // Installed-software inventory — agent-collected like services, so
+          // on for every live agent. The agent owns the six-hour cadence;
+          // an agent older than 0.24 ignores this block.
+          enabled:     true,
+          intervalSec: 21600,
         },
       },
       monitored: asset.monitored,

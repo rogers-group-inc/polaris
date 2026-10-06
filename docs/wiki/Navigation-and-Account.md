@@ -26,6 +26,13 @@ role lacks bounces rather than loading an empty list.
 
 Below Server Settings sits the **theme band** and the version line.
 
+**Changing pages crossfades** rather than cutting: the sidebar holds still while
+the page beside it fades from one to the next. This needs a current Chrome, Edge
+or Safari; other browsers load each page as a plain page load, and it is off when
+your system asks for reduced motion. Signing in is a plain page load — the
+crossfade is only between pages of the app. Each page still fetches its own data after
+it appears, so tables and widgets fill in a moment later.
+
 ### Global search
 
 The search box searches everything at once and groups hits by kind: IPs,
@@ -57,6 +64,22 @@ palette **crossfades through a fourth, unselectable waypoint**: Noon → Nightfa
 passes through *Afternoon*, so the room goes near-white → golden hour → indigo in
 one gesture. The transit palette is applied but never saved, so a reload
 mid-sweep lands on a real theme.
+
+Each theme also lights the page differently, and the light moves with the turn:
+
+| Theme | Its light |
+|---|---|
+| **Morning** | a sunrise glowing up from the bottom edge |
+| **Noon** | a soft sunlight wash across the top |
+| **Nightfall** | a faint moonlight-blue glow across the top |
+
+Morning → Noon climbs the sun from the bottom edge to the top, rounding out as it
+rises. Noon → Nightfall lifts the sunlight off the top while the moonlight slides
+in from the left as a small white light that grows and cools to blue. Nightfall →
+Morning slides the moonlight out to the right as the sunrise comes up. The palette
+itself takes 1.6 s for Noon → Nightfall and Nightfall → Morning and 0.8 s for
+Morning → Noon; the light takes a moment longer to settle. Only a click on the
+band animates anything: opening a page just paints the theme's light.
 
 `prefers-reduced-motion` is honoured throughout the app: the alert strobe drops
 to a steady rendering, and the title text always carries the whole message —

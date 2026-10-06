@@ -125,16 +125,20 @@ A selection past the 500-id cap is refused **with the count**, rather than
 
 ## The asset slide-over
 
-Click a row. Tabs, in order: **General · System · Services · Quarantine ·
-Events · SNMP Walk · Sources**, plus **Alerts**, plus **Wireless**, **MAC
+Click a row. Tabs, in order: **General · System · Services · Software ·
+Quarantine · Events · SNMP Walk · Sources**, plus **Alerts**, plus **Wireless**, **MAC
 Table** and **ARP Table** where the device type has them.
 
 Two tabs are conditional:
 
 - **SNMP Walk** — admins only, **and** only when at least one monitoring stream
   actually resolves to SNMP for this asset.
-- **Services** — hidden on Fortinet infrastructure (firewall / switch / access
-  point) and on the `other` catch-all, none of which report a unit list.
+- **Services** and **Software** — only when something is actually pulling
+  that information in for this asset: **Services** when the Polaris Agent
+  reports its services or processes, or agentless process polling does;
+  **Software** when the agent, Intune or Azure Arc reports installed software.
+  A host none of them cover has neither tab. Never on Fortinet infrastructure
+  (firewall / switch / access point) or the `other` catch-all.
 
 Three are device-type specific: **Wireless** on a monitored access point, **MAC
 Table** on a switch, **ARP Table** on a firewall.
@@ -213,7 +217,17 @@ Identity, location, coordinates, description, notes, tags, and the **upstream
 rows**: *Last Seen Switch*, *Last Seen AP*, *Last Seen Firewall*. Each resolves
 the display string discovery stored back to the **Asset row behind it**, so the
 row carries verbs — open the device, open its HTTPS UI, SSH to it — instead of
-being text you re-find by hand.
+being text you re-find by hand. When several switches share the stored name
+(a per-site "IDF-1"), the row links the one this device actually sits behind —
+by its MAC table, then by the FortiGate that last saw the device — and stays
+plain text when nothing settles it ([rule 91](Business-Rules#rule-91)).
+
+The tag picker in the edit form shows every tag the asset carries. Tags with no
+entry in the tag list (Server Settings → Identification), such as the ones
+discovery adds (`auto-discovered`, `azurearc`, `fortiswitch`…), appear ticked
+under **Not in tag list** and are kept when you save. Untick one to remove it;
+a discovery tag comes back on the next run. `azure:` tags are locked, because
+the Azure Arc integration owns them ([Azure tags on devices](Integration-Azure-Arc#azure-tags-on-devices)).
 
 Resolution never matches a FortiGate by hostname. `fortinetTopology.controllerFortigate`
 holds FortiManager's *device name*, which diverges from the gate's configured
@@ -281,6 +295,16 @@ one-hour view, longer on longer ranges; the tooltip names it), and the line
 breaks where nothing was probed rather than dropping to 0 %. The **Packet
 loss** figure above the chart is the same measurement over the whole window.
 Hovering a response-time point still says whether *that poll* was missed.
+
+**FortiGate tunnel interfaces are listed from the configuration.** On a
+FortiGate polled over the REST API, IPsec interfaces (site-to-site, dial-up,
+ADVPN hub and spoke overlays) and GRE / VXLAN tunnels appear in the Interfaces
+table with their configured address, and that address is tied to the
+firewall like any other interface IP. FortiOS reports no link state or
+counters for them there, so the status and traffic columns stay empty. A
+tunnel's real up/down state is in the IPsec tunnels section. The temporary
+shortcut tunnels ADVPN builds between spokes are not listed. They share their
+parent interface's address.
 
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
@@ -498,6 +522,41 @@ process, its ports and connections, and its log.
 
 Mapping implies monitoring, one way. There is no Alert column, because
 [Automations](Automations) own alerting.
+
+### Software
+
+The programs installed on the host, with their version, publisher, install
+date and size. Read-only. Up to three places can supply the list, and the tab
+shows **one at a time**:
+
+| Source | Where it comes from | How fresh |
+|---|---|---|
+| **Polaris Agent** | Read on the host itself: the *Apps & features* list on Windows (both the 64-bit and 32-bit registry views), the dpkg or rpm package database on Linux | Every six hours |
+| **Intune** | Intune's *detected apps* for the device, read during an Entra ID / Intune discovery run when **Read installed software** is ticked on the integration ([Integration-Directory](Integration-Directory)) | Each discovery run, for devices that have checked in since the last read |
+| **Azure Arc** | Azure Change Tracking & Inventory, read from Log Analytics during an Azure Arc discovery run when **Installed Software** is on ([Integration-Azure-Arc](Integration-Azure-Arc)) | Each discovery run; an uninstalled program can stay listed for up to three days |
+
+When more than one source has a list, a picker beside **Refresh** chooses
+between them; the agent's list is shown first because it reads the host
+directly. Beside the **Installed software** heading you see how many programs
+the source reported and when it was last read (with a single source, its name
+too); a short note under it explains a source's limits.
+
+Things to know:
+
+- **The sources are never merged.** The same program reported by the agent and
+  by Intune appears in both lists, and the two can disagree — Intune's
+  detected apps include things the agent does not see and vice versa.
+- **Intune lists unmanaged apps only on corporate-owned devices.** On a
+  personal (BYOD) device it reports the apps Intune deployed and nothing else.
+  That is Microsoft's privacy rule, not a failed read.
+- **Per-user installs are not on the agent's Windows list** — a program
+  installed for one user only (into their profile) is invisible to a service
+  reading the machine-wide registry.
+- **Two versions, or the 32- and 64-bit builds, of one program are two
+  rows.**
+- **Arch** and **Size** start hidden; turn them on from the column chooser.
+- With no list at all the tab says how to get one: install the agent, or turn
+  the read on in an Entra ID or Azure Arc integration.
 
 ### Alerts
 

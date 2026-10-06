@@ -34,7 +34,7 @@ under the same names.
 - **`debounce(fn, ms)`** — the generic debounce lives in [public/js/table-sf.js](public/js/table-sf.js). It's available wherever `table-sf.js` is loaded (the desktop list pages). **Mobile is not covered:** `mobile.html` loads `api.js` but **not** `table-sf.js`, so the mobile SPA has its own local **`debounceSearch`** in [public/js/mobile/tabs.js](public/js/mobile/tabs.js) for the search box. Don't reach for `table-sf.js`'s `debounce` from mobile code — it isn't on the page.
 - **`window.PolarisPlaceholderMac`** — the placeholder-MAC generator in [public/js/placeholder-mac.js](public/js/placeholder-mac.js), loaded by `ipam.html`, `subnets.html` and `mobile.html`. Every "Generate" button on a reservation MAC field goes through it. This one exists BECAUSE it was duplicated: `ip-panel.js` and `mobile/subnet-detail.js` each carried a byte-for-byte copy, and the drift showed up as the mobile EDIT sheet having no Generate button at all. It also mirrors `normalizePlaceholderPrefix` from [src/utils/mac.ts](src/utils/mac.ts) — if you change the prefix rules server-side, change them here too.
 - **`window.PolarisReservationNotes`** — the FortiGate reservation-notes budget in [public/js/reservation-notes.js](public/js/reservation-notes.js), loaded by `ipam.html`, `subnets.html` and `mobile.html`. `budgetFor(hostname, createdBy)` and `hintFor(notes, hostname, createdBy)` answer how much of a note fits in the device's 255-character `reserved-address` description once Polaris's `Polaris/<user>: … [<hostname>]` wrapper is paid for (business rule 74), and every reservation form with a Notes field renders the live counter from them — the four IP-panel modals and both mobile sheets. It mirrors `reservationNotesBudget` in [src/services/reservationPushService.ts](src/services/reservationPushService.ts), which is the half that actually REFUSES an over-length save; [tests/unit/reservationNotesBudgetDom.test.ts](tests/unit/reservationNotesBudgetDom.test.ts) asserts the two agree. Show the counter only where `subnet.pushEligible` is true — off a pushing network the field has no device behind it and a budget would be a limit Polaris invented.
-- **`tagFieldHTML(selected, opts)` / `getTagFieldValue()` / `wireTagPicker()`** — the registry tag picker in [public/js/app.js](public/js/app.js), rendered by every form that can tag something (asset edit, blocks, subnets, the IPAM block panel). Call `_ensureTagCache()` before rendering. **Its catalogue read must sit at a gate every consuming form holds** — it reads the auth-only `GET /server-settings/tags/catalog`, NOT the registry's own `GET /server-settings/tags` + `/tags/settings`, which sit behind the blanket `serverSettingsSystem:read` floor that every non-admin built-in role is seeded `none` on. Reading the gated pair meant the picker 403'd for `user` / `assetsadmin` / `networkadmin` / `readonly`, and because `_ensureTagCache` swallows the failure it rendered "No tags defined yet" at an install with a full registry — the failure looks like empty data, not like a permission problem, which is why nobody saw it. Same class of bug as the schema-route note under Nested condition tree, and the same fix: a lean, low-gate read of just what the control needs. Two corollaries the picker now holds: the **"+ Add Tag" row is gated on `serverSettingsSystem:write`** (the gate `POST /tags` actually carries — everyone else got a button whose only outcome was a 403 toast), and a **failed read says so** (`_tagCache.failed`) rather than claiming the registry is empty.
+- **`tagFieldHTML(selected, opts)` / `getTagFieldValue()` / `wireTagPicker()`** — the registry tag picker in [public/js/app.js](public/js/app.js), rendered by every form that can tag something (asset edit, blocks, subnets, the IPAM block panel). Call `_ensureTagCache()` before rendering. **Its catalogue read must sit at a gate every consuming form holds** — it reads the auth-only `GET /server-settings/tags/catalog`, NOT the registry's own `GET /server-settings/tags` + `/tags/settings`, which sit behind the blanket `serverSettingsSystem:read` floor that every non-admin built-in role is seeded `none` on. Reading the gated pair meant the picker 403'd for `user` / `assetsadmin` / `networkadmin` / `readonly`, and because `_ensureTagCache` swallows the failure it rendered "No tags defined yet" at an install with a full registry — the failure looks like empty data, not like a permission problem, which is why nobody saw it. Same class of bug as the schema-route note under Nested condition tree, and the same fix: a lean, low-gate read of just what the control needs. Two corollaries the picker now holds: the **"+ Add Tag" row is gated on `serverSettingsSystem:write`** (the gate `POST /tags` actually carries — everyone else got a button whose only outcome was a 403 toast), and a **failed read says so** (`_tagCache.failed`) rather than claiming the registry is empty. **Every selected tag renders as a chip**: one with no registry row (discovery's `azurearc` / `auto-discovered` / `arc-*` / `fortiswitch`…, or anything when the catalogue read failed) goes ticked under a "Not in tag list" group — `getTagFieldValue` reads only rendered checkboxes and the edit form's PUT replaces `tags` wholesale, so a tag with no chip was silently stripped on every save (2026-10). `azure:` chips (`_tagChipHTML`) are `disabled` — Arc-owned — and a ticked disabled box still counts in `:checked`, so they survive the save. Pinned by `tests/unit/tagPickerUnlistedTags.test.ts`.
 - **Status / health color palettes** — the monitor-state pill palette is **`MONITOR_STATE_COLORS`** (`up` / `down` / `warning`) in [public/js/assets.js](public/js/assets.js); the topology-node palette is **`HEALTH_NODE_COLORS`** in [public/js/topology-render.js](public/js/topology-render.js). These are intentionally two palettes — the topology palette adds node-specific states (unmonitored, dependency-suppressed/unknown) the flat status pill doesn't model. Reuse the matching one for the surface you're building; don't introduce a third.
 
 **When adding a new instance:**
@@ -157,6 +157,138 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   over a modal's own scrolling body, but this header stands in front of a full-bleed graph, so
   the title, the endpoint search box and the icon row read through it. Both rules lift only the
   opacity of the theme's own token — never a literal colour — so a new theme keeps its palette.
+- **The page ground carries a glow; nothing full-width may paint over it opaquely.** Since
+  2026-10-04 `body` paints `--page-glow` (a radial wash from the top centre of the viewport,
+  `background-attachment: fixed`) over `--color-bg-secondary`. The glow is `--page-glow-color`
+  (the theme's accent, except nightfall — whose glow is the sliding night layer below, in moonlight blue `#6d97ff` — and noon, which takes sunlight yellow `#ffc928` because a terracotta
+  wash on its near-white ground reads as rust) at `--page-glow-strength` (17.6% dark family, 12.3% nightfall, 11.2%
+  daylight base, 24% noon; a wide horizontal ellipse, 140% × 60% of the viewport). **The glow is
+  built from eleven `@property`-registered parts** (`--page-glow-y` / `-w` / `-h`, colours
+  `-c0`..`-c3`, stops `-p1`..`-p3`, `-end`; registered at the top of styles.css AND mobile.css),
+  because a gradient cuts on a theme change while typed custom properties interpolate.
+  `:root` derives the four colour stops from `--page-glow-color` / `--page-glow-strength` on the
+  straight line to transparent, so a theme that sets only those two paints the same two-stop
+  wash as before. **`html[data-glow-turn]` transitions the parts, on its own 2 s clock** — keyed on the attribute
+  only a theme change sets (`_markGlowTurn`), NEVER on bare `html`: the app pages apply the saved
+  theme from app.js at the end of `<body>`, after a first style pass with no `data-theme`, so an
+  always-on transition played the dark base's glow into the real one on every page load (sky blue
+  fading to noon's yellow; the night glow sliding in on nightfall) — user-reported, then measured
+  live with a page-load sampler. The noon / morning / afternoon rules only narrow the list or set a
+  duration, which does nothing without it (ease-in-out,
+  no phase easing), NOT `html[data-theme-fading]` and not the 800 ms crossfade: at 800 ms the
+  light moved while the whole page swung from white to indigo and could not be seen, and the
+  fading attribute comes off at 880 ms, which would CANCEL a longer transition (a property
+  leaving `transition-property` jumps to its end). So the palette and the band land together and
+  the light drifts on after them. Verified live in the dev app over CDP, not only in a frozen
+  mock. **Morning
+  sets the parts, never a whole `--page-glow`: a sunrise rising from the BOTTOM centre**
+  (y 100%, 140% × 75%, a warm-white core through gold into an orange haze that is gone by
+  mid-screen; lightness is what reads on its mid-tone parchment, and the accent, a vivid orange
+  alone and pale gold all vanished into it). So the turn to noon climbs the sun from the bottom
+  edge to noon's top wash over the glow's 2 s, and ROUNDS on the way: morning's oval → a
+  circle by 12.5% (0.25 s), HELD round to 75% (1.5 s), at CONSTANT width — only `--page-glow-h`
+  moves, up to the oval's own width (`140vw`; a `65vmin` circle read as the glow narrowing) — → noon's oval, as the `page-glow-round` keyframe animation on
+  `html[data-glow-turn="morning-noon"]`. A transition only runs start → end, so a mid-point shape
+  needs keyframes. The theme script (`_markGlowTurn`, both app.js files) holds `data-glow-turn`
+  (`"<from>-<to>"`) for `GLOW_MS` = 2000, because `data-theme-fading` comes off at 880 ms and
+  would cut the animation short; the noon rule leaves `--page-glow-w` / `-h` out of its
+  transition list, because a running transition outranks an animation and would flatten the
+  circle. **The main glow's size is in viewport units (`140vw 75vh` etc.), registered as
+  `<length>`, never percentages**, though both paint the same oval: Chromium rejects a
+  `radial-gradient` ellipse size that mixes percent and length (`calc(70% + 230px)`), which is
+  what a %-to-vmin animation passes through, and it drops the WHOLE background to `none`, both
+  glows gone for the turn. Caught live over CDP; a frozen-mock check never sees it. A theme that overrides `--page-glow` whole goes back to cutting.
+  **Nightfall's glow is a second, SLIDING layer** (`--night-glow`, moonlight blue `#6d97ff` at
+  12.3% at rest, with four registered parts: `--night-glow-x`, its size `--night-glow-w` /
+  `--night-glow-h`, and `--night-glow-c`, ONE `<color>`: WHITE at 35% parked on noon
+  (`rgba(255,255,255,.35)`, the entry; the `:root` default), and the moonlight blue on nightfall
+  AND parked on morning, so the exit never changes colour (by the user's call; it whitened to 50%
+  before). Morning → noon swaps blue for white unseen, the glow off-screen and the noon rule not
+  transitioning it. That blue is the old electric `#2f6bff` with 30% white mixed in (`#6d97ff`,
+  still 12.3%), duller and closer to moonlight, at the user's call.
+  Parked it is also HALF size (70% × 30% desktop, 90% × 33% phone, against 140% × 60% /
+  180% × 66%): the white light slides in small and grows to the full wash as it cools to blue,
+  and shrinks, still blue, as it leaves. A stronger blue was tried first and still
+  read as nothing over the grounds crossed mid-turn. Size and colour take a gentle sine curve
+  (`cubic-bezier(0.37, 0, 0.63, 1)`) so they change evenly across the whole 2 s both ways (a
+  late/early colour curve was tried and replaced at the user's call); position keeps the
+  ease-in-out on the way in and takes its exact REVERSE on the way out
+  (`cubic-bezier(0.8, 0, 0.6, 1)`, in the morning rule), so the exit is the entrance played
+  backwards. On the same curve both ways the exit looked ~40% faster — big and already on screen,
+  so you saw the fast middle, gone in 1.05 s against the entrance's 1.46 s on screen; mirrored,
+  both are on screen 1.46 s. The curves are per-property lists in `transition-property` order with the night
+  glow's size and colour LAST, because a rule with a shorter property list (noon's) cuts the
+  inherited list to fit); nightfall turns the main glow off
+  (`--page-glow-strength: 0%`) and centres it. It is parked just past an edge everywhere else:
+  left on noon (−100% desktop / −130% phone) and right on morning (200% / 230%). **The afternoon
+  waypoint carries NIGHTFALL's glow values** (main strength 0%, y −45% / −50%, night x 50%,
+  strength 12.3%), never half-way ones: the turn from noon starts ONE 2 s glow transition on its
+  first leg, and the second leg changes nothing, so it runs on unbroken. That one transition is 2.5 s, not 2 (`html[data-theme="afternoon"] { transition-duration: 2500ms }`, by the user's call: the 1.6 s palette was right, the glow wanted half a second more). A half-way value
+  restarts the glow at 800 ms and lurches. "Just past"
+  matters: the visible radius is 70% of the ellipse's horizontal radius (~98% of the width
+  on desktop, ~126% on the phone), and parking further out spends the fast first half of the
+  ease off-screen. The afternoon waypoint keeps noon's sunlight HUE (`#ffc928`), not its clay
+  accent, so the fade never turns into a colour change — and noon's glow RISES UP AND AWAY while
+  it fades: nightfall (and afternoon) park the transparent main glow above the top edge
+  (`--page-glow-y` −45% desktop / −50% phone, just clear of a visible half-height of 42% / 46%). The night glow's HUE never changes during
+  any of this; its position and strength move, and the ground under it is crossfading too. Two destination rules say
+  what must NOT move, each a jump made while the jumping thing is invisible:
+  `html[data-theme="noon"]` drops `--night-glow-x` (back from the right edge to the left; animated it
+  would sweep the page), `html[data-theme="morning"]` keeps only the four colours and the
+  night glow's two parts (keyed on the destination theme alone, since the transition outlives the
+  fading attribute; a transition takes its property list from the after-change style) (the transparent main glow takes the sunrise's shape at once and fades up in
+  place while the blue slides out right). Because the glow is two layers, `body` sets
+  `background-repeat` / `background-attachment` as LONGHANDS — in the shorthand, `no-repeat fixed`
+  binds to the layer it follows and the other would scroll and tile. A sticky band pinned at the top of the page sits exactly where the
+  glow is brightest, so `.page-header-sticky` is BLURRED and UNFILLED — a bare `blur(20px)`, no
+  tint. A 70% `--color-bg-secondary` tint was tried and rejected on 2026-10-04: it read as a
+  dark box sitting on the glow. With no tint the blur can't be seen at rest (blurring a smooth
+  gradient changes nothing) and only smears a widget once it scrolls under the bar. It must NOT
+  borrow `--panel-glass-blur`'s `saturate()`: saturation deepens the glow's colour under the bar
+  and the box reappears with no fill at all. The blur is on its `::before`, never on the element:
+  a `backdrop-filter` makes its element the backdrop root of everything inside it, and the
+  frosted "Dashboards ▾" menu that drops out of that header would then blur only the header and
+  go clear over the widgets. Any new sticky bar follows the same `::before` pattern. The phone
+  carries the same recipe (canon-mobile.md § Elevation and the page glow).
+- **The sidebar is frosted glass** (since 2026-10-04): `--rail-glass-bg` (its own
+  `--color-bg-tertiary` at 40%, 30% daylight — ten points under `--panel-glass-chrome`, a token of its own so the modal header bands are not moved with it) + `--panel-glass-blur`, so the page glow shows through
+  the rail. The blur is on `.sidebar` ITSELF, the one exception to the `::before` rule, because
+  the rail scrolls (`overflow-y: auto`) and an absolute pseudo-element would scroll away with the
+  nav. That is safe only while nothing frosted or `position: fixed` mounts inside the sidebar —
+  every menu, popover and tooltip appends to `body` today. A flyout added INSIDE the rail would be
+  backdrop-rooted to it (its glass goes clear over the page) and positioned against it; mount it
+  on `body` instead.
+- **Cards wear the sidebar's glass** (since 2026-10-04): `.card`, `.kpi-card`,
+  `.integration-card`, `.empty-state-card`, `.settings-card` and `.dashboard-widget` paint
+  `--card-bg`, which is `var(--rail-glass-bg)`, so a change to the rail's tint moves the cards with it. The user asked for the cards to match the
+  navigation rail, not the other way round. A one-commit attempt to paint the rail in the cards'
+  `--color-bg-primary` was reverted. Cards take the TINT WITHOUT THE BLUR: behind them is only
+  the page ground and the glow, and blurring a smooth gradient changes nothing. A
+  `backdrop-filter` on a card would also make it the containing block and backdrop root for its
+  widget menus and Leaflet panes. A new page-level card takes `--card-bg`. `.chart-box` does NOT,
+  because it lives inside the frosted asset slide-over, where a translucent plot is a window onto
+  the page (the `.tag-picker` / `.topology-info` lesson above).
+- **List tables wear it too** (since 2026-10-04): `.table-wrapper` and `thead th` paint
+  `--rail-glass-bg` (the two tints stack, so the header still reads a step denser than the
+  rows). The wrapper takes the tint without a blur, for the same reasons as the cards. A sticky
+  header needs a blur to hide the rows scrolling under it, and that blur lives on `thead::before`
+  (canon-tables-lists.md § frozen header). Inside `.modal` / `.slideover` a table keeps its
+  opaque `--color-bg-primary` / `--color-bg-tertiary` grounds.
+- **So do the table's tabs and bulk bar.** The idle `.bulk-bar` and the `.table-tab:hover` /
+  `.table-tab-add:hover` states take `--rail-glass-bg`. The active `.table-tab` and the selected
+  `.bulk-bar` take `--chip-glass-bg` (`--color-bg-elevated` at 70% in the dark family; `--color-surface` at 55% on the daylight base, because the surface mix all but vanished on nightfall's near-black), so they still stand out. Active tabs add a `--color-border` hairline and an inset top rim, with `--panel-glass-blur`
+  on top. The bulk bar is sticky and the table scrolls under it, so its blur is real; it lives
+  on `.bulk-bar::before`, because the bar's Type / State / Monitoring menus are frosted and a
+  `backdrop-filter` on the bar would backdrop-root them. A tab holds nothing frosted or fixed,
+  so its blur is on the tab itself. A page's `.page-tabs` strip opts into the same look with
+  the `.page-tabs-glass` modifier: rounded-top chips, glass on hover, and the frosted
+  surface chip with the accent underline when active. The strip scrolls instead of wrapping.
+  Every page-level strip wears it: Automations (`#auto-tabs`), Server Settings
+  (`#settings-tabs`), IPAM (`#ipam-tabs`) and Integrations (`#integration-tabs`). The
+  Dashboard's own `.dashboard-tab` strip (rendered by `dashboard.js`) copies the same rules
+  rather than the modifier, because its tabs carry a grip, rename input and remove button. It
+  is a modifier, not a change to `.page-tab`, because that class is also every modal's tab
+  strip.
 
 ## Settings-card layout (one card, a fixed row, or a reflowing deck)
 

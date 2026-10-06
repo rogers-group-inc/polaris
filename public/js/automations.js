@@ -71,6 +71,19 @@ var _rulesPage = 1;
       ac.style.display = canEditRules && activeKey === "delivery" ? "" : "none";
       if (canEditRules && !ac._wired) { ac._wired = true; ac.addEventListener("click", function () { showChannelTypePicker(); }); }
     }
+    // Automation settings (Global Quiet Times, business rule 92): readable
+    // with the page's own key; the verbs inside it check write themselves.
+    var st = document.getElementById("btn-automation-settings");
+    if (st) {
+      st.style.display = canManage && activeKey === "manage" ? "" : "none";
+      if (canManage && !st._wired) {
+        st._wired = true;
+        st.addEventListener("click", function () {
+          if (window.PolarisAutomationSettings) window.PolarisAutomationSettings.open();
+          else showToast("The settings module did not load", "error");
+        });
+      }
+    }
     var agBtn = document.getElementById("ag-new-btn");
     if (agBtn) {
       agBtn.style.display = canEditRules ? "" : "none";
@@ -115,6 +128,8 @@ var _rulesPage = 1;
       if (nrBtn && canEditRules) nrBtn.style.display = key === "manage" ? "" : "none";
       var acBtn = document.getElementById("btn-add-channel");
       if (acBtn && canEditRules) acBtn.style.display = key === "delivery" ? "" : "none";
+      var stBtn = document.getElementById("btn-automation-settings");
+      if (stBtn && canManage) stBtn.style.display = key === "manage" ? "" : "none";
       var asBtn2 = document.getElementById("btn-add-script");
       if (asBtn2 && canEditScripts) asBtn2.style.display = key === "scripts" ? "" : "none";
       var acBtn3 = document.getElementById("btn-add-contact");
@@ -206,7 +221,7 @@ var _rulesPage = 1;
       // would show stubs and then silently rewrite them a moment later.
       return loadRuleRecipientCatalogs(_rules).then(function () { renderRules(); });
     }).catch(function () {
-      document.getElementById("rules-tbody").innerHTML = '<tr><td colspan="10" class="empty-state">Failed to load automations</td></tr>';
+      document.getElementById("rules-tbody").innerHTML = '<tr><td colspan="11" class="empty-state">Failed to load automations</td></tr>';
     });
   }
   window._reloadRules = loadRules;
@@ -238,6 +253,9 @@ var _rulesPage = 1;
       // server-side by jsonOrClear, so leaving this out would delete the
       // operator's repeat config every time they flipped the switch.
       repeat: r.repeat || null,
+      // Same reason: the automation's own quiet time (business rule 92) is a
+      // nullable Json column, and an omitted one is cleared by the PUT.
+      quietTime: r.quietTime || null,
       channels: r.channels || ["in_app"],
       emailComposition: r.emailComposition || null,
       escalation: r.escalation || null,
@@ -586,6 +604,34 @@ var _rulesPage = 1;
   }
   window._severityPill = severityPill;
 
+  /**
+   * "global" | "ignore" | "override" — what the automation's Quiet time step
+   * says (business rule 92). `NotificationRule.quietTime` is null (Off: the
+   * global quiet times apply), `{ignoreGlobal: true}` (Ignore Global Quiet
+   * Time: never quiet) or a policy with windows (Override Global Quiet Time).
+   */
+  function quietMode(r) {
+    var q = r && r.quietTime;
+    if (q && q.ignoreGlobal === true) return "ignore";
+    if (q && Array.isArray(q.windows) && q.windows.length) return "override";
+    return "global";
+  }
+
+  /** The Quiet time cell: a pill for the two exemptions, muted text for the default. */
+  function quietCell(r) {
+    var mode = quietMode(r);
+    if (mode === "ignore") {
+      return '<span class="badge badge-level-warning" title="Ignores the global quiet times — this automation sends whatever the hour">IGNORES GLOBAL</span>';
+    }
+    if (mode === "override") {
+      var QE = window.PolarisQuietTimeEditor;
+      var summary = QE ? QE.summary(r.quietTime) : "its own quiet time";
+      return '<span class="badge badge-level-informational" title="' + escapeHtml("Overrides the global quiet times with its own: " + summary) + '">OVERRIDES GLOBAL</span>';
+    }
+    return '<span style="color:var(--color-text-tertiary)" title="No quiet time of its own — the global quiet times under Settings apply">Global</span>';
+  }
+  window._quietMode = quietMode;
+
   function renderRules() {
     var tbody = document.getElementById("rules-tbody");
     var data = _rules.map(function (r) {
@@ -605,11 +651,13 @@ var _rulesPage = 1;
         addressesSummary: addressesSummary(r, groups),
         addressesTooltip: addressesTooltip(r, groups),
         scopeTooltip: scopeTooltip(r),
+        // The Quiet time step's three settings, as a filterable key.
+        quietMode: quietMode(r),
       });
     });
     if (_rulesSF) data = _rulesSF.apply(data);
     if (!data.length) {
-      tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No automations yet' + (canEditRules ? ' — click "+ New automation" to create one.' : "") + '</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="11" class="empty-state">No automations yet' + (canEditRules ? ' — click "+ New automation" to create one.' : "") + '</td></tr>';
       clearPageControls("rules-pagination");
       return;
     }
@@ -658,6 +706,7 @@ var _rulesPage = 1;
         '<td><span class="badge">' + escapeHtml(r.triggerType) + '</span></td>' +
         '<td>' + severityPill(r) + '</td>' +
         '<td>' + enabledCell + '</td>' +
+        '<td>' + quietCell(r) + '</td>' +
         // Each prose cell carries its own full text as the title: the columns
         // are resizable and the sentences are long, so the hover is what makes a
         // truncated cell readable without widening the table.

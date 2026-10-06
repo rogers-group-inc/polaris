@@ -8,7 +8,10 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="icon" type="image/png" href="/img/brand/polaris-symbol-light.png">
   <link rel="icon" type="image/png" href="/img/brand/polaris-symbol-dark.png" media="(prefers-color-scheme: dark)">
+  <script src="/js/theme-init.js"></script>
+  <link rel="expect" href="#polaris-nav-ready" blocking="render">
   <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="/css/page-transitions.css">
 </head>
 <body>
   <div class="layout">
@@ -21,7 +24,7 @@
         </div>
       </div>
 
-      <div class="page-tabs" id="integration-tabs">
+      <div class="page-tabs page-tabs-glass" id="integration-tabs">
         <button class="page-tab active" data-tab="integrations">Integrations</button>
         <button class="page-tab" data-tab="agents">Polaris Agents</button>
       </div>
@@ -85,6 +88,7 @@
   <script src="/js/passkeys-self.js"></script>
   <script src="/js/brand-logo.js"></script>
   <script src="/js/app.js"></script>
+  <span id="polaris-nav-ready" hidden></span>
   <script src="/js/agent-build.js"></script>
   <script src="/js/agent-ssh-onboarding.js"></script>
   <!-- Discovery rules list + its wizard render inline on the Polaris Agent tab

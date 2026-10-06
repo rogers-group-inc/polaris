@@ -102,6 +102,25 @@ describe("executeActions", () => {
     expect(composed.html).toContain("Acknowledge alert");
   });
 
+  it("a grouped alert's update says what changed, in the subject and the body", async () => {
+    // Business rule 75: a port that recovers and faults again leaves the count
+    // where it was, so "[UPDATED · 2]" alone read as the same email twice.
+    const ctx = { ...CTX, "alert.change": "Update: port7 is in fault again after recovering for 32m." };
+    await executeActions("n1", [{ type: "notify", channelId: "c1" }], ctx, { growth: { count: 2, change: "port7 back" } });
+    const composed = (expandDeliveriesMock.mock.calls[0] as any[])[2].composedEmail;
+    expect(composed.subject.startsWith("[UPDATED · 2 · port7 back] ")).toBe(true);
+    expect(composed.text).toContain("Update: port7 is in fault again after recovering for 32m.");
+    expect(composed.html).toContain("Update: port7 is in fault again after recovering for 32m.");
+  });
+
+  it("an update with no change recorded keeps the bare count, and a first send has no notice", async () => {
+    await executeActions("n1", [{ type: "notify", channelId: "c1" }], { ...CTX, "alert.change": "" }, { growth: { count: 3 } });
+    const composed = (expandDeliveriesMock.mock.calls[0] as any[])[2].composedEmail;
+    expect(composed.subject.startsWith("[UPDATED · 3] ")).toBe(true);
+    expect(composed.html).not.toContain("{alert.change}");
+    expect(composed.text).not.toContain("{alert.change}");
+  });
+
   it("an all-clear asks for no acknowledge button; a fire asks for one", async () => {
     // The "resolved" pseudo-severity is what the three all-clear paths
     // (fireResolved, fireReset, the operator-clear path) already stamp to

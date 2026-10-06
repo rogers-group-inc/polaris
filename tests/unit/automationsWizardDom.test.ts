@@ -1,5 +1,5 @@
 /**
- * tests/unit/automationsWizardDom.test.ts — DOM render smoke for the 5-step
+ * tests/unit/automationsWizardDom.test.ts — DOM render smoke for the 7-step
  * automation wizard (public/js/automations-wizard.js).
  *
  * The wizard is a plain browser script (no module exports), so this test
@@ -169,6 +169,11 @@ beforeAll(() => {
   // a page that forgot the script tag would do.
   const recSrc = readFileSync(resolve(__dirname, "../../public/js/recurrence-editor.js"), "utf8");
   (0, eval)(recSrc);
+  // The quiet-time policy editor (business rule 92), loaded after the
+  // recurrence editor it builds on and before the wizard whose step 6 renders
+  // it — the same order the pages' script tags keep.
+  const qteSrc = readFileSync(resolve(__dirname, "../../public/js/quiet-time-editor.js"), "utf8");
+  (0, eval)(qteSrc);
   const src = readFileSync(resolve(__dirname, "../../public/js/automations-wizard.js"), "utf8");
   (0, eval)(src);
   // Export / import / view-code. Loaded on every page that loads the wizard.
@@ -181,7 +186,7 @@ describe("automation wizard DOM render", () => {
     await (g.openAutomationWizard as (r: unknown) => Promise<void>)(null);
     expect(toastErrors).toEqual([]);
     expect(doc.querySelector(".modal")).toBeTruthy();
-    expect(doc.querySelectorAll("#aw-stepper .stepper-step").length).toBe(6);
+    expect(doc.querySelectorAll("#aw-stepper .stepper-step").length).toBe(7);
     expect(doc.querySelector("#aw-step-1.visible")).toBeTruthy();
     // Severity + Enabled were removed from the name step (severity moved to the
     // trigger step; enabled is managed from the list toggle).
@@ -484,7 +489,19 @@ describe("automation wizard DOM render", () => {
 
     (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
+    // Step 6 is the automation's own quiet time (business rule 92): a three-way
+    // choice — Off / Ignore Global Quiet Time / Override Global Quiet Time —
+    // Off by default, the editor rendered (hidden) through the shared module,
+    // and Next passes with it off.
     expect(doc.querySelector("#aw-step-6.visible")).toBeTruthy();
+    expect(doc.querySelectorAll('input[name="aw-quiet-mode"]')).toHaveLength(3);
+    expect((doc.querySelector("#aw-quiet-off") as unknown as { checked: boolean }).checked).toBe(true);
+    expect((doc.querySelector("#aw-quiet-ignore") as unknown as { checked: boolean }).checked).toBe(false);
+    expect((doc.querySelector("#aw-quiet-fields") as unknown as { hidden: boolean }).hidden).toBe(true);
+    expect(doc.querySelector("#aw-quiet-fields .qte")).toBeTruthy();
+    (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(doc.querySelector("#aw-step-7.visible")).toBeTruthy();
     expect(doc.querySelector("#aw-summary")).toBeTruthy();
     expect(doc.querySelector("#aw-summary")!.textContent).toContain("critical"); // band (added on step 3) in summary
     const affected = doc.querySelector("#aw-affected")!;
@@ -922,6 +939,60 @@ describe("automation wizard DOM render", () => {
     expect(p.resetActions).toHaveLength(1);
     expect(p.resetActions[0].addresses).toEqual(["ops@example.invalid"]);
     expect(p.bandNotify.onResolved).toBe(false);
+  });
+
+  // A stored automation comes back with its mirror marks stripped, so every
+  // reset row used to read as operator-authored — and the first change on the
+  // trigger list mirrored each Notify in AGAIN. Saved, then compounded by the
+  // next edit: one more "When it clears" notification per edit.
+  const openStoredWithReset = async (resetActions: unknown[]) => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors = [];
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-mirror",
+      name: "Mirror",
+      description: null,
+      enabled: true,
+      severity: "warning",
+      trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">=", threshold: 80, forDurationSec: 300 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      actions: [{ type: "event" }, { type: "notify", channelId: "c1", addresses: ["noc@example.invalid"] }],
+      resetActions,
+    });
+    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 20));
+    // Any change on the trigger's action list re-runs the mirror.
+    doc.querySelector("#aw-actions")!.dispatchEvent(new (doc.defaultView as any).Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 20));
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    return savedPayloads[0]! as Record<string, any>;
+  };
+
+  it("re-opening a saved automation never mirrors a trigger Notify into the reset list twice", async () => {
+    const p = await openStoredWithReset([
+      { type: "event" },
+      { type: "notify", channelId: "c1", addresses: ["noc@example.invalid"] },
+    ]);
+    expect(p.resetActions).toHaveLength(2);
+    expect(p.resetActions.filter((a: any) => a.type === "notify")).toHaveLength(1);
+    expect(p.resetActions.filter((a: any) => a.type === "event")).toHaveLength(1);
+    expect(() => ruleInputSchema.parse(p)).not.toThrow();
+  });
+
+  it("a saved reset Notify the operator edited is theirs — no mirrored copy appears beside it", async () => {
+    const p = await openStoredWithReset([{ type: "notify", channelId: "c1", addresses: ["ops@example.invalid"] }]);
+    expect(p.resetActions).toHaveLength(1);
+    expect(p.resetActions[0].addresses).toEqual(["ops@example.invalid"]);
+  });
+
+  it("a saved automation with no reset actions stays that way through a trigger change", async () => {
+    const p = await openStoredWithReset(null as unknown as unknown[]);
+    expect(p.resetActions).toBeNull();
   });
 
   it("a new automation seeds an audit Event on BOTH halves, and emptying the reset list saves as null", async () => {
@@ -2717,6 +2788,19 @@ describe("automation wizard DOM render", () => {
     await pickMetric("probeLossPct");
     expect(ceiling().style.display).toBe("");
     (doc.querySelector("#tf-ratio-ceiling") as unknown as { value: string }).value = "90";
+    // The path failure rate is no longer a device condition — it lives under
+    // the Path Monitor trigger type, whose dropdown offers nothing else.
+    const whatOpts = () =>
+      Array.from(doc.querySelectorAll("#aw-trig-root .tgl-what option")).map((o) => (o as unknown as { value: string }).value);
+    expect(whatOpts()).not.toContain("m:pathFailurePct");
+    const win = g.window as InstanceType<typeof Window>;
+    const typeSel = doc.querySelector("#aw-trigger-type") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    typeSel.value = "path";
+    typeSel.dispatchEvent(new win.Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(whatOpts()).toContain("m:pathFailurePct");
+    expect(whatOpts()).not.toContain("m:probeLossPct");
+    expect(whatOpts().every((v) => v.startsWith("m:path"))).toBe(true);
     await pickMetric("pathFailurePct");
     expect(ceiling().style.display).toBe("none");
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
@@ -2725,6 +2809,32 @@ describe("automation wizard DOM render", () => {
     const saved = savedPayloads[0]! as Record<string, any>;
     expect(saved.trigger.metric).toBe("pathFailurePct");
     expect(saved.trigger.ignoreAtOrAbove).toBeUndefined();
+    // A new Path Monitor condition watches the Polaris server's runs too.
+    expect(saved.trigger.includeServer).toBe(true);
+  });
+
+  it("opens a stored path automation under Path Monitor, keeping its server choice", async () => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      ...LOSS_BASE, id: "r-path-stored", name: "ERP unreachable",
+      trigger: { type: "asset_metric", metric: "pathOk", aggregation: "latest", windowSec: 0, operator: "==", threshold: 0, forDurationSec: 0 },
+      reset: { mode: "auto" }, severityBands: null, bandNotify: null,
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect((doc.querySelector("#aw-trigger-type") as unknown as { value: string }).value).toBe("path");
+    // Stored before the flag existed: it never watched the server, so it opens unticked.
+    expect((doc.querySelector("#tf-path-server") as unknown as { checked: boolean }).checked).toBe(false);
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.metric).toBe("pathOk");
+    expect(saved.trigger.includeServer).toBe(false);
   });
 });
 
@@ -3545,9 +3655,9 @@ describe("trigger filter rows", () => {
       toastErrors.length = 0; // an earlier case in this block leaves its refusal toast behind
       await gotoStep(5);
       await tick(depAw()!, true);
-      await gotoStep(6);
-      expect(doc.querySelector("#aw-step-6")!.innerHTML).toContain("dependency-down");
-      expect(doc.querySelector("#aw-step-6")!.innerHTML).toContain("naming the upstream device");
+      await gotoStep(7);
+      expect(doc.querySelector("#aw-step-7")!.innerHTML).toContain("dependency-down");
+      expect(doc.querySelector("#aw-step-7")!.innerHTML).toContain("naming the upstream device");
       await save();
       expect(toastErrors).toEqual([]);
       const p = savedPayloads[0] as DepPayload;
@@ -3637,7 +3747,7 @@ describe("automation export / import / view code", () => {
   /** Open on the Summary step. */
   async function openToSummary(existing?: unknown, opts?: unknown) {
     await (g.openAutomationWizard as (r: unknown, o?: unknown) => Promise<void>)(existing || storedRule(), opts);
-    (doc.querySelector('.stepper-step[data-step="6"]') as unknown as { click: () => void }).click();
+    (doc.querySelector('.stepper-step[data-step="7"]') as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 60));
   }
 
@@ -3868,7 +3978,7 @@ describe("automation export / import / view code", () => {
     expect(note.textContent).toMatch(/Actions/);
 
     // It saves as a CREATE, disabled, whatever the file said.
-    (doc.querySelector('.stepper-step[data-step="6"]') as unknown as { click: () => void }).click();
+    (doc.querySelector('.stepper-step[data-step="7"]') as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 40));
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 40));
@@ -3899,7 +4009,7 @@ describe("automation export / import / view code", () => {
       { import: true, name: "Probe rule", importInfo: { dependencies: [], blankedDimensions: ["stateProbeId"] } },
     );
     toastErrors.length = 0;
-    (doc.querySelector('.stepper-step[data-step="6"]') as unknown as { click: () => void }).click();
+    (doc.querySelector('.stepper-step[data-step="7"]') as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 40));
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 40));

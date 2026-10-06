@@ -345,6 +345,7 @@ the subject fragment away when they are.
 **Follow-up**
 `{escalation.tier}` `{escalation.elapsed}` `{escalation.policy}`
 `{repeat.attempt}` `{repeat.elapsed}` `{repeat.quiet}` `{repeat.policy}`
+`{alert.change}` — on the update a grouped alert sends when a component joins or comes back, what changed; empty on every other send
 
 **Who else knows**
 `{push.recipients}` `{email.recipients}`
@@ -400,7 +401,11 @@ instead ([rule 75](Business-Rules#rule-75)):
 - the alert **stays up until the last one recovers** — the first port to come
   back does not send "Resolved" while the rest are still down;
 - a component that goes wrong later **joins** the alert and sends one more
-  message naming the whole set, and that **re-opens** an acknowledged alert;
+  message naming the whole set, and that **re-opens** an acknowledged alert.
+  That message is marked `[UPDATED · n · what changed]` on the subject and
+  says what changed at the top — a new component (`+port9`), or one that
+  recovered and has faulted again (`port7 back`, with how long it had been
+  recovered). The sentence is the `{alert.change}` token;
 - the alert carries the **worst** severity among the components still affected.
 
 The checkbox appears only on a trigger that reports per component. Turning it
@@ -491,7 +496,17 @@ rule's **reset actions** — which every automation has, banded or not — and
 running both told people twice.
 
 What the old policy announced is adopted into the reset actions **when they are
-empty**; an operator who already wrote reset actions is left alone.
+empty** on an automation **with severity levels** (the only kind the old policy
+ever fired on); an operator who already wrote reset actions is left alone.
+
+### How the reset list follows your Notify actions
+
+Adding a Notify to the trigger list puts the same Notify in the **Reset
+Action** list, so the people told it broke are told it came back. A reset row
+follows its trigger Notify until you edit or remove it; from then on it is
+yours, and the list never adds a second copy beside it. Re-opening a saved
+automation keeps that: a reset Notify that still matches its trigger Notify
+carries on following it, and one you changed or removed stays as saved.
 
 ---
 

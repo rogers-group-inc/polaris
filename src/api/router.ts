@@ -17,6 +17,7 @@ import notificationsRouter from "./routes/notifications.js";
 import notificationRulesRouter from "./routes/notificationRules.js";
 import automationScriptsRouter from "./routes/automationScripts.js";
 import alertGroupsRouter from "./routes/alertGroups.js";
+import quietTimeSchedulesRouter from "./routes/quietTimeSchedules.js";
 import maintenanceSchedulesRouter from "./routes/maintenanceSchedules.js";
 import pathChecksRouter from "./routes/pathChecks.js";
 import contactsRouter from "./routes/contacts.js";
@@ -83,17 +84,23 @@ router.get("/server-settings/branding/logo-accent.png", async (req, res, next) =
     // and navy on the light one, so the wrong variant loses half the mark
     // against the page behind it. Narrowed to the two known values — this is
     // an unauthenticated route reaching the filesystem.
+    const { getBranding, logoCacheControl } = await import("../services/brandingService.js");
     const rendered = await renderAccentedLogo(normalizeBrandTheme(req.query.theme));
     if (!rendered) {
       // Accent off, no custom logo, or an unrenderable one — send the caller to
-      // whatever the plain logo is instead of 404-ing a live <img>.
-      const { getBranding } = await import("../services/brandingService.js");
-      res.redirect(302, (await getBranding()).logoUrl);
+      // whatever the plain logo is instead of 404-ing a live <img>, carrying
+      // the logo's version so that URL can be cached too.
+      const b = await getBranding();
+      res.redirect(302, b.logoVersion ? `${b.logoUrl}?v=${b.logoVersion}` : b.logoUrl);
       return;
     }
-    // Revalidate every time: the upload route reuses one filename, so the URL
-    // can't carry a version. A 304 costs one stat + a hash of two stamps.
-    res.setHeader("Cache-Control", "no-cache");
+    // The upload route reuses one filename, so the URL carries the logo's
+    // version (?v=, from brand-logo.js). Naming the CURRENT version, the
+    // response is immutable — the browser keeps it and a page change paints
+    // the logo from cache instead of asking again (which is what made it pop
+    // in on every page change). Without it, or with a stale one: revalidate
+    // every time, as before; a 304 costs one stat + a hash of two stamps.
+    res.setHeader("Cache-Control", logoCacheControl(req.query.v, (await getBranding()).logoVersion));
     res.setHeader("ETag", `"${rendered.etag}"`);
     if (req.headers["if-none-match"] === `"${rendered.etag}"`) {
       res.status(304).end();
@@ -198,6 +205,8 @@ router.use("/automations/scripts", automationScriptsRouter);
 // Alert groups (business rule 75). ABOVE /automations for the same reason
 // /automations/scripts is: the literal path must not be captured as a rule id.
 router.use("/automations/groups", alertGroupsRouter);
+// Global quiet-time schedules (business rule 92). Same reason, same place.
+router.use("/automations/quiet-times", quietTimeSchedulesRouter);
 // Rules CRUD/schema/preview.
 router.use("/automations", notificationRulesRouter);
 router.use("/notification-rules", deprecatedAlias("/api/v1/automations"), notificationRulesRouter);

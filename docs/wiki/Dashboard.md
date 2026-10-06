@@ -52,7 +52,7 @@ NOC wallboard that has no session at all. See
 |---|---|
 | **Status Summary** | at-a-glance counts of monitored assets by state, infra uptime %, active alerts |
 | **Active Alerts** | alerts your automations have raised and nothing has cleared, most severe first — **with Acknowledge and Clear in place** |
-| **Down Assets** | monitored assets currently down, newest outages first, grouped by site or division. Dependency-down assets are excluded unless the gear says otherwise |
+| **Down Assets** | monitored assets currently down, newest outages first, grouped by site or division. Dependency-down assets are excluded unless the gear says otherwise. An outage whose alert has been acknowledged stays listed but is greyed out, with an **ack** pill naming who took it, so unowned outages stand out |
 | **Sites With Issues** | sites with assets down or in warning, worst first; expand for the nodes |
 | **Asset Types** | breakdown of monitored assets by type; click a slice to drill into the matching asset list |
 
@@ -99,6 +99,11 @@ NOC wallboard that has no session at all. See
 |---|---|
 | **Device Map** | geographic map of FortiGates — monitor-health dots, clustering, click through to topology |
 | **Site Map** | geographic map of monitored sites — status dots and live weather radar |
+
+On both maps a **down site whose alert has been acknowledged is faded**: it
+stays red, but drops the pulse and its label dims to `DOWN · ACK`. A full-strength
+red dot is an outage nobody has picked up yet. A Device Map cluster fades only
+when every down site inside it is acknowledged.
 
 ---
 
@@ -184,6 +189,11 @@ components it covers. A grouped row does not print a port beside the
 hostname: its message lists every affected component. An ungrouped alert
 still shows its port there, which is what tells two rows from one
 per-interface automation apart.
+
+A **TEST** pill beside the severity marks a delivery test sent from the
+automation wizard ([Automations](Automations)). It is about a made-up device
+(`EXAMPLE-SWITCH-01`), not one of yours, and clears itself an hour after it
+fired.
 
 The **Active Maintenance** widget is the other one you can act from. A
 **+ New schedule** button at the top of it opens the Maintenance editor to

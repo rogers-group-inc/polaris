@@ -238,7 +238,7 @@ function _advanceThemeBands(id, prevId) {
       _bandSeamTimer = null;
       _bandPos -= 1;
       _paintThemeBands(false);
-    }, THEME_FADE_MS);
+    }, _themeLegMs(id));
   }
 }
 
@@ -256,11 +256,39 @@ if (!window.__polarisBandResize) {
 // Matches the crossfade duration in styles.css (the data-theme-fading block).
 // Change one, change the other.
 var THEME_FADE_MS = 800;
+// Steps that take longer than THEME_FADE_MS, by DESTINATION. Nightfall →
+// morning is one 800 ms step where noon → nightfall gets two (1.6 s), so dark
+// to light came in a snap; it takes the same 1.6 s here. Every timer tied to a
+// step's length reads _themeLegMs() — the fading attribute's removal (a
+// transition whose rule leaves is cut short), the seam normalisation (never
+// mid-travel) and the next leg's start — and the [data-theme="morning"] rule
+// in the crossfade block of styles.css carries the same number for the
+// palette and the band's travel. MIRRORS THEME_LEG_MS in mobile/app.js
+// (themeBandParity.test.ts).
+var THEME_LEG_MS = { morning: 1600 };
+function _themeLegMs(id) { return THEME_LEG_MS[id] || THEME_FADE_MS; }
 var _themeFadeTimer = null;
+
+// The page glows run on their own, longer clock (the bare `html` rule in the
+// crossfade block of styles.css). data-glow-turn names the turn — "morning-
+// noon" — for that long, so a glow animation can key on WHICH turn it is
+// (the sun rounding to a circle as it climbs) and outlive data-theme-fading,
+// which comes off at 880 ms. Change GLOW_MS with the CSS's 2000ms.
+var GLOW_MS = 2000;
+var _glowTurnTimer = null;
+function _markGlowTurn(fromId, toId) {
+  var root = document.documentElement;
+  root.setAttribute("data-glow-turn", fromId + "-" + toId);
+  if (_glowTurnTimer) clearTimeout(_glowTurnTimer);
+  _glowTurnTimer = setTimeout(function () {
+    root.removeAttribute("data-glow-turn");
+    _glowTurnTimer = null;
+  }, GLOW_MS + 80);
+}
 
 // Arms the palette crossfade for the length of one change. Called before
 // data-theme moves, so the new values are what gets transitioned TO.
-function _beginThemeFade(phase) {
+function _beginThemeFade(phase, ms) {
   try {
     if (window.matchMedia &&
         window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -271,7 +299,7 @@ function _beginThemeFade(phase) {
   _themeFadeTimer = setTimeout(function () {
     root.removeAttribute("data-theme-fading");
     _themeFadeTimer = null;
-  }, THEME_FADE_MS + 80);
+  }, (ms || THEME_FADE_MS) + 80);
 }
 
 /**
@@ -284,7 +312,7 @@ function _setTheme(theme, phase) {
   var prevId = document.documentElement.getAttribute("data-theme") || DEFAULT_THEME;
   // Only fade a real change — re-applying the current theme (a page re-boot,
   // another tab syncing) should be instant.
-  if (t.id !== prevId) _beginThemeFade(phase);
+  if (t.id !== prevId) { _beginThemeFade(phase, _themeLegMs(t.id)); _markGlowTurn(prevId, t.id); }
   document.documentElement.setAttribute("data-theme", t.id);
   // Waypoints are never saved: a reload mid-turn must land on a real theme.
   if (!t.transit) { try { localStorage.setItem("polaris-theme", t.id); } catch (e) {} }
@@ -362,9 +390,10 @@ function advanceTheme() {
     // rather than two changes with a stop in the middle.
     var phase = legs === 1 ? "solo" : (n === 0 ? "in" : (n === legs - 1 ? "out" : "mid"));
     n++;
-    _setTheme(queue.shift(), phase);
+    var leg = queue.shift();
+    _setTheme(leg, phase);
     if (!queue.length) { _themeDest = null; return; }
-    _themeChainTimer = setTimeout(step, THEME_FADE_MS);
+    _themeChainTimer = setTimeout(step, _themeLegMs(leg));
   })();
 }
 window.advanceTheme = advanceTheme;
@@ -1274,7 +1303,7 @@ function renderNav() {
 
   sidebar.innerHTML = `
     <div class="sidebar-brand">
-      <img src="/img/brand/polaris-vert-dark.png" alt="" class="sidebar-logo brand-mark brand-mark-sidebar" style="visibility:hidden">
+      <img src="/img/brand/polaris-vert-dark.png" alt="" class="sidebar-logo brand-mark brand-mark-sidebar" decoding="sync" style="visibility:hidden">
       <h1 style="font-size:1.1rem;font-weight:600;margin:0.5rem 0 0;color:var(--color-text-primary);text-align:center;visibility:hidden;display:none">Polaris</h1>
       <p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0.15rem 0 0;text-align:center;visibility:hidden">Network Management Tool</p>
     </div>
@@ -2482,7 +2511,9 @@ if (window.PolarisBrandLogo) {
 async function fetchBranding() {
   try {
     var cached = JSON.parse(localStorage.getItem("polaris-branding") || "null");
-    if (cached) applyBranding(cached, true);
+    // Skipped when the early rail render (_renderNavFromCache) already put it
+    // on the page: each apply kicks an admin update check.
+    if (cached && !_branding) applyBranding(cached, true);
   } catch (_) {}
   try {
     var b = await api.serverSettings.getBranding();
@@ -4876,15 +4907,26 @@ function _canCreateRegistryTags() {
  */
 function _renderTagChips(selected) {
   var cats = {};
+  var registered = {};
   _tagCache.tags.forEach(function (t) {
     var cat = t.category || "General";
     if (!cats[cat]) cats[cat] = [];
     cats[cat].push(t);
+    registered[t.name] = true;
   });
   var catNames = Object.keys(cats).sort();
   var html = '';
+  // Tags the item carries that have no registry row — discovery's own tags
+  // (azurearc, auto-discovered, arc-*, fortiswitch, entraid…), or ones applied
+  // before the registry had a row for them. getTagFieldValue reads only the
+  // rendered checkboxes, so a tag with no chip was silently DROPPED on every
+  // save of the edit form. They render ticked in their own group instead:
+  // kept unless the operator unticks one.
+  var unlisted = selected.filter(function (name, i) {
+    return !registered[name] && selected.indexOf(name) === i;
+  });
 
-  if (_tagCache.tags.length === 0) {
+  if (_tagCache.tags.length === 0 && unlisted.length === 0) {
     html += '<p class="hint" style="margin:0">' + (
       _tagCache.failed
         ? 'Could not load the tag list. Reload the page to try again.'
@@ -4897,12 +4939,7 @@ function _renderTagChips(selected) {
       html += '<div class="tag-picker-category">' +
         '<span class="tag-picker-cat-label">' + escapeHtml(cat) + '</span>';
       cats[cat].forEach(function (t) {
-        var checked = selected.indexOf(t.name) !== -1;
-        var colorStyle = _tagChipStyle(t.color, checked);
-        html += '<label class="tag-picker-chip' + (checked ? ' selected' : '') + '" style="' + colorStyle + '">' +
-          '<input type="checkbox" name="f-tags-cb" value="' + escapeHtml(t.name) + '"' + (checked ? ' checked' : '') + '>' +
-          escapeHtml(t.name) +
-        '</label>';
+        html += _tagChipHTML(t.name, t.color, selected.indexOf(t.name) !== -1);
       });
       if (cat === REGION_TAG_CATEGORY) {
         // These are also written by the Device Map region reconciler; say what
@@ -4911,10 +4948,40 @@ function _renderTagChips(selected) {
           'Region tags are auto-applied to devices inside a Device Map region — removing one from a device still in the region re-adds it on the next reconcile. A tag you add here yourself is never auto-removed.' +
         '</p>';
       }
+      if (cat === AZURE_TAG_CATEGORY) {
+        html += '<p class="hint" style="flex-basis:100%;margin:2px 0 0">' +
+          'Mirrored from Azure resource tags by the Azure Arc integration — change them in Azure; the next discovery run follows.' +
+        '</p>';
+      }
       html += '</div>';
     });
+    if (unlisted.length > 0) {
+      html += '<div class="tag-picker-category">' +
+        '<span class="tag-picker-cat-label">Not in tag list</span>';
+      unlisted.forEach(function (name) { html += _tagChipHTML(name, '', true); });
+      html += '<p class="hint" style="flex-basis:100%;margin:2px 0 0">' +
+        'Added by discovery or before the tag list had them. Kept on save unless you untick one — a discovery tag you untick comes back on the next run.' +
+      '</p></div>';
+    }
   }
   return html;
+}
+
+// `azure:` tags belong to the Azure Arc sync (it strips and re-adds every one
+// each run), so their chips are locked: unticking one would only last until
+// the next run, and ticking one onto another device would be stripped by it.
+// A locked, ticked chip still counts in getTagFieldValue (`:checked` matches
+// a disabled checkbox), so a save keeps it.
+var AZURE_TAG_PREFIX = "azure:";
+var AZURE_TAG_CATEGORY = "Azure Tags";
+
+function _tagChipHTML(name, color, checked) {
+  var locked = String(name).toLowerCase().indexOf(AZURE_TAG_PREFIX) === 0;
+  return '<label class="tag-picker-chip' + (checked ? ' selected' : '') + '" style="' + _tagChipStyle(color, checked) + '"' +
+    (locked ? ' title="Set in Azure — mirrored by the Azure Arc integration"' : '') + '>' +
+    '<input type="checkbox" name="f-tags-cb" value="' + escapeHtml(name) + '"' + (checked ? ' checked' : '') + (locked ? ' disabled' : '') + '>' +
+    escapeHtml(name) +
+  '</label>';
 }
 
 function tagFieldHTML(selected, opts) {
@@ -5237,15 +5304,14 @@ function initSlideoverResize(panelEl, storageKey) {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
-document.addEventListener("DOMContentLoaded", async function () {
-  // Render nav immediately from cache so the sidebar doesn't flash on navigation.
-  // Restore the permission matrix + regions alongside the role NAME so the
-  // first `hideAdminOnlyElements()` call gates correctly — without this, every
-  // permission-gated element (Conflicts button, etc.) would be hidden until
-  // the post-fetch re-render and the change-detection branch below skipped
-  // re-rendering when only the matrix shifted.
-  var roleBeforeFetch = null;
-  var permsBeforeFetch = null;
+// Render nav immediately from cache so the sidebar doesn't flash on navigation.
+// Restore the permission matrix + regions alongside the role NAME so the
+// first `hideAdminOnlyElements()` call gates correctly — without this, every
+// permission-gated element (Conflicts button, etc.) would be hidden until
+// the post-fetch re-render and the change-detection branch below skipped
+// re-rendering when only the matrix shifted. Returns what it rendered from,
+// for the DOMContentLoaded handler's change detection; null on a cold cache.
+function _renderNavFromCache() {
   try {
     var cachedUser = JSON.parse(localStorage.getItem("polaris-user") || "null");
     if (cachedUser && cachedUser.role) {
@@ -5254,12 +5320,28 @@ document.addEventListener("DOMContentLoaded", async function () {
       currentUsername = cachedUser.username;
       currentRolePermissions = cachedUser.permissions || {};
       currentEffectiveRegions = Array.isArray(cachedUser.regions) ? cachedUser.regions : [];
-      roleBeforeFetch = cachedUser.role;
-      permsBeforeFetch = JSON.stringify(currentRolePermissions);
       renderNav();
       hideAdminOnlyElements();
+      // The cached logo and name too: renderNav paints them hidden until
+      // branding arrives, so without this the rail would blink its brand
+      // out and back on every page change.
+      try {
+        var cachedBranding = JSON.parse(localStorage.getItem("polaris-branding") || "null");
+        if (cachedBranding) applyBranding(cachedBranding, true);
+      } catch (_) {}
+      return { role: cachedUser.role, perms: JSON.stringify(currentRolePermissions) };
     }
   } catch (_) {}
+  return null;
+}
+var _navFromCache = null;
+
+document.addEventListener("DOMContentLoaded", async function () {
+  // Normally already done — at the end of this file, before first paint (see
+  // the bottom). Here for a page whose #sidebar was not in the DOM yet then.
+  if (!_navFromCache) _navFromCache = _renderNavFromCache();
+  var roleBeforeFetch = _navFromCache ? _navFromCache.role : null;
+  var permsBeforeFetch = _navFromCache ? _navFromCache.perms : null;
 
   // Wires the observer + backdrop guard and loads the preference under whatever
   // username the cache gave us (possibly none).
@@ -5289,3 +5371,16 @@ document.addEventListener("DOMContentLoaded", async function () {
   // any #view=<type>:<id> or #ip=... hash a search click-through left us.
   setTimeout(processSearchHash, 0);
 });
+
+// ─── Build the rail before first paint ────────────────────────────────────────
+// app.js loads at the end of <body>, so #sidebar is already in the DOM when this
+// runs and everything above is defined. Building the rail from the cached user
+// and branding HERE, rather than at DOMContentLoaded, puts a finished rail in
+// the page's first paint. That is what the cross-document view transition
+// (@view-transition in styles.css) snapshots: the sidebar is a named element
+// that holds still across a page change, and a rail painted empty and filled
+// a moment later would crossfade to blank and pop back in. Each page also
+// holds its first paint until the parser reaches #polaris-nav-ready, the
+// marker right after this script (<link rel="expect" blocking="render"> in
+// its <head>), so the snapshot cannot be taken before this has run.
+if (document.getElementById("sidebar")) _navFromCache = _renderNavFromCache();

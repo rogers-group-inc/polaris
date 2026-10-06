@@ -14,7 +14,8 @@
  *   - up + warning assets do fire (warning IS the lossy-but-alive state).
  *   - a live loss alert on an asset that stopped answering CLEARS (handoff,
  *     like the carve-out) rather than freezing, and a pending row resets.
- *   - the gate is metric-scoped: a cpuPct rule still evaluates a down asset.
+ *   - the answering gate is metric-scoped: a cpuPct rule still evaluates a
+ *     recovering asset (a DOWN one hands off under rule 29(i)).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -209,17 +210,20 @@ describe("packet-loss gate", () => {
     expect(upd?.[0].data.conditionMetSince).toBe(null);
   });
 
-  it("leaves other metrics alone — a down asset still evaluates for CPU", async () => {
+  it("the answering gate is metric-scoped — a recovering asset still evaluates for CPU", async () => {
+    // Every other metric hands off on `down` alone (rule 29(i), covered in
+    // notificationDeviceDownHandoff.test.ts); `recovering` is answering again,
+    // so its CPU readings are real.
     h.prisma.notificationRule.findMany.mockResolvedValue([CPU_RULE]);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("down-1", { monitorStatus: "down" })]);
+    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("rec-1", { monitorStatus: "recovering" })]);
     h.prisma.assetTelemetrySample.findMany.mockResolvedValue([
-      { assetId: "down-1", timestamp: new Date(), cpuPct: 91, memPct: null, memUsedBytes: null, sessionCount: null },
+      { assetId: "rec-1", timestamp: new Date(), cpuPct: 91, memPct: null, memUsedBytes: null, sessionCount: null },
     ]);
 
     await evaluateAllNotificationRules();
 
     expect(h.prisma.notification.create).toHaveBeenCalledTimes(1);
-    expect(h.prisma.notification.create.mock.calls[0][0].data.assetId).toBe("down-1");
+    expect(h.prisma.notification.create.mock.calls[0][0].data.assetId).toBe("rec-1");
   });
 });
 

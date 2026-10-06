@@ -32,6 +32,8 @@ import {
   triggerCanJoinGroup,
   alertScopeOf,
   alertOwnerOf,
+  classifyGroupChanges,
+  describeGroupChanges,
 } from "../../src/services/notificationTypes.js";
 
 const RULE = "11111111-1111-4111-8111-111111111111";
@@ -465,5 +467,65 @@ describe("alertOwnerOf", () => {
   it("is null when there is neither — a test alert, or a deleted automation", () => {
     expect(alertOwnerOf({ severity: "warning" })).toBeNull();
     expect(alertOwnerOf(null)).toBeNull();
+  });
+});
+
+// The [UPDATED] email of a grouped alert used to be the first email again plus
+// a count — and a port that recovers and faults again inside one alert leaves
+// the count unchanged, so the reader saw identical mail with nothing to say why.
+describe("classifyGroupChanges", () => {
+  it("calls a component never on the alert 'joined'", () => {
+    const prev = [{ ...member("port7"), joinedAt: T0.toISOString() }];
+    expect(classifyGroupChanges(prev, [member("port8")], T1)).toEqual([{ label: "port8", kind: "joined" }]);
+  });
+
+  it("calls a recovered component that faults again 'returned', with how long it was away", () => {
+    const prev = markMemberLeft([{ ...member("port7"), joinedAt: T0.toISOString() }], RULE, "port7", T1);
+    expect(classifyGroupChanges(prev, [member("port7")], T2)).toEqual([{ label: "port7", kind: "returned", awayMs: 5 * 60_000 }]);
+  });
+
+  it("leaves out a component that is still active — it is not a change", () => {
+    const prev = [{ ...member("port7"), joinedAt: T0.toISOString() }];
+    expect(classifyGroupChanges(prev, [member("port7")], T1)).toEqual([]);
+  });
+
+  it("tells two automations' contributions on one port apart", () => {
+    const prev = markMemberLeft([{ ...member("port7"), joinedAt: T0.toISOString() }], RULE, "port7", T1);
+    expect(classifyGroupChanges(prev, [member("port7", { ruleId: RULE_B })], T2)).toEqual([{ label: "port7", kind: "joined" }]);
+  });
+});
+
+describe("describeGroupChanges", () => {
+  it("is null with nothing to report", () => {
+    expect(describeGroupChanges([])).toBeNull();
+  });
+
+  it("names a returning port and how long it had recovered", () => {
+    expect(describeGroupChanges([{ label: "port7", kind: "returned", awayMs: 32 * 60_000 }])).toEqual({
+      sentence: "Update: port7 is in fault again after recovering for 32m.",
+      subjectTag: "port7 back",
+    });
+  });
+
+  it("names new components", () => {
+    expect(describeGroupChanges([{ label: "port9", kind: "joined" }, { label: "port10", kind: "joined" }])).toEqual({
+      sentence: "Update: port9 and port10 joined this alert.",
+      subjectTag: "+port9, +port10",
+    });
+  });
+
+  it("says who had acknowledged an alert the update re-opened", () => {
+    const d = describeGroupChanges([{ label: "port9", kind: "joined" }], { reopenedFrom: "jdoe" });
+    expect(d?.sentence).toBe("Update: port9 joined this alert. Re-opened — jdoe had acknowledged it.");
+  });
+
+  it("caps the subject tag", () => {
+    const many = ["a", "b", "c", "d", "e"].map((label) => ({ label, kind: "joined" as const }));
+    expect(describeGroupChanges(many)?.subjectTag).toBe("+a, +b, +c +2 more");
+  });
+
+  it("caps the sentence's list at GROUP_LABEL_CAP", () => {
+    const many = Array.from({ length: GROUP_LABEL_CAP + 2 }, (_, i) => ({ label: `p${i}`, kind: "joined" as const }));
+    expect(describeGroupChanges(many)?.sentence).toMatch(/and 2 more joined this alert\.$/);
   });
 });
