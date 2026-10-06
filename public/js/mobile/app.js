@@ -623,13 +623,21 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
     });
   }
 
-  function setActiveTab(tabId) {
-    app.dataset.tab = tabId || "";
+  // `data-tab` keeps the ROUTE's id (CSS and map-tab key off it); the lit
+  // navbar slot is resolved through PolarisTabs.navTabFor, so a route with no
+  // slot of its own (the Device Map, under More) lights the one it lives in.
+  function highlightNav(tabId) {
     var nav = document.getElementById("navbar");
     if (!nav) return;
+    var lit = tabId ? PolarisTabs.navTabFor(tabId) : "";
     nav.querySelectorAll(".nav-item").forEach(function (btn) {
-      btn.classList.toggle("active", btn.dataset.tab === tabId);
+      btn.classList.toggle("active", lit !== "" && btn.dataset.tab === lit);
     });
+  }
+
+  function setActiveTab(tabId) {
+    app.dataset.tab = tabId || "";
+    highlightNav(tabId);
   }
 
   // Pull-to-refresh handle for the currently-mounted route. Cleared on
@@ -664,6 +672,12 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
     if (route && (route.name === "reservations"
         || (route.name === "more" && route.parts && route.parts[0] === "subnets"))) {
       PolarisRouter.go("networks", { replace: true });
+      return;
+    }
+    // More → Alerts became the Alerts tab. A push already sitting in a tray
+    // carries the #more/alerts URL it was sent with, so it must still land.
+    if (route && route.name === "more" && route.parts && route.parts[0] === "alerts") {
+      PolarisRouter.go("alerts", { replace: true });
       return;
     }
 
@@ -704,13 +718,12 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
       // Detail specs may declare a parentTab — when set, the corresponding
       // navbar item stays highlighted so the user understands which tab
       // they're conceptually inside. Without a parentTab the navbar is
-      // visible but no item is active (e.g. block detail).
+      // visible but no item is active (e.g. block detail). A parentTab that
+      // is itself a route tab (the map, for #site / #topology) lights the
+      // slot it lives under.
       var parentTab = detailSpec.parentTab || "";
       app.dataset.tab = parentTab || route.name;
-      var nav = document.getElementById("navbar");
-      if (nav) nav.querySelectorAll(".nav-item").forEach(function (b) {
-        b.classList.toggle("active", parentTab !== "" && b.dataset.tab === parentTab);
-      });
+      highlightNav(parentTab);
 
       var detailCtx = { user: currentUser, route: route };
       topbar.innerHTML = detailSpec.renderTopbar

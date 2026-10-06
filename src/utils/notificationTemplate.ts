@@ -811,7 +811,7 @@ export function substituteAckToken(
 /** Where a push notification should land, per enrolling surface. */
 export const PUSH_DEEP_LINK_PATHS = {
   desktop: "/automations.html",
-  mobile: "/mobile.html#more/alerts",
+  mobile: "/mobile.html#alerts",
 } as const;
 
 export type PushSurface = keyof typeof PUSH_DEEP_LINK_PATHS;

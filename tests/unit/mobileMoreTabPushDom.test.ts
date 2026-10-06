@@ -307,13 +307,17 @@ describe("standalone escape hatch", () => {
   });
 });
 
-describe("alerts sub-page", () => {
-  it("is registered, so a push deep link has somewhere to land", async () => {
+describe("push deep link destination", () => {
+  // Alerts left More for its own navbar tab (alerts-tab.js). A push already
+  // sitting in a tray keeps the #more/alerts URL it was sent with, so app.js
+  // must still send that route to the tab rather than bouncing it to Search.
+  it("still routes the retired #more/alerts link to the Alerts tab", () => {
+    const appSrc = readFileSync(join(process.cwd(), "public", "js", "mobile", "app.js"), "utf-8");
+    expect(appSrc).toMatch(/route\.name === "more"[^\n]*route\.parts\[0\] === "alerts"\)\s*\{\s*PolarisRouter\.go\("alerts", \{ replace: true \}\)/);
+  });
+
+  it("no longer registers an alerts sub-page under More", async () => {
     await render({});
-    document.body.innerHTML = '<div id="app"><main class="app-body" id="app-body"></main></div>';
-    const body = document.getElementById("app-body")!;
-    await (g.PolarisMoreTab.spec.render(body, { route: { parts: ["alerts"] }, user: {} }) as any);
-    expect(g.api.alerts.list).toHaveBeenCalled();
-    expect(body.innerHTML).toMatch(/No active alerts/);
+    expect(document.querySelector('[data-sub="alerts"]')).toBeNull();
   });
 });

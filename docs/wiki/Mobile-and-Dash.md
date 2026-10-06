@@ -16,7 +16,22 @@ phone — the link is one address for everyone, and Polaris picks the phone app
 or the desktop page when it is opened. Add `?desktop=1` to that link to force
 the desktop page.
 
-The tab bar is **Search · Device Map · Assets · Networks · More**.
+The tab bar is **Search · Alerts · Assets · Networks · More**. The **Device
+Map** is the first row on the More tab.
+
+## Alerts
+
+Every active alert you can see, newest first. The same **filter field** and
+**sort chip** as the lists below: the field matches device and message, the
+chips above the list show **All**, **Unacknowledged** or **Acknowledged**, and
+the *Sort & filter* sheet orders by **Time**, **Severity** or **Device** and
+narrows to one or more **severities** (Critical also catches alerts recorded as
+"error"). A severity filter is named on the sort chip, so the list is never
+narrowed by something you can't see. Your choices are remembered on that phone.
+
+Tap a row to open its device; tap **Ack** to acknowledge (`alerts:write`).
+Clearing stays on the desktop. The tab loads the newest 500 active alerts; when
+more are active, the count under the list says so.
 
 ## Assets and Networks
 
@@ -81,6 +96,9 @@ Open Polaris on the phone and use the browser's **Add to Home Screen**. The app
 identity — name and icons — is generated per install from your
 [branding](Server-Settings#customization).
 
+Long-press the installed icon (Android) for shortcuts straight to **Alerts**,
+**Assets**, **Networks** and the **Device Map**.
+
 The manifest and icon routes are deliberately **unauthenticated**: a
 `<link rel="manifest">` is fetched with credentials omitted, so a gated manifest
 would 401 for everyone.
@@ -126,7 +144,7 @@ the reason above: add Polaris to your Home Screen first and the offer follows.
 | **The Assets tab** | a device with live alerts carries a strobing **Alerts** control beside its hostname, coloured by the worst one. **It goes steady once everything on it is acknowledged** |
 | **The per-asset alerts sheet** | one card per active alert, with **Acknowledge** (`alerts:write`) per row plus one batched control, and **Clear** (`alerts:fullwrite`) |
 | **The asset detail sheet** | the same flag on its hero, beside the monitor pill |
-| **`#more/alerts`** | the fleet-wide list, and the push deep-link destination. Acknowledges in place |
+| **The Alerts tab** | the fleet-wide list, filterable and sortable, and where a push notification opens. Acknowledges in place |
 
 Search results carry the same statement reduced to a **dot** — deliberately not
 a tap target, since the row opens the device.

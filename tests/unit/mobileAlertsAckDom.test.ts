@@ -1,9 +1,10 @@
 /**
  * tests/unit/mobileAlertsAckDom.test.ts
  *
- * The mobile Alerts sub-page (#more/alerts) — the surface a web push actually
- * lands on. It was read-only, which meant the person holding the pager could
- * see the alert but not stop an escalation chain set to stopOn:"acknowledge".
+ * The mobile Alerts tab (#alerts; formerly the #more/alerts sub-page) — the
+ * surface a web push actually lands on. It was read-only, which meant the
+ * person holding the pager could see the alert but not stop an escalation
+ * chain set to stopOn:"acknowledge".
  *
  * @vitest-environment happy-dom
  */
@@ -12,11 +13,12 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "more-tab.js"), "utf-8");
+const SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "alerts-tab.js"), "utf-8");
 // The note prompt this page opens lives in mobile/alerts.js (shared with the
-// per-asset alerts sheet), so the harness loads both files the way mobile.html
-// does — more-tab delegates to it rather than carrying a second copy.
+// per-asset alerts sheet), and the toolbar in list-controls.js, so the harness
+// loads them the way mobile.html does.
 const ALERTS_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "alerts.js"), "utf-8");
+const LIST_CONTROLS_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "list-controls.js"), "utf-8");
 
 const g = globalThis as any;
 
@@ -55,10 +57,12 @@ async function render(opts?: { perm?: string; ackFails?: boolean; alerts?: any[]
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(ALERTS_SRC)();
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function(LIST_CONTROLS_SRC)();
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
   const body = document.getElementById("app-body")!;
-  await (g.PolarisMoreTab.spec.render(body, {
-    route: { parts: ["alerts"] },
+  await (g.PolarisAlertsTab.spec.render(body, {
+    route: { name: "alerts", parts: [] },
     user: { username: "u", permissions: { alerts: opts?.perm ?? "write" } },
   }) as any);
   await new Promise((r) => setTimeout(r, 0));
@@ -70,6 +74,7 @@ const ackButtons = () => Array.from(document.querySelectorAll("[data-ack]")) as 
 beforeEach(() => {
   document.body.innerHTML = "";
   ALERTS[0].acknowledged = false;
+  try { localStorage.clear(); } catch { /* happy-dom always has it */ }
 });
 
 describe("mobile alerts acknowledge", () => {

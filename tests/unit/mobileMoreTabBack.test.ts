@@ -10,8 +10,8 @@
  * Nothing caught it: `no-unreachable` would have, but `npm run lint` is scoped
  * to `src`, so nothing lints public/js.
  *
- * The chevron is the only way out of a sub-page reached by a push deep link
- * (/mobile.html#more/alerts cold-starts straight into Alerts with no in-app
+ * The chevron is the only way out of a sub-page reached by a deep link
+ * (a pasted /mobile.html#more/events link cold-starts straight into Events with no in-app
  * history behind it), so "renders but does nothing" strands the operator.
  *
  * @vitest-environment happy-dom
@@ -26,7 +26,7 @@ const SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "more-tab
 const g = globalThis as any;
 
 /** Every sub-page registered by more-tab.js, with a stub for the fetch it makes. */
-const SUB_PAGES = ["blocks", "events", "alerts", "install"] as const;
+const SUB_PAGES = ["blocks", "events", "install"] as const;
 
 let routed: string[] = [];
 let resolvers: Array<() => void> = [];
@@ -84,7 +84,6 @@ beforeEach(() => {
     blocks:  { list: deferredList([]) },
     subnets: { list: deferredList({ subnets: [] }) },
     events:  { list: deferredList({ events: [] }) },
-    alerts:  { list: deferredList({ notifications: [] }) },
   };
 });
 
@@ -102,7 +101,7 @@ describe("More sub-page back chevron", () => {
   it("works while the list is still loading", async () => {
     // The bug's shape made this impossible even in principle: the wiring came
     // after the fetch kickoff, so back was dead for the whole load.
-    mount("alerts");
+    mount("events");
     expect(document.querySelector(".spinner"), "expected the loading state").not.toBeNull();
 
     backBtn()!.click();
@@ -111,8 +110,8 @@ describe("More sub-page back chevron", () => {
   });
 
   it("works after the list fails to load", async () => {
-    g.api.alerts.list = vi.fn(async () => { throw new Error("boom"); });
-    await open("alerts");
+    g.api.events.list = vi.fn(async () => { throw new Error("boom"); });
+    await open("events");
     expect(document.body.textContent).toContain("boom");
 
     backBtn()!.click();

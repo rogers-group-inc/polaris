@@ -945,8 +945,10 @@ input, select, textarea { font-family: inherit; }
   background: color-mix(in srgb, var(--md-surface-cont) var(--nav-glass-mix), transparent);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
-  /* Top rim — the edge a dark-family glass panel shows elevation by. */
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
+  /* Cast upward, like a bottom sheet — its only free edge is the top — with
+     the inset top rim a glass panel shows elevation by. --shadow-sheet is
+     declared per theme, so daylight themes get a warm cast, not black grime. */
+  box-shadow: var(--shadow-sheet);
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   align-items: center;
@@ -967,6 +969,21 @@ input, select, textarea { font-family: inherit; }
   border: none;
   color: inherit;
   padding: 0;
+  /* The button is a whole grid column tall; the browser's own tap flash and
+     focus ring would paint that column as a box. The press and focus
+     feedback belong on the pill (rules below), the M3 nav-bar state layer. */
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+.m3-navbar .nav-item:active .nav-icon-pill {
+  background: color-mix(in srgb, var(--md-on-surface) 12%, transparent);
+}
+.m3-navbar .nav-item.active:active .nav-icon-pill {
+  background: color-mix(in srgb, var(--md-on-secondary-container) 12%, var(--md-secondary-container));
+}
+.m3-navbar .nav-item:focus-visible .nav-icon-pill {
+  outline: 2px solid var(--md-primary);
+  outline-offset: 2px;
 }
 .m3-navbar .nav-icon-pill {
   width: 64px; height: 32px;
