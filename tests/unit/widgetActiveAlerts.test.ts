@@ -36,6 +36,7 @@ interface AlertRow {
   dimensionCount?: number | null;
   acknowledged?: boolean;
   acknowledgedBy?: string | null;
+  acknowledgeNote?: string | null;
   raisedAt?: string;
   triggerType?: string | null;
   dependencyDown?: boolean;
@@ -319,6 +320,24 @@ describe("row contents", () => {
     const ackPill = rowsOf(el)[0].querySelector(".widget-pill-neutral")!;
     expect(ackPill.textContent).toBe("ack");
     expect(ackPill.getAttribute("title")).toBe("Acknowledged");
+  });
+
+  it("hovers the acknowledgement note under the owner", () => {
+    const el = render([alert({ id: "a", severity: "critical", acknowledged: true, acknowledgedBy: "jsmith",
+      acknowledgeNote: "  Carrier ticket 4411 <open>  " })], 1, { minSeverity: "warning" });
+    const ackPill = rowsOf(el)[0].querySelector(".widget-pill-neutral")!;
+    // Trimmed, on its own line, and escaped into the attribute (the parsed
+    // title is the literal text, so nothing in the note became markup).
+    expect(ackPill.getAttribute("title")).toBe("Acknowledged by jsmith\nCarrier ticket 4411 <open>");
+    expect(ackPill.textContent).toBe("ack jsmith");
+  });
+
+  it("keeps the owner-only hover when the note is blank or withheld (/dash)", () => {
+    for (const acknowledgeNote of [null, "   "]) {
+      const el = render([alert({ id: "a", severity: "critical", acknowledged: true, acknowledgedBy: "jsmith", acknowledgeNote })], 1,
+        { minSeverity: "warning" });
+      expect(rowsOf(el)[0].querySelector(".widget-pill-neutral")!.getAttribute("title")).toBe("Acknowledged by jsmith");
+    }
   });
 
   it("leaves an unacknowledged row undimmed end to end", () => {

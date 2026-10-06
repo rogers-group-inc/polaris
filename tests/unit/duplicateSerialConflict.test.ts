@@ -112,6 +112,52 @@ describe("controllerKeyFor", () => {
 });
 
 describe("groupContestedSerials", () => {
+  it("drops a claim whose CONTROLLER is decommissioned — rule 83(c)", () => {
+    // A swapped FortiGate: the old chassis's last roster read is still fresh,
+    // so it and the new chassis both "claim" the AP. The old gate's asset is
+    // retired, so it is not a claimant.
+    const ctx: ControllerContext = {
+      assetIdByControllerKey: new Map([
+        ["FG-OLD", "asset-fw-old"],
+        ["FG-NEW", "asset-fw-new"],
+      ]),
+      nameByAssetId: new Map(),
+      integrationNameById: new Map(),
+      statusByAssetId: new Map([
+        ["asset-fw-old", "decommissioned"],
+        ["asset-fw-new", "active"],
+      ]),
+    };
+    const groups = groupContestedSerials(
+      [
+        claim({ id: "c1", controllerSerial: "FG-OLD", controllerDevice: "site-fw" }),
+        claim({ id: "c2", controllerSerial: "FG-NEW", controllerDevice: "site-fw" }),
+      ],
+      CUTOFF,
+      ctx,
+    );
+    expect(groups).toHaveLength(0);
+  });
+
+  it("drops a claim whose controller is disabled, and keeps two live gates arguing", () => {
+    const base = {
+      assetIdByControllerKey: new Map([
+        ["FG-A", "asset-fw-a"],
+        ["FG-B", "asset-fw-b"],
+      ]),
+      nameByAssetId: new Map<string, string | null>(),
+      integrationNameById: new Map<string, string>(),
+    };
+    const claims = [
+      claim({ id: "c1", controllerSerial: "FG-A", controllerDevice: "site-a-fw" }),
+      claim({ id: "c2", controllerSerial: "FG-B", controllerDevice: "site-b-fw" }),
+    ];
+    const disabled: ControllerContext = { ...base, statusByAssetId: new Map([["asset-fw-a", "disabled"], ["asset-fw-b", "active"]]) };
+    expect(groupContestedSerials(claims, CUTOFF, disabled)).toHaveLength(0);
+    const live: ControllerContext = { ...base, statusByAssetId: new Map([["asset-fw-a", "active"], ["asset-fw-b", "active"]]) };
+    expect(groupContestedSerials(claims, CUTOFF, live)).toHaveLength(1);
+  });
+
   it("reports a serial two different gates both claim", () => {
     const groups = groupContestedSerials(
       [

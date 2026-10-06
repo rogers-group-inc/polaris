@@ -164,6 +164,24 @@ Unauthorized FortiSwitch) or `quarantined` still sits on the Device Map, still c
 region tags and still changes hands every pass. Only `decommissioned` and `disabled` —
 written off, or switched off by an operator — drop out.
 
+### 83(c) — a retired gate is not a claimant (2026-10-06)
+
+The status filter above looks at the CLAIMED device. Nothing looked at the
+CLAIMING gate. After a same-name FortiGate swap (rule 41(a)), the old chassis's
+last roster read stayed fresh for `CLAIM_FRESH_DAYS`, so every switch and AP the
+new chassis manages showed up as contested between two gates — one of which
+the operator had already decommissioned. The card was accurate about the claims
+and wrong about the world.
+
+A decommissioned or disabled firewall asset is a statement that the gate is
+gone, made by an operator or by the Phase 2a sweep, and it is stronger evidence
+than a timestamp. So a claim whose controller resolves to such an asset is
+dropped before the fold, and a pending card whose second gate was just retired
+auto-resolves on the next sweep like any other stranded card. Adopting a swap
+also deletes the old chassis's claim rows outright, since that box will never
+re-assert them. A live gate is never dropped: two active gates arguing is still
+the report this rule exists for.
+
 ### Rule 83 — the invariant as stated in full until 2026-09-22
 > Moved here verbatim from the invariants file on 2026-09-22, when the invariant layer was cut back to the contract alone; the short invariant now points here for the reasoning and the dated history. Nothing below was rewritten; this is the text as `main` carried it at the 2026-09-23 merge, which had already gained clauses the branch had not seen.
 

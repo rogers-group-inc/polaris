@@ -82,7 +82,9 @@ import {
   resolveRecipientUsers,
   scopeRegionTagsOf,
 } from "./notificationRecipientService.js";
-import { CHANNEL_TRANSPORT, allRuleActionRefs, type ChannelType, type RuleActionCarrier } from "./notificationTypes.js";
+import { CHANNEL_TRANSPORT, allRuleActionRefs, scopeForTrigger, type ChannelType, type RuleActionCarrier, type RuleScope } from "./notificationTypes.js";
+import { loadScopeRegionSnapshots } from "./notificationEngine.js";
+import { regionLevelIndex, deviceRegionsAtLevels, type RegionLevelIndex } from "./regionHierarchyService.js";
 import { isIgnoreGlobalQuietTime } from "../utils/quietTime.js";
 
 function isChannelType(t: string): t is ChannelType {
@@ -407,9 +409,11 @@ export async function createDueSummaries(now: Date = new Date()): Promise<number
 // (`lastQuietStretch`), and when its send time has arrived writes an all-quiet
 // row once per stretch. Recipients are derived from the automations the
 // source covers: the static recipients of their notify actions (named users,
-// typed addresses, roles, tags, regions, scope-region users). Recipients that
-// depend on the triggering device — its region users, its address-book
-// contacts — cannot be resolved without an alert and are left out.
+// typed addresses, roles, tags, regions, scope-region users), plus device-
+// region routing (`recipientDeviceRegion` and its levels) resolved against
+// every region the rule's monitored in-scope devices carry — the people it
+// could page from any of them. A device's address-book contacts are outside
+// contacts tied to that one device, not a standing audience, and stay out.
 
 interface SourceRow {
   kind: QuietSourceKind;
@@ -518,10 +522,12 @@ function ruleCoveredByGlobal(rule: RuleRecipientRow, config: QuietTimeConfig): b
 }
 
 /** The static recipients of every notify action on these rules: addresses and
- *  account ids, deduped. Device-dependent routing is skipped (see above). */
+ *  account ids, deduped. Device-region routing reads the scope's regions;
+ *  asset contacts are skipped (see above). */
 async function staticRecipientsOfRules(rules: RuleRecipientRow[]): Promise<{ addresses: string[]; userIds: string[] }> {
   const addresses = new Set<string>();
   const userIds = new Set<string>();
+  let levelIndex: RegionLevelIndex | null = null;
   for (const rule of rules) {
     const carrier: RuleActionCarrier = {
       actions: rule.actions as RuleActionCarrier["actions"],
@@ -532,6 +538,15 @@ async function staticRecipientsOfRules(rules: RuleRecipientRow[]): Promise<{ add
       resetActions: null,
     };
     const scopeRegions = scopeRegionTagsOf(rule.scope as never);
+    // Device-region routing has no triggering device here, so it stands in
+    // for every device the rule could fire on: the region snapshots of the
+    // scope's monitored devices, read once per rule and only when an action
+    // routes that way.
+    let snapshots: string[][] | null = null;
+    const regionSnapshots = async (): Promise<string[][]> => {
+      snapshots ??= await loadScopeRegionSnapshots(scopeForTrigger(rule.scope as unknown as RuleScope, rule.trigger));
+      return snapshots;
+    };
     for (const ref of allRuleActionRefs(carrier)) {
       const a = ref.action as Record<string, unknown>;
       if (a.type !== "notify") continue;
@@ -548,6 +563,19 @@ async function staticRecipientsOfRules(rules: RuleRecipientRow[]): Promise<{ add
         if (Array.isArray(a.recipientUserIds) && a.recipientUserIds.length) users.push(...(await resolveRecipientUsersByIds(a.recipientUserIds as string[])));
         if (Array.isArray(a.recipientTags) && a.recipientTags.length) users.push(...(await resolveRecipientUsers(a.recipientTags as string[])));
         if (a.recipientScopeRegion && scopeRegions?.length) users.push(...(await resolveRecipientUsers(scopeRegions)));
+        if (a.recipientDeviceRegion) {
+          // The same flattened match fire-time recipientDeviceRegion uses.
+          const tags = Array.from(new Set((await regionSnapshots()).flat()));
+          if (tags.length) users.push(...(await resolveRecipientUsers(tags)));
+        }
+        if (Array.isArray(a.recipientDeviceRegionLevels) && a.recipientDeviceRegionLevels.length) {
+          levelIndex ??= await regionLevelIndex();
+          const names = new Set<string>();
+          for (const snap of await regionSnapshots()) {
+            for (const n of deviceRegionsAtLevels(snap, a.recipientDeviceRegionLevels as number[], levelIndex)) names.add(n);
+          }
+          if (names.size) users.push(...(await resolveUsersByRegions(Array.from(names))));
+        }
       } catch (err) {
         logger.warn({ ruleId: rule.id, err: (err as Error)?.message }, "all-quiet summary: a recipient lookup failed; continuing with the rest");
       }

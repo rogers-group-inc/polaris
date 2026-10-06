@@ -195,6 +195,12 @@ This closes a case that used to be **silent**: a same-name RMA swap matched by
 CIDR, matched the roster, and let the new chassis inherit every reservation row
 of the old one — `pushStatus: "synced"` and dead device-side pointers included.
 
+A swap that keeps the device name (FortiManager's serial swap) also retires the
+**old gate's asset** on the next run: the name is still on the roster, but the
+gate answering under it is a different chassis. Its switches and APs stay — they
+belong to the new gate. The per-network conflicts appear as **one card** on the
+[Conflicts](Conflict-Resolution#one-swap-one-card) page.
+
 Discovery also **retires a dead row itself**: when a live gate re-reports the
 range of a previously archived network, it is archived forward — but **only when
 a different gate is serving it**, since an operator who archived a network its
@@ -264,6 +270,17 @@ Resolved through three tiers, highest first:
 
 Each tier validates the pair **as a whole** (rejecting null, NaN, (0,0) and
 out-of-range); a half-valid tier falls through rather than mixing values.
+
+**When the lookup fails.** Polaris asks OpenStreetMap first and the US Census
+geocoder second. Rural roads are often in neither, and then the pin keeps
+tier 2 or 3 — which may be an old pair from before the gate moved. Two things
+say so: the asset's **Coordinates** row reads *⚠ lookup failed — address not
+recognised* (or *geocoder unreachable*), with the address in its tooltip, and
+an `asset.location.geocode_failed` warning lands on the asset's **Events** tab.
+A no-match is remembered for 90 days, so the same text is not retried; change
+the text (a city, state and ZIP usually resolves), or set the coordinates
+directly — a manual pin on the asset, the FortiManager `Latitude` / `Longitude`
+metavariables, or the gate's own GUI coordinates.
 
 **Coordinate write-back** (`pushGeocodedCoords`, off by default) writes the
 geocoded pair back to the gate when it differs by more than about a metre. In

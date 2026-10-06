@@ -32,6 +32,15 @@ Edges are labelled per port and carry the observed IPs. Same-asset sibling edges
 get a `via <ip>` label and a wider child stack, with connected siblings ordered
 adjacent, so an intra-asset edge is actually readable.
 
+**An edge's colour is its protocol/port** — the most-seen port on that
+connection, which is also the first one in its label. The **Ports** key in the
+bottom-left corner names each colour (`tcp/443 https`) and how many drawn
+connections carry it. The eight most common ports in view get a colour; the
+rest draw in neutral grey as **Other**. A port keeps its colour across refreshes
+and filter changes for as long as it stays in that top eight. The edge *kind* is
+carried by the stroke instead: heavier for process → process, dashed for
+external. Collapse the key with its `−` button; the choice is remembered per user.
+
 Listening ports are consolidated into ranges — a run of three or more collapses
 to `tcp/9000-9004`, a pair stays listed because "9000, 9001" reads better, and
 protocols never merge.
@@ -131,7 +140,9 @@ not move your time window — and it **replaces** rather than merges.
 ### Screenshot
 
 Composites the graph canvas with a capture of the info rail, so the
-listening-port list is **in** the image. Clipboard first, download as fallback.
+listening-port list is **in** the image, with the Ports key drawn under the
+graph so the colours still mean something off the page. Clipboard first,
+download as fallback.
 
 ---
 

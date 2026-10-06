@@ -452,17 +452,30 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/conflictResolutionService.ts
+
+**What it owns:** The Conflict review queue's reads and the per-row resolution dispatcher — `listConflicts`, `countPendingConflicts` (the nav badge), `loadPendingConflict`, and `acceptConflict` / `mergeAssetConflict` / `rejectConflict`, which dispatch on `entityType` (`reservation` | `asset` | `subnet`) to the variant's handler and then stamp the row's `status` / `resolvedBy` / `resolvedAt`. Its header carries the full conflict-variant table.
+
+**Cross-service deps:** subnetChassisConflictService (`acceptChassisReplacement`, `rejectChassisReplacement`, `chassisSwapKey`), duplicateSerialConflictService, duplicateIpConflictService, assetMergeService (the ghost absorb), eventLogService.
+
+**Used by:** `src/api/routes/conflicts.ts` (every route except the variant-specific verbs).
+
+**Invariants:**
+- **The badge counts decisions, not rows (rule 41(a)).** `countPendingConflicts` counts pending `chassis-replaced` rows once per (old, new) serial pair via `chassisSwapKey` — the same fold `public/js/events.js` → `groupChassisSwaps` applies to the cards. The extra read is bounded by pending subnet rows, not fleet size. A change to either fold must change the other, or the badge and the panel disagree.
+- **The swap-level verbs do NOT go through the dispatcher.** `adoptChassisSwap` / `rejectChassisSwap` stamp their rows' status themselves in one `updateMany` (the dispatcher's per-row stamp would be N round trips and N transactions), so a new per-row side effect added to `acceptConflict`'s subnet branch must be mirrored there.
+
 ## services/subnetChassisConflictService.ts
 
 **What it owns:** The `chassis-replaced` Conflict flavour (business rule 41) — the first and only `entityType="subnet"` variant. Raise/refresh/suppress, the per-address diff, and the accept/reject handlers plus their `subnet.chassis.adopted` / `subnet.chassis.dismissed` Events.
 
-**Public API:** `raiseChassisReplacedConflict(input)` → `"raised" | "refreshed" | "suppressed"`, `buildChassisDiff(conflict)`, `diffReservationLines(oldRows, newRows)` (pure), `notMigratableReasonFor(sourceType)` (pure), `migrateArchivedReservations(conflict, ips, opts)`, `acceptChassisReplacement`, `rejectChassisReplacement`, `listChassisConflicts`, `CHASSIS_REPLACED_COLLISION_REASON`, `MIGRATABLE_SOURCE_TYPES`, and the `ChassisReplacedPayload` / `DiffSide` / `ChassisDiffLine` / `LineVerdict` / `NotMigratableReason` / `MigrateOutcome` types.
+**Public API:** `raiseChassisReplacedConflict(input)` → `"raised" | "refreshed" | "suppressed"`, `buildChassisDiff(conflict)`, `diffReservationLines(oldRows, newRows)` (pure), `notMigratableReasonFor(sourceType)` (pure), `migrateArchivedReservations(conflict, ips, opts)`, `acceptChassisReplacement`, `rejectChassisReplacement`, `listChassisConflicts`, the swap-level verbs `chassisSwapKey(old, new)` (pure), `findChassisAssets(old, new)`, `adoptChassisSwap(old, new, { mergeOldAsset, actor })` → `AdoptSwapOutcome`, `rejectChassisSwap(old, new, actor)`, `CHASSIS_REPLACED_COLLISION_REASON`, `MIGRATABLE_SOURCE_TYPES`, and the `ChassisReplacedPayload` / `DiffSide` / `ChassisDiffLine` / `LineVerdict` / `NotMigratableReason` / `MigrateOutcome` types.
 
-**Cross-service deps:** subnetArchiveService (`getArchivedSubnet`), reservationService (`DEVICE_OWNED_SOURCE_TYPES`), reservationPushService (`integrationPushEnabled`), utils/chassisIdentity (`normalizeSerial`), utils/chunk (`chunkArray`), eventLogService.
+**Cross-service deps:** subnetArchiveService (`getArchivedSubnet`), reservationService (`DEVICE_OWNED_SOURCE_TYPES`), reservationPushService (`integrationPushEnabled`), assetMergeService (`mergeAssets`, for the swap adopt), utils/chassisIdentity (`normalizeSerial`), utils/chunk (`chunkArray`), eventLogService.
 
-**Used by:** `src/services/discovery/discoveryEngine.ts` (raise, from the Phase 1 pass), `src/services/conflictResolutionService.ts` (the `entityType === "subnet"` branch of `acceptConflict` / `rejectConflict`), `src/api/routes/conflicts.ts` (`GET /conflicts/:id/chassis-diff`, `POST /conflicts/:id/migrate-reservations`).
+**Used by:** `src/services/discovery/discoveryEngine.ts` (raise, from the Phase 1 pass), `src/services/conflictResolutionService.ts` (the `entityType === "subnet"` branch of `acceptConflict` / `rejectConflict`), `src/api/routes/conflicts.ts` (`GET /conflicts/:id/chassis-diff`, `POST /conflicts/:id/migrate-reservations`, `POST /conflicts/chassis-swap/adopt` and `/reject`), `conflictResolutionService.countPendingConflicts` (`chassisSwapKey`, so the badge counts a swap once).
 
 **Invariants:**
+- **One swap is one decision (rule 41(a)).** The rows stay one per subnet (the diff and the dismissal marker are per subnet), but the Events page groups pending rows by the pair and the swap verbs act on every pending row of it. `adoptChassisSwap`'s optional merge removes the dead serial's `fortigate-firewall` source and the old MAC rows from the survivor AFTER `mergeAssets` re-binds them — leaving either would feed the new hardware's record an identity no box carries. It also deletes `AssetControllerClaim` rows keyed on the old serial (rule 83(c)).
 - **Dedup is keyed on the (oldSerial, newSerial) PAIR, not the subnet.** A pending row for the same pair refreshes, a REJECTED row for the same pair suppresses, and a different pair — the box swapped twice — raises anew.
 - **Raising never re-points `Subnet.fortigateSerial`.** The pending conflict is the unresolved state, and the stored serial is what keeps the detection derivable from the subnet row rather than dependent on the conflict row surviving. `acceptChassisReplacement` is what moves it; `verdictWritesSerial` returns null for `replaced` to enforce the same thing on the discovery side.
 - **The diff is computed ON READ, never snapshotted.** Discovery syncs subnets in Phase 1 and reservations in Phases 3–5, so a payload built at detection time would compare the old chassis against itself.

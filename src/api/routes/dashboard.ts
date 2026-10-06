@@ -188,6 +188,11 @@ router.get("/noc-summary", async (req, res, next) => {
     // maintenanceManagement:read; without it the widget renders empty, never
     // 403 (the filter-don't-403 contract every other feed keeps).
     const canMaintenance = hasPermission(req, "maintenanceManagement", "read");
+    // Acknowledgement notes (the ack pill's hover) are operator-typed incident
+    // text. The /dash wallboard listener reaches this handler with no login —
+    // only a synthetic readonly role snapshot — so the notes go to a caller
+    // who actually signed in: a session or a bearer token.
+    const includeAckNotes = !!(req.session?.userId || req.apiToken);
 
     // Per-widget filters (optional): ?hideAssetTypes=printer,network_camera
     // (the types the widget's gear grid has switched OFF — the form the grid
@@ -239,6 +244,7 @@ router.get("/noc-summary", async (req, res, next) => {
       capLimit,
       sampleCount,
       includeDependencyDown,
+      includeAckNotes,
     }));
   } catch (err) {
     next(err);

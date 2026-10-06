@@ -93,11 +93,21 @@ vi.mock("../../src/services/notificationRecipientService.js", async (importOrigi
     resolveRecipientUsersByIds: vi.fn(byIds),
     resolveAllUsers: vi.fn(async () => db.users),
     resolveUsersInAnyRegion: vi.fn(async () => []),
-    resolveUsersByRegions: vi.fn(async () => []),
+    resolveUsersByRegions: vi.fn(async (names?: string[]) => db.users.filter((u) => (u.regions ?? []).some((r: string) => (names ?? []).includes(r)))),
     resolveUsersByRoles: vi.fn(async () => []),
-    resolveRecipientUsers: vi.fn(async () => []),
+    resolveRecipientUsers: vi.fn(async (tags?: string[]) => db.users.filter((u) => (u.regions ?? []).some((r: string) => (tags ?? []).includes(r)))),
   };
 });
+// The scope loader is the engine's own; here a rule's monitored devices are
+// just their region snapshots, keyed by rule id through the scope.
+const scopeSnapshots = vi.hoisted(() => vi.fn(async (_scope: any): Promise<string[][]> => []));
+vi.mock("../../src/services/notificationEngine.js", () => ({ loadScopeRegionSnapshots: scopeSnapshots }));
+// One containment edge: Nashville sits inside the Central division.
+vi.mock("../../src/services/regionHierarchyService.js", () => ({
+  regionLevelIndex: vi.fn(async () => ({})),
+  deviceRegionsAtLevels: vi.fn((snap: string[], levels: number[]) =>
+    snap.includes("Nashville") ? levels.map((l) => (l === 1 ? "Nashville" : "Central")) : levels.map(() => snap[0]!)),
+}));
 vi.mock("../../src/services/notificationChannels/emailChannel.js", () => ({
   sendSmtpEmail: vi.fn(async (_cfg: any, msg: any) => {
     const to = Array.isArray(msg.to) ? msg.to[0] : msg.to;
@@ -165,6 +175,8 @@ beforeEach(() => {
   // The recipient resolvers read a cached user index; a test that seeds users
   // after an earlier test built it would otherwise resolve nobody.
   bumpRecipientIndex();
+  scopeSnapshots.mockReset();
+  scopeSnapshots.mockImplementation(async () => []);
   db.schedules.push({ id: "g1", name: "Nights", scope: {}, quiet: { windows: [NIGHTLY] }, enabled: true, createdAt: at(2026, 10, 1), updatedAt: at(2026, 10, 1) });
   db.channels.push({ id: "ch-email", type: "smtp", enabled: true, config: { host: "mail", from: "polaris@example.com" }, createdAt: new Date() });
 });
@@ -397,6 +409,34 @@ describe("the all-quiet summary when NOTHING was held", () => {
     expect(db.summaries[0].sourceKind).toBe("automation");
     expect(db.summaries[0].sourceId).toBe("r-b");
     expect(db.summaries[0].recipients.map((r: any) => r.address).sort()).toEqual(["exempt@example.com", "phone@example.com"]);
+  });
+
+  it("reaches device-region recipients through every region the rule's devices carry, levels included", async () => {
+    seedRules();
+    db.users.push(
+      { id: "u-atl", email: "atl@example.com", username: "atl", regions: ["Atlanta"] },
+      { id: "u-central", email: "central@example.com", username: "central", regions: ["Central"] },
+      { id: "u-west", email: "west@example.com", username: "west", regions: ["West"] },
+    );
+    db.rules[0].actions = [
+      { type: "notify", channelId: "ch-email", recipientDeviceRegion: true },
+      { type: "notify", channelId: "ch-email", recipientDeviceRegionLevels: [2] },
+    ];
+    scopeSnapshots.mockImplementation(async () => [["Atlanta"], ["Nashville"]]);
+    expect(await createDueSummaries(at(2026, 10, 3, 6, 1))).toBe(1);
+    const addrs = db.summaries[0].recipients.map((r: any) => r.address).sort();
+    // Atlanta by its own region; Central as the division containing Nashville;
+    // West carries no device in scope and is not reached. (critical@ and
+    // phone@ come from the critical-only rule, covered here: every severity is held.)
+    expect(addrs).toEqual(["atl@example.com", "central@example.com", "critical@example.com", "phone@example.com"]);
+    // Read once for the rule, however many of its actions route by device region.
+    expect(scopeSnapshots).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not read the rule's devices when no action routes by device region", async () => {
+    seedRules();
+    await createDueSummaries(at(2026, 10, 3, 6, 1));
+    expect(scopeSnapshots).not.toHaveBeenCalled();
   });
 
   it("drains as an all-quiet email that says nothing was held", async () => {

@@ -3569,7 +3569,10 @@ function getAssetFormData() {
     model:         val("f-model") || undefined,
     assetType:     document.getElementById("f-assetType").value,
     status:        document.getElementById("f-status").value,
-    location:      val("f-location") || undefined,
+    // Always sent (including "") — an emptied Location clears to null
+    // server-side so the display falls back to the learned location. Folding
+    // "" to undefined dropped the key and the old value silently survived.
+    location:      val("f-location"),
     department:    val("f-department") || undefined,
     assignedTo:    val("f-assignedTo") || undefined,
     os:            val("f-os") || undefined,
@@ -5728,9 +5731,7 @@ function _assetGeneralTabHTML(a) {
       fortilinkRowHTML(a) +
       apProfileRowHTML(a) +
       viewRow("Location", a.location || a.learnedLocation) +
-      ((a.latitude != null && a.longitude != null)
-        ? viewRow("Coordinates", a.latitude.toFixed(4) + ", " + a.longitude.toFixed(4) + (a.coordSource === "manual" ? " (manual)" : ""), true)
-        : "") +
+      coordinatesRowHTML(a, sources) +
       (a.learnedAddress ? viewRow("Address", a.learnedAddress) : "") +
       (a.snmpLocation ? viewRow("SNMP Location", a.snmpLocation) : "") +
       viewRow("Department", a.department) +
@@ -9687,10 +9688,21 @@ function _wirelessBandLabel(band) {
 // amber threshold uses. The full stream badge rather than a bare chip: which
 // transport and credential answered is exactly what an operator asks next when
 // the client list is empty, and the System tab already states it that way.
+// The AP profile (fortinetTopology.profile, the same value as the General
+// tab's AP Profile row) sits between the heading and the badge: it is the
+// controller object that decides these radios and SSIDs, so it belongs next
+// to them. Omitted until a discovery cycle has stamped it.
 function _wirelessStripHTML(asset, si) {
   var assetId = asset && asset.id;
+  var topo = asset && asset.fortinetTopology;
+  var profile = topo && typeof topo === "object" && typeof topo.profile === "string" ? topo.profile : "";
   return _currentStateStripHTML({
     title: "Wireless",
+    suffixHTML: profile
+      ? '<span style="font-weight:400;color:var(--color-text-secondary)" ' +
+          'title="AP profile this access point is bound to on its controller">' +
+          'Profile: ' + escapeHtml(profile) + '</span>'
+      : "",
     chipHTML: asset ? _streamSourceBadgeHTML(asset, "interfaces") : "",
     lastAt: (si && si.lastSystemInfoAt) || (asset && asset.lastSystemInfoAt) || null,
     cadenceSec: _resolveStaleStreamSec(assetId, asset, "systemInfo"),
@@ -18328,6 +18340,46 @@ function viewRow(label, value, mono, alignRight, copy) {
   }
   return '<div class="detail-row"><span class="detail-label">' + escapeHtml(label) + '</span>' +
     '<span class="detail-value' + (mono ? ' mono' : '') + '"' + style + '>' + inner + '</span></div>';
+}
+
+// Render the Coordinates row on the asset details General tab. When this
+// cycle's location lookup failed (the fortigate-firewall source's
+// observed.geocodeFailure, rewritten every discovery run), say so beside the
+// pair: the pin then comes from a lower-priority source — often a stale pair
+// the FortiGate still carries — and nothing else on the tab would tell you the
+// SNMP location below it is not what placed it. A manual pin is exempt; the
+// lookup never moves it. The row also renders with no coordinates at all when
+// a lookup failed, so the failure is not hidden by the absence it caused.
+var GEOCODE_FAILURE_TEXT = {
+  no_match: "lookup failed — address not recognised",
+  unreachable: "lookup failed — geocoder unreachable",
+  disabled: "lookup off on this server",
+};
+function coordinatesRowHTML(asset, sources) {
+  var has = asset.latitude != null && asset.longitude != null;
+  var manual = asset.coordSource === "manual";
+  var fail = null;
+  if (!manual) {
+    (sources || []).forEach(function (s) {
+      var g = s && s.sourceKind === "fortigate-firewall" && s.observed && s.observed.geocodeFailure;
+      if (g && typeof g.query === "string" && GEOCODE_FAILURE_TEXT[g.reason]) fail = g;
+    });
+  }
+  if (!has && !fail) return "";
+  var value = has
+    ? escapeHtml(asset.latitude.toFixed(4) + ", " + asset.longitude.toFixed(4) + (manual ? " (manual)" : ""))
+    : "-";
+  if (fail) {
+    var what = fail.source === "address-metavar" ? "address metavariable" : "SNMP location";
+    var tip = "The " + what + " \"" + fail.query + "\" could not be placed on the map, so " +
+      (has ? "these coordinates come from the FortiGate's other settings (Latitude/Longitude metavariables or its GUI coordinates)."
+           : "this asset has no coordinates.") +
+      " The asset's Events tab has the details.";
+    value += ' <span class="geocode-failure" style="color:var(--color-warning);font-family:var(--font-sans, inherit)" title="' +
+      escapeHtml(tip) + '">⚠ ' + escapeHtml(GEOCODE_FAILURE_TEXT[fail.reason]) + '</span>';
+  }
+  return '<div class="detail-row"><span class="detail-label">Coordinates</span>' +
+    '<span class="detail-value mono">' + value + '</span></div>';
 }
 
 // Render the Authorization row on the asset details General tab — the

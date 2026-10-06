@@ -38,6 +38,7 @@ vi.mock("../../src/services/notificationRecipientService.js", () => ({
 import {
   clearAssetDetailCache,
   evaluateAllNotificationRules,
+  loadScopeRegionSnapshots,
   previewRule,
 } from "../../src/services/notificationEngine.js";
 
@@ -144,5 +145,19 @@ describe("per-tick scope memo", () => {
     const before = assetReads();
     await previewRule({ scope: { allAssets: true } } as any);
     expect(assetReads()).toBeGreaterThan(before);
+  });
+});
+
+describe("loadScopeRegionSnapshots", () => {
+  it("returns each distinct region set of the scope's devices once, stripped, skipping untagged ones", async () => {
+    h.prisma.asset.findMany.mockResolvedValue([
+      scopeAsset("a1", { tags: ["region:Atlanta", "core"] }),
+      scopeAsset("a2", { tags: ["region:atlanta"] }),
+      scopeAsset("a3", { tags: ["region:Nashville", "region:Central"] }),
+      scopeAsset("a4", { tags: ["region:Central", "region:Nashville"] }),
+      scopeAsset("a5", { tags: ["lab"] }),
+    ]);
+    const snaps = await loadScopeRegionSnapshots({ allAssets: true } as any);
+    expect(snaps).toEqual([["Atlanta"], ["Nashville", "Central"]]);
   });
 });

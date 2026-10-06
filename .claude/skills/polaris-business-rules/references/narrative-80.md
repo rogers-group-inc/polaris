@@ -97,7 +97,7 @@ any other window.
 
 And it does not narrow the silence to the disconnect. For the length of the operation the asset
 is in maintenance, so a genuine failure that starts in that window is suppressed too, and a live
-alert on the way in is frozen for the length of the hold — kept, not retired (rule 16, 2026-09-30) —
+alert on the way in is frozen for the length of the hold — kept, not retired (rule 16, 2026-09-30; a down alert is the exception and is retired, rule 16(a)) —
 and recovers on its own evidence once the agent reports again. That is the cost of using the mechanism
 that already exists, paid deliberately: the alternative — a per-event carve-out that only knows
 about `agent.disconnected` — silences less, but only suppresses the one symptom somebody

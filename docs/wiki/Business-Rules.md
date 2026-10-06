@@ -116,9 +116,12 @@ An alert **already open when the window starts stays open** — it is silenced
 (no new alerts, escalation and reminders paused) and, once polling resumes,
 resolves normally through its own automation if the device is healthy — or
 sooner, if a reading taken during the window (an agent push, a Poll Now) shows
-it healthy. A window
-never clears an alert; only a genuine outage upstream clears a silenced child's
-alerts ([rule 38](#rule-38)). A day carries a **list** of hour ranges, and each range is its
+it healthy. **(a) Down alerts are the exception:** being down is what planned
+downtime looks like, so an open *device down* alert (an automation on "monitor
+status is down") is cleared when the device enters maintenance, or when it is
+silenced behind a parent that has; if the device is still down after the window,
+a new alert fires. No other alert is cleared by a window; only a genuine outage
+upstream clears a silenced child's other alerts ([rule 38](#rule-38)). A day carries a **list** of hour ranges, and each range is its
 own occurrence with its own start. See [Maintenance windows](Maintenance-Windows).
 
 ### Rule 17
@@ -328,6 +331,15 @@ directions, compared against the **cluster's whole serial set**, and the conflic
 is **additive**. A retired network **moves to the archive** rather than going
 deprecated, because a deprecated row's CIDR becomes unrecordable rather than
 reusable.
+
+**One swap is one decision.** A replaced gate raises a conflict for each network
+it serves, but the [Conflicts](Conflict-Resolution#chassis-replaced) page shows
+them as **one card** with one *Adopt* for every network, and the nav badge
+counts the swap once. Adopting can also **merge the old gate's asset into the
+new one**. And the old gate's asset is **decommissioned by discovery** when
+FortiManager lists the same name with a different serial — a swap that keeps
+the name no longer leaves the old record active. Its switches and APs are not
+touched, because they now belong to the new gate.
 
 ### Rule 42
 **Some address space is not one network, and the way to say so is to exclude it.**
@@ -1102,6 +1114,11 @@ and that pair will not come back.
 Those placeholders are also refused at the point a serial would be recorded,
 not just here — see [Rule 84](#rule-84).
 
+**A retired gate is not a claimant.** Once a FortiGate's asset is decommissioned
+or disabled, its last report no longer counts — so after a swap, the old gate
+stops contesting the new one's switches and APs straight away rather than two
+days later.
+
 See [Conflict Resolution](Conflict-Resolution) and
 [Integration: Fortinet](Integration-Fortinet).
 
@@ -1408,7 +1425,8 @@ in Polaris. A held alert that recovers before the summary is not listed, and
 its all-clear is not sent; once an alert has been named in a summary it behaves
 like any other. With nothing to list — everything recovered, or nothing was
 held at all — the summary still goes out as the **all-quiet email** (on by
-default), to the people the covered automations notify, saying nothing is
+default), to the people the covered automations notify — device-region
+routing included, as the users of every region their devices are in — saying nothing is
 outstanding and, by arriving, that the quiet time and email delivery work. A test delivery is never
 held. Rule 44 is the hold mechanics inside this.
 
