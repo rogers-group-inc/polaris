@@ -88,7 +88,7 @@
   --shadow-pill: 0 1px 2px rgba(0,0,0,.45);
   --shadow-md: 0 8px 32px rgba(0,0,0,.5);
   /* Drop shadow for a frosted panel that floats free of a screen edge — the
-     modal. It paints --panel-glass-bg, only 50% opaque, so --shadow-md's
+     modal. It paints --panel-glass-bg, only 78% opaque, so --shadow-md's
      single soft halo no longer reads as an edge against the blurred page
      behind it: the tight second layer is what keeps the panel's outline.
      The slide-over is right-anchored and carries its own one-sided shadow. */
@@ -196,21 +196,25 @@
       var(--page-glow-c3) var(--page-glow-p3),
       transparent var(--page-glow-end));
   /* ── Frosted panel surfaces ────────────────────────────────────────────────
-     Modals and slide-overs are 50% of the theme's own panel colour over a
-     blurred backdrop, so the page stays faintly legible behind them. Declared
+     Modals and slide-overs are 78% of the theme's own panel colour over a
+     blurred backdrop, so the page stays faintly visible behind them. Raised
+     from 50%: dense rows (the asset slide-over's key/value grid, its
+     dependency tree) opened over a busy page like the Device Map competed with
+     what showed through. Declared
      ONCE here rather than per theme: a custom property substitutes var() at
      the element it is declared on, and every theme block below also targets
      the root element, so each theme's own --color-bg-* values are what get
      mixed in. A new theme inherits the glass for free.
-     -chrome is the header/footer band (bg-tertiary), mixed to the same 50% so
-     the band still separates from the body without going opaque. */
-  --panel-glass-bg: color-mix(in srgb, var(--color-bg-primary) 50%, transparent);
+     -chrome is the header/footer band (bg-tertiary) at 50%; it composites
+     over the panel's own glass, so the band still separates from the body
+     without going opaque. */
+  --panel-glass-bg: color-mix(in srgb, var(--color-bg-primary) 78%, transparent);
   --panel-glass-chrome: color-mix(in srgb, var(--color-bg-tertiary) 50%, transparent);
   /* Same glass for context menus and button dropdowns, off --color-surface,
      which is the ground those already stood on. Same 50% and the same
      --panel-glass-blur, so a row menu opened over a frosted modal reads as the
      same material rather than a second, different kind of translucency. Thinner
-     than the panels' 50% by choice — a menu is small and short-lived, so it can
+     than the panels' 78% by choice — a menu is small and short-lived, so it can
      show more of what it covers without costing legibility. */
   --menu-glass-bg: color-mix(in srgb, var(--color-surface) 40%, transparent);
   /* Slight, not heavy: enough to smear text under the panel illegible while
@@ -281,15 +285,15 @@
   --shadow-panel: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.10);
   --shadow-control: 0 2px 5px rgba(0,0,0,.18), 0 1px 2px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.6);
   --page-glow-strength: 11.2%;
-  /* Thinner glass than the dark family's 50% / 40%. These are the only tokens
+  /* Thinner glass than the dark family's 78% / 50%. These are the only tokens
      :root derives that the daylight pair re-derives rather than inheriting, and
      the reason is contrast, not taste: a light panel over a light page has far
      less to hide behind, so the same mix that reads as frosted on an indigo
      ground reads as nearly solid here. The mix still resolves against each
      theme's OWN --color-bg-* — morning and noon override those below this
-     block and both pick up their own values, exactly as they do for the 50%
+     block and both pick up their own values, exactly as they do for the 78%
      version in :root. */
-  --panel-glass-bg: color-mix(in srgb, var(--color-bg-primary) 40%, transparent);
+  --panel-glass-bg: color-mix(in srgb, var(--color-bg-primary) 70%, transparent);
   --panel-glass-chrome: color-mix(in srgb, var(--color-bg-tertiary) 40%, transparent);
   --rail-glass-bg: color-mix(in srgb, var(--color-bg-tertiary) 30%, transparent);
   --chip-glass-bg: color-mix(in srgb, var(--color-surface) 55%, transparent);
@@ -3392,7 +3396,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 
 /* ─── Modal ────────────────────────────────────────────────────────────────── */
 /* The scrim is deliberately lighter than a solid dim: the modal itself is now
-   only 50% opaque, and its backdrop-filter samples THIS layer along with the
+   only 78% opaque, and its backdrop-filter samples THIS layer along with the
    page under it. At the old .6 the half showing through the panel was very
    nearly black, so the frosting read as "the modal got darker" instead of
    "the page is behind it". */
@@ -3419,7 +3423,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   z-index: 1075;
 }
 .modal {
-  /* Frosted, not solid: 50% of the panel colour over a blurred backdrop.
+  /* Frosted, not solid: 78% of the panel colour over a blurred backdrop.
      backdrop-filter here is free of the usual containing-block hazard because
      .modal ALREADY carries a transform (the translateY reveal below), so the
      `position: fixed` popovers mounted inside a modal body — .sf-multi-popover
@@ -4445,8 +4449,8 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 .modal-body > .page-tabs {
   position: sticky;
   top: 0;
-  /* Frosted like the panel it pins to, with its OWN blur: at 50% the strip no
-     longer hides what scrolls under it by opacity alone, so the blur is what
+  /* Frosted like the panel it pins to, with its OWN blur: at 78% the strip no
+     longer fully hides what scrolls under it by opacity alone, so the blur is what
      does the occluding the comment below assumes. */
   background: var(--panel-glass-bg);
   -webkit-backdrop-filter: var(--panel-glass-blur);
@@ -5003,7 +5007,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   border-left: 1px solid var(--color-border);
   /* Directional, not --shadow-panel's halo: the slide-over is full-height and
      pinned to the right edge, so only its LEFT edge ever casts. Deepened from
-     the pre-frosting -8px/.4 because a 50%-opaque panel needs more separation
+     the pre-frosting -8px/.4 because a translucent panel needs more separation
      from the page it now shows through to. */
   box-shadow: -12px 0 40px rgba(0,0,0,.45), -2px 0 10px rgba(0,0,0,.3);
   transform: translateX(100%);

@@ -482,7 +482,7 @@
 }
 .topology-info {
   /* Named, not inherited: the details pane declared no background, so once the
-     modal went frosted (--panel-glass-bg, 50% in the dark family and 40% on the
+     modal went frosted (--panel-glass-bg, then 50% in the dark family and 40% on the
      daylight pair) the blurred page behind the modal showed straight through
      the detail rows and they were hard to read. The graph half never had the
      problem — it paints an opaque --color-bg-secondary — so the two halves of

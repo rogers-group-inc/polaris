@@ -86,7 +86,7 @@ chrome that merely sits ON the page. Added 2026-09 when those surfaces went tran
 before that each rule picked its own background and shadow.
 
 **Canonical implementation:** the token block at the top of
-[public/css/styles.css](public/css/styles.css). `--panel-glass-bg` (modal + slide-over body),
+[public/css/styles.css](public/css/styles.css). `--panel-glass-bg` (modal + slide-over body; 78%, 70% on the daylight base),
 `--panel-glass-chrome` (their header/footer bands), `--menu-glass-bg` (every menu),
 `--panel-glass-blur` (the `backdrop-filter` value all of them share), `--shadow-panel` (a
 frosted surface floating free of a screen edge), `--shadow-control` (buttons, page search
