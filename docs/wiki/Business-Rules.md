@@ -1411,7 +1411,8 @@ in Polaris. A held alert that recovers before the summary is not listed, and
 its all-clear is not sent; once an alert has been named in a summary it behaves
 like any other. With nothing to list — everything recovered, or nothing was
 held at all — the summary still goes out as the **all-quiet email** (on by
-default), to the people the covered automations notify, saying nothing is
+default), to the people the covered automations notify — device-region
+routing included, as the users of every region their devices are in — saying nothing is
 outstanding and, by arriving, that the quiet time and email delivery work. A test delivery is never
 held. Rule 44 is the hold mechanics inside this.
 

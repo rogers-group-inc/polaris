@@ -325,7 +325,7 @@
         '</div>' +
         '<label style="display:flex;align-items:flex-start;gap:6px;margin:0.7rem 0 0;font-weight:400;cursor:pointer">' +
           '<input type="checkbox" class="qte-always"' + (!cfg || cfg.summaryAlways !== false ? " checked" : "") + ' style="width:auto;margin-top:0.2rem"> ' +
-          '<span>Send the summary even when nothing was held <span style="font-size:0.78rem;color:var(--color-text-tertiary)">— an "all quiet" email saying nothing is outstanding, which also confirms the quiet time and email delivery are working. It goes to the people the covered automations notify.</span></span>' +
+          '<span>All-Quiet Summary emails <span style="font-size:0.78rem;color:var(--color-text-tertiary)">— when nothing was held, an email saying nothing is outstanding, which also confirms the quiet time and email delivery are working. It goes to the people the covered automations notify, including the users of every region their devices are in.</span></span>' +
         '</label>' +
         '<p class="qte-problem" style="font-size:0.8rem;color:var(--color-warning);margin:6px 0 0"></p>' +
       '</div>' +
