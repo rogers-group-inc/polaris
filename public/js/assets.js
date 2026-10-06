@@ -5436,7 +5436,7 @@ async function openViewModal(id, opts) {
     // "Back to HARBOR-61F-1" instead of a uuid.
     _assetHistoryLabel(_assetPanelHistory, a.id, a.hostname || a.dnsName || a.ipAddress || null);
     _renderAssetPanelNav();
-    var generalHTML = _assetGeneralTabHTML(a);
+    var generalHTML = _assetGeneralTabHTML(a, sources);
 
     var monitoringHTML = assetMonitoringViewHTML(a);
     var agentSubpanelHTML = assetAgentSubpanelHTML(a, managedAgent);
@@ -5695,7 +5695,7 @@ async function openViewModal(id, opts) {
 // each closes over nothing beyond its params + module globals) ---
 
 // General-tab HTML (details grid + virtualization mount + dependency-tree mount).
-function _assetGeneralTabHTML(a) {
+function _assetGeneralTabHTML(a, sources) {
     // Dependency tree block (General tab) — populated asynchronously after
     // openViewModal awaits api.assets.getDependencies(id) below. Rendered
     // beneath the details table so the at-a-glance facts (hostname / IP /
