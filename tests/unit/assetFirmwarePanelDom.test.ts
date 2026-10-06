@@ -52,7 +52,7 @@ beforeEach(() => {
   g.timeAgo = () => "5 minutes ago";
   g.formatBytes = (n: number) => n + " B";
   g.permAtLeast = (key: string, want: string) => RANK[perms[key] ?? "none"]! >= RANK[want]!;
-  for (const name of ["_assetFirmwareEligible", "_fwBadge", "_fwImageLine", "_fwRunResultHTML", "_fwStageRow", "_fwProgressHTML", "_fwRunHistoryHTML", "assetFirmwarePanelHTML", "_fwApprovalBlockHTML", "_fwApprovalModalHTML"]) {
+  for (const name of ["_assetFirmwareEligible", "_fwBadge", "_fwImageLine", "_fwRunResultHTML", "_fwStageRow", "_fwProgressHTML", "_fwRunHistoryHTML", "assetFirmwarePanelHTML", "_fwApprovalBlockHTML", "_fwApprovalModalHTML", "_fwScheduleFieldsHTML", "_fwLocalInputValue", "_fwBrowserZone", "_fwWhenText"]) {
     (0, eval)(fnSrc(name));
   }
   (0, eval)(varSrc("_FW_STAGE_LABELS"));
@@ -224,9 +224,12 @@ describe("the handoff from openViewModal to the async-sections mount", () => {
 });
 
 // ─── Scheduled upgrades (business rule 93) ───────────────────────────────────
-describe("scheduled upgrades on the card", () => {
+// One dialog for now and later: the card has ONE upgrade verb, and the dialog's
+// "Schedule for later" box turns the flash into a booking (operator decision,
+// 2026-10-06 — two buttons on the card were one too many).
+describe("scheduled upgrades: one Upgrade button, a Schedule for later box in its dialog", () => {
   beforeEach(() => {
-    for (const name of ["_fwLocalInputValue", "_fwBrowserZone", "_fwWhenText", "_fwScheduleHTML", "_fwScheduleModalHTML", "_fwParseEmails"]) {
+    for (const name of ["_fwScheduleHTML", "_fwParseEmails"]) {
       (0, eval)(fnSrc(name));
     }
   });
@@ -234,15 +237,53 @@ describe("scheduled upgrades on the card", () => {
     id: "sch-1", assetId: "a1", imageId: "img-1", toVersion: "7.6.8 build1164", scheduledFor: new Date(Date.now() + 9 * 3_600_000).toISOString(),
     notifyEmails: ["ops@example.com", "noc@example.com"], status: "pending", error: null, createdBy: "alice", ...over,
   });
+  const dialog = (f: unknown, opts?: Record<string, unknown>) => {
+    const host = document.createElement("div");
+    host.innerHTML = g._fwApprovalModalHTML(asset(), f, opts);
+    return host;
+  };
 
-  it("available with no booking: Upgrade now AND Schedule…", () => {
+  it("the card offers ONE verb — Upgrade — and no separate Schedule button", () => {
     const el = render(asset(), fw());
-    expect(el.querySelector("#btn-fw-upgrade")).not.toBeNull();
-    expect(text(el.querySelector("#btn-fw-schedule"))).toBe("Schedule…");
+    expect(text(el.querySelector("#btn-fw-upgrade"))).toBe("Upgrade firmware to 7.6.8 build1164…");
+    expect(el.querySelector("#btn-fw-schedule")).toBeNull();
+    expect(el.querySelectorAll("button.btn-primary, button.btn-secondary").length).toBe(1);
     expect(el.querySelector("#asset-fw-schedule")).toBeNull();
   });
 
-  it("a pending booking: the time, the version, the recipients, Change and Cancel — and no second Schedule verb", () => {
+  it("the dialog carries an unticked 'Schedule for later' box whose time and recipient fields stay hidden until ticked", () => {
+    const host = dialog(fw(), { defaults: { notifyEmails: ["me@example.com"] } });
+    const box = host.querySelector("#fw-approve-schedule") as HTMLInputElement;
+    expect(box).not.toBeNull();
+    expect(box.checked).toBe(false);
+    expect(box.disabled).toBe(false);
+    expect(text(box.closest("label"))).toBe("Schedule for later");
+    const fields = host.querySelector("#fw-sched-fields") as HTMLElement;
+    expect(fields.style.display).toBe("none");
+    const when = host.querySelector("#fw-sched-when") as HTMLInputElement;
+    expect(when.getAttribute("type")).toBe("datetime-local");
+    expect(when.value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+    expect((host.querySelector("#fw-sched-emails") as HTMLInputElement).value).toBe("me@example.com");
+    // The image approval is the same either way.
+    expect(host.querySelector("#fw-approve-ack")).not.toBeNull();
+    expect(host.querySelector('input[name="fw-approve-image"]')).not.toBeNull();
+  });
+
+  it("blocked right now: the same Upgrade verb, and the dialog opens with scheduling ticked and locked", () => {
+    const blocked = fw({ state: "blocked", available: false, reason: "7.6.8 build1164 is available, but the device is down.", blockers: ["the device is down — an upgrade needs a device that is answering"] });
+    const el = render(asset(), blocked);
+    expect(text(el.querySelector("#btn-fw-upgrade"))).toBe("Upgrade firmware to 7.6.8 build1164…");
+    expect(el.querySelector("#btn-fw-schedule")).toBeNull();
+    const host = dialog(blocked, { mode: "schedule-only" });
+    const box = host.querySelector("#fw-approve-schedule") as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    expect(box.disabled).toBe(true);
+    expect((host.querySelector("#fw-sched-fields") as HTMLElement).style.display).toBe("");
+    expect(text(host)).toContain("This device cannot be upgraded right now");
+    expect(text(host)).toContain("Right now the device is down");
+  });
+
+  it("a pending booking: shown on the card with Change and Cancel; the dialog offers no second booking", () => {
     const el = render(asset(), fw({ schedule: booking() }));
     const box = el.querySelector("#asset-fw-schedule");
     expect(text(box)).toContain("Scheduled: upgrade to 7.6.8 build1164 at");
@@ -250,7 +291,24 @@ describe("scheduled upgrades on the card", () => {
     expect(text(box)).toContain("Results emailed to ops@example.com, noc@example.com · booked by alice");
     expect(el.querySelector("#btn-fw-schedule-edit")).not.toBeNull();
     expect(el.querySelector("#btn-fw-schedule-cancel")).not.toBeNull();
-    expect(el.querySelector("#btn-fw-schedule")).toBeNull();
+    const host = dialog(fw({ schedule: booking() }));
+    expect(host.querySelector("#fw-approve-schedule")).toBeNull();
+    expect(text(host)).toContain("is already scheduled for");
+  });
+
+  it("Change… opens the dialog straight on the schedule fields, pre-filled from the booking", () => {
+    const b = booking({ scheduledFor: "2030-01-02T08:30:00Z" });
+    const host = dialog(fw({ schedule: b }), { mode: "change", existing: b });
+    expect(host.querySelector("#fw-approve-schedule")).toBeNull();
+    expect((host.querySelector("#fw-sched-when") as HTMLInputElement).value).toBe(g._fwLocalInputValue(new Date("2030-01-02T08:30:00Z")));
+    expect((host.querySelector("#fw-sched-emails") as HTMLInputElement).value).toBe("ops@example.com, noc@example.com");
+  });
+
+  it("changing a booking when nothing is offered any more keeps its image, by name", () => {
+    const b = booking();
+    const host = dialog(fw({ state: "up-to-date", image: null, schedule: b }), { mode: "change", existing: b });
+    expect(host.querySelector("#fw-approve-ack")).toBeNull();
+    expect(text(host)).toContain("Firmware to push: 7.6.8 build1164 (as booked");
   });
 
   it("a booking waiting on a related flash says what it waits for", () => {
@@ -264,32 +322,6 @@ describe("scheduled upgrades on the card", () => {
     expect(el.querySelector("#asset-fw-schedule")).not.toBeNull();
     expect(el.querySelector("#btn-fw-schedule-edit")).toBeNull();
     expect(el.querySelector("#btn-fw-schedule-cancel")).toBeNull();
-  });
-
-  it("blocked right now can still be booked — the gates are re-taken when it fires", () => {
-    const el = render(asset(), fw({ state: "blocked", available: false, blockers: ["the device is down — an upgrade needs a device that is answering"] }));
-    expect(el.querySelector("#btn-fw-upgrade")).toBeNull();
-    expect(text(el.querySelector("#btn-fw-schedule"))).toBe("Schedule upgrade to 7.6.8 build1164…");
-  });
-
-  it("the booking dialog: the same image approval, a time with the reader's zone, pre-filled recipients, the blocker warning", () => {
-    const host = document.createElement("div");
-    host.innerHTML = g._fwScheduleModalHTML(asset(), fw({ blockers: ["the device is down"] }), null, { notifyEmails: ["me@example.com"] });
-    expect(host.querySelector("#fw-approve-ack")).not.toBeNull();
-    expect(host.querySelector('input[name="fw-approve-image"]')).not.toBeNull();
-    const when = host.querySelector("#fw-sched-when") as HTMLInputElement;
-    expect(when.getAttribute("type")).toBe("datetime-local");
-    expect(when.value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
-    expect((host.querySelector("#fw-sched-emails") as HTMLInputElement).value).toBe("me@example.com");
-    expect(text(host)).toContain("Right now the device is down");
-  });
-
-  it("changing a booking pre-fills its time and recipients", () => {
-    const b = booking({ scheduledFor: "2030-01-02T08:30:00Z" });
-    const host = document.createElement("div");
-    host.innerHTML = g._fwScheduleModalHTML(asset(), fw(), b, null);
-    expect((host.querySelector("#fw-sched-when") as HTMLInputElement).value).toBe(g._fwLocalInputValue(new Date("2030-01-02T08:30:00Z")));
-    expect((host.querySelector("#fw-sched-emails") as HTMLInputElement).value).toBe("ops@example.com, noc@example.com");
   });
 
   it("recipients split on commas, semicolons and whitespace", () => {

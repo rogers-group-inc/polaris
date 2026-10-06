@@ -259,7 +259,7 @@ separate container, `polaris-<slug>_web`, started with `podman compose … run -
 
 The mock FortiGate (MOCK-FGT60F-1) is NOT a capture of a real gate — it speaks the FortiOS REST
 calls the `fortigate-https` engine makes, so it demos the card, not the protocol. Scheduling
-(Firmware card → *Schedule…*, business rule 93) is easiest to watch with a time two minutes out;
+(the upgrade dialog's *Schedule for later* box, business rule 93) is easiest to watch with a time two minutes out;
 the results email needs an enabled SMTP / Microsoft 365 channel, or the booking records why not.
 
 Open a mock switch's asset → System → Firmware → *Upgrade firmware to 7.6.8 build1164*:
