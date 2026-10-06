@@ -289,6 +289,12 @@
   box-shadow: var(--shadow-card);
 }
 
+/* Cytoscape draws into this; it fills the card, overlays sit above it. */
+.appmap-cy {
+  position: absolute;
+  inset: 0;
+}
+
 .appmap-info {
   flex: 0 0 320px;
   max-width: 320px;
@@ -442,13 +448,52 @@
 
 .appmap-port-legend.collapsed .appmap-port-legend-body { display: none; }
 
+/* Rows are buttons: a click switches that port's connections off / on. */
 .appmap-port-legend-row {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  margin: 0 -4px;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  text-align: left;
   color: var(--color-text-secondary);
   white-space: nowrap;
+  cursor: pointer;
+  box-sizing: content-box;
 }
+
+.appmap-port-legend-row:hover { background: var(--color-bg-secondary); }
+
+.appmap-port-legend-row:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+/* Switched off: the row stays (so it can be clicked back on), faded and
+   struck through so it cannot be mistaken for a drawn colour. */
+.appmap-port-legend-row.is-off { opacity: 0.45; }
+.appmap-port-legend-row.is-off .appmap-port-legend-key,
+.appmap-port-legend-row.is-off .appmap-port-legend-svc { text-decoration: line-through; }
+.appmap-port-legend-row.is-off .appmap-port-legend-line { border-top-style: dotted; }
+
+.appmap-port-legend-showall {
+  margin-left: auto;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-accent);
+  cursor: pointer;
+}
+
+.appmap-port-legend-showall:hover { text-decoration: underline; }
 
 .appmap-port-legend-line {
   flex: 0 0 auto;
@@ -478,6 +523,7 @@
 .appmap-empty[hidden],
 .appmap-legend[hidden],
 .appmap-port-legend[hidden],
+.appmap-port-legend-showall[hidden],
 .appmap-info[hidden] {
   display: none;
 }

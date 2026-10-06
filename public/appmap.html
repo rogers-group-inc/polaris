@@ -93,6 +93,11 @@
 
       <div class="appmap-layout">
         <div id="appmap-graph" class="appmap-graph">
+          <!-- Cytoscape's OWN container. cy.destroy() removes every child of the
+               element it was given, so the overlays below must be its siblings,
+               not its children, or each re-render (a filter change, the 60s
+               refresh) deletes them from the page. -->
+          <div id="appmap-cy" class="appmap-cy"></div>
           <div id="appmap-legend" class="appmap-legend" hidden>
             <header class="appmap-legend-header">
               <span>Legend</span>
@@ -113,6 +118,7 @@
           <div id="appmap-port-legend" class="appmap-port-legend" hidden>
             <header class="appmap-port-legend-header">
               <span>Ports</span>
+              <button type="button" class="appmap-port-legend-showall" id="appmap-port-legend-showall" title="Show every port again" hidden>Show all</button>
               <button type="button" class="btn-icon" id="appmap-port-legend-toggle" aria-label="Collapse ports key" aria-expanded="true" title="Collapse">&minus;</button>
             </header>
             <div class="appmap-port-legend-body"></div>
