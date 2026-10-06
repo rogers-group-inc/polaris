@@ -220,6 +220,19 @@ describe("acting on the alert", () => {
     teardown();
   });
 
+  it("hovers the note the modal hands back before the cached feed catches up", async () => {
+    feedRows = [alert({ id: "n1" })];
+    const { el, teardown } = mountAndClick([alert({ id: "n1" })]);
+    pick("Acknowledge alert…");
+    (ackOpened!.opts.onAcknowledged as (a: unknown) => void)({
+      id: "n1", acknowledged: true, acknowledgedBy: "jsmith", acknowledgeNote: "rebooting the stack",
+    });
+    await settle();
+    const pill = el.querySelector(".widget-pill-neutral") as any;
+    expect(pill.getAttribute("title")).toBe("Acknowledged by jsmith\nrebooting the stack");
+    teardown();
+  });
+
   it("clears the alert and keeps it off screen while the cached feed still sends it", async () => {
     feedRows = [alert({ id: "n1" }), alert({ id: "n2" })];
     const { el, teardown } = mountAndClick(feedRows.slice());

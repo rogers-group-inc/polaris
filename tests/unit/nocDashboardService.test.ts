@@ -488,6 +488,8 @@ describe("getRecentAlerts", () => {
       id: "n1", assetId: "asset-1", hostname: "fw-1", dimension: null,
       message: "fw-1 is down", severity: "critical", raisedAt: t,
       ruleName: "Asset down", triggerType: null, acknowledged: true, acknowledgedBy: "jsmith",
+      // Acknowledged without a note — the ack pill hovers the owner alone.
+      acknowledgeNote: null,
       // Grouped alerts (business rule 75): an alert about a single thing
       // reports both as null, which is what keeps the widget's "+N" affordance
       // off every ungrouped row.
@@ -902,6 +904,50 @@ describe("getNocSummaryPayload", () => {
     expect(findMany).toHaveBeenCalledTimes(2);
   });
 
+  // The ack pill's hover is the note typed with the acknowledgement —
+  // operator-typed incident text. /dash serves this payload with no login, so
+  // a caller that did not sign in gets the rows without it, and the copy it
+  // gets must not strip the note from the cache a signed-in viewer reads next.
+  describe("acknowledgement notes", () => {
+    const alertRow = {
+      id: "n1", assetId: "a", assetHostname: "fw-1", dimension: null, message: "fw-1 is down",
+      severity: "critical", triggeredAt: new Date("2026-10-06T00:00:00Z"),
+      acknowledged: true, acknowledgedBy: "jsmith", acknowledgeNote: "ISP ticket 88", rule: { name: "Asset down" },
+    };
+
+    it("serves the note to a signed-in caller and withholds it otherwise, from one cached computation", async () => {
+      notifFindMany.mockReset();
+      notifFindMany.mockResolvedValue([alertRow]);
+      const withheld = await noc.getNocSummaryPayload({ feeds: ["activeAlerts"], ...grantAll(), canAlerts: true });
+      const served = await noc.getNocSummaryPayload({ feeds: ["activeAlerts"], ...grantAll(), canAlerts: true, includeAckNotes: true });
+      const again = await noc.getNocSummaryPayload({ feeds: ["activeAlerts"], ...grantAll(), canAlerts: true });
+      const note = (r: Record<string, unknown>) => (r.activeAlerts as Array<{ acknowledgeNote: string | null }>)[0].acknowledgeNote;
+      expect(note(withheld)).toBeNull();
+      expect(note(served)).toBe("ISP ticket 88");
+      expect(note(again)).toBeNull();
+      // The owner is not withheld — the pill prints it on /dash too.
+      expect((withheld.activeAlerts as Array<{ acknowledgedBy: string }>)[0].acknowledgedBy).toBe("jsmith");
+      expect(notifFindMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("does the same for the Down Assets row's alert", async () => {
+      findMany.mockResolvedValue([
+        { id: "a", hostname: "fw-1", ipAddress: null, assetType: "firewall", location: "HQ", learnedLocation: null, snmpLocation: null, department: null, monitorStatus: "down", monitorStatusChangedAt: null, dependencySuppressed: false },
+      ]);
+      count.mockResolvedValue(1);
+      notifFindMany.mockReset();
+      notifFindMany.mockResolvedValue([
+        { id: "n1", assetId: "a", severity: "critical", acknowledged: true, acknowledgedBy: "jsmith", acknowledgeNote: "ISP ticket 88", rule: { trigger: { type: "asset_state", field: "monitorStatus" } } },
+      ]);
+      const withheld = await noc.getNocSummaryPayload({ feeds: ["downNodes"], ...grantAll() });
+      const served = await noc.getNocSummaryPayload({ feeds: ["downNodes"], ...grantAll(), includeAckNotes: true });
+      const node = (r: Record<string, unknown>) => (r.downNodes as Array<{ alertAcknowledgedBy: string; alertAcknowledgeNote: string | null }>)[0];
+      expect(node(withheld).alertAcknowledgeNote).toBeNull();
+      expect(node(withheld).alertAcknowledgedBy).toBe("jsmith");
+      expect(node(served).alertAcknowledgeNote).toBe("ISP ticket 88");
+    });
+  });
+
   it("drops unknown feed names silently", async () => {
     const r = await noc.getNocSummaryPayload({ feeds: ["bogus"], ...grantAll() });
     expect(r).toEqual({});
@@ -1098,9 +1144,9 @@ describe("alert-severity-aware ordering", () => {
     const m = await noc.activeAlertSeverityByAsset(["a", "b", "c"]);
     // The winner names itself and says whether someone has it, so a widget row
     // can offer Acknowledge for the same alert its pill is showing.
-    expect(m.get("a")).toEqual({ severity: "critical", rank: 5, id: "n2", acknowledged: false, acknowledgedBy: null });
-    expect(m.get("b")).toEqual({ severity: "info", rank: 2, id: "n3", acknowledged: false, acknowledgedBy: null });
-    expect(m.get("c")).toEqual({ severity: "error", rank: 5, id: "n4", acknowledged: true, acknowledgedBy: null });
+    expect(m.get("a")).toEqual({ severity: "critical", rank: 5, id: "n2", acknowledged: false, acknowledgedBy: null, acknowledgeNote: null });
+    expect(m.get("b")).toEqual({ severity: "info", rank: 2, id: "n3", acknowledged: false, acknowledgedBy: null, acknowledgeNote: null });
+    expect(m.get("c")).toEqual({ severity: "error", rank: 5, id: "n4", acknowledged: true, acknowledgedBy: null, acknowledgeNote: null });
     expect(m.has("")).toBe(false);
   });
 
@@ -1205,7 +1251,7 @@ describe("per-widget alert relevance (pill only when a matching automation fires
       { id: "n-c", assetId: "c", severity: "warning", acknowledged: false, rule: null }, // rule deleted → matches nothing specific
     ]);
     const m = await noc.activeAlertSeverityByAsset(["a", "b", "c"], { kind: "metric", metrics: ["cpuPct"] });
-    expect(m.get("a")).toEqual({ severity: "critical", rank: 5, id: "n-a", acknowledged: false, acknowledgedBy: null });
+    expect(m.get("a")).toEqual({ severity: "critical", rank: 5, id: "n-a", acknowledged: false, acknowledgedBy: null, acknowledgeNote: null });
     expect(m.has("b")).toBe(false);
     expect(m.has("c")).toBe(false);
   });

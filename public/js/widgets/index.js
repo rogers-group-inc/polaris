@@ -1523,6 +1523,17 @@
     return '<span class="widget-pill ' + cls + '" title="Highest active alert: ' + escapeHtml(sev) + '" style="margin-right:4px;flex:0 0 auto">' + escapeHtml(String(sev)) + '</span>';
   };
 
+  // Hover text for an "ack <owner>" pill (Active Alerts, Down Assets): who
+  // acknowledged it, then the note they typed on its own line. Plain text —
+  // callers escape it into the title attribute. The note is absent on /dash
+  // (the feed withholds it from a caller that did not sign in) and on an
+  // acknowledgement made without one, so the owner line always stands alone.
+  window.PolarisWidgets.ackPillTitle = function (by, note) {
+    var head = "Acknowledged" + (by ? " by " + by : "");
+    var text = note == null ? "" : String(note).trim();
+    return text ? head + "\n" + text : head;
+  };
+
   // Just the pill class for a severity (null when unknown/absent) — lets count
   // pills reuse the row palette without rendering a labeled pill.
   window.PolarisWidgets.alertSeverityPillClass = function (sev) {

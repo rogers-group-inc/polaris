@@ -278,11 +278,12 @@
     //
     // The owner is IN the pill, not only in the title: these run on wallboards,
     // which never hover. The bare "ack" stays as the fallback for a feed that
-    // gives no name.
+    // gives no name. The note typed with the acknowledgement is the hover — the
+    // feed withholds it on /dash, where the title falls back to the owner.
     var ackWho = r.acknowledgedBy ? "ack " + r.acknowledgedBy : "ack";
     var ack = r.acknowledged
       ? '<span class="widget-pill widget-pill-neutral" style="margin-left:4px" title="' +
-        escapeHtml("Acknowledged" + (r.acknowledgedBy ? " by " + r.acknowledgedBy : "")) + '">' +
+        escapeHtml(PolarisWidgets.ackPillTitle(r.acknowledgedBy, r.acknowledgeNote)) + '">' +
         escapeHtml(ackWho) + '</span>'
       : "";
     // Every row is a prompt to DO something, so every row is clickable —
@@ -380,7 +381,7 @@
           acknowledged: link.getAttribute("data-alert-ack") === "1",
           onChanged: function (kind, id, fresh) {
             if (kind === "cleared") local.cleared[id] = true;
-            else local.acked[id] = (fresh && fresh.acknowledgedBy) || true;
+            else local.acked[id] = fresh || true;
             paint();
             refresh();
           },
@@ -444,11 +445,15 @@
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i];
       if (local.cleared[r.id]) { dropped++; continue; }
-      var who = local.acked[r.id];
-      if (who && !r.acknowledged) {
+      // The acknowledged alert as the modal re-read it (or `true` when it
+      // handed nothing back) — so the owner and the note show before the feed
+      // catches up.
+      var fresh = local.acked[r.id];
+      if (fresh && !r.acknowledged) {
         r = Object.assign({}, r, {
           acknowledged: true,
-          acknowledgedBy: typeof who === "string" ? who : r.acknowledgedBy,
+          acknowledgedBy: (fresh !== true && fresh.acknowledgedBy) || r.acknowledgedBy,
+          acknowledgeNote: (fresh !== true && fresh.acknowledgeNote) || r.acknowledgeNote,
         });
       }
       out.push(r);

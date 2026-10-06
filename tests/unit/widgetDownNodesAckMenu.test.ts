@@ -43,6 +43,7 @@ interface Node {
   alertId?: string;
   alertAcknowledged?: boolean;
   alertAcknowledgedBy?: string | null;
+  alertAcknowledgeNote?: string | null;
 }
 interface Cfg { groupBy?: string; rowLimit?: number | null }
 interface WidgetModule {
@@ -177,6 +178,15 @@ describe("an acknowledged row reads as owned", () => {
       expect((p.getAttribute("style") || "")).not.toContain("opacity");
       p = p.parentElement;
     }
+  });
+
+  it("hovers the acknowledgement note under the owner, or the owner alone without one", () => {
+    const [noted, bare] = renderRows([
+      node({ id: "a", alertId: "n-1", alertAcknowledged: true, alertAcknowledgedBy: "jsmith", alertAcknowledgeNote: "ISP outage, ticket 88" }),
+      node({ id: "b", alertId: "n-2", alertAcknowledged: true, alertAcknowledgedBy: "jsmith", alertAcknowledgeNote: null }),
+    ]);
+    expect(ackPill(noted)?.getAttribute("title")).toBe("Acknowledged by jsmith\nISP outage, ticket 88");
+    expect(ackPill(bare)?.getAttribute("title")).toBe("Acknowledged by jsmith");
   });
 
   it("falls back to a bare 'ack' when the feed names nobody", () => {

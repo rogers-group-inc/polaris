@@ -104,7 +104,7 @@
     var fadeAttr = acked ? ' style="opacity:.6"' : "";
     var ack = acked
       ? '<span class="widget-pill widget-pill-neutral" style="margin-left:6px" title="' +
-        escapeHtml("Acknowledged" + (n.alertAcknowledgedBy ? " by " + n.alertAcknowledgedBy : "")) + '">' +
+        escapeHtml(PolarisWidgets.ackPillTitle(n.alertAcknowledgedBy, n.alertAcknowledgeNote)) + '">' +
         escapeHtml(n.alertAcknowledgedBy ? "ack " + n.alertAcknowledgedBy : "ack") + '</span>'
       : "";
     return '<a class="dash-alert-item' + (acked ? " dash-alert-item-acked" : "") + '" href="' + href + '" data-asset-id="' + escapeHtml(n.id) + '"' + alertAttrs + ' style="text-decoration:none">' +
