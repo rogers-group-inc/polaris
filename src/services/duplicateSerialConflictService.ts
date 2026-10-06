@@ -212,6 +212,13 @@ export interface ControllerContext {
   assetIdByControllerKey: Map<string, string>;
   nameByAssetId: Map<string, string | null>;
   integrationNameById: Map<string, string>;
+  /**
+   * Status of each resolved controller's firewall Asset. A claim from a gate
+   * the operator (or the Phase 2a sweep) has decommissioned or disabled is not
+   * a claimant — rule 83(c). Optional so a context built without it (the unit
+   * tests' hand-made ones) applies no filter.
+   */
+  statusByAssetId?: Map<string, string>;
 }
 
 export const EMPTY_CONTROLLER_CONTEXT: ControllerContext = {
@@ -229,6 +236,13 @@ export const EMPTY_CONTROLLER_CONTEXT: ControllerContext = {
 export function claimFoldKey(claim: ControllerClaimRow, ctx: ControllerContext): string {
   const assetId = ctx.assetIdByControllerKey.get(claim.controllerKey);
   return assetId ? `asset:${assetId}` : claim.controllerKey;
+}
+
+function controllerRetired(claim: ControllerClaimRow, ctx: ControllerContext): boolean {
+  const assetId = ctx.assetIdByControllerKey.get(claim.controllerKey);
+  if (!assetId || !ctx.statusByAssetId) return false;
+  const status = ctx.statusByAssetId.get(assetId);
+  return !!status && (CLAIM_EXCLUDED_STATUSES as readonly string[]).includes(status);
 }
 
 function toStoredClaimant(claim: ControllerClaimRow, ctx: ControllerContext): StoredClaimant {
@@ -265,6 +279,11 @@ export function groupContestedSerials(
     if (!isUsableSerial(claim.deviceSerial)) continue;
     const status = claim.asset?.status;
     if (status && (CLAIM_EXCLUDED_STATUSES as readonly string[]).includes(status)) continue;
+    // Rule 83(c): the CLAIMING gate is retired. Its last roster read is
+    // history — a swapped chassis (rule 41(a)) keeps "claiming" every switch
+    // and AP it used to manage until the freshness window lapses, and the new
+    // chassis's identical claims would read as two gates arguing.
+    if (controllerRetired(claim, ctx)) continue;
     const key = normalizeSerialKey(claim.deviceSerial);
     if (!key) continue;
     const list = bySerial.get(key);
@@ -639,7 +658,19 @@ export async function loadControllerContext(claims: ControllerClaimRow[]): Promi
     for (const i of integrations) integrationNameById.set(i.id, i.name);
   }
 
-  return { assetIdByControllerKey, nameByAssetId, integrationNameById };
+  // One status read for every resolved controller — bounded by the fleet's
+  // firewall count, like the source read above.
+  const statusByAssetId = new Map<string, string>();
+  const controllerAssetIds = [...new Set(assetIdByControllerKey.values())];
+  if (controllerAssetIds.length) {
+    const rows = await prisma.asset.findMany({
+      where: { id: { in: controllerAssetIds } },
+      select: { id: true, status: true },
+    });
+    for (const r of rows) statusByAssetId.set(r.id, r.status);
+  }
+
+  return { assetIdByControllerKey, nameByAssetId, integrationNameById, statusByAssetId };
 }
 
 /**
