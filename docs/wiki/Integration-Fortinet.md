@@ -195,6 +195,12 @@ This closes a case that used to be **silent**: a same-name RMA swap matched by
 CIDR, matched the roster, and let the new chassis inherit every reservation row
 of the old one — `pushStatus: "synced"` and dead device-side pointers included.
 
+A swap that keeps the device name (FortiManager's serial swap) also retires the
+**old gate's asset** on the next run: the name is still on the roster, but the
+gate answering under it is a different chassis. Its switches and APs stay — they
+belong to the new gate. The per-network conflicts appear as **one card** on the
+[Conflicts](Conflict-Resolution#one-swap-one-card) page.
+
 Discovery also **retires a dead row itself**: when a live gate re-reports the
 range of a previously archived network, it is archived forward — but **only when
 a different gate is serving it**, since an operator who archived a network its

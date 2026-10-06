@@ -332,6 +332,15 @@ is **additive**. A retired network **moves to the archive** rather than going
 deprecated, because a deprecated row's CIDR becomes unrecordable rather than
 reusable.
 
+**One swap is one decision.** A replaced gate raises a conflict for each network
+it serves, but the [Conflicts](Conflict-Resolution#chassis-replaced) page shows
+them as **one card** with one *Adopt* for every network, and the nav badge
+counts the swap once. Adopting can also **merge the old gate's asset into the
+new one**. And the old gate's asset is **decommissioned by discovery** when
+FortiManager lists the same name with a different serial — a swap that keeps
+the name no longer leaves the old record active. Its switches and APs are not
+touched, because they now belong to the new gate.
+
 ### Rule 42
 **Some address space is not one network, and the way to say so is to exclude it.**
 Global, CIDR-identified and frozen after create, one-directional containment,
@@ -1104,6 +1113,11 @@ and that pair will not come back.
 
 Those placeholders are also refused at the point a serial would be recorded,
 not just here — see [Rule 84](#rule-84).
+
+**A retired gate is not a claimant.** Once a FortiGate's asset is decommissioned
+or disabled, its last report no longer counts — so after a swap, the old gate
+stops contesting the new one's switches and APs straight away rather than two
+days later.
 
 See [Conflict Resolution](Conflict-Resolution) and
 [Integration: Fortinet](Integration-Fortinet).

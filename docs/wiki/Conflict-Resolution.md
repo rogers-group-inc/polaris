@@ -319,6 +319,28 @@ The conflict is **additive and destroys nothing**:
 Dedup is keyed on the **(old, new) serial pair**, so a rejected row suppresses
 exactly that transition while a second swap raises anew.
 
+### One swap, one card
+
+A gate serves many networks, so one swap raises one conflict per network. They
+are shown as **one card per swap** — the old and new serial once, every network
+listed underneath with its own **Review reservations**, and the decision once:
+
+- **Adopt for all N networks** — every network takes the new chassis.
+- **Merge the old gate's asset into the new one** (ticked by default; needs
+  Assets full read-write) — the new gate's record keeps the old one's notes,
+  location, monitoring settings and dependent devices. The old box's serial
+  source and MAC addresses are dropped, since they belong to hardware that is
+  gone. Monitoring history is not carried.
+- **Dismiss all** — each network keeps its own dismissal, as before.
+
+The nav badge counts the swap once. A swap with a single network keeps the
+single-network card.
+
+You no longer need to decommission the old gate yourself: when FortiManager (or
+the standalone FortiGate) lists the same name with a different serial, discovery
+retires the old gate's asset. It does **not** take the old gate's switches and
+APs with it — after a same-name swap they belong to the new gate.
+
 ### Why the comparison is careful
 
 | Case | Handling |

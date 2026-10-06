@@ -21,6 +21,7 @@
  */
 
 import { Router, type Request } from "express";
+import { z } from "zod";
 import { AppError } from "../../utils/errors.js";
 import { requireAuth, requestActor } from "../middleware/auth.js";
 import { hasPermission } from "../middleware/permissions.js";
@@ -36,6 +37,8 @@ import {
 import {
   buildChassisDiff,
   migrateArchivedReservations,
+  adoptChassisSwap,
+  rejectChassisSwap,
 } from "../../services/subnetChassisConflictService.js";
 import {
   reassignDuplicateIpAsset,
@@ -46,6 +49,13 @@ import {
   mergeDuplicateSerialAssets,
   DUPLICATE_SERIAL_COLLISION_REASON,
 } from "../../services/duplicateSerialConflictService.js";
+
+// One FortiGate swap = one decision across every subnet it raised (rule 41(a)).
+const ChassisSwapSchema = z.object({
+  oldSerial: z.string().trim().min(1).max(64),
+  newSerial: z.string().trim().min(1).max(64),
+  mergeOldAsset: z.boolean().optional(),
+});
 
 const router = Router();
 router.use(requireAuth);
@@ -164,6 +174,48 @@ router.post("/:id/migrate-reservations", async (req, res, next) => {
     if (req.body?.adopt === true) await acceptConflict(conflict, actor);
 
     res.json({ ok: true, ...outcome, adopted: req.body?.adopt === true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/conflicts/chassis-swap/adopt — adopt the new chassis for every
+// pending subnet of one (oldSerial, newSerial) swap (business rule 41(a)).
+// Body: { oldSerial, newSerial, mergeOldAsset? }. mergeOldAsset folds the old
+// gate's asset into the new gate's, which deletes an asset row, so it takes the
+// same chained `assets:fullwrite` gate as every other merge verb here.
+router.post("/chassis-swap/adopt", async (req, res, next) => {
+  try {
+    if (!canResolve(req)) {
+      throw new AppError(403, "You do not have permission to resolve this conflict");
+    }
+    const parsed = ChassisSwapSchema.safeParse(req.body ?? {});
+    if (!parsed.success) throw new AppError(400, "oldSerial and newSerial are required");
+    const { oldSerial, newSerial, mergeOldAsset } = parsed.data;
+    if (mergeOldAsset && !hasPermission(req, "assets", "fullwrite")) {
+      throw new AppError(403, "Merging assets requires full read-write on Assets");
+    }
+    const outcome = await adoptChassisSwap(oldSerial, newSerial, {
+      mergeOldAsset: mergeOldAsset === true,
+      actor: requestActor(req),
+    });
+    res.json({ ok: true, ...outcome });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/conflicts/chassis-swap/reject — dismiss every pending subnet of
+// one swap. Body: { oldSerial, newSerial }.
+router.post("/chassis-swap/reject", async (req, res, next) => {
+  try {
+    if (!canResolve(req)) {
+      throw new AppError(403, "You do not have permission to resolve this conflict");
+    }
+    const parsed = ChassisSwapSchema.safeParse(req.body ?? {});
+    if (!parsed.success) throw new AppError(400, "oldSerial and newSerial are required");
+    const outcome = await rejectChassisSwap(parsed.data.oldSerial, parsed.data.newSerial, requestActor(req));
+    res.json({ ok: true, ...outcome });
   } catch (err) {
     next(err);
   }

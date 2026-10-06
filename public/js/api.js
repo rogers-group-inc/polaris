@@ -1055,6 +1055,9 @@ const api = {
     // subnet chassis-replacement conflicts only (business rule 41)
     chassisDiff: (id) => request("GET", `/conflicts/${id}/chassis-diff`),
     migrateReservations: (id, body) => request("POST", `/conflicts/${id}/migrate-reservations`, body),
+    // one whole FortiGate swap (rule 41(a)) — body { oldSerial, newSerial, mergeOldAsset? }
+    adoptChassisSwap: (body) => request("POST", "/conflicts/chassis-swap/adopt", body),
+    rejectChassisSwap: (body) => request("POST", "/conflicts/chassis-swap/reject", body),
   },
   events: {
     list: (params) => request("GET", "/events" + toQuery(params)),
