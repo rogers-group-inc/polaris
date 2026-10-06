@@ -94,10 +94,16 @@ image it will get and the login it will use. **Upgrade** starts it; the phone
 says *Upgrade started*, and the row then follows the run — signing in,
 uploading, erasing / writing / verifying with a percent on a switch,
 rebooting, verifying, waiting for monitoring to answer — and ends on the
-result. The button needs **Read-Write on Assets**; below that the row says
-the version is available. The phone offers the model's **primary** image
-only: picking its backup, the run history and its log, and scheduling an
-upgrade for later are on the desktop's Firmware card, and the Repository itself is desktop-only. See
+result. The same sheet has a **Schedule for later** box: tick it, pick a
+date and time (your phone's time zone) and who gets the results email, and
+**Schedule** books it instead of starting it. When the device cannot be
+upgraded right now, the button still shows and the sheet opens with the box
+ticked and locked. A pending booking shows in the row — when, to what
+version, who hears about it — with **Change** and **Cancel**. The button
+needs **Read-Write on Assets**; below that the row says the version is
+available. The phone offers the model's **primary** image only: picking its
+backup, and the run history and its log, are on the desktop's Firmware card,
+and the Repository itself is desktop-only. See
 [Assets → Firmware](Assets#firmware).
 
 Networks replaced the old **Reservations** tab: a reservation is now seen and

@@ -109,7 +109,7 @@ own outcome is still recorded.
 
 ### Known gaps (2026-10-06)
 
-- The mobile SPA cannot book; Schedule / Change / Cancel are on the desktop Firmware card only.
+- ~~The mobile SPA cannot book~~ — closed the same day (below).
 - Never run against real hardware; the unit and integration suites use a fake device.
 - The results email's wording has not been human-reviewed.
 
@@ -120,12 +120,35 @@ own outcome is still recorded.
 firing, the email), `services/firmwareUpgradeService.ts → checkSchedulableUpgrade` /
 `FirmwareRunConflictError` / `StartUpgradeInput.scheduleId`, `jobs/startScheduledFirmwareUpgrades.ts`,
 `utils/firmwareResultEmailTemplate.ts`, the `/assets/:id/firmware-upgrade/schedules` routes in
-`src/api/routes/firmware.ts`, and the Firmware card in `public/js/assets.js`
-(`_openFirmwareScheduleModal`, `_fwScheduleHTML`, `_cancelFirmwareSchedule`). Events:
+`src/api/routes/firmware.ts`, the Firmware card in `public/js/assets.js`
+(`_openFirmwareApprovalModal` + `_fwApprovalModalHTML` — the one upgrade dialog, its
+"Schedule for later" box and its `change` mode — `_fwScheduleFieldsHTML`, `_fwScheduleHTML`,
+`_cancelFirmwareSchedule`), and the phone's OS row in `public/js/mobile/asset-detail.js`
+(`fwConfirmBodyHtml`, `confirmFirmwareUpgrade`, `fwScheduleLineHtml`). Events:
 `firmware.upgrade_scheduled`, `firmware.upgrade_rescheduled`,
 `firmware.upgrade_schedule_cancelled`, `firmware.upgrade_schedule_refused`,
 `firmware.upgrade_schedule_missed`, `firmware.upgrade_schedule_email_failed`; a booked run's
 `firmware.upgrade_started` reads "Scheduled firmware upgrade started" and carries
 `details.scheduleId`. Pinned by `tests/unit/firmwareSchedule.test.ts`,
 `tests/integration/firmwareSchedule.test.ts`, and the schedule cases in
-`tests/unit/assetFirmwarePanelDom.test.ts` and `tests/unit/firmwareUpgradeGates.test.ts`.
+`tests/unit/assetFirmwarePanelDom.test.ts`, `tests/unit/mobileFirmwareUpgrade.test.ts` and
+`tests/unit/firmwareUpgradeGates.test.ts`.
+
+### 2026-10-06 (later) — one verb, and the phone books too
+
+The first cut put **Schedule…** beside **Upgrade firmware to …** on the card. The operator
+looked at it and asked for one button: "when the user clicks on upgrade, on the upgrade modal is
+a check box to schedule it, then they can put in the date/time and save it" — and then for "the
+same scheduling thing on the mobile page as well". So:
+
+- **Desktop:** the card has ONE verb. Its dialog (`_fwApprovalModalHTML`) carries a "Schedule
+  for later" box under the warning; ticking it reveals Run at + recipients and turns the button
+  into "Schedule upgrade to …". A `blocked` device's card shows the same verb, and its dialog
+  opens with the box ticked and LOCKED (mode `schedule-only`) — the gates refuse a flash now,
+  and a booking re-takes them when due. A device with a pending booking gets no box (the dialog
+  points at the booking); the booking's **Change…** reopens the same dialog in mode `change`.
+- **Phone:** the OS row's confirm sheet (`fwConfirmBodyHtml`) gets the same box with the same
+  three modes, a `blocked` device now shows the Upgrade verb too, and a pending booking sits in
+  the row with Change / Cancel. Same routes, same rung (`assets:write`), primary image only.
+
+Nothing server-side changed: the booking API, the gates and the email are as above.

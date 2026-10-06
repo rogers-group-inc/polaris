@@ -459,12 +459,16 @@ is this device, from this card. On the phone the upgrade lives in the
 asset's OS row instead — see [Mobile and Dash](Mobile-and-Dash#assets-and-networks).
 
 **Scheduling an upgrade for later**
-([rule 93](Business-Rules#rule-93)). Beside **Upgrade firmware to …** is
-**Schedule…**; on a *Blocked* card, where the upgrade-now button is not
-offered, it reads **Schedule upgrade to …** — a device that is down this
-afternoon may be fine at 2 am. It needs the same **Read-Write on Assets**. The
-dialog is the same approval as an upgrade now — the device, the exact image,
-the backup choice, the tick box — plus:
+([rule 93](Business-Rules#rule-93)). There is one button, **Upgrade firmware
+to …**; its dialog — the device, the exact image, the backup choice, the tick
+box — has a **Schedule for later** box under the warning. Leave it clear to
+upgrade now; tick it and the dialog asks for a time and who gets the results,
+and its button becomes **Schedule upgrade to …**. On a *Blocked* card (the
+device is down or behind a down parent right now) the same button opens the
+dialog with **Schedule for later** already ticked and locked — it cannot be
+upgraded now, but a device that is down this afternoon may be fine at 2 am.
+It needs the same **Read-Write on Assets**. Ticking **Schedule for later**
+adds:
 
 - **Run at** — a date and time in your browser's time zone (the dialog names
   it). It must be at least a minute ahead and within a year.
@@ -515,7 +519,8 @@ the asset when Polaris knows its own public address.
 
 Booking, changing, cancelling, and a scheduled upgrade that was not started
 or whose email could not be sent, each write an Event on the asset.
-Scheduling is on the desktop card only; the phone cannot book.
+The phone books, changes and cancels the same way, from the asset's OS row —
+see [Mobile and Dash](Mobile-and-Dash#assets-and-networks).
 
 **Managed by** names the integration that owns this asset's monitoring
 configuration — whose class settings and stored credential it inherits, whose

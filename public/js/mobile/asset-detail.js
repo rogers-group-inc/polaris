@@ -2381,15 +2381,18 @@
   }
 
   // ─── Firmware upgrade (business rule 87) ────────────────────────────────
-  // A switch or access point's OS / Firmware row carries the upgrade verb —
+  // A switch, access point or FortiGate's OS / Firmware row carries the upgrade verb —
   // the desktop Firmware card, cut down to what a phone needs: the button
   // when the Repository holds a newer image and the operator may flash
   // (assets:write, rule 43(g)), a stacked confirm sheet naming the device and
   // the exact image (never window.confirm — suppressed in some installed
   // PWAs; canon-mobile), then "Upgrade started" and live progress polled from
-  // the per-asset run read. The PRIMARY image only: choosing the model's
-  // backup, the run history and its log stay on the desktop card. The
-  // Repository itself is desktop-only.
+  // the per-asset run read. The same sheet books the flash for later — a
+  // "Schedule for later" box reveals the time and the results recipients
+  // (business rule 93) — and a pending booking sits on the row with Change /
+  // Cancel. The PRIMARY image only: choosing the model's backup, the run
+  // history and its log stay on the desktop card. The Repository itself is
+  // desktop-only.
   var FW_ELIGIBLE = { "switch": true, "access_point": true, "firewall": true };
   var FW_POLL_MS = 3000;
   var FW_STAGE_LABELS = {
@@ -2439,16 +2442,240 @@
   function fwSlotHtml(fw) {
     if (!fw || fw.error) return "";
     if (fw.state === "running" && fw.activeRun) return fwRunningHtml(fw.activeRun);
-    if (fw.state === "available" && fw.image) {
+    var out = "";
+    // Blocked is about NOW: the same verb opens the sheet with "Schedule for
+    // later" ticked and locked, because a booking re-takes every gate when it
+    // is due (business rule 93).
+    var offered = fw.image && (fw.state === "available" || fw.state === "blocked");
+    if (offered && !fw.schedule) {
       if (!canFlashFirmware()) {
-        return '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(fw.image.versionLabel) + ' available — upgrading needs Read-Write on Assets</div>';
+        out += '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(fw.image.versionLabel) + ' available — upgrading needs Read-Write on Assets</div>';
+      } else {
+        out += '<button class="btn btn-tonal" id="asset-fw-upgrade-btn" style="margin-top:6px;">Upgrade to ' + escapeHtml(fw.image.versionLabel) + '</button>';
+        if (fw.state === "blocked") out += '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(fw.reason || "Not right now") + ' It can be scheduled for later.</div>';
       }
-      return '<button class="btn btn-tonal" id="asset-fw-upgrade-btn" style="margin-top:6px;">Upgrade to ' + escapeHtml(fw.image.versionLabel) + '</button>';
+    } else if (offered && fw.state === "available" && fw.schedule && canFlashFirmware()) {
+      out += '<button class="btn btn-tonal" id="asset-fw-upgrade-btn" style="margin-top:6px;">Upgrade to ' + escapeHtml(fw.image.versionLabel) + ' now</button>';
     }
-    if (fw.state === "pending-discovery") {
-      return '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(fw.reason || "Upgraded — the record updates on the next discovery") + '</div>';
+    if (fw.schedule) out += fwScheduleLineHtml(fw.schedule);
+    if (!out && fw.state === "pending-discovery") {
+      out = '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(fw.reason || "Upgraded — the record updates on the next discovery") + '</div>';
     }
-    return "";
+    return out;
+  }
+
+  /** A pending booking on the OS row: when, to what, and Change / Cancel at assets:write. */
+  function fwScheduleLineHtml(sched) {
+    return '<div id="asset-fw-schedule" style="margin-top:6px;font-size:13px;">'
+      + '<div><strong>Scheduled:</strong> ' + escapeHtml(sched.toVersion) + ' at ' + escapeHtml(fwWhenText(sched.scheduledFor)) + '</div>'
+      + '<div class="muted" style="font-size:12px;">Results to ' + escapeHtml((sched.notifyEmails || []).join(", ")) + '</div>'
+      + (sched.error ? '<div style="font-size:12px;color:var(--md-warning);">Waiting: ' + escapeHtml(sched.error) + '</div>' : '')
+      + (canFlashFirmware()
+        ? '<div style="display:flex;gap:8px;margin-top:6px;">'
+          + '<button class="btn btn-outlined" id="asset-fw-sched-change">Change</button>'
+          + '<button class="btn btn-outlined" id="asset-fw-sched-cancel">Cancel</button></div>'
+        : '')
+      + '</div>';
+  }
+
+  /** "YYYY-MM-DDTHH:MM" in the phone's zone — a datetime-local input's value. Pure. */
+  function fwLocalInputValue(d) {
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  /** "Tue, Oct 7, 2:00 AM (in 9 h)". Pure. */
+  function fwWhenText(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    var txt = d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    var mins = Math.round((d.getTime() - Date.now()) / 60000);
+    var rel = mins <= 0 ? "due now" : mins < 60 ? "in " + mins + " min" : mins < 48 * 60 ? "in " + Math.round(mins / 60) + " h" : "in " + Math.round(mins / 1440) + " days";
+    return txt + " (" + rel + ")";
+  }
+
+  function fwParseEmails(text) {
+    return String(text || "").split(/[\s,;]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+
+  function loadFirmwareRow(id, asset) {
+    if (!FW_ELIGIBLE[asset.assetType]) return;
+    api.assets.firmwareUpgrade(id).then(function (fw) {
+      if (_openId !== id) return;
+      paintFirmwareSlot(asset, fw);
+    }).catch(function () { /* the row keeps its version; the desktop card explains */ });
+  }
+
+  function paintFirmwareSlot(asset, fw) {
+    var slot = document.getElementById("asset-fw-slot");
+    if (!slot) return;
+    slot.innerHTML = fwSlotHtml(fw);
+    var btn = document.getElementById("asset-fw-upgrade-btn");
+    if (btn) btn.addEventListener("click", function () { startFirmwareFlow(asset, fw, btn, null); });
+    var change = document.getElementById("asset-fw-sched-change");
+    if (change && fw.schedule) change.addEventListener("click", function () { startFirmwareFlow(asset, fw, change, fw.schedule); });
+    var cancel = document.getElementById("asset-fw-sched-cancel");
+    if (cancel && fw.schedule) cancel.addEventListener("click", function () { cancelFirmwareSchedule(asset, fw.schedule, cancel); });
+    if (fw && fw.state === "running" && fw.activeRun) watchFirmwareRun(asset.id, fw.activeRun.id);
+  }
+
+  /**
+   * Upgrade now, book it for later, or change a booking — one sheet. `existing`
+   * is the pending booking when changing it. The image is always the
+   * PRIMARY on the phone (a booking keeps the image it was made with).
+   */
+  function startFirmwareFlow(asset, fw, btn, existing) {
+    var mode = existing ? "change" : (fw.state === "blocked" ? "schedule-only" : (fw.schedule ? "now-only" : "choose"));
+    var defaultsP = (mode === "choose" || mode === "schedule-only") && api.assets.firmwareScheduleDefaults
+      ? api.assets.firmwareScheduleDefaults(asset.id).catch(function () { return null; })
+      : Promise.resolve(null);
+    defaultsP.then(function (defaults) {
+      return confirmFirmwareUpgrade(asset, fw, { mode: mode, existing: existing, defaults: defaults });
+    }).then(function (choice) {
+      if (!choice || _openId !== asset.id) return;
+      btn.disabled = true;
+      if (choice.schedule) {
+        var body = { scheduledFor: choice.schedule.scheduledFor, notifyEmails: choice.schedule.notifyEmails };
+        var call = existing
+          ? api.assets.updateFirmwareSchedule(asset.id, existing.id, body)
+          : api.assets.scheduleFirmwareUpgrade(asset.id, Object.assign({ imageId: fw.image.id }, body));
+        call.then(function () {
+          if (_openId !== asset.id) return;
+          PolarisTabs.showSnackbar(existing ? "Scheduled upgrade changed" : "Upgrade scheduled for " + new Date(body.scheduledFor).toLocaleString());
+          loadFirmwareRow(asset.id, asset);
+        }).catch(function (err) {
+          btn.disabled = false;
+          PolarisTabs.showSnackbar(err && err.message ? err.message : "Could not save the schedule", { error: true });
+        });
+        return;
+      }
+      api.assets.startFirmwareUpgrade(asset.id, { imageId: fw.image.id }).then(function (res) {
+        if (_openId !== asset.id) return;
+        PolarisTabs.showSnackbar("Upgrade started");
+        var slot = document.getElementById("asset-fw-slot");
+        if (slot) slot.innerHTML = fwRunningHtml(res && res.run);
+        if (res && res.run) watchFirmwareRun(asset.id, res.run.id);
+      }).catch(function (err) {
+        btn.disabled = false;
+        PolarisTabs.showSnackbar(err && err.message ? err.message : "Could not start the upgrade", { error: true });
+      });
+    });
+  }
+
+  function cancelFirmwareSchedule(asset, sched, btn) {
+    btn.disabled = true;
+    api.assets.cancelFirmwareSchedule(asset.id, sched.id).then(function () {
+      PolarisTabs.showSnackbar("Scheduled upgrade cancelled");
+      if (_openId === asset.id) loadFirmwareRow(asset.id, asset);
+    }).catch(function (err) {
+      btn.disabled = false;
+      PolarisTabs.showSnackbar(err && err.message ? err.message : "Could not cancel the scheduled upgrade", { error: true });
+    });
+  }
+
+  /**
+   * The sheet's body. Pure, for the tests. `opts.mode`: "choose" (upgrade now,
+   * or tick "Schedule for later"), "schedule-only" (blocked now — the box is
+   * ticked and locked), "change" (a booking's time and recipients), "now-only"
+   * (a booking already exists, so no second one is offered).
+   */
+  function fwConfirmBodyHtml(asset, fw, opts) {
+    opts = opts || {};
+    var mode = opts.mode || "choose";
+    var existing = opts.existing || null;
+    var img = fw.image;
+    var cred = fw.credential;
+    function line(k, v) {
+      return '<div class="kv-row"><span class="k">' + escapeHtml(k) + '</span><span class="v">' + v + '</span></div>';
+    }
+    var when = existing ? new Date(existing.scheduledFor) : (function () { var d = new Date(Date.now() + 60 * 60000); d.setMinutes(0, 0, 0); return d; })();
+    var emails = existing ? (existing.notifyEmails || []) : ((opts.defaults && opts.defaults.notifyEmails) || []);
+    var fields = ''
+      + (fw.blockers && fw.blockers.length ? '<p style="margin:0 0 8px;font-size:13px;color:var(--md-warning);">Right now ' + escapeHtml(fw.blockers.join("; ")) + '. That is checked again when it is due.</p>' : '')
+      + '<label style="display:block;font-size:13px;margin-bottom:4px;" for="fw-sched-when">Run at (your time)</label>'
+      + '<input type="datetime-local" id="fw-sched-when" class="input" style="width:100%;" min="' + escapeHtml(fwLocalInputValue(new Date(Date.now() + 2 * 60000))) + '" value="' + escapeHtml(fwLocalInputValue(when)) + '">'
+      + '<label style="display:block;font-size:13px;margin:10px 0 4px;" for="fw-sched-emails">Email the results to</label>'
+      + '<input type="email" id="fw-sched-emails" class="input" style="width:100%;" multiple placeholder="you@example.com" value="' + escapeHtml(emails.join(", ")) + '">'
+      + '<p style="margin:6px 0 0;font-size:12px;color:var(--md-on-surface-variant);">Not started if Polaris only gets to it more than 15 minutes late; waits up to 2 hours for an upgrade on a related device.</p>';
+    var schedule;
+    if (mode === "change") {
+      schedule = '<div id="fw-sched-fields" style="margin-top:12px;">' + fields + '</div>';
+    } else if (mode === "now-only") {
+      schedule = '<p style="margin:12px 0 0;font-size:13px;color:var(--md-on-surface-variant);">An upgrade is already scheduled — change or cancel it from the OS row.</p>';
+    } else {
+      var locked = mode === "schedule-only";
+      schedule = '<label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:14px;">'
+        + '<input type="checkbox" id="fw-confirm-schedule"' + (locked ? ' checked disabled' : '') + '> Schedule for later</label>'
+        + '<div id="fw-sched-fields" style="margin-top:8px;' + (locked ? '' : 'display:none;') + '">' + fields + '</div>';
+    }
+    var toVersion = img ? img.versionLabel : (existing ? existing.toVersion : "");
+    return ''
+      + '<div class="sheet-handle"></div>'
+      + '<h3 class="sheet-title" style="margin:0 0 8px;">' + (existing ? "Change scheduled upgrade" : "Upgrade firmware?") + '</h3>'
+      + line("Device", escapeHtml(asset.hostname || asset.ipAddress || asset.id))
+      + (asset.serialNumber ? line("Serial", '<span class="mono">' + escapeHtml(asset.serialNumber) + '</span>') : '')
+      + line("Running", escapeHtml(fw.current || asset.osVersion || "unknown"))
+      + line("Upgrade to", '<strong>' + escapeHtml(toVersion) + '</strong>' + (img && img.platform ? ' (' + escapeHtml(img.platform) + ')' : ''))
+      + (img ? line("Image", '<span class="mono" style="word-break:break-all;">' + escapeHtml(img.filename || "") + '</span>') : '')
+      + (cred ? line("Login", escapeHtml(cred.credentialName)) : '')
+      + '<p style="margin:12px 0 0;color:var(--md-on-surface-variant);font-size:14px;line-height:20px;">'
+      + (asset.assetType === "firewall"
+        ? 'The FortiGate reboots and is unreachable for several minutes — everything behind it goes with it. Polaris does not check Fortinet’s supported upgrade path. '
+        : 'The device reboots and is unreachable for a few minutes. ')
+      + 'Polaris holds its alerts, and the alerts of everything behind it, while it works. Do not power-cycle it while it is flashing.</p>'
+      + schedule
+      + '<div style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">'
+      + '  <button id="fw-confirm-cancel" class="btn btn-outlined">Cancel</button>'
+      + '  <button id="fw-confirm-ok" class="btn btn-filled">' + (existing ? "Save" : (mode === "schedule-only" ? "Schedule" : "Upgrade")) + '</button>'
+      + '</div>';
+  }
+
+  // The sheet — a stacked .sheet at 1010/1011, the shape of confirmClear in
+  // mobile/alerts.js. Resolves { now: true }, { schedule: { scheduledFor,
+  // notifyEmails } }, or false on Cancel / scrim / close / the asset sheet
+  // being dismissed underneath it.
+  var _fwConfirmResolve = null;
+  function confirmFirmwareUpgrade(asset, fw, opts) {
+    closeFirmwareConfirm(false);
+    opts = opts || {};
+    return new Promise(function (resolve) {
+      _fwConfirmResolve = resolve;
+      var scrim = document.createElement("div");
+      scrim.className = "scrim";
+      scrim.id = "fw-confirm-scrim";
+      scrim.style.zIndex = "1010";
+      var sheet = document.createElement("div");
+      sheet.className = "sheet";
+      sheet.id = "fw-confirm-sheet";
+      sheet.style.zIndex = "1011";
+      sheet.innerHTML = fwConfirmBodyHtml(asset, fw, opts);
+      document.body.appendChild(scrim);
+      document.body.appendChild(sheet);
+      var later = sheet.querySelector("#fw-confirm-schedule");
+      var fields = sheet.querySelector("#fw-sched-fields");
+      var ok = sheet.querySelector("#fw-confirm-ok");
+      var whenEl = sheet.querySelector("#fw-sched-when");
+      var emailsEl = sheet.querySelector("#fw-sched-emails");
+      function scheduling() { return opts.mode === "change" || !!(later && later.checked); }
+      function sync() {
+        if (later && fields) fields.style.display = later.checked ? "" : "none";
+        if (!opts.existing) ok.textContent = scheduling() ? "Schedule" : "Upgrade";
+        ok.disabled = scheduling() && !(whenEl && whenEl.value && emailsEl && fwParseEmails(emailsEl.value).length > 0);
+      }
+      if (later) later.addEventListener("change", sync);
+      if (whenEl) whenEl.addEventListener("input", sync);
+      if (emailsEl) emailsEl.addEventListener("input", sync);
+      scrim.addEventListener("click", function () { closeFirmwareConfirm(false); });
+      sheet.querySelector("#fw-confirm-cancel").addEventListener("click", function () { closeFirmwareConfirm(false); });
+      ok.addEventListener("click", function () {
+        if (!scheduling()) { closeFirmwareConfirm({ now: true }); return; }
+        var when = new Date(whenEl.value); // datetime-local parses as the phone's local time
+        if (isNaN(when.getTime())) { PolarisTabs.showSnackbar("Pick a date and time", { error: true }); return; }
+        closeFirmwareConfirm({ schedule: { scheduledFor: when.toISOString(), notifyEmails: fwParseEmails(emailsEl.value) } });
+      });
+      PolarisTabs.attachSwipeToDismiss(sheet, function () { closeFirmwareConfirm(false); });
+      sync();
+    });
   }
 
   function fwRunningHtml(run) {
@@ -2466,86 +2693,6 @@
       return '<div style="font-size:13px;margin-top:6px;color:var(--md-warning);">The device came back but its version couldn’t be confirmed — check it</div>';
     }
     return '<div style="font-size:13px;margin-top:6px;color:var(--md-error);">Upgrade failed' + (run.error ? ': ' + escapeHtml(run.error) : '') + '</div>';
-  }
-
-  function loadFirmwareRow(id, asset) {
-    if (!FW_ELIGIBLE[asset.assetType]) return;
-    api.assets.firmwareUpgrade(id).then(function (fw) {
-      if (_openId !== id) return;
-      paintFirmwareSlot(asset, fw);
-    }).catch(function () { /* the row keeps its version; the desktop card explains */ });
-  }
-
-  function paintFirmwareSlot(asset, fw) {
-    var slot = document.getElementById("asset-fw-slot");
-    if (!slot) return;
-    slot.innerHTML = fwSlotHtml(fw);
-    var btn = document.getElementById("asset-fw-upgrade-btn");
-    if (btn) btn.addEventListener("click", function () { startFirmwareFlow(asset, fw, btn); });
-    if (fw && fw.state === "running" && fw.activeRun) watchFirmwareRun(asset.id, fw.activeRun.id);
-  }
-
-  function startFirmwareFlow(asset, fw, btn) {
-    confirmFirmwareUpgrade(asset, fw).then(function (ok) {
-      if (!ok || _openId !== asset.id) return;
-      btn.disabled = true;
-      api.assets.startFirmwareUpgrade(asset.id, { imageId: fw.image.id }).then(function (res) {
-        if (_openId !== asset.id) return;
-        PolarisTabs.showSnackbar("Upgrade started");
-        var slot = document.getElementById("asset-fw-slot");
-        if (slot) slot.innerHTML = fwRunningHtml(res && res.run);
-        if (res && res.run) watchFirmwareRun(asset.id, res.run.id);
-      }).catch(function (err) {
-        btn.disabled = false;
-        PolarisTabs.showSnackbar(err && err.message ? err.message : "Could not start the upgrade", { error: true });
-      });
-    });
-  }
-
-  // The confirm — a stacked .sheet at 1010/1011, the shape of confirmClear in
-  // mobile/alerts.js. Resolves true on Upgrade, false on Cancel / scrim /
-  // close / the asset sheet being dismissed underneath it.
-  var _fwConfirmResolve = null;
-  function confirmFirmwareUpgrade(asset, fw) {
-    closeFirmwareConfirm(false);
-    return new Promise(function (resolve) {
-      _fwConfirmResolve = resolve;
-      var img = fw.image;
-      var cred = fw.credential;
-      function line(k, v) {
-        return '<div class="kv-row"><span class="k">' + escapeHtml(k) + '</span><span class="v">' + v + '</span></div>';
-      }
-      var scrim = document.createElement("div");
-      scrim.className = "scrim";
-      scrim.id = "fw-confirm-scrim";
-      scrim.style.zIndex = "1010";
-      var sheet = document.createElement("div");
-      sheet.className = "sheet";
-      sheet.id = "fw-confirm-sheet";
-      sheet.style.zIndex = "1011";
-      sheet.innerHTML = ''
-        + '<div class="sheet-handle"></div>'
-        + '<h3 class="sheet-title" style="margin:0 0 8px;">Upgrade firmware?</h3>'
-        + line("Device", escapeHtml(asset.hostname || asset.ipAddress || asset.id))
-        + (asset.serialNumber ? line("Serial", '<span class="mono">' + escapeHtml(asset.serialNumber) + '</span>') : '')
-        + line("Running", escapeHtml(fw.current || asset.osVersion || "unknown"))
-        + line("Upgrade to", '<strong>' + escapeHtml(img.versionLabel) + '</strong>' + (img.platform ? ' (' + escapeHtml(img.platform) + ')' : ''))
-        + line("Image", '<span class="mono" style="word-break:break-all;">' + escapeHtml(img.filename || "") + '</span>')
-        + (cred ? line("Login", escapeHtml(cred.credentialName)) : '')
-        + '<p style="margin:12px 0 0;color:var(--md-on-surface-variant);font-size:14px;line-height:20px;">'
-        + 'The device reboots and is unreachable for a few minutes. Polaris holds its alerts, and the alerts of everything behind it, while it works. '
-        + 'Do not power-cycle it while it is flashing.</p>'
-        + '<div style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">'
-        + '  <button id="fw-confirm-cancel" class="btn btn-outlined">Cancel</button>'
-        + '  <button id="fw-confirm-ok" class="btn btn-filled">Upgrade</button>'
-        + '</div>';
-      document.body.appendChild(scrim);
-      document.body.appendChild(sheet);
-      scrim.addEventListener("click", function () { closeFirmwareConfirm(false); });
-      sheet.querySelector("#fw-confirm-cancel").addEventListener("click", function () { closeFirmwareConfirm(false); });
-      sheet.querySelector("#fw-confirm-ok").addEventListener("click", function () { closeFirmwareConfirm(true); });
-      PolarisTabs.attachSwipeToDismiss(sheet, function () { closeFirmwareConfirm(false); });
-    });
   }
 
   function closeFirmwareConfirm(val) {

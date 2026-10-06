@@ -46,6 +46,11 @@ let runs: any[];
 const firmwareUpgrade = vi.fn(async () => availability);
 const startFirmwareUpgrade = vi.fn(async () => ({ run: { id: "run-1", status: "queued", stage: null, progress: null, toVersion: IMAGE.versionLabel } }));
 const firmwareUpgradeRun = vi.fn(async () => ({ run: runs.length > 1 ? runs.shift() : runs[0] }));
+// Scheduled upgrades (business rule 93).
+const firmwareScheduleDefaults = vi.fn(async () => ({ notifyEmails: ["me@example.com"] }));
+const scheduleFirmwareUpgrade = vi.fn(async (_id: string, body: any) => ({ schedule: { id: "sch-1", ...body } }));
+const updateFirmwareSchedule = vi.fn(async (_id: string, _sid: string, body: any) => ({ schedule: { id: "sch-1", ...body } }));
+const cancelFirmwareSchedule = vi.fn(async () => ({ schedule: { id: "sch-1", status: "cancelled" } }));
 
 let perms: Record<string, string>;
 const flush = async () => { for (let i = 0; i < 6; i++) await vi.advanceTimersByTimeAsync(0); };
@@ -58,7 +63,10 @@ function boot() {
   g.PolarisMobile = { user: () => ({ permissions: perms }) };
   g.mobileFormatDate = (s: any) => String(s ?? "");
   g.timeAgo = () => "1m ago";
-  const known: Record<string, any> = { get: async (id: string) => ASSETS[id], firmwareUpgrade, startFirmwareUpgrade, firmwareUpgradeRun };
+  const known: Record<string, any> = {
+    get: async (id: string) => ASSETS[id], firmwareUpgrade, startFirmwareUpgrade, firmwareUpgradeRun,
+    firmwareScheduleDefaults, scheduleFirmwareUpgrade, updateFirmwareSchedule, cancelFirmwareSchedule,
+  };
   g.api = { assets: new Proxy(known, { get: (t, k: string) => (k in t ? t[k] : async () => ({})) }) };
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
@@ -78,6 +86,9 @@ beforeEach(() => {
   firmwareUpgrade.mockClear();
   startFirmwareUpgrade.mockClear();
   firmwareUpgradeRun.mockClear();
+  scheduleFirmwareUpgrade.mockClear();
+  updateFirmwareSchedule.mockClear();
+  cancelFirmwareSchedule.mockClear();
   perms = { assets: "write" };
   availability = { state: "available", available: true, current: "S124FF-v7.6.6-build1137", image: IMAGE, credential: { credentialName: "FortiSwitch HTTP", scope: "assetType" } };
   runs = [{ id: "run-1", status: "running", stage: "deploying", progress: { erase: 100, write: 46.4, verify: 0 }, toVersion: IMAGE.versionLabel }];
@@ -210,6 +221,111 @@ describe("dismissing the sheet", () => {
     await flush();
     await vi.advanceTimersByTimeAsync(12000); await flush();
     expect(firmwareUpgradeRun).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Scheduled upgrades (business rule 93) — the same sheet, a box to book it ─
+describe("Schedule for later", () => {
+  const box = () => document.getElementById("fw-confirm-schedule") as HTMLInputElement | null;
+  const okBtn = () => document.getElementById("fw-confirm-ok") as HTMLButtonElement;
+  const booking = (over: Record<string, unknown> = {}) => ({
+    id: "sch-1", imageId: IMAGE.id, toVersion: IMAGE.versionLabel, scheduledFor: new Date(Date.now() + 9 * 3_600_000).toISOString(),
+    notifyEmails: ["ops@example.com"], status: "pending", error: null, createdBy: "alice", ...over,
+  });
+
+  it("the sheet has an unticked box; ticking it reveals the time and the pre-filled recipient and makes the verb Schedule", async () => {
+    await openAsset("sw");
+    upgradeBtn()!.click();
+    await flush();
+    expect(box()!.checked).toBe(false);
+    const fields = document.getElementById("fw-sched-fields") as HTMLElement;
+    expect(fields.style.display).toBe("none");
+    expect(text(okBtn())).toBe("Upgrade");
+    box()!.click();
+    await flush();
+    expect(fields.style.display).toBe("");
+    expect(text(okBtn())).toBe("Schedule");
+    expect((document.getElementById("fw-sched-emails") as HTMLInputElement).value).toBe("me@example.com");
+    expect((document.getElementById("fw-sched-when") as HTMLInputElement).value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+  });
+
+  it("Schedule books the offered image for the chosen time — and starts nothing", async () => {
+    await openAsset("sw");
+    upgradeBtn()!.click();
+    await flush();
+    box()!.click();
+    (document.getElementById("fw-sched-when") as HTMLInputElement).value = "2030-01-02T03:30";
+    okBtn().click();
+    await flush();
+    expect(startFirmwareUpgrade).not.toHaveBeenCalled();
+    expect(scheduleFirmwareUpgrade).toHaveBeenCalledWith("sw", { imageId: IMAGE.id, scheduledFor: new Date("2030-01-02T03:30").toISOString(), notifyEmails: ["me@example.com"] });
+    expect(g.PolarisTabs.showSnackbar).toHaveBeenCalledWith(expect.stringContaining("Upgrade scheduled for"));
+  });
+
+  it("no recipient = the Schedule verb stays off", async () => {
+    await openAsset("sw");
+    upgradeBtn()!.click();
+    await flush();
+    box()!.click();
+    const emails = document.getElementById("fw-sched-emails") as HTMLInputElement;
+    emails.value = "";
+    emails.dispatchEvent(new Event("input"));
+    expect(okBtn().disabled).toBe(true);
+  });
+
+  it("blocked right now: the Upgrade verb still shows, and the sheet opens with the box ticked and locked", async () => {
+    availability = { ...availability, state: "blocked", available: false, reason: "7.6.8 build1164 is available, but the device is down.", blockers: ["the device is down"] };
+    await openAsset("sw");
+    expect(text(osRow())).toContain("It can be scheduled for later.");
+    upgradeBtn()!.click();
+    await flush();
+    expect(box()!.checked).toBe(true);
+    expect(box()!.disabled).toBe(true);
+    expect(text(okBtn())).toBe("Schedule");
+    expect(text(confirmSheet())).toContain("Right now the device is down");
+  });
+
+  it("a pending booking sits on the row with Change and Cancel; Cancel cancels it", async () => {
+    availability = { ...availability, schedule: booking() };
+    await openAsset("sw");
+    expect(text(document.getElementById("asset-fw-schedule"))).toContain("Scheduled: 7.6.8 build1164 at");
+    expect(text(document.getElementById("asset-fw-schedule"))).toContain("Results to ops@example.com");
+    (document.getElementById("asset-fw-sched-cancel") as HTMLButtonElement).click();
+    await flush();
+    expect(cancelFirmwareSchedule).toHaveBeenCalledWith("sw", "sch-1");
+  });
+
+  it("Change opens the sheet on the booking's own fields and saves to it", async () => {
+    availability = { ...availability, schedule: booking({ scheduledFor: "2030-01-02T08:30:00Z" }) };
+    await openAsset("sw");
+    (document.getElementById("asset-fw-sched-change") as HTMLButtonElement).click();
+    await flush();
+    expect(text(confirmSheet()!.querySelector(".sheet-title"))).toBe("Change scheduled upgrade");
+    expect(box()).toBeNull();
+    expect((document.getElementById("fw-sched-emails") as HTMLInputElement).value).toBe("ops@example.com");
+    okBtn().click();
+    await flush();
+    expect(updateFirmwareSchedule).toHaveBeenCalledWith("sw", "sch-1", expect.objectContaining({ notifyEmails: ["ops@example.com"] }));
+    expect(scheduleFirmwareUpgrade).not.toHaveBeenCalled();
+  });
+
+  it("with a booking pending, Upgrade now offers no second booking", async () => {
+    availability = { ...availability, schedule: booking() };
+    await openAsset("sw");
+    expect(text(upgradeBtn())).toBe("Upgrade to 7.6.8 build1164 now");
+    upgradeBtn()!.click();
+    await flush();
+    expect(box()).toBeNull();
+    expect(text(confirmSheet())).toContain("already scheduled");
+  });
+
+  it("at assets:read the booking is shown without Change or Cancel", async () => {
+    perms = { assets: "read" };
+    availability = { ...availability, schedule: booking() };
+    await openAsset("sw");
+    expect(document.getElementById("asset-fw-schedule")).not.toBeNull();
+    expect(document.getElementById("asset-fw-sched-change")).toBeNull();
+    expect(document.getElementById("asset-fw-sched-cancel")).toBeNull();
   });
 });
 
