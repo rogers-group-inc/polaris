@@ -234,10 +234,39 @@ refused) and the already-current check. The image goes to `monitor/system/firmwa
 (`source=upload`) as streamed multipart; a non-auth refusal is retried ONCE as JSON with
 `file_content` base64-encoded on the fly (`deviceHttp.ts → Base64Encode`, Content-Length
 precomputed by `base64Length`) — no 330 MB buffer. A connection dropped after the whole body
-went counts as taken: the gate reboots as soon as it has written the image. Every guess —
-multipart acceptance, the FW marker + `FG…` platform token in a FortiGate `.out` header
-(`utils/firmwareVersion.ts → isFortiGateSerial`; FortiGate-VM excluded, its serial prefix is
-a licence tier), the logincheck cookie names — is unvalidated and logged as such.
+went counts as taken: the gate reboots as soon as it has written the image.
+
+**The lab run, same day (2026-10-06).** The operator put `FGT_61F-v8.0.1.F-build0245-FORTINET.out`
+(99.7 MB) on the workstation and asked for the two lab spokes to be upgraded, one through the
+API token and one through an admin login — FortiGate 61F, FortiOS 7.6.7 build3704 → 8.0.1
+build245, driven by the engine directly (not through a Polaris stack). What it settled:
+
+- **The header guess held.** A FortiGate `.out` is a gzip stream whose embedded file NAME is
+  the token — `FGT61F-8.00-FW-build0245-260909-patch01-F-260421` — inside the first 512 bytes,
+  so `parseFortinetImageHeader` reads platform `FGT61F`, 8.0.1 build 245, family `firewall`,
+  unchanged, and the platform equals both spokes' serial prefix.
+- **Multipart is accepted.** Both gates took the streamed multipart upload (~7 s for 99.7 MB);
+  the JSON-base64 retry never fired, so it remains unproven on hardware.
+- **The token path worked first time:** upload answered at 15 s, the gate stopped answering by
+  46 s, and answered on v8.0.1 build245 at 274 s.
+- **The login path was WRONG, twice.** On 7.6.7, `POST /logincheck` answers 200 with the
+  (gzipped) login page and sets no cookie whatever the password — the browser login moved to
+  `POST /api/v2/authentication`, JSON `{ username, password }` (found by reading the gate's own
+  `/login/main.js`; `secretkey` is refused with LOGIN_FAILED). The verdict is the body's
+  `status_message`: LOGIN_FAILED still sets `session_key_<port>_<hash>` and
+  `ccsrf_token_<port>_<hash>` cookies, so "a CSRF cookie was issued" — the old success test —
+  would have passed a failed login. And the cookie is `ccsrf_token_…`, which the original
+  `/^ccsrftoken/` never matched (the gate names it in `GET /api/v2/service/login-config` →
+  `ccsrf_token_cookie_name`). Logout is `DELETE /api/v2/authentication`; it did not require the
+  CSRF header, the firmware POST was sent with it and was accepted. The engine now tries the
+  JSON login first and falls back to `/logincheck` only when no JSON verdict comes back (an older
+  build answers an unknown `/api/v2` path with 401 or 404, which says nothing about the password).
+  `deviceHttp.ts → decodeBody` inflates gzip answers, which FortiOS sends unasked.
+- **The login path then worked end to end on SPK2:** upload answered at 16 s, down by 47 s, the
+  first verify at 275 s met "socket hang up" (the web server was up before the REST API), the
+  retry 20 s later read v8.0.1 build245 — `verifyRetries` earning its keep.
+- **Still unproven:** the `/logincheck` fallback on a pre-7.4 gate, the base64 retry, HA refusal
+  against a real cluster, and any of it run through Polaris itself (holds, the card, the run row).
 
 **HA members are refused twice.** `firmwareUpgradeService.ts → haClusterOf` reads
 `fortinetTopology.haMode` / `haRole` and marks the card `unsupported` and refuses at start and

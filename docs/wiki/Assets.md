@@ -419,8 +419,8 @@ platform and click **Approve and upgrade**.
 behind the gate goes down with it for several minutes, and that Polaris does
 **not** check Fortinet's supported upgrade path — only that the image is
 newer and fits the gate's platform — so choosing an image that is a supported
-step from the running version is up to you. FortiGate upgrades have not yet
-been run against real hardware; see the warning on
+step from the running version is up to you. FortiGate upgrades have only been
+run on lab gates so far; see the warning on
 [Server Settings → Repository](Server-Settings#repository) before using one
 on a production gate. The upgrade signs in to the gate itself (its own admin
 login, a REST API token, or the API token of the integration that discovered

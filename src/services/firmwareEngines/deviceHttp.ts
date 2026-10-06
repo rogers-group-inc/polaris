@@ -26,6 +26,7 @@ import { request as httpRequest } from "node:http";
 import { createReadStream } from "node:fs";
 import { Transform, type Readable, type TransformCallback } from "node:stream";
 import { constants as cryptoConstants } from "node:crypto";
+import { gunzipSync } from "node:zlib";
 import { randomBytes } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 
@@ -124,6 +125,11 @@ export class DeviceHttpClient {
   postForm(path: string, fields: MultipartField[], timeoutMs = this.opts.commandMs): Promise<DeviceHttpResponse> {
     const body = fields.map((f) => `${encodeURIComponent(f.name)}=${encodeURIComponent(f.value)}`).join("&");
     return this.send("POST", path, Buffer.from(body, "utf8"), { "content-type": "application/x-www-form-urlencoded" }, timeoutMs);
+  }
+
+  /** A bodiless DELETE — the FortiOS 7.4+ logout. */
+  delete(path: string, timeoutMs = this.opts.commandMs): Promise<DeviceHttpResponse> {
+    return this.send("DELETE", path, null, {}, timeoutMs);
   }
 
   /** A JSON POST (FortiOS REST). */
@@ -248,7 +254,7 @@ export class DeviceHttpClient {
           res.on("end", () => resolve({
             status: res.statusCode ?? 0,
             headers: res.headers,
-            body: Buffer.concat(chunks).toString("utf8"),
+            body: decodeBody(Buffer.concat(chunks), res.headers["content-encoding"]),
             location: typeof res.headers.location === "string" ? res.headers.location : null,
           }));
           res.on("error", (err) => reject(new DeviceConnectionError(err.message, (err as NodeJS.ErrnoException).code)));
@@ -311,7 +317,7 @@ export class DeviceHttpClient {
           resolve({
             status: res.statusCode ?? 0,
             headers: res.headers,
-            body: Buffer.concat(chunks).toString("utf8"),
+            body: decodeBody(Buffer.concat(chunks), res.headers["content-encoding"]),
             location: typeof res.headers.location === "string" ? res.headers.location : null,
           });
         });
@@ -346,6 +352,20 @@ export class DeviceHttpClient {
       });
     });
   }
+}
+
+/**
+ * A response body as text. FortiOS 7.6 gzips its HTML answers (the login
+ * page a failed /logincheck returns) even when the request named no
+ * Accept-Encoding; a body that does not inflate is returned as it came.
+ */
+export function decodeBody(raw: Buffer, encoding: string | string[] | undefined): string {
+  const gz = (Array.isArray(encoding) ? encoding.join(",") : encoding ?? "").toLowerCase().includes("gzip")
+    || (raw.length > 2 && raw[0] === 0x1f && raw[1] === 0x8b);
+  if (gz) {
+    try { return gunzipSync(raw).toString("utf8"); } catch { /* not really gzip — fall through */ }
+  }
+  return raw.toString("utf8");
 }
 
 /** Length of the padded base64 encoding of `n` bytes. Pure. */

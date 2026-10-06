@@ -102,9 +102,11 @@ no upgrade action. A FortiGate-managed FortiAP usually has its local web UI
 disabled, and an upgrade attempt will report the device as unreachable — that
 is the AP, not the repository.
 
-**FortiGates — read this first.** FortiGate upgrades are new and have **not
-yet been run against real FortiGate hardware**; try one on a lab or spare gate
-before a production one, and have console access ready. A gate in an **HA
+**FortiGates — read this first.** FortiGate upgrades are new. They have been
+run on two lab FortiGate 61F gates (FortiOS 7.6.7 → 8.0.1, once with an API
+token and once with an admin login), but not yet on older FortiOS builds or
+on any other model; try one on a lab or spare gate before a production one,
+and have console access ready. A gate in an **HA
 cluster is not upgraded** — its Firmware card says so. FortiGate-VM is not
 offered images (its serial does not name a hardware platform). Polaris checks
 that an image is newer and fits the gate's platform; it does **not** check

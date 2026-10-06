@@ -3,7 +3,7 @@
  *
  * The FortiGate upgrade engine (business rule 87) driven against a fake
  * FortiOS on `node:http`. Unlike the switch and AP fakes this one is NOT a
- * transcription of captured traffic — the engine has never met a real gate —
+ * transcription of captured traffic (the 7.6.7 login it mimics WAS seen on a lab 61F) —
  * so what is pinned is the engine's own contract, the part a lab run cannot
  * change: both ways in (an admin login echoing the per-port ccsrftoken, or a
  * bearer token and no login at all), the refusals that must come BEFORE a
@@ -38,6 +38,10 @@ interface FakeGate {
   /** Older builds name it ccsrftoken; 7.2+ suffix it per port. */
   csrfCookie: string;
   issueCsrf: boolean;
+  /** 7.4+: POST /api/v2/authentication exists. false = an older build, /logincheck only. */
+  loginApi: boolean;
+  /** What a correct password answers: LOGIN_SUCCESS, or a prompt (two-factor, disclaimer…). */
+  loginVerdict: string;
   multipartAnswer: { status: number; body: unknown } | null;
   down: boolean;
   afterReboot: { version: string; build: number };
@@ -91,6 +95,19 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const body = await readBody(req);
 
   if (url === "/" && req.method === "GET") { res.writeHead(302, { location: "/login" }); res.end(); return; }
+  // FortiOS 7.4+ (seen on 7.6.7): JSON login whose verdict is in the BODY —
+  // session and CSRF cookies are set on LOGIN_FAILED too.
+  if (url === "/api/v2/authentication" && gate.loginApi) {
+    if (req.method === "DELETE") { json(res, 200, { status: 0, status_message: "HTTP_AUTHD_LOGOUT_SUCCESS" }); return; }
+    const b = JSON.parse(body.toString("utf8") || "{}") as { username?: string; password?: string };
+    const ok = b.username === "admin" && b.password === gate.password;
+    const cookies = ["session_key_443_abc=" + (ok ? "ok" : "nope") + "; path=/"];
+    if (gate.issueCsrf) cookies.push(`${gate.csrfCookie}="csrf-123"; path=/`);
+    if (ok) cookies.push("APSCOOKIE_FGT=ok; path=/");
+    res.writeHead(200, { "set-cookie": cookies, "content-type": "application/json" });
+    res.end(JSON.stringify(ok ? { status: 6, status_message: gate.loginVerdict } : { status: -1, status_message: "LOGIN_FAILED" }));
+    return;
+  }
   if (url === "/logincheck") {
     const form = Object.fromEntries(body.toString("utf8").split("&").map((p) => p.split("=").map(decodeURIComponent)));
     const cookies = [];
@@ -160,7 +177,7 @@ function ctx(over: Partial<FirmwareEngineContext> = {}): FirmwareEngineContext {
 beforeEach(async () => {
   gate = {
     version: "v7.4.4", build: 2662, serial: "FGT60FTK20001234", haMode: "standalone", password: "pw", token: "tok-abc", tokenStatus: 200,
-    csrfCookie: "ccsrftoken_443_3f2a", issueCsrf: true, multipartAnswer: null, down: false,
+    csrfCookie: "ccsrf_token_443_b85b43", issueCsrf: true, loginApi: true, loginVerdict: "LOGIN_SUCCESS", multipartAnswer: null, down: false,
     afterReboot: { version: "v7.6.8", build: 3500 }, calls: [], uploads: [],
   };
   stages = [];
@@ -245,7 +262,35 @@ describe("refusals before a byte of image is sent", () => {
     expect(gate.uploads).toHaveLength(0);
   });
 
-  it("a login that opens no session (wrong password, or an admin with two-factor) — one attempt only", async () => {
+  it("a wrong password is LOGIN_FAILED in the body — despite the cookies — and is tried once, never via /logincheck too", async () => {
+    gate.password = "something-else";
+    const res = await upgradeFortiGate(ctx());
+    expect(res.outcome).toBe("failed");
+    expect(res.error).toMatch(/refused the login \(LOGIN_FAILED\)/);
+    expect(gate.calls.filter((c) => c.includes("/api/v2/authentication"))).toHaveLength(1);
+    expect(gate.calls.some((c) => c.includes("/logincheck"))).toBe(false);
+    expect(gate.uploads).toHaveLength(0);
+  });
+
+  it("an admin the gate wants more from (two-factor, a disclaimer) is refused, naming the prompt", async () => {
+    gate.loginVerdict = "LOGIN_TOKEN_REQUIRED";
+    const res = await upgradeFortiGate(ctx());
+    expect(res.outcome).toBe("failed");
+    expect(res.error).toMatch(/wants more than a password for this admin \(LOGIN_TOKEN_REQUIRED\)/);
+    expect(gate.uploads).toHaveLength(0);
+  });
+
+  it("an older build with no /api/v2/authentication falls back to /logincheck and its ccsrftoken cookie", async () => {
+    gate.loginApi = false;
+    gate.csrfCookie = "ccsrftoken_443_3f2a";
+    const res = await upgradeFortiGate(ctx());
+    expect(res.outcome).toBe("upgraded");
+    expect(gate.uploads[0]!.csrf).toBe("csrf-123");
+    expect(gate.calls.filter((c) => c.includes("/logincheck")).length).toBeGreaterThanOrEqual(1);
+  }, 20_000);
+
+  it("on an older build, a /logincheck that opens no session is refused once", async () => {
+    gate.loginApi = false;
     gate.issueCsrf = false;
     const res = await upgradeFortiGate(ctx());
     expect(res.outcome).toBe("failed");

@@ -2,22 +2,31 @@
  * src/services/firmwareEngines/fortigateHttps.ts — flash a FortiGate through
  * its own FortiOS REST API over HTTPS (business rule 87).
  *
- * Unlike the switch and AP engines this is not a transcription of a captured
- * browser session: it is the documented FortiOS REST surface, and it has NOT
- * yet been run against a real FortiGate. Every step that guesses says so in
- * the run log, so the first lab run shows which guess was wrong.
+ * Lab-validated 2026-10-06 on two FortiGate 61F, FortiOS 7.6.7 build3704 →
+ * 8.0.1 build245 (the FGT_61F-v8.0.1.F-build0245 .out, 99.7 MB): one through
+ * the bearer token, one through the admin login. Both took the MULTIPART
+ * upload (the JSON-base64 retry never fired), went down ~30 s after the
+ * upload answered, and answered on the new version ~4 min later. What that
+ * run corrected is marked "seen on 7.6.7" below. Older login paths and the
+ * base64 retry are still unproven on hardware.
  *
  * Two ways in, chosen by the Repository binding:
  *
  *   token   `Authorization: Bearer <api token>` — the integration's REST API
  *           admin. Its profile needs System read-write (firmware upgrade is
  *           a `sysgrp` write); a 403 says so.
- *   login   POST /logincheck  ajax=1, username, secretkey → an APSCOOKIE_*
- *           session cookie and a `ccsrftoken` cookie (`ccsrftoken_<port>_<id>`
- *           on 7.2+), whose value is echoed as `X-CSRFTOKEN`. An admin with
- *           two-factor, a pre-login disclaimer or a forced password change
- *           gets no CSRF cookie — refused at preflight, never retried (each
- *           attempt counts toward the admin lockout).
+ *   login   POST /api/v2/authentication, JSON { username, password } (7.4+,
+ *           seen on 7.6.7). The verdict is the body's `status_message` —
+ *           LOGIN_SUCCESS, or LOGIN_FAILED with session and CSRF cookies SET
+ *           anyway, so a cookie proves nothing. The CSRF cookie is
+ *           `ccsrf_token_<port>_<hash>` there (`ccsrftoken[_<port>_<id>]` on
+ *           older builds); its value is echoed as `X-CSRFTOKEN`. Logout is
+ *           DELETE on the same path. A build with no such endpoint (401 /
+ *           404 / not JSON) falls back to POST /logincheck ajax=1, username,
+ *           secretkey — which on 7.6.7 answers 200 with the login page and no
+ *           cookies whatever the password. An admin with two-factor, a
+ *           pre-login disclaimer or a forced password change is refused at
+ *           preflight, never retried (each attempt counts toward the lockout).
  *
  *   status   GET  /api/v2/monitor/system/status → envelope serial, version
  *            ("v7.6.7"), build
@@ -41,12 +50,15 @@ import { FirmwareEngineError, sleep } from "./types.js";
 import { DeviceHttpClient, DeviceConnectionError, jsonOrNull, asString, asNumber, type DeviceHttpResponse } from "./deviceHttp.js";
 import { parseFirmwareVersion, compareFirmwareVersions, formatFirmwareVersion } from "../../utils/firmwareVersion.js";
 
+const AUTH_PATH = "/api/v2/authentication";
 const LOGIN_PATH = "/logincheck";
 const LOGOUT_PATH = "/logout";
 const STATUS_PATH = "/api/v2/monitor/system/status";
 const HA_PATH = "/api/v2/cmdb/system/ha";
 const UPGRADE_PATH = "/api/v2/monitor/system/firmware/upgrade";
-const CSRF_COOKIE = /^ccsrftoken/i;
+// `ccsrftoken`, `ccsrftoken_<port>_<id>` (7.2) and `ccsrf_token_<port>_<hash>`
+// (7.6.7 — its /api/v2/service/login-config names it as ccsrf_token_cookie_name).
+const CSRF_COOKIE = /^ccsrf_?token/i;
 /** Two refused logins in the verify loop and it stops — the admin lockout counts them. */
 const MAX_AUTH_REJECTIONS = 2;
 
@@ -76,31 +88,66 @@ function usesToken(ctx: FirmwareEngineContext): boolean {
 
 class AuthRejected extends FirmwareEngineError {}
 
-/** Sign in with the bound admin login. A no-op on the token path. */
+/** Which login a client's session came from, so logout uses the matching call. */
+const loginStyle = new WeakMap<DeviceHttpClient, "api" | "legacy">();
+
+const NO_SESSION_HINT =
+  "wrong username or password, a locked-out admin, or an admin account that needs two-factor, " +
+  "a disclaimer or a password change (use an API token binding instead)";
+
+function echoCsrf(c: DeviceHttpClient): boolean {
+  const csrf = c.cookieMatching(CSRF_COOKIE);
+  if (csrf) c.setHeader("X-CSRFTOKEN", csrf.replace(/^"|"$/g, ""));
+  return !!csrf;
+}
+
+/**
+ * Sign in with the bound admin login. A no-op on the token path.
+ *
+ * FortiOS 7.4+ signs a browser in with POST /api/v2/authentication, JSON
+ * `{ username, password }`, and says whether it worked in the BODY
+ * (`status_message: "LOGIN_SUCCESS"`) — it sets session and CSRF cookies even
+ * on LOGIN_FAILED, so a cookie proves nothing. Seen on a FortiGate 61F, 7.6.7
+ * (2026-10-06), where /logincheck answers 200 with the login page and no
+ * cookies whatever the password. Older builds have no such endpoint (404, or
+ * a non-JSON answer), and fall back to /logincheck.
+ */
 export async function gateLogin(c: DeviceHttpClient, ctx: FirmwareEngineContext, timeoutMs = ctx.timeouts.commandMs): Promise<void> {
   if (usesToken(ctx)) return;
   c.clearSession();
-  const res = await c.postForm(LOGIN_PATH, [
+  const res = await c.postJson(AUTH_PATH, { username: ctx.credential.username, password: ctx.credential.password }, timeoutMs);
+  const j = jsonOrNull(res.body);
+  const verdict = j ? asString(j.status_message) : null;
+  if (res.status === 200 && verdict) {
+    if (verdict === "LOGIN_SUCCESS") {
+      loginStyle.set(c, "api");
+      if (!echoCsrf(c)) throw new FirmwareEngineError("the FortiGate signed the admin in but issued no CSRF cookie", "preflight");
+      return;
+    }
+    if (verdict === "LOGIN_FAILED") throw new AuthRejected(`the FortiGate refused the login (LOGIN_FAILED) — ${NO_SESSION_HINT}`, "preflight");
+    // Two-factor, a disclaimer, a forced password change: a prompt this engine cannot answer.
+    throw new AuthRejected(`the FortiGate wants more than a password for this admin (${verdict}) — use an API token binding, or an admin without two-factor or a pre-login disclaimer`, "preflight");
+  }
+
+  // Pre-7.4: the form login. Only a JSON verdict above decides anything — an
+  // older build answers an unknown /api/v2 path with 401 or 404, which says
+  // nothing about the password.
+  c.clearSession();
+  const legacy = await c.postForm(LOGIN_PATH, [
     { name: "ajax", value: "1" },
     { name: "username", value: ctx.credential.username },
     { name: "secretkey", value: ctx.credential.password },
   ], timeoutMs);
-  if (res.status === 401 || res.status === 403) throw new AuthRejected("the FortiGate rejected the login", "preflight");
-  if (res.status < 200 || res.status >= 400) throw new FirmwareEngineError(`unexpected login answer (${res.status})`, "preflight");
-  const csrf = c.cookieMatching(CSRF_COOKIE);
-  if (!csrf) {
-    throw new AuthRejected(
-      "the FortiGate did not open a session for that login — wrong username or password, a locked-out admin, " +
-      "or an admin account that needs two-factor, a disclaimer or a password change (use an API token binding instead)",
-      "preflight",
-    );
-  }
-  c.setHeader("X-CSRFTOKEN", csrf.replace(/^"|"$/g, ""));
+  if (legacy.status === 401 || legacy.status === 403) throw new AuthRejected("the FortiGate rejected the login", "preflight");
+  if (legacy.status < 200 || legacy.status >= 400) throw new FirmwareEngineError(`unexpected login answer (${legacy.status})`, "preflight");
+  if (!echoCsrf(c)) throw new AuthRejected(`the FortiGate did not open a session for that login — ${NO_SESSION_HINT}`, "preflight");
+  loginStyle.set(c, "legacy");
 }
 
 async function gateLogout(c: DeviceHttpClient, ctx: FirmwareEngineContext): Promise<void> {
   if (usesToken(ctx)) return;
-  await c.postEmpty(LOGOUT_PATH, 5_000).catch(() => undefined);
+  if (loginStyle.get(c) === "api") await c.delete(AUTH_PATH, 5_000).catch(() => undefined);
+  else await c.postEmpty(LOGOUT_PATH, 5_000).catch(() => undefined);
 }
 
 function authMessage(ctx: FirmwareEngineContext, status: number, what: string): string {
