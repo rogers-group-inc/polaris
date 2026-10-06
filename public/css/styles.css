@@ -1720,12 +1720,14 @@ code {
   align-items: center;
   margin-bottom: 1.5rem;
 }
-/* Frozen top bar (Dashboard): the header stays pinned while the widgets scroll,
-   so Add Widgets / Done Editing / search stay reachable. z-index sits above the
-   widgets + their Leaflet panes/controls (~1000) but below the widget picker
-   (1100), gear popover (1200), and the Status Map fullscreen (4000). A blur, not
-   a fill, keeps scrolled content illegible beneath it (see ::before). */
-.page-header-sticky {
+/* Frozen top bar (Dashboard, Server Settings): a wrapper around the page
+   header AND its tab strip, so the title, the actions/search and the tabs all
+   stay pinned while the page scrolls — Add Widgets / Done Editing / search /
+   the next tab stay reachable. z-index sits above the widgets + their Leaflet
+   panes/controls (~1000) but below the widget picker (1100), gear popover
+   (1200), and the Status Map fullscreen (4000). A blur, not a fill, keeps
+   scrolled content illegible beneath it (see ::before). */
+.page-top-sticky {
   position: sticky;
   top: 0;
   z-index: 1050;
@@ -1733,12 +1735,18 @@ code {
      page glow is brightest: an opaque band cut the glow off, and a tinted one
      (tried at 70% of --color-bg-secondary) read as a dark box sitting on it.
      Blur alone is invisible at rest — blurring a smooth gradient changes
-     nothing — and only shows once a widget scrolls under the bar. */
+     nothing — and only shows once content scrolls under the bar. */
   background: transparent;
-  padding: 1rem 0 0.85rem;
+  padding-top: 1rem;
   margin-top: -1rem;
-  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 1.5rem;
 }
+/* Inside the bar the header and the tab strip sit tight; the gap to the
+   content below is the wrapper's margin. The header draws no rule of its own:
+   the tab strip's bottom border is the bar's one line. */
+.page-top-sticky > .page-header { margin-bottom: 0.85rem; }
+.page-top-sticky > .page-tabs,
+.page-top-sticky > .dashboard-tabs { margin-bottom: 0; }
 /* The blur lives on ::before, NOT the bar: a backdrop-filter makes its element
    the backdrop root of everything inside it, so the frosted "Dashboards ▾" menu
    that drops out of this bar would blur only the bar and go clear over the
@@ -1746,7 +1754,7 @@ code {
    behind it to help hide what scrolls past — and WITHOUT that token's
    saturate(): saturating the glow under the bar deepens its colour there, so
    the bar shows as a box again even with no fill. */
-.page-header-sticky::before {
+.page-top-sticky::before {
   content: "";
   position: absolute;
   inset: 0;

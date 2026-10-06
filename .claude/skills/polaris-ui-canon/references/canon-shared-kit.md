@@ -269,7 +269,9 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   place while the blue slides out right). Because the glow is two layers, `body` sets
   `background-repeat` / `background-attachment` as LONGHANDS — in the shorthand, `no-repeat fixed`
   binds to the layer it follows and the other would scroll and tile. A sticky band pinned at the top of the page sits exactly where the
-  glow is brightest, so `.page-header-sticky` is BLURRED and UNFILLED — a bare `blur(20px)`, no
+  glow is brightest, so `.page-top-sticky` (the wrapper that pins a page's header AND its tab
+  strip together — Dashboard, /dash, Server Settings; the header draws no rule of its own, the
+  tab strip's bottom border is the bar's one line) is BLURRED and UNFILLED — a bare `blur(20px)`, no
   tint. A 70% `--color-bg-secondary` tint was tried and rejected on 2026-10-04: it read as a
   dark box sitting on the glow. With no tint the blur can't be seen at rest (blurring a smooth
   gradient changes nothing) and only smears a widget once it scrolls under the bar. It must NOT
