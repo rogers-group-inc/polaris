@@ -57,6 +57,19 @@ open alerts are paused too, not cleared. Only a genuine outage upstream — a
 parent that is actually down — clears a child's alerts (see
 [Dependency Suppression](Dependency-Suppression)).
 
+### Except device-down alerts, which are cleared
+
+A **device down** alert (from an automation on *monitor status is down*) is the
+one kind a window clears instead of pausing. A device that is down during
+planned maintenance is the downtime you announced, so leaving a red down alert
+beside it adds nothing. Within a minute of the window opening, any open down
+alert on the device is cleared, along with down alerts on devices silenced
+behind it. The Events log records each one as cleared by `system:maintenance`.
+No reset actions run, because nothing has recovered. If the device is still
+down after the window ends, a new down alert fires once its automation's
+missed-poll count is reached again. Every other alert on the device stays
+paused, as described above.
+
 ### Discovery must not fight it
 
 Discovery and system writers never write a status over a maintenance asset. The
