@@ -206,6 +206,11 @@
      the band still separates from the body without going opaque. */
   --panel-glass-bg: color-mix(in srgb, var(--color-bg-primary) 50%, transparent);
   --panel-glass-chrome: color-mix(in srgb, var(--color-bg-tertiary) 50%, transparent);
+  /* The slide-over's body glass: thicker than a modal's. A modal is small and
+     centred over a dimmed page; the slide-over is full-height, holds dense
+     key/value rows and a dependency tree, and often opens over a busy page
+     (the Device Map), so at 50% the page underneath competed with its text. */
+  --slideover-glass-bg: color-mix(in srgb, var(--color-bg-primary) 78%, transparent);
   /* Same glass for context menus and button dropdowns, off --color-surface,
      which is the ground those already stood on. Same 50% and the same
      --panel-glass-blur, so a row menu opened over a frosted modal reads as the
@@ -291,6 +296,7 @@
      version in :root. */
   --panel-glass-bg: color-mix(in srgb, var(--color-bg-primary) 40%, transparent);
   --panel-glass-chrome: color-mix(in srgb, var(--color-bg-tertiary) 40%, transparent);
+  --slideover-glass-bg: color-mix(in srgb, var(--color-bg-primary) 70%, transparent);
   --rail-glass-bg: color-mix(in srgb, var(--color-bg-tertiary) 30%, transparent);
   --chip-glass-bg: color-mix(in srgb, var(--color-surface) 55%, transparent);
   --menu-glass-bg: color-mix(in srgb, var(--color-surface) 30%, transparent);
@@ -4996,8 +5002,9 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   width: clamp(520px, 42vw, 1100px);
   /* Frosted on the same terms as .modal — and likewise already transformed
      (the translateX reveal), so the fixed-position popovers inside a
-     slide-over's tables are unaffected. See .modal for the full note. */
-  background: var(--panel-glass-bg);
+     slide-over's tables are unaffected. See .modal for the full note. Its
+     own, thicker glass token — see --slideover-glass-bg in :root. */
+  background: var(--slideover-glass-bg);
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
   border-left: 1px solid var(--color-border);
