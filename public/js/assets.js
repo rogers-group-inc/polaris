@@ -9687,10 +9687,21 @@ function _wirelessBandLabel(band) {
 // amber threshold uses. The full stream badge rather than a bare chip: which
 // transport and credential answered is exactly what an operator asks next when
 // the client list is empty, and the System tab already states it that way.
+// The AP profile (fortinetTopology.profile, the same value as the General
+// tab's AP Profile row) sits between the heading and the badge: it is the
+// controller object that decides these radios and SSIDs, so it belongs next
+// to them. Omitted until a discovery cycle has stamped it.
 function _wirelessStripHTML(asset, si) {
   var assetId = asset && asset.id;
+  var topo = asset && asset.fortinetTopology;
+  var profile = topo && typeof topo === "object" && typeof topo.profile === "string" ? topo.profile : "";
   return _currentStateStripHTML({
     title: "Wireless",
+    suffixHTML: profile
+      ? '<span style="font-weight:400;color:var(--color-text-secondary)" ' +
+          'title="AP profile this access point is bound to on its controller">' +
+          'Profile: ' + escapeHtml(profile) + '</span>'
+      : "",
     chipHTML: asset ? _streamSourceBadgeHTML(asset, "interfaces") : "",
     lastAt: (si && si.lastSystemInfoAt) || (asset && asset.lastSystemInfoAt) || null,
     cadenceSec: _resolveStaleStreamSec(assetId, asset, "systemInfo"),

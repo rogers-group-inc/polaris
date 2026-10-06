@@ -613,7 +613,11 @@ their SSIDs come from the discovery run against the controlling FortiGate;
 connected clients come from an SNMP walk, which needs the AP's **Interfaces**
 stream set to SNMP.
 
-Carries the cadence · freshness · **Refresh** row described above.
+Carries the cadence · freshness · **Refresh** row described above, with the
+AP's **profile** (`Profile: <name>`) after the heading — the controller's AP
+profile that decides these radios, SSIDs and power, the same value as the
+General tab's *AP Profile* row. It appears once a discovery run against the
+controlling FortiGate has recorded it.
 
 ### MAC Table (switches)
 
