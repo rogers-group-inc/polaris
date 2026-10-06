@@ -649,7 +649,7 @@ html[data-theme="morning"] {
 
 /* ─── Theme changes as one crossfade ──────────────────────────────────────
    Where the browser has same-document view transitions with types
-   (Chromium 125+, Safari 18.2+), _setTheme runs the change inside
+   (Chromium 125+, Safari 18.2+, Firefox 147+), _setTheme runs the change inside
    document.startViewTransition: the page is captured once before and
    crossfaded to the live page after, as ONE picture. The per-element
    crossfade above then stays off — it keys on data-theme-xfade, which is
@@ -772,8 +772,11 @@ body {
    html::before, not body::before: its parent is <html>, where the values
    live, so nothing in between has to forward them. z-index -1 paints it
    over the canvas and under all content, so no element's background may
-   sit between them (the body's colour propagates to the canvas). */
-html::before {
+   sit between them (the body's colour propagates to the canvas). The
+   sticky top bar's curtain (html::after, under "Page Header") is a second
+   copy of this layer, so it shares the token block. */
+html::before,
+html:has(.page-top-sticky)::after {
   content: "";
   position: fixed;
   inset: 0;
@@ -1737,8 +1740,14 @@ code {
      Blur alone is invisible at rest — blurring a smooth gradient changes
      nothing — and only shows once content scrolls under the bar. */
   background: transparent;
-  padding-top: 1rem;
-  margin-top: -1rem;
+  /* Pinned from the first pixel: the bar reaches up over all of .main's top
+     padding, so its resting top IS its sticky top and scrolling never moves
+     it. Reaching up only half way (1rem, as it once did) left the bar resting
+     1rem down, and the first 1rem of every scroll slid the header up before
+     it stuck. The title stays where the padding put it. The ≤700px rule
+     repeats this for that breakpoint's 1rem padding. */
+  padding-top: 2rem;
+  margin-top: -2rem;
   margin-bottom: 1.5rem;
 }
 /* Inside the bar the header and the tab strip sit tight; the gap to the
@@ -1762,6 +1771,49 @@ code {
   pointer-events: none;
   -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
+}
+/* The curtain: where the browser has anchor positioning, content scrolling
+   under the bar VANISHES instead of blurring, and the bar still has no box.
+   html::after is a second copy of the page's own ground — the body colour
+   plus the glow layer's gradients, attached to the viewport exactly as
+   html::before is — so it is indistinguishable from the page where nothing
+   is under it, and opaque where something is. It is anchored to the bar
+   (top of the viewport down to the bar's bottom edge, which tracks the bar
+   both at rest and pinned) and runs a feather past it: the bottom
+   --page-top-feather fades to clear, so content dissolves into the bar
+   rather than being cut at a line. The feather fits inside the bar's own
+   margin-bottom, so at rest it covers only empty page. Its left edge reaches
+   back to the sidebar and fades in over a shorter feather, so the sidebar's
+   cast shadow is not cut off along the bar.
+   On html, not on the bar's ::before: the glow's animated parts are
+   registered `inherits: false` (see the glow layer) and only <html>'s own
+   pseudo-elements can `inherit` them, so this copy turns with the theme
+   frame for frame. z-index 1049 is one under the bar: above the widgets and
+   their Leaflet panes, below the bar and everything that already opens over
+   it. With the curtain up the blur has nothing left to hide, so it is off. */
+@supports (anchor-name: --a) {
+  .page-top-sticky { anchor-name: --page-top; }
+  .page-top-sticky::before { display: none; }
+  html:has(.page-top-sticky)::after {
+    --page-top-feather: 1.5rem;
+    position: fixed;
+    position-anchor: --page-top;
+    z-index: 1049;
+    top: 0;
+    right: 0;
+    bottom: calc(anchor(bottom) - var(--page-top-feather));
+    left: max(0px, calc(anchor(left) - var(--page-top-gutter, 2.5rem)));
+    background-color: var(--color-bg-secondary);
+    background-attachment: fixed;
+    -webkit-mask-image:
+      linear-gradient(to bottom, #000 calc(100% - var(--page-top-feather)), transparent),
+      linear-gradient(to right, transparent, #000 1.5rem);
+    -webkit-mask-composite: source-in;
+    mask-image:
+      linear-gradient(to bottom, #000 calc(100% - var(--page-top-feather)), transparent),
+      linear-gradient(to right, transparent, #000 1.5rem);
+    mask-composite: intersect;
+  }
 }
 .page-header h2 {
   /* The actions row is what wraps, so the title is what must not: with the
@@ -5773,7 +5825,8 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 }
 @media (max-width: 700px) {
   .sidebar { display: none; }
-  .main { padding: 1rem; }
+  .main { padding: 1rem; --page-top-gutter: 1rem; }
+  .page-top-sticky { padding-top: 1rem; margin-top: -1rem; }
   .user-badge-name { display: none; }
 }
 
