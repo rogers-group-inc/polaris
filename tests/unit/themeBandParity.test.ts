@@ -141,7 +141,10 @@ describe("the band and the strip read the same clock", () => {
       const glowProps = css.match(/@property --(?:page|night)-glow-[a-z0-9]+ *\{[^}]*\}/g) || [];
       expect(glowProps.length).toBe(15);
       for (const p of glowProps) expect(p, p).toContain("inherits: false;");
-      const layer = css.slice(css.indexOf("html::before {"), css.indexOf("\n}\n", css.indexOf("html::before {")));
+      // The selector may be a list (the desktop's top-bar curtain shares it).
+      const at = css.search(/\nhtml::before[,\s][^{]*\{/);
+      expect(at).toBeGreaterThan(-1);
+      const layer = css.slice(at, css.indexOf("\n}\n", at));
       expect(layer).toContain("position: fixed;");
       expect(layer).toContain("z-index: -1;");
       expect(layer).toContain("--page-glow:");
@@ -150,6 +153,29 @@ describe("the band and the strip read the same clock", () => {
       expect(root).not.toMatch(/\n {2}--page-glow:/);
       expect(root).not.toMatch(/\n {2}--night-glow:/);
     }
+  });
+
+  it("paints the top bar's curtain from the glow layer's own tokens, pinned from the first pixel", () => {
+    // The curtain hides content under the sticky bar by repainting the page's
+    // ground over it. It must share the glow layer's rule (the only place the
+    // non-inheriting glow parts can be pulled in), or it paints a stale glow —
+    // a box — during every theme turn. And the bar must reach over all of
+    // .main's top padding, or the header slides on the first scroll.
+    const css = readFileSync(join(process.cwd(), "public", "css", "styles.css"), "utf-8").replace(/\r\n/g, "\n");
+    expect(css).toMatch(/\nhtml::before,\nhtml:has\(\.page-top-sticky\)::after \{/);
+    const sup = css.slice(css.indexOf("@supports (anchor-name: --a)"));
+    const curtain = sup.slice(0, sup.indexOf("\n}\n"));
+    expect(curtain).toContain("anchor-name: --page-top;");
+    expect(curtain).toContain("position-anchor: --page-top;");
+    expect(curtain).toContain("background-color: var(--color-bg-secondary);");
+    expect(curtain).toContain("background-attachment: fixed;");
+    const z = (s: string) => Number(s.match(/z-index: (\d+);/)?.[1]);
+    const bar = css.slice(css.indexOf(".page-top-sticky {"), css.indexOf("\n}\n", css.indexOf(".page-top-sticky {")));
+    expect(z(curtain)).toBe(z(bar) - 1);
+    const main = css.slice(css.indexOf("\n.main {"), css.indexOf("\n}\n", css.indexOf("\n.main {")));
+    const mainPadTop = main.match(/padding: ([\d.]+rem)/)?.[1];
+    expect(bar).toContain(`padding-top: ${mainPadTop};`);
+    expect(bar).toContain(`margin-top: -${mainPadTop};`);
   });
 
   it("slides the night glow in as a circle and out into one, on both", () => {
