@@ -31,9 +31,15 @@
 // uses (PolarisMobileAlerts.confirmClear).
 
 (function () {
-  var PREFS_KEY = "polaris-mobile-alerts-list";
   var FETCH_LIMIT = 500;
-  var DEFAULTS = { sortKey: "triggeredAt", sortDir: "desc", state: "all", severity: [], region: "mine" };
+  // Opens on Critical + Serious + Warning — what someone holding the pager
+  // acts on; Info and Notice are a tap away (a tile, or "Any" in the sheet).
+  // The key gained "-v2" when that default arrived: a viewer who had used the
+  // tab already had `severity: []` saved, which loadPrefs would honour over
+  // the new default forever. The tab was a day old, so resetting its sort and
+  // chips once was the cheaper miss.
+  var PREFS_KEY = "polaris-mobile-alerts-list-v2";
+  var DEFAULTS = { sortKey: "triggeredAt", sortDir: "desc", state: "all", severity: ["5", "4", "3"], region: "mine" };
 
   var REGION_OPTIONS = [
     { value: "mine", label: "My regions" },

@@ -61,9 +61,46 @@ const shownIds = () =>
     .filter((el) => el.classList.contains("list-item"))
     .map((el) => (el.querySelector(".headline") as HTMLElement).textContent);
 
+const PREFS_KEY = "polaris-mobile-alerts-list-v2";
+
+// Most cases read the WHOLE list, so they start with no severity filter; the
+// shipped default (Critical + Serious + Warning) has its own describe below.
 beforeEach(() => {
   document.body.innerHTML = "";
   try { localStorage.clear(); } catch { /* happy-dom always has it */ }
+  localStorage.setItem(PREFS_KEY, JSON.stringify({ severity: [] }));
+});
+
+describe("alerts tab default severities", () => {
+  beforeEach(() => { localStorage.clear(); });
+
+  it("opens on Critical, Serious and Warning, hiding Info and Notice", async () => {
+    await render();
+    expect(shownIds()).toEqual(["ERROR · core-1", "WARNING · sw-2", "CRITICAL · fw-1"]);
+    // Named on the chip, and the tiles say which are on.
+    expect(document.getElementById("alerts-sort")!.textContent!.trim()).toBe("Time · 3 severities");
+    const on = Array.from(document.querySelectorAll("#alerts-summary .sev-tile.selected")).map((t) => (t as HTMLElement).dataset.sev);
+    // Serious is picked with nothing in it, so it is drawn at 0 — a picked
+    // tile stays reachable to un-pick.
+    expect(on).toEqual(["5", "4", "3"]);
+    expect((document.querySelector('#alerts-summary [data-sev="4"] .sev-count') as HTMLElement).textContent).toBe("0");
+    // Info is still counted, so the hidden alert is a tap away.
+    expect(document.querySelector('#alerts-summary [data-sev="2"]')).not.toBeNull();
+  });
+
+  it("ignores a pick saved under the old key", async () => {
+    localStorage.setItem("polaris-mobile-alerts-list", JSON.stringify({ severity: [] }));
+    await render();
+    expect(shownIds()).toHaveLength(3);
+  });
+
+  it("'Any' in the sheet clears the default, and that choice sticks", async () => {
+    await render();
+    (document.getElementById("alerts-sort") as HTMLElement).click();
+    (document.querySelector('#list-sort-sheet [data-filter="severity"][data-value=""]') as HTMLElement).click();
+    expect(shownIds()).toHaveLength(4);
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).severity).toEqual([]);
+  });
 });
 
 describe("alerts tab ordering", () => {
@@ -111,7 +148,7 @@ describe("alerts tab filtering", () => {
     (document.querySelector('#alerts-chips [data-key="unack"]') as HTMLElement).click();
     expect(shownIds()).not.toContain("CRITICAL · fw-1");
     expect(document.querySelector(".list-count")!.textContent).toBe("3 of 4 alerts");
-    expect(JSON.parse(localStorage.getItem("polaris-mobile-alerts-list")!).state).toBe("unack");
+    expect(JSON.parse(localStorage.getItem("polaris-mobile-alerts-list-v2")!).state).toBe("unack");
   });
 
   it("the sort sheet picks severity order and a severity filter, and marks the chip", async () => {
@@ -161,7 +198,7 @@ describe("alerts tab region scope", () => {
     (document.querySelector('#list-sort-sheet [data-filter="region"][data-value="all"]') as HTMLElement).click();
     expect(shownIds()).toEqual(["CRITICAL · east-fw", "CRITICAL · west-fw", "WARNING · lab-sw"]);
     expect(document.getElementById("alerts-sort")!.textContent!.trim()).toBe("Time");
-    expect(JSON.parse(localStorage.getItem("polaris-mobile-alerts-list")!).region).toBe("all");
+    expect(JSON.parse(localStorage.getItem("polaris-mobile-alerts-list-v2")!).region).toBe("all");
   });
 
   it("offers no region choice to a viewer with no regions", async () => {
