@@ -77,7 +77,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `src/api/routes/firmware.ts` — `firmwareAssetRouter`: `GET /` folds in `getPendingSchedule` as `schedule`; `GET /schedules`, `GET /schedules/defaults`, `POST /schedules`, `PATCH /schedules/:scheduleId`, `DELETE /schedules/:scheduleId`.
 - `src/jobs/startScheduledFirmwareUpgrades.ts` — `runDueSchedules` every 60 s (web/all role).
 - `src/services/firmwareUpgradeService.ts` — `notifyScheduledRunFinished`, lazily, from the runner's `.finally` and from `failOrphanedFirmwareRuns`.
-- `public/js/assets.js` — the Firmware card's Schedule… / Change… / Cancel scheduled upgrade, through the routes.
+- `public/js/assets.js` — the Firmware card: the upgrade dialog's "Schedule for later" box, and Change… / Cancel scheduled upgrade, through the routes.
+- `public/js/mobile/asset-detail.js` — the same on the phone's OS row: the confirm sheet's "Schedule for later" box, Change / Cancel.
 
 **Invariants:**
 - **Approved at booking, judged at firing.** Booking takes only `checkSchedulableUpgrade` (image gates + a bound login); health and topology are NOT taken then and come back as `warnings` for the modal. Firing goes through `startFirmwareUpgrade`, which re-takes EVERY gate — so a newer primary uploaded after booking makes the booked image no longer offered and the booking is REFUSED, never silently retargeted.
