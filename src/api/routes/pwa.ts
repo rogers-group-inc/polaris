@@ -106,10 +106,14 @@ export function buildManifest(
       icon("app-maskable-192", 192, "maskable"),
       icon("app-maskable-512", 512, "maskable"),
     ],
+    // The navbar's order (Search aside — the search bar is on every tab), then
+    // the Device Map, which lives under More. Four is what Android's
+    // long-press menu shows; a fifth would be cut off.
     shortcuts: [
+      { name: "Alerts", url: "/mobile.html#alerts", icons: shortcutIcon },
       { name: "Assets", url: "/mobile.html#assets", icons: shortcutIcon },
-      { name: "Device Map", url: "/mobile.html#map", icons: shortcutIcon },
       { name: "Networks", url: "/mobile.html#networks", icons: shortcutIcon },
+      { name: "Device Map", url: "/mobile.html#map", icons: shortcutIcon },
     ],
   };
 }

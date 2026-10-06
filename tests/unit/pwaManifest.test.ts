@@ -71,7 +71,7 @@ describe("buildManifest", () => {
   it("offers in-scope hash shortcuts only", () => {
     const shortcuts = m.shortcuts as Array<{ name: string; url: string }>;
     expect(shortcuts.map((s) => s.url)).toEqual([
-      "/mobile.html#assets", "/mobile.html#map", "/mobile.html#networks",
+      "/mobile.html#alerts", "/mobile.html#assets", "/mobile.html#networks", "/mobile.html#map",
     ]);
   });
 

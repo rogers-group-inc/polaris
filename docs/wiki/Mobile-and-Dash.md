@@ -96,6 +96,9 @@ Open Polaris on the phone and use the browser's **Add to Home Screen**. The app
 identity — name and icons — is generated per install from your
 [branding](Server-Settings#customization).
 
+Long-press the installed icon (Android) for shortcuts straight to **Alerts**,
+**Assets**, **Networks** and the **Device Map**.
+
 The manifest and icon routes are deliberately **unauthenticated**: a
 `<link rel="manifest">` is fetched with credentials omitted, so a gated manifest
 would 401 for everyone.
