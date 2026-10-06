@@ -26,7 +26,10 @@ breakdown** counts them (**Critical**, **Serious**, **Warning**, **Info**,
 **Notice**; a severity with nothing in it is left out). Tap a count to show only
 that severity, and tap more than one to combine them. The counts follow the
 other filters but not the severity one, so they don't move while you tap
-through them. The same **filter field** and
+through them. **It opens on Critical, Serious and Warning**, so Info and Notice
+alerts are counted but not listed until you tap their tile, or pick **Any** under
+*Sort & filter*. A selected severity with no alerts still shows, at 0, so you
+can unselect it. The same **filter field** and
 **sort chip** as the lists below: the field matches device and message, the
 chips above the list show **All**, **Unacknowledged** or **Acknowledged**, and
 the *Sort & filter* sheet orders by **Time**, **Severity** or **Device** and
