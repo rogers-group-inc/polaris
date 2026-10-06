@@ -370,4 +370,24 @@ describe("Wireless tab strip", () => {
     }, ASSET);
     expect(container.querySelector("#asset-wireless-refresh")).not.toBeNull();
   });
+
+  // The AP profile decides these radios and SSIDs, so it sits between the
+  // heading and the stream badge rather than only on the General tab.
+  it("names the AP profile between the heading and the stream badge", () => {
+    g._renderWirelessStationsCard(container, {
+      apRadios: makeRadios(), wirelessStations: [], lastSystemInfoAt: fresh(),
+    }, { ...ASSET, fortinetTopology: { role: "fortiap", profile: "FAP231F-<lobby>" } });
+    const html = container.innerHTML;
+    expect(container.textContent).toContain("Profile: FAP231F-<lobby>");
+    expect(html).toContain("FAP231F-&lt;lobby&gt;");
+    expect(html.indexOf("Wireless</h4>")).toBeLessThan(html.indexOf("Profile:"));
+    expect(html.indexOf("Profile:")).toBeLessThan(html.indexOf("asset-stream-source-badge"));
+  });
+
+  it("omits the profile until discovery has stamped one", () => {
+    g._renderWirelessStationsCard(container, {
+      apRadios: makeRadios(), wirelessStations: [], lastSystemInfoAt: fresh(),
+    }, { ...ASSET, fortinetTopology: { role: "fortiap", profile: null } });
+    expect(container.textContent).not.toContain("Profile:");
+  });
 });
