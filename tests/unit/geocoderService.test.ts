@@ -17,15 +17,31 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("../../src/db.js", () => ({
   prisma: {
     geocodeCache: { findUnique: vi.fn(), upsert: vi.fn() },
+    event: { findMany: vi.fn() },
   },
 }));
 
-import { geocode, __resetGeocoderStateForTests } from "../../src/services/geocoderService.js";
+vi.mock("../../src/services/eventLogService.js", () => ({
+  logEventsBatch: vi.fn(async (rows: unknown[]) => rows.length),
+}));
+
+import {
+  geocode,
+  describeGeocodeFailure,
+  logGeocodeFailureEvents,
+  GEOCODE_FAILED_ACTION,
+  GEOCODE_FAILED_REPEAT_MS,
+  __resetGeocoderStateForTests,
+  type GeocodeFailureForAsset,
+} from "../../src/services/geocoderService.js";
 import { prisma } from "../../src/db.js";
+import { logEventsBatch } from "../../src/services/eventLogService.js";
 
 type Mock = ReturnType<typeof vi.fn>;
 const findUnique = prisma.geocodeCache.findUnique as unknown as Mock;
 const upsert = prisma.geocodeCache.upsert as unknown as Mock;
+const eventFindMany = prisma.event.findMany as unknown as Mock;
+const batchMock = logEventsBatch as unknown as Mock;
 
 const NOMINATIM_HIT = [{ lat: "30.7293", lon: "-88.0602" }];
 const NOMINATIM_MISS: unknown[] = [];
@@ -85,6 +101,7 @@ describe("provider chain", () => {
       longitude: -88.0602,
       cached: false,
       provider: "nominatim",
+      failure: null,
     });
     expect(providersCalled(fetchMock)).toEqual(["nominatim"]);
   });
@@ -108,6 +125,13 @@ describe("provider chain", () => {
       longitude: null,
       cached: false,
       provider: null,
+      failure: {
+        reason: "no_match",
+        providers: [
+          { name: "nominatim", outcome: "no_match" },
+          { name: "census", outcome: "no_match" },
+        ],
+      },
     });
   });
 
@@ -154,7 +178,7 @@ describe("provider chain", () => {
   it("ignores an empty input without touching the network", async () => {
     const fetchMock = stubFetch();
     expect(await geocode("   ")).toEqual({
-      latitude: null, longitude: null, cached: false, provider: null,
+      latitude: null, longitude: null, cached: false, provider: null, failure: null,
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -186,6 +210,7 @@ describe("provider configuration", () => {
 
     expect(await geocode("Atlanta, GA")).toEqual({
       latitude: null, longitude: null, cached: false, provider: null,
+      failure: { reason: "disabled", providers: [] },
     });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(upsert).not.toHaveBeenCalled();
@@ -227,6 +252,7 @@ describe("cache", () => {
       longitude: -86.7816,
       cached: true,
       provider: "nominatim",
+      failure: null,
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -363,5 +389,140 @@ describe("rate limiting", () => {
     // Nominatim then Census within ONE call: each gate is entered for the
     // first time, so neither waits.
     expect(Date.now() - started).toBeLessThan(50);
+  });
+});
+
+// A miss used to be silent — the pin kept stale coordinates and the only
+// trace was a null cache row. The failure reason is what the asset event says.
+describe("failure reason", () => {
+  it("reports a cached no-match per provider without any request", async () => {
+    findUnique.mockResolvedValue({ latitude: null, longitude: null, ttlExpiresAt: new Date(Date.now() + 60_000) });
+    const fetchMock = stubFetch();
+
+    const result = await geocode("186 Lewis Watson Jr Rd. Butler, GA, 31006");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.failure).toEqual({
+      reason: "no_match",
+      providers: [
+        { name: "nominatim", outcome: "no_match_cached" },
+        { name: "census", outcome: "no_match_cached" },
+      ],
+    });
+  });
+
+  it("says unreachable, not no-match, when any provider never answered", async () => {
+    stubFetch(jsonResponse({}, 503), jsonResponse(CENSUS_MISS));
+
+    const result = await geocode("Atlanta, GA");
+
+    expect(result.failure).toEqual({
+      reason: "unreachable",
+      providers: [
+        { name: "nominatim", outcome: "unreachable" },
+        { name: "census", outcome: "no_match" },
+      ],
+    });
+  });
+});
+
+describe("describeGeocodeFailure", () => {
+  const base = { query: "186 Lewis Watson Jr Rd. Butler, GA, 31006", source: "snmp" as const };
+
+  it("names the address, the geocoders that missed, and how to fix it", () => {
+    const msg = describeGeocodeFailure({
+      ...base,
+      failure: { reason: "no_match", providers: [{ name: "nominatim", outcome: "no_match" }, { name: "census", outcome: "no_match_cached" }] },
+    });
+    expect(msg).toContain('SNMP location "186 Lewis Watson Jr Rd. Butler, GA, 31006"');
+    expect(msg).toContain("nominatim and census do not recognise the address");
+    expect(msg).toContain("city, state and ZIP");
+    expect(msg).toContain("map pin was not moved");
+  });
+
+  it("separates the unreachable geocoder from the one that answered", () => {
+    const msg = describeGeocodeFailure({
+      ...base,
+      failure: { reason: "unreachable", providers: [{ name: "nominatim", outcome: "unreachable" }, { name: "census", outcome: "no_match" }] },
+    });
+    expect(msg).toContain("could not reach nominatim (census had no match)");
+    expect(msg).toContain("retries on the next discovery run");
+  });
+
+  it("says geocoding is off when the provider chain is empty", () => {
+    const msg = describeGeocodeFailure({ ...base, source: "address-metavar", failure: { reason: "disabled", providers: [] } });
+    expect(msg).toContain('address metavariable "186');
+    expect(msg).toContain("POLARIS_GEOCODER_PROVIDERS is empty");
+  });
+});
+
+describe("logGeocodeFailureEvents", () => {
+  const now = new Date("2026-10-06T12:00:00Z");
+  const entry = (over: Partial<GeocodeFailureForAsset> = {}): GeocodeFailureForAsset => ({
+    assetId: "fw-1",
+    assetName: "FG-BUTLER",
+    query: "186 Lewis Watson Jr Rd. Butler, GA, 31006",
+    source: "snmp",
+    failure: { reason: "no_match", providers: [{ name: "nominatim", outcome: "no_match" }] },
+    integrationId: "int-1",
+    integrationName: "FMG",
+    ...over,
+  });
+
+  beforeEach(() => eventFindMany.mockResolvedValue([]));
+
+  it("writes a warning on the asset itself, so its Events tab shows it", async () => {
+    expect(await logGeocodeFailureEvents([entry()], now)).toBe(1);
+    const [row] = batchMock.mock.calls[0][0];
+    expect(row).toMatchObject({
+      action: GEOCODE_FAILED_ACTION,
+      resourceType: "asset",
+      resourceId: "fw-1",
+      resourceName: "FG-BUTLER",
+      level: "warning",
+      details: { query: "186 Lewis Watson Jr Rd. Butler, GA, 31006", source: "snmp", reason: "no_match", integrationId: "int-1" },
+    });
+  });
+
+  it("skips an asset already told about the same address and reason within the window", async () => {
+    eventFindMany.mockResolvedValue([
+      { assetId: "fw-1", details: { query: "186 LEWIS WATSON JR RD.  Butler, GA, 31006", reason: "no_match" } },
+    ]);
+
+    expect(await logGeocodeFailureEvents([entry()], now)).toBe(0);
+    const where = eventFindMany.mock.calls[0][0].where;
+    expect(where.action).toBe(GEOCODE_FAILED_ACTION);
+    expect(where.timestamp.gte.getTime()).toBe(now.getTime() - GEOCODE_FAILED_REPEAT_MS);
+  });
+
+  it("reports again when the address or the reason changed", async () => {
+    eventFindMany.mockResolvedValue([
+      { assetId: "fw-1", details: { query: "186 Lewis Watson Jr Rd. Butler, GA, 31006", reason: "no_match" } },
+    ]);
+
+    const n = await logGeocodeFailureEvents([
+      entry({ query: "Butler, GA 31006" }),
+      entry({ assetId: "fw-2", assetName: "FG-B2", failure: { reason: "unreachable", providers: [] } }),
+      entry({ failure: { reason: "unreachable", providers: [{ name: "nominatim", outcome: "unreachable" }] } }),
+    ], now);
+    expect(n).toBe(3);
+  });
+
+  it("reads once and writes once for a whole batch", async () => {
+    await logGeocodeFailureEvents([entry(), entry({ assetId: "fw-2" }), entry({ assetId: "fw-3" })], now);
+    expect(eventFindMany).toHaveBeenCalledTimes(1);
+    expect(batchMock).toHaveBeenCalledTimes(1);
+    expect(eventFindMany.mock.calls[0][0].where.assetId.in).toEqual(["fw-1", "fw-2", "fw-3"]);
+  });
+
+  it("collapses a duplicate within one batch", async () => {
+    expect(await logGeocodeFailureEvents([entry(), entry()], now)).toBe(1);
+  });
+
+  it("does nothing for an empty batch, and never throws", async () => {
+    expect(await logGeocodeFailureEvents([], now)).toBe(0);
+    expect(eventFindMany).not.toHaveBeenCalled();
+    eventFindMany.mockRejectedValueOnce(new Error("db down"));
+    await expect(logGeocodeFailureEvents([entry()], now)).resolves.toBe(0);
   });
 });

@@ -98,6 +98,7 @@ Two archival paths, both configurable:
 | `integration.discover.devices_unread` | **warning** | devices the run **could not read** — named individually ([rule 53](Business-Rules#rule-53)) |
 | `discover.device.complete` | info | retracts an earlier error for that device |
 | `integration.coords.push_failed` | warning | coordinate write-back failed; the asset writes still landed |
+| `asset.location.geocode_failed` | warning | a firewall's SNMP location (or address metavariable) could not be turned into map coordinates — no geocoder recognised it, a geocoder was unreachable, or geocoding is off — so the pin kept its other coordinates. Filed on the asset, so its **Events** tab shows it; repeated at most once a week for the same address and reason |
 
 ### Monitoring
 

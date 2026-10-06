@@ -364,9 +364,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Address-string → lat/lng geocoder over an ordered PROVIDER CHAIN (`POLARIS_GEOCODER_PROVIDERS`, default `nominatim,census`) with a positive+negative `GeocodeCache` keyed on (provider, query) at a 90-day TTL, and a per-provider rate limiter.
 
-**Public API:** `geocode(query: string): Promise<{ latitude: number | null, longitude: number | null, cached: boolean, provider: string | null }>`; `__resetGeocoderStateForTests(rateLimitMs?)` (test seam — clears the rate-limit chains and drops the gates).
+**Public API:** `geocode(query: string): Promise<{ latitude: number | null, longitude: number | null, cached: boolean, provider: string | null, failure: GeocodeFailure | null }>` (`failure` = `{ reason: "no_match" | "unreachable" | "disabled", providers: [{ name, outcome: "no_match" | "no_match_cached" | "unreachable" }] }`, null on a hit and on empty input); `logGeocodeFailureEvents(entries, now?)` (writes `asset.location.geocode_failed` warning Events on the assets, deduped per (asset, normalized query, reason) over `GEOCODE_FAILED_REPEAT_MS` = 7 days, one read + one `logEventsBatch` per call, never throws); `describeGeocodeFailure(f)` (pure message builder); `GEOCODE_FAILED_ACTION`, `GEOCODE_FAILED_REPEAT_MS`; `__resetGeocoderStateForTests(rateLimitMs?)` (test seam — clears the rate-limit chains and drops the gates).
 
-**Cross-service deps:** `utils/geo.ts:isValidGeoCoord` (a provider "hit" must be a valid pair, so a (0,0) answer is cached as a negative and the chain walks on). Otherwise none — prisma directly for cache reads/writes, `getAppVersion()` for the User-Agent.
+**Cross-service deps:** `utils/geo.ts:isValidGeoCoord` (a provider "hit" must be a valid pair, so a (0,0) answer is cached as a negative and the chain walks on); `eventLogService.logEventsBatch` (the failure Events). Otherwise prisma directly for cache reads/writes and the dedupe read of recent Events, `getAppVersion()` for the User-Agent.
 
 **Used by:** src/services/discovery/discoveryEngine.ts:syncDhcpSubnets Phase 3 — geocodes the FMG address metavar, else the FortiGate SNMP sysLocation when `pullSnmpLocation` + `useSnmpLocationCoords` are on. The verbose `discovery.location.geocoded` line carries `provider`.
 
@@ -378,7 +378,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Rate limiting is per provider (a Map of chained Promises), so a slow Nominatim leg never throttles Census: nominatim 1100 ms (policy is 1 req/sec + 100 ms margin), census 250 ms (politeness only — no published limit). Cache hits BYPASS the gates entirely.
 - User-Agent identifies Polaris (`Polaris-IPAM/<version>`) per Nominatim's usage policy. Never use a generic / library-default UA.
 - An empty/unparseable provider list disables geocoding (returns the null result, logs `geocode.no_providers_configured`) — the supported air-gapped posture. Unknown names are dropped with a warning, not fatal.
-- Never throws. All failures return `{latitude: null, longitude: null, cached: false, provider: null}` so callers in the discovery hot path don't need to wrap.
+- Never throws. All failures return `{latitude: null, longitude: null, cached: false, provider: null, failure}` so callers in the discovery hot path don't need to wrap.
+- `failure.reason` is `unreachable` whenever ANY provider in the chain failed transport, even if another answered no-match: a provider that never answered might have had the address, so "nobody recognises it" would overclaim. `disabled` = empty provider chain.
+- A failure Event is per ASSET (each HA member has its own pin and Events tab) and repeats at most once per 7 days per (asset, address, reason); a changed address or reason reports immediately. Successes write no Event.
 
 **When changing this:**
 - Don't add per-request retries — the chain IS the retry, across providers; Nominatim's policy is "be patient and don't hammer us". One shot each per cycle, fall through on failure, retry next discovery.

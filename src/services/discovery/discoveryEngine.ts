@@ -113,7 +113,7 @@ import { reconcileAllTags } from "../tagAssignmentService.js";
 import * as sightings from "../assetSightingService.js";
 import { quarantineAsset, verifyAssetQuarantine } from "../assetQuarantineService.js";
 import { fetchFortigateSysLocation } from "../fortigateLocationService.js";
-import { geocode } from "../geocoderService.js";
+import { geocode, logGeocodeFailureEvents, type GeocodeFailure, type GeocodeFailureForAsset } from "../geocoderService.js";
 import { pushCoordsToFortigate } from "../fortigateCoordPushService.js";
 import { isValidGeoCoord, coordsClose } from "../../utils/geo.js";
 import {
@@ -1480,6 +1480,10 @@ function buildFortigateFirewallObservedBlob(
     // `fortigateMonitor.addressMetavar`; FMG-only). Projected to
     // Asset.learnedAddress and shown as "Address" on the General tab.
     metavarAddress?: string | null;
+    // Set when this cycle's lookup ran and resolved nothing; null on a hit or
+    // when nothing was looked up. Rewritten every cycle, so a later hit clears
+    // it. The General tab's Coordinates row reads it from the Sources payload.
+    geocodeFailure?: { query: string; source: "snmp" | "address-metavar"; reason: GeocodeFailure["reason"] } | null;
   },
   integrationType: "fortimanager" | "fortigate",
   syncedAt: Date,
@@ -1515,6 +1519,7 @@ function buildFortigateFirewallObservedBlob(
     snmpGeocodedLatitude: Number.isFinite(device.snmpGeocodedLatitude) ? device.snmpGeocodedLatitude : null,
     snmpGeocodedLongitude: Number.isFinite(device.snmpGeocodedLongitude) ? device.snmpGeocodedLongitude : null,
     metavarAddress: typeof device.metavarAddress === "string" && device.metavarAddress ? device.metavarAddress : null,
+    geocodeFailure: device.geocodeFailure ?? null,
     managedBy: integrationType,
     ...(ha
       ? {
@@ -3386,6 +3391,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   phaseMark("3");
   // ══════════════════════════════════════════════════════════════════════════════
 
+  // Geocode misses, one per firewall asset, written as asset Events after the
+  // loop in one batch (logGeocodeFailureEvents dedupes against recent rows).
+  const geocodeFailures: GeocodeFailureForAsset[] = [];
   for (const device of result.devices) {
     try {
       const fgHostname = device.hostname || device.name;
@@ -3430,10 +3438,14 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       // the map pin.
       const snmpGeoCandidate = useSnmpLocationCoords ? (devSnmpLocation || "") : "";
       const geoString = addressMetavarValue || snmpGeoCandidate;
-      const geoSource = addressMetavarValue ? "address-metavar" : (snmpGeoCandidate ? "snmp" : null);
+      const geoSource: "address-metavar" | "snmp" | null = addressMetavarValue ? "address-metavar" : (snmpGeoCandidate ? "snmp" : null);
+      // Set when the lookup ran and resolved nothing; reported on each member
+      // asset after the loop (logGeocodeFailureEvents).
+      let devGeocodeFailure: GeocodeFailure | null = null;
       if (geoString) {
         try {
           const geo = await geocode(geoString);
+          devGeocodeFailure = geo.failure;
           if (isValidGeoCoord(geo.latitude, geo.longitude)) {
             devGeocodedLat = geo.latitude;
             devGeocodedLng = geo.longitude;
@@ -3448,6 +3460,15 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           syncLog("error", `${fgHostname}: Geocode of ${geoSource} "${geoString}" failed — ${err?.message || "Unknown error"}`);
         }
       }
+      // Called once per member asset below, so every HA member's Events tab
+      // carries the miss (each member has its own pin).
+      const noteGeocodeFailure = (assetId: string, assetName: string): void => {
+        if (!devGeocodeFailure || !geoSource) return;
+        geocodeFailures.push({
+          assetId, assetName, query: geoString, source: geoSource, failure: devGeocodeFailure,
+          integrationId, integrationName, actor,
+        });
+      };
       // HA fan-out: when the cluster reports multiple members, write one
       // Asset row per physical member keyed on its own stable serial. Each
       // member's identity (serial + hostname) survives failover because we
@@ -3580,6 +3601,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           snmpGeocodedLatitude: devGeocodedLat,
           snmpGeocodedLongitude: devGeocodedLng,
           metavarAddress: device.metavarAddress,
+          geocodeFailure: devGeocodeFailure && geoSource
+            ? { query: geoString, source: geoSource, reason: devGeocodeFailure.reason }
+            : null,
           // True when this gate was offline in FMG and its config came from
           // FMG's cached CMDB (see fortimanagerService DiscoveredDevice.offline).
           // Config-only: withhold presence + decommission-resurrection below.
@@ -3752,6 +3776,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         logDiscoveryAssetUpdated(fwBefore, updateData, existingAsset.id, memberDevice.hostname || device.name, {
           integrationName, integrationId, sourceKind: "fortigate-firewall", actor,
         });
+        noteGeocodeFailure(existingAsset.id, memberDevice.hostname || device.name);
         // HA standby health transition. The roster status stamped into
         // memberTopology above is the standby's only live health signal
         // (probes route to the active member), so an up/unknown→down flip
@@ -3910,6 +3935,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         });
       }
       assetIdx.add(newAsset);
+      noteGeocodeFailure(newAsset.id, memberDevice.hostname || device.name);
       assetNames.push(`${memberDevice.hostname || device.name}${haMembers ? ` (HA ${member.isPrimary ? "primary" : "secondary"})` : ""}`);
       } // end inner for-member loop
 
@@ -3968,6 +3994,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       syncLog("error", `Failed to create/update asset for device ${device.name}: ${err.message || "Unknown error"}`);
     }
   }
+  await logGeocodeFailureEvents(geocodeFailures);
 
   // ══════════════════════════════════════════════════════════════════════════════
   // Phase 3b — Create/update FortiSwitch and FortiAP assets + reservations
