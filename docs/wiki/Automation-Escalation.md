@@ -189,9 +189,11 @@ goes out, saying so: nothing is outstanding, how many alerts fired and
 recovered (or that none were held), and that its arriving confirms the quiet
 time and your email delivery are working. It goes to everyone the covered
 automations notify: the people, addresses, roles, tags and regions their
-notify actions name (recipients that depend on the triggering device cannot be
-worked out without an alert and are left out). It is on by default; untick
-**Send the summary even when nothing was held** on the quiet time to get a
+notify actions name. An action that notifies **the device's region** (or a
+region level above it) reaches the users of every region the automation's
+monitored devices are in — everyone it could have paged from any of them. A
+device's own address-book contacts are left out. It is on by default; untick
+**All-Quiet Summary emails** on the quiet time to get a
 summary only when something was held.
 
 **When it is sent.** When the quiet period ends, or at a **send time** you

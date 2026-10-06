@@ -147,8 +147,14 @@ has no held alert to anchor a summary on, so `createAllQuietSummaries` walks the
 instead (`lastQuietStretch`: the stretch that most recently ended), writes one row per stretch
 (deduped on `coveredTo`, never for a stretch that ended before the policy's last edit), and
 derives the audience from the automations the policy covers: the static recipients of their
-notify actions. Device-dependent recipients — the asset's region users, its address-book
-contacts — cannot be resolved without an alert and are left out; the wiki says so.
+notify actions. Device-dependent recipients were left out at first, and on 2026-10-06 an
+all-quiet email on an install that routes by device region reached only 3 people (the
+operator: *"could we include users in device regions?"*). `recipientDeviceRegion` and
+`recipientDeviceRegionLevels` now resolve against every region snapshot of the rule's
+MONITORED in-scope devices (`loadScopeRegionSnapshots`, deduped per distinct set, read once
+per rule and only when an action routes that way) — everyone the rule could page from any of
+them. A device's address-book contacts stay out: outside contacts of one device, not a
+standing audience. The editor's checkbox reads **All-Quiet Summary emails** (operator's wording).
 
 **The all-clear of an alert nobody was told about says nothing.** `fireReset`, `fireResolved`
 and the operator clear all converge on `executeActions`, which already knows an all-clear by

@@ -544,6 +544,23 @@ export async function loadScopeAssetIds(scope: RuleScope, opts?: { monitoredOnly
   return (await loadScopeAssets(scope, opts)).map((a) => a.id);
 }
 
+/** The distinct region snapshots (stripped, the form fire() writes to
+ *  Notification.regionTags) carried by a scope's MONITORED devices — what
+ *  recipientDeviceRegion routing could reach for this rule. Read by the
+ *  all-quiet summary, which has no triggering device to route on. Devices
+ *  with no region tag contribute nothing; each distinct set appears once, so
+ *  2000 devices across 30 sites is 30 entries. */
+export async function loadScopeRegionSnapshots(scope: RuleScope): Promise<string[][]> {
+  const seen = new Map<string, string[]>();
+  for (const a of await loadScopeAssets(scope, { monitoredOnly: true })) {
+    const snap = regionSnapshot(a.tags ?? []);
+    if (snap.length === 0) continue;
+    const key = snap.map((s) => s.toLowerCase()).sort().join("\u0000");
+    if (!seen.has(key)) seen.set(key, snap);
+  }
+  return Array.from(seen.values());
+}
+
 /**
  * Assets that must not trigger notifications right now:
  *  - status="maintenance" — inside a maintenance window (maintenanceScheduler);
