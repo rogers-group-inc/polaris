@@ -14,7 +14,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent, logEventsBatch } from "./eventLogService.js";
 import { findRulesMatchingAsset } from "./notificationRuleService.js";
-import { effectiveAckNoteForSeverity, parseSeverityBands, alertOwnerOf } from "./notificationTypes.js";
+import { effectiveAckNoteForSeverity, parseSeverityBands, alertOwnerOf, isDownDetectionTrigger, type Trigger } from "./notificationTypes.js";
 import { higherAlertSeverity } from "../utils/alertSeverity.js";
 
 // Both moved to utils/tagNormalize (a leaf) so regionHierarchyService can use
@@ -413,9 +413,14 @@ const SUPPRESSION_SWEEP_CAP = 2000;
  *  parent that is down (business rule 16). */
 const DEPENDENCY_CLEARED_BY = "system:dependency-suppressed";
 
+/** `clearedBy` on a DOWN alert retired because its device is in maintenance,
+ *  or silenced behind a device that is (business rule 16(a)). */
+const MAINTENANCE_CLEARED_BY = "system:maintenance";
+
 /**
  * Retire every ACTIVE alert whose asset is dependency-suppressed behind a
- * parent that is genuinely DOWN (business rule 16).
+ * parent that is genuinely DOWN, and every active DOWN alert whose asset is
+ * silenced by a maintenance window (business rule 16 / 16(a)).
  *
  * A child's alerts usually land a probe or two ahead of its parent's (the
  * child's probe races the gate's), so a dark gate would otherwise leave a red
@@ -423,15 +428,19 @@ const DEPENDENCY_CLEARED_BY = "system:dependency-suppressed";
  * suppression exists to stop. Entering that suppression therefore ends those
  * alerts instead of freezing them.
  *
- * A MAINTENANCE WINDOW NEVER RETIRES AN ALERT — not on the asset in the window
- * (schedule or rule-80 agent hold), and not on the children it silences. An
- * alert raised before the window opened stays live, frozen (the engine refuses
- * new fires and escalation pauses while the asset is suppressed), and either
- * recovers through its own automation once polling resumes or is cleared by
- * hand. So an asset that is itself in a window is skipped whatever its
- * dependency flag says, and a child whose suppression is owed to a maintained
- * parent is skipped too: the blame walk (`resolveDependencyBlameMany`) names the
- * chain, and a "maintenance" link anywhere in it leaves the alert alone.
+ * A MAINTENANCE WINDOW FREEZES AN ALERT RATHER THAN RETIRING IT — on the asset
+ * in the window (schedule or rule-80 agent hold) and on the children it
+ * silences — with ONE exception: a down alert (an automation whose trigger is
+ * `monitorStatus == down`, `isDownDetectionTrigger`). Being down is what
+ * planned downtime looks like, so a frozen down alert is a red row announcing
+ * the very thing the window announced; it is retired instead, and a device
+ * still down when the window closes re-earns its debounce and fires anew.
+ * Every other alert raised before the window opened stays live, frozen (the
+ * engine refuses new fires and escalation pauses while the asset is
+ * suppressed), and either recovers through its own automation or is cleared by
+ * hand. "Owed to maintenance" means the asset is itself in a window, whatever
+ * its dependency flag says, or the blame walk (`resolveDependencyBlameMany`)
+ * finds a "maintenance" link anywhere in its chain.
  *
  * Handoff semantics, not recovery — the same contract the precedence carve-out
  * and the packet-loss/device-down handoff already use:
@@ -463,7 +472,7 @@ export async function clearSuppressedAlerts(): Promise<number> {
       // recovers, or the flavour is handed off when the upstream comes back.
       dependencyDown: false,
     },
-    select: { id: true, assetId: true, rule: { select: { name: true } } },
+    select: { id: true, assetId: true, rule: { select: { name: true, trigger: true } } },
     take: SUPPRESSION_SWEEP_CAP,
   });
   if (open.length === 0) return 0;
@@ -471,54 +480,70 @@ export async function clearSuppressedAlerts(): Promise<number> {
   const candidates = await prisma.asset.findMany({
     where: {
       id: { in: Array.from(new Set(open.map((n) => n.assetId as string))) },
-      dependencySuppressed: true,
-      // Rule 16 — a maintenance window never retires an alert.
-      NOT: { status: "maintenance" },
+      OR: [{ dependencySuppressed: true }, { status: "maintenance" }],
     },
-    select: { id: true, hostname: true },
+    select: { id: true, hostname: true, status: true },
   });
   if (candidates.length === 0) return 0;
 
-  // Keep only the assets whose suppression is owed to a real outage. One
-  // batched walk, a query per graph layer, not one walk per child.
+  // Why each candidate is silenced. An asset in its own window is owed to
+  // maintenance whatever its dependency flag says; the rest need the blame
+  // walk — one batched walk, a query per graph layer, not one walk per child.
   // Imported lazily: dependencyTreeService's import graph is wide, and this
   // file sits under half the services in the app.
-  const { resolveDependencyBlameMany } = await import("./dependencyTreeService.js");
-  const blameById = await resolveDependencyBlameMany(candidates.map((a) => a.id));
-  const nameById = new Map<string, string>();
+  const reasonById = new Map<string, { hostname: string; reason: "maintenance" | "dependency" }>();
+  const toWalk: string[] = [];
   for (const a of candidates) {
-    const blame = blameById.get(a.id);
-    // No blame (a flag the reconciler is about to release, or a failed walk)
-    // is not evidence of an outage — leave the alert alone this tick.
-    if (!blame || blame.chain.some((node) => node.reason === "maintenance")) continue;
-    nameById.set(a.id, a.hostname ?? a.id);
+    if (a.status === "maintenance") reasonById.set(a.id, { hostname: a.hostname ?? a.id, reason: "maintenance" });
+    else toWalk.push(a.id);
   }
-  if (nameById.size === 0) return 0;
+  if (toWalk.length > 0) {
+    const { resolveDependencyBlameMany } = await import("./dependencyTreeService.js");
+    const blameById = await resolveDependencyBlameMany(toWalk);
+    for (const a of candidates) {
+      if (a.status === "maintenance") continue;
+      const blame = blameById.get(a.id);
+      // No blame (a flag the reconciler is about to release, or a failed walk)
+      // is not evidence of an outage — leave the alert alone this tick.
+      if (!blame) continue;
+      const owedToMaintenance = blame.chain.some((node) => node.reason === "maintenance");
+      reasonById.set(a.id, { hostname: a.hostname ?? a.id, reason: owedToMaintenance ? "maintenance" : "dependency" });
+    }
+  }
+  if (reasonById.size === 0) return 0;
 
-  const cleared: string[] = [];
+  const byReason = { dependency: [] as string[], maintenance: [] as string[] };
   const events: Parameters<typeof logEventsBatch>[0] = [];
   for (const n of open) {
-    const hostname = nameById.get(n.assetId as string);
-    if (!hostname) continue;
-    cleared.push(n.id);
+    const hit = reasonById.get(n.assetId as string);
+    if (!hit) continue;
+    // Rule 16(a) — a window retires only DOWN alerts; everything else freezes.
+    if (hit.reason === "maintenance" && !isDownDetectionTrigger(n.rule?.trigger as unknown as Trigger)) continue;
+    byReason[hit.reason].push(n.id);
+    const name = n.rule?.name ?? "alert";
     events.push({
       action: "notification.suppressed",
       resourceType: "notification",
       resourceId: n.id,
-      resourceName: n.rule?.name ?? "alert",
+      resourceName: name,
       actor: "system:notification-engine",
-      message: `Cleared: ${n.rule?.name ?? "alert"} — ${hostname} is suppressed behind a parent that is down`,
-      details: { assetId: n.assetId, reason: "dependency" },
+      message: hit.reason === "maintenance"
+        ? `Cleared: ${name} — ${hit.hostname} is in maintenance, so being down is planned`
+        : `Cleared: ${name} — ${hit.hostname} is suppressed behind a parent that is down`,
+      details: { assetId: n.assetId, reason: hit.reason },
     });
   }
+  const cleared = [...byReason.dependency, ...byReason.maintenance];
   if (cleared.length === 0) return 0;
 
   const now = new Date();
   await prisma.$transaction([
-    prisma.notification.updateMany({
-      where: { id: { in: cleared }, cleared: false },
-      data: { cleared: true, clearedBy: DEPENDENCY_CLEARED_BY, clearedAt: now },
-    }),
+    ...(Object.entries(byReason) as Array<[keyof typeof byReason, string[]]>)
+      .filter(([, ids]) => ids.length > 0)
+      .map(([reason, ids]) => prisma.notification.updateMany({
+        where: { id: { in: ids }, cleared: false },
+        data: { cleared: true, clearedBy: reason === "maintenance" ? MAINTENANCE_CLEARED_BY : DEPENDENCY_CLEARED_BY, clearedAt: now },
+      })),
     // The state machine has to let go of the alert it just lost, or the key
     // sits `firing` with a dangling notificationId and can never fire again.
     prisma.notificationRuleState.updateMany({

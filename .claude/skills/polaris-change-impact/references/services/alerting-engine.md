@@ -66,7 +66,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/notificationService.ts
 
-**What it owns:** Triggered-notification read + lifecycle (View tab + asset tab): region-scoped listing, batch acknowledge/clear, the per-asset bundle, region-prefix stripping, and the **suppression sweep** (`clearSuppressedAlerts` — retires every active alert whose asset is dependency-suppressed behind a genuinely DOWN parent; a maintenance window never retires an alert, business rule 16).
+**What it owns:** Triggered-notification read + lifecycle (View tab + asset tab): region-scoped listing, batch acknowledge/clear, the per-asset bundle, region-prefix stripping, and the **suppression sweep** (`clearSuppressedAlerts` — retires every active alert whose asset is dependency-suppressed behind a genuinely DOWN parent, plus every active DOWN alert — rule trigger `isDownDetectionTrigger` — on an asset in maintenance or behind a maintained parent, `clearedBy="system:maintenance"`; a window freezes every other alert, business rule 16 / 16(a)).
 
 **Public API:** `listNotifications`, `acknowledgeNotifications`, `clearNotifications`, `clearSuppressedAlerts()`, `getAssetNotifications`, `activeAlertSummaryByAsset(assetIds)`, `stripRegionPrefix`, `REGION_TAG_PREFIX`, plus the three pure helpers behind the acknowledge-note policy: `ackNotePolicyOf(row)` (resolves the joined rule's note policy for the severity THIS alert is sitting at — business rule 56), `withAckPolicy(row)` (runs that and flattens the answer onto a list row as a plain boolean, dropping the join) and `ackNoteProblem(needyCount, batchSize, note)` (the refusal message, or null).
 
