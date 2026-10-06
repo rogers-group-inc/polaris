@@ -3569,7 +3569,10 @@ function getAssetFormData() {
     model:         val("f-model") || undefined,
     assetType:     document.getElementById("f-assetType").value,
     status:        document.getElementById("f-status").value,
-    location:      val("f-location") || undefined,
+    // Always sent (including "") — an emptied Location clears to null
+    // server-side so the display falls back to the learned location. Folding
+    // "" to undefined dropped the key and the old value silently survived.
+    location:      val("f-location"),
     department:    val("f-department") || undefined,
     assignedTo:    val("f-assignedTo") || undefined,
     os:            val("f-os") || undefined,

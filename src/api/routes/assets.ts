@@ -3976,6 +3976,8 @@ router.post("/", requirePermission("assets", "write"), async (req, res, next) =>
     // Hostname: trim; an empty box means "not provided", not "" (the edit
     // form now always sends the field, including blank).
     if (typeof input.hostname === "string") data.hostname = input.hostname.trim() || null;
+    // Location: same — the form always sends it, and "" is "none", not a value.
+    if (typeof input.location === "string") data.location = input.location.trim() || null;
     if (input.acquiredAt) data.acquiredAt = new Date(input.acquiredAt);
     if (input.warrantyExpiry) data.warrantyExpiry = new Date(input.warrantyExpiry);
     if (input.ipAddress) data.ipSource = "manual";
@@ -4165,6 +4167,9 @@ async function buildAssetUpdatePatch(
   // Notes: empty string clears to null (notes are operator-only — an
   // emptied box is an intentional clear, not "not provided").
   if (typeof input.notes === "string") data.notes = input.notes.trim() || null;
+  // Location: empty string clears to null (operator-set; the display then
+  // falls back to learnedLocation). The edit form always sends the field.
+  if (typeof input.location === "string") data.location = input.location.trim() || null;
   // HTTP-check path override: empty string clears to null. Stored null rather
   // than "" so "no override" has one representation in the column — the probe's
   // resolveHttpTarget treats both as absent, but a column carrying "" would
