@@ -29,6 +29,7 @@ import { FIRMWARE_INCOMING_DIR } from "../../utils/paths.js";
 import {
   FIRMWARE_ASSET_TYPES,
   FIRMWARE_MAX_IMAGE_BYTES,
+  FIRMWARE_BINDING_SOURCES,
   getFirmwareTree,
   listImages,
   getImage,
@@ -99,6 +100,9 @@ const BindingUpsertSchema = z.object({
   assetType: AssetTypeSchema.optional().nullable(),
   model: z.string().max(200).optional().nullable(),
   credentialId: z.string().uuid().nullable(),
+  // "integration-token" binds the discovering integration's FortiOS API token
+  // (a firewall scope only; credentialId is then null).
+  source: z.enum(FIRMWARE_BINDING_SOURCES).optional(),
 });
 
 const RunsQuerySchema = z.object({
@@ -143,7 +147,7 @@ function firstIssue(err: z.ZodError): string {
 
 // ─── Upload storage ───────────────────────────────────────────────────────────
 
-// Disk, never memory: an image is up to 100 MiB. Into FIRMWARE_DIR/.incoming
+// Disk, never memory: an image is up to 300 MiB (a FortiGate). Into FIRMWARE_DIR/.incoming
 // (not os.tmpdir()) so the service's final rename is on one filesystem and
 // atomic. The ceiling here is the FortiSwitch upload endpoint's own; multer
 // answers LIMIT_FILE_SIZE before the handler sees anything.
@@ -164,7 +168,7 @@ function uploadSingle(field: string) {
     mw(req, res, (err: unknown) => {
       if (!err) return next();
       const code = (err as { code?: string }).code;
-      if (code === "LIMIT_FILE_SIZE") return next(new AppError(413, "Firmware images are limited to 100 MiB"));
+      if (code === "LIMIT_FILE_SIZE") return next(new AppError(413, `Firmware images are limited to ${Math.round(FIRMWARE_MAX_IMAGE_BYTES / 1_048_576)} MiB`));
       if (code === "LIMIT_FILE_COUNT" || code === "LIMIT_UNEXPECTED_FILE") return next(new AppError(400, `Send exactly one file in the "${field}" field`));
       next(err);
     });

@@ -204,7 +204,7 @@ describe("the tree", () => {
 
   it("renders the empty tree honestly", () => {
     sb.PolarisFirmwareTab._setState({ tree: { manufacturers: [] } });
-    expect(text(renderCard().querySelector(".empty-state"))).toMatch(/No switches or access points in the inventory yet/);
+    expect(text(renderCard().querySelector(".empty-state"))).toMatch(/No switches, access points or firewalls in the inventory yet/);
   });
 });
 

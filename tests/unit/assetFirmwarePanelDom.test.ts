@@ -7,7 +7,7 @@
  * THIS device, so what is pinned is the state vocabulary the server hands it
  * and what each state withholds: the Upgrade verb is assets:write-only (the
  * facts stay visible at read); a running flash shows stage and percent and no
- * verb; a card for a server or firewall does not exist at all; and the
+ * verb; a card for a server does not exist at all (a FortiGate has one); and the
  * approval dialog names the exact image — version, platform, file, hash —
  * with the button dead until the operator says they checked it.
  *
@@ -75,11 +75,11 @@ function render(a: Record<string, unknown>, f: unknown): HTMLElement {
 const text = (el: Element | null) => (el?.textContent ?? "").replace(/\s+/g, " ").trim();
 
 describe("who gets a card", () => {
-  it("switches and access points only", () => {
+  it("switches, access points and firewalls only", () => {
     expect(g._assetFirmwareEligible(asset())).toBe(true);
     expect(g._assetFirmwareEligible(asset({ assetType: "access_point" }))).toBe(true);
     expect(g._assetFirmwareEligible(asset({ assetType: "server" }))).toBe(false);
-    expect(g._assetFirmwareEligible(asset({ assetType: "firewall" }))).toBe(false);
+    expect(g._assetFirmwareEligible(asset({ assetType: "firewall" }))).toBe(true);
     expect(g.assetFirmwarePanelHTML(asset({ assetType: "server" }), fw())).toBe("");
     expect(g.assetFirmwarePanelHTML(asset(), null)).toBe("");
   });

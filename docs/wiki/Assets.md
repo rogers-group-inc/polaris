@@ -381,18 +381,22 @@ without the buttons.
 
 #### Firmware
 
-Under the agent card, a **switch or access point** gets a **Firmware** card
-([rule 87](Business-Rules#rule-87)) — the answer to whether the
-[Repository](Server-Settings#repository) holds something newer for this
+Under the agent card, a **switch, access point or firewall** gets a
+**Firmware** card ([rule 87](Business-Rules#rule-87)) — the answer to whether
+the [Repository](Server-Settings#repository) holds something newer for this
 device. It is one of:
 
 - **Not supported** — no upgrade engine for this manufacturer (Fortinet only,
-  over HTTPS to the device's own web UI). Images can still be stored.
+  over HTTPS straight to the device). Images can still be stored. A
+  **FortiGate in an HA cluster** also reads *Not supported*, with the cluster
+  mode and role: upgrading HA clusters is not supported yet.
 - **No image** — nothing in the repository for this device's platform, with a
   link to the Repository.
 - **Current** — nothing newer than what it runs.
 - **No login bound** — an image is available but no device login is bound at
-  the model, device-type or manufacturer level.
+  the model, device-type or manufacturer level (on a FortiGate: no login or API
+  token, or the bound integration API token is missing on the integration that
+  discovered the gate).
 - **Blocked** — an image is available but the device is down, warning,
   recovering, behind a parent that is down, or has no address. Unless the
   address is what is missing, it can still be scheduled for later (below).
@@ -411,12 +415,25 @@ the model's backup image is also newer than the device, lets you choose that
 instead. Nothing is pushed until you tick that you checked the version and
 platform and click **Approve and upgrade**.
 
+**On a FortiGate** the dialog warns that every network, tunnel and device
+behind the gate goes down with it for several minutes, and that Polaris does
+**not** check Fortinet's supported upgrade path — only that the image is
+newer and fits the gate's platform — so choosing an image that is a supported
+step from the running version is up to you. FortiGate upgrades have not yet
+been run against real hardware; see the warning on
+[Server Settings → Repository](Server-Settings#repository) before using one
+on a production gate. The upgrade signs in to the gate itself (its own admin
+login, a REST API token, or the API token of the integration that discovered
+it), checks the gate's serial and that it is standalone (not HA) before
+sending anything, sends the image over the FortiOS REST API — never through
+FortiManager — then waits for the reboot and reads the new version back.
+
 While it runs the card shows the stage and, on a switch, the erase / write /
 verify percentages, then *Rebooting*, *Verifying new version* and *Waiting
 for monitoring to answer*. The device is in a maintenance window for the
 duration
 ([Maintenance Windows](Maintenance-Windows#windows-polaris-opens-for-itself)),
-so everything behind a switch is suppressed with it. The last stage is the
+so everything behind a switch or gate is suppressed with it. The last stage is the
 window staying open after the device has confirmed its new version: its web
 interface, which the upgrade uses, usually answers before the SNMP agent
 Polaris monitors it with. The run finishes when monitoring gets its first
@@ -425,8 +442,9 @@ straight away.
 
 **How the version is confirmed.** The upgrade never takes the device's word
 from before the reboot. It waits for the device's old web session to be
-refused, which only happens once it has restarted, then signs in afresh and
-reads the running version. That can succeed while the device's monitoring
+refused (a FortiGate: for the gate to stop answering and answer again), which
+only happens once it has restarted, then signs in afresh and reads the running
+version. That can succeed while the device's monitoring
 still shows missed polls; the two use different services on the device. Polaris does not offer a
 cancel — a flash mid-write must finish — and **you must not power-cycle the
 device while it is writing.**

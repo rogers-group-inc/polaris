@@ -5992,7 +5992,7 @@ model MaintenanceHold {
 model FirmwareImage {
   id           String   @id @default(uuid())
   manufacturer String   // alias-canonicalised, the same spelling Asset.manufacturer carries
-  assetType    String   // "switch" | "access_point" — CHECK in the migration; not the whole registry
+  assetType    String   // "switch" | "access_point" | "firewall" — CHECK in the migration; not the whole registry
   model        String   // tree placement only (an FMG-discovered switch may carry the literal "FortiSwitch")
   platform     String?  // header token, e.g. S108FF / FP231K — the SERIAL PREFIX it fits; null = unrecognised, never offered
   versionMajor Int?
@@ -6028,6 +6028,10 @@ model FirmwareCredentialBinding {
   manufacturer String
   assetType    String?     // null = manufacturer-wide
   model        String?     // non-null only with assetType
+  // "credential" (credentialId names a form login, or a restapi token on a
+  // FortiGate) | "integration-token" (the discovering integration's FortiOS API
+  // token; firewall scopes only, credentialId null) — CHECKs in the migration.
+  source       String      @default("credential")
   credentialId String?
   credential   Credential? @relation("FirmwareBindingCredential", fields: [credentialId], references: [id], onDelete: SetNull)
   createdBy    String?
@@ -6050,7 +6054,7 @@ model FirmwareUpgradeRun {
   platform        String
   fromVersion     String?
   toVersion       String
-  engine          String         // "fortiswitch-https" | "fortiap-https"
+  engine          String         // "fortiswitch-https" | "fortiap-https" | "fortigate-https"
   status          String         @default("queued") // queued | running | succeeded | failed | unverified
   stage           String?        // preflight | staging | compat | deploying | rebooting | verifying
   progress        Json?          // { erase, write, verify, restart, curStep, totStep, lastMsgAt }

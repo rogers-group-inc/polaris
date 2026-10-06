@@ -2390,7 +2390,7 @@
   // the per-asset run read. The PRIMARY image only: choosing the model's
   // backup, the run history and its log stay on the desktop card. The
   // Repository itself is desktop-only.
-  var FW_ELIGIBLE = { "switch": true, "access_point": true };
+  var FW_ELIGIBLE = { "switch": true, "access_point": true, "firewall": true };
   var FW_POLL_MS = 3000;
   var FW_STAGE_LABELS = {
     preflight: "Signing in",

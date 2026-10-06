@@ -144,7 +144,7 @@ const flushRunner = () => new Promise((r) => setTimeout(r, 30));
 describe("credential precedence — model › device type › manufacturer, live rows only", () => {
   const asset = { manufacturer: "Fortinet", assetType: "switch", model: "FortiSwitch S108FF" };
   it("the manufacturer binding is the fallback", async () => {
-    expect(await resolveFirmwareCredential(asset, { revealSecrets: false })).toEqual({ credentialId: "cred-m", credentialName: "mfr login", scope: "manufacturer" });
+    expect(await resolveFirmwareCredential(asset, { revealSecrets: false })).toEqual({ source: "credential", credentialId: "cred-m", credentialName: "mfr login", scope: "manufacturer" });
   });
   it("a device-type binding beats it, and a model binding beats both", async () => {
     h.state.bindings = [bind("manufacturer", "cred-m"), bind("assetType", "cred-t", "type login")];
@@ -374,7 +374,7 @@ describe("getUpgradeAvailability", () => {
     expect(a.available).toBe(true);
     expect(a.image?.id).toBe("img-primary");
     expect(a.backupImage?.id).toBe("img-backup");
-    expect(a.credential).toEqual({ credentialId: "cred-m", credentialName: "mfr login", scope: "manufacturer" });
+    expect(a.credential).toEqual({ source: "credential", credentialId: "cred-m", credentialName: "mfr login", scope: "manufacturer" });
   });
   it("is unsupported for another manufacturer without touching the images", async () => {
     h.state.asset.manufacturer = "Aruba";

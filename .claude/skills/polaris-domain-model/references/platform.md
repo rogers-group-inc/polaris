@@ -20,7 +20,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 
 - **DeviceIcon** — operator-uploaded topology icon blobs (scope + key), served to the Device Map / topology renderer.
 
-- **FirmwareImage** / **FirmwareCredentialBinding** / **FirmwareUpgradeRun** — the firmware repository for switches and access points (Server Settings → Repository; business rule 87). An **image** is one uploaded `.out`, bytes under `FIRMWARE_DIR` (`data/firmware`, never the public uploads dir), filed under a manufacturer › device type (`switch` / `access_point` only, CHECK) › model node; its identity — `platform` (the header's serial-prefix token), version parts, `build` — is parsed from the image header, and the MODEL NODE is only where it is filed: an asset is matched on `platform === platformFromSerial(serial)`, never on the model string. **A node holds at most one `primary` and one `backup`** (two partial unique indexes); a new upload becomes primary, the displaced primary becomes backup, the displaced backup is removed by the rotation. Only the primary is offered unasked. A **binding** names which device-admin login (an `http` Credential in authMode `form`) signs in at manufacturer, device-type or model scope — one row per scope (three partial uniques), `model` requires `assetType` (CHECK), FK `SetNull` so a deleted credential's binding is SKIPPED by resolution rather than shadowing a wider one. A **run** is one flash: identity snapshotted so history survives rotation; at most one queued/running per asset (partial unique); `verifiedVersion` is what the device reported after reboot and is **never written onto `Asset.osVersion`** — projection owns that, via the scoped rediscover the run requests.
+- **FirmwareImage** / **FirmwareCredentialBinding** / **FirmwareUpgradeRun** — the firmware repository for switches, access points and (2026-10-06) FortiGate firewalls (Server Settings → Repository; business rule 87). An **image** is one uploaded `.out`, bytes under `FIRMWARE_DIR` (`data/firmware`, never the public uploads dir), filed under a manufacturer › device type (`switch` / `access_point` / `firewall` only, CHECK) › model node; its identity — `platform` (the header's serial-prefix token), version parts, `build` — is parsed from the image header, and the MODEL NODE is only where it is filed: an asset is matched on `platform === platformFromSerial(serial)`, never on the model string. **A node holds at most one `primary` and one `backup`** (two partial unique indexes); a new upload becomes primary, the displaced primary becomes backup, the displaced backup is removed by the rotation. Only the primary is offered unasked. A **binding** names what signs in at manufacturer, device-type or model scope — one row per scope (three partial uniques), `model` requires `assetType` (CHECK), FK `SetNull` so a deleted credential's binding is SKIPPED by resolution rather than shadowing a wider one. Its `source` (2026-10-06) is `credential` — a device-admin login (an `http` Credential in authMode `form`), or on a firewall scope a `restapi` Credential — or `integration-token`: no Credential row (`credentialId` null, CHECK-enforced to firewall scopes only), resolved at run time to the FortiOS API token of the integration in `Asset.discoveredByIntegrationId`. A **run** is one flash: identity snapshotted so history survives rotation; at most one queued/running per asset (partial unique); `verifiedVersion` is what the device reported after reboot and is **never written onto `Asset.osVersion`** — projection owns that, via the scoped rediscover the run requests.
 - **FirmwareUpgradeSchedule** — a flash BOOKED for a date and time from the asset's Firmware card (business rule 93): the image approved by name at booking (`imageId`, FK `SetNull`, with `toVersion` snapshotted so the booking still names it after a delete), `scheduledFor` (an absolute instant), `notifyEmails` (lower-cased, de-duplicated, **never empty** — CHECK), and `status` ∈ `pending` / `started` / `cancelled` / `refused` / `missed` (CHECK). **At most one `pending` booking per asset** (partial unique). It is NOT a `FirmwareUpgradeRun` with a "scheduled" status: when the scheduler job fires it, `startFirmwareUpgrade` creates the run and links it back (`runId`, unique, `SetNull`). `error` says why it was refused / missed — or, while `pending` again after a `FirmwareRunConflictError`, what it is waiting for; `notifiedAt` is claimed before the results email is sent, so the outcome is emailed once; `notifyError` records a failed send.
 
 - **UserPasskey** — one registered WebAuthn credential on a local account. The row holds only what verifying a later assertion needs (credential id, COSE public key, signature counter, transports) plus what an operator deciding whether to rely on it needs to see (name, last used, whether it syncs through a credential manager). It is a credential, not a device: the same security key registered by two people is two rows. Whether a passkey may sign in on its own, act as a second factor, both, or nothing is the install-wide `passkeyConfig` Setting, never a property of the row — see `polaris-api-rbac` for the endpoints and business rules 63–64.
@@ -470,10 +470,10 @@ DeviceIcon                      -- Operator-uploaded topology node icons; resolv
   uploadedAt    DateTime
   @@unique([scope, key])
 
-FirmwareImage                   -- One uploaded switch / AP firmware image (business rule 87). Bytes live on disk under FIRMWARE_DIR as "<id>.out".
+FirmwareImage                   -- One uploaded switch / AP / FortiGate firmware image (business rule 87). Bytes live on disk under FIRMWARE_DIR as "<id>.out".
   id            UUID PK
   manufacturer  String          -- alias-canonicalised; the spelling Asset.manufacturer carries
-  assetType     String          -- "switch" | "access_point" (CHECK firmware_images_asset_type_check)
+  assetType     String          -- "switch" | "access_point" | "firewall" (CHECK firmware_images_asset_type_check; firewall since 20261006010000_firmware_fortigate)
   model         String          -- tree placement ONLY (an FMG-discovered switch may carry the literal "FortiSwitch")
   platform      String?         -- image-header token, e.g. S108FF / FP231K = the SERIAL PREFIX it fits; null = filename-only parse, never offered
   versionMajor  Int?
@@ -484,7 +484,7 @@ FirmwareImage                   -- One uploaded switch / AP firmware image (busi
   parsedFrom    String          -- "header" | "filename"
   role          String          -- "primary" | "backup" (CHECK also allows the transient "swapping" the make-primary transaction steps through)
   filename      String
-  sizeBytes     Int             -- ≤ 104857600 (the FortiSwitch upload endpoint's ceiling; multer enforces it)
+  sizeBytes     Int             -- per type (FIRMWARE_MAX_IMAGE_BYTES_BY_TYPE): ≤ 104857600 switch / AP (the FortiSwitch upload endpoint's ceiling), ≤ 314572800 firewall; multer stops at the largest
   sha256        String @unique  -- the same bytes filed twice is a 409 naming where they live
   storagePath   String          -- relative to FIRMWARE_DIR
   notes         String?
@@ -494,15 +494,17 @@ FirmwareImage                   -- One uploaded switch / AP firmware image (busi
   @@index([manufacturer, assetType, model])      -- the tree
   -- SQL only: UNIQUE (manufacturer, assetType, model) WHERE role='primary', and the same WHERE role='backup' — the two-image cap.
 
-FirmwareCredentialBinding       -- Which device-admin login (an `http` Credential, authMode "form") an upgrade signs in with, at one scope
+FirmwareCredentialBinding       -- What an upgrade signs in with, at one scope: a device-admin login (an `http` Credential, authMode "form"), or on a FortiGate a FortiOS API token
   id            UUID PK
   manufacturer  String
-  assetType     String?         -- null = manufacturer-wide
+  assetType     String?         -- null = manufacturer-wide; "switch" | "access_point" | "firewall" (CHECK firmware_credential_bindings_type_check)
   model         String?         -- non-null only with assetType (CHECK firmware_credential_bindings_scope_check)
-  credentialId  UUID? FK → Credential (SetNull) -- null = the credential was deleted; resolution SKIPS the row
+  source        String @default("credential") -- "credential" | "integration-token" (CHECK firmware_credential_bindings_source_check). integration-token = the discovering integration's FortiOS API token, resolved at run time via Asset.discoveredByIntegrationId (a standalone fortigate integration's apiToken, or a fortimanager's fortigateApiToken)
+  credentialId  UUID? FK → Credential (SetNull) -- a `form` login on any type, or a `restapi` Credential on a firewall scope; null on a credential-source row = the credential was deleted (resolution SKIPS the row); always null on integration-token
+  -- CHECK firmware_credential_bindings_token_scope_check: source = 'credential' OR (assetType = 'firewall' AND credentialId IS NULL)
   createdBy     String?
   createdAt, updatedAt
-  -- SQL only: three partial unique indexes, one per scope shape (manufacturer / type / model). Resolution: model › type › manufacturer, most specific LIVE row wins.
+  -- SQL only: three partial unique indexes, one per scope shape (manufacturer / type / model). Resolution: model › type › manufacturer, most specific LIVE row that can sign in to THIS device wins (a token kind on a switch / AP, or an integration with no token, falls through).
 
 FirmwareUpgradeRun              -- One flash of one asset. Identity snapshotted so history survives the image being rotated out.
   id              UUID PK
@@ -511,7 +513,7 @@ FirmwareUpgradeRun              -- One flash of one asset. Identity snapshotted 
   platform        String
   fromVersion     String?
   toVersion       String
-  engine          String        -- "fortiswitch-https" | "fortiap-https"
+  engine          String        -- "fortiswitch-https" | "fortiap-https" | "fortigate-https"
   status          String        -- queued | running | succeeded | failed | unverified
   stage           String?       -- preflight | staging | compat | deploying | rebooting | verifying
   progress        Json?         -- { erase, write, verify, restart, curStep, totStep, lastMsgAt } (FortiSwitch reports percentages while flashing)

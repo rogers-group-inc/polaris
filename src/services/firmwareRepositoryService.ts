@@ -4,7 +4,7 @@
  *
  * Owns three things and their invariants:
  *
- *   THE TREE. manufacturer › device type (switch / access_point only) › model,
+ *   THE TREE. manufacturer › device type (switch / access_point / firewall) › model,
  *   built from the assets that exist plus the model nodes that hold images.
  *   A node with images and no assets is ORPHANED — flagged, never hidden, so
  *   the operator sees the images are still on disk.
@@ -19,7 +19,9 @@
  *   is also strictly newer.
  *
  *   BINDINGS. Which device-admin login (an `http` Credential, authMode
- *   "form") signs in, at manufacturer, device-type or model scope; the most
+ *   "form") signs in — or, on a FortiGate, which FortiOS API token: a
+ *   `restapi` Credential, or the discovering integration's own token
+ *   (`source: "integration-token"`) — at manufacturer, device-type or model scope; the most
  *   specific scope with a LIVE credential wins, and a binding whose credential
  *   was deleted falls through instead of shadowing a wider one (the rule-49
  *   posture: absent is not an error).
@@ -48,19 +50,44 @@ import {
 } from "../utils/firmwareVersion.js";
 import { getCredential } from "./credentialService.js";
 import { isDeviceLoginCredential, type HttpAuthConfig } from "../utils/httpCheck.js";
+import { restApiCredentialAuth } from "../utils/fortinetRestCredential.js";
 import { logEvent } from "./eventLogService.js";
 import { engineKindForType, engineFor } from "./firmwareEngines/index.js";
 import { listAssetTypes } from "./assetTypeService.js";
 import { logger } from "../utils/logger.js";
 
-export const FIRMWARE_ASSET_TYPES = ["switch", "access_point"] as const;
+export const FIRMWARE_ASSET_TYPES = ["switch", "access_point", "firewall"] as const;
 export type FirmwareAssetType = (typeof FIRMWARE_ASSET_TYPES)[number];
-export const FIRMWARE_MAX_IMAGE_BYTES = 104_857_600;
+/**
+ * Per device type: 100 MiB is the FortiSwitch upload endpoint's own ceiling
+ * (and ample for a FortiAP); a FortiGate image runs to ~250 MB.
+ */
+export const FIRMWARE_MAX_IMAGE_BYTES_BY_TYPE: Record<FirmwareAssetType, number> = {
+  switch: 104_857_600,
+  access_point: 104_857_600,
+  firewall: 314_572_800,
+};
+/** The largest of the per-type ceilings — what the upload route accepts at all. */
+export const FIRMWARE_MAX_IMAGE_BYTES = Math.max(...Object.values(FIRMWARE_MAX_IMAGE_BYTES_BY_TYPE));
 export const FIRMWARE_IMAGE_ROLES = ["primary", "backup"] as const;
 export type FirmwareImageRole = (typeof FIRMWARE_IMAGE_ROLES)[number];
 
 export function isFirmwareAssetType(v: unknown): v is FirmwareAssetType {
-  return v === "switch" || v === "access_point";
+  return v === "switch" || v === "access_point" || v === "firewall";
+}
+
+/**
+ * What a binding signs in with. `credential` is a stored Credential — a
+ * device-admin `form` login on any type, or a `restapi` token on a FortiGate;
+ * `integration-token` is the FortiOS API token of the integration that
+ * discovered the gate (FortiGate bindings only — a CHECK in the migration).
+ */
+export const FIRMWARE_BINDING_SOURCES = ["credential", "integration-token"] as const;
+export type FirmwareBindingSource = (typeof FIRMWARE_BINDING_SOURCES)[number];
+const INTEGRATION_TOKEN_LABEL = "Integration API token";
+
+function mibLabel(bytes: number): string {
+  return `${Math.round(bytes / 1_048_576)} MiB`;
 }
 
 // ─── Shapes ───────────────────────────────────────────────────────────────────
@@ -89,14 +116,18 @@ export interface FirmwareImageRow {
 
 export interface FirmwareBindingRef {
   id: string;
+  source: FirmwareBindingSource;
   credentialId: string | null;
+  /** The credential's name, or "Integration API token". */
   credentialName: string | null;
   /** The credential was deleted; resolution skips this row. */
   stale: boolean;
 }
 
 export interface EffectiveBinding {
-  credentialId: string;
+  source: FirmwareBindingSource;
+  /** Null for an integration-token binding. */
+  credentialId: string | null;
   credentialName: string;
   scope: "manufacturer" | "assetType" | "model";
 }
@@ -141,8 +172,24 @@ type ImageRecord = {
 
 type BindingRecord = {
   id: string; manufacturer: string; assetType: string | null; model: string | null; credentialId: string | null;
-  credential?: { id: string; name: string } | null;
+  source?: string | null;
+  credential?: { id: string; name: string; type?: string } | null;
 };
+
+function sourceOf(b: BindingRecord): FirmwareBindingSource {
+  return b.source === "integration-token" ? "integration-token" : "credential";
+}
+
+/** A binding that names something live — an integration token always does; a credential binding only while its credential exists. */
+function bindingIsLive(b: BindingRecord): boolean {
+  return sourceOf(b) === "integration-token" || (!!b.credentialId && !!b.credential);
+}
+
+function effectiveOf(b: BindingRecord, scope: EffectiveBinding["scope"]): EffectiveBinding {
+  return sourceOf(b) === "integration-token"
+    ? { source: "integration-token", credentialId: null, credentialName: INTEGRATION_TOKEN_LABEL, scope }
+    : { source: "credential", credentialId: b.credentialId, credentialName: b.credential?.name ?? "", scope };
+}
 
 function versionOf(r: { versionMajor: number | null; versionMinor: number | null; versionPatch: number | null; build: number | null }): FirmwareVersion | null {
   if (r.versionMajor === null) return null;
@@ -188,11 +235,13 @@ function toRow(r: ImageRecord, fileMissing = false, platformsUnderModel?: Set<st
 
 function bindingRef(b: BindingRecord | undefined): FirmwareBindingRef | null {
   if (!b) return null;
+  const source = sourceOf(b);
   return {
     id: b.id,
+    source,
     credentialId: b.credentialId,
-    credentialName: b.credential?.name ?? null,
-    stale: b.credentialId === null,
+    credentialName: source === "integration-token" ? INTEGRATION_TOKEN_LABEL : (b.credential?.name ?? null),
+    stale: source === "credential" && b.credentialId === null,
   };
 }
 
@@ -244,8 +293,18 @@ async function typeLabels(): Promise<Map<string, string>> {
     const defs = await listAssetTypes();
     return new Map(defs.map((d: { name: string; label: string }) => [d.name, d.label]));
   } catch {
-    return new Map([["switch", "Switch"], ["access_point", "Access Point"]]);
+    return new Map([["switch", "Switch"], ["access_point", "Access Point"], ["firewall", "Firewall"]]);
   }
+}
+
+/**
+ * Whether a binding can sign in to a device of `assetType`. A form login fits
+ * every type; a token — the integration's, or a `restapi` credential — only a
+ * FortiGate (null type = a manufacturer-wide node, which a token never is).
+ */
+function bindingFitsType(b: BindingRecord, assetType: string | null): boolean {
+  const isToken = sourceOf(b) === "integration-token" || b.credential?.type === "restapi";
+  return !isToken || assetType === "firewall";
 }
 
 /**
@@ -261,7 +320,7 @@ export async function getFirmwareTree(): Promise<FirmwareTree> {
       _count: { _all: true },
     }),
     prisma.firmwareImage.findMany({ orderBy: [{ role: "asc" }, { uploadedAt: "desc" }] }),
-    prisma.firmwareCredentialBinding.findMany({ include: { credential: { select: { id: true, name: true } } } }),
+    prisma.firmwareCredentialBinding.findMany({ include: { credential: { select: { id: true, name: true, type: true } } } }),
     typeLabels(),
   ]);
 
@@ -304,7 +363,9 @@ export async function getFirmwareTree(): Promise<FirmwareTree> {
       [bindingByKey.get(nodeKey(manufacturer, null, null)), "manufacturer"],
     ];
     for (const [b, scope] of tiers) {
-      if (b && b.credentialId && b.credential) return { credentialId: b.credentialId, credentialName: b.credential.name, scope };
+      // A token kind only signs in to a FortiGate: on a switch / AP node it
+      // is skipped, exactly as resolveFirmwareCredential skips it.
+      if (b && bindingIsLive(b) && bindingFitsType(b, assetType)) return effectiveOf(b, scope);
     }
     return null;
   };
@@ -443,11 +504,12 @@ export async function registerUploadedImage(input: RegisterImageInput): Promise<
   try {
     const manufacturer = normalizeManufacturer(input.manufacturer.trim());
     if (!manufacturer) throw new AppError(400, "manufacturer is required");
-    if (!isFirmwareAssetType(input.assetType)) throw new AppError(400, "assetType must be switch or access_point");
+    if (!isFirmwareAssetType(input.assetType)) throw new AppError(400, "assetType must be switch, access_point or firewall");
     const model = input.model.trim();
     if (!model) throw new AppError(400, "model is required");
     if (input.sizeBytes <= 0) throw new AppError(400, "The uploaded file is empty");
-    if (input.sizeBytes > FIRMWARE_MAX_IMAGE_BYTES) throw new AppError(413, `Firmware images are limited to ${FIRMWARE_MAX_IMAGE_BYTES} bytes (100 MiB)`);
+    const cap = FIRMWARE_MAX_IMAGE_BYTES_BY_TYPE[input.assetType];
+    if (input.sizeBytes > cap) throw new AppError(413, `${input.assetType === "firewall" ? "Firewall" : input.assetType === "access_point" ? "Access point" : "Switch"} firmware images are limited to ${cap} bytes (${mibLabel(cap)})`);
 
     const head = await readHead(tmp);
     const identity = identifyFirmwareImage(head, input.originalName);
@@ -458,8 +520,10 @@ export async function registerUploadedImage(input: RegisterImageInput): Promise<
     if (identity.parsedFrom === "filename") {
       warnings.push("Only the file name was readable, so no platform is known — this image will not be offered to any device.");
     }
-    if (identity.family === "switch" && input.assetType !== "switch") warnings.push("The image header says this is a FortiSwitch image, but it is being filed under an access-point model.");
-    if (identity.family === "ap" && input.assetType !== "access_point") warnings.push("The image header says this is a FortiAP image, but it is being filed under a switch model.");
+    const filedAs = input.assetType === "access_point" ? "an access-point" : input.assetType === "firewall" ? "a firewall" : "a switch";
+    if (identity.family === "switch" && input.assetType !== "switch") warnings.push(`The image header says this is a FortiSwitch image, but it is being filed under ${filedAs} model.`);
+    if (identity.family === "ap" && input.assetType !== "access_point") warnings.push(`The image header says this is a FortiAP image, but it is being filed under ${filedAs} model.`);
+    if (identity.family === "firewall" && input.assetType !== "firewall") warnings.push(`The image header says this is a FortiGate image, but it is being filed under ${filedAs} model.`);
     if (identity.platform) {
       const platforms = (await platformsPerModelNode()).get(nodeKey(manufacturer, input.assetType, model));
       if (platforms && platforms.size > 0 && !platforms.has(identity.platform)) {
@@ -611,7 +675,7 @@ export async function deleteImage(id: string, actor?: string | null): Promise<vo
 export async function purgeModelImages(input: { manufacturer: string; assetType: string; model: string }, actor?: string | null): Promise<{ deleted: number }> {
   const manufacturer = normalizeManufacturer(input.manufacturer.trim());
   if (!manufacturer) throw new AppError(400, "manufacturer is required");
-  if (!isFirmwareAssetType(input.assetType)) throw new AppError(400, "assetType must be switch or access_point");
+  if (!isFirmwareAssetType(input.assetType)) throw new AppError(400, "assetType must be switch, access_point or firewall");
   const rows = await prisma.firmwareImage.findMany({ where: { manufacturer, assetType: input.assetType, model: input.model } });
   if (rows.length === 0) return { deleted: 0 };
   if ((await activeRunsReferencing(rows.map((r) => r.id))) > 0) throw new AppError(409, "An image under this model is being flashed right now — wait for the run to finish");
@@ -639,36 +703,59 @@ function assertBindingScope(input: { manufacturer: string; assetType?: string | 
   if (!manufacturer) throw new AppError(400, "manufacturer is required");
   const assetType = input.assetType ? String(input.assetType) : null;
   const model = input.model !== undefined && input.model !== null ? String(input.model) : null;
-  if (assetType !== null && !isFirmwareAssetType(assetType)) throw new AppError(400, "assetType must be switch or access_point");
+  if (assetType !== null && !isFirmwareAssetType(assetType)) throw new AppError(400, "assetType must be switch, access_point or firewall");
   if (model !== null && assetType === null) throw new AppError(400, "A model binding needs its device type");
   return { manufacturer, assetType, model };
 }
 
 export async function listBindings(): Promise<Array<BindingScope & FirmwareBindingRef>> {
-  const rows = await prisma.firmwareCredentialBinding.findMany({ include: { credential: { select: { id: true, name: true } } }, orderBy: [{ manufacturer: "asc" }, { assetType: "asc" }, { model: "asc" }] });
+  const rows = await prisma.firmwareCredentialBinding.findMany({ include: { credential: { select: { id: true, name: true, type: true } } }, orderBy: [{ manufacturer: "asc" }, { assetType: "asc" }, { model: "asc" }] });
   return rows.map((b) => ({ manufacturer: b.manufacturer, assetType: b.assetType, model: b.model, ...bindingRef(b as BindingRecord)! }));
 }
 
-/** Bind a device-admin login at one scope (upsert by scope). `credentialId: null` removes the binding. */
-export async function upsertBinding(input: { manufacturer: string; assetType?: string | null; model?: string | null; credentialId: string | null; actor?: string | null }): Promise<FirmwareBindingRef | null> {
+/**
+ * Bind a login at one scope (upsert by scope). `source: "integration-token"`
+ * binds the discovering integration's API token (a FortiGate scope only);
+ * otherwise `credentialId` names a device-admin `form` login, or — on a
+ * FortiGate scope — a `restapi` token credential. `credentialId: null` with
+ * the default source removes the binding.
+ */
+export async function upsertBinding(input: { manufacturer: string; assetType?: string | null; model?: string | null; credentialId: string | null; source?: FirmwareBindingSource; actor?: string | null }): Promise<FirmwareBindingRef | null> {
   const scope = assertBindingScope(input);
+  const source: FirmwareBindingSource = input.source ?? "credential";
   const existing = await prisma.firmwareCredentialBinding.findFirst({ where: { manufacturer: scope.manufacturer, assetType: scope.assetType, model: scope.model } });
   const scopeLabel = [scope.manufacturer, scope.assetType, scope.model].filter(Boolean).join(" › ");
-  if (input.credentialId === null) {
+  if (source === "credential" && input.credentialId === null) {
     if (existing) {
       await prisma.firmwareCredentialBinding.delete({ where: { id: existing.id } });
       await logEvent({ action: "firmware.binding_deleted", resourceType: "firmware_binding", resourceId: existing.id, resourceName: scopeLabel, actor: input.actor ?? undefined, level: "info", message: `Device login binding removed at ${scopeLabel}`, details: { ...scope } });
     }
     return null;
   }
-  const cred = await prisma.credential.findUnique({ where: { id: input.credentialId }, select: { id: true, name: true, type: true, config: true } });
-  if (!cred) throw new AppError(400, "The selected credential no longer exists");
-  if (cred.type !== "http" || !isDeviceLoginCredential((cred.config ?? {}) as HttpAuthConfig)) {
-    throw new AppError(400, "A firmware binding needs an HTTP credential in \"Device admin login (form)\" mode");
+  const include = { credential: { select: { id: true, name: true, type: true } } } as const;
+  let data: { source: FirmwareBindingSource; credentialId: string | null };
+  let what: string;
+  if (source === "integration-token") {
+    if (scope.assetType !== "firewall") throw new AppError(400, "The integration's API token can only sign in to FortiGates — bind it on a Firewall node");
+    data = { source, credentialId: null };
+    what = "the discovering integration's API token";
+  } else {
+    const cred = await prisma.credential.findUnique({ where: { id: input.credentialId! }, select: { id: true, name: true, type: true, config: true } });
+    if (!cred) throw new AppError(400, "The selected credential no longer exists");
+    const isLogin = cred.type === "http" && isDeviceLoginCredential((cred.config ?? {}) as HttpAuthConfig);
+    const isToken = cred.type === "restapi";
+    if (isToken && scope.assetType !== "firewall") throw new AppError(400, "A REST API token credential can only sign in to FortiGates — bind it on a Firewall node");
+    if (!isLogin && !isToken) {
+      throw new AppError(400, scope.assetType === "firewall"
+        ? "A firewall binding needs an HTTP credential in \"Device admin login (form)\" mode or a REST API credential"
+        : "A firmware binding needs an HTTP credential in \"Device admin login (form)\" mode");
+    }
+    data = { source, credentialId: cred.id };
+    what = `${isToken ? "REST API token" : "device login"} "${cred.name}"`;
   }
   const row = existing
-    ? await prisma.firmwareCredentialBinding.update({ where: { id: existing.id }, data: { credentialId: cred.id }, include: { credential: { select: { id: true, name: true } } } })
-    : await prisma.firmwareCredentialBinding.create({ data: { ...scope, credentialId: cred.id, createdBy: input.actor ?? null }, include: { credential: { select: { id: true, name: true } } } });
+    ? await prisma.firmwareCredentialBinding.update({ where: { id: existing.id }, data, include })
+    : await prisma.firmwareCredentialBinding.create({ data: { ...scope, ...data, createdBy: input.actor ?? null }, include });
   await logEvent({
     action: "firmware.binding_set",
     resourceType: "firmware_binding",
@@ -676,8 +763,8 @@ export async function upsertBinding(input: { manufacturer: string; assetType?: s
     resourceName: scopeLabel,
     actor: input.actor ?? undefined,
     level: "info",
-    message: `Device login "${cred.name}" bound at ${scopeLabel}`,
-    details: { ...scope, credentialId: cred.id, credentialName: cred.name },
+    message: `${what.charAt(0).toUpperCase()}${what.slice(1)} bound at ${scopeLabel}`,
+    details: { ...scope, source, credentialId: data.credentialId, credentialName: row.credential?.name ?? null },
   });
   return bindingRef(row as BindingRecord);
 }
@@ -691,16 +778,60 @@ export async function deleteBinding(id: string, actor?: string | null): Promise<
 }
 
 export interface ResolvedFirmwareCredential extends EffectiveBinding {
+  /** A form login's; empty on a token binding. */
   username: string;
   password: string;
+  /** A token binding's FortiOS API token — sent as a bearer token. */
+  bearerToken?: string;
+  /** The token's own transport detail: verify TLS, and a non-default port. */
+  verifyTls?: boolean;
+  port?: number;
+}
+
+/** The asset fields resolution reads. */
+export interface FirmwareCredentialAsset {
+  manufacturer: string | null;
+  assetType: string;
+  model: string | null;
+  /** The integration that discovered it — the source of an integration-token binding's token. */
+  discoveredByIntegrationId?: string | null;
+}
+
+/**
+ * The FortiOS API token of the integration that discovered `asset`, or why
+ * there is none. A standalone FortiGate integration's own token; a
+ * FortiManager's FortiGate token (the one its direct-mode monitoring uses —
+ * FortiManager's own JSON-RPC login cannot flash a gate over its REST API).
+ */
+async function integrationTokenFor(asset: FirmwareCredentialAsset): Promise<{ token: string; verifyTls: boolean; port?: number } | { error: string }> {
+  if (!asset.discoveredByIntegrationId) return { error: "the asset was not discovered by a FortiGate or FortiManager integration" };
+  const integ = await prisma.integration.findUnique({ where: { id: asset.discoveredByIntegrationId }, select: { type: true, config: true } });
+  if (!integ) return { error: "the integration that discovered the asset no longer exists" };
+  const cfg = (integ.config ?? {}) as Record<string, unknown>;
+  if (integ.type === "fortigate") {
+    const token = String(cfg.apiToken || "").trim();
+    if (!token) return { error: "the FortiGate integration has no API token" };
+    const port = Number(cfg.port);
+    return { token, verifyTls: cfg.verifySsl === true, ...(Number.isInteger(port) && port > 0 && port !== 443 ? { port } : {}) };
+  }
+  if (integ.type === "fortimanager") {
+    const token = String(cfg.fortigateApiToken || "").trim();
+    if (!token) return { error: "the FortiManager integration has no FortiGate API token (Monitoring tab)" };
+    return { token, verifyTls: cfg.fortigateVerifySsl === true };
+  }
+  return { error: `a ${integ.type} integration has no FortiOS API token` };
 }
 
 /**
  * The login an upgrade signs in with: model › device type › manufacturer,
  * most specific LIVE binding wins. Secrets are revealed here and nowhere
  * else, and only the caller that is about to open a socket should ask.
+ *
+ * A binding that cannot sign in to THIS device falls through, never shadows:
+ * a deleted credential, a token kind on a switch or AP, an integration-token
+ * binding whose integration has no token (the rule-49 posture).
  */
-export async function resolveFirmwareCredential(asset: { manufacturer: string | null; assetType: string; model: string | null }, opts: { revealSecrets: boolean }): Promise<ResolvedFirmwareCredential | EffectiveBinding | null> {
+export async function resolveFirmwareCredential(asset: FirmwareCredentialAsset, opts: { revealSecrets: boolean }): Promise<ResolvedFirmwareCredential | EffectiveBinding | null> {
   if (!asset.manufacturer) return null;
   const manufacturer = normalizeManufacturer(asset.manufacturer);
   const rows = await prisma.firmwareCredentialBinding.findMany({
@@ -712,20 +843,34 @@ export async function resolveFirmwareCredential(asset: { manufacturer: string | 
         { assetType: null },
       ],
     },
-    include: { credential: { select: { id: true, name: true } } },
+    include: { credential: { select: { id: true, name: true, type: true } } },
   });
   const pick = (pred: (b: BindingRecord) => boolean): BindingRecord | undefined =>
-    (rows as BindingRecord[]).find((b) => pred(b) && b.credentialId && b.credential);
+    (rows as BindingRecord[]).find((b) => pred(b) && bindingIsLive(b) && bindingFitsType(b, asset.assetType));
   const tiers: Array<[BindingRecord | undefined, EffectiveBinding["scope"]]> = [
     [pick((b) => b.model !== null), "model"],
     [pick((b) => b.model === null && b.assetType !== null), "assetType"],
     [pick((b) => b.assetType === null), "manufacturer"],
   ];
   for (const [b, scope] of tiers) {
-    if (!b || !b.credentialId || !b.credential) continue;
-    const eff: EffectiveBinding = { credentialId: b.credentialId, credentialName: b.credential.name, scope };
+    if (!b) continue;
+    const eff = effectiveOf(b, scope);
+    if (eff.source === "integration-token") {
+      const t = await integrationTokenFor(asset);
+      if ("error" in t) {
+        logger.debug({ manufacturer, assetType: asset.assetType, reason: t.error }, "firmware: integration-token binding skipped");
+        continue;
+      }
+      if (!opts.revealSecrets) return eff;
+      return { ...eff, username: "", password: "", bearerToken: t.token, verifyTls: t.verifyTls, ...(t.port ? { port: t.port } : {}) };
+    }
     if (!opts.revealSecrets) return eff;
-    const full = await getCredential(b.credentialId, { revealSecrets: true });
+    const full = await getCredential(b.credentialId!, { revealSecrets: true });
+    if (full.type === "restapi") {
+      const auth = restApiCredentialAuth(full.config);
+      if ("error" in auth) continue; // a token that will not open is absent
+      return { ...eff, username: "", password: "", bearerToken: auth.apiToken, verifyTls: auth.verifySsl, ...(auth.port ? { port: auth.port } : {}) };
+    }
     const cfg = (full.config ?? {}) as HttpAuthConfig;
     if (!isDeviceLoginCredential(cfg) || typeof cfg.username !== "string" || typeof cfg.password !== "string" || !cfg.password) {
       // The credential lost its mode or its secret will not open — treat as

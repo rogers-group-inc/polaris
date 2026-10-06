@@ -1,6 +1,6 @@
 /**
  * public/js/server-settings-firmware.js — Server Settings → Repository
- * (business rule 87): the firmware repository for switches and access points.
+ * (business rule 87): the firmware repository for switches, access points and FortiGates.
  *
  * Exposes `window.PolarisFirmwareTab = { load, render, … }`, which
  * server-settings.js calls when the tab is opened (the server-settings-ha.js
@@ -57,7 +57,16 @@
   function typeWord(t, plural) {
     if (t === "access_point") return plural ? "access points" : "access point";
     if (t === "switch") return plural ? "switches" : "switch";
+    if (t === "firewall") return plural ? "firewalls" : "firewall";
     return t;
+  }
+
+  /** The value the binding picker uses for "the discovering integration's API token". */
+  var INTEGRATION_TOKEN = "__integration-token__";
+
+  /** A binding set AT this node — a credential, or the integration's token (which has no credential id). */
+  function hasOwnBinding(node) {
+    return !!(node && node.binding && (node.binding.credentialId || node.binding.source === "integration-token"));
   }
 
   /** The collapse key of a node — and the value of its data-fw-key. */
@@ -94,7 +103,7 @@
 
   /** What login applies at this node, and whether it is its own or inherited. */
   function bindingPillHTML(node, ctx) {
-    var own = node.binding && node.binding.credentialId;
+    var own = hasOwnBinding(node);
     var eff = node.effectiveBinding;
     if (own && eff) {
       return '<span class="fw-pill fw-binding-pill is-own" title="Bound at this level">Login: ' + esc(eff.credentialName) + '</span>';
@@ -118,7 +127,7 @@
    * fires on a fully covered manufacturer is one an operator learns to ignore.
    */
   function manufacturerLoginPillHTML(m, ctx) {
-    if (m.binding && m.binding.credentialId && m.effectiveBinding) return bindingPillHTML(m, ctx);
+    if (hasOwnBinding(m) && m.effectiveBinding) return bindingPillHTML(m, ctx);
     var missing = typesWithoutLogin(m);
     if (missing.length === 0) return "";
     var names = missing.map(function (t) { return t.label || t.assetType; });
@@ -148,28 +157,45 @@
     return '<button type="button" class="fw-asset-count" title="List the devices in ' + esc(scopeLabel) + '">' + text + '</button>';
   }
 
-  /** Only http credentials in "form" mode are device logins. */
-  function credentialOptionsHTML(list, currentId) {
-    return (list || []).filter(function (c) {
+  /**
+   * Only http credentials in "form" mode are device logins. On a FortiGate
+   * node (`withTokens`) a REST API credential — a FortiOS API token — signs in
+   * too, listed in its own group.
+   */
+  function credentialOptionsHTML(list, currentId, withTokens) {
+    function opt(c) {
+      return '<option value="' + esc(c.id) + '"' + (c.id === currentId ? " selected" : "") + '>' + esc(c.name) + '</option>';
+    }
+    var logins = (list || []).filter(function (c) {
       var cfg = c.config || {};
       var mode = typeof httpAuthModeOf === "function" ? httpAuthModeOf(cfg) : cfg.authMode;
       return c.type === "http" && mode === "form";
-    }).map(function (c) {
-      return '<option value="' + esc(c.id) + '"' + (c.id === currentId ? " selected" : "") + '>' + esc(c.name) + '</option>';
-    }).join("");
+    }).map(opt).join("");
+    if (!withTokens) return logins;
+    var tokens = (list || []).filter(function (c) { return c.type === "restapi"; }).map(opt).join("");
+    return (logins ? '<optgroup label="Device admin logins">' + logins + '</optgroup>' : "") +
+      (tokens ? '<optgroup label="REST API tokens">' + tokens + '</optgroup>' : "");
   }
 
   function bindingEditorHTML(node, ctx) {
-    var effName = node.effectiveBinding && !(node.binding && node.binding.credentialId)
+    var effName = node.effectiveBinding && !hasOwnBinding(node)
       ? node.effectiveBinding.credentialName
       : null;
-    var currentId = node.binding && node.binding.credentialId ? node.binding.credentialId : "";
-    var opts = credentialOptionsHTML(_credentials, currentId);
+    // A FortiGate signs in with a login OR a FortiOS API token: a REST API
+    // credential, or the token of the integration that discovered the gate.
+    var firewall = !!(ctx && ctx.assetType === "firewall");
+    var current = node.binding && node.binding.source === "integration-token" ? INTEGRATION_TOKEN
+      : node.binding && node.binding.credentialId ? node.binding.credentialId : "";
+    var opts = credentialOptionsHTML(_credentials, current, firewall);
     var inherit = effName ? "Inherit — " + effName : "Inherit — none";
+    var integ = firewall
+      ? '<option value="' + INTEGRATION_TOKEN + '"' + (current === INTEGRATION_TOKEN ? " selected" : "") + '>Integration API token — of the FortiGate / FortiManager integration that discovered the gate</option>'
+      : "";
     return '<div class="fw-binding-editor">' +
-      '<label style="font-size:0.8rem">Device login</label>' +
+      '<label style="font-size:0.8rem">' + (firewall ? "Sign in with" : "Device login") + '</label>' +
       '<select class="fw-binding-select">' +
-        '<option value=""' + (currentId ? "" : " selected") + '>' + esc(inherit) + '</option>' +
+        '<option value=""' + (current ? "" : " selected") + '>' + esc(inherit) + '</option>' +
+        integ +
         opts +
       '</select>' +
       '<button type="button" class="btn btn-sm btn-primary fw-binding-save">Save</button>' +
@@ -265,13 +291,13 @@
 
   function bindVerbHTML(node) {
     if (!can("write")) return "";
-    var own = node.binding && node.binding.credentialId;
+    var own = hasOwnBinding(node);
     return '<button type="button" class="btn btn-sm btn-secondary fw-binding-edit">' + (own ? "Change login…" : "Set login…") + '</button>';
   }
 
   function modelNodeHTML(m, t, mdl) {
     var key = nodeKey(m.name, t.assetType, mdl.model);
-    var ctx = { mfrName: m.name, typeLabel: t.label };
+    var ctx = { mfrName: m.name, typeLabel: t.label, assetType: t.assetType };
     var editing = !!_bindingEdit[key];
     var orphanPill = mdl.orphaned
       ? '<span class="fw-pill fw-orphan-pill" title="Images for this model are still on disk, but no asset carries the model any more. Delete them if the hardware is gone.">No assets carry this model any more</span>'
@@ -296,7 +322,7 @@
 
   function typeNodeHTML(m, t) {
     var key = nodeKey(m.name, t.assetType);
-    var ctx = { mfrName: m.name, typeLabel: t.label };
+    var ctx = { mfrName: m.name, typeLabel: t.label, assetType: t.assetType };
     var editing = !!_bindingEdit[key];
     var enginePill = t.engine
       ? ""
@@ -334,18 +360,21 @@
     var html = '<div class="settings-card">' +
       '<h4>Firmware Repository</h4>' +
       '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:0.75rem">' +
-        'Firmware images for the switches and access points in the inventory, filed by manufacturer, device type and model. ' +
+        'Firmware images for the switches, access points and firewalls in the inventory, filed by manufacturer, device type and model. ' +
         'Bind a device admin login at a manufacturer, a device type or a model — the most specific one wins — and a device ' +
         'whose firmware is older than its model’s primary image offers an upgrade on its asset details.' +
       '</p>' +
       (typeof calloutHTML === "function"
         ? calloutHTML("info", "Fortinet only, over HTTPS",
-            "Upgrades run for Fortinet FortiSwitch and FortiAP devices by signing in to the device’s own web UI over HTTPS. " +
+            "Upgrades run for Fortinet FortiSwitch and FortiAP devices by signing in to the device’s own web UI over HTTPS, " +
+            "and for standalone FortiGates over the FortiOS REST API — with a device admin login, a REST API token credential, " +
+            "or the API token of the integration that discovered the gate. HA clusters are not upgraded. " +
             "A FortiGate-managed FortiAP usually has its local UI disabled and will report the device as unreachable. " +
-            "Images for other manufacturers can be stored; their assets show no upgrade action.")
+            "Images for other manufacturers can be stored; their assets show no upgrade action. " +
+            "Switch and access-point images may be up to 100 MiB, FortiGate images up to 300 MiB.")
         : "");
     if (tree.manufacturers.length === 0) {
-      html += '<p class="empty-state">No switches or access points in the inventory yet — the tree is built from assets’ manufacturer, device type and model.</p>';
+      html += '<p class="empty-state">No switches, access points or firewalls in the inventory yet — the tree is built from assets’ manufacturer, device type and model.</p>';
     } else {
       html += '<div id="fw-tree" style="margin-top:0.75rem">' + tree.manufacturers.map(manufacturerNodeHTML).join("") + '</div>';
     }
@@ -484,13 +513,15 @@
 
   async function saveBinding(node) {
     var sel = node.el.querySelector(".fw-binding-select");
-    var credentialId = sel && sel.value ? sel.value : null;
+    var picked = sel && sel.value ? sel.value : null;
+    var credentialId = picked && picked !== INTEGRATION_TOKEN ? picked : null;
     var body = { manufacturer: node.manufacturer, credentialId: credentialId };
+    if (picked === INTEGRATION_TOKEN) body.source = "integration-token";
     if (node.assetType) body.assetType = node.assetType;
     if (node.model !== null && node.model !== undefined) body.model = node.model;
     try {
       await api.serverSettings.setFirmwareBinding(body);
-      toast(credentialId ? "Device login bound" : "Binding removed — this level now inherits", "success");
+      toast(picked === INTEGRATION_TOKEN ? "The integration's API token is bound" : credentialId ? "Login bound" : "Binding removed — this level now inherits", "success");
       delete _bindingEdit[node.key];
       await reload();
     } catch (err) {
@@ -550,8 +581,14 @@
     } catch (err) {
       delete _uploading[node.key];
       if (btn) btn.disabled = false;
-      if (status) { status.style.display = ""; status.className = "fw-upload-status is-error"; status.textContent = err && err.message ? err.message : "Upload failed"; }
-      toast(err && err.message ? err.message : "Upload failed", "error");
+      var msg = err && err.message ? err.message : "Upload failed";
+      // The proxy's 413, on an image the app itself would take: nginx in front
+      // still carries the pre-FortiGate 100m ceiling.
+      if (/rejected the request body as too large/.test(msg) && file.size > 104857600) {
+        msg += " nginx in front of Polaris still has the old 100 MB limit for firmware uploads — re-apply Server Settings → Web Server, or raise client_max_body_size to 300m in its firmware location.";
+      }
+      if (status) { status.style.display = ""; status.className = "fw-upload-status is-error"; status.textContent = msg; }
+      toast(msg, "error");
     }
   }
 

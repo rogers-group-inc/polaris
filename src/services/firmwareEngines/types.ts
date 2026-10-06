@@ -14,7 +14,7 @@
  * and were left out on purpose (business rule 87).
  */
 
-export type FirmwareEngineKind = "fortiswitch-https" | "fortiap-https";
+export type FirmwareEngineKind = "fortiswitch-https" | "fortiap-https" | "fortigate-https";
 
 /**
  * "recovering" is the runner's, not an engine's: the device has answered the
@@ -94,6 +94,17 @@ export interface FirmwareEngineContext {
   /** "https" for a real device; "http" only so tests can run a fake device without certificates. */
   scheme?: "https" | "http";
   credential: { username: string; password: string };
+  /**
+   * FortiGate only: a FortiOS REST API token (the discovering integration's,
+   * when the binding says "integration API token"). When set, the engine
+   * sends it as a bearer token and `credential` is unused (empty).
+   */
+  bearerToken?: string;
+  /**
+   * Verify the device's TLS certificate. Default false — devices are
+   * self-signed; true only when the integration the token came from verifies.
+   */
+  verifyTls?: boolean;
   /** Absolute path of the `.out` on disk — streamed, never read whole. */
   imagePath: string;
   imageSize: number;

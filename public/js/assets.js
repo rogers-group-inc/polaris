@@ -6621,7 +6621,7 @@ function _rerenderAgentSubpanel(a, agent) {
 // card never regexes a sentence to decide what to draw.
 
 function _assetFirmwareEligible(a) {
-  return !!a && (a.assetType === "switch" || a.assetType === "access_point");
+  return !!a && (a.assetType === "switch" || a.assetType === "access_point" || a.assetType === "firewall");
 }
 
 var _FW_STAGE_LABELS = {
@@ -6815,7 +6815,10 @@ function _fwApprovalModalHTML(a, fw) {
     _fwApprovalBlockHTML(fw.image, true, withRadio) +
     (withRadio ? _fwApprovalBlockHTML(fw.backupImage, false, true) : '') +
     '<div class="alert alert-warning" style="padding:0.6rem 0.75rem;border-radius:6px;background:rgba(214,137,16,0.12);border:1px solid var(--color-warning,#d68910);font-size:0.82rem;margin:0.5rem 0 0.75rem">' +
-      'The device reboots during the upgrade and will be unreachable for a few minutes — everything behind a switch goes with it. ' +
+      (a.assetType === "firewall"
+        ? 'The FortiGate reboots during the upgrade and will be unreachable for several minutes — every network, tunnel and device behind it goes with it. ' +
+          'Follow Fortinet’s supported upgrade path: Polaris checks that the image is newer and fits this platform, not that the jump from the running version is a supported one. '
+        : 'The device reboots during the upgrade and will be unreachable for a few minutes — everything behind a switch goes with it. ') +
       'Polaris holds its alerts for this device while it works on it. A flash that fails partway can leave a device unbootable; do not power-cycle it while it is writing.' +
     '</div>' +
     '<label style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:pointer">' +

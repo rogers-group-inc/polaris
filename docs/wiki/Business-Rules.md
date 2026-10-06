@@ -1252,15 +1252,18 @@ See [Polaris Agent](Polaris-Agent#when-the-host-stops-reporting) and
 platform, and only forward; the flash takes a hold and never records a version
 it has not read back.**
 
-The [Repository](Server-Settings#repository) files firmware images under a
-model, but a device is matched on its **platform** — the token in the image's
+This covers Fortinet switches, access points and — since 2026-10-06 —
+FortiGate firewalls. The [Repository](Server-Settings#repository) files
+firmware images under a model, but a device is matched on its **platform** — the token in the image's
 own header, which is the first six characters of the serial numbers the image
 was built for. An image whose header cannot be read is stored and never
 offered. A device is offered an image only when the platform matches **and**
 the image is strictly newer than what it runs; a device whose version Polaris
 cannot read is offered nothing. Never a downgrade — the switch's own
 compatibility check is consulted too, and a "downgrade" answer aborts before
-anything is flashed.
+anything is flashed. Polaris does **not** check Fortinet's supported upgrade
+path for a FortiGate (which intermediate versions a jump must pass through);
+the approval dialog says so, and following it is the operator's job.
 
 A model keeps two images, a **primary** and a **backup**. Only the primary is
 offered on its own; the backup is named in the approval dialog when it is also
@@ -1271,17 +1274,28 @@ looked at.
 The same match feeds the automation field
 [`firmwareVsPrimary`](Automation-Triggers#firmwarevsprimary--what-the-repository-would-push):
 `current`, `older` or `newer` against the platform's primary image, and no
-reading at all for a device the Repository cannot place. The baseline
-automation **Firmware differs from repository primary** (informational) is
-that field with `!= current`.
+reading at all for a device the Repository cannot place. FortiGates get
+readings too; the baseline automation **Firmware differs from repository
+primary** (informational) is that field with `!= current`, scoped to switches
+and access points — add Firewall to its scope to be told about gates.
+
+Each upgrade signs in with the login bound in the Repository, the most
+specific of model, device type and manufacturer. A FortiGate can also sign in
+with an API token — a REST API credential, or the token of the FortiGate or
+FortiManager integration that discovered it. A binding that cannot sign in to
+the device in hand (a token bound where a switch would use it, an integration
+that holds no token) is skipped, and the next wider binding is used instead.
 
 An upgrade does not start on a device that is down, warning, recovering,
 behind a parent that is down, decommissioned, quarantined, in storage or
 disabled; nor while another flash is running on that device, on a switch above
-or below it, or on its MCLAG peer. A device in a scheduled maintenance window
+or below it, or on its MCLAG peer. A **FortiGate in an HA cluster** is not
+upgraded at all (not supported yet): its Firmware card says so, booking is
+refused, and the upgrade checks the gate's own HA setting again before it
+sends anything. A device in a scheduled maintenance window
 is fine — that is when you flash. The flash opens a
 [maintenance window of its own](Maintenance-Windows#windows-polaris-opens-for-itself)
-(45 minutes at most) that suppresses everything behind the switch. A failed
+(45 minutes at most) that suppresses everything behind the device. A failed
 run ends it at once. A run that got as far as the reboot keeps it open until
 **Polaris's own monitoring** answers the device again, for up to 10 more
 minutes: a device's web interface, which the upgrade talks to, often comes
@@ -1298,7 +1312,7 @@ the same image again.
 Starting an upgrade needs **Read-Write on Assets**: whoever may edit an
 asset may upgrade it. The `firmware` key covers the Repository only — Read
 to see it, Read-Write to upload and manage images. Every role with Assets
-Read-Write can therefore reboot a switch or access point; the approval
+Read-Write can therefore reboot a switch, access point or firewall; the approval
 dialog and the checks above are what stand between a click and a flash. An
 upgrade booked for later takes the same approval and the same checks — see
 [rule 93](#rule-93).
@@ -1437,7 +1451,7 @@ See [Escalation, reminders and quiet time → Quiet time](Automation-Escalation#
 ### Rule 93
 **A booked flash is approved when it is booked and judged when it fires — on
 time or not at all, and its recipients hear the outcome either way.** A
-firmware upgrade can be scheduled from a switch or access point's Firmware card
+firmware upgrade can be scheduled from a switch, access point or FortiGate's Firmware card
 by anyone with Read-Write on Assets. You approve the exact image by name when
 you book, as for an upgrade now ([rule 87](#rule-87)); if a newer image becomes
 the model's primary before the booked time, the booked one is no longer offered

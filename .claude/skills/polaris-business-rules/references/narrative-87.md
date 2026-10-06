@@ -214,10 +214,67 @@ nine-minute flash, and so did prod. The fake switch in `fortiswitchHttpsEngine.t
 `scripts/mock-firmware-devices.mjs` now report fractions and a pinned 6/40 like the real one;
 the happy-path test fails against the old engine (`expected 1 to be 100`).
 
+### 2026-10-06 — FortiGates
+
+The operator asked to "add the ability to upgrade the firmware of FortiGate firewalls", and
+for the binding: "in the repository, when the user sets the credential to be used they can
+select from the existing credentials as well as from the integration's api token". FortiGate
+images run to ~250 MB. HA cluster members are refused for now (operator decision).
+
+**A third engine, `fortigate-https`** (`services/firmwareEngines/fortigateHttps.ts →
+upgradeFortiGate`). Unlike the switch and AP engines it is not a transcription of a captured
+browser session — it is the documented FortiOS REST surface, and it has **never run against a
+real FortiGate**. Auth is a bearer API token, or an admin login through `POST /logincheck`
+whose `ccsrftoken` / `ccsrftoken_<port>_<id>` cookie is echoed as `X-CSRFTOKEN`; no CSRF
+cookie (two-factor, a pre-login disclaimer, a forced password change) is refused after ONE
+attempt, because every attempt counts toward the admin lockout — and the verify loop stops
+after two auth rejections for the same reason. Preflight reads `monitor/system/status` (serial
+cross-check, version + build), `cmdb/system/ha` (anything but `standalone`, or unreadable, is
+refused) and the already-current check. The image goes to `monitor/system/firmware/upgrade`
+(`source=upload`) as streamed multipart; a non-auth refusal is retried ONCE as JSON with
+`file_content` base64-encoded on the fly (`deviceHttp.ts → Base64Encode`, Content-Length
+precomputed by `base64Length`) — no 330 MB buffer. A connection dropped after the whole body
+went counts as taken: the gate reboots as soon as it has written the image. Every guess —
+multipart acceptance, the FW marker + `FG…` platform token in a FortiGate `.out` header
+(`utils/firmwareVersion.ts → isFortiGateSerial`; FortiGate-VM excluded, its serial prefix is
+a licence tier), the logincheck cookie names — is unvalidated and logged as such.
+
+**HA members are refused twice.** `firmwareUpgradeService.ts → haClusterOf` reads
+`fortinetTopology.haMode` / `haRole` and marks the card `unsupported` and refuses at start and
+at booking (rule 93); the engine refuses again from the gate's own `system/ha`, because
+discovery's record can lag a cluster being formed.
+
+**Bindings gain a `source`.** `credential` names a form login (any type) or, on a Firewall
+scope only, a `restapi` Credential; `integration-token` (Firewall scope only, `credentialId`
+null — a CHECK) resolves at run time to the token of the integration that discovered the gate
+(`Asset.discoveredByIntegrationId`): a standalone FortiGate integration's `apiToken` /
+`verifySsl` / `port`, or a FortiManager's `fortigateApiToken` / `fortigateVerifySsl` — the
+FMG/FortiGate parity is in that one resolver. A binding that cannot sign in to THIS device
+falls through to the next scope rather than shadowing it (rule 49's posture, as for a deleted
+credential): a token on a switch or AP, an integration-token whose integration has no token or
+no longer exists. The token is the API admin's: its profile needs System read-write.
+
+**Size.** `FIRMWARE_MAX_IMAGE_BYTES_BY_TYPE` — 100 MiB switch / AP (the FortiSwitch endpoint's
+own ceiling), 300 MiB firewall; multer and nginx's firmware `location` take the largest (300m).
+An install whose nginx config is not re-rendered keeps 100m and a FortiGate upload dies at
+nginx with 413; the Repository's error names the fix.
+
+**Consequence.** `firmwareVsPrimary` reads `FIRMWARE_ASSET_TYPES`, so FortiGates now get
+readings; the baseline automation is still scoped to switches + access points (seed
+unchanged), so it fires for a gate only once an operator adds Firewall to its scope.
+
+**Rejected.** *A FortiGuard-download source* (`source=fortiguard`): the gate fetches its own
+image, which bypasses the Repository's approve-by-name — the operator would approve a version
+string, not bytes with a sha256. *An FMG-proxied upload*: a 250 MB body through FortiManager's
+JSON-RPC proxy. *An HA cluster upgrade*: deferred — one member's upgrade reboots the cluster
+and needs its own orchestration. **Nothing here has been validated on hardware**; the
+`fortinet-api-conventions` plugin gets an entry after the first lab run.
+
 ### What is deliberately not here
 
 The bulk / fleet run fortiupgrade's scheduler performs (deepest-first ordering, concurrency);
-the SSH + SFTP/TFTP fallback; a FortiGate-controller push for managed APs; an "available"
+the SSH + SFTP/TFTP fallback; a FortiGate-controller push for managed APs; an HA-cluster
+FortiGate upgrade (2026-10-06); an "available"
 badge on the assets list (no per-row query on the list); the Repository on the mobile SPA
 (the phone gained the per-asset upgrade on 2026-09-26 — the asset sheet's OS row, primary
 image only, the same POST and gates; `public/js/mobile/asset-detail.js` → Firmware upgrade

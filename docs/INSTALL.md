@@ -1140,9 +1140,15 @@ card (unchanged).
 > **Upgrade note (request-body limits):** the shipped nginx config gained a
 > server-level `client_max_body_size 8m` plus one `location` that lifts the
 > limit for the database-restore upload (7 → 8 locations), and later a second
-> `location` that raises it to 100m for the firmware-image upload
+> `location` that raises it for the firmware-image upload
 > (`/api/v1/server-settings/firmware/images`, 9 → 10 locations, after the
-> `/api` docs block; the app's own multer limit is the same number). Before
+> `/api` docs block; the app's own multer limit is the same number) — 100m at
+> first, **300m since FortiGate firmware upgrades** (a FortiGate image runs to
+> ~250 MB). An install whose nginx config has not been re-rendered since still
+> says 100m there, and a FortiGate image over 100 MB is refused at nginx with a
+> 413 before Polaris sees it; re-apply Server Settings → **Web Server**, or edit
+> that location's `client_max_body_size` to `300m` by hand and reload nginx
+> (the only option on a split-role host today). Before
 > this, nginx
 > enforced its 1 MB default on every request — **below** what Polaris's own
 > handlers accept — so a branding logo over 1 MB and *any* database restore

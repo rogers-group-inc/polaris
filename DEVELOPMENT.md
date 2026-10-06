@@ -230,7 +230,7 @@ hostnames, serials, addresses and (once GAL directory sync has run) employee nam
 be published along with the image. The script header lists the pages it does not yet cover
 and what each would need.
 
-### Mock switches and access points for the firmware repository
+### Mock switches, access points and a FortiGate for the firmware repository
 
 Server Settings → Repository and the asset Firmware card (business rule 87) can be driven
 end to end without hardware. Two scripts, both run INSIDE the dev app container — the
@@ -238,12 +238,15 @@ firmware images live under the container's `POLARIS_STATE_DIR`, and the mock dev
 listen on loopback aliases the app dials on port 443:
 
 ```bash
-# seed three Fortinet assets (127.0.0.2 / .3 / .4), a "Mock device login" form
+# seed four Fortinet assets (127.0.0.2 / .3 / .4 / .5), a "Mock device login" form
 # credential bound at Fortinet, and two images per model node (+ one orphaned node)
 podman exec polaris-<slug>_app_1 sh -c \
   'cd /app && node --env-file=.env --import tsx/esm scripts/seed-firmware-mock.ts'
 
-# fake FortiSwitch (127.0.0.2, 127.0.0.3) and FortiAP (127.0.0.4) web UIs, admin/admin.
+# fake FortiSwitch (127.0.0.2, 127.0.0.3) and FortiAP (127.0.0.4) web UIs and a fake
+# FortiGate REST API (127.0.0.5), admin/admin. The FortiGate also takes the bearer token
+# MOCK_FW_TOKEN (default "mock-token") for a REST API / integration-token binding, and
+# MOCK_FW_GATE_HA=a-p makes it report an HA cluster (the engine then refuses it).
 # Background it INSIDE the container: `podman exec -d node …` loses the process.
 podman exec polaris-<slug>_app_1 sh -c \
   'cd /app && (nohup node scripts/mock-firmware-devices.mjs > /tmp/mock-devices.log 2>&1 &)'
@@ -253,6 +256,11 @@ podman exec polaris-<slug>_app_1 sh -c \
 On this machine `npm run dev` dies under `--watch` inside the container; the app then runs as a
 separate container, `polaris-<slug>_web`, started with `podman compose … run -d --service-ports
 --name polaris-<slug>_web app node --env-file=.env --import tsx/esm src/index.ts` — exec into THAT one.)
+
+The mock FortiGate (MOCK-FGT60F-1) is NOT a capture of a real gate — it speaks the FortiOS REST
+calls the `fortigate-https` engine makes, so it demos the card, not the protocol. Scheduling
+(Firmware card → *Schedule…*, business rule 93) is easiest to watch with a time two minutes out;
+the results email needs an enabled SMTP / Microsoft 365 channel, or the booking records why not.
 
 Open a mock switch's asset → System → Firmware → *Upgrade firmware to 7.6.8 build1164*:
 the mock stages the image, reports erase / write / verify for ~40 s, drops off for ~20 s

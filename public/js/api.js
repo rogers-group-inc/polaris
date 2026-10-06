@@ -298,12 +298,13 @@ function _csrfHeaders(extra) {
 // A multipart upload that REPORTS PROGRESS. `fetch` cannot: it has no upload
 // progress event, and every other upload on the page (MIB, logo, restore) is
 // small enough to live with a static "Uploading…" span. A firmware image is
-// up to 100 MiB over whatever link the operator is on, so the Repository tab
+// up to 300 MiB (a FortiGate) over whatever link the operator is on, so the Repository tab
 // drives one XMLHttpRequest and draws a bar from `upload.onprogress`.
 // Everything else matches `request`: CSRF header, the 401 redirect, JSON
 // bodies resolved or rejected on `error`, and a proxy's HTML error page
 // turned into a sentence by `_proxyErrorMessage` (a 413 here is the sign an
-// nginx-fronted install is missing the firmware location block).
+// nginx-fronted install is missing the firmware location block, or still has
+// its pre-FortiGate 100m ceiling — re-apply Server Settings → Web Server).
 function _uploadWithProgress(path, formData, onProgress) {
   return new Promise(function (resolve, reject) {
     var xhr = new XMLHttpRequest();

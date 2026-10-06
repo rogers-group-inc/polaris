@@ -39,14 +39,14 @@ export interface FirmwareVersion {
   build?: number;
 }
 
-export type FirmwareFamily = "switch" | "ap";
+export type FirmwareFamily = "switch" | "ap" | "firewall";
 
 export interface FirmwareImageIdentity {
   /** Serial-prefix platform token (`S108FF`, `FP231K`), or null when only a filename was readable. */
   platform: string | null;
   version: FirmwareVersion;
   parsedFrom: "header" | "filename";
-  /** From the header's FW / AP marker; null on a filename parse. */
+  /** From the header's FW / AP marker (FW on an `FG…` platform = a FortiGate); null on a filename parse. */
   family: FirmwareFamily | null;
   /** The raw token the parse keyed on — for the upload response and Events. */
   token: string;
@@ -119,7 +119,10 @@ export function formatFirmwareVersion(v: FirmwareVersion): string {
   return s;
 }
 
-// `S108FF-7.06-FW-build1164-260709-patch08`, `FP231K-7.06-AP-build1105-260519-patch05`.
+// `S108FF-7.06-FW-build1164-260709-patch08`, `FP231K-7.06-AP-build1105-260519-patch05`,
+// `FGT60F-7.06-FW-build3401-…` — a FortiGate image carries the same FW marker
+// as a switch; its platform token (the serial prefix, FGT…/FG…) is what says
+// firewall. Not yet seen against a real FortiGate image (business rule 87).
 const HEADER_RE = /([A-Z][0-9A-Z]{4,7})-(\d+)\.(\d{2})-(FW|AP)-build(\d+)-\d{6}(?:-patch(\d{2}))?/;
 export const IMAGE_HEADER_BYTES = 512;
 
@@ -132,7 +135,7 @@ export function parseFortinetImageHeader(head: Buffer): FirmwareImageIdentity | 
     platform: m[1]!,
     version: { major: Number(m[2]), minor: Number(m[3]), patch: m[6] !== undefined ? Number(m[6]) : 0, build: Number(m[5]) },
     parsedFrom: "header",
-    family: m[4] === "FW" ? "switch" : "ap",
+    family: m[4] === "AP" ? "ap" : isFortiGatePlatform(m[1]!) ? "firewall" : "switch",
     token: m[0],
   };
 }
@@ -163,6 +166,14 @@ export function identifyFirmwareImage(head: Buffer, filename: string): FirmwareI
 const PLATFORM_PREFIX_LENGTH = 6;
 const FORTISWITCH_SERIAL_RE = /^(?:S\d{3}[A-Z]{2}|S[0-9A-Z]{5}|F[SR][0-9A-Z]{4})/;
 const FORTIAP_SERIAL_RE = /^(?:FP|PU|PS)[0-9A-Z]{4}/;
+// FGT60F…, FG100F…, FG1K0F…, FG3H0G… — every FortiGate appliance serial starts
+// FG. FortiGate-VM (FGVM…) is excluded: its serial prefix is a licence tier, not
+// the platform its image header names, so no image could ever match it.
+const FORTIGATE_SERIAL_RE = /^FG(?!VM)[0-9A-Z]{4}/;
+
+function isFortiGatePlatform(token: string): boolean {
+  return FORTIGATE_SERIAL_RE.test(token.toUpperCase());
+}
 
 /**
  * The platform token a device's serial names: its first six characters, upper
@@ -185,8 +196,14 @@ export function isFortiApSerial(serial: string | null | undefined): boolean {
   return !!s && FORTIAP_SERIAL_RE.test(s.toUpperCase());
 }
 
+export function isFortiGateSerial(serial: string | null | undefined): boolean {
+  const s = usableSerialOrNull(serial);
+  return !!s && FORTIGATE_SERIAL_RE.test(s.toUpperCase());
+}
+
 /** Which Fortinet product line a serial belongs to, or null. */
 export function firmwareFamilyForSerial(serial: string | null | undefined): FirmwareFamily | null {
+  if (isFortiGateSerial(serial)) return "firewall";
   if (isFortiSwitchSerial(serial)) return "switch";
   if (isFortiApSerial(serial)) return "ap";
   return null;

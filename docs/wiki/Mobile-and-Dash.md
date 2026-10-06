@@ -86,7 +86,7 @@ A client or neighbour Polaris matched to a known device links to it, and tapping
 it opens that asset. The sheets are read-only; the reload button re-reads what
 Polaris has stored, not the device itself.
 
-**A switch or access point can be upgraded from its sheet.** When the
+**A switch, access point or FortiGate can be upgraded from its sheet.** When the
 [Repository](Server-Settings#repository) holds newer firmware for the device,
 its **OS** row under *General* carries **Upgrade to &lt;version&gt;**. Tapping it
 opens a confirm sheet naming the device, its serial, what it runs now, the
