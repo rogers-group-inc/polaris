@@ -161,12 +161,21 @@ describe("the band and the strip read the same clock", () => {
     // non-inheriting glow parts can be pulled in), or it paints a stale glow —
     // a box — during every theme turn. And the bar must reach over all of
     // .main's top padding, or the header slides on the first scroll.
+    // Its position is MEASURED, never scroll-linked: anchor positioning made
+    // Firefox move it with the scroll until layout caught up, so content
+    // showed through the bar on every scroll.
     const css = readFileSync(join(process.cwd(), "public", "css", "styles.css"), "utf-8").replace(/\r\n/g, "\n");
-    expect(css).toMatch(/\nhtml::before,\nhtml:has\(\.page-top-sticky\)::after \{/);
-    const sup = css.slice(css.indexOf("@supports (anchor-name: --a)"));
-    const curtain = sup.slice(0, sup.indexOf("\n}\n"));
-    expect(curtain).toContain("anchor-name: --page-top;");
-    expect(curtain).toContain("position-anchor: --page-top;");
+    expect(css).toMatch(/\nhtml::before,\nhtml\[data-page-top-curtain\]::after \{/);
+    expect(css).not.toMatch(/position-anchor|anchor-name/);
+    // The LAST match: the first is the glow layer's shared selector list.
+    const at = css.lastIndexOf("\nhtml[data-page-top-curtain]::after {");
+    const curtain = css.slice(at, css.indexOf("\n}\n", at));
+    expect(curtain).toContain("position: fixed;");
+    expect(curtain).toContain("--page-top-h: inherit;");
+    expect(curtain).toContain("--page-top-l: inherit;");
+    for (const p of ["--page-top-h", "--page-top-l"]) {
+      expect(css).toMatch(new RegExp(`@property ${p} \\{[^}]*inherits: false;`));
+    }
     expect(curtain).toContain("background-color: var(--color-bg-secondary);");
     expect(curtain).toContain("background-attachment: fixed;");
     const z = (s: string) => Number(s.match(/z-index: (\d+);/)?.[1]);
@@ -176,6 +185,16 @@ describe("the band and the strip read the same clock", () => {
     const mainPadTop = main.match(/padding: ([\d.]+rem)/)?.[1];
     expect(bar).toContain(`padding-top: ${mainPadTop};`);
     expect(bar).toContain(`margin-top: -${mainPadTop};`);
+    // Every page that pins a bar loads the script that measures it, and the
+    // script never listens to scroll.
+    const measurer = readFileSync(join(process.cwd(), "public", "js", "page-top-curtain.js"), "utf-8");
+    expect(measurer).not.toMatch(/["']scroll["']/);
+    expect(measurer).toContain('setAttribute("data-page-top-curtain"');
+    for (const page of ["index.html", "dash.html", "server-settings.html"]) {
+      const html = readFileSync(join(process.cwd(), "public", page), "utf-8");
+      expect(html, page).toContain("page-top-sticky");
+      expect(html, page).toContain('<script src="/js/page-top-curtain.js"></script>');
+    }
   });
 
   it("slides the night glow in as a circle and out into one, on both", () => {

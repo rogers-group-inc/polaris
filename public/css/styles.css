@@ -773,10 +773,10 @@ body {
    live, so nothing in between has to forward them. z-index -1 paints it
    over the canvas and under all content, so no element's background may
    sit between them (the body's colour propagates to the canvas). The
-   sticky top bar's curtain (html::after, under "Page Header") is a second
+   sticky top bar's curtain (html[data-page-top-curtain]::after, under "Page Header") is a second
    copy of this layer, so it shares the token block. */
 html::before,
-html:has(.page-top-sticky)::after {
+html[data-page-top-curtain]::after {
   content: "";
   position: fixed;
   inset: 0;
@@ -1772,48 +1772,60 @@ code {
   -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
 }
-/* The curtain: where the browser has anchor positioning, content scrolling
-   under the bar VANISHES instead of blurring, and the bar still has no box.
-   html::after is a second copy of the page's own ground — the body colour
-   plus the glow layer's gradients, attached to the viewport exactly as
-   html::before is — so it is indistinguishable from the page where nothing
-   is under it, and opaque where something is. It is anchored to the bar
-   (top of the viewport down to the bar's bottom edge, which tracks the bar
-   both at rest and pinned) and runs a feather past it: the bottom
-   --page-top-feather fades to clear, so content dissolves into the bar
-   rather than being cut at a line. The feather fits inside the bar's own
-   margin-bottom, so at rest it covers only empty page. Its left edge reaches
-   back to the sidebar and fades in over a shorter feather, so the sidebar's
-   cast shadow is not cut off along the bar.
+/* The curtain: content scrolling under the bar VANISHES instead of blurring,
+   and the bar still has no box. html::after is a second copy of the page's
+   own ground — the body colour plus the glow layer's gradients, attached to
+   the viewport exactly as html::before is — so it is indistinguishable from
+   the page where nothing is under it, and opaque where something is. It runs
+   from the top of the viewport to the bar's bottom edge plus a feather: the
+   bottom --page-top-feather fades to clear, so content dissolves into the
+   bar rather than being cut at a line. The feather fits inside the bar's own
+   margin-bottom, so at rest it covers only empty page. Its left edge is the
+   content column's (the sidebar's right edge) and fades in over a shorter
+   feather, so the sidebar's cast shadow is not cut off along the bar.
+
+   A plain position:fixed box with MEASURED insets, never a scroll-linked one.
+   The bar is pinned from the first pixel and never moves on screen, so
+   public/js/page-top-curtain.js only has to measure its height and the
+   column's left edge (--page-top-h / --page-top-l, re-measured on resize,
+   never on scroll) and set data-page-top-curtain, which switches this on and
+   the blur off. It was first anchored to the bar with CSS anchor
+   positioning: Firefox scrolls on its compositor and moved the anchored
+   curtain WITH the scroll until the main thread re-ran layout, so content
+   showed through the bar on every scroll and vanished a moment later.
+   Without the script (or ResizeObserver) the blur stays.
+
    On html, not on the bar's ::before: the glow's animated parts are
    registered `inherits: false` (see the glow layer) and only <html>'s own
    pseudo-elements can `inherit` them, so this copy turns with the theme
-   frame for frame. z-index 1049 is one under the bar: above the widgets and
-   their Leaflet panes, below the bar and everything that already opens over
-   it. With the curtain up the blur has nothing left to hide, so it is off. */
-@supports (anchor-name: --a) {
-  .page-top-sticky { anchor-name: --page-top; }
-  .page-top-sticky::before { display: none; }
-  html:has(.page-top-sticky)::after {
-    --page-top-feather: 1.5rem;
-    position: fixed;
-    position-anchor: --page-top;
-    z-index: 1049;
-    top: 0;
-    right: 0;
-    bottom: calc(anchor(bottom) - var(--page-top-feather));
-    left: max(0px, calc(anchor(left) - var(--page-top-gutter, 2.5rem)));
-    background-color: var(--color-bg-secondary);
-    background-attachment: fixed;
-    -webkit-mask-image:
-      linear-gradient(to bottom, #000 calc(100% - var(--page-top-feather)), transparent),
-      linear-gradient(to right, transparent, #000 1.5rem);
-    -webkit-mask-composite: source-in;
-    mask-image:
-      linear-gradient(to bottom, #000 calc(100% - var(--page-top-feather)), transparent),
-      linear-gradient(to right, transparent, #000 1.5rem);
-    mask-composite: intersect;
-  }
+   frame for frame. The two measurements are registered non-inheriting for
+   the same reason the glow parts are: a change restyles <html>, not the
+   page. z-index 1049 is one under the bar: above the widgets and their
+   Leaflet panes, below the bar and everything that already opens over it. */
+@property --page-top-h { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --page-top-l { syntax: "<length>"; inherits: false; initial-value: 0px; }
+html[data-page-top-curtain] .page-top-sticky::before { display: none; }
+html[data-page-top-curtain]::after {
+  --page-top-feather: 1.5rem;
+  --page-top-h: inherit;
+  --page-top-l: inherit;
+  position: fixed;
+  z-index: 1049;
+  top: 0;
+  right: 0;
+  bottom: auto;
+  left: var(--page-top-l);
+  height: calc(var(--page-top-h) + var(--page-top-feather));
+  background-color: var(--color-bg-secondary);
+  background-attachment: fixed;
+  -webkit-mask-image:
+    linear-gradient(to bottom, #000 calc(100% - var(--page-top-feather)), transparent),
+    linear-gradient(to right, transparent, #000 1.5rem);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(to bottom, #000 calc(100% - var(--page-top-feather)), transparent),
+    linear-gradient(to right, transparent, #000 1.5rem);
+  mask-composite: intersect;
 }
 .page-header h2 {
   /* The actions row is what wraps, so the title is what must not: with the
@@ -5825,7 +5837,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 }
 @media (max-width: 700px) {
   .sidebar { display: none; }
-  .main { padding: 1rem; --page-top-gutter: 1rem; }
+  .main { padding: 1rem; }
   .page-top-sticky { padding-top: 1rem; margin-top: -1rem; }
   .user-badge-name { display: none; }
 }

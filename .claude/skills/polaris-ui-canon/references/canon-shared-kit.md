@@ -273,20 +273,28 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   strip together — Dashboard, /dash, Server Settings; the header draws no rule of its own, the
   tab strip's bottom border is the bar's one line) is UNFILLED — it never paints a box of its own. A 70% `--color-bg-secondary` tint was tried and rejected on 2026-10-04: it read as a
   dark box sitting on the glow. Since 2026-10-06 content scrolling under it VANISHES behind a
-  **curtain**, `html:has(.page-top-sticky)::after`: a second copy of the page's own ground (body
+  **curtain**, `html[data-page-top-curtain]::after`: a second copy of the page's own ground (body
   colour + the glow layer's gradients, `background-attachment: fixed`), so it is invisible where
-  nothing is under it. It is anchor-positioned to the bar (`anchor-name: --page-top`; top of the
-  viewport to the bar's bottom edge, at rest and pinned), z-index 1049 (one under the bar), and
+  nothing is under it. It is a plain `position: fixed` box with MEASURED insets — top of the
+  viewport, the bar's height (`--page-top-h`) and the content column's left edge (`--page-top-l`),
+  both set on `<html>` by `public/js/page-top-curtain.js` (ResizeObserver, re-measured on resize,
+  NEVER on scroll; registered `inherits: false`), which also sets the `data-page-top-curtain`
+  switch. It was first anchor-positioned to the bar, and Firefox — which scrolls on its
+  compositor — moved the anchored curtain WITH the scroll until the main thread re-ran layout:
+  content showed through the bar on every scroll and vanished a moment later (user-reported the
+  same day it shipped; headless Edge, headless Firefox and a CDP screencast all failed to show
+  it). Never put a scroll-linked position on it again; the bar does not move, so nothing has to
+  follow it. z-index 1049 (one under the bar), and
   masked to a `--page-top-feather` (1.5rem) fade below the bar — inside the bar's own
   margin-bottom, so at rest it covers empty page — and a short fade-in on its left edge so the
   sidebar's shadow is not cut. It lives on `<html>`, not the bar, because the glow's animated
   parts are `inherits: false` and only html's own pseudo-elements can `inherit` them; this way it
   turns with the theme frame for frame. The bar reaches up over all of `.main`'s top padding
   (`margin-top: -2rem; padding-top: 2rem`, 1rem at ≤700px) so its resting top IS its sticky top:
-  reaching only half way made the header slide 1rem on the first scroll. Anchor positioning is
-  Chromium 125+, Safari 26+, Firefox 147+ (checked in Firefox 157); without it the curtain is off
-  and the old fallback runs — a bare `blur(20px)` on the bar's `::before`, which the curtain
-  turns off where it is up. That blur must NOT borrow `--panel-glass-blur`'s `saturate()`:
+  reaching only half way made the header slide 1rem on the first scroll — and it is what lets a
+  measured, unmoving curtain be correct at every scroll position. Without the script (or
+  ResizeObserver) the curtain is off and the old fallback runs — a bare `blur(20px)` on the bar's
+  `::before`, which the curtain switch turns off. That blur must NOT borrow `--panel-glass-blur`'s `saturate()`:
   saturation deepens the glow's colour under the bar and the box reappears with no fill at all.
   It is on the `::before`, never on the element: a `backdrop-filter` makes its element the
   backdrop root of everything inside it, and the frosted "Dashboards ▾" menu that drops out of
