@@ -141,6 +141,23 @@ states the real window rather than a hardcoded guess.
 Dims connections unseen for 15 minutes. **Render-only — the edge is never
 removed.** On by default.
 
+### Export (PDF)
+
+The download icon beside the camera exports the map **as it is on screen** —
+current filters, hidden ports and node positions — to a PDF drawn as vectors,
+so it prints sharp and its text is searchable.
+
+Choose the **paper size**, the **orientation** (Automatic picks whichever needs
+fewer pages) and the **minimum text size** (7 pt by default). **Nothing on the
+printed map is smaller than that minimum.** A map that fits one sheet at that
+size prints on one sheet. One that does not is split into **sections** that
+overlap slightly so they can be taped together, after an **overview page**
+showing the whole map with the section grid (A1, A2, B1 …) on it. The overview
+has no map labels, because at that scale they would print below the minimum.
+Sections with nothing in them are skipped. The dialog states the page count
+before you export; past 30 pages it suggests narrowing the map with filters or
+hidden ports first. Every page carries the Ports key and the filters in force.
+
 ### Saved
 
 Named views, per user and per browser: the **pills plus the ports hidden in the
