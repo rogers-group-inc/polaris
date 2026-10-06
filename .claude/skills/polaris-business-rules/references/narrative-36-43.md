@@ -417,6 +417,56 @@ Raising archives a copy and stops. Carrying chosen addresses forward onto the ne
 
 One Event per batch (`subnet.chassis.reservations_migrated`, the `subnet.bulk-allocated` convention) rather than one per row, but it names every address migrated and every one skipped, so the audit trail stays specific.
 
+### 41(a) — one swap, one decision (2026-10-06)
+
+The first real swap through the feature: an operator replaced a FortiGate and
+did FortiManager's serial swap, which keeps the device name. Polaris raised a
+`chassis-replaced` card for each of the gate's networks — about ten, every one
+saying "A was replaced by B" — and each needed its own adopt and, where
+reservations mattered, its own copy. Then the old gate's asset had to be
+decommissioned by hand.
+
+The second half was a contradiction in the code, not a design gap. The Phase 3b
+firewall fan-out's serial-mismatch guard said, in its comment, "an RMA'd chassis
+keeping the old hostname is new hardware — Phase 2a retires the old asset by
+serial", and refused to bind the new serial to the old row. Phase 2a did not.
+Its match order was serial, then hostname, and the hostname fallback was an
+unconditional keep — so the old row, whose serial had left the roster but whose
+name had not, matched by name forever. A name cannot tell a rename from a
+replacement; this rule's first sentence, applied to the asset instead of the
+subnet.
+
+The fix keeps the name fallback for what it was written for — a legacy row with
+no serial — and for a gate nobody read this run (the tri-state of
+`classifyChassis`: an unread gate is unknown, never different). Only when the
+gate under that name WAS read, and its chassis set (the same per-device set
+Phase 1 uses) does not hold the row's serial, is the row `replaced`. HA cannot
+reach that branch: a failover leaves the old serial on the fleet roster, which
+the first check already accepts.
+
+A replaced gate must NOT cascade. The cascade finds a retired gate's switches
+and APs by `fortinetTopology.controllerFortigate` — a NAME — and after a
+same-name swap that name belongs to the new chassis. Cascading on it would
+decommission every switch and AP the new gate manages.
+
+The cards: the per-subnet rows stay, because two things on them really are per
+subnet — the reservation diff, and the dismissal marker that suppresses exactly
+that transition. What moves is the decision. The Events page folds pending rows
+sharing an (old, new) pair into one card; the bulk verbs act on every pending
+row of the pair; the nav badge counts the pair once.
+
+Adopting can also merge the old gate's asset into the new one (ticked by
+default, and gated on `assets:fullwrite` like every merge). The site keeps one
+record — notes, location, monitoring settings, dependency children — instead of
+a decommissioned twin. Two things the merge carries are wrong for new hardware
+and are removed straight after it: the dead serial's `fortigate-firewall`
+source, which would otherwise feed the projection a serial no box carries, and
+the MAC rows from the old box. Monitoring history is not carried (the merge
+engine never carries samples). Rejected alternative: merging automatically in
+Phase 2a. Whether the new box is the same SITE as the old one is the operator's
+call — a chassis re-registered under the same name at another site is possible
+— so the sweep only retires, and the merge waits for the card.
+
 ---
 
 <a id="rule-42"></a>

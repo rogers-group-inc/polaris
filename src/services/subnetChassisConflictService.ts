@@ -70,6 +70,7 @@ import { DEVICE_OWNED_SOURCE_TYPES } from "./reservationService.js";
 import { integrationPushEnabled } from "./reservationPushService.js";
 import { chunkArray } from "../utils/chunk.js";
 import { getArchivedSubnet } from "./subnetArchiveService.js";
+import { mergeAssets } from "./assetMergeService.js";
 
 export const CHASSIS_REPLACED_COLLISION_REASON = "chassis-replaced";
 
@@ -618,4 +619,207 @@ export async function listChassisConflicts(limit = 50) {
     take: Math.min(Math.max(limit, 1), 200),
     include: { subnet: { select: { id: true, cidr: true, name: true, fortigateDevice: true } } },
   });
+}
+
+// ─── One swap, one decision (rule 41(a)) ────────────────────────────────────
+//
+// A FortiGate serves many subnets, so one physical swap raised one card PER
+// SUBNET — ten interfaces, ten cards, all saying the same "A was replaced by
+// B" (prod 2026-10-05). The per-subnet rows stay, because the per-subnet
+// reservation diff and the per-subnet dedup marker are real; what changes is
+// that the DECISION is taken once per serial pair. The Events page groups the
+// rows by `chassisSwapKey`, and these two verbs act on every pending row of
+// the pair at once.
+
+/** The grouping key the UI and the bulk verbs agree on. */
+export function chassisSwapKey(oldSerial: string | null | undefined, newSerial: string | null | undefined): string {
+  return `${normalizeSerial(oldSerial) ?? ""}>${normalizeSerial(newSerial) ?? ""}`;
+}
+
+async function loadPendingSwapConflicts(oldSerial: string, newSerial: string) {
+  const old = normalizeSerial(oldSerial);
+  const next = normalizeSerial(newSerial);
+  if (!old || !next || old === next) throw new AppError(400, "oldSerial and newSerial must be two different serials");
+  const rows = await prisma.conflict.findMany({
+    where: { ...CHASSIS_CONFLICT_WHERE, status: "pending" },
+    select: { id: true, subnetId: true, proposedSubnetFields: true },
+  });
+  const matches = rows.filter((c) => {
+    const p = c.proposedSubnetFields as ChassisReplacedPayload | null;
+    return normalizeSerial(p?.oldSerial) === old && normalizeSerial(p?.newSerial) === next;
+  });
+  return { old, next, matches };
+}
+
+/**
+ * The firewall Asset each chassis lives on. The `fortigate-firewall` source
+ * (externalId = chassis serial) first, then `Asset.serialNumber`. Compared
+ * normalized in memory: the stored externalId is whatever the transport
+ * reported, and an `in:` filter is case-sensitive (the loadControllerContext
+ * trap). Bounded by the fleet's firewall count.
+ */
+export async function findChassisAssets(oldSerial: string, newSerial: string): Promise<{
+  oldAssetId: string | null;
+  newAssetId: string | null;
+}> {
+  const old = normalizeSerial(oldSerial);
+  const next = normalizeSerial(newSerial);
+  const out = { oldAssetId: null as string | null, newAssetId: null as string | null };
+  const sources = await prisma.assetSource.findMany({
+    where: { sourceKind: "fortigate-firewall" },
+    select: { externalId: true, assetId: true },
+  });
+  for (const s of sources) {
+    const key = normalizeSerial(s.externalId);
+    if (key && key === old && !out.oldAssetId) out.oldAssetId = s.assetId;
+    if (key && key === next && !out.newAssetId) out.newAssetId = s.assetId;
+  }
+  if (!out.oldAssetId || !out.newAssetId) {
+    const firewalls = await prisma.asset.findMany({
+      where: { assetType: "firewall", serialNumber: { not: null } },
+      select: { id: true, serialNumber: true },
+    });
+    for (const f of firewalls) {
+      const key = normalizeSerial(f.serialNumber);
+      if (!out.oldAssetId && key === old) out.oldAssetId = f.id;
+      if (!out.newAssetId && key === next) out.newAssetId = f.id;
+    }
+  }
+  return out;
+}
+
+export interface AdoptSwapOutcome {
+  adopted: number;
+  cidrs: string[];
+  /** Set when the old gate's record was merged into the new gate's. */
+  mergedAssetId: string | null;
+  /** Why a requested merge did not happen — the card says so instead of failing the adopt. */
+  mergeSkipped: "old-asset-not-found" | "new-asset-not-found" | "same-asset" | null;
+  removedClaims: number;
+}
+
+/**
+ * Adopt the new chassis for every pending subnet of one swap.
+ *
+ * `mergeOldAsset` also folds the old gate's Asset into the new gate's through
+ * the operator merge engine (`mergeAssets`): notes, location, monitoring
+ * settings, dependency children and maintenance carry across, so the site
+ * keeps one record rather than a decommissioned twin. Two things the merge
+ * would carry are WRONG for new hardware and are dropped after it: the old
+ * chassis's `fortigate-firewall` source (a dead serial that would otherwise
+ * feed the projection) and the MAC rows that came from the old box.
+ *
+ * Either way the old chassis's controller claims are deleted — that box will
+ * never re-assert them, and until they aged out they read as a second gate
+ * claiming every switch and AP the new one manages (rule 83(c)).
+ */
+export async function adoptChassisSwap(
+  oldSerial: string,
+  newSerial: string,
+  opts: { mergeOldAsset?: boolean; actor?: string } = {},
+): Promise<AdoptSwapOutcome> {
+  const { old, next, matches } = await loadPendingSwapConflicts(oldSerial, newSerial);
+  if (matches.length === 0) throw new AppError(404, "No pending chassis conflicts for that serial pair");
+
+  const subnetIds = matches.map((c) => c.subnetId).filter((id): id is string => !!id);
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.subnet.updateMany({ where: { id: { in: subnetIds } }, data: { fortigateSerial: next } }),
+    prisma.conflict.updateMany({
+      where: { id: { in: matches.map((c) => c.id) }, status: "pending" },
+      data: { status: "accepted", resolvedBy: opts.actor ?? null, resolvedAt: now },
+    }),
+  ]);
+
+  const cidrs: string[] = [];
+  for (const c of matches) {
+    const p = c.proposedSubnetFields as unknown as ChassisReplacedPayload;
+    cidrs.push(p.cidr);
+    void logEvent({
+      action: "subnet.chassis.adopted",
+      resourceType: "subnet",
+      resourceId: c.subnetId ?? undefined,
+      resourceName: p.cidr,
+      actor: opts.actor,
+      message: `Subnet ${p.cidr} adopted FortiGate chassis ${next} (was ${old})`,
+      details: { ...p, bulk: true },
+    });
+  }
+
+  const outcome: AdoptSwapOutcome = { adopted: matches.length, cidrs, mergedAssetId: null, mergeSkipped: null, removedClaims: 0 };
+
+  if (opts.mergeOldAsset) {
+    const { oldAssetId, newAssetId } = await findChassisAssets(old, next);
+    if (!oldAssetId) outcome.mergeSkipped = "old-asset-not-found";
+    else if (!newAssetId) outcome.mergeSkipped = "new-asset-not-found";
+    else if (oldAssetId === newAssetId) outcome.mergeSkipped = "same-asset";
+    else {
+      const oldMacRows = await prisma.assetMacAddress.findMany({ where: { assetId: oldAssetId }, select: { id: true } });
+      const result = await mergeAssets({ canonicalId: newAssetId, ghostId: oldAssetId });
+      // Dead hardware's identity must not ride along on the survivor.
+      const deadSources = await prisma.assetSource.findMany({
+        where: { assetId: newAssetId, sourceKind: "fortigate-firewall" },
+        select: { id: true, externalId: true },
+      });
+      const deadIds = deadSources.filter((s) => normalizeSerial(s.externalId) === old).map((s) => s.id);
+      await prisma.$transaction([
+        prisma.assetSource.deleteMany({ where: { id: { in: deadIds } } }),
+        prisma.assetMacAddress.deleteMany({ where: { id: { in: oldMacRows.map((r) => r.id) }, assetId: newAssetId } }),
+      ]);
+      outcome.mergedAssetId = result.survivorId;
+      void logEvent({
+        action: "asset.merged",
+        resourceType: "asset",
+        resourceId: newAssetId,
+        actor: opts.actor,
+        message: `Replaced FortiGate chassis ${old} merged into its replacement ${next}`,
+        details: { reason: "chassis-replaced", oldSerial: old, newSerial: next, absorbedAssetId: oldAssetId, ...result },
+      });
+    }
+  }
+
+  const { count } = await prisma.assetControllerClaim.deleteMany({ where: { controllerKey: old } });
+  outcome.removedClaims = count;
+
+  void logEvent({
+    action: "subnet.chassis.swap_adopted",
+    resourceType: "subnet",
+    resourceName: `${old} → ${next}`,
+    actor: opts.actor,
+    message:
+      `FortiGate chassis ${old} replaced by ${next}: adopted for ${matches.length} network(s)` +
+      (outcome.mergedAssetId ? ", old gate merged into the new one" : ""),
+    details: { oldSerial: old, newSerial: next, ...outcome },
+  });
+  return outcome;
+}
+
+/**
+ * Dismiss every pending subnet of one swap. Each rejected row stays the dedup
+ * marker for its subnet, exactly as a one-at-a-time dismiss.
+ */
+export async function rejectChassisSwap(
+  oldSerial: string,
+  newSerial: string,
+  actor?: string,
+): Promise<{ rejected: number }> {
+  const { old, next, matches } = await loadPendingSwapConflicts(oldSerial, newSerial);
+  if (matches.length === 0) throw new AppError(404, "No pending chassis conflicts for that serial pair");
+  await prisma.conflict.updateMany({
+    where: { id: { in: matches.map((c) => c.id) }, status: "pending" },
+    data: { status: "rejected", resolvedBy: actor ?? null, resolvedAt: new Date() },
+  });
+  void logEvent({
+    action: "subnet.chassis.dismissed",
+    resourceType: "subnet",
+    resourceName: `${old} → ${next}`,
+    actor,
+    message: `Chassis-replacement conflicts dismissed for ${matches.length} network(s) (${old} → ${next})`,
+    details: {
+      oldSerial: old,
+      newSerial: next,
+      cidrs: matches.map((c) => (c.proposedSubnetFields as unknown as ChassisReplacedPayload).cidr),
+    },
+  });
+  return { rejected: matches.length };
 }

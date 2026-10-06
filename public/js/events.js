@@ -746,12 +746,51 @@ function getAlertsFormData() {
       var status = filterSel.value;
       var data = await api.conflicts.list({ status: status, limit: 5000 });
       var conflicts = data.conflicts || [];
-      countEl.textContent = conflicts.length + " conflict" + (conflicts.length !== 1 ? "s" : "") + (status !== "all" ? " (" + status + ")" : "");
-      if (!conflicts.length) {
+      // One FortiGate swap raises one row per subnet; it is one decision, so
+      // it is one card (business rule 41(a)) and one in the count.
+      var items = groupChassisSwaps(conflicts);
+      countEl.textContent = items.length + " conflict" + (items.length !== 1 ? "s" : "") + (status !== "all" ? " (" + status + ")" : "");
+      if (!items.length) {
         body.innerHTML = '<div class="empty-state" style="padding:2rem">No conflicts found.</div>';
         return;
       }
-      body.innerHTML = conflicts.map(function (c) { return renderConflictCard(c); }).join("");
+      body.innerHTML = items.map(function (it) {
+        return it.swap ? renderChassisSwapCard(it.swap) : renderConflictCard(it.conflict);
+      }).join("");
+
+      // Whole-swap verbs: adopt (optionally merging the old gate's record into
+      // the new one) or dismiss every network the swap raised.
+      body.querySelectorAll("[data-chassis-swap-action]").forEach(function (el) {
+        el.addEventListener("click", async function () {
+          var card = el.closest(".conflict-card");
+          var payload = {
+            oldSerial: el.getAttribute("data-old-serial"),
+            newSerial: el.getAttribute("data-new-serial"),
+          };
+          el.disabled = true;
+          try {
+            if (el.getAttribute("data-chassis-swap-action") === "adopt") {
+              var mergeBox = card && card.querySelector("[data-chassis-swap-merge]");
+              payload.mergeOldAsset = !!(mergeBox && mergeBox.checked);
+              var out = await api.conflicts.adoptChassisSwap(payload);
+              var msg = "New FortiGate chassis adopted for " + out.adopted + " network" + (out.adopted !== 1 ? "s" : "");
+              if (out.mergedAssetId) msg += " — old gate merged into the new one";
+              else if (out.mergeSkipped) msg += " — old gate not merged (" + CHASSIS_MERGE_SKIPPED[out.mergeSkipped] + ")";
+              showToast(msg);
+            } else {
+              var rej = await api.conflicts.rejectChassisSwap(payload);
+              showToast("Dismissed for " + rej.rejected + " network" + (rej.rejected !== 1 ? "s" : "") + " — this chassis change won't be reported again");
+            }
+            var scrollTop = body.scrollTop;
+            await loadConflicts(true);
+            body.scrollTop = scrollTop;
+            refreshBadge();
+          } catch (err) {
+            showToast(err.message, "error");
+            el.disabled = false;
+          }
+        });
+      });
 
       // Per-row winner pickers (asset conflicts only). Toggling a pill updates
       // the winning side's highlight in the same row.
@@ -1017,6 +1056,114 @@ function getAlertsFormData() {
       fortimanager: "FortiManager", manual: "Manual",
     };
     return map[sourceType] || sourceType || "Unknown";
+  }
+
+  // Fold pending chassis-replacement rows that share an (old, new) serial pair
+  // into one item, at the position of the pair's first (newest) row. A pair
+  // with a single network keeps the single-network card; resolved rows stay
+  // one per network, since they are history and each was resolved on its own.
+  function chassisSwapKeyOf(c) {
+    var p = c.proposedSubnetFields || {};
+    if (c.entityType !== "subnet" || c.status !== "pending" || p.collisionReason !== "chassis-replaced") return null;
+    if (!p.oldSerial || !p.newSerial) return null;
+    return String(p.oldSerial).trim().toUpperCase() + ">" + String(p.newSerial).trim().toUpperCase();
+  }
+
+  function groupChassisSwaps(conflicts) {
+    var byKey = {};
+    conflicts.forEach(function (c) {
+      var key = chassisSwapKeyOf(c);
+      if (key) (byKey[key] = byKey[key] || []).push(c);
+    });
+    var items = [];
+    var placed = {};
+    conflicts.forEach(function (c) {
+      var key = chassisSwapKeyOf(c);
+      if (!key || byKey[key].length < 2) { items.push({ conflict: c }); return; }
+      if (placed[key]) return;
+      placed[key] = true;
+      items.push({ swap: byKey[key] });
+    });
+    return items;
+  }
+
+  var CHASSIS_MERGE_SKIPPED = {
+    "old-asset-not-found": "no asset carries the old serial",
+    "new-asset-not-found": "the new gate has not been discovered as an asset yet",
+    "same-asset": "both serials are on the same asset",
+  };
+
+  // One card for a whole FortiGate swap: the identity summary once, every
+  // network it serves underneath (each with its own reservation review, which
+  // is genuinely per network), and the decision taken once for all of them.
+  function renderChassisSwapCard(rows) {
+    var first = rows[0];
+    var p = first.proposedSubnetFields || {};
+    var dash = '<span style="color:var(--color-text-tertiary);font-style:italic">—</span>';
+    var val = function (v) { return v ? escapeHtml(String(v)) : dash; };
+    var gateName = p.newDeviceName || p.oldDeviceName || "FortiGate";
+    var canMerge = typeof permAtLeast === "function" && permAtLeast("assets", "fullwrite");
+
+    var identity = [
+      ["Chassis serial", val(p.oldSerial), "<strong>" + val(p.newSerial) + "</strong>"],
+      ["FortiGate name", val(p.oldDeviceName), val(p.newDeviceName)],
+    ].map(function (r) {
+      return '<tr><td class="conflict-field">' + r[0] + '</td><td>' + r[1] + '</td><td>' + r[2] + '</td></tr>';
+    }).join("");
+
+    var networks = rows.slice().sort(function (a, b) {
+      var ca = (a.proposedSubnetFields || {}).cidr || "";
+      var cb = (b.proposedSubnetFields || {}).cidr || "";
+      return ca.localeCompare(cb, undefined, { numeric: true });
+    }).map(function (c) {
+      var cp = c.proposedSubnetFields || {};
+      var subnet = c.subnet || {};
+      return '<div style="border-top:1px solid var(--color-border);padding:0.375rem 0.75rem">' +
+        '<div style="display:flex;align-items:center;gap:0.5rem">' +
+          '<strong class="mono">' + escapeHtml(cp.cidr || subnet.cidr || "(unknown subnet)") + '</strong>' +
+          '<span class="conflict-card-subnet" style="flex:1">' + escapeHtml(subnet.name || "") + '</span>' +
+          '<button class="btn btn-secondary btn-sm" data-chassis-diff="' + c.id + '">Review reservations</button>' +
+        '</div>' +
+        '<div data-chassis-diff-panel="' + c.id + '"></div>' +
+      '</div>';
+    }).join("");
+
+    var swapAttrs = ' data-old-serial="' + escapeHtml(p.oldSerial) + '" data-new-serial="' + escapeHtml(p.newSerial) + '"';
+    var mergeOpt = canMerge
+      ? '<label style="display:flex;align-items:center;gap:0.375rem;font-size:0.8125rem;margin-right:auto">' +
+          '<input type="checkbox" data-chassis-swap-merge checked>' +
+          "Merge the old gate's asset into the new one" +
+        '</label>'
+      : '<span style="font-size:0.75rem;color:var(--color-text-tertiary);margin-right:auto">' +
+          "The old gate's asset is retired by discovery; merging it needs full read-write on Assets." +
+        '</span>';
+
+    return '<div class="conflict-card">' +
+      '<div class="conflict-card-header">' +
+        '<span class="badge badge-conflict">Chassis replaced</span>' +
+        '<strong>' + escapeHtml(gateName) + '</strong>' +
+        '<span class="conflict-card-subnet">' + rows.length + ' networks</span>' +
+      '</div>' +
+      '<div style="padding:0.5rem 0.75rem;color:var(--color-text-secondary);font-size:0.8125rem">' +
+        'This FortiGate was replaced with new hardware. Every network it serves is listed below; ' +
+        'their previous reservations are archived — nothing was changed or removed. ' +
+        "Merging carries the old gate's notes, location, monitoring settings and dependent devices " +
+        "onto the new one; its monitoring history is not carried." +
+      '</div>' +
+      '<div class="conflict-table" style="padding:0">' +
+        '<table><thead><tr>' +
+          '<th class="conflict-field">Field</th>' +
+          '<th>Previous gate</th>' +
+          '<th>Now serving</th>' +
+        '</tr></thead><tbody>' + identity + '</tbody></table>' +
+      '</div>' +
+      networks +
+      '<div class="conflict-card-actions">' +
+        mergeOpt +
+        '<button class="btn btn-secondary btn-sm" data-chassis-swap-action="reject"' + swapAttrs + '>Dismiss all</button>' +
+        '<button class="btn btn-primary btn-sm" data-chassis-swap-action="adopt"' + swapAttrs + '>Adopt for all ' + rows.length + ' networks</button>' +
+      '</div>' +
+    '</div>';
   }
 
   function renderConflictCard(c) {

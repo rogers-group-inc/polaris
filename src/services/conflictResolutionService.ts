@@ -100,6 +100,7 @@ import {
 import {
   acceptChassisReplacement,
   rejectChassisReplacement,
+  chassisSwapKey,
 } from "./subnetChassisConflictService.js";
 
 // Shared with the discovery sync that writes these tags — see
@@ -185,12 +186,33 @@ export async function listConflicts(
 
 // Pending count for GET /api/v1/conflicts/count (nav badge), scoped by the
 // route's role-based entity-type visibility.
+//
+// A FortiGate swap raises one chassis row per subnet but is ONE decision
+// (business rule 41(a)), so subnet rows count once per (old, new) serial pair
+// — the same fold the Events page applies to its cards. The subnet read is
+// bounded by pending chassis rows (tens), not by fleet size.
 export async function countPendingConflicts(
   entityTypes: ConflictEntityType[],
 ): Promise<number> {
-  return prisma.conflict.count({
-    where: { status: "pending", entityType: { in: entityTypes } },
-  });
+  const [total, subnetRows] = await Promise.all([
+    prisma.conflict.count({
+      where: { status: "pending", entityType: { in: entityTypes } },
+    }),
+    entityTypes.includes("subnet")
+      ? prisma.conflict.findMany({
+          where: { status: "pending", entityType: "subnet" },
+          select: { proposedSubnetFields: true },
+        })
+      : Promise.resolve([] as Array<{ proposedSubnetFields: unknown }>),
+  ]);
+  const pairs = new Set<string>();
+  let unpaired = 0;
+  for (const row of subnetRows) {
+    const p = (row.proposedSubnetFields ?? {}) as { oldSerial?: string; newSerial?: string };
+    if (p.oldSerial && p.newSerial) pairs.add(chassisSwapKey(p.oldSerial, p.newSerial));
+    else unpaired++;
+  }
+  return total - subnetRows.length + pairs.size + unpaired;
 }
 
 // ─── Resolution entry points ─────────────────────────────────────────────────
