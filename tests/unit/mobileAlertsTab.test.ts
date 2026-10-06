@@ -41,11 +41,17 @@ function load() {
   return g.PolarisAlertsTab;
 }
 
-async function render(rows: any[] = ROWS, total?: number) {
+async function render(rows: any[] = ROWS, total?: number, user: any = { permissions: { alerts: "write" } }) {
   document.body.innerHTML = '<div id="app"><main class="app-body" id="app-body"></main></div>';
-  g.api = { alerts: { list: vi.fn(async () => ({ notifications: rows.map((r) => ({ ...r })), total: total ?? rows.length })), acknowledge: vi.fn() } };
+  g.api = {
+    alerts: {
+      list: vi.fn(async () => ({ notifications: rows.map((r) => ({ ...r })), total: total ?? rows.length })),
+      acknowledge: vi.fn(),
+      clear: vi.fn(async (ids: string[]) => { rows = rows.filter((r) => !ids.includes(r.id)); return { cleared: ids.length }; }),
+    },
+  };
   const tab = load();
-  await tab.spec.render(document.getElementById("app-body")!, { route: { name: "alerts", parts: [] }, user: { permissions: { alerts: "write" } } });
+  await tab.spec.render(document.getElementById("app-body")!, { route: { name: "alerts", parts: [] }, user });
   await new Promise((r) => setTimeout(r, 0));
   return tab;
 }
@@ -124,6 +130,120 @@ describe("alerts tab filtering", () => {
   it("says when more alerts are active than were loaded", async () => {
     await render(ROWS, 812);
     expect(document.querySelector(".list-count")!.textContent).toBe("4 alerts · newest 4 of 812 active");
+  });
+});
+
+const REGIONAL = [
+  { id: "r1", severity: "critical", message: "down", assetHostname: "east-fw", triggeredAt: "2026-10-05T10:00:00Z", acknowledged: false, regionTags: ["East"] },
+  { id: "r2", severity: "critical", message: "down", assetHostname: "west-fw", triggeredAt: "2026-10-05T09:00:00Z", acknowledged: false, regionTags: ["West"] },
+  { id: "r3", severity: "warning",  message: "cpu",  assetHostname: "lab-sw",  triggeredAt: "2026-10-05T08:00:00Z", acknowledged: false, regionTags: [] },
+];
+const EAST_USER = { regions: ["East"], permissions: { alerts: "write" } };
+
+describe("alerts tab region scope", () => {
+  it("'mine' keeps my regions AND untagged alerts — the server's own viewer scope", () => {
+    const tab = load();
+    expect(tab.filterRows(REGIONAL, "", "all", [], ["east"]).map((r: any) => r.id)).toEqual(["r1", "r3"]);
+    expect(tab.filterRows(REGIONAL, "", "all", [], null).map((r: any) => r.id)).toEqual(["r1", "r2", "r3"]);
+  });
+
+  it("defaults a regional viewer to My regions, named on the chip", async () => {
+    await render(REGIONAL, undefined, EAST_USER);
+    expect(shownIds()).toEqual(["CRITICAL · east-fw", "WARNING · lab-sw"]);
+    const chip = document.getElementById("alerts-sort")!;
+    expect(chip.textContent!.trim()).toBe("Time · My regions");
+    expect(chip.classList.contains("selected")).toBe(true);
+  });
+
+  it("toggles to All regions in the sheet, and remembers it", async () => {
+    await render(REGIONAL, undefined, EAST_USER);
+    (document.getElementById("alerts-sort") as HTMLElement).click();
+    (document.querySelector('#list-sort-sheet [data-filter="region"][data-value="all"]') as HTMLElement).click();
+    expect(shownIds()).toEqual(["CRITICAL · east-fw", "CRITICAL · west-fw", "WARNING · lab-sw"]);
+    expect(document.getElementById("alerts-sort")!.textContent!.trim()).toBe("Time");
+    expect(JSON.parse(localStorage.getItem("polaris-mobile-alerts-list")!).region).toBe("all");
+  });
+
+  it("offers no region choice to a viewer with no regions", async () => {
+    await render(REGIONAL);
+    expect(shownIds()).toHaveLength(3);
+    (document.getElementById("alerts-sort") as HTMLElement).click();
+    expect(document.querySelector('#list-sort-sheet [data-filter="region"]')).toBeNull();
+    expect(document.getElementById("alerts-sort")!.textContent!.trim()).toBe("Time");
+  });
+});
+
+describe("alerts tab clear", () => {
+  const clearButtons = () => Array.from(document.querySelectorAll("[data-clear]")) as HTMLElement[];
+
+  it("draws Clear only at alerts:fullwrite, outside the row button", async () => {
+    await render(ROWS);
+    expect(clearButtons()).toHaveLength(0);
+    await render(ROWS, undefined, { permissions: { alerts: "fullwrite" } });
+    // Every active alert can be cleared, acknowledged or not.
+    expect(clearButtons().map((b) => b.dataset.clear)).toEqual(["c", "a", "b", "d"]);
+    expect(document.querySelector(".list-item [data-clear]")).toBeNull();
+  });
+
+  it("asks first, then clears and drops the row", async () => {
+    await render(ROWS, undefined, { permissions: { alerts: "fullwrite" } });
+    clearButtons()[0]!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(g.api.alerts.clear).not.toHaveBeenCalled();
+    (document.getElementById("alert-clear-ok") as HTMLElement).click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(g.api.alerts.clear).toHaveBeenCalledWith(["c"]);
+    expect(g.PolarisTabs.showSnackbar).toHaveBeenCalledWith("Alert cleared", undefined);
+    expect(shownIds()).not.toContain("ERROR · core-1");
+    expect(g.PolarisRouter.go).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing when the confirm is cancelled", async () => {
+    await render(ROWS, undefined, { permissions: { alerts: "fullwrite" } });
+    clearButtons()[0]!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    (document.getElementById("alert-clear-cancel") as HTMLElement).click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(g.api.alerts.clear).not.toHaveBeenCalled();
+    expect(clearButtons()).toHaveLength(4);
+  });
+});
+
+describe("alerts tab severity breakdown", () => {
+  const tiles = () =>
+    Array.from(document.querySelectorAll("#alerts-summary .sev-tile")).map((t) =>
+      `${(t.querySelector(".sev-label") as HTMLElement).textContent} ${(t.querySelector(".sev-count") as HTMLElement).textContent}`);
+
+  it("counts each severity by rank, above the list, skipping empty ones", async () => {
+    await render();
+    // error + critical are one rank; info is Info; nothing Serious or Notice.
+    expect(tiles()).toEqual(["Critical 2", "Warning 1", "Info 1"]);
+    const summary = document.getElementById("alerts-summary")!;
+    expect(summary.compareDocumentPosition(document.querySelector(".list-toolbar")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("a tile toggles the severity filter, and the counts hold still", async () => {
+    await render();
+    (document.querySelector('#alerts-summary [data-sev="5"]') as HTMLElement).click();
+    expect(shownIds()).toEqual(["ERROR · core-1", "CRITICAL · fw-1"]);
+    expect(tiles()).toEqual(["Critical 2", "Warning 1", "Info 1"]);
+    expect(document.querySelector('#alerts-summary [data-sev="5"]')!.classList.contains("selected")).toBe(true);
+    expect(document.getElementById("alerts-sort")!.textContent!.trim()).toBe("Time · Critical");
+    (document.querySelector('#alerts-summary [data-sev="5"]') as HTMLElement).click();
+    expect(shownIds()).toHaveLength(4);
+  });
+
+  it("follows the other filters — ack state and region", async () => {
+    await render();
+    (document.querySelector('#alerts-chips [data-key="unack"]') as HTMLElement).click();
+    expect(tiles()).toEqual(["Critical 1", "Warning 1", "Info 1"]);
+    await render(REGIONAL, undefined, EAST_USER);
+    expect(tiles()).toEqual(["Critical 1", "Warning 1"]);
+  });
+
+  it("is hidden when nothing is active", async () => {
+    await render([]);
+    expect(document.getElementById("alerts-summary")!.classList.contains("hidden")).toBe(true);
   });
 });
 

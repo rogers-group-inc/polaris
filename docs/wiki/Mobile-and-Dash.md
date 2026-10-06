@@ -21,17 +21,28 @@ Map** is the first row on the More tab.
 
 ## Alerts
 
-Every active alert you can see, newest first. The same **filter field** and
+Every active alert you can see, newest first. Across the top, a **severity
+breakdown** counts them (**Critical**, **Serious**, **Warning**, **Info**,
+**Notice**; a severity with nothing in it is left out). Tap a count to show only
+that severity, and tap more than one to combine them. The counts follow the
+other filters but not the severity one, so they don't move while you tap
+through them. The same **filter field** and
 **sort chip** as the lists below: the field matches device and message, the
 chips above the list show **All**, **Unacknowledged** or **Acknowledged**, and
 the *Sort & filter* sheet orders by **Time**, **Severity** or **Device** and
 narrows to one or more **severities** (Critical also catches alerts recorded as
-"error"). A severity filter is named on the sort chip, so the list is never
-narrowed by something you can't see. Your choices are remembered on that phone.
+"error"). If your account carries [region tags](Users-Roles-and-Permissions#tags-and-region-scope),
+the sheet also offers **My regions** (the default) or **All regions**. My
+regions shows alerts in your regions plus alerts that belong to no region. If
+your role limits you to your regions, All regions shows nothing more; for an
+administrator it is the whole fleet. Whatever the sheet is narrowing by is
+named on the sort chip, so the list is never filtered by something you can't
+see. Your choices are remembered on that phone.
 
-Tap a row to open its device; tap **Ack** to acknowledge (`alerts:write`).
-Clearing stays on the desktop. The tab loads the newest 500 active alerts; when
-more are active, the count under the list says so.
+Tap a row to open its device; tap **Ack** to acknowledge (`alerts:write`) or
+**Clear** to clear it (`alerts:fullwrite`). Clear asks first: it stops
+escalation and runs the automation's reset actions. The tab loads the newest
+500 active alerts; when more are active, the count under the list says so.
 
 ## Assets and Networks
 
