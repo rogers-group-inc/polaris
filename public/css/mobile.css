@@ -126,9 +126,10 @@
      not light. Morning resets the glow's parts into a sunrise rising from
      the bottom; nightfall turns it off for the sliding --night-glow. */
   /* Opacity of the frosted bottom navbar's tint: the desktop sidebar's
-     --rail-glass-bg mix (40% dark family, 30% daylight, where a light panel
-     over a light page has less to hide behind). */
-  --nav-glass-mix: 40%;
+     --rail-glass-bg mix, 30% in every theme. Nightfall used to run 10 points
+     heavier here, on the cards and on the sheets (40% / 40% / 50%); by the
+     user's call (2026-10-06) it matches morning and noon, as on the desktop. */
+  --nav-glass-mix: 30%;
 
   /* The desktop's glass materials, under the phone's surface names.
      --rail-glass-bg is what the desktop sidebar, cards and tables wear: the
@@ -139,8 +140,8 @@
      glass: it is mostly the chart and detail panels INSIDE a sheet, and a
      translucent box inside a frosted panel is a window onto the page behind
      it (the desktop keeps its .chart-box opaque for the same reason). */
-  --rail-glass-bg:  color-mix(in srgb, var(--md-surface-cont-low) 40%, transparent);
-  --panel-glass-bg: color-mix(in srgb, var(--md-surface-cont-low) 50%, transparent);
+  --rail-glass-bg:  color-mix(in srgb, var(--md-surface-cont-low) 30%, transparent);
+  --panel-glass-bg: color-mix(in srgb, var(--md-surface-cont-low) 40%, transparent);
   --glass-blur: blur(12px) saturate(1.3);
 
   --page-glow-color: var(--md-primary);
@@ -257,9 +258,8 @@
   --shadow-card:  0 8px 32px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.6);
   --shadow-sheet: 0 -8px 32px rgba(0,0,0,.16), 0 -2px 6px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.6);
   --page-glow-strength: 11.2%;
-  --nav-glass-mix: 30%;
-  --rail-glass-bg:  color-mix(in srgb, var(--md-surface-cont-low) 30%, transparent);
-  --panel-glass-bg: color-mix(in srgb, var(--md-surface-cont-low) 40%, transparent);
+  /* The glass mixes (nav bar, cards, sheets) are :root's in every theme now;
+     nothing to re-declare here. */
 }
 
 /* ─── Daylight palettes, mapped from the desktop set ───────────────────────

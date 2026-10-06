@@ -86,7 +86,7 @@ chrome that merely sits ON the page. Added 2026-09 when those surfaces went tran
 before that each rule picked its own background and shadow.
 
 **Canonical implementation:** the token block at the top of
-[public/css/styles.css](public/css/styles.css). `--panel-glass-bg` (modal + slide-over body; 78%, 70% on the daylight base),
+[public/css/styles.css](public/css/styles.css). `--panel-glass-bg` (modal + slide-over body; 70% in every theme),
 `--panel-glass-chrome` (their header/footer bands), `--menu-glass-bg` (every menu),
 `--panel-glass-blur` (the `backdrop-filter` value all of them share), `--shadow-panel` (a
 frosted surface floating free of a screen edge), `--shadow-control` (buttons, page search
@@ -121,9 +121,13 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   `--menu-glass-bg` + `--panel-glass-blur` + `--shadow-panel` rather than inventing a mix.
   `.widget-export-menu` mixed its own `--color-bg-elevated` for exactly one commit, which was
   enough for it to silently ignore the next change to the shared token.
-- **The daylight pair overrides the glass, and only the glass** (panels 40%, menus 30%, in the
-  `:is([data-theme="morning"],[data-theme="noon"])` base block). A light panel over a light
-  page has far less to hide behind, so the dark family's mix reads as nearly solid there.
+- **One glass mix for all three themes** (panels 70%, header/footer bands 40%, rail and cards
+  30%, menus 30%, all on `:root`; the phone's nav bar 30%, cards 30%, sheets 40%). Nightfall used
+  to run 8-10 points heavier, on the theory that dark glass needs more colour to hide what is
+  behind it, and the daylight base re-declared thinner mixes; by the user's call (2026-10-06)
+  nightfall matches morning and noon and the re-declarations are gone. The ONE per-family glass
+  left is the selected chip (`--chip-glass-bg`), because it mixes a different COLOUR per family,
+  not a different amount — see the chip bullet below.
 - **An overlay wrapping a frosted surface must reach opacity EXACTLY 1.** Any value below it
   makes the overlay a backdrop root, and the child's `backdrop-filter` then samples nothing but
   the scrim. This binds every standalone overlay a stacking surface builds for itself, not just
