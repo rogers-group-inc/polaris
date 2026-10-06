@@ -166,20 +166,19 @@
   --page-glow-p2: 26%;
   --page-glow-p3: 50%;
   --page-glow-end: 70%;
-  /* Nightfall's moonlight-blue wash as its own sliding layer, parked by
+  /* Nightfall's white wash as its own sliding layer, parked by
      theme as on the desktop: -130% noon, 50% nightfall (and afternoon, its waypoint),
      230% morning. Wider apart than the desktop's -100% / 200% because the
      phone's visible radius is 70% of 180%, ~126% of the width; these are
      just clear of the screen, so the slide is all visible travel. */
   --night-glow-x: -130%;
-  /* White at 35% here on noon's entry, the moonlight blue #6d97ff at 12.3%
-     at rest on nightfall and parked on morning: it slides in white and
-     cools to blue as it lands, and leaves still blue (styles.css has the
-     reasoning). */
+  /* White at 35% everywhere — parked on noon and morning, at rest on
+     nightfall — so the glow never changes colour, only position and size
+     (styles.css has the reasoning). */
   --night-glow-c: rgba(255,255,255,.35);
   /* HALF size wherever it is parked (90% x 33% against nightfall's 180% x 66%):
-     the white light comes in small and grows to the full wash as it cools
-     to blue, and shrinks back as it leaves. */
+     the white light comes in small and grows to the full wash, and
+     shrinks back as it leaves. */
   --night-glow-w: 90%;
   --night-glow-h: 33%;
   --night-glow: radial-gradient(ellipse var(--night-glow-w) var(--night-glow-h) at var(--night-glow-x) 0%,
@@ -335,12 +334,10 @@
   --page-glow-c3: rgba(238,154,90,.14);
   --page-glow-end: 78%;
   --night-glow-x: 230%;
-  /* The exit to morning keeps nightfall's moonlight blue: the glow slides
-     out and shrinks, but its colour does not change. Only the entry from
-     noon is white (35%). Morning -> noon swaps blue for white while the
-     glow is parked off-screen (the noon rule does not transition it), so
-     it never shows. */
-  --night-glow-c: rgba(109,151,255,.123);
+  /* The exit to morning keeps nightfall's white (35%), the same white it
+     arrived in: the glow slides out and shrinks, but its colour does not
+     change. */
+  --night-glow-c: rgba(255,255,255,.35);
 }
 /* Noon — neutral near-white, terracotta, the highest contrast of any palette.
    The cool daylight palette; cream here and it reads as morning. */
@@ -415,7 +412,7 @@
   --page-glow-strength: 0%;
   --page-glow-y: -50%;
   --night-glow-x: 50%;
-  --night-glow-c: rgba(109,151,255,.123);
+  --night-glow-c: rgba(255,255,255,.35);
   --night-glow-w: 180%;
   --night-glow-h: 66%;
 }
@@ -470,7 +467,7 @@
   --page-glow-strength: 0%;
   --page-glow-y: -50%;
   --night-glow-x: 50%;
-  --night-glow-c: rgba(109,151,255,.123);
+  --night-glow-c: rgba(255,255,255,.35);
   --night-glow-w: 180%;
   --night-glow-h: 66%;
 }
@@ -2222,9 +2219,9 @@ html[data-glow-turn] {
   transition-duration: 2000ms;
   /* One curve per property, in transition-property's order. Position and
      the main glow ease in and out; the night glow's size and colour (the
-     last three) take a gentle sine curve, so the white light grows and
-     cools to blue evenly across the whole 2 s rather than mostly at one
-     end. Rules with shorter property lists (noon's) cut this list to fit,
+     last three) take a gentle sine curve, so the white light grows evenly
+     across the whole turn rather than mostly at one end (the colour is the
+     same white at both ends today, so its curve is inert). Rules with shorter property lists (noon's) cut this list to fit,
      which is why the night glow's parts must stay LAST. */
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
     cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
@@ -2288,7 +2285,7 @@ html[data-theme="morning"] {
      it was gone in 1.05 s against the entrance's 1.46 s on screen. Mirrored,
      both are on screen 1.46 s at the same speeds. Size and colour keep the
      gentle sine, which is symmetric already: it shrinks to half size
-     evenly, and stays the moonlight blue (morning parks it in that colour). */
+     evenly, and stays white (morning parks it in that colour). */
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
     cubic-bezier(0.8, 0, 0.6, 1),
     cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);

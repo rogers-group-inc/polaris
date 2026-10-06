@@ -158,7 +158,7 @@
   --page-glow-p2: 26%;
   --page-glow-p3: 50%;
   --page-glow-end: 70%;
-  /* Nightfall's moonlight-blue wash, its own layer so it can slide while the
+  /* Nightfall's white wash, its own layer so it can slide while the
      main glow fades. Parked off-screen in every other theme: -100% (left of
      the viewport, waiting to slide in) on noon, 50% on nightfall AND on the
      afternoon waypoint (so the one 2 s slide spans both legs of
@@ -166,22 +166,20 @@
      radius is 70% of a 140% radius, ~98% of the width, so -100% / 200% are
      JUST clear of the screen. Further out and the slide spends its fast
      first half off-screen: at ±200% the exit was over in a quarter of the
-     fade. Saturated blue rather than nightfall's pastel accent, which went
-     grey slate at this faintness. */
+     fade. */
   --night-glow-x: -100%;
-  /* WHITE at 35% parked here on noon, the entry, and a MOONLIGHT blue,
-     #6d97ff at 12.3% — the electric #2f6bff with 30% white mixed in,
-     duller and softer — at rest on nightfall and parked on morning. The
-     glow's 2 s transition carries the one colour with the slide: it comes
-     in as a white light and cools to the blue as it lands, and leaves for
-     morning still blue (the exit changes position and size only). A stronger blue was tried first and still read as nothing over
-     the grounds it crosses mid-turn (the afternoon tan into indigo); white
-     is what shows against both. One registered <color>, not a hue plus a
-     strength, so hue and alpha move together. */
+  /* WHITE at 35% everywhere — parked on noon, at rest on nightfall (and its
+     afternoon waypoint), parked on morning — so the glow never changes
+     colour: the slide-in and the slide-out move only its position and size.
+     By the user's call (2026-10-06) it replaced a moonlight blue at rest
+     (#6d97ff at 12.3%) that the slide-in cooled into; before that, a blue
+     too faint to see over the grounds crossed mid-turn (the afternoon tan
+     into indigo). Still one registered <color> and still in the transition
+     lists, so a future theme that wants a colour turn only has to set it. */
   --night-glow-c: rgba(255,255,255,.35);
   /* HALF size wherever it is parked (70% x 30% against nightfall's 140% x 60%):
-     the white light comes in small and grows to the full wash as it cools
-     to blue, and shrinks back as it leaves. */
+     the white light comes in small and grows to the full wash, and shrinks
+     back as it leaves. */
   --night-glow-w: 70%;
   --night-glow-h: 30%;
   --night-glow: radial-gradient(ellipse var(--night-glow-w) var(--night-glow-h) at var(--night-glow-x) 0%,
@@ -536,9 +534,9 @@ html[data-glow-turn] {
   transition-duration: 2000ms;
   /* One curve per property, in transition-property's order. Position and
      the main glow ease in and out; the night glow's size and colour (the
-     last three) take a gentle sine curve, so the white light grows and
-     cools to blue evenly across the whole 2 s rather than mostly at one
-     end. Rules with shorter property lists (noon's) cut this list to fit,
+     last three) take a gentle sine curve, so the white light grows evenly
+     across the whole turn rather than mostly at one end (the colour is the
+     same white at both ends today, so its curve is inert). Rules with shorter property lists (noon's) cut this list to fit,
      which is why the night glow's parts must stay LAST. */
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
     cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
@@ -551,8 +549,8 @@ html[data-glow-turn] {
      across the page right to left.
    - into morning (from nightfall): the main glow is transparent on
      nightfall, so its geometry jumps to the sunrise's and only the colours
-     fade, bringing the sun up in place at the bottom while the blue slides
-     out to the right. */
+     fade, bringing the sun up in place at the bottom while the white glow
+     slides out to the right. */
 /* Noon → nightfall's glow move takes 2.5 s, half a second longer than the
    other turns' 2 s; the palette keeps its 1.6 s. Keyed on the AFTERNOON
    waypoint because that is where the turn's one glow transition starts —
@@ -608,7 +606,7 @@ html[data-theme="morning"] {
      it was gone in 1.05 s against the entrance's 1.46 s on screen. Mirrored,
      both are on screen 1.46 s at the same speeds. Size and colour keep the
      gentle sine, which is symmetric already: it shrinks to half size
-     evenly, and stays the moonlight blue (morning parks it in that colour). */
+     evenly, and stays white (morning parks it in that colour). */
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
     cubic-bezier(0.8, 0, 0.6, 1),
     cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
@@ -763,12 +761,10 @@ code {
   /* Night glow gone past the right edge: the turn from nightfall slides it
      out that way. */
   --night-glow-x: 200%;
-  /* The exit to morning keeps nightfall's moonlight blue: the glow slides
-     out and shrinks, but its colour does not change. Only the entry from
-     noon is white (35%). Morning -> noon swaps blue for white while the
-     glow is parked off-screen (the noon rule does not transition it), so
-     it never shows. */
-  --night-glow-c: rgba(109,151,255,.123);
+  /* The exit to morning keeps nightfall's white (35%), the same white it
+     arrived in: the glow slides out and shrinks, but its colour does not
+     change. */
+  --night-glow-c: rgba(255,255,255,.35);
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────
@@ -848,15 +844,15 @@ code {
      2 s clock (see the html rule in the crossfade block), so the turn from
      noon starts a single glow transition here, and the second leg into
      nightfall changes none of these values and lets it run on unbroken —
-     noon's sunlight rising up and away as it fades, the blue sliding in
-     bright and settling. A half-way value here would restart the glow mid-
+     noon's sunlight rising up and away as it fades, the white glow sliding in
+     and growing. A half-way value here would restart the glow mid-
      flight at 800 ms and lurch. The colour stays noon's sunlight (not this
      palette's clay accent) so the fade never turns into a colour change. */
   --page-glow-color: #ffc928;
   --page-glow-strength: 0%;
   --page-glow-y: -45%;
   --night-glow-x: 50%;
-  --night-glow-c: rgba(109,151,255,.123);
+  --night-glow-c: rgba(255,255,255,.35);
   --night-glow-w: 140%;
   --night-glow-h: 60%;
 }
@@ -895,16 +891,16 @@ code {
      pushed hardest and still does almost nothing — the inset rim is carrying
      this one, and it is a hair brighter here than in the :root dark base. */
   --shadow-card: 0 8px 32px rgba(0,0,0,.65), 0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
-  /* Nightfall's glow is the sliding --night-glow layer (moonlight blue at
-     12.3%, see :root), centred here. The main glow is off and parked above
+  /* Nightfall's glow is the sliding --night-glow layer (white at 35%, see
+     :root), centred here. The main glow is off and parked above
      the top edge: on the turn from noon its sunlight rises up and away as it
-     fades (afternoon carries the same values), while the blue slides in from
+     fades (afternoon carries the same values), while the white glow slides in from
      the left. Its visible half-height is 70% of a 60% radius, 42% of the
      viewport, so -45% is just clear. */
   --page-glow-strength: 0%;
   --page-glow-y: -45%;
   --night-glow-x: 50%;
-  --night-glow-c: rgba(109,151,255,.123);
+  --night-glow-c: rgba(255,255,255,.35);
   --night-glow-w: 140%;
   --night-glow-h: 60%;
 }
