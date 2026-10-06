@@ -2408,7 +2408,7 @@ html[data-theme-fading][data-theme="morning"] .theme-strip-track { transition-du
 
 /* ─── Theme changes as one crossfade ──────────────────────────────────────
    Where the browser has same-document view transitions with types
-   (Chromium 125+, Safari 18.2+), _setTheme runs the change inside
+   (Chromium 125+, Safari 18.2+, Firefox 147+), _setTheme runs the change inside
    document.startViewTransition: the page is captured once before and
    crossfaded to the live page after, as ONE picture. The per-element
    crossfade above then stays off — it keys on data-theme-xfade, which is

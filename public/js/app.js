@@ -318,7 +318,7 @@ function _prefersReducedMotion() {
 
 // Can this browser crossfade the theme change as ONE picture — a same-document
 // view transition WITH types (the types carry the step's easing and length to
-// the CSS)? Chromium 125+, Safari 18.2+. Anything else takes the per-element
+// the CSS)? Chromium 125+, Safari 18.2+, Firefox 147+. Anything else takes the per-element
 // crossfade (data-theme-xfade). See the "Theme changes as one crossfade" block
 // in styles.css for why: per-element transitions on a busy page were the
 // 100-150 ms frames.
