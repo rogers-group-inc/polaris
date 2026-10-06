@@ -16,13 +16,16 @@
 //
 // Region scope: a viewer who carries region tags (`user.regions`, the
 // effective set /auth/me reports) picks "My regions" or "All regions" in the
-// sheet, defaulting to mine like the desktop widgets' regionScope. "Mine" is
-// the server's own viewer scope (regionScopeWhere in notificationService):
-// an alert in one of those regions OR in none — an untagged alert belongs to
-// everybody. It narrows on the phone rather than through the route's
-// `region` param, because that param is hasSome only and would drop the
-// untagged ones. A non-admin is already held to their regions by the server,
-// so for them "All" adds nothing; for an admin it is the whole fleet.
+// sheet, defaulting to mine like the desktop widgets' regionScope. "Mine"
+// matches the desktop Active Alerts widget (getRecentAlerts in
+// nocDashboardService): an alert on a device in one of those regions, or a
+// system alert tied to no device. An alert on a device that carries NO region
+// tag is someone else's — keeping it (as the first cut did, copying the
+// server's permissive viewer scope) filled "My regions" with every untagged
+// device in the fleet. It narrows on the phone rather than through the
+// route's `region` param, because that param is hasSome only and would drop
+// the device-less ones. The server's viewer scope (regionScopeWhere) still
+// lets a non-admin see untagged alerts under "All".
 //
 // Acknowledging happens here (alerts:write): the phone is where an alert is
 // usually READ, so making it desktop-only meant the person holding the pager
@@ -263,10 +266,10 @@
   }
 
   // ─── Filter + sort (pure; exposed for tests) ───────────────────────────
-  /** "Mine" is the server's viewer scope: untagged, or sharing a region. */
+  /** "Mine": sharing a region, or a system alert with no device. */
   function inRegions(n, regions) {
+    if (!n.assetId) return true;
     var tags = Array.isArray(n.regionTags) ? n.regionTags : [];
-    if (!tags.length) return true;
     var want = {};
     regions.forEach(function (r) { want[String(r).toLowerCase()] = true; });
     return tags.some(function (t) { return want[String(t).toLowerCase()]; });
