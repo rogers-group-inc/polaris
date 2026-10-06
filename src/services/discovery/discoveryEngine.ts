@@ -38,6 +38,7 @@ import { classifyDirectoryRows, absenceExceedsGuard } from "../../utils/director
 import { scoreDhcpClaim, claimBeats, createDhcpClaimState, type DhcpClaimState } from "../../utils/dhcpClaimFreshness.js";
 import { bareFortinetDeviceName } from "../../utils/assetSourceLocation.js";
 import { readFirewallDeviceName, normalizeNameKey, normalizeSerialKey } from "../../utils/fortinetParentKey.js";
+import { isUsableSerial } from "../../utils/serialNumber.js";
 import { refreshProjectionPriority } from "../assetSourcePriorityService.js";
 import { refreshCache as refreshAssetTypeCache } from "../assetTypeService.js";
 import { normalizeManufacturer } from "../../utils/manufacturerNormalize.js";
@@ -1987,6 +1988,84 @@ export function haStandbyOfUnreadCluster(
   return !haRosterPublishedUc.has(peer);
 }
 
+/** What the Phase 2a roster says about one previously-discovered firewall asset. */
+export type RosterFirewallVerdict =
+  /** Still configured upstream (by chassis, by name, or unknowable) — leave it. */
+  | { kind: "keep" }
+  /** Gone from the roster entirely — decommission, and cascade to its children. */
+  | { kind: "stale" }
+  /**
+   * Its NAME is still on the roster, but this run read that gate and got a
+   * different chassis (business rule 41(a)): the box was swapped under the
+   * same name. Decommission the old chassis's asset — but never cascade, since
+   * the name the cascade keys on now belongs to the new chassis's children.
+   */
+  | { kind: "replaced"; oldSerial: string; newSerials: string[] };
+
+export interface RosterFirewallContext {
+  /** Every chassis serial on the roster, HA members included — UPPER-CASE. */
+  knownFirewallSerialsUc: Set<string>;
+  /** Every roster device name, lower-case. */
+  knownDeviceNamesLc: Set<string>;
+  /** HA member serials whose cluster roster was published this run — UPPER-CASE. */
+  haRosterPublishedUc: Set<string>;
+  /** Per processed device (FMG name AND FortiOS hostname, lower-case): its chassis set. */
+  clusterSerialsByDevice: Map<string, Set<string>>;
+}
+
+/**
+ * Pure verdict for the Phase 2a stale-firewall sweep.
+ *
+ * Serial first, then the HA-standby protection, then the name. The name match
+ * used to be an unconditional KEEP, which is exactly wrong for an RMA: FMG's
+ * serial-swap keeps the device name, so the old chassis's asset kept matching
+ * the roster by name and was never retired (prod 2026-10-05 — an operator
+ * decommissioned it by hand). A name match is now a keep only when it cannot
+ * be told apart from the same chassis:
+ *
+ *   - the asset has no usable serial            → keep (legacy / placeholder row)
+ *   - nobody READ that gate's chassis this run  → keep (absence of evidence —
+ *     an offline gate, a failed direct read; same tri-state as classifyChassis)
+ *   - the gate was read, and its chassis set does not hold this serial
+ *                                               → replaced
+ *
+ * The asset serial is already known NOT to be anywhere on the fleet roster by
+ * the time the name is consulted, so an HA failover (the old serial still a
+ * cluster member) never reaches the replaced branch.
+ */
+export function judgeRosterFirewall(
+  asset: { hostname: string | null; serialNumber: string | null; fortinetTopology: unknown },
+  ctx: RosterFirewallContext,
+): RosterFirewallVerdict {
+  const serial = asset.serialNumber && isUsableSerial(asset.serialNumber)
+    ? asset.serialNumber.trim().toUpperCase()
+    : null;
+  if (serial && ctx.knownFirewallSerialsUc.has(serial)) return { kind: "keep" };
+  if (haStandbyOfUnreadCluster(asset.fortinetTopology, ctx.knownFirewallSerialsUc, ctx.haRosterPublishedUc)) {
+    return { kind: "keep" };
+  }
+
+  // Every name this gate might be listed under: FMG's device name (stamped on
+  // the topology blob) and the FortiOS hostname, which can differ.
+  const names = [readFirewallDeviceName(asset.fortinetTopology), asset.hostname]
+    .map((n) => (typeof n === "string" ? n.trim().toLowerCase() : ""))
+    .filter((n) => n.length > 0);
+  const onRoster = names.filter((n) => ctx.knownDeviceNamesLc.has(n));
+  if (onRoster.length === 0) {
+    // Nothing to identify it by: never judged (matches the old `!hostname` skip).
+    return asset.hostname ? { kind: "stale" } : { kind: "keep" };
+  }
+  if (!serial) return { kind: "keep" };
+
+  for (const name of onRoster) {
+    const cluster = ctx.clusterSerialsByDevice.get(name);
+    if (!cluster || cluster.size === 0) continue;
+    if (cluster.has(serial)) return { kind: "keep" };
+    return { kind: "replaced", oldSerial: serial, newSerials: [...cluster].sort() };
+  }
+  return { kind: "keep" };
+}
+
 /**
  * Pure matcher for the Phase 2a controller cascade: given a FortiSwitch/FortiAP
  * asset's `fortinetTopology` blob and the set of just-decommissioned FortiGate
@@ -2997,13 +3076,14 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   //      covers HA: every cluster member's serial is in `knownFirewallSerials`
   //      (roster ha_slave[] entries included), so a standby whose hostname
   //      never appears at top-level still matches by serial.
-  //   2. Hostname (case-insensitive) — fallback for legacy/partial rows
-  //      where Asset.serialNumber wasn't populated. FMG-stored names and
-  //      FortiOS system-status hostnames can disagree in case for the same
-  //      device, so the comparison is lowercase-on-both-sides.
-  //   3. HA standby whose cluster never published its membership this run —
+  //   2. HA standby whose cluster never published its membership this run —
   //      see haStandbyOfUnreadCluster. Absence from a roster nobody read is
   //      not evidence the box left the cluster.
+  //   3. Name (FMG device name or hostname, case-insensitive) — keeps a
+  //      legacy/partial row with no serial, and a gate nobody read this run.
+  //      A name whose gate WAS read and answered with a different chassis is
+  //      a replacement (rule 41(a)): the old chassis's asset is retired, with
+  //      no cascade. All three live in judgeRosterFirewall.
   //
   // A decommissioned firewall is reactivated by the Phase-3b firewall update
   // path above on a future discovery cycle when the device returns to FMG.
@@ -3027,17 +3107,42 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       select: { id: true, hostname: true, serialNumber: true, fortinetTopology: true },
     });
     const staleFwIds: string[] = [];
+    // Only the gates that LEFT the roster cascade to their children. A
+    // replaced chassis (rule 41(a)) is retired too, but its name now belongs to
+    // the new chassis — cascading on it would decommission every switch and AP
+    // the new gate manages.
     const staleFwHostnames: string[] = [];
+    const rosterCtx: RosterFirewallContext = {
+      knownFirewallSerialsUc: knownFirewallSerials,
+      knownDeviceNamesLc,
+      haRosterPublishedUc: haRosterPublished,
+      clusterSerialsByDevice,
+    };
     for (const a of candidateFws) {
-      // 1) Serial-first — canonical chassis identity.
-      if (a.serialNumber && knownFirewallSerials.has(a.serialNumber.toUpperCase())) continue;
-      // 2) Hostname fallback (case-insensitive).
-      if (a.hostname && knownDeviceNamesLc.has(a.hostname.toLowerCase())) continue;
-      // 3) Standby of a cluster whose membership went unread this run.
-      if (haStandbyOfUnreadCluster(a.fortinetTopology, knownFirewallSerials, haRosterPublished)) continue;
-      if (!a.hostname) continue;
+      const verdict = judgeRosterFirewall(a, rosterCtx);
+      if (verdict.kind === "keep") continue;
       staleFwIds.push(a.id);
-      staleFwHostnames.push(a.hostname);
+      if (verdict.kind === "replaced") {
+        logEvent({
+          action: "asset.fortigate.decommissioned",
+          resourceType: "asset",
+          resourceId: a.id,
+          resourceName: a.hostname || a.serialNumber || a.id,
+          actor,
+          message:
+            `FortiGate "${a.hostname || verdict.oldSerial}" (serial ${verdict.oldSerial}) decommissioned — ` +
+            `"${integrationName}" now reports chassis ${verdict.newSerials.join(", ")} under that name`,
+          details: {
+            reason: "chassis-replaced",
+            oldSerial: verdict.oldSerial,
+            newSerials: verdict.newSerials,
+            integrationId,
+            integrationName,
+          },
+        });
+        continue;
+      }
+      staleFwHostnames.push(a.hostname!);
       logEvent({
         action: "asset.fortigate.decommissioned",
         resourceType: "asset",
