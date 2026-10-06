@@ -22,7 +22,7 @@ describe("normalizePushSurface", () => {
 describe("pushDeepLinkUrl", () => {
   it("sends a mobile subscription to the mobile alerts screen", () => {
     process.env.POLARIS_PUBLIC_URL = "https://polaris.example.com";
-    expect(pushDeepLinkUrl("mobile")).toBe("https://polaris.example.com/mobile.html#more/alerts");
+    expect(pushDeepLinkUrl("mobile")).toBe("https://polaris.example.com/mobile.html#alerts");
   });
 
   it("sends a desktop subscription to the Automations page", () => {
@@ -32,7 +32,7 @@ describe("pushDeepLinkUrl", () => {
 
   it("strips a trailing slash on the public URL", () => {
     process.env.POLARIS_PUBLIC_URL = "https://polaris.example.com/";
-    expect(pushDeepLinkUrl("mobile")).toBe("https://polaris.example.com/mobile.html#more/alerts");
+    expect(pushDeepLinkUrl("mobile")).toBe("https://polaris.example.com/mobile.html#alerts");
   });
 
   it("falls back to a RELATIVE path when POLARIS_PUBLIC_URL is unset", () => {
@@ -40,7 +40,7 @@ describe("pushDeepLinkUrl", () => {
     // public URL from routing every push to the service worker's hardcoded
     // desktop fallback regardless of surface.
     delete process.env.POLARIS_PUBLIC_URL;
-    expect(pushDeepLinkUrl("mobile")).toBe("/mobile.html#more/alerts");
+    expect(pushDeepLinkUrl("mobile")).toBe("/mobile.html#alerts");
     expect(pushDeepLinkUrl("desktop")).toBe("/automations.html");
   });
 

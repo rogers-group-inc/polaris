@@ -380,6 +380,16 @@
     render: function (body) { body.innerHTML = placeholder("Map module not loaded", "PolarisMapTab is missing — check script load order."); },
   };
 
+  // ─── Alerts ────────────────────────────────────────────────────────────
+  // Real spec lives in /js/mobile/alerts-tab.js. It took the navbar slot the
+  // Device Map held; the map moved under More (see ROUTE_TABS below).
+  var Alerts = (window.PolarisAlertsTab && window.PolarisAlertsTab.spec) || {
+    title: "Alerts",
+    icon: "#i-bell",
+    renderTopbar: function () { return ''; },
+    render: function (body) { body.innerHTML = placeholder("Alerts module not loaded", "PolarisAlertsTab is missing — check script load order."); },
+  };
+
   // ─── Assets ────────────────────────────────────────────────────────────
   // Real spec lives in /js/mobile/assets-tab.js. Loaded before tabs.js so the
   // window.PolarisAssetsTab namespace is available here.
@@ -414,12 +424,28 @@
   // Order here drives the navbar layout. Keep at five — that's the MD3 spec
   // limit and what fits comfortably on a phone width.
   var TABS = [
-    { id: "search",  spec: Search },
-    { id: "map",     spec: Map },
-    { id: "assets",  spec: Assets },
+    { id: "search",   spec: Search },
+    { id: "alerts",   spec: Alerts },
+    { id: "assets",   spec: Assets },
     { id: "networks", spec: Networks },
-    { id: "more",    spec: More },
+    { id: "more",     spec: More },
   ];
+
+  // Top-level routes with no navbar slot of their own. They render exactly
+  // like a tab (their own topbar, no back chevron), but the navbar lights
+  // `navTab` — the slot the operator reached them from. The Device Map left
+  // the navbar for Alerts and opens from More; #map, #site/<id> and
+  // #topology/<id> links all still resolve.
+  var ROUTE_TABS = [
+    { id: "map", spec: Map, navTab: "more" },
+  ];
+
+  /** The navbar slot a route — a tab, a route tab, or a detail's parentTab — lights. */
+  function navTabFor(id) {
+    if (!id) return "";
+    for (var i = 0; i < ROUTE_TABS.length; i++) if (ROUTE_TABS[i].id === id) return ROUTE_TABS[i].navTab;
+    return id;
+  }
 
   // ─── helpers ───────────────────────────────────────────────────────────
   // escapeHtml is the canonical global from api.js (loaded first on every page).
@@ -744,8 +770,10 @@
     list: TABS,
     byId: function (id) {
       for (var i = 0; i < TABS.length; i++) if (TABS[i].id === id) return TABS[i].spec;
+      for (var j = 0; j < ROUTE_TABS.length; j++) if (ROUTE_TABS[j].id === id) return ROUTE_TABS[j].spec;
       return null;
     },
+    navTabFor: navTabFor,
     escapeHtml: escapeHtml,
     placeholder: placeholder,
     showSnackbar: showSnackbar,

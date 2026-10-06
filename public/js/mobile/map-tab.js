@@ -529,8 +529,10 @@
       var appEl = document.getElementById("app");
       if (appEl) appEl.dataset.tab = "map";
       var nav = document.getElementById("navbar");
+      // The map has no navbar slot of its own (it lives under More).
+      var lit = (window.PolarisTabs && PolarisTabs.navTabFor) ? PolarisTabs.navTabFor("map") : "map";
       if (nav) nav.querySelectorAll(".nav-item").forEach(function (b) {
-        b.classList.toggle("active", b.dataset.tab === "map");
+        b.classList.toggle("active", b.dataset.tab === lit);
       });
     }
   }

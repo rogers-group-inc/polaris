@@ -1,8 +1,9 @@
 // public/js/mobile/more-tab.js — More tab + its sub-pages.
 //
-// The More tab is two things: a menu of the rest of the app (Blocks /
-// Alerts / Events / Profile), and a host for those
-// sub-pages. The router emits `#more/<sub>` and we dispatch on
+// The More tab is two things: a menu of the rest of the app (Device Map /
+// Blocks / Events / Profile), and a host for those
+// sub-pages (the Device Map is a top-level route, not a sub-page; Alerts
+// left for its own tab — alerts-tab.js). The router emits `#more/<sub>` and we dispatch on
 // route.parts[0] inside this module so the rest of app.js doesn't have
 // to know about More's sub-routes.
 //
@@ -142,123 +143,6 @@
     return s.charAt(0).toUpperCase() + s.slice(1);
   }
 
-  // ─── Alerts sub-page ───────────────────────────────────────────────────
-  // The destination for every push notification enrolled from mobile
-  // (PushSubscription.surface = "mobile" → /mobile.html#more/alerts). Without
-  // this route the hash resolves to nothing and app.js's routeChanged bounces
-  // unknown routes to #search — i.e. a push tap would land on an empty search
-  // box. Acknowledging happens here too (alerts:write): the phone is where an
-  // alert is usually READ, so making it desktop-only meant the person holding
-  // the pager couldn't stop an escalation chain. Clearing stays on desktop —
-  // it's the destructive half and needs fullwrite.
-  var _PERM_RANK = { none: 0, read: 1, write: 2, fullwrite: 3 };
-  function permAtLeast(user, key, level) {
-    var have = (user && user.permissions && user.permissions[key]) || "none";
-    return (_PERM_RANK[have] || 0) >= (_PERM_RANK[level] || 0);
-  }
-
-  registerSub("alerts", {
-    renderTopbar: function () { return backTopbar("Alerts"); },
-    render: function (body, ctx) {
-      // wireBack() must run BEFORE the `return api…` below — a call after it is
-      // unreachable, which is how every sub-page's back chevron came to be inert.
-      wireBack();
-      var canAck = permAtLeast(ctx && ctx.user, "alerts", "write");
-      body.innerHTML = loadingHtml();
-      return api.alerts.list({ limit: 100 }).then(function (resp) {
-        var alerts = (resp && resp.notifications) || [];
-        if (alerts.length === 0) {
-          body.innerHTML = '<div class="empty-state" style="padding-top:48px;"><div class="icon"><svg viewBox="0 0 24 24"><use href="#i-bell"/></svg></div><div class="ttl">No active alerts</div><div class="desc">Nothing is firing right now.</div></div>';
-          return;
-        }
-        var html = "";
-        alerts.forEach(function (n, i) {
-          var sev = n.severity || "info";
-          var leadCls = sev === "critical" || sev === "error" ? "error" : (sev === "warning" ? "warning" : "");
-          var iconHref = sev === "critical" || sev === "error" ? "#i-down-arrow" : (sev === "warning" ? "#i-warn" : "#i-info");
-          var meta = formatTimeAgo(n.triggeredAt);
-          if (n.acknowledged) meta += " · acknowledged" + (n.acknowledgedBy ? " by " + n.acknowledgedBy : "");
-          // The Ack control is a sibling of the row button, not inside it —
-          // nesting a <button> inside a <button> is invalid and swallows the
-          // tap that opens the device.
-          var showAck = canAck && !n.acknowledged;
-          html += ''
-            + '<div class="alert-row" style="display:flex;align-items:stretch;">'
-            + '<button class="list-item three-line" style="flex:1;min-width:0;" data-aid="' + escapeHtml(n.assetId || "") + '">'
-            + '  <span class="leading ' + leadCls + '"><svg viewBox="0 0 24 24"><use href="' + iconHref + '"/></svg></span>'
-            + '  <div class="content">'
-            + '    <div class="headline">' + escapeHtml(sev.toUpperCase()) + (n.assetHostname ? " · " + escapeHtml(n.assetHostname) : "") + '</div>'
-            + '    <div class="supporting" style="white-space:normal;">' + escapeHtml(n.message || "") + '</div>'
-            + '    <div class="supporting mono" style="font-size:12px;color:var(--md-on-surface-variant);margin-top:4px;">' + escapeHtml(meta) + '</div>'
-            + '  </div>'
-            + '</button>'
-            + (showAck
-              ? '<button class="ack-btn" data-ack="' + escapeHtml(n.id) + '" aria-label="Acknowledge alert"'
-                + (n.requireAckNote ? ' data-note-required="1"' : "")
-                + ' style="flex:0 0 auto;align-self:center;margin-right:12px;padding:8px 12px;border-radius:20px;'
-                + 'border:1px solid var(--md-outline);background:transparent;color:var(--md-primary);font:inherit;font-size:13px;">Ack</button>'
-              : '')
-            + '</div>'
-            + (i < alerts.length - 1 ? '<div class="list-divider"></div>' : '');
-        });
-        body.innerHTML = html;
-        body.querySelectorAll(".list-item").forEach(function (row) {
-          row.addEventListener("click", function () {
-            var aid = row.dataset.aid;
-            // The alert may outlive its asset (assetId is nullable and the
-            // hostname is snapshotted), so only navigate when there's one.
-            if (!aid) return;
-            if (window.PolarisAssetDetail && PolarisAssetDetail.open) PolarisAssetDetail.open(aid);
-            else PolarisRouter.go("asset/" + aid);
-          });
-        });
-        body.querySelectorAll("[data-ack]").forEach(function (btn) {
-          btn.addEventListener("click", function (e) {
-            e.stopPropagation();
-            acknowledgeMobileAlert(btn, body, ctx);
-          });
-        });
-      }).catch(function (err) { body.innerHTML = errorState(err && err.message ? err.message : "error"); });
-    },
-  });
-
-  /* The acknowledge-note prompt lives in mobile/alerts.js, which the per-asset
-   * alerts sheet needs too: an automation with `requireAckNote` is refused
-   * server-side without one, and two copies of that sheet is two places for
-   * the required-field rule to drift. Delegated rather than guarded — there is
-   * deliberately no window.prompt fallback, since that is the exact dialog
-   * some installed PWAs suppress (which is why this was a sheet to begin
-   * with), and a silent no-op would read as a dead button.
-   */
-  function promptAckNoteSheet() {
-    return PolarisMobileAlerts.promptAckNote(1);
-  }
-
-  // Acknowledge from the phone — one tap, unless the alert's automation
-  // requires a note (see promptAckNoteSheet above).
-  async function acknowledgeMobileAlert(btn, body, ctx) {
-    var note;
-    if (btn.dataset.noteRequired === "1") {
-      note = await promptAckNoteSheet();
-      if (note === null) return; // dismissed
-    }
-    btn.disabled = true;
-    var old = btn.textContent;
-    btn.textContent = "…";
-    api.alerts.acknowledge([btn.dataset.ack], note || undefined)
-      .then(function () {
-        if (window.PolarisTabs && PolarisTabs.showSnackbar) PolarisTabs.showSnackbar("Alert acknowledged");
-        return SUB_PAGES.alerts.render(body, ctx);
-      })
-      .catch(function (err) {
-        if (window.PolarisTabs && PolarisTabs.showSnackbar) {
-          PolarisTabs.showSnackbar((err && err.message) || "Couldn't acknowledge", { error: true });
-        }
-        btn.disabled = false;
-        btn.textContent = old;
-      });
-  }
-
   // ─── Add to Home Screen sub-page ───────────────────────────────────────
   registerSub("install", {
     renderTopbar: function () { return backTopbar("Add to Home Screen"); },
@@ -322,11 +206,11 @@
 
     body.innerHTML = ''
       + '<div class="section-head">Network</div>'
+      + menuRow({ route: "map" }, "i-map", "Device Map", "Sites and topology")
+      + '<div class="list-divider"></div>'
       + menuRow("blocks", "i-block",   "Blocks",       "")
 
       + '<div class="section-head">Operations</div>'
-      + menuRow("alerts", "i-bell", "Alerts", "Active alerts")
-      + '<div class="list-divider"></div>'
       + menuRow("events", "i-event", "Events", "Audit log · last 7 days")
 
       // Hidden until wireNotifPrefRow() resolves the account's preference: the
@@ -404,6 +288,12 @@
     body.querySelectorAll("[data-sub]").forEach(function (row) {
       row.addEventListener("click", function () {
         PolarisRouter.go("more/" + row.dataset.sub);
+      });
+    });
+    // A row that opens a top-level route rather than a More sub-page.
+    body.querySelectorAll("[data-route]").forEach(function (row) {
+      row.addEventListener("click", function () {
+        PolarisRouter.go(row.dataset.route);
       });
     });
 
@@ -639,10 +529,15 @@
     paint();
   }
 
+  // `sub` is a More sub-page key (#more/<sub>), or `{ route: "<name>" }` for a
+  // row that opens a top-level route that has no navbar slot (the Device Map).
   function menuRow(sub, iconId, title, supporting) {
     var supLine = supporting ? '<div class="supporting">' + escapeHtml(supporting) + '</div>' : '';
+    var target = (sub && typeof sub === "object")
+      ? 'data-route="' + escapeHtml(sub.route) + '"'
+      : 'data-sub="' + sub + '"';
     return ''
-      + '<button class="list-item ' + (supporting ? "two-line" : "") + '" data-sub="' + sub + '">'
+      + '<button class="list-item ' + (supporting ? "two-line" : "") + '" ' + target + '>'
       + '  <span class="leading"><svg viewBox="0 0 24 24"><use href="#' + iconId + '"/></svg></span>'
       + '  <div class="content"><div class="headline">' + escapeHtml(title) + '</div>' + supLine + '</div>'
       + '  <div class="trailing"><svg viewBox="0 0 24 24"><use href="#i-chev-right"/></svg></div>'

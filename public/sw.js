@@ -8,7 +8,7 @@
  * renders the sidebar and on the mobile SPA.
  *
  * DEEP LINKS ARE THE SERVER'S JOB. The payload's `url` already points at the
- * right surface — /mobile.html#more/alerts for a subscription enrolled from
+ * right surface — /mobile.html#alerts for a subscription enrolled from
  * the mobile SPA, /automations.html for a desktop one (PushSubscription
  * .surface → pushDeepLinkUrl). This worker deliberately contains no
  * rewriting logic; it just navigates where it's told. The url may be absolute
