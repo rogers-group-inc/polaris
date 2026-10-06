@@ -20,10 +20,11 @@
   // The theme strip's <img>, three times over: the art URL carries the running
   // version (?v=, from the cached branding payload) so the server can answer it
   // immutable and a reopened app paints it from cache, and the intrinsic size
-  // (3456 x 132) lets the strip be measured and seated before it has decoded.
+  // (3456 x 132 — the phone's full-size WebP, 88 KB; the strip is drawn 72 px
+  // tall here) lets the strip be measured and seated before it has decoded.
   // MIRRORS _brandArtUrl / THEME_BAND_ART_W/H in public/js/app.js.
   function stripImg() {
-    var src = "/img/brand/time-strip.png";
+    var src = "/img/brand/time-strip.webp";
     try {
       var b = JSON.parse(localStorage.getItem("polaris-branding") || "null");
       if (b && b.version) src += "?v=" + encodeURIComponent(String(b.version));

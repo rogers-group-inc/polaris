@@ -28,7 +28,7 @@ var TRANSIT_THEMES = [
   { id: "afternoon", label: "Afternoon", family: "light", icon: _sunIcon, transit: true },
 ];
 
-// Where each palette sits along /img/brand/time-strip.png, as a fraction of
+// Where each palette sits along the strip art (/img/brand/time-strip-desktop.webp), as a fraction of
 // the strip's width. The engraving is a 24-hour clock unrolled, so six hours
 // is a quarter of it and the two faces land half a strip apart the way noon
 // and midnight should:
@@ -53,13 +53,18 @@ var TRANSIT_THEMES = [
 // why there are two tables and not one; changing one means changing both,
 // keeping the quarter spacing and moving the anchor.
 var THEME_BAND_POS = { noon: 0.056, afternoon: 0.306, nightfall: 0.556, morning: 0.806 };
-var THEME_BAND_ART = "/img/brand/time-strip.png";
+// The desktop's own copy of the engraving: 1676 x 64, twice the band's 32 px
+// height for high-density screens, WebP at quality 90 — 31 KB, where the
+// shared 3456 x 132 PNG it replaced was 757 KB. The phone keeps a full-size
+// one (/img/brand/time-strip.webp), since it draws the strip 72 px tall. Positions are
+// fractions of the strip's width, so the resolution changes nothing else.
+var THEME_BAND_ART = "/img/brand/time-strip-desktop.webp";
 // The art's intrinsic size, written onto each <img> so the band can be
 // MEASURED (and seated) in the first paint, before the image has decoded —
 // with width/height the browser knows the aspect ratio up front. Without
 // them the width read 0 until load, and the band painted unseated and jumped
 // into place on every page change.
-var THEME_BAND_ART_W = 3456, THEME_BAND_ART_H = 132;
+var THEME_BAND_ART_W = 1676, THEME_BAND_ART_H = 64;
 
 // A shipped /img/brand/ file's URL with the running version as ?v=, from the
 // cached branding payload. The server answers that immutable (src/app.ts), so

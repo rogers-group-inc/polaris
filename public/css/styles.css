@@ -297,7 +297,7 @@
 /* Noon's primary buttons are GOLDEN rather than the terracotta accent — the
    sun at its height. Only the button: links, active tabs and underlines keep
    --color-accent. Derived from #9f8a46, the mean of the gold pixels in the
-   theme strip's art at noon's position (/img/brand/time-strip.png, the sun
+   theme strip's art at noon's position (/img/brand/time-strip-desktop.webp, the sun
    engraving under Server Settings), made 20% more saturated and nudged from
    hue 46 to 48 for a more yellow gold at the same lightness: #a9933d. White
    text holds about 3:1 on it, the floor for bold button labels; any
@@ -363,7 +363,7 @@
    the same clock; the geometry here is the phone's, so that one artwork and
    one set of rules now serve both screens.
 
-   The art (/img/brand/time-strip.png) is a 24-hour clockface UNROLLED: the
+   The art (/img/brand/time-strip-desktop.webp) is a 24-hour clockface UNROLLED: the
    engraved sun face, the red-rust of late afternoon, the moon face, dawn gold,
    in that order and a quarter of the strip apart. Every theme's palette was
    drawn from one of those positions, so each theme OWNS its place along the

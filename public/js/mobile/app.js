@@ -69,7 +69,7 @@ function _mobileTheme(id) {
 
 // ─── Theme strip ────────────────────────────────────────────────
 //
-// Where each palette sits along /img/brand/time-strip.png, as a fraction of
+// Where each palette sits along the strip art (/img/brand/time-strip.webp), as a fraction of
 // the strip’s width. The anchor was set by eye on the two FACES (the marker has
 // to sit on the face, not beside it) and then stepped by exactly a quarter: the
 // engraving is a 24-hour clock unrolled, so six hours is a quarter of it, and

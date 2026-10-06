@@ -108,7 +108,7 @@ const STRIP_HTML =
   '<div class="theme-strip-row">' +
   '<button class="theme-strip" id="theme-strip">' +
   '<span class="theme-strip-track">' +
-  '<img src="/img/brand/time-strip.png"><img src="/img/brand/time-strip.png"><img src="/img/brand/time-strip.png">' +
+  '<img src="/img/brand/time-strip.webp"><img src="/img/brand/time-strip.webp"><img src="/img/brand/time-strip.webp">' +
   "</span>" +
   '<span class="theme-strip-marker"></span>' +
   "</button>" +
@@ -322,7 +322,7 @@ describe("the More tab's strip markup", () => {
     // The three copies come from stripImg() (versioned src, intrinsic size).
     expect(row.match(/stripImg\(\)/g)).toHaveLength(3);
     const helper = MORE_TAB_JS.slice(MORE_TAB_JS.indexOf("function stripImg()"), MORE_TAB_JS.indexOf("function backTopbar("));
-    expect(helper).toContain('"/img/brand/time-strip.png"');
+    expect(helper).toContain('"/img/brand/time-strip.webp"');
   });
 
   it("delegates the tap instead of wiring its own listener", () => {

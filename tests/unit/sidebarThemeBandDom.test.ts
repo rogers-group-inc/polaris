@@ -77,7 +77,7 @@ const harness = [
   extractDecl("var TRANSIT_THEMES = [", "];"),
   extractDecl("var THEME_BAND_POS = {", "};"),
   'var DEFAULT_THEME = "nightfall";',
-  'var THEME_BAND_ART = "/img/brand/time-strip.png";',
+  'var THEME_BAND_ART = "/img/brand/time-strip-desktop.webp";',
   "var THEME_FADE_MS = 800;",
   extractDecl("var THEME_LEG_MS = {", "};"),
   extractFn("_themeLegMs"),
@@ -131,8 +131,8 @@ const BAND_HTML =
   'aria-label="Time of day: Nightfall. Move through the day.">' +
   '<span class="theme-band-window">' +
   '<span class="theme-band-track" id="theme-band-track">' +
-  '<img src="/img/brand/time-strip.png"><img src="/img/brand/time-strip.png">' +
-  '<img src="/img/brand/time-strip.png">' +
+  '<img src="/img/brand/time-strip-desktop.webp"><img src="/img/brand/time-strip-desktop.webp">' +
+  '<img src="/img/brand/time-strip-desktop.webp">' +
   "</span>" +
   "</span>" +
   "</button>";
@@ -176,7 +176,7 @@ describe("sidebar theme band placement", () => {
     // The track is anchored one strip width left of centre, so copies one and
     // three cover the window either side. With two, bare surface shows on the
     // right as the position approaches the seam.
-    expect(APP_JS).toContain('var THEME_BAND_ART = "/img/brand/time-strip.png"');
+    expect(APP_JS).toContain('var THEME_BAND_ART = "/img/brand/time-strip-desktop.webp"');
     const markup = APP_JS.slice(
       APP_JS.indexOf('id="btn-theme-band"'),
       APP_JS.indexOf('<div id="sidebar-version"'),
@@ -188,7 +188,7 @@ describe("sidebar theme band placement", () => {
     // every page change.
     expect(APP_JS).toContain("var bandSrc = _brandArtUrl(THEME_BAND_ART);");
     expect(markup.match(/width="\$\{THEME_BAND_ART_W\}" height="\$\{THEME_BAND_ART_H\}"/g)).toHaveLength(3);
-    expect(APP_JS).toContain("var THEME_BAND_ART_W = 3456, THEME_BAND_ART_H = 132;");
+    expect(APP_JS).toContain("var THEME_BAND_ART_W = 1676, THEME_BAND_ART_H = 64;");
   });
 
   it("draws nothing but the artwork — no caption, no centre marker", () => {

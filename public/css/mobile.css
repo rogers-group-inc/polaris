@@ -2117,7 +2117,7 @@ button, .list-item, .chip { touch-action: manipulation; }
 /* ─── Theme strip ───────────────────────────────────────────────
    The phone’s version of the desktop’s theme dial, unrolled. Same clock, same
    palettes, same one-way rule — a flat 24-hour engraving
-   (/img/brand/time-strip.png) that always travels LEFT, so the window advances
+   (/img/brand/time-strip.webp) that always travels LEFT, so the window advances
    forward through the day: sun face → red afternoon → moon face → dawn rays →
    sun again. Positions live in THEME_STRIP_POS (mobile/app.js) as fractions of
    the strip’s width, and a tap moves the strip to the next selectable theme’s

@@ -64,19 +64,36 @@ describe("the band and the strip read the same clock", () => {
   });
 
   it("sizes the strip's art up front on both, so it seats before it decodes", () => {
-    // 3456 x 132 is the engraving's intrinsic size; with width/height on each
-    // <img> the strip can be measured and seated in the first paint.
+    // Each screen's art carries its own intrinsic size (desktop 1676 x 64,
+    // phone 3456 x 132); with width/height on each <img> the strip can be
+    // measured and seated in the first paint.
     const moreTab = readFileSync(join(process.cwd(), "public", "js", "mobile", "more-tab.js"), "utf-8");
     expect(moreTab).toContain('width="3456" height="132"');
     expect(moreTab).toContain("stripImg() + stripImg() + stripImg()");
-    expect(APP_JS).toContain("var THEME_BAND_ART_W = 3456, THEME_BAND_ART_H = 132;");
+    expect(APP_JS).toContain("var THEME_BAND_ART_W = 1676, THEME_BAND_ART_H = 64;");
   });
 
-  it("renders the same artwork on both", () => {
-    expect(APP_JS).toContain('"/img/brand/time-strip.png"');
-    expect(MOBILE_APP_JS + readFileSync(
-      join(process.cwd(), "public", "js", "mobile", "more-tab.js"), "utf-8",
-    )).toContain("/img/brand/time-strip.png");
+  it("renders the same artwork on both, each at its own resolution", () => {
+    // One engraving, two files: the desktop draws the strip 32 px tall and
+    // takes a 2x copy (1676 x 64, 31 KB); the phone draws it 72 px tall and
+    // keeps the full 3456 x 132 (88 KB). Both WebP — the shared PNG was 757 KB.
+    // Positions are fractions of the strip's width, so the two must keep the
+    // same aspect ratio or the same theme sits at two different places.
+    expect(APP_JS).toContain('var THEME_BAND_ART = "/img/brand/time-strip-desktop.webp";');
+    expect(readFileSync(join(process.cwd(), "public", "js", "mobile", "more-tab.js"), "utf-8"))
+      .toContain('"/img/brand/time-strip.webp"');
+    const webpSize = (file: string) => {
+      // VP8 (lossy) WebP: 14-bit width/height at bytes 26-29 of the file.
+      const b = readFileSync(join(process.cwd(), "public", "img", "brand", file));
+      expect(b.toString("ascii", 0, 4)).toBe("RIFF");
+      expect(b.toString("ascii", 12, 16)).toBe("VP8 ");
+      return { w: b.readUInt16LE(26) & 0x3fff, h: b.readUInt16LE(28) & 0x3fff };
+    };
+    const desk = webpSize("time-strip-desktop.webp");
+    const phone = webpSize("time-strip.webp");
+    expect(desk).toEqual({ w: 1676, h: 64 });
+    expect(phone).toEqual({ w: 3456, h: 132 });
+    expect(Math.abs(desk.w / desk.h - phone.w / phone.h)).toBeLessThan(0.01);
   });
 
   it("gives both the same 800ms travel, matching the palette crossfade", () => {
