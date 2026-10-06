@@ -103,11 +103,19 @@
               <div class="appmap-legend-row"><span class="appmap-legend-swatch appmap-legend-proc"></span> Mapped process (lilac)</div>
               <div class="appmap-legend-row"><span class="appmap-legend-swatch appmap-legend-service"></span> Mapped service (teal)</div>
               <div class="appmap-legend-row"><span class="appmap-legend-swatch appmap-legend-unknown"></span> External / unknown IP</div>
-              <div class="appmap-legend-row"><span class="appmap-legend-line appmap-legend-line-process"></span> Process &rarr; process (both ends mapped)</div>
+              <div class="appmap-legend-row"><span class="appmap-legend-line appmap-legend-line-process"></span> Process &rarr; process (both ends mapped; heavier line)</div>
               <div class="appmap-legend-row"><span class="appmap-legend-line appmap-legend-line-asset"></span> Process &rarr; asset (destination known, process not mapped)</div>
               <div class="appmap-legend-row"><span class="appmap-legend-line appmap-legend-line-external"></span> External connection</div>
               <div class="appmap-legend-row"><span class="appmap-legend-line appmap-legend-line-stale"></span> Stale (not seen in the last 15 min)</div>
+              <div class="appmap-legend-row">Line colour is the connection's protocol/port &mdash; see the Ports key, bottom left.</div>
             </div>
+          </div>
+          <div id="appmap-port-legend" class="appmap-port-legend" hidden>
+            <header class="appmap-port-legend-header">
+              <span>Ports</span>
+              <button type="button" class="btn-icon" id="appmap-port-legend-toggle" aria-label="Collapse ports key" aria-expanded="true" title="Collapse">&minus;</button>
+            </header>
+            <div class="appmap-port-legend-body"></div>
           </div>
           <div id="appmap-empty" class="appmap-empty" hidden>
             <h3 id="appmap-empty-title">No mapped processes or services yet</h3>
