@@ -463,6 +463,8 @@
     sevColor: sevColor,
     sevRank: sevRank,
     promptAckNote: promptAckNote,
+    // The Alerts tab's per-row Clear asks through the same sheet.
+    confirmClear: confirmClear,
     canAcknowledge: canAck,
     canClear: canClear,
   };

@@ -14,15 +14,31 @@
 // mirror of ALERT_SEVERITY_RANK. When more than 500 are active the count line
 // says so rather than letting the list read as complete.
 //
+// Region scope: a viewer who carries region tags (`user.regions`, the
+// effective set /auth/me reports) picks "My regions" or "All regions" in the
+// sheet, defaulting to mine like the desktop widgets' regionScope. "Mine" is
+// the server's own viewer scope (regionScopeWhere in notificationService):
+// an alert in one of those regions OR in none — an untagged alert belongs to
+// everybody. It narrows on the phone rather than through the route's
+// `region` param, because that param is hasSome only and would drop the
+// untagged ones. A non-admin is already held to their regions by the server,
+// so for them "All" adds nothing; for an admin it is the whole fleet.
+//
 // Acknowledging happens here (alerts:write): the phone is where an alert is
 // usually READ, so making it desktop-only meant the person holding the pager
-// couldn't stop an escalation chain. Clearing stays on desktop — it is the
-// destructive half and needs fullwrite.
+// couldn't stop an escalation chain. Clearing is here too, at
+// alerts:fullwrite, behind the same confirm sheet the per-asset alerts sheet
+// uses (PolarisMobileAlerts.confirmClear).
 
 (function () {
   var PREFS_KEY = "polaris-mobile-alerts-list";
   var FETCH_LIMIT = 500;
-  var DEFAULTS = { sortKey: "triggeredAt", sortDir: "desc", state: "all", severity: [] };
+  var DEFAULTS = { sortKey: "triggeredAt", sortDir: "desc", state: "all", severity: [], region: "mine" };
+
+  var REGION_OPTIONS = [
+    { value: "mine", label: "My regions" },
+    { value: "all",  label: "All regions" },
+  ];
 
   var SORTS = [
     { key: "triggeredAt", label: "Time",     defaultDir: "desc" },
@@ -76,23 +92,42 @@
     p.severity = (p.severity || []).filter(function (v) {
       return SEVERITY_OPTIONS.some(function (o) { return o.value !== "" && o.value === v; });
     });
+    if (!REGION_OPTIONS.some(function (o) { return o.value === p.region; })) p.region = DEFAULTS.region;
     return p;
   }
 
-  // The chip names a severity filter hidden in the sheet (canon-mobile.md §
-  // Mobile list toolbar): up to two by name, a count beyond that.
+  /** The viewer's effective regions; [] = unscoped, so no region choice. */
+  function myRegions() {
+    var r = _state.user && _state.user.regions;
+    return Array.isArray(r) ? r.filter(Boolean) : [];
+  }
+
+  /** The regions "mine" narrows to, or null when the list is not narrowed. */
+  function activeRegions() {
+    var mine = myRegions();
+    return (mine.length && prefs().region === "mine") ? mine : null;
+  }
+
+  // The chip names what the sheet is hiding (canon-mobile.md § Mobile list
+  // toolbar): "My regions", then severities — up to two by name, a count
+  // beyond that (or beyond one when the region already takes room).
   function sortLabel() {
     var p = prefs();
     var s = SORTS.find(function (x) { return x.key === p.sortKey; });
+    var parts = [];
+    if (activeRegions()) parts.push("My regions");
+    var sevMax = parts.length ? 1 : 2;
+    if (p.severity.length > sevMax) parts.push(p.severity.length + " severities");
+    else p.severity.forEach(function (v) {
+      var o = SEVERITY_OPTIONS.find(function (x) { return x.value === v; });
+      parts.push(o ? o.label : v);
+    });
     var label = s ? s.label : "Sort";
-    if (p.severity.length > 2) return label + " · " + p.severity.length + " severities";
-    if (p.severity.length) {
-      return label + " · " + p.severity.map(function (v) {
-        var o = SEVERITY_OPTIONS.find(function (x) { return x.value === v; });
-        return o ? o.label : v;
-      }).join(", ");
-    }
-    return label;
+    return parts.length ? label + " · " + parts.join(", ") : label;
+  }
+
+  function sheetNarrows() {
+    return prefs().severity.length > 0 || !!activeRegions();
   }
 
   var Alerts = {
@@ -118,7 +153,7 @@
             value: _state.filter,
             sortLabel: sortLabel(),
             dir: p.sortDir,
-            active: p.severity.length > 0,
+            active: sheetNarrows(),
           })
         + '<div class="chip-row" id="alerts-chips"></div>'
         + '<div id="alerts-list-host"></div>';
@@ -195,30 +230,51 @@
 
   function openSortSheet() {
     var p = prefs();
+    var filters = [];
+    // Only a viewer who HAS regions gets the choice — for anyone else "mine"
+    // would be the whole fleet, and two chips that do the same thing read as
+    // a broken control.
+    if (myRegions().length) {
+      filters.push({ key: "region", label: "Regions", options: REGION_OPTIONS, value: p.region });
+    }
+    filters.push({ key: "severity", label: "Severity", options: SEVERITY_OPTIONS, value: p.severity, multi: true });
     PolarisListControls.openSortSheet({
       sortOptions: SORTS,
       sortKey: p.sortKey,
       sortDir: p.sortDir,
-      filters: [{ key: "severity", label: "Severity", options: SEVERITY_OPTIONS, value: p.severity, multi: true }],
+      filters: filters,
       onApply: function (choice) {
         _state.prefs.sortKey = choice.sortKey;
         _state.prefs.sortDir = choice.sortDir;
         _state.prefs.severity = choice.filters.severity || [];
+        if (choice.filters.region) _state.prefs.region = choice.filters.region;
         PolarisListControls.savePrefs(PREFS_KEY, _state.prefs);
-        PolarisListControls.updateSortChip("alerts", sortLabel(), choice.sortDir, _state.prefs.severity.length > 0);
+        PolarisListControls.updateSortChip("alerts", sortLabel(), choice.sortDir, sheetNarrows());
         renderList();
       },
     });
   }
 
   // ─── Filter + sort (pure; exposed for tests) ───────────────────────────
-  function filterRows(rows, text, state, severities) {
+  /** "Mine" is the server's viewer scope: untagged, or sharing a region. */
+  function inRegions(n, regions) {
+    var tags = Array.isArray(n.regionTags) ? n.regionTags : [];
+    if (!tags.length) return true;
+    var want = {};
+    regions.forEach(function (r) { want[String(r).toLowerCase()] = true; });
+    return tags.some(function (t) { return want[String(t).toLowerCase()]; });
+  }
+
+  // `regions`: the list "My regions" narrows to, or null/[] for all.
+  function filterRows(rows, text, state, severities, regions) {
     var terms = String(text || "").toLowerCase().split(/\s+/).filter(Boolean);
     var sevs = (severities || []).map(Number);
+    var scoped = Array.isArray(regions) && regions.length > 0;
     return rows.filter(function (n) {
       if (state === "unack" && n.acknowledged) return false;
       if (state === "ack" && !n.acknowledged) return false;
       if (sevs.length && sevs.indexOf(sevRank(n.severity)) === -1) return false;
+      if (scoped && !inRegions(n, regions)) return false;
       if (!terms.length) return true;
       var h = [n.assetHostname, n.message, n.severity, n.dimension, n.acknowledgedBy]
         .filter(Boolean).join("\n").toLowerCase();
@@ -293,17 +349,23 @@
     }
 
     var p = prefs();
-    var shown = sortRows(filterRows(_state.rows, _state.filter, p.state, p.severity), p.sortKey, p.sortDir);
+    var regions = activeRegions();
+    var shown = sortRows(filterRows(_state.rows, _state.filter, p.state, p.severity, regions), p.sortKey, p.sortDir);
 
     if (shown.length === 0) {
-      host.innerHTML = emptyState("No matching alerts", "Nothing matches this filter. Clear it or pick “All”.");
+      host.innerHTML = regions
+        ? emptyState("No matching alerts in your regions", "Nothing matches here. Pick “All regions” under Sort & filter to see the rest of the fleet.")
+        : emptyState("No matching alerts", "Nothing matches this filter. Clear it or pick “All”.");
       return;
     }
 
-    var canAck = permAtLeast(_state.user, "alerts", "write");
+    var perms = {
+      ack: permAtLeast(_state.user, "alerts", "write"),
+      clear: permAtLeast(_state.user, "alerts", "fullwrite"),
+    };
     var html = '<div class="alert-list">';
     shown.forEach(function (n, i) {
-      html += rowHTML(n, canAck) + (i < shown.length - 1 ? '<div class="list-divider"></div>' : '');
+      html += rowHTML(n, perms) + (i < shown.length - 1 ? '<div class="list-divider"></div>' : '');
     });
     var loaded = _state.rows.length;
     var count = shown.length === loaded
@@ -315,17 +377,31 @@
     wireListHost(host);
   }
 
-  function rowHTML(n, canAck) {
+  var ROW_BTN_STYLE = 'padding:8px 12px;border-radius:20px;border:1px solid var(--md-outline);'
+    + 'background:transparent;font:inherit;font-size:13px;min-width:60px;';
+
+  function rowHTML(n, perms) {
     var sev = n.severity || "info";
     var rank = sevRank(sev);
     var leadCls = rank >= 5 ? "error" : (rank >= 3 ? "warning" : "");
     var iconHref = rank >= 5 ? "#i-down-arrow" : (rank >= 3 ? "#i-warn" : "#i-info");
     var meta = formatTimeAgo(n.triggeredAt);
     if (n.acknowledged) meta += " · acknowledged" + (n.acknowledgedBy ? " by " + n.acknowledgedBy : "");
-    // The Ack control is a sibling of the row button, not inside it —
-    // nesting a <button> inside a <button> is invalid and swallows the tap
-    // that opens the device.
-    var showAck = canAck && !n.acknowledged;
+    // The Ack and Clear controls are siblings of the row button, not inside
+    // it — nesting a <button> inside a <button> is invalid and swallows the
+    // tap that opens the device. Stacked, so two of them still leave the
+    // message its width.
+    var showAck = perms.ack && !n.acknowledged;
+    var actions = '';
+    if (showAck) {
+      actions += '<button class="ack-btn" data-ack="' + escapeHtml(n.id) + '" aria-label="Acknowledge alert"'
+        + (n.requireAckNote ? ' data-note-required="1"' : "")
+        + ' style="' + ROW_BTN_STYLE + 'color:var(--md-primary);">Ack</button>';
+    }
+    if (perms.clear) {
+      actions += '<button class="clear-btn" data-clear="' + escapeHtml(n.id) + '" aria-label="Clear alert"'
+        + ' style="' + ROW_BTN_STYLE + 'color:var(--md-error);">Clear</button>';
+    }
     return ''
       + '<div class="alert-row" style="display:flex;align-items:stretch;">'
       + '<button class="list-item three-line" style="flex:1;min-width:0;" data-aid="' + escapeHtml(n.assetId || "") + '">'
@@ -336,11 +412,9 @@
       + '    <div class="supporting mono" style="font-size:12px;color:var(--md-on-surface-variant);margin-top:4px;">' + escapeHtml(meta) + '</div>'
       + '  </div>'
       + '</button>'
-      + (showAck
-        ? '<button class="ack-btn" data-ack="' + escapeHtml(n.id) + '" aria-label="Acknowledge alert"'
-          + (n.requireAckNote ? ' data-note-required="1"' : "")
-          + ' style="flex:0 0 auto;align-self:center;margin-right:12px;padding:8px 12px;border-radius:20px;'
-          + 'border:1px solid var(--md-outline);background:transparent;color:var(--md-primary);font:inherit;font-size:13px;">Ack</button>'
+      + (actions
+        ? '<div class="alert-row-actions" style="flex:0 0 auto;align-self:center;display:flex;flex-direction:column;gap:6px;margin-right:12px;">'
+          + actions + '</div>'
         : '')
       + '</div>';
   }
@@ -356,6 +430,12 @@
       if (ack) {
         ev.stopPropagation();
         acknowledge(ack);
+        return;
+      }
+      var clr = t.closest("[data-clear]");
+      if (clr) {
+        ev.stopPropagation();
+        clearAlert(clr);
         return;
       }
       var row = t.closest(".list-item");
@@ -391,6 +471,31 @@
       })
       .catch(function (err) {
         PolarisTabs.showSnackbar((err && err.message) || "Couldn't acknowledge", { error: true });
+        btn.disabled = false;
+        btn.textContent = old;
+      });
+  }
+
+  // Clear — the destructive half (alerts:fullwrite): it stops escalation and
+  // runs the automation's reset actions, so it always asks first, through the
+  // sheet the per-asset alerts sheet uses (never window.confirm, which some
+  // installed PWAs suppress). A cleared alert leaves this list, so the reload
+  // is the confirmation; a 0 count means someone else got there first.
+  async function clearAlert(btn) {
+    if (btn.disabled) return;
+    var ok = await PolarisMobileAlerts.confirmClear(1);
+    if (!ok) return;
+    btn.disabled = true;
+    var old = btn.textContent;
+    btn.textContent = "…";
+    return api.alerts.clear([btn.dataset.clear])
+      .then(function (res) {
+        var n = res && typeof res.cleared === "number" ? res.cleared : 1;
+        PolarisTabs.showSnackbar(n ? "Alert cleared" : "That alert was already cleared", n ? undefined : { error: true });
+        return load(true);
+      })
+      .catch(function (err) {
+        PolarisTabs.showSnackbar((err && err.message) || "Couldn’t clear the alert", { error: true });
         btn.disabled = false;
         btn.textContent = old;
       });
