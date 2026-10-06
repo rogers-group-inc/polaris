@@ -29,8 +29,8 @@
 /* Nightfall's sliding glow layer (see styles.css). */
 @property --night-glow-x  { syntax: "<percentage>"; inherits: true; initial-value: -130%; }
 @property --night-glow-c { syntax: "<color>"; inherits: true; initial-value: rgba(109,151,255,.25); }
-@property --night-glow-w { syntax: "<percentage>"; inherits: true; initial-value: 90%; }
-@property --night-glow-h { syntax: "<percentage>"; inherits: true; initial-value: 33%; }
+@property --night-glow-w { syntax: "<length>"; inherits: true; initial-value: 0px; }
+@property --night-glow-h { syntax: "<length>"; inherits: true; initial-value: 0px; }
 
 :root {
   /* Key colors */
@@ -177,11 +177,14 @@
      at rest on nightfall — so the glow never changes colour, only position
      and size (styles.css has the reasoning). */
   --night-glow-c: rgba(109,151,255,.25);
-  /* HALF size wherever it is parked (90% x 33% against nightfall's 180% x 66%):
+  /* HALF size wherever it is parked (90vw x 33vh against nightfall's 180vw x 66vh),
+     viewport units because the slide's circle mixes vw and vh. The SIZE
+     is not transitioned: the night-glow-in / -out keyframes own it (a
+     circle while it slides, an oval at rest). In words:
      the blue light comes in small and grows to the full wash, and
      shrinks back as it leaves. */
-  --night-glow-w: 90%;
-  --night-glow-h: 33%;
+  --night-glow-w: 90vw;
+  --night-glow-h: 33vh;
   --night-glow: radial-gradient(ellipse var(--night-glow-w) var(--night-glow-h) at var(--night-glow-x) 0%,
     var(--night-glow-c) 0%,
     transparent 70%);
@@ -413,8 +416,8 @@
   --page-glow-y: -50%;
   --night-glow-x: 50%;
   --night-glow-c: rgba(109,151,255,.25);
-  --night-glow-w: 180%;
-  --night-glow-h: 66%;
+  --night-glow-w: 180vw;
+  --night-glow-h: 66vh;
 }
 /* Nightfall — indigo ground, sky-blue accent: the desktop's nightfall hues
    (styles.css). Without this block the phone painted the neutral Material
@@ -468,8 +471,8 @@
   --page-glow-y: -50%;
   --night-glow-x: 50%;
   --night-glow-c: rgba(109,151,255,.25);
-  --night-glow-w: 180%;
-  --night-glow-h: 66%;
+  --night-glow-w: 180vw;
+  --night-glow-h: 66vh;
 }
 
 * { box-sizing: border-box; }
@@ -2215,16 +2218,16 @@ html[data-glow-turn] {
   transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
-    --night-glow-x, --night-glow-w, --night-glow-h, --night-glow-c;
+    --night-glow-x, --night-glow-c;
   transition-duration: 2000ms;
   /* One curve per property, in transition-property's order. Position and
-     the main glow ease in and out; the night glow's size and colour (the
-     last three) take a gentle sine curve, so the blue light grows evenly
-     across the whole turn rather than mostly at one end (the colour is the
-     same white at both ends today, so its curve is inert). Rules with shorter property lists (noon's) cut this list to fit,
+     the main glow ease in and out; the night glow's colour (last) takes a
+     gentle sine curve, inert while it is one value in every theme. Its
+     SIZE is not here at all: the night-glow-in / -out keyframes own it,
+     and a running transition would outrank them. Rules with shorter property lists (noon's) cut this list to fit,
      which is why the night glow's parts must stay LAST. */
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
-    cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
+    cubic-bezier(0.37, 0, 0.63, 1);
 }
 /* What must not move, by destination (reasoning in styles.css): into noon
    the night glow jumps back to the left edge unseen; into morning the
@@ -2273,9 +2276,46 @@ html[data-glow-turn="morning-noon"] {
   12.5%, 75% { --page-glow-h: 180vw; }
   100% { --page-glow-h: 66vh; }
 }
+/* The night glow's SHAPE, after the sun's rounding above: a circle while
+   it slides, an oval at rest. Slide-in (noon → nightfall, 2.5 s): a
+   circle from the first frame, held to 75%, easing into nightfall's oval
+   over the last quarter as it lands — the window in which morning → noon
+   turns its circle back into an oval. Slide-out (nightfall → morning,
+   2 s) mirrors it: the oval rounds into a circle over the first quarter,
+   while still on screen, and leaves as one. (Copied literally, the
+   change would fall in the first / last 12.5%, while the glow is still
+   off-screen — it is on screen only from 27% of the slide-in and until
+   73% of the slide-out.) The circle keeps the width, as the sun's does:
+   the height matches it. The width still grows from half size to full
+   across the turn; the 75% / 25% frames sit on the same sine the size
+   used to transition on (166.8vw). Same two rules as the sun's:
+   --night-glow-w / -h are OUT of every transition list (a running
+   transition outranks an animation), and the size is in viewport units
+   registered as <length> (a percentage-to-vw frame is a mixed calc()
+   Chromium rejects as a gradient size, blanking the whole background).
+   The slide-in keys on BOTH legs' data-glow-turn values: one rule, one
+   animation name, so the change of value at the waypoint lets it run on
+   rather than restarting it. */
+html[data-glow-turn="noon-afternoon"],
+html[data-glow-turn="afternoon-nightfall"] {
+  animation: night-glow-in 2500ms cubic-bezier(0.37, 0, 0.63, 1);
+}
+@keyframes night-glow-in {
+  0%   { --night-glow-w: 90vw;   --night-glow-h: 90vw; }
+  75%  { --night-glow-w: 166.8vw; --night-glow-h: 166.8vw; }
+  100% { --night-glow-w: 180vw;  --night-glow-h: 66vh; }
+}
+html[data-glow-turn="nightfall-morning"] {
+  animation: night-glow-out 2000ms cubic-bezier(0.37, 0, 0.63, 1);
+}
+@keyframes night-glow-out {
+  0%   { --night-glow-w: 180vw;  --night-glow-h: 66vh; }
+  25%  { --night-glow-w: 166.8vw; --night-glow-h: 166.8vw; }
+  100% { --night-glow-w: 90vw;   --night-glow-h: 90vw; }
+}
 html[data-theme="morning"] {
   transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
-    --night-glow-x, --night-glow-w, --night-glow-h, --night-glow-c;
+    --night-glow-x, --night-glow-c;
   /* The exit is the entrance played backwards: same path, mirrored. Its
      position takes the REVERSED ease (STD's control points swapped and
      flipped), so it eases off the centre slowly the way the entrance eased
@@ -2288,7 +2328,7 @@ html[data-theme="morning"] {
      evenly, and stays moonlight blue (morning parks it in that colour). */
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
     cubic-bezier(0.8, 0, 0.6, 1),
-    cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1), cubic-bezier(0.37, 0, 0.63, 1);
+    cubic-bezier(0.37, 0, 0.63, 1);
 }
 /* Phase easing for a multi-leg turn: accelerate once at the start, run at
    constant speed through the waypoint, decelerate once at the end, so

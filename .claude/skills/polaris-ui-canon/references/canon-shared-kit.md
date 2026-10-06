@@ -212,18 +212,31 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   white 35% slide-in cooling into this blue at a fainter 12.3%; before that an electric blue
   whitening to 50% on the way out. The colour
   stays registered and in the transition lists, so a future colour turn is one value per theme.
-  Parked it is also HALF size (70% × 30% desktop, 90% × 33% phone, against 140% × 60% /
-  180% × 66%): the blue light slides in small and grows to the full wash, and shrinks back as
-  it leaves. A stronger blue was tried first and still
-  read as nothing over the grounds crossed mid-turn. Size and colour take a gentle sine curve
-  (`cubic-bezier(0.37, 0, 0.63, 1)`) so they change evenly across the whole 2 s both ways (a
+  Parked it is also HALF size (70vw × 30vh desktop, 90vw × 33vh phone, against 140vw × 60vh /
+  180vw × 66vh). **Its SHAPE is a keyframe animation, after the sun's rounding:** a CIRCLE while
+  it slides, an oval at rest (by the user's call, 2026-10-06). `night-glow-in` (2.5 s, on
+  `html[data-glow-turn="noon-afternoon"], html[data-glow-turn="afternoon-nightfall"]` — ONE
+  rule for both legs, so the waypoint's value change does not restart it) is a circle from the
+  first frame, held to 75%, easing into nightfall's oval over the last quarter as it lands;
+  `night-glow-out` (2 s, `nightfall-morning`) mirrors it, rounding over the first quarter and
+  leaving as a circle. The circle keeps the width and the height matches it, as the sun's does;
+  the width still grows half → full, its 75% / 25% frames on the sine the size used to
+  transition on (129.8vw desktop, 166.8vw phone). Morning's literal 12.5% windows were
+  rejected because the glow is on screen only from 27% of the slide-in and until 73% of the
+  slide-out, so the change would be invisible. Two rules keep it working, both the sun's:
+  `--night-glow-w` / `-h` are in NO transition list (a running transition outranks an
+  animation; `themeBandParity.test.ts` checks every list), and they are viewport-unit `<length>`s,
+  never percentages (a %-to-vw frame is the mixed calc() that blanks the background). A stronger
+  blue was tried first and still
+  read as nothing over the grounds crossed mid-turn. The colour takes a gentle sine curve
+  (`cubic-bezier(0.37, 0, 0.63, 1)`), inert while it is one value everywhere (a
   late/early colour curve was tried and replaced at the user's call); position keeps the
   ease-in-out on the way in and takes its exact REVERSE on the way out
   (`cubic-bezier(0.8, 0, 0.6, 1)`, in the morning rule), so the exit is the entrance played
   backwards. On the same curve both ways the exit looked ~40% faster — big and already on screen,
   so you saw the fast middle, gone in 1.05 s against the entrance's 1.46 s on screen; mirrored,
   both are on screen 1.46 s. The curves are per-property lists in `transition-property` order with the night
-  glow's size and colour LAST, because a rule with a shorter property list (noon's) cuts the
+  glow's colour LAST, because a rule with a shorter property list (noon's) cuts the
   inherited list to fit); nightfall turns the main glow off
   (`--page-glow-strength: 0%`) and centres it. It is parked just past an edge everywhere else:
   left on noon (−100% desktop / −130% phone) and right on morning (200% / 230%). **The afternoon

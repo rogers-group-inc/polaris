@@ -104,6 +104,27 @@ describe("the band and the strip read the same clock", () => {
     }
   });
 
+  it("slides the night glow in as a circle and out into one, on both", () => {
+    // A circle while it slides, an oval at rest — keyframes on data-glow-turn,
+    // the slide-in keyed on BOTH legs' values so the waypoint does not restart
+    // it. The size must be out of every transition list (a running transition
+    // outranks an animation) and in lengths, not percentages (a %-to-vw frame
+    // is a mixed calc() Chromium rejects, blanking the background).
+    for (const name of ["styles.css", "mobile.css"]) {
+      const css = readFileSync(join(process.cwd(), "public", "css", name), "utf-8").replace(/\r\n/g, "\n");
+      expect(css).toContain('html[data-glow-turn="noon-afternoon"],\nhtml[data-glow-turn="afternoon-nightfall"] {\n  animation: night-glow-in 2500ms');
+      expect(css).toContain('html[data-glow-turn="nightfall-morning"] {\n  animation: night-glow-out 2000ms');
+      expect(css).toContain("@keyframes night-glow-in");
+      expect(css).toContain("@keyframes night-glow-out");
+      expect(css).toContain('@property --night-glow-w { syntax: "<length>"');
+      expect(css).toContain('@property --night-glow-h { syntax: "<length>"');
+      for (const list of css.match(/transition-property:[^;]*;/g) || []) {
+        expect(list).not.toContain("--night-glow-w");
+        expect(list).not.toContain("--night-glow-h");
+      }
+    }
+  });
+
   it("slows the same step on both, by the same amount, in JS and CSS alike", () => {
     // Nightfall -> morning takes 1.6 s. The JS holds the fading attribute (and
     // the seam) that long; the CSS gives the palette and the travel the same
