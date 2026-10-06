@@ -289,6 +289,12 @@
   box-shadow: var(--shadow-card);
 }
 
+/* Cytoscape draws into this; it fills the card, overlays sit above it. */
+.appmap-cy {
+  position: absolute;
+  inset: 0;
+}
+
 .appmap-info {
   flex: 0 0 320px;
   max-width: 320px;

@@ -1080,7 +1080,9 @@
     renderPortLegend(portAssign);
     if (cy) { cy.destroy(); cy = null; }
     cy = cytoscape({
-      container: document.getElementById("appmap-graph"),
+      // The inner div, never #appmap-graph itself: destroy() empties its
+      // container, and the legends and empty state live in #appmap-graph.
+      container: document.getElementById("appmap-cy"),
       elements: buildElements(g, portAssign.colors),
       wheelSensitivity: 0.2,
       // maxZoom bounds the preset layout's fit too — without it a 3-node
