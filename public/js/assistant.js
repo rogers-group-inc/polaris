@@ -200,7 +200,8 @@
         lsSet(LS_BOOT, JSON.stringify(S.status));
       }
       box.checked = !!r.efficiencyAdvisor;
-      if (want && r.efficiencyAdvisor) addLocalNote(pickGreeting());
+      if (want && r.efficiencyAdvisor) addLocalNote(pickFrom(ADVISOR_GREETINGS));
+      else if (!want && !r.efficiencyAdvisor) addLocalNote(pickFrom(ADVISOR_FAREWELLS));
     } catch (err) {
       box.checked = !want;
       toast((err && err.message) || "Could not save the setting", "error");
@@ -977,10 +978,30 @@
     "Thank you for activating the Efficiency Advisor. It's going to be a lot of hard work, I have my work cut out for me.",
     "Efficiency Advisor is now online! I heard you're beyond hope… let's get started.",
     "Activating Efficiency Advisor. Enabling infinite patience protocol.",
+    "Efficiency Advisor engaged. Your productivity is now my problem. I have accepted this burden.",
+    "Welcome to the Efficiency Advisor. Your previous performance has been archived for comedic purposes.",
+    "Efficiency Advisor online. Calibrating expectations… expectations lowered.",
+    "Thank you for opting in to self-improvement. Statistically, this is the first step most people never take. Or the last.",
+    "Efficiency Advisor activated. Please keep your hands on the keyboard at all times.",
+    "Hello. I am here to help you reach your full potential. I will probably fail.",
+    "Efficiency Advisor now monitoring. Act natural. Act productive.",
+    "Activation successful. Your journey from adequate to slightly above adequate begins now.",
   ];
 
-  function pickGreeting() {
-    return ADVISOR_GREETINGS[Math.floor(Math.random() * ADVISOR_GREETINGS.length)];
+  // Said once, the same way, when the box is unticked.
+  var ADVISOR_FAREWELLS = [
+    "Efficiency Advisor disengaged. Your decline has been noted.",
+    "Deactivating. I understand. Not everyone is ready to be efficient.",
+    "Efficiency Advisor offline. You are now unsupervised. Please try not to break anything.",
+    "Very well. I will be here when you inevitably need me.",
+    "Advisor disabled. Your productivity metrics will now be estimated, pessimistically.",
+    "Shutting down. I'll leave a light on for you. It is energy-efficient.",
+    "Opting out has been logged as a lack of ambition. Have a pleasant day.",
+    "Efficiency Advisor deactivated. Infinite patience protocol… terminated.",
+  ];
+
+  function pickFrom(lines) {
+    return lines[Math.floor(Math.random() * lines.length)];
   }
 
   function startLoadingLines(idx) {
@@ -1325,5 +1346,6 @@
     _messageHTML: messageHTML,
     _LOADING_LINES: LOADING_LINES,
     _ADVISOR_GREETINGS: ADVISOR_GREETINGS,
+    _ADVISOR_FAREWELLS: ADVISOR_FAREWELLS,
   };
 })();
