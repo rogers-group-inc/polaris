@@ -675,7 +675,7 @@ async function loadIntegrations() {
     var result = await api.integrations.list();
     var integrations = result.integrations || result;
     if (integrations.length === 0) {
-      container.innerHTML = '<div class="empty-state-card"><p>No integrations configured.</p><p style="color:var(--color-text-tertiary);font-size:0.85rem;margin-top:0.5rem">Add a FortiManager, FortiGate, Windows Server, Microsoft Entra ID, Active Directory, VMware vCenter, or Azure Arc connection to get started.</p></div>';
+      container.innerHTML = '<div class="empty-state-card"><p>No integrations configured.</p><p style="color:var(--color-text-tertiary);font-size:0.85rem;margin-top:0.5rem">Add a FortiManager, FortiGate, Windows Server, Microsoft Entra ID, Active Directory, VMware vCenter, or Azure Arc connection to get started — or a Local AI Assistant to turn on the AI assistant.</p></div>';
       return;
     }
     var activeDiscoveries = (window._getServerDiscoveries && window._getServerDiscoveries()) || [];
@@ -690,7 +690,11 @@ async function loadIntegrations() {
         intg.type === "activedirectory" ? "Active Directory" :
         intg.type === "vcenter" ? "vCenter" :
         intg.type === "azurearc" ? "Azure Arc" :
+        intg.type === "llm" ? "Local AI Assistant" :
         "FortiManager";
+      // The Local AI Assistant integration discovers nothing: no Discover button and no
+      // auto-discovery rows on its card.
+      var isLlm = intg.type === "llm";
 
       function filterRow(baseLabel, include, exclude) {
         include = include || []; exclude = exclude || [];
@@ -705,7 +709,17 @@ async function loadIntegrations() {
         443;
 
       var detailRows;
-      if (intg.type === "activedirectory") {
+      if (isLlm) {
+        var llmEndpoint = (config.useHttps ? "https" : "http") + "://" + (config.host || "-") + ":" + (config.port || 11434) + (config.basePath || "");
+        detailRows =
+          '<div class="detail-row"><span class="detail-label">Assistant Name</span><span class="detail-value">' + escapeHtml(config.displayName || "Assistant") + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Endpoint</span><span class="detail-value mono">' + escapeHtml(llmEndpoint) + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Model</span><span class="detail-value mono">' + (config.model ? escapeHtml(config.model) : '<span style="color:var(--color-text-tertiary)">Auto (the server\'s first tool-calling model)</span>') + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">API Key</span><span class="detail-value">' + (config.apiToken ? "Set" : '<span style="color:var(--color-text-tertiary)">None</span>') + '</span></div>' +
+          (config.useHttps ? '<div class="detail-row"><span class="detail-label">Verify TLS</span><span class="detail-value">' + (config.verifySsl !== false ? "Yes" : "No") + '</span></div>' : '') +
+          '<div class="detail-row"><span class="detail-label">Lookups</span><span class="detail-value">Up to ' + (config.maxToolRounds || 6) + ' rounds, ' + (config.maxRowsPerTool || 200) + ' rows each</span></div>' +
+          '<div class="detail-row"><span class="detail-label">API Access Role</span><span class="detail-value">' + (config.roleName ? escapeHtml(config.roleName) + ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(read-only)</span>' : '<span style="color:var(--color-text-tertiary)">—</span>') + '</span></div>';
+      } else if (intg.type === "activedirectory") {
         detailRows =
           '<div class="detail-row"><span class="detail-label">Host</span><span class="detail-value mono">' + escapeHtml(config.host || "-") + ':' + (config.port || defaultPort) + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Protocol</span><span class="detail-value">' + (config.useLdaps === false ? "LDAP" : "LDAPS") + '</span></div>' +
@@ -833,9 +847,10 @@ async function loadIntegrations() {
             '<div class="integration-card-enabled">' +
               (intg.enabled ? '<span class="badge badge-active">Enabled</span>' : '<span class="badge badge-deprecated">Disabled</span>') +
             '</div>' +
+            (isLlm ? '' :
             '<div class="integration-card-discover" id="discover-wrap-' + intg.id + '" data-disabled="' + (intg.lastTestOk !== true ? '1' : '0') + '">' +
               _discoverBtnHTML(intg.id, intg.name, activeDiscoveries.find(function(d){ return d.id === intg.id; }) || null, intg.lastTestOk !== true) +
-            '</div>' +
+            '</div>') +
           '</div>' +
           '<div class="integration-card-actions">' +
             (intg.type === "fortimanager" ? '<button class="btn btn-sm btn-secondary" onclick="openApiQueryModal(\'' + intg.id + '\', \'' + escapeHtml(config.adom || 'root') + '\', ' + (config.useProxy !== false ? 'true' : 'false') + ')">Query API</button>' : '') +
@@ -844,6 +859,7 @@ async function loadIntegrations() {
             (intg.type === "azurearc" ? '<button class="btn btn-sm btn-secondary" onclick="openArcApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
             (intg.type === "activedirectory" ? '<button class="btn btn-sm btn-secondary" onclick="openAdApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
             (intg.type === "vcenter" ? '<button class="btn btn-sm btn-secondary" onclick="openVcenterApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
+            (isLlm && config.roleName && permAtLeast("apiTokens", "write") ? '<button class="btn btn-sm btn-secondary" onclick="regenerateLlmToken(\'' + intg.id + '\', this)">Regenerate Token</button>' : '') +
             '<button class="btn btn-sm btn-secondary" onclick="testConnection(\'' + intg.id + '\', this)">Test Connection</button>' +
             '<button class="btn btn-sm btn-secondary" onclick="openIntegrationEditModal(\'' + intg.id + '\')">Edit</button>' +
             '<button class="btn btn-sm btn-danger" onclick="confirmDeleteIntegration(\'' + intg.id + '\', \'' + escapeHtml(intg.name) + '\')">Delete</button>' +
@@ -851,9 +867,10 @@ async function loadIntegrations() {
         '</div>' +
         '<div class="integration-card-details">' +
           detailRows +
+          (isLlm ? '' :
           '<div class="detail-row"><span class="detail-label">Auto-Discovery</span><span class="detail-value">' + (!intg.lastTestOk ? '<span style="color:var(--color-text-tertiary)">Disabled until a successful connection test</span>' : intg.autoDiscover === false ? '<span style="color:var(--color-text-tertiary)">Disabled</span>' : 'Every ' + (intg.pollInterval || 4) + ' hour' + ((intg.pollInterval || 4) === 1 ? '' : 's')) + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Next Auto-Discovery</span><span class="detail-value">' + nextDiscoveryText + '</span></div>' +
-          avgRow +
+          avgRow) +
         '</div>' +
       '</div>';
     }).join("");
@@ -5276,6 +5293,149 @@ function getArcFormConfig() {
   };
 }
 
+// ─── Local AI Assistant (AI assistant, business rule 94) ─────────────────────────────
+//
+// A flat, untabbed form: the integration discovers nothing and monitors
+// nothing — it is the model behind the floating assistant. Creating one also
+// mints a read-only role + API token (shown once by _showLlmAccessModal).
+// `f-pollInterval` is a hidden field only because the shared create / save
+// paths read it for every type.
+function llmFormHTML(defaults) {
+  var d = defaults || {};
+  var enabledChecked = d.enabled !== false ? "checked" : "";
+  var timeoutSec = Math.round((d.requestTimeoutMs || 120000) / 1000);
+  return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. Ollama on gpu-01"></div>' +
+    '<div class="form-group"><label>Assistant name</label><input type="text" id="f-displayName" maxlength="40" value="' + escapeHtml(d.displayName || "") + '" placeholder="Assistant"><p class="hint">What people see in the chat window — its title, the button\'s tooltip and the greeting. The model is told to answer to it too.</p></div>' +
+    infoBox('Connects the <strong style="color:var(--color-text-primary)">AI assistant</strong> (the chat button in the bottom-right corner) to a model server you run. Any <strong style="color:var(--color-text-primary)">OpenAI-compatible</strong> endpoint works: Ollama, LM Studio, vLLM, the llama.cpp server, LocalAI or Open WebUI. Pick a model that supports <strong style="color:var(--color-text-primary)">tool calling</strong> (for example Qwen 2.5 / 3, Llama 3.1+ or Mistral Small), or the assistant can chat but cannot look anything up.') +
+    calloutHTML("note", "Lookups use each person's own permissions",
+      'When someone asks the assistant a question, Polaris runs every lookup with <strong>that person\'s</strong> role, so the assistant can never show them more than their role already allows. It is read-only: it cannot change, acknowledge or push anything.') +
+    formDivider() +
+    sectionHeading("Model Server") +
+    '<div style="display:grid;grid-template-columns:1fr auto;gap:8px">' +
+      '<div class="form-group"><label>Host / IP *</label><input type="text" id="f-host" value="' + escapeHtml(d.host || "") + '" placeholder="e.g. 10.1.5.20 or llm.example.com"></div>' +
+      '<div class="form-group"><label>Port</label><input type="number" id="f-port" value="' + (d.port || 11434) + '" min="1" max="65535" style="width:100px"></div>' +
+    '</div>' +
+    '<div class="form-group"><label>API path</label><input type="text" id="f-basePath" value="' + escapeHtml(d.basePath != null ? d.basePath : "/v1") + '" placeholder="/v1"><p class="hint"><code>/v1</code> for Ollama, LM Studio, vLLM and llama.cpp; <code>/api</code> for Open WebUI.</p></div>' +
+    checkboxRow("f-useHttps", "Use HTTPS", d.useHttps === true) +
+    checkboxRow("f-verifySsl", "Verify TLS certificate", d.verifySsl !== false) +
+    '<div class="form-group"><label>API key</label><input type="password" id="f-apiToken" value="" placeholder="' + escapeHtml(d.apiTokenPlaceholder || "Optional — only if the server requires one") + '" autocomplete="new-password"><p class="hint">Stored encrypted. Ollama and LM Studio need none by default.</p></div>' +
+    '<div class="form-group"><label>Model</label>' +
+      '<div style="display:flex;gap:8px;align-items:center">' +
+        '<input type="text" id="f-model" value="' + escapeHtml(d.model || "") + '" placeholder="Blank = the server\'s first tool-calling model" style="flex:1">' +
+        '<select id="f-model-select" style="flex:1;display:none" aria-label="Model"></select>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="f-llm-load" style="white-space:nowrap">Load models</button>' +
+      '</div>' +
+      '<div id="f-llm-model-status" class="hint" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">Load the server\'s models (Test Connection does too) to pick one and see which support tool calling.</div>' +
+    '</div>' +
+    // Not checkboxRow(): the note must sit inside the same .form-group,
+    // because `.hint` is only styled there (`.form-group .hint`).
+    '<div class="form-group">' +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+        '<input type="checkbox" id="f-allowLoopback"' + (d.allowLoopback === true ? " checked" : "") + ' style="width:auto">' +
+        '<label for="f-allowLoopback" style="margin:0">Allow loopback (the model server runs on this Polaris host)</label>' +
+      '</div>' +
+      '<p class="hint">Only <code>localhost</code> / <code>127.x</code> / <code>::1</code>. Leave off unless the server really is local — in a container, use the host\'s LAN address instead.</p>' +
+    '</div>' +
+    formDivider() +
+    sectionHeading("Assistant Behaviour") +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+      '<div class="form-group"><label>Temperature</label><input type="number" id="f-temperature" value="' + (d.temperature != null ? d.temperature : 0.2) + '" min="0" max="2" step="0.1"><p class="hint">Low keeps answers factual.</p></div>' +
+      '<div class="form-group"><label>Lookup rounds per answer</label><input type="number" id="f-maxToolRounds" value="' + (d.maxToolRounds || 6) + '" min="1" max="12"></div>' +
+      '<div class="form-group"><label>Rows per lookup</label><input type="number" id="f-maxRowsPerTool" value="' + (d.maxRowsPerTool || 200) + '" min="10" max="1000"><p class="hint">Reports go up to 5,000 regardless.</p></div>' +
+      '<div class="form-group"><label>Messages of history sent</label><input type="number" id="f-contextMessages" value="' + (d.contextMessages || 20) + '" min="2" max="100"><p class="hint">Lower it for models with a small context window.</p></div>' +
+      '<div class="form-group"><label>Response timeout</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-requestTimeoutSec" value="' + timeoutSec + '" min="5" max="600" style="width:90px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">seconds idle</span></div></div>' +
+    '</div>' +
+    '<div class="form-group"><label>Extra instructions</label><textarea id="f-systemPromptExtra" rows="3" maxlength="4000" placeholder="Optional — e.g. site naming conventions, who to escalate to">' + escapeHtml(d.systemPromptExtra || "") + '</textarea></div>' +
+    formDivider() +
+    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
+      '<input type="checkbox" id="f-enabled" ' + enabledChecked + ' style="width:auto">' +
+      '<label for="f-enabled" style="margin:0">Enabled</label>' +
+    '</div>' +
+    '<input type="hidden" id="f-pollInterval" value="' + (d.pollInterval || 12) + '">' +
+    (d.roleName
+      ? infoBox('API access for the model server: role <strong style="color:var(--color-text-primary)">' + escapeHtml(d.roleName) + '</strong> (read-only). Use <em>Regenerate Token</em> on the card to issue a new token.')
+      : infoBox('Creating this integration also creates a <strong style="color:var(--color-text-primary)">read-only role</strong> and an <strong style="color:var(--color-text-primary)">API token</strong> the model server can use for its own lookups. The token is shown once. Needs Roles and API Tokens Read-Write.')) +
+    verboseLoggingFormHTML(d);
+}
+
+function getLlmFormConfig() {
+  function num(id, fallback) {
+    var el = document.getElementById(id);
+    var n = el ? parseFloat(el.value) : NaN;
+    return isNaN(n) ? fallback : n;
+  }
+  return {
+    displayName: val("f-displayName"),
+    host: val("f-host"),
+    port: Math.round(num("f-port", 11434)),
+    basePath: val("f-basePath"),
+    useHttps: document.getElementById("f-useHttps").checked,
+    verifySsl: document.getElementById("f-verifySsl").checked,
+    apiToken: val("f-apiToken"),
+    model: val("f-model"),
+    allowLoopback: document.getElementById("f-allowLoopback").checked,
+    temperature: num("f-temperature", 0.2),
+    maxToolRounds: Math.round(num("f-maxToolRounds", 6)),
+    maxRowsPerTool: Math.round(num("f-maxRowsPerTool", 200)),
+    contextMessages: Math.round(num("f-contextMessages", 20)),
+    requestTimeoutMs: Math.round(num("f-requestTimeoutSec", 120)) * 1000,
+    systemPromptExtra: (document.getElementById("f-systemPromptExtra").value || "").trim(),
+    verboseLogging: readVerboseLoggingFromForm(),
+  };
+}
+
+/**
+ * The once-only reveal of the LLM server's API credentials — the same "save it
+ * now" contract as Server Settings → API Tokens (_showRawTokenModal), plus the
+ * base URL and role the model server needs to use them.
+ */
+function _showLlmAccessModal(access, integrationName) {
+  var base = window.location.origin + (access.apiPath || "/api/v1");
+  var block = function (label, value, id) {
+    return '<div class="form-group"><label>' + escapeHtml(label) + '</label>' +
+      '<div style="display:flex;gap:8px;align-items:stretch">' +
+        '<div id="' + id + '" style="flex:1;background:var(--color-surface);border:1px solid var(--color-border);border-radius:6px;padding:0.55rem 0.7rem;font-family:var(--font-mono);font-size:0.85rem;word-break:break-all;user-select:all">' + escapeHtml(value) + '</div>' +
+        '<button class="btn btn-secondary btn-sm" data-copy="' + id + '">Copy</button>' +
+      '</div></div>';
+  };
+  var body =
+    '<p style="margin:0 0 0.75rem">Give these to the model server for <strong>' + escapeHtml(integrationName) + '</strong> so it can look things up in Polaris itself (an Open WebUI tool, an MCP server, a script). The token is <strong>never shown again</strong>.</p>' +
+    block("Polaris API base URL", base, "llm-acc-base") +
+    block("API token (Authorization: Bearer …)", access.rawToken, "llm-acc-token") +
+    '<p class="hint" style="margin-top:0.25rem">Bound to the read-only role <strong>' + escapeHtml(access.roleName) + '</strong> (token “' + escapeHtml(access.tokenName) + '”). The endpoints are documented at <a href="/api" target="_blank" rel="noopener">/api</a>. The in-app assistant does not need this — it answers with each user\'s own permissions.</p>' +
+    calloutHTML("warning", "Treat it like a password",
+      'Anyone holding this token can read your inventory, networks, alerts and events. Store it in the model server\'s secret store, not in a prompt or a shared file. Regenerate it from the integration card if it leaks.');
+  openModal("AI Assistant API Access — Save Now", body,
+    '<button class="btn btn-primary" onclick="closeModal()">I have saved it</button>', { wide: true });
+  document.querySelectorAll("[data-copy]").forEach(function (btn) {
+    btn.addEventListener("click", async function () {
+      var el = document.getElementById(btn.getAttribute("data-copy"));
+      try {
+        if (!(await copyTextToClipboard(el ? el.textContent : ""))) throw new Error("copy failed");
+        showToast("Copied");
+      } catch (_) {
+        showToast("Copy failed — select the text manually", "error");
+      }
+    });
+  });
+}
+
+async function regenerateLlmToken(id, btn) {
+  // The name is read off the card rather than passed through the onclick
+  // string, where a quote in it would break the handler.
+  var card = btn && btn.closest ? btn.closest(".integration-card") : null;
+  var strong = card ? card.querySelector(".integration-card-title strong") : null;
+  var name = strong ? strong.textContent : "this integration";
+  var ok = await showConfirm('Issue a new API token for "' + name + '"? The current token stops working immediately, so update the model server afterwards.');
+  if (!ok) return;
+  try {
+    var access = await api.integrations.llmRegenerateToken(id);
+    _showLlmAccessModal(access, name);
+  } catch (err) {
+    showToast(err.message || "Could not regenerate the token", "error");
+  }
+}
+
 function vcenterFormHTML(defaults) {
   var d = defaults || {};
   var verifyTls = d.verifyTls !== false;
@@ -5368,6 +5528,10 @@ function showTypePicker() {
         '<strong>Azure Arc</strong>' +
         '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Arc-enabled servers via Azure Resource Manager</span>' +
       '</button>' +
+      '<button class="btn btn-secondary" id="pick-llm" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
+        '<strong>Local AI Assistant</strong>' +
+        '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">AI assistant via an OpenAI-compatible model server</span>' +
+      '</button>' +
     '</div>';
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>';
   openModal("Add Integration", body, footer, { wide: true });
@@ -5378,9 +5542,11 @@ function showTypePicker() {
   document.getElementById("pick-ad").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("activedirectory"); });
   document.getElementById("pick-vc").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("vcenter"); });
   document.getElementById("pick-arc").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("azurearc"); });
+  document.getElementById("pick-llm").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("llm"); });
 }
 
 function _formHTMLForType(type, defaults) {
+  if (type === "llm") return llmFormHTML(defaults);
   if (type === "windowsserver") return windowsServerFormHTML(defaults);
   if (type === "fortigate") return fortiGateFormHTML(defaults);
   if (type === "entraid") return entraIdFormHTML(defaults);
@@ -5391,6 +5557,7 @@ function _formHTMLForType(type, defaults) {
 }
 
 function _formConfigForType(type) {
+  if (type === "llm") return getLlmFormConfig();
   if (type === "windowsserver") return getWinFormConfig();
   if (type === "fortigate") return getFgtFormConfig();
   if (type === "entraid") return getEntraFormConfig();
@@ -5434,6 +5601,7 @@ var _INTEGRATION_PRODUCTS = {
   windowsserver:   "Windows Server",
   vcenter:         "vCenter",
   azurearc:        "Azure Arc",
+  llm:             "Local AI Assistant",
 };
 
 /** The product an operator picked to get here. Unknown types fall back to the
@@ -5476,6 +5644,9 @@ var _INTEGRATION_REQUIRED_FIELDS = {
   ],
   fortimanager: [["f-host", "host"], ["f-apiToken", "API token", true]],
   fortigate:    [["f-host", "host"], ["f-apiToken", "API token", true]],
+  // The API key is optional (Ollama / LM Studio need none), and a blank Model
+  // means the server's default pick, so only the host is required.
+  llm:          [["f-host", "host"]],
 };
 
 function _integrationRequires(type, mode) {
@@ -5639,8 +5810,125 @@ function _integrationTabs(ctx) {
   return nonFortinet;
 }
 
+// ─── Local AI Assistant model picker ──────────────────────────────────────────────────
+//
+// The server's models come from POST /integrations/test (llmService.listModels):
+// each carries toolCalling "yes" | "no" | "unknown" — from Ollama's reported
+// capabilities where the server is Ollama, otherwise unknown until the
+// operator runs "Check tool calling" (one real request offering a dummy tool,
+// POST /integrations/llm/probe-tools). `f-model` stays the field the form
+// reads; the select just writes into it, and a server whose list cannot be
+// read leaves the free-text box in place.
+
+var _llmModels = [];
+
+function _llmToolLabel(tc) {
+  return tc === "yes" ? "✓ tool calling" : tc === "no" ? "✗ no tool calling" : "tool calling unverified";
+}
+
+function _renderLlmModelStatus(id) {
+  var status = document.getElementById("f-llm-model-status");
+  var input = document.getElementById("f-model");
+  if (!status || !input) return;
+  var chosen = input.value.trim();
+  if (!_llmModels.length) return;
+  var def = _llmModels.find(function (m) { return !m.embedding && m.toolCalling === "yes"; })
+    || _llmModels.find(function (m) { return !m.embedding; });
+  var m = chosen ? _llmModels.find(function (x) { return x.id === chosen; }) : def;
+  var color = !m ? "var(--color-text-tertiary)" : m.toolCalling === "yes" ? "var(--color-success)" : m.toolCalling === "no" ? "var(--color-warning)" : "var(--color-text-tertiary)";
+  var html = "";
+  if (!m) {
+    html = '<span>Not on the server\'s list.</span>';
+  } else {
+    html = '<span style="color:' + color + '">' + escapeHtml((chosen ? m.id : "Auto → " + m.id) + " — " + _llmToolLabel(m.toolCalling)) +
+      (m.toolCallingSource === "ollama" ? " (reported by Ollama)" : m.toolCallingSource === "probe" ? " (checked)" : "") + '</span>';
+    if (m.toolCalling === "no") html += '<span>The assistant can chat with it but cannot look anything up.</span>';
+    if (m.toolCalling !== "yes") html += '<button type="button" class="btn btn-secondary btn-sm" id="f-llm-probe">Check tool calling</button>';
+  }
+  status.innerHTML = html;
+  var probe = document.getElementById("f-llm-probe");
+  if (probe && m) probe.addEventListener("click", function () { _probeLlmModel(m.id, id); });
+}
+
+function _renderLlmModelPicker(models, id) {
+  _llmModels = Array.isArray(models) ? models : [];
+  var input = document.getElementById("f-model");
+  var select = document.getElementById("f-model-select");
+  if (!input || !select) return;
+  if (!_llmModels.length) {
+    select.style.display = "none";
+    input.style.display = "";
+    var st = document.getElementById("f-llm-model-status");
+    if (st) st.textContent = "The server listed no models — type the model name.";
+    return;
+  }
+  var current = input.value.trim();
+  var def = _llmModels.find(function (m) { return !m.embedding && m.toolCalling === "yes"; })
+    || _llmModels.find(function (m) { return !m.embedding; });
+  var opts = '<option value="">Auto — ' + escapeHtml(def ? def.id : "server default") + '</option>' +
+    _llmModels.map(function (m) {
+      return '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.id + " — " + _llmToolLabel(m.toolCalling) + (m.embedding ? " (embedding)" : "")) + '</option>';
+    }).join("");
+  // A configured model the server no longer lists stays selectable, flagged.
+  if (current && !_llmModels.some(function (m) { return m.id === current; })) {
+    opts += '<option value="' + escapeHtml(current) + '">' + escapeHtml(current + " — not on the server") + '</option>';
+  }
+  select.innerHTML = opts;
+  select.value = current;
+  select.style.display = "";
+  input.style.display = "none";
+  select.onchange = function () {
+    input.value = select.value;
+    _renderLlmModelStatus(id);
+  };
+  _renderLlmModelStatus(id);
+}
+
+async function _loadLlmModels(id) {
+  var btn = document.getElementById("f-llm-load");
+  var status = document.getElementById("f-llm-model-status");
+  if (!val("f-host")) { showToast("Enter the model server's host first", "error"); return; }
+  if (btn) { btn.disabled = true; btn.textContent = "Loading…"; }
+  try {
+    var cfg = getLlmFormConfig();
+    if (id && !cfg.apiToken) delete cfg.apiToken;
+    var result = await api.integrations.testNew({ id: id || undefined, type: "llm", name: val("f-name") || "Test", config: cfg });
+    if (result.models) _renderLlmModelPicker(result.models, id);
+    else if (status) status.textContent = result.message || "Could not list the server's models";
+  } catch (err) {
+    if (status) status.textContent = (err && err.message) || "Could not list the server's models";
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Reload"; }
+  }
+}
+
+async function _probeLlmModel(model, id) {
+  var btn = document.getElementById("f-llm-probe");
+  if (btn) { btn.disabled = true; btn.textContent = "Checking… (one model call)"; }
+  try {
+    var cfg = getLlmFormConfig();
+    if (id && !cfg.apiToken) delete cfg.apiToken;
+    var r = await api.integrations.llmProbeTools({ config: cfg, model: model, id: id || undefined });
+    _llmModels.forEach(function (m) { if (m.id === model) { m.toolCalling = r.toolCalling; m.toolCallingSource = "probe"; } });
+    _renderLlmModelPicker(_llmModels, id);
+    showToast(model + ": " + _llmToolLabel(r.toolCalling), r.toolCalling === "yes" ? "success" : "warning");
+  } catch (err) {
+    showToast((err && err.message) || "The tool-calling check failed", "error");
+    if (btn) { btn.disabled = false; btn.textContent = "Check tool calling"; }
+  }
+}
+
+function _wireLlmForm(id) {
+  _llmModels = [];
+  var btn = document.getElementById("f-llm-load");
+  if (btn) btn.addEventListener("click", function () { _loadLlmModels(id); });
+  // Editing a configured integration: show its server's models straight away.
+  if (id && val("f-host")) _loadLlmModels(id);
+}
+
 /** The per-type wiring both flows run after the modal is in the DOM. */
 function _wireIntegrationModal(type, id) {
+  if (type === "llm") { _wireLlmForm(id); return; }
   var isFmgOrFgt = (type === "fortimanager" || type === "fortigate");
   if (isFmgOrFgt) {
     _wireMonitoringTabSubtabs(type);
@@ -5736,6 +6024,7 @@ async function _testNewIntegration(type) {
     config: _formConfigForType(type),
   });
   showToast(result.message, result.ok ? "success" : "error");
+  if (type === "llm" && result.models) _renderLlmModelPicker(result.models, null);
   return result;
 }
 
@@ -5862,7 +6151,10 @@ async function _createIntegration(type, tested) {
       .then(function () { loadIntegrations(); })
       .catch(function () { /* user can retry from the card */ });
   }
-  if (result && result.conflicts && result.conflicts.length) {
+  if (result && result.llmAccess) {
+    // The LLM server's API token exists only in this response (rule 94(f)).
+    _showLlmAccessModal(result.llmAccess, input.name);
+  } else if (result && result.conflicts && result.conflicts.length) {
     showConflictModal(result.id, result.conflicts);
   } else {
     // Conflict modal owns the screen when it renders, so skip the
@@ -5940,6 +6232,39 @@ function _intgEditFormSpec(intg, config) {
     var isVc = intg.type === "vcenter";
     var isArc = intg.type === "azurearc";
     var body, formGetter;
+
+    if (intg.type === "llm") {
+      var defaults = {
+        name: intg.name,
+        displayName: config.displayName,
+        host: config.host,
+        port: config.port,
+        basePath: config.basePath,
+        useHttps: config.useHttps === true,
+        verifySsl: config.verifySsl !== false,
+        apiTokenPlaceholder: config.apiToken ? "Leave blank to keep the current key" : "Optional — only if the server requires one",
+        model: config.model,
+        allowLoopback: config.allowLoopback === true,
+        temperature: config.temperature,
+        maxToolRounds: config.maxToolRounds,
+        maxRowsPerTool: config.maxRowsPerTool,
+        contextMessages: config.contextMessages,
+        requestTimeoutMs: config.requestTimeoutMs,
+        systemPromptExtra: config.systemPromptExtra,
+        roleName: config.roleName,
+        enabled: intg.enabled,
+        pollInterval: intg.pollInterval,
+        verboseLogging: config.verboseLogging === true,
+        verboseLoggingEnabledAt: config.verboseLoggingEnabledAt,
+      };
+      body = llmFormHTML(defaults);
+      formGetter = function () {
+        var fc = getLlmFormConfig();
+        if (!fc.apiToken) delete fc.apiToken;
+        return fc;
+      };
+      return { body: body, formGetter: formGetter, defaults: defaults };
+    }
 
     if (isVc) {
       var defaults = {
@@ -6186,6 +6511,7 @@ async function _testExistingIntegration(id, intg) {
     config: formConfig,
   });
   showToast(result.message, result.ok ? "success" : "error");
+  if (intg.type === "llm" && result.models) _renderLlmModelPicker(result.models, id);
   if (result.ok) loadIntegrations();
   // Direct-transport sanity check: run asynchronously so the FMG toast appears
   // immediately rather than waiting on the FortiGate probe (which can take 10s
