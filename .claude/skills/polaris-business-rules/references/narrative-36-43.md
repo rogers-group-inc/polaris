@@ -322,6 +322,47 @@ deploy), it is admin-only among the built-in roles (which is what the UI already
 it is a level a custom role can hold. The reassign verb stays at `write`: it edits an address
 and deletes nothing.
 
+### (j) An offline device has no new address to type, so it may be blanked (2026-10-07)
+
+Reassign assumes the operator KNOWS where the moving device should go. The case that broke that
+assumption: an access point in maintenance and an unmonitored endpoint both recorded on one
+address through the same FortiGate, and the endpoint was simply off. Nobody knew its next
+address — it would get whatever DHCP handed it when it came back — so the only honest answer
+was "it is not on this address any more, and we will learn where it is".
+
+So the card gains a third verb, `Clear`, on each member row: `POST /conflicts/:id/clear-ip`
+writes `ipAddress = null` with no pin and remembers the blanked address in `Asset.ipCleared`.
+The conflict closes on the same settle step reassign uses (fewer than two current claims).
+
+**Why not just null the address and walk away.** The offline device's stale lease is still in
+the gate's tables, and the next discovery run would re-stage it and re-raise the card within a
+cycle — the blank would last minutes. So `ipCleared` is a HOLD, enforced in the `db.ts`
+override guard on the same row read the IP pin already pays for (`applyIpCleared`):
+
+- a write staging a **different** address passes through and releases the hold in the same
+  write — this is the "discovery found it somewhere new" case the verb exists for, audited as
+  `asset.ip_cleared.filled`;
+- a write re-staging the **blanked** address is dropped (address and `ipSource` both) while
+  another network-present asset still records it — the stale lease cannot walk the device back
+  onto the contested address;
+- the same re-staging is let through, releasing the hold, once **nothing else** holds the
+  address — the collision is gone, so the address is legitimately the device's again. A hold
+  that never expired would strand a device whose old address became free.
+
+The "is it still contested" read fires only when a write re-stages exactly the blanked address
+on a held row, so at 2000 assets it costs nothing on the hot paths.
+
+**Why not a pin to null.** `ipOverride` is "the operator says it is HERE", and discovery
+disagreeing raises a conflict. A blank is the opposite statement — "the operator does not know
+where it is" — and discovery reporting a new address is the answer, not a disagreement, so it
+fills silently (with an Event) rather than raising anything.
+
+**The asset form had to learn it too.** The edit form re-sends its IP field on every save, and
+a blank field means "release the pin and re-project from sources" — which, for a blanked row,
+re-projects the stale lease and undoes the Clear the first time anyone edits the notes. A
+blank on a row that is already blank and held is therefore a no-op; typing an address on the
+form or reassigning ends the hold.
+
 ---
 
 <a id="rule-41"></a>

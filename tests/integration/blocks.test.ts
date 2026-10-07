@@ -109,6 +109,22 @@ d("GET /api/v1/blocks", () => {
     expect(resp.body.every((b: any) => b.tags.includes("lab"))).toBe(true);
     expect(resp.body.find((b: any) => b.name === "Prod")).toBeUndefined();
   });
+
+  it("reports utilizationPercent as address space carved into non-deprecated networks", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const block = await agent.post("/api/v1/blocks").set("X-CSRF-Token", csrf).send({ name: "Util", cidr: "10.95.0.0/22" });
+    const empty = await agent.post("/api/v1/blocks").set("X-CSRF-Token", csrf).send({ name: "Empty", cidr: "10.96.0.0/22" });
+    await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: block.body.id, cidr: "10.95.0.0/24", name: "A" });
+    const dep = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: block.body.id, cidr: "10.95.1.0/24", name: "B" });
+    await prisma.subnet.update({ where: { id: dep.body.id }, data: { status: "deprecated" } });
+
+    const resp = await agent.get("/api/v1/blocks");
+    const util = resp.body.find((b: any) => b.id === block.body.id);
+    expect(util.utilizationPercent).toBe(25);
+    expect(util._count.subnets).toBe(2);
+    expect(util.subnets).toBeUndefined();
+    expect(resp.body.find((b: any) => b.id === empty.body.id).utilizationPercent).toBe(0);
+  });
 });
 
 // ─── GET /api/v1/blocks/:id ───────────────────────────────────────────────────

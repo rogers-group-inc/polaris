@@ -90,6 +90,7 @@
   // OTHER_KEY for the uncoloured tail. Persisted with the pills — in the
   // toolbar prefs and in each saved filter.
   var hiddenPorts = [];
+  var lastLegend = null;      // the Ports key as last drawn (the export reads it)
   var OTHER_KEY = "other";
   var suggestItems = [];      // current dropdown contents
   var suggestIndex = -1;      // highlighted row, -1 = none
@@ -1172,6 +1173,7 @@
     }
 
     var positions = resolvePositions(g, preserved);
+    lastLegend = legend;
     renderPortLegend(legend);
     if (cy) { cy.destroy(); cy = null; }
     cy = cytoscape({
@@ -1414,8 +1416,8 @@
     var refresh = document.getElementById("appmap-refresh");
     if (refresh) refresh.addEventListener("click", function () { loadGraph(true); });
 
-    var shot = document.getElementById("appmap-screenshot");
-    if (shot) shot.addEventListener("click", function () { screenshotMap(); });
+    // The screenshot is an item on the Export menu (appmap-export.js), which
+    // reaches it through PolarisAppMap.screenshot.
 
     // The discovery-rules list (formerly a Discovery button + modal here) lives
     // on Integrations → Polaris Agent now; the empty-state copy points there.
@@ -1972,5 +1974,28 @@
     portHiddenEdges: portHiddenEdges,
     cleanHiddenPorts: cleanHiddenPorts,
     PORT_PALETTE: PORT_PALETTE,
+    // The Export menu's Screenshot item (graph + info rail + Ports key).
+    screenshot: function () { return screenshotMap(); },
+    // What appmap-export.js needs from the live page: the drawn graph (so the
+    // export is exactly what is on screen, dragged positions included), the
+    // daylight stylesheet (paper is white whatever the theme), the Ports key
+    // as drawn, and a plain-text account of what narrowed the view.
+    exportContext: function () {
+      var ageEl = document.getElementById("appmap-age");
+      var ageOpt = ageEl && ageEl.selectedOptions && ageEl.selectedOptions[0];
+      return {
+        cy: cy,
+        stylesheet: appmapStylesheet("light"),
+        neutralEdgeColor: neutralEdgeColor("light"),
+        legend: lastLegend,
+        portServiceName: portServiceName,
+        seenWithin: ageOpt ? ageOpt.textContent : "",
+        pills: filterPills.slice(),
+        hiddenPorts: hiddenPorts.slice(),
+        hideExternal: !!(document.getElementById("appmap-hide-external") || {}).checked,
+        hideWorkstations: !!(document.getElementById("appmap-hide-workstations") || {}).checked,
+        status: (document.getElementById("appmap-status") || {}).textContent || "",
+      };
+    },
   };
 })();

@@ -3,7 +3,7 @@
  *
  * The AI assistant is drawn BEFORE first paint on every app page, from cache
  * (PolarisAssistant.earlyMount, called at the end of app.js beside
- * _renderNavFromCache), so a page change does not blink it — business rule 94
+ * _renderNavFromCache), so a page change does not blink it — business rule 95
  * and polaris-ui-canon → canon-modals-wizards.md § Floating tool window. That
  * needs, on every page that loads app.js:
  *   - assistant.css in <head> (styled on the first frame);

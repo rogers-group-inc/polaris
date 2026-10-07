@@ -22,7 +22,7 @@ async function runScheduledDiscoveries(): Promise<void> {
     try {
       integrations = await prisma.integration.findMany({
         // `type: not llm` — the AI assistant's LLM server has nothing to
-        // discover (rule 94); its create path forces autoDiscover off too,
+        // discover (rule 95); its create path forces autoDiscover off too,
         // this keeps a hand-edited row from reaching triggerDiscovery.
         where: { enabled: true, autoDiscover: true, lastTestOk: true, type: { not: "llm" } },
         select: { id: true, name: true, pollInterval: true, lastDiscoveryAt: true },

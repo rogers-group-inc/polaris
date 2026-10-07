@@ -64,8 +64,22 @@ export async function attachApiToken(req: Request, _res: Response, next: NextFun
     const raw = extractBearerToken(req);
     if (!raw) return next();
     const callerIp = (req.ip || req.socket.remoteAddress || null) ?? null;
-    const token = await verifyToken(raw, callerIp);
-    if (token) req.apiToken = token;
+    const result = await verifyToken(raw, callerIp);
+    if (result.ok) {
+      req.apiToken = result.token;
+    } else if (result.reason === "untrusted_host") {
+      // A real token from outside its trusted hosts: refuse outright rather
+      // than fall through to a bare 401, and name the address Polaris saw —
+      // behind a proxy with TRUST_PROXY unset that is the proxy's own
+      // address, which is the most likely reason a correct list "fails".
+      return next(
+        new AppError(
+          403,
+          `API token "${result.tokenName}" is not accepted from ${result.callerIp || "this source address"} — ` +
+            "add the address to the token's trusted hosts, or if Polaris sits behind a reverse proxy, check TRUST_PROXY",
+        ),
+      );
+    }
     next();
   } catch {
     // Swallow — invalid token is the same as no token. The downstream

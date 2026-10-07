@@ -3028,6 +3028,8 @@ var _MONITORED_VIA_LABELS = {
   icmp:     "ICMP",
   vcenter:  "vCenter",
   fortimanager: "FortiManager",
+  unraid:   "Unraid",
+  truenas:  "TrueNAS",
 };
 
 // "Monitored Via" cell — renders how the asset is actually monitored from the
@@ -4892,10 +4894,11 @@ async function openEditModal(id, opts) {
           // The operator chose the merge review over the conflict card: open
           // it now, over the list, instead of re-rendering the details panel
           // for a record they are about to fold into another one.
+          if (_isCurrentAsset(id)) closeAssetPanel();
           openAssetMergeModal(id, pre.mergeWith, { onMerged: loadAssets });
         } else if (_isCurrentAsset(id)) {
-          // The details panel can still be open behind this modal (locked
-          // slide-over, or the monitoring-pill path that never closes it) —
+          // The details panel stays open behind this modal (neither the
+          // panel's Edit button nor the monitoring-pill path closes it) —
           // re-render it so it doesn't sit on the pre-save values.
           openViewModal(id);
         }
@@ -5665,13 +5668,10 @@ async function openViewModal(id, opts) {
     var editBtn = document.getElementById("btn-asset-panel-edit-btn");
     if (editBtn) {
       editBtn.addEventListener("click", function () {
-        // A locked slide-over stays pinned open — the edit modal stacks over it
-        // (openModal's .above-slideover), same as the monitoring-pill path that
-        // already opens the modal without closing the panel. The save handler
+        // The slide-over stays open — the edit modal stacks over it
+        // (openModal's .above-slideover), same as the monitoring-pill path.
+        // Cancelling the modal lands back on the panel; the save handler
         // refreshes the panel behind it so it can't show pre-save values.
-        if (!(typeof isPanelLocked === "function" && isPanelLocked("slideover"))) {
-          closeAssetPanel();
-        }
         openEditModal(a.id);
       });
     }
@@ -5918,6 +5918,7 @@ function _mountAssetViewAsyncSections(a, dependencies, sources, sightings, manag
         if (!res || !res.virtualization) return;
         virtMount.innerHTML = _assetVirtualizationHTML(res);
         _wireDependencyTreeLinks(virtMount);
+        _wireWorkloadActions(virtMount, a, res);
       }).catch(function (err) { console.warn("Failed to load virtualization info", err); });
     }
     // Mount the Polaris Agent panel into the System tab placeholder + wire
@@ -6280,13 +6281,16 @@ function _agentStatusColor(s) {
 // has nowhere to put a Go binary.
 var _AGENT_INSTALLABLE_SOURCES = [
   "manual", "activedirectory", "entraid", "windowsserver", "azurearc", "vcenter",
+  // A VM on an Unraid / TrueNAS host is a guest OS like a vCenter VM; the host
+  // and its containers are refused below by type.
+  "unraid", "truenas",
 ];
 
 // True when an install could actually succeed on this asset: compatible
 // source, and not an ESXi host (POST /assets/:id/agent/install 400s on
 // `assetType === "hypervisor"`, and the bulk path skips it).
 function _assetSupportsAgentInstall(a) {
-  if (!a || a.assetType === "hypervisor") return false;
+  if (!a || a.assetType === "hypervisor" || a.assetType === "container") return false;
   var kind = (a.discoveredByIntegration && a.discoveredByIntegration.type) || "manual";
   // An integration type this build doesn't know reads as "manual" server-side
   // (assetSourceKindFromIntegrationType's default) — match that rather than
@@ -7409,6 +7413,11 @@ function _confirmUninstallAgent(a, force) {
 //             the OS accounts for them.
 //   vcenter — a VM's vCPUs or an ESXi host's physical cores from the
 //             PerformanceManager, and vSphere's own memory bands.
+//   unraid / truenas — the HOST only: Unraid's metrics.cpu.cpus and
+//             TrueNAS's reporting.realtime carry every core; memory is used +
+//             total bytes, which the memory chart draws as its one band. Their
+//             VMs and containers report a single CPU figure (or none), so those
+//             keep the combined chart.
 //
 // FortiOS REST, SNMP, WinRM and SSH report one CPU figure and one memory
 // figure per sample, and two of those on two stacked 200px charts is the
@@ -7421,9 +7430,13 @@ function _confirmUninstallAgent(a, force) {
 // can carry either method too, and _resolvedStreamPolling is the same walk
 // the section badge and the stale banner use.
 var _SPLIT_CHART_METHODS = ["agent", "vcenter"];
+var _SPLIT_CHART_HOST_METHODS = ["unraid", "truenas"];
 
 function _telemetrySplitsCpuMemory(a) {
-  return _SPLIT_CHART_METHODS.indexOf(_resolvedStreamPolling(a, "telemetry")) >= 0;
+  var method = _resolvedStreamPolling(a, "telemetry");
+  if (_SPLIT_CHART_METHODS.indexOf(method) >= 0) return true;
+  return _SPLIT_CHART_HOST_METHODS.indexOf(method) >= 0 &&
+    !!(a && a.virtualization && a.virtualization.role === "host");
 }
 
 function assetSystemViewHTML(a) {
@@ -7958,7 +7971,7 @@ function _resolvedStreamPolling(asset, stream) {
 // the vendor disk-scalar pair as fallback, ssh reads `df`, winrm reads
 // Get-Volume) and the heavy system-info pass (the same SNMP walk, the agent's
 // own push, or the vCenter warm cache's guest filesystems / host datastores).
-var _STORAGE_DELIVERING_METHODS = ["snmp", "ssh", "winrm", "agent", "vcenter"];
+var _STORAGE_DELIVERING_METHODS = ["snmp", "ssh", "winrm", "agent", "vcenter", "unraid", "truenas"];
 
 // Interfaces-stream methods that deliver ANY heavy-cadence system data, and so
 // gate the System tab as a whole. `vcenter` belongs here since the 2026-08
@@ -7967,7 +7980,7 @@ var _STORAGE_DELIVERING_METHODS = ["snmp", "ssh", "winrm", "agent", "vcenter"];
 // table like any other inventory (see the Virtualization section's own note).
 // It was missing, so a vCenter-monitored asset was told to switch to a
 // transport it doesn't use in order to see data it was already collecting.
-var _SYSTEM_TAB_IFACE_METHODS = ["rest_api", "snmp", "agent", "vcenter"];
+var _SYSTEM_TAB_IFACE_METHODS = ["rest_api", "snmp", "agent", "vcenter", "unraid", "truenas"];
 
 function _storageStreamDelivers(asset) {
   if (!asset) return false;
@@ -10910,7 +10923,185 @@ function _vcUsageBar(usedBytes, totalBytes) {
     '<span style="font-size:0.75rem;color:var(--color-text-tertiary)">' + pct.toFixed(0) + '%</span>';
 }
 
+// ─── Workload section (Unraid / TrueNAS SCALE) ─────────────────────────────
+// The General-tab block for an asset whose virtualization blob carries a
+// `platform` — a host (its pools + the VMs / containers placed on it) or a
+// VM / container (its host, state, image, update status). VMs and containers
+// get the business-rule-94 action bar once GET /assets/:id/workload answers
+// with the live state; the bar is drawn only for assets:write.
+
+function _wlStateBadge(state) {
+  var s = String(state || "").toLowerCase();
+  var label = s === "running" ? "Running" : s === "stopped" ? "Stopped" : s === "paused" ? "Paused" : (state ? String(state) : "—");
+  var color = s === "running" ? "var(--color-success,#4caf50)" : s === "paused" ? "var(--color-warning,#ffb74d)" : "var(--color-text-tertiary)";
+  return '<span style="color:' + color + '">●</span> ' + escapeHtml(label);
+}
+
+function _wlUpdateBadge(updateAvailable) {
+  if (updateAvailable === true) return ' <span class="badge badge-update" title="The platform reports a newer image / version">Update available</span>';
+  return "";
+}
+
+function _assetWorkloadHTML(res) {
+  var v = res.virtualization || {};
+  var isTn = v.platform === "truenas";
+  var product = isTn ? "TrueNAS SCALE" : "Unraid";
+  var header = '<p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1px;color:var(--color-text-tertiary);margin:1.25rem 0 0.75rem 0">' + escapeHtml(product) + '</p>';
+  var tableStyle = 'width:100%;border-collapse:collapse;font-size:0.83rem';
+  var thStyle = 'text-align:left;padding:4px 8px;color:var(--color-text-tertiary);font-weight:500;border-bottom:1px solid var(--color-border)';
+  var tdStyle = 'padding:4px 8px;border-bottom:1px solid var(--color-border)';
+
+  if (v.role === "host") {
+    var rows =
+      '<div class="asset-view-grid">' +
+        '<div class="detail-row"><span class="detail-label">Platform</span><span class="detail-value">' + escapeHtml((v.os || product) + (v.osVersion ? " " + v.osVersion : "")) + '</span></div>' +
+        (v.cpuCount != null ? '<div class="detail-row"><span class="detail-label">CPU Threads</span><span class="detail-value">' + escapeHtml(String(v.cpuCount)) + '</span></div>' : '') +
+        (v.memTotalBytes != null ? '<div class="detail-row"><span class="detail-label">Memory</span><span class="detail-value">' + _fmtBytes(v.memTotalBytes) + '</span></div>' : '') +
+        '<div class="detail-row"><span class="detail-label">Workloads</span><span class="detail-value">' + (v.vmCount || 0) + ' VM(s), ' + (v.containerCount || 0) + (isTn ? ' App(s)' : ' container(s)') + '</span></div>' +
+      '</div>';
+    var pools = Array.isArray(v.pools) ? v.pools : [];
+    var poolHtml = pools.length === 0 ? "" :
+      '<div style="margin-top:0.75rem;overflow-x:auto"><table style="' + tableStyle + '">' +
+        '<thead><tr><th style="' + thStyle + '">Pool</th><th style="' + thStyle + '">Kind</th><th style="' + thStyle + '">Health</th><th style="' + thStyle + '">Capacity</th><th style="' + thStyle + '">Used</th><th style="' + thStyle + '">Usage</th></tr></thead><tbody>' +
+        pools.map(function (p) {
+          return '<tr>' +
+            '<td style="' + tdStyle + '">' + escapeHtml(p.name) + '</td>' +
+            '<td style="' + tdStyle + '">' + escapeHtml(p.kind || "—") + '</td>' +
+            '<td style="' + tdStyle + '">' + escapeHtml(p.health || "—") + '</td>' +
+            '<td style="' + tdStyle + '">' + _fmtBytes(p.totalBytes) + '</td>' +
+            '<td style="' + tdStyle + '">' + _fmtBytes(p.usedBytes) + '</td>' +
+            '<td style="' + tdStyle + '"><div style="display:flex;align-items:center;gap:6px">' + _vcUsageBar(p.usedBytes, p.totalBytes) + '</div></td>' +
+          '</tr>';
+        }).join("") +
+      '</tbody></table></div>';
+    var wls = res.workloads || [];
+    var wlHtml = wls.length === 0 ? "" :
+      '<div style="margin-top:0.75rem;overflow-x:auto"><table style="' + tableStyle + '">' +
+        '<thead><tr><th style="' + thStyle + '">Workload</th><th style="' + thStyle + '">Kind</th><th style="' + thStyle + '">State</th><th style="' + thStyle + '">Monitor</th></tr></thead><tbody>' +
+        wls.map(function (w) {
+          var kind = w.role === "vm" ? "VM" : (isTn ? "App" : "Container");
+          return '<tr>' +
+            '<td style="' + tdStyle + '"><a href="#" class="dep-tree-link" data-asset-id="' + escapeHtml(w.id) + '">' + escapeHtml(w.hostname || w.id) + '</a>' + _wlUpdateBadge(w.updateAvailable) + '</td>' +
+            '<td style="' + tdStyle + '">' + kind + '</td>' +
+            '<td style="' + tdStyle + '">' + _wlStateBadge(w.state) + '</td>' +
+            '<td style="' + tdStyle + '">' + (w.monitored ? escapeHtml(w.monitorStatus || "—") : '<span style="color:var(--color-text-tertiary)">not monitored</span>') + '</td>' +
+          '</tr>';
+        }).join("") +
+      '</tbody></table></div>';
+    return header + rows + poolHtml + wlHtml;
+  }
+
+  // VM or container / App
+  var hostAsset = res.hostAsset || null;
+  var hostHtml = hostAsset
+    ? '<a href="#" class="dep-tree-link" data-asset-id="' + escapeHtml(hostAsset.id) + '">' + escapeHtml(hostAsset.hostname || v.hostName || "host") + '</a>'
+    : escapeHtml(v.hostName || "—");
+  var isCtr = v.role === "container";
+  var ports = Array.isArray(v.ports) ? v.ports : [];
+  var body =
+    '<div class="asset-view-grid">' +
+      '<div class="detail-row"><span class="detail-label">Host</span><span class="detail-value">' + hostHtml + '</span></div>' +
+      '<div class="detail-row"><span class="detail-label">State</span><span class="detail-value" data-wl-state>' + _wlStateBadge(v.state) + (v.rawState && String(v.rawState).toLowerCase() !== String(v.state || "").toLowerCase() ? ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(' + escapeHtml(v.rawState) + ')</span>' : '') + '</span></div>' +
+      (isCtr && v.image ? '<div class="detail-row"><span class="detail-label">Image</span><span class="detail-value mono">' + escapeHtml(v.image) + '</span></div>' : '') +
+      (isCtr && v.version ? '<div class="detail-row"><span class="detail-label">Version</span><span class="detail-value">' + escapeHtml(v.version) + (v.latestVersion && v.latestVersion !== v.version ? ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(latest ' + escapeHtml(v.latestVersion) + ')</span>' : '') + '</span></div>' : '') +
+      (isCtr ? '<div class="detail-row"><span class="detail-label">Updates</span><span class="detail-value" data-wl-update>' + (v.updateAvailable === true ? _wlUpdateBadge(true) : v.updateAvailable === false ? 'Up to date' : '<span style="color:var(--color-text-tertiary)">Not checked</span>') + '</span></div>' : '') +
+      (isCtr && isTn && v.memberCount != null ? '<div class="detail-row"><span class="detail-label">Containers</span><span class="detail-value">' + escapeHtml(String(v.memberCount)) + '</span></div>' : '') +
+      (ports.length > 0 ? '<div class="detail-row"><span class="detail-label">Ports</span><span class="detail-value mono">' + escapeHtml(ports.join(", ")) + '</span></div>' : '') +
+      (!isCtr && v.cpuCount != null ? '<div class="detail-row"><span class="detail-label">vCPUs</span><span class="detail-value">' + escapeHtml(String(v.cpuCount)) + '</span></div>' : '') +
+      (!isCtr && v.memoryBytes != null ? '<div class="detail-row"><span class="detail-label">Memory</span><span class="detail-value">' + _fmtBytes(v.memoryBytes) + '</span></div>' : '') +
+      (v.autostart != null ? '<div class="detail-row"><span class="detail-label">Autostart</span><span class="detail-value">' + (v.autostart ? "Yes" : "No") + '</span></div>' : '') +
+      (v.monitoringPausedByStop ? '<div class="detail-row"><span class="detail-label">Monitoring</span><span class="detail-value" style="color:var(--color-warning)">Paused — stopped from Polaris; starting it from here resumes monitoring</span></div>' : '') +
+    '</div>' +
+    // The action bar fills in once the live state arrives (_wireWorkloadActions).
+    '<div data-wl-actions style="margin-top:0.6rem"></div>';
+  return header + body;
+}
+
+/**
+ * Fetch the live state and draw the action bar (business rule 94). Only for
+ * assets:write — a reader sees the card without verbs. Every verb confirms;
+ * a stop pauses monitoring unless "Keep monitoring while stopped" is ticked.
+ */
+function _wireWorkloadActions(mount, asset, res) {
+  var v = (res && res.virtualization) || {};
+  if (v.role !== "vm" && v.role !== "container") return;
+  var bar = mount.querySelector("[data-wl-actions]");
+  if (!bar || !(typeof canManageAssets === "function" && canManageAssets())) return;
+  var name = asset.hostname || "this workload";
+  var what = v.role === "vm" ? "VM" : (v.platform === "truenas" ? "App" : "container");
+  bar.innerHTML = '<span style="color:var(--color-text-tertiary);font-size:0.85rem">Reading live state…</span>';
+
+  function render(status) {
+    var verbs = status.verbs || [];
+    var labels = { start: "Start", stop: "Stop", restart: "Restart", update: "Update" };
+    var btns = verbs.map(function (verb) {
+      var cls = verb === "stop" ? "btn-danger" : verb === "update" ? "btn-primary" : "btn-secondary";
+      return '<button type="button" class="btn btn-sm ' + cls + '" data-wl-verb="' + verb + '" style="margin-right:6px">' + labels[verb] + '</button>';
+    }).join("");
+    if (status.role === "container") {
+      btns += '<button type="button" class="btn btn-sm btn-secondary" data-wl-check style="margin-right:6px">Check for updates</button>';
+    }
+    var keepMon = verbs.indexOf("stop") !== -1
+      ? '<label style="display:inline-flex;align-items:center;gap:6px;font-size:0.82rem;margin-left:4px"><input type="checkbox" data-wl-keepmon style="width:auto"> Keep monitoring while stopped</label>'
+      : "";
+    bar.innerHTML = '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px">' + btns + keepMon + '</div>';
+    var stateCell = mount.querySelector("[data-wl-state]");
+    if (stateCell) stateCell.innerHTML = _wlStateBadge(status.state);
+    var updCell = mount.querySelector("[data-wl-update]");
+    if (updCell) updCell.innerHTML = status.updateAvailable === true ? _wlUpdateBadge(true) : status.updateAvailable === false ? "Up to date" : '<span style="color:var(--color-text-tertiary)">Not checked</span>';
+
+    Array.prototype.forEach.call(bar.querySelectorAll("[data-wl-verb]"), function (btn) {
+      btn.addEventListener("click", async function () {
+        var verb = btn.getAttribute("data-wl-verb");
+        var keep = bar.querySelector("[data-wl-keepmon]");
+        var pause = verb === "stop" && !(keep && keep.checked);
+        var msg = verb === "update"
+          ? "Update " + what + " \"" + name + "\" to the newest version " + (v.platform === "truenas" ? "TrueNAS" : "Unraid") + " offers?\n\nIt restarts during the update. Alerts are held for its duration."
+          : verb === "restart"
+          ? "Restart " + what + " \"" + name + "\"?\n\nAlerts are held while it restarts."
+          : verb === "stop"
+          ? "Stop " + what + " \"" + name + "\"?" + (pause ? "\n\nMonitoring is paused until it is started again from Polaris." : "\n\nMonitoring stays on, so it will be reported down.")
+          : "Start " + what + " \"" + name + "\"?";
+        if (!(await showConfirm(msg))) return;
+        Array.prototype.forEach.call(bar.querySelectorAll("button"), function (b) { b.disabled = true; });
+        btn.textContent = verb === "update" ? "Updating…" : verb === "restart" ? "Restarting…" : verb === "stop" ? "Stopping…" : "Starting…";
+        try {
+          var r = await api.assets.workloadAction(asset.id, verb, verb === "stop" ? { pauseMonitoring: pause } : {});
+          showToast((r && r.message) || "Done", "success");
+        } catch (err) {
+          showToast((err && err.message) || "Action failed", "error");
+        }
+        load();
+      });
+    });
+    var check = bar.querySelector("[data-wl-check]");
+    if (check) {
+      check.addEventListener("click", async function () {
+        check.disabled = true;
+        check.textContent = "Checking…";
+        try {
+          render(await api.assets.workloadCheckUpdates(asset.id));
+        } catch (err) {
+          showToast((err && err.message) || "Update check failed", "error");
+          check.disabled = false;
+          check.textContent = "Check for updates";
+        }
+      });
+    }
+  }
+
+  function load() {
+    api.assets.workload(asset.id).then(render).catch(function (err) {
+      bar.innerHTML = '<span style="color:var(--color-text-tertiary);font-size:0.85rem">' + escapeHtml((err && err.message) || "Live state unavailable") + '</span>';
+    });
+  }
+  load();
+}
+
 function _assetVirtualizationHTML(res) {
+  if (res && res.virtualization && (res.virtualization.platform === "unraid" || res.virtualization.platform === "truenas")) {
+    return _assetWorkloadHTML(res);
+  }
   var v = res.virtualization || {};
   var header = '<p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1px;color:var(--color-text-tertiary);margin:1.25rem 0 0.75rem 0">Virtualization</p>';
   var tableStyle = 'width:100%;border-collapse:collapse;font-size:0.83rem';
@@ -12116,8 +12307,7 @@ function _cpuLegendHTML(coreCount, hidden, data, asset) {
       ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;color:var(--color-accent)">Show all</span>';
   }
   // Why a range can show no cores even on a source that reports them:
-  // per-core data is kept on the DETAIL tier only, on the agent and on
-  // vCenter alike. Saying so beats letting the operator conclude the source
+  // per-core data is kept on the DETAIL tier only, whichever source sent it. Saying so beats letting the operator conclude the source
   // stopped reporting them. A source that never reports cores gets no note
   // — "pick a shorter range" would send a FortiGate operator nowhere.
   var note = "";
@@ -12830,6 +13020,8 @@ function _probeMethodLabel(a) {
     case "icmp":         return "ICMP ping";
     case "fortimanager": return "FortiManager roster";
     case "vcenter":      return "vCenter";
+    case "unraid":       return "Unraid";
+    case "truenas":      return "TrueNAS";
     case "agent":        return "Polaris Agent";
     default:             return polling;
   }
@@ -12863,6 +13055,8 @@ function _assetIntegrationLabelWithController(asset, joiner) {
     windowsserver:   "Windows Server",
     vcenter:         "vCenter",
     azurearc:        "Azure Arc",
+    unraid:          "Unraid",
+    truenas:         "TrueNAS SCALE",
   };
   var label = (typeLabels[integration.type] || integration.type) + joiner + integration.name;
   if (asset.assetType !== "switch" && asset.assetType !== "access_point") return label;
@@ -13255,7 +13449,11 @@ function _assetDiscoverNowBtnHTML(a) {
     || integ.type === "vcenter" || integ.type === "azurearc");
 
   var disabledReason = "";
-  if (!isGate && !isInfra && !isDirectory) {
+  if (integ && (integ.type === "unraid" || integ.type === "truenas")) {
+    // Mirrors NOT_YET_SCOPED in assetDiscoveryScope.ts: the whole host is one
+    // read, so the integration's own Discover is the refresh.
+    disabledReason = "Unraid / TrueNAS read the whole host in one call — run Discover on the integration to refresh it. State and usage refresh every monitor tick.";
+  } else if (!isGate && !isInfra && !isDirectory) {
     disabledReason = "No discovery source owns this asset, so there is nothing to re-run.";
   } else if (isGate && !fortinetIntg) {
     disabledReason = "This FortiGate is not owned by a FortiManager or FortiGate integration.";
@@ -25416,28 +25614,73 @@ function _trEdgeColor(e) {
   return "var(--color-success)";
 }
 
-/** Pure: the path graph as SVG. `source` is this host ({hostname, ipAddress}). */
-function _trPathSVG(g, source, minWidth) {
-  // Columns shrink to fit the panel before the graph scrolls: source and
-  // destination on one screen is the point of the view.
+/**
+ * Pure: where everything on the path graph sits. Columns shrink to fit the
+ * panel before the graph scrolls (source and destination on one screen is the
+ * point of the view); `minWidth` null gives the roomiest columns, which is
+ * what the export draws. Shared by the on-screen SVG and the export scene so
+ * the two cannot drift.
+ */
+function _trPathLayout(g, minWidth) {
   var MINCOL = 76, MAXCOL = 130, ROWH = 74, PADX = 12, PADT = 22, R = 13;
+  if (minWidth == null) minWidth = PADX * 2 + g.cols * MAXCOL;
   var rows = 1;
   Object.keys(g.nodes).forEach(function (k) { rows = Math.max(rows, g.nodes[k].row + 1); });
   var colW = Math.max(MINCOL, Math.min(MAXCOL, ((minWidth || 0) - PADX * 2) / g.cols));
   var W = Math.max(minWidth || 0, PADX * 2 + g.cols * colW);
   var offX = (W - g.cols * colW) / 2;
-  var H = PADT + rows * ROWH + 4;
-  function pos(n) { return { x: offX + n.col * colW + colW / 2, y: PADT + R + n.row * ROWH }; }
-  function clip(s, px) { var max = Math.max(4, Math.floor(px / 6.2)); s = String(s || ""); return s.length > max ? s.slice(0, max - 1) + "…" : s; }
+  return {
+    W: W, H: PADT + rows * ROWH + 4, R: R,
+    pos: function (n) { return { x: offX + n.col * colW + colW / 2, y: PADT + R + n.row * ROWH }; },
+    clip: function (s) { var max = Math.max(4, Math.floor((colW - 8) / 6.2)); s = String(s || ""); return s.length > max ? s.slice(0, max - 1) + "…" : s; },
+  };
+}
+
+/**
+ * Pure: how one node reads — its glyph, its name, the line under the name,
+ * and its colours (theme tokens, or a monitor-state hex). Shared by the SVG
+ * and the export scene.
+ */
+function _trNodeView(g, k, source) {
+  var n = g.nodes[k], h = n.hop || {};
+  var rtt = h.rttMs ? _trHopRtt(h.rttMs) : null;
+  var v = { fill: null, stroke: "var(--color-text-secondary)", text: "var(--color-text-primary)", dashed: false,
+    strokeWidth: k === "dst" ? 3 : 1.5, opacity: n.onSel || k === "src" ? 1 : 0.45, glyph: "", name: "", sub: "" };
+  if (k === "src") {
+    v.fill = "var(--color-accent)"; v.stroke = v.fill; v.text = "#fff"; v.glyph = "⌂";
+    v.name = (source && source.hostname) || "This host"; v.sub = "source";
+  } else if (k === "dst") {
+    v.fill = h.monitorStatus && MONITOR_STATE_COLORS[h.monitorStatus] ? MONITOR_STATE_COLORS[h.monitorStatus] : "var(--color-bg-primary)";
+    v.glyph = "◎"; if (v.fill.charAt(0) === "#") { v.stroke = v.fill; v.text = "#fff"; }
+    v.name = h.hostname || h.rdns || g.destIp || "Destination"; v.sub = rtt ? (Math.round(rtt.avg * 10) / 10) + " ms" : "destination";
+  } else if (!h.ip) {
+    v.stroke = "var(--color-text-tertiary)"; v.dashed = true; v.text = "var(--color-text-tertiary)";
+    v.glyph = "*"; v.name = "no reply"; v.sub = "TTL " + n.ttl;
+  } else {
+    var sc = h.monitorStatus && MONITOR_STATE_COLORS[h.monitorStatus];
+    v.fill = sc || "var(--color-bg-primary)"; if (sc) { v.stroke = sc; v.text = "#fff"; }
+    v.glyph = String(n.ttl); v.name = h.hostname || h.rdns || h.ip; v.sub = rtt ? (Math.round(rtt.avg * 10) / 10) + " ms" : "—";
+  }
+  return v;
+}
+
+/** Pure: a link's stroke width — thicker the more traces took it. */
+function _trEdgeWidth(g, e) {
+  var w = 1.25 + 3 * (e.traces / Math.max(1, g.traces));
+  return e.onSel ? Math.max(2.5, w) : w;
+}
+
+/** Pure: the path graph as SVG. `source` is this host ({hostname, ipAddress}). */
+function _trPathSVG(g, source, minWidth) {
+  var L = _trPathLayout(g, minWidth || 0), R = L.R, W = L.W, H = L.H;
   var edgeSvg = "", nodeSvg = "", hitSvg = "";
   // Unselected routes first so the selected one paints on top.
   g.edges.slice().sort(function (a, b) { return (a.onSel ? 1 : 0) - (b.onSel ? 1 : 0); }).forEach(function (e) {
-    var a = pos(g.nodes[e.from]), b = pos(g.nodes[e.to]);
+    var a = L.pos(g.nodes[e.from]), b = L.pos(g.nodes[e.to]);
     var x1 = a.x + R, x2 = b.x - R, mx = (x1 + x2) / 2;
-    var w = (1.25 + 3 * (e.traces / Math.max(1, g.traces))).toFixed(2);
     var dash = e.broken || e.unanswered ? ' stroke-dasharray="5 4"' : "";
     edgeSvg += '<path d="M' + x1.toFixed(1) + "," + a.y + " C" + mx.toFixed(1) + "," + a.y + " " + mx.toFixed(1) + "," + b.y + " " + x2.toFixed(1) + "," + b.y +
-      '" fill="none" stroke="' + _trEdgeColor(e) + '" stroke-width="' + (e.onSel ? Math.max(2.5, +w) : w) + '"' + dash +
+      '" fill="none" stroke="' + _trEdgeColor(e) + '" stroke-width="' + +_trEdgeWidth(g, e).toFixed(2) + '"' + dash +
       ' stroke-linecap="round" opacity="' + (e.onSel ? 1 : 0.35) + '"/>';
     if (e.broken && e.onSel) {
       var cx = (x1 + x2) / 2, cy = (a.y + b.y) / 2;
@@ -25447,35 +25690,83 @@ function _trPathSVG(g, source, minWidth) {
     }
   });
   Object.keys(g.nodes).forEach(function (k) {
-    var n = g.nodes[k], p = pos(n), h = n.hop || {};
-    var rtt = h.rttMs ? _trHopRtt(h.rttMs) : null;
-    var fill, stroke = "var(--color-text-secondary)", text = "var(--color-text-primary)", dash = "", glyph, name, sub;
-    if (k === "src") {
-      fill = "var(--color-accent)"; stroke = fill; text = "#fff"; glyph = "⌂";
-      name = (source && source.hostname) || "This host"; sub = "source";
-    } else if (k === "dst") {
-      fill = h.monitorStatus && MONITOR_STATE_COLORS[h.monitorStatus] ? MONITOR_STATE_COLORS[h.monitorStatus] : "var(--color-bg-primary)";
-      glyph = "◎"; if (fill.charAt(0) === "#") { stroke = fill; text = "#fff"; }
-      name = h.hostname || h.rdns || g.destIp || "Destination"; sub = rtt ? (Math.round(rtt.avg * 10) / 10) + " ms" : "destination";
-    } else if (!h.ip) {
-      fill = "none"; stroke = "var(--color-text-tertiary)"; dash = ' stroke-dasharray="3 3"'; text = "var(--color-text-tertiary)";
-      glyph = "*"; name = "no reply"; sub = "TTL " + n.ttl;
-    } else {
-      var sc = h.monitorStatus && MONITOR_STATE_COLORS[h.monitorStatus];
-      fill = sc || "var(--color-bg-primary)"; if (sc) { stroke = sc; text = "#fff"; }
-      glyph = String(n.ttl); name = h.hostname || h.rdns || h.ip; sub = rtt ? (Math.round(rtt.avg * 10) / 10) + " ms" : "—";
-    }
-    var op = n.onSel || k === "src" ? 1 : 0.45;
-    nodeSvg += '<g opacity="' + op + '">' +
-      '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y + '" r="' + R + '" fill="' + fill + '" stroke="' + stroke + '" stroke-width="' + (k === "dst" ? 3 : 1.5) + '"' + dash + "/>" +
-      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + 4) + '" text-anchor="middle" font-size="11" font-weight="600" fill="' + text + '">' + escapeHtml(glyph) + "</text>" +
-      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + R + 14) + '" text-anchor="middle" font-size="11" fill="var(--color-text-primary)">' + escapeHtml(clip(name, colW - 8)) + "</text>" +
-      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + R + 27) + '" text-anchor="middle" font-size="10" fill="var(--color-text-secondary)">' + escapeHtml(clip(sub, colW - 8)) + "</text>" +
+    var p = L.pos(g.nodes[k]), h = g.nodes[k].hop || {}, v = _trNodeView(g, k, source);
+    nodeSvg += '<g opacity="' + v.opacity + '">' +
+      '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y + '" r="' + R + '" fill="' + (v.fill || "none") + '" stroke="' + v.stroke + '" stroke-width="' + v.strokeWidth + '"' +
+        (v.dashed ? ' stroke-dasharray="3 3"' : "") + "/>" +
+      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + 4) + '" text-anchor="middle" font-size="11" font-weight="600" fill="' + v.text + '">' + escapeHtml(v.glyph) + "</text>" +
+      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + R + 14) + '" text-anchor="middle" font-size="11" fill="var(--color-text-primary)">' + escapeHtml(L.clip(v.name)) + "</text>" +
+      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + R + 27) + '" text-anchor="middle" font-size="10" fill="var(--color-text-secondary)">' + escapeHtml(L.clip(v.sub)) + "</text>" +
       "</g>";
     hitSvg += '<circle class="chart-hit" data-k="' + escapeHtml(k) + '" cx="' + p.x.toFixed(1) + '" cy="' + p.y + '" r="' + (R + 5) + '" fill="transparent"' +
       (h.assetId ? ' style="cursor:pointer"' : "") + "/>";
   });
   return '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" style="display:block;font-family:inherit">' + edgeSvg + nodeSvg + hitSvg + "</svg>";
+}
+
+// Paper is white whatever theme is on screen: the daylight (noon) values of
+// the tokens the path graph paints with.
+var _TR_PAPER_COLORS = {
+  "var(--color-accent)": "#0288d1", "var(--color-bg-primary)": "#ffffff",
+  "var(--color-text-primary)": "#1a1a2e", "var(--color-text-secondary)": "#555570", "var(--color-text-tertiary)": "#8080a0",
+  "var(--color-success)": "#2e7d32", "var(--color-warning)": "#f57f17", "var(--color-danger)": "#c62828",
+  "#fff": "#ffffff",
+};
+
+/**
+ * Pure: the path graph as a graph-export.js scene — model px are the SVG's px
+ * at the roomiest column width, colours the daylight palette. `mix(hex,
+ * alpha)` is PolarisGraphExport.mixWithWhite: paper has no alpha, so a faded
+ * branch is resolved to its colour over white. `pdfText` is its WinAnsi
+ * mapping, applied to what the PDF prints (a hostname can hold anything).
+ * A circle's glyph, its name and the line under it are three text-only boxes,
+ * because a scene label carries one font size and colour.
+ */
+function _trPathScene(g, source, mix, pdfText) {
+  var L = _trPathLayout(g, null), R = L.R;
+  function paper(c) { return c == null ? null : _TR_PAPER_COLORS[c] || c; }
+  function label(text, pdf, fontPx, color, valign, my, bold) {
+    return { lines: [text], pdfLines: [pdfText(pdf)], fontPx: fontPx, mono: false, bold: !!bold, italic: false, color: color,
+      bg: null, valign: valign, halign: "center", mx: 0, my: my };
+  }
+  function line(path, color, width, style) {
+    return { path: path, color: color, width: width, style: style, arrowTarget: null, arrowSource: null, label: null,
+      mid: { x: (path[0].x + path[path.length - 1].x) / 2, y: (path[0].y + path[path.length - 1].y) / 2 }, z: 0 };
+  }
+  var scene = { under: [], parents: [], edges: [], nodes: [], minFontPx: 10, icons: [],
+    bbox: { x1: 0, y1: 0, x2: L.W, y2: L.H, w: L.W, h: L.H } };
+  g.edges.slice().sort(function (a, b) { return (a.onSel ? 1 : 0) - (b.onSel ? 1 : 0); }).forEach(function (e) {
+    var a = L.pos(g.nodes[e.from]), b = L.pos(g.nodes[e.to]);
+    var x1 = a.x + R, x2 = b.x - R, mx = (x1 + x2) / 2, my = (a.y + b.y) / 2, q = (x2 - x1) / 4;
+    // The SVG's S-curve is one cubic with both handles at mid-x; drawn here as
+    // the quadratic on each side of its midpoint, tangent where the cubic is.
+    scene.edges.push(line(
+      [{ type: "M", x: x1, y: a.y }, { type: "Q", cx: x1 + q, cy: a.y, x: mx, y: my }, { type: "Q", cx: x2 - q, cy: b.y, x: x2, y: b.y }],
+      mix(paper(_trEdgeColor(e)), e.onSel ? 1 : 0.35), _trEdgeWidth(g, e), e.broken || e.unanswered ? "dashed" : "solid"));
+    if (e.broken && e.onSel) {
+      [[-5, -5, 5, 5], [-5, 5, 5, -5]].forEach(function (d) {
+        scene.edges.push(line([{ type: "M", x: mx + d[0], y: my + d[1] }, { type: "L", x: mx + d[2], y: my + d[3] }],
+          paper("var(--color-danger)"), 2.5, "solid"));
+      });
+    }
+  });
+  Object.keys(g.nodes).forEach(function (k) {
+    var p = L.pos(g.nodes[k]), v = _trNodeView(g, k, source);
+    var x1 = p.x - R, y1 = p.y - R, x2 = p.x + R, y2 = p.y + R;
+    function textBox(lbl) {
+      return { shape: "rect", polygon: null, x1: x1, y1: y1, x2: x2, y2: y2, fill: null, stroke: null,
+        strokeWidth: 0, strokeStyle: "solid", icon: null, label: lbl, z: 0 };
+    }
+    scene.nodes.push({ shape: "ellipse", polygon: null, x1: x1, y1: y1, x2: x2, y2: y2,
+      fill: v.fill ? mix(paper(v.fill), v.opacity) : null, stroke: mix(paper(v.stroke), v.opacity),
+      strokeWidth: v.strokeWidth, strokeStyle: v.dashed ? "dashed" : "solid", icon: null, label: null, z: 0 });
+    // ⌂ and ◎ are not in the PDF's WinAnsi fonts; the Visio package keeps them.
+    var pdfGlyph = k === "src" ? "S" : k === "dst" ? "D" : v.glyph;
+    scene.nodes.push(textBox(label(v.glyph, pdfGlyph, 11, mix(paper(v.text), v.opacity), "center", 0, true)));
+    scene.nodes.push(textBox(label(L.clip(v.name), L.clip(v.name), 11, mix(paper("var(--color-text-primary)"), v.opacity), "bottom", 3)));
+    scene.nodes.push(textBox(label(L.clip(v.sub), L.clip(v.sub), 10, mix(paper("var(--color-text-secondary)"), v.opacity), "bottom", 16)));
+  });
+  return scene;
 }
 
 function _trPathTooltipHTML(g, key, source) {
@@ -25553,7 +25844,11 @@ async function _loadPathTraceroutes(assetId, check, source) {
     mount.innerHTML = '<div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">' +
         '<div class="chart-label" style="margin:0">Path</div>' +
         '<select id="path-tr-select" style="width:auto">' + options + "</select>" +
-        '<span id="path-tr-diff" class="hint"></span></div>' +
+        '<span id="path-tr-diff" class="hint"></span>' +
+        '<button type="button" class="btn-icon" id="path-tr-export" aria-label="Export" aria-haspopup="menu" title="Export: screenshot, PDF or Visio" style="margin-left:auto;line-height:0">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
+        "</button></div>" +
       '<div class="chart-box" id="path-tr-graph" style="margin-top:0.5rem;position:relative"></div>' +
       _TR_PATH_LEGEND_HTML +
       '<div class="table-wrapper" style="margin-top:0.75rem"><table id="path-tr-table"><thead><tr>' +
@@ -25604,7 +25899,90 @@ async function _loadPathTraceroutes(assetId, check, source) {
     };
     sel.addEventListener("change", draw);
     draw();
+    var exportBtn = document.getElementById("path-tr-export");
+    exportBtn.addEventListener("click", function () {
+      _openPathMapExport(exportBtn, check, list, Number(sel.value) || 0, source);
+    });
   } catch (err) {
     mount.innerHTML = '<div class="chart-label">Path</div><p class="hint">' + escapeHtml(err.message || "Failed to load traceroutes") + "</p>";
   }
+}
+
+/** Pure: the path map export's header lines — the route, then the trace drawn. */
+function _pathMapExportMeta(check, list, sel, source, g) {
+  var t = list[sel] || list[0];
+  var from = (source && source.hostname) || "This host";
+  var to = g.destIp || "destination";
+  return [
+    from + " -> " + to + "  |  " + (_PATH_KIND_LABELS[check.kind] || check.kind || "") + " check",
+    "Trace " + _pathFmtWhen(t.timestamp) + ", " + t.hopCount + " hops, " + (t.complete ? "reached the destination" : "incomplete") +
+      (list.length > 1 ? "  |  Faded branches: routes the other " + (list.length - 1) + " recent trace" + (list.length === 2 ? "" : "s") + " took" : ""),
+  ];
+}
+
+/** Pure: the path map export's key — the on-screen legend, as paper colours. */
+function _pathMapExportKey() {
+  var P = _TR_PAPER_COLORS;
+  return [
+    { kind: "line", color: P["var(--color-success)"], text: "adds under 10 ms" },
+    { kind: "line", color: P["var(--color-warning)"], text: "adds 10-50 ms or probe loss" },
+    { kind: "line", color: P["var(--color-danger)"], text: "adds over 50 ms" },
+    { kind: "line", color: P["var(--color-danger)"], text: "destination not reached", dashed: true },
+    { kind: "line", color: P["var(--color-text-tertiary)"], text: "hop did not answer", dashed: true },
+    { kind: "dot", color: MONITOR_STATE_COLORS.up, text: "asset up" },
+    { kind: "dot", color: MONITOR_STATE_COLORS.warning, text: "asset warning" },
+    { kind: "dot", color: MONITOR_STATE_COLORS.down, text: "asset down" },
+  ];
+}
+
+// The Export menu (graph-export.js) for the path map. The slide-over opens on
+// every page and the Path Monitor draws the same map, but graph-export.js and
+// the vendor libraries it needs are only static on some of them — so they are
+// fetched here on first use (_loadPanelScript requests each file once a page).
+function _openPathMapExport(btn, check, list, sel, source) {
+  var need = [];
+  if (!window.jspdf) need.push("/js/vendor/jspdf.umd.min.js");
+  if (typeof htmlToImage === "undefined") need.push("/js/vendor/html-to-image.min.js");
+  if (!window.PolarisGraphExport) need.push("/js/graph-export.js");
+  need.reduce(function (p, src) { return p.then(function () { return _loadPanelScript(src); }); }, Promise.resolve())
+    .then(function () {
+      window.PolarisGraphExport.openMenu(btn, function () {
+        var g = _trPathGraph(list, sel);
+        var name = check.name || "Path";
+        return {
+          scene: _trPathScene(g, source, window.PolarisGraphExport.mixWithWhite, window.PolarisGraphExport.pdfText),
+          title: "Path: " + name,
+          fileBase: "polaris-path-" + (String(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "check"),
+          noun: "path map",
+          metaLines: _pathMapExportMeta(check, list, sel, source, g),
+          keyItems: _pathMapExportKey(),
+          scopeNote: "Exports the trace selected now, with the routes the other recent traces took as faded branches.",
+        };
+      }, { screenshot: function () { _pathMapScreenshot(); } });
+    }, function (err) {
+      showToast("Export unavailable: " + (err && err.message ? err.message : String(err)), "error");
+    });
+}
+
+// The map and its legend onto the clipboard — the map at full width even when
+// the panel scrolls it. Both are copied into an off-screen holder as wide as
+// the map, so the legend wraps to the picture rather than to the panel; it
+// stays in the document so the theme's colours still resolve.
+function _pathMapScreenshot() {
+  var svg = document.querySelector("#path-tr-graph svg");
+  if (!svg) { showToast("Nothing to export", "error"); return; }
+  var bg = getComputedStyle(document.documentElement).getPropertyValue("--color-bg-primary").trim() || "#ffffff";
+  var holder = document.createElement("div");
+  holder.style.cssText = "position:fixed;left:-100000px;top:0;padding:12px 16px;background:" + bg + ";width:" + svg.getAttribute("width") + "px";
+  holder.innerHTML = svg.outerHTML + _TR_PATH_LEGEND_HTML;
+  holder.querySelectorAll(".chart-hit").forEach(function (el) { el.remove(); });
+  document.body.appendChild(holder);
+  // `style` applies to the capture's clone only: it drops the holder's
+  // off-screen offset so the clone is not drawn 100000 px to the left.
+  htmlToImage.toBlob(holder, { pixelRatio: 2, backgroundColor: bg, style: { position: "static", left: "0" } })
+    .then(function (blob) { holder.remove(); return blob ? copyPngToClipboard(blob) : false; },
+      function (err) { holder.remove(); throw err; })
+    .then(function (ok) {
+      showToast(ok ? "Screenshot copied to clipboard" : "Screenshot failed — requires HTTPS or clipboard permission", ok ? "success" : "error");
+    }, function () { showToast("Screenshot failed", "error"); });
 }

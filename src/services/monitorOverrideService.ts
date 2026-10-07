@@ -38,7 +38,8 @@ export type AddAsMonitoredAssetType =
   | "workstation"
   | "server"
   | "hypervisor"
-  | "kubernetes_cluster";
+  | "kubernetes_cluster"
+  | "container";
 
 const FORTINET_TYPES = new Set(["fortimanager", "fortigate"]);
 const WORKSTATION_SERVER_TYPES = new Set([
@@ -54,6 +55,10 @@ const WORKSTATION_SERVER_TYPES = new Set([
   "azurearc",
 ]);
 const VCENTER_TYPES = new Set(["vcenter"]);
+// Unraid / TrueNAS SCALE reuse vCenter's class-block NAMES (hostMonitor for
+// the `hypervisor` host, vmMonitor for its `server` VMs) and add one of their
+// own, containerMonitor, for the `container` type only they produce.
+const WORKLOAD_TYPES = new Set(["unraid", "truenas"]);
 // Azure Arc is the only integration that owns connected Kubernetes clusters.
 const ARC_TYPES = new Set(["azurearc"]);
 
@@ -70,6 +75,9 @@ const ARC_TYPES = new Set(["azurearc"]);
  *                                                         the class block kept its vm name)
  *   hypervisor    → hostMonitor.addAsMonitored           (vcenter)
  *   kubernetes_cluster → k8sMonitor.addAsMonitored       (azurearc)
+ *   server        → vmMonitor.addAsMonitored             (unraid/truenas VMs)
+ *   hypervisor    → hostMonitor.addAsMonitored           (unraid/truenas hosts)
+ *   container     → containerMonitor.addAsMonitored      (unraid/truenas)
  *
  * Returns null when:
  *  - the asset type doesn't map to a per-class block
@@ -106,17 +114,21 @@ export function getAddAsMonitoredFromConfig(
       break;
     case "server":
       // vCenter VMs are typed "server" — same class key, different block.
-      if (VCENTER_TYPES.has(integrationType)) blockKey = "vmMonitor";
+      if (VCENTER_TYPES.has(integrationType) || WORKLOAD_TYPES.has(integrationType)) blockKey = "vmMonitor";
       else if (WORKSTATION_SERVER_TYPES.has(integrationType)) blockKey = "serverMonitor";
       else return null;
       break;
     case "hypervisor":
-      if (!VCENTER_TYPES.has(integrationType)) return null;
+      if (!VCENTER_TYPES.has(integrationType) && !WORKLOAD_TYPES.has(integrationType)) return null;
       blockKey = "hostMonitor";
       break;
     case "kubernetes_cluster":
       if (!ARC_TYPES.has(integrationType)) return null;
       blockKey = "k8sMonitor";
+      break;
+    case "container":
+      if (!WORKLOAD_TYPES.has(integrationType)) return null;
+      blockKey = "containerMonitor";
       break;
     default:
       return null;
@@ -170,7 +182,7 @@ export function resolveMonitorOverride(input: {
  * and is invisible to the per-class addAsMonitored flag.
  */
 export const AUTO_MONITOR_ASSET_TYPES: ReadonlySet<AddAsMonitoredAssetType> =
-  new Set(["firewall", "switch", "access_point", "workstation", "server", "hypervisor", "kubernetes_cluster"]);
+  new Set(["firewall", "switch", "access_point", "workstation", "server", "hypervisor", "kubernetes_cluster", "container"]);
 
 /**
  * Maps Asset.assetType to its per-class config block key, when one applies.
@@ -187,9 +199,10 @@ export function classBlockKeyForAssetType(
     case "switch":       return "fortiswitchMonitor";
     case "access_point": return "fortiapMonitor";
     case "workstation":  return "workstationMonitor";
-    case "server":       return integrationType && VCENTER_TYPES.has(integrationType) ? "vmMonitor" : "serverMonitor";
+    case "server":       return integrationType && (VCENTER_TYPES.has(integrationType) || WORKLOAD_TYPES.has(integrationType)) ? "vmMonitor" : "serverMonitor";
     case "hypervisor":   return "hostMonitor";
     case "kubernetes_cluster": return "k8sMonitor";
+    case "container":    return "containerMonitor";
     default:             return null;
   }
 }
@@ -212,6 +225,7 @@ export function snapshotAddAsMonitoredByAssetType(
     server:       getAddAsMonitoredFromConfig(integrationType, integrationConfig, "server"),
     hypervisor:   getAddAsMonitoredFromConfig(integrationType, integrationConfig, "hypervisor"),
     kubernetes_cluster: getAddAsMonitoredFromConfig(integrationType, integrationConfig, "kubernetes_cluster"),
+    container:    getAddAsMonitoredFromConfig(integrationType, integrationConfig, "container"),
   };
 }
 
@@ -255,11 +269,12 @@ export async function recomputeMonitorOverrideForAssets(
           WHEN 'switch'       THEN (i."config" #>> '{fortiswitchMonitor,addAsMonitored}')::boolean
           WHEN 'access_point' THEN (i."config" #>> '{fortiapMonitor,addAsMonitored}')::boolean
           WHEN 'workstation'  THEN (i."config" #>> '{workstationMonitor,addAsMonitored}')::boolean
-          WHEN 'server'       THEN (CASE WHEN i."type" = 'vcenter'
+          WHEN 'server'       THEN (CASE WHEN i."type" IN ('vcenter', 'unraid', 'truenas')
                                          THEN (i."config" #>> '{vmMonitor,addAsMonitored}')::boolean
                                          ELSE (i."config" #>> '{serverMonitor,addAsMonitored}')::boolean END)
           WHEN 'hypervisor'   THEN (i."config" #>> '{hostMonitor,addAsMonitored}')::boolean
           WHEN 'kubernetes_cluster' THEN (i."config" #>> '{k8sMonitor,addAsMonitored}')::boolean
+          WHEN 'container'    THEN (i."config" #>> '{containerMonitor,addAsMonitored}')::boolean
           ELSE NULL
         END,
         false
@@ -268,7 +283,7 @@ export async function recomputeMonitorOverrideForAssets(
     FROM "integrations" i
     WHERE a."discoveredByIntegrationId" = i."id"
       AND a."id" = ANY(${assetIds}::text[])
-      AND a."assetType" IN ('firewall', 'switch', 'access_point', 'workstation', 'server', 'hypervisor')
+      AND a."assetType" IN ('firewall', 'switch', 'access_point', 'workstation', 'server', 'hypervisor', 'kubernetes_cluster', 'container')
   `;
 }
 
@@ -304,11 +319,12 @@ export async function sweepMonitoredForIntegration(
         WHEN 'switch'       THEN (i."config" #>> '{fortiswitchMonitor,addAsMonitored}')::boolean
         WHEN 'access_point' THEN (i."config" #>> '{fortiapMonitor,addAsMonitored}')::boolean
         WHEN 'workstation'  THEN (i."config" #>> '{workstationMonitor,addAsMonitored}')::boolean
-        WHEN 'server'       THEN (CASE WHEN i."type" = 'vcenter'
+        WHEN 'server'       THEN (CASE WHEN i."type" IN ('vcenter', 'unraid', 'truenas')
                                        THEN (i."config" #>> '{vmMonitor,addAsMonitored}')::boolean
                                        ELSE (i."config" #>> '{serverMonitor,addAsMonitored}')::boolean END)
         WHEN 'hypervisor'   THEN (i."config" #>> '{hostMonitor,addAsMonitored}')::boolean
         WHEN 'kubernetes_cluster' THEN (i."config" #>> '{k8sMonitor,addAsMonitored}')::boolean
+          WHEN 'container'    THEN (i."config" #>> '{containerMonitor,addAsMonitored}')::boolean
       END,
       false
     )
@@ -316,7 +332,7 @@ export async function sweepMonitoredForIntegration(
     WHERE a."discoveredByIntegrationId" = i."id"
       AND i."id" = ${integrationId}::text
       AND a."monitorOverride" = false
-      AND a."assetType" IN ('firewall', 'switch', 'access_point', 'workstation', 'server', 'hypervisor')
+      AND a."assetType" IN ('firewall', 'switch', 'access_point', 'workstation', 'server', 'hypervisor', 'kubernetes_cluster', 'container')
       AND a."monitored" IS DISTINCT FROM COALESCE(
         CASE a."assetType"
           WHEN 'firewall'     THEN (CASE WHEN a."fortinetTopology" ->> 'haRole' = 'secondary'
@@ -325,11 +341,12 @@ export async function sweepMonitoredForIntegration(
           WHEN 'switch'       THEN (i."config" #>> '{fortiswitchMonitor,addAsMonitored}')::boolean
           WHEN 'access_point' THEN (i."config" #>> '{fortiapMonitor,addAsMonitored}')::boolean
           WHEN 'workstation'  THEN (i."config" #>> '{workstationMonitor,addAsMonitored}')::boolean
-          WHEN 'server'       THEN (CASE WHEN i."type" = 'vcenter'
+          WHEN 'server'       THEN (CASE WHEN i."type" IN ('vcenter', 'unraid', 'truenas')
                                          THEN (i."config" #>> '{vmMonitor,addAsMonitored}')::boolean
                                          ELSE (i."config" #>> '{serverMonitor,addAsMonitored}')::boolean END)
           WHEN 'hypervisor'   THEN (i."config" #>> '{hostMonitor,addAsMonitored}')::boolean
           WHEN 'kubernetes_cluster' THEN (i."config" #>> '{k8sMonitor,addAsMonitored}')::boolean
+          WHEN 'container'    THEN (i."config" #>> '{containerMonitor,addAsMonitored}')::boolean
         END,
         false
       )

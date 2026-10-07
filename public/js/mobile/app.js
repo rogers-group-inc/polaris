@@ -392,7 +392,7 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
       if (res.ok) {
         var data = await res.json();
         // /auth/me returns { authenticated, username, role: {id,name,permissions,...},
-        // authProvider, regionTags: {user, role, effective} }. Translate to
+        // authProvider, regionTags / otherTags: {user, role, group, effective} }. Translate to
         // the shape the rest of the mobile bundle expects — role becomes the
         // role NAME string for back-compat with existing role-name checks in
         // reservation-actions.js / subnet-detail.js / more-tab.js. Permissions +
@@ -404,6 +404,8 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
             role:         (data.role && data.role.name) || null,
             permissions:  (data.role && data.role.permissions) || {},
             regions:      (data.regionTags && data.regionTags.effective) || [],
+            // The second scope dimension (free-form tags), same union.
+            tags:         (data.otherTags && data.otherTags.effective) || [],
             authProvider: data.authProvider,
             displayName:  data.username,
           };

@@ -4,8 +4,8 @@
  * pinning one core while the all-cores average looks idle.
  *
  * The per-core vector is `AssetTelemetrySample.cpuCorePcts` — one 0-100 value
- * per logical core, index 0 first, written by the Polaris Agent and vCenter
- * only. Every hold is counted PER CORE: "over 90% for 3 polls" means the SAME
+ * per logical core, index 0 first, written by the Polaris Agent, vCenter and
+ * the Unraid / TrueNAS host collectors. Every hold is counted PER CORE: "over 90% for 3 polls" means the SAME
  * core was over 90% on three consecutive polls (coreSeries), never "some core"
  * on each of them — three different cores each spiking once is ordinary load,
  * not one thread stuck on one core.

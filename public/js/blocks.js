@@ -97,20 +97,20 @@ async function loadBlocks() {
     _blocksData = await api.blocks.list();
     renderBlocksPage();
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Error: ' + escapeHtml(err.message) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">Error: ' + escapeHtml(err.message) + '</td></tr>';
   }
 }
 
 function renderBlocksPage() {
   var tbody = document.getElementById("blocks-tbody");
   if (_blocksData.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No IP blocks found. Create one to get started.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No IP blocks found. Create one to get started.</td></tr>';
     clearPageControls("pagination");
     return;
   }
   var sfData = _blocksSF ? _blocksSF.apply(_blocksData) : _blocksData;
   if (sfData.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No results match the current filters.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No results match the current filters.</td></tr>';
     clearPageControls("pagination");
     return;
   }
@@ -129,6 +129,7 @@ function renderBlocksPage() {
       '<td>' + escapeHtml(b.description || "-") + '</td>' +
       '<td>' + (tags || '<span style="color:var(--color-text-tertiary)">-</span>') + '</td>' +
       '<td>' + (b._count ? b._count.subnets : 0) + '</td>' +
+      '<td>' + blockUtilCellHTML(b) + '</td>' +
       '<td>' + formatDate(b.createdAt) + '</td>' +
       '</tr>';
   }).join("");
@@ -318,6 +319,20 @@ function _compressIPv6(bigint) {
   return L + "::" + R;
 }
 
+// Utilization = share of the block's address space carved into networks
+// (deprecated ones excluded), computed server-side in blockService.listBlocks.
+function blockUtilCellHTML(b) {
+  if (b.utilizationPercent == null) return subnetUtilCellHTML(null);
+  return subnetUtilCellHTML(b.utilizationPercent, null, null,
+    b.utilizationPercent + "% of " + b.cidr + " is carved into networks");
+}
+
+function blockUtilExportText(b) {
+  if (b.utilizationPercent == null) return "-";
+  var pct = b.utilizationPercent;
+  return (pct > 0 && Math.round(pct) === 0 ? "<1" : String(Math.round(pct))) + "%";
+}
+
 /* ─── PDF / CSV Export ──────────────────────────────────────────────────────
    Wired by ipam.js (which owns the single Export button in the IPAM top
    page-header) via window.PolarisBlocks.export(mode, fmt) when the IP Blocks
@@ -374,7 +389,7 @@ function generateBlockPdf(blocks, label) {
   doc.setTextColor(120, 120, 120);
   doc.text("Generated: " + timestamp + "  |  Scope: " + label + "  |  Count: " + blocks.length, 40, 52);
 
-  var head = [["Name", "CIDR", "Version", "Description", "Tags", "Networks", "Created"]];
+  var head = [["Name", "CIDR", "Version", "Description", "Tags", "Networks", "Utilization", "Created"]];
   var body = blocks.map(function (b) {
     return [
       b.name || "-",
@@ -383,6 +398,7 @@ function generateBlockPdf(blocks, label) {
       b.description || "-",
       (b.tags || []).join(", ") || "-",
       b._count ? String(b._count.subnets) : "0",
+      blockUtilExportText(b),
       b.createdAt ? formatDate(b.createdAt) : "-",
     ];
   });
@@ -415,13 +431,14 @@ function generateBlockPdf(blocks, label) {
 }
 
 function generateBlockCsv(blocks) {
-  var headers = ["Name", "CIDR", "Version", "Description", "Tags", "Networks", "Created"];
+  var headers = ["Name", "CIDR", "Version", "Description", "Tags", "Networks", "Utilization", "Created"];
   var rows = blocks.map(function (b) {
     return [
       b.name || "", b.cidr || "",
       b.ipVersion === "v6" ? "IPv6" : (b.ipVersion === "v4" ? "IPv4" : ""),
       b.description || "", (b.tags || []).join("; "),
       b._count ? String(b._count.subnets) : "0",
+      blockUtilExportText(b),
       b.createdAt ? formatDate(b.createdAt) : "",
     ];
   });

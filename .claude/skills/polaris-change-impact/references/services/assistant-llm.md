@@ -1,6 +1,6 @@
 # Services — the AI assistant and the `llm` integration
 
-The floating chat assistant (business rule 94) and the integration type that backs it. Six
+The floating chat assistant (business rule 95) and the integration type that backs it. Six
 services: the transport to the model server, the tool layer that answers its lookups, the
 turn orchestrator, the conversation store, the help index over `docs/wiki/`, and the
 role + API token an llm integration provisions. Route: `src/api/routes/assistant.ts`
@@ -43,7 +43,7 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 
 ## services/assistantToolService.ts
 
-**What it owns:** The lookups the assistant may make, as OpenAI-style tool definitions plus their implementations: `search_help`, `search`, `fleet_summary`, `list_assets`, `get_asset`, `list_alerts`, `list_events`, `list_networks`, `list_reservations`, `create_report`. Every tool runs **as the caller** — it is handed the caller's own Express request and checks `hasPermission(req, key, "read")` before touching anything (rule 94(a)); alerts are region-scoped with the Alerts page's own predicate (`viewerRegionTags`, admin-equivalent unscoped). All tools are read-only (94(b)), project to a tight `select`, cap rows at the integration's `maxRowsPerTool`, and report `truncated`. `create_report` re-runs one list tool server-side with `REPORT_ROW_CAP` (5000) and hands the client a `{title, columns, rows}` table built from database rows, never model text (94(c)).
+**What it owns:** The lookups the assistant may make, as OpenAI-style tool definitions plus their implementations: `search_help`, `search`, `fleet_summary`, `list_assets`, `get_asset`, `list_alerts`, `list_events`, `list_networks`, `list_reservations`, `create_report`. Every tool runs **as the caller** — it is handed the caller's own Express request and checks `hasPermission(req, key, "read")` before touching anything (rule 95(a)); alerts are region-scoped with the Alerts page's own predicate (`viewerRegionTags`, admin-equivalent unscoped). All tools are read-only (95(b)), project to a tight `select`, cap rows at the integration's `maxRowsPerTool`, and report `truncated`. `create_report` re-runs one list tool server-side with `REPORT_ROW_CAP` (5000) and hands the client a `{title, columns, rows}` table built from database rows, never model text (95(c)).
 
 **Public API:** REPORT_ROW_CAP, ReportColumn, AssistantReportPayload, ToolContext, ToolResult, assistantToolDefs, toolLabel, runAssistantTool.
 
@@ -62,7 +62,7 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 
 **When changing this:**
 - A new tool needs: a permission check first, Zod args, a tight select, a row cap, a chip `label`, and — if it lists rows — `columns` + `rows()` so `create_report` can source it.
-- Never add a tool that writes, acknowledges, pushes, probes or reads a secret (rule 94(b)); `credentials`, `apiTokens`, `users`, `roles`, `authentication`, `automationScripts` and server settings stay out.
+- Never add a tool that writes, acknowledges, pushes, probes or reads a secret (rule 95(b)); `credentials`, `apiTokens`, `users`, `roles`, `authentication`, `automationScripts` and server settings stay out.
 - At 2000 assets the hot path is `list_assets` with a `subnet` filter (an in-memory CIDR pass over the matched set) — keep its `select` tight.
 
 ---
@@ -82,11 +82,11 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 - Never throws once streaming has started — failures become an `error` event; the route opens the SSE stream on `start`, i.e. only after ownership passed.
 - An error before any text stores NOTHING for the answer (the question stays; /retry re-asks it).
 - Tool results handed back to the model are clipped at 24 000 characters.
-- The audit Event carries tool names, report count and stopped — the conversation text is the owner's data (rule 94(d)).
+- The audit Event carries tool names, report count and stopped — the conversation text is the owner's data (rule 95(d)).
 - **First-round steering** (2026-10-07, qwen2.5:7b): a message that plainly asks for a report (`asksForReport`) is offered ONLY `create_report` on round 0, and one that asks how to use / configure Polaris (`asksHowTo`, deliberately narrow — "how many…" is not) ONLY `search_help`. A report request that still ends without a report is turned into one from the model's last list lookup, same filters (`reportTitleFromQuestion`).
 - **Links are checked** (`sanitizeAnswerLinks`, after the turn): only `WIKI_BASE_URL/<page>` for a page `helpIndexService.wikiPageNames()` knows, or a same-origin path. Anything else keeps its text and loses the link (a model invented `docs.polaris.example.com/subnets/add-subnet`); a changed answer is re-sent whole via `retract {from:0}` + `token`.
 - **Turns outlive the page** (`registerTurn` / `releaseTurn` / `isTurnRunning` / `stopTurn`): the route does not abort on disconnect; Stop is `POST /conversations/:id/stop`; the next page sees `pending`.
-- **Text after a report is HELD, then table-stripped** (`stripMarkdownTables`). The model only ever sees a report's row COUNT, so a table it types afterwards is invented — seen live 2026-10-07 (qwen2.5:7b re-typed a "report" of networks that do not exist beside the real card). Rounds after the first `create_report` are buffered instead of streamed, tables removed, and an all-table reply becomes `REPORT_READY_TEXT`. This is rule 94(c) enforced in code, not left to the prompt.
+- **Text after a report is HELD, then table-stripped** (`stripMarkdownTables`). The model only ever sees a report's row COUNT, so a table it types afterwards is invented — seen live 2026-10-07 (qwen2.5:7b re-typed a "report" of networks that do not exist beside the real card). Rounds after the first `create_report` are buffered instead of streamed, tables removed, and an all-table reply becomes `REPORT_READY_TEXT`. This is rule 95(c) enforced in code, not left to the prompt.
 
 **When changing this:**
 - The system prompt is the behavioural contract (tools for facts, search_help for how-to, create_report for downloads, read-only) — `tests/unit/assistantChatService.test.ts → buildSystemPrompt` pins its load-bearing lines.
@@ -96,7 +96,7 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 
 ## services/assistantConversationService.ts
 
-**What it owns:** The saved conversations (AssistantConversation / AssistantMessage / AssistantReport). Every function takes the session user's id and scopes every query to it — someone else's id answers 404 (rule 94(d)). List / create / get / rename / delete / clear; `beginTurn` / `finishTurn` / `recentTurns` for the chat service; the `assistant` Setting (`retentionDays`, default 90) and `pruneAssistantConversations` (rule 94(e)). Creating past 200 conversations for one user drops that user's oldest.
+**What it owns:** The saved conversations (AssistantConversation / AssistantMessage / AssistantReport). Every function takes the session user's id and scopes every query to it — someone else's id answers 404 (rule 95(d)). List / create / get / rename / delete / clear; `beginTurn` / `finishTurn` / `recentTurns` for the chat service; the `assistant` Setting (`retentionDays`, default 90) and `pruneAssistantConversations` (rule 95(e)). Creating past 200 conversations for one user drops that user's oldest.
 
 **Public API:** AssistantSettings, ToolUseRecord, getAssistantSettings, updateAssistantSettings, titleFromQuestion, listConversations, createConversation, getConversation, renameConversation, deleteConversation, clearConversation, recentTurns, beginTurn, finishTurn, pruneAssistantConversations.
 
@@ -142,7 +142,7 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 
 ## services/llmIntegrationService.ts
 
-**What it owns:** The role + API token an llm integration provisions for its model server (rule 94(f)). `provisionLlmAccess` creates a custom role `llm-<name>` with `botPermissions()` — read on every key whose ladder has a read rung, except `BOT_EXCLUDED_KEYS` (credentials, apiTokens, users, roles, authentication, automationScripts, serverSettingsSystem, serverSettingsData, assistant) — then mints an API token bound to it and returns the raw token once; a token failure deletes the role. `assertCanProvision` requires `roles` write AND `apiTokens` write (and runs `assertNoPrivilegeEscalation`). `regenerateLlmToken` deletes the old token and mints a new one on the same role. `deprovisionLlmAccess` deletes the token then the role (role FK is Restrict), best-effort per step.
+**What it owns:** The role + API token an llm integration provisions for its model server (rule 95(f)). `provisionLlmAccess` creates a custom role `llm-<name>` with `botPermissions()` — read on every key whose ladder has a read rung, except `BOT_EXCLUDED_KEYS` (credentials, apiTokens, users, roles, authentication, automationScripts, serverSettingsSystem, serverSettingsData, assistant) — then mints an API token bound to it and returns the raw token once; a token failure deletes the role. `assertCanProvision` requires `roles` write AND `apiTokens` write (and runs `assertNoPrivilegeEscalation`). `regenerateLlmToken` deletes the old token and mints a new one on the same role. `deprovisionLlmAccess` deletes the token then the role (role FK is Restrict), best-effort per step.
 
 **Public API:** BOT_EXCLUDED_KEYS, botPermissions, botRoleBaseName, assertCanProvision, ProvisionResult, provisionLlmAccess, regenerateLlmToken, deprovisionLlmAccess.
 

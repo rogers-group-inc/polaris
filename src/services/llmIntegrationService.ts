@@ -1,6 +1,6 @@
 /**
  * src/services/llmIntegrationService.ts — the role + API token an `llm`
- * integration provisions for its LLM server (business rule 94(f)).
+ * integration provisions for its LLM server (business rule 95(f)).
  *
  * Creating an llm integration mints, in one step:
  *   - a custom Role `llm-<name>` holding READ on every function key whose
@@ -12,7 +12,7 @@
  *
  * The token is for the LLM host's OWN direct lookups (an Open WebUI tool, an
  * MCP server, a script). The in-app chat never uses it: chat lookups run as
- * the chatting user (rule 94(a)), so the bot role can never widen what a user
+ * the chatting user (rule 95(a)), so the bot role can never widen what a user
  * sees in the widget.
  *
  * Deleting the integration removes the token first and then the role (the

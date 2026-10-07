@@ -31,6 +31,7 @@ import proxySettingsRouter from "./routes/proxySettings.js";
 import mibsRouter from "./routes/mibs.js";
 import manufacturerProfilesRouter from "./routes/manufacturerProfiles.js";
 import { firmwareRouter, firmwareAssetRouter } from "./routes/firmware.js";
+import { workloadAssetRouter } from "./routes/workloads.js";
 import deviceIconsRouter from "./routes/deviceIcons.js";
 import searchRouter from "./routes/search.js";
 import mapRouter from "./routes/map.js";
@@ -173,7 +174,7 @@ router.use("/users", requirePermission("users", "read"), usersRouter);
 router.use("/roles", rolesRouter);
 router.use("/group-mappings", requirePermission("users", "fullwrite"), groupMappingsRouter);
 router.use("/integrations", requirePermission("integrations", "read"), integrationsRouter);
-// The floating AI assistant (business rule 94). Session-only and owner-scoped
+// The floating AI assistant (business rule 95). Session-only and owner-scoped
 // inside the route file; every lookup it makes re-checks the caller's own
 // per-key permissions, so this gate only decides whether it is offered.
 router.use("/assistant", requirePermission("assistant", "read"), assistantRouter);
@@ -188,6 +189,10 @@ router.use("/asset-types", assetTypesRouter);
 // router. Gated on the `firmware` key per route: read for availability and
 // run history, fullwrite to start a flash.
 router.use("/assets/:id/firmware-upgrade", firmwareAssetRouter);
+// Unraid / TrueNAS VM + container control (business rule 94), mounted before
+// /assets for the same first-match reason. assets:read to read, assets:write
+// to act — gated per route.
+router.use("/assets/:id/workload", workloadAssetRouter);
 router.use("/assets", assetsRouter);
 router.use("/log-flag-rules", logFlagRulesRouter);
 router.use("/events", eventsRouter);

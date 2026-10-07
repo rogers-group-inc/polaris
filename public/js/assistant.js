@@ -1,5 +1,5 @@
 /**
- * public/js/assistant.js — the floating AI assistant (business rule 94).
+ * public/js/assistant.js — the floating AI assistant (business rule 95).
  *
  * Loaded on demand by app.js → _bootAssistant() on desktop app pages, only
  * when the caller holds `assistant` read AND an llm integration is enabled.
@@ -17,7 +17,7 @@
  *     as you type: ↑/↓ move, Tab or Enter completes, Esc closes. The command
  *     list is ONE array (COMMANDS) — the popup, /help and the operator wiki
  *     page all describe the same set.
- *   - Reports arrive as tables built from the database (rule 94(c)) and
+ *   - Reports arrive as tables built from the database (rule 95(c)) and
  *     download as CSV, PDF or Markdown.
  *
  * Everything the model says is rendered through PolarisMarkdown, which

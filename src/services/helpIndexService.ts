@@ -1,7 +1,7 @@
 /**
  * src/services/helpIndexService.ts — keyword search over the operator wiki.
  *
- * Backs the assistant's `search_help` tool (business rule 94): "how do I…" and
+ * Backs the assistant's `search_help` tool (business rule 95): "how do I…" and
  * "how is X configured" questions are answered from Polaris's own operator
  * documentation in docs/wiki/, never from the model's guesswork.
  *

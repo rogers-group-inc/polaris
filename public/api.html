@@ -285,6 +285,11 @@
           <li>Bearer requests are exempt from CSRF checks — no CSRF token or cookie is needed.</li>
           <li>A missing, revoked, expired, or malformed token gets the same <code>401</code> as no
               token at all; the API does not distinguish.</li>
+          <li>A token may be limited to <strong>trusted hosts</strong> — a list of IP addresses
+              and CIDRs set when it is created. A valid token sent from any other address gets a
+              <code>403</code> whose message names the source address Polaris saw (behind a
+              reverse proxy, check that it forwards the client address). A token with no list is
+              accepted from anywhere.</li>
           <li>A request the token's role does not permit gets a <code>403</code> — except on the
               handful of aggregate endpoints documented as <em>filter-don't-403</em>, which
               return the sections the role can read and leave the rest empty.</li>
@@ -314,7 +319,8 @@
         <ul>
           <li><code>400</code> — validation failure; the message names the offending field.</li>
           <li><code>401</code> — missing or unusable credentials.</li>
-          <li><code>403</code> — authenticated, but the token's role lacks the required permission.</li>
+          <li><code>403</code> — authenticated, but the token's role lacks the required permission,
+              or the token was sent from outside its trusted hosts.</li>
           <li><code>404</code> — no such resource, or one outside the caller's visibility scope
               (Polaris deliberately answers 404 rather than 403 for scoped-away resources).</li>
           <li><code>409</code> — the request conflicts with current state (overlapping subnet,
@@ -998,7 +1004,9 @@
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-get">GET</span> /blocks
             <span class="gate">ipBlocks:read</span></div>
-          <p>All blocks as a JSON array (no paging), each with a subnet count. Filters:
+          <p>All blocks as a JSON array (no paging), each with a subnet count
+            (<code>_count.subnets</code>) and <code>utilizationPercent</code> — the share
+            (0–100) of the block's address space carved into non-deprecated networks. Filters:
             <code>ipVersion</code> (<code>v4</code>/<code>v6</code>), <code>tag</code>.</p>
         </div>
         <div class="endpoint">

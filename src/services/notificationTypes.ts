@@ -484,7 +484,7 @@ export function tierMetSinceChanged(
 // narrows multi-row streams (interfaces, sensors, mounts, SD-WAN members).
 export const ASSET_METRICS = [
   // cpuCorePct is per-core CPU (AssetTelemetrySample.cpuCorePcts — Polaris
-  // Agent + vCenter only), for finding a single-threaded application: its
+  // Agent, vCenter, and Unraid / TrueNAS hosts), for finding a single-threaded application: its
   // hold is counted PER CORE (the same core over the line for N polls). One
   // alert per device naming the cores, superseded on a device while that
   // device carries a live all-cores cpuPct alert (business rule 89).

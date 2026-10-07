@@ -1,12 +1,12 @@
 /**
  * tests/unit/assistantRbacLockstep.test.ts
  *
- * Business rule 94 — the RBAC halves of the AI assistant that must move
+ * Business rule 95 — the RBAC halves of the AI assistant that must move
  * together:
  *   - the `assistant` key is catalogued READ_ONLY and seeded by its migration
  *     onto every role except the api-* / llm-* token roles (including the
  *     protected `readonly`, which could otherwise never be granted it);
- *   - the bot role an llm integration mints (rule 94(f)) reads everything
+ *   - the bot role an llm integration mints (rule 95(f)) reads everything
  *     with a read rung EXCEPT secrets, identities and server administration,
  *     can never write, and is never admin-equivalent.
  */
@@ -17,7 +17,7 @@ import { resolve } from "node:path";
 import { FUNCTION_KEYS, levelsFor, isAdminEquivalentPermissions } from "../../src/api/middleware/permissions.js";
 import { botPermissions, botRoleBaseName, BOT_EXCLUDED_KEYS } from "../../src/services/llmIntegrationService.js";
 
-const sql = readFileSync(resolve(__dirname, "../../prisma/migrations/20261007000000_assistant/migration.sql"), "utf8");
+const sql = readFileSync(resolve(__dirname, "../../prisma/migrations/20261007020000_assistant/migration.sql"), "utf8");
 const block = (() => {
   const start = sql.indexOf("'{assistant}'");
   const from = sql.lastIndexOf('UPDATE "roles"', start);

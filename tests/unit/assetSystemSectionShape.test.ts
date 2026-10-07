@@ -99,6 +99,27 @@ describe("CPU & Memory section shape", () => {
     expect([...g._SPLIT_CHART_METHODS].sort()).toEqual(["agent", "vcenter"]);
   });
 
+  it("splits an Unraid / TrueNAS HOST, whose source reports every core", () => {
+    for (const method of ["unraid", "truenas"]) {
+      const html = render(method, { assetType: "hypervisor", virtualization: { role: "host", platform: method } });
+      expect(html, method).toContain('id="asset-cpu-chart"');
+      expect(html, method).toContain('id="asset-memory-chart"');
+      expect(html, method).not.toContain('id="asset-system-chart"');
+    }
+  });
+
+  it("keeps the combined chart for Unraid / TrueNAS VMs and containers", () => {
+    for (const method of ["unraid", "truenas"]) {
+      for (const role of ["vm", "container"]) {
+        const html = render(method, { virtualization: { role, platform: method } });
+        expect(html, `${method} ${role}`).toContain('id="asset-system-chart"');
+        expect(html, `${method} ${role}`).not.toContain('id="asset-cpu-chart"');
+      }
+      // No blob at all (an asset not yet synced) is not a host either.
+      expect(render(method)).toContain('id="asset-system-chart"');
+    }
+  });
+
   it("gives both shapes the same one range selector and custom-window panel", () => {
     for (const method of ["agent", "rest_api"]) {
       const html = render(method);

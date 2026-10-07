@@ -18,6 +18,14 @@
  * non-expired tokens sharing the 8-char prefix (small N in practice).
  *
  * Wire format: `Authorization: Bearer polaris_<32-char-base62-tail>`.
+ *
+ * Trusted hosts: a token may name the source addresses it is accepted from
+ * (bare IPs or CIDRs, matched against the trust-proxy-resolved req.ip). Empty
+ * = any source. The check runs AFTER the hash matches, so only a holder of the
+ * real token learns that it was refused for its source address — and that
+ * refusal is a 403 naming the address Polaris saw, because "my SIEM gets 401"
+ * with no further clue is the support call this feature would otherwise cause
+ * (a reverse proxy without trust-proxy set makes every caller 127.0.0.1).
  */
 
 import { TOKEN_PREFIX, generateRawToken } from "../utils/bearerToken.js";
@@ -25,6 +33,8 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { hashPassword, verifyPassword } from "../utils/password.js";
 import { logEvent } from "./eventLogService.js";
+import { ipMatchesAllowlist, isValidAllowlistEntry } from "../utils/ipAllowlist.js";
+import { detectIpVersion, isValidIpAddress, normalizeCidr } from "../utils/cidr.js";
 import {
   normalizePermissions,
   isAdminEquivalentPermissions,
@@ -39,6 +49,7 @@ export interface ApiTokenSummary {
   roleId: string;
   roleName: string;
   integrationIds: string[];
+  trustedHosts: string[];
   createdBy: string;
   createdAt: Date;
   expiresAt: Date | null;
@@ -59,6 +70,7 @@ export interface CreateTokenInput {
   name: string;
   roleId: string;
   integrationIds?: string[];
+  trustedHosts?: string[];
   expiresAt?: Date | null;
   createdBy: string;
 }
@@ -100,6 +112,49 @@ async function validateIntegrationIds(
   return unique;
 }
 
+/** Upper bound on a token's trusted-host list — a list this long is a network, not a host set. */
+export const MAX_TRUSTED_HOSTS = 64;
+
+/**
+ * Validate and canonicalize an operator-entered trusted-host list: trims,
+ * drops blanks, rejects anything that is not an IPv4/IPv6 address or CIDR
+ * (a typo must fail the save, never sit in the list matching nothing),
+ * zeroes host bits on IPv4 CIDRs ("10.1.2.5/24" → "10.1.2.0/24") and
+ * de-duplicates. Empty in → empty out, which means "any source".
+ */
+export function normalizeTrustedHosts(raw: readonly string[] | undefined | null): string[] {
+  if (!raw) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const invalid: string[] = [];
+  for (const item of raw) {
+    let entry = String(item ?? "").trim().toLowerCase();
+    if (!entry) continue;
+    // isValidCidr checks only the prefix length of an IPv6 CIDR, so the
+    // address half is validated here as well.
+    const valid =
+      isValidAllowlistEntry(entry) && isValidIpAddress(entry.includes("/") ? entry.split("/")[0] : entry);
+    if (!valid) {
+      invalid.push(entry);
+      continue;
+    }
+    if (entry.includes("/") && detectIpVersion(entry) === "v4") entry = normalizeCidr(entry);
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    out.push(entry);
+  }
+  if (invalid.length > 0) {
+    throw new AppError(
+      400,
+      `Invalid trusted host${invalid.length === 1 ? "" : "s"}: ${invalid.join(", ")} — each must be an IP address or a CIDR such as 10.20.0.0/16`,
+    );
+  }
+  if (out.length > MAX_TRUSTED_HOSTS) {
+    throw new AppError(400, `A token may list at most ${MAX_TRUSTED_HOSTS} trusted hosts — use a wider CIDR instead`);
+  }
+  return out;
+}
+
 export interface CreateTokenResult {
   token: ApiTokenSummary;
   rawToken: string; // Shown ONCE; never recoverable later.
@@ -121,6 +176,8 @@ export async function createToken(input: CreateTokenInput): Promise<CreateTokenR
     input.integrationIds ?? [],
   );
 
+  const trustedHosts = normalizeTrustedHosts(input.trustedHosts);
+
   const raw = generateRawToken();
   const tokenHash = await hashPassword(raw);
   const tokenPrefix = raw.slice(0, TOKEN_PREFIX.length + 8); // "polaris_xxxxxxxx"
@@ -132,6 +189,7 @@ export async function createToken(input: CreateTokenInput): Promise<CreateTokenR
       tokenPrefix,
       roleId: role.id,
       integrationIds,
+      trustedHosts,
       createdBy: input.createdBy,
       expiresAt: input.expiresAt ?? null,
     },
@@ -209,6 +267,30 @@ export async function listTokens(): Promise<ApiTokenSummary[]> {
   return rows.map(toSummary);
 }
 
+export interface UpdateTrustedHostsResult {
+  token: ApiTokenSummary;
+  before: string[];
+}
+
+/**
+ * Replace a live token's trusted-host list — the one field editable after
+ * mint, because a caller's address changing must not force re-issuing the
+ * secret. Same validation as create; an empty list re-opens the token to
+ * any source. A revoked token refuses (409): nothing can reach it any more.
+ */
+export async function updateTrustedHosts(id: string, raw: readonly string[]): Promise<UpdateTrustedHostsResult> {
+  const trustedHosts = normalizeTrustedHosts(raw);
+  const existing = await prisma.apiToken.findUnique({ where: { id }, select: { trustedHosts: true, revokedAt: true } });
+  if (!existing) throw new AppError(404, "Token not found");
+  if (existing.revokedAt) throw new AppError(409, "Token is revoked — its trusted hosts can no longer be changed");
+  const row = await prisma.apiToken.update({
+    where: { id },
+    data: { trustedHosts },
+    include: { role: { select: { name: true } } },
+  });
+  return { token: toSummary(row), before: existing.trustedHosts };
+}
+
 export async function revokeToken(id: string, revokedBy: string): Promise<void> {
   const row = await prisma.apiToken.findUnique({ where: { id } });
   if (!row) throw new AppError(404, "Token not found");
@@ -232,6 +314,7 @@ function toSummary(row: {
   roleId: string;
   role: { name: string };
   integrationIds: string[];
+  trustedHosts: string[];
   createdBy: string;
   createdAt: Date;
   expiresAt: Date | null;
@@ -247,6 +330,7 @@ function toSummary(row: {
     roleId: row.roleId,
     roleName: row.role.name,
     integrationIds: row.integrationIds,
+    trustedHosts: row.trustedHosts,
     createdBy: row.createdBy,
     createdAt: row.createdAt,
     expiresAt: row.expiresAt,
@@ -258,19 +342,62 @@ function toSummary(row: {
 }
 
 /**
+ * Outcome of presenting a bearer token. `untrusted_host` is a REAL token
+ * presented from an address outside its trustedHosts list — distinct from
+ * "no such token" so the caller can answer 403 with the address it saw.
+ */
+export type TokenVerification =
+  | { ok: true; token: AuthenticatedToken }
+  | { ok: false; reason: "invalid" }
+  | { ok: false; reason: "untrusted_host"; tokenName: string; callerIp: string | null };
+
+// One warning Event per (token, source address) per window — a leaked token
+// replayed from outside its trusted hosts must leave a trail, but a client
+// retrying every second must not write 3600 rows an hour.
+const UNTRUSTED_EVENT_WINDOW_MS = 15 * 60 * 1000;
+const UNTRUSTED_EVENT_MAX_KEYS = 1000;
+const untrustedEventLoggedAt = new Map<string, number>();
+
+function noteUntrustedHost(
+  row: { id: string; name: string; trustedHosts: string[] },
+  callerIp: string | null,
+): void {
+  const key = `${row.id}|${callerIp ?? ""}`;
+  const now = Date.now();
+  const last = untrustedEventLoggedAt.get(key);
+  if (last !== undefined && now - last < UNTRUSTED_EVENT_WINDOW_MS) return;
+  if (untrustedEventLoggedAt.size >= UNTRUSTED_EVENT_MAX_KEYS) untrustedEventLoggedAt.clear();
+  untrustedEventLoggedAt.set(key, now);
+  void logEvent({
+    action: "api_token.untrusted_host",
+    resourceType: "api_token",
+    resourceId: row.id,
+    resourceName: row.name,
+    actor: `api:${row.name}`,
+    level: "warning",
+    message: `API token "${row.name}" was presented from ${callerIp || "an unknown address"}, which is not one of its trusted hosts (${row.trustedHosts.join(", ")}) — request refused`,
+    details: { callerIp, trustedHosts: row.trustedHosts },
+  });
+}
+
+/** Test hook: forget which (token, address) pairs have already logged. */
+export function _resetUntrustedHostEventThrottle(): void {
+  untrustedEventLoggedAt.clear();
+}
+
+/**
  * Verify a presented bearer token. Walks every live (non-revoked, non-
  * expired) token row sharing the prefix and verifies argon2id against
- * each. Returns the matching token's identity + bound roleId on success,
- * null on mismatch.
+ * each. A match whose trustedHosts list is non-empty must also come from
+ * an address in that list (`ipMatchesAllowlist`, fail closed on an unknown
+ * address); otherwise the result is `untrusted_host`, lastUsed is NOT
+ * bumped, and a throttled warning Event is written.
  *
  * On success, lastUsedAt + lastUsedIp are bumped opportunistically (best-
  * effort — failure here doesn't fail auth).
  */
-export async function verifyToken(
-  rawToken: string,
-  callerIp: string | null,
-): Promise<AuthenticatedToken | null> {
-  if (!rawToken || !rawToken.startsWith(TOKEN_PREFIX)) return null;
+export async function verifyToken(rawToken: string, callerIp: string | null): Promise<TokenVerification> {
+  if (!rawToken || !rawToken.startsWith(TOKEN_PREFIX)) return { ok: false, reason: "invalid" };
 
   const candidates = await prisma.apiToken.findMany({
     where: {
@@ -284,6 +411,11 @@ export async function verifyToken(
     const { valid } = await verifyPassword(rawToken, row.tokenHash);
     if (!valid) continue;
 
+    if (row.trustedHosts.length > 0 && !ipMatchesAllowlist(callerIp ?? undefined, row.trustedHosts)) {
+      noteUntrustedHost(row, callerIp);
+      return { ok: false, reason: "untrusted_host", tokenName: row.name, callerIp };
+    }
+
     // Best-effort lastUsed bump.
     prisma.apiToken
       .update({
@@ -294,7 +426,10 @@ export async function verifyToken(
         /* ignore */
       });
 
-    return { id: row.id, name: row.name, roleId: row.roleId, integrationIds: row.integrationIds };
+    return {
+      ok: true,
+      token: { id: row.id, name: row.name, roleId: row.roleId, integrationIds: row.integrationIds },
+    };
   }
-  return null;
+  return { ok: false, reason: "invalid" };
 }

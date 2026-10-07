@@ -544,6 +544,7 @@ const api = {
     list:   ()        => request("GET",    "/api-tokens"),
     create: (body)    => request("POST",   "/api-tokens", body),
     revoke: (id)      => request("POST",   `/api-tokens/${id}/revoke`),
+    updateTrustedHosts: (id, trustedHosts) => request("PUT", `/api-tokens/${id}/trusted-hosts`, { trustedHosts }),
     delete: (id)      => request("DELETE", `/api-tokens/${id}`),
   },
   // Operator-uploaded device icons used by the Device Map's topology
@@ -956,6 +957,10 @@ const api = {
     // assets:read (the facts are stamped on IPAM reservations).
     vips:                 (id) => request("GET", `/assets/${id}/vips`),
     virtualization:       (id) => request("GET", `/assets/${id}/virtualization`),
+    // Unraid / TrueNAS VM + container control (business rule 94).
+    workload:             (id)       => request("GET",  `/assets/${id}/workload`),
+    workloadAction:       (id, verb, body) => request("POST", `/assets/${id}/workload/${encodeURIComponent(verb)}`, body || {}),
+    workloadCheckUpdates: (id)       => request("POST", `/assets/${id}/workload/check-updates`, {}),
     // Firmware upgrade (business rule 87): what the Repository can offer this
     // device (plus its pending booking, `schedule`), the start (assets:write;
     // `imageId` is the image the operator approved by name), and the asset's
@@ -1020,7 +1025,7 @@ const api = {
     llmRegenerateToken: (id) => request("POST", `/integrations/${id}/llm/regenerate-token`),
     llmProbeTools:      (body) => trackedRequest("Checking tool calling", "POST", "/integrations/llm/probe-tools", body),
   },
-  // The floating AI assistant (public/js/assistant.js, business rule 94). The
+  // The floating AI assistant (public/js/assistant.js, business rule 95). The
   // streamed ask (POST /conversations/:id/messages) is NOT here: request()
   // reads a whole JSON body, so assistant.js drives that one with fetch +
   // _csrfHeaders and reads the event stream itself.
@@ -1079,6 +1084,7 @@ const api = {
     merge:  (id, body) => request("POST", `/conflicts/${id}/merge`, body),
     // duplicate-IP conflicts only — body { assetId, ipAddress }
     reassignIp: (id, body) => request("POST", `/conflicts/${id}/reassign-ip`, body),
+    clearIp: (id, body) => request("POST", `/conflicts/${id}/clear-ip`, body),
     // subnet chassis-replacement conflicts only (business rule 41)
     chassisDiff: (id) => request("GET", `/conflicts/${id}/chassis-diff`),
     migrateReservations: (id, body) => request("POST", `/conflicts/${id}/migrate-reservations`, body),

@@ -3,92 +3,76 @@
 > Written 2026-10-07 as its own file (one file per rule from 78 on). Rule numbers are a
 > stable citation key — never renumber. 81 is a deliberate gap.
 
-Verbatim from BUSINESS-RULES.md: each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
+Each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
-- [Rule 94](#rule-94) — The assistant answers as the person asking, only reads, and never types a figure into a report
+- [Rule 94](#rule-94) — A workload Polaris restarts or updates is held, one Polaris stops is paused until Polaris starts it, and every attempt is on the record
 
 <a id="rule-94"></a>
 
-## Rule 94 — The assistant answers as the person asking, only reads, and never types a figure into a report
+## Rule 94 — A workload Polaris restarts or updates is held, one Polaris stops is paused until Polaris starts it, and every attempt is on the record
 
 ### The ask
 
-2026-10-07. The operator asked for "a new integration for a local LLM that will be used as a
-chat bot": a floating icon in the bottom-right corner that expands into a draggable chat
-window, where people can ask for reports on any criteria (downloadable) and ask the model to
-correlate issues — and, added mid-design, ask how to use or configure Polaris. Their sketch had
-the integration create a role and an API token and hand them to the LLM server, "so the local
-LLM can perform look ups on the current database". Conversations were to be human-like, stream
-as they are written, be saved, and take slash commands (`/clear` and the rest) with a popup
-listing them as `/` is typed.
+2026-10-07. The operator asked for Unraid and TrueNAS SCALE integrations that discover the
+host, its VMs and its containers, chart their usage and track up/down — and, asked whether they
+should stay read-only, chose to "include start/stop/restart, also include check for updates and
+give the ability to perform an update". That makes Polaris the cause of the downtime it is
+monitoring, which is the same situation rule 80 (agent operations) and rule 87 (firmware
+flashes) already settled: Polaris must not page anyone about an outage it caused on purpose.
 
-### (a) Lookups run as the person asking — not as the bot
+### Restart and update take a hold, for the length of the call
 
-The sketch's literal shape — the model server holds a Polaris token and calls the API itself —
-has one consequence the operator was asked about and rejected: everyone who chats would see
-whatever the BOT's role can read, including data their own role hides. A `user` with no
-`events` read could ask the bot for the audit log and get it. So the chat runs the other way
-round: Polaris sends the model the tool definitions, the model asks for a lookup, and Polaris
-runs it with the chatting user's own request — `hasPermission(req, key, "read")` first, the
-same region scope the Alerts page applies to alerts — and a role without the key gets "Not
-permitted" back, which the system prompt tells the model to relay rather than work around. The
-`assistant` key therefore can never widen a role; it only decides whether the widget is offered.
-It is READ_ONLY and seeded `read` on every role but the token roles, including the protected
-`readonly` — which, being uneditable, could otherwise never be granted it.
+`services/workloadActionService.ts` opens a rule-80 maintenance hold — `workload-restart`
+(TTL 10 min) or `workload-update` (TTL 30 min: an image pull and recreate, or a TrueNAS App
+upgrade with its own migrations) — BEFORE it calls the platform, and releases it when the
+platform reports the action finished, success or failure, in a `finally`. Both platforms'
+calls return only when the action is done (Unraid's mutations; TrueNAS's jobs, polled to a
+terminal state), so "released on completion" is "released once the workload is back or has
+definitively failed". The TTL is the cap for the path where nothing releases it — a process
+that died mid-call. As with every hold, nothing is taken on an unmonitored asset.
 
-### (b) Read-only, because model output is untrusted
+### Stop pauses monitoring — it does not take a hold
 
-Tool results carry text that came off the network — hostnames, descriptions, alert messages —
-and a model can be steered by text in its context. With only read tools, the worst a poisoned
-hostname can do is make the model say something wrong to a person who could already read the
-same rows. No tool writes, acknowledges, pushes, probes, or reads a credential, token, account,
-role, auth setting, automation script or server setting. The answer is rendered through an
-escape-first Markdown renderer that emits a fixed tag set and only http(s) / same-origin links.
+A stop is the operator saying "this is meant to be off", for as long as they like. A hold has
+a TTL by design (rule 80: the cap is what keeps a forgotten hold from silencing a device
+forever), so a held stop would start paging the moment the TTL ran out, on a workload that is
+exactly where the operator left it. Instead a stop sets `monitored = false`, recomputes the
+override (so discovery's auto-monitor sweep respects it as an operator pin), and stamps
+`Asset.virtualization.monitoringPausedByStop = true`. The workload sync rewrites that blob
+every run, so it carries the flag forward explicitly. A start from Polaris clears the flag and
+sets `monitored = true` again — and ONLY when the flag is there: a workload an operator
+unmonitored by hand stays unmonitored when someone starts it. The stop dialog lets the operator
+opt out of the pause (they want the down alert); default on.
 
-### (c) A report's rows come from the database
+### The handle is read fresh; the state decides what is offered
 
-"Create reports that can be downloaded" invites the model to write a table. A model asked for
-120 rows will happily produce 120 plausible ones. `create_report` takes a source list tool and
-its filters and Polaris re-runs it server-side with a 5000-row cap; the client receives rows
-straight from the query, and the model only learns how many there were. The download (CSV —
-with spreadsheet formulas neutralized —, PDF or Markdown) is therefore a database extract with
-a title the model chose, and the stored copy is a snapshot, so reopening a conversation
-downloads the figures the user saw at the time.
+The platform handle comes from a fresh read of the host (the snapshot cache dropped first),
+never from the source row: an Unraid container's id changes on every recreate and every image
+update, so the one stored at the last discovery may already point at nothing. The same read
+decides which verbs are legal (`allowedVerbs`): start unless running, stop when running or
+paused, restart when running, update only for a container the platform says has one waiting.
+Anything else is refused with 409 BEFORE any hold is taken. The host is never a target — the
+actions are for VMs and containers / Apps.
 
-### (d) Conversations belong to one person
+### Every attempt is an Event
 
-A conversation contains whatever its owner could see, so it is that owner's data: every query
-is scoped to the session user and a foreign id answers 404 — no admin view, by design. Tool calls
-and their results are never stored (re-derived per turn), so a saved thread cannot replay data
-its owner has since lost. The audit Event (`assistant.chat`) records that a turn happened and
-which lookups it ran — never the question or the answer. A bearer token cannot use the
-assistant routes at all: it has no user to own a conversation.
+`asset.workload.<verb>` for a refusal (warning), a platform failure (error, with the
+platform's reason) and a success (info, with the duration and whether monitoring was paused or
+resumed). A stop/start that moved `monitored` says so in the message, so the asset's history
+explains why it went quiet.
 
-### (e) Retention
+### Gate: `assets:write`, not a new key
 
-The operator wanted conversations saved; unbounded saving of chats that quote inventory is a
-liability. `assistant.retentionDays` (default 90) prunes idle conversations from the hourly
-`pruneEvents` job in one batched delete, and a user's history is capped at 200 threads.
+The plan proposed a dedicated `workloadControl` key. It was not added: the firmware routes
+record the operator's decision of 2026-09-26 that "whoever may edit an asset may upgrade it" —
+a flash, which reboots a switch and everything behind it, is `assets:write`. Restarting a
+container is a smaller act than that, so it takes the same gate; reading the live state is
+`assets:read`. A separate key would have been a grant no existing role could derive without a
+judgment call, for an act the catalogue already places.
 
-### (f) The role and token the integration mints
+### What this rule does not do
 
-The operator's role + token still exist — for the model HOST's own use (an Open WebUI tool, an
-MCP server, a script), not for the chat. Creating an llm integration requires `roles` write and
-`apiTokens` write, because it does what those keys gate; it mints `llm-<name>` with read on
-every key that has a read rung except credentials, API tokens, users, roles, authentication,
-automation scripts and server settings, and a token bound to it, shown once alongside the API
-base URL. Deleting the integration removes the token then the role; Regenerate Token replaces
-the token. A role added later does not gain new keys automatically.
-
-### (g) Loopback, and only loopback
-
-A local model very often listens on the Polaris host itself (Ollama's default is
-`localhost:11434`), which the integration SSRF guard refuses. "Allow loopback" lifts the block
-for 127/8, ::1 and `localhost` only; link-local and the cloud metadata address stay refused.
-
-### What is deliberately not here
-
-The assistant is desktop-only for now (not the phone SPA or the Dash wallboard), takes no action
-on the operator's behalf, and speaks one dialect — OpenAI-compatible chat completions — rather
-than per-vendor clients. Help answers come from a keyword index over `docs/wiki/` shipped with
-the build (the Docker image copies it), not from embeddings.
+- No action on the host (no reboot / shutdown of the NAS). Out of scope.
+- No scheduled actions. A workload action runs now or not at all.
+- An update is "the newest the platform offers" (Unraid's image digest; TrueNAS's latest
+  catalog version, or a pull + redeploy for a custom App) — Polaris does not choose versions.

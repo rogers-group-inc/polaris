@@ -1,4 +1,4 @@
--- AI assistant (business rule 94), 2026-10-07.
+-- AI assistant (business rule 95), 2026-10-07.
 --
 --   assistant_conversations  one chat thread in the floating assistant widget,
 --                            owned by exactly one user (owner-only reads).
@@ -73,7 +73,7 @@ ALTER TABLE "assistant_reports"
 -- ─── Seed the `assistant` function key ──────────────────────────
 -- READ_ONLY ladder: the assistant writes nothing outside the caller's own
 -- conversations, and every lookup it makes runs with the caller's own role
--- (rule 94(a)), so `read` grants nothing the role does not already hold.
+-- (rule 95(a)), so `read` grants nothing the role does not already hold.
 -- Every role gets read — including the protected `readonly`, which could
 -- otherwise never be granted it — EXCEPT the legacy `api-*` token roles
 -- (a bearer token has no user to own a conversation) and the `llm-*` roles

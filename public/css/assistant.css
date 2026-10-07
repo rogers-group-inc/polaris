@@ -1,5 +1,5 @@
 /*
- * public/css/assistant.css — the floating AI assistant (business rule 94).
+ * public/css/assistant.css — the floating AI assistant (business rule 95).
  *
  * Loaded on demand by app.js (_bootAssistant) on desktop app pages only, once
  * the caller holds `assistant` read and an llm integration is enabled.

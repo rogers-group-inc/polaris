@@ -129,6 +129,19 @@ export function deriveAssetSourceState(
       return NOT_REPORTED;
     }
 
+    case "unraid-vm":
+    case "unraid-container":
+    case "truenas-vm":
+    case "truenas-app": {
+      // Normalized by the workload services to running / stopped / paused /
+      // other (services/workloadSync.ts → normalizeWorkloadState).
+      const state = str(o.state).toLowerCase();
+      if (state === "running") return reading("enabled",  "runtime", "Running", "state", o.state);
+      if (state === "stopped") return reading("disabled", "runtime", "Stopped", "state", o.state);
+      if (state === "paused")  return reading("disabled", "runtime", "Paused",  "state", o.state);
+      return NOT_REPORTED;
+    }
+
     case "arc": {
       // Arc's connectivity status is a RUNTIME statement — it means the
       // Connected Machine agent is (or isn't) checking in with Azure. It is

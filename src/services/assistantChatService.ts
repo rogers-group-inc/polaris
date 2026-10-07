@@ -1,6 +1,6 @@
 /**
  * src/services/assistantChatService.ts — one assistant turn, streamed
- * (business rule 94).
+ * (business rule 95).
  *
  *   1. beginTurn stores the user's question (or, for /retry, drops the last
  *      answer) — ownership is checked there.
@@ -451,7 +451,7 @@ export async function streamAssistantTurn(input: {
     actor: input.username,
     level: failure ? "warning" : "info",
     // The question and answer are deliberately not logged — the conversation
-    // is the owner's data (rule 94(d)); the audit trail records that it
+    // is the owner's data (rule 95(d)); the audit trail records that it
     // happened and which lookups ran.
     message: failure
       ? `Assistant turn failed for ${input.username ?? "a user"}: ${failure}`

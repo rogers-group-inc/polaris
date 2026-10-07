@@ -1,15 +1,15 @@
 /**
  * tests/integration/llmAssistant.test.ts — the `llm` integration and the AI
- * assistant end to end against a real database (business rule 94):
+ * assistant end to end against a real database (business rule 95):
  *   - creating an llm integration mints a read-only `llm-*` role + API token,
  *     returns the raw token once, refuses a caller without roles + apiTokens
- *     write, and enforces the loopback-only host exception (94(f), 94(g));
+ *     write, and enforces the loopback-only host exception (95(f), 95(g));
  *   - the minted token reads inventory and cannot write, read credentials, or
  *     drive the assistant; regenerate replaces it; delete removes token + role;
  *   - the integration is never discoverable and a PUT cannot spoof roleId;
  *   - a streamed turn against a fake OpenAI-compatible server runs a tool as
  *     the caller, streams text, stores the answer and a DB-sourced report;
- *   - conversations are owner-only (94(d)).
+ *   - conversations are owner-only (95(d)).
  */
 
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -99,7 +99,7 @@ const llmBody = (over: Record<string, unknown> = {}) => ({
   config: { host: "10.250.0.9", port: 11434, model: "fake-model", ...over },
 });
 
-d("llm integration — provisioning (rule 94(f))", () => {
+d("llm integration — provisioning (rule 95(f))", () => {
   it("refuses a caller without roles + apiTokens write, writing nothing", async () => {
     const r = await request(app).post("/api/v1/integrations").set("Authorization", `Bearer ${weakToken}`).send(llmBody());
     expect(r.status).toBe(403);
@@ -175,7 +175,7 @@ d("llm integration — provisioning (rule 94(f))", () => {
   });
 });
 
-d("the assistant (rule 94(a), (c), (d))", () => {
+d("the assistant (rule 95(a), (c), (d))", () => {
   let convId = "";
 
   it("reports the enabled integration by name and model only", async () => {
@@ -202,7 +202,7 @@ d("the assistant (rule 94(a), (c), (d))", () => {
     expect(text).toMatch(/event: tool\ndata: \{"name":"create_report"/);
     expect(text).toMatch(/event: report/);
     // Text written after a report is held and released whole, table-stripped
-    // (rule 94(c) — the model has not seen the rows), not streamed piecemeal.
+    // (rule 95(c) — the model has not seen the rows), not streamed piecemeal.
     expect(text).toMatch(/event: token\ndata: \{"text":"One switch is down\."\}/);
     expect(text).toMatch(/event: done/);
 
@@ -242,7 +242,7 @@ d("the assistant (rule 94(a), (c), (d))", () => {
   });
 });
 
-d("llm integration — delete (rule 94(f))", () => {
+d("llm integration — delete (rule 95(f))", () => {
   it("removes the token and the role", async () => {
     const { agent, csrf } = await authedAgent(app);
     const row = await prisma.integration.findUnique({ where: { id: integrationId } });

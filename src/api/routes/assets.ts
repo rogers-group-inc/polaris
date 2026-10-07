@@ -127,8 +127,16 @@ import {
   isFortinetIntegrationType,
   isMethodValidForStream,
   isPollingMethodCompatible,
+  isWorkloadPollingMethod,
   pollingMethodLabel,
 } from "../../utils/pollingCompatibility.js";
+import {
+  assetTypeForWorkloadRole,
+  isWorkloadPlatform,
+  parseWorkloadSourceKind,
+  workloadPlatformLabel,
+  workloadSourceKindsFor,
+} from "../../utils/workloadSources.js";
 import { collectorCapability } from "../../utils/pollingCapability.js";
 import { logger } from "../../utils/logger.js";
 import {
@@ -256,7 +264,7 @@ const CreateAssetSchema = z.object({
 // apply to the asset's source. Includes "disabled" (universally allowed
 // opt-out) and "agent" (Polaris Agent; allowed on AD/Entra/WinServer/Manual
 // sources, ignored on fortimanager/fortigate).
-const PollingMethodEnum = z.enum(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager"]);
+const PollingMethodEnum = z.enum(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas"]);
 
 const UpdateAssetSchema = CreateAssetSchema.partial().extend({
   // Unlike create (min(1)), update accepts "" — blanking the IP Address field
@@ -980,6 +988,7 @@ function shapeManagementAccess(ma: unknown): { mgmtIp: string | null; protocols:
 async function computeMonitoringMethods(a: {
   monitored?: boolean;
   assetType?: unknown;
+  ipAddress?: unknown;
   discoveredByIntegrationId?: unknown;
   discoveredByIntegration?: { type?: string | null } | null;
   managedAgent?: { installStatus?: string | null } | null;
@@ -994,6 +1003,8 @@ async function computeMonitoringMethods(a: {
   if (a.managedAgent?.installStatus === "active") return ["agent"];
   const resolved = await resolveMonitorSettings({
     assetType:                   typeof a.assetType === "string" ? a.assetType : "other",
+    // Read by the Unraid / TrueNAS response-time default (ICMP only when pingable).
+    ipAddress:                   typeof a.ipAddress === "string" ? a.ipAddress : null,
     discoveredByIntegrationId:   typeof a.discoveredByIntegrationId === "string" ? a.discoveredByIntegrationId : null,
     discoveredByIntegrationType: a.discoveredByIntegration?.type ?? null,
     monitorIntervalSec:     null,
@@ -1999,6 +2010,14 @@ async function resolveIntegrationFilterBlock(id: string): Promise<{
       select: { observed: true },
     });
     const obs = (vmSource?.observed as Record<string, unknown> | null) || null;
+    if (obs && typeof obs.name === "string") vmName = obs.name;
+  } else if (isWorkloadPlatform(filterAsset.discoveredByIntegration.type)) {
+    // Unraid / TrueNAS: same idea — the platform's own VM / container name.
+    const wlSource = await prisma.assetSource.findFirst({
+      where: { assetId: id, sourceKind: { in: workloadSourceKindsFor(filterAsset.discoveredByIntegration.type) } },
+      select: { observed: true },
+    });
+    const obs = (wlSource?.observed as Record<string, unknown> | null) || null;
     if (obs && typeof obs.name === "string") vmName = obs.name;
   }
   const filt = assetMatchesIntegrationFilter({ ...filterAsset, adOuPath, vmName }, filterAsset.discoveredByIntegration);
@@ -3722,6 +3741,46 @@ router.get("/:id/virtualization", requirePermission("assets", "read"), async (re
     });
     if (!asset) throw new AppError(404, "Asset not found");
     const v = asset.virtualization as Record<string, any> | null;
+    // Unraid / TrueNAS blobs (`platform` set) have their own shape: a VM or
+    // container links to its host; the host lists the workloads placed on it
+    // (VMs and containers alike) and carries its pools inline.
+    if (v && (v.platform === "unraid" || v.platform === "truenas")) {
+      if (v.role === "vm" || v.role === "container") {
+        const hostAsset = typeof v.hostAssetId === "string" && v.hostAssetId
+          ? await prisma.asset.findUnique({
+              where: { id: v.hostAssetId },
+              select: { id: true, hostname: true, monitorStatus: true, monitored: true },
+            })
+          : null;
+        res.json({ virtualization: v, hostAsset });
+        return;
+      }
+      if (v.role === "host") {
+        const children = await prisma.asset.findMany({
+          where: { virtualization: { path: ["hostAssetId"], equals: id }, status: { not: "decommissioned" } },
+          select: { id: true, hostname: true, assetType: true, monitorStatus: true, monitored: true, virtualization: true },
+          orderBy: { hostname: "asc" },
+          take: 1000,
+        });
+        res.json({
+          virtualization: v,
+          workloads: children.map((c) => {
+            const cv = (c.virtualization as Record<string, any> | null) ?? {};
+            return {
+              id: c.id,
+              hostname: c.hostname,
+              role: cv.role ?? null,
+              state: cv.state ?? null,
+              image: cv.image ?? null,
+              updateAvailable: cv.updateAvailable ?? null,
+              monitorStatus: c.monitorStatus,
+              monitored: c.monitored,
+            };
+          }),
+        });
+        return;
+      }
+    }
     if (!v || (v.role !== "vm" && v.role !== "host")) {
       res.json({ virtualization: null });
       return;
@@ -4081,6 +4140,23 @@ async function validateAssetUpdate(id: string, existing: ExistingAssetForUpdate,
           throw new AppError(400, "vCenter polling requires this asset to be a vCenter-discovered VM or ESXi host (no vCenter source on file)");
         }
       }
+      // "unraid" / "truenas": the vCenter guard for the workload integrations —
+      // the stream must be one the host's API answers, and the asset must carry
+      // a source row of THAT platform to resolve the integration through.
+      if (isWorkloadPollingMethod(value)) {
+        const stream = name.replace(/Polling$/, "") as Stream;
+        const label = workloadPlatformLabel(value);
+        if (!isMethodValidForStream(stream, value)) {
+          throw new AppError(400, `${label} polling does not apply to the ${stream} stream (field: ${name})`);
+        }
+        const wlSource = await prisma.assetSource.findFirst({
+          where: { assetId: id, sourceKind: { in: workloadSourceKindsFor(value) } },
+          select: { id: true },
+        });
+        if (!wlSource) {
+          throw new AppError(400, `${label} polling requires this asset to be discovered by a ${label} integration (no ${label} source on file)`);
+        }
+      }
       // "fortimanager" reads FMG's own device roster — reachability and nothing
       // else — so it covers response time only, and needs an actual
       // FortiManager to ask. The source-kind check above already rejects it on
@@ -4224,7 +4300,13 @@ async function buildAssetUpdatePatch(
   let ipOverrideTouched = false;
   if (input.ipAddress !== undefined) {
     const trimmed = input.ipAddress.trim();
-    if (!trimmed) {
+    if (!trimmed && existing.ipCleared && !existing.ipAddress && !existing.ipOverride) {
+      // Business rule 40(j): the address was blanked from a duplicate-IP
+      // card and is waiting for discovery. The form re-sends the blank field
+      // on every save; re-projecting here would put the contested address
+      // straight back, so a blank that is already blank is a no-op.
+      delete data.ipAddress;
+    } else if (!trimmed) {
       data.ipOverride = null;
       const { projected, provenance } = await loadProjection();
       data.ipAddress = projected.ipAddress;
@@ -4234,6 +4316,7 @@ async function buildAssetUpdatePatch(
       data.ipAddress = trimmed;
       data.ipOverride = trimmed;
       data.ipSource = "manual";
+      data.ipCleared = null; // a typed address ends any rule 40(j) blank hold
       ipOverrideTouched = true;
     } else {
       delete data.ipAddress;
@@ -5323,7 +5406,8 @@ router.post("/:id/sources/:sourceId/split", requirePermission("assets", "write")
     // canonical identity link via (sourceKind, externalId). The legacy
     // entra:/ad:/fgt: prefixes were back-compat markers that re-discovery
     // already stopped consulting in Phase 2.
-    let assetType: "firewall" | "switch" | "access_point" | "workstation" | "server" | "hypervisor" | "other" = "other";
+    let assetType: "firewall" | "switch" | "access_point" | "workstation" | "server" | "hypervisor" | "container" | "other" = "other";
+    const splitWorkload = parseWorkloadSourceKind(target.sourceKind);
     const tagSet = new Set<string>(["split-from-asset", "auto-discovered"]);
     if (target.sourceKind === "entra") {
       assetType = "workstation";
@@ -5355,6 +5439,9 @@ router.post("/:id/sources/:sourceId/split", requirePermission("assets", "write")
       // run refines this via inferArcAssetType if it's actually a client SKU.
       assetType = "server";
       tagSet.add("azurearc");
+    } else if (splitWorkload) {
+      assetType = assetTypeForWorkloadRole(splitWorkload.role);
+      tagSet.add(splitWorkload.platform);
     }
 
     // Manufacturer fallback — projection only gives "Fortinet" for fortinet
@@ -6536,7 +6623,12 @@ router.post("/:id/agent/install", requirePermission("assets", "fullwrite"), asyn
     // can't run third-party binaries. Gate on the asset's class, not the
     // integration type (the vcenter source matrix must allow "agent" for VMs).
     if (asset.assetType === "hypervisor") {
-      throw new AppError(400, "Polaris Agent cannot be installed on a hypervisor (ESXi) host.");
+      throw new AppError(400, "Polaris Agent cannot be installed on a hypervisor host (ESXi, Unraid, TrueNAS SCALE).");
+    }
+    // A container is not a machine: the agent would land in an image layer
+    // the next update throws away. Its host's integration reports it.
+    if (asset.assetType === "container") {
+      throw new AppError(400, "Polaris Agent cannot be installed on a container.");
     }
 
     // Resolve transport: explicit body value wins; otherwise default by

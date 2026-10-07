@@ -1,7 +1,7 @@
 /**
  * tests/unit/assistantToolService.test.ts
  *
- * Rule 94(a)–(c) at the tool layer, without a database:
+ * Rule 95(a)–(c) at the tool layer, without a database:
  *   - every data tool checks the CALLER's role first and answers "Not
  *     permitted" without querying when the role lacks the key;
  *   - model-supplied arguments are validated (bad JSON, bad values, unknown

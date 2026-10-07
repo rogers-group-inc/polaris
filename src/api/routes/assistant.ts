@@ -1,5 +1,5 @@
 /**
- * src/api/routes/assistant.ts — the floating AI assistant (business rule 94).
+ * src/api/routes/assistant.ts — the floating AI assistant (business rule 95).
  *
  * Mounted at /api/v1/assistant behind requirePermission("assistant", "read").
  *
@@ -17,7 +17,7 @@
  * SESSION-ONLY: a conversation belongs to a user, and a bearer token has none,
  * so token callers get a 403 here even when their role holds `assistant`.
  * Every conversation route is owner-scoped in the service (404 for anyone
- * else's id — rule 94(d)).
+ * else's id — rule 95(d)).
  */
 
 import { Router, type Request, type Response, type NextFunction } from "express";

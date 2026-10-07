@@ -3,7 +3,7 @@
  *
  * ESCAPE-FIRST. Model output is untrusted text (it can echo device names,
  * descriptions and alert messages that came from the network — business rule
- * 94's prompt-injection note), so every character is HTML-escaped before any
+ * 95's prompt-injection note), so every character is HTML-escaped before any
  * Markdown is recognized, and the only markup ever produced is the fixed set
  * below. No raw HTML passes through, ever; links are limited to http(s) and
  * same-origin paths and always open in a new tab with noopener.

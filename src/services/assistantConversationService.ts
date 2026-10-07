@@ -1,6 +1,6 @@
 /**
  * src/services/assistantConversationService.ts — the AI assistant's saved
- * conversations (business rule 94(d)–(e)).
+ * conversations (business rule 95(d)–(e)).
  *
  * OWNER-ONLY. Every function takes the session user's id and scopes every
  * query to it; a conversation id that belongs to someone else answers 404
@@ -11,7 +11,7 @@
  * Only the user / assistant turns are stored. Tool calls and their results are
  * NOT — they are re-derived on every request, so a stored conversation can
  * never replay data its owner has since lost access to. Report snapshots ARE
- * stored (rule 94(c)): reopening a conversation downloads the figures the user
+ * stored (rule 95(c)): reopening a conversation downloads the figures the user
  * saw at the time.
  *
  * Retention: `assistant.retentionDays` (default 90); pruneAssistantConversations
@@ -227,7 +227,7 @@ export async function finishTurn(
   return { messageId: message.id, reportIds };
 }
 
-/** Rule 94(e): drop conversations idle past the retention window. One batched delete. */
+/** Rule 95(e): drop conversations idle past the retention window. One batched delete. */
 export async function pruneAssistantConversations(): Promise<number> {
   const { retentionDays } = await getAssistantSettings();
   const cutoff = new Date(Date.now() - retentionDays * 86_400_000);

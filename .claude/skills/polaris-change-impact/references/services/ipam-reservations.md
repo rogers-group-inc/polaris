@@ -70,6 +70,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - CIDR must be normalized and unique
 - IP version immutable after creation (v4 vs v6)
 - Tags are optional arrays, filtered client-side in listBlocks
+- listBlocks returns `utilizationPercent` per block — the share of its address space carved into NON-deprecated networks, via `utils/cidr.ts → cidrAllocationPercent()` (BigInt, exact for IPv6, any carved space floors at 0.01 so it renders "<1%"). It reads only the child CIDRs and strips them from the response. It is the same figure the Block utilization widget ranks on (utilizationService), and drives the IP Blocks list's Utilization column + its PDF/CSV exports (public/js/blocks.js)
 - Exactly ONE audit Event per mutation, fired `void` after the write resolves — never from the route layer (double-logging) and never before/inside the write (phantom on failure). `tests/integration/blocks.test.ts` asserts the one-per-mutation + zero-on-validation-failure contract.
 
 **When changing this:**
@@ -83,12 +84,13 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Reverse (IP → PTR) and forward (hostname → A/AAAA) DNS lookup via three modes (standard/UDP, DoT/TLS, DoH/HTTPS); per-asset TTL caching; resolver configuration storage.
 
-**Public API:** DnsSettings, PtrRecord, ARecord, ResolverLike, getDnsSettings, updateDnsSettings, createResolver, getConfiguredResolver.
+**Public API:** DnsSettings, PtrRecord, ARecord, ResolverLike, DnsTestTarget, getDnsSettings, updateDnsSettings, createResolver, getConfiguredResolver, parseDnsTestTarget.
 
 **Used by:**
 - src/api/routes/assets.ts — GET /assets/:id, resolve PTR names for associated IPs
 - src/services/discovery/discoveryEngine.ts — resolve PTR during discovery (dispatched from POST /integrations/discover)
-- src/api/routes/serverSettings.ts — GET/PUT /server-settings/dns, CRUD DNS config + test endpoint
+- src/api/routes/serverSettings.ts — GET/PUT /server-settings/dns, CRUD DNS config + test endpoint (`parseDnsTestTarget`: an IP runs a PTR lookup; a hostname, host:port or full URL runs an A/AAAA lookup — the Test DNS Lookup card accepts an integration URL pasted as-is)
+- src/services/discovery/workloadSync.ts — `getConfiguredResolver().lookup` resolves an Unraid / TrueNAS host configured by name
 
 **Invariants:**
 - Three modes (standard, dot, doh): standard falls back to system DNS, returns null TTL; DoT connects to port 853 (configurable), parses TCP wire format; DoH uses JSON API (Cloudflare/Google/Quad9).
@@ -135,7 +137,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `prisma`, `logEvent` + `buildChanges` (eventLogService), `UNMONITORABLE_STATUSES` (utils/assetInvariants), `isValidIpAddress` (utils/cidr), `resolvePendingIpOverrideConflicts` (ipOverrideService), `mergeAssets` (assetMergeService — the merge verb delegates rather than re-implementing an absorb), `buildIpContexts` (subnetService — subnet containment for the cross-source clause's reservation lookup, the same single implementation `ipUpstreamChainService` uses).
 
-**Used by:** `src/jobs/detectDuplicateIpAssets.ts` (10-min sweep, scheduler role), `src/api/routes/assets.ts` (`GET /ip-check` → `checkIpForIncomingClaim`; `POST /` and `PUT /:id` → `reconcileDuplicateIpForAddresses` on the address written / moved, awaited, returned as `ipConflict`; `POST /:id/merge` → `repointDuplicateIpConflicts` before the merge, then the same on the survivor's address AND the absorbed asset's old one, awaited), `src/services/duplicateSerialConflictService.ts` (`absorbDuplicateSerialGroup`, the automatic serial merge — same repoint + reconcile), `src/api/routes/conflicts.ts` (`POST /:id/reassign-ip` + the duplicate-IP branch of `POST /:id/merge`), `src/services/conflictResolutionService.ts` (imports `DUPLICATE_IP_COLLISION_REASON` + `logDuplicateIpDismissal` for the accept-refusal and reject branches). Frontend reader: `renderDuplicateIpConflictCard` in `public/js/events.js` + the reason label in `public/js/widgets/conflictQueue.js`.
+**Used by:** `src/jobs/detectDuplicateIpAssets.ts` (10-min sweep, scheduler role), `src/api/routes/assets.ts` (`GET /ip-check` → `checkIpForIncomingClaim`; `POST /` and `PUT /:id` → `reconcileDuplicateIpForAddresses` on the address written / moved, awaited, returned as `ipConflict`; `POST /:id/merge` → `repointDuplicateIpConflicts` before the merge, then the same on the survivor's address AND the absorbed asset's old one, awaited), `src/services/duplicateSerialConflictService.ts` (`absorbDuplicateSerialGroup`, the automatic serial merge — same repoint + reconcile), `src/api/routes/conflicts.ts` (`POST /:id/reassign-ip`, `POST /:id/clear-ip` → `clearDuplicateIpAsset` (rule 40(j), the blank whose hold lives in the `src/db.ts` guard on `Asset.ipCleared`) + the duplicate-IP branch of `POST /:id/merge`), `src/services/conflictResolutionService.ts` (imports `DUPLICATE_IP_COLLISION_REASON` + `logDuplicateIpDismissal` for the accept-refusal and reject branches). Frontend reader: `renderDuplicateIpConflictCard` in `public/js/events.js` + the reason label in `public/js/widgets/conflictQueue.js`.
 
 **Invariants:**
 - ONE pending conflict per ADDRESS (never per pair) — a three-way collision is one row, every claimant in `proposedAssetFields.members[]`.
@@ -570,8 +572,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - Global utilization counts all blocks, subnets, and active reservations in one query set
-- IPv6 block addresses capped at Number.MAX_SAFE_INTEGER to avoid precision loss
-- Deprecated subnets excluded from allocatedAddresses calculation
+- IPv6 block addresses capped at Number.MAX_SAFE_INTEGER to avoid precision loss — in the `blockAddresses` / `allocatedAddresses` counts ONLY. `usedPercent` comes from `utils/cidr.ts → cidrAllocationPercent()` (exact BigInt) so a capped pair never divides an IPv6 block to 100%; it must stay the same helper blockService.listBlocks uses, or the widget and the IP Blocks Utilization column disagree
+- Deprecated subnets excluded from allocatedAddresses calculation (and from usedPercent)
 - Subnet status grouping: available, reserved, deprecated
 - `getRecentManualReservations(limit, sourceTypes?)` — default `sourceTypes=undefined` filters to `["manual"]` (back-compat); explicit array narrows or broadens; empty array disables the filter entirely. Caller (the dashboard route) validates source-type values against the known enum before passing through.
 

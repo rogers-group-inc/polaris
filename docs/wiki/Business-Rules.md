@@ -1,6 +1,6 @@
 # Business rules
 
-Polaris carries **90 numbered rules** (81 is a deliberate gap). Each one records a decision *and* the
+Polaris carries **93 numbered rules**, 1 to 94 (81 is a deliberate gap). Each one records a decision *and* the
 incident or constraint that forced it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
 where the reasons live.
@@ -323,6 +323,12 @@ types are, so two workstations one of which you addressed by hand is a conflict.
 Merging assets now requires Assets **full read-write** everywhere — it edits one
 record and deletes another. See
 [Conflict Resolution](Conflict-Resolution#i-or-an-operator-typed-the-address).
+
+**Since 2026-10-07 an offline device can be cleared.** When one claimant is off and
+its next address is unknown, *Clear* on its row blanks the address instead of
+pinning a new one; discovery fills the blank the first time it reports the device
+on a different address, and won't put the old one back while the other device
+still holds it.
 
 ### Rule 41
 **A subnet dies with its FortiGate, and the chassis — not the name — says which
@@ -1358,7 +1364,7 @@ The **CPU core utilization** condition (`cpuCorePct`) finds single-threaded
 applications. "Above 90% for 3 polls" means the **same core** was above 90% on
 three polls in a row. Different cores each spiking once does not count. It
 raises **one alert per device**, naming the cores that stayed over the line,
-with the top five processes by CPU. Only the Polaris Agent and vCenter report
+with the top five processes by CPU. Only the Polaris Agent, vCenter and Unraid / TrueNAS hosts report
 per-core figures; any other device has no reading for it.
 
 When the whole device is busy, every core is hot. So while the device has an
@@ -1471,6 +1477,31 @@ Polaris account.
 See [Assets → Firmware](Assets#firmware).
 
 ### Rule 94
+
+**A workload Polaris restarts or updates is held, one Polaris stops is paused
+until Polaris starts it, and every attempt is on the record.** On an Unraid or
+TrueNAS SCALE integration, a VM or container (an App on TrueNAS) can be
+started, stopped, restarted and updated from its asset by anyone with Read-Write
+on Assets, the same level as a firmware upgrade. Reading its live state needs
+only Read-Only. The host itself cannot be started or stopped from Polaris.
+
+- **Restart and update take a maintenance hold**, as an agent upgrade does
+  ([rule 80](#rule-80)), so downtime you asked for does not page you. The hold
+  is released when the platform reports the action finished, and expires on its
+  own after 10 minutes for a restart and 30 for an update, whatever happened.
+- **Stop takes no hold.** Instead Polaris pauses monitoring of the workload,
+  unless you tick *Keep monitoring while stopped*. A **Start from Polaris** resumes monitoring, but only when it was
+  Polaris that paused it; monitoring you turned off yourself stays off.
+- **Polaris never chooses a version.** On Unraid, update re-pulls the
+  container's image. On TrueNAS it upgrades the App to the latest version in the
+  catalog, or, for a custom App, pulls its images and redeploys it.
+- **Every attempt is an Event** named `asset.workload.<verb>`: the success, the
+  failure, and the refusal (no permission in Polaris, or an API key the platform
+  will not let act).
+
+See [Unraid → Workload actions](Integration-Unraid#workload-actions) and
+[TrueNAS SCALE → Workload actions](Integration-TrueNAS#workload-actions).
+
 **The assistant answers as the person asking, only reads, and never types a
 figure into a report.** The [AI assistant](AI-Assistant) looks things up with
 **your own** permissions: if your role cannot read alerts, neither can the

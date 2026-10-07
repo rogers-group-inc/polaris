@@ -1,7 +1,7 @@
 /**
  * tests/unit/llmService.test.ts
  *
- * The OpenAI-compatible transport behind the AI assistant (business rule 94),
+ * The OpenAI-compatible transport behind the AI assistant (business rule 95),
  * driven against a real local HTTP server so the SSE parsing is exercised the
  * way a model server actually sends it: text in many small deltas, a tool
  * call whose name and JSON arguments arrive in separate fragments, CRLF line

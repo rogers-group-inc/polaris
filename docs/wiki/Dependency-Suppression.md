@@ -35,6 +35,7 @@ Edges live on the asset and come from four sources:
 | `computed` | rebuilt at the end of every FortiManager / FortiGate discovery cycle, from interface adjacency, LLDP, mesh and controller signals |
 | `endpoint` | a fleet-wide pass giving each endpoint **one** parent |
 | `vcenter` | VM → ESXi host placement |
+| `unraid` / `truenas` | VM or container (App) → the Unraid / TrueNAS host it runs on |
 | `override` | operator-managed, never touched by recompute |
 
 **Layer assignment is physical-first**: a breadth-first walk from any FortiGate

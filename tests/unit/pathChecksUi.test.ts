@@ -15,6 +15,7 @@
 import { describe, it, expect, beforeAll, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import vm from "node:vm";
 import { parseStatusSpec as serverParse } from "../../src/utils/httpCheck.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
@@ -41,6 +42,18 @@ function sliceFn(src: string, name: string): string {
   for (let i = src.indexOf("{", start); i < src.length; i++) {
     if (src[i] === "{") depth++;
     else if (src[i] === "}" && --depth === 0) return src.slice(start, i + 1);
+  }
+  throw new Error("unbalanced " + name);
+}
+
+/** Slice one top-level `var name = { … };` object literal out of a browser file. */
+function sliceVar(src: string, name: string): string {
+  const start = src.indexOf("var " + name + " = {");
+  if (start < 0) throw new Error("no var " + name);
+  let depth = 0;
+  for (let i = src.indexOf("{", start); i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}" && --depth === 0) return src.slice(start, i + 1) + ";";
   }
   throw new Error("unbalanced " + name);
 }
@@ -173,7 +186,7 @@ describe("slide-over Paths tab helpers", () => {
 describe("traceroute path graph (NetPath-style)", () => {
   const prelude = 'var MONITOR_STATE_COLORS = { up: "#2a9d8f", down: "#d32f2f", warning: "#f4a261" };' +
     "function escapeHtml(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;'); }\n";
-  const names = ["_trHopRtt", "_trPathGraph", "_trEdgeColor", "_trPathSVG", "_trPathTooltipHTML"];
+  const names = ["_trHopRtt", "_trPathGraph", "_trEdgeColor", "_trPathLayout", "_trNodeView", "_trEdgeWidth", "_trPathSVG", "_trPathTooltipHTML"];
   const fns: any = new Function(prelude + names.map((n) => sliceFn(assetsSrc, n)).join("\n") + "\nreturn {" + names.join(",") + "};")();
 
   const hop = (ttl: number, ip: string | null, rtt: number[] = [1, 1, 1], extra: any = {}) => ({ ttl, ip, rdns: null, rttMs: ip ? rtt : [-1, -1, -1], ...extra });
@@ -235,6 +248,108 @@ describe("traceroute path graph (NetPath-style)", () => {
     expect(svg).not.toMatch(/class="(?!chart-hit)/); // the camera sees no stylesheet
     expect(fns._trPathTooltipHTML(g, "1:10.0.0.1", null)).toContain("Click to open the asset");
     expect(fns._trPathTooltipHTML(g, "3:*", null)).toContain("No router answered");
+  });
+});
+
+describe("traceroute path graph — Export (graph-export.js scene)", () => {
+  // The scene is drawn by the shared PDF / Visio writers, so they are loaded
+  // for real (a browser IIFE in a vm, as tests/unit/graphExport.test.ts does).
+  const sandbox: Record<string, any> = { window: {}, document: { addEventListener() {}, getElementById: () => null }, TextEncoder };
+  vm.createContext(sandbox);
+  vm.runInContext(readFileSync(resolve(ROOT, "public/js/graph-export.js"), "utf8"), sandbox);
+  const G = sandbox.window.PolarisGraphExport;
+
+  const prelude = 'var MONITOR_STATE_COLORS = { up: "#2a9d8f", down: "#d32f2f", warning: "#f4a261" };' +
+    'var _PATH_KIND_LABELS = { http: "HTTP", https: "HTTPS", tcp: "TCP", icmp: "ICMP" };' +
+    "function _pathFmtWhen(v) { return String(v); }\n" +
+    "function escapeHtml(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;'); }\n" +
+    sliceVar(assetsSrc, "_TR_PAPER_COLORS") + "\n";
+  const names = ["_trHopRtt", "_trPathGraph", "_trEdgeColor", "_trPathLayout", "_trNodeView", "_trEdgeWidth", "_trPathSVG",
+    "_trPathScene", "_pathMapExportMeta", "_pathMapExportKey"];
+  const fns: any = new Function(prelude + names.map((n) => sliceFn(assetsSrc, n)).join("\n") + "\nreturn {" + names.join(",") + "};")();
+
+  const hop = (ttl: number, ip: string | null, rtt: number[] = [1, 1, 1], extra: any = {}) => ({ ttl, ip, rdns: null, rttMs: ip ? rtt : [-1, -1, -1], ...extra });
+  const newest = { timestamp: "t0", hopCount: 4, destinationIp: "10.0.0.9", complete: true,
+    hops: [hop(1, "10.0.0.1", [1, 1, 1], { hostname: "core → edge", monitorStatus: "up" }), hop(2, "10.0.0.2", [2, 2, 2]), hop(3, null), hop(4, "10.0.0.9", [70, 70, 70])] };
+  const older = { timestamp: "t1", hopCount: 3, destinationIp: "10.0.0.9", complete: true, hops: [hop(1, "10.0.0.1"), hop(2, "10.0.0.3"), hop(3, "10.0.0.9", [3, 3, 3])] };
+  const failed = { timestamp: "t2", hopCount: 2, destinationIp: "10.0.0.9", complete: false, hops: [hop(1, "10.0.0.1"), hop(2, "10.0.0.2", [5, -1, 5])] };
+  const scene = (traces: any[]) => fns._trPathScene(fns._trPathGraph(traces, 0), { hostname: "web01" }, G.mixWithWhite, G.pdfText);
+
+  it("puts every circle exactly where the on-screen SVG puts it at the same column width", () => {
+    const g = fns._trPathGraph([newest, older], 0);
+    const s = fns._trPathScene(g, { hostname: "web01" }, G.mixWithWhite, G.pdfText);
+    const svg = fns._trPathSVG(g, { hostname: "web01" }, s.bbox.w);
+    const onScreen = [...svg.matchAll(/<circle cx="([\d.]+)" cy="([\d.]+)" r="13"/g)].map((m) => [+m[1], +m[2]]);
+    const exported = s.nodes.filter((n: any) => n.shape === "ellipse").map((n: any) => [(n.x1 + n.x2) / 2, (n.y1 + n.y2) / 2]);
+    expect(exported).toHaveLength(Object.keys(g.nodes).length);
+    exported.forEach((p: number[], i: number) => {
+      expect(p[0]).toBeCloseTo(onScreen[i][0], 1);
+      expect(p[1]).toBeCloseTo(onScreen[i][1], 1);
+    });
+  });
+
+  it("paints paper colours only — no theme token reaches the writers — and fades the other routes", () => {
+    const s = scene([newest, older]);
+    const colours = [
+      ...s.edges.map((e: any) => e.color),
+      ...s.nodes.flatMap((n: any) => [n.fill, n.stroke, n.label && n.label.color]),
+    ].filter(Boolean);
+    colours.forEach((c: string) => expect(c).toMatch(/^#[0-9a-f]{6}$/i));
+    // Another trace's branch is mixed toward white, as the screen draws it at 35 %.
+    const faded = G.mixWithWhite("#8080a0", 0.35).toLowerCase();
+    expect(s.edges.some((e: any) => e.color.toLowerCase() === faded)).toBe(true);
+    // The selected route's slow link keeps its full red.
+    expect(s.edges.some((e: any) => e.color.toLowerCase() === "#c62828" && e.style === "solid")).toBe(true);
+  });
+
+  it("keeps the real glyphs for Visio and prints WinAnsi-safe text in the PDF", () => {
+    const s = scene([newest]);
+    const labels = s.nodes.map((n: any) => n.label).filter(Boolean);
+    const src = labels.find((l: any) => l.lines[0] === "⌂");
+    expect(src.pdfLines).toEqual(["S"]);
+    expect(labels.find((l: any) => l.lines[0] === "◎").pdfLines).toEqual(["D"]);
+    const name = labels.find((l: any) => l.lines[0].startsWith("core"));
+    expect(name.lines[0]).toContain("→");
+    expect(name.pdfLines[0]).toContain("->");
+    expect(s.minFontPx).toBe(10);
+  });
+
+  it("draws a stopped trace's link dashed with the ✕ on it", () => {
+    const s = scene([failed, newest]);
+    expect(s.edges.some((e: any) => e.style === "dashed" && e.color.toLowerCase() === "#c62828")).toBe(true);
+    // The ✕: two short straight strokes.
+    expect(s.edges.filter((e: any) => e.path.length === 2 && e.path[1].type === "L")).toHaveLength(2);
+  });
+
+  it("keeps everything inside the scene's box, so neither writer crops a label", () => {
+    const s = scene([newest, older]);
+    s.nodes.forEach((n: any) => {
+      expect(n.x1).toBeGreaterThanOrEqual(0);
+      expect(n.x2).toBeLessThanOrEqual(s.bbox.x2);
+      if (n.label && n.label.valign === "bottom") {
+        expect(n.y2 + n.label.my + n.label.fontPx * 1.2).toBeLessThanOrEqual(s.bbox.y2);
+      }
+    });
+  });
+
+  it("packages as Visio — one shape per circle, text box and line", () => {
+    const s = scene([newest, older]);
+    const page = G.vsdxPageXml(s);
+    expect(page.shapeCount).toBe(s.nodes.length + s.edges.length);
+    expect(page.xml).toContain("<Text>⌂</Text>");
+    const parts = G.vsdxParts(s, "Polaris Path: test", "Path: test");
+    expect(parts.map((p: any) => p.name)).toContain("visio/windows.xml");
+  });
+
+  it("says which route and which trace the export shows, and keys the colours", () => {
+    const g = fns._trPathGraph([newest, older], 0);
+    const meta = fns._pathMapExportMeta({ name: "web", kind: "https" }, [newest, older], 0, { hostname: "web01" }, g);
+    expect(meta[0]).toBe("web01 -> 10.0.0.9  |  HTTPS check");
+    expect(meta[1]).toContain("Trace t0, 4 hops, reached the destination");
+    expect(meta[1]).toContain("the other 1 recent trace took");
+    const key = fns._pathMapExportKey();
+    key.forEach((k: any) => expect(k.color).toMatch(/^#[0-9a-f]{6}$/i));
+    expect(key.map((k: any) => k.text)).toContain("destination not reached");
   });
 });
 

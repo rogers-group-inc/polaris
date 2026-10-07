@@ -445,6 +445,35 @@ export function usableHostCount(cidr: string): number {
 }
 
 /**
+ * Percentage (0–100, two decimals) of a block's address space covered by the
+ * given child CIDRs — how much of an IP block has been carved into networks.
+ * BigInt throughout so IPv6 is exact: a /48 holding one /64 is a real, tiny
+ * figure, not two capped 2^53 counts dividing to 100%. Children are assumed
+ * not to overlap (subnets never do — business rule 1); a child outside the
+ * block or larger than it is ignored, and the result is clamped at 100.
+ * Any carved space yields at least 0.01, so a busy block never reads as 0.
+ */
+export function cidrAllocationPercent(blockCidr: string, childCidrs: string[]): number {
+  const v6 = detectIpVersion(blockCidr) === "v6";
+  const width = v6 ? 128 : 32;
+  const blockPrefix = parseInt(blockCidr.split("/")[1], 10);
+  if (!Number.isFinite(blockPrefix)) return 0;
+  const total = 1n << BigInt(width - blockPrefix);
+  let used = 0n;
+  for (const child of childCidrs) {
+    const prefix = parseInt(child.split("/")[1], 10);
+    if (!Number.isFinite(prefix) || prefix < blockPrefix) continue;
+    if ((detectIpVersion(child) === "v6") !== v6) continue;
+    used += 1n << BigInt(width - prefix);
+  }
+  if (used >= total) return 100;
+  // A /24 inside a /8 is 0.0015% — never let occupied space read as an empty
+  // block; 0.01 is the floor the UI shows as "<1%".
+  if (used > 0n) return Math.max(0.01, Number((used * 10000n) / total) / 100);
+  return 0;
+}
+
+/**
  * Given a parent CIDR and a list of already-allocated child CIDRs,
  * find the first available sub-block of the requested prefix length.
  *

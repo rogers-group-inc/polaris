@@ -1,7 +1,7 @@
 /**
  * tests/unit/assistantWidget.test.ts
  *
- * The browser half of the AI assistant (business rule 94), loaded through
+ * The browser half of the AI assistant (business rule 95), loaded through
  * node:vm the way automationSentences.test.ts loads its module:
  *   - assistant-markdown.js escapes FIRST — model output that carries HTML,
  *     script, event handlers or javascript: links renders as inert text;

@@ -23,6 +23,12 @@
  *   vCenter           → ICMP, SNMP, WinRM, SSH, Agent,           (VMs are guest OSes → the directory-set methods
  *                       vCenter                                   apply; ESXi hosts also answer SNMP/SSH; "vcenter"
  *                                                                 is the DEFAULT for both roles — see below)
+ *   Unraid            → ICMP, SNMP, WinRM, SSH, Agent,           (vCenter's shape: VMs are guest OSes, the host and
+ *                       Unraid                                    its containers are read through the integration;
+ *                                                                 "unraid" is the default for everything but
+ *                                                                 response time, which is ICMP on any asset
+ *                                                                 with an address — see below)
+ *   TrueNAS SCALE     → ICMP, SNMP, WinRM, SSH, Agent, TrueNAS   (same, with "truenas")
  *   Manual            → any                                       (operator-chosen)
  *
  * ── The retired "http" method (2026-08) ──────────────────────────────────────
@@ -80,6 +86,17 @@
  * be reached the probe is SKIPPED rather than failed (ProbeResult.skipped), so
  * one vCenter outage never declares a whole virtual fleet down.
  *
+ * ── The "unraid" / "truenas" methods (2026-10) ───────────────────────────────
+ * The vCenter pattern for the two workload integrations: one cached read of
+ * the host's own API per integration per tick (Unraid GraphQL / TrueNAS
+ * JSON-RPC) answers for the host, its VMs and its containers / Apps. They
+ * cover WORKLOAD_STREAMS — vCenter's four plus temperature (host disk temps;
+ * a NAS reports them, ESXi through vCenter does not). Same skipped-not-failed
+ * posture when the host's API is unreachable. Each is allowed on its own
+ * source, on the directory sources (a VM an AD / Entra sync found first) and
+ * on manual, for vCenter's reason; never on the other workload source — an
+ * Unraid asset has no TrueNAS integration to read.
+ *
  * ── The "fortimanager" method (2026-08-28) ───────────────────────────────────
  * Asks FortiManager's own device database whether it still sees the chassis,
  * instead of touching the device. Response-time ONLY (see FORTIMANAGER_STREAMS)
@@ -109,7 +126,7 @@
  * "Polling-method compatibility matrix".
  */
 
-export type PollingMethod = "rest_api" | "snmp" | "winrm" | "ssh" | "icmp" | "disabled" | "agent" | "vcenter" | "fortimanager";
+export type PollingMethod = "rest_api" | "snmp" | "winrm" | "ssh" | "icmp" | "disabled" | "agent" | "vcenter" | "fortimanager" | "unraid" | "truenas";
 
 /** Streams resolved independently by the four-tier monitor settings hierarchy. */
 export type Stream =
@@ -129,9 +146,11 @@ export type AssetSourceKind =
   | "windowsserver"
   | "vcenter"
   | "azurearc"
+  | "unraid"
+  | "truenas"
   | "manual";
 
-const ALL_METHODS: ReadonlyArray<PollingMethod> = ["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager"];
+const ALL_METHODS: ReadonlyArray<PollingMethod> = ["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas"];
 
 // Each entry is the full set of valid methods for that source. A `Set` is
 // O(1) lookup which matters for the resolver running in the hot monitor
@@ -147,26 +166,32 @@ const COMPATIBILITY: Readonly<Record<AssetSourceKind, ReadonlySet<PollingMethod>
   fortigate:       new Set<PollingMethod>(["rest_api", "snmp", "ssh", "icmp", "disabled"]),
   // "vcenter" on the directory sources covers VMs those integrations
   // discovered FIRST that a vCenter sync merged into — see header note.
-  activedirectory: new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter"]),
-  entraid:         new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter"]),
-  windowsserver:   new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter"]),
+  // "unraid" / "truenas" ride along for the same merged-VM reason.
+  activedirectory: new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas"]),
+  entraid:         new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas"]),
+  windowsserver:   new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas"]),
   // Arc-enabled machines are ordinary Windows/Linux hosts, so they take the
   // same set as the directory sources. "vcenter" is included for the same
   // reason it is there — an Arc machine can also be a vCenter-merged VM, and
   // in fact the Arc↔vCenter vmUuid cross-link makes that MORE likely, not
   // less. No rest_api (no shared host API) and no snmp.
-  azurearc:        new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter"]),
+  azurearc:        new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas"]),
   // Union across the two vCenter classes: VMs are guest OSes (icmp / winrm /
   // ssh / agent like the directory sources), ESXi hosts answer snmp/ssh, and
   // "vcenter" delivers the hypervisor-view cpuMemory stream for VMs.
   vcenter:         new Set<PollingMethod>(["icmp", "snmp", "winrm", "ssh", "disabled", "agent", "vcenter"]),
+  // vCenter's shape with the integration's own method in place of "vcenter":
+  // VMs are guest OSes, the host answers SNMP / SSH, and the integration's
+  // method reads all three classes (host, VM, container / App).
+  unraid:          new Set<PollingMethod>(["icmp", "snmp", "winrm", "ssh", "disabled", "agent", "unraid"]),
+  truenas:         new Set<PollingMethod>(["icmp", "snmp", "winrm", "ssh", "disabled", "agent", "truenas"]),
   // Spelled out rather than `ALL_METHODS`. Manual is the most permissive set
   // by design (the operator picks the credential), but "most permissive" is not
   // "everything that exists": `fortimanager` reads a specific integration's
   // device roster, and an orphan asset has no integration to read. Writing the
   // list out means a future method has to be added here deliberately instead of
   // being inherited by accident.
-  manual:          new Set<PollingMethod>(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter"]),
+  manual:          new Set<PollingMethod>(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas"]),
 };
 
 /**
@@ -195,6 +220,8 @@ export function assetSourceKindFromIntegrationType(integrationType: string | nul
     case "windowsserver":   return "windowsserver";
     case "vcenter":         return "vcenter";
     case "azurearc":        return "azurearc";
+    case "unraid":          return "unraid";
+    case "truenas":         return "truenas";
     default:                return "manual";
   }
 }
@@ -251,9 +278,28 @@ export const VCENTER_STREAMS: ReadonlySet<Stream> = new Set<Stream>([
  */
 export const FORTIMANAGER_STREAMS: ReadonlySet<Stream> = new Set<Stream>(["responseTime"]);
 
+/**
+ * Streams the "unraid" / "truenas" methods can serve: vCenter's four plus
+ * temperature. Both APIs report per-disk temperatures (array / pool members),
+ * which land as `sensorClass: "disk"` hardware-sensor rows on the host. They
+ * publish nothing for LLDP, processes or an event log. Which CLASS gets what
+ * is the collector's business (a container has no storage or temperature; a
+ * VM has no temperature) — a stream it cannot answer for a class simply comes
+ * back empty, as vCenter's do.
+ */
+export const WORKLOAD_STREAMS: ReadonlySet<Stream> = new Set<Stream>([
+  "responseTime", "cpuMemory", "interfaces", "storage", "temperature",
+]);
+
+/** True for the two workload-integration polling methods. */
+export function isWorkloadPollingMethod(m: string | null | undefined): m is "unraid" | "truenas" {
+  return m === "unraid" || m === "truenas";
+}
+
 export function isMethodValidForStream(stream: Stream, method: PollingMethod): boolean {
   if (method === "vcenter") return VCENTER_STREAMS.has(stream);
   if (method === "fortimanager") return FORTIMANAGER_STREAMS.has(stream);
+  if (method === "unraid" || method === "truenas") return WORKLOAD_STREAMS.has(stream);
   const allowed = STREAM_METHODS[stream];
   return allowed ? allowed.has(method) : true;
 }
@@ -312,6 +358,8 @@ export function pollingMethodLabel(method: PollingMethod): string {
     case "agent":    return "Polaris Agent";
     case "vcenter":  return "vCenter";
     case "fortimanager": return "FortiManager";
+    case "unraid":   return "Unraid";
+    case "truenas":  return "TrueNAS";
   }
 }
 
@@ -344,6 +392,8 @@ export function credentialTypeForPollingMethod(
     case "agent":
     case "vcenter":
     case "fortimanager":
+    case "unraid":
+    case "truenas":
       return null;
   }
 }

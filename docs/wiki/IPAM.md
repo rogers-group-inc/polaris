@@ -26,7 +26,13 @@ discovered row has `createdBy = null` and is therefore **unowned** — only
 A block is the outermost container — a CIDR you own.
 
 **Columns:** favourite · Name · CIDR · Version (IPv4 / IPv6) · Description ·
-Tags · Networks (count) · Created.
+Tags · Networks (count) · **Utilization** · Created.
+
+**Utilization** is how much of the block's address space is already carved
+into networks — a /22 holding two /24s is 50%. Sort on it to see which blocks
+are nearly full. The bar uses the same colour bands as the Networks tab; a
+block with any network in it never reads 0% (it shows **<1%**). The PDF and
+CSV exports carry the same figure.
 
 **+ Add Block** takes a name, CIDR, version, description and tags.
 
@@ -40,9 +46,9 @@ any page — a search result for a block or a network opens them in place.
 Move the networks to another block ([Moving a network](#moving-a-network-to-another-block)),
 archive or delete them first.
 
-Utilisation (`allocatedAddresses / blockAddresses`) is what the Block
-Utilization dashboard widget ranks on. **Deprecated networks are excluded** from
-that calculation.
+The same utilisation figure is what the Block Utilization dashboard widget
+ranks on. **Deprecated networks are excluded** from it — an archived network
+frees its space as far as this column is concerned.
 
 ---
 

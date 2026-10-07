@@ -684,6 +684,15 @@ model Asset {
   // Address field in the edit form — ipAddress then reverts to the
   // discovery-projected value. See src/services/ipOverrideService.ts.
   ipOverride            String?
+  // The address an operator BLANKED from a duplicate-IP conflict card (rule
+  // 40(j) — "Clear" on an offline device's row). ipAddress is null while this
+  // is set. The src/db.ts guard drops any later discovery write re-staging
+  // THIS address while another network-present asset still records it (the
+  // offline device's stale lease must not walk back onto the contested
+  // address); a write staging any OTHER address passes through and releases
+  // the hold in the same write, as does re-staging this one once nothing
+  // else holds it. Operator IP writes (form, reassign) null it explicitly.
+  ipCleared             String?
   macAddress            String? // Most recently seen MAC, e.g. "AA:BB:CC:DD:EE:FF"
   hostname              String?
   // Operator hostname override (pin) — coordSource-style. When set, this value
@@ -4778,6 +4787,12 @@ model ApiToken {
   // originating integration id is in this list — so a token minted for "Site
   // A FortiGate" can never accidentally push to Site B's gateway.
   integrationIds String[]  @default([])
+  // Source addresses this token is accepted from — bare IPv4/IPv6 addresses
+  // or CIDRs, matched against the trust-proxy-resolved req.ip. Empty = any
+  // source (every token minted before the column existed). A correct token
+  // presented from outside the list is refused with a 403, not treated as
+  // valid.
+  trustedHosts   String[]  @default([])
   createdBy      String // username of the admin who minted the token
   createdAt      DateTime  @default(now())
   expiresAt      DateTime?
@@ -5961,7 +5976,8 @@ model MaintenanceHold {
   id        String   @id @default(uuid())
   assetId   String
   // "agent-upgrade" | "agent-reinstall" | "agent-uninstall" |
-  // "firmware-upgrade" (business rule 87). Part of the uniqueness so two
+  // "firmware-upgrade" (business rule 87) | "workload-restart" |
+  // "workload-update" (business rule 94). Part of the uniqueness so two
   // different operations on one asset cannot lose each other's hold, and
   // re-running the same one extends rather than stacks.
   kind      String
@@ -6232,9 +6248,9 @@ model SubnetExclusion {
   @@map("subnet_exclusions")
 }
 
-// ─── AI assistant (business rule 94) ─────────────────────────────────────────
+// ─── AI assistant (business rule 95) ─────────────────────────────────────────
 //
-// One chat thread in the floating assistant widget. Owner-only by rule 94(d):
+// One chat thread in the floating assistant widget. Owner-only by rule 95(d):
 // every read and write is scoped to userId = the session user, admins
 // included — a conversation holds whatever its owner could see, so it is that
 // owner's data. Pruned after the `assistantRetentionDays` setting (default 90)
@@ -6276,7 +6292,7 @@ model AssistantMessage {
   @@map("assistant_messages")
 }
 
-// A downloadable report the assistant produced (rule 94(c)): rows come from
+// A downloadable report the assistant produced (rule 95(c)): rows come from
 // the database via the create_report tool, never from model text, and are
 // snapshotted so reopening the conversation downloads the figures the user
 // saw at the time. Capped at 5000 rows by the service.

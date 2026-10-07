@@ -21,6 +21,10 @@
  *   - vcenter:                   vmInclude/vmExclude vs the vCenter VM name
  *     (the vcenter-vm source's observed.name when supplied via vmName; falls
  *     back to Asset.hostname). ESXi hosts are never name-filtered.
+ *   - unraid / truenas:          vmInclude/vmExclude for VMs (`server`),
+ *     containerInclude/containerExclude for containers / Apps, both vs the
+ *     platform's own name (vmName carries the workload source's observed.name).
+ *     The host is never name-filtered.
  *
  * Returns { included: true } for any other integration type (we don't have
  * authoritative match data for it) so we never block a refresh on a hunch.
@@ -144,6 +148,29 @@ export function assetMatchesIntegrationFilter(
     } else if (exclude.length > 0) {
       const blocked = exclude.find((p) => matchesWildcard(p, candidate));
       if (blocked) return { included: false, reason: `Excluded by vcenter integration vmExclude pattern "${blocked}"` };
+    }
+    return { included: true };
+  }
+
+  // Unraid / TrueNAS: the vCenter rule, split by class — VMs against the VM
+  // pair, containers / Apps against the container pair. Same include-wins
+  // semantics as the discovery-side filter (services/workloadSync.ts).
+  if (type === "unraid" || type === "truenas") {
+    if (asset.assetType === "hypervisor") return { included: true };
+    const isContainer = asset.assetType === "container";
+    const incKey = isContainer ? "containerInclude" : "vmInclude";
+    const excKey = isContainer ? "containerExclude" : "vmExclude";
+    const include = asStringArray(cfg[incKey]);
+    const exclude = asStringArray(cfg[excKey]);
+    const candidate = (asset.vmName || asset.hostname || "").trim();
+    if (!candidate) return { included: true };
+
+    if (include.length > 0) {
+      const ok = include.some((p) => matchesWildcard(p, candidate));
+      if (!ok) return { included: false, reason: `Excluded by ${type} integration ${incKey} (${candidate} matches no pattern)` };
+    } else if (exclude.length > 0) {
+      const blocked = exclude.find((p) => matchesWildcard(p, candidate));
+      if (blocked) return { included: false, reason: `Excluded by ${type} integration ${excKey} pattern "${blocked}"` };
     }
     return { included: true };
   }

@@ -1,7 +1,7 @@
 /**
  * tests/unit/netGuardLlm.test.ts
  *
- * Business rule 94(g): an llm integration's "Allow loopback" lifts the SSRF
+ * Business rule 95(g): an llm integration's "Allow loopback" lifts the SSRF
  * block for loopback ONLY. Link-local (and the cloud metadata address inside
  * it), unspecified and multicast stay refused whatever the checkbox says, and
  * with the box off loopback is refused like every other integration.

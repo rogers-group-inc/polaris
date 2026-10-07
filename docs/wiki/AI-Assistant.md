@@ -9,7 +9,7 @@ something in Polaris works.
 > **It sees only what you can see.** Every lookup the assistant makes runs with
 > **your** permissions — the assistant can never show you more than your role
 > already can. It can only look things up: it never changes, acknowledges,
-> pushes or deletes anything. See [rule 94](Business-Rules#rule-94).
+> pushes or deletes anything. See [rule 95](Business-Rules#rule-95).
 
 ---
 
@@ -171,4 +171,4 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 | "Not permitted" in an answer | your role cannot read that area — the assistant is telling you, not failing |
 | "Help is not available on this install" | the `docs/wiki` folder is missing from this install |
 
-Rule: [94](Business-Rules#rule-94).
+Rule: [95](Business-Rules#rule-95).

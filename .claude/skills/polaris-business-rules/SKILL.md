@@ -66,7 +66,7 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 | touch a path check — what its result means, what it may point at, what is stored from a response body, traceroute hops and path changes, and the Polaris server as a source (who may aim it, why it does not alert) | 85 first, then 33 (the vendor HTTP check it is NOT), 36 and 37 (who says "failing" and who may alert) |
 | touch the firmware repository — which image a switch, AP or FortiGate is offered, the device-admin login or API token it signs in with, a FortiGate HA member being refused, what a flash may or may not write, or a flash booked for later (a scheduled upgrade and its results email) | 87 (the whole contract), 93 (a booked flash — approved at booking, judged when it fires), 80 (the hold it takes), 43(g) (why flashing is `assets:write` and the `firmware` key is repository-only), 84 (the serial it keys on) |
 | touch what happens when an agent host stops reporting — a dead host, `ManagedAgent.lastSeenAt`, an agent-monitored asset stuck `up` | 86 (the silence is the miss), 80 (a hold Polaris takes during its own agent operations) |
-| touch the AI assistant or the `llm` integration — what a lookup may see, what a tool may do, where report rows come from, who can read a saved conversation, the role and token the integration mints, a loopback model server | 94 (the whole contract), 48 (why provisioning needs roles + apiTokens write) |
+| touch the AI assistant or the `llm` integration — what a lookup may see, what a tool may do, where report rows come from, who can read a saved conversation, the role and token the integration mints, a loopback model server | 95 (the whole contract), 48 (why provisioning needs roles + apiTokens write) |
 | touch a column a rule calls dormant (`cooldownSec`, `failureThreshold`, `awaitingRecoveryConfirm`, `recoveryStartedAt`, `consecutiveSuccesses`) | `polaris-domain-model` → references/dormant-columns.md, then the rule it names |
 | add or retire a rule | the section below |
 
@@ -99,13 +99,13 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 - [references/narrative-36-43.md](references/narrative-36-43.md) — narrative, rules 36–43
 - [references/narrative-44-48.md](references/narrative-44-48.md) — narrative, rules 44–59 (split 2026-09-09 when 36–43 passed 100 KB)
 - [references/narrative-60-64.md](references/narrative-60-64.md) — narrative, rules 60–74 (split 2026-09-15; rules 76, 77 and 79 moved out to their own files 2026-09-22 to keep it under the ceiling)
-- one file per rule from here on: [narrative-75.md](references/narrative-75.md), [narrative-76.md](references/narrative-76.md), [narrative-77.md](references/narrative-77.md), [narrative-78.md](references/narrative-78.md), [narrative-79.md](references/narrative-79.md), [narrative-80.md](references/narrative-80.md) (80 and 80a), [narrative-82.md](references/narrative-82.md), [narrative-83.md](references/narrative-83.md), [narrative-84.md](references/narrative-84.md), [narrative-85.md](references/narrative-85.md), [narrative-86.md](references/narrative-86.md), [narrative-87.md](references/narrative-87.md), [narrative-88.md](references/narrative-88.md), [narrative-89.md](references/narrative-89.md), [narrative-90.md](references/narrative-90.md), [narrative-91.md](references/narrative-91.md), [narrative-92.md](references/narrative-92.md), [narrative-93.md](references/narrative-93.md), [narrative-94.md](references/narrative-94.md)
+- one file per rule from here on: [narrative-75.md](references/narrative-75.md), [narrative-76.md](references/narrative-76.md), [narrative-77.md](references/narrative-77.md), [narrative-78.md](references/narrative-78.md), [narrative-79.md](references/narrative-79.md), [narrative-80.md](references/narrative-80.md) (80 and 80a), [narrative-82.md](references/narrative-82.md), [narrative-83.md](references/narrative-83.md), [narrative-84.md](references/narrative-84.md), [narrative-85.md](references/narrative-85.md), [narrative-86.md](references/narrative-86.md), [narrative-87.md](references/narrative-87.md), [narrative-88.md](references/narrative-88.md), [narrative-89.md](references/narrative-89.md), [narrative-90.md](references/narrative-90.md), [narrative-91.md](references/narrative-91.md), [narrative-92.md](references/narrative-92.md), [narrative-93.md](references/narrative-93.md), [narrative-94.md](references/narrative-94.md), [narrative-95.md](references/narrative-95.md)
 
 ## Rules 1–11
 
 One-line invariants, in [references/invariants-01-11.md](references/invariants-01-11.md): no overlapping subnets (1), subnet within block (2), no duplicate reservations (3), deletion protection (4), CIDR normalization (5), `sourceType` tracking (6), conflict detection (7), event retention (8), `acquiredAt ≤ lastSeen` (9), the four unmonitorable statuses (10), DNS-resolved reservations (11).
 
-## Rules 12–94 (index)
+## Rules 12–95 (index)
 
 Pairs that are two halves of one concern are marked; each keeps its own number because code cites both.
 
@@ -194,7 +194,8 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 91 | A hostname is not an identity: a name several devices of one kind share is resolved by where the child sits, or not at all | invariants-30-43 | narrative-91 |
 | 92 | Quiet time withholds the send, never the alert — and what it withheld is reported when it ends (44 is the hold mechanics inside it) | invariants-30-43 | narrative-92 |
 | 93 | A booked flash is approved when it is booked and judged when it fires — on time or not at all, and its recipients hear the outcome either way | invariants-30-43 | narrative-93 |
-| 94 | The assistant answers as the person asking, only reads, and never types a figure into a report | invariants-30-43 | narrative-94 |
+| 94 | A workload Polaris restarts or updates is held, one Polaris stops is paused until Polaris starts it, and every attempt is on the record | invariants-30-43 | narrative-94 |
+| 95 | The assistant answers as the person asking, only reads, and never types a figure into a report | invariants-30-43 | narrative-95 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain, and the dormant
 columns they retired), `polaris-change-impact` (who else reads or writes the fields a rule

@@ -1,7 +1,7 @@
 /**
  * tests/unit/assistantChatService.test.ts
  *
- * One streamed assistant turn (business rule 94), with the model, the tools
+ * One streamed assistant turn (business rule 95), with the model, the tools
  * and the conversation store mocked:
  *   - text streams through as `token` events, after a `start`;
  *   - a tool round runs each call as the caller and feeds results back;
@@ -122,7 +122,7 @@ describe("streamAssistantTurn", () => {
     expect(h.finishTurn.mock.calls[0][1].content).toBe("Two are down.");
   });
 
-  it("never shows or stores a table the model types after a report (rule 94(c))", async () => {
+  it("never shows or stores a table the model types after a report (rule 95(c))", async () => {
     const report = { title: "Networks", columns: [{ key: "cidr", label: "CIDR" }], rows: [{ cidr: "10.0.1.0/24" }], rowCount: 1, truncated: false };
     const typed = "Here is the report:\n\n| CIDR | Name |\n|---|---|\n| 192.168.1.0/24 | Lab |\n\nYou can download the full report.";
     h.chatCompletionRound

@@ -119,7 +119,7 @@ export function isLoopbackHost(host: string): boolean {
  * localhost:11434), so an operator may tick "Allow loopback" — which lifts the
  * block for loopback ONLY. Everything else in the blocklist (link-local and
  * the cloud metadata address, unspecified, multicast) is refused regardless.
- * Business rule 94(g).
+ * Business rule 95(g).
  */
 export function isBlockedLlmHost(host: string, allowLoopback: boolean): boolean {
   if (!isBlockedOutboundHost(host)) return false;

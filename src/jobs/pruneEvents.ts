@@ -41,7 +41,7 @@ async function pruneOldEvents(): Promise<void> {
       }
 
       // AI assistant conversations idle past their own retention window
-      // (business rule 94(e)). Separate try: a failure here must not look
+      // (business rule 95(e)). Separate try: a failure here must not look
       // like the event prune failed.
       try {
         await pruneAssistantConversations();

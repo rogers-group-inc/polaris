@@ -17,7 +17,10 @@ or the desktop page when it is opened. Add `?desktop=1` to that link to force
 the desktop page.
 
 The tab bar is **Search · Alerts · Assets · Networks · More**. The **Device
-Map** is the first row on the More tab.
+Map** is the first row on the More tab. Its **Account** row shows your name, your
+role and, under them, the regions and tags your account is scoped to — the ones
+from your role, your user and your sign-in groups together, regions first. An
+account with no tag scope shows no tags there.
 
 ## Alerts
 
@@ -74,7 +77,17 @@ FortiGate **VIP** or **interface address** belongs to the device's own config
 and offers no Edit or Release. The **+ Reserve** button on the Networks tab
 takes any address and finds its network for you.
 
-**Tapping an asset opens its detail sheet.** Under the status pill, a device
+**Tapping an asset opens its detail sheet.** The refresh button in its header
+(or pulling the sheet down) re-reads what Polaris has for the device and
+repaints the sheet, keeping the sections you opened; it does not poll the device.
+The sheet does not refresh on its own, so tap it to catch up with the latest
+poll. **Response Time**, **CPU + Memory**, **Hardware Sensors** and
+**Interfaces** each name the polling method that collects them beside the
+title (**Not collected** when nothing does), and CPU + Memory has its own
+**1h · 24h · 7d** range. On a switch with PoE ports, Interfaces opens with a
+count of ports delivering, searching and faulted, naming the faulted ones, and
+each port shows its PoE state. Tapping a monitored interface shows its usage and
+error graphs (**1h · 24h · 7d**) along with its PoE state and class. Under the status pill, a device
 with a table to read carries a button for it, below **View SD-WAN** on a
 firewall that reports SD-WAN:
 

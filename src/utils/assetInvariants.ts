@@ -135,6 +135,75 @@ export function applyIpOverride(
 }
 
 /**
+ * The address a pending Asset write stages, trimmed, or null when the write
+ * stages none or a clear. Handles the plain and Prisma nested (`{ set }`)
+ * shapes.
+ */
+export function stagedIpOf(data: Record<string, unknown> | null | undefined): string | null {
+  if (!data || typeof data !== "object" || !("ipAddress" in data)) return null;
+  const v = data.ipAddress;
+  const raw = v !== null && typeof v === "object" && "set" in (v as Record<string, unknown>)
+    ? (v as Record<string, unknown>).set
+    : v;
+  return typeof raw === "string" ? raw.trim() || null : null;
+}
+
+/**
+ * Outcome of applying an operator-blanked address (Asset.ipCleared) to a
+ * pending Asset write — business rule 40(j).
+ *
+ *   "none"     — no hold on the row, the write doesn't stage an address (or
+ *                stages a clear — the blank stays blank), or the write itself
+ *                touches ipCleared (authoritative).
+ *   "filled"   — the write stages a DIFFERENT address: it passes through and
+ *                the hold is released in the same write. This is the case the
+ *                hold exists for — the device came back somewhere else.
+ *   "returned" — the write re-stages the blanked address and nothing else
+ *                holds it any more: the collision is gone, so the address is
+ *                the device's again and the hold is released.
+ *   "held"     — the write re-stages the blanked address while another
+ *                network-present asset still records it: the address (and any
+ *                staged ipSource) is dropped from the write, so the row stays
+ *                blank rather than walking back onto the contested address.
+ */
+export type IpClearedOutcome =
+  | { action: "none" }
+  | { action: "filled"; ip: string }
+  | { action: "returned"; ip: string }
+  | { action: "held"; ip: string };
+
+/**
+ * Apply Asset.ipCleared to a pending write. `contested` says whether another
+ * network-present asset currently records the blanked address — the caller
+ * reads it only when `stagedIpOf(data)` equals the hold, so the common path
+ * costs nothing. Mutates `data` in place.
+ */
+export function applyIpCleared(
+  data: Record<string, unknown>,
+  cleared: string | null | undefined,
+  contested: boolean,
+): IpClearedOutcome {
+  if (!data || typeof data !== "object") return { action: "none" };
+  if (!("ipAddress" in data)) return { action: "none" };
+  if ("ipCleared" in data) return { action: "none" };
+  if (!cleared) return { action: "none" };
+  const staged = stagedIpOf(data);
+  if (!staged) return { action: "none" };
+
+  if (staged !== cleared.trim()) {
+    data.ipCleared = null;
+    return { action: "filled", ip: staged };
+  }
+  if (!contested) {
+    data.ipCleared = null;
+    return { action: "returned", ip: staged };
+  }
+  delete data.ipAddress;
+  delete data.ipSource;
+  return { action: "held", ip: staged };
+}
+
+/**
  * Evidence-source labels for Asset.lastSeenSource. Open set — the UI renders
  * the string verbatim — but every writer should use one of these so operators
  * see a consistent vocabulary.
@@ -145,6 +214,8 @@ export type LastSeenSource =
   | "discovery"         // infra device answered / reported connected during discovery
   | "vcenter"           // vCenter reported the VM powered-on / the ESXi host connected at scrape time
   | "arc"               // Azure Arc reported status="Connected" at scrape time (a live himds heartbeat)
+  | "unraid"            // Unraid reported the VM / container running (host: its API answered) at scrape time
+  | "truenas"           // TrueNAS SCALE reported the VM / App running (host: its API answered) at scrape time
   | "agent"             // Polaris Agent heartbeat
   | "probe"             // successful monitor probe
   | "ping"              // AD/Entra presence-verification ICMP fallback
@@ -177,7 +248,9 @@ export type LastSeenSource =
 // Note the evidence timestamp is always RUN TIME, never
 // properties.lastStatusChange — that records when the status last CHANGED, so
 // a machine Connected for 90 days carries a 90-day-old value.
-const POLLING_DEFERRED_SOURCES = new Set<string>(["discovery", "device-inventory", "dhcp-lease", "vcenter", "arc"]);
+// "unraid" / "truenas" are deferred for vCenter's reason: a running state read
+// off the host's API is real-time, but a monitored workload's probe owns presence.
+const POLLING_DEFERRED_SOURCES = new Set<string>(["discovery", "device-inventory", "dhcp-lease", "vcenter", "arc", "unraid", "truenas"]);
 
 /**
  * Single write path for Asset.lastSeen: advance it to `evidenceAt` (stamping

@@ -8,7 +8,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 
 - **ApiToken** — bearer tokens for external callers (e.g. SIEM quarantine, NOC kiosk); each token is bound to a Role and acts with that role's permission matrix.
 
-- **AssistantConversation** / **AssistantMessage** / **AssistantReport** — the floating AI assistant's saved chats (business rule 94). A conversation belongs to exactly ONE user (`userId`, cascade) and is **owner-only** — every read and write is scoped to the session user, admins included, and someone else's id answers 404. Only `user` / `assistant` turns are stored (CHECK); **tool calls and their results never are**, so a stored thread cannot replay data its owner has since lost access to. A report is a **snapshot** of rows the `create_report` tool read from the database (never model text), capped at 5000. `integrationId` (SetNull) names the `llm` integration that answered last. Pruned after `Setting assistant.retentionDays` (default 90) of inactivity by the hourly `pruneEvents` job; capped at 200 per user.
+- **AssistantConversation** / **AssistantMessage** / **AssistantReport** — the floating AI assistant's saved chats (business rule 95). A conversation belongs to exactly ONE user (`userId`, cascade) and is **owner-only** — every read and write is scoped to the session user, admins included, and someone else's id answers 404. Only `user` / `assistant` turns are stored (CHECK); **tool calls and their results never are**, so a stored thread cannot replay data its owner has since lost access to. A report is a **snapshot** of rows the `create_report` tool read from the database (never model text), capped at 5000. `integrationId` (SetNull) names the `llm` integration that answered last. Pruned after `Setting assistant.retentionDays` (default 90) of inactivity by the hourly `pruneEvents` job; capped at 200 per user.
 
 - **SshHostKey** — trust-on-first-use pins for SSH **server** host keys, one row per dialed `(host, port)` — no Asset FK, since a host is often onboarded before it exists as an Asset. A changed key **refuses** the connection. Gated per credential by `SshConfig.verifyHostKey`. See business rule 21.
 
@@ -60,6 +60,7 @@ ApiToken                        -- Long-lived bearer tokens for external callers
   tokenPrefix   String            -- first 16 chars (polaris_ + 8 chars) for fast candidate lookup
   roleId        String FK->Role   -- the Role whose permission matrix this token acts with (Restrict: roleService refuses deleting a role bound to any token)
   integrationIds String[]         -- FMG/FortiGate ids this token may target. REQUIRED + non-empty when the bound role grants assetsQuarantine >= write; empty otherwise. The quarantine service drops sightings whose integration isn't in this list before pushing, and refuses release/verify outright if the existing quarantine touches integrations outside the token's scope (partial release would leave Polaris flipped to active while orphan entries linger on out-of-scope gateways). Validated at create-time: each id must exist and be type fortimanager or fortigate.
+  trustedHosts   String[]         -- source addresses the token is accepted from: bare IPv4/IPv6 addresses or CIDRs (IPv4 CIDRs stored with host bits zeroed), max 64, matched against the trust-proxy-resolved req.ip by utils/ipAllowlist.ipMatchesAllowlist. EMPTY = any source (the default; every token minted before migration 20261007000000_api_token_trusted_hosts). A correct token from outside a non-empty list is refused 403 (apiTokenService.verifyToken → untrusted_host), never accepted, and does not bump lastUsed.
   createdBy     String
   createdAt     DateTime
   expiresAt     DateTime?
@@ -73,7 +74,7 @@ ApiToken                        -- Long-lived bearer tokens for external callers
   -- (assets:read / dashboard:read / assets:quarantine); legacy tokens were
   -- mapped onto seeded api-* roles with matching matrices.
 
-AssistantConversation           -- One AI-assistant chat thread (business rule 94). Owner-only.
+AssistantConversation           -- One AI-assistant chat thread (business rule 95). Owner-only.
   id            UUID PK
   userId        String FK->User (Cascade)       -- the ONLY user who may read it
   integrationId String? FK->Integration (SetNull) -- the llm integration that answered last
@@ -92,7 +93,7 @@ AssistantMessage                -- One turn. Tool calls / results are never stor
   createdAt      DateTime
   @@index([conversationId, createdAt]); @@map("assistant_messages")
 
-AssistantReport                 -- A downloadable table the create_report tool built (rule 94(c)).
+AssistantReport                 -- A downloadable table the create_report tool built (rule 95(c)).
   id          UUID PK
   messageId   String FK->AssistantMessage (Cascade)
   title       String
@@ -382,7 +383,7 @@ Setting                         -- Key-value configuration store
   --   "mapRegions"                              -- Operator-drawn map regions: `MapRegion[]` ({ id, name, polygon: [[lat,lng],...], color: "#rrggbb", createdBy, createdAt, updatedAt }). `color` is the polygon stroke + fill hue on the map; on create it defaults to a random palette pick (same palette `mapRegionService` uses for the matching Tag registry row) and can be overridden in the create modal or via the polygon-click popup's "Change color" action. Legacy regions written before this field existed are back-filled at read time with a random pick. See `mapRegionService`.
   --   "mapRegionRetiredNames"                   -- Companion to "mapRegions": region NAMES no longer in use, `{name, regionId, retiredAt, reason:"rename"|"delete"}[]`. Appended INSIDE the same locked transaction that renames or deletes a region, before the tag rotation is attempted, so it survives a rotation that dies part-way — which is the whole point, since a `region:<name>` tag matching no region is otherwise invisible to the provenance-bounded reconcile (provenance is keyed by region ID: unchanged by a rename, dropped by a delete). `sweepRetiredRegionTags` strips those tags and forgets the name; a name that is live again is dropped untouched; a name whose strip throws stays for the next pass. Business rule 54. See `mapRegionService`.
   --   "appMapAutoMap"                           -- Service/process DISCOVERY RULES (Integrations → Polaris Agent): `{version:2, rules:[{id, name, enabled, mode, source, scope, assetIds, processes:{names,patterns,regex}, services:{…}}]}`. `mode` = "map" (monitor + Application Map) | "monitor" (monitor-only); `source` = "manual" | "auto" (minted/consolidated from per-asset Services-tab pin toggles; single-item, scope:null + explicit assetIds — null scope + assetIds targets JUST those assets, and an auto rule losing its last asset is deleted). Each rule pins its items on union(scope matches, assetIds); several rules' pins union per asset. Applied inline on save and re-applied by the 30-min `reconcileAppMapAutoMap` job — the "and future assets too" mechanism. Additive only; `unmapEverywhere` is the separate subtractive path. The pre-rules single-selection shape folds forward into one rule at read time. See `appMapDiscoveryService`.
-  --   "assistant"                               -- AI assistant settings: `{ retentionDays }` (1–3650, default 90) — how long an idle AssistantConversation is kept before pruneEvents drops it (business rule 94(e)). Written by PUT /assistant/settings (serverSettingsSystem write). See `assistantConversationService`.
+  --   "assistant"                               -- AI assistant settings: `{ retentionDays }` (1–3650, default 90) — how long an idle AssistantConversation is kept before pruneEvents drops it (business rule 95(e)). Written by PUT /assistant/settings (serverSettingsSystem write). See `assistantConversationService`.
 
 Tag
   id            UUID PK

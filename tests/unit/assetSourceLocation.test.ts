@@ -41,6 +41,11 @@ describe("assetSourceLocation — catalogue", () => {
       "arc-k8s",
       "vcenter-vm",
       "vcenter-host",
+      // Unraid / TrueNAS workloads: placed on their host, vCenter's tier.
+      "unraid-vm",
+      "unraid-container",
+      "truenas-vm",
+      "truenas-app",
       "ad",
       "fortiswitch",
       "fortiap",

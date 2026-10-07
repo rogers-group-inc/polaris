@@ -845,6 +845,29 @@ function getAlertsFormData() {
         }
       });
 
+      // Duplicate-IP conflicts, offline variant (rule 40(j)): blank the row's
+      // address; discovery fills it when the device turns up elsewhere.
+      body.querySelectorAll("[data-dupip-clear]").forEach(function (el) {
+        var conflictId = el.getAttribute("data-conflict-id");
+        var assetId = el.getAttribute("data-asset-id");
+        el.addEventListener("click", async function () {
+          el.disabled = true;
+          try {
+            var out = await api.conflicts.clearIp(conflictId, { assetId: assetId });
+            showToast(out && out.resolved
+              ? "Address cleared — duplicate resolved; discovery will fill in the new address"
+              : "Address cleared — " + ((out && out.remaining) || 0) + " assets still share the old address");
+            var scrollTop = body.scrollTop;
+            await loadConflicts(true);
+            body.scrollTop = scrollTop;
+            refreshBadge();
+          } catch (err) {
+            showToast(err.message, "error");
+            el.disabled = false;
+          }
+        });
+      });
+
       // Duplicate-IP conflicts, the other cause: one device recorded twice.
       // "Merge into this" keeps the clicked row and absorbs the rest through the
       // operator merge engine. Destructive and irreversible, so the confirm
@@ -1436,6 +1459,12 @@ function getAlertsFormData() {
               '<button class="btn btn-primary btn-sm" data-dupip-apply data-conflict-id="' + c.id + '" ' +
                 'data-asset-id="' + escapeHtml(m.assetId || "") + '" ' +
                 'title="Assign this address to ' + escapeHtml(name) + ' and pin it">Apply</button>' +
+              // Rule 40(j): the device is offline, so there is no new address
+              // to type — blank it and let discovery fill in whatever it
+              // reports next.
+              '<button class="btn btn-secondary btn-sm" data-dupip-clear data-conflict-id="' + c.id + '" ' +
+                'data-asset-id="' + escapeHtml(m.assetId || "") + '" ' +
+                'title="' + escapeHtml(name) + ' is offline — blank its address until discovery reports a new one">Clear</button>' +
             '</div>' +
           '</td>';
       // The other cause of a shared address: one device recorded twice. Keeping
@@ -1486,7 +1515,9 @@ function getAlertsFormData() {
         'recorded twice — resolve it whichever way it actually is. ';
     var explainer = lead +
       '<strong>Two devices:</strong> enter a new address on the row of whichever one should move; it is saved ' +
-      'as a manual pin (discovery reporting the same address later releases the pin by itself). ' +
+      'as a manual pin (discovery reporting the same address later releases the pin by itself). If that ' +
+      'device is offline and its new address is not known yet, <em>Clear</em> blanks it instead; the next ' +
+      'discovery run that reports it on a different address fills the blank in. ' +
       '<strong>One device:</strong> use <em>Merge into this</em> on the record to keep — the other' +
       (members.length > 2 ? 's are' : ' is') + ' absorbed into it and deleted — or ' +
       '<em>Review &amp; merge</em> below to compare the two records field by field first. ' +

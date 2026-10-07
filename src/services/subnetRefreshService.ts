@@ -178,7 +178,7 @@ async function fetchVipsForGate(t: Transport, deviceName: string): Promise<Parse
  * A row whose owner is anything else was authored somewhere else and survives.
  */
 function vipCanonicalOwner(snap: VipInfoSnapshot): string {
-  return snap.isVirtualServer ? "fortimanager-vs" : "fortimanager-vip";
+  return snap.name;
 }
 
 function vipCanonicalNotes(snap: VipInfoSnapshot): string {
@@ -551,7 +551,7 @@ export async function refreshSubnet(
 
     const liveRows = await prisma.reservation.findMany({
       where: { subnetId: subnet.id, status: "active" },
-      select: { id: true, ipAddress: true, sourceType: true, owner: true, vipInfo: true },
+      select: { id: true, ipAddress: true, sourceType: true, hostname: true, owner: true, vipInfo: true },
     });
     const rowByIp = new Map<string, (typeof liveRows)[number]>();
     for (const r of liveRows) if (r.ipAddress) rowByIp.set(r.ipAddress, r);
@@ -623,8 +623,10 @@ export async function refreshSubnet(
         // converts in place and keeps its id. Only the canonical VIP-discovery
         // owner placeholder is overwritten — a `vip` row cannot be edited from
         // Polaris, so anything else on it came from discovery too.
+        // Canonical = the VIP's name; a rename at the same address refreshes
+        // vipInfo but never owner or hostname, hence the hostname match.
         const isCanonicalVipOwner =
-          row.owner === "fortimanager-vip" || row.owner === "fortimanager-vs";
+          !!row.owner && (row.owner === cur.name || row.owner === row.hostname);
         await prisma.reservation.update({
           where: { id: row.id },
           data: {

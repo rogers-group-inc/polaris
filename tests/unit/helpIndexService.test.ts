@@ -1,7 +1,7 @@
 /**
  * tests/unit/helpIndexService.test.ts
  *
- * The assistant's search_help index over docs/wiki (business rule 94). What
+ * The assistant's search_help index over docs/wiki (business rule 95). What
  * matters: sections split at ## / ### (never at a # inside a code fence), the
  * links it hands the model point at the GitHub wiki the Help menu opens, the
  * real wiki answers an ordinary how-to question with the right page, and a

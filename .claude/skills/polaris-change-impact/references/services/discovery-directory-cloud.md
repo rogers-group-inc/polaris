@@ -42,6 +42,76 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/unraidService.ts
+
+**What it owns:** The Unraid integration's client — Unraid 7.2+'s built-in GraphQL API (`POST /graphql`, `x-api-key` header; HTTPS by default, plain HTTP when `useTls: false`). One query (`UNRAID_INVENTORY_QUERY`) answers the host (info.os / system / baseboard / versions), its live usage (metrics.cpu / memory / network), the array + cache pools and their disks (with temperatures), Docker containers (state, image, `isUpdateAvailable`, network mode + settings, LAN ports) and VM domains (id, name, state — Unraid publishes NO vCPU / memory / guest IP for a VM). Per-container CPU / memory exists only as the `dockerContainerStats` SUBSCRIPTION, so `sampleUnraidContainerStats` opens a `graphql-transport-ws` socket (the `ws` package), collects one event per running container for `statsWindowMs` (default 4 s, max 15 s, resolves early once every running container reported) and closes. Output is the shared `WorkloadDiscoveryResult` / `WorkloadSnapshot` (services/discovery/workloadSync.ts). Also the write side: `containerAction` (start / stop / restart / `updateContainer`), `vmAction` (start / stop / reboot), `refreshUpdateChecks` (`refreshDockerDigests`).
+
+**Public API:** testConnection, discoverInventory, fetchUnraidSnapshot, proxyQuery (queries only — mutations / subscriptions refused), containerAction, vmAction, refreshUpdateChecks, unraidGraphql, sampleUnraidContainerStats, UNRAID_INVENTORY_QUERY; pure parsers parseUnraidInventory / parseUnraidHostUsage / parseUnraidPools / parseUnraidDisks / parseDockerSize / parseDockerMemUsage / containerOwnIp / unprefixId; UnraidConfig.
+
+**Cross-service deps:** discovery/workloadSync (types + `normalizeWorkloadState`).
+
+**Used by:** src/api/routes/integrations.ts — both test-connection handlers + the Query API branch. src/services/discovery/discoveryEngine.ts — preflight + dispatch (`discoverInventory` → `syncWorkloadDevices`). src/services/workloadMonitorService.ts — `fetchUnraidSnapshot` behind the per-integration workload snapshot cache (the `unraid` polling method, dispatched from monitoringService). src/services/workloadActionService.ts — `containerAction` / `vmAction` / `refreshUpdateChecks` (rule 94).
+
+**Invariants:**
+- A top-level field that comes back as a GraphQL error (Docker service stopped, VM manager off, or the key's role lacks it) marks the read INCOMPLETE (`dockerFailed` / `vmsFailed` → `inventoryComplete: false`) — never an empty list. The sweep would otherwise read "Docker is off" as every container deleted.
+- Container name = `names[0]` without the leading `/`; that name is the identity (`${integrationId}:ctr:<name>`). The PrefixedID (`<server>:<id>`) is the ACTION handle only — it changes on recreate.
+- `containerOwnIp` gives a container an IP only on a non-bridge, non-host network (br0 / macvlan); a bridged container answers on its host's address and two assets must never claim one IP.
+- Host memory in use = total − available (Unraid's `used` counts reclaimable cache). A disk temperature of 0 is a spun-down / absent disk → null, never charted as 0 °C.
+- SMBIOS "To Be Filled By O.E.M."-style system fields fall back to the baseboard; the projection's serial rule still refuses placeholders (rule 84).
+
+**When changing this:**
+- Field shapes are from the published schema (`unraid/api` → `api/generated-schema.graphql`); verify on a real 7.2 box (Settings → Management Access → API → GraphQL sandbox) and refresh tests/unit/unraidService.test.ts fixtures.
+- A new projected field → the `workloadRule` entries in `src/utils/assetProjection.ts` + the shared observed builders in workloadSync — both platforms at once.
+
+---
+
+## services/discovery/workloadSync.ts
+
+**What it owns:** The asset sync SHARED by the Unraid and TrueNAS SCALE integrations, plus the normalized shapes both services return (`WorkloadDiscoveryResult`, `WorkloadSnapshot`, `WorkloadHost` / `WorkloadVm` / `WorkloadContainer` / `WorkloadPool` / `WorkloadDisk` / `WorkloadUsage`). `syncWorkloadDevices` runs Pass A host → B VMs → C containers → D placement edges → E stale sweep; see polaris-monitoring-discovery → discovery-directory-vcenter-arc.md § Unraid / TrueNAS SCALE for the passes.
+
+**Public API:** syncWorkloadDevices, applyWorkloadFilters, passesNameFilter, workloadSweepBlockedReason, buildWorkloadDependencyEdges, resolveWorkloadHostAddress; re-exports normalizeWorkloadState + the externalId builders from utils/workloadSources.ts; the Workload* types.
+
+**Cross-service deps:** discoveryEngine (exported `indexHostname` / `lookupHostname` / `normalizeMacKey` / `upsertAssetConflict`), dnsService.getConfiguredResolver (host-name resolution, with `node:dns/promises.lookup` as the fallback), eventLogService, monitorOverrideService (`getAddAsMonitoredFromConfig` / `buildMonitoredSweep`), maintenanceScheduleService.releaseAssetsForDecommission, macAddressService.reconcileMacAddresses.
+
+**Used by:** src/services/discovery/discoveryEngine.ts (runDiscovery's unraid / truenas branch). The services and collectors import only its TYPES (runtime imports of it from a service would cycle through discoveryEngine).
+
+**Invariants:**
+- Identity: host `${integrationId}:host`; VM = UUID (not all-zero) else `${integrationId}:vm:<name>`; container `${integrationId}:ctr:<name>`. Containers are never MAC-matched. A hostname is never an identity (rule 91) — an unlinked name match is a pending Conflict.
+- The sweep never runs on a scoped / incomplete / empty-after-populated read, is refused past `absenceExceedsGuard`, and retains rows for names still in the pre-filter lists.
+- The host's `ip` arrives as the integration's configured host, which may be a NAME. `resolveWorkloadHostAddress` resolves it (configured resolver, then the system resolver — what the integration's own connection used) before Pass A: Asset.ipAddress only ever receives an address, the name fills a blank `dnsName` (create, or update when blank — the vCenter FQDN pattern), and an unresolvable name leaves ipAddress null on create and clears a stored non-IP value on update (hosts synced before this fix carried the name there).
+- Edges are delete-replaced only on full runs, scoped to `source = platform` and this integration's prior + current children.
+- `virtualization` is rewritten each run, so anything another writer stamps on it (today `monitoringPausedByStop`, rule 94) must be carried forward here; a container's `updateAvailable` is carried when the platform could not answer this run.
+
+**When changing this:**
+- A new role field: the shared observed builder here + the `workloadRule` projection rules + the `/assets/:id/virtualization` workload branch + `_assetWorkloadHTML` in public/js/assets.js.
+- Extend tests/unit/workloadSync.test.ts (pure parts) and tests/integration/workloadSync.test.ts (the DB round trip).
+
+---
+
+## services/truenasService.ts
+
+**What it owns:** The TrueNAS SCALE integration's client — the versioned JSON-RPC 2.0 over WebSocket API (`wss://<host>/api/current`, TrueNAS 25.04+; REST is deprecated in 25.10 and gone in 26.04), authenticated per socket with `auth.login_with_api_key`. `TrueNasSession` is one authenticated socket: `call` (id-matched request/response, per-call timeout), `firstEvent` (`core.subscribe` → the first `collection_update` for that collection, or null after a window), `waitForJob` (polls `core.get_jobs` every 2 s — every App / VM action is a JOB that returns an id immediately). Discovery reads `system.info` (required — it is the connection check) plus `pool.query`, `app.query`, `vm.query`, `disk.temperatures`, `disk.query` in parallel, each degrading on its own. A snapshot adds the `reporting.realtime` (host CPU per core, memory, link state) and `app.stats` (per-App CPU / memory) events on the same socket. Normalized to the shared workload shapes. A TrueNAS "container" asset is an APP (a compose project) — the unit TrueNAS starts, stops and upgrades.
+
+**Public API:** testConnection, discoverInventory, fetchTrueNasSnapshot, proxyQuery (read methods only — `isProxyReadMethod`: `.query` / `.get_instance` / `.config` / `.info` / `.status` / `.upgrade_summary` / `.temperatures` + an explicit list), appAction (start / stop / restart = `app.redeploy` / update = `app.upgrade` to latest when the catalog offers one, else `app.pull_images` with redeploy), vmAction (start / graceful stop with force-after-timeout / restart), refreshUpdateChecks (`catalog.sync`, best-effort), TrueNasSession; pure parsers parseTrueNasHost / parseTrueNasPools / parseTrueNasDisks / parseTrueNasVms / parseTrueNasApps / parseTrueNasRealtime / parseTrueNasAppStats / truenasVersion; TrueNasConfig.
+
+**Cross-service deps:** discovery/workloadSync (types + `normalizeWorkloadState`).
+
+**Used by:** src/api/routes/integrations.ts — both test-connection handlers + the Query API branch. src/services/discovery/discoveryEngine.ts — preflight + dispatch (`discoverInventory` → `syncWorkloadDevices`). src/services/workloadMonitorService.ts — `fetchTrueNasSnapshot` behind the per-integration workload snapshot cache (the `truenas` polling method, dispatched from monitoringService). src/services/workloadActionService.ts — `appAction` / `vmAction` / `refreshUpdateChecks` (rule 94).
+
+**Invariants:**
+- An `app.query` or `vm.query` that fails (Apps service unconfigured, a key without APPS_READ / VM_READ) marks the inventory INCOMPLETE, never empty — the sweep must not read it as deletions.
+- `system.info.model` is the CPU; the machine model is `system_product`.
+- `vm.query.memory` is MiB. VM MACs come only from `devices[]` with `dtype: "NIC"`.
+- `reporting.realtime` interface figures are RATES, not counters — the host's interface rows carry link state and speed only (counter columns null), never a rate mistaken for a counter.
+- TrueNAS REVOKES an API key used over plain HTTP: `useTls: false` exists for lab installs behind a TLS-terminating proxy, and the form says so.
+- One socket, one login per discovery / snapshot / action, closed in `finally`. Not persistent across ticks: the snapshot cache bounds how often a socket opens.
+
+**When changing this:**
+- Method and field shapes are from the published docs (api.truenas.com/v25.10); verify on a real 25.10 box and refresh tests/unit/truenasService.test.ts (which also runs the session against a stub JSON-RPC server — extend the stub with any new method).
+- A new projected field → the `workloadRule` entries in `src/utils/assetProjection.ts` + the shared observed builders in workloadSync.
+
+---
+
 ## services/activeDirectoryService.ts
 
 **What it owns:** On-prem Active Directory device discovery via LDAP/LDAPS client (computer objects, OU filtering, SID/GUID identity, disabled-account handling).

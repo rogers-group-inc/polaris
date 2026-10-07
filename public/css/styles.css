@@ -3399,6 +3399,17 @@ th.fav-col, td.fav-col { width: 20px; min-width: 20px; text-align: center; paddi
   font-size: 0.85rem;
   color: var(--color-text-primary);
 }
+/* Graph export PDF dialog (graph-export.js — Application Map and the Device
+   Map's topology view): the live "how many sheets" line under the options. */
+.graph-export-summary {
+  margin: 0 0 0.75rem;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
 input[type="text"],
 input[type="password"],
 input[type="number"],
@@ -3523,6 +3534,8 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 .badge-conflict   { background: rgba(255,23,68,0.12); color: var(--color-danger); border: 1px solid rgba(255,23,68,0.25); }
 .badge-active     { background: rgba(0,200,83,0.12); color: var(--color-success); border: 1px solid rgba(0,200,83,0.25); }
 .badge-expired    { background: rgba(255,214,0,0.12); color: var(--color-warning); border: 1px solid rgba(255,214,0,0.25); }
+/* An Unraid container / TrueNAS App with a newer image or version waiting (rule 94). */
+.badge-update     { background: rgba(255,214,0,0.12); color: var(--color-warning); border: 1px solid rgba(255,214,0,0.25); }
 .badge-released   { background: rgba(117,117,117,0.12); color: var(--color-deprecated); border: 1px solid rgba(117,117,117,0.25); }
 .badge-v4         { background: rgba(79,195,247,0.12); color: var(--color-accent); border: 1px solid rgba(79,195,247,0.25); }
 .badge-v6         { background: rgba(255,214,0,0.12); color: var(--color-warning); border: 1px solid rgba(255,214,0,0.25); }
@@ -5607,6 +5620,18 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   padding: 1px 3px;
   margin: -1px -3px;
   transition: background 0.15s, color 0.15s;
+}
+/* Inside a right-aligned .detail-value, an inline copy cell's padding/negative
+   margin pair nets to zero in the intrinsic width, but Firefox's line breaker
+   checks the text + trailing padding before the negative margin lands — and
+   overflow-wrap:anywhere then lets it push the LAST character onto a second
+   line ("swa / g", "172.16.1.2 / 1"). As an inline-block the cell is sized as
+   one box, and long values still wrap inside it (its available width is the
+   value's width plus the 6px the negative margins give back). No max-width:
+   100% here — under border-box that caps the padded box at the value's width
+   and leaves the text 6px short, which is the same bug again. */
+.detail-value .copy-cell {
+  display: inline-block;
 }
 .copy-cell:hover {
   background: rgba(79, 195, 247, 0.12);

@@ -1,6 +1,6 @@
 /**
  * src/services/assistantToolService.ts — the lookups the AI assistant may make
- * (business rule 94).
+ * (business rule 95).
  *
  * Every tool:
  *   (a) runs AS THE CALLER — it is handed the caller's own Express request and
@@ -15,7 +15,7 @@
  *
  * create_report re-runs one of the list tools server-side with a much larger
  * cap and hands the rows to the client as a downloadable table — the figures
- * in a report come from the database, never from model text (rule 94(c)).
+ * in a report come from the database, never from model text (rule 95(c)).
  *
  * Tool arguments come from a language model, so every tool parses them with
  * Zod and answers a validation problem as a tool error the model can correct,

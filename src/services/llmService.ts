@@ -1,6 +1,6 @@
 /**
  * src/services/llmService.ts — the `llm` integration's transport: an
- * OpenAI-compatible chat-completions client (business rule 94).
+ * OpenAI-compatible chat-completions client (business rule 95).
  *
  * Speaks `POST {base}/chat/completions` with `stream: true` and `tools`, and
  * `GET {base}/models` for Test Connection. That one dialect covers Ollama,
