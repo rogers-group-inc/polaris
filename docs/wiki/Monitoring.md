@@ -254,6 +254,38 @@ twenty.
 > read it: the selection persisted, resolved, rendered — and **collected
 > nothing, forever, with the tick reporting success.**
 
+**A stored credential stays in force when you set the stream back to
+"Inherit".** It is applied whenever the inherited method takes that credential
+type. The modal therefore shows the Credential picker on any stream that stores
+one, with a note saying so, even on "Inherit". To stop using it, choose
+**Source default**. Before 2026-10 the picker was hidden on "Inherit": the
+stream read as "nothing set" while Polaris kept sending the stored token, and a
+stale one could lock the server out of that gate's API
+([rule 96](Business-Rules#rule-96)).
+
+### How Polaris paces FortiOS REST calls
+
+FortiOS 7.6 locks a **source IP** out of API-key access after a few failed
+authorizations (`admin-lockout-threshold`, default 3), and doubles the lockout
+each time it repeats. Fortinet counts every non-OK answer as a failure,
+including transient ones during an HA transition or an upgrade. Everything
+Polaris does to a gate comes from one source IP, so a lockout stops discovery,
+monitoring, pushes and the Query API tool together. To stay clear of it
+([rule 96](Business-Rules#rule-96)):
+
+- **At most 2 requests are in flight to one gate at a time**
+  (`POLARIS_FORTIOS_PER_GATE_CONCURRENCY`, per Polaris process). One bad moment
+  then costs at most two failures, not the burst that used to trip the
+  threshold.
+- **After a 401, Polaris sends that gate nothing for a while**: 60 seconds,
+  doubling on each consecutive 401 up to 30 minutes, and ending at the first
+  answer that is not a 401. Requests during the pause fail at once with
+  *"Polaris has paused requests to this FortiGate"* and never reach the gate.
+- **A probe Polaris did not send is not a missed poll.** A paused gate's REST
+  response-time probe, and the controller probe for the switches and APs behind
+  it, are recorded as skipped. A token problem does not mark the gate and its
+  whole site down.
+
 ---
 
 ## Compatibility vs capability

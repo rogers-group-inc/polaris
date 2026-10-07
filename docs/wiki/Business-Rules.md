@@ -1502,6 +1502,8 @@ only Read-Only. The host itself cannot be started or stopped from Polaris.
 See [Unraid → Workload actions](Integration-Unraid#workload-actions) and
 [TrueNAS SCALE → Workload actions](Integration-TrueNAS#workload-actions).
 
+### Rule 95
+
 **The assistant answers as the person asking, only reads, and never types a
 figure into a report.** The [AI assistant](AI-Assistant) looks things up with
 **your own** permissions: if your role cannot read alerts, neither can the
@@ -1519,3 +1521,34 @@ token. "Allow loopback" lets the model server be on the Polaris host itself, and
 allows nothing else that is normally blocked.
 
 See [AI Assistant](AI-Assistant).
+
+### Rule 96
+
+**Polaris never drives a FortiGate's API-key lockout: few requests at once,
+nothing after a 401 until a pause runs out, and a probe it did not send is not
+a missed poll.** FortiOS 7.6 locks a source IP out of REST API-key access after
+`admin-lockout-threshold` failed authorizations (default 3). It counts every
+non-OK answer, including transient ones, and doubles the lockout on each
+repeat, so it can grow to hours. Everything Polaris does to a gate comes from
+one address, so a lockout silences discovery, monitoring, pushes and the Query
+API tool at once.
+
+- **At most 2 requests are in flight to one gate** (per Polaris process;
+  `POLARIS_FORTIOS_PER_GATE_CONCURRENCY` changes it). A single bad moment costs
+  at most two failed attempts.
+- **After a 401 nothing is sent to that gate for 60 seconds**, doubling on each
+  consecutive 401 up to 30 minutes. The first answer that is not a 401 ends the
+  pause. Requests during it fail straight away with *"Polaris has paused
+  requests to this FortiGate"*.
+- **A paused probe is skipped, not missed.** The gate's REST response-time
+  probe, and the controller probe for every switch and AP behind it, record no
+  reading rather than a failure, so a token problem cannot mark a site down.
+- **A stored per-stream credential is always shown on the asset.** It stays in
+  force on "Inherit", so the Monitoring tab shows it there and **Source
+  default** clears it.
+
+This came from a production incident: a stale per-asset REST credential, hidden
+behind an "Inherit" stream, sent a burst of bad keys every monitor pass and kept
+the server locked out of one gate for hours.
+
+See [Monitoring → How Polaris paces FortiOS REST calls](Monitoring#how-polaris-paces-fortios-rest-calls).

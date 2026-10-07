@@ -101,7 +101,7 @@ import {
 // Re-exported so existing import sites (unit tests, etc.) keep resolving these
 // from monitoringService; implementations live in utils/fortiswitchCmdb.ts.
 export { parseFortiosMemberList, buildFortiswitchTrunkMembers, findFortiswitchUplinkPorts };
-import { fgRequest, type FortiGateConfig } from "./fortigateService.js";
+import { fgRequest, FortiosAuthPausedError, type FortiGateConfig } from "./fortigateService.js";
 import { fetchVcenterQuickStats, fetchVcenterHostSnapshot } from "./vcenterService.js";
 import {
   fmgProxyRest,
@@ -2413,6 +2413,8 @@ async function probeFortinet(
     if (up !== null) ok.uptimeSec = up;
     return ok;
   } catch (err: any) {
+    // Inside a 401 pause the request was never sent: not a reading, not a miss (rule 96).
+    if (err instanceof FortiosAuthPausedError) return { success: false, responseTimeMs: 0, skipped: true, error: err.message };
     return finish(start, false, err?.message || "FortiOS request failed");
   }
 }
@@ -3728,6 +3730,9 @@ async function probeFortinetController(
       error: `Controller reports ${role} status: ${entry.status || "Disconnected"}`,
     };
   } catch (err: any) {
+    // The controller gate is inside a 401 pause, so nobody asked it. Counting
+    // that as a miss would mark every switch / AP behind it down at once (rule 96).
+    if (err instanceof FortiosAuthPausedError) return { success: false, responseTimeMs: 0, skipped: true, error: err.message };
     // Precondition failures and upstream errors don't have a meaningful
     // upstream duration; fall back to local elapsed time so the operator
     // still sees how long the failure took.
