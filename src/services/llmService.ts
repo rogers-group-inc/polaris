@@ -40,6 +40,8 @@ export interface LlmConfig {
   requestTimeoutMs?: number;
   maxRowsPerTool?: number;
   contextMessages?: number;
+  /** The model server's context window in tokens (Ollama: OLLAMA_CONTEXT_LENGTH, default 4096). */
+  contextWindow?: number;
   systemPromptExtra?: string;
   allowLoopback?: boolean;
   verboseLogging?: boolean;
@@ -57,7 +59,17 @@ export const LLM_DEFAULTS = {
   requestTimeoutMs: 120_000,
   maxRowsPerTool: 200,
   contextMessages: 20,
+  contextWindow: 8192,
 } as const;
+
+/**
+ * Rough token count for budgeting: ~3.5 characters a token for English and
+ * JSON under the tokenizers local models use. Deliberately approximate —
+ * it only decides what to trim, never what to send verbatim. Exported for tests.
+ */
+export function estimateTokens(text: string): number {
+  return Math.ceil((text ?? "").length / 3.5);
+}
 
 export interface ChatToolCall {
   id: string;
@@ -354,7 +366,19 @@ export interface LlmTestResult {
  * it can be known) and check the configured model is among them. A blank
  * Model passes when the server has a chat model to default to.
  */
+/** Below this many tokens a turn has little room left for lookups (assistantChatService.contextBudget). */
+export const SMALL_CONTEXT_WINDOW = 6000;
+
 export async function testConnection(config: LlmConfig): Promise<LlmTestResult> {
+  const out = await testConnectionInner(config);
+  const w = config.contextWindow ?? LLM_DEFAULTS.contextWindow;
+  if (out.ok && w < SMALL_CONTEXT_WINDOW) {
+    out.message += `. Context window is ${w} tokens — lookup results will be cut short; raise it on the server (Ollama: OLLAMA_CONTEXT_LENGTH) and here if you can`;
+  }
+  return out;
+}
+
+async function testConnectionInner(config: LlmConfig): Promise<LlmTestResult> {
   if (!config.host) return { ok: false, message: "Host is required" };
   let models: LlmModelInfo[];
   try {
@@ -493,7 +517,7 @@ export function recoverTextToolCalls(text: string, knownNames: Iterable<string>)
  * running round. Exported for tests.
  */
 export function applyStreamChunk(
-  round: { content: string; toolCalls: Map<number, ChatToolCall>; finishReason: string | null },
+  round: { content: string; toolCalls: Map<number, ChatToolCall>; finishReason: string | null; reasoningChars?: number },
   data: Record<string, any>,
 ): string {
   const choice = Array.isArray(data?.choices) ? data.choices[0] : undefined;
@@ -504,6 +528,13 @@ export function applyStreamChunk(
     text = delta.content;
     round.content += text;
   }
+  // A thinking model's reasoning arrives in its own field — `reasoning`
+  // (Ollama) or `reasoning_content` (vLLM, DeepSeek-style servers). It is
+  // never shown or stored; only its length is counted, so the widget can say
+  // the model is working during a long silent think.
+  const reasoning = typeof delta.reasoning === "string" ? delta.reasoning
+    : typeof delta.reasoning_content === "string" ? delta.reasoning_content : "";
+  if (reasoning) round.reasoningChars = (round.reasoningChars ?? 0) + reasoning.length;
   if (Array.isArray(delta.tool_calls)) {
     for (const [pos, tc] of delta.tool_calls.entries()) {
       const idx = typeof tc.index === "number" ? tc.index : pos;
@@ -530,7 +561,7 @@ export async function chatCompletionRound(
   config: LlmConfig,
   messages: ChatMessage[],
   tools: ChatToolDef[],
-  opts: { signal?: AbortSignal; onText?: (text: string) => void } = {},
+  opts: { signal?: AbortSignal; onText?: (text: string) => void; onReasoning?: (totalChars: number) => void } = {},
 ): Promise<CompletionRound> {
   const body: Record<string, unknown> = {
     model: config.model,
@@ -547,10 +578,10 @@ export async function chatCompletionRound(
     throw upstreamError(res.status, await readAll(res.stream));
   }
 
-  const round = { content: "", toolCalls: new Map<number, ChatToolCall>(), finishReason: null as string | null };
+  const round = { content: "", toolCalls: new Map<number, ChatToolCall>(), finishReason: null as string | null, reasoningChars: 0 };
 
   try {
-    await readRound(config, res, round, opts.onText);
+    await readRound(config, res, round, opts.onText, opts.onReasoning);
   } catch (err) {
     // An abort mid-body surfaces from the socket as ECONNRESET "aborted", not
     // as an AbortError — normalize it so callers can tell Stop from a failure.
@@ -568,8 +599,9 @@ export async function chatCompletionRound(
 async function readRound(
   config: LlmConfig,
   res: RawResponse,
-  round: { content: string; toolCalls: Map<number, ChatToolCall>; finishReason: string | null },
+  round: { content: string; toolCalls: Map<number, ChatToolCall>; finishReason: string | null; reasoningChars: number },
   onText: ((text: string) => void) | undefined,
+  onReasoning?: (totalChars: number) => void,
 ): Promise<void> {
   const opts = { onText };
   if (!res.contentType.includes("text/event-stream")) {
@@ -596,8 +628,10 @@ async function readRound(
           continue;
         }
         if (parsed?.error) throw upstreamError(500, JSON.stringify(parsed));
+        const before = round.reasoningChars;
         const text = applyStreamChunk(round, parsed);
         if (text) opts.onText?.(text);
+        if (round.reasoningChars !== before) onReasoning?.(round.reasoningChars);
       }
     }
   }

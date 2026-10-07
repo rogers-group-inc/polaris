@@ -100,7 +100,7 @@ router.get("/status", async (req, res, next) => {
 router.put("/settings", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
   try {
     const input = SettingsSchema.parse(req.body);
-    res.json(await updateAssistantSettings(input));
+    res.json(await updateAssistantSettings(input, req.session?.username ?? "unknown"));
   } catch (err) { next(err); }
 });
 

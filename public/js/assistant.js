@@ -387,6 +387,18 @@
       '</div></div>';
   }
 
+  // The live line before the first word arrives. A thinking model can reason
+  // silently for a minute on modest hardware, so the line counts the seconds
+  // and — when the server streams reasoning (the `thinking` event carries its
+  // length, never its text) — how much the model has worked through.
+  function thinkingText(m) {
+    var secs = m.startedAt ? Math.floor((Date.now() - m.startedAt) / 1000) : 0;
+    var t = m.thinkingChars > 0
+      ? "Reasoning… " + m.thinkingChars.toLocaleString() + " characters"
+      : "Thinking…";
+    return secs >= 2 ? t + " · " + secs + "s" : t;
+  }
+
   function messageHTML(m, idx, isLive) {
     if (m.local) {
       return '<div class="asst-msg assistant"><div class="asst-bubble" style="border-style:dashed">' + md(m.content) + '</div></div>';
@@ -396,7 +408,7 @@
     }
     var body = m.content ? md(m.content)
       : m.waiting ? '<span class="asst-thinking">Still answering your last question…</span>'
-      : (isLive && !m.error ? '<span class="asst-thinking">Thinking…</span>' : "");
+      : (isLive && !m.error ? '<span class="asst-thinking">' + esc(thinkingText(m)) + '</span>' : "");
     var chips = (m.tools || m.toolsUsed || []).map(chipHTML).join("");
     if (m.stopped) chips += '<span class="asst-chip stopped">stopped</span>';
     var reports = (m.reports || []).map(function (r, i) { return reportHTML(r, i, idx); }).join("");
@@ -896,12 +908,19 @@
     var regenerate = opts.regenerate === true;
     setBusy(true);
     var liveIdx;
+    var tick = null;
     try {
       var convId = await ensureConversation();
       if (!regenerate) S.messages.push({ role: "user", content: opts.display || opts.content });
-      S.messages.push({ role: "assistant", content: "", tools: [], reports: [], live: true });
+      S.messages.push({ role: "assistant", content: "", tools: [], reports: [], live: true, startedAt: Date.now(), thinkingChars: 0 });
       liveIdx = S.messages.length - 1;
       renderAll();
+      // Tick the Thinking line's seconds until the first word shows.
+      tick = setInterval(function () {
+        var lm = S.messages[liveIdx];
+        if (!lm || !lm.live || lm.content) return;
+        renderOne(liveIdx);
+      }, 1000);
 
       S.abort = new AbortController();
       var res = await fetch("/api/v1/assistant/conversations/" + encodeURIComponent(convId) + "/messages", {
@@ -930,6 +949,7 @@
         // The model wrote a tool call as text; the server ran it instead, so
         // that round's text is withdrawn from the bubble.
         else if (ev === "retract") { m.content = m.content.slice(0, Math.max(0, data.from | 0)); schedule(); }
+        else if (ev === "thinking") { m.thinkingChars = data.chars | 0; if (!m.content) schedule(); }
         else if (ev === "tool") {
           var existing = null;
           for (var k = m.tools.length - 1; k >= 0; k--) if (m.tools[k].name === data.name && m.tools[k].status === "running") { existing = m.tools[k]; break; }
@@ -955,6 +975,7 @@
         toast((err && err.message) || "The assistant failed", "error");
       }
     } finally {
+      if (tick) clearInterval(tick);
       S.abort = null;
       setBusy(false);
       saveSnapshot();

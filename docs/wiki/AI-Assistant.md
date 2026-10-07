@@ -42,6 +42,14 @@ the list. On other servers every model starts as *unverified*; **Check tool
 calling** asks the selected model, once, to call a dummy tool and records
 whether it did. That costs one model request, so it runs only when you ask.
 
+**Every save checks it for you.** After you create or save the integration,
+Polaris asks the model it will actually use (the one you picked, or the Auto
+choice) to call a dummy tool, then shows the result in a notification and on
+the card's **Tool Calling** row: **✓ Verified**, **✗ Not supported — chat
+only, no lookups**, or **Could not tell**, with the model's name and when it
+was checked. Changing the host, port, API path or model clears the result
+until the next save checks again.
+
 ### What creating it also does
 
 Creating a Local AI Assistant integration also creates, for the **model server's own
@@ -86,6 +94,12 @@ Click the round button in the bottom-right corner. The chat window opens:
 - Answers appear as they are written. While it works you see what it is doing —
   *looked up assets*, *checked alerts*, *searched the Polaris help*. **Stop**
   cuts an answer off; what was written so far is kept.
+- Before the first word, the reply shows how long it has been working —
+  *Thinking… · 12s*. A **thinking model** (Qwen 3, DeepSeek-R1 and similar)
+  reasons privately before it answers, which can take a minute on modest
+  hardware; while it does, the line reads *Reasoning… 2,340 characters · 25s*
+  so you can see it is making progress. The reasoning itself is never shown or
+  saved.
 
 Talk to it normally — follow-up questions use the earlier conversation as
 context. Some things to try:
@@ -141,10 +155,14 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
   (or `/history`) lists them; rename or delete from there.
 - They are **private to you** — no other user, administrators included, can
   read them.
-- A conversation untouched for **90 days** is deleted automatically.
-- Only the most recent turns (20 by default — *Messages of history sent* on the
-  integration) are sent to the model with each question, so a very long
-  conversation forgets its beginning; `/new` starts fresh.
+- A conversation untouched for **90 days** is deleted automatically. Change
+  the period with **Keep conversations for** on the integration (it applies to
+  every assistant on the install; changing it needs **Server Settings → System**
+  at Read-Write, and is recorded in the event log).
+- Only the most recent turns are sent to the model with each question — at most
+  *Messages of history sent* (20 by default), and fewer when they would not fit
+  the model's **context window** — so a very long conversation forgets its
+  beginning; `/new` starts fresh.
 - The [event log](Events) records that you asked something and which lookups
   ran — never what you asked or what was answered.
 
@@ -155,9 +173,11 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 | Temperature | lower = more factual and repeatable; 0.2 is the default |
 | Lookup rounds per answer | how many rounds of lookups one answer may take (default 6) |
 | Rows per lookup | rows one lookup hands the model (default 200); reports go to 5,000 regardless |
-| Messages of history sent | lower it for a model with a small context window |
+| Messages of history sent | the most earlier turns sent with each question (default 20); older ones are dropped first when they would not fit the context window |
+| Context window | the model server's context size in tokens (default 8192) — set it to match the server. Polaris sizes each question to fit: the conversation, the lookup results (cut down for a small window) and room for the answer. **Ollama uses 4096 unless `OLLAMA_CONTEXT_LENGTH` raises it**, and the assistant's own instructions take about 2,700 of those, so raise it to 8192 or more on the server and here. Test Connection warns below 6000 |
 | Response timeout | how long the model may go silent before the answer fails |
 | Extra instructions | added to the assistant's instructions — site naming conventions, who to escalate to |
+| Keep conversations for | how long a conversation nobody has touched is kept (default 90 days). One setting for every assistant on the install |
 
 ## Troubleshooting
 
@@ -166,7 +186,9 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 | No button | no **enabled** Local AI Assistant integration, or your role has AI Assistant set to None |
 | "Connected, but model … is not on the server" | the model was removed from the server — pick another with **Load models**, or set it to Auto |
 | Loopback refused | tick **Allow loopback**, or use the host's LAN address |
-| It chats but never looks anything up | the model does not support tool calling — choose one that does |
+| It chats but never looks anything up | the model does not support tool calling — the card's **Tool Calling** row says ✗; choose one that does |
+| It forgets the task, or reasons for minutes and answers off-topic | the model server's context window is too small and is silently cutting the start of the question — raise `OLLAMA_CONTEXT_LENGTH` (or your server's equivalent) and **Context window** to match |
+| "Thinking…" counts up with no reasoning shown | a non-thinking model loading or working on slow hardware; the first answer after the model loads is the slowest |
 | Answers arrive all at once instead of streaming | a proxy or load balancer in front of Polaris buffers responses; the answer still arrives |
 | "Not permitted" in an answer | your role cannot read that area — the assistant is telling you, not failing |
 | "Help is not available on this install" | the `docs/wiki` folder is missing from this install |
