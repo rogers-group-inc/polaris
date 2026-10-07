@@ -17,7 +17,10 @@ or the desktop page when it is opened. Add `?desktop=1` to that link to force
 the desktop page.
 
 The tab bar is **Search · Alerts · Assets · Networks · More**. The **Device
-Map** is the first row on the More tab.
+Map** is the first row on the More tab. Its **Account** row shows your name, your
+role and, under them, the regions and tags your account is scoped to — the ones
+from your role, your user and your sign-in groups together, regions first. An
+account with no tag scope shows no tags there.
 
 ## Alerts
 
