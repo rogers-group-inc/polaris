@@ -125,8 +125,14 @@ with the status and action icons right-aligned.
 ### The filter box
 
 A typeahead over the **current payload**: protocol, port, host, device type,
-process, service, external IP, plus free text. Enter turns a suggestion into a
-pill.
+tag, process, service, external IP, plus free text. Enter turns a suggestion
+into a pill.
+
+A **tag** pill keeps the assets carrying that tag (the tags set on the asset
+itself), their processes and services, and their connections. It matches the
+whole tag, ignoring case: `prod` does not also pick up assets tagged
+`production`. Typing `tag` lists every tag on the map. Selecting an asset box
+shows its tags in the info panel; click one to add it as a pill.
 
 **Pills combine OR within a kind and AND across kinds.** `×` or Backspace
 removes.

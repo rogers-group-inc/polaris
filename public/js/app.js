@@ -2861,6 +2861,7 @@ function renderIntegrationFailedStatus() {
     if (t === "azurearc") return "Azure Arc";
     if (t === "unraid") return "Unraid";
     if (t === "truenas") return "TrueNAS SCALE";
+    if (t === "llm") return "Local AI Assistant";
     return t || "";
   }
   container.innerHTML =
@@ -3592,6 +3593,37 @@ function ensurePanelScripts(kind) {
   }, Promise.resolve()).then(function () {
     if (typeof window[opener] !== "function") throw new Error(opener + " is not defined after loading the " + kind + " panel");
   });
+}
+
+// ─── The floating AI assistant (business rule 95) ──────────────────────────
+// Desktop app pages only (the ones with a #sidebar — not login, the ack page,
+// the Dash wallboard or the phone SPA). Nothing is fetched for a role without
+// `assistant` read, and nothing is loaded until GET /assistant/status says an
+// llm integration is enabled — an install without one pays one small request
+// per page and never sees a button. The CSS and two scripts come in through
+// the same once-per-page loader the slide-over bundles use.
+//
+// The widget's files are linked statically by every app page (before app.js)
+// and drawn from cache before first paint (PolarisAssistant.earlyMount, at
+// the end of this file) so a page change does not blink it. This is the
+// authoritative check that follows: it confirms or removes what was drawn.
+function _bootAssistant() {
+  if (!document.getElementById("sidebar")) return;
+  var drop = function () { if (window.PolarisAssistant) window.PolarisAssistant.unmount(); };
+  if (typeof permAtLeast !== "function" || !permAtLeast("assistant", "read")) { drop(); return; }
+  if (!window.api || !api.assistant) return;
+  api.assistant.status().then(function (status) {
+    if (!status || !status.enabled) { drop(); return; }
+    if (!document.querySelector('link[href="/css/assistant.css"]')) {
+      var link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = "/css/assistant.css";
+      document.head.appendChild(link);
+    }
+    return _loadPanelScript("/js/assistant-markdown.js")
+      .then(function () { return _loadPanelScript("/js/assistant.js"); })
+      .then(function () { if (window.PolarisAssistant) window.PolarisAssistant.mount(status); });
+  }).catch(function () { /* the assistant is optional; never break a page over it */ });
 }
 
 // When the scripts cannot be loaded (a proxy that blocks a file, a half-
@@ -5440,6 +5472,7 @@ document.addEventListener("DOMContentLoaded", async function () {
   fetchBranding();
   initAutoLogout();
   checkCapacity();
+  _bootAssistant();
 
   // Let each page's own DOMContentLoaded handler finish first, then consume
   // any #view=<type>:<id> or #ip=... hash a search click-through left us.
@@ -5458,3 +5491,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 // marker right after this script (<link rel="expect" blocking="render"> in
 // its <head>), so the snapshot cannot be taken before this has run.
 if (document.getElementById("sidebar")) _navFromCache = _renderNavFromCache();
+// The AI assistant, drawn from cache in the same pre-paint pass so the
+// page-change crossfade keeps it in place (assistant.js loads before app.js;
+// _bootAssistant confirms or removes it once the user is fetched).
+if (document.getElementById("sidebar") && window.PolarisAssistant) {
+  try { window.PolarisAssistant.earlyMount(); } catch (_) { /* never block the page over it */ }
+}

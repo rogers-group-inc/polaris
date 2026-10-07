@@ -193,6 +193,13 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   // of a page rather than a statement about identity, and lives under the
   // /server-settings mount whose floor is that key anyway.
   { key: "authentication", label: "Authentication", description: "How operators sign in: the SAML / OIDC / LDAP / App Proxy providers, passkey policy and password policy.", levels: UP_TO_WRITE },
+  // The floating AI assistant (business rule 95). Read-only by nature: every
+  // lookup the assistant makes runs as the CALLER, through the same per-key
+  // gates the pages use (rule 95(a)), so this key only decides whether the
+  // widget is offered at all — it can never widen what a role may see. The
+  // conversations it stores are the caller's own. Seeded `read` on every role
+  // except the api-* / llm-* token roles (migration 20261007020000_assistant).
+  { key: "assistant", label: "AI Assistant", description: "The chat assistant in the bottom-right corner, when a Local AI Assistant integration is configured. Every lookup it makes uses your own permissions, so it can never show more than your role already can.", levels: READ_ONLY },
   { key: "savedDashboards", label: "Saved Dashboards", description: "Named dashboard canvases. Read-Only keeps your own private ones; Read-Write publishes one to everyone." },
   { key: "serverSettingsSystem", label: "Server Settings — System", description: "HTTPS, branding, DNS, NTP, certificates, tags, capacity, HA and the agent fleet.", levels: UP_TO_WRITE },
   { key: "serverSettingsData", label: "Server Settings — Data", description: "Database backup, restore and download, queue mode, security tokens, restart, in-app updates.", levels: WRITE_ONLY },

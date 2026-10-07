@@ -10,7 +10,7 @@ that opens the sign-in configuration (tabs **SAML**, **OIDC**, **LDAP**,
 ## The model
 
 Every route declares a **function key** plus a required **level**. A role is a
-matrix over the 34 keys:
+matrix over the 35 keys:
 
 ```
 none  <  read  <  write  <  fullwrite
@@ -64,7 +64,7 @@ silently revoke.
 
 ---
 
-## The 34 function keys
+## The 35 function keys
 
 **Top rung** names the highest level the key offers. Where that is Full
 Read-Write, the last column says what it buys over Read-Write — because that is
@@ -145,6 +145,7 @@ the only thing that justifies the rung existing.
 | `users` | Full RW | user CRUD, role assignment, TOTP and passkey reset. **Full RW = IdP group mappings** |
 | `roles` | Full RW | **the matrix itself** — Full RW here plus Full RW on Users is admin-equivalent |
 | `authentication` | Read-Write | how operators sign in: the SAML / OIDC / LDAP / App Proxy providers, the passkey policy and the password policy |
+| `assistant` | Read | the [AI assistant](AI-Assistant) chat button. It cannot widen a role — every lookup it makes uses **your own** permissions — so every built-in role has it, `readonly` included |
 | `savedDashboards` | Full RW | named layouts; Read-Write **publishes**, Full RW deletes anyone's |
 | `serverSettingsSystem` | Read-Write | HTTPS, branding, DNS, NTP, certificates, capacity, tags, HA, the agent fleet |
 | `serverSettingsData` | **Read-Write** (no Read) | backup, restore, **download**, queue mode, security tokens, restart, in-app updates |

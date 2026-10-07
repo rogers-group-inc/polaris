@@ -10,6 +10,7 @@ import reservationsRouter from "./routes/reservations.js";
 import utilizationRouter from "./routes/utilization.js";
 import usersRouter from "./routes/users.js";
 import integrationsRouter from "./routes/integrations.js";
+import assistantRouter from "./routes/assistant.js";
 import assetsRouter from "./routes/assets.js";
 import logFlagRulesRouter from "./routes/logFlagRules.js";
 import eventsRouter from "./routes/events.js";
@@ -173,6 +174,10 @@ router.use("/users", requirePermission("users", "read"), usersRouter);
 router.use("/roles", rolesRouter);
 router.use("/group-mappings", requirePermission("users", "fullwrite"), groupMappingsRouter);
 router.use("/integrations", requirePermission("integrations", "read"), integrationsRouter);
+// The floating AI assistant (business rule 95). Session-only and owner-scoped
+// inside the route file; every lookup it makes re-checks the caller's own
+// per-key permissions, so this gate only decides whether it is offered.
+router.use("/assistant", requirePermission("assistant", "read"), assistantRouter);
 // asset-types is mounted BEFORE /assets so Express's first-match routing
 // picks the registry endpoint instead of treating "types" as an asset id.
 // Reads gated by assets=read; writes by assets=write (admin + assetsadmin

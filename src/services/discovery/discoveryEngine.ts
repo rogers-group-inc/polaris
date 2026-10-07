@@ -27,6 +27,7 @@ import * as truenas from "../truenasService.js";
 import { syncWorkloadDevices } from "./workloadSync.js";
 import { isWorkloadPlatform } from "../../utils/workloadSources.js";
 import * as azureArc from "../azureArcService.js";
+import * as llm from "../llmService.js";
 import { ipInCidr, normalizeCidr, cidrContains, cidrOverlaps } from "../../utils/cidr.js";
 import { normalizeMacsDistinct, macHexKeyOrNull } from "../../utils/mac.js";
 import {
@@ -564,8 +565,17 @@ export async function runPreflightTest(integration: { id: string; type: string; 
   if (integration.type === "azurearc") return azureArc.testConnection(config as any);
   if (integration.type === "unraid") return unraid.testConnection(config as any);
   if (integration.type === "truenas") return truenas.testConnection(config as any);
+  if (integration.type === "llm") return llm.testConnection(config as any);
   return { ok: false, message: `Unknown integration type: ${integration.type}` };
 }
+
+/**
+ * Integration types with nothing to discover — the AI assistant's LLM server
+ * (rule 95). Checked first in triggerDiscovery, because its type dispatch
+ * ends in a FortiManager `else` that would otherwise run FMG discovery
+ * against an LLM host.
+ */
+export const NON_DISCOVERABLE_INTEGRATION_TYPES: ReadonlySet<string> = new Set(["llm"]);
 
 /**
  * Enqueue a discovery run. Validates the integration config (fast 400 for the
@@ -584,6 +594,9 @@ export async function triggerDiscovery(
 ): Promise<boolean> {
   const integration = await prisma.integration.findUnique({ where: { id: integrationId } });
   if (!integration) throw new AppError(404, "Integration not found");
+  if (NON_DISCOVERABLE_INTEGRATION_TYPES.has(integration.type)) {
+    throw new AppError(400, `${integration.name} is not a discovery integration — there is nothing to discover`);
+  }
 
   // Each scope kind identifies a device the way exactly ONE integration type
   // does (an FMG roster name, an Entra deviceId, an AD objectGUID), so a

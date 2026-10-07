@@ -16,6 +16,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { fgRequest } from "../../src/services/fortigateService.js";
 import { AppError } from "../../src/utils/errors.js";
+import { _resetFortiosGateState } from "../../src/utils/fortiosRequestGate.js";
 
 // The FortiManager/FortiGate transports call `tlsFetch` — undici's own fetch
 // paired with its own dispatcher, because a dispatcher is only valid to the
@@ -41,6 +42,8 @@ function mockStatus(status: number, body: unknown = {}) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // A 401 starts a per-gate pause (utils/fortiosRequestGate.ts); every case here uses the same host.
+  _resetFortiosGateState();
   vi.restoreAllMocks();
 });
 
