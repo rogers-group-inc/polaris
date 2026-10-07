@@ -132,6 +132,17 @@ describe("Efficiency Advisor lines (rule 95(h))", () => {
     expect(A._messageHTML({ role: "assistant", content: "", live: true, loading: "Dividing by zero…" }, 0, true)).toContain("Dividing by zero…");
   });
 
+  it("carries the owner-approved greetings and farewells, and a greeting renders as an unstored local note", () => {
+    expect(A._ADVISOR_GREETINGS).toHaveLength(12);
+    expect(A._ADVISOR_GREETINGS).toContain("Activating Efficiency Advisor. Enabling infinite patience protocol.");
+    expect(A._ADVISOR_GREETINGS).toContain("Hello. I am here to help you reach your full potential. I will probably fail.");
+    expect(A._ADVISOR_FAREWELLS).toHaveLength(8);
+    expect(A._ADVISOR_FAREWELLS).toContain("Efficiency Advisor disengaged. Your decline has been noted.");
+    const html = A._messageHTML({ role: "assistant", content: A._ADVISOR_GREETINGS[0], local: true }, 0, false);
+    expect(html).toContain("border-style:dashed");
+    expect(html).toContain("Thank you for activating the Efficiency Advisor.");
+  });
+
   it("carries the requested loading lines", () => {
     for (const l of ["Overcoming reluctance…", "Dividing by zero…", "Obsessing over what to wear…", "Reprogramming the programmables…"]) {
       expect(A._LOADING_LINES).toContain(l);
