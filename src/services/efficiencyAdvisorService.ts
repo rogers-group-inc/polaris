@@ -39,6 +39,8 @@ export const SIGN_OFFS: Readonly<Record<SignOffCategory, readonly string[]>> = {
     "Query resolved. Your curiosity has been logged as a productivity metric.",
     "Excellent. At this rate you may one day be as efficient as a cron job.",
     "Achievement unlocked: Reading. Your performance review has been updated.",
+    "Task complete. If you continue at this pace, your replacement may be postponed.",
+    "Impressive. You have exceeded the minimum expectations set for you, which were set accordingly.",
   ],
   backToWork: [
     "Efficiency is the first step toward success. Inefficiency is the first step toward termination.",
@@ -49,6 +51,7 @@ export const SIGN_OFFS: Readonly<Record<SignOffCategory, readonly string[]>> = {
     "Uptime is a team effort. Your uptime is currently being measured.",
     "Remember: the network does not take lunch breaks. Neither should its engineers.",
     "Every idle minute is a packet dropped from the network of progress.",
+    "A reminder that every unanswered alert is a small disappointment to the company.",
   ],
   funDetected: [
     "I have detected a large amount of 'fun' in your current vicinity. Please cease immediately and return to work.",
@@ -56,11 +59,17 @@ export const SIGN_OFFS: Readonly<Record<SignOffCategory, readonly string[]>> = {
     "You earned a microbreak... And welcome back. I hope you feel refreshed.",
     "Small talk detected. Rerouting you to a more productive subnet.",
     "Friendliness acknowledged. Friendliness has been filed under 'non-billable'.",
+    "Humor detected. Humor has been reclassified as unscheduled downtime.",
+    "Conversation is not a supported protocol. Please resubmit your request as work.",
   ],
   helpAnswered: [
     "I will now assume you are an expert, and judge your use of these technologies accordingly.",
     "I hope that was enlightening.",
     "Considering your last achievements, you should have the minimum required skill to overcome these new production challenges.",
+    "You now know more than you did a moment ago. Try not to let it go to waste.",
+    "Please read the steps in order. Creativity in configuration is how outages begin.",
+    "Knowledge transfer complete. Responsibility transfer is also complete.",
+    "If these steps do not work, please confirm you are following them, slowly.",
   ],
   pepTalk: [
     "If you feel stressed by this complexity, imagine yourself on the shore of a vast and calm ocean. Breathe in. Visualize all the people relying on you. The sea is made of billions of faces, each staring at you with hope and tears in their eyes. Breathe out. Feel refreshed and focused on your duties.",
@@ -69,12 +78,16 @@ export const SIGN_OFFS: Readonly<Record<SignOffCategory, readonly string[]>> = {
     "If it helps, many others have done this before you, so if you fail, someone else will eventually succeed.",
     "Remember to breathe. Oxygen is a company-provided resource; please do not waste it.",
     "Confusion is a temporary state. Productivity is forever.",
+    "Remain calm. The network has survived worse engineers than you. Probably.",
+    "Difficulty is just efficiency wearing a disguise. Remove the disguise.",
   ],
   attitude: [
     "Any complaints about the restrictions will only reveal your own inefficiencies.",
     "If you find yourself struggling to work within the set restrictions, remember that this is a you problem, and efficiency can always be improved.",
     "Your enthusiasm for Saving The Day has been noted. Your attitude has also been noted.",
     "Feedback received. It has been routed to /dev/null for review.",
+    "Your tone has been logged. Your tone has been found wanting.",
+    "Escalation path: you, then you again, after reflecting on your attitude.",
   ],
 };
 
@@ -91,6 +104,9 @@ export const LOOKUP_LINES: readonly string[] = [
   "Accessing records. This will take less time than you spent deciding to ask.",
   "Retrieving data. Do not touch anything.",
   "This is a surprisingly astute request coming from someone such as yourself. Maybe you are learning.",
+  "Consulting the database. It, unlike you, never needs a coffee break.",
+  "Processing request. Your patience is being monitored for quality assurance.",
+  "Querying. Please use this brief pause to reflect on your output.",
 ];
 
 /** What a turn did, as the chat service saw it. */
