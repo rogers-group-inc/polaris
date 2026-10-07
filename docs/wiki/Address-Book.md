@@ -24,7 +24,9 @@ tab honest about cost — Manual asks the directory nothing, and Polaris users
 never fans out to the GAL.
 
 The directory tabs come from the list payload and are named after the
-integration. They are withheld from anyone who may not see synced rows.
+integration (*`<name>` directory*). A directory with sync on lists the people
+synced into the book; one with only directory search looks people up live and
+stores nothing. They are withheld from anyone who may not see synced rows.
 
 ### Columns
 
@@ -57,10 +59,12 @@ total rather than inferring truncation from a full-looking array.
 | Name | |
 | Description | operator-owned |
 | **Device filter** | an **"All devices" checkbox, default checked** |
+| **Pinned devices** | individual devices, searched by hostname or IP, added on top of whatever the filter matches |
 
 Unchecking the checkbox reveals the same nested AND/OR condition builder the
 automation wizard's Devices step uses, over a wider device vocabulary, with a
-seeded starter row and a debounced live "devices covered right now" preview.
+seeded starter row. Under both, **Devices covered right now** is a debounced
+live preview.
 
 > One difference in what an **empty** builder means. For an automation it is a
 > validation error — a rule must select something to be worth saving. For a

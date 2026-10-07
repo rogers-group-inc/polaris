@@ -50,7 +50,10 @@ function startFakeLlm(): Promise<void> {
       const hasToolResult = (j.messages || []).some((m: any) => m.role === "tool");
       res.writeHead(200, { "Content-Type": "text/event-stream" });
       const send = (o: unknown) => res.write(`data: ${JSON.stringify(o)}\n\n`);
-      if (!hasToolResult && j.tools?.length) {
+      if (j.tools?.some((t: any) => t.function?.name === "polaris_probe")) {
+        // The tool-calling check (llmService.probeToolCalling).
+        send({ choices: [{ delta: { tool_calls: [{ index: 0, id: "p1", function: { name: "polaris_probe", arguments: '{"ok":true}' } }] }, finish_reason: "tool_calls" }] });
+      } else if (!hasToolResult && j.tools?.length) {
         send({ choices: [{ delta: { tool_calls: [{ index: 0, id: "c1", function: { name: "create_report", arguments: JSON.stringify({ title: "Down switches", source: "list_assets", args: { search: ASSET } }) } }] }, finish_reason: "tool_calls" }] });
       } else {
         send({ choices: [{ delta: { content: "One switch " } }] });
@@ -84,7 +87,10 @@ beforeAll(async () => {
   await startFakeLlm();
   const weak = await createRole({ name: WEAK_ROLE, permissions: { integrations: "write" } });
   weakToken = (await createToken({ name: WEAK_ROLE, roleId: weak.id, createdBy: "integration-test" })).rawToken;
-  await prisma.asset.create({ data: { hostname: ASSET, assetType: "switch", status: "active", monitored: true, monitorStatus: "down", model: "FS-148F" } as never });
+  // monitored: false — the app's boot-time monitor pass would otherwise flip
+  // an IP-less monitored asset to "warning" ("Asset has no IP address")
+  // before the report reads it. The report only needs the stored status.
+  await prisma.asset.create({ data: { hostname: ASSET, assetType: "switch", status: "active", monitored: false, monitorStatus: "down", model: "FS-148F" } as never });
 });
 
 afterAll(async () => {
@@ -173,6 +179,34 @@ d("llm integration — provisioning (rule 95(f))", () => {
     rawToken = r.body.rawToken;
     expect((await request(app).get("/api/v1/assets").set("Authorization", `Bearer ${rawToken}`)).status).toBe(200);
   });
+
+  it("check-tools stamps the verdict; a PUT keeps it, cannot forge it, and drops it when the model moves", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const r = await agent.post(`/api/v1/integrations/${integrationId}/llm/check-tools`).set("X-CSRF-Token", csrf);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ model: "fake-model", result: "yes" });
+    const stamped = async () => ((await prisma.integration.findUnique({ where: { id: integrationId } }))!.config as any).toolCheck;
+    expect(await stamped()).toMatchObject({ model: "fake-model", result: "yes" });
+    expect(await prisma.event.count({ where: { action: "integration.llm.tool_check", resourceId: integrationId } })).toBeGreaterThan(0);
+
+    const put = (config: Record<string, unknown>) => agent.put(`/api/v1/integrations/${integrationId}`).set("X-CSRF-Token", csrf).send({ config });
+    expect((await put({ temperature: 0.4, toolCheck: { model: "x", result: "no" } })).status).toBe(200);
+    expect(await stamped()).toMatchObject({ model: "fake-model", result: "yes" });
+    expect((await put({ model: "other-model" })).status).toBe(200);
+    expect(await stamped()).toBeUndefined();
+    expect((await put({ model: "fake-model" })).status).toBe(200);
+
+    const other = await agent.post(`/api/v1/integrations/${integrationId.replace(/.$/, (c) => (c === "0" ? "1" : "0"))}/llm/check-tools`).set("X-CSRF-Token", csrf);
+    expect(other.status).toBe(404);
+  });
+
+  it("stores the context window, and refuses one below 2048 tokens", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const put = (contextWindow: number) => agent.put(`/api/v1/integrations/${integrationId}`).set("X-CSRF-Token", csrf).send({ config: { contextWindow } });
+    expect((await put(16384)).status).toBe(200);
+    expect(((await prisma.integration.findUnique({ where: { id: integrationId } }))!.config as any).contextWindow).toBe(16384);
+    expect((await put(1000)).status).toBe(400);
+  });
 });
 
 d("the assistant (rule 95(a), (c), (d))", () => {
@@ -260,6 +294,22 @@ d("the assistant (rule 95(a), (c), (d))", () => {
       expect(o.text).not.toMatch(/event: signoff/);
     } finally {
       await agent.put("/api/v1/assistant/preferences").set("X-CSRF-Token", csrf).send({ efficiencyAdvisor: false });
+    }
+  });
+
+  it("conversation retention is saved, audited, and range-checked", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const before = (await agent.get("/api/v1/assistant/status")).body.retentionDays;
+    const next = before === 45 ? 46 : 45;
+    const put = (retentionDays: number) => agent.put("/api/v1/assistant/settings").set("X-CSRF-Token", csrf).send({ retentionDays });
+    try {
+      expect((await put(next)).body).toEqual({ retentionDays: next });
+      expect((await agent.get("/api/v1/assistant/status")).body.retentionDays).toBe(next);
+      const ev = await prisma.event.findFirst({ where: { action: "assistant.settings.updated" }, orderBy: { timestamp: "desc" } });
+      expect(ev?.message).toContain(`to ${next} days`);
+      expect((await put(0)).status).toBe(400);
+    } finally {
+      await put(before);
     }
   });
 

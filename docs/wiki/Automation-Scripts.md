@@ -11,8 +11,9 @@ alert.
 > Linux, **LocalSystem on Windows**. Anyone who can write a script here, or
 > attach one to an automation, can execute arbitrary code on your estate.
 >
-> The `automationScripts` key is seeded `fullwrite` **only for
-> admin-equivalent roles** and `none` for every other built-in role. That is the
+> The `automationScripts` key stops at `write` — it has no `fullwrite` rung. It
+> is seeded `write` **only for admin-equivalent roles** and `none` for every
+> other built-in role. That is the
 > right default. Widening it is a decision about who may run code on your
 > hosts, not about who may edit automations.
 >
@@ -25,6 +26,10 @@ alert.
 | `automationScripts:read` | see the tab and run history |
 | `automationScripts:write` | create, edit, delete, test-run, **and attach a script action to an automation** |
 
+**+ Add script** opens the editor. Each script is a card showing its
+interpreter and run target, its timeout and the start of its sha256, with
+**Test run**, **Edit** and **Delete** for `write`.
+
 ---
 
 ## A script row
@@ -35,8 +40,8 @@ alert.
 | **Description** | free text |
 | **Interpreter** | `bash` · `sh` · `powershell` · `cmd` · `python3` |
 | **Body** | the script source, **≤ 64 KB** |
-| **Run target** | `server` · `agent` · `either` |
-| **Timeout** | default seconds; a script *action* may override, up to 600 |
+| **Runs on** | `server` (the Polaris server, the default) · `agent` (the triggering asset's agent) · `either` |
+| **Default timeout** | 1–600 seconds, default **60**; a script *action* may override it |
 | **Enabled** | a disabled script refuses to run |
 
 Polaris computes a **sha256 of the body on every save**. That digest is what an
@@ -46,7 +51,8 @@ agent verifies before executing, and a client-supplied hash is never accepted.
 
 - **Creating** a script writes a **warning**-level Event.
 - **Changing the body** writes a warning Event carrying the **old and new
-  sha256**.
+  sha256**. An edit that leaves the body alone writes an info Event.
+- **Deleting** a script writes a warning Event carrying its last sha256.
 
 Script tampering has to be visible in the audit log, and Events are shipped
 off-host by the syslog and SFTP archivers.
@@ -178,17 +184,23 @@ script's, or the request is refused before a run row exists.
 
 ## Testing
 
-Each script has a **Test** button (`automationScripts:write`) that starts a
-**server-side** run and polls for its exit code and output.
+Each script has a **Test run** button (`automationScripts:write`). After a
+confirmation it starts a **server-side** run with no arguments and shows the
+status, exit code, stdout and stderr under the card when it finishes. A script
+that runs on `agent` only cannot be test-run from here — trigger it through an
+automation on a real asset.
 
-Script and `api_call` actions are **never offered** in an automation's step-6
-test-delivery block — the server refuses to run them from a button, on purpose.
+Script and `api_call` actions are **never offered** in an automation's
+test-delivery block on the Summary step — the server refuses to run them from a
+button, on purpose.
 
 ---
 
 ## Run history
 
-**`/runs`** on the Scripts tab, or the per-script view.
+Every run is kept as a row, read through the [API](API)
+(`/automations/scripts/runs`, filterable by script, alert and status). The
+Scripts tab itself shows only the result of a **Test run**.
 
 | Column | |
 |---|---|
@@ -218,7 +230,7 @@ schedule.
   and both are visible.
 - **Do not print secrets.** stdout is stored, displayed, and included in
   backups.
-- **Keep them short.** The default timeout is seconds, not minutes, and a
+- **Keep them short.** The default timeout is 60 seconds, and a
   long-running script is better as something the script *triggers* than
   something it waits on.
 - **Prefer `api_call` where an HTTP request would do.** It does not need the

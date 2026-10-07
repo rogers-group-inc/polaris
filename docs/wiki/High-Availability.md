@@ -10,7 +10,8 @@ nodes over a replicated PostgreSQL, with automatic failover.
 
 **Server Settings → High Availability.** Reads at
 `serverSettingsSystem:read`; everything that hands over or revokes the keys to
-the install is **`fullwrite`**.
+the install is `serverSettingsSystem:write` — the key's top rung, so grant it
+deliberately.
 
 ---
 
@@ -38,9 +39,12 @@ discovery loops.
 
 The load balancer monitors **`GET /health/ready`**, which answers 200 only when
 the local PostgreSQL is a **writable primary** and 503 with `in-recovery` on the
-standby. It runs on its own one-connection pool over the direct database URL,
+standby (`db-error` when the database is unreachable, `timeout` when it is too
+slow). It runs on its own one-connection pool over the direct database URL,
 never the application pool — **a saturated pool must not be able to flap a
-healthy site out of a load balancer.**
+healthy site out of a load balancer.** It is never cached, and it takes the
+same `HEALTH_TOKEN` bearer as `/health`, which the setup wizard generates — so
+the load balancer's monitor must send `Authorization: Bearer <token>`.
 
 ---
 
@@ -147,6 +151,10 @@ That is **Phase 6** for a reason. Do it.
 | **Rebuilding the standby from scratch** | |
 | **Moving the witness** | |
 | **Backups** | HA is **not** a backup. Replication faithfully replicates a deletion |
+
+The same document also carries the runbooks you hope not to need: **rolling back
+out of Patroni** (§10), **etcd has lost quorum** (§11), and the **drills** to run
+before you rely on any of it (§12).
 
 ---
 

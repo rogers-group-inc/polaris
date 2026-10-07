@@ -745,7 +745,8 @@ async function loadIntegrations() {
           '<div class="detail-row"><span class="detail-label">Model</span><span class="detail-value mono">' + (config.model ? escapeHtml(config.model) : '<span style="color:var(--color-text-tertiary)">Auto (the server\'s first tool-calling model)</span>') + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">API Key</span><span class="detail-value">' + (config.apiToken ? "Set" : '<span style="color:var(--color-text-tertiary)">None</span>') + '</span></div>' +
           (config.useHttps ? '<div class="detail-row"><span class="detail-label">Verify TLS</span><span class="detail-value">' + (config.verifySsl !== false ? "Yes" : "No") + '</span></div>' : '') +
-          '<div class="detail-row"><span class="detail-label">Lookups</span><span class="detail-value">Up to ' + (config.maxToolRounds || 6) + ' rounds, ' + (config.maxRowsPerTool || 200) + ' rows each</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Tool Calling</span><span class="detail-value">' + _llmToolCheckHTML(config.toolCheck) + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Lookups</span><span class="detail-value">Up to ' + (config.maxToolRounds || 6) + ' rounds, ' + (config.maxRowsPerTool || 200) + ' rows each · ' + Math.round((config.contextWindow || 8192) / 1024) + 'K-token window</span></div>' +
           '<div class="detail-row"><span class="detail-label">API Access Role</span><span class="detail-value">' + (config.roleName ? escapeHtml(config.roleName) + ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(read-only)</span>' : '<span style="color:var(--color-text-tertiary)">—</span>') + '</span></div>';
       } else if (intg.type === "activedirectory") {
         detailRows =
@@ -5426,10 +5427,18 @@ function llmFormHTML(defaults) {
       '<div class="form-group"><label>Temperature</label><input type="number" id="f-temperature" value="' + (d.temperature != null ? d.temperature : 0.2) + '" min="0" max="2" step="0.1"><p class="hint">Low keeps answers factual.</p></div>' +
       '<div class="form-group"><label>Lookup rounds per answer</label><input type="number" id="f-maxToolRounds" value="' + (d.maxToolRounds || 6) + '" min="1" max="12"></div>' +
       '<div class="form-group"><label>Rows per lookup</label><input type="number" id="f-maxRowsPerTool" value="' + (d.maxRowsPerTool || 200) + '" min="10" max="1000"><p class="hint">Reports go up to 5,000 regardless.</p></div>' +
-      '<div class="form-group"><label>Messages of history sent</label><input type="number" id="f-contextMessages" value="' + (d.contextMessages || 20) + '" min="2" max="100"><p class="hint">Lower it for models with a small context window.</p></div>' +
+      '<div class="form-group"><label>Messages of history sent</label><input type="number" id="f-contextMessages" value="' + (d.contextMessages || 20) + '" min="2" max="100"><p class="hint">At most — older ones are dropped first when they would not fit the context window.</p></div>' +
+      '<div class="form-group"><label>Context window</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-contextWindow" value="' + (d.contextWindow || 8192) + '" min="2048" max="1000000" step="1024" style="width:110px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">tokens</span></div><p class="hint">Match the model server. Ollama uses 4096 unless <code>OLLAMA_CONTEXT_LENGTH</code> raises it; 8192 or more leaves room for lookups.</p></div>' +
       '<div class="form-group"><label>Response timeout</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-requestTimeoutSec" value="' + timeoutSec + '" min="5" max="600" style="width:90px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">seconds idle</span></div></div>' +
     '</div>' +
     '<div class="form-group"><label>Extra instructions</label><textarea id="f-systemPromptExtra" rows="3" maxlength="4000" placeholder="Optional — e.g. site naming conventions, who to escalate to">' + escapeHtml(d.systemPromptExtra || "") + '</textarea></div>' +
+    // Not part of this integration's config: one server-wide setting (PUT
+    // /assistant/settings), filled in by _wireLlmForm and saved by
+    // _saveLlmRetention after the integration itself saves.
+    '<div class="form-group"><label>Keep conversations for</label>' +
+      '<div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-assistantRetentionDays" value="" min="1" max="3650" style="width:90px" disabled><span style="color:var(--color-text-tertiary);font-size:0.85rem">days</span></div>' +
+      '<p class="hint" id="f-assistantRetentionHint">Applies to every assistant on this install. Each person\'s saved chats are deleted this long after their last message.</p>' +
+    '</div>' +
     formDivider() +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
       '<input type="checkbox" id="f-enabled" ' + enabledChecked + ' style="width:auto">' +
@@ -5462,6 +5471,7 @@ function getLlmFormConfig() {
     maxToolRounds: Math.round(num("f-maxToolRounds", 6)),
     maxRowsPerTool: Math.round(num("f-maxRowsPerTool", 200)),
     contextMessages: Math.round(num("f-contextMessages", 20)),
+    contextWindow: Math.round(num("f-contextWindow", 8192)),
     requestTimeoutMs: Math.round(num("f-requestTimeoutSec", 120)) * 1000,
     systemPromptExtra: (document.getElementById("f-systemPromptExtra").value || "").trim(),
     verboseLogging: readVerboseLoggingFromForm(),
@@ -6033,6 +6043,15 @@ function _llmToolLabel(tc) {
   return tc === "yes" ? "✓ tool calling" : tc === "no" ? "✗ no tool calling" : "tool calling unverified";
 }
 
+/** The card's Tool Calling row: config.toolCheck, stamped by POST /:id/llm/check-tools. */
+function _llmToolCheckHTML(check) {
+  if (!check || !check.result) return '<span style="color:var(--color-text-tertiary)">Not checked yet — saves run the check</span>';
+  var color = check.result === "yes" ? "var(--color-success)" : check.result === "no" ? "var(--color-warning)" : "var(--color-text-tertiary)";
+  var word = check.result === "yes" ? "✓ Verified" : check.result === "no" ? "✗ Not supported — chat only, no lookups" : "Could not tell";
+  return '<span style="color:' + color + '">' + escapeHtml(word) + '</span>' +
+    ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(' + escapeHtml(check.model || "") + (check.at ? ", " + escapeHtml(timeAgo(check.at)) : "") + ')</span>';
+}
+
 function _renderLlmModelStatus(id) {
   var status = document.getElementById("f-llm-model-status");
   var input = document.getElementById("f-model");
@@ -6131,6 +6150,63 @@ function _wireLlmForm(id) {
   if (btn) btn.addEventListener("click", function () { _loadLlmModels(id); });
   // Editing a configured integration: show its server's models straight away.
   if (id && val("f-host")) _loadLlmModels(id);
+  _loadLlmRetention();
+}
+
+// Conversation retention is one server-wide setting, not integration config:
+// read from GET /assistant/status, written by PUT /assistant/settings (Server
+// Settings → System write). Without that grant the field stays read-only.
+var _llmRetentionLoaded = null;
+
+async function _loadLlmRetention() {
+  _llmRetentionLoaded = null;
+  var input = document.getElementById("f-assistantRetentionDays");
+  var hint = document.getElementById("f-assistantRetentionHint");
+  if (!input) return;
+  try {
+    var st = await api.assistant.status();
+    if (!document.body.contains(input)) return;
+    _llmRetentionLoaded = st.retentionDays;
+    input.value = st.retentionDays;
+    var canEdit = permAtLeast("serverSettingsSystem", "write");
+    input.disabled = !canEdit;
+    if (!canEdit && hint) hint.textContent += " Changing it needs Server Settings → System Read-Write.";
+  } catch (_) {
+    // No assistant grant: leave the field blank and disabled.
+    if (hint) hint.textContent = "Conversation retention could not be read with your role.";
+  }
+}
+
+/** Save the retention field when it changed. Never fails the integration save. */
+async function _saveLlmRetention() {
+  var input = document.getElementById("f-assistantRetentionDays");
+  if (!input || input.disabled || _llmRetentionLoaded == null) return;
+  var days = parseInt(input.value, 10);
+  if (!Number.isFinite(days) || days === _llmRetentionLoaded) return;
+  try {
+    await api.assistant.updateSettings({ retentionDays: days });
+  } catch (e) {
+    showToast("Integration saved, but conversation retention couldn\'t be: " + (e.message || "unknown error"), "error");
+  }
+}
+
+/**
+ * After a create / save: ask the model the integration will actually chat
+ * with to call a dummy tool, and record the verdict on the card
+ * (POST /integrations/:id/llm/check-tools). Runs in the background — a slow
+ * model takes up to 90 s — and reports by toast.
+ */
+function _autoCheckLlmTools(id, name) {
+  if (!id) return;
+  api.integrations.llmCheckTools(id)
+    .then(function (r) {
+      var msg = (name ? name + ": " : "") + r.model + " — " + _llmToolLabel(r.result);
+      showToast(msg, r.result === "yes" ? "success" : "warning");
+      loadIntegrations();
+    })
+    .catch(function (e) {
+      showToast((name ? name + ": " : "") + "tool-calling check failed — " + (e.message || "unknown error"), "warning");
+    });
 }
 
 /** The per-type wiring both flows run after the modal is in the DOM. */
@@ -6360,6 +6436,7 @@ async function _createIntegration(type, tested) {
     try { await api.monitorSettings.setIntegration(result.id, getMonitorSettingsFromForm()); }
     catch (e) { showToast("Integration created, but monitor settings couldn\'t be saved: " + (e.message || "unknown error"), "error"); }
   }
+  if (type === "llm") await _saveLlmRetention();
   closeModal();
   showToast("Integration created");
   loadIntegrations();
@@ -6374,6 +6451,7 @@ async function _createIntegration(type, tested) {
   if (result && result.llmAccess) {
     // The LLM server's API token exists only in this response (rule 95(f)).
     _showLlmAccessModal(result.llmAccess, input.name);
+    _autoCheckLlmTools(result.id, input.name);
   } else if (result && result.conflicts && result.conflicts.length) {
     showConflictModal(result.id, result.conflicts);
   } else {
@@ -6470,6 +6548,7 @@ function _intgEditFormSpec(intg, config) {
         maxToolRounds: config.maxToolRounds,
         maxRowsPerTool: config.maxRowsPerTool,
         contextMessages: config.contextMessages,
+        contextWindow: config.contextWindow,
         requestTimeoutMs: config.requestTimeoutMs,
         systemPromptExtra: config.systemPromptExtra,
         roleName: config.roleName,
@@ -7052,8 +7131,10 @@ async function _saveIntegration(id, intg, formGetter) {
         showToast("Saved, but apply couldn't start — " + failures.join("; "), "error");
       }
     } else {
+      if (intg.type === "llm") await _saveLlmRetention();
       closeModal();
       showToast("Integration updated");
+      if (intg.type === "llm") _autoCheckLlmTools(id, intg.name);
     }
     loadIntegrations();
     if (saved.result && saved.result.conflicts && saved.result.conflicts.length) {

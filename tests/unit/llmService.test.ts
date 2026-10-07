@@ -24,6 +24,7 @@ import {
   probeToolCalling,
   resolveChatModel,
   recoverTextToolCalls,
+  estimateTokens,
   _clearResolvedModelCache,
   type LlmConfig,
   type ChatToolCall,
@@ -112,6 +113,15 @@ describe("applyStreamChunk", () => {
     applyStreamChunk(round, { choices: [{ message: { tool_calls: [{ function: { name: "search", arguments: { query: "fw1" } } }] } }] });
     expect(round.toolCalls.get(0)!.function.arguments).toBe('{"query":"fw1"}');
   });
+
+  it("counts reasoning from either field without adding it to the answer", () => {
+    const round = { content: "", toolCalls: new Map<number, ChatToolCall>(), finishReason: null as string | null, reasoningChars: 0 };
+    expect(applyStreamChunk(round, { choices: [{ delta: { reasoning: "Let me think" } }] })).toBe("");
+    applyStreamChunk(round, { choices: [{ delta: { reasoning_content: "abc" } }] });
+    applyStreamChunk(round, { choices: [{ delta: { content: "Hi" } }] });
+    expect(round.reasoningChars).toBe(15);
+    expect(round.content).toBe("Hi");
+  });
 });
 
 describe("chatCompletionRound", () => {
@@ -162,6 +172,21 @@ describe("chatCompletionRound", () => {
   it("turns an auth refusal into a readable error", async () => {
     handler = (_req, _b, res) => { res.writeHead(401, { "Content-Type": "application/json" }); res.end('{"error":"bad key"}'); };
     await expect(chatCompletionRound(cfg(), [{ role: "user", content: "x" }], [])).rejects.toThrow(/refused the API key/);
+  });
+
+  it("reports reasoning progress while a thinking model works, and never as text", async () => {
+    handler = (_req, _b, res) => sse(res, [
+      { choices: [{ delta: { reasoning: "The user wants " } }] },
+      { choices: [{ delta: { reasoning: "the down list." } }] },
+      { choices: [{ delta: { content: "Two are down." } }] },
+    ]);
+    const progress: number[] = [];
+    const text: string[] = [];
+    const r = await chatCompletionRound(cfg(), [{ role: "user", content: "x" }], [],
+      { onText: (t) => text.push(t), onReasoning: (n) => progress.push(n) });
+    expect(progress).toEqual([15, 29]);
+    expect(text).toEqual(["Two are down."]);
+    expect(r.content).toBe("Two are down.");
   });
 
   it("can be aborted mid-stream", async () => {
@@ -289,6 +314,21 @@ describe("testConnection", () => {
 
   it("requires a host", async () => {
     expect((await testConnection({ host: "", model: "x" })).ok).toBe(false);
+  });
+
+  it("warns about a small context window, and only then", async () => {
+    handler = modelServer({ ids: ["qwen2.5:7b"] });
+    expect((await testConnection(cfg({ contextWindow: 4096 }))).message).toMatch(/Context window is 4096 tokens.*OLLAMA_CONTEXT_LENGTH/);
+    expect((await testConnection(cfg({ contextWindow: 8192 }))).message).not.toMatch(/Context window/);
+    expect((await testConnection(cfg())).message).not.toMatch(/Context window/);
+  });
+});
+
+describe("estimateTokens", () => {
+  it("counts about 3.5 characters a token, rounding up", () => {
+    expect(estimateTokens("")).toBe(0);
+    expect(estimateTokens("abc")).toBe(1);
+    expect(estimateTokens("x".repeat(35))).toBe(10);
   });
 });
 

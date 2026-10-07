@@ -1,7 +1,9 @@
 # Users, roles and permissions
 
-**Users** in the sidebar (admin only). Four sections: **Users**, **Manage
-Roles**, **Group Mappings**, **Authentication**.
+**Users** in the sidebar (admin only). Three sections: **Users**, **Roles**
+and **Group Mappings**, plus an **Authentication** button in the page header
+that opens the sign-in configuration (tabs **SAML**, **OIDC**, **LDAP**,
+**App Proxy** and **Settings**).
 
 ---
 
@@ -44,7 +46,7 @@ decision the operator did not really make.
 | Ladder | Keys | Why |
 |---|---|---|
 | `none \| read` | `assetsProbe` | A probe dials the device and writes nothing in Polaris, so Read *is* the whole grant |
-| `none \| read \| write` | 18 keys — see the tables below | Full Read-Write was never routed. It means something only where it lifts an ownership filter or reserves a more dangerous act |
+| `none \| read \| write` | 20 keys — see the tables below | Full Read-Write was never routed. It means something only where it lifts an ownership filter or reserves a more dangerous act |
 | `none \| write` | `serverSettingsData` | Nothing on the key is merely viewable. Its reads sit on the System key's floor, and everything it gates changes the database or hands over a copy of it |
 | all four | the 5 ownership keys and 7 named exceptions | Marked in the tables below |
 
@@ -200,7 +202,7 @@ are.
 | Role | Editable? | Grants |
 |---|---|---|
 | **`admin`** | **protected** — cannot be edited or deleted, and is hidden from the list | every key at its **top rung** |
-| **`readonly`** | protected | `read` on everything non-admin, `none` on admin-only keys |
+| **`readonly`** | protected — like `admin`, hidden from the Roles list | `read` on everything non-admin, `none` on admin-only keys |
 | **`networkadmin`** | editable, not deletable | IP space / integrations / map regions / conflicts at write; `subnets` + `reservations` at **Full RW**; assets, topology layouts and maintenance windows at write |
 | **`assetsadmin`** | editable, not deletable | assets / quarantine / monitor settings / maintenance / automations at write; own-row write on networks, reservations and **credentials**; integrations readable |
 | **`user`** | editable, not deletable | own-network / own-reservation write; read elsewhere |
@@ -211,8 +213,8 @@ less. There is exactly one deliberate exception: `user` holds `networkScan: none
 where `readonly` holds `read`, because that role exists for address-space
 self-service and an active sweep is IDS-visible.
 
-Create custom roles under **Users → Manage Roles**. A role bound to any API
-token refuses deletion.
+Create custom roles with **+ Add Role** in the **Roles** section. A role bound
+to any API token refuses deletion.
 
 ### What changed on 2026-09-22
 
@@ -452,6 +454,11 @@ Each token is **bound to a role at mint time** and passes the same
 `requirePermission` gates a session does — so it reaches exactly what its role
 grants, filter-don't-403 surfaces included.
 
+- The value (`polaris_` plus a 32-character tail) is shown **once**, at
+  creation; afterwards the list shows only its prefix, with the role, scoped
+  integrations, trusted hosts, creator, **last used** time and **expiry**. An
+  expiry is optional — blank means never. **Revoke** stops a token
+  immediately; an expired or revoked token gets the same `401` as no token.
 - A token granting quarantine at `write` or above **must** name the
   integrations it is scoped to.
 - Binding a token to an admin-equivalent role logs a **warning Event**.
@@ -479,7 +486,8 @@ grants, filter-don't-403 surfaces included.
 | Login | 10 / 15 min per IP |
 | TOTP confirm / disable | 10 / 15 min |
 | Self-service password change | 10 / 15 min |
-| OIDC kick-off | 30 / 15 min |
+| Passkey ceremonies (login, second-factor step, registration) | 60 / 15 min |
+| SSO kick-off (OIDC and SAML login redirects) | 120 / 5 min — sized against the callback ceiling, since one sign-in is one kick-off plus one callback. Never shares the login limiter's budget |
 | Entra App Proxy header login | 60 / 5 min — deliberately generous, since all App Proxy users share the connector IP and there is no guessable credential |
 | IdP callbacks | 300 / 5 min — a signature-validated assertion is not a guessable credential, so this bounds flood volume, not guessing. Note one NAT egress address can carry a whole site's shift-start logins |
 | Admin maintenance / backup routes | 120 / 5 min |

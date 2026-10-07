@@ -3,12 +3,12 @@
 The device inventory, and the page most operators live on. Everything Polaris
 knows about a device is reachable from here.
 
-![The Assets table: hostname, IP, serial, type, state, monitor status and monitoring transport, with a per-column filter row and a bulk-action bar above it.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/desktop-noon-assets.png)
+![The Assets table: hostname, IP, serial, type, state, monitor status, monitoring transport, sources, tags and last seen, with a per-column filter row and a bulk-action bar above it.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/desktop-noon-assets.png)
 
 | Gate | Grants |
 |---|---|
 | `assets:read` | see the page |
-| `assets:write` | edit rows, bulk-monitor, bulk tags, mass-pin |
+| `assets:write` | add and edit rows, the bulk Type / State / Monitoring / Tags / Delete actions, mass-pin, start / stop / restart / update an [Unraid or TrueNAS workload](#unraid-and-truenas-scale-workloads) |
 | `assets:fullwrite` | **deploy the Polaris Agent** (install / retry / reinstall / upgrade / uninstall), delete others' saved filters |
 
 Agent deployment sits at `fullwrite` on purpose ([rule 43](Business-Rules#rule-43)):
@@ -21,12 +21,23 @@ serial — describes.
 ## The list
 
 **Columns:** Hostname · IP Address · Network · Serial Number · Type · State · **Status** ·
-**Sources** · Description · Tags · Asset Tag · Manufacturer · Model · OS / Firmware ·
-MAC Address · Assigned To · Purchase Order · DNS Name · Latitude · Longitude ·
-Last Seen.
+**Monitored Via** · **Sources** · Description · Tags · Asset Tag · Manufacturer · Model ·
+OS / Firmware · MAC Address · Assigned To · Purchase Order · DNS Name · Latitude ·
+Longitude · Last Seen.
 
 Columns are sortable, inline-filterable, resizable and hideable. **Column order
-is per view tab; widths and visibility are per screen.**
+is per view tab; widths and visibility are per screen.** Network, Asset Tag,
+Manufacturer, Model, OS / Firmware, MAC Address, Assigned To, Purchase Order, DNS
+Name, Latitude and Longitude start hidden.
+
+The **star** left of Hostname marks a favourite. Favourites pin to the top of
+the list, and each view tab keeps its own set.
+
+**Monitored Via** names the polling method actually in use — *ICMP*, *SNMP*,
+*REST API*, *Agent*, *vCenter*, *FortiManager*, *Unraid*, *TrueNAS* and so on —
+resolved per stream as [Polling methods](Polling-Methods) describes. An asset
+whose streams use more than one reads **Multiple**, with the list in the
+tooltip; an unmonitored asset reads `—`.
 
 **IP Address** filters by network, not by text. Type the first one, two or
 three octets (`10`, `10.1`, `10.1.2`) to see every device in that range —
@@ -73,9 +84,13 @@ auto-resume monitoring — re-enabling is deliberate.
 while `monitored` keeps your intent, so it survives the window.
 
 **Status** is the monitor pill, and it has six values — see
-[Monitor states](Monitor-States). Click it to toggle monitoring. An *unmonitored*
-pill instead opens the edit modal on the Monitoring tab, so you set the polling
-method before enabling; the disable direction confirms inline.
+[Monitor states](Monitor-States#what-the-pill-says), which also lists the
+overlays (*Dep. Down*, *Maintenance*, *Standby*…) that can replace them. With
+`assets:write`, click it to toggle monitoring. An *unmonitored* pill instead
+opens the edit modal on the Monitoring tab, so you set the polling method before
+enabling; the disable direction confirms inline, and for a
+`maintenanceManagement` holder the same popover offers **enter maintenance mode
+until…** a time you pick. A **Maintenance** pill offers to end the window early.
 
 ### The alert indicator
 
@@ -99,6 +114,17 @@ someone else's needs `assets:fullwrite`.
 
 ---
 
+### The row menu
+
+Each row's menu carries **Open** and, with `assets:write`, **Edit…**; then
+**Open HTTPS**, **Open RDP** and **Open SSH** where the device has that
+management surface (the same verbs as the slide-over header — a Fortinet device
+offers what its `allowaccess` permits, a server RDP and SSH); **Quarantine…** or
+**Release quarantine** for an `assetsQuarantine` holder when quarantine push is
+on for some integration; and **Delete**.
+
+---
+
 ## Bulk actions
 
 Select rows to raise the bulk bar:
@@ -106,10 +132,15 @@ Select rows to raise the bulk bar:
 | Action | Needs | Does |
 |---|---|---|
 | **Compare** | `assets:read` | overlays telemetry charts for two to ten devices, after a metric picker; with more than ten selected the button greys out in yellow |
-| **Merge** | Assets **full read-write**, exactly **two** selected | opens the merge modal with the target pre-selected |
+| **Merge** | Assets **full read-write** (the button appears for the admin role), exactly **two** selected | opens the merge modal with the target pre-selected |
+| **Type ▾** / **State ▾** | `assets:write` | sets the asset type or lifecycle state on every selected row. A state that cannot carry monitoring turns monitoring off ([rule 10](Business-Rules#rule-10)) |
+| **Monitoring ▾** | `assets:write` | **Enable** or **Disable** monitoring on the selection. Assets in a state that cannot be monitored are refused with a reason |
+| **Tags** | `assets:write` | pick tags, then **Add** them (each asset keeps its own tags), **Remove** them (from the assets that have them), or **Replace all tags** (each asset ends up with exactly the picked set) |
+| **Edit** | `assets:write`, exactly **one** selected | opens the edit modal |
 | **Deploy Agent** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried, and other ineligible assets come back as skips **with reasons** |
 | **Maintenance** | `maintenanceManagement` | opens the schedules modal with the selection pinned as explicit asset ids |
-| **Tags** | `assets:write` | pick tags, then **Add** them (each asset keeps its own tags), **Remove** them (from the assets that have them), or **Replace all tags** (each asset ends up with exactly the picked set) |
+| **Quarantine selected** / **Release Quarantine** | `assetsQuarantine:write` | pushes or lifts the MAC block on every FortiGate that has seen each asset |
+| **Delete selected** | `assets:write` | deletes the selection after a confirmation — see [Deleting an asset](#deleting-an-asset) |
 
 **Replace keeps two kinds of tag** on every asset: Device Map `region:` tags
 and the discovery breadcrumbs `prev-entra:` / `prev-ad:`. Wiping region tags
@@ -125,23 +156,38 @@ A selection past the 500-id cap is refused **with the count**, rather than
 
 ## The asset slide-over
 
-Click a row. Tabs, in order: **General · System · Services · Software ·
-Quarantine · Events · SNMP Walk · Sources**, plus **Alerts**, plus **Wireless**, **MAC
-Table** and **ARP Table** where the device type has them.
+Click a row. Tabs, in order, each shown only where it applies: **General ·
+System · Wireless · SD-WAN · Paths · MAC Table · ARP Table · Services · Software ·
+Quarantine · Events · Alerts · Custom MIB · SNMP Walk · Sources**. General,
+System and Sources are always there.
 
-Two tabs are conditional:
+Three are device-type specific: **Wireless** on a monitored access point, **MAC
+Table** on a switch, **ARP Table** on a firewall.
 
-- **SNMP Walk** — admins only, **and** only when at least one monitoring stream
-  actually resolves to SNMP for this asset.
+The rest are conditional:
+
+- **SD-WAN** — on a FortiGate that has reported SD-WAN data.
+- **Paths** — on a host that runs at least one [path check](Path-Monitor).
 - **Services** and **Software** — only when something is actually pulling
   that information in for this asset: **Services** when the Polaris Agent
   reports its services or processes, or agentless process polling does;
   **Software** when the agent, Intune or Azure Arc reports installed software.
   A host none of them cover has neither tab. Never on Fortinet infrastructure
   (firewall / switch / access point) or the `other` catch-all.
+- **Quarantine** — for an `assetsQuarantine` holder, on an asset with a MAC
+  when quarantine push is turned on for some integration, and always on an
+  asset that is already quarantined, so **Release** stays reachable.
+- **Events** — with `events:read`. **Alerts** — with `alerts:read`.
+- **Custom MIB** — when the asset's manufacturer profile defines custom widgets
+  (Server Settings → Credentials → Manufacturer Profiles).
+- **SNMP Walk** — with the **Asset Probes** permission, **and** only when at
+  least one monitoring stream actually resolves to SNMP for this asset.
 
-Three are device-type specific: **Wireless** on a monitored access point, **MAC
-Table** on a switch, **ARP Table** on a firewall.
+The header also carries **Copy** and **Screenshot** (below), **Open HTTPS** /
+**Open RDP** / **Open SSH** where the device has them, and **Edit** for
+`assets:write`. Edit opens the edit modal (**General · Monitoring**, plus
+**Maintenance** where it applies) over the panel and returns you to it.
+[Discover Now](#discover-now) sits beside the Status pill on the System tab.
 
 ### Copy and Screenshot
 
@@ -278,10 +324,35 @@ removing it removes the whole block — the confirmation says how many. A range 
 a port block rather than an identity, so it is never promoted to primary; an
 asset whose only remaining entries are ranges correctly shows no primary MAC.
 
+#### Unraid and TrueNAS SCALE workloads
+
+An asset discovered by an [Unraid](Integration-Unraid) or
+[TrueNAS SCALE](Integration-TrueNAS) integration gets a section named for the
+platform. On the **host**: platform and version, CPU threads, memory, workload
+counts, a **Pools** table and a **Workloads** table linking each VM and
+container (App on TrueNAS) to its own asset with its state and monitor status.
+On a **VM or container**: its host, state, image and version, an **Updates**
+line (*Update available*, *Up to date* or *Not checked*), ports and autostart.
+
+With `assets:write`, a VM or container carries an action bar: **Start**,
+**Stop** (with a **Keep monitoring while stopped** box), **Restart**, and on a
+container **Update** (when one is available) and **Check for updates**. Every
+verb confirms first. Restart and Update hold the workload in maintenance for
+their duration; Stop pauses its monitoring unless you keep it, and a Start from
+Polaris resumes it ([rule 94](Business-Rules#rule-94)). Details are on
+[Unraid → Workload actions](Integration-Unraid#workload-actions).
+
 ### System
 
 Live telemetry and history: response time, CPU, memory, temperature,
-interfaces, storage, IPsec tunnels, SD-WAN.
+interfaces, storage, IPsec tunnels.
+
+At the top sits the **Status** row — the pill, **Discover Now**, and on a
+monitored firewall, switch or access point **Simulate Down…** for
+`assetMonitorSettings:fullwrite`
+([testing dependency suppression](Dependency-Suppression#testing-it)) — then
+the **Last 30 min** strip, one cell per probe coloured by the state it left
+the device in, and **Uptime** where the transport reports it.
 
 **The Response time chart also draws packet loss.** A dashed purple line reads
 against a second axis on the right. That axis tops out at the worst loss in
@@ -295,6 +366,9 @@ one-hour view, longer on longer ranges; the tooltip names it), and the line
 breaks where nothing was probed rather than dropping to 0 %. The **Packet
 loss** figure above the chart is the same measurement over the whole window.
 Hovering a response-time point still says whether *that poll* was missed.
+An Unraid or TrueNAS workload with no address of its own charts its response
+time at **0 ms**: its up/down is the platform's state read, which has no
+latency ([Polling methods](Polling-Methods#the-unraid-and-truenas-methods)).
 
 **FortiGate tunnel interfaces are listed from the configuration.** On a
 FortiGate polled over the REST API, IPsec interfaces (site-to-site, dial-up,
@@ -642,6 +716,13 @@ Things to know:
 - With no list at all the tab says how to get one: install the agent, or turn
   the read on in an Entra ID or Azure Arc integration.
 
+### Events
+
+The audit history about this asset — its own [Events](Events), plus each of
+its alerts firing and clearing — newest first. The header's Screenshot gives way
+to an **Export** dropdown here (CSV or PDF, this page or every event for the
+asset).
+
 ### Alerts
 
 This asset's active alerts, above the automations that can trigger for it.
@@ -678,6 +759,16 @@ The second table lists matching automations: **Name · Trigger · Scope**, where
 Trigger is the automation's plain-English sentence — every severity tier
 included, which is why there is no separate Severity column. The name opens the
 automation in the wizard in place, for `automationManagement:write`.
+
+### Custom MIB
+
+Shown when the asset's manufacturer profile defines **custom widgets**
+(Server Settings → Credentials → Manufacturer Profiles). One card per widget,
+drawn as its type says — a gauge with its threshold ranges, a line over the
+last 60 samples, a table, or a pass/fail state.
+Widgets are collected on their own cadence (60 seconds by default); the tab
+shows the freshest sample and says so when none has arrived yet, or when the
+asset's polling is disabled.
 
 ### Wireless (access points)
 
@@ -792,15 +883,16 @@ probe; the snapshot tabs' **Refresh** (which re-reads system info) does not.
 
 ### Path Monitor (hosts with the Polaris Agent)
 
-Shown on a host that runs at least one [path check](Path-Monitor).
-A table lists every check the host runs; click one to see its **Latency**
+The tab is labelled **Paths**. Shown on a host that runs at least one
+[path check](Path-Monitor). A table lists every check the host runs; click one to see its **Latency**
 (with optional DNS / Connect / TLS / TTFB lines and any automation SLA shaded),
 **Availability**, **HTTP status**, the **Latest result** (body fingerprint and
 size, TLS issuer and days to expiry, error text, and a body excerpt when one
 was kept) and the **Path** — the traceroute, each hop linked to the device
 Polaris monitors at that address, with changed hops marked against the previous
 trace. These results describe the path from this host; they never change the
-host's own Up / Down.
+host's own Up / Down. The path graph has an **Export** menu (screenshot, PDF or
+Visio) — see [Exporting the path graph](Path-Monitor#exporting-the-path-graph).
 
 ### Sources
 
@@ -815,6 +907,11 @@ and one line naming which two sources decided it. Two rules outrank the order:
 **an empty value never overwrites a filled one**, and for Type the `other`
 catch-all counts as empty — so a specific type on either side wins, and no merge
 path writes `other` over a real type.
+
+The inverse is **Split**, shown to the admin role on each non-manual source
+card of an asset with more than one source: it detaches that
+source onto a new asset that starts clean, while monitoring, IP history,
+sightings and quarantine stay on the original — the recovery for a bad merge.
 
 ### Discover Now
 
@@ -835,8 +932,13 @@ nothing cheaper to scope to.
 
 ## Adding an asset by hand
 
-**+ Add Asset**. As you type the IP, a panel underneath cross-references it and
-reports, in this order:
+**+ Add Asset(s)** opens a menu: **Single asset** (`assets:write`) is the
+hand-typed form below; **New discovery** and **Saved discoveries** run an active
+scan of IP ranges ([Network Discovery](Network-Discovery), `networkScan`). An
+entry your role cannot use is left out of the menu.
+
+In the Single asset form, as you type the IP, a panel underneath
+cross-references it and reports, in this order:
 
 1. **Any asset that already carries it as a primary IP**, in the warning colour
    — that is a duplicate you are about to create.
@@ -880,17 +982,19 @@ not count as a collision. Re-saving an asset without changing its IP asks nothin
 
 ## Deleting an asset
 
-Two ways in, both `assets:write` and both the same act:
+Three ways in, all `assets:write` and all the same act:
 
-- the row menu's **Delete**, on the list; or
+- the row menu's **Delete**, on the list;
 - **Delete Asset**, at the bottom-left of the **edit modal** — so a device you
   opened to fix, and then decided should not exist, does not have to be found
-  again in the list.
+  again in the list; or
+- **Delete selected** on the bulk bar, for many at once.
 
-Either one asks you to confirm **by hostname** first, over the top of whatever
+The first two ask you to confirm **by hostname** first, over the top of whatever
 you had open; cancelling leaves the edit modal and anything you had typed in it
 exactly as it was. Confirming closes the modal, closes the detail panel if it
-was showing that device, and removes the record.
+was showing that device, and removes the record. The bulk delete confirms once,
+with the count.
 
 **There is no undo.** The asset's history goes with it — samples, alerts,
 sightings. If the device is simply gone from the network rather than gone from
@@ -911,11 +1015,18 @@ Two things the delete does for you, and one it refuses:
 
 ## The Settings modal
 
-**Settings** on the toolbar, one modal of stacked sections:
+**Settings** on the toolbar — shown to the **admin** role — one modal of stacked
+sections:
 
 ### Asset Lifecycle
 
-How long a device sits in each state before Polaris acts on it.
+Two fields:
+
+- **Auto-Decommission Threshold (months)** — an asset whose *Last Seen* is
+  older than this is moved to `decommissioned`. A daily job; `0` turns it off,
+  and an asset in a maintenance window is never auto-decommissioned.
+- **IP History Retention (days)** — IP address history older than this is
+  removed. `0` keeps it indefinitely.
 
 ### Sources
 
@@ -935,7 +1046,8 @@ an AD OU path into a FortiGate-sourced field and accumulated a prefix per cycle.
 ### Manual Monitoring
 
 The polling-method tier for **orphan assets** — ones with no integration behind
-them. Accepts any method, since it must cover any source.
+them. Accepts every method except `fortimanager` (an orphan has no FortiManager
+to ask), since it must cover any source.
 
 ### Class Overrides
 

@@ -4,6 +4,12 @@ A **Discovery** is a saved sweep of IP ranges you name. It is the only Polaris
 feature that touches hosts it has **no prior relationship with**, so the posture
 matters more than the mechanism ([rule 34](Business-Rules#rule-34)).
 
+It lives on the **Assets** page: **+ Add Asset(s) → New discovery** starts one,
+and **Saved discoveries** lists them (row menu: *Open…*, *Run now*, *Export
+config*, *Delete*). It is for equipment that answers SNMP or an API but belongs
+to no controller and no directory — PDUs, UPSes, sensors, cameras, older
+switches.
+
 | Gate | Grants |
 |---|---|
 | `networkScan:read` | browse the Discoveries you can see, and watch a run |
@@ -29,10 +35,11 @@ so you find out before you have filled in the form.
 
 ## What it is not
 
-- **Not an eighth integration type.** It creates no `Integration` row and no
-  discovery run row.
-- **No `network-scan` source kind.** An adopted asset carries the source of
-  whatever answered it, not "a scan found it".
+- **Not a tenth integration type.** It creates no `Integration` row and no
+  integration discovery run.
+- **No `network-scan` source kind.** An adopted asset is created exactly like a
+  hand-typed one — a `manual` source row — with its provenance in the asset's
+  notes (*Found by Polaris Discovery "…" at …*) and in an Event.
 - **No scheduler.** There is no recurring sweep, and no shipped default range.
   You run it when you mean to.
 
@@ -42,30 +49,64 @@ It is **opt-in and IDS-visible**, and that is stated where you use it.
 
 ## The wizard
 
-Name → targets → credentials → run → results → adopt.
+Seven steps:
+
+```
+Name → Targets → Methods → Run → Results → Monitor → Summary
+```
 
 ### Targets
 
-Typed as ranges, CIDRs or single addresses. **Preview targets** resolves what
-you typed with no packets sent, and reports how many of those addresses
-inventory already carries.
+Typed as ranges, CIDRs or single addresses — up to 50 rows and 65,536
+addresses. A live preview resolves what you typed as you type, with no packets
+sent, and reports how many of those addresses inventory already carries.
 
-### Credentials
+### Methods
 
-You supply an ordered list. **Credential order is the try order**, and the first
-method that answers wins. That is what lets one sweep cover a mixed estate
-without you classifying it first.
+Pick from **ICMP (ping)**, **SNMP**, **REST API**, **SSH** and **WinRM**, each
+with up to ten credentials from Server Settings → Credentials (ICMP takes none).
+
+**Order is the try order.** ICMP, when enabled, is the cheap liveness filter
+that keeps empty space from costing an authentication attempt per address.
+Each live address then gets the remaining methods in your order, each method's
+credentials in order, and the **first that answers wins**. That is what lets
+one sweep cover a mixed estate without you classifying it first.
+
+**SNMP is the only method that identifies a device** — hostname, vendor, model
+— and the only one that reports interface and storage names during the scan.
+SSH and WinRM prove a login works; their interfaces appear only once an agent
+runs.
 
 ### Running
 
-A run is started with a 202 and its own row — the sweep takes minutes, and the
-wizard watches that row. You can leave and come back: the Discoveries list shows
-each one's newest run, which is also the reattach path. A run can be cancelled.
+The Run step saves the Discovery and starts a run — the sweep takes minutes, and
+the wizard watches it. You can close the wizard and come back: reopening the
+Discovery reattaches to a run still in flight. **Cancel scan** stops one;
+**Scan again** re-runs it.
+
+### Results and Monitor
+
+Results lists the responders, with the method that answered and, per method,
+why the others failed — *"answered ICMP, refused every SNMP community"* is the
+most common shape, and it names the credential to fix. Tick the ones to add.
+
+The **Monitor** step groups the selection by the method that identified it, and
+offers the same interface and storage auto-monitor rules as an integration's
+Monitoring tab — filled from the names the scan itself collected. The choice is
+saved with the Discovery.
 
 ### Adopting
 
-**New addresses only.** A re-run **enriches nothing** — which is deliberate, so
-that *"nothing new"* stays distinguishable from *"nothing there"*.
+**New addresses only.** A run skips every address an asset already carries
+before sending a packet, and adoption re-checks at the moment you add, so a
+device created in the meantime is skipped rather than duplicated. A re-run
+**enriches nothing** — which is deliberate, so that *"nothing new"* stays
+distinguishable from *"nothing there"*.
+
+An adopted device is typed by the asset-type rules for scanned devices (else
+`other`), named after its SNMP hostname (else its address), and carries the
+interface and storage pins from the Monitor step. It is **not** switched to
+monitored — that is a separate decision per asset. Up to 500 addresses per add.
 
 ---
 

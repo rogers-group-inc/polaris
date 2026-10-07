@@ -3,18 +3,19 @@
 Ten tabs at the bottom of the sidebar. Most of it is gated on
 `serverSettingsSystem` or `serverSettingsData`; the **Credentials** and
 **Repository** tabs have their own keys, so a role holding only `credentials`
-or only `firmware` sees that tab and nothing else.
+or only `firmware` sees that tab and nothing else. Every other tab is shown
+only to an administrator.
 
 | Tab | Gate | Holds |
 |---|---|---|
-| **Identification** | `serverSettingsSystem` | what this install calls itself |
-| **Credentials** | `credentials` | stored SNMP / SSH / WinRM / REST / HTTP secrets |
+| **Identification** | `serverSettingsSystem` | DNS, MAC & vendor identification, device icons, device types, tags |
+| **Credentials** | `credentials` | stored SNMP / SSH / WinRM / REST / HTTP secrets, plus the MIB Database (`mibDatabase`) and Manufacturer Profiles (`manufacturerProfiles`) cards |
 | **Repository** | `firmware` | firmware images for switches, access points and FortiGates, and the device logins or API tokens that apply them |
-| **Customization** | `serverSettingsSystem` | branding, logo, units |
-| **Time & NTP** | `serverSettingsSystem` | server clock and timezone |
-| **Web Server** | `serverSettingsSystem` | HTTPS, nginx, Dash wallboard |
-| **Maintenance** | `serverSettingsData` | backup, restore, updates, capacity, lifecycle |
-| **Retention** | `serverSettingsData` | sample and event retention |
+| **Customization** | `serverSettingsSystem` | application name and subtitle, logo, display units |
+| **Time & NTP** | `serverSettingsSystem` | NTP servers and the timezone override |
+| **Web Server** | `serverSettingsSystem` | HTTPS certificate, nginx, Dash wallboard, trusted CAs |
+| **Maintenance** | `serverSettingsSystem` to look; `serverSettingsData` for backup, restore, download, updates and restart | database and capacity, updates, lifecycle, backups |
+| **Retention** | `serverSettingsSystem` | sample retention and agent OS event-log collection |
 | **API Tokens** | `apiTokens` | bearer tokens + the API-docs IP scope |
 | **High Availability** | `serverSettingsSystem` | the active/standby pair |
 
@@ -22,8 +23,25 @@ or only `firmware` sees that tab and nothing else.
 
 ## Identification
 
-The install's name and subtitle. These appear in the browser title, the sidebar,
-alert emails and the mobile app's install identity.
+Five cards about what Polaris calls things it finds:
+
+- **DNS Configuration** — the resolvers Polaris uses for reverse lookups, with a
+  **Test DNS Lookup** card beside it.
+- **MAC & Vendor Identification** — a three-layer pipeline: **Prefix
+  Overrides** win, then **Manufacturer Aliases** normalise the vendor name, then
+  the IEEE **OUI database** supplies the base lookup. The **Placeholder MAC
+  Prefix** (default `02:0F:5E`) lives here too: it is what the IP panel's
+  **Generate** button builds a MAC from when you reserve an address for a device
+  that is not racked yet, and the only thing that marks such a MAC as a
+  placeholder.
+- **Device Icons** — PNG / JPEG / WebP (256 KB) or SVG (32 KB, strictly
+  validated) icons overlaid on the topology graphs, keyed to a manufacturer
+  plus a type or a model. Gated `deviceIcons`.
+- **Device Types** — the asset-type registry and the matching rules that file a
+  newly discovered device. Built-in types cannot be renamed or removed, but
+  their rules are editable; **Apply rules to existing "Other" assets…** re-files
+  what was left unclassified.
+- **[Tags](#tags)** — the tag registry.
 
 ---
 
@@ -248,9 +266,12 @@ it on real devices. A flash that fails partway can leave a device unbootable.
 
 ## Customization
 
-Branding: application name, subtitle, logo, and where each appears
-(`logoOnLogin` / `logoOnSidebar`). Plus the hardware-sensor display unit, which
-rides the branding payload.
+Three cards: **Application Name** (name and subtitle — the name shows in browser
+tabs and PDF exports), **Logo** (upload, where it appears — `logoOnLogin` /
+`logoOnSidebar` — and an optional Polaris-star accent on its corner), and
+**Display Units** (Celsius or Fahrenheit for hardware-sensor temperatures;
+display only — samples and automation thresholds stay in °C). The unit rides
+the branding payload and applies to every operator and the wallboard.
 
 **The logo is picked by theme *family*, never by id** ([rule 27](Business-Rules#rule-27)).
 The shipped art is theme-paired, so painting the wrong variant makes the logo
@@ -271,7 +292,8 @@ vanish.
 
 ## Time & NTP
 
-The server's NTP servers, its timezone, and an override.
+Two cards: **Time Synchronization** (the server's NTP servers) and **Timezone
+Override**.
 
 **This is the clock every maintenance window and every automation quiet-time
 window is expressed in.** Both are **server-local wall clock with no offset** —
@@ -286,16 +308,22 @@ Individual users set their own **display** timezone from the
 
 A reflowing three-column deck of cards.
 
-### HTTPS
+### HTTPS Certificate
 
-Certificate and key, the listen port (**TCP and UDP** — HTTP/3), and hot
-rotation. Polaris can hold the certificate directly.
+The certificate nginx terminates TLS with — path, common name, SANs and expiry
+(amber under 30 days, red under 7). **Rotate certificate** walks the dual-pin
+**stage → swap → retire** workflow, which is zero-downtime as long as every
+agent is online to receive the new pin; see
+[certificate pin rotation](Polaris-Agent#rotating-the-certificate-without-breaking-the-fleet).
 
 ### nginx Proxy
 
-The in-app nginx GUI: managed configuration, certificate preflight and
-rotation, and a `nginx -t` check before anything is applied. A configuration
-Polaris does not manage yet is detected and said so rather than overwritten.
+The in-app nginx GUI: six operator-settable directives — among them the HTTPS
+listen port (**TCP and UDP** — HTTP/3), TLS protocols, HSTS and the Prometheus
+allow-list. **Save & Apply** renders the config, runs `nginx -t`, and reloads.
+A configuration Polaris does not manage yet is detected and said so rather
+than overwritten: the controls are read-only until you click **Adopt managed
+mode**, and adopting overwrites hand edits beyond those six on the next apply.
 
 Two things the shipped config does that matter
 ([rule 50](Business-Rules#rule-50)):
@@ -320,20 +348,33 @@ Behind nginx that manifests to the remote client as a 502.
 
 See [Mobile and Dash](Mobile-and-Dash#dash-wallboard).
 
-### Login restriction
+### Trusted Certificate Authorities
 
-Restrict local login by source IP. Off by default, fails open on a read error,
-and **refuses a scope that excludes your own IP**. See
+Upload `.pem` / `.crt` / `.cer` / `.der` CA certificates Polaris uses to verify
+remote servers — integrations, syslog and archive targets. With none uploaded
+it uses the system trust store.
+
+### Local Login Access
+
+A **read-only summary** of the local-login source-IP restriction. The setting
+is edited on **Users → Authentication → Settings**, beside the password and
+passkey policies — see
 [Users](Users-Roles-and-Permissions#restricting-the-login-page-by-source-ip).
 
 ---
 
 ## Maintenance
 
+Cards in this order: **Database** (the capacity snapshot), **Capacity Advisor**
+and **Application Updates** side by side, **Platform Lifecycle**, then
+**Backup**, **Restore** and **Backup History** in one row, and **Scheduled
+Backups**.
+
 ### Backup
 
-Manual backup, a **backup schedule**, and backup history. Filenames embed the
-Polaris version, so a backup always names the build that produced it.
+**Backup** (with an optional encryption password), **Restore** (drop a `.gz` or
+`.enc.gz` file), **Backup History**, and **Scheduled Backups**. Filenames embed
+the Polaris version, so a backup always names the build that produced it.
 
 Backup and restore are **streamed end to end**, and restore is wrapped in
 TimescaleDB's pre- and post-restore calls. **A failed pre-update backup aborts
@@ -352,8 +393,17 @@ from. See [Updates](Updates).
 
 ### Capacity Advisor
 
-A capacity snapshot, a steady-state size projection and a disk forecast, all
-**measured on this install** rather than assumed.
+The **Database** card at the top of the tab carries a capacity snapshot — storage
+volumes, the application host, the database, and the monitoring workload — a
+steady-state size projection and a disk forecast, all **measured on this
+install** rather than assumed.
+
+The **Capacity Advisor** card beside Updates appears only when it has something
+to recommend: the queue mode, the connection-pool and worker-count variables,
+and PostgreSQL tuning (`max_connections`, `shared_buffers` and friends). Tick
+the rows you want, **Stage** them, and **Restart Polaris to apply**. The
+PostgreSQL rows are advisory only — they have no Stage button, and a value you
+set yourself with `ALTER SYSTEM` is honoured.
 
 Its `timescale_recommended` reason carries **no size gate** — it fires at zero
 bytes, because TimescaleDB's absence is a broken install from the first byte,
@@ -433,29 +483,42 @@ open, since it clears only in a maintenance window.
 
 ### Database tools
 
-Reports the **resolved** `pg_dump` and `psql` and their compatibility with the
+Polaris checks the **resolved** `pg_dump` and `psql` for compatibility with the
 server ([rule 47](Business-Rules#rule-47)). Presence is not compatibility, and
 `alternatives --display` reports its own bookkeeping rather than the file on
-disk — neither of which this card relies on.
+disk — neither of which this check relies on. When both are fine nothing is
+shown; when either is not, a **"Backups cannot run on this host"** banner
+above the backup history names the versions, the path and the fix.
 
-### Polaris Agent
-
-The agent binary build and **[certificate pin rotation](Polaris-Agent#rotating-the-certificate-without-breaking-the-fleet)**.
+> The agent binary build lives on **Integrations → Polaris Agents**, and
+> certificate pin rotation on the **Web Server** tab's
+> [HTTPS Certificate](#https-certificate) card.
 
 ---
 
 ## Retention
 
-Per-stream sample retention, rollup retention, compression, and event retention.
+Two cards.
 
-Events older than **7 days** are pruned by default
-([rule 8](Business-Rules#rule-8)). Syslog (CEF) and SFTP/SCP archival are
-configurable — and note that **anything archived leaves the host**, which is why
-directory sync writes counts rather than names into Events.
-
-Retention changes are applied by a background job, not instantly.
-
+**Sample Retention** — how long each kind of sample is kept at each tier:
+detail, then hourly rollups, then daily rollups. Per cell, **N** keeps N days,
+**0** drops that tier and **−1** keeps it forever; the defaults are 7 days
+detail / 30 days hourly / 365 days daily, and **Restore defaults** puts them
+back. Interface, storage and IPsec-tunnel rows apply only to the ones you
+selected for monitoring — unselected ones are kept 24 hours and not rolled up.
+Changes take effect on the next nightly prune and the next chart request.
 Pruning is by `drop_chunks`, never by row delete.
+
+**Agent OS Event Log** — off by default. When on, Polaris Agents ship matching
+Windows Event Log / Linux journald entries into the audit log, filtered by a
+minimum severity, a journald priority and a list of Windows channels, and
+bounded per push and per asset per hour (overflow is summarised into one
+event). Event messages can carry hostnames or sensitive text, so keep the
+filter tight.
+
+Audit-event retention (7 days by default, [rule 8](Business-Rules#rule-8)) and
+syslog / SFTP archival are set on the [Events](Events#retention-and-archival)
+page, not here — and note that **anything archived leaves the host**.
 
 ---
 
@@ -488,14 +551,14 @@ See [High availability](High-Availability). The tab is a **procedure**: five
 cards in build order, each returning nothing until its step applies.
 
 Reads are `serverSettingsSystem:read`; everything that hands over or revokes the
-keys to the install is **`fullwrite`**.
+keys to the install is `serverSettingsSystem:write` — the key's top rung.
 
 ---
 
 ## Tags
 
-Managed under Server Settings, gated `serverSettingsSystem` with mutations at
-**`fullwrite`**.
+The last card on the **Identification** tab, gated `serverSettingsSystem` with
+mutations at `write`.
 
 The registry holds every tag, its category and colour, and optionally a
 **device filter that auto-assigns it**. A preview reports the match count, a

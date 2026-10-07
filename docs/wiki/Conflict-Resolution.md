@@ -8,15 +8,17 @@ existing manual record create a conflict rather than overwriting**
 ([rule 7](Business-Rules#rule-7)). An automatic merge that silently loses an
 operator's decision is worse than a queue nobody has cleared.
 
-Reached from **Events → Conflicts**, the **Conflict Queue** dashboard widget
-(which is **role-scoped** — you only see the ones your role can resolve), and
-the conflict slide-over.
+Reached from the **Conflicts** button on the **Events** page, the **Conflict
+Queue** dashboard widget, and the conflict slide-over. Everyone who can see the
+queue sees every flavour — there is no per-role split between reservation and
+asset conflicts any more.
 
 | Gate | |
 |---|---|
 | `discoveryConflicts:read` | see the queue |
-| `discoveryConflicts:write` | accept / reject |
-| **plus `assets:write`** | **chained**, for the two verbs that edit or delete inventory |
+| `discoveryConflicts:write` | accept / reject / adopt / dismiss |
+| **plus `assets:write`** | **chained**, for the duplicate-IP verbs that change an asset's address (*Apply* a new address, *Clear*) |
+| **plus `assets:fullwrite`** | **chained**, for the duplicate-IP and duplicate-serial merge verbs — they delete a record |
 
 ---
 
@@ -24,8 +26,8 @@ the conflict slide-over.
 
 | Flavour | Entity | Raised when |
 |---|---|---|
-| **Field conflict** | reservation | a discovered value differs from a **manual** reservation |
-| **Hostname collision** | asset | a discovered device's hostname matches an existing asset |
+| **Field conflict** | reservation | a discovered value differs from a **manual** reservation, or a VIP row could take a value a DHCP entry for the same address carries |
+| **Hostname collision** | asset | a device found by Entra ID / Intune, Active Directory, vCenter, Azure Arc, Unraid or TrueNAS has the same hostname as an existing asset |
 | **`duplicate-ip`** | asset | two network-present devices claim one address |
 | **IP override** | asset | discovery disagrees with an operator's IP pin |
 | **`serial-two-controllers`** | asset | one managed FortiSwitch/FortiAP is on **two FortiGates'** rosters |
@@ -36,25 +38,46 @@ the conflict slide-over.
 
 ## Field conflicts on reservations
 
-The original flavour. Discovery proposes a hostname, owner, project reference,
-notes or source type for an address an operator has already claimed manually.
+The original flavour, in two shapes. The fields compared are hostname, owner and
+project reference.
+
+**A manual reservation.** Discovery finds a DHCP entry, VIP, FortiGate
+interface, FortiSwitch or FortiAP on an address an operator reserved by hand,
+and its hostname, owner or project reference differs. (A FortiSwitch or FortiAP
+on the address *you reserved for it* is not a conflict.)
 
 | Verb | Does |
 |---|---|
-| **Accept** | adopts the proposed values — **fill-only**: it has only ever filled blanks |
-| **Reject** | dismisses; the rejected combination does not re-raise |
+| **Accept** | writes the discovered values over the fields that differ and takes the discovered source type — the row stops being `manual` |
+| **Reject** | keeps your values unchanged |
 
-Because accept is fill-only, a conflict whose proposed fields are all already
-populated would change nothing on accept. Those are raised fill-only in the
-first place, and pre-existing ones close themselves on the next cycle.
+**A VIP and a DHCP entry on one address** (neither side manual). Accept is a
+**merge that only fills blanks**: the VIP row keeps every value it already has,
+takes the other side's value for any field it left empty, and stays a VIP. Such
+a card is only raised when the VIP row actually has a blank to fill.
+
+A card whose fields have since come back into agreement — you edited the
+reservation, or the device changed — closes itself on the next discovery run.
+A reservation Polaris itself pushed to the gate never raises one: the device is
+only echoing back what Polaris wrote.
 
 ---
 
 ## Hostname collisions
 
-A new device whose hostname matches an existing asset raises a conflict rather
-than merging. The card snapshots both sides — what was proposed, and what the
-existing asset looked like when the conflict was raised.
+A device found by Entra ID / Intune, Active Directory, vCenter, Azure Arc,
+Unraid or TrueNAS whose hostname matches an existing asset raises a conflict
+rather than merging. Names also match when one side is the 15-character NetBIOS
+truncation of the other; on Accept the longer name wins. The card snapshots
+both sides — what was proposed, and what the existing asset looked like when
+the conflict was raised — and **◀ / ▶** between the columns pick the winning
+value per field (the defaults are the plain-Accept behaviour).
+
+| Card | Means | **Apply merge** | **Reject (keep separate)** |
+|---|---|---|---|
+| *Hostname collision* | the existing asset has no link to this source | the existing asset becomes this device's record | a separate asset is created for the device |
+| *Duplicate registration* | another record from the **same** source, under a different ID, has this name — a re-enrolment, re-image or re-join | merged into the existing record, which takes the new ID; the old ID is kept as a `prev-…` tag | kept as separate assets |
+| *Duplicate assets* | the device **already has** its own asset, and another asset shares its name | the device's duplicate is absorbed and removed | both assets stand; nothing is created or deleted |
 
 Assets **pinned** with a hostname override are excluded from the automatic
 duplicate-hostname merge entirely.
@@ -72,7 +95,8 @@ So duplicates are found by a **sweep every 10 minutes** and reported
 ([rule 40](Business-Rules#rule-40)). The seeded "IP conflict detected"
 automation alerts on it.
 
-Eight decisions shape what gets reported.
+The decisions below shape what gets reported — rule 40's lettered clauses (the
+tenth, (j), is the *Clear* verb under (e)).
 
 ### (a) Only network-present assets count
 
@@ -115,9 +139,9 @@ There is nothing to adopt, so the card offers the verb matching the real cause:
 
 | Cause | Verb |
 |---|---|
-| **Two devices** | **Reassign IP** — type a new address on **one** claimant. Written with the asset form's own pin semantics, and it **refuses an address another network-present asset already holds**, which would move the duplicate rather than resolve it |
+| **Two devices** | **Reassign IP** — type a new address on **one** claimant's row and click *Apply*. Written with the asset form's own pin semantics, and it **refuses an address another network-present asset already holds**, which would move the duplicate rather than resolve it |
 | **Two devices, one offline** | **Clear** — blank that claimant's address when you don't know where it will turn up. The next discovery run that reports it on a **different** address fills the blank in. Its old address is held off while the other device still has it, so a stale lease can't put it back; once nothing else holds the old address it may return. Typing an address on the asset form ends the hold |
-| **One device recorded twice** | **Merge** — name a survivor and the rows to absorb. It runs the same engine the asset page's Merge modal uses, so provenance, MACs, IP history, dependency edges and monitoring carry identically |
+| **One device recorded twice** | **Merge into this** on the row to keep absorbs the others, or **Review & merge…** compares two records field by field first. It runs the same engine the asset page's Merge modal uses, so provenance, MACs, IP history, dependency edges and monitoring carry identically |
 
 Merge accepts **no field winners** — blank-fill is what every automatic absorb
 does, and per-field control lives on the asset's Sources tab.
@@ -335,7 +359,16 @@ listed underneath with its own **Review reservations**, and the decision once:
 - **Dismiss all** — each network keeps its own dismissal, as before.
 
 The nav badge counts the swap once. A swap with a single network keeps the
-single-network card.
+single-network card, whose verbs are **Adopt new chassis**, **Review
+reservations** and **Dismiss**.
+
+**Review reservations** lists every address either gate reports for that
+network — *Missing on the new gate*, *New gate only*, *Differs* or *Matches* —
+with the old gate's reservations ticked where the new gate lacks or disagrees
+with them. **Copy selected to the new gate** writes the ticked ones onto the
+live network; they are queued for push when DHCP push is enabled. VIPs and
+interface addresses cannot be copied, because the new gate's own configuration
+states those.
 
 You no longer need to decommission the old gate yourself: when FortiManager (or
 the standalone FortiGate) lists the same name with a different serial, discovery
@@ -406,7 +439,15 @@ finding re-raising forever. That is why the dedup keys are so specific:
 | Flavour | Re-raises when |
 |---|---|
 | duplicate IP | the **claimant set** changes |
+| duplicate serial | the **set of records** changes |
+| two FortiGates claim one device | a **different pair of gates** claims it |
 | chassis replaced | a **different (old, new) serial pair** appears |
 | IP override | a **different** discovered IP is staged |
+| field conflict from a DHCP entry or VIP | not for **30 days** after either Accept or Reject on that reservation |
+| field conflict from an interface, FortiSwitch or FortiAP | after a Reject, the next discovery run — if the values still differ |
+
+The last row is the one exception: rejecting a device's claim on an address you
+reserved by hand does not stop it re-raising. To end it for good, accept it,
+or change the reservation so it agrees.
 
 So reject deliberately, and re-open the queue after a real change.

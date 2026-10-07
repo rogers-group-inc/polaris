@@ -108,6 +108,28 @@ async function deMock() {
     renamed++;
   }
 
+  //    Delivery channels carry the same prefix and show in the Automations
+  //    table's Addresses column. Rules point at a channel by id, and step 1
+  //    already removed any rule still bound to a stripped twin, so the twin can
+  //    go too. Rules and channels both say who made them in Created By.
+  const mockChannels = await prisma.notificationChannel.findMany({
+    where:  { name: { startsWith: "Mock: " } },
+    select: { id: true, name: true },
+  });
+  for (const ch of mockChannels) {
+    const clean = ch.name.slice("Mock: ".length);
+    await prisma.notificationChannel.deleteMany({ where: { name: clean, id: { not: ch.id } } });
+    await prisma.notificationChannel.update({ where: { id: ch.id }, data: { name: clean } });
+  }
+  await prisma.notificationRule.updateMany({
+    where: { createdBy: "system:mock-notifications" },
+    data:  { createdBy: "admin" },
+  });
+  await prisma.notificationChannel.updateMany({
+    where: { createdBy: "system:mock-notifications" },
+    data:  { createdBy: "admin" },
+  });
+
   // 2. Alert bodies carry the prefix inline, and the temperature rule's
   //    dimension is the widget name "Mock CPU Temp".
   const noisy = await prisma.notification.findMany({
@@ -132,7 +154,23 @@ async function deMock() {
     }
   }
 
-  // 3. mock-notifications seeds a few already-triggered rows with no rule
+  // 3. mock-compare tags its fleet "mock-compare" so it can find it again; in
+  //    the Assets table's Tags column that reads as placeholder data. Swap it
+  //    for the seeded "Datacenter" tag (mock-compare puts it back on a re-run).
+  const tagged = await prisma.asset.findMany({
+    where:  { tags: { has: "mock-compare" } },
+    select: { id: true, tags: true },
+  });
+  await prisma.$transaction(
+    tagged.map((a) =>
+      prisma.asset.update({
+        where: { id: a.id },
+        data:  { tags: [...new Set(a.tags.map((t) => (t === "mock-compare" ? "Datacenter" : t)))] },
+      }),
+    ),
+  );
+
+  // 4. mock-notifications seeds a few already-triggered rows with no rule
   //    behind them. The alert feed takes a row's TITLE from its rule, so those
   //    render as a bare severity pill with no headline — which looks like a
   //    broken widget rather than demo data.
@@ -141,7 +179,8 @@ async function deMock() {
   console.log(
     `De-mocked: ${renamed} rule name${renamed === 1 ? "" : "s"}, ` +
       `${cleaned} alert message${cleaned === 1 ? "" : "s"}, ` +
-      `${orphans.count} rule-less alert${orphans.count === 1 ? "" : "s"} removed.`,
+      `${orphans.count} rule-less alert${orphans.count === 1 ? "" : "s"} removed, ` +
+      `${tagged.length} asset tag${tagged.length === 1 ? "" : "s"} renamed.`,
   );
 }
 

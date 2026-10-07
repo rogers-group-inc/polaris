@@ -31,14 +31,16 @@ unchanged. The action-level chains are then stripped so the sweep cannot fire
 both. Per-action chains stay in the schema, so a rule this wizard has not
 re-saved keeps working.
 
-Each tier carries:
+Each tier (**+ Escalation Action**; up to five per chain) carries:
 
 | Field | Means |
 |---|---|
-| **After N minutes** | wall time from the fire |
+| **Escalate after N minutes unhandled** | wall time from the fire, up to a week |
 | **Actions** | a full action list — usually a wider recipient set |
-| **Repeat every** | the tier's own re-send cadence |
-| **Stop on** | what ends the chain — typically acknowledgement |
+| **Repeat every … min, max …** | the tier's own re-send cadence (5 minutes or more, off by default) and how many times (1–20, default 5) |
+
+The chain as a whole carries **Stop escalating when**: *Acknowledged (or
+cleared)*, the default, or *Cleared only — acknowledging does not stop it*.
 
 Tier-hosted action rows carry **no escalation footer**: no chains inside chains.
 
@@ -54,8 +56,9 @@ One automation, two honest audiences, no duplication.
 
 ## Reminders
 
-**"Repeat this action"** at the foot of a notify row: *re-send every N minutes*
-and *give up after N hours*. (Quiet time used to sit here too; it is the
+**"Repeat this action"** at the foot of a notify row: *re-send every N minutes
+(default 15), until* **Acknowledged** or **Cleared only**, *…and give up after N
+hours* (optional; blank means never). (Quiet time used to sit here too; it is the
 automation's own step now — [below](#quiet-time).)
 
 A reminder re-sends **notify actions and nothing else**, which is why it belongs
@@ -152,8 +155,8 @@ carries `· ACTIVE 9h 12m` in its subject ([rule 44](Business-Rules#rule-44)).
 The schedule editor is the Maintenance modal's. For specific days of the week
 you write **periods** — "Mon–Fri 22:00–06:00", "Sat, Sun all day" — each a
 row of day chips with either *all day* or one or more hour ranges; add as many
-periods as the week needs, or start from a preset (*Nights*, *Every night*,
-*Weekends*, *Outside business hours*). **Quiet outside these hours** turns the
+periods as the week needs, or start from a preset (*Nights and weekends*,
+*Every night*, *Weekends only*, *Outside business hours*). **Quiet outside these hours** turns the
 periods inside out, so working hours are what you type and the quiet time is
 everything else. A week strip and a per-day breakdown under the periods show
 exactly what will be quiet. Monthly and yearly schedules take a day of the
@@ -228,7 +231,8 @@ else) once the channel is fixed.
 
 A **maintenance window** is not a quiet time. It stops polling the device, so no
 new alerts are raised about it at all, and it freezes an open alert for the
-whole window ([rule 16](Business-Rules#rule-16)). Quiet time keeps watching and
+whole window — except a device-down alert, which it clears
+([rule 16](Business-Rules#rule-16)). Quiet time keeps watching and
 keeps raising; it only decides who is told, and when.
 
 A wizard **test delivery** is never held — it exists to show you the email.
@@ -255,7 +259,8 @@ the Actions step still warns that `stopAfterHours` counts quiet time too.
 | **The reset condition becomes true** | same as Clear, automatically |
 | **The device leaves the scope** | alert cleared as `out_of_scope` |
 | **The device stops being monitored** | same ([rule 37](Business-Rules#rule-37)) |
-| **A maintenance window opens** | nothing ends — the alert stays open, escalation and reminders **pause** until the window ends, then it resolves or carries on as usual ([rule 16](Business-Rules#rule-16)) |
+| **A maintenance window opens** | a **device-down** alert (`monitorStatus == down`) is cleared — down is what planned downtime looks like, and a device still down afterwards fires a new alert. Every other alert stays open with escalation and reminders **paused** until the window ends, then resolves or carries on as usual ([rule 16](Business-Rules#rule-16)) |
+| **The device itself goes down** | an alert about something the device reports (CPU, an interface, a sensor…) clears as `superseded` and the asset-down alert speaks for the outage — see [Triggers](Automation-Triggers#a-device-that-goes-down-takes-its-other-alerts-with-it) ([rule 29](Business-Rules#rule-29)) |
 | **The parent goes dark** | dependency suppression retires it — a parent genuinely down, not one in maintenance ([rule 38](Business-Rules#rule-38)) |
 | **A more specific automation carves the device out** | cleared as `superseded` ([rule 18](Business-Rules#rule-18)) |
 | **The pin is removed** | a dimensioned alert clears ([rule 57](Business-Rules#rule-57)) |

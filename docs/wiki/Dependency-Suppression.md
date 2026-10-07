@@ -12,8 +12,9 @@ is **not accused**.
 ## What you see
 
 A suppressed device shows a **slate-blue "Dep. Down"** pill. Suppression
-**outranks** the five-state label — including the device's own probe-down — and
-the device's own state moves to the tooltip.
+**outranks** the [monitor-state label](Monitor-States#what-the-pill-says) —
+including the device's own probe-down — and the device's own state moves to the
+tooltip. Only a maintenance window or a running dependency test outranks it.
 
 The same colour is used consistently: Device Map pins, cluster icons, topology
 nodes and the mobile asset detail. A cluster counts suppressed children as
@@ -28,7 +29,7 @@ deliberately *not* a band — that vocabulary belongs to maintenance.
 
 ## The graph
 
-Edges live on the asset and come from four sources:
+Edges live on the asset and come from these sources:
 
 | Source | Built by |
 |---|---|
@@ -67,8 +68,10 @@ on the endpoint's address claim being current, because a recycled DHCP address
 would otherwise suppress a departed device behind whoever serves that range now.
 
 Each parent row in the asset's General tab carries a **`detectedVia` tag** —
-*"last-seen switch port"* / *"last-seen access point"* / *"last-seen firewall"* —
-because an edge that silences alerts should say which signal put it there. An
+*"last-seen switch port"* / *"last-seen access point"* / *"last-seen firewall"* /
+*"owning firewall (from IPAM)"* for an endpoint, and *controller*, *interface*,
+*LLDP*, *wireless mesh*, *hypervisor placement* or *operator override* for the
+rest — because an edge that silences alerts should say which signal put it there. An
 endpoint with no resolvable upstream gets an explicit *"dependency suppression
 can't apply"* empty state rather than a missing block.
 
@@ -86,10 +89,12 @@ error anywhere.
 
 ### Overrides
 
-`PUT /assets/:id/dependencies/override` (admin). If **any** override row exists
+`PUT /assets/:id/dependencies/override` (`assets:write`), over the
+[API](API) — there is no editor for it in the UI. If **any** override row exists
 for an asset, those are the effective parents and computed rows are ignored. An
 **empty** override set is an explicit "no parents" pin — the asset opts out
-entirely.
+entirely. `DELETE` on the same path clears the overrides and hands the asset
+back to the computed graph.
 
 Cycles are rejected.
 
@@ -137,7 +142,7 @@ does not mean the switch under it has.
 | Response-time probe | still runs, at **2× the interval** — the device may answer over a redundant path |
 | Probe failures | stamped as dependency-explained, rendered **grey** |
 | Alerts | the device is excluded from firing ([rule 37](Business-Rules#rule-37)) — unless a down automation opted to speak for it, below |
-| Live alerts | retired when the upstream is genuinely down; **kept (paused)** when the device is silenced behind a parent in maintenance ([rule 16](Business-Rules#rule-16)) |
+| Live alerts | retired when the upstream is genuinely down. Behind a parent in **maintenance**, a device-down alert is cleared and every other alert is **kept (paused)** ([rule 16(a)](Business-Rules#rule-16)) |
 
 A suppressed device is **still probed**. That is deliberate: a device with a
 redundant path may well answer, and finding that out is worth one probe at half
@@ -287,5 +292,13 @@ reconciler tick (≤ 60 s). The child switches and APs should flip to Dep. Down
 and emit `monitor.dependency_suppressed`.
 
 There is also an **outage simulation** for testing dependency behaviour without
-a real outage. It is gated at `assetMonitorSettings:fullwrite` — the admin-only
-level — because it stamps a field that **can mask a real outage**.
+a real outage: **Simulate Down…** beside the Status pill on the System tab of a
+monitored firewall, switch or access point. It asks for a duration (1–240
+minutes, 30 by default); for that long the device counts as down for its
+children, which turn Dep. Down exactly as for a real failure, while its own
+probes keep running. Its pill reads **Dependency Test**, the dependency tree
+marks it, and it clears itself at the deadline — or at once with **Clear Dep.
+Test**, after which children resume within about a minute.
+
+It is gated at `assetMonitorSettings:fullwrite` — the admin-only level — because
+it stamps a field that **can mask a real outage**.

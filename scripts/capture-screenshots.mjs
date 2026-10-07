@@ -83,7 +83,9 @@ const DESKTOP = [
 //                        and the place a stray real value is most likely to
 //                        appear; needs a review pass of its own.
 
-const MOBILE = [{ slug: "mobile", path: "/mobile.html", settle: 3500 }];
+// The PWA opens on its Search tab, which is an empty state until something is
+// typed; the Alerts tab is the one that shows the app doing its job.
+const MOBILE = [{ slug: "mobile", path: "/mobile.html#alerts", settle: 3500 }];
 
 // Two half-width stacks. A widget's height is a fixed number of pixel rows
 // (dashboard.js sets article.style.height from ROW_HEIGHT_PX), so a short

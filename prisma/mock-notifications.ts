@@ -75,9 +75,9 @@ async function main() {
 
   // ── A hot temperature sensor on the firewall (78°C > 70) ──
   if (fw) {
-    await prisma.assetHardwareSensorSample.deleteMany({ where: { assetId: fw.id, sensorName: "Mock CPU Temp" } });
+    await prisma.assetHardwareSensorSample.deleteMany({ where: { assetId: fw.id, sensorName: "CPU Temp" } });
     await prisma.assetHardwareSensorSample.create({
-      data: { assetId: fw.id, timestamp: now, sensorName: "Mock CPU Temp", sensorClass: "temperature", value: 78, unit: "°C", alarmStatus: "alarm" },
+      data: { assetId: fw.id, timestamp: now, sensorName: "CPU Temp", sensorClass: "temperature", value: 78, unit: "°C", alarmStatus: "alarm" },
     });
   }
 

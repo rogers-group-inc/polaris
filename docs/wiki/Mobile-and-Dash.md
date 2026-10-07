@@ -7,7 +7,7 @@ unauthenticated NOC wallboard.
 
 # The mobile app
 
-![The Polaris mobile web app: a scoped search screen with a bottom tab bar.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/mobile-noon-mobile.png)
+![The Polaris mobile web app's Alerts tab: severity count tiles, filter and sort controls, and an alert list with Ack and Clear buttons, above the bottom tab bar.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/mobile-noon-mobile.png)
 
 An installable **PWA** with push notifications. Phones hitting `/` are
 redirected to it; `?desktop=1` escapes. The **Open device** link in an alert
@@ -16,8 +16,12 @@ phone — the link is one address for everyone, and Polaris picks the phone app
 or the desktop page when it is opened. Add `?desktop=1` to that link to force
 the desktop page.
 
-The tab bar is **Search · Alerts · Assets · Networks · More**. The **Device
-Map** is the first row on the More tab. Its **Account** row shows your name, your
+The tab bar is **Search · Alerts · Assets · Networks · More**. The More tab
+holds the rest, top to bottom: the **Device Map** (sites and topology) and
+**Blocks**; **Events** (the audit log, last 7 days); the **Notification
+preference**; **Add to Home Screen** when the app is not installed yet; the
+**theme strip** (tap to move through the day, as the desktop's theme band
+does); your **Account**; **Desktop view**; and **Sign out**. Its **Account** row shows your name, your
 role and, under them, the regions and tags your account is scoped to — the ones
 from your role, your user and your sign-in groups together, regions first. An
 account with no tag scope shows no tags there.
