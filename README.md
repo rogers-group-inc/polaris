@@ -22,7 +22,7 @@ One record per device, with the source that reported each field, its monitoring 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/screenshots/desktop-nightfall-assets.png">
-  <img alt="The Assets table: hostname, IP, serial, type, state, monitor status and monitoring transport, with a per-column filter row and a bulk-action bar." src="docs/img/screenshots/desktop-noon-assets.png">
+  <img alt="The Assets table: hostname, IP, serial, type, state, monitor status, monitoring transport, sources, tags and last seen, with a per-column filter row and a bulk-action bar." src="docs/img/screenshots/desktop-noon-assets.png">
 </picture>
 
 ### Address registry
@@ -36,7 +36,7 @@ Blocks are the namespaces; networks are the subnets carved out of them, with uti
 
 ### Automations
 
-What fires, on which devices, at what severity, and what it does — 29 of them ship enabled.
+What fires, on which devices, at what severity, and what it does — a baseline set ships enabled, delivering in-app until you add recipients.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/screenshots/desktop-nightfall-automations.png">
@@ -54,11 +54,11 @@ The audit trail — every create, update, delete and discovery event.
 
 ### Mobile
 
-An installable PWA for the phone — search, device map, assets and reservations.
+An installable PWA for the phone — search, live alerts with acknowledge and clear, assets and networks.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/screenshots/mobile-nightfall-mobile.png">
-  <img alt="The Polaris mobile web app: a scoped search screen with a bottom tab bar for Search, Device Map, Assets, Reservations and More." src="docs/img/screenshots/mobile-noon-mobile.png" width="320">
+  <img alt="The Polaris mobile web app's Alerts tab: severity count tiles, filter and sort controls, and an alert list with Ack and Clear buttons, above a bottom tab bar for Search, Alerts, Assets, Networks and More." src="docs/img/screenshots/mobile-noon-mobile.png" width="320">
 </picture>
 
 </details>
