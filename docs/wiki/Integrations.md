@@ -23,18 +23,19 @@ discovery at `write`.
 | **FortiGate** (standalone) | one device over REST | same | [Fortinet](Integration-Fortinet) |
 | **Entra ID / Intune** | Microsoft Graph | assets | [Directory](Integration-Directory) |
 | **Active Directory** | LDAP / LDAPS | assets | [Directory](Integration-Directory) |
-| **Windows Server** | WinRM DHCP | networks, reservations | [Windows Server](Integration-Windows-Server) |
+| **Windows Server** | WinRM DHCP | networks (from DHCP scopes) | [Windows Server](Integration-Windows-Server) |
 | **VMware vCenter** | vSphere REST + SOAP | assets, datastores | [vCenter](Integration-vCenter) |
 | **Azure Arc** | Azure Resource Manager | assets | [Azure Arc](Integration-Azure-Arc) |
 | **Unraid** | Unraid GraphQL API (7.2+) | host, VMs, containers | [Unraid](Integration-Unraid) |
 | **TrueNAS SCALE** | TrueNAS JSON-RPC WebSocket API (25.04+) | host, VMs, Apps | [TrueNAS SCALE](Integration-TrueNAS) |
 
-Plus two things managed from this page that are not integration rows:
+The page has a second tab, **Polaris Agents** — the
+[Polaris Agent](Polaris-Agent) build, SSH deployment, and service/process
+discovery rules — which is not an integration row.
 
-- the **[Polaris Agent](Polaris-Agent)** tab — builds, SSH deployment, and
-  service/process discovery rules;
-- **[Network Discovery](Network-Discovery)** — saved active scans, which is
-  deliberately **not** an integration type.
+**[Network Discovery](Network-Discovery)** — saved active scans of IP ranges —
+is deliberately **not** an integration type, and lives on the Assets page under
+**+ Add Asset(s)**.
 
 ---
 
@@ -42,24 +43,28 @@ Plus two things managed from this page that are not integration rows:
 
 **+ Add Integration** → pick the type → fill in the modal.
 
-Every type's modal follows the same shape, in a fixed tab order:
+The modal is tabbed, and the tab set depends on the type:
 
-```
-General → Filters → Monitoring → DHCP Push → Quarantine Push
-        → Description Sync → SD-WAN → Geographic Location → Directory
-```
+| Type | Tabs, in order |
+|---|---|
+| FortiManager / FortiGate | General → Filters → Monitoring → DHCP Push → Quarantine Push → Description Sync → SD-WAN → Geographic Location |
+| Active Directory | General → Monitoring → Directory |
+| Entra ID / Intune | General → Monitoring → Directory → Script Publishing |
+| Azure Arc | General → Monitoring → Script Publishing |
+| Windows Server, vCenter, Unraid, TrueNAS SCALE | General → Monitoring |
 
-Tabs a type does not support are hidden. **The FortiManager and standalone
-FortiGate layouts are deliberately identical**, diverging only where the two
-integrations genuinely differ.
+Outside the Fortinet pair, the connection settings **and** the filters live on
+the General tab. **The FortiManager and standalone FortiGate layouts are
+deliberately identical**, diverging only where the two integrations genuinely
+differ.
 
-### Four fields every type has
+### Fields every type has
 
 | Field | |
 |---|---|
 | `host` | absent on Entra and Arc, whose endpoints are fixed |
 | `port` | |
-| `verifySsl` / `verifyTls` | **on by default for new integrations**. An existing row keeps its stored value, so this never changes a configured integration's behaviour |
+| `verifySsl` / `verifyTls` | **on by default for new integrations**. An existing row keeps its stored value, so this never changes a configured integration's behaviour. Windows Server has **Use SSL** instead, and Entra and Arc talk only to Microsoft's fixed endpoints |
 | `verboseLogging` | always the **last** element on the General tab |
 
 Plus, on the integration row itself:
@@ -69,7 +74,7 @@ Plus, on the integration row itself:
 | `name` | |
 | `enabled` | |
 | `autoDiscover` | on by default |
-| `pollInterval` | hours — 12 for the Fortinet types, 4 for Windows Server, 1 for Unraid and TrueNAS |
+| `pollInterval` | hours, 1–24 — 12 for most types, 4 for Windows Server, 1 for Unraid and TrueNAS |
 
 ### Test Connection
 
@@ -84,6 +89,11 @@ drops blank secrets — so "leave blank to keep the current secret" works.
 ## Running discovery
 
 Either the row's **Discover** button, or the scheduler on `pollInterval`.
+
+**Both wait for a successful Test Connection.** Until the row has one, the
+Discover button is disabled and the details panel reads *Disabled until a
+successful connection test* — and a row whose last test failed stays skipped by
+the scheduler until a manual test passes again.
 
 The **Discovery Activity** dashboard widget shows in-flight runs with per-run
 progress and amber telemetry for slow ones; the sidebar carries a status panel
@@ -118,7 +128,13 @@ Every integration carries a **Monitoring** tab: the integration tier of the
 
 Each block carries `addAsMonitored`, per-stream polling methods and credentials,
 and — on the classes that support it — agent auto-deploy and interface/storage
-auto-monitor.
+auto-monitor. The AD, Entra, Arc and vCenter VM blocks carry the full set;
+Windows Server, ESXi hosts, Kubernetes clusters and the Unraid / TrueNAS
+classes carry `addAsMonitored` and streams only.
+
+AD, Entra, Arc and vCenter also carry **Verify network presence after
+discovery** (on by default) at the top of the tab — see
+[Post-sync passes](Discovery#post-sync-passes).
 
 Cadence and retention live on the same tab.
 
@@ -164,6 +180,7 @@ Three tools, in order of how much they cost:
 1. **Test Connection** — is the credential still good?
 2. **The Query API button** — proxies a raw read to the upstream system. It is
    the self-service way to answer *"why didn't device X get discovered?"*.
+   Every type has one except Windows Server.
 3. **Verbose logging** — the bottom of the General tab. The next discovery cycle
    **and every monitor job for this integration's assets** emit step-by-step
    logs at info level. High volume; turn it off when done.

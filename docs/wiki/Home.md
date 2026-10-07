@@ -55,7 +55,7 @@ and deletions protected while reservations are live. See [IPAM](IPAM).
 | new to an install someone else built | [Concepts](Concepts) → [Getting around](Navigation-and-Account) |
 | trying to get devices into inventory | [Discovery](Discovery) → the page for your integration |
 | trying to get alerted about something | [Automations](Automations) → [Triggers](Automation-Triggers) → [Actions](Automation-Actions) |
-| wondering why Polaris decided something | [Business rules](Business-Rules) — 64 numbered decisions, each with the incident that forced it |
+| wondering why Polaris decided something | [Business rules](Business-Rules) — 93 numbered decisions, each with the incident that forced it |
 | wiring Polaris into another system | [REST API](API) |
 | holding a broken install | [Troubleshooting](Troubleshooting) |
 

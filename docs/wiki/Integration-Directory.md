@@ -213,7 +213,7 @@ Both integrations carry **Workstations** and **Servers** blocks, each with:
 | Per-stream polling methods and credentials | source defaults |
 | **Agent auto-deploy** | **off** |
 | **Interface auto-monitor** | off |
-| **Storage auto-monitor** | off — **AD / Entra only** |
+| **Storage auto-monitor** | off |
 
 ### Agent auto-deploy
 

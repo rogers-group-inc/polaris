@@ -4,8 +4,8 @@ A small Go binary installed on Windows, Linux and macOS hosts. It pushes
 monitoring samples back to Polaris over HTTPS and holds a long-lived outbound
 WebSocket for on-demand probes.
 
-Managed from **Integrations → Polaris Agent**, and per-device from the asset
-slide-over.
+Managed from the **Integrations → Polaris Agents** tab, and per-device from the
+asset slide-over.
 
 ---
 
@@ -75,7 +75,7 @@ else's host over a stored credential and leaves a service behind.
 |---|---|
 | **Per asset** | the asset slide-over's **System** tab carries a Polaris Agent card with an **Install Agent** button on every server and workstation that could take one — no need to pick "Polaris Agent" as a polling method first. Any other device type shows the card once an agent exists or a stream is set to the agent method. The edit modal's Monitoring tab has the same button. Neither appears on a FortiManager- or FortiGate-discovered asset or on an ESXi host: FortiOS and ESXi take no agent. On a Windows host the modal adds a **Transport** choice — **SSH** (preselected; needs OpenSSH Server running on the host) or **WinRM** — and shows the credential picker for whichever is chosen. Linux and macOS are SSH-only, and the row is hidden |
 | **Bulk** | the Assets bulk bar's **Deploy Agent** — one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried with the credentials you pick, and other ineligible assets come back as **skips with reasons** |
-| **Auto-deploy** | a per-class toggle on the AD / Entra / Arc integrations, off by default — pushes to newly discovered agent-less devices during discovery, bounded and paced |
+| **Auto-deploy** | a per-class toggle on the AD / Entra / Arc workstation and server blocks and the vCenter Virtual Machines block, off by default — pushes to newly discovered agent-less devices during discovery, bounded and paced |
 
 Enabling an integration's auto-deploy checkbox is **the same grant, chained**
 onto `integrations:write` — a capability with two doors has to be gated at both.
@@ -101,7 +101,7 @@ into `agent.conf`.
 
 ## SSH Deployment
 
-**Integrations → Polaris Agent → SSH Deployment.** Polaris generates the
+**Integrations → Polaris Agents → SSH Deployment.** Polaris generates the
 ed25519 keypair used to install the agent over OpenSSH, owns the credential
 holding it, and emits the scripts that authorise the public half fleet-wide.
 
@@ -573,7 +573,7 @@ the detail.
 
 ## Building agent binaries in-app
 
-**Integrations → Polaris Agent** carries a build card: cross-compile the agent
+The **Polaris Agent** card on **Integrations → Polaris Agents** carries the build: cross-compile the agent
 for the platform matrix from the Go toolchain on the Polaris host, with an
 optional **code-signing** step for Windows binaries against your internal CA.
 

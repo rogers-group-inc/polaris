@@ -15,6 +15,11 @@ real explanation.
 | `npm install` fails on a corporate network | TLS inspection. Read *Networks that inspect TLS* in the install guide **before** installing — it is the one environment problem that can leave an install unable to update |
 | The install came up without TimescaleDB | That is a **broken install from the first byte**, not a tuning gap. [rule 52](Business-Rules#rule-52) |
 | The update-source override appears ignored | The URL contained a disallowed character. The updater keeps the existing origin and **logs an error naming it** |
+| **"Backups cannot run on this host"** on the Maintenance tab | The resolved `pg_dump` or `psql` cannot work against this server — the banner names the versions, the path and the fix. [Backup and restore](Backup-and-Restore#1-a-pg_dump-older-than-the-server) |
+| **"In-app updates are disabled in Docker"** | Correct — a container image has no git checkout. Pull the new image and recreate the container. [Updates](Updates) |
+| `/health`, `/health/ready` or `/metrics` answers **401** | The setup wizard generated `HEALTH_TOKEN` / `METRICS_TOKEN`. Send `Authorization: Bearer <token>` from your monitor, load balancer or Prometheus. [First-run setup](First-Run-Setup#step-3--application-settings) |
+| **Save & Apply** on Web Server → nginx Proxy shows *Internal server error* on a systemd install | A known problem: neither the tab nor the updater can currently rewrite nginx on the systemd split-role layout. Edit the config by hand as root. [Server Settings](Server-Settings#repository) |
+| A compose stack stores credentials in plaintext | `POLARIS_SECRET_KEY` was never written to `./state/.env` — compose does not run the setup wizard, so nothing generates it. [Installation](Installation#install-paths) |
 
 ---
 
@@ -72,7 +77,7 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 
 | Symptom | Cause |
 |---|---|
-| An automation never fires | The **monitored gate** ([rule 37](Business-Rules#rule-37)), or a **more specific automation carved the devices out** ([rule 18](Business-Rules#rule-18)). Step 6 shows both |
+| An automation never fires | The **monitored gate** ([rule 37](Business-Rules#rule-37)), or a **more specific automation carved the devices out** ([rule 18](Business-Rules#rule-18)). The wizard's Summary step shows both |
 | A per-dimension automation fires about nothing | Nothing is **pinned**. The pin is the gate, and the picker lists the pin set, not the inventory ([rule 57](Business-Rules#rule-57)) |
 | An alert stayed open through a maintenance window | Correct — a window pauses an open alert rather than clearing it. It resolves by itself once polling resumes and the device reads healthy; clear it by hand if you don't want to wait ([rule 16](Business-Rules#rule-16)) |
 | Alerts from two automations about one outage | Same-rank ties **both fire**. That is also why Clone and Import create **disabled** |

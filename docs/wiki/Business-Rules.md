@@ -57,8 +57,8 @@ reservation creates a [Conflict](Conflict-Resolution) rather than overwriting.
 
 ### Rule 8
 **Event archival.** Events older than the configured retention (default 7 days,
-set under [Server Settings](Server-Settings)) are archived and then pruned; syslog
-(CEF) and SFTP/SCP archival are configurable.
+set in the [Events](Events) page's **Settings**) are archived and then pruned; syslog
+(RFC 5424 or 3164) and SFTP/SCP archival are configurable.
 
 ### Rule 9
 **`acquiredAt` ≤ `lastSeen`**, clamped on every write and repaired at boot.
@@ -268,7 +268,9 @@ method. The body match is load-bearing, redirects are never followed, and it
 ### Rule 34
 **An active scan finds things; a separate grant adds them.** Scanning and
 adopting are separate grants, chained at the route. Opt-in, IDS-visible, no
-scheduler, no shipped default range. Adoption is new-addresses-only. See
+scheduler, no shipped default range. Adoption is new-addresses-only. A Discovery
+is **private or shared**: who can see and run it is its visibility, who can edit
+it is its owner (or anyone with Full Read-Write on Network Discovery). See
 [Network Discovery](Network-Discovery).
 
 ### Rule 35
@@ -305,7 +307,7 @@ an alert**.
 
 ### Rule 40
 **Two assets on one address is a conflict; one asset on a stale address is not.**
-Eight clauses — see [Conflict resolution](Conflict-Resolution#duplicate-ip--the-long-one).
+Ten lettered clauses, (a) to (j) — see [Conflict resolution](Conflict-Resolution#duplicate-ip--the-long-one).
 The short version: only network-present assets, only current claims, two
 **devices** not two rows, one card per address, two verbs instead of accept, and
 one claimant must be equipment somebody addressed on purpose **or** the address
@@ -461,8 +463,9 @@ region answers to the name, **and** Polaris recorded retiring it. Stripping ever
 manual attachments survive every reconciler.
 
 ### Rule 55
-**An address places a device behind a gate only when nothing has seen it, and
-every surface says which answer it got.** IPAM is the **last** source consulted.
+**IPAM is the last source consulted for a device's upstream gate — it may add a
+parent, never move one, and every surface says which answer it got.** (The
+write side, where an address actually places a device, is [rule 45](#rule-45).)
 It can only ever **add** a parent, never move one, so the failure mode is a missed
 alert and never a false one. An inference has no moment, so the row prints no
 timestamp.
@@ -546,6 +549,39 @@ list. No reading is quoted; the headline states the **condition** you
 configured. The email is marked **TEST** in its subject, in a banner above the
 body, and in the plain-text alternative, and that marking is added at send time,
 so customizing the email template cannot remove it.
+
+### Rule 66
+**A measurement window may be counted in readings, and then the hold counts
+poll groups.** Switch an average, median, minimum or maximum condition from
+minutes to **polls** and the window becomes the last N readings that actually
+produced a value, so a device that drops polls is measured over as many
+readings as a healthy one. A missed poll is not counted, not filled in and not
+read as zero: zero would flatter a dying device, and losing polls is what
+[packet loss](#rule-29) and [down detection](#rule-36) are for. (Response time
+is the one exception — see [rule 67](#rule-67).)
+
+Only a counted window takes **Sustained for**, and there it counts **groups**:
+the readings are cut into separate, non-overlapping groups of N, each group
+becomes one reading, and the alert needs that many groups in a row over the
+line. So time to alert is group size × sustained groups, which is what the
+builder's labels promise. A group that has not filled yet is no reading at all.
+See [Triggers → Poll groups](Automation-Triggers#poll-groups).
+
+### Rule 67
+**A missed response-time poll is the timeout it cost, and an outage resets the
+window.** Response time is the one metric whose failure has a duration: a poll
+that heard nothing waited the device's full probe timeout. So inside a
+response-time window, a miss that did not put the device Down counts as **the
+timeout configured for that device when it was probed** — not skipped, which
+would let a device answering one poll in ten read as fast as a healthy one.
+
+The fill is only safe because **going Down resets the window**: everything up
+to the poll that declared the outage is discarded, so an outage your down
+automation already paged you for does not keep a recovered device alerting on
+latency. What counts as Down is your own missed-poll count ([rule 36](#rule-36)),
+not a second threshold. A recovered device has **no reading until its window
+refills**. Response time defaults to a poll group of 10 in the builder. See
+[Triggers → Response time measures misses too](Automation-Triggers#response-time-measures-misses-too-and-forgets-an-outage).
 
 ### Rule 68
 **Polaris ships two kinds of MIB, and only one of them is yours to remove.**
@@ -1026,6 +1062,12 @@ suppression started and stopped the way it does for windows.
 See [Maintenance Windows](Maintenance-Windows) and
 [Automation Triggers](Automation-Triggers).
 
+### Rule 81
+**Not in use.** Rule 81 was published and then withdrawn in full the same week
+(2026-09-22). The number is left empty on purpose and will never be given to a
+different rule, so a reference to "rule 81" anywhere means that withdrawn change,
+not something current.
+
 ### Rule 82
 
 **A measurement of the host must not be dominated by the measurer, and a
@@ -1108,12 +1150,16 @@ serial — usually one device that two integrations both found and nothing
 cross-linked, or a record that outlived a re-enrolment. Here there is nothing to
 weigh up: a serial identifies one unit, so the card's action is a merge, either
 one-click from the row you want to keep or through the full comparison first.
-Merging needs full read-write on Assets, because it deletes a record.
+Merging needs full read-write on Assets, because it deletes a record. Most of
+these never reach you: a background pass merges them automatically every 30
+minutes, and the card appears only for a group that pass declined or failed to
+merge.
 
 Serials that identify nothing are ignored rather than reported: the placeholders
 some hardware ships (`To Be Filled By O.E.M.`, `Default string`, `System Serial
-Number`, in any capitalisation, spacing or punctuation, and a serial that is one
-character repeated), and any serial shared by more than three assets — past that count the serial is the problem, not the
+Number`, `Not Specified`, in any capitalisation, spacing or punctuation, and a
+serial that is one character repeated), anything under four characters, and any
+serial shared by more than three assets — past that count the serial is the problem, not the
 assets. If two genuinely different units do report one serial, Reject the card
 and that pair will not come back.
 

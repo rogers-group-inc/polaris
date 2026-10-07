@@ -14,6 +14,9 @@ scoping, and FMG-proxy concurrency tuning.
 
 ### General
 
+On-premises FortiManager **7.4.7+ or 7.6.2+** only (not FortiManager Cloud) —
+older versions do not support bearer-token authentication.
+
 | Field | Default | |
 |---|---|---|
 | Host | — | FortiManager address |
@@ -21,12 +24,21 @@ scoping, and FMG-proxy concurrency tuning.
 | API user | — | a **predefined REST API Admin** |
 | API token | — | secret |
 | ADOM | `root` | |
-| Verify SSL | **on** for new integrations | existing rows keep their stored value |
 | Management interface | — | which interface name to read for a gate's management IP |
-| Discovery parallelism | 5 | 1–20 |
-| **Use proxy** | **on** | see below |
-| FortiGate API user / token | — | used in direct mode |
-| FortiGate verify SSL | **on** for new integrations | |
+| Verify SSL | **on** for new integrations | existing rows keep their stored value |
+| Enabled / Enable auto-discovery | on | |
+| Auto-Discovery Interval | 12 hours | 1–24 |
+| Verbose logging | off | always last |
+
+The transport settings are **not** on General. They sit at the top of the
+**Monitoring** tab's **FortiGate** subtab, under *Direct polling*:
+
+| Field | Default | |
+|---|---|---|
+| **Direct Polling** | **off** (= proxy mode) | see below |
+| Parallel FortiGate Queries | 5 in direct mode | 1–20; proxy mode is always one at a time |
+| FortiGate API user / token | — | used by Direct Polling **and** by any monitoring stream set to REST API, in either mode. One token for the whole fleet; a gate with its own api-user takes a REST API credential on its stream instead |
+| Verify SSL certificate on FortiGates | **on** for new integrations | |
 
 > **Never configure Polaris to call `/sys/logout`.** It authenticates with a
 > predefined REST API Admin api-key, which per Fortinet's own best-practices
@@ -39,7 +51,7 @@ scoping, and FMG-proxy concurrency tuning.
 
 ### Proxy vs direct mode
 
-| | **Proxy** (`useProxy: true`, the default) | **Direct** |
+| | **Proxy** (`useProxy: true`, Direct Polling unticked — the default) | **Direct** |
 |---|---|---|
 | Discovery reads | through FMG's `/sys/proxy/json` | straight to each FortiGate's REST API |
 | Needs | FMG reachable | Polaris routable to every gate |
@@ -64,12 +76,15 @@ re-enables and overruns FMG's session limit").
 
 ### Filters
 
-| Field | Matches |
+Each filter is an **Include** or **Exclude** list — one mode at a time —
+with wildcards (`port*`, `*wan`, `FG-*`). Empty means everything.
+
+| Filter | Matches |
 |---|---|
-| `deviceInclude` / `deviceExclude` | FortiGate device names, wildcards |
-| `interfaceInclude` / `interfaceExclude` | interface names for subnet discovery |
-| `dhcpInclude` / `dhcpExclude` | DHCP scopes |
-| `inventoryIncludeInterfaces` / `inventoryExcludeInterfaces` | which interfaces feed device inventory |
+| FortiGate Device Filter (`deviceInclude` / `deviceExclude`) | managed FortiGates' device name or hostname — FMG only |
+| DHCP Filter (`dhcpInclude` / `dhcpExclude`) | the **interfaces** whose DHCP server scopes are discovered |
+| Interface Filter (`interfaceInclude` / `interfaceExclude`) | the interfaces whose own addresses become interface-IP reservations |
+| Device Inventory (`inventoryIncludeInterfaces` / `inventoryExcludeInterfaces`) | the interfaces whose attached devices feed asset discovery |
 
 ### Monitoring
 
@@ -91,6 +106,10 @@ resolved method needs them.
 | **`syncFortigateDescriptions`** / **`syncSwitchDescriptions`** / **`syncApDescriptions`** (Description Sync) | writes Polaris descriptions back to the devices — one toggle each for FortiGates, FortiSwitches and FortiAPs | proxy mode: device-config write on the FMG admin profile. Direct mode and standalone FortiGate: **System → Read-Write** on the gate's REST API access profile (plus Network → Configuration, and WiFi & Switch Controller when the gate manages switches / APs) |
 | **`pullSdwan`** | pulls SD-WAN health-check metrics and rule member selection | — |
 | **`arpPresenceSweep`** | fires one datagram at every reserved IP so the gate ARP-resolves it | — |
+
+`pushReservations`, `arpPresenceSweep`, `autoReserveFortinetInfra` and
+`adoptDiscoveredMac` are on the **DHCP Push** tab; the others on the tab of
+their own name (**Quarantine Push**, **Description Sync**, **SD-WAN**).
 
 Three of these deserve their own note:
 
@@ -155,18 +174,21 @@ alerts therefore move once a minute by default, and an SD-WAN automation
 interfaces are polled over FortiOS REST are asked. A gate moved to SNMP gets no
 SD-WAN reads, and managed switches and APs have no SD-WAN.
 
-Also on the Monitoring tab: **`excludeFortilinkLldp`**, which stops internal
-FortiGate↔FortiSwitch links appearing in the LLDP Neighbor column, and
-**`switchManagementInterface`**, the interface name read for a managed switch's
-management access.
+Also on the Monitoring tab, under the FortiGate subtab's LLDP stream:
+**`excludeFortilinkLldp`**, which stops internal FortiGate↔FortiSwitch links
+appearing in the LLDP Neighbor column. **`switchManagementInterface`** — the
+interface name read for a managed switch's management access — has no field in
+the modal; it is set through the [API](API) on the integration's config.
 
 ---
 
 ## Configuring a standalone FortiGate
 
 The same shape, minus FMG: **host · port · API user · API token · VDOM
-(`root`) · verify SSL · management interface**, the DHCP and inventory-interface
-filters, the same push toggles, and the same per-class monitoring blocks.
+(`root`) · management interface · verify SSL** on General — the token comes from
+a **REST API Admin** created on the gate (System → Administrators) — the DHCP,
+interface and device-inventory filters (no device filter), the same push
+toggles, and the same per-class monitoring blocks.
 
 Feature parity with FMG is a standing rule for this project — if a feature
 exists on one and could sensibly exist on the other, it does.
@@ -266,7 +288,9 @@ alike.
 
 ### Geographic coordinates
 
-Resolved through three tiers, highest first:
+The toggles below live on the **Geographic Location** tab (FortiManager also
+names its latitude, longitude and optional address metavariables there).
+Coordinates are resolved through three tiers, highest first:
 
 1. **SNMP-geocoded `sysLocation`** — pulled when `pullSnmpLocation` is on, and
    geocoded only when the companion `useSnmpLocationCoords` toggle is **also**

@@ -20,7 +20,7 @@ Where each tier is edited:
 
 | Tier | Where |
 |---|---|
-| **Manual** | Assets → Settings → *Manual Monitoring*. Accepts any method — it covers any source |
+| **Manual** | Assets → Settings → *Manual Monitoring*. Accepts every method except `fortimanager` — it covers any source |
 | **Integration** | the integration's edit modal → **Monitoring** → Cadence & Retention. Filtered to the integration's source kind |
 | **Class override** | Assets → Settings → *Class Overrides*. Re-renders when the source picker changes |
 | **Per asset** | the asset's edit modal → **Monitoring**. Filtered to the asset's source kind |
@@ -29,9 +29,13 @@ Where each tier is edited:
 per-field provenance** (`asset` / `class` / `integration` / `manual`), which is
 what draws the tier badges in the asset modal.
 
-Every **Inherit** option is labelled with what you would actually inherit —
-*"Source default: REST API"*, *"Source default: ICMP"*, *"Not delivered for this
-source"* — so you can see the fallback without clicking through.
+Every **Inherit** option is labelled with what you would actually inherit, so
+you can see the fallback without clicking through. Where a tier sets the method
+it names the tier and the method — *"Inherit (FMG-CORE: REST API)"*,
+*"Inherit (class override: SNMP)"* — and otherwise the source default:
+*"Inherit (Source Manual: ICMP)"*, or *"… : not delivered"* for a stream the
+source has no default for. Manual Monitoring, the bottom tier, has no Inherit
+option at all.
 
 A method that does not apply to the asset's source kind is **silently ignored at
 resolution time**; the route layer rejects it at write time with a clear 400.
@@ -44,10 +48,10 @@ resolution time**; the route layer rejects it at write time with a clear 400.
 |---|---|
 | `icmp` | the cheapest universal liveness probe. **Batched** |
 | `snmp` | v2c / v3 authenticated GETs |
-| `ssh` | |
-| `winrm` | |
-| `rest_api` | FortiOS REST |
-| `agent` | the Polaris Agent installed on the host. **Never appliances** |
+| `ssh` | Linux / Unix hosts — see [agentless host streams](#agentless-host-streams) |
+| `winrm` | Windows hosts — same |
+| `rest_api` | FortiOS REST. Outside a Fortinet integration it drives the response-time probe only |
+| `agent` | the Polaris Agent installed on the host — every stream but LLDP. **Never appliances** |
 | `vcenter` | reads the vCenter server, not the guest |
 | `fortimanager` | reads FortiManager's device database, not the device |
 | `unraid` | reads the Unraid host's API, not the VM or container |
@@ -58,6 +62,27 @@ resolution time**; the route layer rejects it at write time with a clear 400.
 > **manufacturer custom widget** ([rule 33](Business-Rules#rule-33)) — see
 > [below](#the-http-check).
 
+### Which source takes which method
+
+The dropdowns offer only what the asset's source kind accepts (plus `disabled`
+everywhere):
+
+| Source | Methods |
+|---|---|
+| **FortiManager** | `icmp`, `snmp`, `ssh`, `rest_api`, `fortimanager` |
+| **FortiGate** | `icmp`, `snmp`, `ssh`, `rest_api` |
+| **AD / Entra / Windows Server / Azure Arc** | `icmp`, `winrm`, `ssh`, `agent`, `vcenter`, `unraid`, `truenas` |
+| **vCenter** | `icmp`, `snmp`, `winrm`, `ssh`, `agent`, `vcenter` |
+| **Unraid** | `icmp`, `snmp`, `winrm`, `ssh`, `agent`, `unraid` |
+| **TrueNAS SCALE** | `icmp`, `snmp`, `winrm`, `ssh`, `agent`, `truenas` |
+| **Manual** | everything except `fortimanager` |
+
+`vcenter`, `unraid` and `truenas` appear on the directory sources because a VM
+that Active Directory or Entra found first can later be merged with its vCenter
+or NAS record. Within a source, each stream narrows the list further: ICMP is
+response-time only, and a method with no collector for that stream is not
+offered (see [compatibility vs capability](Monitoring#compatibility-vs-capability)).
+
 ---
 
 ## Source defaults
@@ -65,15 +90,21 @@ resolution time**; the route layer rejects it at write time with a clear 400.
 | Source | responseTime | cpuMemory | temperature | interfaces | lldp | storage |
 |---|---|---|---|---|---|---|
 | **FortiManager / FortiGate** | `icmp` | `rest_api` | `rest_api` | `rest_api` | `disabled` | `disabled` |
-| **AD / Entra / Windows Server / Manual** | `icmp` | — | — | — | — | — |
+| **AD / Entra / Windows Server / Azure Arc / Manual** | `icmp` | — | — | — | — | — |
 | **vCenter** | `vcenter` | `vcenter` | — | `vcenter` | — | `vcenter` |
 | **Unraid** | `icmp`; `unraid` for an asset with no IP | `unraid` | `unraid` (host) | `unraid` (host) | — | `unraid` (host) |
 | **TrueNAS SCALE** | `icmp`; `truenas` for an asset with no IP | `truenas` | `truenas` (host) | `truenas` (host) | — | `truenas` (host) |
 
-**Response time defaults to ICMP across every source kind**, because ICMP is the
-cheapest universal liveness probe. Operators wanting a heavier transport —
-FortiOS `/sys/status`, SNMP `sysUpTime` — opt in per asset, per class, or at the
-integration tier.
+`—` means *not delivered* until you pick a method. **processes** and
+**eventLog** default to `disabled` on every source — they are opt-in — except
+that an installed Polaris Agent turns its own process inventory on (below).
+
+**Response time defaults to ICMP wherever there is an address to ping**,
+because ICMP is the cheapest universal liveness probe. The exceptions read a
+manager instead: vCenter assets (`vcenter` — power and connection state, no
+guest IP needed) and Unraid / TrueNAS workloads with no address of their own.
+Operators wanting a heavier transport — FortiOS `/sys/status`, SNMP
+`sysUpTime` — opt in per asset, per class, or at the integration tier.
 
 FortiOS storage defaults to `disabled` because FortiOS appliances expose no
 meaningful mountable storage, so the SNMP walk would burn cycles every scrape.
@@ -91,6 +122,11 @@ temperature and interfaces, and a **stored** `rest_api` is skipped the same way
 — non-destructively, since the stored value returns the moment a token is
 supplied. The dropdowns grey out with a note naming the token as the thing that
 unlocks them.
+
+A **per-asset REST API credential** is the other way out: a `restapi`-typed
+credential selected on an asset's stream authenticates that one gate, and a
+stream carrying one is exempt from the skip
+([per-asset FortiOS REST credentials](Monitoring#per-asset-fortios-rest-credentials)).
 
 **Response time is deliberately unchanged** (`icmp`): moving it would silently
 change how up/down is decided for every gate on every affected install.
@@ -197,8 +233,10 @@ cannot be pinged — a bridged container, an App, a VM with no known IP — and
 there **the platform's own state** decides: running is up, stopped is down, a
 state in transition (TrueNAS's DEPLOYING, for example) is skipped with no
 verdict, and the reading is charted at **0 ms**, because a state read has no
-latency. If the host's API cannot be reached, **the host is reported down and
-its VMs and containers are skipped** — no down storm across the workloads.
+latency. If the host's API cannot be reached, a host on the method is
+**reported down** (its own API is the finding) and **its VMs and containers on
+the method are skipped** — no down storm across the workloads. A host on its
+ICMP default is judged by its ping instead.
 
 Unraid samples per-container CPU and memory over a short WebSocket stats
 window (4 s by default); TrueNAS reads host usage from its `reporting.realtime`

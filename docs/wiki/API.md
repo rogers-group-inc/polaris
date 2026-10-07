@@ -395,8 +395,13 @@ by optional tokens from `.env`:
 | Endpoint | |
 |---|---|
 | **`GET /health`** | liveness. 200 whenever the process is up, and **checks nothing at all** — the setup wizard polls it before a database exists. Gated by `HEALTH_TOKEN` when set |
-| **`GET /health/ready`** | readiness. 200 only when the local PostgreSQL is a **writable primary**; else 503 with a reason (`in-recovery` / `db-error` / `timeout`). **This is the one a load balancer should monitor** |
-| **`GET /metrics`** | Prometheus. Gated by `METRICS_TOKEN` when set, and by an nginx `allow` block in production |
+| **`GET /health/ready`** | readiness. 200 only when the local PostgreSQL is a **writable primary**; else 503 with a reason (`in-recovery` / `db-error` / `timeout`). Never cached. Gated by `HEALTH_TOKEN` too. **This is the one a load balancer should monitor** |
+| **`GET /metrics`** | Prometheus. Gated by `METRICS_TOKEN` when set, and by an nginx `allow` block (the Web Server tab's Prometheus allow-list) in production |
+
+The [setup wizard](First-Run-Setup#step-3--application-settings) generates both
+tokens, so on a wizard-built install all three answer `401` until the caller
+sends `Authorization: Bearer <token>`. Clearing a token opens its endpoint, and
+the Maintenance tab warns while it is unset.
 
 None carries a session or a role snapshot, and all three are served only by the
 `web` and `all` process roles.

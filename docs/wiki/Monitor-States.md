@@ -3,14 +3,40 @@
 The monitor pill has six values, and how it moves between them is one of the
 most consequential pieces of behaviour in Polaris.
 
-| State | Means |
+| State | Pill reads | Means |
+|---|---|---|
+| `up` | **Up** | answering, and the failure bucket is empty |
+| `warning` | **Missed** | has missed polls, but the bucket is below the threshold |
+| `down` | **Down** | the bucket has reached the covering automation's `missedPolls` |
+| `recovering` | **Recovering** | answered again, but has not yet answered enough times to read `up` |
+| `passive` | **Passive** | **no automation covers this device, so Polaris renders no verdict** |
+| `unknown` | **Pending** | never probed, or the probe could not run |
+
+`warning` is labelled **Missed** everywhere an operator reads it — the pill, the
+Status filter, the dependency tree's pips, the automation wizard's condition
+sentence — because the alert severities are also called warning / serious /
+critical, and a pill reading "Warning" looked like an alert had fired. The
+stored value and the API still say `warning`.
+
+---
+
+## What the pill says
+
+A few conditions **replace** the six-state label on the pill, in this order of
+precedence:
+
+| Pill | When |
 |---|---|
-| `up` | answering, and the failure bucket is empty |
-| `warning` | has missed polls, but the bucket is below the threshold |
-| `down` | the bucket has reached the covering automation's `missedPolls` |
-| `recovering` | answered again, but has not yet answered enough times to read `up` |
-| `passive` | **no automation covers this device, so Polaris renders no verdict** |
-| `unknown` | never probed, or the probe could not run |
+| **Unmonitored** | monitoring is off. With `assets:write`, clicking it opens the edit modal on the Monitoring tab |
+| **Standby** / **Standby Down** | an unmonitored HA standby FortiGate — its health comes from the cluster's HA roster on each discovery cycle, since the cluster IP only reaches the active member |
+| **Maintenance** | the device is in a [maintenance window](Maintenance-Windows); polling and alerts are paused, and the tooltip names the state it returns to |
+| **Dependency Test** | an operator is [simulating this device down](Dependency-Suppression#testing-it); real probes keep running underneath |
+| **Dep. Down** | an upstream parent is down — [dependency suppression](Dependency-Suppression). The device's own state moves to the tooltip |
+
+Otherwise the pill shows the state from the table above. Its tooltip carries the
+response-time method, the last round-trip time and the last poll; a **Passive**
+pill's tooltip also says whether its last poll succeeded, or how many in a row
+failed, since polling carries on.
 
 ---
 
@@ -127,6 +153,25 @@ move `monitorStatus`.
 Exactly **one** clamp applies to the interval: dependency suppression doubles it
 for a device whose parent is dark.
 
+### An agent host's silence is a miss
+
+Nothing polls a host whose response time comes from the
+[Polaris Agent](Polaris-Agent) — the agent sends its own readings. So once an
+agent that **finished deploying** has gone quiet for **two polling intervals**
+(never less than one interval plus a minute), each interval it misses is counted
+exactly like a failed ping: **Missed**, then **Down** at the automation's count
+([rule 86](Business-Rules#rule-86)). At a 60-second interval and three missed
+polls that is about four minutes from the last reading; the next real reading
+starts the climb back.
+
+It does not count while the agent is still installing, failed, uninstalling or
+revoked; while an agent upgrade, reinstall or uninstall holds the asset in
+maintenance ([rule 80](Business-Rules#rule-80)); or while Polaris itself is
+the one not listening — after a restart every agent gets a full window to
+reconnect, and when **no** agent anywhere is reporting (with at least two
+deployed), Polaris records nothing. See
+[When the host stops reporting](Polaris-Agent#when-the-host-stops-reporting).
+
 ---
 
 ## The colour of Down is not red
@@ -170,6 +215,7 @@ the state outright.
 | blue | `recovering` |
 | **grey** | a failure the upstream explains — [dependency suppression](Dependency-Suppression) |
 | translucent labelled band | a [maintenance window](Maintenance-Windows) |
+| dashed purple line, right-hand axis | packet loss, from every probe Polaris sends the device; the axis tops out at the worst loss in the window ([Assets → System](Assets#system)) |
 | line/dot fading through warning → serious → critical | the reading has entered a tier of an automation watching this metric on this asset |
 
 Severity shading is computed **server-side from the engine's own resolver**, so
@@ -189,3 +235,4 @@ outside the visible range clamp rather than widening the axis.
 | Switch reads `up` but is not passing traffic | check **`fortilinkStatus`** — the gate's view of its own FortiLink session. A dead session still answers every ping |
 | A whole site went `down` at once | check whether its parent gate is dark ([dependency suppression](Dependency-Suppression) should have prevented the storm) |
 | The entire virtual fleet went `down` | vCenter unreachable should produce **skips**, not misses — check the integration |
+| An agent host went `down` with nothing wrong on the box | the agent stopped reporting ([rule 86](Business-Rules#rule-86)) — check the agent service and its path to Polaris; the **Agent disconnected** alert usually fires alongside |

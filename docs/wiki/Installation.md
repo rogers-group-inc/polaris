@@ -60,13 +60,31 @@ approaching end of life.
 | **RHEL / Rocky / AlmaLinux 9** | the common on-prem case | *RHEL / Rocky / AlmaLinux 9* |
 | **Ubuntu / Debian** | same, Debian family | *Ubuntu / Debian* |
 | **`-nodb` variants** | PostgreSQL is elsewhere (managed service, separate host) | both platform sections |
-| **Docker / podman compose** | containerised | *Docker* |
-| **Unraid** | a homelab NAS | *Docker* + the Unraid notes |
-| **Split role** (`web` / `monitor` / `discovery` / `dash`) | large fleet, or a wallboard on its own process | *The split-role deployment* |
+| **Docker / podman compose** | containerised | *The split-role deployment → Docker* |
+| **Unraid** | a homelab NAS — a single container that runs the setup wizard, beside a `timescale/timescaledb:latest-pg17` container | the README's *Docker / Unraid* section |
 
-All of them do the same five things: provision PostgreSQL 17 + TimescaleDB,
+The Linux paths do the same five things: provision PostgreSQL 17 + TimescaleDB,
 create the `polaris` database and user, install Node 24, clone Polaris, and run
 the platform's setup script.
+
+**Every production install is split-role.** The workload runs as separate
+processes — `web` (HTTP, schedulers, the updater), `monitor` (one or more
+replicas), `discovery`, `dash` (the wallboard) and a one-shot `migrate` —
+coordinated through a job queue in PostgreSQL. The setup scripts and the
+compose file install that layout; there is no single-process production unit
+any more (an old install moves across via `UPGRADING.md`). Read *The split-role
+deployment* to understand or customise it, and *Sizing — connections multiply*
+before adding monitor replicas.
+
+**Compose does not generate secrets for you.** The stack supplies
+`DATABASE_URL` up front, which is what tells Polaris to skip the
+[setup wizard](First-Run-Setup) — so write `SESSION_SECRET` and
+`POLARIS_SECRET_KEY` into `./state/.env` yourself before the first start, as the
+*Docker* section shows. Without the second, stored credentials are kept in
+plaintext. The Unraid single container does run the wizard and gets both
+written for it. The container runs as an unprivileged user and takes ownership
+of `./state` on first start; keep that bind mount, because it also holds the
+install's identity.
 
 ---
 
@@ -119,6 +137,15 @@ the sweep's cadence is simply floored at what the installed pinger can finish.
 `fping` is in EPEL on RHEL. Note that on Debian it carries `cap_net_raw=ep`, so
 a Polaris process without `CAP_NET_RAW` cannot execute it.
 
+## Optional: `traceroute`
+
+A [path check](Path-Monitor) can run from the Polaris server itself as well as
+from agents. Its traceroute uses `traceroute -n`, falling back to `tracepath -n`
+(part of iputils). The Docker image and the setup scripts install `traceroute`
+best-effort. Without either, server-run checks still run and chart — only their
+traceroutes come back empty, with a note saying the package is missing. Polaris
+looks for the tracer once per process, so restart after installing it.
+
 ---
 
 ## After the install
@@ -133,12 +160,12 @@ a Polaris process without `CAP_NET_RAW` cannot execute it.
 | | Path |
 |---|---|
 | Install root | `/opt/polaris` |
-| Environment | `/opt/polaris/.env` |
-| State (backups, agent binaries, instance id) | `/opt/polaris/data` |
-| systemd unit | `polaris.service` (plus `polaris-monitor` / `polaris-discovery` / `polaris-dash` when split) |
-| nginx config | `deploy/nginx/polaris.conf`, installed by the updater |
+| Environment | `/opt/polaris/.env` (in a container: `/app/state/.env`, i.e. `./state/.env` on the host) |
+| State (backups, agent binaries, firmware, instance id) | `/opt/polaris/data` (in a container: `/app/state/data`) |
+| systemd units | `polaris-web`, `polaris-monitor@1..N`, `polaris-discovery`, `polaris-dash` and the one-shot `polaris-migrate`, grouped by `polaris.target` — `systemctl start` / `stop polaris.target` drives them all |
+| nginx config | `/etc/nginx/conf.d/polaris.conf`, rendered from `deploy/nginx/polaris.conf` and kept in sync by the updater while Polaris manages it |
 | Database | PostgreSQL `polaris` database, `polaris` user |
-| Logs | `journalctl -u polaris` |
+| Logs | `journalctl -u polaris-web` (and the other units); `docker compose logs` in a container |
 
 Every runtime variable is documented with comments in
 [`.env.example`](https://github.com/rogers-group-inc/polaris/blob/main/.env.example).

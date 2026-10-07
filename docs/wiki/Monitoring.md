@@ -27,6 +27,12 @@ Companion pages: [Polling methods](Polling-Methods) ·
 Each has its own cadence, its own queue and its own worker pool. A slow stream
 cannot starve a fast one.
 
+Two other things on an asset are deliberately **not** streams, so they have no
+polling method of their own: [path checks](Path-Monitor), which the Polaris
+Agent (or the Polaris server) runs on each check's own interval and which never
+move the host's state, and the **installed software** list, which the agent
+re-reads every six hours and Intune / Azure Arc supply on their discovery runs.
+
 SD-WAN on a FortiGate is not a stream of its own. It is read only where the
 interfaces stream resolves to FortiOS REST, but it has its own cadence, queue
 and worker pool. The interval is set per integration, 60 seconds by default
@@ -71,12 +77,14 @@ interval for a device whose parent is dark. That is it.
 ### What a probe can decline to be
 
 A probe can return `skipped`, which **writes no sample and moves no counter** —
-it bumps the cadence anchor alone, so spacing is preserved. Three sources:
+it bumps the cadence anchor alone, so spacing is preserved. The sources:
 
 | Source | Why |
 |---|---|
 | **vCenter unreachable** | the thing that answers for the device is not the device — one vCenter outage must not down a virtual fleet |
 | **FortiManager unreachable** | same reasoning, for the `fortimanager` method |
+| **Unraid / TrueNAS host API unreachable** | same reasoning, for the VMs and containers on the `unraid` / `truenas` method (the host itself fails — its own API is the finding) |
+| **A workload mid-transition** | an Unraid / TrueNAS state such as TrueNAS's *DEPLOYING* says neither up nor down |
 | **`responseTimePolling = "disabled"`** | the operator saying *do not poll this* |
 
 That last one was a *failure* until 2026-08-28. Every other stream's publisher
@@ -107,11 +115,12 @@ re-runs the due check at pickup; a duplicate records nothing at all.
 | SSH / WinRM | one connection per host per tick; interfaces and storage ride the same one |
 | REST (FortiOS) | one per asset, **except** two cross-device caches |
 | vCenter | two warm caches, one SOAP round trip per integration per tick |
-| Agent | the agent pushes on its own schedule |
+| Unraid / TrueNAS | one cached read of the host's API per integration per 30 s answers every asset on the host |
+| Agent | the agent pushes on its own schedule; a deployed agent that goes quiet counts as missed polls ([Monitor states](Monitor-States#an-agent-hosts-silence-is-a-miss)) |
 
-The two cross-device REST batchers matter at scale: **one FortiManager
-`/dvmdb` read serves every gate it manages**, and the vCenter warm caches answer
-four streams for every VM and host in one fetch.
+The cross-device batchers matter at scale: **one FortiManager `/dvmdb` read
+serves every gate it manages**, the vCenter warm caches answer four streams for
+every VM and host in one fetch, and one NAS read answers every container on it.
 
 ### Reading timestamps correctly
 
@@ -263,15 +272,24 @@ Two different questions, and only the first used to be checked:
 - **Compatibility** — is this method *meaningful* for this source kind?
 - **Capability** — does the **collector actually exist**?
 
-A stream could be configured into permanent quiet: `ssh`/`winrm` on several
-streams, `snmp` on processes, `rest_api` on FortiOS storage, `eventLog` on
-anything but the agent — all resolved fine and collected nothing while the tick
-recorded success.
+A stream could be configured into permanent quiet — resolving fine and
+collecting nothing while the tick recorded success. Now the validators **warn**
+(not refuse — a 400 would punish re-saving an existing value), the dropdowns
+stop offering the combination, and an audit names what is already stored. One
+case is a hard refusal: **ICMP on a non-response-time stream** via the
+per-asset route.
 
-Now the validators **warn** (not refuse — a 400 would punish re-saving an
-existing value), the dropdowns stop offering them, and an audit names what is
-already stored. One case is a hard refusal: **ICMP on a non-response-time
-stream** via the per-asset route.
+What has no collector today:
+
+| Method | Not collected |
+|---|---|
+| `icmp` | anything but response time |
+| `ssh` / `winrm` | temperature, LLDP |
+| `snmp` | processes (declared, not implemented), event log |
+| `agent` | LLDP |
+| `rest_api` on a FortiGate | storage, processes, event log |
+| `rest_api` on a managed FortiSwitch / FortiAP | anything but response time — plus CPU / memory and temperature on an AP, which ride the parent gate's controller table |
+| `rest_api` outside Fortinet | anything but response time |
 
 ---
 

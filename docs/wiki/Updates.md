@@ -1,29 +1,62 @@
 # Updates
 
 **Production Polaris is updated through the in-app updater**, at
-**Server Settings → Maintenance → Updates**.
+**Server Settings → Maintenance → Application Updates**.
 
 > Do **not** use `git pull` and a manual restart. The updater also syncs the
 > shipped **systemd units and nginx configuration**, which a pull does not — so a
 > manually-updated install silently drifts from the deployment surface every
 > release ships.
 
-Gated by `serverSettingsData`.
+Applying an update is gated `serverSettingsData` (Read-Write — the key has no
+Read rung); looking at the card rides `serverSettingsSystem` Read.
+
+**Docker / podman installs do not use it.** A container image carries no git
+checkout, so the card reports *"In-app updates are disabled in Docker"* — pull
+the new image and recreate the container instead; data and settings persist on
+the mounted state volume.
 
 ---
 
 ## What the updater does
 
-1. **Takes a pre-update backup.** A failure **aborts the update** by default —
-   see [Backup and restore](Backup-and-Restore).
-2. Fetches from the configured source repository.
-3. Installs dependencies and builds.
-4. Runs database migrations.
-5. **Syncs the shipped systemd units and nginx config.**
-6. Restarts.
+**Check for Updates** fetches and reports what is available. Applying then runs
+seven steps, each shown with its own status:
 
-The card shows the **update train**, the resolved **source repository** and
-where that came from, and what version is available.
+1. **Back up database.** A failure **aborts the update** by default —
+   see [Backup and restore](Backup-and-Restore). Two deliberate ways past it:
+   untick **Back up database before applying updates** on the card, or tick
+   *proceed without a backup* in the confirmation after a backup has failed.
+   Migrations cannot be rolled back, so either is a decision to have no
+   rollback point.
+2. **Pull latest code** from the configured source repository.
+3. **Install dependencies** — preceded by a check that the npm registry is
+   reachable, because `npm ci` deletes the working dependency tree before it
+   discovers it cannot download a new one.
+4. **Generate Prisma client.**
+5. **Build TypeScript.**
+6. **Run migrations.**
+7. **Restart service** — first syncing the shipped **systemd units** (only
+   files that changed, then a daemon-reload) and, on an nginx-fronted install
+   whose config Polaris manages, the **nginx config** (rendered, `nginx -t`,
+   reload), then restarting the whole `polaris.target` group so no role keeps
+   running old code against the new schema.
+
+An nginx config that was hand-edited since Polaris last wrote it is **not**
+overwritten — the update logs it, and the Web Server tab shows the drift
+banner until you adopt it again.
+
+The card shows the current version, the resolved **source repository** and
+where that came from, the **update train**, and a *Recent updates* history.
+Every update writes `server.update.started` and `server.update.applied` (or
+`server.update.failed`) Events.
+
+### Update train
+
+| Train | Follows |
+|---|---|
+| **Nightly — latest commits** (default) | the tip of the update branch — every change |
+| **Release — stable releases only** | the highest published release tag (`v1.2.3` or `1.2.3`), checked out detached. With no tags published yet it reports up to date with a note |
 
 ---
 
@@ -60,7 +93,7 @@ filenames.
 | Check | Where |
 |---|---|
 | A backup succeeds **now** | Server Settings → Maintenance → take one manually |
-| `pg_dump` is compatible | the Maintenance tab reports the resolved tools |
+| `pg_dump` is compatible | the Maintenance tab shows a *"Backups cannot run on this host"* banner when it is not |
 | The platform is supported | **Platform Lifecycle** grades this host |
 | A maintenance window is open | so the restart does not page anyone |
 
@@ -109,6 +142,7 @@ a host that already runs Polaris, you want `UPGRADING.md`.
 | Container refuses to boot after the image upgrade | *"another host holds a fresh active-instance heartbeat"* — see below |
 | Migration fails on table ownership | check who owns the queue tables; a migration cannot alter tables owned by another role |
 | The override repo appears ignored | the URL contained a disallowed character; the log names it |
+| A new nginx block never arrives (systemd split-role install) | a known problem: the update cannot currently rewrite nginx there. Add the block by hand — see the [Repository](Server-Settings#repository) section for the one that matters today |
 
 ### "Another host holds a fresh active-instance heartbeat"
 

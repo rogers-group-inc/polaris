@@ -220,7 +220,9 @@ A field rather than a number.
 `dependencySuppressed` · `quarantined` · `fortilinkStatus` · `firmwareVsPrimary`.
 
 **Per-dimension fields:** `ifOperStatus` · `ifAdminStatus` · `ifIpAddress` ·
-`poeStatus` · `ipsecStatus` · `sdwanRuleStatus` · `sdwanSelectedMember`.
+`poeStatus` · `ipsecStatus` · `sdwanRuleStatus` · `sdwanSelectedMember` ·
+`sdwanMemberState` (whether one WAN member of one health check is alive, as the
+FortiGate judges it — see [SD-WAN](#sd-wan)).
 
 ### `monitorStatus == down` is the down-detection automation
 
@@ -888,7 +890,7 @@ because a reset matches on the action pattern alone: a rule pointed back at its
 own trigger action would clear itself the moment it fired.
 
 **To be told about the all-clear, not just have it clear the alert**, add an
-action under **When it clears** on the Actions step. The alert clearing is
+action to the **Reset Action** list on the Actions step. The alert clearing is
 silent by default — the built-in rules ship with in-app alerts only and no
 delivery channel, so they resolve the alert on the Alerts tab and write a
 `notification.auto_cleared` Event (which reaches syslog/SFTP archival if you

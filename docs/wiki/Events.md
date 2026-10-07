@@ -23,7 +23,9 @@ Gated by `events`.
 | **User** | the actor |
 
 Sortable, inline-filterable, resizable, with saved layouts like every other list
-page.
+page. **Export** downloads PDF or CSV of the current page, all filtered results,
+or the entire event log; **Refresh** and the **Show** page size sit beside the
+pagination.
 
 ### Actors
 
@@ -46,7 +48,7 @@ discovery and change events, **and its alerts** — an automation firing
 `notification` with the automation's name beside it. A device whose alert keeps
 firing and clearing shows each round there.
 
-An automation only writes its *fired* event when it has an **Event log** action;
+An automation only writes its *fired* event when it has a **Create an Event** action;
 the clear is written regardless. Acknowledging or clearing alerts by hand is one
 event for the whole selection, so it appears here on the Events page but not on
 each device's tab.
@@ -73,13 +75,19 @@ rows, check that before assuming there are none.
 ## Retention and archival
 
 **Events older than 7 days are pruned** by default
-([rule 8](Business-Rules#rule-8)). Configure retention at
-[Server Settings → Retention](Server-Settings#retention).
+([rule 8](Business-Rules#rule-8)). All three settings live behind the Events page's
+own **Settings** button (the **Event Settings** modal; the button is shown only
+to the built-in **admin** role), not under Server Settings — [Server Settings → Retention](Server-Settings#retention) is sample
+retention. Reading the retention needs `events:read`; changing any of the three
+needs `events:write`.
 
-Two archival paths, both configurable:
+| Tab | Holds |
+|---|---|
+| **Archive Export** | copy events off-host over **SCP** or **SFTP**: host, port, username, password or SSH key path, remote path |
+| **Syslog** | forward events over **UDP**, **TCP** or **TLS** (CA, client certificate and key paths): host, port, facility, minimum severity, and message format — **RFC 5424** (default) or **RFC 3164** |
+| **Retention** | **Retention Period (days)**, default 7, and **Minimum Event Level to Retain** — *Info* (store everything, the default), *Warning* or *Error*, which drop the lower levels permanently |
 
-- **syslog (CEF)**
-- **SFTP / SCP**
+Archive Export and Syslog each have a **Test Connection** button.
 
 > **Anything archived leaves the host.** That is why several rules are careful
 > about what reaches an Event in the first place — most visibly, directory sync
@@ -112,7 +120,7 @@ Two archival paths, both configurable:
 
 The `asset.*.changed` family: `asset.firmware.changed`,
 `asset.switch_port.changed`, `asset.wireless_ap.changed`,
-`asset.fortilink.changed`, `asset.ha.standby_down` / `_restored`,
+`asset.gateway_firewall.changed`, `asset.fortilink.changed`, `asset.ha.standby_down` / `_restored`,
 `asset.mac.adopted`, `asset.ip_override.released`.
 
 ### Path checks
@@ -153,8 +161,9 @@ device-down supersession (any metric or device-state alert on a device that went
 | `user.password_reset` | **warning** | **admin-side** — that proof could not be made |
 | `api_token.admin_equivalent` | warning | a token was bound to an admin-equivalent role |
 | a group mapping to an admin role | warning | IdP group membership is now a path to Polaris admin |
-| **script created** | **warning** | |
-| **script body changed** | **warning** | carries the **old and new sha256** |
+| `automation_script.created` | **warning** | |
+| `automation_script.updated` | **warning** when the body changed, else info | a body change carries the **old and new sha256** |
+| `automation_script.deleted` | **warning** | |
 | `automation.script.run` | | one execution |
 | `ssh.host_key.mismatch` | | a host key **changed** and the connection was refused |
 | `agent.upgrade_skipped` | | a host the fan-out could not upgrade |
@@ -171,7 +180,9 @@ the admin reset cannot, so they are not the same act.
 
 An **event** trigger fires when a matching Event is written, filtered by action
 pattern, minimum level and resource type. A **change** trigger is sugar over the
-`asset.*.changed` family.
+change Events — the `change.*` family (LLDP neighbours, processes, SD-WAN
+failover, MCLAG, wireless stations), written only while some automation
+subscribes to them, and the always-written `asset.*.changed` family.
 
 Both are device-scoped ([rule 46](Business-Rules#rule-46)), and both are
 **exempt from carve-out precedence** — they neither carve out nor are carved
