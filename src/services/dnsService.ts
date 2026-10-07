@@ -18,7 +18,7 @@ import dns from "node:dns/promises";
 import https from "node:https";
 import tls from "node:tls";
 import { prisma } from "../db.js";
-import { ipToPtrName } from "../utils/cidr.js";
+import { ipToPtrName, isValidIpAddress } from "../utils/cidr.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -50,6 +50,33 @@ export interface ARecord {
 export interface ResolverLike {
   reverse(ip: string): Promise<PtrRecord[]>;
   lookup(hostname: string): Promise<ARecord[]>;
+}
+
+// ─── Test target ───────────────────────────────────────────────────────────
+
+export type DnsTestTarget = { kind: "reverse"; ip: string } | { kind: "forward"; name: string };
+
+/**
+ * What the Test DNS Lookup card was given: an IP (PTR lookup) or a hostname —
+ * bare, host:port, or a full URL as copied from an integration — for an A/AAAA
+ * lookup. Null when nothing usable is left after stripping the URL parts.
+ */
+export function parseDnsTestTarget(input: string): DnsTestTarget | null {
+  let v = (input ?? "").trim();
+  if (!v) return null;
+  if (isValidIpAddress(v)) return { kind: "reverse", ip: v };
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) {
+    try { v = new URL(v).hostname; } catch { return null; }
+  } else {
+    v = v.split(/[/?#]/)[0];
+    const m = v.match(/^([^:]+):\d+$/);
+    if (m) v = m[1];
+  }
+  v = v.replace(/^\[(.*)\]$/, "$1").replace(/\.$/, "").toLowerCase();
+  if (!v) return null;
+  if (isValidIpAddress(v)) return { kind: "reverse", ip: v };
+  if (!/^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)*$/.test(v)) return null;
+  return { kind: "forward", name: v };
 }
 
 // ─── Settings CRUD ─────────────────────────────────────────────────────────

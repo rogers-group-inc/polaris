@@ -19,7 +19,7 @@ import {
   addCertificate,
   deleteCertificate,
 } from "../../services/serverSettingsService.js";
-import { getDnsSettings, updateDnsSettings, createResolver } from "../../services/dnsService.js";
+import { getDnsSettings, updateDnsSettings, createResolver, parseDnsTestTarget } from "../../services/dnsService.js";
 import type { DnsSettings } from "../../services/dnsService.js";
 import { getOuiStatus, refreshOuiDatabase, getOuiOverrides, setOuiOverride, deleteOuiOverride, lookupOuiDetailed } from "../../services/ouiService.js";
 import { getReservationMacSettings, saveReservationMacSettings } from "../../services/reservationMacService.js";
@@ -1038,7 +1038,11 @@ router.post("/dns/test", requirePermission("serverSettingsSystem", "write"), asy
     const mode = (req.body.mode || "standard") as DnsSettings["mode"];
     const dohUrl = (req.body.dohUrl || "").trim();
     const verifyTls = req.body.verifyTls === true;
-    const testIp = req.body.testIp || "8.8.8.8";
+    const rawTarget = typeof req.body.testIp === "string" && req.body.testIp.trim() ? req.body.testIp : "8.8.8.8";
+    const target = parseDnsTestTarget(rawTarget);
+    if (!target) {
+      throw new AppError(400, `"${rawTarget}" is not an IP address, hostname or URL`);
+    }
 
     if (mode === "doh" && !dohUrl) {
       return res.json({ ok: false, message: "No DoH URL configured", results: [] });
@@ -1057,15 +1061,25 @@ router.post("/dns/test", requirePermission("serverSettingsSystem", "write"), asy
       const resolver = await createResolver(t.settings);
       const start = Date.now();
       try {
-        const records = await resolver.reverse(testIp);
+        if (target.kind === "forward") {
+          const addrs = await resolver.lookup(target.name);
+          const elapsed = Date.now() - start;
+          if (addrs.length === 0) {
+            return { server: t.label, ok: true, message: `Reachable but no A/AAAA record for ${target.name} (${elapsed}ms)` };
+          }
+          return { server: t.label, ok: true, message: `${target.name} → ${addrs.map((a) => a.address).join(", ")} in ${elapsed}ms` };
+        }
+        const records = await resolver.reverse(target.ip);
         const elapsed = Date.now() - start;
         const name = records[0]?.name || "(no PTR)";
         const ttlNote = records[0]?.ttl != null ? ` TTL ${records[0].ttl}s` : "";
-        return { server: t.label, ok: true, message: `${testIp} → ${name}${ttlNote} in ${elapsed}ms` };
+        return { server: t.label, ok: true, message: `${target.ip} → ${name}${ttlNote} in ${elapsed}ms` };
       } catch (dnsErr: any) {
         const elapsed = Date.now() - start;
+        const subject = target.kind === "forward" ? target.name : target.ip;
         if (dnsErr.code === "ENOTFOUND" || dnsErr.code === "ENODATA") {
-          return { server: t.label, ok: true, message: `Reachable but no PTR record for ${testIp} (${elapsed}ms)` };
+          const what = target.kind === "forward" ? "A/AAAA" : "PTR";
+          return { server: t.label, ok: true, message: `Reachable but no ${what} record for ${subject} (${elapsed}ms)` };
         }
         return { server: t.label, ok: false, message: `${dnsErr.message || dnsErr.code || "Unknown error"} (${elapsed}ms)` };
       }

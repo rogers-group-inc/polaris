@@ -13,6 +13,7 @@ const {
   buildWorkloadDependencyEdges,
   normalizeWorkloadState,
   passesNameFilter,
+  resolveWorkloadHostAddress,
   workloadContainerExternalId,
   workloadHostExternalId,
   workloadSweepBlockedReason,
@@ -43,6 +44,36 @@ const vm = (name: string, uuid: string | null = null) => ({
 const ctr = (name: string) => ({
   platformId: name, name, image: `img/${name}`, state: "running" as const, rawState: "RUNNING", ip: null,
   updateAvailable: null, version: null, latestVersion: null, memberCount: 1, ports: [], autostart: true,
+});
+
+describe("resolveWorkloadHostAddress", () => {
+  const configured = (addrs: string[]) => async () => ({ lookup: async () => addrs.map((address) => ({ address })) });
+  const failing = async () => ({ lookup: async () => { throw Object.assign(new Error("nx"), { code: "ENOTFOUND" }); } });
+
+  it("passes an IP through with no DNS name", async () => {
+    expect(await resolveWorkloadHostAddress("10.0.0.2", { configured: configured([]) })).toEqual({ ip: "10.0.0.2", dnsName: null });
+    expect(await resolveWorkloadHostAddress("[fd00::2]")).toEqual({ ip: "fd00::2", dnsName: null });
+  });
+
+  it("resolves a name through the configured resolver and keeps it as dnsName", async () => {
+    expect(await resolveWorkloadHostAddress("Tower.Lan.", { configured: configured(["10.0.0.9"]) }))
+      .toEqual({ ip: "10.0.0.9", dnsName: "tower.lan" });
+  });
+
+  it("falls back to the system resolver", async () => {
+    const system = vi.fn(async () => ({ address: "10.0.0.7" }));
+    expect(await resolveWorkloadHostAddress("tower.lan", { configured: failing, system })).toEqual({ ip: "10.0.0.7", dnsName: "tower.lan" });
+    expect(system).toHaveBeenCalledWith("tower.lan");
+  });
+
+  it("never returns the name as the IP when nothing resolves", async () => {
+    const system = async () => { throw new Error("ENOTFOUND"); };
+    expect(await resolveWorkloadHostAddress("tower.lan", { configured: configured([]), system })).toEqual({ ip: null, dnsName: "tower.lan" });
+  });
+
+  it("returns nothing for an empty host", async () => {
+    expect(await resolveWorkloadHostAddress(null)).toEqual({ ip: null, dnsName: null });
+  });
 });
 
 describe("normalizeWorkloadState", () => {
