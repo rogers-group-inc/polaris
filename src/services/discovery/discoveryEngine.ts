@@ -22,6 +22,10 @@ import * as entraId from "../entraIdService.js";
 import * as activeDirectory from "../activeDirectoryService.js";
 import { syncArcSoftware, syncIntuneSoftware } from "../softwareInventoryService.js";
 import * as vcenter from "../vcenterService.js";
+import * as unraid from "../unraidService.js";
+import * as truenas from "../truenasService.js";
+import { syncWorkloadDevices } from "./workloadSync.js";
+import { isWorkloadPlatform } from "../../utils/workloadSources.js";
 import * as azureArc from "../azureArcService.js";
 import { ipInCidr, normalizeCidr, cidrContains, cidrOverlaps } from "../../utils/cidr.js";
 import { normalizeMacsDistinct, macHexKeyOrNull } from "../../utils/mac.js";
@@ -558,6 +562,8 @@ export async function runPreflightTest(integration: { id: string; type: string; 
   if (integration.type === "activedirectory") return activeDirectory.testConnection(config as any);
   if (integration.type === "vcenter") return vcenter.testConnection(config as any);
   if (integration.type === "azurearc") return azureArc.testConnection(config as any);
+  if (integration.type === "unraid") return unraid.testConnection(config as any);
+  if (integration.type === "truenas") return truenas.testConnection(config as any);
   return { ok: false, message: `Unknown integration type: ${integration.type}` };
 }
 
@@ -607,6 +613,9 @@ export async function triggerDiscovery(
     if (integration.type === "vcenter") {
       if (!config.username) throw new AppError(400, "Integration has no username configured");
       if (!config.password) throw new AppError(400, "Integration has no password configured");
+    }
+    if (isWorkloadPlatform(integration.type) && !config.apiToken) {
+      throw new AppError(400, "Integration has no API key configured");
     }
   }
 
@@ -668,7 +677,8 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
   const integrationType = integration.type;
   const label = actor === "auto-discovery" ? "Scheduled" : "Manual";
   const baseKindLabel = (integration.type === "entraid" || integration.type === "activedirectory"
-    || integration.type === "vcenter" || integration.type === "azurearc") ? "device discovery" : "DHCP discovery";
+    || integration.type === "vcenter" || integration.type === "azurearc" || isWorkloadPlatform(integration.type))
+    ? "device discovery" : "DHCP discovery";
   // Scoped runs label every start/complete/abort/error Event with the device.
   const kindLabel = scopeDeviceName ? `${baseKindLabel} (device "${scopeDeviceName}")` : baseKindLabel;
 
@@ -889,6 +899,22 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.skipped.push(...r.skipped);
         syncTotals.decommissionedAssets.push(...r.decommissioned);
       }
+    } else if (integration.type === "unraid" || integration.type === "truenas") {
+      // Unraid / TrueNAS SCALE produce assets only — the host, its VMs and its
+      // containers / Apps — through ONE shared sync (discovery/workloadSync.ts).
+      // No scoped mode: one host per integration, and the whole inventory is
+      // one read, so a single-device run would save nothing.
+      const result = integration.type === "unraid"
+        ? await unraid.discoverInventory(config as any, ac.signal)
+        : await truenas.discoverInventory(config as any);
+      if (!ac.signal.aborted) {
+        onProgress("discover.inventory", "info", `${result.vms.length} VM(s), ${result.containers.length} container(s) read${result.inventoryComplete ? "" : " (part of the inventory could not be read)"}`);
+        const r = await syncWorkloadDevices(integrationId, integrationName, config, result, actor, "full");
+        syncTotals.created.push(...r.created);
+        syncTotals.updated.push(...r.updated);
+        syncTotals.skipped.push(...r.skipped);
+        syncTotals.decommissionedAssets.push(...r.decommissioned);
+      }
     } else if (integration.type === "azurearc") {
       // Azure Arc discovery produces assets only — Arc-enabled machines. No
       // subnets, reservations, or VIPs.
@@ -1027,7 +1053,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
     // tab for an asset-only type. (The fourth is narrower still: only the two
     // DIRECTORY types have a directory of people to sync.)
     const assetsOnly = integration.type === "entraid" || integration.type === "activedirectory"
-      || integration.type === "vcenter" || integration.type === "azurearc";
+      || integration.type === "vcenter" || integration.type === "azurearc" || isWorkloadPlatform(integration.type);
 
     // ── AD/Entra post-sync passes (agent auto-deploy + interface/storage
     // auto-monitor) ──────────────────────────────────────────────────────────
@@ -1035,7 +1061,13 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
     // which never runs for these assets-only integrations. Runs only when the
     // sync completed (not aborted). Each pass is wrapped so a failure logs and
     // continues — neither poisons the discovery run's success/abort accounting.
-    if (assetOnlyPostSyncPassesEnabled({ assetsOnly, scoped: scope !== undefined, aborted: ac.signal.aborted })) {
+    // Not for Unraid / TrueNAS: their class blocks carry no agent deploy or
+    // interface / storage auto-monitor, and the sync itself is the presence
+    // signal (the host answered; a workload reported running).
+    if (
+      !isWorkloadPlatform(integration.type) &&
+      assetOnlyPostSyncPassesEnabled({ assetsOnly, scoped: scope !== undefined, aborted: ac.signal.aborted })
+    ) {
       // 1) Agent auto-deploy FIRST so newly-discovered, agent-less devices get
       //    the Polaris Agent kicked off this cycle; their interface/storage
       //    samples (and thus the pins below) land on the NEXT discovery.

@@ -29,17 +29,17 @@
 import WebSocket from "ws";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
-import {
-  normalizeWorkloadState,
-  type WorkloadContainer,
-  type WorkloadDisk,
-  type WorkloadDiscoveryResult,
-  type WorkloadHost,
-  type WorkloadInterfaceReading,
-  type WorkloadPool,
-  type WorkloadSnapshot,
-  type WorkloadUsage,
-  type WorkloadVm,
+import { normalizeWorkloadState } from "../utils/workloadSources.js";
+import type {
+  WorkloadContainer,
+  WorkloadDisk,
+  WorkloadDiscoveryResult,
+  WorkloadHost,
+  WorkloadInterfaceReading,
+  WorkloadPool,
+  WorkloadSnapshot,
+  WorkloadUsage,
+  WorkloadVm,
 } from "./discovery/workloadSync.js";
 
 export interface TrueNasConfig {

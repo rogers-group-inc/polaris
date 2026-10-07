@@ -47,18 +47,21 @@ import { matchesWildcard } from "../../utils/integrationFilter.js";
 import { absenceExceedsGuard } from "../../utils/directoryAbsence.js";
 import {
   assetTypeForWorkloadRole,
+  workloadContainerExternalId,
+  workloadHostExternalId,
   workloadPlatformLabel,
   workloadSourceKind,
   workloadSourceKindsFor,
+  workloadVmExternalId,
   type WorkloadPlatform,
   type WorkloadRole,
+  type WorkloadState,
 } from "../../utils/workloadSources.js";
 import { indexHostname, lookupHostname, normalizeMacKey, upsertAssetConflict } from "./discoveryEngine.js";
 
 // ─── The normalized shape both services return ────────────────────────────────
 
-/** running / stopped / paused / other — see normalizeWorkloadState. */
-export type WorkloadState = "running" | "stopped" | "paused" | "other";
+export type { WorkloadState } from "../../utils/workloadSources.js";
 
 export interface WorkloadPool {
   name: string;
@@ -187,19 +190,15 @@ export interface WorkloadSnapshot {
   containerUsage: Map<string, WorkloadUsage>;
 }
 
-/** Map a platform's state word to the four states the rest of Polaris reads. */
-export function normalizeWorkloadState(raw: string | null | undefined): WorkloadState {
-  const s = String(raw ?? "").trim().toLowerCase();
-  if (!s) return "other";
-  // Unraid: RUNNING / EXITED / PAUSED (containers), RUNNING / SHUTOFF / PAUSED /
-  // PMSUSPENDED (VMs). TrueNAS: RUNNING / STOPPED / DEPLOYING / CRASHED (apps),
-  // RUNNING / STOPPED / SUSPENDED (VMs).
-  if (s === "running" || s === "started" || s === "up") return "running";
-  if (s === "exited" || s === "stopped" || s === "shutoff" || s === "shutdown" || s === "crashed" || s === "dead" || s === "created")
-    return "stopped";
-  if (s === "paused" || s === "suspended" || s === "pmsuspended") return "paused";
-  return "other";
-}
+// Identity + state live in utils/workloadSources.ts (no imports) so the
+// services and collectors can share them without importing this file, which
+// pulls discoveryEngine. Re-exported here for the sync's own callers.
+export {
+  normalizeWorkloadState,
+  workloadContainerExternalId,
+  workloadHostExternalId,
+  workloadVmExternalId,
+} from "../../utils/workloadSources.js";
 
 // ─── Filters (the post-hoc twin is utils/integrationFilter.ts) ───────────────
 
@@ -233,23 +232,6 @@ export function applyWorkloadFilters(
     vms: result.vms.filter((v) => passesNameFilter(v.name, vmInc, vmExc)),
     containers: result.containers.filter((c) => passesNameFilter(c.name, ctrInc, ctrExc)),
   };
-}
-
-// ─── Identity ─────────────────────────────────────────────────────────────────
-
-export function workloadHostExternalId(integrationId: string): string {
-  return `${integrationId}:host`;
-}
-
-export function workloadVmExternalId(integrationId: string, vm: Pick<WorkloadVm, "uuid" | "name">): string {
-  const uuid = (vm.uuid ?? "").trim().toLowerCase();
-  // An all-zero UUID is a hypervisor placeholder, not an identity.
-  if (uuid && !/^[0-]+$/.test(uuid)) return uuid;
-  return `${integrationId}:vm:${vm.name}`;
-}
-
-export function workloadContainerExternalId(integrationId: string, name: string): string {
-  return `${integrationId}:ctr:${name}`;
 }
 
 /**

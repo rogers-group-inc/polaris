@@ -68,3 +68,40 @@ export function assetTypeForWorkloadRole(role: WorkloadRole): "hypervisor" | "se
 export function workloadPlatformLabel(platform: WorkloadPlatform): string {
   return platform === "unraid" ? "Unraid" : "TrueNAS SCALE";
 }
+
+// ─── Identity + state (pure; shared by the sync, the services and the collectors) ─
+
+/** running / stopped / paused / other — the four states the rest of Polaris reads. */
+export type WorkloadState = "running" | "stopped" | "paused" | "other";
+
+/** Map a platform's state word to the four states the rest of Polaris reads. */
+export function normalizeWorkloadState(raw: string | null | undefined): WorkloadState {
+  const s = String(raw ?? "").trim().toLowerCase();
+  if (!s) return "other";
+  // Unraid: RUNNING / EXITED / PAUSED (containers), RUNNING / SHUTOFF / PAUSED /
+  // PMSUSPENDED (VMs). TrueNAS: RUNNING / STOPPED / DEPLOYING / CRASHED (apps),
+  // RUNNING / STOPPED / SUSPENDED (VMs).
+  if (s === "running" || s === "started" || s === "up") return "running";
+  if (s === "exited" || s === "stopped" || s === "shutoff" || s === "shutdown" || s === "crashed" || s === "dead" || s === "created")
+    return "stopped";
+  if (s === "paused" || s === "suspended" || s === "pmsuspended") return "paused";
+  return "other";
+}
+
+/** The host: one per integration. */
+export function workloadHostExternalId(integrationId: string): string {
+  return `${integrationId}:host`;
+}
+
+/** A VM: its UUID when the platform reports a real one, else integration + name. */
+export function workloadVmExternalId(integrationId: string, vm: { uuid: string | null; name: string }): string {
+  const uuid = (vm.uuid ?? "").trim().toLowerCase();
+  // An all-zero UUID is a hypervisor placeholder, not an identity.
+  if (uuid && !/^[0-]+$/.test(uuid)) return uuid;
+  return `${integrationId}:vm:${vm.name}`;
+}
+
+/** A container / App: integration + NAME — never the container id, which changes on every recreate. */
+export function workloadContainerExternalId(integrationId: string, name: string): string {
+  return `${integrationId}:ctr:${name}`;
+}

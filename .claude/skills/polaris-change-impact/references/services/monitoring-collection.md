@@ -249,6 +249,30 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/workloadMonitorService.ts
+
+**What it owns:** The `unraid` / `truenas` polling methods' collectors — response time, CPU/memory, interfaces, storage and hardware sensors for an Unraid / TrueNAS SCALE host, its VMs and its containers / Apps, all from ONE warm-cached `WorkloadSnapshot` per integration (`fetchWorkloadSnapshotCached`: `createTtlCache`, 30 s TTL, promise-shared, rejections never cached). `readWorkloadAsset` resolves the asset through its workload AssetSource row (never `discoveredByIntegration`) into `host | vm | container | absent | unreachable`. monitoringService dispatches each stream here BEFORE its IP guard.
+
+**Public API:** fetchWorkloadSnapshotCached, invalidateWorkloadSnapshot, readWorkloadAsset, probeWorkload, collectTelemetryWorkload, collectSystemInfoWorkload (optional `pinned` subset = the fast cadence), buildWorkloadSystemInfo, collectHardwareSensorsWorkload, WORKLOAD_SNAPSHOT_TTL_MS, WorkloadReading.
+
+**Cross-service deps:** unraidService.fetchUnraidSnapshot, truenasService.fetchTrueNasSnapshot; types from monitoringService and discovery/workloadSync (type-only imports — no runtime cycle).
+
+**Used by:** src/services/monitoringService.ts — `probeAsset`, `collectTelemetry`, `collectSystemInfo`, `collectFastFiltered`, `collectHardwareSensors` dispatch on `polling === "unraid" | "truenas"`.
+
+**Invariants:**
+- `unreachable` SKIPS a VM / container probe (one NAS reboot must not declare sixty containers down; the placement edges then suppress them once the host fails) but FAILS the HOST probe — the host's own API not answering IS the finding about the host.
+- A workload missing from a list that failed to read this tick (`inventoryComplete: false` with an empty list — Docker / Apps stopped) is `unreachable`, never `absent`.
+- `other` state (DEPLOYING, STOPPING, NOSTATE) is a skipped probe — no verdict during a transition.
+- The probe's response time is the shared API round trip, not a measurement of the workload (vCenter's honesty).
+- Container CPU is clamped to 100 % (docker-stats reports multi-core containers above it). An Unraid VM has NO usage source → telemetry `{supported:false}`, never a zero.
+- Interfaces + storage + temperatures exist on the HOST only (storage = its pools, `mountPath` = pool name; temps = `sensorClass: "disk"`). Each stream is gated on its own resolved method.
+
+**When changing this:**
+- A new stream for these methods = `WORKLOAD_STREAMS` (pollingCompatibility.ts) + `defaultPollingForSource` + a collector here + the dispatch branch in monitoringService + the assets.ts PUT guard + the browser mirrors in integrations.js.
+- Keep `computeDueWork` and jobs/monitorAssets `canTelemetry` in lockstep if a gate ever needs to exclude these methods (today both pass them).
+
+---
+
 ## services/peerInferredLldpService.ts
 
 **What it owns:** Read-time supplementation of the persisted `AssetLldpNeighbor` set with neighbor rows synthesized from `Asset.fortinetTopology` so the System tab Neighbor column reflects topology Polaris already knows about (most importantly: managed FortiAPs that the FortiSwitch's SNMP LLDP-MIB silently consumes without re-publishing). Note the AP-side branch is now mostly a fallback: FMG/FortiGate discovery persists the AP's full managed_ap `lldp` table as real rows (source `"managed-ap"`, via `monitoringService.persistManagedApLldpNeighbors`), and those real rows dedupe the inferred AP row away — the inferred branch still covers firmware that omits the `lldp` array and installs whose discovery hasn't re-run yet.

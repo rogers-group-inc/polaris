@@ -202,8 +202,15 @@ import {
   isMethodValidForStream,
   assetSourceKindFromIntegrationType,
   isFortinetIntegrationType,
+  isWorkloadPollingMethod,
   responseTimeProbeShouldQueue,
 } from "../utils/pollingCompatibility.js";
+import {
+  collectHardwareSensorsWorkload,
+  collectSystemInfoWorkload,
+  collectTelemetryWorkload,
+  probeWorkload,
+} from "./workloadMonitorService.js";
 import { propagateAfterStatusChange } from "./dependencyTreeService.js";
 import { buildInfraParentIndex, controllerGateIdOf, type InfraParentCandidate } from "../utils/fortinetParentKey.js";
 import { indexLldpHostname, pickLldpHostnameMatch, type LldpHostnameMatchIndex } from "../utils/lldpHostnameMatch.js";
@@ -1015,6 +1022,15 @@ export function defaultPollingForSource(
         || stream === "interfaces" || stream === "storage") return "vcenter";
     return null;
   }
+  if (source === "unraid" || source === "truenas") {
+    // The vCenter posture: everything the host's API answers for, it answers
+    // for, out of ONE cached read per integration per tick. Temperature too —
+    // a NAS reports its disks' temperatures, which land on the host as
+    // `sensorClass: "disk"` readings. LLDP is never published.
+    if (stream === "responseTime" || stream === "cpuMemory" || stream === "interfaces"
+        || stream === "storage" || stream === "temperature") return source;
+    return null;
+  }
   // manual
   return stream === "responseTime" ? "icmp" : null;
 }
@@ -1062,6 +1078,16 @@ function pickClassStreamsBlock(
     let block: Record<string, unknown> | undefined;
     if (assetType === "workstation") block = cfg.workstationMonitor as Record<string, unknown> | undefined;
     else if (assetType === "server")  block = cfg.serverMonitor      as Record<string, unknown> | undefined;
+    if (!block) return undefined;
+    const streams = block.streams as Record<string, unknown> | undefined;
+    return streams && typeof streams === "object" ? streams : undefined;
+  }
+  if (integrationType === "unraid" || integrationType === "truenas") {
+    // vCenter's block names plus containerMonitor (monitorOverrideService).
+    let block: Record<string, unknown> | undefined;
+    if (assetType === "server")          block = cfg.vmMonitor        as Record<string, unknown> | undefined;
+    else if (assetType === "hypervisor") block = cfg.hostMonitor      as Record<string, unknown> | undefined;
+    else if (assetType === "container")  block = cfg.containerMonitor as Record<string, unknown> | undefined;
     if (!block) return undefined;
     const streams = block.streams as Record<string, unknown> | undefined;
     return streams && typeof streams === "object" ? streams : undefined;
@@ -2186,6 +2212,11 @@ export async function probeAsset(
     // probeable. Dispatches before the IP guard for exactly that reason.
     if (polling === "vcenter") {
       return await probeVcenter(assetId, dispatchStart);
+    }
+    // Unraid / TrueNAS: the same posture — the host's API answers for the
+    // asset, so no asset IP is needed (services/workloadMonitorService.ts).
+    if (polling === "unraid" || polling === "truenas") {
+      return await probeWorkload(assetId, dispatchStart);
     }
 
     // AD-discovered Windows hosts often have no IP yet (only dnsName/hostname),
@@ -4889,6 +4920,9 @@ export async function collectTelemetry(assetId: string, preloaded?: TelemetryAss
   if (polling === "vcenter") {
     return await collectTelemetryVcenter(assetId);
   }
+  if (polling === "unraid" || polling === "truenas") {
+    return await collectTelemetryWorkload(assetId);
+  }
 
   // FQDN fallback for credentialed methods that resolve hostnames natively.
   const targetIp =
@@ -5006,6 +5040,10 @@ export async function collectHardwareSensors(assetId: string, preloaded?: Teleme
   // own schedule. Periodic puller stays out of the way.
   if (polling === "agent") return { supported: false };
   const timeoutMs = effective.temperatureTimeoutMs;
+  // Unraid / TrueNAS: the host's disk temperatures, from the cached snapshot.
+  if (polling === "unraid" || polling === "truenas") {
+    return await collectHardwareSensorsWorkload(assetId);
+  }
 
   const targetIp =
     asset.ipAddress ||
@@ -5146,6 +5184,11 @@ export async function collectFastFiltered(assetId: string): Promise<CollectionRe
           : [],
       },
     };
+  }
+
+  // Unraid / TrueNAS: the pinned subset of the same cached snapshot.
+  if (polling === "unraid" || polling === "truenas") {
+    return await collectSystemInfoWorkload(assetId, effective, { interfaces: wantedIfaces, storage: wantedStorage });
   }
 
   const targetIp =
@@ -5576,6 +5619,9 @@ export async function collectSystemInfo(assetId: string): Promise<CollectionResu
   // own resolved method.
   if (interfacesPolling === "vcenter" || effective.storagePolling === "vcenter") {
     return await collectSystemInfoVcenter(assetId, effective);
+  }
+  if (isWorkloadPollingMethod(interfacesPolling) || isWorkloadPollingMethod(effective.storagePolling)) {
+    return await collectSystemInfoWorkload(assetId, effective);
   }
 
   const targetIp =
