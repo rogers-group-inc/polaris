@@ -1,0 +1,353 @@
+/*
+ * public/css/assistant.css — the floating AI assistant (business rule 95).
+ *
+ * Loaded on demand by app.js (_bootAssistant) on desktop app pages only, once
+ * the caller holds `assistant` read and an llm integration is enabled.
+ *
+ * Glass: the panel is a frosted surface floating free of every screen edge, so
+ * it takes --panel-glass-bg / --panel-glass-chrome + --shadow-panel, and its
+ * blur lives on a ::before — the panel HOLDS frosted children (the slash
+ * popup, the history drawer), and a backdrop-filter on their ancestor would
+ * make their own blur sample nothing (polaris-ui-canon → canon-shared-kit.md
+ * § Floating-surface tokens). z-index 950: above page chrome, below the modal
+ * overlay (1000) and toasts (2000).
+ */
+
+.asst-fab {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  z-index: 950;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 55%, transparent);
+  background: var(--color-accent);
+  color: #fff;
+  box-shadow: var(--shadow-panel);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.asst-fab:hover { background: var(--color-accent-hover, var(--color-accent)); transform: translateY(-1px) scale(1.04); }
+.asst-fab:focus-visible { outline: 2px solid var(--color-text-primary); outline-offset: 3px; }
+.asst-fab svg { width: 24px; height: 24px; }
+.asst-fab[hidden] { display: none; }
+.asst-fab .asst-fab-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-warning);
+  border: 2px solid var(--color-accent);
+  display: none;
+}
+.asst-fab.has-unread .asst-fab-dot { display: block; }
+
+/* Toasts share the bottom-right corner; lift them clear of the button. */
+body.asst-mounted .toast-container { bottom: 5.25rem; }
+
+.asst-panel {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  z-index: 950;
+  width: 400px;
+  height: min(620px, calc(100vh - 3rem));
+  min-width: 300px;
+  min-height: 320px;
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100vh - 2rem);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-glass-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  overflow: hidden;
+  isolation: isolate;
+}
+.asst-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
+  pointer-events: none;
+}
+.asst-panel[hidden] { display: none; }
+
+/* Held still across a page change, like the sidebar (polaris-sidebar in
+   styles.css): both are drawn before first paint, so the cross-document view
+   transition captures them as their own groups instead of crossfading them
+   with the page. Only one of the two is ever displayed. */
+.asst-panel { view-transition-name: polaris-assistant; }
+.asst-fab { view-transition-name: polaris-assistant-fab; }
+/* No opacity here: opacity < 1 makes the panel a backdrop root and every
+   frosted child would stop blurring the page for the length of the drag. */
+.asst-panel.is-dragging { user-select: none; }
+
+/* Resize grip, TOP-LEFT (assistant.js → wireResize): the panel docks
+   bottom-right, so a CSS `resize` grip would sit under the Send button.
+   Two short diagonal strokes, the mirror of the browser's own grip. */
+.asst-resize {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  z-index: 5;
+  cursor: nwse-resize;
+  touch-action: none;
+  border-top-left-radius: var(--radius-lg);
+  background:
+    linear-gradient(135deg, transparent 0 5px, var(--color-text-tertiary) 5px 6px, transparent 6px 9px, var(--color-text-tertiary) 9px 10px, transparent 10px);
+  opacity: 0.55;
+}
+.asst-resize:hover { opacity: 1; }
+
+.asst-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0.55rem 0.6rem 0.55rem 0.85rem;
+  background: var(--panel-glass-chrome);
+  border-bottom: 1px solid var(--color-border);
+  cursor: move;
+  touch-action: none;
+  flex: 0 0 auto;
+}
+.asst-head-title { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
+.asst-head-title strong { font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.asst-head-title span { font-size: 0.72rem; color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.asst-icon-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 1rem;
+  flex: 0 0 auto;
+}
+.asst-icon-btn:hover { color: var(--color-text-primary); border-color: var(--color-border); background: color-mix(in srgb, var(--color-text-primary) 6%, transparent); }
+.asst-icon-btn svg { width: 16px; height: 16px; }
+
+.asst-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  position: relative;
+}
+
+.asst-msg { display: flex; flex-direction: column; max-width: 100%; }
+.asst-msg.user { align-items: flex-end; }
+.asst-bubble {
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-md);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  max-width: 92%;
+  overflow-wrap: anywhere;
+}
+.asst-msg.user .asst-bubble {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+  white-space: pre-wrap;
+}
+.asst-msg.assistant .asst-bubble {
+  background: color-mix(in srgb, var(--color-surface) 55%, transparent);
+  border: 1px solid var(--color-border);
+  max-width: 100%;
+}
+.asst-bubble p { margin: 0 0 0.5rem; }
+.asst-bubble p:last-child { margin-bottom: 0; }
+.asst-bubble h4, .asst-bubble h5, .asst-bubble h6 { margin: 0.6rem 0 0.35rem; font-size: 0.88rem; }
+.asst-bubble ul, .asst-bubble ol { margin: 0.25rem 0 0.5rem; padding-left: 1.25rem; }
+.asst-bubble li { margin: 0.1rem 0; }
+.asst-bubble code { font-family: var(--font-mono); font-size: 0.8rem; background: color-mix(in srgb, var(--color-text-primary) 8%, transparent); padding: 0 0.25rem; border-radius: 3px; }
+.asst-bubble pre.asst-code { background: color-mix(in srgb, var(--color-bg-primary) 70%, transparent); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 0.5rem 0.6rem; overflow-x: auto; margin: 0.4rem 0; }
+.asst-bubble pre.asst-code code { background: none; padding: 0; white-space: pre; }
+.asst-bubble blockquote { margin: 0.4rem 0; padding-left: 0.6rem; border-left: 3px solid var(--color-border); color: var(--color-text-secondary); }
+.asst-bubble a { color: var(--color-accent); }
+.asst-table-wrap { overflow-x: auto; margin: 0.4rem 0; }
+.asst-table { border-collapse: collapse; font-size: 0.78rem; width: 100%; }
+.asst-table th, .asst-table td { border: 1px solid var(--color-border); padding: 0.25rem 0.4rem; text-align: left; vertical-align: top; }
+.asst-table th { background: color-mix(in srgb, var(--color-text-primary) 6%, transparent); font-weight: 600; }
+
+.asst-cursor::after { content: "▍"; animation: asst-blink 1s steps(1) infinite; color: var(--color-text-tertiary); margin-left: 1px; }
+@keyframes asst-blink { 50% { opacity: 0; } }
+
+.asst-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.asst-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-surface) 50%, transparent);
+}
+.asst-chip.running { color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 40%, transparent); }
+.asst-chip.running::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: asst-blink 0.9s steps(1) infinite; }
+.asst-chip.failed { color: var(--color-warning); }
+.asst-chip.stopped { color: var(--color-text-tertiary); font-style: italic; }
+
+.asst-thinking { font-size: 0.8rem; color: var(--color-text-tertiary); font-style: italic; }
+.asst-error {
+  font-size: 0.8rem;
+  color: var(--color-danger);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.6rem;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.asst-report {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-surface) 55%, transparent);
+  padding: 0.55rem 0.65rem;
+  margin-top: 6px;
+  font-size: 0.8rem;
+}
+.asst-report-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 0.35rem; }
+.asst-report-head strong { font-size: 0.84rem; }
+.asst-report-head span { color: var(--color-text-tertiary); font-size: 0.72rem; white-space: nowrap; }
+.asst-report-actions { display: flex; gap: 6px; margin-top: 0.45rem; flex-wrap: wrap; }
+
+.asst-welcome { color: var(--color-text-secondary); font-size: 0.84rem; line-height: 1.5; }
+.asst-welcome p { margin: 0 0 0.6rem; }
+.asst-suggestions { display: flex; flex-direction: column; gap: 6px; }
+.asst-suggestion {
+  text-align: left;
+  background: color-mix(in srgb, var(--color-surface) 45%, transparent);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 0.45rem 0.65rem;
+  color: var(--color-text-primary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  font-family: var(--font-sans);
+}
+.asst-suggestion:hover { border-color: color-mix(in srgb, var(--color-accent) 50%, transparent); }
+
+.asst-foot {
+  position: relative;
+  flex: 0 0 auto;
+  padding: 0.55rem 0.6rem 0.6rem;
+  border-top: 1px solid var(--color-border);
+  background: var(--panel-glass-chrome);
+}
+.asst-input-row { display: flex; gap: 6px; align-items: flex-end; }
+.asst-input {
+  flex: 1;
+  resize: none;
+  min-height: 38px;
+  max-height: 140px;
+  font-family: var(--font-sans);
+  font-size: 0.86rem;
+  line-height: 1.4;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-bg-primary) 60%, transparent);
+  color: var(--color-text-primary);
+}
+.asst-input:focus { outline: none; border-color: var(--color-accent); }
+.asst-send { height: 38px; min-width: 38px; padding: 0 0.7rem; }
+.asst-hint { font-size: 0.68rem; color: var(--color-text-tertiary); margin-top: 4px; }
+
+/* Slash-command popup — a menu, so menu glass. */
+.asst-slash {
+  position: absolute;
+  left: 0.6rem;
+  right: 0.6rem;
+  bottom: calc(100% + 4px);
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--menu-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  z-index: 2;
+}
+.asst-slash[hidden] { display: none; }
+.asst-slash-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  align-items: baseline;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.asst-slash-item.active, .asst-slash-item:hover { background: color-mix(in srgb, var(--color-accent) 16%, transparent); }
+.asst-slash-cmd { font-family: var(--font-mono); font-size: 0.78rem; color: var(--color-text-primary); white-space: nowrap; }
+.asst-slash-cmd em { color: var(--color-text-tertiary); font-style: normal; }
+.asst-slash-desc { color: var(--color-text-secondary); }
+.asst-slash-empty { padding: 0.4rem 0.5rem; font-size: 0.8rem; color: var(--color-text-tertiary); }
+
+/* History drawer — slides over the message list. */
+.asst-history {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
+}
+.asst-history[hidden] { display: none; }
+.asst-history-head { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0.85rem; border-bottom: 1px solid var(--color-border); font-size: 0.85rem; }
+.asst-history-list { flex: 1; overflow-y: auto; padding: 0.4rem; }
+.asst-history-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0.45rem 0.55rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.asst-history-item:hover, .asst-history-item.current { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.asst-history-item .t { flex: 1; min-width: 0; }
+.asst-history-item .t strong { display: block; font-size: 0.82rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.asst-history-item .t span { font-size: 0.7rem; color: var(--color-text-tertiary); }
+.asst-history-empty { padding: 1rem; font-size: 0.82rem; color: var(--color-text-tertiary); text-align: center; }
+
+.asst-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+@media (max-width: 640px) {
+  .asst-panel { right: 0.5rem; left: 0.5rem; bottom: 0.5rem; width: auto; resize: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .asst-fab { transition: none; }
+  .asst-cursor::after, .asst-chip.running::before { animation: none; }
+}

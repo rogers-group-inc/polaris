@@ -1022,6 +1022,23 @@ const api = {
     storageAggregatePreview:   (id, body)  => request("POST", `/integrations/${id}/storage-aggregate/preview`, body),
     storageAggregateApply:     (id, klass) => trackedRequest("Applying auto-monitor storage", "POST", `/integrations/${id}/storage-aggregate/apply`, { class: klass }),
     autoMonitorAssetsPreflight: (id, proposed) => request("POST", `/integrations/${id}/auto-monitor-assets/preflight`, { proposed: proposed }),
+    llmRegenerateToken: (id) => request("POST", `/integrations/${id}/llm/regenerate-token`),
+    llmProbeTools:      (body) => trackedRequest("Checking tool calling", "POST", "/integrations/llm/probe-tools", body),
+  },
+  // The floating AI assistant (public/js/assistant.js, business rule 95). The
+  // streamed ask (POST /conversations/:id/messages) is NOT here: request()
+  // reads a whole JSON body, so assistant.js drives that one with fetch +
+  // _csrfHeaders and reads the event stream itself.
+  assistant: {
+    status:            ()          => request("GET", "/assistant/status"),
+    listConversations: ()          => request("GET", "/assistant/conversations"),
+    createConversation:(title)     => request("POST", "/assistant/conversations", title ? { title: title } : {}),
+    getConversation:   (id)        => request("GET", `/assistant/conversations/${id}`),
+    renameConversation:(id, title) => request("PATCH", `/assistant/conversations/${id}`, { title: title }),
+    deleteConversation:(id)        => request("DELETE", `/assistant/conversations/${id}`),
+    clearConversation: (id)        => request("DELETE", `/assistant/conversations/${id}/messages`),
+    stopTurn:          (id)        => request("POST", `/assistant/conversations/${id}/stop`),
+    updateSettings:    (body)      => request("PUT", "/assistant/settings", body),
   },
   monitorSettings: {
     // Manual tier — settings for orphan/non-integration-discovered assets.
