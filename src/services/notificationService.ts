@@ -29,6 +29,10 @@ export interface ListFilters {
   region?: string[];
   search?: string;
   includeCleared?: boolean;
+  // triggeredAt window — the assistant's correlation lookups ("what else
+  // fired around 02:00?"). Either bound may be omitted.
+  triggeredFrom?: Date;
+  triggeredTo?: Date;
 }
 
 export interface ListParams {
@@ -147,6 +151,14 @@ export async function listNotifications(params: ListParams) {
   if (typeof filters.acknowledged === "boolean") and.push({ acknowledged: filters.acknowledged });
   if (filters.assetId) and.push({ assetId: filters.assetId });
   if (filters.region && filters.region.length > 0) and.push({ regionTags: { hasSome: filters.region } });
+  if (filters.triggeredFrom || filters.triggeredTo) {
+    and.push({
+      triggeredAt: {
+        ...(filters.triggeredFrom ? { gte: filters.triggeredFrom } : {}),
+        ...(filters.triggeredTo ? { lte: filters.triggeredTo } : {}),
+      },
+    });
+  }
   if (filters.search) {
     and.push({
       OR: [

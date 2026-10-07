@@ -1364,7 +1364,7 @@ The **CPU core utilization** condition (`cpuCorePct`) finds single-threaded
 applications. "Above 90% for 3 polls" means the **same core** was above 90% on
 three polls in a row. Different cores each spiking once does not count. It
 raises **one alert per device**, naming the cores that stayed over the line,
-with the top five processes by CPU. Only the Polaris Agent and vCenter report
+with the top five processes by CPU. Only the Polaris Agent, vCenter and Unraid / TrueNAS hosts report
 per-core figures; any other device has no reading for it.
 
 When the whole device is busy, every core is hot. So while the device has an
@@ -1501,6 +1501,26 @@ only Read-Only. The host itself cannot be started or stopped from Polaris.
 
 See [Unraid → Workload actions](Integration-Unraid#workload-actions) and
 [TrueNAS SCALE → Workload actions](Integration-TrueNAS#workload-actions).
+
+### Rule 95
+
+**The assistant answers as the person asking, only reads, and never types a
+figure into a report.** The [AI assistant](AI-Assistant) looks things up with
+**your own** permissions: if your role cannot read alerts, neither can the
+assistant when you ask it, and alerts are limited to your regions exactly as on
+the Alerts page. It can only look things up — it never changes, acknowledges,
+pushes or deletes anything, and it cannot read stored credentials, API tokens,
+user accounts, roles, sign-in settings, automation scripts or server settings.
+A report it builds is a database extract: Polaris runs the query itself (up to
+5,000 rows), so the rows you download were never written by the model. Your
+conversations are visible only to you — administrators included — and are
+deleted after 90 days without activity. Creating a Local AI Assistant integration needs
+Read-Write on Roles and on API Tokens, because it also creates a read-only role
+and an API token for the model server's own use; the chat itself never uses that
+token. "Allow loopback" lets the model server be on the Polaris host itself, and
+allows nothing else that is normally blocked.
+
+See [AI Assistant](AI-Assistant).
 
 ### Rule 96
 

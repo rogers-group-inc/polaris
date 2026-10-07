@@ -1,10 +1,12 @@
 // public/js/graph-export.js — export a Cytoscape graph as PDF or Visio.
 //
-// Shared by the Application Map (appmap-export.js) and the Device Map's site
-// topology (map.js). Each page hands over an export CONTEXT — its live cy, its
-// stylesheet in the daylight palette, a title, a line or two saying what
-// narrowed the view, and the items of its key — and opens the Export menu
-// (Screenshot / PDF / Visio) with openMenu().
+// Shared by the Application Map (appmap-export.js), the Device Map's site
+// topology (map.js) and the traceroute path map (assets.js — the asset
+// slide-over's Paths tab and Path Monitor → Results). Each page hands over an
+// export CONTEXT — its live cy and its stylesheet in the daylight palette, OR
+// a ready-made scene (a graph that is not Cytoscape draws its own) — plus a
+// title, a line or two saying what narrowed the view, and the items of its
+// key, and opens the Export menu (Screenshot / PDF / Visio) with openMenu().
 //
 // Nothing is rasterised. sceneFromCy() reads what Cytoscape actually drew —
 // node shapes and boxes, edge routes (bezier control points, taxi and segment
@@ -23,10 +25,12 @@
 // is worse than none.
 //
 // Visio: one page sized to the graph at 1 model px = 1 pt, every node and
-// connection its own editable shape. Deliberately conservative, because no
-// Visio was available to test against: connections are 2-D line shapes (not
-// glued 1-D connectors), text takes Visio's default font, and device icons
-// are left out.
+// connection its own editable shape. Deliberately conservative: connections
+// are 2-D line shapes (not glued 1-D connectors), text takes Visio's default
+// font, and device icons are left out. The title, the header lines and the key
+// go on the page as text and swatch shapes above and below the drawing
+// (withHeaderAndKey), as the PDF prints them. The package itself is the shape
+// Visio for the web accepts — see vsdxDocumentXml.
 //
 // Depends on: window.jspdf (vendor), cytoscape (the cy handed in),
 // openModal / closeModal / showToast / showRowMenu / currentUsername (app.js).
@@ -444,21 +448,42 @@
     return (typeof _branding !== "undefined" && _branding && _branding.appName) ? _branding.appName : "Polaris";
   }
 
-  // Lays the key out across `width` pt; returns { lines: [[{item, x}]], height }.
+  // PURE (exposed for tests): the key as a box, the way the maps show it on
+  // screen (the App Map's Ports key, bottom left) — a "Key" heading over a
+  // vertical list, one swatch + label per row. A long key flows into columns
+  // of at most KEY_MAX_ROWS so the box stays a corner box, not a column down
+  // the sheet; columns are dropped again if the box would be wider than
+  // `maxW`. `measure(text)` is the text width at `fontPt` — jsPDF's for the
+  // PDF, an estimate for Visio. Coordinates are relative to the box's top
+  // left; width/height 0 when there is no key.
+  var KEY_MAX_ROWS = 6;
+  var KEY_BOX_BORDER = "#c8c8d4";   // the on-screen box's --color-border, on paper
+  function keyBoxLayout(items, measure, fontPt, maxW) {
+    items = items || [];
+    var SW = 16, GAP = 5, COLSEP = 14, PAD = 7;
+    var lineH = fontPt * 1.5, headerH = fontPt * 1.9;
+    if (!items.length) return { cols: [], width: 0, height: 0, pad: PAD, headerH: headerH, lineH: lineH, swatch: SW, gap: GAP, title: "Key" };
+    function build(nCols) {
+      var rows = Math.ceil(items.length / nCols), cols = [], x = PAD;
+      for (var c = 0; c * rows < items.length; c++) {
+        var slice = items.slice(c * rows, (c + 1) * rows);
+        var w = SW + GAP + Math.max.apply(null, slice.map(function (it) { return measure(it.text); }));
+        cols.push({ x: x, w: w, items: slice });
+        x += w + COLSEP;
+      }
+      var width = Math.max(x - COLSEP + PAD, PAD * 2 + measure("Key"));
+      return { cols: cols, rows: rows, width: width, height: PAD + headerH + rows * lineH + PAD * 0.5,
+        pad: PAD, headerH: headerH, lineH: lineH, swatch: SW, gap: GAP, title: "Key" };
+    }
+    var L = build(Math.ceil(items.length / KEY_MAX_ROWS));
+    while (L.width > maxW && L.cols.length > 1) L = build(L.cols.length - 1);
+    return L;
+  }
+
   function layoutKey(doc, items, width, fontPt) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(fontPt);
-    var SW = 16, GAP = 5, SEP = 12;
-    var lines = [[]], x = 0;
-    (items || []).forEach(function (it) {
-      var w = SW + GAP + doc.getTextWidth(pdfText(it.text));
-      if (x > 0 && x + w > width) { lines.push([]); x = 0; }
-      lines[lines.length - 1].push({ item: it, x: x });
-      x += w + SEP;
-    });
-    var lh = fontPt * 1.35;
-    var n = (items || []).length ? lines.length : 0;
-    return { lines: n ? lines : [], lineHeight: lh, height: n * lh, swatch: SW, gap: GAP };
+    return keyBoxLayout(items, function (t) { return doc.getTextWidth(pdfText(t)); }, fontPt, width);
   }
 
   function sheetSize(paperKey, orientation) {
@@ -673,16 +698,25 @@
     doc.restoreGraphicsState();
   }
 
+  // The key box, bottom left of the sheet, above the footer.
   function drawKey(doc, L) {
     var key = L.key;
-    if (!key.lines.length) return;
-    var y = L.size.h - MARGIN - (L.textPt + 6) - key.height;
-    doc.setFont("helvetica", "normal");
+    if (!key.cols.length) return;
+    var bx = MARGIN, by = L.size.h - MARGIN - (L.textPt + 6) - key.height;
+    doc.setLineDashPattern([], 0);
+    doc.setFillColor("#ffffff");
+    doc.setDrawColor(KEY_BOX_BORDER);
+    doc.setLineWidth(0.75);
+    doc.roundedRect(bx, by, key.width, key.height, 4, 4, "FD");
+    doc.setFont("helvetica", "bold");
     doc.setFontSize(L.textPt);
-    key.lines.forEach(function (line, li) {
-      var ly = y + li * key.lineHeight + key.lineHeight * 0.7;
-      line.forEach(function (cell) {
-        var x = MARGIN + cell.x, it = cell.item, mid = ly - L.textPt * 0.3;
+    doc.setTextColor("#1a1a1a");
+    doc.text(key.title, bx + key.pad, by + key.pad + L.textPt * 0.85);
+    doc.line(bx, by + key.pad + key.headerH - key.pad * 0.5, bx + key.width, by + key.pad + key.headerH - key.pad * 0.5);
+    doc.setFont("helvetica", "normal");
+    key.cols.forEach(function (col) {
+      col.items.forEach(function (it, r) {
+        var x = bx + col.x, ly = by + key.pad + key.headerH + r * key.lineH + key.lineH * 0.65, mid = ly - L.textPt * 0.3;
         if (it.kind === "box" || it.kind === "dot") {
           doc.setFillColor(it.fill || it.color);
           doc.setDrawColor(it.color);
@@ -871,9 +905,14 @@
     function PY(y) { return pageH - VSDX_MARGIN_IN - (y - bb.y1) * PT_IN; }
     var id = 0, shapes = [];
 
+    // Visio centres a paragraph by default (the No Style sheet). A label with
+    // textAlign "left" — the header and key text withHeaderAndKey adds, whose
+    // boxes are sized from an estimate of the text — starts at its box's left
+    // edge instead, so it sits against its swatch whatever the real width.
     function charSection(lbl) {
       return '<Section N="Character"><Row IX="0">' + cell("Size", num(lbl.fontPx * PT_IN), "PT") +
-        cell("Color", lbl.color || "#1a1a1a") + cell("Style", (lbl.bold ? 1 : 0) | (lbl.italic ? 2 : 0)) + "</Row></Section>";
+        cell("Color", lbl.color || "#1a1a1a") + cell("Style", (lbl.bold ? 1 : 0) | (lbl.italic ? 2 : 0)) + "</Row></Section>" +
+        (lbl.textAlign === "left" ? '<Section N="Paragraph"><Row IX="0">' + cell("HorzAlign", 0) + "</Row></Section>" : "");
     }
 
     function geomRows(pts, x0, y0) {
@@ -893,7 +932,8 @@
         var blk = nodeLabelBlock(b, lbl, lh);
         var tw = Math.max(w, Math.max.apply(null, lbl.lines.map(function (l) { return l.length; })) * lbl.fontPx * 0.62 * PT_IN + 0.1);
         var th = blk.h * PT_IN;
-        var tcx = PX(blk.align === "center" ? blk.x : blk.align === "right" ? blk.x - (tw / PT_IN) / 2 : blk.x + (tw / PT_IN) / 2) - x1;
+        var tcx = lbl.textAlign === "left" ? tw / 2
+          : PX(blk.align === "center" ? blk.x : blk.align === "right" ? blk.x - (tw / PT_IN) / 2 : blk.x + (tw / PT_IN) / 2) - x1;
         var tcy = PY(blk.top + blk.h / 2) - yBot;
         txt = cell("TxtPinX", num(tcx)) + cell("TxtPinY", num(tcy)) + cell("TxtWidth", num(tw)) + cell("TxtHeight", num(th)) +
           cell("TxtLocPinX", num(tw / 2)) + cell("TxtLocPinY", num(th / 2)) +
@@ -1138,15 +1178,19 @@
     return text;
   }
 
-  // ctx: { cy, lightStylesheet, title, fileBase, noun, metaLines, keyItems,
-  //        scopeNote } — see the header comment.
+  // ctx: { cy, lightStylesheet | scene, title, fileBase, noun, metaLines,
+  //        keyItems, scopeNote } — see the header comment.
   function checkCtx(ctx) {
-    if (!ctx || !ctx.cy || ctx.cy.nodes(":visible").length === 0) {
+    var empty = !ctx || (ctx.scene ? !ctx.scene.nodes.length : !ctx.cy || ctx.cy.nodes(":visible").length === 0);
+    if (empty) {
       showToast("Nothing to export", "error");
       return false;
     }
     return true;
   }
+
+  // A page that draws its own graph hands the scene over already built.
+  function sceneOf(ctx) { return ctx.scene || sceneFromCy(ctx.cy, ctx.lightStylesheet); }
 
   function openPdfDialog(ctx) {
     if (!checkCtx(ctx)) return;
@@ -1154,7 +1198,7 @@
       showToast("PDF library not loaded. Reload the page and try again.", "error");
       return;
     }
-    var scene = sceneFromCy(ctx.cy, ctx.lightStylesheet);
+    var scene = sceneOf(ctx);
     var o = readOpts();
     function options(list, cur) {
       return list.map(function (v) {
@@ -1217,10 +1261,81 @@
     refresh();
   }
 
+  // PURE (exposed for tests): a copy of `scene` with the title and header
+  // lines above the drawing and the key below it, as ordinary shapes — the
+  // Visio page's equivalent of the PDF's header and key (the PDF draws those
+  // itself, so it never uses this). Model px are points on the Visio page.
+  // Text widths are estimated (0.62 em per character, the Visio writer's own
+  // estimate), so each key label's box is about as wide as its text.
+  function withHeaderAndKey(scene, ctx) {
+    var b = scene.bbox, out = {
+      under: scene.under.slice(), parents: scene.parents.slice(), edges: scene.edges.slice(), nodes: scene.nodes.slice(),
+      minFontPx: scene.minFontPx, icons: scene.icons, bbox: null,
+    };
+    var KEY_PX = 9, TITLE_PX = 14, CHAR_EM = 0.62;
+    var width = Math.max(b.w, 360);
+    function textBox(text, x, yMid, fontPx, color, bold) {
+      var w = Math.max(4, text.length * fontPx * CHAR_EM), h = fontPx * 1.3;
+      out.nodes.push({ shape: "rect", polygon: null, x1: x, y1: yMid - h / 2, x2: x + w, y2: yMid + h / 2, fill: null, stroke: null,
+        strokeWidth: 0, strokeStyle: "solid", icon: null, z: 0,
+        label: { lines: [text], pdfLines: [pdfText(text)], fontPx: fontPx, mono: false, bold: !!bold, italic: false, color: color,
+          bg: null, valign: "center", halign: "center", mx: 0, my: 0, textAlign: "left" } });
+      return w;
+    }
+    // Header: title, then up to two lines of what narrowed the view.
+    var lines = [{ text: ctx.title ? appName() + " — " + ctx.title : "", px: TITLE_PX, color: "#1a1a1a", bold: true }]
+      .concat((ctx.metaLines || []).filter(Boolean).slice(0, 2).map(function (t) { return { text: t, px: KEY_PX, color: "#555555" }; }))
+      .filter(function (l) { return l.text; });
+    var headH = lines.reduce(function (n, l) { return n + l.px * 1.5; }, 0);
+    var y = b.y1 - headH - (lines.length ? 16 : 0);
+    var top = y;
+    lines.forEach(function (l) { textBox(l.text, b.x1, y + l.px * 0.75, l.px, l.color, l.bold); y += l.px * 1.5; });
+    // Key: the same box the PDF draws (keyBoxLayout), below the drawing at
+    // its left edge. Every part is its own shape, so it can be moved in Visio.
+    var K = keyBoxLayout(ctx.keyItems, function (t) { return t.length * KEY_PX * CHAR_EM; }, KEY_PX, width);
+    var bottom = b.y2;
+    if (K.cols.length) {
+      var bx = b.x1, by = b.y2 + 18;
+      // In `under`: the writers paint lines before boxes, and a white box
+      // painted last would hide the key's own line swatches and rule.
+      out.under.push({ shape: "round", polygon: null, x1: bx, y1: by, x2: bx + K.width, y2: by + K.height, fill: "#ffffff",
+        stroke: KEY_BOX_BORDER, strokeWidth: 0.75, strokeStyle: "solid", icon: null, label: null, z: 0 });
+      textBox(K.title, bx + K.pad, by + K.pad + K.headerH / 2 - K.pad * 0.25, KEY_PX, "#1a1a1a", true);
+      var ruleY = by + K.pad + K.headerH - K.pad * 0.5;
+      out.edges.push({ path: [{ type: "M", x: bx, y: ruleY }, { type: "L", x: bx + K.width, y: ruleY }], color: KEY_BOX_BORDER,
+        width: 0.75, style: "solid", arrowTarget: null, arrowSource: null, label: null, mid: { x: bx + K.width / 2, y: ruleY }, z: 0 });
+      K.cols.forEach(function (col) {
+        col.items.forEach(function (it, r) {
+          var sx = bx + col.x, mid = by + K.pad + K.headerH + r * K.lineH + K.lineH / 2, SW = K.swatch;
+          if (it.kind === "dot" || it.kind === "box") {
+            var rr = KEY_PX * 0.42;
+            out.nodes.push({ shape: it.kind === "dot" ? "ellipse" : "round", polygon: null,
+              x1: it.kind === "dot" ? sx + SW / 2 - rr : sx + 2, y1: mid - rr, x2: it.kind === "dot" ? sx + SW / 2 + rr : sx + SW - 2, y2: mid + rr,
+              // As drawKey: a box swatch with no fill is an outline, a dot is always filled.
+              fill: it.kind === "dot" ? it.fill || it.color : it.fill || null,
+              stroke: it.color, strokeWidth: 1, strokeStyle: it.dashed ? "dashed" : "solid", icon: null, label: null, z: 0 });
+          } else {
+            out.edges.push({ path: [{ type: "M", x: sx, y: mid }, { type: "L", x: sx + SW, y: mid }], color: it.color,
+              width: it.heavy ? 2.6 : 1.8, style: it.dashed ? "dashed" : "solid", arrowTarget: null, arrowSource: null, label: null,
+              mid: { x: sx + SW / 2, y: mid }, z: 0 });
+          }
+          textBox(it.text, sx + SW + K.gap, mid, KEY_PX, "#333333");
+        });
+      });
+      bottom = by + K.height;
+    }
+    var right = b.x1 + width;
+    out.nodes.forEach(function (n) { if (n.x2 > right) right = n.x2; });
+    out.bbox = { x1: b.x1, y1: Math.min(b.y1, top), x2: Math.max(b.x2, right), y2: bottom };
+    out.bbox.w = out.bbox.x2 - out.bbox.x1; out.bbox.h = out.bbox.y2 - out.bbox.y1;
+    out.minFontPx = Math.min(scene.minFontPx, KEY_PX);
+    return out;
+  }
+
   function exportVisio(ctx) {
     if (!checkCtx(ctx)) return;
     try {
-      var scene = sceneFromCy(ctx.cy, ctx.lightStylesheet);
+      var scene = withHeaderAndKey(sceneOf(ctx), ctx);
       var bytes = zipStore(vsdxParts(scene, appName() + " " + ctx.title, ctx.title));
       download(bytes, "application/vnd.ms-visio.drawing", ctx.fileBase + "-" + new Date().toISOString().slice(0, 10) + ".vsdx");
       showToast(ctx.title + " exported for Visio");
@@ -1263,6 +1378,8 @@
     zipStore: zipStore,
     vsdxPageXml: vsdxPageXml,
     vsdxParts: vsdxParts,
+    withHeaderAndKey: withHeaderAndKey,
+    keyBoxLayout: keyBoxLayout,
     // live
     sceneFromCy: sceneFromCy,
     openMenu: openMenu,

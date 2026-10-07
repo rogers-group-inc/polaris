@@ -166,13 +166,15 @@ including a narrowed endpoint-search view.
   the printed graph is smaller than that**. A site that fits one sheet at that
   size prints on one; a bigger one is split into overlapping sections after an
   overview page with the section grid, and empty sections are skipped. Every
-  page carries the legend (health colours, link types, location groups).
+  page carries the legend (health colours, link types, location groups) in a
+  box at the bottom left.
   Characters the PDF fonts cannot print are simplified: `↔` prints as `<->`.
 - **Export to Visio (.vsdx)**: one Visio page sized to the graph, every device,
   location box and link a separate editable shape, health colours and link
   styles kept. Links are drawn lines, **not glued connectors** (moving a device
   in Visio does not drag its links), text uses Visio's default font, and device
-  icons are not included.
+  icons are not included. The title and summary line sit above the graph, and
+  the legend sits in a box at its bottom left, as on the PDF.
 
 The Application Map has the same menu ([Application Map](Application-Map#export)).
 

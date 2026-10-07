@@ -29,7 +29,11 @@ discovery at `write`.
 | **Unraid** | Unraid GraphQL API (7.2+) | host, VMs, containers | [Unraid](Integration-Unraid) |
 | **TrueNAS SCALE** | TrueNAS JSON-RPC WebSocket API (25.04+) | host, VMs, Apps | [TrueNAS SCALE](Integration-TrueNAS) |
 
-Plus two things managed from this page that are not integration rows:
+Plus one integration that discovers nothing: **Local AI Assistant** — the model server
+behind the [AI assistant](AI-Assistant). It has no Discover button, no
+auto-discovery and no Monitoring tab.
+
+And two things managed from this page that are not integration rows:
 
 - the **[Polaris Agent](Polaris-Agent)** tab — builds, SSH deployment, and
   service/process discovery rules;

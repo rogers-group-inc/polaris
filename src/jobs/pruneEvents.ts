@@ -13,6 +13,7 @@ import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { archiveAndExport, getRetentionSettings } from "../services/eventArchiveService.js";
 import { runInstrumentedJob } from "./_metrics.js";
+import { pruneAssistantConversations } from "../services/assistantConversationService.js";
 
 const INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -37,6 +38,15 @@ async function pruneOldEvents(): Promise<void> {
       });
       if (count > 0) {
         logger.info({ count, retentionDays }, `Pruned old events (>${retentionDays} days)`);
+      }
+
+      // AI assistant conversations idle past their own retention window
+      // (business rule 95(e)). Separate try: a failure here must not look
+      // like the event prune failed.
+      try {
+        await pruneAssistantConversations();
+      } catch (err) {
+        logger.error(err, "Assistant conversation prune failed");
       }
     });
   } catch (err) {

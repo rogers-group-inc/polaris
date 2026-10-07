@@ -23,7 +23,14 @@ import * as azureArc from "../../services/azureArcService.js";
 import { isValidIpAddress, ipInCidr, isPrivateIpv4 } from "../../utils/cidr.js";
 import { isFortinetIntegrationType } from "../../utils/pollingCompatibility.js";
 import { SECRET_MASK, isMaskedSecret } from "../../utils/secretMask.js";
-import { isBlockedOutboundHost } from "../../utils/netGuard.js";
+import { isBlockedOutboundHost, isBlockedLlmHost, isLoopbackHost } from "../../utils/netGuard.js";
+import * as llm from "../../services/llmService.js";
+import {
+  assertCanProvision,
+  provisionLlmAccess,
+  deprovisionLlmAccess,
+  regenerateLlmToken,
+} from "../../services/llmIntegrationService.js";
 import { logEvent } from "./events.js";
 import { getBaselines } from "../../services/discoveryDurationService.js";
 import { requestCancel, listActiveRuns } from "../../services/discoveryRunState.js";
@@ -978,6 +985,49 @@ const WorkloadConfigSchema = z.object({
   verboseLogging: z.boolean().optional().default(false),
 }).superRefine(refineConfigHost);
 
+// Local AI Assistant (model server) for the AI assistant (business rule 95). OpenAI-compatible
+// chat completions — Ollama, LM Studio, vLLM, llama.cpp, LocalAI, Open WebUI.
+// No discovery, no monitoring, no assets: it is read by the assistant routes
+// only. The host guard is the llm variant (rule 95(g)): `allowLoopback` lifts
+// the block for loopback ONLY, because a local model so often listens on the
+// Polaris host itself. roleId / roleName / tokenId are stamped by the server
+// at create time and are not accepted from the client.
+const LlmConfigSchema = z.object({
+  host:      z.string().trim().min(1, "Host is required"),
+  port:      z.number().int().min(1).max(65535).optional().default(11434),
+  useHttps:  z.boolean().optional().default(false),
+  verifySsl: z.boolean().optional().default(true),
+  basePath:  z.string().trim().max(100).optional().default("/v1"),
+  apiToken:  z.string().max(2048).optional().default(""),
+  // What the chat window calls the assistant ("Ask Polaris", "NOC Bot"…);
+  // blank = "Assistant". Also told to the model as its name.
+  displayName: z.string().trim().max(40).optional().default(""),
+  // Blank = the server's default pick at chat time (llmService.pickDefaultModel:
+  // the first tool-calling model, else the first chat model).
+  model:     z.string().trim().max(200).optional().default(""),
+  temperature:      z.number().min(0).max(2).optional().default(0.2),
+  maxToolRounds:    z.number().int().min(1).max(12).optional().default(6),
+  requestTimeoutMs: z.number().int().min(5_000).max(600_000).optional().default(120_000),
+  maxRowsPerTool:   z.number().int().min(10).max(1000).optional().default(200),
+  contextMessages:  z.number().int().min(2).max(100).optional().default(20),
+  systemPromptExtra: z.string().max(4000).optional().default(""),
+  allowLoopback:    z.boolean().optional().default(false),
+  verboseLogging:   z.boolean().optional().default(false),
+}).superRefine((cfg, ctx) => {
+  if (cfg.host && isBlockedLlmHost(cfg.host, cfg.allowLoopback)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["host"],
+      message: isLoopbackHost(cfg.host)
+        ? `Host "${cfg.host.trim()}" is a loopback address. Tick "Allow loopback" if the LLM server runs on the Polaris host itself.`
+        : `Host "${cfg.host.trim()}" is in a blocked range (link-local / metadata / multicast) and cannot be used as an LLM server.`,
+    });
+  }
+});
+
+/** Server-stamped llm config keys a client may never set or overwrite. */
+const LLM_SERVER_KEYS = ["roleId", "roleName", "tokenId"] as const;
+
 const CreateIntegrationSchema = z.discriminatedUnion("type", [
   z.object({
     type:         z.literal("fortimanager"),
@@ -1052,6 +1102,15 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
     enabled:      z.boolean().optional().default(true),
     autoDiscover: z.boolean().optional().default(true),
     pollInterval: z.number().int().min(1).max(24).optional().default(1),
+  }),
+  z.object({
+    type:         z.literal("llm"),
+    name:         z.string().min(1, "Name is required"),
+    config:       LlmConfigSchema,
+    enabled:      z.boolean().optional().default(true),
+    // Nothing to discover — forced false at create regardless of input.
+    autoDiscover: z.boolean().optional().default(false),
+    pollInterval: z.number().int().min(1).max(24).optional().default(12),
   }),
 ]);
 
@@ -1257,21 +1316,49 @@ router.post("/", async (req, res, next) => {
       // clear message instead of failing later in the apply pass.
       validateAutoMonitorPatterns(cfg);
     }
+    // An llm integration also mints a role + API token (rule 95(f)); the
+    // caller must hold the grants to do that by hand, checked before any
+    // row is written.
+    if (input.type === "llm") assertCanProvision(req);
     // Stamp verboseLoggingEnabledAt when creating with verbose logging already on.
     const createConfig: Record<string, unknown> = { ...(input.config as any) };
     if (createConfig.verboseLogging === true) {
       createConfig.verboseLoggingEnabledAt = new Date().toISOString();
     }
-    const integration = await prisma.integration.create({
+    let integration = await prisma.integration.create({
       data: {
         type: input.type,
         name: input.name,
         config: createConfig as any,
         enabled: input.enabled,
-        autoDiscover: input.autoDiscover ?? true,
+        // llm has nothing to discover — never let the scheduler pick it up.
+        autoDiscover: input.type === "llm" ? false : (input.autoDiscover ?? true),
         pollInterval: input.pollInterval,
       },
     });
+
+    let llmAccess: Awaited<ReturnType<typeof provisionLlmAccess>> | null = null;
+    if (input.type === "llm") {
+      try {
+        llmAccess = await provisionLlmAccess(integration, req.session?.username ?? "unknown");
+      } catch (err) {
+        // All or nothing: an llm integration without its role/token is not
+        // what the operator asked for.
+        await prisma.integration.delete({ where: { id: integration.id } }).catch(() => {});
+        throw err;
+      }
+      integration = await prisma.integration.update({
+        where: { id: integration.id },
+        data: {
+          config: {
+            ...createConfig,
+            roleId: llmAccess.roleId,
+            roleName: llmAccess.roleName,
+            tokenId: llmAccess.tokenId,
+          } as any,
+        },
+      });
+    }
 
     // Defensive: a new integration's id has no cached resolver entries yet,
     // but bumping the cache here keeps POST symmetric with PUT/DELETE and
@@ -1282,6 +1369,16 @@ router.post("/", async (req, res, next) => {
     logEvent({ action: "integration.created", resourceType: "integration", resourceId: integration.id, resourceName: input.name, actor: req.session?.username, message: `Integration "${input.name}" (${input.type}) created` });
 
     const response: Record<string, unknown> = stripSecret(integration);
+
+    // Shown ONCE — only the hash is stored (same contract as API Tokens).
+    if (llmAccess) {
+      response.llmAccess = {
+        roleName: llmAccess.roleName,
+        tokenName: llmAccess.tokenName,
+        rawToken: llmAccess.rawToken,
+        apiPath: "/api/v1",
+      };
+    }
 
     // Auto-register FortiManager/FortiGate IP as asset/reservation.
     // Literal comparison kept (not isFortinetIntegrationType): it's the
@@ -1338,11 +1435,26 @@ router.put("/:id", async (req, res, next) => {
       if (!input.config.bindPassword || isMaskedSecretSentinel(input.config.bindPassword)) {
         newConfig.bindPassword = currentConfig.bindPassword;
       }
+      if (existing.type === "llm") {
+        // The loose update schema skips LlmConfigSchema, so run the merged
+        // config through it here: that is both the shape check and the
+        // loopback-aware host guard (rule 95(g)). Server-stamped keys are
+        // carried from the stored row, never from the request.
+        const { verboseLoggingEnabledAt, ...rest } = newConfig;
+        for (const k of LLM_SERVER_KEYS) delete rest[k];
+        const parsed = LlmConfigSchema.safeParse(rest);
+        if (!parsed.success) throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "));
+        for (const k of Object.keys(newConfig)) delete newConfig[k];
+        Object.assign(newConfig, parsed.data, verboseLoggingEnabledAt ? { verboseLoggingEnabledAt } : {});
+        for (const k of LLM_SERVER_KEYS) if (currentConfig[k] !== undefined) newConfig[k] = currentConfig[k];
+        data.autoDiscover = false;
+      }
       // SSRF guard — the update path validates config as a loose record, so the
       // per-type schema's host refinement (refineConfigHost) doesn't run here.
       // Re-check the merged host explicitly so an edit can't smuggle in a
       // blocked target. See src/utils/netGuard.ts + the 2026-06-03 review (M4).
-      if (typeof newConfig.host === "string" && isBlockedOutboundHost(newConfig.host)) {
+      // (llm was checked just above with its own loopback-aware variant.)
+      if (existing.type !== "llm" && typeof newConfig.host === "string" && isBlockedOutboundHost(newConfig.host)) {
         throw new AppError(
           400,
           `Host "${newConfig.host.trim()}" is in a blocked range (loopback / link-local / ` +
@@ -1546,6 +1658,12 @@ router.delete("/:id", async (req, res, next) => {
       .catch((err: any) => {
         logEvent({ action: "contact.directory_sync.purge_failed", resourceType: "integration", resourceId: req.params.id, resourceName: existing.name, actor: req.session?.username, level: "error", message: `Could not remove directory-synced contacts for "${existing.name}": ${err?.message || "Unknown error"}` });
       });
+    if (existing.type === "llm") {
+      await deprovisionLlmAccess(
+        { id: existing.id, name: existing.name, config: existing.config as Record<string, unknown> },
+        req.session?.username ?? "unknown",
+      );
+    }
     await prisma.integration.delete({ where: { id: req.params.id } });
     invalidateMonitorSettingsCache({ integrationId: req.params.id });
     if (existing.type === "entraid" || existing.type === "activedirectory") bumpDirectoryCache();
@@ -1587,6 +1705,8 @@ router.post("/:id/test", async (req, res, next) => {
       result = await unraid.testConnection(config as any);
     } else if (integration.type === "truenas") {
       result = await truenas.testConnection(config as any);
+    } else if (integration.type === "llm") {
+      result = await llm.testConnection(config as any);
     } else {
       result = { ok: false, message: `Unknown integration type: ${integration.type}` };
     }
@@ -2221,6 +2341,58 @@ router.post("/:id/register", async (req, res, next) => {
   }
 });
 
+// POST /api/v1/integrations/llm/probe-tools — does this model really call
+// tools? One real chat request offering a dummy tool (llmService.probeToolCalling),
+// run only on the model the operator asks about, because it costs a model
+// call. Body: { config, model, id? } — the form's (possibly unsaved) config,
+// validated through LlmConfigSchema so the loopback-aware host guard applies;
+// `id` lets a blank API key fall back to the stored one, as on POST /test.
+const ProbeToolsSchema = z.object({
+  config: z.record(z.unknown()),
+  model:  z.string().trim().min(1).max(200),
+  id:     z.string().uuid().optional(),
+});
+router.post("/llm/probe-tools", async (req, res, next) => {
+  try {
+    const body = ProbeToolsSchema.parse(req.body);
+    const raw: Record<string, unknown> = { ...body.config };
+    for (const k of LLM_SERVER_KEYS) delete raw[k];
+    if (body.id && (!raw.apiToken || isMaskedSecretSentinel(raw.apiToken))) {
+      const stored = await prisma.integration.findFirst({ where: { id: body.id, type: "llm" }, select: { config: true } });
+      raw.apiToken = (stored?.config as Record<string, unknown> | undefined)?.apiToken ?? "";
+    }
+    const parsed = LlmConfigSchema.safeParse(raw);
+    if (!parsed.success) throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "));
+    const toolCalling = await llm.probeToolCalling(parsed.data as llm.LlmConfig, body.model);
+    res.json({ model: body.model, toolCalling });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/integrations/:id/llm/regenerate-token — replace the llm
+// integration's API token (rule 95(f)). The old token stops working at once;
+// the new one is returned ONCE. Same grant as minting a token by hand.
+router.post("/:id/llm/regenerate-token", requirePermission("apiTokens", "write"), async (req, res, next) => {
+  try {
+    const integration = await prisma.integration.findUnique({ where: { id: req.params.id as string } });
+    if (!integration) throw new AppError(404, "Integration not found");
+    if (integration.type !== "llm") throw new AppError(400, "Only Local AI Assistant integrations carry a provisioned API token");
+    const config = integration.config as Record<string, unknown>;
+    const out = await regenerateLlmToken(
+      { id: integration.id, name: integration.name, config },
+      req.session?.username ?? "unknown",
+    );
+    await prisma.integration.update({
+      where: { id: integration.id },
+      data: { config: { ...config, tokenId: out.tokenId } as any },
+    });
+    res.json({ roleName: out.roleName, tokenName: out.tokenName, rawToken: out.rawToken, apiPath: "/api/v1" });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/v1/integrations/:id/discover — manually trigger DHCP discovery
 router.post("/:id/discover", async (req, res, next) => {
   try {
@@ -2271,6 +2443,10 @@ router.post("/test", async (req, res, next) => {
         if ((input.type === "unraid" || input.type === "truenas") && needsRestore(cfg.apiToken)) {
           cfg.apiToken = stored.apiToken;
         }
+        // The llm API key is optional, so only restore when one is stored.
+        if (input.type === "llm" && needsRestore(cfg.apiToken) && stored.apiToken) {
+          cfg.apiToken = stored.apiToken;
+        }
       }
     }
 
@@ -2292,6 +2468,8 @@ router.post("/test", async (req, res, next) => {
       result = await unraid.testConnection(input.config as unraid.UnraidConfig);
     } else if (input.type === "truenas") {
       result = await truenas.testConnection(input.config as truenas.TrueNasConfig);
+    } else if (input.type === "llm") {
+      result = await llm.testConnection(input.config);
     } else {
       result = { ok: false, message: `Unknown integration type: ${(input as any).type}` };
     }
