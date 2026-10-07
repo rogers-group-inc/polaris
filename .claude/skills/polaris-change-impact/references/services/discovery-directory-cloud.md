@@ -42,6 +42,29 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/unraidService.ts
+
+**What it owns:** The Unraid integration's client — Unraid 7.2+'s built-in GraphQL API (`POST /graphql`, `x-api-key` header; HTTPS by default, plain HTTP when `useTls: false`). One query (`UNRAID_INVENTORY_QUERY`) answers the host (info.os / system / baseboard / versions), its live usage (metrics.cpu / memory / network), the array + cache pools and their disks (with temperatures), Docker containers (state, image, `isUpdateAvailable`, network mode + settings, LAN ports) and VM domains (id, name, state — Unraid publishes NO vCPU / memory / guest IP for a VM). Per-container CPU / memory exists only as the `dockerContainerStats` SUBSCRIPTION, so `sampleUnraidContainerStats` opens a `graphql-transport-ws` socket (the `ws` package), collects one event per running container for `statsWindowMs` (default 4 s, max 15 s, resolves early once every running container reported) and closes. Output is the shared `WorkloadDiscoveryResult` / `WorkloadSnapshot` (services/discovery/workloadSync.ts). Also the write side: `containerAction` (start / stop / restart / `updateContainer`), `vmAction` (start / stop / reboot), `refreshUpdateChecks` (`refreshDockerDigests`).
+
+**Public API:** testConnection, discoverInventory, fetchUnraidSnapshot, proxyQuery (queries only — mutations / subscriptions refused), containerAction, vmAction, refreshUpdateChecks, unraidGraphql, sampleUnraidContainerStats, UNRAID_INVENTORY_QUERY; pure parsers parseUnraidInventory / parseUnraidHostUsage / parseUnraidPools / parseUnraidDisks / parseDockerSize / parseDockerMemUsage / containerOwnIp / unprefixId; UnraidConfig.
+
+**Cross-service deps:** discovery/workloadSync (types + `normalizeWorkloadState`).
+
+**Used by:** src/api/routes/integrations.ts — both test-connection handlers + the Query API branch. src/services/discovery/discoveryEngine.ts — preflight + dispatch (`discoverInventory` → `syncWorkloadDevices`). src/services/monitoringService.ts — `fetchUnraidSnapshot` behind the per-integration workload snapshot cache (the `unraid` polling method).
+
+**Invariants:**
+- A top-level field that comes back as a GraphQL error (Docker service stopped, VM manager off, or the key's role lacks it) marks the read INCOMPLETE (`dockerFailed` / `vmsFailed` → `inventoryComplete: false`) — never an empty list. The sweep would otherwise read "Docker is off" as every container deleted.
+- Container name = `names[0]` without the leading `/`; that name is the identity (`${integrationId}:ctr:<name>`). The PrefixedID (`<server>:<id>`) is the ACTION handle only — it changes on recreate.
+- `containerOwnIp` gives a container an IP only on a non-bridge, non-host network (br0 / macvlan); a bridged container answers on its host's address and two assets must never claim one IP.
+- Host memory in use = total − available (Unraid's `used` counts reclaimable cache). A disk temperature of 0 is a spun-down / absent disk → null, never charted as 0 °C.
+- SMBIOS "To Be Filled By O.E.M."-style system fields fall back to the baseboard; the projection's serial rule still refuses placeholders (rule 84).
+
+**When changing this:**
+- Field shapes are from the published schema (`unraid/api` → `api/generated-schema.graphql`); verify on a real 7.2 box (Settings → Management Access → API → GraphQL sandbox) and refresh tests/unit/unraidService.test.ts fixtures.
+- A new projected field → the `workloadRule` entries in `src/utils/assetProjection.ts` + the shared observed builders in workloadSync — both platforms at once.
+
+---
+
 ## services/activeDirectoryService.ts
 
 **What it owns:** On-prem Active Directory device discovery via LDAP/LDAPS client (computer objects, OU filtering, SID/GUID identity, disabled-account handling).

@@ -148,6 +148,45 @@ export interface WorkloadDiscoveryResult {
   presentContainerNames: string[];
 }
 
+/** Live usage for one workload (or the host), as one monitor tick reads it. */
+export interface WorkloadUsage {
+  cpuPct: number | null;
+  /** Per-core load, host only. */
+  perCorePct?: number[] | null;
+  memUsedBytes: number | null;
+  memTotalBytes: number | null;
+}
+
+export interface WorkloadInterfaceReading {
+  name: string;
+  operUp: boolean | null;
+  rxBytes: number | null;
+  txBytes: number | null;
+  rxErrors: number | null;
+  txErrors: number | null;
+  rxDrops: number | null;
+  txDrops: number | null;
+  speedMbps: number | null;
+}
+
+/**
+ * Everything one monitor tick needs about one integration, from ONE read of
+ * the host's API: the inventory (states, pools, disk temperatures) plus live
+ * usage. Warm-cached per integration in monitoringService, the vCenter
+ * quickStats pattern — never fetched per asset.
+ */
+export interface WorkloadSnapshot {
+  fetchedAt: number;
+  /** The round trip, reported as the response time of every asset it answers. */
+  durationMs: number;
+  inventory: WorkloadDiscoveryResult;
+  host: WorkloadUsage & { interfaces: WorkloadInterfaceReading[] };
+  /** Keyed by WorkloadVm.platformId. Absent = the platform reports no VM usage. */
+  vmUsage: Map<string, WorkloadUsage>;
+  /** Keyed by WorkloadContainer.platformId. */
+  containerUsage: Map<string, WorkloadUsage>;
+}
+
 /** Map a platform's state word to the four states the rest of Polaris reads. */
 export function normalizeWorkloadState(raw: string | null | undefined): WorkloadState {
   const s = String(raw ?? "").trim().toLowerCase();
