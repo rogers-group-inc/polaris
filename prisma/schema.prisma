@@ -274,6 +274,7 @@ model Integration {
   controllerClaims      AssetControllerClaim[] // Back-relation: managed-device claims this integration's gates asserted (business rule 83)
   monitorClassOverrides MonitorClassOverride[] // Back-relation: (assetType, integration) override rows
   vcenterDatastores     VcenterDatastore[] // Back-relation: current-state datastore rows (vcenter type only)
+  assistantConversations AssistantConversation[] // Back-relation: chats last answered by this llm integration (SetNull on delete)
 
   @@index([type])
   @@index([enabled])
@@ -3665,6 +3666,7 @@ model User {
   savedTableFilters SavedTableFilter[]
   tableTabs         UserTableTabs[]
   passkeys          UserPasskey[]
+  assistantConversations AssistantConversation[]
 
   @@index([roleId])
   @@map("users")
@@ -6228,4 +6230,67 @@ model SubnetExclusion {
 
   @@index([cidr])
   @@map("subnet_exclusions")
+}
+
+// ─── AI assistant (business rule 94) ─────────────────────────────────────────
+//
+// One chat thread in the floating assistant widget. Owner-only by rule 94(d):
+// every read and write is scoped to userId = the session user, admins
+// included — a conversation holds whatever its owner could see, so it is that
+// owner's data. Pruned after the `assistantRetentionDays` setting (default 90)
+// by the hourly pruneEvents job. integrationId names the `llm` integration
+// that answered last; SetNull keeps the history when the integration goes.
+model AssistantConversation {
+  id            String             @id @default(uuid())
+  userId        String
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  integrationId String?
+  integration   Integration?       @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+  title         String             @default("New conversation")
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  messages      AssistantMessage[]
+
+  @@index([userId, updatedAt])
+  @@index([updatedAt])
+  @@map("assistant_conversations")
+}
+
+// One turn. role is "user" or "assistant" (tool calls and their results are
+// never stored — they are re-derived per request, so a stored conversation
+// can never replay data its owner has since lost access to). stopped = the
+// reply was cut off by the Stop button or a dropped connection; content then
+// holds the partial text.
+model AssistantMessage {
+  id             String                @id @default(uuid())
+  conversationId String
+  conversation   AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String // user | assistant
+  content        String                @db.Text
+  toolsUsed      Json                  @default("[]") // [{ name, label, ok }]
+  stopped        Boolean               @default(false)
+  createdAt      DateTime              @default(now())
+  reports        AssistantReport[]
+
+  @@index([conversationId, createdAt])
+  @@map("assistant_messages")
+}
+
+// A downloadable report the assistant produced (rule 94(c)): rows come from
+// the database via the create_report tool, never from model text, and are
+// snapshotted so reopening the conversation downloads the figures the user
+// saw at the time. Capped at 5000 rows by the service.
+model AssistantReport {
+  id          String           @id @default(uuid())
+  messageId   String
+  message     AssistantMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  title       String
+  columns     Json // [{ key, label }]
+  rows        Json // [{ [key]: value }]
+  rowCount    Int
+  truncated   Boolean          @default(false)
+  generatedAt DateTime         @default(now())
+
+  @@index([messageId])
+  @@map("assistant_reports")
 }

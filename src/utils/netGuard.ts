@@ -97,3 +97,31 @@ export function assertOutboundHostAllowed(host: string): void {
     );
   }
 }
+
+/**
+ * True for the loopback subset of the blocklist only: "localhost" (and
+ * *.localhost), 127.0.0.0/8, ::1 and ::ffff:127.x. Link-local, metadata,
+ * unspecified and multicast are NOT loopback and stay blocked.
+ */
+export function isLoopbackHost(host: string): boolean {
+  const h = normalizeHost(host);
+  if (!h) return false;
+  if (h === "localhost" || h.endsWith(".localhost")) return true;
+  const mapped = h.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  const ip = mapped ? mapped[1] : h;
+  if (!isValidIpAddress(ip)) return false;
+  return ip.includes(":") ? ip === "::1" : ipInCidr(ip, "127.0.0.0/8");
+}
+
+/**
+ * The `llm` integration's variant of the guard. A local model server very
+ * often listens on the Polaris host itself (Ollama's default is
+ * localhost:11434), so an operator may tick "Allow loopback" — which lifts the
+ * block for loopback ONLY. Everything else in the blocklist (link-local and
+ * the cloud metadata address, unspecified, multicast) is refused regardless.
+ * Business rule 94(g).
+ */
+export function isBlockedLlmHost(host: string, allowLoopback: boolean): boolean {
+  if (!isBlockedOutboundHost(host)) return false;
+  return !(allowLoopback && isLoopbackHost(host));
+}

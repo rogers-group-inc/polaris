@@ -126,6 +126,10 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 COPY public ./public
+# The operator wiki (~0.7 MB of Markdown). The AI assistant's search_help tool
+# indexes it to answer "how do I…" questions (helpIndexService, business rule
+# 94); without it the assistant says help is unavailable on this install.
+COPY docs/wiki ./docs/wiki
 # Polaris Agent Go source — the in-app build feature (Server Settings →
 # Maintenance → Polaris Agent → Build) shells out to `go build` against
 # this directory. Without it, agentBuildService throws "agent/ source
