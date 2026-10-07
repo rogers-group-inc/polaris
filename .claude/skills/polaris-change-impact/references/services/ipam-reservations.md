@@ -84,12 +84,13 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Reverse (IP → PTR) and forward (hostname → A/AAAA) DNS lookup via three modes (standard/UDP, DoT/TLS, DoH/HTTPS); per-asset TTL caching; resolver configuration storage.
 
-**Public API:** DnsSettings, PtrRecord, ARecord, ResolverLike, getDnsSettings, updateDnsSettings, createResolver, getConfiguredResolver.
+**Public API:** DnsSettings, PtrRecord, ARecord, ResolverLike, DnsTestTarget, getDnsSettings, updateDnsSettings, createResolver, getConfiguredResolver, parseDnsTestTarget.
 
 **Used by:**
 - src/api/routes/assets.ts — GET /assets/:id, resolve PTR names for associated IPs
 - src/services/discovery/discoveryEngine.ts — resolve PTR during discovery (dispatched from POST /integrations/discover)
-- src/api/routes/serverSettings.ts — GET/PUT /server-settings/dns, CRUD DNS config + test endpoint
+- src/api/routes/serverSettings.ts — GET/PUT /server-settings/dns, CRUD DNS config + test endpoint (`parseDnsTestTarget`: an IP runs a PTR lookup; a hostname, host:port or full URL runs an A/AAAA lookup — the Test DNS Lookup card accepts an integration URL pasted as-is)
+- src/services/discovery/workloadSync.ts — `getConfiguredResolver().lookup` resolves an Unraid / TrueNAS host configured by name
 
 **Invariants:**
 - Three modes (standard, dot, doh): standard falls back to system DNS, returns null TTL; DoT connects to port 853 (configurable), parses TCP wire format; DoH uses JSON API (Cloudflare/Google/Quad9).

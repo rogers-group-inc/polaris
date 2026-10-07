@@ -90,7 +90,7 @@ the stored key.
 | Field | Default | |
 |---|---|---|
 | Name | — | |
-| Host / IP | — | the Unraid server's address |
+| Host / IP | — | the Unraid server's address. A hostname is resolved through Server Settings → DNS (then the system resolver); the host asset gets the resolved IP as its IP Address and the name as its DNS Name |
 | Port | blank | blank means **443** with HTTPS, **80** without |
 | Use HTTPS | **on** | |
 | Verify TLS certificate | **on** | turn off only for a self-signed certificate you cannot replace |

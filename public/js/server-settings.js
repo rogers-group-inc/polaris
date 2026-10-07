@@ -499,14 +499,14 @@ function dnsCardsHTML() {
   '<div class="settings-card">' +
     '<h4>Test DNS Lookup</h4>' +
     '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
-      'Verify that the configured DNS servers can perform reverse lookups by testing with a known IP address.' +
+      'Verify that the configured DNS servers answer, by looking up a known IP address or hostname.' +
     '</p>' +
-    '<div class="form-group"><label>Test IP Address</label>' +
+    '<div class="form-group"><label>IP Address or Hostname</label>' +
       '<div style="display:flex;gap:8px;align-items:center">' +
-        '<input type="text" id="f-dns-test-ip" value="8.8.8.8" placeholder="e.g. 8.8.8.8 or 2001:4860:4860::8888" style="width:320px">' +
+        '<input type="text" id="f-dns-test-ip" value="8.8.8.8" placeholder="e.g. 8.8.8.8, nas.example.lan or https://nas.example.lan" style="width:320px">' +
         '<button class="btn btn-secondary" id="btn-dns-test">Test Lookup</button>' +
       '</div>' +
-      '<p class="hint">Enter an IPv4 or IPv6 address to perform a test PTR lookup against the configured servers.</p>' +
+      '<p class="hint">An IP address runs a reverse (PTR) lookup; a hostname or URL runs a forward (A/AAAA) lookup against the configured servers.</p>' +
       '<div id="dns-status" style="font-size:0.82rem;margin-top:0.4rem"></div>' +
     '</div>' +
   '</div>' +
