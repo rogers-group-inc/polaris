@@ -1067,6 +1067,7 @@ const api = {
     merge:  (id, body) => request("POST", `/conflicts/${id}/merge`, body),
     // duplicate-IP conflicts only — body { assetId, ipAddress }
     reassignIp: (id, body) => request("POST", `/conflicts/${id}/reassign-ip`, body),
+    clearIp: (id, body) => request("POST", `/conflicts/${id}/clear-ip`, body),
     // subnet chassis-replacement conflicts only (business rule 41)
     chassisDiff: (id) => request("GET", `/conflicts/${id}/chassis-diff`),
     migrateReservations: (id, body) => request("POST", `/conflicts/${id}/migrate-reservations`, body),

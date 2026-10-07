@@ -116,6 +116,7 @@ There is nothing to adopt, so the card offers the verb matching the real cause:
 | Cause | Verb |
 |---|---|
 | **Two devices** | **Reassign IP** — type a new address on **one** claimant. Written with the asset form's own pin semantics, and it **refuses an address another network-present asset already holds**, which would move the duplicate rather than resolve it |
+| **Two devices, one offline** | **Clear** — blank that claimant's address when you don't know where it will turn up. The next discovery run that reports it on a **different** address fills the blank in. Its old address is held off while the other device still has it, so a stale lease can't put it back; once nothing else holds the old address it may return. Typing an address on the asset form ends the hold |
 | **One device recorded twice** | **Merge** — name a survivor and the rows to absorb. It runs the same engine the asset page's Merge modal uses, so provenance, MACs, IP history, dependency edges and monitoring carry identically |
 
 Merge accepts **no field winners** — blank-fill is what every automatic absorb

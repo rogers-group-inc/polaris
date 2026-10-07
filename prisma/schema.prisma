@@ -683,6 +683,15 @@ model Asset {
   // Address field in the edit form — ipAddress then reverts to the
   // discovery-projected value. See src/services/ipOverrideService.ts.
   ipOverride            String?
+  // The address an operator BLANKED from a duplicate-IP conflict card (rule
+  // 40(j) — "Clear" on an offline device's row). ipAddress is null while this
+  // is set. The src/db.ts guard drops any later discovery write re-staging
+  // THIS address while another network-present asset still records it (the
+  // offline device's stale lease must not walk back onto the contested
+  // address); a write staging any OTHER address passes through and releases
+  // the hold in the same write, as does re-staging this one once nothing
+  // else holds it. Operator IP writes (form, reassign) null it explicitly.
+  ipCleared             String?
   macAddress            String? // Most recently seen MAC, e.g. "AA:BB:CC:DD:EE:FF"
   hostname              String?
   // Operator hostname override (pin) — coordSource-style. When set, this value

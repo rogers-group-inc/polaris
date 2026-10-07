@@ -82,7 +82,11 @@
  *                devices, one of them has to move); `mergeDuplicateIpAssets`
  *                absorbs members into a survivor through the operator merge
  *                engine (one device recorded twice, where renumbering either
- *                row would be wrong). Both close the conflict as accepted once
+ *                row would be wrong). `clearDuplicateIpAsset` is the first
+ *                verb's offline variant (rule 40(j)): no new address is known,
+ *                so the member's address is BLANKED and `Asset.ipCleared`
+ *                holds the old one off until discovery reports another.
+ *                All of them close the conflict as accepted once
  *                fewer than two current claims remain, and both leave a
  *                three-way collision open on whoever still claims the address.
  *   auto-close — a duplicate that resolves itself (a device decommissioned, a
@@ -1056,7 +1060,8 @@ export async function reassignDuplicateIpAsset(
 
   await prisma.asset.update({
     where: { id: assetId },
-    data: { ipAddress: newIp, ipOverride: newIp, ipSource: "manual" },
+    // ipCleared: null — an operator address ends any rule 40(j) blank hold.
+    data: { ipAddress: newIp, ipOverride: newIp, ipSource: "manual", ipCleared: null },
   });
 
   // Setting the pin makes any pending ip-override conflict on this asset moot —
@@ -1078,6 +1083,104 @@ export async function reassignDuplicateIpAsset(
     details: changes ? { changes, duplicateIp: ip } : { duplicateIp: ip },
   });
 
+  const settled = await settleAfterMemberLeft(conflict, ip, assetId, actor, `"${label}" now records ${newIp}`, { newIpAddress: newIp });
+  return { ipAddress: ip, newIpAddress: newIp, assetId, ...settled };
+}
+
+// ─── Resolution: blank an offline member's address ──────────────────────────
+
+export interface ClearIpOutcome {
+  ipAddress: string;
+  assetId: string;
+  /** True when the conflict closed (fewer than two current claims remain). */
+  resolved: boolean;
+  /** Members still claiming the original address after the write. */
+  remaining: number;
+}
+
+/**
+ * Business rule 40(j): the device is offline, so there is no new address to
+ * type. Blank ONE member's address instead — `ipAddress` null, no pin — and
+ * remember the blanked address in `ipCleared`. Discovery then decides: the
+ * db.ts guard fills the blank with the first DIFFERENT address a writer
+ * stages (releasing the hold), drops a re-staging of the blanked address
+ * while another network-present asset still records it (the offline device's
+ * stale lease must not walk it back onto the contested address), and lets
+ * the blanked address back once nothing else holds it.
+ *
+ * Any operator pin is dropped too: a pin on the contested address is the
+ * claim being withdrawn.
+ */
+export async function clearDuplicateIpAsset(
+  conflict: { id: string; assetId: string | null; proposedAssetFields: unknown },
+  assetId: string,
+  actor?: string,
+): Promise<ClearIpOutcome> {
+  const proposed = (conflict.proposedAssetFields || {}) as Record<string, unknown>;
+  if (proposed.collisionReason !== DUPLICATE_IP_COLLISION_REASON) {
+    throw new AppError(400, "This conflict is not a duplicate IP address conflict");
+  }
+  const ip = conflictIpOf(conflict);
+  if (!ip) throw new AppError(500, "Duplicate IP conflict is missing its address");
+
+  const members = conflictMembersOf(conflict);
+  if (!members.some((m) => m.assetId === assetId)) {
+    throw new AppError(400, "That asset is not one of the assets sharing this address");
+  }
+
+  const asset = await prisma.asset.findUnique({
+    where: { id: assetId },
+    select: { id: true, hostname: true, ipAddress: true, ipOverride: true, ipSource: true },
+  });
+  if (!asset) throw new AppError(404, "Asset not found");
+  if (asset.ipAddress !== ip) {
+    throw new AppError(409, `"${asset.hostname || assetId}" no longer records ${ip}`);
+  }
+
+  await prisma.asset.update({
+    where: { id: assetId },
+    data: { ipAddress: null, ipOverride: null, ipSource: null, ipCleared: ip },
+  });
+
+  // Dropping the pin makes any pending ip-override conflict on this asset moot.
+  if (asset.ipOverride) resolvePendingIpOverrideConflicts(assetId, actor ?? "manual").catch(() => {});
+
+  const label = asset.hostname || ip;
+  const changes = buildChanges(
+    { ipAddress: asset.ipAddress, ipOverride: asset.ipOverride, ipSource: asset.ipSource, ipCleared: null },
+    { ipAddress: null, ipOverride: null, ipSource: null, ipCleared: ip },
+  );
+  logEvent({
+    action: "asset.updated",
+    resourceType: "asset",
+    resourceId: assetId,
+    resourceName: label,
+    actor,
+    message: `Asset "${label}" IP address blanked off duplicate address ${ip} — discovery fills it when the device reports a new one`,
+    details: changes ? { changes, duplicateIp: ip, ipCleared: ip } : { duplicateIp: ip, ipCleared: ip },
+  });
+
+  const settled = await settleAfterMemberLeft(
+    conflict, ip, assetId, actor,
+    `"${label}" was blanked until discovery reports a new address`,
+    { cleared: true },
+  );
+  return { ipAddress: ip, assetId, ...settled };
+}
+
+/**
+ * After one member left the contested address (moved or blanked): close the
+ * conflict when fewer than two current claims remain, otherwise keep it open
+ * on the survivors so the operator can move the next one.
+ */
+async function settleAfterMemberLeft(
+  conflict: { id: string; assetId: string | null },
+  ip: string,
+  assetId: string,
+  actor: string | undefined,
+  outcomeText: string,
+  extraDetails: Record<string, unknown>,
+): Promise<{ resolved: boolean; remaining: number }> {
   const group = await evaluateIp(ip);
   const remaining = group ? group.members.length : 0;
   if (!group) {
@@ -1091,15 +1194,15 @@ export async function reassignDuplicateIpAsset(
       resourceId: conflict.assetId ?? assetId,
       resourceName: ip,
       actor,
-      message: `Duplicate IP conflict on ${ip} resolved — "${label}" now records ${newIp}`,
+      message: `Duplicate IP conflict on ${ip} resolved — ${outcomeText}`,
       details: {
         collisionReason: DUPLICATE_IP_COLLISION_REASON,
         ipAddress: ip,
-        newIpAddress: newIp,
+        ...extraDetails,
         assetId,
       },
     });
-    return { ipAddress: ip, newIpAddress: newIp, assetId, resolved: true, remaining };
+    return { resolved: true, remaining };
   }
 
   // Still contested (a three-way collision) — keep the conflict open on the
@@ -1117,7 +1220,7 @@ export async function reassignDuplicateIpAsset(
       existingAssetSnapshot: { ipAddress: ip, members: survivors } as any,
     },
   });
-  return { ipAddress: ip, newIpAddress: newIp, assetId, resolved: false, remaining };
+  return { resolved: false, remaining };
 }
 
 // ─── Resolution: the two records are one device ───────────────────────────────
