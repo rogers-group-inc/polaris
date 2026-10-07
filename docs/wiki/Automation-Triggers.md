@@ -115,8 +115,8 @@ Set the number of polls in **Sustained for**, as for any other condition.
   and memory charts.
 - **It clears when every core is back under the line** for the reset's
   clear-sustain count, not just the core that fired.
-- **Only hosts that report per-core figures**: the Polaris Agent and vCenter
-  (VMs and ESXi hosts). SNMP, FortiOS, WinRM and SSH do not report cores, so
+- **Only hosts that report per-core figures**: the Polaris Agent, vCenter
+  (VMs and ESXi hosts) and Unraid / TrueNAS hosts. SNMP, FortiOS, WinRM and SSH do not report cores, so
   those devices never fire this condition.
 - **The regular CPU alert wins.** While a device has an open **CPU
   utilization** (`cpuPct`) alert from any automation, a per-core automation

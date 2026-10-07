@@ -315,7 +315,7 @@ choice appears only for roles that can read networks, and only when a network
 actually contains the address.
 
 **CPU & Memory is one chart, or two, depending on what is collecting it.**
-Two sources report CPU per core and memory as a composition, and on those the
+Three sources report CPU per core and memory in bytes, and on those the
 section splits into a CPU chart and a Memory chart:
 
 | Source | CPU chart | Memory chart |
@@ -323,6 +323,7 @@ section splits into a CPU chart and a Memory chart:
 | [Polaris Agent](Polaris-Agent#per-core-cpu-and-the-memory-breakdown) | one line per logical core | processes / buffers / cache against installed RAM |
 | [vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) — VM | one line per vCPU | private / shared / ballooned / host-swapped / compressed against configured RAM |
 | [vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) — ESXi host | one line per physical core | consumed / ballooned / host-swapped against installed RAM |
+| [Unraid](Integration-Unraid) / [TrueNAS](Integration-TrueNAS) — host | one line per core | used against installed RAM (one band) |
 
 A percentage and a byte scale cannot share an axis, but they are two readings
 of the same sample, so the two charts keep one range selector — picking a

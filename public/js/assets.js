@@ -7413,6 +7413,11 @@ function _confirmUninstallAgent(a, force) {
 //             the OS accounts for them.
 //   vcenter — a VM's vCPUs or an ESXi host's physical cores from the
 //             PerformanceManager, and vSphere's own memory bands.
+//   unraid / truenas — the HOST only: Unraid's metrics.cpu.cpus and
+//             TrueNAS's reporting.realtime carry every core; memory is used +
+//             total bytes, which the memory chart draws as its one band. Their
+//             VMs and containers report a single CPU figure (or none), so those
+//             keep the combined chart.
 //
 // FortiOS REST, SNMP, WinRM and SSH report one CPU figure and one memory
 // figure per sample, and two of those on two stacked 200px charts is the
@@ -7425,9 +7430,13 @@ function _confirmUninstallAgent(a, force) {
 // can carry either method too, and _resolvedStreamPolling is the same walk
 // the section badge and the stale banner use.
 var _SPLIT_CHART_METHODS = ["agent", "vcenter"];
+var _SPLIT_CHART_HOST_METHODS = ["unraid", "truenas"];
 
 function _telemetrySplitsCpuMemory(a) {
-  return _SPLIT_CHART_METHODS.indexOf(_resolvedStreamPolling(a, "telemetry")) >= 0;
+  var method = _resolvedStreamPolling(a, "telemetry");
+  if (_SPLIT_CHART_METHODS.indexOf(method) >= 0) return true;
+  return _SPLIT_CHART_HOST_METHODS.indexOf(method) >= 0 &&
+    !!(a && a.virtualization && a.virtualization.role === "host");
 }
 
 function assetSystemViewHTML(a) {
@@ -12298,8 +12307,7 @@ function _cpuLegendHTML(coreCount, hidden, data, asset) {
       ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;color:var(--color-accent)">Show all</span>';
   }
   // Why a range can show no cores even on a source that reports them:
-  // per-core data is kept on the DETAIL tier only, on the agent and on
-  // vCenter alike. Saying so beats letting the operator conclude the source
+  // per-core data is kept on the DETAIL tier only, whichever source sent it. Saying so beats letting the operator conclude the source
   // stopped reporting them. A source that never reports cores gets no note
   // — "pick a shorter range" would send a FortiGate operator nowhere.
   var note = "";
