@@ -295,7 +295,7 @@
     };
   }
 
-  var SCOPE_KINDS = ["asset", "type", "process", "service", "external", "text"];
+  var SCOPE_KINDS = ["asset", "type", "tag", "process", "service", "external", "text"];
 
   // The searchable text of a node, per pill kind. `text` pills deliberately look
   // at everything so a half-remembered fragment still lands somewhere.
@@ -311,6 +311,11 @@
     // "server" would then match most of the fleet and read as a broken filter.
     if (kind === "type") {
       if (n.kind === "asset") add(n.assetType);
+    }
+    // Asset tags: asset-level like `type` (expanded to the children by the
+    // group-builder) and, like `type`, kept out of `text`.
+    if (kind === "tag") {
+      if (n.kind === "asset") (n.tags || []).forEach(add);
     }
     if (kind === "process" || kind === "text") {
       if (n.kind === "process") add(n.processName);
@@ -329,9 +334,12 @@
 
   // Substring, not equality: catalog-sourced values are full labels (so it
   // behaves as equality for them) while a hand-typed fragment still matches.
+  // Except tags, which match whole: tags are discrete labels, and a substring
+  // would let `prod` also select every `production` and `preprod` asset.
   function nodeMatchesPill(n, pill) {
     var v = String(pill.value || "").toLowerCase();
     if (!v) return false;
+    if (pill.kind === "tag") return nodeHaystack(n, "tag").indexOf(v) >= 0;
     return nodeHaystack(n, pill.kind).some(function (h) { return h.indexOf(v) >= 0; });
   }
 
@@ -342,9 +350,10 @@
    *   - proto / port pills filter an edge's PORT LIST; when either kind is
    *     present the edge must retain at least one port (a genuinely port-less
    *     edge is exempt, as before).
-   *   - Each node-scope kind (asset / process / service / external / text) with
-   *     pills becomes a group: a Set of matching node ids, with asset pills
-   *     expanded to that asset's children because an asset's traffic flows
+   *   - Each node-scope kind (asset / type / tag / process / service / external
+   *     / text) with pills becomes a group: a Set of matching node ids, with
+   *     asset-level matches (host, type, tag) expanded to that asset's children
+   *     because an asset's traffic flows
    *     through its process/service boxes. An edge survives only if EVERY group
    *     has a matching endpoint.
    *   - A node is visible if a surviving edge references it, or if it satisfies
@@ -1304,6 +1313,12 @@
     if (n.kind === "asset") {
       html += "<h3>" + esc(n.hostname || n.ipAddress || "asset") + "</h3>";
       html += '<div class="appmap-info-sub">' + esc(n.assetType || "") + (n.ipAddress ? " · " + esc(n.ipAddress) : "") + (n.monitorStatus ? " · " + esc(n.monitorStatus) : "") + "</div>";
+      // Tags as buttons: a click adds that tag as a filter pill.
+      if (n.tags && n.tags.length) {
+        html += '<div class="appmap-info-tags">' + n.tags.map(function (t) {
+          return '<button type="button" class="tag-chip" data-add-tag="' + esc(t) + '" title="Filter the map to assets tagged ' + esc(t) + '">' + esc(t) + "</button>";
+        }).join("") + "</div>";
+      }
       var procs = payload.nodes.filter(function (p) { return p.kind === "process" && p.assetId === n.assetId; });
       if (procs.length) {
         html += "<table><tr><th>Mapped process</th><th>Listening</th></tr>";
@@ -1377,6 +1392,9 @@
         if (typeof openViewModal === "function") openViewModal(btn.getAttribute("data-open-asset"));
       });
     }
+    info.querySelectorAll("[data-add-tag]").forEach(function (chip) {
+      chip.addEventListener("click", function () { addPill("tag", chip.getAttribute("data-add-tag")); });
+    });
   }
 
   function renderInfoEdge(id) {
@@ -1475,7 +1493,7 @@
   // ─── Pill filter box ───────────────────────────────────────────────
 
   var PILL_KIND_LABEL = {
-    proto: "proto", port: "port", asset: "host", type: "type",
+    proto: "proto", port: "port", asset: "host", type: "type", tag: "tag",
     process: "process", service: "service", external: "external", text: "text",
   };
 
@@ -1534,7 +1552,10 @@
     });
     (nodes || []).forEach(function (n) {
       (n.listenPorts || []).forEach(function (p) { protos[p.proto] = true; ports[p.port] = true; });
-      if (n.kind === "asset") { push("asset", n.hostname || n.ipAddress); push("type", n.assetType); }
+      if (n.kind === "asset") {
+        push("asset", n.hostname || n.ipAddress); push("type", n.assetType);
+        (n.tags || []).forEach(function (t) { push("tag", t); });
+      }
       else if (n.kind === "process") push("process", n.processName);
       else if (n.kind === "service") push("service", n.serviceUnit);
       else if (n.kind === "unknown-ip") { push("external", n.ip); push("external", n.ipHostname); }

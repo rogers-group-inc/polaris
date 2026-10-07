@@ -11,7 +11,7 @@
 (function () {
   "use strict";
 
-  var PILL_LABELS = { proto: "proto", port: "port", asset: "host", type: "type", process: "process", service: "service", external: "external", text: "text" };
+  var PILL_LABELS = { proto: "proto", port: "port", asset: "host", type: "type", tag: "tag", process: "process", service: "service", external: "external", text: "text" };
 
   // PURE (exposed for tests): the header lines under the title.
   function metaLines(raw) {

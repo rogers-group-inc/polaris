@@ -59,6 +59,8 @@ export interface MappedAssetLite {
   monitorStatus: string | null;
   manufacturer: string | null;
   model: string | null;
+  /** Asset.tags — carried to the asset node for the App Map's `tag` filter pill. */
+  tags?: string[];
   mappedProcesses: string[];
   mappedServices: string[];
 }
@@ -91,6 +93,10 @@ export interface AppMapNode {
    * (compound parents); false on assets that appear only as resolved edge
    * targets. */
   hasMappedProcesses?: boolean;
+  /** Asset nodes only, and only when the asset carries tags: Asset.tags, for
+   *  the client's `tag` filter pill (exact match, expanded to the asset's
+   *  process/service children like a host pill). */
+  tags?: string[];
   processName?: string;
   serviceUnit?: string;
   listenPorts?: Array<{ proto: string; port: number }>;
@@ -217,7 +223,7 @@ export function subnetKeyOf(ip: string): string {
 
 const ASSET_LITE_SELECT = {
   id: true, hostname: true, ipAddress: true, assetType: true,
-  monitorStatus: true, manufacturer: true, model: true,
+  monitorStatus: true, manufacturer: true, model: true, tags: true,
 } as const;
 
 export type ResolvedAssetLite = Omit<MappedAssetLite, "mappedProcesses" | "mappedServices">;
@@ -540,6 +546,7 @@ export function buildGraphFromRows(
       id: assetNodeId(a.id), kind: "asset", assetId: a.id,
       hostname: a.hostname, ipAddress: a.ipAddress, assetType: a.assetType,
       monitorStatus: a.monitorStatus, hasMappedProcesses: true,
+      ...(a.tags?.length ? { tags: a.tags } : {}),
     });
     for (const name of a.mappedProcesses) {
       const pid = processNodeId(a.id, name);
@@ -567,6 +574,7 @@ export function buildGraphFromRows(
         id, kind: "asset", assetId: a.id,
         hostname: a.hostname, ipAddress: a.ipAddress, assetType: a.assetType,
         monitorStatus: a.monitorStatus, hasMappedProcesses: false,
+        ...(a.tags?.length ? { tags: a.tags } : {}),
       });
     }
     return id;
