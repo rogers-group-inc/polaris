@@ -208,6 +208,25 @@
     },
   });
 
+  // The account's tag scope under its role: the EFFECTIVE set /auth/me
+  // resolves (role ∪ user ∪ SSO group), regions first, then free-form tags —
+  // the same two dimensions the desktop Users page pills. Nothing at all when
+  // the account has none (unrestricted), rather than an empty "Tags:" line.
+  function accountTagsHtml(user) {
+    var regions = Array.isArray(user.regions) ? user.regions : [];
+    var tags = Array.isArray(user.tags) ? user.tags : [];
+    if (!regions.length && !tags.length) return "";
+    var pill = function (cls, title) {
+      return function (t) {
+        return '<span class="account-tag' + cls + '" title="' + title + '">' + escapeHtml(t) + '</span>';
+      };
+    };
+    return '<div class="account-tags">'
+      + regions.map(pill(" region", "Region")).join("")
+      + tags.map(pill("", "Tag")).join("")
+      + '</div>';
+  }
+
   // ─── Menu (root More) ──────────────────────────────────────────────────
   function renderMenu(body, ctx) {
     var user = ctx.user || {};
@@ -279,7 +298,9 @@
       + '<div class="section-head">Account</div>'
       + '<div class="list-item two-line">'
       + '  <span class="leading tertiary"><svg viewBox="0 0 24 24"><use href="#i-person"/></svg></span>'
-      + '  <div class="content"><div class="headline">' + escapeHtml(displayName) + '</div><div class="supporting">' + escapeHtml(role) + '</div></div>'
+      + '  <div class="content"><div class="headline">' + escapeHtml(displayName) + '</div><div class="supporting">' + escapeHtml(role) + '</div>'
+      + accountTagsHtml(user)
+      + '</div>'
       + '</div>'
       + '<div class="list-divider"></div>'
       // In an installed app, manifest scope "/" means this link would open the
