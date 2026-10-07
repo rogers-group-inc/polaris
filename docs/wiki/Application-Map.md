@@ -159,7 +159,8 @@ positions. The Device Map's site topology has the same menu
   annotate. Text keeps its on-screen size. Connections are drawn lines, **not
   glued connectors**, so moving a box in Visio does not drag its lines with it.
   Text uses Visio's default font. The title and filter lines sit above the
-  map and the Ports key below it, as on the PDF.
+  map, and the key sits in a box at its bottom left, as on the PDF. Each part
+  of the box is its own shape, so you can move it.
 
 **PDF.** Choose the **paper size**, the **orientation** (Automatic picks whichever needs
 fewer pages) and the **minimum text size** (7 pt by default). **Nothing on the
@@ -170,7 +171,9 @@ showing the whole map with the section grid (A1, A2, B1 …) on it. The overview
 has no map labels, because at that scale they would print below the minimum.
 Sections with nothing in them are skipped. The dialog states the page count
 before you export; past 30 pages it suggests narrowing the map with filters or
-hidden ports first. Every page carries the Ports key and the filters in force.
+hidden ports first. Every page carries the filters in force and, in a box at
+the bottom left, the key: the ports drawn (a hidden port is left out) and what
+dashed and heavy lines mean.
 
 ### Saved
 

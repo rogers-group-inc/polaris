@@ -232,14 +232,16 @@ The **Export** button at the right of the Path heading opens a menu:
   image needs HTTPS.
 - **Export PDF…**: the graph on paper, in the light colours whatever theme you
   use. A header names the source, the destination, the check type and the
-  trace shown, and a key explains the link and status colours. Choose the
+  trace shown, and a key in a box at the bottom left explains the link and
+  status colours. Choose the
   paper, the orientation and the smallest text size allowed (7 pt by
   default). A path too long for one sheet at that size is split across
   several. The source and destination print as **S** and **D**, because the
   PDF fonts have no house or target symbol.
 - **Export to Visio (.vsdx)**: one Visio page, every circle, label and link a
   separate editable shape. Links are drawn lines, not glued connectors. The
-  same header sits above the graph and the same key below it, as on the PDF.
+  same header sits above the graph and the same key box at its bottom left,
+  as on the PDF.
 
 The export shows the trace selected in the list, with the routes the other
 recent traces took as faded branches, as on screen. The same button appears on
