@@ -190,7 +190,7 @@ describe("the band and the strip read the same clock", () => {
     const measurer = readFileSync(join(process.cwd(), "public", "js", "page-top-curtain.js"), "utf-8");
     expect(measurer).not.toMatch(/["']scroll["']/);
     expect(measurer).toContain('setAttribute("data-page-top-curtain"');
-    for (const page of ["index.html", "dash.html", "server-settings.html"]) {
+    for (const page of ["index.html", "dash.html", "server-settings.html", "integrations.html"]) {
       const html = readFileSync(join(process.cwd(), "public", page), "utf-8");
       expect(html, page).toContain("page-top-sticky");
       expect(html, page).toContain('<script src="/js/page-top-curtain.js"></script>');
