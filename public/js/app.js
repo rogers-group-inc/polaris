@@ -4879,7 +4879,9 @@ function subnetUtilBarColor(pct) {
  * @param {number|null} used   active reservations holding an address
  * @param {number|null} usable usable host addresses in the CIDR
  */
-function subnetUtilCellHTML(pct, used, usable) {
+// `title` (optional) replaces the hover text — the IP Blocks list uses the
+// same bar for address space carved into networks, not hosts reserved.
+function subnetUtilCellHTML(pct, used, usable, title) {
   // No denominator (IPv6, or a CIDR the server could not measure) is a muted
   // em dash, never a 0%-wide bar — an empty bar is a positive claim that the
   // network is empty.
@@ -4887,7 +4889,7 @@ function subnetUtilCellHTML(pct, used, usable) {
   // A reservation sitting on the network or broadcast address can push the
   // numerator past the usable count; the bar clamps, the tooltip doesn't.
   var w = Math.max(0, Math.min(100, pct));
-  var title = used != null && usable != null
+  if (!title) title = used != null && usable != null
     ? used + " of " + usable + " usable addresses reserved (" + pct + "%)"
     : pct + "% of usable addresses reserved";
   // A /24 with one address taken is 0.4%, and "0%" beside a bar reads as an

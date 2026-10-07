@@ -7,7 +7,7 @@
 import { prisma } from "../db.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import type { ReservationSourceType } from "../generated/prisma/enums.js";
-import { usableHostCount } from "../utils/cidr.js";
+import { usableHostCount, cidrAllocationPercent } from "../utils/cidr.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -132,11 +132,12 @@ export async function getGlobalUtilization(): Promise<GlobalUtilization> {
     const reserved = block.subnets.filter((s) => s.status === "reserved").length;
     const deprecated = block.subnets.filter((s) => s.status === "deprecated").length;
 
+    const carved = block.subnets.filter((s) => s.status !== "deprecated");
     const blockAddresses = cidrAddressCount(block.cidr);
-    const allocatedAddresses = block.subnets
-      .filter((s) => s.status !== "deprecated")
-      .reduce((sum, s) => sum + cidrAddressCount(s.cidr), 0);
-    const usedPercent = blockAddresses === 0 ? 0 : Math.round((allocatedAddresses / blockAddresses) * 100);
+    const allocatedAddresses = carved.reduce((sum, s) => sum + cidrAddressCount(s.cidr), 0);
+    // Exact (BigInt) — the capped counts above would put an IPv6 block at 100%
+    // as soon as it held one network. Same figure as the IP Blocks list column.
+    const usedPercent = Math.round(cidrAllocationPercent(block.cidr, carved.map((s) => s.cidr)));
 
     return {
       id: block.id,

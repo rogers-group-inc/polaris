@@ -9,6 +9,7 @@ import {
   normalizeCidr,
   isValidCidr,
   detectIpVersion,
+  cidrAllocationPercent,
 } from "../utils/cidr.js";
 import { lockBlockForSubnetWrites } from "./subnetService.js";
 
@@ -35,13 +36,24 @@ export interface ListBlocksFilter {
 
 // ─── List ─────────────────────────────────────────────────────────────────────
 
+// Each block carries `utilizationPercent`: the share of its address space
+// carved into networks, deprecated ones excluded — the same figure as the
+// dashboard's Block utilization widget (utilizationService). Only the child
+// CIDRs are read and they are dropped from the response.
 export async function listBlocks(filter: ListBlocksFilter = {}) {
   const blocks = await prisma.ipBlock.findMany({
     where: { ipVersion: filter.ipVersion },
-    include: { _count: { select: { subnets: true } } },
+    include: {
+      _count: { select: { subnets: true } },
+      subnets: { where: { status: { not: "deprecated" } }, select: { cidr: true } },
+    },
     orderBy: { cidr: "asc" },
   });
-  return filter.tag ? blocks.filter((b) => b.tags.includes(filter.tag!)) : blocks;
+  const filtered = filter.tag ? blocks.filter((b) => b.tags.includes(filter.tag!)) : blocks;
+  return filtered.map(({ subnets, ...b }) => ({
+    ...b,
+    utilizationPercent: cidrAllocationPercent(b.cidr, subnets.map((s) => s.cidr)),
+  }));
 }
 
 // ─── Get ──────────────────────────────────────────────────────────────────────
