@@ -1502,7 +1502,7 @@ only Read-Only. The host itself cannot be started or stopped from Polaris.
 See [Unraid → Workload actions](Integration-Unraid#workload-actions) and
 [TrueNAS SCALE → Workload actions](Integration-TrueNAS#workload-actions).
 
-### Rule 95
+### Rule 96
 
 **Polaris never drives a FortiGate's API-key lockout: few requests at once,
 nothing after a 401 until a pause runs out, and a probe it did not send is not

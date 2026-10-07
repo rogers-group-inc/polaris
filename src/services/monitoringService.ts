@@ -2413,7 +2413,7 @@ async function probeFortinet(
     if (up !== null) ok.uptimeSec = up;
     return ok;
   } catch (err: any) {
-    // Inside a 401 pause the request was never sent: not a reading, not a miss (rule 95).
+    // Inside a 401 pause the request was never sent: not a reading, not a miss (rule 96).
     if (err instanceof FortiosAuthPausedError) return { success: false, responseTimeMs: 0, skipped: true, error: err.message };
     return finish(start, false, err?.message || "FortiOS request failed");
   }
@@ -3731,7 +3731,7 @@ async function probeFortinetController(
     };
   } catch (err: any) {
     // The controller gate is inside a 401 pause, so nobody asked it. Counting
-    // that as a miss would mark every switch / AP behind it down at once (rule 95).
+    // that as a miss would mark every switch / AP behind it down at once (rule 96).
     if (err instanceof FortiosAuthPausedError) return { success: false, responseTimeMs: 0, skipped: true, error: err.message };
     // Precondition failures and upstream errors don't have a meaningful
     // upstream duration; fall back to local elapsed time so the operator

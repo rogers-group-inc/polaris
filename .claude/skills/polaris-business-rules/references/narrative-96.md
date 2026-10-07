@@ -1,15 +1,15 @@
-# Business rule 95 — full narrative
+# Business rule 96 — full narrative
 
 > Written 2026-10-07 as its own file (one file per rule from 78 on). Rule numbers are a
 > stable citation key — never renumber. 81 is a deliberate gap.
 
 Each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
-- [Rule 95](#rule-95) — Polaris never drives a FortiGate's API-key lockout: few requests at once, nothing after a 401 until a pause runs out, and a probe it did not send is not a miss
+- [Rule 96](#rule-96) — Polaris never drives a FortiGate's API-key lockout: few requests at once, nothing after a 401 until a pause runs out, and a probe it did not send is not a miss
 
-<a id="rule-95"></a>
+<a id="rule-96"></a>
 
-## Rule 95 — Polaris never drives a FortiGate's API-key lockout: few requests at once, nothing after a 401 until a pause runs out, and a probe it did not send is not a miss
+## Rule 96 — Polaris never drives a FortiGate's API-key lockout: few requests at once, nothing after a 401 until a pause runs out, and a probe it did not send is not a miss
 
 ### The incident
 

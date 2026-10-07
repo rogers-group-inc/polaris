@@ -210,7 +210,7 @@ export interface FgRequestOptions {
 /**
  * Every direct FortiOS REST call goes through here, paced per gate by
  * utils/fortiosRequestGate.ts so Polaris cannot drive FortiOS 7.6's
- * per-source-IP API-key lockout (business rule 95):
+ * per-source-IP API-key lockout (business rule 96):
  *
  *  - at most POLARIS_FORTIOS_PER_GATE_CONCURRENCY requests in flight per
  *    host:port (default 2, below FortiOS's default lockout threshold of 3);

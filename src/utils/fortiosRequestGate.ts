@@ -1,6 +1,6 @@
 /**
  * src/utils/fortiosRequestGate.ts — per-FortiGate request pacing for the
- * direct FortiOS REST transport (`fortigateService.fgRequest`). Business rule 95.
+ * direct FortiOS REST transport (`fortigateService.fgRequest`). Business rule 96.
  *
  * ── Why this exists ──────────────────────────────────────────────────────────
  * FortiOS 7.6 moved REST API-key authorization into a dedicated daemon,
