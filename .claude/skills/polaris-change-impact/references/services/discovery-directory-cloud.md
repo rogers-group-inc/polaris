@@ -71,7 +71,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** syncWorkloadDevices, applyWorkloadFilters, passesNameFilter, workloadSweepBlockedReason, buildWorkloadDependencyEdges; re-exports normalizeWorkloadState + the externalId builders from utils/workloadSources.ts; the Workload* types.
 
-**Cross-service deps:** discoveryEngine (exported `indexHostname` / `lookupHostname` / `normalizeMacKey` / `upsertAssetConflict`), eventLogService, monitorOverrideService (`getAddAsMonitoredFromConfig` / `buildMonitoredSweep`), maintenanceScheduleService.releaseAssetsForDecommission, macAddressService.reconcileMacAddresses.
+**Cross-service deps:** discoveryEngine (exported `indexHostname` / `lookupHostname` / `normalizeMacKey` / `upsertAssetConflict`), eventLogService, monitorOverrideService (`getAddAsMonitoredFromConfig` / `buildMonitoredSweep`), maintenanceScheduleService.releaseAssetsForDecommission, macAddressService.reconcileMacAddresses, dnsService.getConfiguredResolver (Pass A resolves a host NAME in the integration's Host field to an IP before it is written to `Asset.ipAddress` — the ICMP response-time default pings it; unresolvable → null, never the name).
 
 **Used by:** src/services/discovery/discoveryEngine.ts (runDiscovery's unraid / truenas branch). The services and collectors import only its TYPES (runtime imports of it from a service would cycle through discoveryEngine).
 
