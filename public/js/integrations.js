@@ -19,6 +19,8 @@ var _POLLING_LABELS = {
   agent:    "Polaris Agent",
   vcenter:  "vCenter",
   fortimanager: "FortiManager",
+  unraid:   "Unraid",
+  truenas:  "TrueNAS",
 };
 
 // "agent" is intentionally NOT in any of these arrays — the Polaris Agent
@@ -42,12 +44,15 @@ var _POLLING_COMPAT = {
   // source and nowhere else — nothing else has a FortiManager to ask.
   fortimanager:    ["rest_api", "snmp", "ssh", "icmp", "disabled", "fortimanager"],
   fortigate:       ["rest_api", "snmp", "ssh", "icmp", "disabled"],
-  activedirectory: ["icmp", "winrm", "ssh", "disabled", "vcenter"],
-  entraid:         ["icmp", "winrm", "ssh", "disabled", "vcenter"],
-  windowsserver:   ["icmp", "winrm", "ssh", "disabled", "vcenter"],
-  azurearc:        ["icmp", "winrm", "ssh", "disabled", "vcenter"],
+  activedirectory: ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas"],
+  entraid:         ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas"],
+  windowsserver:   ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas"],
+  azurearc:        ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas"],
   vcenter:         ["icmp", "snmp", "winrm", "ssh", "disabled", "vcenter"],
-  manual:          ["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "vcenter"],
+  // vCenter's shape with the integration's own method (pollingCompatibility.ts).
+  unraid:          ["icmp", "snmp", "winrm", "ssh", "disabled", "unraid"],
+  truenas:         ["icmp", "snmp", "winrm", "ssh", "disabled", "truenas"],
+  manual:          ["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "vcenter", "unraid", "truenas"],
 };
 
 // Per-stream method restriction — mirrors STREAM_METHODS in
@@ -70,6 +75,11 @@ var _VCENTER_STREAMS = ["responseTime", "cpuMemory", "interfaces", "storage"];
 // src/utils/pollingCompatibility.ts. Response time only: FMG's device database
 // carries reachability, identity and firmware, and no metrics of any kind.
 var _FORTIMANAGER_STREAMS = ["responseTime"];
+
+// Streams the "unraid" / "truenas" methods can serve — mirrors WORKLOAD_STREAMS
+// in src/utils/pollingCompatibility.ts: vCenter's four plus temperature (host
+// disk temperatures). "telemetry" is the dropdowns' legacy name for cpuMemory.
+var _WORKLOAD_STREAMS = ["responseTime", "cpuMemory", "telemetry", "interfaces", "storage", "temperature"];
 
 // Source-default polling for one stream. Mirrors defaultPollingForSource() in
 // src/services/monitoringService.ts. Used to label the "Inherit" option.
@@ -102,6 +112,11 @@ function _polarisSourceDefaultPolling(source, stream, opts) {
     // storage. Temperature and LLDP have no vCenter source.
     if (stream === "responseTime" || stream === "cpuMemory"
         || stream === "interfaces" || stream === "storage") return "vcenter";
+    return null;
+  }
+  if (source === "unraid" || source === "truenas") {
+    // Mirrors defaultPollingForSource: everything but LLDP comes from the host's API.
+    if (_WORKLOAD_STREAMS.indexOf(stream) !== -1) return source;
     return null;
   }
   if (stream === "responseTime") return "icmp";
@@ -158,6 +173,7 @@ function _fmgFortiosRestUnavailable(integrationType) {
 function _collectorExists(source, stream, klass) {
   return function (method) {
     if (method === "disabled" || method === "vcenter" || method === "fortimanager") return true;
+    if (method === "unraid" || method === "truenas") return true;
     if (method === "icmp")  return stream === "responseTime";
     // The agent walks no LLDP neighbours.
     if (method === "agent") return stream !== "lldp";
@@ -209,6 +225,9 @@ function _streamAllowedMethods(source, stream, klass) {
   if (_FORTIMANAGER_STREAMS.indexOf(stream) === -1) {
     allowed = allowed.filter(function (m) { return m !== "fortimanager"; });
   }
+  if (_WORKLOAD_STREAMS.indexOf(stream) === -1) {
+    allowed = allowed.filter(function (m) { return m !== "unraid" && m !== "truenas"; });
+  }
   // Finally: drop anything with no collector behind it. Offering a method that
   // silently gathers nothing is how a stream gets configured into permanent
   // silence with every indicator green. The dropdown labels cpuMemory as
@@ -234,6 +253,8 @@ function _polarisSourceLabel(source, opts) {
   if (source === "windowsserver")   return "Windows Server";
   if (source === "vcenter")         return "vCenter";
   if (source === "azurearc")        return "Azure Arc";
+  if (source === "unraid")          return "Unraid";
+  if (source === "truenas")         return "TrueNAS SCALE";
   return "Manual";
 }
 
@@ -675,7 +696,7 @@ async function loadIntegrations() {
     var result = await api.integrations.list();
     var integrations = result.integrations || result;
     if (integrations.length === 0) {
-      container.innerHTML = '<div class="empty-state-card"><p>No integrations configured.</p><p style="color:var(--color-text-tertiary);font-size:0.85rem;margin-top:0.5rem">Add a FortiManager, FortiGate, Windows Server, Microsoft Entra ID, Active Directory, VMware vCenter, or Azure Arc connection to get started.</p></div>';
+      container.innerHTML = '<div class="empty-state-card"><p>No integrations configured.</p><p style="color:var(--color-text-tertiary);font-size:0.85rem;margin-top:0.5rem">Add a FortiManager, FortiGate, Windows Server, Microsoft Entra ID, Active Directory, VMware vCenter, Azure Arc, Unraid, or TrueNAS SCALE connection to get started.</p></div>';
       return;
     }
     var activeDiscoveries = (window._getServerDiscoveries && window._getServerDiscoveries()) || [];
@@ -690,6 +711,8 @@ async function loadIntegrations() {
         intg.type === "activedirectory" ? "Active Directory" :
         intg.type === "vcenter" ? "vCenter" :
         intg.type === "azurearc" ? "Azure Arc" :
+        intg.type === "unraid" ? "Unraid" :
+        intg.type === "truenas" ? "TrueNAS SCALE" :
         "FortiManager";
 
       function filterRow(baseLabel, include, exclude) {
@@ -700,6 +723,7 @@ async function loadIntegrations() {
         return '<div class="detail-row"><span class="detail-label">' + label + '</span><span class="detail-value">' + value + '</span></div>';
       }
       var defaultPort =
+        (intg.type === "unraid" || intg.type === "truenas") && config.useTls === false ? 80 :
         intg.type === "windowsserver" ? 5985 :
         intg.type === "activedirectory" ? (config.useLdaps === false ? 389 : 636) :
         443;
@@ -760,6 +784,13 @@ async function loadIntegrations() {
           '<div class="detail-row"><span class="detail-label">Username</span><span class="detail-value">' + escapeHtml(config.username || "-") + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Verify TLS</span><span class="detail-value">' + (config.verifyTls !== false ? "Yes" : "No") + '</span></div>' +
           filterRow("VMs", config.vmInclude, config.vmExclude);
+      } else if (intg.type === "unraid" || intg.type === "truenas") {
+        detailRows =
+          '<div class="detail-row"><span class="detail-label">Host</span><span class="detail-value mono">' + escapeHtml(config.host || "-") + ':' + (config.port || defaultPort) + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Protocol</span><span class="detail-value">' + (config.useTls === false ? "HTTP (no TLS)" : "HTTPS") + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Verify TLS</span><span class="detail-value">' + (config.useTls === false ? "—" : config.verifyTls !== false ? "Yes" : "No") + '</span></div>' +
+          filterRow("VMs", config.vmInclude, config.vmExclude) +
+          filterRow(intg.type === "truenas" ? "Apps" : "Containers", config.containerInclude, config.containerExclude);
       } else if (intg.type === "fortigate") {
         detailRows =
           '<div class="detail-row"><span class="detail-label">Host</span><span class="detail-value mono">' + escapeHtml(config.host || "-") + ':' + (config.port || defaultPort) + '</span></div>' +
@@ -844,6 +875,7 @@ async function loadIntegrations() {
             (intg.type === "azurearc" ? '<button class="btn btn-sm btn-secondary" onclick="openArcApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
             (intg.type === "activedirectory" ? '<button class="btn btn-sm btn-secondary" onclick="openAdApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
             (intg.type === "vcenter" ? '<button class="btn btn-sm btn-secondary" onclick="openVcenterApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
+            ((intg.type === "unraid" || intg.type === "truenas") ? '<button class="btn btn-sm btn-secondary" onclick="openWorkloadApiQueryModal(\'' + intg.id + '\', \'' + intg.type + '\')">Query API</button>' : '') +
             '<button class="btn btn-sm btn-secondary" onclick="testConnection(\'' + intg.id + '\', this)">Test Connection</button>' +
             '<button class="btn btn-sm btn-secondary" onclick="openIntegrationEditModal(\'' + intg.id + '\')">Edit</button>' +
             '<button class="btn btn-sm btn-danger" onclick="confirmDeleteIntegration(\'' + intg.id + '\', \'' + escapeHtml(intg.name) + '\')">Delete</button>' +
@@ -1791,6 +1823,25 @@ var _CLASS_SUBTAB_SPECS = {
       { key: "hosts", label: "ESXi Hosts"       },
     ],
   },
+  // Unraid / TrueNAS SCALE: their own class keys (not vCenter's "vms" /
+  // "hosts") so the subtabs render the REDUCED card — addAsMonitored only;
+  // no agent deploy or auto-monitor pins — matching WorkloadConfigSchema.
+  unraid: {
+    primary: "wlhosts",
+    classes: [
+      { key: "wlhosts",    label: "Host"             },
+      { key: "wlvms",      label: "Virtual Machines" },
+      { key: "containers", label: "Containers"       },
+    ],
+  },
+  truenas: {
+    primary: "wlhosts",
+    classes: [
+      { key: "wlhosts",    label: "Host"             },
+      { key: "wlvms",      label: "Virtual Machines" },
+      { key: "containers", label: "Apps"             },
+    ],
+  },
 };
 
 // Integration types whose Workstations/Servers class subtabs carry the FULL
@@ -1857,6 +1908,10 @@ function _classStreamsBlockFor(klass, opts) {
   if (klass === "hosts" || klass === "hypervisor")      return streamsOf(opts.hostMonitor);
   // Azure Arc connected clusters (Phase 4) — reduced block, like hosts.
   if (klass === "clusters" || klass === "kubernetes_cluster") return streamsOf(opts.k8sMonitor);
+  // Unraid / TrueNAS classes.
+  if (klass === "wlhosts")    return streamsOf(opts.hostMonitor);
+  if (klass === "wlvms")      return streamsOf(opts.vmMonitor);
+  if (klass === "containers" || klass === "container") return streamsOf(opts.containerMonitor);
   return null;
 }
 
@@ -1908,6 +1963,10 @@ function _streamsForClass(klass) {
     // mounts to walk. (processes / eventLog are already off — isHostClass
     // excludes it.)
     if (s.key === "storage" && klass === "clusters") return false;
+    // A container / App reports state and CPU / memory only — its host's API
+    // publishes no interfaces, mounts, sensors or neighbours for it.
+    if ((klass === "containers" || klass === "container") &&
+        (s.key === "storage" || s.key === "interfaces" || s.key === "lldp" || s.key === "temperature")) return false;
     if (s.key === "processes") return allowProcesses;
     if (s.key === "eventLog")  return allowEventLog;
     return true;
@@ -3613,6 +3672,11 @@ function monitorSettingsFormHTML(s, opts) {
   var hostCfg = opts.hostMonitor || { addAsMonitored: false };
   // Azure Arc connected clusters — reduced block, same shape as hostCfg.
   var k8sCfg  = opts.k8sMonitor  || { addAsMonitored: false };
+  // Unraid / TrueNAS — reduced blocks. The host defaults ON (the schema's
+  // default), so an unsaved form shows it checked.
+  var wlHostCfg = opts.hostMonitor      || { addAsMonitored: true };
+  var wlVmCfg   = opts.vmMonitor        || { addAsMonitored: false };
+  var ctrCfg    = opts.containerMonitor || { addAsMonitored: false };
 
   // Stash auto-monitor name seeds for the lazy-loaded checklists.
   function _amonSeedNames(sel) {
@@ -3809,6 +3873,21 @@ function monitorSettingsFormHTML(s, opts) {
       return '<section style="margin-bottom:1.25rem">' + autoMonitoringHeader() +
         _classAddAsMonitoredHTML("f-mon-clusters-", "Kubernetes cluster", k8sCfg.addAsMonitored === true) + '</section>';
     }
+    // Unraid / TrueNAS — addAsMonitored only, per class. Everything else the
+    // workloads report rides the "unraid" / "truenas" polling method on the
+    // stream subtabs; nothing is installed and nothing is pinned for them.
+    if (klass === "wlhosts") {
+      return '<section style="margin-bottom:1.25rem">' + autoMonitoringHeader() +
+        _classAddAsMonitoredHTML("f-mon-wlhost-", "host", wlHostCfg.addAsMonitored !== false) + '</section>';
+    }
+    if (klass === "wlvms") {
+      return '<section style="margin-bottom:1.25rem">' + autoMonitoringHeader() +
+        _classAddAsMonitoredHTML("f-mon-wlvm-", "virtual machine", wlVmCfg.addAsMonitored === true) + '</section>';
+    }
+    if (klass === "containers") {
+      return '<section style="margin-bottom:1.25rem">' + autoMonitoringHeader() +
+        _classAddAsMonitoredHTML("f-mon-ctr-", integrationType === "truenas" ? "App" : "container", ctrCfg.addAsMonitored === true) + '</section>';
+    }
     return "";
   }
 
@@ -3840,6 +3919,7 @@ function monitorSettingsFormHTML(s, opts) {
         serverMonitor:      opts.serverMonitor     || {},
         vmMonitor:          opts.vmMonitor         || {},
         hostMonitor:        opts.hostMonitor       || {},
+        containerMonitor:   opts.containerMonitor  || {},
         // Hide per-stream credential rows on FortiSwitch + FortiAP class
         // subtabs — the class-level SNMP/SSH credential picker inside the
         // Direct Polling block is authoritative for those classes (managed
@@ -5320,6 +5400,111 @@ function vcenterFormHTML(defaults) {
     verboseLoggingFormHTML(d);
 }
 
+// ─── Unraid / TrueNAS SCALE ─────────────────────────────────────────────────
+// One form for both: they own the same three asset classes and differ only in
+// transport (Unraid GraphQL vs TrueNAS JSON-RPC over WebSocket), which the
+// copy below names. The key is stored under the sealed `apiToken` config key.
+function workloadFormHTML(type, defaults) {
+  var d = defaults || {};
+  var isTn = type === "truenas";
+  var product = isTn ? "TrueNAS SCALE" : "Unraid";
+  var useTls = d.useTls !== false;
+  var verifyTls = d.verifyTls !== false;
+  var enabledChecked = d.enabled !== false ? "checked" : "";
+  var autoChecked = d.autoDiscover !== false ? "checked" : "";
+  var vmMode = (d.vmInclude && d.vmInclude.length > 0) ? "include" : "exclude";
+  var vmNames = vmMode === "include" ? (d.vmInclude || []) : (d.vmExclude || []);
+  var ctrMode = (d.containerInclude && d.containerInclude.length > 0) ? "include" : "exclude";
+  var ctrNames = ctrMode === "include" ? (d.containerInclude || []) : (d.containerExclude || []);
+  var ctrWord = isTn ? "Apps" : "containers";
+  var keyHint = isTn
+    ? 'Created from the top-right user menu → <strong>My API Keys</strong>. A key carries the permissions of the user it belongs to — see the setup steps above.'
+    : 'Created under <strong>Settings → Management Access → API Keys</strong>. See the setup steps above for the role and permissions.';
+  // Step-by-step setup on the platform side, written against Unraid 7.3 and
+  // TrueNAS SCALE 25.10. Menu paths move between releases — when they do,
+  // update this AND docs/wiki/Integration-Unraid.md / Integration-TrueNAS.md.
+  var setupSteps = isTn
+    ? '<ol style="margin:0.25rem 0 0 1.1rem;padding:0">' +
+        '<li><strong>Check the version</strong> — the dashboard&rsquo;s System Information card. Polaris needs TrueNAS SCALE <strong>25.04 or later</strong> (it uses the JSON-RPC WebSocket API, not the REST API removed in 26.04).</li>' +
+        '<li><strong>Create a dedicated user</strong> — <em>Credentials → Users → Add</em>. Give it a username (e.g. <code>polaris</code>), under <em>Allow Access</em> choose <strong>TrueNAS Access</strong>, and set the <em>Administration Role</em> to <strong>Readonly Admin</strong>. No shell, no SMB, no sudo. Readonly Admin is enough for discovery and monitoring; for Polaris to start, stop, restart or update Apps and VMs the user needs <strong>Full Admin</strong> instead.</li>' +
+        '<li><strong>Create the key</strong> — top-right user menu → <em>My API Keys</em> → <strong>Add</strong> (or <em>Credentials → Users</em>, select the user, <em>View API Keys</em>). Name it, pick the user from <em>Username</em>, and either leave it non-expiring or set <em>Expires On</em>.</li>' +
+        '<li><strong>Copy the key now</strong> — TrueNAS shows it only once — and paste it below.</li>' +
+        '<li><strong>Keep HTTPS on.</strong> TrueNAS revokes a key the first time it is sent over plain HTTP. If the web UI uses TrueNAS&rsquo;s default self-signed certificate, untick <em>Verify TLS certificate</em> or install a trusted certificate on TrueNAS.</li>' +
+        '<li><strong>Test Connection</strong> should report the hostname, the version and how many Apps, VMs and pools it can see. &ldquo;Apps unreadable&rdquo; means the Apps service has no pool configured, or the user lacks read access.</li>' +
+      '</ol>'
+    : '<ol style="margin:0.25rem 0 0 1.1rem;padding:0">' +
+        '<li><strong>Check the version</strong> — shown top-right of the web UI. Polaris needs <strong>Unraid 7.2 or later</strong>, where the API is built in (older releases need the Unraid Connect plugin).</li>' +
+        '<li><strong>Create the key</strong> — <em>Settings → Management Access → API Keys</em> → create a key named e.g. <code>polaris</code>. For discovery and monitoring give it the <strong>VIEWER</strong> role (read-only).</li>' +
+        '<li><strong>For workload actions</strong> (start / stop / restart / update), also grant the permissions <strong>DOCKER: UPDATE_ANY</strong> and <strong>VMS: UPDATE_ANY</strong> — or use the ADMIN role, which grants everything. Without them Polaris still monitors; the actions are refused by Unraid and logged.</li>' +
+        '<li><strong>Copy the key</strong> and paste it below.</li>' +
+        '<li><strong>HTTPS:</strong> <em>Settings → Management Access → Use SSL/TLS</em> decides the protocol. With <em>Strict</em> (a myunraid.net certificate) enter the myunraid.net hostname as the host so the certificate verifies; with a self-signed certificate untick <em>Verify TLS certificate</em>; with SSL off, untick <em>Use HTTPS</em>.</li>' +
+        '<li><strong>Test Connection</strong> should report the hostname, the Unraid version and the container and VM counts. &ldquo;Containers unreadable&rdquo; means Docker is stopped (<em>Settings → Docker</em>) or the key lacks Docker read access; the same for VMs.</li>' +
+      '</ol>' +
+      '<p style="margin:0.4rem 0 0 0">To explore the API yourself, enable <em>Settings → Management Access → Developer Options → GraphQL Sandbox</em> and open <code>https://&lt;server&gt;/graphql</code>.</p>';
+  function filterBlock(idMode, idNames, mode, names, what, matched, example) {
+    return '<div class="form-group">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
+        '<select id="' + idMode + '" style="width:auto">' +
+          '<option value="include"' + (mode === "include" ? " selected" : "") + '>Include</option>' +
+          '<option value="exclude"' + (mode === "exclude" ? " selected" : "") + '>Exclude</option>' +
+        '</select>' +
+        '<span style="font-size:0.85rem;color:var(--color-text-secondary)">these ' + what + ' (matched against ' + matched + ')</span>' +
+      '</div>' +
+      '<textarea id="' + idNames + '" rows="3" placeholder="One per line — e.g.&#10;' + example + '">' + escapeHtml(names.join("\n")) + '</textarea>' +
+    '</div>';
+  }
+  return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. ' + (isTn ? "Storage NAS" : "Tower") + '"></div>' +
+    infoBox('Connects to an <strong style="color:var(--color-text-primary)">' + product + '</strong> host and discovers the host, its virtual machines and its ' + ctrWord + ', each as an asset parented by the host. Their state, CPU and memory, the host&rsquo;s pools and disk temperatures are read from the host&rsquo;s own API on every monitor tick — nothing is installed on the host.') +
+    calloutHTML("tip", "Set up " + product + " first", setupSteps) +
+    formDivider() +
+    sectionHeading("Connection Settings") +
+    '<div style="display:grid;grid-template-columns:1fr auto;gap:8px">' +
+      '<div class="form-group"><label>Host / IP *</label><input type="text" id="f-host" value="' + escapeHtml(d.host || "") + '" placeholder="e.g. ' + (isTn ? "truenas.lan" : "tower.lan") + '"></div>' +
+      '<div class="form-group"><label>Port</label><input type="number" id="f-port" value="' + escapeHtml(d.port ? String(d.port) : "") + '" min="1" max="65535" placeholder="' + (useTls ? "443" : "80") + '" style="width:90px"></div>' +
+    '</div>' +
+    checkboxRow("f-useTls", "Use HTTPS", useTls) +
+    (isTn ? '<p class="hint" style="color:var(--color-warning)">Leave on. TrueNAS revokes an API key that is ever sent over plain HTTP.</p>' : '') +
+    checkboxRow("f-verifyTls", "Verify TLS certificate", verifyTls) +
+    '<p class="hint">Turn off only for a host with a self-signed certificate you cannot replace — it lets a network attacker capture the API key.</p>' +
+    '<div class="form-group"><label>API Key *</label><input type="password" id="f-apiToken" value="" placeholder="' + escapeHtml(d.apiTokenPlaceholder || "API key") + '" autocomplete="off"><p class="hint">' + keyHint + '</p></div>' +
+    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
+      '<input type="checkbox" id="f-enabled" ' + enabledChecked + ' style="width:auto">' +
+      '<label for="f-enabled" style="margin:0">Enabled</label>' +
+    '</div>' +
+    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
+      '<input type="checkbox" id="f-autoDiscover" ' + autoChecked + ' style="width:auto">' +
+      '<label for="f-autoDiscover" style="margin:0">Enable auto-discovery</label>' +
+    '</div>' +
+    '<div class="form-group"><label>Auto-Discovery Interval</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-pollInterval" value="' + (d.pollInterval || 1) + '" min="1" max="24" style="width:80px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">hours</span></div><p class="hint">How often to look for new or removed VMs and ' + ctrWord + ' (1–24 hours). Their up/down state and usage are read every monitor tick regardless.</p></div>' +
+    formDivider() +
+    sectionHeading("Filters") +
+    filterBlock("f-vmMode", "f-vmNames", vmMode, vmNames, "VMs", "the VM name", "win-*") +
+    filterBlock("f-ctrMode", "f-ctrNames", ctrMode, ctrNames, ctrWord, isTn ? "the App name" : "the container name", "*-test") +
+    '<p class="hint">Leave empty to sync everything. Wildcards: <code>plex*</code>, <code>*db*</code>. The host is never filtered. Narrowing a filter does not decommission what it drops — those assets simply stop updating.</p>' +
+    verboseLoggingFormHTML(d);
+}
+
+function getWorkloadFormConfig() {
+  var port = document.getElementById("f-port").value;
+  var vmMode = document.getElementById("f-vmMode").value;
+  var vmNames = linesToArray("f-vmNames");
+  var ctrMode = document.getElementById("f-ctrMode").value;
+  var ctrNames = linesToArray("f-ctrNames");
+  var cfg = {
+    host: val("f-host"),
+    useTls: document.getElementById("f-useTls").checked,
+    verifyTls: document.getElementById("f-verifyTls").checked,
+    apiToken: val("f-apiToken"),
+    vmInclude: vmMode === "include" ? vmNames : [],
+    vmExclude: vmMode === "exclude" ? vmNames : [],
+    containerInclude: ctrMode === "include" ? ctrNames : [],
+    containerExclude: ctrMode === "exclude" ? ctrNames : [],
+    verboseLogging: readVerboseLoggingFromForm(),
+  };
+  if (port) cfg.port = parseInt(port, 10);
+  return cfg;
+}
+
 function getVcenterFormConfig() {
   var port = document.getElementById("f-port").value;
   var devMode = document.getElementById("f-deviceMode").value;
@@ -5368,6 +5553,14 @@ function showTypePicker() {
         '<strong>Azure Arc</strong>' +
         '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Arc-enabled servers via Azure Resource Manager</span>' +
       '</button>' +
+      '<button class="btn btn-secondary" id="pick-unraid" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
+        '<strong>Unraid</strong>' +
+        '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Host, VMs &amp; Docker containers via the Unraid API</span>' +
+      '</button>' +
+      '<button class="btn btn-secondary" id="pick-truenas" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
+        '<strong>TrueNAS SCALE</strong>' +
+        '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Host, VMs &amp; Apps via the JSON-RPC API</span>' +
+      '</button>' +
     '</div>';
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>';
   openModal("Add Integration", body, footer, { wide: true });
@@ -5378,6 +5571,8 @@ function showTypePicker() {
   document.getElementById("pick-ad").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("activedirectory"); });
   document.getElementById("pick-vc").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("vcenter"); });
   document.getElementById("pick-arc").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("azurearc"); });
+  document.getElementById("pick-unraid").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("unraid"); });
+  document.getElementById("pick-truenas").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("truenas"); });
 }
 
 function _formHTMLForType(type, defaults) {
@@ -5387,6 +5582,7 @@ function _formHTMLForType(type, defaults) {
   if (type === "activedirectory") return activeDirectoryFormHTML(defaults);
   if (type === "vcenter") return vcenterFormHTML(defaults);
   if (type === "azurearc") return azureArcFormHTML(defaults);
+  if (type === "unraid" || type === "truenas") return workloadFormHTML(type, defaults);
   return fortiManagerFormHTML(defaults);
 }
 
@@ -5397,6 +5593,7 @@ function _formConfigForType(type) {
   if (type === "activedirectory") return getAdFormConfig();
   if (type === "vcenter") return getVcenterFormConfig();
   if (type === "azurearc") return getArcFormConfig();
+  if (type === "unraid" || type === "truenas") return getWorkloadFormConfig();
   return getFormConfig();
 }
 
@@ -5434,6 +5631,8 @@ var _INTEGRATION_PRODUCTS = {
   windowsserver:   "Windows Server",
   vcenter:         "vCenter",
   azurearc:        "Azure Arc",
+  unraid:          "Unraid",
+  truenas:         "TrueNAS SCALE",
 };
 
 /** The product an operator picked to get here. Unknown types fall back to the
@@ -5476,6 +5675,8 @@ var _INTEGRATION_REQUIRED_FIELDS = {
   ],
   fortimanager: [["f-host", "host"], ["f-apiToken", "API token", true]],
   fortigate:    [["f-host", "host"], ["f-apiToken", "API token", true]],
+  unraid:       [["f-host", "host"], ["f-apiToken", "API key", true]],
+  truenas:      [["f-host", "host"], ["f-apiToken", "API key", true]],
 };
 
 function _integrationRequires(type, mode) {
@@ -5486,7 +5687,7 @@ function _integrationRequires(type, mode) {
 
 // The five non-Fortinet types that carry a Monitoring tab. A type in neither
 // this list nor the Fortinet pair gets the flat, untabbed form.
-var _NON_FORTINET_TABBED = ["activedirectory", "entraid", "windowsserver", "vcenter", "azurearc"];
+var _NON_FORTINET_TABBED = ["activedirectory", "entraid", "windowsserver", "vcenter", "azurearc", "unraid", "truenas"];
 
 /**
  * The tab set for one integration type, in order, for BOTH flows.
@@ -5615,6 +5816,8 @@ function _integrationTabs(ctx) {
         serverMonitor:      config.serverMonitor      || null,
         vmMonitor:          config.vmMonitor          || null,
         hostMonitor:        config.hostMonitor        || null,
+        k8sMonitor:         config.k8sMonitor         || null,
+        containerMonitor:   config.containerMonitor   || null,
         verifyPresence:     config.verifyPresence,
       }),
     },
@@ -5670,6 +5873,7 @@ async function openIntegrationCreateModal(type) {
   var isWin = type === "windowsserver";
   var isVc = type === "vcenter";
   var isArc = type === "azurearc";
+  var isWl = type === "unraid" || type === "truenas";
   var isFmgOrFgt = isFmg || isFgt;
 
   // Every type with a Monitoring tab seeds it from the MANUAL tier — the
@@ -5677,7 +5881,7 @@ async function openIntegrationCreateModal(type) {
   // integration's own tier, which happens right after create below.
   var monSettings = {};
   var creds = [];
-  if (isFmgOrFgt || isAd || isEntra || isWin || isVc || isArc) {
+  if (isFmgOrFgt || isAd || isEntra || isWin || isVc || isArc || isWl) {
     try { monSettings = (await api.monitorSettings.getManual()) || {}; }
     catch (e) { /* fall back to the form's own defaults */ }
   }
@@ -5694,7 +5898,8 @@ async function openIntegrationCreateModal(type) {
   // edit flow passes the stored config, so existing rows are unaffected.
   var createDefaults = isFmg ? { verifySsl: true, fortigateVerifySsl: true }
     : isFgt ? { verifySsl: true }
-    : (isAd || isVc) ? { verifyTls: true } : {};
+    : (isAd || isVc) ? { verifyTls: true }
+    : isWl ? { verifyTls: true, useTls: true } : {};
 
   // The Fortinet pair build their General tab from their own split
   // general/filters helpers, so this is only consulted by the other five —
@@ -5749,8 +5954,19 @@ async function _createIntegration(type, tested) {
   var isWin = type === "windowsserver";
   var isVc = type === "vcenter";
   var isArc = type === "azurearc";
+  var isWl = type === "unraid" || type === "truenas";
   var autoDiscoverEl = document.getElementById("f-autoDiscover");
   var createConfig = _formConfigForType(type);
+  if (isWl) {
+    // Reduced class blocks (addAsMonitored + streams). Host is the primary
+    // subtab, so its streams carry the legacy primary ids.
+    var wlHostNew = _readWorkstationServerMonitorBlock("f-mon-wlhost-", { klass: "wlhosts",    isPrimary: true });
+    var wlVmNew   = _readWorkstationServerMonitorBlock("f-mon-wlvm-",   { klass: "wlvms",      isPrimary: false });
+    var wlCtrNew  = _readWorkstationServerMonitorBlock("f-mon-ctr-",    { klass: "containers", isPrimary: false });
+    if (wlHostNew) createConfig.hostMonitor      = wlHostNew;
+    if (wlVmNew)   createConfig.vmMonitor        = wlVmNew;
+    if (wlCtrNew)  createConfig.containerMonitor = wlCtrNew;
+  }
   if (isFmg || isFgt) {
     var credId = _readMonitorCredentialId();
     if (credId) createConfig.monitorCredentialId = credId;
@@ -5847,7 +6063,7 @@ async function _createIntegration(type, tested) {
   // Save the new integration's tier-3 monitor settings if the Monitoring
   // tab was rendered. Failures here aren't fatal — the integration is
   // already created; operator can edit and resave.
-  if ((isFmg || isFgt || isAd || isEntra || isWin || isVc || isArc) && result && result.id) {
+  if ((isFmg || isFgt || isAd || isEntra || isWin || isVc || isArc || isWl) && result && result.id) {
     try { await api.monitorSettings.setIntegration(result.id, getMonitorSettingsFromForm()); }
     catch (e) { showToast("Integration created, but monitor settings couldn\'t be saved: " + (e.message || "unknown error"), "error"); }
   }
@@ -5939,9 +6155,36 @@ function _intgEditFormSpec(intg, config) {
     var isAd = intg.type === "activedirectory";
     var isVc = intg.type === "vcenter";
     var isArc = intg.type === "azurearc";
+    var isWl = intg.type === "unraid" || intg.type === "truenas";
     var body, formGetter;
 
-    if (isVc) {
+    if (isWl) {
+      // All four places a field must land (schema, service, form + reader,
+      // these defaults) carry every key below — round-trip Add → Save → Edit.
+      var defaults = {
+        name: intg.name,
+        host: config.host,
+        port: config.port,
+        useTls: config.useTls !== false,
+        verifyTls: config.verifyTls !== false,
+        apiTokenPlaceholder: "Leave blank to keep current key",
+        enabled: intg.enabled,
+        autoDiscover: intg.autoDiscover !== false,
+        pollInterval: intg.pollInterval,
+        vmInclude: config.vmInclude || [],
+        vmExclude: config.vmExclude || [],
+        containerInclude: config.containerInclude || [],
+        containerExclude: config.containerExclude || [],
+        verboseLogging: config.verboseLogging === true,
+        verboseLoggingEnabledAt: config.verboseLoggingEnabledAt,
+      };
+      body = workloadFormHTML(intg.type, defaults);
+      formGetter = function () {
+        var fc = getWorkloadFormConfig();
+        if (!fc.apiToken) delete fc.apiToken;
+        return fc;
+      };
+    } else if (isVc) {
       var defaults = {
         name: intg.name,
         host: config.host,
@@ -6215,6 +6458,7 @@ async function _saveIntegration(id, intg, formGetter) {
     var isAd = intg.type === "activedirectory";
     var isVc = intg.type === "vcenter";
     var isArc = intg.type === "azurearc";
+    var isWl = intg.type === "unraid" || intg.type === "truenas";
     var isFmgOrFgt = (intg.type === "fortimanager" || intg.type === "fortigate");
     // Reads the form into an editConfig WITHOUT persisting it. Split from
     // commitSave so the Auto-Monitor capacity-warning confirm can run BEFORE
@@ -6312,6 +6556,14 @@ async function _saveIntegration(id, intg, formGetter) {
         var vcVerifyPresenceEdit = _readVerifyPresenceToggle();
         if (vcVerifyPresenceEdit !== undefined) editConfig.verifyPresence = vcVerifyPresenceEdit;
       }
+      if (isWl) {
+        var wlHost = _readWorkstationServerMonitorBlock("f-mon-wlhost-", { klass: "wlhosts",    isPrimary: true });
+        var wlVm   = _readWorkstationServerMonitorBlock("f-mon-wlvm-",   { klass: "wlvms",      isPrimary: false });
+        var wlCtr  = _readWorkstationServerMonitorBlock("f-mon-ctr-",    { klass: "containers", isPrimary: false });
+        if (wlHost) editConfig.hostMonitor      = wlHost;
+        if (wlVm)   editConfig.vmMonitor        = wlVm;
+        if (wlCtr)  editConfig.containerMonitor = wlCtr;
+      }
       return { editConfig: editConfig, autoDiscoverEl: autoDiscoverEl };
     }
 
@@ -6331,7 +6583,7 @@ async function _saveIntegration(id, intg, formGetter) {
       // Persist the integration-tier monitor settings for any integration
       // type that renders a Monitoring tab. Failures here aren't fatal —
       // the integration update itself already landed.
-      if (isFmgOrFgt || isAd || isEntra || isWin || isVc || isArc) {
+      if (isFmgOrFgt || isAd || isEntra || isWin || isVc || isArc || isWl) {
         try { await api.monitorSettings.setIntegration(id, getMonitorSettingsFromForm()); }
         catch (e) { showToast("Integration updated, but monitor settings couldn\'t be saved: " + (e.message || "unknown error"), "error"); }
       }
@@ -7990,6 +8242,142 @@ function openVcenterApiQueryModal(id) {
 
   document.getElementById("vc-copy-btn").addEventListener("click", function () {
     var text = document.getElementById("vc-response").textContent;
+    var btn = this;
+    copyTextToClipboard(text).then(function (ok) {
+      if (!ok) { showToast("Copy failed", "error"); return; }
+      btn.textContent = "Copied!";
+      setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+    });
+  });
+}
+
+// ─── Unraid / TrueNAS API Query modal ──────────────────────────────────────
+// Read-only by construction on the server: Unraid takes GraphQL QUERIES only
+// (mutations / subscriptions refused), TrueNAS takes read methods only
+// (`.query`, `.get_instance`, `.config`, … — truenasService.isProxyReadMethod).
+// Same saved-query console as the vCenter modal, one store per platform.
+
+var _UNRAID_PRESET_QUERIES = [
+  { name: "Containers", query: "query {\n  docker { containers { id names image state status isUpdateAvailable autoStart } }\n}", variables: "" },
+  { name: "VMs", query: "query {\n  vms { domains { id name state } }\n}", variables: "" },
+  { name: "Array + disks", query: "query {\n  array { state capacity { kilobytes { total used free } } disks { name device temp status fsSize fsUsed } caches { name temp fsSize fsUsed } }\n}", variables: "" },
+  { name: "Host usage", query: "query {\n  metrics { cpu { percentTotal } memory { total used available } }\n  info { os { hostname release uptime } versions { core { unraid } } }\n}", variables: "" },
+];
+var _TRUENAS_PRESET_QUERIES = [
+  { name: "Apps", method: "app.query", params: "[]" },
+  { name: "VMs", method: "vm.query", params: "[]" },
+  { name: "Pools", method: "pool.query", params: "[]" },
+  { name: "System info", method: "system.info", params: "[]" },
+  { name: "Disk temperatures", method: "disk.temperatures", params: "[[]]" },
+  { name: "Update summary for an App (edit the name)", method: "app.upgrade_summary", params: "[\"plex\"]" },
+];
+var _WL_QUERIES_VERSION = 1;
+var _unraidQueryStore = _makeSavedQueryStore("polaris-unraid-queries", _WL_QUERIES_VERSION, _UNRAID_PRESET_QUERIES);
+var _truenasQueryStore = _makeSavedQueryStore("polaris-truenas-queries", _WL_QUERIES_VERSION, _TRUENAS_PRESET_QUERIES);
+
+function openWorkloadApiQueryModal(id, type) {
+  var isTn = type === "truenas";
+  var inputs = isTn
+    ? '<div class="form-group" style="margin:0">' +
+        '<label>Method</label>' +
+        '<input type="text" id="wl-method" value="app.query" placeholder="app.query" style="font-family:monospace;font-size:0.85rem">' +
+      '</div>' +
+      '<div class="form-group" style="margin-top:0.75rem">' +
+        '<label>Params <span style="font-size:0.8rem;color:var(--color-text-tertiary)">(a JSON array)</span></label>' +
+        '<textarea id="wl-params" rows="4" style="font-family:monospace;font-size:0.82rem">[]</textarea>' +
+        '<p class="hint">Read methods only — <code>*.query</code>, <code>*.get_instance</code>, <code>*.config</code>, <code>system.info</code>, <code>disk.temperatures</code> and the like. Anything that changes the host is refused.</p>' +
+      '</div>'
+    : '<div class="form-group" style="margin:0">' +
+        '<label>GraphQL query</label>' +
+        '<textarea id="wl-query" rows="8" style="font-family:monospace;font-size:0.82rem">query {\n  docker { containers { id names state } }\n}</textarea>' +
+      '</div>' +
+      '<div class="form-group" style="margin-top:0.75rem">' +
+        '<label>Variables <span style="font-size:0.8rem;color:var(--color-text-tertiary)">(optional JSON object)</span></label>' +
+        '<textarea id="wl-vars" rows="2" style="font-family:monospace;font-size:0.82rem" placeholder="{}"></textarea>' +
+        '<p class="hint">Queries only — mutations and subscriptions are refused. The schema is browsable in Unraid under Settings → Management Access → API.</p>' +
+      '</div>';
+  var body =
+    '<div style="margin-bottom:0.75rem">' +
+      '<p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1px;color:var(--color-text-tertiary);margin-bottom:0.4rem">Saved Queries</p>' +
+      '<div style="display:flex;gap:6px;align-items:center">' +
+        '<select id="wl-saved-select" style="flex:1"></select>' +
+        '<button class="btn btn-sm btn-secondary" id="wl-load-btn">Load</button>' +
+        '<button class="btn btn-sm btn-danger" id="wl-delete-btn">Delete</button>' +
+      '</div>' +
+    '</div>' +
+    '<hr style="border:none;border-top:1px solid var(--color-border);margin:0 0 0.75rem">' +
+    inputs +
+    '<div style="display:flex;justify-content:flex-end;margin-bottom:0.75rem"><button class="btn btn-primary" id="wl-send">Send</button></div>' +
+    '<div style="display:flex;gap:6px;align-items:center;margin-bottom:0.25rem">' +
+      '<input type="text" id="wl-save-name" placeholder="Name this query to save it…" style="flex:1;font-size:0.85rem">' +
+      '<button class="btn btn-sm btn-secondary" id="wl-save-btn">Save</button>' +
+    '</div>' +
+    '<div id="wl-response-wrap" style="display:none;margin-top:1rem">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem">' +
+        '<p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1px;color:var(--color-text-tertiary);margin:0">Response</p>' +
+        '<button class="btn btn-sm btn-secondary" id="wl-copy-btn" style="padding:2px 10px;font-size:0.75rem">Copy</button>' +
+      '</div>' +
+      '<pre id="wl-response" style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:0.75rem;font-size:0.78rem;overflow:auto;max-height:300px;white-space:pre-wrap;word-break:break-all;margin:0"></pre>' +
+    '</div>';
+  var footer = '<button class="btn btn-secondary" onclick="closeModal()">Close</button>';
+  openModal((isTn ? "TrueNAS SCALE" : "Unraid") + " API Query", body, footer, { wide: true });
+
+  _wireSavedQueryConsole(isTn ? _truenasQueryStore : _unraidQueryStore, "wl",
+    function () {
+      return isTn
+        ? { method: document.getElementById("wl-method").value.trim(), params: document.getElementById("wl-params").value }
+        : { query: document.getElementById("wl-query").value, variables: document.getElementById("wl-vars").value };
+    },
+    function (q) {
+      if (isTn) {
+        document.getElementById("wl-method").value = q.method || "";
+        document.getElementById("wl-params").value = q.params || "[]";
+      } else {
+        document.getElementById("wl-query").value = q.query || "";
+        document.getElementById("wl-vars").value = q.variables || "";
+      }
+    });
+
+  document.getElementById("wl-send").addEventListener("click", async function () {
+    var btn = this;
+    var payload;
+    try {
+      if (isTn) {
+        var method = document.getElementById("wl-method").value.trim();
+        if (!method) { showToast("Enter a method (e.g. app.query)", "error"); return; }
+        var params = JSON.parse(document.getElementById("wl-params").value.trim() || "[]");
+        if (!Array.isArray(params)) throw new Error("Params must be a JSON array");
+        payload = { method: method, params: params };
+      } else {
+        var q = document.getElementById("wl-query").value.trim();
+        if (!q) { showToast("Enter a GraphQL query", "error"); return; }
+        var rawVars = document.getElementById("wl-vars").value.trim();
+        payload = { query: q };
+        if (rawVars) payload.variables = JSON.parse(rawVars);
+      }
+    } catch (e) {
+      showToast("Invalid JSON: " + e.message, "error");
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "Sending…";
+    var responseWrap = document.getElementById("wl-response-wrap");
+    var responsePre = document.getElementById("wl-response");
+    try {
+      var result = await api.integrations.query(id, payload);
+      responseWrap.style.display = "";
+      responsePre.textContent = JSON.stringify(result, null, 2);
+    } catch (err) {
+      responseWrap.style.display = "";
+      responsePre.textContent = "Error: " + err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Send";
+    }
+  });
+
+  document.getElementById("wl-copy-btn").addEventListener("click", function () {
+    var text = document.getElementById("wl-response").textContent;
     var btn = this;
     copyTextToClipboard(text).then(function (ok) {
       if (!ok) { showToast("Copy failed", "error"); return; }

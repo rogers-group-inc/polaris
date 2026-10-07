@@ -112,6 +112,15 @@ const NOT_YET_SCOPED: Record<string, string> = {
   // per-resource refresh of its own — it is created by the cluster query a
   // full Arc run performs, which a scoped run deliberately skips.
   "arc-k8s": "Azure Arc (connected Kubernetes cluster)",
+  // Unraid / TrueNAS read the whole host — VMs, containers, pools — in ONE
+  // call, so a per-asset run would save nothing over the integration's own
+  // Discover; their state and usage refresh every monitor tick anyway.
+  "unraid-host": "Unraid",
+  "unraid-vm": "Unraid",
+  "unraid-container": "Unraid",
+  "truenas-host": "TrueNAS SCALE",
+  "truenas-vm": "TrueNAS SCALE",
+  "truenas-app": "TrueNAS SCALE",
 };
 
 /**

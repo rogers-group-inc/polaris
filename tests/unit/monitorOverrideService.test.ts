@@ -260,6 +260,21 @@ describe("classBlockKeyForAssetType — assetType → config block key", () => {
     expect(AUTO_MONITOR_ASSET_TYPES.has("kubernetes_cluster")).toBe(true);
   });
 
+  it("maps the Unraid / TrueNAS classes onto vCenter's block names plus containerMonitor", () => {
+    for (const t of ["unraid", "truenas"]) {
+      expect(classBlockKeyForAssetType("server", t)).toBe("vmMonitor");
+      expect(classBlockKeyForAssetType("hypervisor", t)).toBe("hostMonitor");
+      expect(classBlockKeyForAssetType("container", t)).toBe("containerMonitor");
+      expect(getAddAsMonitoredFromConfig(t, cfg("vmMonitor", true), "server")).toBe(true);
+      expect(getAddAsMonitoredFromConfig(t, cfg("hostMonitor", true), "hypervisor")).toBe(true);
+      expect(getAddAsMonitoredFromConfig(t, cfg("containerMonitor", true), "container")).toBe(true);
+      expect(getAddAsMonitoredFromConfig(t, {}, "container")).toBe(false);
+    }
+    // Only the two workload integrations own containers.
+    expect(getAddAsMonitoredFromConfig("vcenter", cfg("containerMonitor", true), "container")).toBeNull();
+    expect(getAddAsMonitoredFromConfig("azurearc", cfg("containerMonitor", true), "container")).toBeNull();
+  });
+
   it("reads the directory class blocks on an azurearc integration", () => {
     expect(getAddAsMonitoredFromConfig("azurearc", cfg("workstationMonitor", true), "workstation")).toBe(true);
     expect(getAddAsMonitoredFromConfig("azurearc", cfg("serverMonitor", true), "server")).toBe(true);
@@ -276,10 +291,10 @@ describe("classBlockKeyForAssetType — assetType → config block key", () => {
   });
 });
 
-describe("AUTO_MONITOR_ASSET_TYPES — the seven participating classes", () => {
-  it("contains exactly firewall/switch/access_point/workstation/server/hypervisor/kubernetes_cluster", () => {
+describe("AUTO_MONITOR_ASSET_TYPES — the eight participating classes", () => {
+  it("contains exactly firewall/switch/access_point/workstation/server/hypervisor/kubernetes_cluster/container", () => {
     expect([...AUTO_MONITOR_ASSET_TYPES].sort()).toEqual(
-      ["access_point", "firewall", "hypervisor", "kubernetes_cluster", "server", "switch", "workstation"],
+      ["access_point", "container", "firewall", "hypervisor", "kubernetes_cluster", "server", "switch", "workstation"],
     );
   });
 
@@ -291,6 +306,8 @@ describe("AUTO_MONITOR_ASSET_TYPES — the seven participating classes", () => {
       "workstation",
       "server",
       "hypervisor",
+      "kubernetes_cluster",
+      "container",
     ];
     for (const c of classes) {
       expect(AUTO_MONITOR_ASSET_TYPES.has(c)).toBe(true);

@@ -5965,7 +5965,8 @@ model MaintenanceHold {
   id        String   @id @default(uuid())
   assetId   String
   // "agent-upgrade" | "agent-reinstall" | "agent-uninstall" |
-  // "firmware-upgrade" (business rule 87). Part of the uniqueness so two
+  // "firmware-upgrade" (business rule 87) | "workload-restart" |
+  // "workload-update" (business rule 94). Part of the uniqueness so two
   // different operations on one asset cannot lose each other's hold, and
   // re-running the same one extends rather than stacks.
   kind      String

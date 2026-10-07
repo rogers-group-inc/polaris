@@ -102,6 +102,14 @@ import {
   rejectChassisReplacement,
   chassisSwapKey,
 } from "./subnetChassisConflictService.js";
+import {
+  assetTypeForWorkloadRole,
+  isWorkloadPlatform,
+  parseWorkloadSourceKind,
+  workloadSourceKind,
+  type WorkloadPlatform,
+  type WorkloadRole,
+} from "../utils/workloadSources.js";
 
 // Shared with the discovery sync that writes these tags — see
 // src/utils/assetSourceTags.ts (imported at the top of this file).
@@ -118,11 +126,21 @@ function assetTagPrefixFor(proposed: Record<string, any>): string {
 // `sourceType: "vcenter"` in proposedAssetFields (with assetType
 // discriminating VM vs ESXi host) and Azure Arc conflicts `sourceType:
 // "azurearc"`; AD/Entra keep the legacy tag-prefix convention via
-// assetTagPrefixFor.
-type AssetConflictSource = "ad" | "entra" | "vcenter-vm" | "vcenter-host" | "arc";
+// assetTagPrefixFor. Unraid / TrueNAS conflicts carry `sourceType: "unraid"
+// | "truenas"` plus `workloadRole` (host / vm / container), which names the
+// source kind directly (utils/workloadSources.ts).
+type WorkloadConflictSource =
+  | "unraid-host" | "unraid-vm" | "unraid-container"
+  | "truenas-host" | "truenas-vm" | "truenas-app";
+type AssetConflictSource = "ad" | "entra" | "vcenter-vm" | "vcenter-host" | "arc" | WorkloadConflictSource;
 function conflictSourceFor(proposed: Record<string, any>): AssetConflictSource {
   if (proposed.sourceType === "vcenter") {
     return proposed.assetType === "hypervisor" ? "vcenter-host" : "vcenter-vm";
+  }
+  if (isWorkloadPlatform(proposed.sourceType)) {
+    const role: WorkloadRole = proposed.workloadRole === "host" || proposed.workloadRole === "container"
+      ? proposed.workloadRole : "vm";
+    return workloadSourceKind(proposed.sourceType, role) as WorkloadConflictSource;
   }
   if (proposed.sourceType === "azurearc") return "arc";
   return assetTagPrefixFor(proposed) === AD_ASSET_TAG_PREFIX ? "ad" : "entra";
@@ -135,7 +153,18 @@ function conflictSourceLabel(src: AssetConflictSource): string {
     case "vcenter-vm":   return "vCenter VM";
     case "vcenter-host": return "vCenter ESXi host";
     case "arc":          return "Azure Arc machine";
+    case "unraid-host":      return "Unraid host";
+    case "unraid-vm":        return "Unraid VM";
+    case "unraid-container": return "Unraid container";
+    case "truenas-host":     return "TrueNAS SCALE host";
+    case "truenas-vm":       return "TrueNAS SCALE VM";
+    case "truenas-app":      return "TrueNAS SCALE App";
   }
+}
+
+/** The workload platform behind a conflict source, or null for every other source. */
+function workloadPlatformOf(src: AssetConflictSource): WorkloadPlatform | null {
+  return parseWorkloadSourceKind(src)?.platform ?? null;
 }
 
 // ─── Reads (route GET handlers delegate here) ────────────────────────────────
@@ -402,6 +431,7 @@ async function acceptAssetConflict(
   const isAd = src === "ad";
   const isVcenter = src === "vcenter-vm" || src === "vcenter-host";
   const isArc = src === "arc";
+  const wlPlatform = workloadPlatformOf(src);
   const sourceLabel = conflictSourceLabel(src);
 
   // Per-field merge. fieldWinners (from POST /:id/merge) overrides the default
@@ -464,9 +494,12 @@ async function acceptAssetConflict(
   // assetTag.
   const sourceTags: string[] = isVcenter
     ? ["vcenter", "auto-discovered"]
+    : wlPlatform ? [wlPlatform, "auto-discovered"]
     : isArc ? ["azurearc", "auto-discovered"]
     : isAd ? ["activedirectory", "auto-discovered"] : ["entraid", "auto-discovered"];
-  if (isArc) {
+  if (wlPlatform) {
+    // nothing source-specific to tag
+  } else if (isArc) {
     if (proposed.arcStatus && String(proposed.arcStatus).toLowerCase() !== "connected") {
       sourceTags.push(`arc-${String(proposed.arcStatus).toLowerCase()}`);
     }
@@ -500,9 +533,9 @@ async function acceptAssetConflict(
   // same way.
   const sourceKind = src;
   // AD/Entra ids are case-normalized to lowercase everywhere; vCenter
-  // externalIds (instanceUuid or `${integrationId}:${moref}`) must match the
-  // sync's key verbatim.
-  const externalId = isVcenter
+  // externalIds (instanceUuid or `${integrationId}:${moref}`) and the
+  // workload ids (`${integrationId}:…`) must match the sync's key verbatim.
+  const externalId = isVcenter || wlPlatform
     ? String(conflict.proposedDeviceId)
     : String(conflict.proposedDeviceId).toLowerCase();
   const existingSourceForId = await prisma.assetSource.findUnique({
@@ -739,6 +772,7 @@ async function rejectAssetConflict(conflict: any, actor?: string) {
   const isAd = src === "ad";
   const isVcenter = src === "vcenter-vm" || src === "vcenter-host";
   const isArc = src === "arc";
+  const wlPlatform = workloadPlatformOf(src);
   const sourceLabel = conflictSourceLabel(src);
 
   // Sibling flavour — the proposed device ALREADY has its own asset (its
@@ -749,7 +783,7 @@ async function rejectAssetConflict(conflict: any, actor?: string) {
   // device's real asset, orphaning it. The resolved conflict row itself is
   // what suppresses a re-raise (upsertAssetConflict's resolved-pair check).
   {
-    const rejectExternalId = isVcenter
+    const rejectExternalId = isVcenter || wlPlatform
       ? String(conflict.proposedDeviceId)
       : String(conflict.proposedDeviceId).toLowerCase();
     const alreadyOwned = await prisma.assetSource.findUnique({
@@ -775,9 +809,12 @@ async function rejectAssetConflict(conflict: any, actor?: string) {
   // AssetSource row we upsert below.
   const tags: string[] = isVcenter
     ? ["vcenter", "auto-discovered"]
+    : wlPlatform ? [wlPlatform, "auto-discovered"]
     : isArc ? ["azurearc", "auto-discovered"]
     : isAd ? ["activedirectory", "auto-discovered"] : ["entraid", "auto-discovered"];
-  if (isArc) {
+  if (wlPlatform) {
+    // nothing source-specific to tag
+  } else if (isArc) {
     if (proposed.arcStatus && String(proposed.arcStatus).toLowerCase() !== "connected") {
       tags.push(`arc-${String(proposed.arcStatus).toLowerCase()}`);
     }
@@ -801,7 +838,9 @@ async function rejectAssetConflict(conflict: any, actor?: string) {
     // Arc defaults to "server": Arc onboarding is overwhelmingly server
     // estate, and inferArcAssetType normally supplies proposed.assetType
     // anyway — this is only the fallback when it couldn't decide.
-    assetType: proposed.assetType || (isVcenter || isArc ? "server" : isAd ? "other" : "workstation"),
+    assetType: proposed.assetType
+      || (wlPlatform ? assetTypeForWorkloadRole(parseWorkloadSourceKind(src)!.role)
+        : isVcenter || isArc ? "server" : isAd ? "other" : "workstation"),
     status: proposed.status || defaultStatus,
     statusChangedAt: new Date(),
     statusChangedBy: actor ?? "system",
@@ -848,9 +887,10 @@ async function upsertConflictAssetSource(
   sourceKind: AssetConflictSource,
 ): Promise<void> {
   const isVcenter = sourceKind === "vcenter-vm" || sourceKind === "vcenter-host";
-  // AD/Entra ids are lowercase everywhere; vCenter externalIds must match the
-  // discovery sync's key verbatim (instanceUuid / `${integrationId}:${moref}`).
-  const externalId = isVcenter
+  const wl = parseWorkloadSourceKind(sourceKind);
+  // AD/Entra ids are lowercase everywhere; vCenter / workload externalIds must
+  // match the discovery sync's key verbatim.
+  const externalId = isVcenter || wl
     ? String(conflict.proposedDeviceId)
     : String(conflict.proposedDeviceId).toLowerCase();
   let observed: Record<string, unknown>;
@@ -894,6 +934,21 @@ async function upsertConflictAssetSource(
       vmUuid: proposed.vmUuid ?? null,
       status: proposed.arcStatus ?? null,
     };
+  } else if (wl) {
+    // The sync stamps its full observed blob on the conflict; fall back to a
+    // minimal one with the keys the projection reads. The next discovery run
+    // replaces it either way.
+    observed = (proposed.workloadObserved && typeof proposed.workloadObserved === "object")
+      ? { ...(proposed.workloadObserved as Record<string, unknown>) }
+      : {
+          kind: sourceKind,
+          role: wl.role,
+          name: proposed.hostname ?? null,
+          hostname: wl.role === "host" ? (proposed.hostname ?? null) : null,
+          ip: proposed.ipAddress ?? null,
+          os: proposed.os ?? null,
+          osVersion: proposed.osVersion ?? null,
+        };
   } else if (sourceKind === "vcenter-vm") {
     observed = {
       kind: "vcenter-vm",

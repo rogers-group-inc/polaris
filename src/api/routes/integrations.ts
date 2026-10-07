@@ -17,6 +17,8 @@ import * as windowsServer from "../../services/windowsServerService.js";
 import * as entraId from "../../services/entraIdService.js";
 import * as activeDirectory from "../../services/activeDirectoryService.js";
 import * as vcenter from "../../services/vcenterService.js";
+import * as unraid from "../../services/unraidService.js";
+import * as truenas from "../../services/truenasService.js";
 import * as azureArc from "../../services/azureArcService.js";
 import { isValidIpAddress, ipInCidr, isPrivateIpv4 } from "../../utils/cidr.js";
 import { isFortinetIntegrationType } from "../../utils/pollingCompatibility.js";
@@ -940,6 +942,42 @@ const VcenterConfigSchema = z.object({
   verboseLogging: z.boolean().optional().default(false),
 }).superRefine(refineConfigHost);
 
+// Unraid / TrueNAS SCALE. One schema for both: they own the same three asset
+// classes and differ only in transport, which their services hide. All three
+// class blocks are the REDUCED shape (addAsMonitored + streams) — Polaris
+// cannot install its agent on the host or a container, and VM agent deploy
+// would need a guest credential these integrations never hold. The host block
+// defaults addAsMonitored ON: the host is the parent every workload's
+// suppression hangs off, so it is always watched unless an operator says not.
+const WorkloadHostClassMonitorSchema = z.object({
+  enabled:        z.boolean().optional().default(true),
+  addAsMonitored: z.boolean().optional().default(true),
+  streams:        ClassStreamsSchema.optional(),
+}).optional().default({ enabled: true, addAsMonitored: true });
+
+const WorkloadConfigSchema = z.object({
+  host:      z.string().optional().default(""),
+  port:      z.number().int().min(1).max(65535).optional(),
+  // HTTPS / WSS by default. Plain HTTP exists for a lab box or a TLS-
+  // terminating proxy in front; TrueNAS revokes an API key used without TLS.
+  useTls:    z.boolean().optional().default(true),
+  verifyTls: z.boolean().optional().default(true),
+  // The platform's API key, stored under the sealed `apiToken` key
+  // (utils/configSecretFields.ts) — never `apiKey`, which is not sealed.
+  apiToken:  z.string().optional().default(""),
+  // Wildcard name filters (include wins), per class.
+  vmInclude:        z.array(z.string()).optional().default([]),
+  vmExclude:        z.array(z.string()).optional().default([]),
+  containerInclude: z.array(z.string()).optional().default([]),
+  containerExclude: z.array(z.string()).optional().default([]),
+  // Unraid only: how long a snapshot listens to dockerContainerStats.
+  statsWindowMs: z.number().int().min(1000).max(15000).optional(),
+  hostMonitor:      WorkloadHostClassMonitorSchema,
+  vmMonitor:        VcenterHostClassMonitorSchema,
+  containerMonitor: VcenterHostClassMonitorSchema,
+  verboseLogging: z.boolean().optional().default(false),
+}).superRefine(refineConfigHost);
+
 const CreateIntegrationSchema = z.discriminatedUnion("type", [
   z.object({
     type:         z.literal("fortimanager"),
@@ -996,6 +1034,24 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
     enabled:      z.boolean().optional().default(true),
     autoDiscover: z.boolean().optional().default(true),
     pollInterval: z.number().int().min(1).max(24).optional().default(12),
+  }),
+  // Workloads come and go far faster than directory objects, so these
+  // discover hourly by default (state between runs is the monitor's job).
+  z.object({
+    type:         z.literal("unraid"),
+    name:         z.string().min(1, "Name is required"),
+    config:       WorkloadConfigSchema,
+    enabled:      z.boolean().optional().default(true),
+    autoDiscover: z.boolean().optional().default(true),
+    pollInterval: z.number().int().min(1).max(24).optional().default(1),
+  }),
+  z.object({
+    type:         z.literal("truenas"),
+    name:         z.string().min(1, "Name is required"),
+    config:       WorkloadConfigSchema,
+    enabled:      z.boolean().optional().default(true),
+    autoDiscover: z.boolean().optional().default(true),
+    pollInterval: z.number().int().min(1).max(24).optional().default(1),
   }),
 ]);
 
@@ -1407,15 +1463,12 @@ router.put("/:id", async (req, res, next) => {
     {
       const oldSnap = snapshotAddAsMonitoredByAssetType(existing.type, existing.config as Record<string, unknown>);
       const newSnap = snapshotAddAsMonitoredByAssetType(existing.type, updated.config as Record<string, unknown>);
-      const flipped =
-        oldSnap.firewall     !== newSnap.firewall ||
-        oldSnap.switch       !== newSnap.switch ||
-        oldSnap.access_point !== newSnap.access_point ||
-        oldSnap.workstation  !== newSnap.workstation ||
-        // Under a vcenter integration the server key reads vmMonitor, so VM
-        // flag flips sweep too; hypervisor covers the hostMonitor flag.
-        oldSnap.server       !== newSnap.server ||
-        oldSnap.hypervisor   !== newSnap.hypervisor;
+      // Every class the snapshot carries — a hand-written list here once left
+      // kubernetes_cluster's flag flips unswept. Under a vcenter / unraid /
+      // truenas integration the server key reads vmMonitor and hypervisor
+      // hostMonitor; container covers containerMonitor.
+      const flipped = (Object.keys(newSnap) as Array<keyof typeof newSnap>)
+        .some((k) => oldSnap[k] !== newSnap[k]);
       if (flipped) {
         const swept = await sweepMonitoredForIntegration(prisma, req.params.id);
         if (swept > 0) {
@@ -1530,6 +1583,10 @@ router.post("/:id/test", async (req, res, next) => {
       result = await vcenter.testConnection(config as any);
     } else if (integration.type === "azurearc") {
       result = await azureArc.testConnection(config as any);
+    } else if (integration.type === "unraid") {
+      result = await unraid.testConnection(config as any);
+    } else if (integration.type === "truenas") {
+      result = await truenas.testConnection(config as any);
     } else {
       result = { ok: false, message: `Unknown integration type: ${integration.type}` };
     }
@@ -1768,6 +1825,28 @@ router.post("/:id/query", async (req, res, next) => {
         body:   z.unknown().optional(),
       }).parse(req.body);
       const result = await azureArc.proxyQuery(integration.config as any, method, path, query, body);
+      sendProxyJson(res, result);
+      return;
+    }
+
+    if (integration.type === "unraid") {
+      // GraphQL QUERIES only — proxyQuery refuses mutations / subscriptions.
+      const { query, variables } = z.object({
+        query:     z.string().min(1).max(20000),
+        variables: z.record(z.unknown()).optional(),
+      }).parse(req.body);
+      const result = await unraid.proxyQuery(integration.config as any, query, variables);
+      sendProxyJson(res, result);
+      return;
+    }
+
+    if (integration.type === "truenas") {
+      // Read methods only — proxyQuery refuses anything outside its allow-list.
+      const { method, params } = z.object({
+        method: z.string().min(1).max(200),
+        params: z.array(z.unknown()).optional().default([]),
+      }).parse(req.body);
+      const result = await truenas.proxyQuery(integration.config as any, method, params);
       sendProxyJson(res, result);
       return;
     }
@@ -2189,6 +2268,9 @@ router.post("/test", async (req, res, next) => {
         if (input.type === "azurearc" && needsRestore(cfg.clientSecret)) {
           cfg.clientSecret = stored.clientSecret;
         }
+        if ((input.type === "unraid" || input.type === "truenas") && needsRestore(cfg.apiToken)) {
+          cfg.apiToken = stored.apiToken;
+        }
       }
     }
 
@@ -2206,6 +2288,10 @@ router.post("/test", async (req, res, next) => {
       result = await vcenter.testConnection(input.config);
     } else if (input.type === "azurearc") {
       result = await azureArc.testConnection(input.config);
+    } else if (input.type === "unraid") {
+      result = await unraid.testConnection(input.config as unraid.UnraidConfig);
+    } else if (input.type === "truenas") {
+      result = await truenas.testConnection(input.config as truenas.TrueNasConfig);
     } else {
       result = { ok: false, message: `Unknown integration type: ${(input as any).type}` };
     }

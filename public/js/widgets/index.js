@@ -60,6 +60,7 @@
     "server", "switch", "router", "firewall", "workstation", "printer", "access_point", "other",
     "hypervisor",         // vCenter (migration 20260709000000)
     "kubernetes_cluster", // Azure Arc connected clusters (migration 20260807020000)
+    "container",          // Unraid containers / TrueNAS Apps (migration 20261007000000)
   ];
 
   // The eight types that existed before the registry grew. A stored widget
@@ -1433,12 +1434,12 @@
   window.PolarisWidgets.ASSET_TYPE_LABELS = {
     server: "Server", switch: "Switch", router: "Router", firewall: "Firewall",
     workstation: "Workstation", printer: "Printer", access_point: "AP", other: "Other",
-    hypervisor: "Hypervisor", kubernetes_cluster: "K8s Cluster",
+    hypervisor: "Hypervisor", kubernetes_cluster: "K8s Cluster", container: "Container",
   };
   window.PolarisWidgets.ASSET_TYPE_COLORS = {
     server: "#4fc3f7", switch: "#26c6da", router: "#7e57c2", firewall: "#ef5350",
     workstation: "#66bb6a", printer: "#ffa726", access_point: "#ab47bc", other: "#90a4ae",
-    hypervisor: "#5c6bc0", kubernetes_cluster: "#00897b",
+    hypervisor: "#5c6bc0", kubernetes_cluster: "#00897b", container: "#26a69a",
   };
 
   // Display name for ANY asset type, including one this bundle has never heard

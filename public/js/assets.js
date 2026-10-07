@@ -3028,6 +3028,8 @@ var _MONITORED_VIA_LABELS = {
   icmp:     "ICMP",
   vcenter:  "vCenter",
   fortimanager: "FortiManager",
+  unraid:   "Unraid",
+  truenas:  "TrueNAS",
 };
 
 // "Monitored Via" cell — renders how the asset is actually monitored from the
@@ -5918,6 +5920,7 @@ function _mountAssetViewAsyncSections(a, dependencies, sources, sightings, manag
         if (!res || !res.virtualization) return;
         virtMount.innerHTML = _assetVirtualizationHTML(res);
         _wireDependencyTreeLinks(virtMount);
+        _wireWorkloadActions(virtMount, a, res);
       }).catch(function (err) { console.warn("Failed to load virtualization info", err); });
     }
     // Mount the Polaris Agent panel into the System tab placeholder + wire
@@ -6280,13 +6283,16 @@ function _agentStatusColor(s) {
 // has nowhere to put a Go binary.
 var _AGENT_INSTALLABLE_SOURCES = [
   "manual", "activedirectory", "entraid", "windowsserver", "azurearc", "vcenter",
+  // A VM on an Unraid / TrueNAS host is a guest OS like a vCenter VM; the host
+  // and its containers are refused below by type.
+  "unraid", "truenas",
 ];
 
 // True when an install could actually succeed on this asset: compatible
 // source, and not an ESXi host (POST /assets/:id/agent/install 400s on
 // `assetType === "hypervisor"`, and the bulk path skips it).
 function _assetSupportsAgentInstall(a) {
-  if (!a || a.assetType === "hypervisor") return false;
+  if (!a || a.assetType === "hypervisor" || a.assetType === "container") return false;
   var kind = (a.discoveredByIntegration && a.discoveredByIntegration.type) || "manual";
   // An integration type this build doesn't know reads as "manual" server-side
   // (assetSourceKindFromIntegrationType's default) — match that rather than
@@ -7958,7 +7964,7 @@ function _resolvedStreamPolling(asset, stream) {
 // the vendor disk-scalar pair as fallback, ssh reads `df`, winrm reads
 // Get-Volume) and the heavy system-info pass (the same SNMP walk, the agent's
 // own push, or the vCenter warm cache's guest filesystems / host datastores).
-var _STORAGE_DELIVERING_METHODS = ["snmp", "ssh", "winrm", "agent", "vcenter"];
+var _STORAGE_DELIVERING_METHODS = ["snmp", "ssh", "winrm", "agent", "vcenter", "unraid", "truenas"];
 
 // Interfaces-stream methods that deliver ANY heavy-cadence system data, and so
 // gate the System tab as a whole. `vcenter` belongs here since the 2026-08
@@ -7967,7 +7973,7 @@ var _STORAGE_DELIVERING_METHODS = ["snmp", "ssh", "winrm", "agent", "vcenter"];
 // table like any other inventory (see the Virtualization section's own note).
 // It was missing, so a vCenter-monitored asset was told to switch to a
 // transport it doesn't use in order to see data it was already collecting.
-var _SYSTEM_TAB_IFACE_METHODS = ["rest_api", "snmp", "agent", "vcenter"];
+var _SYSTEM_TAB_IFACE_METHODS = ["rest_api", "snmp", "agent", "vcenter", "unraid", "truenas"];
 
 function _storageStreamDelivers(asset) {
   if (!asset) return false;
@@ -10910,7 +10916,185 @@ function _vcUsageBar(usedBytes, totalBytes) {
     '<span style="font-size:0.75rem;color:var(--color-text-tertiary)">' + pct.toFixed(0) + '%</span>';
 }
 
+// ─── Workload section (Unraid / TrueNAS SCALE) ─────────────────────────────
+// The General-tab block for an asset whose virtualization blob carries a
+// `platform` — a host (its pools + the VMs / containers placed on it) or a
+// VM / container (its host, state, image, update status). VMs and containers
+// get the business-rule-94 action bar once GET /assets/:id/workload answers
+// with the live state; the bar is drawn only for assets:write.
+
+function _wlStateBadge(state) {
+  var s = String(state || "").toLowerCase();
+  var label = s === "running" ? "Running" : s === "stopped" ? "Stopped" : s === "paused" ? "Paused" : (state ? String(state) : "—");
+  var color = s === "running" ? "var(--color-success,#4caf50)" : s === "paused" ? "var(--color-warning,#ffb74d)" : "var(--color-text-tertiary)";
+  return '<span style="color:' + color + '">●</span> ' + escapeHtml(label);
+}
+
+function _wlUpdateBadge(updateAvailable) {
+  if (updateAvailable === true) return ' <span class="badge badge-update" title="The platform reports a newer image / version">Update available</span>';
+  return "";
+}
+
+function _assetWorkloadHTML(res) {
+  var v = res.virtualization || {};
+  var isTn = v.platform === "truenas";
+  var product = isTn ? "TrueNAS SCALE" : "Unraid";
+  var header = '<p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1px;color:var(--color-text-tertiary);margin:1.25rem 0 0.75rem 0">' + escapeHtml(product) + '</p>';
+  var tableStyle = 'width:100%;border-collapse:collapse;font-size:0.83rem';
+  var thStyle = 'text-align:left;padding:4px 8px;color:var(--color-text-tertiary);font-weight:500;border-bottom:1px solid var(--color-border)';
+  var tdStyle = 'padding:4px 8px;border-bottom:1px solid var(--color-border)';
+
+  if (v.role === "host") {
+    var rows =
+      '<div class="asset-view-grid">' +
+        '<div class="detail-row"><span class="detail-label">Platform</span><span class="detail-value">' + escapeHtml((v.os || product) + (v.osVersion ? " " + v.osVersion : "")) + '</span></div>' +
+        (v.cpuCount != null ? '<div class="detail-row"><span class="detail-label">CPU Threads</span><span class="detail-value">' + escapeHtml(String(v.cpuCount)) + '</span></div>' : '') +
+        (v.memTotalBytes != null ? '<div class="detail-row"><span class="detail-label">Memory</span><span class="detail-value">' + _fmtBytes(v.memTotalBytes) + '</span></div>' : '') +
+        '<div class="detail-row"><span class="detail-label">Workloads</span><span class="detail-value">' + (v.vmCount || 0) + ' VM(s), ' + (v.containerCount || 0) + (isTn ? ' App(s)' : ' container(s)') + '</span></div>' +
+      '</div>';
+    var pools = Array.isArray(v.pools) ? v.pools : [];
+    var poolHtml = pools.length === 0 ? "" :
+      '<div style="margin-top:0.75rem;overflow-x:auto"><table style="' + tableStyle + '">' +
+        '<thead><tr><th style="' + thStyle + '">Pool</th><th style="' + thStyle + '">Kind</th><th style="' + thStyle + '">Health</th><th style="' + thStyle + '">Capacity</th><th style="' + thStyle + '">Used</th><th style="' + thStyle + '">Usage</th></tr></thead><tbody>' +
+        pools.map(function (p) {
+          return '<tr>' +
+            '<td style="' + tdStyle + '">' + escapeHtml(p.name) + '</td>' +
+            '<td style="' + tdStyle + '">' + escapeHtml(p.kind || "—") + '</td>' +
+            '<td style="' + tdStyle + '">' + escapeHtml(p.health || "—") + '</td>' +
+            '<td style="' + tdStyle + '">' + _fmtBytes(p.totalBytes) + '</td>' +
+            '<td style="' + tdStyle + '">' + _fmtBytes(p.usedBytes) + '</td>' +
+            '<td style="' + tdStyle + '"><div style="display:flex;align-items:center;gap:6px">' + _vcUsageBar(p.usedBytes, p.totalBytes) + '</div></td>' +
+          '</tr>';
+        }).join("") +
+      '</tbody></table></div>';
+    var wls = res.workloads || [];
+    var wlHtml = wls.length === 0 ? "" :
+      '<div style="margin-top:0.75rem;overflow-x:auto"><table style="' + tableStyle + '">' +
+        '<thead><tr><th style="' + thStyle + '">Workload</th><th style="' + thStyle + '">Kind</th><th style="' + thStyle + '">State</th><th style="' + thStyle + '">Monitor</th></tr></thead><tbody>' +
+        wls.map(function (w) {
+          var kind = w.role === "vm" ? "VM" : (isTn ? "App" : "Container");
+          return '<tr>' +
+            '<td style="' + tdStyle + '"><a href="#" class="dep-tree-link" data-asset-id="' + escapeHtml(w.id) + '">' + escapeHtml(w.hostname || w.id) + '</a>' + _wlUpdateBadge(w.updateAvailable) + '</td>' +
+            '<td style="' + tdStyle + '">' + kind + '</td>' +
+            '<td style="' + tdStyle + '">' + _wlStateBadge(w.state) + '</td>' +
+            '<td style="' + tdStyle + '">' + (w.monitored ? escapeHtml(w.monitorStatus || "—") : '<span style="color:var(--color-text-tertiary)">not monitored</span>') + '</td>' +
+          '</tr>';
+        }).join("") +
+      '</tbody></table></div>';
+    return header + rows + poolHtml + wlHtml;
+  }
+
+  // VM or container / App
+  var hostAsset = res.hostAsset || null;
+  var hostHtml = hostAsset
+    ? '<a href="#" class="dep-tree-link" data-asset-id="' + escapeHtml(hostAsset.id) + '">' + escapeHtml(hostAsset.hostname || v.hostName || "host") + '</a>'
+    : escapeHtml(v.hostName || "—");
+  var isCtr = v.role === "container";
+  var ports = Array.isArray(v.ports) ? v.ports : [];
+  var body =
+    '<div class="asset-view-grid">' +
+      '<div class="detail-row"><span class="detail-label">Host</span><span class="detail-value">' + hostHtml + '</span></div>' +
+      '<div class="detail-row"><span class="detail-label">State</span><span class="detail-value" data-wl-state>' + _wlStateBadge(v.state) + (v.rawState && String(v.rawState).toLowerCase() !== String(v.state || "").toLowerCase() ? ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(' + escapeHtml(v.rawState) + ')</span>' : '') + '</span></div>' +
+      (isCtr && v.image ? '<div class="detail-row"><span class="detail-label">Image</span><span class="detail-value mono">' + escapeHtml(v.image) + '</span></div>' : '') +
+      (isCtr && v.version ? '<div class="detail-row"><span class="detail-label">Version</span><span class="detail-value">' + escapeHtml(v.version) + (v.latestVersion && v.latestVersion !== v.version ? ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(latest ' + escapeHtml(v.latestVersion) + ')</span>' : '') + '</span></div>' : '') +
+      (isCtr ? '<div class="detail-row"><span class="detail-label">Updates</span><span class="detail-value" data-wl-update>' + (v.updateAvailable === true ? _wlUpdateBadge(true) : v.updateAvailable === false ? 'Up to date' : '<span style="color:var(--color-text-tertiary)">Not checked</span>') + '</span></div>' : '') +
+      (isCtr && isTn && v.memberCount != null ? '<div class="detail-row"><span class="detail-label">Containers</span><span class="detail-value">' + escapeHtml(String(v.memberCount)) + '</span></div>' : '') +
+      (ports.length > 0 ? '<div class="detail-row"><span class="detail-label">Ports</span><span class="detail-value mono">' + escapeHtml(ports.join(", ")) + '</span></div>' : '') +
+      (!isCtr && v.cpuCount != null ? '<div class="detail-row"><span class="detail-label">vCPUs</span><span class="detail-value">' + escapeHtml(String(v.cpuCount)) + '</span></div>' : '') +
+      (!isCtr && v.memoryBytes != null ? '<div class="detail-row"><span class="detail-label">Memory</span><span class="detail-value">' + _fmtBytes(v.memoryBytes) + '</span></div>' : '') +
+      (v.autostart != null ? '<div class="detail-row"><span class="detail-label">Autostart</span><span class="detail-value">' + (v.autostart ? "Yes" : "No") + '</span></div>' : '') +
+      (v.monitoringPausedByStop ? '<div class="detail-row"><span class="detail-label">Monitoring</span><span class="detail-value" style="color:var(--color-warning)">Paused — stopped from Polaris; starting it from here resumes monitoring</span></div>' : '') +
+    '</div>' +
+    // The action bar fills in once the live state arrives (_wireWorkloadActions).
+    '<div data-wl-actions style="margin-top:0.6rem"></div>';
+  return header + body;
+}
+
+/**
+ * Fetch the live state and draw the action bar (business rule 94). Only for
+ * assets:write — a reader sees the card without verbs. Every verb confirms;
+ * a stop pauses monitoring unless "Keep monitoring while stopped" is ticked.
+ */
+function _wireWorkloadActions(mount, asset, res) {
+  var v = (res && res.virtualization) || {};
+  if (v.role !== "vm" && v.role !== "container") return;
+  var bar = mount.querySelector("[data-wl-actions]");
+  if (!bar || !(typeof canManageAssets === "function" && canManageAssets())) return;
+  var name = asset.hostname || "this workload";
+  var what = v.role === "vm" ? "VM" : (v.platform === "truenas" ? "App" : "container");
+  bar.innerHTML = '<span style="color:var(--color-text-tertiary);font-size:0.85rem">Reading live state…</span>';
+
+  function render(status) {
+    var verbs = status.verbs || [];
+    var labels = { start: "Start", stop: "Stop", restart: "Restart", update: "Update" };
+    var btns = verbs.map(function (verb) {
+      var cls = verb === "stop" ? "btn-danger" : verb === "update" ? "btn-primary" : "btn-secondary";
+      return '<button type="button" class="btn btn-sm ' + cls + '" data-wl-verb="' + verb + '" style="margin-right:6px">' + labels[verb] + '</button>';
+    }).join("");
+    if (status.role === "container") {
+      btns += '<button type="button" class="btn btn-sm btn-secondary" data-wl-check style="margin-right:6px">Check for updates</button>';
+    }
+    var keepMon = verbs.indexOf("stop") !== -1
+      ? '<label style="display:inline-flex;align-items:center;gap:6px;font-size:0.82rem;margin-left:4px"><input type="checkbox" data-wl-keepmon style="width:auto"> Keep monitoring while stopped</label>'
+      : "";
+    bar.innerHTML = '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px">' + btns + keepMon + '</div>';
+    var stateCell = mount.querySelector("[data-wl-state]");
+    if (stateCell) stateCell.innerHTML = _wlStateBadge(status.state);
+    var updCell = mount.querySelector("[data-wl-update]");
+    if (updCell) updCell.innerHTML = status.updateAvailable === true ? _wlUpdateBadge(true) : status.updateAvailable === false ? "Up to date" : '<span style="color:var(--color-text-tertiary)">Not checked</span>';
+
+    Array.prototype.forEach.call(bar.querySelectorAll("[data-wl-verb]"), function (btn) {
+      btn.addEventListener("click", async function () {
+        var verb = btn.getAttribute("data-wl-verb");
+        var keep = bar.querySelector("[data-wl-keepmon]");
+        var pause = verb === "stop" && !(keep && keep.checked);
+        var msg = verb === "update"
+          ? "Update " + what + " \"" + name + "\" to the newest version " + (v.platform === "truenas" ? "TrueNAS" : "Unraid") + " offers?\n\nIt restarts during the update. Alerts are held for its duration."
+          : verb === "restart"
+          ? "Restart " + what + " \"" + name + "\"?\n\nAlerts are held while it restarts."
+          : verb === "stop"
+          ? "Stop " + what + " \"" + name + "\"?" + (pause ? "\n\nMonitoring is paused until it is started again from Polaris." : "\n\nMonitoring stays on, so it will be reported down.")
+          : "Start " + what + " \"" + name + "\"?";
+        if (!(await showConfirm(msg))) return;
+        Array.prototype.forEach.call(bar.querySelectorAll("button"), function (b) { b.disabled = true; });
+        btn.textContent = verb === "update" ? "Updating…" : verb === "restart" ? "Restarting…" : verb === "stop" ? "Stopping…" : "Starting…";
+        try {
+          var r = await api.assets.workloadAction(asset.id, verb, verb === "stop" ? { pauseMonitoring: pause } : {});
+          showToast((r && r.message) || "Done", "success");
+        } catch (err) {
+          showToast((err && err.message) || "Action failed", "error");
+        }
+        load();
+      });
+    });
+    var check = bar.querySelector("[data-wl-check]");
+    if (check) {
+      check.addEventListener("click", async function () {
+        check.disabled = true;
+        check.textContent = "Checking…";
+        try {
+          render(await api.assets.workloadCheckUpdates(asset.id));
+        } catch (err) {
+          showToast((err && err.message) || "Update check failed", "error");
+          check.disabled = false;
+          check.textContent = "Check for updates";
+        }
+      });
+    }
+  }
+
+  function load() {
+    api.assets.workload(asset.id).then(render).catch(function (err) {
+      bar.innerHTML = '<span style="color:var(--color-text-tertiary);font-size:0.85rem">' + escapeHtml((err && err.message) || "Live state unavailable") + '</span>';
+    });
+  }
+  load();
+}
+
 function _assetVirtualizationHTML(res) {
+  if (res && res.virtualization && (res.virtualization.platform === "unraid" || res.virtualization.platform === "truenas")) {
+    return _assetWorkloadHTML(res);
+  }
   var v = res.virtualization || {};
   var header = '<p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1px;color:var(--color-text-tertiary);margin:1.25rem 0 0.75rem 0">Virtualization</p>';
   var tableStyle = 'width:100%;border-collapse:collapse;font-size:0.83rem';
@@ -12830,6 +13014,8 @@ function _probeMethodLabel(a) {
     case "icmp":         return "ICMP ping";
     case "fortimanager": return "FortiManager roster";
     case "vcenter":      return "vCenter";
+    case "unraid":       return "Unraid";
+    case "truenas":      return "TrueNAS";
     case "agent":        return "Polaris Agent";
     default:             return polling;
   }
@@ -12863,6 +13049,8 @@ function _assetIntegrationLabelWithController(asset, joiner) {
     windowsserver:   "Windows Server",
     vcenter:         "vCenter",
     azurearc:        "Azure Arc",
+    unraid:          "Unraid",
+    truenas:         "TrueNAS SCALE",
   };
   var label = (typeLabels[integration.type] || integration.type) + joiner + integration.name;
   if (asset.assetType !== "switch" && asset.assetType !== "access_point") return label;
@@ -13255,7 +13443,11 @@ function _assetDiscoverNowBtnHTML(a) {
     || integ.type === "vcenter" || integ.type === "azurearc");
 
   var disabledReason = "";
-  if (!isGate && !isInfra && !isDirectory) {
+  if (integ && (integ.type === "unraid" || integ.type === "truenas")) {
+    // Mirrors NOT_YET_SCOPED in assetDiscoveryScope.ts: the whole host is one
+    // read, so the integration's own Discover is the refresh.
+    disabledReason = "Unraid / TrueNAS read the whole host in one call — run Discover on the integration to refresh it. State and usage refresh every monitor tick.";
+  } else if (!isGate && !isInfra && !isDirectory) {
     disabledReason = "No discovery source owns this asset, so there is nothing to re-run.";
   } else if (isGate && !fortinetIntg) {
     disabledReason = "This FortiGate is not owned by a FortiManager or FortiGate integration.";

@@ -9,7 +9,7 @@ makes every other page shorter.
 
 **Asset** — a device. Anything with a presence on the network: firewalls,
 switches, access points, servers, workstations, printers, VMs, hypervisors,
-Kubernetes clusters. Asset types are a **registry**, not a fixed list — you can
+containers, Kubernetes clusters. Asset types are a **registry**, not a fixed list — you can
 add your own.
 
 **Asset source** (`AssetSource`) — **one report about a device from one
@@ -63,8 +63,8 @@ eight: `responseTime`, `cpuMemory`, `temperature`, `interfaces`, `lldp`,
 `storage`, `processes`, `eventLog`.
 
 **Polling method** — *how* a stream is collected for a given asset: `icmp`,
-`snmp`, `ssh`, `winrm`, `rest_api`, `agent`, `vcenter`, `fortimanager`, or
-`disabled`. Resolved per stream from a four-tier hierarchy. See
+`snmp`, `ssh`, `winrm`, `rest_api`, `agent`, `vcenter`, `fortimanager`,
+`unraid`, `truenas`, or `disabled`. Resolved per stream from a four-tier hierarchy. See
 [Polling methods](Polling-Methods).
 
 ---
@@ -161,7 +161,7 @@ much sample data exists for it.
 
 ## Cross-cutting
 
-**Integration** — a configured connection to an external system. Seven types.
+**Integration** — a configured connection to an external system. Nine types.
 Every one is optional and absent by default.
 
 **Discovery run** — one execution of an integration's discovery, in numbered

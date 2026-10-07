@@ -98,7 +98,7 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 - [references/narrative-36-43.md](references/narrative-36-43.md) — narrative, rules 36–43
 - [references/narrative-44-48.md](references/narrative-44-48.md) — narrative, rules 44–59 (split 2026-09-09 when 36–43 passed 100 KB)
 - [references/narrative-60-64.md](references/narrative-60-64.md) — narrative, rules 60–74 (split 2026-09-15; rules 76, 77 and 79 moved out to their own files 2026-09-22 to keep it under the ceiling)
-- one file per rule from here on: [narrative-75.md](references/narrative-75.md), [narrative-76.md](references/narrative-76.md), [narrative-77.md](references/narrative-77.md), [narrative-78.md](references/narrative-78.md), [narrative-79.md](references/narrative-79.md), [narrative-80.md](references/narrative-80.md) (80 and 80a), [narrative-82.md](references/narrative-82.md), [narrative-83.md](references/narrative-83.md), [narrative-84.md](references/narrative-84.md), [narrative-85.md](references/narrative-85.md), [narrative-86.md](references/narrative-86.md), [narrative-87.md](references/narrative-87.md), [narrative-88.md](references/narrative-88.md), [narrative-89.md](references/narrative-89.md), [narrative-90.md](references/narrative-90.md), [narrative-91.md](references/narrative-91.md), [narrative-92.md](references/narrative-92.md), [narrative-93.md](references/narrative-93.md)
+- one file per rule from here on: [narrative-75.md](references/narrative-75.md), [narrative-76.md](references/narrative-76.md), [narrative-77.md](references/narrative-77.md), [narrative-78.md](references/narrative-78.md), [narrative-79.md](references/narrative-79.md), [narrative-80.md](references/narrative-80.md) (80 and 80a), [narrative-82.md](references/narrative-82.md), [narrative-83.md](references/narrative-83.md), [narrative-84.md](references/narrative-84.md), [narrative-85.md](references/narrative-85.md), [narrative-86.md](references/narrative-86.md), [narrative-87.md](references/narrative-87.md), [narrative-88.md](references/narrative-88.md), [narrative-89.md](references/narrative-89.md), [narrative-90.md](references/narrative-90.md), [narrative-91.md](references/narrative-91.md), [narrative-92.md](references/narrative-92.md), [narrative-93.md](references/narrative-93.md), [narrative-94.md](references/narrative-94.md)
 
 ## Rules 1–11
 
@@ -193,6 +193,7 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 91 | A hostname is not an identity: a name several devices of one kind share is resolved by where the child sits, or not at all | invariants-30-43 | narrative-91 |
 | 92 | Quiet time withholds the send, never the alert — and what it withheld is reported when it ends (44 is the hold mechanics inside it) | invariants-30-43 | narrative-92 |
 | 93 | A booked flash is approved when it is booked and judged when it fires — on time or not at all, and its recipients hear the outcome either way | invariants-30-43 | narrative-93 |
+| 94 | A workload Polaris restarts or updates is held, one Polaris stops is paused until Polaris starts it, and every attempt is on the record | invariants-30-43 | narrative-94 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain, and the dormant
 columns they retired), `polaris-change-impact` (who else reads or writes the fields a rule

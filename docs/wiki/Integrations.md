@@ -15,7 +15,7 @@ discovery at `write`.
 
 ---
 
-## The seven types
+## The nine types
 
 | Type | Reads | Produces | Page |
 |---|---|---|---|
@@ -26,13 +26,15 @@ discovery at `write`.
 | **Windows Server** | WinRM DHCP | networks, reservations | [Windows Server](Integration-Windows-Server) |
 | **VMware vCenter** | vSphere REST + SOAP | assets, datastores | [vCenter](Integration-vCenter) |
 | **Azure Arc** | Azure Resource Manager | assets | [Azure Arc](Integration-Azure-Arc) |
+| **Unraid** | Unraid GraphQL API (7.2+) | host, VMs, containers | [Unraid](Integration-Unraid) |
+| **TrueNAS SCALE** | TrueNAS JSON-RPC WebSocket API (25.04+) | host, VMs, Apps | [TrueNAS SCALE](Integration-TrueNAS) |
 
 Plus two things managed from this page that are not integration rows:
 
 - the **[Polaris Agent](Polaris-Agent)** tab — builds, SSH deployment, and
   service/process discovery rules;
 - **[Network Discovery](Network-Discovery)** — saved active scans, which is
-  deliberately **not** an eighth integration type.
+  deliberately **not** an integration type.
 
 ---
 
@@ -67,7 +69,7 @@ Plus, on the integration row itself:
 | `name` | |
 | `enabled` | |
 | `autoDiscover` | on by default |
-| `pollInterval` | hours — 12 for the Fortinet types, 4 for Windows Server |
+| `pollInterval` | hours — 12 for the Fortinet types, 4 for Windows Server, 1 for Unraid and TrueNAS |
 
 ### Test Connection
 
@@ -112,6 +114,7 @@ Every integration carries a **Monitoring** tab: the integration tier of the
 | FortiManager / FortiGate | FortiGate · FortiSwitch · FortiAP |
 | Entra / AD / Windows Server / Arc | Workstations · Servers (Arc adds Kubernetes) |
 | vCenter | VMs · ESXi hosts |
+| Unraid / TrueNAS | Host · Virtual Machines · Containers (Apps on TrueNAS) |
 
 Each block carries `addAsMonitored`, per-stream polling methods and credentials,
 and — on the classes that support it — agent auto-deploy and interface/storage
@@ -143,6 +146,12 @@ default**:
 Two Azure-side write capabilities are also off by default and gated separately:
 [Intune script publishing](Integration-Directory#publishing-scripts-to-intune)
 and [Arc Run Command](Integration-Azure-Arc#publishing-scripts-via-run-command).
+
+Unraid and TrueNAS add one more: **starting, stopping, restarting and updating
+a VM or container** from its asset, by a user with Assets Read-Write and only
+when the integration's API key is allowed to
+([rule 94](Business-Rules#rule-94); see [Unraid](Integration-Unraid#workload-actions)
+and [TrueNAS SCALE](Integration-TrueNAS#workload-actions)).
 
 Everything else Polaris does is a **read**.
 

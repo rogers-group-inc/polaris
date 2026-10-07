@@ -322,6 +322,7 @@ const BUILT_IN_SEEDS: ReadonlyArray<{ name: string; label: string; description: 
   // comes back on the next boot); only the ESXi host type remains.
   { name: "hypervisor",   label: "Hypervisor",   description: "Virtualization host (ESXi). Parents its VMs in the dependency tree; datastores render on its details view." },
   { name: "kubernetes_cluster", label: "Kubernetes Cluster", description: "Azure Arc-enabled Kubernetes cluster. Discovered as a single asset; it runs no Polaris Agent and reports no interfaces or storage." },
+  { name: "container",    label: "Container",    description: "Docker container (Unraid) or App (TrueNAS SCALE). Parented by its host in the dependency tree; it runs no Polaris Agent." },
 ];
 
 export async function seedBuiltInAssetTypes(): Promise<{ inserted: number }> {

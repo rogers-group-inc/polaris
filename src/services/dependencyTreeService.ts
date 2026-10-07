@@ -72,7 +72,12 @@ export type DependencyDetectedVia =
   | "wireless"
   | "sighting"
   | "subnet";
-export type DependencySource = "computed" | "override" | "endpoint" | "vcenter";
+// "unraid" / "truenas": a VM or container → the Unraid / TrueNAS host it runs
+// on (services/workloadSync.ts), the vCenter placement edge's twin.
+export type DependencySource = "computed" | "override" | "endpoint" | "vcenter" | "unraid" | "truenas";
+
+/** Hypervisor-placement edge sources: the endpoint half never overlays these. */
+export const PLACEMENT_DEPENDENCY_SOURCES: readonly DependencySource[] = ["vcenter", "unraid", "truenas"];
 
 /**
  * The Fortinet infra types the BFS-layered half of the DAG is built from.
@@ -1743,10 +1748,12 @@ export async function syncEndpointDependencyEdges(
   // gets none of ours. The VM's network path IS its host, so the placement edge
   // is the more specific truth — and unioning the two would break the existing
   // vCenter behavior under all-down semantics (host down + switch up would stop
-  // suppressing).
+  // suppressing). Unraid / TrueNAS VMs and containers are placed the same way;
+  // a container would otherwise pick up its HOST's switch port off the shared
+  // MAC sighting.
   const vcenterParented = new Set(
     (await prisma.assetDependencyParent.findMany({
-      where:  { source: "vcenter" },
+      where:  { source: { in: [...PLACEMENT_DEPENDENCY_SOURCES] } },
       select: { assetId: true },
     })).map(r => r.assetId),
   );

@@ -1731,6 +1731,7 @@ button, .list-item, .chip { touch-action: manipulation; }
 .ico-ap   { background: color-mix(in srgb, var(--md-tertiary) 20%, transparent); color: var(--md-tertiary); }
 .ico-rtr  { background: color-mix(in srgb, var(--md-primary) 16%, transparent); color: var(--md-primary); }
 .ico-wks  { background: color-mix(in srgb, var(--md-primary) 16%, transparent); color: var(--md-primary); }
+.ico-ctr  { background: color-mix(in srgb, var(--md-tertiary) 20%, transparent); color: var(--md-tertiary); }
 .ico-other{ background: var(--md-surface-cont-highest); color: var(--md-on-surface-variant); }
 
 /* ─── Asset detail ────────────────────────────────────────────────────── */

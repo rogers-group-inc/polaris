@@ -1,6 +1,6 @@
 # Business rules
 
-Polaris carries **90 numbered rules** (81 is a deliberate gap). Each one records a decision *and* the
+Polaris carries **93 numbered rules**, 1 to 94 (81 is a deliberate gap). Each one records a decision *and* the
 incident or constraint that forced it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
 where the reasons live.
@@ -1469,3 +1469,29 @@ address gets one results email, in that reader's own time zone when they have a
 Polaris account.
 
 See [Assets → Firmware](Assets#firmware).
+
+### Rule 94
+
+**A workload Polaris restarts or updates is held, one Polaris stops is paused
+until Polaris starts it, and every attempt is on the record.** On an Unraid or
+TrueNAS SCALE integration, a VM or container (an App on TrueNAS) can be
+started, stopped, restarted and updated from its asset by anyone with Read-Write
+on Assets, the same level as a firmware upgrade. Reading its live state needs
+only Read-Only. The host itself cannot be started or stopped from Polaris.
+
+- **Restart and update take a maintenance hold**, as an agent upgrade does
+  ([rule 80](#rule-80)), so downtime you asked for does not page you. The hold
+  is released when the platform reports the action finished, and expires on its
+  own after 10 minutes for a restart and 30 for an update, whatever happened.
+- **Stop takes no hold.** Instead Polaris pauses monitoring of the workload,
+  unless you tick *Keep monitoring while stopped*. A **Start from Polaris** resumes monitoring, but only when it was
+  Polaris that paused it; monitoring you turned off yourself stays off.
+- **Polaris never chooses a version.** On Unraid, update re-pulls the
+  container's image. On TrueNAS it upgrades the App to the latest version in the
+  catalog, or, for a custom App, pulls its images and redeploys it.
+- **Every attempt is an Event** named `asset.workload.<verb>`: the success, the
+  failure, and the refusal (no permission in Polaris, or an API key the platform
+  will not let act).
+
+See [Unraid → Workload actions](Integration-Unraid#workload-actions) and
+[TrueNAS SCALE → Workload actions](Integration-TrueNAS#workload-actions).

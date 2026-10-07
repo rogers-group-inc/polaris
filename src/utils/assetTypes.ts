@@ -44,6 +44,8 @@ export const BUILT_IN_ASSET_TYPES = [
   // Azure Arc phase 4 (migration 20260807020000). A connected cluster is the
   // only Arc entity that isn't just detail on a machine, so it gets a type.
   "kubernetes_cluster",
+  // Unraid Docker containers and TrueNAS SCALE Apps (migration 20261007000000).
+  "container",
 ] as const;
 
 export type BuiltInAssetType = (typeof BUILT_IN_ASSET_TYPES)[number];
