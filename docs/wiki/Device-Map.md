@@ -145,10 +145,36 @@ Drag anything to override the layout; the positions are saved per site.
 | **Snap to grid** | per user; lands drags on the solver's lattice and re-snaps everything on enable |
 | **Fullscreen** | |
 | **Legend** | |
+| **Export** | screenshot, PDF or Visio — see below |
 
 **Save** is an explicit checkpoint that writes the live layout **and** the
 restore point in one statement, so a checkpoint can never be of a layout the
 server has not stored.
+
+### Exporting the topology
+
+The **Export** button at the top right of the topology header opens a menu.
+Each choice exports the graph **as it is on screen**, in its current layout,
+including a narrowed endpoint-search view.
+
+- **Copy screenshot (map + details)**: the graph and the right-hand details
+  panel as one image. Clipboard first, download as fallback. The small camera
+  inside the graph area still copies the graph alone.
+- **Export PDF…**: the graph drawn as vectors on white paper whatever theme you
+  are using, so it prints sharp and its text is searchable. Choose the paper
+  size, orientation and **minimum text size** (7 pt by default): **nothing on
+  the printed graph is smaller than that**. A site that fits one sheet at that
+  size prints on one; a bigger one is split into overlapping sections after an
+  overview page with the section grid, and empty sections are skipped. Every
+  page carries the legend (health colours, link types, location groups).
+  Characters the PDF fonts cannot print are simplified: `↔` prints as `<->`.
+- **Export to Visio (.vsdx)**: one Visio page sized to the graph, every device,
+  location box and link a separate editable shape, health colours and link
+  styles kept. Links are drawn lines, **not glued connectors** (moving a device
+  in Visio does not drag its links), text uses Visio's default font, and device
+  icons are not included.
+
+The Application Map has the same menu ([Application Map](Application-Map#export)).
 
 ### HA clusters show one box
 

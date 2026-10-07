@@ -3399,6 +3399,17 @@ th.fav-col, td.fav-col { width: 20px; min-width: 20px; text-align: center; paddi
   font-size: 0.85rem;
   color: var(--color-text-primary);
 }
+/* Graph export PDF dialog (graph-export.js — Application Map and the Device
+   Map's topology view): the live "how many sheets" line under the options. */
+.graph-export-summary {
+  margin: 0 0 0.75rem;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
 input[type="text"],
 input[type="password"],
 input[type="number"],

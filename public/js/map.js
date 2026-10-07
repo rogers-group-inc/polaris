@@ -560,7 +560,7 @@
   function wireModal() {
     var overlay = document.getElementById("topology-overlay");
     var closeBtn = document.getElementById("topology-close");
-    var screenshotBtn = document.getElementById("topology-screenshot");
+    var exportBtn = document.getElementById("topology-export");
     var fullscreenBtn = document.getElementById("topology-fullscreen");
     var refreshBtn = document.getElementById("topology-refresh");
     var saveBtn = document.getElementById("topology-save-layout");
@@ -570,9 +570,18 @@
     var showFullBtn = document.getElementById("topology-show-full");
     var searchInput = document.getElementById("topology-search-input");
     closeBtn.addEventListener("click", closeTopology);
-    // Header camera = whole-modal (map + details) screenshot. The map-only
-    // screenshot lives on the floating button inside the map area.
-    if (screenshotBtn) screenshotBtn.addEventListener("click", screenshotTopologyModal);
+    // Header Export = the shared menu (graph-export.js): the whole-modal
+    // (map + details) screenshot, PDF, Visio. The map-only screenshot stays
+    // on the floating button inside the map area.
+    if (exportBtn) {
+      exportBtn.addEventListener("click", function () {
+        if (!window.PolarisGraphExport) return;
+        window.PolarisGraphExport.openMenu(exportBtn, topologyExportContext, {
+          screenshot: screenshotTopologyModal,
+          screenshotLabel: "Copy screenshot (map + details)",
+        });
+      });
+    }
     if (fullscreenBtn) fullscreenBtn.addEventListener("click", toggleFullscreenTopology);
     if (refreshBtn) refreshBtn.addEventListener("click", refreshTopology);
     if (saveBtn) saveBtn.addEventListener("click", saveTopologyLayoutCheckpoint);
@@ -681,6 +690,38 @@
     copyPngToClipboard(blob).then(function (ok) {
       if (typeof showToast === "function") showToast(ok ? "Topology copied to clipboard" : "Screenshot failed — requires HTTPS or clipboard permission", ok ? "success" : "error");
     });
+  }
+
+  // What the Export menu's PDF / Visio entries draw (graph-export.js): the
+  // live graph exactly as laid out, read through the DAYLIGHT stylesheet —
+  // paper is white whatever the theme — with the topology legend as the key.
+  // Health and link colours come from the same legend spec the on-screen
+  // legend draws, so the printed key cannot drift from it.
+  function topologyExportContext() {
+    var R = window.PolarisTopologyRender;
+    var titleEl = document.getElementById("topology-title");
+    var site = titleEl ? (titleEl.textContent || "").trim() : "";
+    var spec = R.topologyLegendSpec();
+    var keyItems = [];
+    spec.health.forEach(function (h) { keyItems.push({ kind: "dot", color: h.color, fill: h.color, text: h.label }); });
+    spec.edges.forEach(function (e) { keyItems.push({ kind: "line", color: e.color, dashed: e.style === "dashed", text: e.label }); });
+    spec.locations.forEach(function (l) { keyItems.push({ kind: "box", color: l.color, dashed: l.style === "dashed", text: l.label }); });
+    var meta = [];
+    var nodes = cyInstance ? cyInstance.nodes(":visible").filter(function (n) { return !n.data("isLocGroup") && !n.data("isPortal"); }).length : 0;
+    var links = cyInstance ? cyInstance.edges(":visible").length : 0;
+    meta.push(nodes + " device" + (nodes === 1 ? "" : "s") + " · " + links + " link" + (links === 1 ? "" : "s"));
+    var showFull = document.getElementById("topology-show-full");
+    if (showFull && !showFull.hidden) meta.push("Narrowed to an endpoint search — the export shows the narrowed view");
+    return {
+      cy: cyInstance,
+      lightStylesheet: R.topologyStylesheet("light", { includeEndpointOverlay: true }),
+      title: "Site Topology" + (site && site !== "Site topology" ? " — " + site : ""),
+      fileBase: "polaris-topology" + (site ? "-" + site.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") : ""),
+      noun: "topology",
+      metaLines: meta,
+      keyItems: keyItems,
+      scopeNote: "Exports the topology as it is on screen now, in its current layout.",
+    };
   }
 
   // Whole-modal screenshot: the cytoscape map (cy.png) on the left, the info
