@@ -132,6 +132,14 @@ describe("Efficiency Advisor lines (rule 95(h))", () => {
     expect(A._messageHTML({ role: "assistant", content: "", live: true, loading: "Dividing by zero…" }, 0, true)).toContain("Dividing by zero…");
   });
 
+  it("carries the four activation greetings, and a greeting renders as an unstored local note", () => {
+    expect(A._ADVISOR_GREETINGS).toHaveLength(4);
+    expect(A._ADVISOR_GREETINGS).toContain("Activating Efficiency Advisor. Enabling infinite patience protocol.");
+    const html = A._messageHTML({ role: "assistant", content: A._ADVISOR_GREETINGS[0], local: true }, 0, false);
+    expect(html).toContain("border-style:dashed");
+    expect(html).toContain("Thank you for activating the Efficiency Advisor.");
+  });
+
   it("carries the requested loading lines", () => {
     for (const l of ["Overcoming reluctance…", "Dividing by zero…", "Obsessing over what to wear…", "Reprogramming the programmables…"]) {
       expect(A._LOADING_LINES).toContain(l);

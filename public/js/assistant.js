@@ -200,6 +200,7 @@
         lsSet(LS_BOOT, JSON.stringify(S.status));
       }
       box.checked = !!r.efficiencyAdvisor;
+      if (want && r.efficiencyAdvisor) addLocalNote(pickGreeting());
     } catch (err) {
       box.checked = !want;
       toast((err && err.message) || "Could not save the setting", "error");
@@ -970,6 +971,18 @@
   ];
   var LOADING_EVERY_MS = 2200;
 
+  // Said once, as a local note (not stored, never sent), when the box is ticked.
+  var ADVISOR_GREETINGS = [
+    "Thank you for activating the Efficiency Advisor. I'm glad to see that you wish to become a better you. Don't hold it against yourself if you fail.",
+    "Thank you for activating the Efficiency Advisor. It's going to be a lot of hard work, I have my work cut out for me.",
+    "Efficiency Advisor is now online! I heard you're beyond hope… let's get started.",
+    "Activating Efficiency Advisor. Enabling infinite patience protocol.",
+  ];
+
+  function pickGreeting() {
+    return ADVISOR_GREETINGS[Math.floor(Math.random() * ADVISOR_GREETINGS.length)];
+  }
+
   function startLoadingLines(idx) {
     if (!(S.status && S.status.efficiencyAdvisor)) return function () {};
     var last = -1;
@@ -1311,5 +1324,6 @@
     _reportToMarkdown: reportToMarkdown,
     _messageHTML: messageHTML,
     _LOADING_LINES: LOADING_LINES,
+    _ADVISOR_GREETINGS: ADVISOR_GREETINGS,
   };
 })();
