@@ -1,10 +1,12 @@
 // public/js/graph-export.js — export a Cytoscape graph as PDF or Visio.
 //
-// Shared by the Application Map (appmap-export.js) and the Device Map's site
-// topology (map.js). Each page hands over an export CONTEXT — its live cy, its
-// stylesheet in the daylight palette, a title, a line or two saying what
-// narrowed the view, and the items of its key — and opens the Export menu
-// (Screenshot / PDF / Visio) with openMenu().
+// Shared by the Application Map (appmap-export.js), the Device Map's site
+// topology (map.js) and the traceroute path map (assets.js — the asset
+// slide-over's Paths tab and Path Monitor → Results). Each page hands over an
+// export CONTEXT — its live cy and its stylesheet in the daylight palette, OR
+// a ready-made scene (a graph that is not Cytoscape draws its own) — plus a
+// title, a line or two saying what narrowed the view, and the items of its
+// key, and opens the Export menu (Screenshot / PDF / Visio) with openMenu().
 //
 // Nothing is rasterised. sceneFromCy() reads what Cytoscape actually drew —
 // node shapes and boxes, edge routes (bezier control points, taxi and segment
@@ -23,10 +25,10 @@
 // is worse than none.
 //
 // Visio: one page sized to the graph at 1 model px = 1 pt, every node and
-// connection its own editable shape. Deliberately conservative, because no
-// Visio was available to test against: connections are 2-D line shapes (not
-// glued 1-D connectors), text takes Visio's default font, and device icons
-// are left out.
+// connection its own editable shape. Deliberately conservative: connections
+// are 2-D line shapes (not glued 1-D connectors), text takes Visio's default
+// font, and device icons are left out. The package itself is the shape Visio
+// for the web accepts — see vsdxDocumentXml.
 //
 // Depends on: window.jspdf (vendor), cytoscape (the cy handed in),
 // openModal / closeModal / showToast / showRowMenu / currentUsername (app.js).
@@ -1138,15 +1140,19 @@
     return text;
   }
 
-  // ctx: { cy, lightStylesheet, title, fileBase, noun, metaLines, keyItems,
-  //        scopeNote } — see the header comment.
+  // ctx: { cy, lightStylesheet | scene, title, fileBase, noun, metaLines,
+  //        keyItems, scopeNote } — see the header comment.
   function checkCtx(ctx) {
-    if (!ctx || !ctx.cy || ctx.cy.nodes(":visible").length === 0) {
+    var empty = !ctx || (ctx.scene ? !ctx.scene.nodes.length : !ctx.cy || ctx.cy.nodes(":visible").length === 0);
+    if (empty) {
       showToast("Nothing to export", "error");
       return false;
     }
     return true;
   }
+
+  // A page that draws its own graph hands the scene over already built.
+  function sceneOf(ctx) { return ctx.scene || sceneFromCy(ctx.cy, ctx.lightStylesheet); }
 
   function openPdfDialog(ctx) {
     if (!checkCtx(ctx)) return;
@@ -1154,7 +1160,7 @@
       showToast("PDF library not loaded. Reload the page and try again.", "error");
       return;
     }
-    var scene = sceneFromCy(ctx.cy, ctx.lightStylesheet);
+    var scene = sceneOf(ctx);
     var o = readOpts();
     function options(list, cur) {
       return list.map(function (v) {
@@ -1220,7 +1226,7 @@
   function exportVisio(ctx) {
     if (!checkCtx(ctx)) return;
     try {
-      var scene = sceneFromCy(ctx.cy, ctx.lightStylesheet);
+      var scene = sceneOf(ctx);
       var bytes = zipStore(vsdxParts(scene, appName() + " " + ctx.title, ctx.title));
       download(bytes, "application/vnd.ms-visio.drawing", ctx.fileBase + "-" + new Date().toISOString().slice(0, 10) + ".vsdx");
       showToast(ctx.title + " exported for Visio");
