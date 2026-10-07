@@ -228,7 +228,7 @@
     scrim.addEventListener("click", minimize);
     document.getElementById("asset-sheet-close").addEventListener("click", dismiss);
     document.getElementById("asset-sheet-refresh").addEventListener("click", function () {
-      if (_openId) onRefresh(_openId, this, mountState(_openId));
+      if (_openId) reloadSheet(_openId, this);
     });
     // While peeked the header tap handler below re-expands instead (the
     // camera isn't in its exclusion list) and this guard makes the
@@ -277,10 +277,10 @@
       dotEl.className = "dot" + (cls ? " " + cls : "");
       dotEl.style.display = cls ? "" : "none";
     }
-    // Refresh fires probeNow, which only makes sense for monitored assets —
-    // unmonitored hosts have no probe transport to run, so hide the button.
+    // Refresh re-reads the sheet (reloadSheet), so every asset gets it — an
+    // unmonitored one still changes under discovery.
     var refreshBtn = document.getElementById("asset-sheet-refresh");
-    if (refreshBtn) refreshBtn.style.display = asset.monitored ? "" : "none";
+    if (refreshBtn) refreshBtn.style.display = "";
   }
 
   function minimize() {
@@ -465,8 +465,25 @@
     _maintWindows = { assetId: null, promise: null };
     expandFresh(sheet);
 
-    var st = mountState(id);
-    api.assets.get(id).then(function (asset) {
+    loadAsset(id, mountState(id)).catch(function (err) {
+      if (_openId !== id) return;
+      var msg = (err && err.message) ? err.message : "Failed to load asset";
+      var host = document.getElementById("asset-host");
+      if (!host) return;
+      host.innerHTML = ''
+        + '<div class="empty-state" style="padding-top:64px;">'
+        + '  <div class="icon" style="background:var(--md-error-container);color:var(--md-on-error-container);"><svg viewBox="0 0 24 24"><use href="#i-warn"/></svg></div>'
+        + '  <div class="ttl">Couldn’t load asset</div>'
+        + '  <div class="desc">' + escapeHtml(msg) + '</div>'
+        + '</div>';
+    });
+  }
+
+  // Fetch the asset row and paint the whole sheet from it. Shared by open()
+  // and reloadSheet() so a refresh shows exactly what a fresh open would.
+  // Resolves once the row is painted; the section loaders land on their own.
+  function loadAsset(id, st) {
+    return api.assets.get(id).then(function (asset) {
       if (_openId !== id) return;
       if (!asset) throw new Error("Asset not found");
       setHeader(asset);
@@ -483,17 +500,35 @@
       wireTableButtons(id, asset);
       loadAlerts(id, asset);
       loadFirmwareRow(id, asset);
+    });
+  }
+
+  // Refresh (header button and pull-to-refresh): re-read what Polaris already
+  // has and repaint the sheet — it does NOT poll the device. It used to fire
+  // probeNow, which put an on-demand probe + telemetry + system-info pass on
+  // the device every tap; the monitor loop keeps the data current, and nothing
+  // here re-reads on a timer, so this is how the operator catches up with it.
+  // The open sections, chart range and scroll position survive, and the old
+  // content stays up until the new row arrives (a failed reload keeps it).
+  function reloadSheet(id, btn) {
+    if (!id || _openId !== id) return Promise.resolve();
+    var sheet = document.getElementById("asset-sheet");
+    var scroll = sheet ? sheet.scrollTop : 0;
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner" style="width:18px;height:18px;border-width:2px;"></span>';
+    }
+    // A maintenance window may have started or ended since the sheet opened.
+    _maintWindows = { assetId: null, promise: null };
+    return loadAsset(id, mountState(id)).then(function () {
+      if (sheet && _openId === id) sheet.scrollTop = scroll;
     }).catch(function (err) {
       if (_openId !== id) return;
-      var msg = (err && err.message) ? err.message : "Failed to load asset";
-      var host = document.getElementById("asset-host");
-      if (!host) return;
-      host.innerHTML = ''
-        + '<div class="empty-state" style="padding-top:64px;">'
-        + '  <div class="icon" style="background:var(--md-error-container);color:var(--md-on-error-container);"><svg viewBox="0 0 24 24"><use href="#i-warn"/></svg></div>'
-        + '  <div class="ttl">Couldn’t load asset</div>'
-        + '  <div class="desc">' + escapeHtml(msg) + '</div>'
-        + '</div>';
+      PolarisTabs.showSnackbar("Couldn’t refresh — " + ((err && err.message) || "error"), { error: true });
+    }).finally(function () {
+      if (!btn) return;
+      btn.disabled = false;
+      btn.innerHTML = '<svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg>';
     });
   }
 
@@ -510,7 +545,7 @@
     var dotEl = document.getElementById("asset-sheet-dot");
     if (dotEl) { dotEl.className = "dot"; dotEl.style.display = "none"; }
     var refreshBtn = document.getElementById("asset-sheet-refresh");
-    if (refreshBtn) refreshBtn.style.display = "none"; // setHeader re-shows when monitored
+    if (refreshBtn) refreshBtn.style.display = "none"; // setHeader re-shows it once the row loads
     var host = document.getElementById("asset-host");
     if (host) host.innerHTML = '<div class="loading-screen"><div class="spinner"></div></div>';
   }
@@ -2239,51 +2274,6 @@
     });
   }
 
-  function onRefresh(id, btn, st) {
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner" style="width:18px;height:18px;border-width:2px;"></span>';
-    api.assets.probeNow(id).then(function (resp) {
-      // Reflect what each stream did so the operator knows whether it
-      // was a partial failure (matches desktop "Poll partial" toast).
-      var bits = [];
-      if (resp.success) bits.push("probe " + (resp.responseTimeMs != null ? resp.responseTimeMs + " ms" : "ok"));
-      else if (resp.error) bits.push("probe failed");
-      if (resp.telemetry) {
-        if (resp.telemetry.collected) bits.push("telemetry");
-        else if (resp.telemetry.error) bits.push("telemetry: " + resp.telemetry.error);
-      }
-      if (resp.systemInfo) {
-        if (resp.systemInfo.collected) bits.push("system-info");
-        else if (resp.systemInfo.error) bits.push("system-info: " + resp.systemInfo.error);
-      }
-      var anyFailure = (resp.success === false) ||
-        (resp.telemetry && resp.telemetry.collected === false && resp.telemetry.error) ||
-        (resp.systemInfo && resp.systemInfo.collected === false && resp.systemInfo.error);
-      PolarisTabs.showSnackbar((anyFailure ? "Poll partial — " : "Poll ok — ") + bits.join(" · "), { error: !!anyFailure });
-      // Repull the charts + system-info sections.
-      loadMonitor(id, st);
-      loadTelemetry(id, st);
-      loadSystemInfo(id, st);
-      // probeNow ran the state machine, so monitorStatus may have flipped
-      // (e.g. down → up). Re-fetch the asset row and re-render the status pill
-      // + header dot — otherwise they keep showing the stale state the sheet
-      // opened with even though every chart refreshed.
-      api.assets.get(id).then(function (fresh) {
-        if (!fresh || _openId !== id) return;
-        _assetCache[id] = fresh;
-        var pillHost = document.getElementById("asset-hero-pill");
-        if (pillHost) pillHost.innerHTML = renderMonitorPill(fresh);
-        setHeader(fresh);
-      }).catch(function () { /* pill stays as-is; charts already refreshed */ });
-    }).catch(function (err) {
-      var msg = (err && err.message) ? err.message : "Poll failed";
-      PolarisTabs.showSnackbar("Poll failed — " + msg, { error: true });
-    }).finally(function () {
-      btn.disabled = false;
-      btn.innerHTML = '<svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg>';
-    });
-  }
-
   // ─── Quarantine ────────────────────────────────────────────────────────
   // Mirrors the desktop quarantine tab's eligibility (assets.js
   // `_assetQuarantineTabHTML` + the tab guard): gate on the assetsQuarantine
@@ -2362,9 +2352,9 @@
   }
 
   // Re-fetch the asset after a quarantine/release so the hero pill, header dot
-  // and the action button itself reflect the new status (mirrors the pill
-  // refresh in onRefresh). Guarded by _openId so a stale response from a
-  // superseded asset can't overwrite the current sheet.
+  // and the action button itself reflect the new status — a targeted repaint
+  // rather than a whole reloadSheet. Guarded by _openId so a stale response
+  // from a superseded asset can't overwrite the current sheet.
   function refreshAfterQuarantine(id, st) {
     api.assets.get(id).then(function (fresh) {
       if (!fresh || _openId !== id) return;
@@ -2849,46 +2839,14 @@
 
   // escapeHtml is the canonical global from api.js (loaded first on every page).
 
-  // Pull-to-refresh path — same backend work the topbar Refresh button
-  // does (probe-now + repull monitor/telemetry/system-info), but returns a
-  // promise so the PTR puck can spin until it settles. Snackbar still
-  // fires so the operator gets the same per-stream outcome message.
+  // Pull-to-refresh — the same sheet reload as the header Refresh button
+  // (reloadSheet; no device poll). Returns the promise so the PTR puck spins
+  // until the row lands. The route carries the id on a #asset/<id> deep link;
+  // a sheet opened in-app has none, so fall back to the open one.
   function refreshFromPtr(ctx) {
-    var id = (ctx && ctx.route && ctx.route.parts && ctx.route.parts[0]) || "";
+    var id = (ctx && ctx.route && ctx.route.parts && ctx.route.parts[0]) || _openId;
     if (!id) return null;
-    var st = mountState(id);
-    return api.assets.probeNow(id).then(function (resp) {
-      var bits = [];
-      if (resp.success) bits.push("probe " + (resp.responseTimeMs != null ? resp.responseTimeMs + " ms" : "ok"));
-      else if (resp.error) bits.push("probe failed");
-      if (resp.telemetry) {
-        if (resp.telemetry.collected) bits.push("telemetry");
-        else if (resp.telemetry.error) bits.push("telemetry: " + resp.telemetry.error);
-      }
-      if (resp.systemInfo) {
-        if (resp.systemInfo.collected) bits.push("system-info");
-        else if (resp.systemInfo.error) bits.push("system-info: " + resp.systemInfo.error);
-      }
-      var anyFailure = (resp.success === false) ||
-        (resp.telemetry && resp.telemetry.collected === false && resp.telemetry.error) ||
-        (resp.systemInfo && resp.systemInfo.collected === false && resp.systemInfo.error);
-      PolarisTabs.showSnackbar((anyFailure ? "Poll partial — " : "Poll ok — ") + bits.join(" · "), { error: !!anyFailure });
-      loadMonitor(id, st);
-      loadTelemetry(id, st);
-      loadSystemInfo(id, st);
-      // Re-render the status pill + header dot from the freshly-probed asset
-      // so a down → up flip is reflected (see onRefresh for the rationale).
-      api.assets.get(id).then(function (fresh) {
-        if (!fresh || _openId !== id) return;
-        _assetCache[id] = fresh;
-        var pillHost = document.getElementById("asset-hero-pill");
-        if (pillHost) pillHost.innerHTML = renderMonitorPill(fresh);
-        setHeader(fresh);
-      }).catch(function () { /* pill stays as-is; charts already refreshed */ });
-    }).catch(function (err) {
-      var msg = (err && err.message) ? err.message : "Poll failed";
-      PolarisTabs.showSnackbar("Poll failed — " + msg, { error: true });
-    });
+    return reloadSheet(id, null);
   }
 
   window.PolarisAssetDetail = {

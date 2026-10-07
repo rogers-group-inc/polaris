@@ -74,7 +74,11 @@ FortiGate **VIP** or **interface address** belongs to the device's own config
 and offers no Edit or Release. The **+ Reserve** button on the Networks tab
 takes any address and finds its network for you.
 
-**Tapping an asset opens its detail sheet.** Under the status pill, a device
+**Tapping an asset opens its detail sheet.** The refresh button in its header
+(or pulling the sheet down) re-reads what Polaris has for the device and
+repaints the sheet, keeping the sections you opened; it does not poll the device.
+The sheet does not refresh on its own, so tap it to catch up with the latest
+poll. Under the status pill, a device
 with a table to read carries a button for it, below **View SD-WAN** on a
 firewall that reports SD-WAN:
 
