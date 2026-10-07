@@ -29,7 +29,10 @@
  * bridge MACs repeat across hosts and across recreates.
  */
 
+import { lookup as systemLookup } from "node:dns/promises";
 import { prisma } from "../../db.js";
+import { isValidIpAddress } from "../../utils/cidr.js";
+import { getConfiguredResolver } from "../dnsService.js";
 import { logEvent, logDiscoveryAssetCreated, logDiscoveryAssetUpdated, snapshotMaterialAssetFields } from "../eventLogService.js";
 import { projectAssetFromSources, ENRICHMENT_SOURCE_KINDS } from "../../utils/assetProjection.js";
 import { bumpLastSeen, clampAcquiredToLastSeen } from "../../utils/assetInvariants.js";
@@ -264,6 +267,44 @@ export function buildWorkloadDependencyEdges(
     .map((assetId) => ({ assetId, parentAssetId: hostAssetId }));
 }
 
+// ─── Host address ─────────────────────────────────────────────────────────────
+
+export interface WorkloadHostAddress {
+  ip: string | null;
+  dnsName: string | null;
+}
+
+/**
+ * The host's `ip` is the integration's configured host, which an operator may
+ * have entered as a name (`tower.lan`) rather than an address. A name is never
+ * written to Asset.ipAddress: it is resolved — the configured resolver first,
+ * then the system resolver (getaddrinfo: /etc/hosts and the container's DNS,
+ * which is what the integration's own connection used) — and kept as dnsName.
+ * An unresolvable name yields ip null, so the asset keeps whatever it had.
+ */
+export async function resolveWorkloadHostAddress(
+  host: string | null,
+  deps: {
+    configured?: () => Promise<{ lookup(hostname: string): Promise<Array<{ address: string }>> }>;
+    system?: (hostname: string) => Promise<{ address: string }>;
+  } = {},
+): Promise<WorkloadHostAddress> {
+  const value = (host ?? "").trim().replace(/^\[(.*)\]$/, "$1");
+  if (!value) return { ip: null, dnsName: null };
+  if (isValidIpAddress(value)) return { ip: value, dnsName: null };
+  const dnsName = value.toLowerCase().replace(/\.$/, "");
+  try {
+    const resolver = await (deps.configured ?? getConfiguredResolver)();
+    const hit = (await resolver.lookup(dnsName)).find((r) => isValidIpAddress(r.address));
+    if (hit) return { ip: hit.address, dnsName };
+  } catch { /* fall through to the system resolver */ }
+  try {
+    const { address } = await (deps.system ?? ((n: string) => systemLookup(n)))(dnsName);
+    if (isValidIpAddress(address)) return { ip: address, dnsName };
+  } catch { /* unresolvable */ }
+  return { ip: null, dnsName };
+}
+
 // ─── Observed blobs (one shape, read by assetProjection's workloadRule) ───────
 
 function hostObserved(platform: WorkloadPlatform, h: WorkloadHost, syncedAt: Date): Record<string, unknown> {
@@ -470,6 +511,8 @@ export async function syncWorkloadDevices(
     virtualization: Record<string, unknown>;
     present: boolean;
     macs: string[];
+    /** The name the operator reached the host by; fills a blank dnsName only. */
+    dnsName?: string | null;
     collisionFields: Record<string, unknown>;
   }): Promise<string | null> => {
     const { role, externalId, displayName, observed, virtualization, present, macs } = args;
@@ -538,6 +581,10 @@ export async function syncWorkloadDevices(
           updateData.serialNumber = projected.serialNumber;
         }
         if (projected.ipAddress !== null) updateData.ipAddress = projected.ipAddress;
+        // A host first synced before its name was resolved carries the name in
+        // ipAddress; clear it when this pass could not resolve a real address.
+        else if (args.dnsName && existing.ipAddress && !isValidIpAddress(existing.ipAddress)) updateData.ipAddress = null;
+        if (args.dnsName && !existing.dnsName) updateData.dnsName = args.dnsName;
         // Retype only from the unclassified default; a directory-typed asset
         // keeps its class (the vCenter rule).
         if (existing.assetType === "other") updateData.assetType = assetType;
@@ -612,6 +659,7 @@ export async function syncWorkloadDevices(
         macAddress: seeded.primary,
         ...(seeded.merged.length > 0 ? { macAddressRows: { create: buildMacRowsForCreate(seeded.merged as MacJsonEntry[]) } } : {}),
         ipAddress: projected.ipAddress,
+        dnsName: args.dnsName ?? null,
         os: projected.os,
         osVersion: projected.osVersion,
         serialNumber: projected.serialNumber ?? null,
@@ -653,7 +701,11 @@ export async function syncWorkloadDevices(
   };
 
   // ── Pass A — the host ──────────────────────────────────────────────────────
-  const h = result.host;
+  const hostAddr = await resolveWorkloadHostAddress(result.host.ip);
+  if (hostAddr.dnsName && !hostAddr.ip) {
+    syncLog("warning", `${label} host "${hostAddr.dnsName}" did not resolve to an IP address — the host asset's IP was left unchanged.`);
+  }
+  const h = { ...result.host, ip: hostAddr.ip };
   const hostName = h.hostname;
   const hostExternalId = workloadHostExternalId(integrationId);
   const hostAssetId = await syncOne({
@@ -678,6 +730,7 @@ export async function syncWorkloadDevices(
     // The host answered its own API — that IS presence.
     present: true,
     macs: [],
+    dnsName: hostAddr.dnsName,
     collisionFields: { os: h.os, osVersion: h.osVersion, ipAddress: h.ip, serialNumber: h.serial },
   });
 

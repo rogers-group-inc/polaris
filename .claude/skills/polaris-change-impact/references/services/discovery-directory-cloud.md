@@ -69,15 +69,16 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The asset sync SHARED by the Unraid and TrueNAS SCALE integrations, plus the normalized shapes both services return (`WorkloadDiscoveryResult`, `WorkloadSnapshot`, `WorkloadHost` / `WorkloadVm` / `WorkloadContainer` / `WorkloadPool` / `WorkloadDisk` / `WorkloadUsage`). `syncWorkloadDevices` runs Pass A host → B VMs → C containers → D placement edges → E stale sweep; see polaris-monitoring-discovery → discovery-directory-vcenter-arc.md § Unraid / TrueNAS SCALE for the passes.
 
-**Public API:** syncWorkloadDevices, applyWorkloadFilters, passesNameFilter, workloadSweepBlockedReason, buildWorkloadDependencyEdges; re-exports normalizeWorkloadState + the externalId builders from utils/workloadSources.ts; the Workload* types.
+**Public API:** syncWorkloadDevices, applyWorkloadFilters, passesNameFilter, workloadSweepBlockedReason, buildWorkloadDependencyEdges, resolveWorkloadHostAddress; re-exports normalizeWorkloadState + the externalId builders from utils/workloadSources.ts; the Workload* types.
 
-**Cross-service deps:** discoveryEngine (exported `indexHostname` / `lookupHostname` / `normalizeMacKey` / `upsertAssetConflict`), eventLogService, monitorOverrideService (`getAddAsMonitoredFromConfig` / `buildMonitoredSweep`), maintenanceScheduleService.releaseAssetsForDecommission, macAddressService.reconcileMacAddresses.
+**Cross-service deps:** discoveryEngine (exported `indexHostname` / `lookupHostname` / `normalizeMacKey` / `upsertAssetConflict`), dnsService.getConfiguredResolver (host-name resolution, with `node:dns/promises.lookup` as the fallback), eventLogService, monitorOverrideService (`getAddAsMonitoredFromConfig` / `buildMonitoredSweep`), maintenanceScheduleService.releaseAssetsForDecommission, macAddressService.reconcileMacAddresses.
 
 **Used by:** src/services/discovery/discoveryEngine.ts (runDiscovery's unraid / truenas branch). The services and collectors import only its TYPES (runtime imports of it from a service would cycle through discoveryEngine).
 
 **Invariants:**
 - Identity: host `${integrationId}:host`; VM = UUID (not all-zero) else `${integrationId}:vm:<name>`; container `${integrationId}:ctr:<name>`. Containers are never MAC-matched. A hostname is never an identity (rule 91) — an unlinked name match is a pending Conflict.
 - The sweep never runs on a scoped / incomplete / empty-after-populated read, is refused past `absenceExceedsGuard`, and retains rows for names still in the pre-filter lists.
+- The host's `ip` arrives as the integration's configured host, which may be a NAME. `resolveWorkloadHostAddress` resolves it (configured resolver, then the system resolver — what the integration's own connection used) before Pass A: Asset.ipAddress only ever receives an address, the name fills a blank `dnsName` (create, or update when blank — the vCenter FQDN pattern), and an unresolvable name leaves ipAddress null on create and clears a stored non-IP value on update (hosts synced before this fix carried the name there).
 - Edges are delete-replaced only on full runs, scoped to `source = platform` and this integration's prior + current children.
 - `virtualization` is rewritten each run, so anything another writer stamps on it (today `monitoringPausedByStop`, rule 94) must be carried forward here; a container's `updateAvailable` is carried when the platform could not answer this run.
 
