@@ -225,9 +225,9 @@ Most detail in Polaris opens in a **slide-over** (a panel from the right) or a
 
 - Every one carries a **lock toggle**. Locked means a backdrop click will not
   dismiss it — useful when you are reading an asset panel and clicking around.
-  A locked slide-over also survives an affordance that would otherwise close it:
-  the asset panel's Edit button keeps the panel pinned and stacks the edit modal
-  over it.
+  The asset panel's Edit button never closes the panel, locked or not: the
+  edit modal opens over it, and Cancel or Save brings you back to the panel
+  (refreshed after a save).
 - The asset slide-over has **back / forward history** (‹ / › in the header, or
   Alt+Left / Alt+Right). A dependency-tree row, an HA peer, an LLDP neighbour, a
   MAC-table match and the Application Map rail all pivot the *open* panel to

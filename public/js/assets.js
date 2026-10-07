@@ -4894,10 +4894,11 @@ async function openEditModal(id, opts) {
           // The operator chose the merge review over the conflict card: open
           // it now, over the list, instead of re-rendering the details panel
           // for a record they are about to fold into another one.
+          if (_isCurrentAsset(id)) closeAssetPanel();
           openAssetMergeModal(id, pre.mergeWith, { onMerged: loadAssets });
         } else if (_isCurrentAsset(id)) {
-          // The details panel can still be open behind this modal (locked
-          // slide-over, or the monitoring-pill path that never closes it) —
+          // The details panel stays open behind this modal (neither the
+          // panel's Edit button nor the monitoring-pill path closes it) —
           // re-render it so it doesn't sit on the pre-save values.
           openViewModal(id);
         }
@@ -5667,13 +5668,10 @@ async function openViewModal(id, opts) {
     var editBtn = document.getElementById("btn-asset-panel-edit-btn");
     if (editBtn) {
       editBtn.addEventListener("click", function () {
-        // A locked slide-over stays pinned open — the edit modal stacks over it
-        // (openModal's .above-slideover), same as the monitoring-pill path that
-        // already opens the modal without closing the panel. The save handler
+        // The slide-over stays open — the edit modal stacks over it
+        // (openModal's .above-slideover), same as the monitoring-pill path.
+        // Cancelling the modal lands back on the panel; the save handler
         // refreshes the panel behind it so it can't show pre-save values.
-        if (!(typeof isPanelLocked === "function" && isPanelLocked("slideover"))) {
-          closeAssetPanel();
-        }
         openEditModal(a.id);
       });
     }
