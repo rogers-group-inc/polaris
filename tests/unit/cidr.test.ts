@@ -13,6 +13,7 @@ import {
   ipInCidr,
   compareIpv4,
   usableHostCount,
+  cidrAllocationPercent,
   findNextAvailableSubnet,
   detectIpVersion,
   packTemplateEntries,
@@ -161,6 +162,24 @@ describe("usableHostCount", () => {
   it("calculates /32 as 1", () => expect(usableHostCount("10.0.0.1/32")).toBe(1));
   it("calculates /31 as 2", () => expect(usableHostCount("10.0.0.0/31")).toBe(2));
   it("calculates /16 correctly", () => expect(usableHostCount("10.0.0.0/16")).toBe(65534));
+});
+
+describe("cidrAllocationPercent", () => {
+  it("is 0 for a block with no networks", () => expect(cidrAllocationPercent("10.0.0.0/16", [])).toBe(0));
+  it("sums carved networks against the block", () =>
+    expect(cidrAllocationPercent("10.0.0.0/16", ["10.0.0.0/24", "10.0.1.0/24", "10.0.2.0/23"])).toBe(1.56));
+  it("is 100 when the block is fully carved", () =>
+    expect(cidrAllocationPercent("10.0.0.0/23", ["10.0.0.0/24", "10.0.1.0/24"])).toBe(100));
+  it("keeps sub-1% figures non-zero", () =>
+    expect(cidrAllocationPercent("10.0.0.0/8", ["10.0.0.0/24"])).toBe(0.01));
+  it("ignores a child wider than the block", () =>
+    expect(cidrAllocationPercent("10.0.0.0/24", ["10.0.0.0/16"])).toBe(0));
+  it("is exact for IPv6 (no 2^53 cap)", () => {
+    expect(cidrAllocationPercent("2001:db8::/48", ["2001:db8::/64"])).toBe(0.01);
+    expect(cidrAllocationPercent("2001:db8::/48", ["2001:db8::/49"])).toBe(50);
+  });
+  it("ignores a child of the other address family", () =>
+    expect(cidrAllocationPercent("10.0.0.0/24", ["2001:db8::/120"])).toBe(0));
 });
 
 describe("findNextAvailableSubnet", () => {

@@ -70,6 +70,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - CIDR must be normalized and unique
 - IP version immutable after creation (v4 vs v6)
 - Tags are optional arrays, filtered client-side in listBlocks
+- listBlocks returns `utilizationPercent` per block — the share of its address space carved into NON-deprecated networks, via `utils/cidr.ts → cidrAllocationPercent()` (BigInt, exact for IPv6, any carved space floors at 0.01 so it renders "<1%"). It reads only the child CIDRs and strips them from the response. It is the same figure the Block utilization widget ranks on (utilizationService), and drives the IP Blocks list's Utilization column + its PDF/CSV exports (public/js/blocks.js)
 - Exactly ONE audit Event per mutation, fired `void` after the write resolves — never from the route layer (double-logging) and never before/inside the write (phantom on failure). `tests/integration/blocks.test.ts` asserts the one-per-mutation + zero-on-validation-failure contract.
 
 **When changing this:**
@@ -570,8 +571,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - Global utilization counts all blocks, subnets, and active reservations in one query set
-- IPv6 block addresses capped at Number.MAX_SAFE_INTEGER to avoid precision loss
-- Deprecated subnets excluded from allocatedAddresses calculation
+- IPv6 block addresses capped at Number.MAX_SAFE_INTEGER to avoid precision loss — in the `blockAddresses` / `allocatedAddresses` counts ONLY. `usedPercent` comes from `utils/cidr.ts → cidrAllocationPercent()` (exact BigInt) so a capped pair never divides an IPv6 block to 100%; it must stay the same helper blockService.listBlocks uses, or the widget and the IP Blocks Utilization column disagree
+- Deprecated subnets excluded from allocatedAddresses calculation (and from usedPercent)
 - Subnet status grouping: available, reserved, deprecated
 - `getRecentManualReservations(limit, sourceTypes?)` — default `sourceTypes=undefined` filters to `["manual"]` (back-compat); explicit array narrows or broadens; empty array disables the filter entirely. Caller (the dashboard route) validates source-type values against the known enum before passing through.
 

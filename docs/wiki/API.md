@@ -314,6 +314,9 @@ GET    /blocks              GET /blocks/:id
 POST   /blocks              PUT /blocks/:id      DELETE /blocks/:id
 ```
 
+Each `GET /blocks` row carries `utilizationPercent` (0–100): the share of the
+block's address space carved into non-deprecated networks.
+
 ### IPAM — networks
 
 ```
