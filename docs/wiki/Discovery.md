@@ -3,7 +3,7 @@
 Discovery is how devices, networks, reservations and VIPs get into Polaris
 without anyone typing them.
 
-Seven integration types feed it. Every one is **optional and absent by
+Nine integration types feed it. Every one is **optional and absent by
 default** — but they are what Polaris is built around. An install with none
 still works (hand-entered assets, monitored over SNMP / SSH / WinRM / ICMP or
 the agent, plus the address registry), it just does the smaller half of the
@@ -18,6 +18,8 @@ job.
 | **[Windows Server](Integration-Windows-Server)** | WinRM DHCP | networks, reservations |
 | **[VMware vCenter](Integration-vCenter)** | vSphere REST + two SOAP calls | assets, datastores |
 | **[Azure Arc](Integration-Azure-Arc)** | Azure Resource Manager | assets |
+| **[Unraid](Integration-Unraid)** | Unraid GraphQL API | host, VMs, containers |
+| **[TrueNAS SCALE](Integration-TrueNAS)** | TrueNAS JSON-RPC WebSocket API | host, VMs, Apps |
 
 Runs are triggered manually, or by the scheduler on each integration's
 `pollInterval` (hours).
@@ -170,6 +172,7 @@ Polaris picks the right integration and the right scope:
 | AD computer | an LDAP `objectGUID` filter — keyed on the GUID because a DN changes when an object moves OU |
 | vCenter VM / host | by managed-object reference |
 | Arc machine | by ARM resource id |
+| Unraid / TrueNAS host, VM or container | **not offered** — Discover Now is disabled on these; the integration's own Discover reads the whole host in one call |
 
 A scoped run:
 
@@ -198,6 +201,7 @@ differences are deliberate.
 | vCenter | **absence, but only if nothing else claims the asset** |
 | Entra / Intune / AD | only the directory object's own **disabled** flag |
 | Azure Arc | **never writes status at all** |
+| Unraid / TrueNAS | absence of a VM or container from the host, if nothing else claims the asset — skipped on a partial read, refused when one read loses more than max(50, 20%) of the host's workloads |
 
 **The vCenter rule is the one to internalise**: when a VM or host leaves the
 inventory, the stale vCenter source rows are deleted — and an asset thereby left

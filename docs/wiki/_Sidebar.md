@@ -44,6 +44,8 @@
 - [Entra ID / Intune & Active Directory](Integration-Directory)
 - [VMware vCenter](Integration-vCenter)
 - [Azure Arc](Integration-Azure-Arc)
+- [Unraid](Integration-Unraid)
+- [TrueNAS SCALE](Integration-TrueNAS)
 - [Windows Server DHCP](Integration-Windows-Server)
 - [Polaris Agent](Polaris-Agent)
 - [Network Discovery (active scan)](Network-Discovery)

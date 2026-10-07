@@ -826,6 +826,10 @@ auto-deploy, interface/storage auto-monitor, presence verification and directory
 sync — which read the database fleet-wide. Auto-deploy in particular would start
 agent installs across the whole fleet from one click.
 
+On an Unraid or TrueNAS SCALE VM or container, **Discover Now is disabled**: the
+integration's own **Discover** reads the whole host in one call, so there is
+nothing cheaper to scope to.
+
 ---
 
 ## Adding an asset by hand

@@ -50,6 +50,8 @@ resolution time**; the route layer rejects it at write time with a clear 400.
 | `agent` | the Polaris Agent installed on the host. **Never appliances** |
 | `vcenter` | reads the vCenter server, not the guest |
 | `fortimanager` | reads FortiManager's device database, not the device |
+| `unraid` | reads the Unraid host's API, not the VM or container |
+| `truenas` | reads the TrueNAS SCALE host's API, not the VM or App |
 | `disabled` | universally allowed — *do not poll this stream* |
 
 > The **`http`** method was retired in 2026-08. The HTTP check it ran is now a
@@ -65,6 +67,8 @@ resolution time**; the route layer rejects it at write time with a clear 400.
 | **FortiManager / FortiGate** | `icmp` | `rest_api` | `rest_api` | `rest_api` | `disabled` | `disabled` |
 | **AD / Entra / Windows Server / Manual** | `icmp` | — | — | — | — | — |
 | **vCenter** | `vcenter` | `vcenter` | — | `vcenter` | — | `vcenter` |
+| **Unraid** | `unraid` | `unraid` | `unraid` (host) | `unraid` (host) | — | `unraid` (host) |
+| **TrueNAS SCALE** | `truenas` | `truenas` | `truenas` (host) | `truenas` (host) | — | `truenas` (host) |
 
 **Response time defaults to ICMP across every source kind**, because ICMP is the
 cheapest universal liveness probe. Operators wanting a heavier transport —
@@ -167,6 +171,36 @@ row with its uplink pNICs and VMkernel ports stamped as children — the
 FortiSwitch-trunk shape, so the System tab nests it unchanged. A vSwitch's
 operational status is derived (up while any uplink is up, and **null with no
 uplinks at all** — an internal-only vSwitch is not an outage).
+
+---
+
+## The `unraid` and `truenas` methods
+
+Each reads the **host's own API** for every asset on that host — the host, its
+VMs and its containers (Apps on TrueNAS). No credential in any guest, no SNMP,
+and no reachable workload IP is needed.
+
+| Stream | Host | VM | Container / App |
+|---|---|---|---|
+| responseTime | the host's API answered | the platform's running state | the platform's running state |
+| cpuMemory | yes | **no** — use the agent or SNMP / SSH / WinRM in the guest | yes |
+| interfaces | yes | — | — |
+| storage | the pools: the Unraid array and cache pools, TrueNAS ZFS pools | — | — |
+| temperature | disk temperatures | — | — |
+| lldp | — | — | — |
+
+**One cached read per integration per 30 s** answers every asset on the host.
+The response time shown is that **API round trip, not a ping**.
+
+**Response time is the platform's own state**: running is up, stopped is down,
+and a state in transition (TrueNAS's DEPLOYING, for example) is skipped with no
+verdict. If the host's API cannot be reached, **the host is reported down and
+its VMs and containers are skipped** — no down storm across the workloads.
+
+Unraid samples per-container CPU and memory over a short WebSocket stats
+window (4 s by default); TrueNAS reads host usage from its `reporting.realtime`
+event and per-App usage from `app.stats`. See [Unraid](Integration-Unraid) and
+[TrueNAS SCALE](Integration-TrueNAS).
 
 ---
 
