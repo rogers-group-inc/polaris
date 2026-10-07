@@ -79,9 +79,10 @@ const HISTORY_RETENTION_DAYS = 400;
 // ─── Holds ───────────────────────────────────────────────────────────────────
 
 /**
- * What Polaris can hold an asset in maintenance FOR. Every one of these stops
- * the agent service on the host, which drops the WebSocket and writes
- * `agent.disconnected`.
+ * What Polaris can hold an asset in maintenance FOR — every operation Polaris
+ * performs that takes the asset down. The agent kinds stop the agent service
+ * on the host, which drops the WebSocket and writes `agent.disconnected`; the
+ * firmware and workload kinds take the device itself down.
  *
  * A first install is deliberately absent: there is no agent yet to disconnect,
  * and a hold would only silence alerts that are still telling the truth about
@@ -96,6 +97,11 @@ export const MAINTENANCE_HOLD_KINDS = {
   // device reboots, and everything behind a switch goes dark with it — a hold
   // window has no schedule row, so it suppresses dependents (rule 38).
   "firmware-upgrade": "Firmware upgrade",
+  // An operator restarting or updating a VM / container on an Unraid or
+  // TrueNAS host from Polaris (business rule 94). No agent is involved — the
+  // workload itself goes dark for the length of the platform call.
+  "workload-restart": "Workload restart",
+  "workload-update":  "Workload update",
 } as const;
 
 export type MaintenanceHoldKind = keyof typeof MAINTENANCE_HOLD_KINDS;
@@ -119,6 +125,10 @@ const HOLD_TTL_MINUTES: Record<MaintenanceHoldKind, number> = {
   // A FortiSwitch flash is ~15 min (erase, write, verify) and the reboot up
   // to another 15 before the UI answers again; verify retries ride after.
   "firmware-upgrade": 45,
+  // A restart is seconds to a minute; an image pull + recreate (or a TrueNAS
+  // App upgrade with its own migrations) can run to many minutes.
+  "workload-restart": 10,
+  "workload-update":  30,
 };
 
 /** Exposed for the tests that pin each kind's cap. */

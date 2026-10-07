@@ -524,6 +524,10 @@ export async function syncWorkloadDevices(
       try {
         const { projected } = projectAssetFromSources(sourcesByAssetId.get(existing.id) ?? []);
         const before = snapshotMaterialAssetFields(existing);
+        // A Polaris stop paused this asset's monitoring until a Polaris start
+        // (rule 94) — the flag lives on the blob this pass rewrites, so carry it.
+        const priorBlob = (existing.virtualization ?? null) as Record<string, unknown> | null;
+        if (priorBlob?.monitoringPausedByStop === true) virtualization.monitoringPausedByStop = true;
         const updateData: Record<string, unknown> = { virtualization: virtualization as any };
         if (projected.hostname !== null) updateData.hostname = projected.hostname;
         if (projected.os !== null) updateData.os = projected.os;
