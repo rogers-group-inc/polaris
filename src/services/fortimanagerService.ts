@@ -1197,8 +1197,8 @@ export interface DiscoveredVip {
   // FortiOS load-balance Virtual Servers live in the same firewall/vip CMDB
   // table (`type: server-load-balance`). Their backend pool is the
   // `realservers` child table (not `mappedip`), so they get their own array
-  // and a flag the sync phase uses to label reservations "fortimanager-vs"
-  // instead of "fortimanager-vip". Detection is structural-first (non-empty
+  // and a flag the sync phase uses to label reservations "Virtual server"
+  // instead of "Firewall VIP". Detection is structural-first (non-empty
   // realservers) with the type string as confirmation — FMG encodes CMDB
   // enums inconsistently across releases, so we never rely on type alone.
   isVirtualServer: boolean;

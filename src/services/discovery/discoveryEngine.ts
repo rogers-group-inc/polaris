@@ -4836,7 +4836,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
 
         const key = reservationKey(matchingSubnet.id, ip);
         const proposedHostname = vip.name;
-        const proposedOwner = vip.isVirtualServer ? "fortimanager-vs" : "fortimanager-vip";
+        // The owner is the VIP / Virtual Server's own name, as the FortiGate
+        // config spells it.
+        const proposedOwner = vip.name;
         const proposedProjectRef = `${vip.isVirtualServer ? "VS" : "VIP"}: ${vip.device}`;
         const proposedNotes = `${kindLabel} "${vip.name}" (${role}) on ${vip.device} — ext: ${vip.extip}`;
 
@@ -5275,7 +5277,14 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
             // current state. Operator-typed owner / notes / hostname
             // survive; only the canonical VIP-discovery placeholders are
             // overwritten by the DHCP-discovery equivalents.
-            const isCanonicalVipOwner = existingRes.owner === "fortimanager-vip" || existingRes.owner === "fortimanager-vs";
+            // The canonical owner is the VIP's name. A VIP renamed at the same
+            // address refreshes vipInfo but never owner or hostname, so a row
+            // whose owner still matches its discovery-written hostname is
+            // canonical too.
+            const vipName = (existingRes.vipInfo as any)?.name;
+            const isCanonicalVipOwner =
+              !!existingRes.owner &&
+              (existingRes.owner === vipName || existingRes.owner === existingRes.hostname);
             const isCanonicalVipNotes =
               !existingRes.notes ||
               (typeof existingRes.notes === "string" &&
