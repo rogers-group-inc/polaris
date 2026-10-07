@@ -5621,6 +5621,18 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   margin: -1px -3px;
   transition: background 0.15s, color 0.15s;
 }
+/* Inside a right-aligned .detail-value, an inline copy cell's padding/negative
+   margin pair nets to zero in the intrinsic width, but Firefox's line breaker
+   checks the text + trailing padding before the negative margin lands — and
+   overflow-wrap:anywhere then lets it push the LAST character onto a second
+   line ("swa / g", "172.16.1.2 / 1"). As an inline-block the cell is sized as
+   one box, and long values still wrap inside it (its available width is the
+   value's width plus the 6px the negative margins give back). No max-width:
+   100% here — under border-box that caps the padded box at the value's width
+   and leaves the text 6px short, which is the same bug again. */
+.detail-value .copy-cell {
+  display: inline-block;
+}
 .copy-cell:hover {
   background: rgba(79, 195, 247, 0.12);
   color: var(--color-accent);
