@@ -319,6 +319,20 @@
   margin-bottom: 10px;
 }
 
+/* The selected asset's tags: buttons that add a `tag` filter pill. */
+.appmap-info .appmap-info-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: -4px 0 10px;
+}
+
+.appmap-info .appmap-info-tags .tag-chip {
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
 .appmap-info table {
   width: 100%;
   border-collapse: collapse;

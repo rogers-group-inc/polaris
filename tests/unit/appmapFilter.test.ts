@@ -33,6 +33,7 @@ interface Node {
   cidr?: string;
   ips?: string[];
   hasMappedProcesses?: boolean;
+  tags?: string[];
 }
 interface Port { proto: string; port: number; count?: number; firstSeen?: string; lastSeen?: string }
 interface Edge { id: string; source: string; target: string; kind: string; ports: Port[]; portOverflow?: number; lastSeen: string }
@@ -247,6 +248,56 @@ describe("applyGraphFilter — device type", () => {
     // A bare "server" as free text would otherwise match most of the fleet and
     // read as a broken filter.
     expect(edgeIds(run(noFilter({ pills: [{ kind: "text", value: "server" }] })))).toEqual([]);
+  });
+});
+
+describe("applyGraphFilter — asset tags", () => {
+  // web01 is tagged prod + web-tier; db01 production + db. `prod` must not
+  // select db01: tags are labels, not search fragments.
+  const tagged = () => {
+    const { nodes, edges } = fixture();
+    nodes.find((n) => n.id === "asset:A")!.tags = ["prod", "web-tier"];
+    nodes.find((n) => n.id === "asset:B")!.tags = ["production", "db"];
+    return { nodes, edges };
+  };
+  const runTagged = (f: Filter) => { const { nodes, edges } = tagged(); return applyGraphFilter(nodes, edges, f, NOW); };
+
+  it("a tag pill keeps only traffic touching assets carrying that tag, through their children", () => {
+    // web01's edges: e1 (nginx → postgres) and e2 (myapp.service → external) —
+    // e2's endpoint is the service child, so the tag must expand to children.
+    const r = runTagged(noFilter({ pills: [{ kind: "tag", value: "web-tier" }] }));
+    expect(edgeIds(r)).toEqual(["e1", "e2"]);
+    expect(nodeIds(r)).toContain("svc:A:myapp");
+  });
+
+  it("matches the whole tag, not a fragment of one", () => {
+    // `prod` is web01's tag; db01's `production` merely contains it.
+    expect(edgeIds(runTagged(noFilter({ pills: [{ kind: "tag", value: "prod" }] })))).toEqual(["e1", "e2"]);
+    expect(edgeIds(runTagged(noFilter({ pills: [{ kind: "tag", value: "produc" }] })))).toEqual([]);
+  });
+
+  it("ignores case", () => {
+    expect(edgeIds(runTagged(noFilter({ pills: [{ kind: "tag", value: "DB" }] })))).toEqual(["e1", "e3"]);
+  });
+
+  it("two tag pills union, and a tag ANDs with other kinds", () => {
+    expect(edgeIds(runTagged(noFilter({ pills: [{ kind: "tag", value: "prod" }, { kind: "tag", value: "db" }] }))))
+      .toEqual(["e1", "e2", "e3"]);
+    expect(edgeIds(runTagged(noFilter({ pills: [{ kind: "tag", value: "db" }, { kind: "proto", value: "tcp" }, { kind: "port", value: "80" }] }))))
+      .toEqual(["e3"]);
+  });
+
+  it("an untagged map matches nothing, and tags stay out of free text", () => {
+    expect(edgeIds(run(noFilter({ pills: [{ kind: "tag", value: "prod" }] })))).toEqual([]);
+    expect(edgeIds(runTagged(noFilter({ pills: [{ kind: "text", value: "web-tier" }] })))).toEqual([]);
+  });
+
+  it("offers each tag once in the suggestions", () => {
+    const { nodes, edges } = tagged();
+    nodes.find((n) => n.id === "asset:B")!.tags = ["production", "db", "prod"];
+    const tags = buildFilterCatalog(nodes, edges).filter((c) => c.kind === "tag").map((c) => c.value).sort();
+    expect(tags).toEqual(["db", "prod", "production", "web-tier"]);
+    expect(rankSuggestions(buildFilterCatalog(nodes, edges), "web-t")[0]).toEqual({ kind: "tag", value: "web-tier" });
   });
 });
 

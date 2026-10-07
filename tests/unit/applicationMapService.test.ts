@@ -259,6 +259,28 @@ describe("buildGraphFromRows", () => {
   });
 });
 
+describe("buildGraphFromRows — asset tags (the App Map's tag filter)", () => {
+  it("carries Asset.tags on mapped and edge-target asset nodes, and omits the field when there are none", () => {
+    const a = asset("A", "10.0.0.1", ["nginx"], { tags: ["prod", "web-tier"] });
+    const b = asset("B", "10.0.0.2", ["postgres"]);
+    const target: ResolvedAssetLite = {
+      id: "C", hostname: "C-host", ipAddress: "10.0.0.3", assetType: "server",
+      monitorStatus: "up", manufacturer: null, model: null, tags: ["db"],
+    };
+    const g = buildGraphFromRows(
+      [a, b],
+      [row("A", "nginx", "outbound", "tcp", { remoteIp: "10.0.0.3", remotePort: 5432 })],
+      new Map([["10.0.0.3", target]]),
+    );
+    const node = (id: string) => g.nodes.find((n) => n.id === assetNodeId(id))!;
+    expect(node("A").tags).toEqual(["prod", "web-tier"]);
+    expect(node("C").tags).toEqual(["db"]);
+    expect("tags" in node("B")).toBe(false);
+    // Tags are asset-level: process children carry none.
+    expect(g.nodes.find((n) => n.id === processNodeId("A", "nginx"))!.tags).toBeUndefined();
+  });
+});
+
 describe("buildGraphFromRows — mapped services (Asset.mappedServices / unit)", () => {
   it("emits a service child node even when the service has zero connections", () => {
     const box = asset("S", "10.0.1.1", [], { mappedServices: ["nginx.service"] });
