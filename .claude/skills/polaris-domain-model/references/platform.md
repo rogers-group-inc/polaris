@@ -8,6 +8,8 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 
 - **ApiToken** — bearer tokens for external callers (e.g. SIEM quarantine, NOC kiosk); each token is bound to a Role and acts with that role's permission matrix.
 
+- **AssistantConversation** / **AssistantMessage** / **AssistantReport** — the floating AI assistant's saved chats (business rule 94). A conversation belongs to exactly ONE user (`userId`, cascade) and is **owner-only** — every read and write is scoped to the session user, admins included, and someone else's id answers 404. Only `user` / `assistant` turns are stored (CHECK); **tool calls and their results never are**, so a stored thread cannot replay data its owner has since lost access to. A report is a **snapshot** of rows the `create_report` tool read from the database (never model text), capped at 5000. `integrationId` (SetNull) names the `llm` integration that answered last. Pruned after `Setting assistant.retentionDays` (default 90) of inactivity by the hourly `pruneEvents` job; capped at 200 per user.
+
 - **SshHostKey** — trust-on-first-use pins for SSH **server** host keys, one row per dialed `(host, port)` — no Asset FK, since a host is often onboarded before it exists as an Asset. A changed key **refuses** the connection. Gated per credential by `SshConfig.verifyHostKey`. See business rule 21.
 
 - **Credential** — named SNMP / WinRM / SSH / REST API / HTTP credentials for monitoring probes. **`createdBy` is the ownership dimension of the `credentials` function key** (business rule 43): stamped once at create, never rewritten by an edit (so saving a row can't adopt it), and `null` means UNOWNED — every row predating the column, deliberately not backfilled, reachable only at `fullwrite`. The `http` type carries **authentication only** (`authMode` ∈ bearer/basic/digest/form) and deliberately has no "none" mode — see business rule 33. `form` (2026-09) is a **device admin login** — a switch or AP's own web-UI username + password, consumed only by the firmware repository (business rule 87); an HTTP-check widget refuses it and the probe never turns it into a header. Secret fields inside `config` are **encrypted at rest** by the Prisma extension in `src/db.ts` (business rule 20b) and masked on read at the API layer.
@@ -24,7 +26,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 - **FirmwareUpgradeSchedule** — a flash BOOKED for a date and time from the asset's Firmware card (business rule 93): the image approved by name at booking (`imageId`, FK `SetNull`, with `toVersion` snapshotted so the booking still names it after a delete), `scheduledFor` (an absolute instant), `notifyEmails` (lower-cased, de-duplicated, **never empty** — CHECK), and `status` ∈ `pending` / `started` / `cancelled` / `refused` / `missed` (CHECK). **At most one `pending` booking per asset** (partial unique). It is NOT a `FirmwareUpgradeRun` with a "scheduled" status: when the scheduler job fires it, `startFirmwareUpgrade` creates the run and links it back (`runId`, unique, `SetNull`). `error` says why it was refused / missed — or, while `pending` again after a `FirmwareRunConflictError`, what it is waiting for; `notifiedAt` is claimed before the results email is sent, so the outcome is emailed once; `notifyError` records a failed send.
 
 - **UserPasskey** — one registered WebAuthn credential on a local account. The row holds only what verifying a later assertion needs (credential id, COSE public key, signature counter, transports) plus what an operator deciding whether to rely on it needs to see (name, last used, whether it syncs through a credential manager). It is a credential, not a device: the same security key registered by two people is two rows. Whether a passkey may sign in on its own, act as a second factor, both, or nothing is the install-wide `passkeyConfig` Setting, never a property of the row — see `polaris-api-rbac` for the endpoints and business rules 63–64.
-- **User** / **Role** — dynamic-role RBAC; `User.roleId` → `Role`; permissions matrix on Role over 34 function keys. `User.notificationPreference` (`email` | `push` | `any`, default `email`) is the account's own answer to how it wants to be alerted — stored here rather than per browser so a sign-in on a new device knows to enroll or un-enroll itself; see business rule 39. `User.timezone` (an IANA name or the literal `auto`, default `auto`) is the zone this account reads times in, and `User.detectedTimezone` (nullable) is the zone its BROWSER last reported — client-posted on boot, never operator-set and never offered as a choice. The pair exists because an alert EMAIL has no browser to ask: `auto` resolves explicit-choice → detected → server zone, so an operator who never opens the picker still gets mail on their own wall clock instead of a UTC-clocked host's. Both are free-form TEXT, not an enum — the tz database moves on its own schedule and an unresolvable name degrades to `auto` on READ (`normalizeUserTimezone`) rather than failing a render or a send.
+- **User** / **Role** — dynamic-role RBAC; `User.roleId` → `Role`; permissions matrix on Role over 35 function keys. `User.notificationPreference` (`email` | `push` | `any`, default `email`) is the account's own answer to how it wants to be alerted — stored here rather than per browser so a sign-in on a new device knows to enroll or un-enroll itself; see business rule 39. `User.timezone` (an IANA name or the literal `auto`, default `auto`) is the zone this account reads times in, and `User.detectedTimezone` (nullable) is the zone its BROWSER last reported — client-posted on boot, never operator-set and never offered as a choice. The pair exists because an alert EMAIL has no browser to ask: `auto` resolves explicit-choice → detected → server zone, so an operator who never opens the picker still gets mail on their own wall clock instead of a UTC-clocked host's. Both are free-form TEXT, not an enum — the tz database moves on its own schedule and an unresolvable name degrades to `auto` on READ (`normalizeUserTimezone`) rather than failing a render or a send.
 
 - **GroupMapping** — IdP group → role + tags map for OIDC / LDAP / SAML SSO login (`provider` + `groupKey`; nullable `roleId` for tags-only mappings).
 
@@ -70,6 +72,36 @@ ApiToken                        -- Long-lived bearer tokens for external callers
   -- Role cutover (migration 20260706000000) replaced the prior scope strings
   -- (assets:read / dashboard:read / assets:quarantine); legacy tokens were
   -- mapped onto seeded api-* roles with matching matrices.
+
+AssistantConversation           -- One AI-assistant chat thread (business rule 94). Owner-only.
+  id            UUID PK
+  userId        String FK->User (Cascade)       -- the ONLY user who may read it
+  integrationId String? FK->Integration (SetNull) -- the llm integration that answered last
+  title         String @default("New conversation") -- set from the first question, renamable
+  createdAt     DateTime
+  updatedAt     DateTime @updatedAt             -- bumped per turn; retention clock
+  @@index([userId, updatedAt]); @@index([updatedAt]); @@map("assistant_conversations")
+
+AssistantMessage                -- One turn. Tool calls / results are never stored.
+  id             UUID PK
+  conversationId String FK->AssistantConversation (Cascade)
+  role           String         -- "user" | "assistant" (CHECK assistant_messages_role_check)
+  content        Text           -- the question, or the answer as streamed (partial when stopped)
+  toolsUsed      Json @default("[]") -- [{ name, label, ok }] — which lookups ran, for the chips
+  stopped        Boolean @default(false) -- cut off by Stop / a dropped connection / a failure mid-answer
+  createdAt      DateTime
+  @@index([conversationId, createdAt]); @@map("assistant_messages")
+
+AssistantReport                 -- A downloadable table the create_report tool built (rule 94(c)).
+  id          UUID PK
+  messageId   String FK->AssistantMessage (Cascade)
+  title       String
+  columns     Json              -- [{ key, label }]
+  rows        Json              -- [{ [key]: value }] read from the DB, never from model text; ≤ 5000
+  rowCount    Int
+  truncated   Boolean           -- more rows matched than the cap
+  generatedAt DateTime
+  @@index([messageId]); @@map("assistant_reports")
 
 Credential                      -- Named credentials for monitoring probes (SNMP / WinRM / SSH)
   id            UUID PK
@@ -350,6 +382,7 @@ Setting                         -- Key-value configuration store
   --   "mapRegions"                              -- Operator-drawn map regions: `MapRegion[]` ({ id, name, polygon: [[lat,lng],...], color: "#rrggbb", createdBy, createdAt, updatedAt }). `color` is the polygon stroke + fill hue on the map; on create it defaults to a random palette pick (same palette `mapRegionService` uses for the matching Tag registry row) and can be overridden in the create modal or via the polygon-click popup's "Change color" action. Legacy regions written before this field existed are back-filled at read time with a random pick. See `mapRegionService`.
   --   "mapRegionRetiredNames"                   -- Companion to "mapRegions": region NAMES no longer in use, `{name, regionId, retiredAt, reason:"rename"|"delete"}[]`. Appended INSIDE the same locked transaction that renames or deletes a region, before the tag rotation is attempted, so it survives a rotation that dies part-way — which is the whole point, since a `region:<name>` tag matching no region is otherwise invisible to the provenance-bounded reconcile (provenance is keyed by region ID: unchanged by a rename, dropped by a delete). `sweepRetiredRegionTags` strips those tags and forgets the name; a name that is live again is dropped untouched; a name whose strip throws stays for the next pass. Business rule 54. See `mapRegionService`.
   --   "appMapAutoMap"                           -- Service/process DISCOVERY RULES (Integrations → Polaris Agent): `{version:2, rules:[{id, name, enabled, mode, source, scope, assetIds, processes:{names,patterns,regex}, services:{…}}]}`. `mode` = "map" (monitor + Application Map) | "monitor" (monitor-only); `source` = "manual" | "auto" (minted/consolidated from per-asset Services-tab pin toggles; single-item, scope:null + explicit assetIds — null scope + assetIds targets JUST those assets, and an auto rule losing its last asset is deleted). Each rule pins its items on union(scope matches, assetIds); several rules' pins union per asset. Applied inline on save and re-applied by the 30-min `reconcileAppMapAutoMap` job — the "and future assets too" mechanism. Additive only; `unmapEverywhere` is the separate subtractive path. The pre-rules single-selection shape folds forward into one rule at read time. See `appMapDiscoveryService`.
+  --   "assistant"                               -- AI assistant settings: `{ retentionDays }` (1–3650, default 90) — how long an idle AssistantConversation is kept before pruneEvents drops it (business rule 94(e)). Written by PUT /assistant/settings (serverSettingsSystem write). See `assistantConversationService`.
 
 Tag
   id            UUID PK

@@ -27,7 +27,11 @@ discovery at `write`.
 | **VMware vCenter** | vSphere REST + SOAP | assets, datastores | [vCenter](Integration-vCenter) |
 | **Azure Arc** | Azure Resource Manager | assets | [Azure Arc](Integration-Azure-Arc) |
 
-Plus two things managed from this page that are not integration rows:
+Plus one integration that discovers nothing: **Local AI Assistant** — the model server
+behind the [AI assistant](AI-Assistant). It has no Discover button, no
+auto-discovery and no Monitoring tab.
+
+And two things managed from this page that are not integration rows:
 
 - the **[Polaris Agent](Polaris-Agent)** tab — builds, SSH deployment, and
   service/process discovery rules;

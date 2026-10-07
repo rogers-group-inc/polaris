@@ -77,7 +77,27 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 - Add the tab to `_integrationTabs` — once. Both flows pick it up.
 - Add the type to `_INTEGRATION_PRODUCTS`, to `_INTEGRATION_REQUIRED_FIELDS` (marking secret fields with a third `true`), and to `_NON_FORTINET_TABBED` if it carries a Monitoring tab.
 - Add its per-type wiring to `_wireIntegrationModal`, not to the flows.
+- A type with no Monitoring tab and nothing to discover (`llm`, the AI assistant's model server) stays OUT of `_NON_FORTINET_TABBED` and gets the flat form; its card hides the Discover button and the auto-discovery rows, and a create that returns a once-only secret (`llmAccess`) is revealed by its own "save it now" modal (`_showLlmAccessModal`, the `_showRawTokenModal` contract) instead of the conflict / no-blocks follow-ups.
 - Anything the tab COLLECTS must exist in that type's create schema in `src/api/routes/integrations.ts` — `z.object` strips unknown keys, so a field the modal offers and the schema omits is dropped in silence on Add and the tab reopens showing the default. See polaris-change-impact → cross-cutting/fmg-fortigate-parity-surfaces.md.
+
+---
+
+## Floating tool window (non-modal, draggable, on every page)
+
+**What it is:** A panel that floats over whatever page the operator is on, can be moved and resized, and does NOT block the page under it — the AI assistant (business rule 94). Collapsed it is a round button in the bottom-right corner; expanded it is a glass panel.
+
+**Canonical implementation:** `public/js/assistant.js` (`window.PolarisAssistant.mount`) + `public/css/assistant.css`, booted by `public/js/app.js → _bootAssistant()`.
+
+**Key conventions:**
+- **Drawn before first paint, like the rail — or it blinks on every page change.** Every app page links `assistant.css` in `<head>` and `assistant-markdown.js` + `assistant.js` BEFORE `app.js` (nothing may sit between app.js and `#polaris-nav-ready`); the end of app.js calls `PolarisAssistant.earlyMount()` beside `_renderNavFromCache`, which draws it from cache (`polaris-assistant-boot` in localStorage = the last `/assistant/status`; the conversation snapshot in sessionStorage, report rows capped). `.asst-panel` / `.asst-fab` carry `view-transition-name`s so the cross-document crossfade holds them still. `_bootAssistant()` (DOMContentLoaded, after the user is fetched) is the authoritative check: `permAtLeast("assistant","read")` + `GET /assistant/status` → `mount()` (refresh quietly) or `unmount()`. Pinned by `tests/unit/assistantPageWiring.test.ts`.
+- **What the user started outlives the page.** A page change drops the browser's stream but not the turn (server side, `registerTurn`); the next page sees `pending` and shows "Still answering…" until it is stored. Stop is an explicit request.
+- **Not a modal.** It is a `role="dialog"` section that is NOT `#modal-overlay` and does not use `openModal` — the page stays usable. z-index 950: above page chrome, below `.modal-overlay` (1000), so a confirm or prompt it opens (`showConfirm` / `showPrompt`, their own overlays) stacks above it.
+- **Glass with the blur on a `::before`.** It holds frosted children (a menu-glass popup, a glass drawer), so a `backdrop-filter` on the panel itself would make theirs sample nothing; and no `opacity` < 1 while dragging, for the same backdrop-root reason.
+- **Drag by the header with pointer events** (mouse, pen, touch — `setPointerCapture`), skip when the pointer is on a header button, clamp to the viewport on every move and on `resize`, persist `{left, top}` in localStorage (try/catch), double-click the header to send it back to its corner. Resize is a custom TOP-LEFT grip (`wireResize`) — not CSS `resize`, whose grip is always bottom-right and would sit under the Send button on a panel docked bottom-right; it grows the panel up-and-left with the bottom-right corner held, and persists `{w, h}` (`polaris-assistant-size`). Under 640 px it docks full-width and does not drag.
+- **It shares the bottom-right corner with toasts** — `body.asst-mounted .toast-container` lifts them clear of the button.
+- **Esc collapses it** (after closing any popup / drawer inside it first), and focus returns to the button.
+
+**When adding a new instance:** reuse this file's drag + clamp + persist block rather than `openModal`'s mouse-only `_modalDrag`, gate the boot exactly like `_bootAssistant()`, and pick a z-index below 1000.
 
 ---
 

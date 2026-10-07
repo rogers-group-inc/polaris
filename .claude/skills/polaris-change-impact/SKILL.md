@@ -85,6 +85,7 @@ do this — which one is the reference?"). The UI counterpart is `polaris-ui-can
 | [settings-platform](references/services/settings-platform.md) | settingsStore, serverSettingsService, brandingService, brandLogoService, appIconService, backupService, backupScheduleService, updateService, queueService, eventLogService, eventArchiveService, nginxApplyService, nginxConfigParser, nginxRenderer, proxyConfigService, privilegedSysadmin, dashSettingsService, dashRoleSnapshotService, weatherProxyService, deviceIconService, certInfo |
 | [agent-services](references/services/agent-services.md) | agentInstallService, agentInstallScripts, agentAutoDeployService, agentBuildService, agentChannelService, agentTokenService, agentCommandService, agentCommandWake, serviceInventoryService, softwareInventoryService |
 | [dashboards-maps-tables](references/services/dashboards-maps-tables.md) | mapRegionService, regionHierarchyService, topologyLayoutService, applicationMapService, appMapDiscoveryService, savedDashboardService, savedFilterService, tableTabsService, userDashboardService, nocDashboardService, searchService |
+| [assistant-llm](references/services/assistant-llm.md) | llmService, assistantToolService, assistantChatService, assistantConversationService, helpIndexService, llmIntegrationService (the AI assistant + the `llm` integration, rule 94) |
 
 A new service goes in the group whose "What it owns" it most resembles; when in doubt,
 `grep -l "## services/<sibling>.ts" references/services/*.md` to find where its siblings sit.

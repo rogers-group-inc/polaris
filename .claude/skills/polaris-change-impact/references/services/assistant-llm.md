@@ -1,0 +1,161 @@
+# Services — the AI assistant and the `llm` integration
+
+The floating chat assistant (business rule 94) and the integration type that backs it. Six
+services: the transport to the model server, the tool layer that answers its lookups, the
+turn orchestrator, the conversation store, the help index over `docs/wiki/`, and the
+role + API token an llm integration provisions. Route: `src/api/routes/assistant.ts`
+(`/api/v1/assistant`, `assistant` read, session-only); integration CRUD stays in
+`src/api/routes/integrations.ts`. Frontend: `public/js/assistant.js`,
+`public/js/assistant-markdown.js`, `public/css/assistant.css` (booted by
+`public/js/app.js → _bootAssistant()`), and the Local AI Assistant form in `public/js/integrations.js`.
+
+---
+
+## services/llmService.ts
+
+**What it owns:** The `llm` integration's transport — an OpenAI-compatible chat-completions client over `node:http`/`node:https` (so `verifySsl: false` works against a self-signed lab server without undici). `GET {base}/models` for Test Connection (and the model-is-listed check, Ollama's `:latest` form included); `POST {base}/chat/completions` with `stream: true` + `tools` for each round, parsing the SSE body incrementally. Text deltas are handed to `onText` as they arrive; tool-call deltas (name and JSON arguments arrive in fragments) are accumulated by `index` and returned whole. A server that ignores `stream:true` and answers with one JSON body is handled. An abort mid-body (which the socket reports as ECONNRESET) is normalized to an `AbortError`.
+
+**Model discovery (2026-10-07):** `listModels` reads `{base}/models`, then — only when the API path is `/v1` or empty, because Open WebUI also answers `/api/…` — recognizes Ollama by `/api/tags` and reads each model's `capabilities` from `/api/show` (≤40 models, 4 at a time). `toolCalling` is `yes`/`no` from those capabilities and `unknown` otherwise, never guessed from the name; embedding-only models (Ollama's `embedding` without `completion`, else a conservative name pattern) are dropped unless they are all there is. `probeToolCalling` is the operator-triggered check for an `unknown` model: one request offering a dummy `polaris_probe` tool, `yes` if it is called, `no` on prose or a server that rejects `tools`. A blank `model` is legal: `pickDefaultModel` (first tool-calling, else first chat model) via `resolveChatModel`, cached per integration for 5 minutes. `displayName` is the name the chat window shows and the system prompt gives the model.
+
+**Tool calls written as text:** small local models sometimes write a tool call into the reply instead of emitting `tool_calls` — and once one such reply is in the history, copy it every turn after (qwen2.5:7b on Ollama, 2026-10-07: 6/6 structured on a fresh thread, text-only once a text-mode reply was in history). `recoverTextToolCalls(text, knownNames)` recovers fenced / bare / `<tool_call>` JSON naming ONLY a tool the request offered; the chat service runs it, emits `retract { from }` and keeps that round's text out of both the stored answer and the history it sends back.
+
+**Public API:** LlmConfig, LLM_DEFAULTS, recoverTextToolCalls, ChatMessage, ChatToolDef, ChatToolCall, CompletionRound, ToolCallingSupport, LlmModelInfo, LlmTestResult, normalizeBasePath, describeEndpoint, looksLikeEmbeddingModel, ollamaCapabilities, listModels, matchModelId, pickDefaultModel, probeToolCalling, testConnection, describeModels, resolveChatModel, _clearResolvedModelCache, applyStreamChunk, chatCompletionRound.
+
+**Cross-service deps:** none (utils/errors, utils/logger).
+
+**Used by:**
+- src/services/assistantChatService.ts → streamAssistantTurn — every model round of a turn
+- src/api/routes/integrations.ts → POST /:id/test, POST /test — the llm branch of Test Connection
+- src/services/discovery/discoveryEngine.ts → runPreflightTest — the 10-minute integrationConnectionTester re-test
+
+**Invariants:**
+- Speaks ONE dialect (OpenAI-compatible). Ollama-native `/api/chat` is not supported; Ollama's `/v1` is.
+- The request timeout is an IDLE timeout (`req.setTimeout`), not a wall clock: a local model may take long to its first token and then stream for a long time.
+- A 401/403 from the model server becomes "refused the API key"; nothing upstream is echoed beyond 300 characters.
+- `apiToken` is sent as `Authorization: Bearer` only when set (most local servers need none).
+
+**When changing this:**
+- A new provider dialect is a new branch HERE, not in the chat service — the orchestrator only sees `chatCompletionRound`.
+- Keep `applyStreamChunk` tolerant: object-shaped `arguments`, missing `index`, `message` instead of `delta`.
+- `tests/unit/llmService.test.ts` drives a real local HTTP server — extend it for any new parsing case.
+
+---
+
+## services/assistantToolService.ts
+
+**What it owns:** The lookups the assistant may make, as OpenAI-style tool definitions plus their implementations: `search_help`, `search`, `fleet_summary`, `list_assets`, `get_asset`, `list_alerts`, `list_events`, `list_networks`, `list_reservations`, `create_report`. Every tool runs **as the caller** — it is handed the caller's own Express request and checks `hasPermission(req, key, "read")` before touching anything (rule 94(a)); alerts are region-scoped with the Alerts page's own predicate (`viewerRegionTags`, admin-equivalent unscoped). All tools are read-only (94(b)), project to a tight `select`, cap rows at the integration's `maxRowsPerTool`, and report `truncated`. `create_report` re-runs one list tool server-side with `REPORT_ROW_CAP` (5000) and hands the client a `{title, columns, rows}` table built from database rows, never model text (94(c)).
+
+**Public API:** REPORT_ROW_CAP, ReportColumn, AssistantReportPayload, ToolContext, ToolResult, assistantToolDefs, toolLabel, runAssistantTool.
+
+**Cross-service deps:** searchService (searchAll), notificationService (listNotifications — the `triggeredFrom`/`triggeredTo` window was added for correlation lookups), regionScopeService (getEffectiveRegionTags), eventLogService (queryEventsPage), eventArchiveService (getRetentionSettings — the events retention floor), helpIndexService (searchHelp), permissions.ts (hasPermission, callerIsAdminEquivalent), utils/cidr (usableHostCount, isValidCidr, ipInCidr).
+
+**Used by:**
+- src/services/assistantChatService.ts → streamAssistantTurn — tool definitions per round; runAssistantTool per tool call
+- src/services/assistantConversationService.ts — the AssistantReportPayload type it persists
+
+**Invariants:**
+- `runAssistantTool` never throws: unknown tool, bad JSON, Zod failures and query errors come back as `{ ok: false, data: { error } }` so the model can recover.
+- A role without the key gets "Not permitted" and NO query runs (pinned by `tests/unit/assistantToolService.test.ts`).
+- `list_reservations` does NOT use `reservationService.listReservations` — that include carries the subnet integration's config (secrets) for the push UI.
+- `list_assets` subnet filtering narrows in SQL to rows with an IP, then matches with `utils/cidr` (IP math lives only there).
+- Subnet utilization counts only active reservations holding an IP — business rule 69's numerator.
+
+**When changing this:**
+- A new tool needs: a permission check first, Zod args, a tight select, a row cap, a chip `label`, and — if it lists rows — `columns` + `rows()` so `create_report` can source it.
+- Never add a tool that writes, acknowledges, pushes, probes or reads a secret (rule 94(b)); `credentials`, `apiTokens`, `users`, `roles`, `authentication`, `automationScripts` and server settings stay out.
+- At 2000 assets the hot path is `list_assets` with a `subnet` filter (an in-memory CIDR pass over the matched set) — keep its `select` tight.
+
+---
+
+## services/assistantChatService.ts
+
+**What it owns:** One streamed assistant turn: `beginTurn` (ownership + store the question, or drop the last answer for /retry) → emit `start` → system prompt + the last `contextMessages` turns → `chatCompletionRound` with the tool definitions → run each tool call as the caller and loop, up to `maxToolRounds` (capped at 12); the final round is offered NO tools so the model must answer → `finishTurn` saves the answer (partial + `stopped` on abort or mid-answer failure) and any report snapshots → one `assistant.chat` Event naming the lookups (never the question or answer text). Also resolves which `llm` integration answers (`resolveAssistantIntegration`) and lists them for the widget (names + models only).
+
+**Public API:** AssistantEmit, AssistantIntegrationRef, resolveAssistantIntegration, listAssistantIntegrations, buildSystemPrompt, streamAssistantTurn.
+
+**Cross-service deps:** llmService (chatCompletionRound, LLM_DEFAULTS), assistantToolService (assistantToolDefs, runAssistantTool, toolLabel), assistantConversationService (beginTurn, finishTurn, recentTurns), eventLogService (logEvent).
+
+**Used by:**
+- src/api/routes/assistant.ts → GET /status (listAssistantIntegrations), POST /conversations/:id/messages (resolveAssistantIntegration + streamAssistantTurn)
+
+**Invariants:**
+- Never throws once streaming has started — failures become an `error` event; the route opens the SSE stream on `start`, i.e. only after ownership passed.
+- An error before any text stores NOTHING for the answer (the question stays; /retry re-asks it).
+- Tool results handed back to the model are clipped at 24 000 characters.
+- The audit Event carries tool names, report count and stopped — the conversation text is the owner's data (rule 94(d)).
+- **First-round steering** (2026-10-07, qwen2.5:7b): a message that plainly asks for a report (`asksForReport`) is offered ONLY `create_report` on round 0, and one that asks how to use / configure Polaris (`asksHowTo`, deliberately narrow — "how many…" is not) ONLY `search_help`. A report request that still ends without a report is turned into one from the model's last list lookup, same filters (`reportTitleFromQuestion`).
+- **Links are checked** (`sanitizeAnswerLinks`, after the turn): only `WIKI_BASE_URL/<page>` for a page `helpIndexService.wikiPageNames()` knows, or a same-origin path. Anything else keeps its text and loses the link (a model invented `docs.polaris.example.com/subnets/add-subnet`); a changed answer is re-sent whole via `retract {from:0}` + `token`.
+- **Turns outlive the page** (`registerTurn` / `releaseTurn` / `isTurnRunning` / `stopTurn`): the route does not abort on disconnect; Stop is `POST /conversations/:id/stop`; the next page sees `pending`.
+- **Text after a report is HELD, then table-stripped** (`stripMarkdownTables`). The model only ever sees a report's row COUNT, so a table it types afterwards is invented — seen live 2026-10-07 (qwen2.5:7b re-typed a "report" of networks that do not exist beside the real card). Rounds after the first `create_report` are buffered instead of streamed, tables removed, and an all-table reply becomes `REPORT_READY_TEXT`. This is rule 94(c) enforced in code, not left to the prompt.
+
+**When changing this:**
+- The system prompt is the behavioural contract (tools for facts, search_help for how-to, create_report for downloads, read-only) — `tests/unit/assistantChatService.test.ts → buildSystemPrompt` pins its load-bearing lines.
+- Changing the event vocabulary changes `public/js/assistant.js → ask()` in the same commit.
+
+---
+
+## services/assistantConversationService.ts
+
+**What it owns:** The saved conversations (AssistantConversation / AssistantMessage / AssistantReport). Every function takes the session user's id and scopes every query to it — someone else's id answers 404 (rule 94(d)). List / create / get / rename / delete / clear; `beginTurn` / `finishTurn` / `recentTurns` for the chat service; the `assistant` Setting (`retentionDays`, default 90) and `pruneAssistantConversations` (rule 94(e)). Creating past 200 conversations for one user drops that user's oldest.
+
+**Public API:** AssistantSettings, ToolUseRecord, getAssistantSettings, updateAssistantSettings, titleFromQuestion, listConversations, createConversation, getConversation, renameConversation, deleteConversation, clearConversation, recentTurns, beginTurn, finishTurn, pruneAssistantConversations.
+
+**Cross-service deps:** none beyond Prisma (the report payload type comes from assistantToolService).
+
+**Used by:**
+- src/api/routes/assistant.ts — every conversation route and PUT /settings
+- src/services/assistantChatService.ts — beginTurn / finishTurn / recentTurns
+- src/jobs/pruneEvents.ts — pruneAssistantConversations, hourly, in its own try
+
+**Invariants:**
+- Only user / assistant turns are stored; tool calls and results never are.
+- Reports are snapshots — reopening a conversation downloads the figures the user saw.
+- Pruning is one batched `deleteMany` on `updatedAt` (indexed); messages and reports cascade.
+
+**When changing this:**
+- Any new read path MUST take `userId` and scope by it; there is no admin override by design.
+- A schema change here is a migration + `polaris-domain-model/references/platform.md`.
+
+---
+
+## services/helpIndexService.ts
+
+**What it owns:** Keyword search over the operator wiki (`docs/wiki/*.md`) for the `search_help` tool. Reads the folder once per process, lazily; splits each page at `##` / `###` headings (never at a `#` inside a code fence); ranks sections BM25-style with a heading boost; returns at most 5 sections under a 6 KB budget, each with its GitHub wiki URL (`WIKI_BASE_URL`, the same base as the Help menu's `WIKI_URL` in `public/js/app.js`) and anchor. A missing folder answers `available: false`.
+
+**Public API:** WIKI_BASE_URL, HelpSection, HelpHit, HelpSearchResult, tokenize, wikiAnchor, splitWikiPage, buildHelpIndex, rankHelp, searchHelp, _resetHelpIndexForTests.
+
+**Cross-service deps:** none (node:fs).
+
+**Used by:**
+- src/services/assistantToolService.ts → search_help
+
+**Invariants:**
+- The path is resolved relative to the module (`../../docs/wiki`) so it is the same from `src/services` and `dist/services`.
+- The Docker image must `COPY docs/wiki` (Dockerfile); RHEL installs are a git tree and already have it.
+- `_Sidebar`, `_Footer` and `README` are skipped — navigation chrome, not documentation.
+
+**When changing this:**
+- If `WIKI_URL` in `public/js/app.js` moves, move `WIKI_BASE_URL` with it.
+- Embedding-based retrieval would be a new dependency and a model call per question — the keyword index is deliberate.
+
+---
+
+## services/llmIntegrationService.ts
+
+**What it owns:** The role + API token an llm integration provisions for its model server (rule 94(f)). `provisionLlmAccess` creates a custom role `llm-<name>` with `botPermissions()` — read on every key whose ladder has a read rung, except `BOT_EXCLUDED_KEYS` (credentials, apiTokens, users, roles, authentication, automationScripts, serverSettingsSystem, serverSettingsData, assistant) — then mints an API token bound to it and returns the raw token once; a token failure deletes the role. `assertCanProvision` requires `roles` write AND `apiTokens` write (and runs `assertNoPrivilegeEscalation`). `regenerateLlmToken` deletes the old token and mints a new one on the same role. `deprovisionLlmAccess` deletes the token then the role (role FK is Restrict), best-effort per step.
+
+**Public API:** BOT_EXCLUDED_KEYS, botPermissions, botRoleBaseName, assertCanProvision, ProvisionResult, provisionLlmAccess, regenerateLlmToken, deprovisionLlmAccess.
+
+**Cross-service deps:** roleService (createRole, deleteRole), apiTokenService (createToken, deleteToken), eventLogService (logEvent), permissions.ts (FUNCTION_KEYS, keySupportsLevel, hasPermission, assertNoPrivilegeEscalation).
+
+**Used by:**
+- src/api/routes/integrations.ts → POST / (assertCanProvision before the row; provisionLlmAccess after, rolling the row back on failure), DELETE /:id (deprovisionLlmAccess), POST /:id/llm/regenerate-token
+
+**Invariants:**
+- The bot role never writes and is never admin-equivalent (`tests/unit/assistantRbacLockstep.test.ts`).
+- The in-app chat NEVER uses this token — chat lookups run as the chatting user; the token is only for the model host's own direct API calls.
+- `roleId` / `roleName` / `tokenId` live in `Integration.config` and are server-stamped; the PUT path re-attaches them from the stored row.
+
+**When changing this:**
+- A new function key: decide whether the bot should read it, and add it to `BOT_EXCLUDED_KEYS` if it exposes secrets, identities or administration.
+- Existing bot roles are NOT updated when a key is added later — they get `none` from `normalizePermissions`; an operator widens them by hand under Users → Roles.

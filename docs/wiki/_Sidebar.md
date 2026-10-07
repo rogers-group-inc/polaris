@@ -20,6 +20,7 @@
 - [Users](Users-Roles-and-Permissions)
 - [Server Settings](Server-Settings)
 - [Mobile app & Dash wallboard](Mobile-and-Dash)
+- [AI assistant](AI-Assistant)
 
 **Automations**
 - [Overview](Automations)
