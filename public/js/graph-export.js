@@ -990,6 +990,45 @@
     return { xml: xml, pageW: pageW, pageH: pageH, shapeCount: id };
   }
 
+  // The document part. Visio for the web refuses a package ("the file format
+  // is invalid or has become corrupted") that desktop Visio would only repair,
+  // so this mirrors a skeleton known to open there: a font table, a "No Style"
+  // stylesheet that sets every line / fill / text cell and section a shape can
+  // inherit, and a DocumentSheet.
+  function vsdxDocumentXml(NS) {
+    function row(cells) { return '<Row IX="0">' + cells + "</Row>"; }
+    var noStyle =
+      cell("EnableLineProps", 1) + cell("EnableFillProps", 1) + cell("EnableTextProps", 1) + cell("HideForApply", 0) +
+      cell("LineWeight", num(PT_IN)) + cell("LineColor", "#000000") + cell("LinePattern", 1) + cell("Rounding", 0) +
+      cell("EndArrowSize", 2) + cell("BeginArrow", 0) + cell("EndArrow", 0) + cell("LineCap", 0) + cell("BeginArrowSize", 2) +
+      cell("LineColorTrans", 0) + cell("CompoundType", 0) +
+      cell("FillForegnd", "#FFFFFF") + cell("FillBkgnd", "#FFFFFF") + cell("FillPattern", 1) +
+      cell("ShdwForegnd", "#000000") + cell("ShdwPattern", 0) + cell("FillForegndTrans", 0) + cell("FillBkgndTrans", 0) +
+      cell("ShdwForegndTrans", 0) + cell("ShapeShdwType", 0) + cell("ShapeShdwOffsetX", 0) + cell("ShapeShdwOffsetY", 0) +
+      cell("ShapeShdwObliqueAngle", 0) + cell("ShapeShdwScaleFactor", 1) + cell("ShapeShdwBlur", 0) + cell("ShapeShdwShow", 0) +
+      cell("LeftMargin", 0) + cell("RightMargin", 0) + cell("TopMargin", 0) + cell("BottomMargin", 0) +
+      cell("VerticalAlign", 1) + cell("TextBkgnd", 0) + cell("DefaultTabStop", 0.5) + cell("TextDirection", 0) + cell("TextBkgndTrans", 0) +
+      '<Section N="Character">' + row(cell("Font", "Calibri") + cell("Color", "#000000") + cell("Style", 0) + cell("Case", 0) +
+        cell("Pos", 0) + cell("FontScale", 1) + cell("Size", num(10 * PT_IN), "PT") + cell("DblUnderline", 0) + cell("Overline", 0) +
+        cell("Strikethru", 0) + cell("DoubleStrikethrough", 0) + cell("Letterspace", 0) + cell("ColorTrans", 0) +
+        cell("AsianFont", 0) + cell("ComplexScriptFont", 0) + cell("ComplexScriptSize", -1) + cell("LangID", "en-US")) + "</Section>" +
+      '<Section N="Paragraph">' + row(cell("IndFirst", 0) + cell("IndLeft", 0) + cell("IndRight", 0) + cell("SpLine", -1.2) +
+        cell("SpBefore", 0) + cell("SpAfter", 0) + cell("HorzAlign", 1) + cell("Bullet", 0) + cell("BulletStr", "") +
+        cell("BulletFont", 0) + cell("BulletFontSize", -1) + cell("TextPosAfterBullet", 0) + cell("Flags", 0)) + "</Section>" +
+      '<Section N="Tabs"><Row IX="0"/></Section>';
+    return "<VisioDocument " + NS + ">" +
+      '<DocumentSettings TopPage="0" DefaultTextStyle="0" DefaultLineStyle="0" DefaultFillStyle="0" DefaultGuideStyle="0">' +
+      "<GlueSettings>9</GlueSettings><SnapSettings>65847</SnapSettings><SnapExtensions>34</SnapExtensions><SnapAngles/>" +
+      "<DynamicGridEnabled>1</DynamicGridEnabled><ProtectStyles>0</ProtectStyles><ProtectShapes>0</ProtectShapes>" +
+      "<ProtectMasters>0</ProtectMasters><ProtectBkgnds>0</ProtectBkgnds></DocumentSettings>" +
+      '<FaceNames><FaceName NameU="Calibri" UnicodeRanges="-536859905 -1073732485 9 0" CharSets="536871423 0" Panose="2 15 5 2 2 2 4 3 2 4" Flags="325"/></FaceNames>' +
+      '<StyleSheets><StyleSheet ID="0" NameU="No Style" IsCustomNameU="1" Name="No Style" IsCustomName="1">' + noStyle + "</StyleSheet></StyleSheets>" +
+      '<DocumentSheet NameU="TheDoc" IsCustomNameU="1" Name="TheDoc" IsCustomName="1" LineStyle="0" FillStyle="0" TextStyle="0">' +
+      cell("OutputFormat", 0) + cell("LockPreview", 0) + cell("AddMarkup", 0) + cell("ViewMarkup", 0) +
+      cell("PreviewQuality", 0) + cell("PreviewScope", 0) + cell("DocLangID", "en-US") + "</DocumentSheet>" +
+      "</VisioDocument>";
+  }
+
   // PURE (exposed for tests): every part of the .vsdx package.
   function vsdxParts(scene, title, pageName) {
     var page = vsdxPageXml(scene);
@@ -1005,6 +1044,7 @@
         '<Override PartName="/visio/document.xml" ContentType="application/vnd.ms-visio.drawing.main+xml"/>' +
         '<Override PartName="/visio/pages/pages.xml" ContentType="application/vnd.ms-visio.pages+xml"/>' +
         '<Override PartName="/visio/pages/page1.xml" ContentType="application/vnd.ms-visio.page+xml"/>' +
+        '<Override PartName="/visio/windows.xml" ContentType="application/vnd.ms-visio.windows+xml"/>' +
         '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>' +
         '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>' +
         "</Types>" },
@@ -1021,20 +1061,13 @@
         "</cp:coreProperties>" },
       { name: "docProps/app.xml", data: head +
         '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">' +
-        "<Application>Microsoft Visio</Application></Properties>" },
-      { name: "visio/document.xml", data: head + "<VisioDocument " + NS + ">" +
-        '<DocumentSettings TopPage="0" DefaultTextStyle="0" DefaultLineStyle="0" DefaultFillStyle="0" DefaultGuideStyle="0"/>' +
-        '<StyleSheets><StyleSheet ID="0" NameU="No Style" Name="No Style">' +
-        cell("LineWeight", num(PT_IN)) + cell("LineColor", "#000000") + cell("LinePattern", 1) +
-        cell("FillForegnd", "#FFFFFF") + cell("FillBkgnd", "#FFFFFF") + cell("FillPattern", 1) +
-        cell("LeftMargin", 0) + cell("RightMargin", 0) + cell("TopMargin", 0) + cell("BottomMargin", 0) +
-        cell("VerticalAlign", 1) +
-        '<Section N="Character"><Row IX="0">' + cell("Size", num(10 * PT_IN), "PT") + cell("Color", "#000000") + "</Row></Section>" +
-        '<Section N="Paragraph"><Row IX="0">' + cell("HorzAlign", 1) + "</Row></Section>" +
-        "</StyleSheet></StyleSheets></VisioDocument>" },
+        "<Application>Microsoft Visio</Application><AppVersion>15.0000</AppVersion></Properties>" },
+      { name: "visio/document.xml", data: head + vsdxDocumentXml(NS) },
       { name: "visio/_rels/document.xml.rels", data: head + '<Relationships xmlns="' + REL + '">' +
         '<Relationship Id="rId1" Type="http://schemas.microsoft.com/visio/2010/relationships/pages" Target="pages/pages.xml"/>' +
+        '<Relationship Id="rId2" Type="http://schemas.microsoft.com/visio/2010/relationships/windows" Target="windows.xml"/>' +
         "</Relationships>" },
+      { name: "visio/windows.xml", data: head + '<Windows ClientWidth="0" ClientHeight="0" ' + NS + "/>" },
       { name: "visio/pages/pages.xml", data: head + "<Pages " + NS + ">" +
         '<Page ID="0" NameU="' + pn + '" Name="' + pn + '"><PageSheet>' +
         cell("PageWidth", num(page.pageW)) + cell("PageHeight", num(page.pageH)) +

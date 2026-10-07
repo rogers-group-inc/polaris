@@ -238,9 +238,17 @@ describe("vsdxPageXml / vsdxParts", () => {
     expect(names).toEqual(expect.arrayContaining([
       "[Content_Types].xml", "_rels/.rels", "visio/document.xml", "visio/_rels/document.xml.rels",
       "visio/pages/pages.xml", "visio/pages/_rels/pages.xml.rels", "visio/pages/page1.xml",
+      // Visio for the web rejects a package without the windows part.
+      "visio/windows.xml",
     ]));
     const ct = parts.find((p: { name: string }) => p.name === "[Content_Types].xml").data;
     expect(ct).toContain('PartName="/visio/pages/page1.xml"');
+    expect(ct).toContain('PartName="/visio/windows.xml"');
+    const docRels = parts.find((p: { name: string }) => p.name === "visio/_rels/document.xml.rels").data;
+    expect(docRels).toContain('Target="windows.xml"');
+    // Every relationship target and content-type override names a part that exists.
+    for (const m of ct.matchAll(/PartName="\/([^"]+)"/g)) expect(names).toContain(m[1]);
+    for (const m of docRels.matchAll(/Target="([^"]+)"/g)) expect(names).toContain("visio/" + m[1]);
     expect(parts.find((p: { name: string }) => p.name === "visio/pages/pages.xml").data).toContain('Name="Test page"');
   });
 });
