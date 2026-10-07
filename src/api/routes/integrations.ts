@@ -30,6 +30,7 @@ import {
   provisionLlmAccess,
   deprovisionLlmAccess,
   regenerateLlmToken,
+  checkLlmToolCalling,
 } from "../../services/llmIntegrationService.js";
 import { logEvent } from "./events.js";
 import { getBaselines } from "../../services/discoveryDurationService.js";
@@ -1010,6 +1011,10 @@ const LlmConfigSchema = z.object({
   requestTimeoutMs: z.number().int().min(5_000).max(600_000).optional().default(120_000),
   maxRowsPerTool:   z.number().int().min(10).max(1000).optional().default(200),
   contextMessages:  z.number().int().min(2).max(100).optional().default(20),
+  // The model server's context window in tokens — what each turn is budgeted
+  // against (assistantChatService.contextBudget). Ollama's default is 4096
+  // unless OLLAMA_CONTEXT_LENGTH raises it.
+  contextWindow:    z.number().int().min(2048).max(1_000_000).optional().default(8192),
   systemPromptExtra: z.string().max(4000).optional().default(""),
   allowLoopback:    z.boolean().optional().default(false),
   verboseLogging:   z.boolean().optional().default(false),
@@ -1026,7 +1031,7 @@ const LlmConfigSchema = z.object({
 });
 
 /** Server-stamped llm config keys a client may never set or overwrite. */
-const LLM_SERVER_KEYS = ["roleId", "roleName", "tokenId"] as const;
+const LLM_SERVER_KEYS = ["roleId", "roleName", "tokenId", "toolCheck"] as const;
 
 const CreateIntegrationSchema = z.discriminatedUnion("type", [
   z.object({
@@ -1447,6 +1452,10 @@ router.put("/:id", async (req, res, next) => {
         for (const k of Object.keys(newConfig)) delete newConfig[k];
         Object.assign(newConfig, parsed.data, verboseLoggingEnabledAt ? { verboseLoggingEnabledAt } : {});
         for (const k of LLM_SERVER_KEYS) if (currentConfig[k] !== undefined) newConfig[k] = currentConfig[k];
+        // A tool-calling verdict describes one model on one server; pointing
+        // the integration elsewhere makes it stale until the next check.
+        const moved = ["host", "port", "basePath", "useHttps", "model"].some((k) => newConfig[k] !== currentConfig[k]);
+        if (moved) delete newConfig.toolCheck;
         data.autoDiscover = false;
       }
       // SSRF guard — the update path validates config as a loose record, so the
@@ -2365,6 +2374,19 @@ router.post("/llm/probe-tools", async (req, res, next) => {
     if (!parsed.success) throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "));
     const toolCalling = await llm.probeToolCalling(parsed.data as llm.LlmConfig, body.model);
     res.json({ model: body.model, toolCalling });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/integrations/:id/llm/check-tools — run the tool-calling check
+// against the model this SAVED integration will chat with, and record the
+// verdict on the integration (config.toolCheck) for its card. The UI fires it
+// after every create/save of an llm integration. Same gate as the router.
+router.post("/:id/llm/check-tools", async (req, res, next) => {
+  try {
+    const toolCheck = await checkLlmToolCalling(req.params.id as string, req.session?.username ?? "unknown");
+    res.json(toolCheck);
   } catch (err) {
     next(err);
   }

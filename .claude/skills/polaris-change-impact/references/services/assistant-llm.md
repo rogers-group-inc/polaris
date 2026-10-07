@@ -19,12 +19,15 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 
 **Tool calls written as text:** small local models sometimes write a tool call into the reply instead of emitting `tool_calls` — and once one such reply is in the history, copy it every turn after (qwen2.5:7b on Ollama, 2026-10-07: 6/6 structured on a fresh thread, text-only once a text-mode reply was in history). `recoverTextToolCalls(text, knownNames)` recovers fenced / bare / `<tool_call>` JSON naming ONLY a tool the request offered; the chat service runs it, emits `retract { from }` and keeps that round's text out of both the stored answer and the history it sends back.
 
-**Public API:** LlmConfig, LLM_DEFAULTS, recoverTextToolCalls, ChatMessage, ChatToolDef, ChatToolCall, CompletionRound, ToolCallingSupport, LlmModelInfo, LlmTestResult, normalizeBasePath, describeEndpoint, looksLikeEmbeddingModel, ollamaCapabilities, listModels, matchModelId, pickDefaultModel, probeToolCalling, testConnection, describeModels, resolveChatModel, _clearResolvedModelCache, applyStreamChunk, chatCompletionRound.
+**Reasoning progress + context window (2026-10-07):** a thinking model (qwen3, DeepSeek-R1…) streams its reasoning in `delta.reasoning` (Ollama) or `delta.reasoning_content` (vLLM / DeepSeek-style). `applyStreamChunk` only COUNTS it (`round.reasoningChars`) — it is never added to `content`, shown or stored — and `chatCompletionRound`'s `onReasoning(totalChars)` reports the running count per round. `LlmConfig.contextWindow` (default 8192, `LLM_DEFAULTS.contextWindow`) is the server's window as the operator states it; `estimateTokens` (~3.5 chars a token) is the deliberately rough measure the chat service budgets with. `testConnection` appends a warning when the window is under `SMALL_CONTEXT_WINDOW` (6000): the instructions plus tool definitions alone are ~2 700 tokens, so Ollama's 4096 default leaves room for the question and almost nothing else.
+
+**Public API:** LlmConfig, LLM_DEFAULTS, estimateTokens, SMALL_CONTEXT_WINDOW, recoverTextToolCalls, ChatMessage, ChatToolDef, ChatToolCall, CompletionRound, ToolCallingSupport, LlmModelInfo, LlmTestResult, normalizeBasePath, describeEndpoint, looksLikeEmbeddingModel, ollamaCapabilities, listModels, matchModelId, pickDefaultModel, probeToolCalling, testConnection, describeModels, resolveChatModel, _clearResolvedModelCache, applyStreamChunk, chatCompletionRound.
 
 **Cross-service deps:** none (utils/errors, utils/logger).
 
 **Used by:**
-- src/services/assistantChatService.ts → streamAssistantTurn — every model round of a turn
+- src/services/assistantChatService.ts → streamAssistantTurn — every model round of a turn; estimateTokens for the context budget
+- src/services/llmIntegrationService.ts → checkLlmToolCalling — listModels / matchModelId / pickDefaultModel / probeToolCalling
 - src/api/routes/integrations.ts → POST /:id/test, POST /test — the llm branch of Test Connection
 - src/services/discovery/discoveryEngine.ts → runPreflightTest — the 10-minute integrationConnectionTester re-test
 
@@ -71,9 +74,13 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 
 **What it owns:** One streamed assistant turn: `beginTurn` (ownership + store the question, or drop the last answer for /retry) → emit `start` → system prompt + the last `contextMessages` turns → `chatCompletionRound` with the tool definitions → run each tool call as the caller and loop, up to `maxToolRounds` (capped at 12); the final round is offered NO tools so the model must answer → `finishTurn` saves the answer (partial + `stopped` on abort or mid-answer failure) and any report snapshots → one `assistant.chat` Event naming the lookups (never the question or answer text). Also resolves which `llm` integration answers (`resolveAssistantIntegration`) and lists them for the widget (names + models only).
 
-**Public API:** AssistantEmit, AssistantIntegrationRef, resolveAssistantIntegration, listAssistantIntegrations, buildSystemPrompt, streamAssistantTurn.
+**Fitting the context window (2026-10-07):** an overflowing prompt is not refused — the model server silently drops the OLDEST tokens, i.e. the system prompt and tool definitions, and the model loses the task. So each turn is budgeted from the integration's `contextWindow` (`contextBudget`): the prompt may use 60 %, one lookup result at most a quarter of the window in characters (clamped 1 500–24 000). `fitHistory` keeps the newest turns that fit after the instructions + tool list, always keeps the question (cut down if it alone overflows) and never opens on an orphaned answer; before every round `compactToolResults` replaces the OLDEST lookup results with a one-line `{"omitted":…}` note until the prompt fits, never the newest. `contextMessages` is still the upper bound on turns.
 
-**Cross-service deps:** llmService (chatCompletionRound, LLM_DEFAULTS), assistantToolService (assistantToolDefs, runAssistantTool, toolLabel), assistantConversationService (beginTurn, finishTurn, recentTurns), eventLogService (logEvent).
+**Reasoning progress:** `onReasoning` from llmService becomes a `thinking { chars }` event — the total across rounds, at most every 400 ms. The widget turns it into "Reasoning… N characters · Ns" on the live line.
+
+**Public API:** AssistantEmit, AssistantIntegrationRef, ContextBudget, resolveAssistantIntegration, listAssistantIntegrations, buildSystemPrompt, contextBudget, fitHistory, compactToolResults, streamAssistantTurn.
+
+**Cross-service deps:** llmService (chatCompletionRound, estimateTokens, LLM_DEFAULTS), assistantToolService (assistantToolDefs, runAssistantTool, toolLabel), assistantConversationService (beginTurn, finishTurn, recentTurns), eventLogService (logEvent).
 
 **Used by:**
 - src/api/routes/assistant.ts → GET /status (listAssistantIntegrations), POST /conversations/:id/messages (resolveAssistantIntegration + streamAssistantTurn)
@@ -81,7 +88,8 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 **Invariants:**
 - Never throws once streaming has started — failures become an `error` event; the route opens the SSE stream on `start`, i.e. only after ownership passed.
 - An error before any text stores NOTHING for the answer (the question stays; /retry re-asks it).
-- Tool results handed back to the model are clipped at 24 000 characters.
+- Tool results handed back to the model are clipped to `contextBudget(contextWindow).toolResultChars` — 24 000 characters at most, ~7 000 at the 8192 default.
+- The model's reasoning text never leaves llmService; only its length reaches the client.
 - The audit Event carries tool names, report count and stopped — the conversation text is the owner's data (rule 95(d)).
 - **First-round steering** (2026-10-07, qwen2.5:7b): a message that plainly asks for a report (`asksForReport`) is offered ONLY `create_report` on round 0, and one that asks how to use / configure Polaris (`asksHowTo`, deliberately narrow — "how many…" is not) ONLY `search_help`. A report request that still ends without a report is turned into one from the model's last list lookup, same filters (`reportTitleFromQuestion`).
 - **Links are checked** (`sanitizeAnswerLinks`, after the turn): only `WIKI_BASE_URL/<page>` for a page `helpIndexService.wikiPageNames()` knows, or a same-origin path. Anything else keeps its text and loses the link (a model invented `docs.polaris.example.com/subnets/add-subnet`); a changed answer is re-sent whole via `retract {from:0}` + `token`.
@@ -96,11 +104,11 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 
 ## services/assistantConversationService.ts
 
-**What it owns:** The saved conversations (AssistantConversation / AssistantMessage / AssistantReport). Every function takes the session user's id and scopes every query to it — someone else's id answers 404 (rule 95(d)). List / create / get / rename / delete / clear; `beginTurn` / `finishTurn` / `recentTurns` for the chat service; the `assistant` Setting (`retentionDays`, default 90) and `pruneAssistantConversations` (rule 95(e)). Creating past 200 conversations for one user drops that user's oldest.
+**What it owns:** The saved conversations (AssistantConversation / AssistantMessage / AssistantReport). Every function takes the session user's id and scopes every query to it — someone else's id answers 404 (rule 95(d)). List / create / get / rename / delete / clear; `beginTurn` / `finishTurn` / `recentTurns` for the chat service; the `assistant` Setting (`retentionDays`, default 90) and `pruneAssistantConversations` (rule 95(e)). Creating past 200 conversations for one user drops that user's oldest. `updateAssistantSettings(input, actor)` writes an `assistant.settings.updated` Event when the value changes — a warning when it shortens, because the next prune then deletes conversations. The operator edits it from the Local AI Assistant integration form ("Keep conversations for"), which calls PUT /assistant/settings after the integration saves; it stays a server-wide Setting, not integration config.
 
 **Public API:** AssistantSettings, ToolUseRecord, getAssistantSettings, updateAssistantSettings, titleFromQuestion, listConversations, createConversation, getConversation, renameConversation, deleteConversation, clearConversation, recentTurns, beginTurn, finishTurn, pruneAssistantConversations.
 
-**Cross-service deps:** none beyond Prisma (the report payload type comes from assistantToolService).
+**Cross-service deps:** eventLogService (logEvent — the retention change); otherwise Prisma only (the report payload type comes from assistantToolService).
 
 **Used by:**
 - src/api/routes/assistant.ts — every conversation route and PUT /settings
@@ -142,19 +150,19 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 
 ## services/llmIntegrationService.ts
 
-**What it owns:** The role + API token an llm integration provisions for its model server (rule 95(f)). `provisionLlmAccess` creates a custom role `llm-<name>` with `botPermissions()` — read on every key whose ladder has a read rung, except `BOT_EXCLUDED_KEYS` (credentials, apiTokens, users, roles, authentication, automationScripts, serverSettingsSystem, serverSettingsData, assistant) — then mints an API token bound to it and returns the raw token once; a token failure deletes the role. `assertCanProvision` requires `roles` write AND `apiTokens` write (and runs `assertNoPrivilegeEscalation`). `regenerateLlmToken` deletes the old token and mints a new one on the same role. `deprovisionLlmAccess` deletes the token then the role (role FK is Restrict), best-effort per step.
+**What it owns:** The role + API token an llm integration provisions for its model server (rule 95(f)). `provisionLlmAccess` creates a custom role `llm-<name>` with `botPermissions()` — read on every key whose ladder has a read rung, except `BOT_EXCLUDED_KEYS` (credentials, apiTokens, users, roles, authentication, automationScripts, serverSettingsSystem, serverSettingsData, assistant) — then mints an API token bound to it and returns the raw token once; a token failure deletes the role. `assertCanProvision` requires `roles` write AND `apiTokens` write (and runs `assertNoPrivilegeEscalation`). `regenerateLlmToken` deletes the old token and mints a new one on the same role. `deprovisionLlmAccess` deletes the token then the role (role FK is Restrict), best-effort per step. `checkLlmToolCalling` (2026-10-07) runs `probeToolCalling` against the model a SAVED integration will chat with — the configured one under the server's own name, or `pickDefaultModel` for a blank Model — and stamps `config.toolCheck = { model, result, at }` (re-reading config just before the write so an edit saved during the up-to-90 s probe survives) plus an `integration.llm.tool_check` Event (warning on `no`). An unreachable server throws and stores nothing. The form fires it after every create / save; the card's Tool Calling row reads it.
 
-**Public API:** BOT_EXCLUDED_KEYS, botPermissions, botRoleBaseName, assertCanProvision, ProvisionResult, provisionLlmAccess, regenerateLlmToken, deprovisionLlmAccess.
+**Public API:** BOT_EXCLUDED_KEYS, botPermissions, botRoleBaseName, assertCanProvision, ProvisionResult, provisionLlmAccess, regenerateLlmToken, LlmToolCheck, checkLlmToolCalling, deprovisionLlmAccess.
 
-**Cross-service deps:** roleService (createRole, deleteRole), apiTokenService (createToken, deleteToken), eventLogService (logEvent), permissions.ts (FUNCTION_KEYS, keySupportsLevel, hasPermission, assertNoPrivilegeEscalation).
+**Cross-service deps:** roleService (createRole, deleteRole), apiTokenService (createToken, deleteToken), llmService (listModels, matchModelId, pickDefaultModel, probeToolCalling), eventLogService (logEvent), permissions.ts (FUNCTION_KEYS, keySupportsLevel, hasPermission, assertNoPrivilegeEscalation).
 
 **Used by:**
-- src/api/routes/integrations.ts → POST / (assertCanProvision before the row; provisionLlmAccess after, rolling the row back on failure), DELETE /:id (deprovisionLlmAccess), POST /:id/llm/regenerate-token
+- src/api/routes/integrations.ts → POST / (assertCanProvision before the row; provisionLlmAccess after, rolling the row back on failure), DELETE /:id (deprovisionLlmAccess), POST /:id/llm/regenerate-token, POST /:id/llm/check-tools
 
 **Invariants:**
 - The bot role never writes and is never admin-equivalent (`tests/unit/assistantRbacLockstep.test.ts`).
 - The in-app chat NEVER uses this token — chat lookups run as the chatting user; the token is only for the model host's own direct API calls.
-- `roleId` / `roleName` / `tokenId` live in `Integration.config` and are server-stamped; the PUT path re-attaches them from the stored row.
+- `roleId` / `roleName` / `tokenId` / `toolCheck` live in `Integration.config` and are server-stamped (`LLM_SERVER_KEYS` in the route); the PUT path re-attaches them from the stored row. `toolCheck` is DROPPED instead when the PUT moves `host`, `port`, `basePath`, `useHttps` or `model` — a verdict describes one model on one server.
 
 **When changing this:**
 - A new function key: decide whether the bot should read it, and add it to `BOT_EXCLUDED_KEYS` if it exposes secrets, identities or administration.

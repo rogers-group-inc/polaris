@@ -21,6 +21,7 @@
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
+import { logEvent } from "./eventLogService.js";
 import type { AssistantReportPayload } from "./assistantToolService.js";
 
 const SETTINGS_KEY = "assistant";
@@ -45,13 +46,27 @@ export async function getAssistantSettings(): Promise<AssistantSettings> {
   return { retentionDays: Number.isFinite(days) && days >= 1 ? Math.min(Math.floor(days), 3650) : DEFAULT_RETENTION_DAYS };
 }
 
-export async function updateAssistantSettings(input: Partial<AssistantSettings>): Promise<AssistantSettings> {
+export async function updateAssistantSettings(input: Partial<AssistantSettings>, actor = "unknown"): Promise<AssistantSettings> {
   const days = Number(input.retentionDays);
   if (!Number.isFinite(days) || days < 1 || days > 3650) {
     throw new AppError(400, "Conversation retention must be between 1 and 3650 days");
   }
+  const before = await getAssistantSettings();
   const value = { retentionDays: Math.floor(days) };
   await prisma.setting.upsert({ where: { key: SETTINGS_KEY }, create: { key: SETTINGS_KEY, value }, update: { value } });
+  if (before.retentionDays !== value.retentionDays) {
+    await logEvent({
+      action: "assistant.settings.updated",
+      resourceType: "setting",
+      resourceId: SETTINGS_KEY,
+      resourceName: "AI assistant",
+      actor,
+      // Shortening it deletes saved conversations at the next daily prune.
+      level: value.retentionDays < before.retentionDays ? "warning" : "info",
+      message: `AI assistant conversation retention changed from ${before.retentionDays} to ${value.retentionDays} days`,
+      details: { from: before.retentionDays, to: value.retentionDays },
+    });
+  }
   return value;
 }
 

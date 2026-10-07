@@ -5,7 +5,8 @@
  *   1. beginTurn stores the user's question (or, for /retry, drops the last
  *      answer) — ownership is checked there.
  *   2. The last N turns + a system prompt go to the `llm` integration's
- *      OpenAI-compatible endpoint with the assistant tool definitions.
+ *      OpenAI-compatible endpoint with the assistant tool definitions —
+ *      trimmed to fit the integration's contextWindow (contextBudget).
  *   3. Text streams straight to the caller as `token` events. When the model
  *      asks for tools, each runs AS THE CALLER (assistantToolService) and the
  *      results go back for another round, up to maxToolRounds; the last round
@@ -18,6 +19,8 @@
  *   token  { text }                      a slice of the answer
  *   retract { from }                     drop the answer text from char `from` on —
  *                                        a tool call the model wrote as text, now run
+ *   thinking { chars }                   a thinking model's reasoning so far (length
+ *                                        only, never the text), at most every 400 ms
  *   tool   { name, label, status, ok? }   status: "running" | "done"
  *   report { id?, title, columns, rows, rowCount, truncated }
  *   done   { messageId, stopped }
@@ -33,6 +36,7 @@ import {
   chatCompletionRound,
   resolveChatModel,
   recoverTextToolCalls,
+  estimateTokens,
   LLM_DEFAULTS,
   type ChatMessage,
   type LlmConfig,
@@ -51,9 +55,9 @@ import {
 } from "./assistantConversationService.js";
 import { WIKI_BASE_URL, wikiPageNames } from "./helpIndexService.js";
 
-export type AssistantEmit = (event: "start" | "token" | "retract" | "tool" | "report" | "done" | "error", data: unknown) => void;
+export type AssistantEmit = (event: "start" | "token" | "retract" | "thinking" | "tool" | "report" | "done" | "error", data: unknown) => void;
 
-/** Cap on one tool result handed back to the model (characters of JSON). */
+/** Ceiling on one tool result handed back to the model (characters of JSON); contextBudget sizes it down for small windows. */
 const TOOL_RESULT_MAX_CHARS = 24_000;
 
 export interface AssistantIntegrationRef {
@@ -263,10 +267,94 @@ function isAbort(err: unknown, signal?: AbortSignal): boolean {
   return Boolean(signal?.aborted) || (err as { name?: string })?.name === "AbortError";
 }
 
-function clipJson(value: unknown): string {
+function clipJson(value: unknown, maxChars: number): string {
   const s = JSON.stringify(value);
-  if (s.length <= TOOL_RESULT_MAX_CHARS) return s;
-  return s.slice(0, TOOL_RESULT_MAX_CHARS) + '…"(truncated — narrow the filters or use create_report)"';
+  if (s.length <= maxChars) return s;
+  return s.slice(0, maxChars) + '…"(truncated — narrow the filters or use create_report)"';
+}
+
+// ─── Fitting the model's context window ──────────────────────────────────────
+//
+// A local model's window is small (Ollama defaults to 4096 tokens) and a
+// prompt that overflows it is not refused — the server silently drops the
+// OLDEST tokens, which is the system prompt and the tool definitions, and the
+// model then loses the task (seen live 2026-10-07: minutes of silent
+// reasoning). So the turn is budgeted against the integration's
+// `contextWindow`: the instructions + tool list + conversation may use 60 %,
+// a lookup result at most a quarter, and the rest is left for the answer.
+
+const TOOL_RESULT_MIN_CHARS = 1_500;
+
+export interface ContextBudget {
+  window: number;
+  /** Tokens the prompt (system + tools + history + this turn's lookups) may use. */
+  promptTokens: number;
+  /** Characters one lookup result may carry back to the model. */
+  toolResultChars: number;
+}
+
+/** The budget for a window of `contextWindow` tokens. Exported for tests. */
+export function contextBudget(contextWindow: number | undefined): ContextBudget {
+  const w = Math.min(Math.max(Math.floor(contextWindow ?? LLM_DEFAULTS.contextWindow), 2048), 1_000_000);
+  return {
+    window: w,
+    promptTokens: Math.floor(w * 0.6),
+    toolResultChars: Math.min(TOOL_RESULT_MAX_CHARS, Math.max(TOOL_RESULT_MIN_CHARS, Math.floor(w * 3.5 * 0.25))),
+  };
+}
+
+/**
+ * The newest turns that fit `budgetTokens` after the fixed part of the prompt
+ * (instructions + tool definitions). The latest turn — the question being
+ * answered — is always kept, cut down if it alone is too long. Exported for tests.
+ */
+export function fitHistory(
+  fixedTokens: number,
+  turns: Array<{ role: "user" | "assistant"; content: string }>,
+  budgetTokens: number,
+): Array<{ role: "user" | "assistant"; content: string }> {
+  if (!turns.length) return turns;
+  let room = Math.max(budgetTokens - fixedTokens, 0);
+  const kept: typeof turns = [];
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const t = turns[i];
+    const cost = estimateTokens(t.content) + 4;
+    if (i === turns.length - 1) {
+      // Never drop the question itself; trim it to what is left if it must be.
+      const maxChars = Math.max(Math.floor(room * 3.5), 200);
+      kept.unshift(t.content.length > maxChars ? { ...t, content: t.content.slice(0, maxChars) + "…" } : t);
+      room -= Math.min(cost, room);
+      continue;
+    }
+    if (cost > room) break;
+    kept.unshift(t);
+    room -= cost;
+  }
+  // A thread must not open on an assistant turn whose question was dropped.
+  while (kept.length > 1 && kept[0].role === "assistant") kept.shift();
+  return kept;
+}
+
+/**
+ * When a long turn's lookups push the prompt past its budget, the OLDEST
+ * lookup results are replaced by a one-line note — the model has already
+ * read them, and the newest result is the one it is answering from.
+ * Mutates `messages`. Exported for tests.
+ */
+export function compactToolResults(messages: ChatMessage[], budgetTokens: number): number {
+  const size = () => messages.reduce((n, m) => n + estimateTokens(typeof m.content === "string" ? m.content : "") +
+    ("tool_calls" in m && m.tool_calls ? estimateTokens(JSON.stringify(m.tool_calls)) : 0) + 4, 0);
+  let compacted = 0;
+  const toolIdx = messages.map((m, i) => (m.role === "tool" ? i : -1)).filter((i) => i >= 0);
+  // Keep the newest result whatever happens.
+  for (const i of toolIdx.slice(0, -1)) {
+    if (size() <= budgetTokens) break;
+    const m = messages[i] as { role: "tool"; tool_call_id: string; content: string };
+    if (m.content.startsWith('{"omitted"')) continue;
+    messages[i] = { ...m, content: '{"omitted":"earlier lookup result dropped to fit the model\'s context window"}' };
+    compacted++;
+  }
+  return compacted;
 }
 
 /**
@@ -299,12 +387,15 @@ export async function streamAssistantTurn(input: {
   // on this event, so its keep-alive covers a slow first token.
   emit("start", { question });
 
-  const turns = await recentTurns(input.conversationId, config.contextMessages ?? LLM_DEFAULTS.contextMessages);
+  const tools = assistantToolDefs();
+  const budget = contextBudget(config.contextWindow);
+  const systemPrompt = buildSystemPrompt({ username: input.username, extra: config.systemPromptExtra, displayName: config.displayName });
+  const allTurns = await recentTurns(input.conversationId, config.contextMessages ?? LLM_DEFAULTS.contextMessages);
+  const turns = fitHistory(estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools)), allTurns, budget.promptTokens);
   const messages: ChatMessage[] = [
-    { role: "system", content: buildSystemPrompt({ username: input.username, extra: config.systemPromptExtra, displayName: config.displayName }) },
+    { role: "system", content: systemPrompt },
     ...turns,
   ];
-  const tools = assistantToolDefs();
   const wantsReport = asksForReport(question);
   const reportOnlyTools = tools.filter((t) => t.function.name === "create_report");
   const wantsHowTo = !wantsReport && asksHowTo(question);
@@ -340,6 +431,21 @@ export async function streamAssistantTurn(input: {
     emit("token", { text });
   };
 
+  // A thinking model reasons silently before it answers — tens of seconds on
+  // modest hardware. Its reasoning is never shown; how much it has written is,
+  // at most every 400 ms, so the widget can say it is working.
+  let reasoningTotal = 0;
+  let roundReasoning = 0;
+  let lastThinkingEmit = 0;
+  const onReasoning = (roundChars: number) => {
+    const total = reasoningTotal + roundChars;
+    roundReasoning = roundChars;
+    const now = Date.now();
+    if (now - lastThinkingEmit < 400) return;
+    lastThinkingEmit = now;
+    emit("thinking", { chars: total });
+  };
+
   try {
     for (let round = 0; ; round++) {
       const lastRound = round >= maxRounds;
@@ -353,7 +459,10 @@ export async function streamAssistantTurn(input: {
         : round === 0 && wantsReport ? reportOnlyTools
         : round === 0 && wantsHowTo ? helpOnlyTools
         : tools;
-      const res = await chatCompletionRound(config, messages, roundTools, { signal, onText });
+      compactToolResults(messages, budget.promptTokens);
+      roundReasoning = 0;
+      const res = await chatCompletionRound(config, messages, roundTools, { signal, onText, onReasoning });
+      reasoningTotal += roundReasoning;
       const wasHeld = held !== null;
       held = null;
       let calls = res.toolCalls;
@@ -391,7 +500,7 @@ export async function streamAssistantTurn(input: {
         const result = await runAssistantTool(name, tc.function.arguments, toolCtx);
         toolsUsed.push({ name, label: toolLabel(name), ok: result.ok });
         emit("tool", { name, label: toolLabel(name), status: "done", ok: result.ok });
-        messages.push({ role: "tool", tool_call_id: tc.id, content: clipJson(result.data) });
+        messages.push({ role: "tool", tool_call_id: tc.id, content: clipJson(result.data, budget.toolResultChars) });
         if (result.ok && REPORT_SOURCES.has(name)) lastListCall = { name, args: tc.function.arguments };
       }
     }

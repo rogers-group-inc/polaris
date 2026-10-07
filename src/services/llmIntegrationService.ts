@@ -27,6 +27,14 @@ import { logEvent } from "./eventLogService.js";
 import { createRole, deleteRole } from "./roleService.js";
 import { createToken, deleteToken } from "./apiTokenService.js";
 import {
+  listModels,
+  matchModelId,
+  pickDefaultModel,
+  probeToolCalling,
+  type LlmConfig,
+  type ToolCallingSupport,
+} from "./llmService.js";
+import {
   FUNCTION_KEYS,
   keySupportsLevel,
   hasPermission,
@@ -165,6 +173,64 @@ export async function regenerateLlmToken(
     details: { oldTokenId, tokenId: token.id },
   });
   return { tokenId: token.id, tokenName, rawToken, roleName: role.name };
+}
+
+// ─── Tool-calling check after save ───────────────────────────────────────────
+
+export interface LlmToolCheck {
+  /** The model that was asked — the configured one, or the server's default pick for a blank Model. */
+  model: string;
+  result: ToolCallingSupport;
+  at: string;
+}
+
+/**
+ * Run "Check tool calling" against the model a saved integration will chat
+ * with, and stamp the outcome on its config as `toolCheck` (server-owned —
+ * PUT preserves it, a client cannot set it). The integration card reads it,
+ * so an operator sees on the card whether lookups will work rather than
+ * finding out from a chat that answers without looking anything up.
+ * Throws when the server cannot be reached; that is not a verdict on the model.
+ */
+export async function checkLlmToolCalling(integrationId: string, actor: string): Promise<LlmToolCheck> {
+  const integration = await prisma.integration.findUnique({
+    where: { id: integrationId },
+    select: { id: true, name: true, type: true, config: true },
+  });
+  if (!integration) throw new AppError(404, "Integration not found");
+  if (integration.type !== "llm") throw new AppError(400, "Only Local AI Assistant integrations have a tool-calling check");
+  const config = (integration.config ?? {}) as Record<string, unknown> & LlmConfig;
+
+  const models = await listModels(config);
+  const configured = (config.model ?? "").trim();
+  const model = configured ? (matchModelId(models.map((m) => m.id), configured) ?? configured) : pickDefaultModel(models);
+  if (!model) throw new AppError(409, "The LLM server lists no chat model — set Model on the integration");
+
+  const result = await probeToolCalling(config, model);
+  const toolCheck: LlmToolCheck = { model, result, at: new Date().toISOString() };
+  // Re-read before writing so an edit saved during the (up to 90 s) probe is kept.
+  const fresh = await prisma.integration.findUnique({ where: { id: integrationId }, select: { config: true } });
+  if (fresh) {
+    await prisma.integration.update({
+      where: { id: integrationId },
+      data: { config: { ...(fresh.config as Record<string, unknown>), toolCheck } as any },
+    });
+  }
+  await logEvent({
+    action: "integration.llm.tool_check",
+    resourceType: "integration",
+    resourceId: integration.id,
+    resourceName: integration.name,
+    actor,
+    level: result === "no" ? "warning" : "info",
+    message: result === "yes"
+      ? `Local AI Assistant "${integration.name}": model "${model}" calls tools — lookups will work`
+      : result === "no"
+        ? `Local AI Assistant "${integration.name}": model "${model}" did NOT call a tool — the assistant can chat but cannot look anything up`
+        : `Local AI Assistant "${integration.name}": tool calling for model "${model}" could not be determined`,
+    details: { model, result },
+  });
+  return toolCheck;
 }
 
 /**

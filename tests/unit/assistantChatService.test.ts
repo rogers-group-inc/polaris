@@ -28,7 +28,8 @@ vi.mock("../../src/services/llmService.js", async () => ({
   chatCompletionRound: h.chatCompletionRound,
   resolveChatModel: async (_id: string, c: any) => c.model || "picked-default",
   recoverTextToolCalls: (await vi.importActual<typeof import("../../src/services/llmService.js")>("../../src/services/llmService.js")).recoverTextToolCalls,
-  LLM_DEFAULTS: { maxToolRounds: 6, maxRowsPerTool: 200, contextMessages: 20 },
+  estimateTokens: (t: string) => Math.ceil((t ?? "").length / 3.5),
+  LLM_DEFAULTS: { maxToolRounds: 6, maxRowsPerTool: 200, contextMessages: 20, contextWindow: 8192 },
 }));
 vi.mock("../../src/services/assistantToolService.js", () => ({
   assistantToolDefs: () => [{ type: "function", function: { name: "list_assets", description: "", parameters: {} } }],
@@ -41,7 +42,10 @@ vi.mock("../../src/services/assistantConversationService.js", () => ({
   recentTurns: h.recentTurns,
 }));
 
-import { streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, asksForReport, reportTitleFromQuestion, asksHowTo, sanitizeAnswerLinks } from "../../src/services/assistantChatService.js";
+import {
+  streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, asksForReport, reportTitleFromQuestion, asksHowTo, sanitizeAnswerLinks,
+  contextBudget, fitHistory, compactToolResults,
+} from "../../src/services/assistantChatService.js";
 
 const integration = { id: "i1", name: "Ollama", config: { host: "10.0.0.5", model: "qwen", maxToolRounds: 2 } as any };
 
@@ -252,6 +256,59 @@ describe("streamAssistantTurn", () => {
     expect(h.beginTurn).not.toHaveBeenCalled();
   });
 
+  it("reports a thinking model's reasoning as a running length, summed across rounds and throttled", async () => {
+    h.chatCompletionRound
+      .mockImplementationOnce(async (_c: any, _m: any, _t: any, o: any) => {
+        o.onReasoning(100);
+        o.onReasoning(200); // inside the 400 ms throttle — not emitted
+        return { content: "", toolCalls: [{ id: "t", type: "function", function: { name: "list_assets", arguments: "{}" } }], finishReason: "tool_calls" };
+      })
+      .mockImplementationOnce(async (_c: any, _m: any, _t: any, o: any) => {
+        await new Promise((r) => setTimeout(r, 420));
+        o.onReasoning(50);
+        o.onText("ok");
+        return { content: "ok", toolCalls: [], finishReason: "stop" };
+      });
+    h.runAssistantTool.mockResolvedValueOnce({ ok: true, data: {} });
+    const { p, events } = run();
+    await p;
+    expect(events.filter((e) => e[0] === "thinking").map((e) => e[1].chars)).toEqual([100, 250]);
+    // Reasoning is never part of the answer.
+    expect(h.finishTurn.mock.calls[0][1].content).toBe("ok");
+  });
+
+  it("clips a lookup result to the context window's share", async () => {
+    const big = { rows: "x".repeat(20_000) };
+    h.chatCompletionRound
+      .mockImplementationOnce(async () => ({ content: "", toolCalls: [{ id: "t", type: "function", function: { name: "list_assets", arguments: "{}" } }], finishReason: "tool_calls" }))
+      .mockImplementationOnce(async (_c: any, msgs: any[], _t: any, o: any) => {
+        const toolMsg = msgs.find((m: any) => m.role === "tool");
+        // 4096 tokens × 3.5 chars × 25 % = 3584 chars, plus the truncation note.
+        expect(toolMsg.content.length).toBeLessThan(3700);
+        expect(toolMsg.content).toContain("truncated");
+        o.onText("ok");
+        return { content: "ok", toolCalls: [], finishReason: "stop" };
+      });
+    h.runAssistantTool.mockResolvedValueOnce({ ok: true, data: big });
+    await run({ integration: { ...integration, config: { ...integration.config, contextWindow: 4096 } } }).p;
+  });
+
+  it("drops the oldest history that will not fit the window, keeping the question", async () => {
+    const long = "y".repeat(6000);
+    h.recentTurns.mockResolvedValueOnce([
+      { role: "user", content: "old question " + long },
+      { role: "assistant", content: "old answer " + long },
+      { role: "user", content: "what is down?" },
+    ] as any);
+    h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], _t: any, o: any) => {
+      expect(msgs.map((m: any) => m.role)).toEqual(["system", "user"]);
+      expect(msgs[1].content).toBe("what is down?");
+      o.onText("ok");
+      return { content: "ok", toolCalls: [], finishReason: "stop" };
+    });
+    await run({ integration: { ...integration, config: { ...integration.config, contextWindow: 4096 } } }).p;
+  });
+
   it("sends the server's default pick when Model is blank", async () => {
     h.chatCompletionRound.mockImplementationOnce(async (c: any, _m: any, _t: any, o: any) => {
       expect(c.model).toBe("picked-default");
@@ -260,6 +317,49 @@ describe("streamAssistantTurn", () => {
     });
     await run({ integration: { ...integration, config: { host: "h", model: "" } } }).p;
     expect(h.chatCompletionRound).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("context budget", () => {
+  it("sizes the prompt and lookup results to the window, within bounds", () => {
+    expect(contextBudget(8192)).toEqual({ window: 8192, promptTokens: 4915, toolResultChars: 7168 });
+    expect(contextBudget(undefined).window).toBe(8192);
+    expect(contextBudget(512).window).toBe(2048); // floor
+    expect(contextBudget(2048).toolResultChars).toBe(1792);
+    expect(contextBudget(131_072).toolResultChars).toBe(24_000); // ceiling
+  });
+
+  it("keeps the newest turns that fit and never opens on an orphaned answer", () => {
+    const turns = [
+      { role: "user" as const, content: "a".repeat(350) },      // ~100 tokens
+      { role: "assistant" as const, content: "b".repeat(350) },
+      { role: "user" as const, content: "c".repeat(350) },
+    ];
+    expect(fitHistory(0, turns, 1000)).toHaveLength(3);
+    // Room for two: the answer would lead, so it is dropped too.
+    expect(fitHistory(0, turns, 220).map((t) => t.content[0])).toEqual(["c"]);
+    expect(fitHistory(0, [], 100)).toEqual([]);
+  });
+
+  it("cuts the question itself down when nothing else fits", () => {
+    const out = fitHistory(10_000, [{ role: "user", content: "q".repeat(5000) }], 4000);
+    expect(out).toHaveLength(1);
+    expect(out[0].content.length).toBeLessThan(5000);
+    expect(out[0].content.endsWith("…")).toBe(true);
+  });
+
+  it("replaces the oldest lookup results first, and never the newest", () => {
+    const msgs: any[] = [
+      { role: "system", content: "s" },
+      { role: "tool", tool_call_id: "1", content: "x".repeat(3500) },
+      { role: "tool", tool_call_id: "2", content: "y".repeat(3500) },
+      { role: "tool", tool_call_id: "3", content: "z".repeat(3500) },
+    ];
+    expect(compactToolResults(msgs, 1500)).toBe(2);
+    expect(msgs[1].content).toContain("omitted");
+    expect(msgs[2].content).toContain("omitted");
+    expect(msgs[3].content[0]).toBe("z");
+    expect(compactToolResults(msgs, 100_000)).toBe(0);
   });
 });
 

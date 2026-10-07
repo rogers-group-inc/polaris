@@ -1024,6 +1024,7 @@ const api = {
     autoMonitorAssetsPreflight: (id, proposed) => request("POST", `/integrations/${id}/auto-monitor-assets/preflight`, { proposed: proposed }),
     llmRegenerateToken: (id) => request("POST", `/integrations/${id}/llm/regenerate-token`),
     llmProbeTools:      (body) => trackedRequest("Checking tool calling", "POST", "/integrations/llm/probe-tools", body),
+    llmCheckTools:      (id)   => trackedRequest("Checking tool calling", "POST", `/integrations/${id}/llm/check-tools`),
   },
   // The floating AI assistant (public/js/assistant.js, business rule 95). The
   // streamed ask (POST /conversations/:id/messages) is NOT here: request()
