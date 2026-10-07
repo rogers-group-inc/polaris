@@ -3679,11 +3679,11 @@ function getAssetFormData() {
     var httpPathEl = document.getElementById("f-httpCheckPath");
     if (httpPathEl) data.httpCheckPath = httpPathEl.value.trim() || null;
     // Per-stream credential overrides. Empty string → null (source default).
-    // A picker whose stream is on "Inherit" is left UNPOPULATED by
-    // refreshStreamCred (no options, hidden) — its .value reads "" even when
-    // the asset has a stored credential, so fall back to the data-current-id
-    // stamp rather than wiping the stored value on an unrelated save. A
-    // deliberate method change clears data-current-id first (see the change
+    // refreshStreamCred populates and shows a picker whenever the row stores a
+    // credential, even on "Inherit", so .value is what the operator sees and
+    // "Source default" clears it. The data-current-id fallback only covers a
+    // picker that was never populated (nothing stored, or refresh not run).
+    // A deliberate method change clears data-current-id first (see the change
     // handler), so switching methods still drops a stale credential.
     function credVal(el) {
       if (!el) return undefined;
@@ -3831,6 +3831,7 @@ function assetMonitoringFormHTML(asset, managedAgent) {
         '<label style="margin:0;font-size:0.85rem;color:var(--color-text-secondary);min-width:90px">Credential</label>' +
         '<select id="' + credSelectId + '" data-current-id="' + escapeHtml(currentCredId) + '" style="flex:1"></select>' +
       '</div>' +
+      '<p class="hint" id="' + pollingId + '-cred-hint" style="display:none">This stream stores a credential. It is still used whenever the inherited method takes that credential type. Choose "Source default" to clear it.</p>' +
       mibSubRow;
   }
 
@@ -4319,16 +4320,35 @@ function _credTypeForPolling(method) {
 
 // Options for a per-stream credential picker: "Source default" first (value=""),
 // then credentials matching credType. When credType is null, just the default.
+//
+// A STORED credential is always an option, whatever credType is. The picker
+// must show what the asset row holds: a stored id with no matching option made
+// the select fall back to "Source default", so the operator read "nothing set"
+// while the dispatchers kept sending that credential (a stale per-asset REST
+// token behind an "Inherit" stream locked the server out of a FortiGate's API
+// for hours). The extra option names the credential and says when its type
+// doesn't fit the method, so the mismatch is visible instead of silent.
 function _credentialOptionsForStream(selectedId, credType) {
   var opts = '<option value="">— Source default —</option>';
-  if (!credType) return opts;
-  _credentialCache.list.forEach(function (c) {
-    if (c.type !== credType) return;
-    opts += '<option value="' + escapeHtml(c.id) + '"' +
-      (selectedId === c.id ? " selected" : "") + '>' +
-      escapeHtml(c.name) +
-      '</option>';
-  });
+  var listed = false;
+  if (credType) {
+    _credentialCache.list.forEach(function (c) {
+      if (c.type !== credType) return;
+      if (selectedId === c.id) listed = true;
+      opts += '<option value="' + escapeHtml(c.id) + '"' +
+        (selectedId === c.id ? " selected" : "") + '>' +
+        escapeHtml(c.name) +
+        '</option>';
+    });
+  }
+  if (selectedId && !listed) {
+    var stored = null;
+    _credentialCache.list.forEach(function (c) { if (c.id === selectedId) stored = c; });
+    var label = stored
+      ? stored.name + " (" + stored.type + (credType ? ", not used by this method" : "") + ")"
+      : "Stored credential (not visible to you)";
+    opts += '<option value="' + escapeHtml(selectedId) + '" selected>' + escapeHtml(label) + '</option>';
+  }
   return opts;
 }
 
@@ -4400,13 +4420,20 @@ async function _wireMonitorEditTab(asset) {
     var method   = pollEl.value || null;
     var credType = _credTypeForPolling(method);
     if (credEl && credWrap) {
-      if (credType) {
-        var current = credEl.getAttribute("data-current-id") || "";
+      var current = credEl.getAttribute("data-current-id") || "";
+      var credHint = document.getElementById(streamDef.pollId + "-cred-hint");
+      if (credType || current) {
+        // A method with no credential type of its own ("Inherit", ICMP, Agent,
+        // Disabled) still shows the picker when the row STORES a credential:
+        // the dispatchers apply it whenever the resolved method takes that
+        // type, so hiding it hid a live setting. "Source default" clears it.
         credEl.innerHTML = _credentialOptionsForStream(current, credType);
         credWrap.style.display = "flex";
       } else {
+        credEl.innerHTML = "";
         credWrap.style.display = "none";
       }
+      if (credHint) credHint.style.display = (!credType && current) ? "" : "none";
     }
     // MIB sub-row appears only when the stream is set to SNMP. Streams that
     // don't carry a MIB picker (storage) have no wrap div to toggle.
