@@ -948,7 +948,7 @@ export function fortiosRestUsable(stream: Stream, assetType: string | null | und
 export function defaultPollingForSource(
   source: AssetSourceKind,
   stream: Stream,
-  opts?: { assetType?: string | null; fortiosRestUnavailable?: boolean },
+  opts?: { assetType?: string | null; fortiosRestUnavailable?: boolean; hasIp?: boolean },
 ): PollingMethod | null {
   // Cross-transport streams default to "disabled" everywhere — they're opt-in
   // (operator picks agent / SNMP / SSH / WinRM, or REST for eventLog on a
@@ -1023,11 +1023,19 @@ export function defaultPollingForSource(
     return null;
   }
   if (source === "unraid" || source === "truenas") {
-    // The vCenter posture: everything the host's API answers for, it answers
-    // for, out of ONE cached read per integration per tick. Temperature too —
-    // a NAS reports its disks' temperatures, which land on the host as
-    // `sensorClass: "disk"` readings. LLDP is never published.
-    if (stream === "responseTime" || stream === "cpuMemory" || stream === "interfaces"
+    // Response time is ICMP whenever there is an address to ping (operator
+    // decision 2026-10-07): the API-state probe's "response time" was the
+    // whole host-API round trip — hundreds of ms of GraphQL / JSON-RPC, not
+    // the workload. A workload with no address of its own (a bridged
+    // container, a VM whose guest IP the platform does not publish) keeps the
+    // platform's state check — ICMP there would fail every probe and call a
+    // running container down. That probe reports 0 ms (probeWorkload).
+    if (stream === "responseTime") return opts?.hasIp ? "icmp" : source;
+    // Everything else the host's API answers for, it answers for, out of ONE
+    // cached read per integration per tick. Temperature too — a NAS reports
+    // its disks' temperatures, which land on the host as `sensorClass:
+    // "disk"` readings. LLDP is never published.
+    if (stream === "cpuMemory" || stream === "interfaces"
         || stream === "storage" || stream === "temperature") return source;
     return null;
   }
@@ -1386,6 +1394,15 @@ async function loadClassOverride(
 /** Minimal asset shape the resolver needs. */
 export interface AssetMonitorContext {
   assetType:                 string;
+  /**
+   * The asset's address. Read by ONE source default only: an Unraid / TrueNAS
+   * asset's response time defaults to ICMP when it has an address to ping and
+   * to the platform's API state otherwise (a bridged container or a VM whose
+   * guest IP the platform does not report). Callers that spread an asset row
+   * carry it already; a hand-built context that omits it resolves as "no
+   * address", which is the safe answer (never a ping at nothing).
+   */
+  ipAddress?:                string | null;
   discoveredByIntegrationId: string | null;
   /**
    * Type of the discovering integration. Drives the source-default
@@ -1709,6 +1726,7 @@ async function resolveMonitorSettingsCore(asset: AssetMonitorContext): Promise<R
     let resolved: PollingMethod | null = defaultPollingForSource(sourceKind, stream, {
       assetType: asset.assetType,
       fortiosRestUnavailable,
+      hasIp: typeof asset.ipAddress === "string" && asset.ipAddress.trim() !== "",
     });
     let tier: ProvenanceTier = "default";
     if (tierVal && ok(tierVal)) {

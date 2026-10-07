@@ -8,6 +8,13 @@
  * never contacted, so no credential, no SNMP and no reachable guest address
  * are needed. monitoringService dispatches here before its IP guard.
  *
+ * Response time is ICMP by default for any asset with an address
+ * (defaultPollingForSource); this probe answers for the rest — a bridged
+ * container, a VM with no published guest IP — and for an operator who picks
+ * the method on purpose. It reports up/down only: its responseTimeMs is 0,
+ * because the only latency it could report is the host-API round trip, which
+ * says nothing about the workload and charted as a misleadingly high number.
+ *
  * The reading model is vCenter's, and for vCenter's reason:
  *
  *   host / vm / container — the platform answered ABOUT this asset; its own
@@ -162,22 +169,22 @@ export async function readWorkloadAsset(assetId: string): Promise<WorkloadReadin
 // ─── Probe ────────────────────────────────────────────────────────────────────
 
 /**
- * Response time = the shared API round trip (not a measurement of the
- * workload — the vCenter honesty). Up/down = the platform's own state.
+ * Up/down = the platform's own state. Response time is always 0 ms: a state
+ * read carries no latency of the workload (operator decision 2026-10-07 —
+ * the API round trip used to be charted here and read as a slow device).
  */
-export async function probeWorkload(assetId: string, start: number): Promise<ProbeResult> {
+export async function probeWorkload(assetId: string, _start: number): Promise<ProbeResult> {
   const reading = await readWorkloadAsset(assetId);
-  const elapsed = () => Math.max(0, Math.round(performance.now() - start));
   if (reading.kind === "unreachable") {
     if (reading.role === "host") {
       // The host's own API not answering is the finding about the host.
-      return { success: false, responseTimeMs: elapsed(), error: reading.error };
+      return { success: false, responseTimeMs: 0, error: reading.error };
     }
     logger.debug({ assetId, reason: reading.error }, "workload probe skipped — could not read the host");
     return { success: false, responseTimeMs: 0, skipped: true, error: reading.error };
   }
-  if (reading.kind === "absent") return { success: false, responseTimeMs: elapsed(), error: reading.error };
-  const rtt = reading.snap.durationMs;
+  if (reading.kind === "absent") return { success: false, responseTimeMs: 0, error: reading.error };
+  const rtt = 0;
   if (reading.kind === "host") {
     const ok: ProbeResult = { success: true, responseTimeMs: rtt };
     if (reading.snap.inventory.host.uptimeSeconds !== null) ok.uptimeSec = reading.snap.inventory.host.uptimeSeconds;

@@ -988,6 +988,7 @@ function shapeManagementAccess(ma: unknown): { mgmtIp: string | null; protocols:
 async function computeMonitoringMethods(a: {
   monitored?: boolean;
   assetType?: unknown;
+  ipAddress?: unknown;
   discoveredByIntegrationId?: unknown;
   discoveredByIntegration?: { type?: string | null } | null;
   managedAgent?: { installStatus?: string | null } | null;
@@ -1002,6 +1003,8 @@ async function computeMonitoringMethods(a: {
   if (a.managedAgent?.installStatus === "active") return ["agent"];
   const resolved = await resolveMonitorSettings({
     assetType:                   typeof a.assetType === "string" ? a.assetType : "other",
+    // Read by the Unraid / TrueNAS response-time default (ICMP only when pingable).
+    ipAddress:                   typeof a.ipAddress === "string" ? a.ipAddress : null,
     discoveredByIntegrationId:   typeof a.discoveredByIntegrationId === "string" ? a.discoveredByIntegrationId : null,
     discoveredByIntegrationType: a.discoveredByIntegration?.type ?? null,
     monitorIntervalSec:     null,

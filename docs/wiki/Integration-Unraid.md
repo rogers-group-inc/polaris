@@ -146,7 +146,7 @@ is the source default for this integration's assets. It covers:
 
 | Stream | Host | VM | Container |
 |---|---|---|---|
-| **Response Time** | yes | yes | yes |
+| **Response Time** | ICMP by default | when it has no IP | when it has no IP of its own |
 | **CPU / Memory** | yes | **no** (see below) | yes |
 | **Interfaces** | yes | — | — |
 | **Storage** | yes: the array and cache pools | — | — |
@@ -159,13 +159,24 @@ small one.
 
 ### What "response time" means here
 
-For a VM or container, up and down is **Unraid's own running state**: running is
-up, stopped is down. A state that is in transition is skipped, with no verdict
-either way. The response time shown is the **round trip of the API call to the
-host**, not a ping of the workload.
+Response time **defaults to ICMP** for every asset that has an address of its
+own: the host, a VM whose IP another source (an agent, Active Directory) has
+filled in, and a container on its own network (br0 / macvlan). Those get a real
+ping latency.
 
-If the host's API cannot be reached, **the host is reported down and its VMs
-and containers are skipped** rather than all declared down. Combined with
+A workload with **no address of its own** — a container on the default bridge,
+or a VM, since Unraid does not publish guest IPs — cannot be pinged, so its
+response time stays on the **Unraid** method: up and down is **Unraid's own
+running state** (running is up, stopped is down; a state in transition is
+skipped with no verdict), and it is charted at **0 ms**, because a state read
+has no latency to report. You can switch any asset to the other method on its
+Monitoring tab.
+
+If the host's API cannot be reached while the host is on the **Unraid** method,
+**the host is reported down and its VMs and containers are skipped** rather
+than all declared down. (On the ICMP default the host's up/down is its ping;
+workloads still on the Unraid method are skipped while the API is
+unreachable.) Combined with
 dependency suppression, a powered-off Unraid server produces one alert, not one
 per container.
 

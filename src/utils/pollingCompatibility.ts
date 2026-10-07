@@ -25,7 +25,9 @@
  *                                                                 is the DEFAULT for both roles — see below)
  *   Unraid            → ICMP, SNMP, WinRM, SSH, Agent,           (vCenter's shape: VMs are guest OSes, the host and
  *                       Unraid                                    its containers are read through the integration;
- *                                                                 "unraid" is the DEFAULT — see below)
+ *                                                                 "unraid" is the default for everything but
+ *                                                                 response time, which is ICMP on any asset
+ *                                                                 with an address — see below)
  *   TrueNAS SCALE     → ICMP, SNMP, WinRM, SSH, Agent, TrueNAS   (same, with "truenas")
  *   Manual            → any                                       (operator-chosen)
  *
