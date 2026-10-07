@@ -65,6 +65,30 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/truenasService.ts
+
+**What it owns:** The TrueNAS SCALE integration's client — the versioned JSON-RPC 2.0 over WebSocket API (`wss://<host>/api/current`, TrueNAS 25.04+; REST is deprecated in 25.10 and gone in 26.04), authenticated per socket with `auth.login_with_api_key`. `TrueNasSession` is one authenticated socket: `call` (id-matched request/response, per-call timeout), `firstEvent` (`core.subscribe` → the first `collection_update` for that collection, or null after a window), `waitForJob` (polls `core.get_jobs` every 2 s — every App / VM action is a JOB that returns an id immediately). Discovery reads `system.info` (required — it is the connection check) plus `pool.query`, `app.query`, `vm.query`, `disk.temperatures`, `disk.query` in parallel, each degrading on its own. A snapshot adds the `reporting.realtime` (host CPU per core, memory, link state) and `app.stats` (per-App CPU / memory) events on the same socket. Normalized to the shared workload shapes. A TrueNAS "container" asset is an APP (a compose project) — the unit TrueNAS starts, stops and upgrades.
+
+**Public API:** testConnection, discoverInventory, fetchTrueNasSnapshot, proxyQuery (read methods only — `isProxyReadMethod`: `.query` / `.get_instance` / `.config` / `.info` / `.status` / `.upgrade_summary` / `.temperatures` + an explicit list), appAction (start / stop / restart = `app.redeploy` / update = `app.upgrade` to latest when the catalog offers one, else `app.pull_images` with redeploy), vmAction (start / graceful stop with force-after-timeout / restart), refreshUpdateChecks (`catalog.sync`, best-effort), TrueNasSession; pure parsers parseTrueNasHost / parseTrueNasPools / parseTrueNasDisks / parseTrueNasVms / parseTrueNasApps / parseTrueNasRealtime / parseTrueNasAppStats / truenasVersion; TrueNasConfig.
+
+**Cross-service deps:** discovery/workloadSync (types + `normalizeWorkloadState`).
+
+**Used by:** src/api/routes/integrations.ts — both test-connection handlers + the Query API branch. src/services/discovery/discoveryEngine.ts — preflight + dispatch (`discoverInventory` → `syncWorkloadDevices`). src/services/monitoringService.ts — `fetchTrueNasSnapshot` behind the per-integration workload snapshot cache (the `truenas` polling method).
+
+**Invariants:**
+- An `app.query` or `vm.query` that fails (Apps service unconfigured, a key without APPS_READ / VM_READ) marks the inventory INCOMPLETE, never empty — the sweep must not read it as deletions.
+- `system.info.model` is the CPU; the machine model is `system_product`.
+- `vm.query.memory` is MiB. VM MACs come only from `devices[]` with `dtype: "NIC"`.
+- `reporting.realtime` interface figures are RATES, not counters — the host's interface rows carry link state and speed only (counter columns null), never a rate mistaken for a counter.
+- TrueNAS REVOKES an API key used over plain HTTP: `useTls: false` exists for lab installs behind a TLS-terminating proxy, and the form says so.
+- One socket, one login per discovery / snapshot / action, closed in `finally`. Not persistent across ticks: the snapshot cache bounds how often a socket opens.
+
+**When changing this:**
+- Method and field shapes are from the published docs (api.truenas.com/v25.10); verify on a real 25.10 box and refresh tests/unit/truenasService.test.ts (which also runs the session against a stub JSON-RPC server — extend the stub with any new method).
+- A new projected field → the `workloadRule` entries in `src/utils/assetProjection.ts` + the shared observed builders in workloadSync.
+
+---
+
 ## services/activeDirectoryService.ts
 
 **What it owns:** On-prem Active Directory device discovery via LDAP/LDAPS client (computer objects, OU filtering, SID/GUID identity, disabled-account handling).
