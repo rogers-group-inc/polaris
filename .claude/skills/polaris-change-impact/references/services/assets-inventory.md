@@ -182,7 +182,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/assetTypeService.ts
 
-**What it owns:** CRUD + in-memory cache for the `AssetTypeDef` registry (replaces the retired `AssetType` enum). Built-in types (the eight historical + vCenter's `hypervisor` + Azure Arc's `kubernetes_cluster`) are protected; custom types support transactional rename and use-checked delete. The `virtual_machine` built-in was retired by migration 20260722000000 (vCenter VMs are typed `server`) — keep it out of `BUILT_IN_SEEDS` / `BUILT_IN_ASSET_TYPES` or the boot self-heal resurrects it.
+**What it owns:** CRUD + in-memory cache for the `AssetTypeDef` registry (replaces the retired `AssetType` enum). Built-in types (the eight historical + vCenter's `hypervisor` + Azure Arc's `kubernetes_cluster` + Unraid / TrueNAS's `container`, migration 20261007000000, pinned by `tests/unit/containerAssetTypeLockstep.test.ts`) are protected; custom types support transactional rename and use-checked delete. The `virtual_machine` built-in was retired by migration 20260722000000 (vCenter VMs are typed `server`) — keep it out of `BUILT_IN_SEEDS` / `BUILT_IN_ASSET_TYPES` or the boot self-heal resurrects it.
 
 **Public API:** `AssetTypeRow`, `listAssetTypes`, `getAssetType`, `createAssetType`, `updateAssetType`, `deleteAssetType`, `refreshCache`, `seedBuiltInAssetTypes`, `previewMatchRules`, `applyMatchRules`, `MatchPreviewRow`, `MatchPreviewResult`
 
