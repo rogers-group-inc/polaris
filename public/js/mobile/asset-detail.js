@@ -6,11 +6,18 @@
 // Sections (top to bottom):
 //   - Hero with status pill + identity bits (name lives in the sheet header)
 //   - Monitor section (response-time chart, status pill, RTT/last poll)
-//   - Telemetry section (CPU+Memory chart, when supported)
+//   - Telemetry section (CPU+Memory chart, when supported; its own
+//     1h / 24h / 7d range)
 //   - General section (IP/MAC/type/model/OS/location/last seen)
 //   - Temperatures section — current per-sensor reading + 1h min/avg/max
-//   - Interfaces section — operStatus=="up" only; tap a row opens a bottom
-//     sheet with status / speed / ip / mac / errors / LLDP neighbor(s)
+//   - Interfaces section — a PoE summary (delivering / searching / fault,
+//     faulted ports named) when any port reports PoE, then the list,
+//     operStatus=="up" only, each row with its PoE state; tap a row opens a
+//     bottom sheet with status / speed / ip / mac / PoE / errors / LLDP
+//     neighbor(s), plus throughput + error charts for a MONITORED interface
+//
+// The four monitoring sections carry a polling-method chip beside the title
+// (loadPollingChips, from /effective-monitor-settings).
 //   - Discovery sources — per-source list (sourceKind + integration + lastSeen)
 //   - Firewall sightings — which FortiGates saw this asset (needs
 //     assetsQuarantine read; degrades to a muted note otherwise)
@@ -52,7 +59,8 @@
 // Out of scope for v1 (desktop-only):
 //   - The Firmware Repository, the choice of a model's backup image, and a
 //     run's history and log
-//   - Per-interface throughput + errors charts
+//   - Per-interface charts for an UNMONITORED interface, and custom date
+//     ranges on them
 //   - Per-interface comments editor
 //   - IPsec tunnels
 //   - SNMP walk
@@ -63,11 +71,12 @@
 //     full observed key/value table)
 
 (function () {
-  // Single shared chart range — driven by the 24h/7d segmented control on
-  // the Monitor card. Telemetry chart follows the same range so both
-  // sections move together when the operator switches windows.
+  // Response Time chart range — driven by the segmented control on its card.
+  // CPU + Memory and the interface slide-up carry their own shorter control
+  // (CHART_RANGES), so each chart moves on its own.
   var DEFAULT_RANGE = "24h";
   var RANGES = ["1h", "12h", "24h", "7d", "30d"];
+  var CHART_RANGES = ["1h", "24h", "7d"];
   var RANGE_MS = {
     "1h": 3600000, "12h": 12 * 3600000, "24h": 24 * 3600000,
     "7d": 7 * 86400000, "30d": 30 * 86400000,
@@ -153,6 +162,7 @@
     if (!_mounts[id]) {
       _mounts[id] = {
         range: DEFAULT_RANGE,
+        telemetryRange: DEFAULT_RANGE,
         // Chart sections collapse by default — operators get the summary
         // (avg/max in the section subtitle) at a glance and can expand for
         // the full chart when needed.
@@ -578,10 +588,6 @@
     if (modelLine) heroBits.push(escapeHtml(modelLine));
     if (asset.serialNumber) heroBits.push('<span class="mono">S/N ' + escapeHtml(asset.serialNumber) + '</span>');
 
-    var rangeButtons = RANGES.map(function (r) {
-      return '<button class="seg-item' + (r === st.range ? " on" : "") + '" data-range="' + r + '">' + r + '</button>';
-    }).join("");
-
     host.innerHTML = ''
       + '<div class="asset-hero">'
       + (heroBits.length ? '  <div class="hero-sub">' + heroBits.join(" · ") + '</div>' : '')
@@ -615,19 +621,20 @@
       // Response Time section — collapsed by default; subtitle shows
       // avg/max once the loader returns. `asset-monitor-sub` is the slot
       // the loader writes into.
-      + sectionHeader("monitor", "Response Time", escapeHtml(monitorPillSubtext(asset)), st.sections.monitor, "asset-monitor-sub")
+      + sectionHeader("monitor", "Response Time", escapeHtml(monitorPillSubtext(asset)), st.sections.monitor, "asset-monitor-sub", "responseTime")
       + '<div class="sect-body" data-sect="monitor"' + (st.sections.monitor ? '' : ' hidden') + '>'
       + '  <div class="card-filled" style="padding:16px;margin-bottom:8px;">'
-      + '    <div class="seg" id="asset-range-seg" style="display:inline-flex;border:1px solid var(--md-outline);border-radius:var(--shape-full);overflow:hidden;margin-bottom:8px;">' + rangeButtons + '</div>'
+      + '    ' + rangeSegHtml("asset-range-seg", RANGES, st.range)
       + '    <div id="asset-monitor-chart" style="min-height:120px;"></div>'
       + '  </div>'
       + '</div>'
 
       // CPU + Memory section — collapsed by default; subtitle shows
-      // cpu/mem avg/max once the loader returns.
-      + sectionHeader("telemetry", "CPU + Memory", "", st.sections.telemetry, "asset-telemetry-sub")
+      // cpu/mem avg/max once the loader returns. Its range is its own.
+      + sectionHeader("telemetry", "CPU + Memory", "", st.sections.telemetry, "asset-telemetry-sub", "cpuMemory")
       + '<div class="sect-body" data-sect="telemetry"' + (st.sections.telemetry ? '' : ' hidden') + '>'
       + '  <div class="card-filled" style="padding:16px;margin-bottom:8px;">'
+      + '    ' + rangeSegHtml("asset-telemetry-range-seg", CHART_RANGES, st.telemetryRange)
       + '    <div id="asset-telemetry-chart" style="min-height:120px;"></div>'
       + '  </div>'
       + '</div>'
@@ -639,13 +646,13 @@
       + '</div>'
 
       // Hardware Sensors section — populated by loadSystemInfo.
-      + sectionHeader("temperatures", "Hardware Sensors", "", st.sections.temperatures)
+      + sectionHeader("temperatures", "Hardware Sensors", "", st.sections.temperatures, null, "temperature")
       + '<div class="sect-body" data-sect="temperatures"' + (st.sections.temperatures ? '' : ' hidden') + '>'
       + '  <div id="asset-temperatures-host"><div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div></div>'
       + '</div>'
 
       // Interfaces section — populated by loadSystemInfo (operStatus=="up" only).
-      + sectionHeader("interfaces", "Interfaces", "", st.sections.interfaces)
+      + sectionHeader("interfaces", "Interfaces", "", st.sections.interfaces, null, "interfaces")
       + '<div class="sect-body" data-sect="interfaces"' + (st.sections.interfaces ? '' : ' hidden') + '>'
       + '  <div id="asset-interfaces-host"><div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div></div>'
       + '</div>'
@@ -690,19 +697,16 @@
       });
     });
 
-    // Range segmented control
-    var seg = document.getElementById("asset-range-seg");
-    if (seg) seg.querySelectorAll(".seg-item").forEach(function (b) {
-      b.addEventListener("click", function () {
-        if (b.dataset.range === st.range) return;
-        st.range = b.dataset.range;
-        seg.querySelectorAll(".seg-item").forEach(function (x) {
-          x.classList.toggle("on", x.dataset.range === st.range);
-        });
-        loadMonitor(asset.id, st);
-        loadTelemetry(asset.id, st);
-      });
+    // Range segmented controls — one per chart.
+    wireRangeSeg("asset-range-seg", function (r) {
+      st.range = r;
+      loadMonitor(asset.id, st);
     });
+    wireRangeSeg("asset-telemetry-range-seg", function (r) {
+      st.telemetryRange = r;
+      loadTelemetry(asset.id, st);
+    });
+    loadPollingChips(asset.id);
     // Quarantine / release action button (hero). The button renders
     // synchronously (fail-open); the availability probe re-renders the wrap if
     // it comes back saying no integration can be pushed to.
@@ -723,16 +727,74 @@
   // `subtitleId` when a loader needs to update the subtitle asynchronously
   // — the slot is always rendered so the loader can write into it even if
   // the initial subtitle is empty.
-  function sectionHeader(key, title, subtitleHtml, expanded, subtitleId) {
+  // `pollStream` (optional) is the monitoring stream the section shows —
+  // responseTime / cpuMemory / temperature / interfaces — and puts an empty
+  // polling-method chip beside the title for loadPollingChips to fill.
+  function sectionHeader(key, title, subtitleHtml, expanded, subtitleId, pollStream) {
     var subId = subtitleId ? ' id="' + subtitleId + '"' : '';
+    var chip = pollStream
+      ? '<span class="sect-poll" data-poll-stream="' + escapeHtml(pollStream) + '" hidden></span>'
+      : '';
     return ''
       + '<button class="asset-sect-header" data-key="' + key + '">'
       + '  <div style="flex:1;text-align:left;min-width:0;">'
-      + '    <div class="sect-title">' + escapeHtml(title) + '</div>'
+      + '    <div class="sect-title">' + escapeHtml(title) + chip + '</div>'
       + '    <div class="sect-sub"' + subId + '>' + (subtitleHtml || "") + '</div>'
       + '  </div>'
       + '  <svg class="caret" viewBox="0 0 24 24" width="24" height="24" style="fill:var(--md-on-surface-variant);flex-shrink:0;"><use href="' + (expanded ? "#i-chev-down" : "#i-chev-right") + '"/></svg>'
       + '</button>';
+  }
+
+  // A chart's range control: a segmented row of `ranges`, `current` lit.
+  function rangeSegHtml(id, ranges, current) {
+    return '<div class="seg" id="' + id + '" style="display:inline-flex;border:1px solid var(--md-outline);border-radius:var(--shape-full);overflow:hidden;margin-bottom:8px;">'
+      + ranges.map(function (r) {
+        return '<button class="seg-item' + (r === current ? " on" : "") + '" data-range="' + r + '">' + r + '</button>';
+      }).join("")
+      + '</div>';
+  }
+
+  // Wires a rangeSegHtml control: a tap on an unlit button lights it and
+  // hands the new range to `onPick`.
+  function wireRangeSeg(id, onPick) {
+    var seg = document.getElementById(id);
+    if (!seg) return;
+    seg.querySelectorAll(".seg-item").forEach(function (b) {
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (b.classList.contains("on")) return;
+        seg.querySelectorAll(".seg-item").forEach(function (x) { x.classList.toggle("on", x === b); });
+        onPick(b.dataset.range);
+      });
+    });
+  }
+
+  // ─── Polling-method chips ──────────────────────────────────────────────
+  // The labels the desktop uses (_POLLING_LABELS in integrations.js, which the
+  // phone does not load).
+  var POLLING_LABELS = {
+    rest_api: "REST API", snmp: "SNMP", winrm: "WinRM", ssh: "SSH", icmp: "ICMP",
+    disabled: "Disabled", agent: "Polaris Agent", vcenter: "vCenter", fortimanager: "FortiManager",
+  };
+
+  // Fill each section's chip from /effective-monitor-settings — the same
+  // four-tier resolution the monitor uses, source default included, so the
+  // chip names the method that actually runs. A null method means nothing
+  // collects that stream for this asset ("Not collected"). Best-effort: on a
+  // failed read the chips stay hidden rather than guess.
+  function loadPollingChips(id) {
+    if (!api.assets.effectiveMonitorSettings) return;
+    api.assets.effectiveMonitorSettings(id).then(function (eff) {
+      if (_openId !== id || !eff || !eff.resolved) return;
+      document.querySelectorAll("#asset-host .sect-poll[data-poll-stream]").forEach(function (chip) {
+        var method = eff.resolved[chip.dataset.pollStream + "Polling"];
+        var label = method ? (POLLING_LABELS[method] || method) : "Not collected";
+        chip.textContent = label;
+        chip.title = "Polling method";
+        chip.classList.toggle("off", !method || method === "disabled");
+        chip.hidden = false;
+      });
+    }).catch(function () { /* chips stay hidden */ });
   }
 
   function renderGeneralBody(asset) {
@@ -894,7 +956,7 @@
     var sub = document.getElementById("asset-telemetry-sub");
     if (chartHost) chartHost.innerHTML = '<div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div>';
 
-    var range = st.range;
+    var range = st.telemetryRange;
     Promise.all([api.assets.telemetryHistory(id, range), maintWindowsFor(id)]).then(function (got) {
       var resp = got[0], maint = got[1];
       if (_openId !== id || !resp) return;   // bail if a newer asset replaced us
@@ -936,7 +998,7 @@
           height: 120,
           yMin: 0, yMax: 100,
           yUnit: "%",
-          ariaLabel: "CPU and memory over " + st.range,
+          ariaLabel: "CPU and memory over " + range,
         });
       }
       if (sub) {
@@ -1065,6 +1127,56 @@
   // operStatus==="up", regardless of pinning. The "Show all / Show
   // monitored only" button at the bottom of the section flips
   // `st.interfacesShowAll` and re-renders.
+  // PoE port state (pethPsePortDetectionStatus, RFC 3621) — the desktop
+  // interface table's labels. `cls` colours it: delivering is good, a fault
+  // is bad, everything else (searching, disabled, test) is neutral.
+  var POE_LABELS = {
+    disabled: "Disabled", searching: "Searching", delivering: "Delivering",
+    fault: "Fault", test: "Test", "other-fault": "Fault (other)",
+  };
+  function poeCls(status) {
+    if (status === "delivering") return "poe-ok";
+    if (status === "fault" || status === "other-fault") return "poe-fault";
+    return "poe-idle";
+  }
+  // `bare`: drop the "PoE " prefix — for a row already labelled PoE.
+  function poeLabelHtml(iface, bare) {
+    if (!iface || !iface.poeStatus) return "";
+    return '<span class="poe-label ' + poeCls(iface.poeStatus) + '">' + (bare ? "" : "PoE ")
+      + escapeHtml(POE_LABELS[iface.poeStatus] || iface.poeStatus) + '</span>';
+  }
+
+  // A switch's PoE at a glance, over EVERY port the system-info read returned —
+  // not just the up ones the list shows, since a searching or faulted port is
+  // usually down. Empty when no port reports PoE (most devices). Faulted ports
+  // are named, because that is the line an operator opened this for.
+  function poeSummaryHtml(ifaces) {
+    var counts = { delivering: 0, searching: 0, fault: 0 };
+    var faulted = [];
+    var any = false;
+    ifaces.forEach(function (i) {
+      if (!i.poeStatus) return;
+      any = true;
+      if (i.poeStatus === "delivering") counts.delivering++;
+      else if (i.poeStatus === "searching") counts.searching++;
+      else if (i.poeStatus === "fault" || i.poeStatus === "other-fault") {
+        counts.fault++;
+        faulted.push(i.alias || i.ifName || "(unnamed)");
+      }
+    });
+    if (!any) return "";
+    var bits = [
+      '<span class="poe-label poe-ok">' + counts.delivering + ' delivering</span>',
+      '<span class="poe-label poe-idle">' + counts.searching + ' searching</span>',
+      '<span class="poe-label ' + (counts.fault ? "poe-fault" : "poe-idle") + '">' + counts.fault + ' fault</span>',
+    ];
+    return ''
+      + '<div class="poe-summary">'
+      + '  <div class="poe-summary-row"><span class="poe-summary-k">PoE</span>' + bits.join("") + '</div>'
+      + (faulted.length ? '  <div class="poe-summary-faults">Faulted: <span class="mono">' + faulted.map(escapeHtml).join(", ") + '</span></div>' : '')
+      + '</div>';
+  }
+
   function renderInterfaces(host, info, assetId, st, asset) {
     var ifaces = (info && info.interfaces) || [];
     var monitoredSet = Object.create(null);
@@ -1113,7 +1225,10 @@
           + '    <div class="headline">' + escapeHtml(label) + '</div>'
           + (sub ? '    <div class="supporting mono">' + escapeHtml(sub) + '</div>' : '')
           + '  </div>'
-          + '  <span class="trailing muted mono" style="font-size:12px;">' + escapeHtml(speed) + '</span>'
+          + '  <span class="trailing iface-trailing">'
+          + '    <span class="muted mono" style="font-size:12px;">' + escapeHtml(speed) + '</span>'
+          + poeLabelHtml(iface)
+          + '  </span>'
           + '</div>'
           + (i < visible.length - 1 ? '<div class="list-divider"></div>' : '');
       });
@@ -1127,14 +1242,14 @@
       + '  <button class="btn btn-tonal" id="iface-show-all-btn" style="width:100%;">' + escapeHtml(btnLabel) + '</button>'
       + '</div>';
 
-    host.innerHTML = listHtml + toggleHtml;
+    host.innerHTML = poeSummaryHtml(ifaces) + listHtml + toggleHtml;
 
     // Wire row taps — index into the same `visible` list rendered above.
     host.querySelectorAll(".iface-row").forEach(function (row) {
       row.addEventListener("click", function () {
         var idx = parseInt(row.dataset.ifaceIdx, 10);
         if (isNaN(idx)) return;
-        openInterfaceSheet(visible[idx], info, assetId);
+        openInterfaceSheet(visible[idx], info, assetId, !!monitoredSet[visible[idx].ifName]);
       });
     });
 
@@ -1148,7 +1263,9 @@
 
   // ─── Interface bottom sheet ────────────────────────────────────────────
   // Reuses the .sheet + .scrim pattern from map-tab.js for consistency.
-  function openInterfaceSheet(iface, info, assetId) {
+  // `monitored`: the interface is in the asset's monitoredInterfaces — those
+  // get the throughput + error charts (the desktop interface panel's pair).
+  function openInterfaceSheet(iface, info, assetId, monitored) {
     closeInterfaceSheet();
 
     var scrim = document.createElement("div");
@@ -1180,11 +1297,21 @@
       row("Addressing", amLabel);
     }
     row("MAC", iface.macAddress, true);
+    if (iface.poeStatus) {
+      // Status and class read together, as on the desktop: the class is a
+      // budget bracket, meaningless without knowing power is flowing.
+      rows.push({
+        k: "PoE",
+        html: poeLabelHtml(iface, true)
+          + (iface.poeClass ? ' <span class="muted mono" style="font-size:12px;">' + escapeHtml(iface.poeClass) + '</span>' : ''),
+      });
+    }
     row("In errors",  iface.inErrors  != null ? String(iface.inErrors)  : null);
     row("Out errors", iface.outErrors != null ? String(iface.outErrors) : null);
 
     var detailRowsHtml = rows.map(function (r) {
-      var v = r.mono ? '<span class="mono">' + escapeHtml(r.v) + '</span>' : escapeHtml(r.v);
+      var v = r.html != null ? r.html
+        : r.mono ? '<span class="mono">' + escapeHtml(r.v) + '</span>' : escapeHtml(r.v);
       return ''
         + '<div class="kv-row">'
         + '  <span class="k">' + escapeHtml(r.k) + '</span>'
@@ -1234,6 +1361,16 @@
       + '  <button class="icon-btn" id="iface-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
       + '</div>'
       + detailRowsHtml
+      + (monitored
+        ? ''
+          + '<div style="font-weight:500;margin:16px 0 8px;">Usage</div>'
+          + rangeSegHtml("iface-range-seg", CHART_RANGES, "1h")
+          + '<div id="iface-tput-chart" style="min-height:120px;"></div>'
+          + '<div class="muted" id="iface-tput-sub" style="font-size:12px;margin-top:4px;"></div>'
+          + '<div style="font-weight:500;margin:16px 0 8px;">Errors</div>'
+          + '<div id="iface-err-chart" style="min-height:120px;"></div>'
+          + '<div class="muted" id="iface-err-sub" style="font-size:12px;margin-top:4px;"></div>'
+        : '')
       + '<div style="font-weight:500;margin:16px 0 8px;">Neighbor</div>'
       + neighborHtml;
 
@@ -1249,6 +1386,146 @@
         closeInterfaceSheet();
         if (nid) open(nid);   // replace the sheet content in place with the neighbor
       });
+    });
+    if (monitored && iface.ifName) {
+      wireRangeSeg("iface-range-seg", function (r) { loadInterfaceCharts(assetId, iface.ifName, r); });
+      loadInterfaceCharts(assetId, iface.ifName, "1h");
+    }
+  }
+
+  // Counter samples → per-interval rates. Mirrors _derivePerIntervalSeries in
+  // public/js/assets.js: a rolled-up window (bucketSeconds set) already carries
+  // per-second rates; raw samples are cumulative counters, differenced pairwise,
+  // with a counter reset (negative delta) dropped rather than drawn as a spike.
+  // Errors come out as a count per interval, not per second.
+  function deriveInterfaceSeries(samples, data) {
+    samples = samples || [];
+    if (data && typeof data.bucketSeconds === "number" && data.bucketSeconds > 0) {
+      var bucketSec = data.bucketSeconds;
+      return samples.map(function (s) {
+        return {
+          ts: s.timestamp,
+          inBps:  typeof s.inBytesPerSec  === "number" ? s.inBytesPerSec  * 8 : null,
+          outBps: typeof s.outBytesPerSec === "number" ? s.outBytesPerSec * 8 : null,
+          inErr:  typeof s.inErrorsPerSec  === "number" ? Math.round(s.inErrorsPerSec  * bucketSec) : null,
+          outErr: typeof s.outErrorsPerSec === "number" ? Math.round(s.outErrorsPerSec * bucketSec) : null,
+        };
+      });
+    }
+    function delta(a, b) {
+      if (typeof a !== "number" || typeof b !== "number") return null;
+      return b - a < 0 ? null : b - a;
+    }
+    var out = [];
+    for (var i = 1; i < samples.length; i++) {
+      var prev = samples[i - 1], cur = samples[i];
+      var dtSec = (new Date(cur.timestamp) - new Date(prev.timestamp)) / 1000;
+      if (!(dtSec > 0)) continue;
+      var inOct = delta(prev.inOctets, cur.inOctets);
+      var outOct = delta(prev.outOctets, cur.outOctets);
+      out.push({
+        ts: cur.timestamp,
+        inBps:  inOct  != null ? (inOct  * 8) / dtSec : null,
+        outBps: outOct != null ? (outOct * 8) / dtSec : null,
+        inErr:  delta(prev.inErrors,  cur.inErrors),
+        outErr: delta(prev.outErrors, cur.outErrors),
+      });
+    }
+    return out;
+  }
+
+  // The bit-rate unit a peak reads best in; the chart is drawn in that unit
+  // so its axis ticks stay short.
+  function bpsScale(peak) {
+    if (peak >= 1e9) return { div: 1e9, unit: "Gbps" };
+    if (peak >= 1e6) return { div: 1e6, unit: "Mbps" };
+    if (peak >= 1e3) return { div: 1e3, unit: "Kbps" };
+    return { div: 1, unit: "bps" };
+  }
+  function fmtBps(v) {
+    var sc = bpsScale(v);
+    var n = v / sc.div;
+    return (n >= 100 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2)) + " " + sc.unit;
+  }
+
+  function loadInterfaceCharts(assetId, ifName, range) {
+    var tputEl = document.getElementById("iface-tput-chart");
+    var errEl = document.getElementById("iface-err-chart");
+    var tputSub = document.getElementById("iface-tput-sub");
+    var errSub = document.getElementById("iface-err-sub");
+    if (!tputEl || !errEl) return;
+    var spinner = '<div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div>';
+    tputEl.innerHTML = errEl.innerHTML = spinner;
+    if (tputSub) tputSub.textContent = "";
+    if (errSub) errSub.textContent = "";
+    // The sheet belongs to one (asset, interface, range): a reply for any
+    // other — a closed sheet, a different port, a range tapped since — drops.
+    var current = function () {
+      var seg = document.getElementById("iface-range-seg");
+      var on = seg && seg.querySelector(".seg-item.on");
+      return _openId === assetId && document.getElementById("iface-tput-chart") === tputEl
+        && on && on.dataset.range === range;
+    };
+    Promise.all([api.assets.interfaceHistory(assetId, ifName, { range: range }), maintWindowsFor(assetId)]).then(function (got) {
+      if (!current()) return;
+      var data = got[0] || {}, maint = got[1];
+      var d = deriveInterfaceSeries(data.samples, data);
+      var bounds = rangeBounds(range);
+      var common = { maintenance: maint, from: bounds && bounds.from, to: bounds && bounds.to, outages: data.outages, height: 120 };
+
+      var inPts = [], outPts = [], peak = 0, inSum = 0, inN = 0, outSum = 0, outN = 0;
+      d.forEach(function (p) {
+        if (p.inBps != null)  { inPts.push({ ts: p.ts, v: p.inBps });  inSum += p.inBps;  inN++;  if (p.inBps > peak) peak = p.inBps; }
+        if (p.outBps != null) { outPts.push({ ts: p.ts, v: p.outBps }); outSum += p.outBps; outN++; if (p.outBps > peak) peak = p.outBps; }
+      });
+      if (!inPts.length && !outPts.length) {
+        tputEl.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">' + escapeHtml(emptyStatsLabel(maint, range)) + '</div>';
+      } else {
+        var sc = bpsScale(peak);
+        var scaled = function (pts) { return pts.map(function (p) { return { ts: p.ts, v: p.v / sc.div }; }); };
+        tputEl.innerHTML = PolarisCharts.lineChart(Object.assign({}, common, {
+          series: [
+            { values: scaled(inPts),  color: "var(--md-primary)",  gapFade: true },
+            { values: scaled(outPts), color: "var(--md-tertiary)", gapFade: true },
+          ],
+          // An idle port peaks at 0 — give it a 0–1 axis, not lineChart's
+          // -1–1 for a flat line.
+          yMin: 0, yMax: peak > 0 ? undefined : 1, yUnit: sc.unit,
+          ariaLabel: ifName + " throughput over " + range,
+        }));
+        if (tputSub) tputSub.innerHTML = ''
+          + '<span style="color:var(--md-primary);">in avg ' + escapeHtml(fmtBps(inN ? inSum / inN : 0)) + '</span>'
+          + ' · <span style="color:var(--md-tertiary);">out avg ' + escapeHtml(fmtBps(outN ? outSum / outN : 0)) + '</span>'
+          + ' · peak ' + escapeHtml(fmtBps(peak));
+      }
+
+      var inE = [], outE = [], inTot = 0, outTot = 0;
+      d.forEach(function (p) {
+        if (p.inErr != null)  { inE.push({ ts: p.ts, v: p.inErr });  inTot += p.inErr; }
+        if (p.outErr != null) { outE.push({ ts: p.ts, v: p.outErr }); outTot += p.outErr; }
+      });
+      if (!inE.length && !outE.length) {
+        errEl.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">' + escapeHtml(emptyStatsLabel(maint, range)) + '</div>';
+      } else {
+        errEl.innerHTML = PolarisCharts.lineChart(Object.assign({}, common, {
+          series: [
+            { values: inE,  color: "var(--md-error)",   gapFade: true },
+            { values: outE, color: "var(--md-warning)", gapFade: true },
+          ],
+          // A clean port (the usual case) is all zeros: same 0–1 axis.
+          yMin: 0, yMax: (inTot + outTot) > 0 ? undefined : 1,
+          ariaLabel: ifName + " errors over " + range,
+        }));
+        if (errSub) errSub.innerHTML = ''
+          + '<span style="color:var(--md-error);">in ' + inTot + '</span>'
+          + ' · <span style="color:var(--md-warning);">out ' + outTot + '</span>'
+          + ' · total ' + (inTot + outTot);
+      }
+    }).catch(function (err) {
+      if (!current()) return;
+      var msg = '<div class="muted" style="font-size:13px;padding:8px 0;">Couldn’t load interface history: ' + escapeHtml(err && err.message ? err.message : "error") + '</div>';
+      tputEl.innerHTML = msg;
+      errEl.innerHTML = "";
     });
   }
 

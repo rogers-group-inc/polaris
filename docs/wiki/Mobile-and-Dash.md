@@ -81,7 +81,13 @@ takes any address and finds its network for you.
 (or pulling the sheet down) re-reads what Polaris has for the device and
 repaints the sheet, keeping the sections you opened; it does not poll the device.
 The sheet does not refresh on its own, so tap it to catch up with the latest
-poll. Under the status pill, a device
+poll. **Response Time**, **CPU + Memory**, **Hardware Sensors** and
+**Interfaces** each name the polling method that collects them beside the
+title (**Not collected** when nothing does), and CPU + Memory has its own
+**1h · 24h · 7d** range. On a switch with PoE ports, Interfaces opens with a
+count of ports delivering, searching and faulted, naming the faulted ones, and
+each port shows its PoE state. Tapping a monitored interface shows its usage and
+error graphs (**1h · 24h · 7d**) along with its PoE state and class. Under the status pill, a device
 with a table to read carries a button for it, below **View SD-WAN** on a
 firewall that reports SD-WAN:
 
