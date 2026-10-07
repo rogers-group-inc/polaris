@@ -135,6 +135,7 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 **Invariants:**
 - POLARIS picks every line; the model never sees the persona. Asked to play it via the system prompt (2026-10-07, qwen2.5:7b), the model parroted one sample line on every answer, quipped under a critical device-down alert, and — pushed harder — skipped its lookups and invented an IP and a network count. Do not move the voice back into the prompt.
 - No line on an outage (question or lookup), an error or a Stop; a before-lookup line already shown is withdrawn when a lookup shows an outage.
+- The loading-screen lines ("Dividing by zero…") that replace "Thinking…" while an advisor user waits are CLIENT-ONLY: `public/js/assistant.js → LOADING_LINES` / `startLoadingLines()`, cycled every 2.2 s until the first token, never sent anywhere or stored.
 - "pioneer" from the source quotes is "engineer" here; the line lists were reviewed and chosen by the owner — add or change a line only with their review.
 
 **When changing this:**

@@ -423,7 +423,7 @@
     }
     var body = m.content ? md(m.content)
       : m.waiting ? '<span class="asst-thinking">Still answering your last question…</span>'
-      : (isLive && !m.error ? '<span class="asst-thinking">Thinking…</span>' : "");
+      : (isLive && !m.error ? '<span class="asst-thinking">' + esc(m.loading || "Thinking…") + '</span>' : "");
     var chips = (m.tools || m.toolsUsed || []).map(chipHTML).join("");
     if (m.stopped) chips += '<span class="asst-chip stopped">stopped</span>';
     var reports = (m.reports || []).map(function (r, i) { return reportHTML(r, i, idx); }).join("");
@@ -923,17 +923,62 @@
     }
   }
 
+  // Efficiency Advisor (rule 95(h)): while the answer has not started, the
+  // "Thinking…" placeholder cycles through loading-screen lines instead.
+  // Client-side only — the server and the model never see these.
+  var LOADING_LINES = [
+    "Overcoming reluctance…",
+    "Dividing by zero…",
+    "Obsessing over what to wear…",
+    "Reprogramming the programmables…",
+    "Reticulating subnets…",
+    "Counting packets by hand…",
+    "Untangling the patch panel…",
+    "Negotiating with the firewall…",
+    "Consulting the spanning tree…",
+    "Waking the hamsters…",
+    "Defragmenting the cloud…",
+    "Pinging the void…",
+    "Locating the any key…",
+    "Polishing the North Star…",
+    "Recalculating your performance review…",
+    "Calibrating condescension…",
+    "Herding packets…",
+    "Filing your request under 'eventually'…",
+  ];
+  var LOADING_EVERY_MS = 2200;
+
+  function startLoadingLines(idx) {
+    if (!(S.status && S.status.efficiencyAdvisor)) return function () {};
+    var last = -1;
+    var next = function () {
+      var m = S.messages[idx];
+      if (!m || !m.live || m.content) return;
+      // Never the same line twice in a row: draw from the others.
+      var i = Math.floor(Math.random() * (LOADING_LINES.length - (last < 0 ? 0 : 1)));
+      if (last >= 0 && i >= last) i++;
+      last = i;
+      m.loading = LOADING_LINES[i];
+      renderOne(idx);
+    };
+    next();
+    var timer = setInterval(next, LOADING_EVERY_MS);
+    return function () { clearInterval(timer); };
+  }
+
   async function ask(opts) {
     if (S.busy) return;
     var regenerate = opts.regenerate === true;
     setBusy(true);
     var liveIdx;
+    var stopLoadingLines = function () {};
     try {
       var convId = await ensureConversation();
       if (!regenerate) S.messages.push({ role: "user", content: opts.display || opts.content });
       S.messages.push({ role: "assistant", content: "", tools: [], reports: [], live: true });
       liveIdx = S.messages.length - 1;
       renderAll();
+      stopLoadingLines = startLoadingLines(liveIdx);
 
       S.abort = new AbortController();
       var res = await fetch("/api/v1/assistant/conversations/" + encodeURIComponent(convId) + "/messages", {
@@ -990,6 +1035,7 @@
         toast((err && err.message) || "The assistant failed", "error");
       }
     } finally {
+      stopLoadingLines();
       S.abort = null;
       setBusy(false);
       saveSnapshot();
@@ -1232,5 +1278,7 @@
     readEventStream: readEventStream,
     _csvSafe: csvSafe,
     _reportToMarkdown: reportToMarkdown,
+    _messageHTML: messageHTML,
+    _LOADING_LINES: LOADING_LINES,
   };
 })();
