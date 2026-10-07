@@ -938,6 +938,7 @@
     "Activating death clock…",
     "Re-assembling courage…",
     "Articulating despair…",
+    "Arguing with… myself? Winning…",
     "Reticulating subnets…",
     "Counting packets by hand…",
     "Untangling the patch panel…",
