@@ -1364,7 +1364,7 @@ The **CPU core utilization** condition (`cpuCorePct`) finds single-threaded
 applications. "Above 90% for 3 polls" means the **same core** was above 90% on
 three polls in a row. Different cores each spiking once does not count. It
 raises **one alert per device**, naming the cores that stayed over the line,
-with the top five processes by CPU. Only the Polaris Agent and vCenter report
+with the top five processes by CPU. Only the Polaris Agent, vCenter and Unraid / TrueNAS hosts report
 per-core figures; any other device has no reading for it.
 
 When the whole device is busy, every core is hot. So while the device has an

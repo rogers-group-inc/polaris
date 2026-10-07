@@ -9586,7 +9586,8 @@ export async function recordTelemetryResult(assetId: string, result: CollectionR
       memPct:        d.memPct ?? null,
       memUsedBytes:  d.memUsedBytes  != null ? BigInt(Math.round(d.memUsedBytes))  : null,
       memTotalBytes: d.memTotalBytes != null ? BigInt(Math.round(d.memTotalBytes)) : null,
-      // Per-core CPU reaches this function from the vCenter collector only;
+      // Per-core CPU reaches this function from the vCenter collector and the
+      // Unraid / TrueNAS host snapshot (workloadMonitorService);
       // the agent's copy arrives on its own push path (routes/agents.ts),
       // which writes this buffer directly. FortiOS REST, SNMP, WinRM and SSH
       // expose no per-core figure at all and leave it null.
