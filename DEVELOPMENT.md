@@ -210,9 +210,15 @@ The earlier scripts leave every monitored asset at `monitorStatus = null`, which
 labels "Pending", so the Assets table and every health widget read as an install that
 has never polled; it stamps a plausible steady state instead (mostly up, one down, one
 missing polls, with staggered transition times). It also strips the `Mock: ` /
-`Mock demo: ` prefixes `mock-notifications.ts` uses as its own idempotency key, because
-in a screenshot they read as if the product shipped placeholder alerts. It is
-idempotent and refuses to run with `NODE_ENV=production`.
+`Mock demo: ` prefixes `mock-notifications.ts` uses as its own idempotency key (rule,
+channel and alert names), credits those rules and channels to `admin` rather than
+`system:mock-notifications`, and swaps `mock-compare`'s `mock-compare` asset tag for
+`Datacenter`, because in a screenshot each reads as if the product shipped placeholder
+data. It is idempotent and refuses to run with `NODE_ENV=production`.
+
+**Run `mock:demo` again after the app has been up for a minute.** The alert engine fires
+the seeded rules on its first passes, so an alert raised after the first `mock:demo` can
+still carry a seed-side name; the second pass catches it.
 
 `scripts/capture-screenshots.mjs` then drives that stack with a real browser and writes
 one PNG per page per theme for `README.md` and `docs/wiki/`. Playwright is deliberately
@@ -224,7 +230,10 @@ node scripts/capture-screenshots.mjs --base http://127.0.0.1:3000 \
      --out docs/img/screenshots --themes noon,nightfall
 ```
 
-It uses the locally installed Chrome, so `playwright install` is not needed. **Screenshots
+It uses the locally installed Chrome, so `playwright install` is not needed. Start the
+app with `-e POLARIS_BUILD_COMMIT_COUNT=$(git rev-list --count HEAD)` for a shooting run:
+a worktree's `.git` is meaningless inside the container, so otherwise the sidebar's version
+reads `x.y.0` in every image. **Screenshots
 come from seeded synthetic data only, never from a production install** — a real one's
 hostnames, serials, addresses and (once GAL directory sync has run) employee names would
 be published along with the image. The script header lists the pages it does not yet cover

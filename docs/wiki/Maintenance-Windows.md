@@ -4,7 +4,8 @@ A maintenance window is how you tell Polaris *"we are working on this, do not
 report it"*.
 
 Gated by `maintenanceManagement`. Reached from **Assets → Maintenance**, from a
-selection's bulk bar, or from the monitor pill's popover on a single device.
+selection's bulk bar, from a single device's edit modal (**Maintenance** tab),
+or from the **Active Maintenance** dashboard widget.
 
 ---
 
@@ -237,12 +238,16 @@ scope, and then shows the whole thing, so the count you read is the real one.
 
 ## Ad-hoc windows
 
-The monitor pill's popover — on both the table and the slide-over's System tab —
-offers:
+Two controls act on one device without building a schedule:
 
-- **"Enter maintenance mode until…"** — creates a one-shot schedule.
-- **"End maintenance now"** — releases *this occurrence*, per the start-keyed
-  rule above.
+- **"Enter maintenance mode until…"** — a checkbox on the asset edit modal's
+  **Maintenance** tab, with an end date and time in the Polaris server's
+  timezone. It creates a one-shot schedule starting now, listed under
+  Assets → Maintenance. An unmonitored asset cannot enter maintenance — there
+  is no polling to pause — and the tab says so.
+- **End maintenance** — clicking the purple monitor pill of a device in
+  maintenance (on the table or the slide-over's System tab) asks to end it now,
+  releasing *this occurrence*, per the start-keyed rule above.
 
 Every schedule mutation reconciles **inline**, so an ad-hoc window applies
 immediately rather than on the next tick.
@@ -313,7 +318,7 @@ They are easy to confuse and do opposite things:
 |---|---|---|
 | Scope | a device | an automation, or (globally) a set of devices, severities and alert kinds |
 | Polling | **stopped** | unaffected |
-| An alert already open | **stays open, paused** — resolves normally after the window, or sooner if an agent reading shows the device is healthy | unaffected |
+| An alert already open | **stays open, paused** — resolves normally after the window, or sooner if an agent reading shows the device is healthy. A device-down alert is the exception: it is cleared | unaffected |
 | New alerts | **not raised** | **raised** and shown with a QUIET pill; the emails, pushes and chat messages are **held** |
 | Reminders | **paused**, resume after the window | **held**, resume after the period |
 | Escalation tiers | **paused**, resume after the window | **held**, resume after the period |

@@ -15,10 +15,31 @@ and restore.
 - Backup and restore are **streamed end to end** — no whole-dump buffering.
 - Restore is wrapped in TimescaleDB's **pre-restore / post-restore** calls.
 - Filenames embed the **Polaris version**, so a backup always names the build
-  that produced it.
+  that produced it: `polaris-backup-<version>-<timestamp>.gz`, or
+  `polaris-pre-update-…` for the one an update takes, with `.enc` before `.gz`
+  when encrypted.
+- Files live on the host under `data/backups` in the state directory.
+  **Backup History** shows the most recent 20 — date, filename (pre-update ones
+  badged), size, whether encrypted — each with a **Download** button.
+- A dump that stops producing output for 10 minutes is treated as wedged; one
+  that is still streaming may take as long as it needs.
 - **A failed pre-update backup aborts the update by default.**
 
-Set the automatic cadence on the same tab. History lists what exists.
+### Scheduled backups
+
+**Off by default** — many sites already back their PostgreSQL up with another
+product, and Polaris will not start writing gigabytes on upgrade without being
+asked.
+
+| Setting | |
+|---|---|
+| Interval | every 1–168 hours (default 24) since the last successful run |
+| Hour (UTC) | optional — pins runs to one hour so a daily backup lands in a quiet window |
+| Keep | how many **scheduled** backups stay on disk (1–50, default 7). Manual and pre-update backups are never pruned by this |
+| Passphrase | optional; encrypts scheduled backups the same way as a manual one. Stored masked in the database — keep a copy somewhere other than the host |
+| Copy to | optional absolute directory (a mounted share) each finished backup is **copied** to. This is the off-host half: without it, losing the host loses the database **and** every backup of it |
+
+The card shows the last successful run and the last error.
 
 ---
 
@@ -67,7 +88,10 @@ never behind "see the server log".
 > `psql` on `PATH` at all is the one that just removed a distro's old PostgreSQL
 > package without resetting alternatives.
 
-The Maintenance tab shows the **resolved** tools and their compatibility.
+When the resolved tools are not compatible, the Maintenance tab shows a
+**"Backups cannot run on this host"** banner above the backup history, with that
+same sentence — so you see it the day it becomes true, not the day you need a
+restore.
 
 ### 2. An untranslated `sslmode`
 
@@ -98,8 +122,10 @@ failed for months behind the same sentence.
 
 ## Restoring
 
-Restore from the same tab. It takes the same connection overlay, so a broken
-`sslmode` breaks restore too.
+Restore from the same tab: drop a `.gz` or `.enc.gz` file on the **Restore**
+card (an encrypted one asks for its password). It **replaces all current
+data**. It takes the same connection overlay, so a broken `sslmode` breaks
+restore too.
 
 Because restore is wrapped in TimescaleDB's pre/post-restore calls, the target
 install **must have the extension**. An install that came up without it has a
@@ -117,6 +143,11 @@ wrong disk forecast **and an unrehearsed restore path** from the first byte
 
 ## Encrypted backups
 
+Set an encryption password when you take a backup (or a passphrase on the
+schedule) and the gzip stream is sealed with AES-256-GCM under a key derived
+from it. **Polaris keeps no copy of a manual backup's password** — lose it and
+the file cannot be restored.
+
 Encrypted backups are versioned by an 8-byte magic header. The format that
 predates the project's rename is **no longer recognised** — an install carrying
 those migrates by dump-and-reinstall, since a plain dump carries cleanly.
@@ -127,7 +158,7 @@ those migrates by dump-and-reinstall, since a plain dump carries cleanly.
 
 | | |
 |---|---|
-| Schedule | on, at a cadence matched to how much change you can afford to lose |
+| Schedule | on, at a cadence matched to how much change you can afford to lose, with **Copy to** pointed off the host |
 | Pre-update backup | leave the abort-on-failure default **on** |
 | `POLARIS_SECRET_KEY` | in your password manager **and** your backup, separately from the dump |
 | Rehearsal | restore to a scratch install at least once, and again after any PostgreSQL major upgrade |

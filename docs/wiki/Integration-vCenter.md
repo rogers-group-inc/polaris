@@ -14,13 +14,22 @@ too**, through the vCenter server rather than through the guest.
 | Verify TLS | **on** for new integrations | |
 | Username | — | |
 | Password | — | secret |
-| `vmInclude` / `vmExclude` | — | wildcards against the **VM name**; include wins when both are set |
-| **Verify presence** | on | |
-| **VM monitor** block | — | the full workstation/server-style block: agent deploy + interface/storage auto-monitor |
-| **Host monitor** block | — | the reduced block: `addAsMonitored` + streams only |
+| Auto-Discovery Interval | 12 hours | 1–24 |
+| VM Filter | — | an **Include** or **Exclude** list (one mode at a time), wildcards against the **VM name** (`vmInclude` / `vmExclude`) |
 | Verbose logging | off | |
 
-The account needs **inventory read**. A post-login 401 on the inventory calls is
+The **Monitoring** tab carries the rest:
+
+| Control | Default | |
+|---|---|---|
+| **Verify presence** | on | the post-sync presence pass |
+| **Virtual Machines** block | — | the full workstation/server-style block: agent deploy + interface/storage auto-monitor |
+| **ESXi Hosts** block | — | the reduced block: `addAsMonitored` + streams only |
+
+Supported: **vCenter 7.0 U2 and later**.
+
+A **read-only** vCenter account is enough — Polaris never writes to vCenter —
+but it needs **inventory read**. A post-login 401 on the inventory calls is
 the signature of a missing inventory permission rather than a bad password.
 
 Transport: vSphere Automation REST for session auth and most reads, plus **two

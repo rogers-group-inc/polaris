@@ -15,8 +15,8 @@ about it.
 
 ## The in-app alert is not an action
 
-The step is led by a mandatory card: **"Create an in-app alert (always
-happens)"**. It cannot be removed, because every delivery row hangs off the
+The step is led by a mandatory card, **In-app Alert**: every fire creates an
+in-app alert on the Alerts tab. It cannot be removed, because every delivery row hangs off the
 alert's id, as do the escalation sweep, acknowledge, clear and the rule state
 machine.
 
@@ -83,7 +83,7 @@ An action's `channelIds` can carry **several channels behind one recipient
 list** — "page this person by email *and* push" is one action.
 
 If the group offers **both** email and push, you can additionally tick
-**"deliver through each recipient's own preference"**. Polaris then routes each
+**"Only use the channel matching the user's preferred notification method"**. Polaris then routes each
 recipient through the channel *they* chose ([rule 39](Business-Rules#rule-39)).
 
 Three limits on that, each with a reason:
@@ -166,8 +166,10 @@ polygon.
 on a *new* action. A **stored** action reflects what was saved, so an old rule
 listing three people cannot silently become fleet-wide on the next edit.
 
-Both are rejected at save on any other channel type — they are broadcasts, and
-the builder offers them nowhere else.
+They appear as soon as the action has a Web Push channel. On an action that
+also emails, they are marked *(push only)*: they widen the push half and never
+the email. An action with no push channel at all is rejected at save if it holds
+them — they are broadcasts, and the builder offers them nowhere else.
 
 ### What the field tells you
 
@@ -303,8 +305,13 @@ body, and a script's args:
 
 **The alert**
 `{asset}` `{metric}` `{value}` `{threshold}` `{dimension}` `{dimension.label}`
-`{dimension.suffix}` `{conditions}` `{message}` `{severity}` `{severity.upper}`
-`{severity.color}` `{time}` `{time.local}` `{time.zone}` `{link}`
+`{dimension.suffix}` `{dimension.count}` `{dimension.first}` `{dimension.list}`
+`{conditions}` `{message}` `{severity}` `{severity.upper}` `{severity.color}`
+`{time}` `{time.local}` `{time.zone}` `{link}` `{ack}`
+
+`{ack}` is the alert's acknowledge-page link — the same for every recipient,
+empty when `POLARIS_PUBLIC_URL` is unset. `{dimension.list}` is every affected
+component, uncapped, for a body rather than a subject line.
 
 `{dimension}` is the part of the device the alert is about — the port, the
 sensor, the mount, the tunnel. `{dimension.label}` is what that part is CALLED
@@ -350,7 +357,19 @@ the subject fragment away when they are.
 **Who else knows**
 `{push.recipients}` `{email.recipients}`
 
-A token palette is visible in both view modes.
+**Charts and blocks** — each renders away on an alert it does not fit
+`{chart.responseTime}` `{chart.cpu}` `{chart.memory}` `{chart.storage}`
+`{chart.sensor}` `{chart.sdwanLatency}` `{chart.sdwanJitter}`
+`{chart.sdwanLoss}` `{processes.top}` `{interface.ip}` `{interface.lldp}`
+`{brand.header}` (the install's logo, name and subtitle — the default email's
+letterhead)
+
+**Dependency down** ([rule 78](Business-Rules#rule-78)) — empty on every other alert
+`{dependency.summary}` `{dependency.headline}` `{dependency.upstream}`
+`{dependency.rootCause}` `{dependency.path}` (a diagram of the chain)
+`{dependency.tag}` (`" · DEPENDENCY DOWN"`, for a subject line)
+
+A token palette (**Insert variable…**) is visible in both view modes.
 
 > **One email, one To line, one clock.** Everyone a notify action names
 > receives the *same* message, with each other's addresses visible on it — an

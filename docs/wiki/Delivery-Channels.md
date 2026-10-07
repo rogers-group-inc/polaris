@@ -4,7 +4,10 @@
 An automation's notify action names one or more channels; the channel knows how
 to talk to the transport, and the action knows who to reach.
 
-Gated by `automationManagement`.
+Gated by `automationManagement`: `read` sees the cards, `write` adds, edits,
+tests and deletes. **+ Add channel** opens a type picker, then that type's form.
+Deleting a channel an automation still references leaves that automation
+delivering nothing through it.
 
 ---
 
@@ -58,15 +61,17 @@ send-as user must be a **licensed Exchange Online mailbox**.
 ## Web Push
 
 **Web Push is a single on/off capability, not a destination.** There is one
-singleton channel for the whole install.
+singleton channel for the whole install, and it is not in **+ Add channel**: it
+has its own **Web Push** card at the head of the tab, with an on/off switch, the
+number of devices enrolled, and (while on) **Send test**, which pushes to your
+own enrolled devices.
 
-| Field | |
-|---|---|
-| Contact subject | `mailto:` or `https:` — what push services contact you at |
-
-Enabling it creates the singleton **and generates the VAPID keypair in one
-call**. **Disabling it never deletes the keys**, because every existing browser
-subscription is signed against them.
+Turning it on creates the singleton **and generates the VAPID keypair in one
+call**. Its contact subject — the `mailto:` or `https:` address push services
+contact you at — is filled in for you: `POLARIS_PUBLIC_URL` when that is an
+`https:` address, otherwise `mailto:polaris@localhost`. **Turning it off never
+deletes the keys**, because every existing browser subscription is signed
+against them.
 
 Recipients are chosen per notify action, not here. Enrollment is per browser and
 driven by each user's own [notification preference](Navigation-and-Account#notification-preference)
@@ -85,9 +90,11 @@ One field: the **access token**, stored as a secret.
 
 ## Testing a channel
 
-Each row has a **Test** button. Unlike the wizard's test-delivery block — which
-rewrites recipients to you and nobody else — a channel test goes wherever the
-channel goes. For a Slack or Teams webhook that is the whole channel, which is
+Each channel card has **Test**, **Edit** and **Delete** (`automationManagement:write`).
+An email channel's Test asks for an address and sends a *Polaris notification
+test* message to it. Unlike the wizard's test-delivery block — which
+rewrites recipients to you and nobody else — a Slack, Teams or Pushbullet test
+goes wherever the channel goes. For a Slack or Teams webhook that is the whole channel, which is
 exactly what an operator expects when testing a webhook, and exactly why the
 wizard refuses to offer it.
 

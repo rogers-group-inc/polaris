@@ -13,24 +13,40 @@ two people on the same install legitimately see different dashboards.
 
 ## Working with the canvas
 
+The canvas is read-only until you press **Customize Page**; **Done Editing**
+saves and leaves edit mode. The layout is a row of **columns**, each a stack of
+widgets.
+
 | Action | How |
 |---|---|
-| Add a widget | **+ Add widget** → the library, with a one-line blurb per widget |
-| Move one | drag its header |
-| Resize | drag the edge; widgets snap to the column grid |
-| Configure one | the **gear** on the widget — most carry options (row count, filters, grouping) |
+| Add a widget | **Customize Page** → **Add Widgets** — a picker that docks over the dashboard, with a group list, a search box, A–Z / Z–A sort and favourites; drag a widget into place or click it |
+| Move one | drag its **⠿** grip to any column; a green **+** marks where it will land, and dropping on the trailing empty column starts a new one |
+| Column width | the column's **¼ / ⅓ / ½ / Full** control |
+| Widget height | the **1× / 2× / 3×** toggle on the widget, click to cycle |
+| Configure one | the **⚙** on the widget — most carry options (row count, filters, grouping) |
 | Sort one | the **⇅** button on the widget's header, while you are customizing |
 | Export one to CSV | the **⤓** button on the widget's header, while you are *not* customizing |
-| Remove one | the widget's own menu |
-| Change column count | the canvas control |
+| Remove one | the **×** on the widget, while customizing |
 
-Your personal layout saves automatically to your account (`/me/dashboard`), so
-it follows you to another browser.
+**Several dashboards, as tabs.** **Create New Dashboard** adds another canvas
+and opens it in edit mode. Once you have more than one, a tab bar appears under
+the header: click a tab to switch; while customizing, type over the active
+tab's name to rename it, drag a tab's grip to reorder, or **×** to delete it.
+
+Your personal layout — every tab — saves automatically to your account
+(`/me/dashboard`), so it follows you to another browser.
 
 ## Saved dashboards
 
 A layout can also be **named and saved** as a `SavedDashboard`, private or
-public.
+public, from the **Dashboards ▾** menu → **Save this dashboard…**. What is
+saved is the tab you are looking at — its widgets, columns, sizes and
+per-widget settings. Saving over one of your own names replaces it.
+
+The same menu lists **My dashboards** and **Shared dashboards** (everyone's
+published ones). Loading one adds it as a **new tab of your own layout — a
+copy**, so editing it never writes back to someone else's row, and later
+edits by its owner do not follow it.
 
 | Level | Grants |
 |---|---|
@@ -90,7 +106,7 @@ NOC wallboard that has no session at all. See
 | Widget | Shows |
 |---|---|
 | **Discovery Activity** | in-flight integration discoveries with per-run progress and slow-run amber telemetry |
-| **Conflict Queue** | pending discovery conflicts. **Role-scoped** — you only see the ones your role can resolve |
+| **Conflict Queue** | pending discovery conflicts of every kind — needs `discoveryConflicts:read`; see [Conflict resolution](Conflict-Resolution) for who can act on each |
 | **Capacity Health** | overall capacity severity pill + the top reasons driving it. Admin only |
 
 ### Maps
@@ -157,9 +173,10 @@ A widget that groups its rows follows you: pick an order and the groups
 re-order to match it, instead of staying on the biggest-group-first order they
 use by default.
 
-**Conflict Queue is role-scoped, not filtered for tidiness.** If it looks empty
-and you expected rows, check whether your role can resolve that conflict kind
-rather than assuming there are none.
+**Conflict Queue shows every pending conflict or none.** It lists all of them
+to anyone whose role holds `discoveryConflicts` at Read, and nothing at all to
+anyone whose role does not — it never shows a partial list. If it looks empty
+and you expected rows, check that grant before assuming there are none.
 
 **Capacity Health measures this install.** The reasons behind the pill are
 computed against real table sizes and the real retention configuration, not

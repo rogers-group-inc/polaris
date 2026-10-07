@@ -1,8 +1,7 @@
 /**
- * widgets/conflictQueue.js — pending discovery conflicts. Role-scoped by
- * the underlying /conflicts endpoint (admin sees both flavors,
- * networkadmin sees reservations, assetsadmin sees assets) — we just
- * surface what the API returns. Permission-gated on discoveryConflicts:read.
+ * widgets/conflictQueue.js — pending discovery conflicts. The /conflicts
+ * endpoint lists every flavour to anyone holding discoveryConflicts:read —
+ * we just surface what the API returns. Permission-gated on that same key.
  */
 
 (function () {
@@ -54,7 +53,7 @@
     type: "conflictQueue",
     category: "Discovery",
     label: "Conflict queue",
-    description: "Pending discovery conflicts. Role-scoped — you only see the ones your role can resolve.",
+    description: "Pending discovery conflicts — reservation, asset and address conflicts waiting for a decision.",
     defaultSize: { width: 4, height: 1 },
     minSize: { width: 3, height: 1 },
     defaultConfig: {},

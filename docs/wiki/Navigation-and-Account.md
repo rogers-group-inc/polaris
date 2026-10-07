@@ -12,19 +12,35 @@ search box and your user badge on the right, and the page's own content below.
 | **Dashboard** | nothing — everyone sees it, widgets gate themselves |
 | **Device Map** | `deviceMap:read` |
 | **Application Map** | `applicationMap:read` |
+| **Path Monitor** | `pathChecks:read` |
 | **IPAM** | `ipBlocks:read` **or** `subnets:read` |
 | **Assets** | `assets:read` |
 | **Events** | `events:read` |
 | **Automations** | `automationManagement:read` |
 | **Integrations** | `integrations:read` |
 | **Users** | admin only |
-| **Server Settings** (bottom) | `serverSettingsSystem:read`, or `credentials` for the Credentials tab alone |
+| **Server Settings** (bottom) | `serverSettingsSystem:read`; or `credentials:write` for the Credentials tab alone, or `firmware:read` for the Firmware tab alone |
 
 **A nav entry you cannot see is a page you cannot open.** The sidebar gate and
 the server-side page gate are kept in lockstep, so a typed URL for a page your
 role lacks bounces rather than loading an empty list.
 
 Below Server Settings sits the **theme band** and the version line.
+
+The **Events** entry carries the sidebar's one alert dot: red for pending
+discovery conflicts, yellow for stale-reservation alerts or queued pushes, red
+winning when both apply.
+
+Above Server Settings, panels appear only while there is something to say:
+
+| Panel | Shows when |
+|---|---|
+| **New user(s) logged in** | admins — someone signed in for the first time and their role wants review; each row has its own dismiss |
+| **Integration(s) not reachable** | an integration's latest connection test failed — click through to Integrations |
+| **Consider bypassing the FortiManager proxy** | the fleet behind a FortiManager has grown past what proxy mode serves well; dismissable, and returns as the fleet grows |
+| **Agent code signing failed** | the last agent build shipped unsigned Windows binaries; dismissable per failure |
+| **Applying update / Update — restarting** | an in-app update is running — it names the current step and clicks through to Server Settings → Maintenance |
+| **Capacity — Immediate Attention** | a critical capacity reason (disk near full, autovacuum stalled, database far larger than RAM); **cannot be dismissed** |
 
 **Changing pages crossfades** rather than cutting: the sidebar holds still while
 the page beside it fades from one to the next. This needs a current Chrome, Edge

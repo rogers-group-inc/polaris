@@ -15,7 +15,7 @@ job.
 | **[FortiGate](Integration-Fortinet)** (standalone) | one device via REST | same |
 | **[Entra ID / Intune](Integration-Directory)** | Microsoft Graph | assets |
 | **[Active Directory](Integration-Directory)** | LDAP / LDAPS | assets |
-| **[Windows Server](Integration-Windows-Server)** | WinRM DHCP | networks, reservations |
+| **[Windows Server](Integration-Windows-Server)** | WinRM DHCP | networks (from DHCP scopes) |
 | **[VMware vCenter](Integration-vCenter)** | vSphere REST + two SOAP calls | assets, datastores |
 | **[Azure Arc](Integration-Azure-Arc)** | Azure Resource Manager | assets |
 | **[Unraid](Integration-Unraid)** | Unraid GraphQL API | host, VMs, containers |
@@ -116,10 +116,13 @@ After the type-specific phases, a run performs up to four fleet-wide passes:
 
 | Pass | Applies to | Default |
 |---|---|---|
-| **Agent auto-deploy** | AD / Entra / Arc workstation and server classes | **off** |
-| **Interface + storage auto-monitor** | same (storage is AD/Entra only) | off |
+| **Agent auto-deploy** | AD / Entra / Arc workstation and server classes, and vCenter VMs | **off** |
+| **Interface + storage auto-monitor** | same | off |
 | **Network-presence verification** | AD / Entra / Arc / vCenter | **on** |
 | **Directory (GAL) sync** | Entra / AD | **off** |
+
+Unraid and TrueNAS run none of them: their class blocks carry no agent or
+auto-monitor settings, and the host's own answer is the presence signal.
 
 **Presence verification** establishes `Asset.lastSeen` for directory-sourced
 assets, cheapest signal first: already-fresh lastSeen → agent heartbeat →
@@ -185,8 +188,8 @@ A scoped run:
   datastore delete-replace, and the **disappearance sweep** (which
   decommissions assets, so it carries a second independent guard).
 
-Entra, AD and Arc need no such mode — none of those syncs has a fleet-absence
-pass.
+For Entra and AD, the opt-in disappearance sweep is refused on a scoped run as
+well. Arc needs no such guard — its sync has no fleet-absence pass.
 
 ---
 
@@ -199,7 +202,7 @@ differences are deliberate.
 |---|---|
 | FortiManager / FortiGate | absence from the roster, with HA-awareness and a CMDB vouching pass |
 | vCenter | **absence, but only if nothing else claims the asset** |
-| Entra / Intune / AD | only the directory object's own **disabled** flag |
+| Entra / Intune / AD | the directory object's own **disabled** flag; plus, **only when *Decommission missing* is turned on** (off by default), absence from the directory — judged by which integration *manages* the asset, and refused on a partial, empty or suspiciously shrunken read ([rule 70](Business-Rules#rule-70)) |
 | Azure Arc | **never writes status at all** |
 | Unraid / TrueNAS | absence of a VM or container from the host, if nothing else claims the asset — skipped on a partial read, refused when one read loses more than max(50, 20%) of the host's workloads |
 
@@ -253,8 +256,8 @@ High volume. Flip it on to diagnose, flip it off when done.
 
 ### The Query API
 
-Every integration type has a **Query API** button that proxies a raw read to the
-upstream system. It is the operator's self-service way to answer *"why didn't
+Every integration type except Windows Server has a **Query API** button that
+proxies a raw read to the upstream system. It is the operator's self-service way to answer *"why didn't
 device X get discovered?"*.
 
 When a FortiGate query cannot connect at all, the response reads

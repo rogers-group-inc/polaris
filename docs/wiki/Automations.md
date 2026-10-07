@@ -47,14 +47,15 @@ needs `automationManagement:read`; creating, editing, toggling and deleting need
 
 ### The list
 
-Columns: **Devices · Trigger · Reset · Actions · Addresses · Type · Quiet time**.
+Columns: **Name · Type · Severity · Enabled · Quiet time · Devices · Trigger ·
+Reset · Actions · Addresses · Created by**.
 
 **Quiet time** shows what the automation's Quiet time step says: *Global*
 (the global quiet times apply), **IGNORES GLOBAL** (no quiet time at all — it
 sends whatever the hour) or **OVERRIDES GLOBAL** (its own quiet time; hover for
 the schedule). Filter on it to see which automations page through the night.
 
-The first four each hold that part of the automation **in the builder's own
+**Devices**, **Trigger**, **Reset** and **Actions** each hold that part of the automation **in the builder's own
 words**, so two automations can be told apart without opening either. Trigger
 and Reset come from the same sentence factory the wizard renders its own steps
 from — a second phrasing here is how the list and the editor would come to
@@ -78,8 +79,9 @@ in which case the pill reads **Escalation**, coloured by the base severity (the
 first tier it fires at). Hovering it lists the ladder, e.g. *Warning → Serious
 (20) → Critical (30)*. The column's filter and sort use that base severity.
 
-Clicking an automation's **name** opens a menu: **Edit**, **Clone**, **Delete**.
-Below `automationManagement:write` the name renders as plain text.
+Clicking an automation's **name** opens a menu: **Edit**, **Clone**, **View
+code**, **Export**, **Delete**. Below `automationManagement:write` the name
+renders as plain text and the **Enabled** column as a static label.
 
 **Clone** pre-fills the wizard, saves as a create, names it `<name> (copy)`, and
 is **created disabled**. That is not politeness: two automations with the same
@@ -93,7 +95,7 @@ setup rather than flashing defaults.
 
 ---
 
-## The six-step wizard
+## The seven-step wizard
 
 | Step | What it asks |
 |---|---|
@@ -102,7 +104,8 @@ setup rather than flashing defaults.
 | **3 — Trigger** | severity, then what to watch |
 | **4 — Reset** | what has to become true again |
 | **5 — Actions** | the in-app alert, then notify / API call / script / event |
-| **6 — Summary** | review, export, view code, **test delivery**, and the impact preview |
+| **6 — Quiet time** | Off (the global quiet times apply), **Ignore Global Quiet Time** or **Override Global Quiet Time** — see [Quiet time](Automation-Escalation#quiet-time) |
+| **7 — Summary** | review, export, view code, **test delivery**, and the impact preview |
 
 You can navigate freely to any step you have visited; in edit mode every step is
 unlocked. An unsaved new automation stashes in memory with a restore prompt.
@@ -230,7 +233,7 @@ is also the group that decides **whose `missedPolls` count governs each device**
 ([rule 36](Business-Rules#rule-36)), rather than inventing a second precedence
 system.
 
-The step-6 preview shows both directions: which lower-ranked automations this
+The Summary step's preview shows both directions: which lower-ranked automations this
 one removes devices from, **and** which of its devices a more-specific
 automation already covers. Carved-out devices are counted in the warning box and
 **left out of the row list** — the list is what the automation *will* alert on.
@@ -262,7 +265,7 @@ are: firing about a device nobody polls made "an automation covers it" and
 
 ## Export, import and view code
 
-Both on the Summary card and the list row menu.
+Both on the Summary step and the name menu on the list.
 
 **Export** produces a portable `.automation.json`. The **`dependencies` block
 comes first**, because that is what a human opening the file reads: everything
@@ -291,7 +294,7 @@ automation. The editor says so.
 
 ## Testing an automation
 
-Step 7 (the review) carries a **Test delivery** block (`automationManagement:write`;
+Step 7 (Summary) carries a **Test delivery** block (`automationManagement:write`;
 omitted entirely otherwise), with one button per distinct delivery the draft
 would perform: *Send Test Web Push*, *Send Test Email*, *Send Test <channel>*,
 *Write a Test Event*. Deduplicated by channel across base actions, band actions,

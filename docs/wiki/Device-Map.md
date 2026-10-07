@@ -28,6 +28,11 @@ degraded child still rolls the cluster up red or amber.
 
 Click a pin for the site; click through for its **topology**.
 
+The sun / moon button at the left of the toolbar switches the **basemap** between
+light and dark tiles independently of the app theme. It is remembered per user in
+this browser; until you touch it, the map follows the app theme's family
+(Morning and Noon light, Nightfall dark).
+
 ### Where coordinates come from
 
 Three tiers, highest first — see
@@ -141,7 +146,7 @@ Drag anything to override the layout; the positions are saved per site.
 | **Show full** | the whole graph rather than the narrowed view |
 | **Refresh** | re-read |
 | **Save layout** | `deviceMap:write` — **shared across operators**; readers fall back to browser storage |
-| **Reset to baseline** | keeps a restore point where one exists |
+| **Reset layout** | a menu: **Reset to last save** (where a restore point exists) or **Reset to baseline** — the column solver's layout |
 | **Snap to grid** | per user; lands drags on the solver's lattice and re-snaps everything on enable |
 | **Fullscreen** | |
 | **Legend** | |

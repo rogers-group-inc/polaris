@@ -67,7 +67,7 @@ it mints a single-item **auto rule** targeting just that asset.
 
 ### Discovery rules
 
-**Integrations → Polaris Agent → Service & Process Discovery Rules.** Named
+**Integrations → Polaris Agents → Service & Process Discovery Rules.** Named
 rules that pin items on the assets they select — now **and** on assets discovered
 later.
 

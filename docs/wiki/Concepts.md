@@ -120,15 +120,16 @@ would collide with every site that serves it. See
 
 **Automation** (`NotificationRule`) — the whole unit: which devices, what to
 watch, at what severity, what to do about it, when it resets. Built in a
-six-step wizard.
+seven-step wizard: Name, Devices, Trigger, Reset, Actions, Quiet time, Summary.
 
 **Alert** (`Notification`) — one live instance of an automation firing about
 one device (and, where the metric has dimensions, one interface or sensor or
 mount). It has a lifecycle: raised → optionally acknowledged → cleared.
 
-**Trigger** — what the automation watches. Five kinds: a metric threshold, a
-device-state field, an event arriving, a field changing, or a composite tree
-combining several.
+**Trigger** — what the automation watches: a device metric threshold, a
+device-state field, a [path check](Path-Monitor)'s results, the Polaris
+server's own health, an event arriving, a field changing, or a composite tree
+combining several. See [Triggers](Automation-Triggers).
 
 **Severity band** — an extra tier stacked on the base trigger, so one alert
 climbs and eases in place rather than firing several. Severities must strictly
@@ -173,7 +174,7 @@ address, a firewall chassis that appears to have been replaced, an IP override
 discovery disagrees with. Conflicts queue for a human.
 
 **Event** — the audit log. Every create, update, delete and discovery result
-writes one. Events older than 7 days are pruned; syslog (CEF) and SFTP/SCP
+writes one. Events older than 7 days are pruned; syslog (RFC 5424 or 3164) and SFTP/SCP
 archival are configurable.
 
 **Tag** — a label on an asset, block or network, from a registry. Tags can be
@@ -188,7 +189,7 @@ stored as `region:<name>` in a locked registry category.
 rest. Credentials carry an ownership dimension: at `write` you reach only the
 ones you created.
 
-**Function key** — one of 33 permission keys. Each route declares the key it
+**Function key** — one of 34 permission keys. Each route declares the key it
 gates plus a level: `none` / `read` / `write` / `fullwrite`. See
 [Users, roles and permissions](Users-Roles-and-Permissions).
 
