@@ -50,7 +50,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** discovery/workloadSync (types + `normalizeWorkloadState`).
 
-**Used by:** src/api/routes/integrations.ts — both test-connection handlers + the Query API branch. src/services/discovery/discoveryEngine.ts — preflight + dispatch (`discoverInventory` → `syncWorkloadDevices`). src/services/monitoringService.ts — `fetchUnraidSnapshot` behind the per-integration workload snapshot cache (the `unraid` polling method).
+**Used by:** src/api/routes/integrations.ts — both test-connection handlers + the Query API branch. src/services/discovery/discoveryEngine.ts — preflight + dispatch (`discoverInventory` → `syncWorkloadDevices`). src/services/workloadMonitorService.ts — `fetchUnraidSnapshot` behind the per-integration workload snapshot cache (the `unraid` polling method, dispatched from monitoringService). src/services/workloadActionService.ts — `containerAction` / `vmAction` / `refreshUpdateChecks` (rule 94).
 
 **Invariants:**
 - A top-level field that comes back as a GraphQL error (Docker service stopped, VM manager off, or the key's role lacks it) marks the read INCOMPLETE (`dockerFailed` / `vmsFailed` → `inventoryComplete: false`) — never an empty list. The sweep would otherwise read "Docker is off" as every container deleted.
@@ -65,6 +65,28 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/discovery/workloadSync.ts
+
+**What it owns:** The asset sync SHARED by the Unraid and TrueNAS SCALE integrations, plus the normalized shapes both services return (`WorkloadDiscoveryResult`, `WorkloadSnapshot`, `WorkloadHost` / `WorkloadVm` / `WorkloadContainer` / `WorkloadPool` / `WorkloadDisk` / `WorkloadUsage`). `syncWorkloadDevices` runs Pass A host → B VMs → C containers → D placement edges → E stale sweep; see polaris-monitoring-discovery → discovery-directory-vcenter-arc.md § Unraid / TrueNAS SCALE for the passes.
+
+**Public API:** syncWorkloadDevices, applyWorkloadFilters, passesNameFilter, workloadSweepBlockedReason, buildWorkloadDependencyEdges; re-exports normalizeWorkloadState + the externalId builders from utils/workloadSources.ts; the Workload* types.
+
+**Cross-service deps:** discoveryEngine (exported `indexHostname` / `lookupHostname` / `normalizeMacKey` / `upsertAssetConflict`), eventLogService, monitorOverrideService (`getAddAsMonitoredFromConfig` / `buildMonitoredSweep`), maintenanceScheduleService.releaseAssetsForDecommission, macAddressService.reconcileMacAddresses.
+
+**Used by:** src/services/discovery/discoveryEngine.ts (runDiscovery's unraid / truenas branch). The services and collectors import only its TYPES (runtime imports of it from a service would cycle through discoveryEngine).
+
+**Invariants:**
+- Identity: host `${integrationId}:host`; VM = UUID (not all-zero) else `${integrationId}:vm:<name>`; container `${integrationId}:ctr:<name>`. Containers are never MAC-matched. A hostname is never an identity (rule 91) — an unlinked name match is a pending Conflict.
+- The sweep never runs on a scoped / incomplete / empty-after-populated read, is refused past `absenceExceedsGuard`, and retains rows for names still in the pre-filter lists.
+- Edges are delete-replaced only on full runs, scoped to `source = platform` and this integration's prior + current children.
+- `virtualization` is rewritten each run, so anything another writer stamps on it (today `monitoringPausedByStop`, rule 94) must be carried forward here; a container's `updateAvailable` is carried when the platform could not answer this run.
+
+**When changing this:**
+- A new role field: the shared observed builder here + the `workloadRule` projection rules + the `/assets/:id/virtualization` workload branch + `_assetWorkloadHTML` in public/js/assets.js.
+- Extend tests/unit/workloadSync.test.ts (pure parts) and tests/integration/workloadSync.test.ts (the DB round trip).
+
+---
+
 ## services/truenasService.ts
 
 **What it owns:** The TrueNAS SCALE integration's client — the versioned JSON-RPC 2.0 over WebSocket API (`wss://<host>/api/current`, TrueNAS 25.04+; REST is deprecated in 25.10 and gone in 26.04), authenticated per socket with `auth.login_with_api_key`. `TrueNasSession` is one authenticated socket: `call` (id-matched request/response, per-call timeout), `firstEvent` (`core.subscribe` → the first `collection_update` for that collection, or null after a window), `waitForJob` (polls `core.get_jobs` every 2 s — every App / VM action is a JOB that returns an id immediately). Discovery reads `system.info` (required — it is the connection check) plus `pool.query`, `app.query`, `vm.query`, `disk.temperatures`, `disk.query` in parallel, each degrading on its own. A snapshot adds the `reporting.realtime` (host CPU per core, memory, link state) and `app.stats` (per-App CPU / memory) events on the same socket. Normalized to the shared workload shapes. A TrueNAS "container" asset is an APP (a compose project) — the unit TrueNAS starts, stops and upgrades.
@@ -73,7 +95,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** discovery/workloadSync (types + `normalizeWorkloadState`).
 
-**Used by:** src/api/routes/integrations.ts — both test-connection handlers + the Query API branch. src/services/discovery/discoveryEngine.ts — preflight + dispatch (`discoverInventory` → `syncWorkloadDevices`). src/services/monitoringService.ts — `fetchTrueNasSnapshot` behind the per-integration workload snapshot cache (the `truenas` polling method).
+**Used by:** src/api/routes/integrations.ts — both test-connection handlers + the Query API branch. src/services/discovery/discoveryEngine.ts — preflight + dispatch (`discoverInventory` → `syncWorkloadDevices`). src/services/workloadMonitorService.ts — `fetchTrueNasSnapshot` behind the per-integration workload snapshot cache (the `truenas` polling method, dispatched from monitoringService). src/services/workloadActionService.ts — `appAction` / `vmAction` / `refreshUpdateChecks` (rule 94).
 
 **Invariants:**
 - An `app.query` or `vm.query` that fails (Apps service unconfigured, a key without APPS_READ / VM_READ) marks the inventory INCOMPLETE, never empty — the sweep must not read it as deletions.

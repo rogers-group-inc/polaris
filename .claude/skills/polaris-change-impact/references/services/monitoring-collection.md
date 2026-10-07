@@ -257,7 +257,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** unraidService.fetchUnraidSnapshot, truenasService.fetchTrueNasSnapshot; types from monitoringService and discovery/workloadSync (type-only imports — no runtime cycle).
 
-**Used by:** src/services/monitoringService.ts — `probeAsset`, `collectTelemetry`, `collectSystemInfo`, `collectFastFiltered`, `collectHardwareSensors` dispatch on `polling === "unraid" | "truenas"`.
+**Used by:** src/services/monitoringService.ts — `probeAsset`, `collectTelemetry`, `collectSystemInfo`, `collectFastFiltered`, `collectHardwareSensors` dispatch on `polling === "unraid" | "truenas"`. src/services/workloadActionService.ts — reads a FRESH snapshot (invalidate first) for the action handle and invalidates again afterwards.
 
 **Invariants:**
 - `unreachable` SKIPS a VM / container probe (one NAS reboot must not declare sixty containers down; the placement edges then suppress them once the host fails) but FAILS the HOST probe — the host's own API not answering IS the finding about the host.

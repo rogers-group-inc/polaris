@@ -52,9 +52,9 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 
 ---
 
-## Integration modal (one shape for all seven)
+## Integration modal (one shape for all nine)
 
-**What it is:** Any "connect us to another system" dialog — the Add / Edit form for FortiManager, standalone FortiGate, Active Directory, Entra ID, Windows Server, vCenter and Azure Arc.
+**What it is:** Any "connect us to another system" dialog — the Add / Edit form for FortiManager, standalone FortiGate, Active Directory, Entra ID, Windows Server, vCenter, Azure Arc, Unraid and TrueNAS SCALE. (The last two share ONE General-tab form, `workloadFormHTML(type, defaults)` / `getWorkloadFormConfig()`, branching only on the copy — and their Monitoring tab uses its own class keys `wlhosts` / `wlvms` / `containers` so the subtabs render the reduced addAsMonitored-only card rather than vCenter's agent-deploy set.)
 
 **Canonical implementation:** `openIntegrationModal(cfg)` in `public/js/app.js`, driven by `_integrationTabs(ctx)` / `_INTEGRATION_REQUIRED_FIELDS` / `_productForType` / `_wireIntegrationModal` in `public/js/integrations.js`. Both flows go through it: `openIntegrationCreateModal(type)` and `openIntegrationEditModal(id)` — named apart from assets.js's `openCreateModal` / `openEditModal`, which the asset slide-over's on-demand load would otherwise overwrite on the Integrations page (§ Slide-over panel, "Every slide-over opens on every page").
 
