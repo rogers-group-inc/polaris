@@ -115,7 +115,11 @@ function _polarisSourceDefaultPolling(source, stream, opts) {
     return null;
   }
   if (source === "unraid" || source === "truenas") {
-    // Mirrors defaultPollingForSource: everything but LLDP comes from the host's API.
+    // Mirrors defaultPollingForSource: response time is ICMP for any asset with
+    // an address (the server falls back to the platform's state check for one
+    // without — a bridged container, a VM with no published IP — which this
+    // per-source label cannot see); everything else but LLDP is the host's API.
+    if (stream === "responseTime") return "icmp";
     if (_WORKLOAD_STREAMS.indexOf(stream) !== -1) return source;
     return null;
   }

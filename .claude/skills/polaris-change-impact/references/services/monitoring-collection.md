@@ -263,7 +263,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `unreachable` SKIPS a VM / container probe (one NAS reboot must not declare sixty containers down; the placement edges then suppress them once the host fails) but FAILS the HOST probe — the host's own API not answering IS the finding about the host.
 - A workload missing from a list that failed to read this tick (`inventoryComplete: false` with an empty list — Docker / Apps stopped) is `unreachable`, never `absent`.
 - `other` state (DEPLOYING, STOPPING, NOSTATE) is a skipped probe — no verdict during a transition.
-- The probe's response time is the shared API round trip, not a measurement of the workload (vCenter's honesty).
+- The probe reports `responseTimeMs: 0` — a state read carries no latency of the workload (operator decision 2026-10-07; the shared API round trip used to be charted and read as a slow device). It only ANSWERS response time for an asset with no address: `defaultPollingForSource` makes ICMP the default for any Unraid / TrueNAS asset with an `ipAddress` (`AssetMonitorContext.ipAddress` → `hasIp`).
 - Container CPU is clamped to 100 % (docker-stats reports multi-core containers above it). An Unraid VM has NO usage source → telemetry `{supported:false}`, never a zero.
 - Interfaces + storage + temperatures exist on the HOST only (storage = its pools, `mountPath` = pool name; temps = `sensorClass: "disk"`). Each stream is gated on its own resolved method.
 

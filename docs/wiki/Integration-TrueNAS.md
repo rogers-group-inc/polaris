@@ -150,7 +150,7 @@ is the source default for this integration's assets. It covers:
 
 | Stream | Host | VM | App |
 |---|---|---|---|
-| **Response Time** | yes | yes | yes |
+| **Response Time** | ICMP by default | when it has no IP | yes (Apps have no IP of their own) |
 | **CPU / Memory** | yes, from the `reporting.realtime` event | **no** (see below) | yes, from `app.stats` |
 | **Interfaces** | yes | — | — |
 | **Storage** | yes: the ZFS pools | — | — |
@@ -163,13 +163,22 @@ one.
 
 ### What "response time" means here
 
-For a VM or App, up and down is **TrueNAS's own state**: running is up, stopped
-is down. A state that is in transition (DEPLOYING, for example) is skipped, with
-no verdict either way. The response time shown is the **round trip of the API
-call to the host**, not a ping of the workload.
+Response time **defaults to ICMP** for every asset that has an address of its
+own: the host, and a VM whose IP another source (an agent, Active Directory)
+has filled in. Those get a real ping latency.
 
-If the host's API cannot be reached, **the host is reported down and its VMs
-and Apps are skipped** rather than all declared down. Combined with dependency
+A workload with **no address of its own** — an App (it answers on the host's
+ports) or a VM, since TrueNAS does not publish guest IPs — cannot be pinged, so
+its response time stays on the **TrueNAS** method: up and down is **TrueNAS's
+own state** (running is up, stopped is down; a state in transition such as
+DEPLOYING is skipped with no verdict), and it is charted at **0 ms**, because a
+state read has no latency to report. You can switch any asset to the other
+method on its Monitoring tab.
+
+If the host's API cannot be reached while the host is on the **TrueNAS** method,
+**the host is reported down and its VMs and Apps are skipped** rather than all
+declared down. (On the ICMP default the host's up/down is its ping; workloads
+still on the TrueNAS method are skipped while the API is unreachable.) Combined with dependency
 suppression, a powered-off TrueNAS server produces one alert, not one per App.
 
 ### VMs have up/down only

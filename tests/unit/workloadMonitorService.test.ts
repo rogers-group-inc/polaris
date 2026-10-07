@@ -56,9 +56,9 @@ beforeEach(() => {
 });
 
 describe("probeWorkload", () => {
-  it("passes a running container with the shared round trip as its response time", async () => {
+  it("passes a running container, reporting 0 ms — a state read carries no latency", async () => {
     h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
-    expect(await wm.probeWorkload("a", performance.now())).toEqual({ success: true, responseTimeMs: 42 });
+    expect(await wm.probeWorkload("a", performance.now())).toEqual({ success: true, responseTimeMs: 0 });
   });
 
   it("fails a stopped container, naming the platform's state", async () => {
@@ -100,7 +100,7 @@ describe("probeWorkload", () => {
 
   it("passes the host with its uptime, and shares one snapshot across assets", async () => {
     h.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
-    expect(await wm.probeWorkload("h", performance.now())).toEqual({ success: true, responseTimeMs: 42, uptimeSec: 99 });
+    expect(await wm.probeWorkload("h", performance.now())).toEqual({ success: true, responseTimeMs: 0, uptimeSec: 99 });
     h.findFirst.mockResolvedValue(source("unraid-vm", "int1:vm:win"));
     expect((await wm.probeWorkload("v", performance.now())).success).toBe(true);
     expect(h.fetchUnraidSnapshot).toHaveBeenCalledTimes(1);

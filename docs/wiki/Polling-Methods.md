@@ -67,8 +67,8 @@ resolution time**; the route layer rejects it at write time with a clear 400.
 | **FortiManager / FortiGate** | `icmp` | `rest_api` | `rest_api` | `rest_api` | `disabled` | `disabled` |
 | **AD / Entra / Windows Server / Manual** | `icmp` | — | — | — | — | — |
 | **vCenter** | `vcenter` | `vcenter` | — | `vcenter` | — | `vcenter` |
-| **Unraid** | `unraid` | `unraid` | `unraid` (host) | `unraid` (host) | — | `unraid` (host) |
-| **TrueNAS SCALE** | `truenas` | `truenas` | `truenas` (host) | `truenas` (host) | — | `truenas` (host) |
+| **Unraid** | `icmp`; `unraid` for an asset with no IP | `unraid` | `unraid` (host) | `unraid` (host) | — | `unraid` (host) |
+| **TrueNAS SCALE** | `icmp`; `truenas` for an asset with no IP | `truenas` | `truenas` (host) | `truenas` (host) | — | `truenas` (host) |
 
 **Response time defaults to ICMP across every source kind**, because ICMP is the
 cheapest universal liveness probe. Operators wanting a heavier transport —
@@ -190,11 +190,14 @@ and no reachable workload IP is needed.
 | lldp | — | — | — |
 
 **One cached read per integration per 30 s** answers every asset on the host.
-The response time shown is that **API round trip, not a ping**.
-
-**Response time is the platform's own state**: running is up, stopped is down,
-and a state in transition (TrueNAS's DEPLOYING, for example) is skipped with no
-verdict. If the host's API cannot be reached, **the host is reported down and
+**Response time defaults to ICMP** for any of these assets that has an address
+of its own (the host, a container on its own network, a VM whose IP another
+source supplied). The method answers response time only for a workload that
+cannot be pinged — a bridged container, an App, a VM with no known IP — and
+there **the platform's own state** decides: running is up, stopped is down, a
+state in transition (TrueNAS's DEPLOYING, for example) is skipped with no
+verdict, and the reading is charted at **0 ms**, because a state read has no
+latency. If the host's API cannot be reached, **the host is reported down and
 its VMs and containers are skipped** — no down storm across the workloads.
 
 Unraid samples per-container CPU and memory over a short WebSocket stats

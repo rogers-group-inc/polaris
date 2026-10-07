@@ -44,6 +44,8 @@ import {
   type MacJsonEntry,
 } from "../../utils/macAddresses.js";
 import { matchesWildcard } from "../../utils/integrationFilter.js";
+import { isValidIpAddress } from "../../utils/cidr.js";
+import { getConfiguredResolver } from "../dnsService.js";
 import { absenceExceedsGuard } from "../../utils/directoryAbsence.js";
 import {
   assetTypeForWorkloadRole,
@@ -653,6 +655,18 @@ export async function syncWorkloadDevices(
   };
 
   // ── Pass A — the host ──────────────────────────────────────────────────────
+  // The integration's Host field may be a NAME. Asset.ipAddress must hold an
+  // address (it is what ICMP pings and what IPAM matches), so resolve a name
+  // the way vCenter resolves an ESXi host's — through the configured resolver
+  // — and leave it empty when it does not resolve.
+  if (result.host.ip && !isValidIpAddress(result.host.ip)) {
+    let resolved: string | null = null;
+    try {
+      const resolver = await getConfiguredResolver();
+      resolved = (await resolver.lookup(result.host.ip))[0]?.address ?? null;
+    } catch { /* unresolvable — leave it empty */ }
+    result.host = { ...result.host, ip: resolved };
+  }
   const h = result.host;
   const hostName = h.hostname;
   const hostExternalId = workloadHostExternalId(integrationId);
