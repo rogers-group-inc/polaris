@@ -4776,6 +4776,12 @@ model ApiToken {
   // originating integration id is in this list — so a token minted for "Site
   // A FortiGate" can never accidentally push to Site B's gateway.
   integrationIds String[]  @default([])
+  // Source addresses this token is accepted from — bare IPv4/IPv6 addresses
+  // or CIDRs, matched against the trust-proxy-resolved req.ip. Empty = any
+  // source (every token minted before the column existed). A correct token
+  // presented from outside the list is refused with a 403, not treated as
+  // valid.
+  trustedHosts   String[]  @default([])
   createdBy      String // username of the admin who minted the token
   createdAt      DateTime  @default(now())
   expiresAt      DateTime?

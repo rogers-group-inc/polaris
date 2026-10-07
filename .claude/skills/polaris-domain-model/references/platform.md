@@ -58,6 +58,7 @@ ApiToken                        -- Long-lived bearer tokens for external callers
   tokenPrefix   String            -- first 16 chars (polaris_ + 8 chars) for fast candidate lookup
   roleId        String FK->Role   -- the Role whose permission matrix this token acts with (Restrict: roleService refuses deleting a role bound to any token)
   integrationIds String[]         -- FMG/FortiGate ids this token may target. REQUIRED + non-empty when the bound role grants assetsQuarantine >= write; empty otherwise. The quarantine service drops sightings whose integration isn't in this list before pushing, and refuses release/verify outright if the existing quarantine touches integrations outside the token's scope (partial release would leave Polaris flipped to active while orphan entries linger on out-of-scope gateways). Validated at create-time: each id must exist and be type fortimanager or fortigate.
+  trustedHosts   String[]         -- source addresses the token is accepted from: bare IPv4/IPv6 addresses or CIDRs (IPv4 CIDRs stored with host bits zeroed), max 64, matched against the trust-proxy-resolved req.ip by utils/ipAllowlist.ipMatchesAllowlist. EMPTY = any source (the default; every token minted before migration 20261007000000_api_token_trusted_hosts). A correct token from outside a non-empty list is refused 403 (apiTokenService.verifyToken → untrusted_host), never accepted, and does not bump lastUsed.
   createdBy     String
   createdAt     DateTime
   expiresAt     DateTime?
