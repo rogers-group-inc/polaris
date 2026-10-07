@@ -172,7 +172,8 @@ including a narrowed endpoint-search view.
   location box and link a separate editable shape, health colours and link
   styles kept. Links are drawn lines, **not glued connectors** (moving a device
   in Visio does not drag its links), text uses Visio's default font, and device
-  icons are not included.
+  icons are not included. The title and summary line sit above the graph and
+  the key below it, as on the PDF.
 
 The Application Map has the same menu ([Application Map](Application-Map#export)).
 

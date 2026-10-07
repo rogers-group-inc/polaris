@@ -158,7 +158,8 @@ positions. The Device Map's site topology has the same menu
   external node and connection is a separate shape you can recolour, move or
   annotate. Text keeps its on-screen size. Connections are drawn lines, **not
   glued connectors**, so moving a box in Visio does not drag its lines with it.
-  Text uses Visio's default font.
+  Text uses Visio's default font. The title and filter lines sit above the
+  map and the Ports key below it, as on the PDF.
 
 **PDF.** Choose the **paper size**, the **orientation** (Automatic picks whichever needs
 fewer pages) and the **minimum text size** (7 pt by default). **Nothing on the

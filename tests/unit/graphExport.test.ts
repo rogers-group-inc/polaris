@@ -253,6 +253,70 @@ describe("vsdxPageXml / vsdxParts", () => {
   });
 });
 
+describe("withHeaderAndKey (the Visio page's header and key)", () => {
+  const ctx = {
+    title: "Application Map",
+    metaLines: ["Seen within: 7 days", "Filters: port: 443"],
+    keyItems: [
+      { kind: "line", color: "#2e7d32", text: "tcp/443 https" },
+      { kind: "line", color: "#555555", text: "dashed = external", dashed: true },
+      { kind: "dot", color: "#d32f2f", text: "asset down" },
+      { kind: "box", color: "#1fb3c8", fill: "#e0f7fa", text: "location" },
+    ],
+  };
+  const texts = (s: any) => s.nodes.filter((n: any) => n.label).map((n: any) => n.label.lines[0]);
+
+  it("adds the title, the header lines and every key label as text shapes", () => {
+    const s = G.withHeaderAndKey(tinyScene(), ctx);
+    expect(texts(s)).toEqual(expect.arrayContaining(["Polaris — Application Map", "Seen within: 7 days", "Filters: port: 443",
+      "tcp/443 https", "dashed = external", "asset down", "location"]));
+  });
+
+  it("draws each swatch as the key says: a line (dashed when asked), a dot, a box", () => {
+    const base = tinyScene();
+    const s = G.withHeaderAndKey(base, ctx);
+    const added = s.edges.slice(base.edges.length);
+    expect(added.map((e: any) => e.style)).toEqual(["solid", "dashed"]);
+    expect(s.nodes.some((n: any) => n.shape === "ellipse" && n.fill === "#d32f2f" && !n.label)).toBe(true);
+    expect(s.nodes.some((n: any) => n.shape === "round" && n.fill === "#e0f7fa")).toBe(true);
+  });
+
+  it("puts the header above and the key below the drawing, and grows the page to hold them", () => {
+    const base = tinyScene();
+    const s = G.withHeaderAndKey(base, ctx);
+    const title = s.nodes.find((n: any) => n.label && n.label.lines[0].startsWith("Polaris"));
+    const key = s.nodes.find((n: any) => n.label && n.label.lines[0] === "location");
+    expect(title.y2).toBeLessThan(base.bbox.y1);
+    expect(key.y1).toBeGreaterThan(base.bbox.y2);
+    expect(s.bbox.y1).toBeLessThanOrEqual(title.y1);
+    expect(s.bbox.y2).toBeGreaterThanOrEqual(key.y2);
+    expect(s.bbox.h).toBeCloseTo(s.bbox.y2 - s.bbox.y1, 6);
+  });
+
+  it("wraps a long key at the drawing's width and leaves the scene it was given alone", () => {
+    const base = tinyScene();
+    const many = { ...ctx, keyItems: Array.from({ length: 30 }, (_, i) => ({ kind: "line", color: "#333333", text: "item number " + i })) };
+    const s = G.withHeaderAndKey(base, many);
+    const rows = new Set(s.edges.slice(base.edges.length).map((e: any) => Math.round(e.path[0].y)));
+    expect(rows.size).toBeGreaterThan(1);
+    expect(base.nodes).toHaveLength(2);
+    expect(base.bbox.y1).toBe(0);
+  });
+
+  it("still packages as Visio, the header and key text left-aligned against the left edge", () => {
+    const s = G.withHeaderAndKey(tinyScene(), ctx);
+    const page = G.vsdxPageXml(s);
+    expect(page.xml).toContain("<Text>asset down</Text>");
+    const keyShape = /<Shape [^>]*>(?:(?!<\/Shape>)[\s\S])*<Text>asset down<\/Text><\/Shape>/.exec(page.xml)![0];
+    expect(keyShape).toContain('<Cell N="HorzAlign" V="0"/>');
+    const tw = Number(/<Cell N="TxtWidth" V="([^"]+)"/.exec(keyShape)![1]);
+    expect(Number(/<Cell N="TxtPinX" V="([^"]+)"/.exec(keyShape)![1])).toBeCloseTo(tw / 2, 5);
+    // The map's own labels keep Visio's centred paragraph.
+    expect(G.vsdxPageXml(tinyScene()).xml).not.toContain('N="HorzAlign"');
+    expect(page.shapeCount).toBe(s.nodes.length + s.edges.length + s.under.length + s.parents.length);
+  });
+});
+
 describe("sceneFromCy (computed style)", () => {
   // A cy-shaped stub whose elements answer pstyle() like Cytoscape does.
   const ele = (style: Record<string, any>, extra: Record<string, any>) => ({

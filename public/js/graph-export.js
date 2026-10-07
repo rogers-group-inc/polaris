@@ -27,8 +27,10 @@
 // Visio: one page sized to the graph at 1 model px = 1 pt, every node and
 // connection its own editable shape. Deliberately conservative: connections
 // are 2-D line shapes (not glued 1-D connectors), text takes Visio's default
-// font, and device icons are left out. The package itself is the shape Visio
-// for the web accepts — see vsdxDocumentXml.
+// font, and device icons are left out. The title, the header lines and the key
+// go on the page as text and swatch shapes above and below the drawing
+// (withHeaderAndKey), as the PDF prints them. The package itself is the shape
+// Visio for the web accepts — see vsdxDocumentXml.
 //
 // Depends on: window.jspdf (vendor), cytoscape (the cy handed in),
 // openModal / closeModal / showToast / showRowMenu / currentUsername (app.js).
@@ -873,9 +875,14 @@
     function PY(y) { return pageH - VSDX_MARGIN_IN - (y - bb.y1) * PT_IN; }
     var id = 0, shapes = [];
 
+    // Visio centres a paragraph by default (the No Style sheet). A label with
+    // textAlign "left" — the header and key text withHeaderAndKey adds, whose
+    // boxes are sized from an estimate of the text — starts at its box's left
+    // edge instead, so it sits against its swatch whatever the real width.
     function charSection(lbl) {
       return '<Section N="Character"><Row IX="0">' + cell("Size", num(lbl.fontPx * PT_IN), "PT") +
-        cell("Color", lbl.color || "#1a1a1a") + cell("Style", (lbl.bold ? 1 : 0) | (lbl.italic ? 2 : 0)) + "</Row></Section>";
+        cell("Color", lbl.color || "#1a1a1a") + cell("Style", (lbl.bold ? 1 : 0) | (lbl.italic ? 2 : 0)) + "</Row></Section>" +
+        (lbl.textAlign === "left" ? '<Section N="Paragraph"><Row IX="0">' + cell("HorzAlign", 0) + "</Row></Section>" : "");
     }
 
     function geomRows(pts, x0, y0) {
@@ -895,7 +902,8 @@
         var blk = nodeLabelBlock(b, lbl, lh);
         var tw = Math.max(w, Math.max.apply(null, lbl.lines.map(function (l) { return l.length; })) * lbl.fontPx * 0.62 * PT_IN + 0.1);
         var th = blk.h * PT_IN;
-        var tcx = PX(blk.align === "center" ? blk.x : blk.align === "right" ? blk.x - (tw / PT_IN) / 2 : blk.x + (tw / PT_IN) / 2) - x1;
+        var tcx = lbl.textAlign === "left" ? tw / 2
+          : PX(blk.align === "center" ? blk.x : blk.align === "right" ? blk.x - (tw / PT_IN) / 2 : blk.x + (tw / PT_IN) / 2) - x1;
         var tcy = PY(blk.top + blk.h / 2) - yBot;
         txt = cell("TxtPinX", num(tcx)) + cell("TxtPinY", num(tcy)) + cell("TxtWidth", num(tw)) + cell("TxtHeight", num(th)) +
           cell("TxtLocPinX", num(tw / 2)) + cell("TxtLocPinY", num(th / 2)) +
@@ -1223,10 +1231,68 @@
     refresh();
   }
 
+  // PURE (exposed for tests): a copy of `scene` with the title and header
+  // lines above the drawing and the key below it, as ordinary shapes — the
+  // Visio page's equivalent of the PDF's header and key (the PDF draws those
+  // itself, so it never uses this). Model px are points on the Visio page.
+  // Text widths are estimated (0.62 em per character, the Visio writer's own
+  // estimate), so each key label's box is about as wide as its text.
+  function withHeaderAndKey(scene, ctx) {
+    var b = scene.bbox, out = {
+      under: scene.under.slice(), parents: scene.parents.slice(), edges: scene.edges.slice(), nodes: scene.nodes.slice(),
+      minFontPx: scene.minFontPx, icons: scene.icons, bbox: null,
+    };
+    var KEY_PX = 9, TITLE_PX = 14, CHAR_EM = 0.62;
+    var width = Math.max(b.w, 360);
+    function textBox(text, x, yMid, fontPx, color, bold) {
+      var w = Math.max(4, text.length * fontPx * CHAR_EM), h = fontPx * 1.3;
+      out.nodes.push({ shape: "rect", polygon: null, x1: x, y1: yMid - h / 2, x2: x + w, y2: yMid + h / 2, fill: null, stroke: null,
+        strokeWidth: 0, strokeStyle: "solid", icon: null, z: 0,
+        label: { lines: [text], pdfLines: [pdfText(text)], fontPx: fontPx, mono: false, bold: !!bold, italic: false, color: color,
+          bg: null, valign: "center", halign: "center", mx: 0, my: 0, textAlign: "left" } });
+      return w;
+    }
+    // Header: title, then up to two lines of what narrowed the view.
+    var lines = [{ text: ctx.title ? appName() + " — " + ctx.title : "", px: TITLE_PX, color: "#1a1a1a", bold: true }]
+      .concat((ctx.metaLines || []).filter(Boolean).slice(0, 2).map(function (t) { return { text: t, px: KEY_PX, color: "#555555" }; }))
+      .filter(function (l) { return l.text; });
+    var headH = lines.reduce(function (n, l) { return n + l.px * 1.5; }, 0);
+    var y = b.y1 - headH - (lines.length ? 16 : 0);
+    var top = y;
+    lines.forEach(function (l) { textBox(l.text, b.x1, y + l.px * 0.75, l.px, l.color, l.bold); y += l.px * 1.5; });
+    // Key: swatch + label, wrapping at the drawing's width.
+    var SW = 16, GAP = 5, SEP = 14, rowH = KEY_PX * 1.8;
+    var x = 0, ky = b.y2 + 18, bottom = b.y2;
+    (ctx.keyItems || []).forEach(function (it) {
+      var tw = it.text.length * KEY_PX * CHAR_EM;
+      if (x > 0 && x + SW + GAP + tw > width) { x = 0; ky += rowH; }
+      var sx = b.x1 + x, mid = ky + rowH / 2;
+      if (it.kind === "dot" || it.kind === "box") {
+        var r = KEY_PX * 0.42;
+        out.nodes.push({ shape: it.kind === "dot" ? "ellipse" : "round", polygon: null,
+          x1: it.kind === "dot" ? sx + SW / 2 - r : sx + 2, y1: mid - r, x2: it.kind === "dot" ? sx + SW / 2 + r : sx + SW - 2, y2: mid + r,
+          fill: it.fill || it.color, stroke: it.color, strokeWidth: 1, strokeStyle: it.dashed ? "dashed" : "solid", icon: null, label: null, z: 0 });
+      } else {
+        out.edges.push({ path: [{ type: "M", x: sx, y: mid }, { type: "L", x: sx + SW, y: mid }], color: it.color,
+          width: it.heavy ? 2.6 : 1.8, style: it.dashed ? "dashed" : "solid", arrowTarget: null, arrowSource: null, label: null,
+          mid: { x: sx + SW / 2, y: mid }, z: 0 });
+      }
+      textBox(it.text, sx + SW + GAP, mid, KEY_PX, "#333333");
+      x += SW + GAP + tw + SEP;
+      bottom = ky + rowH;
+    });
+    var right = b.x1 + width;
+    out.nodes.forEach(function (n) { if (n.x2 > right) right = n.x2; });
+    out.bbox = { x1: b.x1, y1: Math.min(b.y1, top), x2: Math.max(b.x2, right), y2: bottom };
+    out.bbox.w = out.bbox.x2 - out.bbox.x1; out.bbox.h = out.bbox.y2 - out.bbox.y1;
+    out.minFontPx = Math.min(scene.minFontPx, KEY_PX);
+    return out;
+  }
+
   function exportVisio(ctx) {
     if (!checkCtx(ctx)) return;
     try {
-      var scene = sceneOf(ctx);
+      var scene = withHeaderAndKey(sceneOf(ctx), ctx);
       var bytes = zipStore(vsdxParts(scene, appName() + " " + ctx.title, ctx.title));
       download(bytes, "application/vnd.ms-visio.drawing", ctx.fileBase + "-" + new Date().toISOString().slice(0, 10) + ".vsdx");
       showToast(ctx.title + " exported for Visio");
@@ -1269,6 +1335,7 @@
     zipStore: zipStore,
     vsdxPageXml: vsdxPageXml,
     vsdxParts: vsdxParts,
+    withHeaderAndKey: withHeaderAndKey,
     // live
     sceneFromCy: sceneFromCy,
     openMenu: openMenu,

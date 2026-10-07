@@ -25956,13 +25956,24 @@ function _openPathMapExport(btn, check, list, sel, source) {
     });
 }
 
-// The map alone, whole width even when the panel scrolls it, onto the clipboard.
+// The map and its legend onto the clipboard — the map at full width even when
+// the panel scrolls it. Both are copied into an off-screen holder as wide as
+// the map, so the legend wraps to the picture rather than to the panel; it
+// stays in the document so the theme's colours still resolve.
 function _pathMapScreenshot() {
   var svg = document.querySelector("#path-tr-graph svg");
   if (!svg) { showToast("Nothing to export", "error"); return; }
   var bg = getComputedStyle(document.documentElement).getPropertyValue("--color-bg-primary").trim() || "#ffffff";
-  htmlToImage.toBlob(svg, { pixelRatio: 2, backgroundColor: bg })
-    .then(function (blob) { return blob ? copyPngToClipboard(blob) : false; })
+  var holder = document.createElement("div");
+  holder.style.cssText = "position:fixed;left:-100000px;top:0;padding:12px 16px;background:" + bg + ";width:" + svg.getAttribute("width") + "px";
+  holder.innerHTML = svg.outerHTML + _TR_PATH_LEGEND_HTML;
+  holder.querySelectorAll(".chart-hit").forEach(function (el) { el.remove(); });
+  document.body.appendChild(holder);
+  // `style` applies to the capture's clone only: it drops the holder's
+  // off-screen offset so the clone is not drawn 100000 px to the left.
+  htmlToImage.toBlob(holder, { pixelRatio: 2, backgroundColor: bg, style: { position: "static", left: "0" } })
+    .then(function (blob) { holder.remove(); return blob ? copyPngToClipboard(blob) : false; },
+      function (err) { holder.remove(); throw err; })
     .then(function (ok) {
       showToast(ok ? "Screenshot copied to clipboard" : "Screenshot failed — requires HTTPS or clipboard permission", ok ? "success" : "error");
     }, function () { showToast("Screenshot failed", "error"); });

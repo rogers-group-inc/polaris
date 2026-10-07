@@ -227,8 +227,9 @@ how many of the recent traces passed through it.
 
 The **Export** button at the right of the Path heading opens a menu:
 
-- **Copy screenshot**: the whole graph as an image on the clipboard, even the
-  part the panel has scrolled out of view. Copying an image needs HTTPS.
+- **Copy screenshot**: the whole graph and its legend as an image on the
+  clipboard, even the part the panel has scrolled out of view. Copying an
+  image needs HTTPS.
 - **Export PDF…**: the graph on paper, in the light colours whatever theme you
   use. A header names the source, the destination, the check type and the
   trace shown, and a key explains the link and status colours. Choose the
@@ -237,7 +238,8 @@ The **Export** button at the right of the Path heading opens a menu:
   several. The source and destination print as **S** and **D**, because the
   PDF fonts have no house or target symbol.
 - **Export to Visio (.vsdx)**: one Visio page, every circle, label and link a
-  separate editable shape. Links are drawn lines, not glued connectors.
+  separate editable shape. Links are drawn lines, not glued connectors. The
+  same header sits above the graph and the same key below it, as on the PDF.
 
 The export shows the trace selected in the list, with the routes the other
 recent traces took as faded branches, as on screen. The same button appears on
