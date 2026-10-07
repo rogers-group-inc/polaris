@@ -194,6 +194,26 @@ body.asst-mounted .toast-container { bottom: 5.25rem; }
 @keyframes asst-blink { 50% { opacity: 0; } }
 
 .asst-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+/* Efficiency Advisor (rule 95(h)): the header checkbox and the line under an answer. */
+.asst-advisor {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 4px 0 0;
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.asst-advisor input { width: auto; margin: 0; cursor: pointer; }
+.asst-signoff {
+  margin-top: 6px;
+  max-width: 100%;
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--color-text-tertiary);
+}
+.asst-preface { margin: 0 0 4px; }
 .asst-chip {
   display: inline-flex;
   align-items: center;

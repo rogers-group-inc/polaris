@@ -118,3 +118,23 @@ describe("report downloads", () => {
     expect(md).toContain("| x\\|y |");
   });
 });
+
+describe("Efficiency Advisor lines (rule 95(h))", () => {
+  it("shows the before-lookup line above the answer and the sign-off below it, escaped", () => {
+    const html = A._messageHTML({ role: "assistant", content: "42 networks.", preface: "Do <b>not</b> touch", signOff: "Adequate. For a human." }, 0, false);
+    expect(html.indexOf("asst-preface")).toBeLessThan(html.indexOf("42 networks."));
+    expect(html.indexOf("42 networks.")).toBeLessThan(html.indexOf("Adequate. For a human."));
+    expect(html).toContain("Do &lt;b&gt;not&lt;/b&gt; touch");
+  });
+
+  it("swaps the Thinking… placeholder for the current loading line while waiting", () => {
+    expect(A._messageHTML({ role: "assistant", content: "", live: true }, 0, true)).toContain("Thinking…");
+    expect(A._messageHTML({ role: "assistant", content: "", live: true, loading: "Dividing by zero…" }, 0, true)).toContain("Dividing by zero…");
+  });
+
+  it("carries the requested loading lines", () => {
+    for (const l of ["Overcoming reluctance…", "Dividing by zero…", "Obsessing over what to wear…", "Reprogramming the programmables…"]) {
+      expect(A._LOADING_LINES).toContain(l);
+    }
+  });
+});

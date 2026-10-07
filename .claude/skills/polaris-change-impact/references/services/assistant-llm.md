@@ -1,6 +1,6 @@
 # Services — the AI assistant and the `llm` integration
 
-The floating chat assistant (business rule 95) and the integration type that backs it. Six
+The floating chat assistant (business rule 95) and the integration type that backs it. Seven
 services: the transport to the model server, the tool layer that answers its lookups, the
 turn orchestrator, the conversation store, the help index over `docs/wiki/`, and the
 role + API token an llm integration provisions. Route: `src/api/routes/assistant.ts`
@@ -80,7 +80,9 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 
 **Public API:** AssistantEmit, AssistantIntegrationRef, ContextBudget, resolveAssistantIntegration, listAssistantIntegrations, buildSystemPrompt, contextBudget, fitHistory, compactToolResults, streamAssistantTurn.
 
-**Cross-service deps:** llmService (chatCompletionRound, estimateTokens, LLM_DEFAULTS), assistantToolService (assistantToolDefs, runAssistantTool, toolLabel), assistantConversationService (beginTurn, finishTurn, recentTurns), eventLogService (logEvent).
+**Efficiency Advisor (rule 95(h), 2026-10-07):** when the caller's `User.assistantEfficiencyAdvisor` is on, the turn emits `preface { text }` as its FIRST tool call starts (before that tool's `tool` event), `preface { text: null }` to withdraw it if a lookup then shows an outage, and `signoff { text }` after the answer; both lines are stored on the AssistantMessage (`preface` / `signOff`), never in `content`. The signals (`TurnSignals`) are gathered by `noteLookup` per tool result whether or not the advisor is on. The model's system prompt carries NO persona — see efficiencyAdvisorService.
+
+**Cross-service deps:** llmService (chatCompletionRound, estimateTokens, LLM_DEFAULTS), assistantToolService (assistantToolDefs, runAssistantTool, toolLabel), assistantConversationService (beginTurn, finishTurn, recentTurns, getEfficiencyAdvisor, recentAdvisorLines), efficiencyAdvisorService (asksAboutOutage, lookupShowsOutage, lookupFoundSomething, topicForTool, pickSignOff, pickLookupLine), eventLogService (logEvent).
 
 **Used by:**
 - src/api/routes/assistant.ts → GET /status (listAssistantIntegrations), POST /conversations/:id/messages (resolveAssistantIntegration + streamAssistantTurn)
@@ -106,23 +108,48 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 
 **What it owns:** The saved conversations (AssistantConversation / AssistantMessage / AssistantReport). Every function takes the session user's id and scopes every query to it — someone else's id answers 404 (rule 95(d)). List / create / get / rename / delete / clear; `beginTurn` / `finishTurn` / `recentTurns` for the chat service; the `assistant` Setting (`retentionDays`, default 90) and `pruneAssistantConversations` (rule 95(e)). Creating past 200 conversations for one user drops that user's oldest. `updateAssistantSettings(input, actor)` writes an `assistant.settings.updated` Event when the value changes — a warning when it shortens, because the next prune then deletes conversations. The operator edits it from the Local AI Assistant integration form ("Keep conversations for"), which calls PUT /assistant/settings after the integration saves; it stays a server-wide Setting, not integration config.
 
-**Public API:** AssistantSettings, ToolUseRecord, getAssistantSettings, updateAssistantSettings, titleFromQuestion, listConversations, createConversation, getConversation, renameConversation, deleteConversation, clearConversation, recentTurns, beginTurn, finishTurn, pruneAssistantConversations.
+**Public API:** AssistantSettings, ToolUseRecord, getAssistantSettings, updateAssistantSettings, getEfficiencyAdvisor, setEfficiencyAdvisor, recentAdvisorLines, titleFromQuestion, listConversations, createConversation, getConversation, renameConversation, deleteConversation, clearConversation, recentTurns, beginTurn, finishTurn, pruneAssistantConversations.
 
 **Cross-service deps:** eventLogService (logEvent — the retention change); otherwise Prisma only (the report payload type comes from assistantToolService).
 
 **Used by:**
-- src/api/routes/assistant.ts — every conversation route and PUT /settings
-- src/services/assistantChatService.ts — beginTurn / finishTurn / recentTurns
+- src/api/routes/assistant.ts — every conversation route, PUT /settings, GET /status (getEfficiencyAdvisor) and PUT /preferences (setEfficiencyAdvisor)
+- src/services/assistantChatService.ts — beginTurn / finishTurn / recentTurns / getEfficiencyAdvisor / recentAdvisorLines
 - src/jobs/pruneEvents.ts — pruneAssistantConversations, hourly, in its own try
 
 **Invariants:**
 - Only user / assistant turns are stored; tool calls and results never are.
 - Reports are snapshots — reopening a conversation downloads the figures the user saw.
 - Pruning is one batched `deleteMany` on `updatedAt` (indexed); messages and reports cascade.
+- `recentTurns` selects `role` + `content` only — the Efficiency Advisor's `preface` / `signOff` columns must never reach the model (it copies them; rule 95(h)).
 
 **When changing this:**
 - Any new read path MUST take `userId` and scope by it; there is no admin override by design.
 - A schema change here is a migration + `polaris-domain-model/references/platform.md`.
+
+---
+
+## services/efficiencyAdvisorService.ts
+
+**What it owns:** The assistant's optional "Efficiency Advisor" (business rule 95(h)) — a per-user chat-window checkbox that adds canned lines in the voice of a patronizing productivity AI: one from `LOOKUP_LINES` when a turn's first lookup starts, and one from `SIGN_OFFS` under the answer. Pure logic, no I/O: `pickCategory(TurnSignals)` maps what the turn did to a category (`attitude` on a "Not permitted" lookup or a complaining question, `pepTalk` on a frustrated one, `helpAnswered` after search_help, `congratulation` / `backToWork` after a lookup that found something / nothing, `funDetected` with no lookup) or to null on an outage or a failed / stopped turn; `pickSignOff` / `pickLookupLine` choose a line, skipping the conversation's recent ones while others are left, and fill `{topic}` from `topicForTool`. `asksAboutOutage` (question) and `lookupShowsOutage` (tool JSON: a `down`/`critical` status or severity, or a non-zero `down`/`critical` count) gate it.
+
+**Public API:** SignOffCategory, SIGN_OFFS, LOOKUP_LINES, TurnSignals, asksAboutOutage, lookupShowsOutage, lookupFoundSomething, topicForTool, pickCategory, pickSignOff, pickLookupLine.
+
+**Cross-service deps:** none.
+
+**Used by:**
+- src/services/assistantChatService.ts → streamAssistantTurn — the preface on the first tool call, the signals per lookup, the sign-off after the answer
+
+**Invariants:**
+- POLARIS picks every line; the model never sees the persona. Asked to play it via the system prompt (2026-10-07, qwen2.5:7b), the model parroted one sample line on every answer, quipped under a critical device-down alert, and — pushed harder — skipped its lookups and invented an IP and a network count. Do not move the voice back into the prompt.
+- No line on an outage (question or lookup), an error or a Stop; a before-lookup line already shown is withdrawn when a lookup shows an outage.
+- The loading-screen lines ("Dividing by zero…") that replace "Thinking…" while an advisor user waits are CLIENT-ONLY: `public/js/assistant.js → LOADING_LINES` / `startLoadingLines()`, cycled every 2.2 s until the first token, never sent anywhere or stored.
+- "pioneer" from the source quotes is "engineer" here; the line lists were reviewed and chosen by the owner — add or change a line only with their review.
+
+**When changing this:**
+- A new tool that returns rows should get a `TOOL_TOPICS` noun, or `{topic}` lines never fire after it.
+- A tool whose result names a down state under a new key needs `lookupShowsOutage` widened, or a quip lands under an outage.
+- **Deliberately undocumented for operators (owner's call, 2026-10-07):** the Efficiency Advisor is an easter egg. Do NOT add it to `README.md` or to any `docs/wiki/` page, and `/polaris-docs-sync` should not route it there — this entry, rule 95(h) and the domain-model notes are its only documentation.
 
 ---
 

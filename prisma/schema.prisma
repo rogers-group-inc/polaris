@@ -3643,6 +3643,11 @@ model User {
   // Validation is normalizeUserTimezone() in userTimezoneService.
   timezone String @default("auto")
 
+  // The chat window's "Efficiency Advisor" checkbox (business rule 95(h)): a
+  // canned sign-off line under each assistant answer. On the USER, not per
+  // browser, so the choice follows the person; off by default.
+  assistantEfficiencyAdvisor Boolean @default(false) @map("assistant_efficiency_advisor")
+
   // The zone this account's BROWSER last reported, reported by the client on
   // boot. Never operator-set and never shown as a choice — it exists so that
   // "auto" can mean something on a surface with no browser.
@@ -6285,6 +6290,12 @@ model AssistantMessage {
   content        String                @db.Text
   toolsUsed      Json                  @default("[]") // [{ name, label, ok }]
   stopped        Boolean               @default(false)
+  // The Efficiency Advisor lines (rule 95(h)), chosen by Polaris, not the
+  // model: `preface` shown when the first lookup started, `signOff` under the
+  // answer. Kept out of `content` so recentTurns never sends them back to the
+  // model, which would copy them.
+  preface        String?
+  signOff        String?
   createdAt      DateTime              @default(now())
   reports        AssistantReport[]
 

@@ -8,7 +8,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 
 - **ApiToken** — bearer tokens for external callers (e.g. SIEM quarantine, NOC kiosk); each token is bound to a Role and acts with that role's permission matrix.
 
-- **AssistantConversation** / **AssistantMessage** / **AssistantReport** — the floating AI assistant's saved chats (business rule 95). A conversation belongs to exactly ONE user (`userId`, cascade) and is **owner-only** — every read and write is scoped to the session user, admins included, and someone else's id answers 404. Only `user` / `assistant` turns are stored (CHECK); **tool calls and their results never are**, so a stored thread cannot replay data its owner has since lost access to. A report is a **snapshot** of rows the `create_report` tool read from the database (never model text), capped at 5000. `integrationId` (SetNull) names the `llm` integration that answered last. Pruned after `Setting assistant.retentionDays` (default 90) of inactivity by the hourly `pruneEvents` job; capped at 200 per user.
+- **AssistantConversation** / **AssistantMessage** / **AssistantReport** — the floating AI assistant's saved chats (business rule 95). A conversation belongs to exactly ONE user (`userId`, cascade) and is **owner-only** — every read and write is scoped to the session user, admins included, and someone else's id answers 404. Only `user` / `assistant` turns are stored (CHECK); **tool calls and their results never are**, so a stored thread cannot replay data its owner has since lost access to. A report is a **snapshot** of rows the `create_report` tool read from the database (never model text), capped at 5000. `integrationId` (SetNull) names the `llm` integration that answered last. Pruned after `Setting assistant.retentionDays` (default 90) of inactivity by the hourly `pruneEvents` job; capped at 200 per user. An answer's `preface` / `signOff` are the Efficiency Advisor's canned lines (rule 95(h)) — chosen by Polaris, kept OUT of `content` so they are never resent to the model.
 
 - **SshHostKey** — trust-on-first-use pins for SSH **server** host keys, one row per dialed `(host, port)` — no Asset FK, since a host is often onboarded before it exists as an Asset. A changed key **refuses** the connection. Gated per credential by `SshConfig.verifyHostKey`. See business rule 21.
 
@@ -90,6 +90,8 @@ AssistantMessage                -- One turn. Tool calls / results are never stor
   content        Text           -- the question, or the answer as streamed (partial when stopped)
   toolsUsed      Json @default("[]") -- [{ name, label, ok }] — which lookups ran, for the chips
   stopped        Boolean @default(false) -- cut off by Stop / a dropped connection / a failure mid-answer
+  preface        String?        -- Efficiency Advisor line shown as the first lookup started (rule 95(h)); null when off / no lookup / withdrawn on an outage
+  signOff        String?        -- Efficiency Advisor line shown under the answer (rule 95(h)); never part of `content`, never resent to the model
   createdAt      DateTime
   @@index([conversationId, createdAt]); @@map("assistant_messages")
 
@@ -140,6 +142,7 @@ User
   totpSecret      String?       -- Base32 TOTP secret (null = not enrolled)
   totpEnabledAt   DateTime?     -- Null = not enabled; set on first valid confirm code
   totpBackupCodes String[]      -- argon2id-hashed single-use recovery codes
+  assistantEfficiencyAdvisor Boolean @default(false) -- (`assistant_efficiency_advisor`) the AI chat window's "Efficiency Advisor" checkbox (rule 95(h)); on the USER so it follows them across browsers; set via PUT /assistant/preferences
   passkeys        UserPasskey[] -- Registered WebAuthn credentials (local accounts only; cascade delete)
   needsRoleReview Boolean       -- Flipped true at the password step the first time the user logs in (Asset.lastLogin transitions null → set), EXCEPT for users whose role is already `admin` (an admin reviewing their own role is redundant; this keeps the seed admin's first login on a fresh install from triggering a self-notification). Drives the admin-only "new user logged in" panel in the sidebar (#role-review-status, rendered above #query-status). Auto-cleared when an admin PUTs /users/:id/role (implicit review) or DELETEs /users/:id/role-review (explicit Dismiss). Dismiss is global — clearing the flag hides the row for every admin at once. SAML SSO sets it on auto-provision (always `readonly`) and on first-ever login of an existing non-admin account.
 
