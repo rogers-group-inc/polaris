@@ -454,6 +454,14 @@ grants, filter-don't-403 surfaces included.
 - A token granting quarantine at `write` or above **must** name the
   integrations it is scoped to.
 - Binding a token to an admin-equivalent role logs a **warning Event**.
+- **Trusted hosts** (optional, set at mint time) limit the source addresses a
+  token is accepted from: one IP address or CIDR per line, IPv4 or IPv6. Blank
+  means any source. A valid token from any other address is refused with a
+  `403` naming the address Polaris saw, and an `api_token.untrusted_host`
+  warning Event is written — at most once per token and address every
+  15 minutes. The address is the one Polaris resolves through `TRUST_PROXY`, so
+  behind a reverse proxy that does not forward the client address every caller
+  looks like the proxy.
 - **CSRF is skipped** for bearer requests — cross-site attackers cannot attach
   custom headers — while authentication is fully enforced downstream.
 - Writes are attributed in the audit log as `api:<token name>`.

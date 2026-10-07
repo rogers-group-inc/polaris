@@ -4,11 +4,11 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/apiTokenService.ts
 
-**What it owns:** Long-lived bearer-token CRUD for external API access; argon2id hash + tokenPrefix-based lookup; role binding (each token carries a roleId whose matrix requirePermission resolves like a session snapshot); integrationIds enforcement when the bound role grants assetsQuarantine >= write; api_token.admin_equivalent warning Event on admin-equivalent bindings.
+**What it owns:** Long-lived bearer-token CRUD for external API access; argon2id hash + tokenPrefix-based lookup; role binding (each token carries a roleId whose matrix requirePermission resolves like a session snapshot); integrationIds enforcement when the bound role grants assetsQuarantine >= write; api_token.admin_equivalent warning Event on admin-equivalent bindings; per-token trustedHosts (normalizeTrustedHosts at create, enforced in verifyToken, api_token.untrusted_host warning Event throttled per token+address).
 
 **Public API:** ApiTokenSummary, AuthenticatedToken, CreateTokenInput, CreateTokenResult, createToken, listTokens, revokeToken, deleteToken, verifyToken.
 
-**Cross-service deps:** permissions.ts (normalizePermissions, isAdminEquivalentPermissions), eventLogService (logEvent via routes/events re-export).
+**Cross-service deps:** permissions.ts (normalizePermissions, isAdminEquivalentPermissions), eventLogService (logEvent via routes/events re-export), utils/ipAllowlist (ipMatchesAllowlist, isValidAllowlistEntry), utils/cidr (normalizeCidr, isValidIpAddress).
 
 **Used by:**
 - src/api/routes/apiTokens.ts — GET /api-tokens, list all tokens
@@ -24,10 +24,13 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - A bound role granting assetsQuarantine ≥ write requires integrationIds (≥1 FortiManager/FortiGate id); other roles may have empty integrationIds.
 - Roles bound to tokens can't be deleted (roleService counts apiTokens and 409s); role edits propagate to live tokens via the bumpRoleVersion cache on the next request.
 - verifyToken() is best-effort on lastUsedAt/lastUsedIp updates; missed bumps don't fail auth.
+- verifyToken() returns a TokenVerification union, not a token-or-null: `{ok:true, token}`, `{ok:false, reason:"invalid"}`, or `{ok:false, reason:"untrusted_host"}`. The trusted-host check runs only AFTER the argon2 hash matches, so only a holder of the real token learns it was refused for its address; attachApiToken answers that case with a 403 naming the address it saw instead of falling through to the uniform 401. Empty trustedHosts = any source; an unknown caller address against a non-empty list fails closed. A refusal never bumps lastUsed.
+- The untrusted-host warning Event is throttled in-process (one per token+address per 15 min, map cleared at 1000 keys) — per process, so a split-role install with several web processes can log once per process.
 - Expired tokens (expiresAt in past) and revoked tokens (revokedAt set) are silently excluded from lookup; no 401 distinction.
 
 **When changing this:**
 - Audit validateIntegrationIds if adding new integration types to quarantine support.
+- trustedHosts matches req.ip, which is only as honest as TRUST_PROXY (src/utils/trustProxy.ts): never match a raw X-Forwarded-For header here, and never widen trust-proxy to make a list "work".
 - Test wire format edge cases (malformed prefix, truncated token, null bearer header).
 - Verify tokenPrefix index is used in verifyToken candidate fetch to keep lookup O(indexed).
 - Check that expiresAt comparison handles null and timezone offsets correctly.

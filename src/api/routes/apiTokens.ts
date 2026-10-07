@@ -5,7 +5,8 @@
  * at router.ts; writes here escalate to `apiTokens=write`. Each token is
  * bound to a Role at mint time — it acts with that role's permission matrix
  * everywhere requirePermission gates. The raw token value is shown ONCE on
- * creation and never recoverable.
+ * creation and never recoverable. An optional trustedHosts list (IPs /
+ * CIDRs) limits the source addresses the token is accepted from.
  */
 
 import { Router } from "express";
@@ -29,6 +30,9 @@ const CreateTokenSchema = z.object({
   name: z.string().min(1).max(80),
   roleId: z.string().min(1),
   integrationIds: z.array(z.string().uuid()).optional(),
+  // Bare IPs / CIDRs the token is accepted from; omitted or empty = any
+  // source. Format is validated in the service (normalizeTrustedHosts).
+  trustedHosts: z.array(z.string().max(64)).max(256).optional(),
   expiresAt: z.string().datetime().optional(),
 });
 
@@ -58,6 +62,7 @@ router.post("/", requirePermission("apiTokens", "write"), async (req, res, next)
       name: input.name,
       roleId: input.roleId,
       integrationIds: input.integrationIds,
+      trustedHosts: input.trustedHosts,
       expiresAt,
       createdBy: req.session?.username || "unknown",
     });
@@ -67,7 +72,12 @@ router.post("/", requirePermission("apiTokens", "write"), async (req, res, next)
       resourceId: result.token.id,
       resourceName: result.token.name,
       actor: req.session?.username,
-      message: `API token "${result.token.name}" created with role "${result.token.roleName}"`,
+      message:
+        `API token "${result.token.name}" created with role "${result.token.roleName}"` +
+        (result.token.trustedHosts.length
+          ? `, accepted only from ${result.token.trustedHosts.join(", ")}`
+          : ", accepted from any source address"),
+      details: { trustedHosts: result.token.trustedHosts },
     });
     // The raw token field is the ONLY time the caller sees the value.
     res.status(201).json(result);

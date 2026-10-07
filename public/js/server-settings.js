@@ -8508,7 +8508,7 @@ function renderApiTokensTab(tokens, roles, quarantineIntegrations, apiBaseUrl, d
 
   var tableHtml = tokens.length
     ? '<div class="table-wrapper"><table class="data-table"><thead><tr>' +
-        '<th>Name</th><th>Prefix</th><th>Role</th><th>Integrations</th><th>Created By</th><th>Last Used</th><th>Expires</th><th>Status</th><th>Actions</th>' +
+        '<th>Name</th><th>Prefix</th><th>Role</th><th>Integrations</th><th>Trusted Hosts</th><th>Created By</th><th>Last Used</th><th>Expires</th><th>Status</th><th>Actions</th>' +
       '</tr></thead><tbody>' +
       tokens.map(function (t) {
         var statusBadge = t.revokedAt
@@ -8536,11 +8536,21 @@ function renderApiTokensTab(tokens, roles, quarantineIntegrations, apiBaseUrl, d
           : tokenRole && tokenRole.grantsQuarantineWrite
             ? '<span style="color:var(--color-danger,#c0392b)">none — token cannot push</span>'
             : '<span style="color:var(--color-text-secondary)">n/a</span>';
+        // Empty = accepted from any source; otherwise the first few entries
+        // with the full list in the tooltip.
+        var hosts = t.trustedHosts || [];
+        var hostsHtml = hosts.length
+          ? '<span title="' + escapeHtml(hosts.join(", ")) + '">' +
+              hosts.slice(0, 3).map(function (h) { return '<div class="mono">' + escapeHtml(h) + '</div>'; }).join("") +
+              (hosts.length > 3 ? '<div style="color:var(--color-text-secondary)">+' + (hosts.length - 3) + ' more</div>' : '') +
+            '</span>'
+          : '<span style="color:var(--color-text-secondary)">Any</span>';
         return '<tr>' +
           '<td><strong>' + escapeHtml(t.name) + '</strong></td>' +
           '<td class="mono">' + escapeHtml(t.tokenPrefix || "—") + '…</td>' +
           '<td>' + roleHtml + '</td>' +
           '<td style="font-size:0.85rem">' + intgHtml + '</td>' +
+          '<td style="font-size:0.82rem">' + hostsHtml + '</td>' +
           '<td>' + escapeHtml(t.createdBy || "—") + '</td>' +
           '<td>' + (t.lastUsedAt ? formatDate(t.lastUsedAt) + (t.lastUsedIp ? ' <span class="mono" style="font-size:0.78rem;color:var(--color-text-secondary)">(' + escapeHtml(t.lastUsedIp) + ')</span>' : '') : "—") + '</td>' +
           '<td>' + (t.expiresAt ? formatDate(t.expiresAt) : "Never") + '</td>' +
@@ -8618,6 +8628,14 @@ function renderApiTokensTab(tokens, roles, quarantineIntegrations, apiBaseUrl, d
           '<label class="form-label">Integrations <span style="color:var(--color-danger,#c0392b)">*</span></label>' +
           '<div style="font-size:0.82rem;color:var(--color-text-secondary);margin:0 0 0.4rem">This token will only be allowed to quarantine via the selected integrations. At least one is required.</div>' +
           '<div style="border:1px solid var(--color-border);border-radius:6px;padding:0.5rem 0.75rem">' + integrationPickerHtml + '</div>' +
+        '</div>' +
+        '<div>' +
+          '<label class="form-label" for="f-token-trusted-hosts">Trusted hosts (optional)</label>' +
+          '<textarea id="f-token-trusted-hosts" class="form-input" rows="3" spellcheck="false" style="font-family:monospace" placeholder="10.20.5.14&#10;10.20.0.0/16"></textarea>' +
+          '<div style="font-size:0.82rem;color:var(--color-text-secondary);margin-top:0.3rem">' +
+            'One IP address or CIDR per line (commas also work). The token is refused from any other address. Leave blank to accept it from anywhere.' +
+            (docsAccess.callerIp ? ' Polaris sees your address as <code class="mono">' + escapeHtml(docsAccess.callerIp) + '</code>.' : '') +
+          '</div>' +
         '</div>' +
         '<div>' +
           '<label class="form-label" for="f-token-expires">Expires (optional)</label>' +
@@ -8773,9 +8791,14 @@ async function createApiToken() {
     showToast("Pick at least one integration — this role can push quarantine", "error");
     return;
   }
+  var trustedHosts = (document.getElementById("f-token-trusted-hosts").value || "")
+    .split(/[\s,;]+/)
+    .map(function (h) { return h.trim(); })
+    .filter(Boolean);
   var expiresAt = document.getElementById("f-token-expires").value;
   var body = { name: name, roleId: roleId };
   if (integrationIds.length) body.integrationIds = integrationIds;
+  if (trustedHosts.length) body.trustedHosts = trustedHosts;
   if (expiresAt) body.expiresAt = new Date(expiresAt).toISOString();
 
   var btn = document.getElementById("btn-create-api-token");

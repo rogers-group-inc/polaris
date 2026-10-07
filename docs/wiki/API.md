@@ -29,6 +29,7 @@ Tokens look like `polaris_<32-character-tail>`.
 | Situation | Answer |
 |---|---|
 | missing, revoked, expired or malformed token | the **same `401`** as no token at all |
+| a valid token sent from outside its **trusted hosts** | `403`, naming the source address Polaris saw |
 | a request the token's role does not permit | `403` — except on filter-don't-403 surfaces, which narrow instead |
 | **any** unknown path under `/api/v1` to an anonymous caller | **`401`, not `404`** — the API does not tell an anonymous caller which endpoints exist |
 
@@ -68,7 +69,7 @@ Every error is JSON with a single `error` string:
 |---|---|
 | `400` | validation failure — the message **names the offending field** |
 | `401` | missing or unusable credentials |
-| `403` | authenticated, but the role lacks the permission |
+| `403` | authenticated, but the role lacks the permission — or the token came from outside its trusted hosts |
 | `404` | no such resource, **or one outside the caller's visibility scope** |
 | `409` | conflicts with current state — an overlapping network, a duplicate reservation, a referenced row |
 | `429` | rate-limited; back off and retry |
