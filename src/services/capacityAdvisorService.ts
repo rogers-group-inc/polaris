@@ -154,6 +154,8 @@ export interface IntegrationBreakdown {
   windowsserver: number;
   vcenter: number;
   azurearc: number;
+  /** Unraid + TrueNAS SCALE integrations (optional: older callers predate them). */
+  workload?: number;
 }
 
 export interface PgRecommendation {
@@ -445,7 +447,8 @@ export function buildAdvisorState(inputs: AdvisorInputs): AdvisorState {
     integrations.fortigate * 1 +
     // `?? 0` — older callers/tests may pass a breakdown built before the
     // vcenter member existed.
-    (integrations.entra + integrations.activedirectory + integrations.windowsserver + (integrations.vcenter ?? 0)) * 2;
+    (integrations.entra + integrations.activedirectory + integrations.windowsserver + (integrations.vcenter ?? 0)
+      + (integrations.workload ?? 0)) * 2;
 
   // 3. Prisma / pg-boss / max_connections.
   //
@@ -802,6 +805,7 @@ async function readIntegrationBreakdown(): Promise<IntegrationBreakdown> {
     windowsserver: 0,
     vcenter: 0,
     azurearc: 0,
+    workload: 0,
   };
   for (const r of rows) {
     const cfg = (r.config ?? {}) as Record<string, unknown>;
@@ -825,6 +829,8 @@ async function readIntegrationBreakdown(): Promise<IntegrationBreakdown> {
       out.vcenter += 1;
     } else if (r.type === "azurearc") {
       out.azurearc += 1;
+    } else if (r.type === "unraid" || r.type === "truenas") {
+      out.workload = (out.workload ?? 0) + 1;
     }
   }
   return out;

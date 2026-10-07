@@ -181,6 +181,12 @@ export function deriveAssetSources(asset: AssetSnapshot): DerivedSource[] {
     return [];
   }
 
+  // 3a. Unraid / TrueNAS SCALE assets — explicit workload source rows written
+  //     by syncWorkloadDevices; same suppression for the same reason.
+  if (out.length === 0 && (tags.includes("unraid") || tags.includes("truenas"))) {
+    return [];
+  }
+
   // 3b. Azure Arc assets (tag "azurearc") are owned by an explicit `arc`
   //     source row written by syncArcDevices — same story as vCenter, no
   //     legacy assetTag convention to derive from. Suppress the manual

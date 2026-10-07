@@ -127,8 +127,16 @@ import {
   isFortinetIntegrationType,
   isMethodValidForStream,
   isPollingMethodCompatible,
+  isWorkloadPollingMethod,
   pollingMethodLabel,
 } from "../../utils/pollingCompatibility.js";
+import {
+  assetTypeForWorkloadRole,
+  isWorkloadPlatform,
+  parseWorkloadSourceKind,
+  workloadPlatformLabel,
+  workloadSourceKindsFor,
+} from "../../utils/workloadSources.js";
 import { collectorCapability } from "../../utils/pollingCapability.js";
 import { logger } from "../../utils/logger.js";
 import {
@@ -256,7 +264,7 @@ const CreateAssetSchema = z.object({
 // apply to the asset's source. Includes "disabled" (universally allowed
 // opt-out) and "agent" (Polaris Agent; allowed on AD/Entra/WinServer/Manual
 // sources, ignored on fortimanager/fortigate).
-const PollingMethodEnum = z.enum(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager"]);
+const PollingMethodEnum = z.enum(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas"]);
 
 const UpdateAssetSchema = CreateAssetSchema.partial().extend({
   // Unlike create (min(1)), update accepts "" — blanking the IP Address field
@@ -1999,6 +2007,14 @@ async function resolveIntegrationFilterBlock(id: string): Promise<{
       select: { observed: true },
     });
     const obs = (vmSource?.observed as Record<string, unknown> | null) || null;
+    if (obs && typeof obs.name === "string") vmName = obs.name;
+  } else if (isWorkloadPlatform(filterAsset.discoveredByIntegration.type)) {
+    // Unraid / TrueNAS: same idea — the platform's own VM / container name.
+    const wlSource = await prisma.assetSource.findFirst({
+      where: { assetId: id, sourceKind: { in: workloadSourceKindsFor(filterAsset.discoveredByIntegration.type) } },
+      select: { observed: true },
+    });
+    const obs = (wlSource?.observed as Record<string, unknown> | null) || null;
     if (obs && typeof obs.name === "string") vmName = obs.name;
   }
   const filt = assetMatchesIntegrationFilter({ ...filterAsset, adOuPath, vmName }, filterAsset.discoveredByIntegration);
@@ -4081,6 +4097,23 @@ async function validateAssetUpdate(id: string, existing: ExistingAssetForUpdate,
           throw new AppError(400, "vCenter polling requires this asset to be a vCenter-discovered VM or ESXi host (no vCenter source on file)");
         }
       }
+      // "unraid" / "truenas": the vCenter guard for the workload integrations —
+      // the stream must be one the host's API answers, and the asset must carry
+      // a source row of THAT platform to resolve the integration through.
+      if (isWorkloadPollingMethod(value)) {
+        const stream = name.replace(/Polling$/, "") as Stream;
+        const label = workloadPlatformLabel(value);
+        if (!isMethodValidForStream(stream, value)) {
+          throw new AppError(400, `${label} polling does not apply to the ${stream} stream (field: ${name})`);
+        }
+        const wlSource = await prisma.assetSource.findFirst({
+          where: { assetId: id, sourceKind: { in: workloadSourceKindsFor(value) } },
+          select: { id: true },
+        });
+        if (!wlSource) {
+          throw new AppError(400, `${label} polling requires this asset to be discovered by a ${label} integration (no ${label} source on file)`);
+        }
+      }
       // "fortimanager" reads FMG's own device roster — reachability and nothing
       // else — so it covers response time only, and needs an actual
       // FortiManager to ask. The source-kind check above already rejects it on
@@ -5323,7 +5356,8 @@ router.post("/:id/sources/:sourceId/split", requirePermission("assets", "write")
     // canonical identity link via (sourceKind, externalId). The legacy
     // entra:/ad:/fgt: prefixes were back-compat markers that re-discovery
     // already stopped consulting in Phase 2.
-    let assetType: "firewall" | "switch" | "access_point" | "workstation" | "server" | "hypervisor" | "other" = "other";
+    let assetType: "firewall" | "switch" | "access_point" | "workstation" | "server" | "hypervisor" | "container" | "other" = "other";
+    const splitWorkload = parseWorkloadSourceKind(target.sourceKind);
     const tagSet = new Set<string>(["split-from-asset", "auto-discovered"]);
     if (target.sourceKind === "entra") {
       assetType = "workstation";
@@ -5355,6 +5389,9 @@ router.post("/:id/sources/:sourceId/split", requirePermission("assets", "write")
       // run refines this via inferArcAssetType if it's actually a client SKU.
       assetType = "server";
       tagSet.add("azurearc");
+    } else if (splitWorkload) {
+      assetType = assetTypeForWorkloadRole(splitWorkload.role);
+      tagSet.add(splitWorkload.platform);
     }
 
     // Manufacturer fallback — projection only gives "Fortinet" for fortinet
