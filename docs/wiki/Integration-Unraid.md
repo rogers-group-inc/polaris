@@ -44,20 +44,42 @@ VM or container would take, Polaris does not merge them. It raises a pending
 
 ---
 
-## Before you add it: the API key
+## Before you add it: set up Unraid
 
-The integration talks to the **GraphQL API built into Unraid 7.2 and later**, at
-`/graphql`. Older Unraid releases do not have it.
+Written against **Unraid 7.3**. Menu paths can move between releases.
 
-1. On the Unraid server, open **Settings → Management Access → API Keys** and
-   create a key.
-2. **Viewer** is enough for discovery and monitoring.
-3. To [start, stop, restart or update](#workload-actions) VMs and containers
-   from Polaris, give the key a role that may manage **containers and VMs**.
-   Polaris works without it: the actions are refused by Unraid and the refusal
-   is recorded.
+1. **Check the version.** It is shown at the top right of the web UI. The
+   integration needs **Unraid 7.2 or later**, where the API is built in at
+   `/graphql`. Older releases only have it through the Unraid Connect plugin.
+2. **Create the API key.** Go to **Settings → Management Access → API Keys**
+   and create a key with a recognisable name, such as `polaris`.
+   - For discovery and monitoring, give it the **VIEWER** role (read-only).
+   - For [workload actions](#workload-actions) (start, stop, restart, update),
+     also grant the permissions **DOCKER: UPDATE_ANY** and **VMS: UPDATE_ANY**,
+     or use the **ADMIN** role, which grants everything. These are the
+     permissions Unraid's API checks on those calls. Without them Polaris still
+     monitors; Unraid refuses the actions and the refusal is recorded.
+   - The CLI equivalent is `unraid-api apikey --create`.
+3. **Copy the key** and keep it for the Polaris form.
+4. **Decide HTTPS.** **Settings → Management Access → Use SSL/TLS** sets what
+   the server speaks:
+   - **Strict** (a `myunraid.net` certificate): enter the `myunraid.net`
+     hostname as the Polaris *Host* so the certificate verifies.
+   - **Yes** (self-signed): leave *Use HTTPS* on and untick *Verify TLS
+     certificate*.
+   - **No**: untick *Use HTTPS*. Polaris then uses port 80.
+5. **Make sure Docker and the VM manager are running** (**Settings → Docker**,
+   **Settings → VM Manager**). When either is stopped, Polaris reads that part
+   of the host as *unreadable*, not as empty.
+6. In Polaris, add the integration and press **Test Connection**. It should
+   report the hostname, the Unraid version, and the container and VM counts.
+   *Containers unreadable* means Docker is stopped or the key cannot read it.
+   The same goes for VMs.
 
-Copy the key once; Unraid does not show it again.
+To explore the API yourself, turn on **Settings → Management Access →
+Developer Options → GraphQL Sandbox** and open `https://<server>/graphql`. The
+integration card's [Query API](#query-api) button runs read-only queries with
+the stored key.
 
 ---
 

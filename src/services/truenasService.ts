@@ -4,9 +4,11 @@
  * TrueNAS SCALE integration — the host, its VMs and its Apps, read through the
  * versioned JSON-RPC 2.0 over WebSocket API (`wss://<host>/api/current`,
  * TrueNAS 25.04+; the REST API is deprecated in 25.10 and removed in 26.04).
- * Authenticated with `auth.login_with_api_key` — create a key under the
- * admin user's API Keys (a read-only role is enough for discovery and
- * monitoring; APPS_WRITE / VM_WRITE for the workload actions).
+ * Authenticated with `auth.login_with_api_key`. A key carries the permissions
+ * of the user it belongs to: a "Readonly Admin" user is enough for discovery
+ * and monitoring; the workload actions need APPS_WRITE / VM_WRITE ("Full
+ * Admin"). Setup steps: the General-tab tip in public/js/integrations.js and
+ * docs/wiki/Integration-TrueNAS.md.
  *
  * A TrueNAS "container" asset is an APP: a compose project that may run
  * several Docker containers, and the unit TrueNAS itself starts, stops and

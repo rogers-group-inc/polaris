@@ -47,23 +47,46 @@ VM or App would take, Polaris does not merge them. It raises a pending
 
 ---
 
-## Before you add it: the API key
+## Before you add it: set up TrueNAS
 
-The integration speaks **JSON-RPC 2.0 over a WebSocket** at
-`wss://<host>/api/current`, the API of **TrueNAS 25.04 and later**. (The older
-REST API is deprecated in 25.10 and removed in 26.04; Polaris does not use it.)
-It logs in with `auth.login_with_api_key`.
+Written against **TrueNAS SCALE 25.10**. Menu paths can move between releases.
 
-1. In TrueNAS, open the **admin user's API Keys** and create a key.
-2. **Read roles** are enough for discovery and monitoring.
-3. To [start, stop, restart or update](#workload-actions) VMs and Apps from
-   Polaris, the key also needs **APPS_WRITE** and **VM_WRITE**. Polaris works
-   without them: the actions are refused by TrueNAS and the refusal is
-   recorded.
+1. **Check the version** on the dashboard's System Information card. The
+   integration needs **25.04 or later**. It uses the JSON-RPC 2.0 WebSocket API
+   at `wss://<host>/api/current` and logs in with `auth.login_with_api_key`.
+   The older REST API is deprecated in 25.10 and removed in 26.04; Polaris does
+   not use it.
+2. **Create a dedicated user.** A TrueNAS API key carries exactly the
+   permissions of the user it belongs to; the key has no permissions of its own.
+   Go to **Credentials → Users → Add**:
+   - **Username**: for example `polaris`.
+   - **Allow Access**: **TrueNAS Access**.
+   - **Administration Role**: **Readonly Admin** for discovery and monitoring.
+     For [workload actions](#workload-actions) (start, stop, restart, update
+     Apps and VMs), use **Full Admin** instead. With Readonly Admin Polaris
+     still monitors; TrueNAS refuses the actions and the refusal is recorded.
+   - No shell, SMB or sudo access is needed.
+3. **Create the API key.** Open the top-right user menu → **My API Keys** →
+   **Add**. Alternatively go to **Credentials → Users**, select the user and
+   choose **View API Keys**. Give the key a name, choose the user under
+   **Username**, and either leave it **Non-expiring** or set **Expires On**.
+4. **Copy the key immediately.** TrueNAS shows it only once, in the
+   confirmation dialog.
+5. **Keep HTTPS on.** TrueNAS **automatically revokes a user-linked API key the
+   first time it is sent over plain HTTP**, so one test against port 80 costs
+   you the key. If the web UI still uses TrueNAS's default self-signed
+   certificate, either untick *Verify TLS certificate* in Polaris or install a
+   trusted certificate under **Credentials → Certificates** and select it in
+   **System → General Settings → GUI**.
+6. **Make sure Apps are configured** (**Apps**, with a pool chosen). When they
+   are not, Polaris reads the Apps as *unreadable*, not as empty.
+7. In Polaris, add the integration and press **Test Connection**. It should
+   report the hostname, the TrueNAS version, and how many Apps, VMs and pools it
+   can see.
 
-> **Keep *Use HTTPS* on.** TrueNAS **revokes an API key that is sent over plain
-> HTTP**. One test against port 80 can cost you the key, and you will have to
-> create a new one.
+API keys are not subject to the user's two-factor authentication, so treat the
+key like a password. Rotate it by creating a new key, updating Polaris, and
+deleting the old key.
 
 ---
 
@@ -252,7 +275,7 @@ presets cover the common reads.
 |---|---|
 | The API key stopped working right after a test | it was sent over plain HTTP and TrueNAS revoked it. Create a new key and keep **Use HTTPS** on |
 | Test Connection cannot reach the API | the TrueNAS version. The `/api/current` WebSocket API needs TrueNAS 25.04 or later |
-| Start / Stop / Restart / Update fails with a permission error | the key's roles. Actions need **APPS_WRITE** (Apps) or **VM_WRITE** (VMs). The `asset.workload.*` Event names the refusal |
+| Start / Stop / Restart / Update fails with a permission error | the role of the user the key belongs to. **Readonly Admin** can only read; actions need **Full Admin** (or a custom role carrying APPS_WRITE for Apps and VM_WRITE for VMs). The `asset.workload.*` Event names the refusal |
 | An App with several containers is one asset | correct. Polaris tracks the App, not its containers |
 | An App reads neither up nor down for a while | it is in a transition state such as DEPLOYING, which is skipped |
 | Every App went quiet at once, and the host is down | correct: the host's API is unreachable, so its workloads are skipped and suppressed |

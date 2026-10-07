@@ -52,6 +52,17 @@ describe("registries", () => {
     expect(scope._NON_FORTINET_TABBED).toEqual(expect.arrayContaining(["unraid", "truenas"]));
   });
 
+  it("walks the operator through the platform-side setup", () => {
+    const u = scope.workloadFormHTML("unraid", {});
+    expect(u).toContain("Settings → Management Access → API Keys");
+    expect(u).toContain("DOCKER: UPDATE_ANY");
+    expect(u).toContain("VMS: UPDATE_ANY");
+    const t = scope.workloadFormHTML("truenas", {});
+    expect(t).toContain("My API Keys");
+    expect(t).toContain("Readonly Admin");
+    expect(t).toContain("revokes a key the first time it is sent over plain HTTP");
+  });
+
   it("requires host + key, and drops the key on the edit flow", () => {
     expect(scope._integrationRequires("unraid", "create")).toEqual([["f-host", "host"], ["f-apiToken", "API key"]]);
     expect(scope._integrationRequires("truenas", "edit")).toEqual([["f-host", "host"]]);

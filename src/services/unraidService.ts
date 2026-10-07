@@ -4,8 +4,9 @@
  * Unraid integration — the host, its VMs and its Docker containers, read
  * through the GraphQL API built into Unraid 7.2+ (`/graphql`, an API key in the
  * `x-api-key` header; create one under Settings → Management Access → API Keys
- * with the Viewer role, or a role that may start / stop / update containers
- * and VMs when the workload actions are wanted).
+ * with the VIEWER role, plus DOCKER:UPDATE_ANY and VMS:UPDATE_ANY — the
+ * permissions the API's start / stop / restart / update resolvers check —
+ * when the workload actions are wanted).
  *
  * One query answers the inventory and the host's live usage. Per-container
  * CPU / memory is the exception: Unraid publishes it only as the

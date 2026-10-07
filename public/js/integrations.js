@@ -5418,8 +5418,29 @@ function workloadFormHTML(type, defaults) {
   var ctrNames = ctrMode === "include" ? (d.containerInclude || []) : (d.containerExclude || []);
   var ctrWord = isTn ? "Apps" : "containers";
   var keyHint = isTn
-    ? 'Create one under <strong>Credentials → API Keys</strong> (TrueNAS 25.04 or later). A read-only key is enough for discovery and monitoring; starting, stopping and updating Apps and VMs needs one that may write them.'
-    : 'Create one under <strong>Settings → Management Access → API Keys</strong> (Unraid 7.2 or later). The <em>Viewer</em> role is enough for discovery and monitoring; starting, stopping and updating containers and VMs needs a role that may manage them.';
+    ? 'Created from the top-right user menu → <strong>My API Keys</strong>. A key carries the permissions of the user it belongs to — see the setup steps above.'
+    : 'Created under <strong>Settings → Management Access → API Keys</strong>. See the setup steps above for the role and permissions.';
+  // Step-by-step setup on the platform side, written against Unraid 7.3 and
+  // TrueNAS SCALE 25.10. Menu paths move between releases — when they do,
+  // update this AND docs/wiki/Integration-Unraid.md / Integration-TrueNAS.md.
+  var setupSteps = isTn
+    ? '<ol style="margin:0.25rem 0 0 1.1rem;padding:0">' +
+        '<li><strong>Check the version</strong> — the dashboard&rsquo;s System Information card. Polaris needs TrueNAS SCALE <strong>25.04 or later</strong> (it uses the JSON-RPC WebSocket API, not the REST API removed in 26.04).</li>' +
+        '<li><strong>Create a dedicated user</strong> — <em>Credentials → Users → Add</em>. Give it a username (e.g. <code>polaris</code>), under <em>Allow Access</em> choose <strong>TrueNAS Access</strong>, and set the <em>Administration Role</em> to <strong>Readonly Admin</strong>. No shell, no SMB, no sudo. Readonly Admin is enough for discovery and monitoring; for Polaris to start, stop, restart or update Apps and VMs the user needs <strong>Full Admin</strong> instead.</li>' +
+        '<li><strong>Create the key</strong> — top-right user menu → <em>My API Keys</em> → <strong>Add</strong> (or <em>Credentials → Users</em>, select the user, <em>View API Keys</em>). Name it, pick the user from <em>Username</em>, and either leave it non-expiring or set <em>Expires On</em>.</li>' +
+        '<li><strong>Copy the key now</strong> — TrueNAS shows it only once — and paste it below.</li>' +
+        '<li><strong>Keep HTTPS on.</strong> TrueNAS revokes a key the first time it is sent over plain HTTP. If the web UI uses TrueNAS&rsquo;s default self-signed certificate, untick <em>Verify TLS certificate</em> or install a trusted certificate on TrueNAS.</li>' +
+        '<li><strong>Test Connection</strong> should report the hostname, the version and how many Apps, VMs and pools it can see. &ldquo;Apps unreadable&rdquo; means the Apps service has no pool configured, or the user lacks read access.</li>' +
+      '</ol>'
+    : '<ol style="margin:0.25rem 0 0 1.1rem;padding:0">' +
+        '<li><strong>Check the version</strong> — shown top-right of the web UI. Polaris needs <strong>Unraid 7.2 or later</strong>, where the API is built in (older releases need the Unraid Connect plugin).</li>' +
+        '<li><strong>Create the key</strong> — <em>Settings → Management Access → API Keys</em> → create a key named e.g. <code>polaris</code>. For discovery and monitoring give it the <strong>VIEWER</strong> role (read-only).</li>' +
+        '<li><strong>For workload actions</strong> (start / stop / restart / update), also grant the permissions <strong>DOCKER: UPDATE_ANY</strong> and <strong>VMS: UPDATE_ANY</strong> — or use the ADMIN role, which grants everything. Without them Polaris still monitors; the actions are refused by Unraid and logged.</li>' +
+        '<li><strong>Copy the key</strong> and paste it below.</li>' +
+        '<li><strong>HTTPS:</strong> <em>Settings → Management Access → Use SSL/TLS</em> decides the protocol. With <em>Strict</em> (a myunraid.net certificate) enter the myunraid.net hostname as the host so the certificate verifies; with a self-signed certificate untick <em>Verify TLS certificate</em>; with SSL off, untick <em>Use HTTPS</em>.</li>' +
+        '<li><strong>Test Connection</strong> should report the hostname, the Unraid version and the container and VM counts. &ldquo;Containers unreadable&rdquo; means Docker is stopped (<em>Settings → Docker</em>) or the key lacks Docker read access; the same for VMs.</li>' +
+      '</ol>' +
+      '<p style="margin:0.4rem 0 0 0">To explore the API yourself, enable <em>Settings → Management Access → Developer Options → GraphQL Sandbox</em> and open <code>https://&lt;server&gt;/graphql</code>.</p>';
   function filterBlock(idMode, idNames, mode, names, what, matched, example) {
     return '<div class="form-group">' +
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
@@ -5434,6 +5455,7 @@ function workloadFormHTML(type, defaults) {
   }
   return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. ' + (isTn ? "Storage NAS" : "Tower") + '"></div>' +
     infoBox('Connects to an <strong style="color:var(--color-text-primary)">' + product + '</strong> host and discovers the host, its virtual machines and its ' + ctrWord + ', each as an asset parented by the host. Their state, CPU and memory, the host&rsquo;s pools and disk temperatures are read from the host&rsquo;s own API on every monitor tick — nothing is installed on the host.') +
+    calloutHTML("tip", "Set up " + product + " first", setupSteps) +
     formDivider() +
     sectionHeading("Connection Settings") +
     '<div style="display:grid;grid-template-columns:1fr auto;gap:8px">' +
