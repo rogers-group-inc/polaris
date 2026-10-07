@@ -105,6 +105,57 @@ d("API token trusted hosts", () => {
     expect(found.trustedHosts).toEqual(["10.1.2.0/24", "192.168.4.20"]);
   });
 
+  it("PUT /api-tokens/:id/trusted-hosts takes effect on the next request, and is audited", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const minted = await createToken({
+      name: `${TOKEN_PREFIX}editable`,
+      roleId,
+      trustedHosts: ["10.98.0.0/16"],
+      createdBy: "integration-test",
+    });
+    const call = () => request(app).get("/api/v1/assets").set("Authorization", `Bearer ${minted.rawToken}`);
+    expect((await call()).status).toBe(403);
+
+    const put = await agent
+      .put(`/api/v1/api-tokens/${minted.token.id}/trusted-hosts`)
+      .set("X-CSRF-Token", csrf)
+      .send({ trustedHosts: ["10.98.0.0/16", "127.0.0.1", "::1"] });
+    expect(put.status).toBe(200);
+    expect(put.body.token.trustedHosts).toEqual(["10.98.0.0/16", "127.0.0.1", "::1"]);
+    expect((await call()).status).toBe(200);
+    expect(await waitForEventCount("api_token.trusted_hosts_updated", 1, minted.token.id)).toBe(1);
+
+    // Clearing the list re-opens the token and is logged at warning level.
+    const cleared = await agent
+      .put(`/api/v1/api-tokens/${minted.token.id}/trusted-hosts`)
+      .set("X-CSRF-Token", csrf)
+      .send({ trustedHosts: [] });
+    expect(cleared.status).toBe(200);
+    await waitForEventCount("api_token.trusted_hosts_updated", 2, minted.token.id);
+    const widen = await prisma.event.findFirst({
+      where: { action: "api_token.trusted_hosts_updated", resourceId: minted.token.id },
+      orderBy: { timestamp: "desc" },
+    });
+    expect(widen?.level).toBe("warning");
+    await prisma.event.deleteMany({ where: { resourceId: minted.token.id } });
+  });
+
+  it("PUT /api-tokens/:id/trusted-hosts refuses a typo (400) and a revoked token (409)", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const minted = await createToken({ name: `${TOKEN_PREFIX}revoked`, roleId, createdBy: "integration-test" });
+    const typo = await agent
+      .put(`/api/v1/api-tokens/${minted.token.id}/trusted-hosts`)
+      .set("X-CSRF-Token", csrf)
+      .send({ trustedHosts: ["10.1.2.300"] });
+    expect(typo.status).toBe(400);
+    await prisma.apiToken.update({ where: { id: minted.token.id }, data: { revokedAt: new Date() } });
+    const revoked = await agent
+      .put(`/api/v1/api-tokens/${minted.token.id}/trusted-hosts`)
+      .set("X-CSRF-Token", csrf)
+      .send({ trustedHosts: ["10.0.0.1"] });
+    expect(revoked.status).toBe(409);
+  });
+
   it("POST /api-tokens refuses a malformed trusted host with 400 and mints nothing", async () => {
     const { agent, csrf } = await authedAgent(app);
     const res = await agent

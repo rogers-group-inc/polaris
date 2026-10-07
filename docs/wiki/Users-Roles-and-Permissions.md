@@ -454,9 +454,12 @@ grants, filter-don't-403 surfaces included.
 - A token granting quarantine at `write` or above **must** name the
   integrations it is scoped to.
 - Binding a token to an admin-equivalent role logs a **warning Event**.
-- **Trusted hosts** (optional, set at mint time) limit the source addresses a
-  token is accepted from: one IP address or CIDR per line, IPv4 or IPv6. Blank
-  means any source. A valid token from any other address is refused with a
+- **Trusted hosts** (optional) limit the source addresses a token is accepted
+  from. Set them at creation or change them later with **Edit Hosts** on the
+  token's row; the token value stays the same and the change applies to the
+  next request. Clearing a restricted token's list logs a warning Event.
+  Entries are one IP address or CIDR per line, IPv4 or IPv6. Blank means any
+  source. A valid token from any other address is refused with a
   `403` naming the address Polaris saw, and an `api_token.untrusted_host`
   warning Event is written — at most once per token and address every
   15 minutes. The address is the one Polaris resolves through `TRUST_PROXY`, so

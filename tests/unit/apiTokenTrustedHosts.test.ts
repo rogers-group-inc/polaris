@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   prisma: {
     apiToken: {
       findMany: vi.fn(),
+      findUnique: vi.fn(),
       update: vi.fn(),
     },
   },
@@ -34,6 +35,7 @@ vi.mock("../../src/utils/password.js", () => ({
 import {
   MAX_TRUSTED_HOSTS,
   normalizeTrustedHosts,
+  updateTrustedHosts,
   verifyToken,
   _resetUntrustedHostEventThrottle,
 } from "../../src/services/apiTokenService.js";
@@ -149,5 +151,48 @@ describe("verifyToken with trusted hosts", () => {
   it("a non-polaris bearer is invalid without a DB read", async () => {
     expect(await verifyToken("not-a-token", "10.20.1.1")).toEqual({ ok: false, reason: "invalid" });
     expect(h.prisma.apiToken.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateTrustedHosts", () => {
+  const summaryRow = (trustedHosts: string[]) => ({
+    ...tokenRow(trustedHosts),
+    role: { name: "r" },
+    createdBy: "admin",
+    createdAt: new Date(),
+    expiresAt: null,
+    lastUsedAt: null,
+    lastUsedIp: null,
+    revokedAt: null,
+    revokedBy: null,
+  });
+
+  it("replaces the list with the normalized one and returns the previous list", async () => {
+    h.prisma.apiToken.findUnique.mockResolvedValue({ trustedHosts: ["10.0.0.1"], revokedAt: null });
+    h.prisma.apiToken.update.mockResolvedValue(summaryRow(["10.1.2.0/24"]));
+    const r = await updateTrustedHosts("tok-1", ["10.1.2.5/24", "10.1.2.0/24"]);
+    expect(h.prisma.apiToken.update.mock.calls[0][0].data).toEqual({ trustedHosts: ["10.1.2.0/24"] });
+    expect(r.before).toEqual(["10.0.0.1"]);
+    expect(r.token.trustedHosts).toEqual(["10.1.2.0/24"]);
+  });
+
+  it("accepts an empty list (back to any source)", async () => {
+    h.prisma.apiToken.findUnique.mockResolvedValue({ trustedHosts: ["10.0.0.1"], revokedAt: null });
+    h.prisma.apiToken.update.mockResolvedValue(summaryRow([]));
+    await updateTrustedHosts("tok-1", []);
+    expect(h.prisma.apiToken.update.mock.calls[0][0].data).toEqual({ trustedHosts: [] });
+  });
+
+  it("rejects a malformed entry before touching the row", async () => {
+    await expect(updateTrustedHosts("tok-1", ["10.1.2.300"])).rejects.toMatchObject({ httpStatus: 400 });
+    expect(h.prisma.apiToken.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("is 404 for an unknown token and 409 for a revoked one", async () => {
+    h.prisma.apiToken.findUnique.mockResolvedValueOnce(null);
+    await expect(updateTrustedHosts("nope", [])).rejects.toMatchObject({ httpStatus: 404 });
+    h.prisma.apiToken.findUnique.mockResolvedValueOnce({ trustedHosts: [], revokedAt: new Date() });
+    await expect(updateTrustedHosts("tok-1", ["10.0.0.1"])).rejects.toMatchObject({ httpStatus: 409 });
+    expect(h.prisma.apiToken.update).not.toHaveBeenCalled();
   });
 });

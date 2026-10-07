@@ -17,6 +17,7 @@ import {
   deleteToken,
   listTokens,
   revokeToken,
+  updateTrustedHosts,
   listRoleChoices,
   listQuarantineIntegrations,
 } from "../../services/apiTokenService.js";
@@ -81,6 +82,34 @@ router.post("/", requirePermission("apiTokens", "write"), async (req, res, next)
     });
     // The raw token field is the ONLY time the caller sees the value.
     res.status(201).json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+const UpdateTrustedHostsSchema = z.object({
+  trustedHosts: z.array(z.string().max(64)).max(256),
+});
+
+router.put("/:id/trusted-hosts", requirePermission("apiTokens", "write"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const input = UpdateTrustedHostsSchema.parse(req.body);
+    const { token, before } = await updateTrustedHosts(id, input.trustedHosts);
+    const describe = (hosts: string[]) => (hosts.length ? hosts.join(", ") : "any source");
+    logEvent({
+      action: "api_token.trusted_hosts_updated",
+      resourceType: "api_token",
+      resourceId: token.id,
+      resourceName: token.name,
+      actor: req.session?.username,
+      // Opening a restricted token to every source is the widening an
+      // auditor needs to see first.
+      level: before.length > 0 && token.trustedHosts.length === 0 ? "warning" : "info",
+      message: `API token "${token.name}" trusted hosts changed from ${describe(before)} to ${describe(token.trustedHosts)}`,
+      details: { before, after: token.trustedHosts },
+    });
+    res.json({ token });
   } catch (err) {
     next(err);
   }

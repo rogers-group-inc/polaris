@@ -544,6 +544,7 @@ const api = {
     list:   ()        => request("GET",    "/api-tokens"),
     create: (body)    => request("POST",   "/api-tokens", body),
     revoke: (id)      => request("POST",   `/api-tokens/${id}/revoke`),
+    updateTrustedHosts: (id, trustedHosts) => request("PUT", `/api-tokens/${id}/trusted-hosts`, { trustedHosts }),
     delete: (id)      => request("DELETE", `/api-tokens/${id}`),
   },
   // Operator-uploaded device icons used by the Device Map's topology

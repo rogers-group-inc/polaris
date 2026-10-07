@@ -8518,7 +8518,8 @@ function renderApiTokensTab(tokens, roles, quarantineIntegrations, apiBaseUrl, d
             : '<span class="badge badge-active">Active</span>';
         var actions = t.revokedAt
           ? '<button class="btn btn-sm btn-danger" onclick="deleteApiToken(\'' + t.id + '\',\'' + escapeHtml(t.name) + '\')">Delete</button>'
-          : '<button class="btn btn-sm btn-secondary" onclick="revokeApiToken(\'' + t.id + '\',\'' + escapeHtml(t.name) + '\')">Revoke</button>' +
+          : '<button class="btn btn-sm btn-secondary" onclick="editApiTokenTrustedHosts(\'' + t.id + '\')">Edit Hosts</button>' +
+            '<button class="btn btn-sm btn-secondary" onclick="revokeApiToken(\'' + t.id + '\',\'' + escapeHtml(t.name) + '\')">Revoke</button>' +
             '<button class="btn btn-sm btn-danger" onclick="deleteApiToken(\'' + t.id + '\',\'' + escapeHtml(t.name) + '\')">Delete</button>';
         var tokenRole = roleById[t.roleId];
         var roleHtml = '<span class="badge badge-type">' + escapeHtml(t.roleName || "—") + '</span>' +
@@ -8673,9 +8674,60 @@ function renderApiTokensTab(tokens, roles, quarantineIntegrations, apiBaseUrl, d
   }
   // Stash for createApiToken's client-side validation.
   _apiTokenRolesById = roleById;
+  _apiTokensById = {};
+  tokens.forEach(function (t) { _apiTokensById[t.id] = t; });
+  _apiTokenCallerIp = docsAccess.callerIp || "";
 }
 
 var _apiTokenRolesById = {};
+var _apiTokensById = {};
+var _apiTokenCallerIp = "";
+
+// One IP or CIDR per line; commas, semicolons and spaces also separate.
+// The server validates — this only splits.
+function _parseTrustedHosts(text) {
+  return String(text || "")
+    .split(/[\s,;]+/)
+    .map(function (h) { return h.trim(); })
+    .filter(Boolean);
+}
+
+function editApiTokenTrustedHosts(id) {
+  var t = _apiTokensById[id];
+  if (!t) return;
+  var body =
+    '<p style="margin:0 0 0.75rem">Source addresses token <strong>' + escapeHtml(t.name) + '</strong> is accepted from. ' +
+      'The change applies to the next request — the token value does not change.</p>' +
+    '<label class="form-label" for="f-edit-trusted-hosts">Trusted hosts</label>' +
+    '<textarea id="f-edit-trusted-hosts" class="form-input" rows="6" spellcheck="false" style="font-family:monospace;width:100%" placeholder="10.20.5.14&#10;10.20.0.0/16">' +
+      escapeHtml((t.trustedHosts || []).join("\n")) + '</textarea>' +
+    '<div style="font-size:0.82rem;color:var(--color-text-secondary);margin-top:0.3rem">' +
+      'One IP address or CIDR per line. Leave blank to accept the token from anywhere.' +
+      (_apiTokenCallerIp ? ' Polaris sees your address as <code class="mono">' + escapeHtml(_apiTokenCallerIp) + '</code>.' : '') +
+    '</div>';
+  openModal("Trusted Hosts — " + t.name, body,
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn btn-primary" id="btn-save-trusted-hosts">Save</button>');
+  document.getElementById("btn-save-trusted-hosts").addEventListener("click", async function () {
+    var btn = this;
+    var hosts = _parseTrustedHosts(document.getElementById("f-edit-trusted-hosts").value);
+    if (!hosts.length && (t.trustedHosts || []).length) {
+      var ok = await showConfirm('Remove every trusted host? Token "' + t.name + '" will be accepted from any address.');
+      if (!ok) return;
+    }
+    btn.disabled = true;
+    try {
+      await api.apiTokens.updateTrustedHosts(id, hosts);
+      closeModal();
+      showToast('Trusted hosts updated for "' + t.name + '"');
+      _apiTokensLoaded = false;
+      await loadApiTokensTab();
+    } catch (err) {
+      showToast(err.message || "Update failed", "error");
+      btn.disabled = false;
+    }
+  });
+}
 
 // ─── API Documentation Access card ─────────────────────────────────────────
 // Who may reach the unauthenticated /api docs page. Three postures only —
@@ -8791,10 +8843,7 @@ async function createApiToken() {
     showToast("Pick at least one integration — this role can push quarantine", "error");
     return;
   }
-  var trustedHosts = (document.getElementById("f-token-trusted-hosts").value || "")
-    .split(/[\s,;]+/)
-    .map(function (h) { return h.trim(); })
-    .filter(Boolean);
+  var trustedHosts = _parseTrustedHosts(document.getElementById("f-token-trusted-hosts").value);
   var expiresAt = document.getElementById("f-token-expires").value;
   var body = { name: name, roleId: roleId };
   if (integrationIds.length) body.integrationIds = integrationIds;

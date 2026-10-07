@@ -4,7 +4,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/apiTokenService.ts
 
-**What it owns:** Long-lived bearer-token CRUD for external API access; argon2id hash + tokenPrefix-based lookup; role binding (each token carries a roleId whose matrix requirePermission resolves like a session snapshot); integrationIds enforcement when the bound role grants assetsQuarantine >= write; api_token.admin_equivalent warning Event on admin-equivalent bindings; per-token trustedHosts (normalizeTrustedHosts at create, enforced in verifyToken, api_token.untrusted_host warning Event throttled per token+address).
+**What it owns:** Long-lived bearer-token CRUD for external API access; argon2id hash + tokenPrefix-based lookup; role binding (each token carries a roleId whose matrix requirePermission resolves like a session snapshot); integrationIds enforcement when the bound role grants assetsQuarantine >= write; api_token.admin_equivalent warning Event on admin-equivalent bindings; per-token trustedHosts (normalizeTrustedHosts at create and on updateTrustedHosts — the one field editable after mint, refused on a revoked token — enforced in verifyToken, api_token.untrusted_host warning Event throttled per token+address).
 
 **Public API:** ApiTokenSummary, AuthenticatedToken, CreateTokenInput, CreateTokenResult, createToken, listTokens, revokeToken, deleteToken, verifyToken.
 
@@ -13,6 +13,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:**
 - src/api/routes/apiTokens.ts — GET /api-tokens, list all tokens
 - src/api/routes/apiTokens.ts — POST /api-tokens, create new token (show raw once)
+- src/api/routes/apiTokens.ts — PUT /api-tokens/:id/trusted-hosts, replace a live token's trusted hosts (updateTrustedHosts)
 - src/api/routes/apiTokens.ts — POST /api-tokens/:id/revoke, revoke by ID
 - src/api/routes/apiTokens.ts — DELETE /api-tokens/:id, delete by ID
 - src/api/middleware/auth.ts — attachApiToken middleware, verify bearer token on every request

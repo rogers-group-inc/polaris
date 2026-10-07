@@ -267,6 +267,30 @@ export async function listTokens(): Promise<ApiTokenSummary[]> {
   return rows.map(toSummary);
 }
 
+export interface UpdateTrustedHostsResult {
+  token: ApiTokenSummary;
+  before: string[];
+}
+
+/**
+ * Replace a live token's trusted-host list — the one field editable after
+ * mint, because a caller's address changing must not force re-issuing the
+ * secret. Same validation as create; an empty list re-opens the token to
+ * any source. A revoked token refuses (409): nothing can reach it any more.
+ */
+export async function updateTrustedHosts(id: string, raw: readonly string[]): Promise<UpdateTrustedHostsResult> {
+  const trustedHosts = normalizeTrustedHosts(raw);
+  const existing = await prisma.apiToken.findUnique({ where: { id }, select: { trustedHosts: true, revokedAt: true } });
+  if (!existing) throw new AppError(404, "Token not found");
+  if (existing.revokedAt) throw new AppError(409, "Token is revoked — its trusted hosts can no longer be changed");
+  const row = await prisma.apiToken.update({
+    where: { id },
+    data: { trustedHosts },
+    include: { role: { select: { name: true } } },
+  });
+  return { token: toSummary(row), before: existing.trustedHosts };
+}
+
 export async function revokeToken(id: string, revokedBy: string): Promise<void> {
   const row = await prisma.apiToken.findUnique({ where: { id } });
   if (!row) throw new AppError(404, "Token not found");
