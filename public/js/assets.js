@@ -25606,28 +25606,73 @@ function _trEdgeColor(e) {
   return "var(--color-success)";
 }
 
-/** Pure: the path graph as SVG. `source` is this host ({hostname, ipAddress}). */
-function _trPathSVG(g, source, minWidth) {
-  // Columns shrink to fit the panel before the graph scrolls: source and
-  // destination on one screen is the point of the view.
+/**
+ * Pure: where everything on the path graph sits. Columns shrink to fit the
+ * panel before the graph scrolls (source and destination on one screen is the
+ * point of the view); `minWidth` null gives the roomiest columns, which is
+ * what the export draws. Shared by the on-screen SVG and the export scene so
+ * the two cannot drift.
+ */
+function _trPathLayout(g, minWidth) {
   var MINCOL = 76, MAXCOL = 130, ROWH = 74, PADX = 12, PADT = 22, R = 13;
+  if (minWidth == null) minWidth = PADX * 2 + g.cols * MAXCOL;
   var rows = 1;
   Object.keys(g.nodes).forEach(function (k) { rows = Math.max(rows, g.nodes[k].row + 1); });
   var colW = Math.max(MINCOL, Math.min(MAXCOL, ((minWidth || 0) - PADX * 2) / g.cols));
   var W = Math.max(minWidth || 0, PADX * 2 + g.cols * colW);
   var offX = (W - g.cols * colW) / 2;
-  var H = PADT + rows * ROWH + 4;
-  function pos(n) { return { x: offX + n.col * colW + colW / 2, y: PADT + R + n.row * ROWH }; }
-  function clip(s, px) { var max = Math.max(4, Math.floor(px / 6.2)); s = String(s || ""); return s.length > max ? s.slice(0, max - 1) + "…" : s; }
+  return {
+    W: W, H: PADT + rows * ROWH + 4, R: R,
+    pos: function (n) { return { x: offX + n.col * colW + colW / 2, y: PADT + R + n.row * ROWH }; },
+    clip: function (s) { var max = Math.max(4, Math.floor((colW - 8) / 6.2)); s = String(s || ""); return s.length > max ? s.slice(0, max - 1) + "…" : s; },
+  };
+}
+
+/**
+ * Pure: how one node reads — its glyph, its name, the line under the name,
+ * and its colours (theme tokens, or a monitor-state hex). Shared by the SVG
+ * and the export scene.
+ */
+function _trNodeView(g, k, source) {
+  var n = g.nodes[k], h = n.hop || {};
+  var rtt = h.rttMs ? _trHopRtt(h.rttMs) : null;
+  var v = { fill: null, stroke: "var(--color-text-secondary)", text: "var(--color-text-primary)", dashed: false,
+    strokeWidth: k === "dst" ? 3 : 1.5, opacity: n.onSel || k === "src" ? 1 : 0.45, glyph: "", name: "", sub: "" };
+  if (k === "src") {
+    v.fill = "var(--color-accent)"; v.stroke = v.fill; v.text = "#fff"; v.glyph = "⌂";
+    v.name = (source && source.hostname) || "This host"; v.sub = "source";
+  } else if (k === "dst") {
+    v.fill = h.monitorStatus && MONITOR_STATE_COLORS[h.monitorStatus] ? MONITOR_STATE_COLORS[h.monitorStatus] : "var(--color-bg-primary)";
+    v.glyph = "◎"; if (v.fill.charAt(0) === "#") { v.stroke = v.fill; v.text = "#fff"; }
+    v.name = h.hostname || h.rdns || g.destIp || "Destination"; v.sub = rtt ? (Math.round(rtt.avg * 10) / 10) + " ms" : "destination";
+  } else if (!h.ip) {
+    v.stroke = "var(--color-text-tertiary)"; v.dashed = true; v.text = "var(--color-text-tertiary)";
+    v.glyph = "*"; v.name = "no reply"; v.sub = "TTL " + n.ttl;
+  } else {
+    var sc = h.monitorStatus && MONITOR_STATE_COLORS[h.monitorStatus];
+    v.fill = sc || "var(--color-bg-primary)"; if (sc) { v.stroke = sc; v.text = "#fff"; }
+    v.glyph = String(n.ttl); v.name = h.hostname || h.rdns || h.ip; v.sub = rtt ? (Math.round(rtt.avg * 10) / 10) + " ms" : "—";
+  }
+  return v;
+}
+
+/** Pure: a link's stroke width — thicker the more traces took it. */
+function _trEdgeWidth(g, e) {
+  var w = 1.25 + 3 * (e.traces / Math.max(1, g.traces));
+  return e.onSel ? Math.max(2.5, w) : w;
+}
+
+/** Pure: the path graph as SVG. `source` is this host ({hostname, ipAddress}). */
+function _trPathSVG(g, source, minWidth) {
+  var L = _trPathLayout(g, minWidth || 0), R = L.R, W = L.W, H = L.H;
   var edgeSvg = "", nodeSvg = "", hitSvg = "";
   // Unselected routes first so the selected one paints on top.
   g.edges.slice().sort(function (a, b) { return (a.onSel ? 1 : 0) - (b.onSel ? 1 : 0); }).forEach(function (e) {
-    var a = pos(g.nodes[e.from]), b = pos(g.nodes[e.to]);
+    var a = L.pos(g.nodes[e.from]), b = L.pos(g.nodes[e.to]);
     var x1 = a.x + R, x2 = b.x - R, mx = (x1 + x2) / 2;
-    var w = (1.25 + 3 * (e.traces / Math.max(1, g.traces))).toFixed(2);
     var dash = e.broken || e.unanswered ? ' stroke-dasharray="5 4"' : "";
     edgeSvg += '<path d="M' + x1.toFixed(1) + "," + a.y + " C" + mx.toFixed(1) + "," + a.y + " " + mx.toFixed(1) + "," + b.y + " " + x2.toFixed(1) + "," + b.y +
-      '" fill="none" stroke="' + _trEdgeColor(e) + '" stroke-width="' + (e.onSel ? Math.max(2.5, +w) : w) + '"' + dash +
+      '" fill="none" stroke="' + _trEdgeColor(e) + '" stroke-width="' + +_trEdgeWidth(g, e).toFixed(2) + '"' + dash +
       ' stroke-linecap="round" opacity="' + (e.onSel ? 1 : 0.35) + '"/>';
     if (e.broken && e.onSel) {
       var cx = (x1 + x2) / 2, cy = (a.y + b.y) / 2;
@@ -25637,35 +25682,83 @@ function _trPathSVG(g, source, minWidth) {
     }
   });
   Object.keys(g.nodes).forEach(function (k) {
-    var n = g.nodes[k], p = pos(n), h = n.hop || {};
-    var rtt = h.rttMs ? _trHopRtt(h.rttMs) : null;
-    var fill, stroke = "var(--color-text-secondary)", text = "var(--color-text-primary)", dash = "", glyph, name, sub;
-    if (k === "src") {
-      fill = "var(--color-accent)"; stroke = fill; text = "#fff"; glyph = "⌂";
-      name = (source && source.hostname) || "This host"; sub = "source";
-    } else if (k === "dst") {
-      fill = h.monitorStatus && MONITOR_STATE_COLORS[h.monitorStatus] ? MONITOR_STATE_COLORS[h.monitorStatus] : "var(--color-bg-primary)";
-      glyph = "◎"; if (fill.charAt(0) === "#") { stroke = fill; text = "#fff"; }
-      name = h.hostname || h.rdns || g.destIp || "Destination"; sub = rtt ? (Math.round(rtt.avg * 10) / 10) + " ms" : "destination";
-    } else if (!h.ip) {
-      fill = "none"; stroke = "var(--color-text-tertiary)"; dash = ' stroke-dasharray="3 3"'; text = "var(--color-text-tertiary)";
-      glyph = "*"; name = "no reply"; sub = "TTL " + n.ttl;
-    } else {
-      var sc = h.monitorStatus && MONITOR_STATE_COLORS[h.monitorStatus];
-      fill = sc || "var(--color-bg-primary)"; if (sc) { stroke = sc; text = "#fff"; }
-      glyph = String(n.ttl); name = h.hostname || h.rdns || h.ip; sub = rtt ? (Math.round(rtt.avg * 10) / 10) + " ms" : "—";
-    }
-    var op = n.onSel || k === "src" ? 1 : 0.45;
-    nodeSvg += '<g opacity="' + op + '">' +
-      '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y + '" r="' + R + '" fill="' + fill + '" stroke="' + stroke + '" stroke-width="' + (k === "dst" ? 3 : 1.5) + '"' + dash + "/>" +
-      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + 4) + '" text-anchor="middle" font-size="11" font-weight="600" fill="' + text + '">' + escapeHtml(glyph) + "</text>" +
-      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + R + 14) + '" text-anchor="middle" font-size="11" fill="var(--color-text-primary)">' + escapeHtml(clip(name, colW - 8)) + "</text>" +
-      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + R + 27) + '" text-anchor="middle" font-size="10" fill="var(--color-text-secondary)">' + escapeHtml(clip(sub, colW - 8)) + "</text>" +
+    var p = L.pos(g.nodes[k]), h = g.nodes[k].hop || {}, v = _trNodeView(g, k, source);
+    nodeSvg += '<g opacity="' + v.opacity + '">' +
+      '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y + '" r="' + R + '" fill="' + (v.fill || "none") + '" stroke="' + v.stroke + '" stroke-width="' + v.strokeWidth + '"' +
+        (v.dashed ? ' stroke-dasharray="3 3"' : "") + "/>" +
+      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + 4) + '" text-anchor="middle" font-size="11" font-weight="600" fill="' + v.text + '">' + escapeHtml(v.glyph) + "</text>" +
+      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + R + 14) + '" text-anchor="middle" font-size="11" fill="var(--color-text-primary)">' + escapeHtml(L.clip(v.name)) + "</text>" +
+      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + R + 27) + '" text-anchor="middle" font-size="10" fill="var(--color-text-secondary)">' + escapeHtml(L.clip(v.sub)) + "</text>" +
       "</g>";
     hitSvg += '<circle class="chart-hit" data-k="' + escapeHtml(k) + '" cx="' + p.x.toFixed(1) + '" cy="' + p.y + '" r="' + (R + 5) + '" fill="transparent"' +
       (h.assetId ? ' style="cursor:pointer"' : "") + "/>";
   });
   return '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" style="display:block;font-family:inherit">' + edgeSvg + nodeSvg + hitSvg + "</svg>";
+}
+
+// Paper is white whatever theme is on screen: the daylight (noon) values of
+// the tokens the path graph paints with.
+var _TR_PAPER_COLORS = {
+  "var(--color-accent)": "#0288d1", "var(--color-bg-primary)": "#ffffff",
+  "var(--color-text-primary)": "#1a1a2e", "var(--color-text-secondary)": "#555570", "var(--color-text-tertiary)": "#8080a0",
+  "var(--color-success)": "#2e7d32", "var(--color-warning)": "#f57f17", "var(--color-danger)": "#c62828",
+  "#fff": "#ffffff",
+};
+
+/**
+ * Pure: the path graph as a graph-export.js scene — model px are the SVG's px
+ * at the roomiest column width, colours the daylight palette. `mix(hex,
+ * alpha)` is PolarisGraphExport.mixWithWhite: paper has no alpha, so a faded
+ * branch is resolved to its colour over white. `pdfText` is its WinAnsi
+ * mapping, applied to what the PDF prints (a hostname can hold anything).
+ * A circle's glyph, its name and the line under it are three text-only boxes,
+ * because a scene label carries one font size and colour.
+ */
+function _trPathScene(g, source, mix, pdfText) {
+  var L = _trPathLayout(g, null), R = L.R;
+  function paper(c) { return c == null ? null : _TR_PAPER_COLORS[c] || c; }
+  function label(text, pdf, fontPx, color, valign, my, bold) {
+    return { lines: [text], pdfLines: [pdfText(pdf)], fontPx: fontPx, mono: false, bold: !!bold, italic: false, color: color,
+      bg: null, valign: valign, halign: "center", mx: 0, my: my };
+  }
+  function line(path, color, width, style) {
+    return { path: path, color: color, width: width, style: style, arrowTarget: null, arrowSource: null, label: null,
+      mid: { x: (path[0].x + path[path.length - 1].x) / 2, y: (path[0].y + path[path.length - 1].y) / 2 }, z: 0 };
+  }
+  var scene = { under: [], parents: [], edges: [], nodes: [], minFontPx: 10, icons: [],
+    bbox: { x1: 0, y1: 0, x2: L.W, y2: L.H, w: L.W, h: L.H } };
+  g.edges.slice().sort(function (a, b) { return (a.onSel ? 1 : 0) - (b.onSel ? 1 : 0); }).forEach(function (e) {
+    var a = L.pos(g.nodes[e.from]), b = L.pos(g.nodes[e.to]);
+    var x1 = a.x + R, x2 = b.x - R, mx = (x1 + x2) / 2, my = (a.y + b.y) / 2, q = (x2 - x1) / 4;
+    // The SVG's S-curve is one cubic with both handles at mid-x; drawn here as
+    // the quadratic on each side of its midpoint, tangent where the cubic is.
+    scene.edges.push(line(
+      [{ type: "M", x: x1, y: a.y }, { type: "Q", cx: x1 + q, cy: a.y, x: mx, y: my }, { type: "Q", cx: x2 - q, cy: b.y, x: x2, y: b.y }],
+      mix(paper(_trEdgeColor(e)), e.onSel ? 1 : 0.35), _trEdgeWidth(g, e), e.broken || e.unanswered ? "dashed" : "solid"));
+    if (e.broken && e.onSel) {
+      [[-5, -5, 5, 5], [-5, 5, 5, -5]].forEach(function (d) {
+        scene.edges.push(line([{ type: "M", x: mx + d[0], y: my + d[1] }, { type: "L", x: mx + d[2], y: my + d[3] }],
+          paper("var(--color-danger)"), 2.5, "solid"));
+      });
+    }
+  });
+  Object.keys(g.nodes).forEach(function (k) {
+    var p = L.pos(g.nodes[k]), v = _trNodeView(g, k, source);
+    var x1 = p.x - R, y1 = p.y - R, x2 = p.x + R, y2 = p.y + R;
+    function textBox(lbl) {
+      return { shape: "rect", polygon: null, x1: x1, y1: y1, x2: x2, y2: y2, fill: null, stroke: null,
+        strokeWidth: 0, strokeStyle: "solid", icon: null, label: lbl, z: 0 };
+    }
+    scene.nodes.push({ shape: "ellipse", polygon: null, x1: x1, y1: y1, x2: x2, y2: y2,
+      fill: v.fill ? mix(paper(v.fill), v.opacity) : null, stroke: mix(paper(v.stroke), v.opacity),
+      strokeWidth: v.strokeWidth, strokeStyle: v.dashed ? "dashed" : "solid", icon: null, label: null, z: 0 });
+    // ⌂ and ◎ are not in the PDF's WinAnsi fonts; the Visio package keeps them.
+    var pdfGlyph = k === "src" ? "S" : k === "dst" ? "D" : v.glyph;
+    scene.nodes.push(textBox(label(v.glyph, pdfGlyph, 11, mix(paper(v.text), v.opacity), "center", 0, true)));
+    scene.nodes.push(textBox(label(L.clip(v.name), L.clip(v.name), 11, mix(paper("var(--color-text-primary)"), v.opacity), "bottom", 3)));
+    scene.nodes.push(textBox(label(L.clip(v.sub), L.clip(v.sub), 10, mix(paper("var(--color-text-secondary)"), v.opacity), "bottom", 16)));
+  });
+  return scene;
 }
 
 function _trPathTooltipHTML(g, key, source) {
@@ -25743,7 +25836,11 @@ async function _loadPathTraceroutes(assetId, check, source) {
     mount.innerHTML = '<div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">' +
         '<div class="chart-label" style="margin:0">Path</div>' +
         '<select id="path-tr-select" style="width:auto">' + options + "</select>" +
-        '<span id="path-tr-diff" class="hint"></span></div>' +
+        '<span id="path-tr-diff" class="hint"></span>' +
+        '<button type="button" class="btn-icon" id="path-tr-export" aria-label="Export" aria-haspopup="menu" title="Export: screenshot, PDF or Visio" style="margin-left:auto;line-height:0">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
+        "</button></div>" +
       '<div class="chart-box" id="path-tr-graph" style="margin-top:0.5rem;position:relative"></div>' +
       _TR_PATH_LEGEND_HTML +
       '<div class="table-wrapper" style="margin-top:0.75rem"><table id="path-tr-table"><thead><tr>' +
@@ -25794,7 +25891,79 @@ async function _loadPathTraceroutes(assetId, check, source) {
     };
     sel.addEventListener("change", draw);
     draw();
+    var exportBtn = document.getElementById("path-tr-export");
+    exportBtn.addEventListener("click", function () {
+      _openPathMapExport(exportBtn, check, list, Number(sel.value) || 0, source);
+    });
   } catch (err) {
     mount.innerHTML = '<div class="chart-label">Path</div><p class="hint">' + escapeHtml(err.message || "Failed to load traceroutes") + "</p>";
   }
+}
+
+/** Pure: the path map export's header lines — the route, then the trace drawn. */
+function _pathMapExportMeta(check, list, sel, source, g) {
+  var t = list[sel] || list[0];
+  var from = (source && source.hostname) || "This host";
+  var to = g.destIp || "destination";
+  return [
+    from + " -> " + to + "  |  " + (_PATH_KIND_LABELS[check.kind] || check.kind || "") + " check",
+    "Trace " + _pathFmtWhen(t.timestamp) + ", " + t.hopCount + " hops, " + (t.complete ? "reached the destination" : "incomplete") +
+      (list.length > 1 ? "  |  Faded branches: routes the other " + (list.length - 1) + " recent trace" + (list.length === 2 ? "" : "s") + " took" : ""),
+  ];
+}
+
+/** Pure: the path map export's key — the on-screen legend, as paper colours. */
+function _pathMapExportKey() {
+  var P = _TR_PAPER_COLORS;
+  return [
+    { kind: "line", color: P["var(--color-success)"], text: "adds under 10 ms" },
+    { kind: "line", color: P["var(--color-warning)"], text: "adds 10-50 ms or probe loss" },
+    { kind: "line", color: P["var(--color-danger)"], text: "adds over 50 ms" },
+    { kind: "line", color: P["var(--color-danger)"], text: "destination not reached", dashed: true },
+    { kind: "line", color: P["var(--color-text-tertiary)"], text: "hop did not answer", dashed: true },
+    { kind: "dot", color: MONITOR_STATE_COLORS.up, text: "asset up" },
+    { kind: "dot", color: MONITOR_STATE_COLORS.warning, text: "asset warning" },
+    { kind: "dot", color: MONITOR_STATE_COLORS.down, text: "asset down" },
+  ];
+}
+
+// The Export menu (graph-export.js) for the path map. The slide-over opens on
+// every page and the Path Monitor draws the same map, but graph-export.js and
+// the vendor libraries it needs are only static on some of them — so they are
+// fetched here on first use (_loadPanelScript requests each file once a page).
+function _openPathMapExport(btn, check, list, sel, source) {
+  var need = [];
+  if (!window.jspdf) need.push("/js/vendor/jspdf.umd.min.js");
+  if (typeof htmlToImage === "undefined") need.push("/js/vendor/html-to-image.min.js");
+  if (!window.PolarisGraphExport) need.push("/js/graph-export.js");
+  need.reduce(function (p, src) { return p.then(function () { return _loadPanelScript(src); }); }, Promise.resolve())
+    .then(function () {
+      window.PolarisGraphExport.openMenu(btn, function () {
+        var g = _trPathGraph(list, sel);
+        var name = check.name || "Path";
+        return {
+          scene: _trPathScene(g, source, window.PolarisGraphExport.mixWithWhite, window.PolarisGraphExport.pdfText),
+          title: "Path: " + name,
+          fileBase: "polaris-path-" + (String(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "check"),
+          noun: "path map",
+          metaLines: _pathMapExportMeta(check, list, sel, source, g),
+          keyItems: _pathMapExportKey(),
+          scopeNote: "Exports the trace selected now, with the routes the other recent traces took as faded branches.",
+        };
+      }, { screenshot: function () { _pathMapScreenshot(); } });
+    }, function (err) {
+      showToast("Export unavailable: " + (err && err.message ? err.message : String(err)), "error");
+    });
+}
+
+// The map alone, whole width even when the panel scrolls it, onto the clipboard.
+function _pathMapScreenshot() {
+  var svg = document.querySelector("#path-tr-graph svg");
+  if (!svg) { showToast("Nothing to export", "error"); return; }
+  var bg = getComputedStyle(document.documentElement).getPropertyValue("--color-bg-primary").trim() || "#ffffff";
+  htmlToImage.toBlob(svg, { pixelRatio: 2, backgroundColor: bg })
+    .then(function (blob) { return blob ? copyPngToClipboard(blob) : false; })
+    .then(function (ok) {
+      showToast(ok ? "Screenshot copied to clipboard" : "Screenshot failed — requires HTTPS or clipboard permission", ok ? "success" : "error");
+    }, function () { showToast("Screenshot failed", "error"); });
 }

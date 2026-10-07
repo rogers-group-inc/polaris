@@ -223,6 +223,28 @@ host, then one column per hop, then the destination.
 Hover a circle for its address, reverse DNS, round-trip times, lost probes and
 how many of the recent traces passed through it.
 
+### Exporting the path graph
+
+The **Export** button at the right of the Path heading opens a menu:
+
+- **Copy screenshot**: the whole graph as an image on the clipboard, even the
+  part the panel has scrolled out of view. Copying an image needs HTTPS.
+- **Export PDF…**: the graph on paper, in the light colours whatever theme you
+  use. A header names the source, the destination, the check type and the
+  trace shown, and a key explains the link and status colours. Choose the
+  paper, the orientation and the smallest text size allowed (7 pt by
+  default). A path too long for one sheet at that size is split across
+  several. The source and destination print as **S** and **D**, because the
+  PDF fonts have no house or target symbol.
+- **Export to Visio (.vsdx)**: one Visio page, every circle, label and link a
+  separate editable shape. Links are drawn lines, not glued connectors.
+
+The export shows the trace selected in the list, with the routes the other
+recent traces took as faded branches, as on screen. The same button appears on
+the Polaris server's results under **Path Monitor → Results**. The Device Map
+and the Application Map have the same menu
+([Device Map](Device-Map#exporting-the-topology), [Application Map](Application-Map#export)).
+
 ## Alerting — setting an SLA
 
 A check has no threshold of its own. To be alerted, create an
