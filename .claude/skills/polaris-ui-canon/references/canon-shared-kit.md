@@ -270,7 +270,7 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   `background-repeat` / `background-attachment` as LONGHANDS — in the shorthand, `no-repeat fixed`
   binds to the layer it follows and the other would scroll and tile. A sticky band pinned at the top of the page sits exactly where the
   glow is brightest, so `.page-top-sticky` (the wrapper that pins a page's header AND its tab
-  strip together — Dashboard, /dash, Server Settings; the header draws no rule of its own, the
+  strip together — Dashboard, /dash, Server Settings, Integrations; the header draws no rule of its own, the
   tab strip's bottom border is the bar's one line) is UNFILLED — it never paints a box of its own. A 70% `--color-bg-secondary` tint was tried and rejected on 2026-10-04: it read as a
   dark box sitting on the glow. Since 2026-10-06 content scrolling under it VANISHES behind a
   **curtain**, `html[data-page-top-curtain]::after`: a second copy of the page's own ground (body
