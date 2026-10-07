@@ -324,6 +324,12 @@ Merging assets now requires Assets **full read-write** everywhere — it edits o
 record and deletes another. See
 [Conflict Resolution](Conflict-Resolution#i-or-an-operator-typed-the-address).
 
+**Since 2026-10-07 an offline device can be cleared.** When one claimant is off and
+its next address is unknown, *Clear* on its row blanks the address instead of
+pinning a new one; discovery fills the blank the first time it reports the device
+on a different address, and won't put the old one back while the other device
+still holds it.
+
 ### Rule 41
 **A subnet dies with its FortiGate, and the chassis — not the name — says which
 gate that is.** A name cannot tell a rename from a replacement. Tri-state in both

@@ -4297,7 +4297,13 @@ async function buildAssetUpdatePatch(
   let ipOverrideTouched = false;
   if (input.ipAddress !== undefined) {
     const trimmed = input.ipAddress.trim();
-    if (!trimmed) {
+    if (!trimmed && existing.ipCleared && !existing.ipAddress && !existing.ipOverride) {
+      // Business rule 40(j): the address was blanked from a duplicate-IP
+      // card and is waiting for discovery. The form re-sends the blank field
+      // on every save; re-projecting here would put the contested address
+      // straight back, so a blank that is already blank is a no-op.
+      delete data.ipAddress;
+    } else if (!trimmed) {
       data.ipOverride = null;
       const { projected, provenance } = await loadProjection();
       data.ipAddress = projected.ipAddress;
@@ -4307,6 +4313,7 @@ async function buildAssetUpdatePatch(
       data.ipAddress = trimmed;
       data.ipOverride = trimmed;
       data.ipSource = "manual";
+      data.ipCleared = null; // a typed address ends any rule 40(j) blank hold
       ipOverrideTouched = true;
     } else {
       delete data.ipAddress;

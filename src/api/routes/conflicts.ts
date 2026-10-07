@@ -7,12 +7,13 @@
  * in src/services/conflictResolutionService.ts — see its header for the
  * conflict-variant semantics. The duplicate-IP flavour's two verbs delegate to
  * src/services/duplicateIpConflictService.ts: `/:id/reassign-ip` (move one of
- * the assets to a different address) and `/:id/merge` (same route as the
- * per-field asset merge, different body — the records are one device).
+ * the assets to a different address), `/:id/clear-ip` (blank an offline one's
+ * address until discovery reports a new one) and `/:id/merge` (same route as
+ * the per-field asset merge, different body — the records are one device).
  *
  * Access rides the discoveryConflicts permission alone: read = list both
- * entity types, write = resolve both — with two exceptions, `/:id/reassign-ip`
- * and `/:id/merge` on a duplicate-IP conflict, which additionally require
+ * entity types, write = resolve both — with exceptions, `/:id/reassign-ip`,
+ * `/:id/clear-ip` and `/:id/merge` on a duplicate-IP conflict, which additionally require
  * `assets:write` because they edit (and, for merge, delete) inventory.
  * (The historical networkadmin↔
  * reservation / assetsadmin↔asset role-NAME partition was dropped 2026-08 —
@@ -42,6 +43,7 @@ import {
 } from "../../services/subnetChassisConflictService.js";
 import {
   reassignDuplicateIpAsset,
+  clearDuplicateIpAsset,
   mergeDuplicateIpAssets,
   DUPLICATE_IP_COLLISION_REASON,
 } from "../../services/duplicateIpConflictService.js";
@@ -359,6 +361,31 @@ router.post("/:id/reassign-ip", async (req, res, next) => {
       ipAddress,
       requestActor(req),
     );
+
+    res.json({ ok: true, ...outcome });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/conflicts/:id/clear-ip — duplicate-IP conflicts only.
+// Body: { assetId }. Blanks ONE member's address — the device is offline, so
+// there is no new address to type (business rule 40(j)). The next discovery
+// write staging a different address fills the blank. Same chained gate and
+// close-when-fewer-than-two semantics as /reassign-ip.
+router.post("/:id/clear-ip", async (req, res, next) => {
+  try {
+    const conflict = await loadPendingConflict(req.params.id);
+    if (!canResolve(req)) {
+      throw new AppError(403, "You do not have permission to resolve this conflict");
+    }
+    if (!hasPermission(req, "assets", "write")) {
+      throw new AppError(403, "You do not have permission to change an asset's IP address");
+    }
+    const assetId = typeof req.body?.assetId === "string" ? req.body.assetId : "";
+    if (!assetId) throw new AppError(400, "assetId is required");
+
+    const outcome = await clearDuplicateIpAsset(conflict, assetId, requestActor(req));
 
     res.json({ ok: true, ...outcome });
   } catch (err) {

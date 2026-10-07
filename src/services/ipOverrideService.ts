@@ -76,6 +76,43 @@ export async function handleIpOverrideReleased(assetId: string, ip: string): Pro
 }
 
 /**
+ * Business rule 40(j): discovery staged an address on a row whose address an
+ * operator had blanked from a duplicate-IP conflict card, and the db.ts guard
+ * let it through — either a NEW address ("filled") or the blanked one once
+ * nothing else held it ("returned"). The hold was released in that write;
+ * this audits it.
+ */
+export async function handleIpClearedReleased(
+  assetId: string,
+  ip: string,
+  how: "filled" | "returned",
+): Promise<void> {
+  try {
+    const asset = await prisma.asset.findUnique({
+      where: { id: assetId },
+      select: { hostname: true },
+    });
+    const label = asset?.hostname || assetId;
+    logEvent({
+      action: "asset.ip_cleared.filled",
+      resourceType: "asset",
+      resourceId: assetId,
+      resourceName: asset?.hostname || ip,
+      actor: "system",
+      message: how === "filled"
+        ? `Blank IP address on "${label}" filled by discovery — it now reports ${ip}`
+        : `Blank IP address on "${label}" filled by discovery — ${ip} is no longer held by another asset`,
+      details: { ipAddress: ip, how },
+    });
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err), assetId },
+      "ip-cleared release follow-up failed",
+    );
+  }
+}
+
+/**
  * Discovery proposed a different IP than the override; the write was
  * re-asserted back to the pin. Raise or refresh the asset's single pending
  * ip-override conflict.

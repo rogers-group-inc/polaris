@@ -30,6 +30,10 @@
  *      override releases the pin in the same write; a different staged IP is
  *      rewritten back to the override and an ip-override Conflict is raised
  *      (fire-and-forget, via ipOverrideService) for the operator to resolve.
+ *      The same read also enforces Asset.ipCleared (rule 40(j)): an address
+ *      the operator blanked is dropped from a write re-staging it while
+ *      another network-present asset still records it; any other staged
+ *      address fills the blank and releases the hold.
  *   5. Asset writes staging `os` are run through normalizeOsInData() so a
  *      Windows 11 client stops being reported as "Windows 10" — the registry
  *      ProductName key every discovery source reads was frozen at "Windows
@@ -49,9 +53,12 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { normalizeManufacturer } from "./utils/manufacturerNormalize.js";
 import {
   applyHostnameOverride,
+  applyIpCleared,
   applyIpOverride,
+  stagedIpOf,
   statusAllowsMonitoring,
   UNMONITORABLE_STATUSES,
+  type IpClearedOutcome,
   type IpOverrideOutcome,
 } from "./utils/assetInvariants.js";
 import { normalizeOsInData } from "./utils/osNormalize.js";
@@ -351,6 +358,8 @@ interface OperatorOverrideOutcome {
   /** The ipSource the writer originally staged, captured before the
    *  re-assertion rewrote it to "manual" — conflict provenance. */
   stagedIpSource: string | null;
+  /** Rule 40(j): what the operator-blanked address did to this write. */
+  cleared?: IpClearedOutcome;
 }
 
 /**
@@ -390,7 +399,7 @@ async function enforceOperatorOverrides(
   try {
     const row = await base.asset.findFirst({
       where: where as any,
-      select: { hostnameOverride: true, ipOverride: true },
+      select: { id: true, hostnameOverride: true, ipOverride: true, ipCleared: true },
     });
     if (guardHostname) applyHostnameOverride(d, row?.hostnameOverride);
     if (guardIp) {
@@ -401,6 +410,27 @@ async function enforceOperatorOverrides(
           : (srcRaw && typeof srcRaw === "object" && typeof (srcRaw as any).set === "string" ? (srcRaw as any).set : null);
       const ip = applyIpOverride(d, row?.ipOverride);
       if (ip.action !== "none") return { ip, stagedIpSource };
+      // Business rule 40(j): an operator-blanked address. The "is it still
+      // contested" read only fires when the write re-stages the blanked
+      // address, which for a cleared row is the offline device's stale lease
+      // — rare, and discovery-cadence.
+      if (row?.ipCleared && !row.ipOverride) {
+        const staged = stagedIpOf(d);
+        let contested = false;
+        if (staged && staged === row.ipCleared.trim()) {
+          const holder = await base.asset.findFirst({
+            where: {
+              id: { not: row.id },
+              ipAddress: staged,
+              status: { notIn: UNMONITORABLE_STATUSES as any },
+            },
+            select: { id: true },
+          });
+          contested = !!holder;
+        }
+        const cleared = applyIpCleared(d, row.ipCleared, contested);
+        if (cleared.action !== "none") return { ip, stagedIpSource, cleared };
+      }
     }
   } catch {
     // Best-effort — see doc comment.
@@ -417,6 +447,11 @@ function fireIpOverrideFollowUp(outcome: OperatorOverrideOutcome, assetId: strin
   void (async () => {
     try {
       const svc = await import("./services/ipOverrideService.js");
+      const cleared = outcome.cleared;
+      if (cleared && (cleared.action === "filled" || cleared.action === "returned")) {
+        await svc.handleIpClearedReleased(assetId, cleared.ip, cleared.action);
+        return;
+      }
       if (outcome.ip.action === "released") {
         await svc.handleIpOverrideReleased(assetId, outcome.ip.ip);
       } else if (outcome.ip.action === "reasserted" && outcome.ip.discoveredIp) {
