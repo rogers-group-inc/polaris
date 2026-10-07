@@ -66,9 +66,10 @@ in the queue — six columns, two of them holding the new-address field and the
 merge button — so widen the panel if the card is scrolling sideways. The
 **Alerts** button's panel beside it resizes the same way.
 
-The **Conflict Queue** dashboard widget shows the same thing, **role-scoped** —
-you see only the ones your role can resolve. If it looks empty and you expected
-rows, check that before assuming there are none.
+The **Conflict Queue** dashboard widget shows the same thing — every pending
+conflict, to anyone whose role holds `discoveryConflicts` at Read, and nothing to
+anyone whose role does not. If it looks empty and you expected rows, check that
+grant before assuming there are none.
 
 ---
 

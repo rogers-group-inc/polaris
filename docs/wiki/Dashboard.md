@@ -173,9 +173,10 @@ A widget that groups its rows follows you: pick an order and the groups
 re-order to match it, instead of staying on the biggest-group-first order they
 use by default.
 
-**Conflict Queue is role-scoped, not filtered for tidiness.** If it looks empty
-and you expected rows, check whether your role can resolve that conflict kind
-rather than assuming there are none.
+**Conflict Queue shows every pending conflict or none.** It lists all of them
+to anyone whose role holds `discoveryConflicts` at Read, and nothing at all to
+anyone whose role does not — it never shows a partial list. If it looks empty
+and you expected rows, check that grant before assuming there are none.
 
 **Capacity Health measures this install.** The reasons behind the pill are
 computed against real table sizes and the real retention configuration, not

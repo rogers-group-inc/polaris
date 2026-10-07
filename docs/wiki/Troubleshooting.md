@@ -137,7 +137,7 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 | A region rename appeared to revoke people's scope | It carries the columns with it now. A **delete** deliberately does not, and writes a warning Event naming who holds a dangling assignment |
 | A tag stayed on thousands of assets under a dead region name | Retired-name sweeping is **not retroactive**. [rule 54](Business-Rules#rule-54) |
 | A nav entry is missing | Your role lacks the key. A typed URL for the same page bounces — the two gates are kept in lockstep |
-| The Conflict Queue widget looks empty | It is **role-scoped**. Check whether your role can resolve that conflict kind |
+| The Conflict Queue widget looks empty | Without `discoveryConflicts` at Read the list is always empty. Check your role's grant before assuming there are no conflicts |
 
 ---
 
