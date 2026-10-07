@@ -131,6 +131,8 @@
       '<div class="asst-resize" data-r="resize" title="Drag to resize" aria-hidden="true"></div>' +
       '<header class="asst-head">' +
         '<div class="asst-head-title"><strong data-r="title">Assistant</strong><span data-r="sub"></span></div>' +
+        '<label class="asst-advisor" title="Adds a sign-off line under each answer. Only you see this setting.">' +
+          '<input type="checkbox" data-r="advisor"> Efficiency Advisor</label>' +
         '<button type="button" class="asst-icon-btn" data-a="history" title="Conversations (/history)" aria-label="Conversations">' + ICON_HISTORY + '</button>' +
         '<button type="button" class="asst-icon-btn" data-a="new" title="New conversation (/new)" aria-label="New conversation">' + ICON_NEW + '</button>' +
         '<button type="button" class="asst-icon-btn" data-a="close" title="Minimize (Esc)" aria-label="Minimize">' + ICON_MIN + '</button>' +
@@ -159,7 +161,9 @@
       title: q("title"), sub: q("sub"), body: q("body"), history: q("history"),
       historyList: q("historyList"), slash: q("slash"), input: q("input"),
       send: panel.querySelector('[data-a="send"]'),
+      advisor: q("advisor"),
     };
+    S.els.advisor.addEventListener("change", setAdvisor);
 
     fab.addEventListener("click", function () { openPanel(true); });
     panel.addEventListener("click", function (e) {
@@ -182,8 +186,31 @@
     window.addEventListener("resize", function () { clampIntoView(); });
   }
 
+  // The Efficiency Advisor checkbox (rule 95(h)) is saved on the user, so it
+  // follows them to other browsers; the boot cache is updated with it so the
+  // next page's early draw shows the box as it was left.
+  async function setAdvisor() {
+    var box = S.els.advisor;
+    var want = box.checked;
+    box.disabled = true;
+    try {
+      var r = await api.assistant.setPreferences({ efficiencyAdvisor: want });
+      if (S.status) {
+        S.status.efficiencyAdvisor = !!r.efficiencyAdvisor;
+        lsSet(LS_BOOT, JSON.stringify(S.status));
+      }
+      box.checked = !!r.efficiencyAdvisor;
+    } catch (err) {
+      box.checked = !want;
+      toast((err && err.message) || "Could not save the setting", "error");
+    } finally {
+      box.disabled = false;
+    }
+  }
+
   function setHeader() {
     var intg = currentIntegration();
+    S.els.advisor.checked = !!(S.status && S.status.efficiencyAdvisor);
     // Title: the assistant's name. Subtitle: this conversation's title once it
     // has one, else which integration + model is answering.
     S.els.title.textContent = botName();
@@ -235,7 +262,7 @@
     var head = S.els.head;
     var drag = null;
     head.addEventListener("pointerdown", function (e) {
-      if (e.button !== 0 || e.target.closest("button")) return;
+      if (e.button !== 0 || e.target.closest("button, label, input")) return;
       if (window.matchMedia && window.matchMedia("(max-width: 640px)").matches) return;
       var r = S.els.panel.getBoundingClientRect();
       drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, h: r.height, id: e.pointerId };
@@ -404,9 +431,12 @@
       ? '<div class="asst-error"><span>' + esc(m.error) + '</span><button type="button" class="btn btn-sm btn-secondary" data-a2="retry">Retry</button></div>'
       : "";
     return '<div class="asst-msg assistant" data-idx="' + idx + '">' +
+      (m.preface ? '<div class="asst-signoff asst-preface">' + esc(m.preface) + '</div>' : "") +
       (body ? '<div class="asst-bubble' + (isLive && !m.done ? " asst-cursor" : "") + '">' + body + '</div>' : "") +
       (chips ? '<div class="asst-meta">' + chips + '</div>' : "") +
-      reports + err +
+      reports +
+      (m.signOff ? '<div class="asst-signoff">' + esc(m.signOff) + '</div>' : "") +
+      err +
       '</div>';
   }
 
@@ -493,6 +523,8 @@
         content: m.content,
         toolsUsed: m.toolsUsed || m.tools || [],
         stopped: !!m.stopped,
+        preface: m.preface || null,
+        signOff: m.signOff || null,
         reports: (m.reports || []).map(function (r) {
           var rows = r.rows || [];
           return Object.assign({}, r, { rows: rows.slice(0, SNAP_REPORT_ROWS), partial: !!r.partial || rows.length > SNAP_REPORT_ROWS });
@@ -508,7 +540,7 @@
 
   function fromServer(c) {
     return (c.messages || []).map(function (m) {
-      return { role: m.role, content: m.content, toolsUsed: m.toolsUsed || [], stopped: m.stopped, reports: m.reports || [] };
+      return { role: m.role, content: m.content, toolsUsed: m.toolsUsed || [], stopped: m.stopped, preface: m.preface || null, signOff: m.signOff || null, reports: m.reports || [] };
     });
   }
 
@@ -937,6 +969,9 @@
           else { existing.status = "done"; existing.ok = data.ok; }
           schedule();
         } else if (ev === "report") { m.reports.push(data); schedule(); }
+        else if (ev === "signoff") { m.signOff = data.text || null; schedule(); }
+        // Shown as the first lookup starts; text null = withdrawn (the lookups showed an outage).
+        else if (ev === "preface") { m.preface = data.text || null; schedule(); }
         else if (ev === "done") { m.stopped = !!data.stopped; }
         else if (ev === "error") { m.error = data.message || "The assistant failed"; }
       });

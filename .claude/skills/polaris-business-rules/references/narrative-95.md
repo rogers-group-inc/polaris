@@ -86,6 +86,28 @@ A local model very often listens on the Polaris host itself (Ollama's default is
 `localhost:11434`), which the integration SSRF guard refuses. "Allow loopback" lifts the block
 for 127/8, ::1 and `localhost` only; link-local and the cloud metadata address stay refused.
 
+### (h) The Efficiency Advisor speaks through Polaris, not the model
+
+2026-10-07. The owner asked for an optional personality — a patronizing productivity AI that
+congratulates you and then tells you to get back to work — built from a list of quotes, and
+asked whether it would work across models. The first build put the persona in the system
+prompt. Against qwen2.5:7b with the real prompt and tools it parroted one sample quote on
+nearly every answer, signed off a critical device-down alert with a quip, and — once the
+wording pushed harder — stopped calling its tools and invented an IP for a device that does
+not exist and a network count. A personality strong enough to be heard on a small model was
+strong enough to break rule 95's "facts come from tools".
+
+So the model never sees it. The owner sorted the quotes into categories; Polaris picks the
+category from what the turn actually did (a lookup that found something, found nothing, was
+refused; a how-to answer; small talk; a frustrated or complaining question) and shows one line
+when the first lookup starts and one under the answer. The lines are stored in their own
+columns, not in the answer, because a model that sees them in its history copies them — the
+same trap as text-mode tool calls. Nothing is said on an outage, an error or a Stop, and a
+line already shown is withdrawn when a lookup turns up something down or critical. The voice
+is identical on every model, which answers the original question. It is a per-user checkbox
+in the chat window, off by default, and the owner chose to keep it out of the README and the
+operator wiki.
+
 ### What is deliberately not here
 
 The assistant is desktop-only for now (not the phone SPA or the Dash wallboard), takes no action

@@ -19,6 +19,8 @@ const h = vi.hoisted(() => ({
   beginTurn: vi.fn(async () => ({ question: "q" })),
   finishTurn: vi.fn(async () => ({ messageId: "m1", reportIds: [] })),
   recentTurns: vi.fn(async () => [{ role: "user", content: "what is down?" }]),
+  getEfficiencyAdvisor: vi.fn(async () => false),
+  recentAdvisorLines: vi.fn(async () => ({ prefaces: [] as string[], signOffs: [] as string[] })),
   logEvent: vi.fn(async () => {}),
 }));
 
@@ -39,8 +41,11 @@ vi.mock("../../src/services/assistantConversationService.js", () => ({
   beginTurn: h.beginTurn,
   finishTurn: h.finishTurn,
   recentTurns: h.recentTurns,
+  getEfficiencyAdvisor: h.getEfficiencyAdvisor,
+  recentAdvisorLines: h.recentAdvisorLines,
 }));
 
+import { SIGN_OFFS, LOOKUP_LINES } from "../../src/services/efficiencyAdvisorService.js";
 import { streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, asksForReport, reportTitleFromQuestion, asksHowTo, sanitizeAnswerLinks } from "../../src/services/assistantChatService.js";
 
 const integration = { id: "i1", name: "Ollama", config: { host: "10.0.0.5", model: "qwen", maxToolRounds: 2 } as any };
@@ -332,5 +337,96 @@ describe("buildSystemPrompt", () => {
   it("tells the model the name the operator gave it, and stays nameless otherwise", () => {
     expect(buildSystemPrompt({ displayName: "NOC Bot" })).toMatch(/^Your name is NOC Bot\. You are the Polaris assistant/);
     expect(buildSystemPrompt({ displayName: "  " })).toMatch(/^You are the Polaris assistant/);
+  });
+});
+
+describe("streamAssistantTurn — Efficiency Advisor (rule 95(h))", () => {
+  const answerWith = (text: string) => async (_c: any, msgs: any[], _t: any, o: any) => {
+    // The model never sees the advisor: no persona in its prompt.
+    expect(msgs[0].content).not.toMatch(/efficien/i);
+    o.onText(text);
+    return { content: text, toolCalls: [], finishReason: "stop" };
+  };
+  const lookupThen = (data: unknown, text: string) => {
+    h.chatCompletionRound
+      .mockImplementationOnce(async () => ({ content: "", toolCalls: [{ id: "t1", type: "function", function: { name: "list_networks", arguments: "{}" } }], finishReason: "tool_calls" }))
+      .mockImplementationOnce(answerWith(text));
+    h.runAssistantTool.mockResolvedValueOnce({ ok: true, data });
+  };
+
+  it("adds nothing when the user has it off", async () => {
+    h.chatCompletionRound.mockImplementationOnce(answerWith("Hello."));
+    const { p, events } = run({ content: "hi" });
+    await p;
+    expect(events.some((e) => e[0] === "signoff")).toBe(false);
+    expect(h.finishTurn.mock.calls[0][1].signOff).toBeNull();
+  });
+
+  it("congratulates after a lookup that found something, stores the line apart from the answer", async () => {
+    h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
+    h.beginTurn.mockResolvedValueOnce({ question: "how many networks do we have?" });
+    lookupThen({ total: 42, rows: [] }, "You have 42 networks.");
+    const { p, events } = run();
+    await p;
+    const line = events.find((e) => e[0] === "signoff")?.[1].text;
+    expect(SIGN_OFFS.congratulation.map((t) => t.replace("{topic}", "networks"))).toContain(line);
+    const saved = h.finishTurn.mock.calls[0][1];
+    expect(saved.content).toBe("You have 42 networks.");
+    expect(saved.signOff).toBe(line);
+  });
+
+  it("shows a before-lookup line as the first lookup starts, before the tool chip, and stores it", async () => {
+    h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
+    h.beginTurn.mockResolvedValueOnce({ question: "how many networks do we have?" });
+    lookupThen({ total: 42, rows: [] }, "You have 42 networks.");
+    const { p, events } = run();
+    await p;
+    const names = events.map((e) => e[0]);
+    expect(names.indexOf("preface")).toBeLessThan(names.indexOf("tool"));
+    const line = events.find((e) => e[0] === "preface")?.[1].text;
+    expect(LOOKUP_LINES).toContain(line);
+    expect(h.finishTurn.mock.calls[0][1].preface).toBe(line);
+  });
+
+  it("no before-lookup line on a turn with no lookup", async () => {
+    h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
+    h.chatCompletionRound.mockImplementationOnce(answerWith("Hello."));
+    const { p, events } = run({ content: "hi" });
+    await p;
+    expect(events.some((e) => e[0] === "preface")).toBe(false);
+    expect(h.finishTurn.mock.calls[0][1].preface).toBeNull();
+  });
+
+  it("stays silent when a lookup shows something critical, withdrawing the before-lookup line", async () => {
+    h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
+    h.beginTurn.mockResolvedValueOnce({ question: "anything alerting?" });
+    lookupThen({ total: 1, rows: [{ severity: "critical", assetHostname: "NSH-FW01" }] }, "NSH-FW01 has a critical alert.");
+    const { p, events } = run();
+    await p;
+    const prefaces = events.filter((e) => e[0] === "preface").map((e) => e[1].text);
+    expect(prefaces).toHaveLength(2);
+    expect(prefaces[1]).toBeNull();
+    expect(events.some((e) => e[0] === "signoff")).toBe(false);
+    expect(h.finishTurn.mock.calls[0][1]).toMatchObject({ preface: null, signOff: null });
+  });
+
+  it("no before-lookup line at all on an outage question", async () => {
+    h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
+    h.beginTurn.mockResolvedValueOnce({ question: "why is NSH-FW01 down?" });
+    lookupThen({ total: 0, rows: [] }, "No such device.");
+    const { p, events } = run();
+    await p;
+    expect(events.some((e) => e[0] === "preface" || e[0] === "signoff")).toBe(false);
+  });
+
+  it("does not repeat this conversation's recent lines while others are left", async () => {
+    h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
+    h.beginTurn.mockResolvedValueOnce({ question: "thanks!" });
+    const [keep, ...used] = SIGN_OFFS.funDetected;
+    h.recentAdvisorLines.mockResolvedValueOnce({ prefaces: [], signOffs: used });
+    h.chatCompletionRound.mockImplementationOnce(answerWith("You're welcome."));
+    const { p, events } = run();
+    await p;
+    expect(events.find((e) => e[0] === "signoff")?.[1].text).toBe(keep);
   });
 });

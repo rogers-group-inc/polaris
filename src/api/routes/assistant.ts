@@ -13,6 +13,7 @@
  *   POST   /conversations/:id/stop          Stop the running turn (a page change does not)
  *   POST   /conversations/:id/messages      ask; answers as a text/event-stream
  *   PUT    /settings                        conversation retention (serverSettingsSystem write)
+ *   PUT    /preferences                     the caller's own Efficiency Advisor checkbox (rule 95(h))
  *
  * SESSION-ONLY: a conversation belongs to a user, and a bearer token has none,
  * so token callers get a 403 here even when their role holds `assistant`.
@@ -34,6 +35,8 @@ import {
   clearConversation,
   getAssistantSettings,
   updateAssistantSettings,
+  getEfficiencyAdvisor,
+  setEfficiencyAdvisor,
 } from "../../services/assistantConversationService.js";
 import {
   listAssistantIntegrations,
@@ -65,6 +68,10 @@ const SettingsSchema = z.object({
   retentionDays: z.number().int().min(1).max(3650),
 });
 
+const PreferencesSchema = z.object({
+  efficiencyAdvisor: z.boolean(),
+});
+
 const IdParam = z.string().uuid();
 
 // A local model answers slowly and each turn may run several lookups, so
@@ -91,9 +98,21 @@ function convId(req: Request): string {
 
 router.get("/status", async (req, res, next) => {
   try {
-    sessionUser(req);
-    const [integrations, settings] = await Promise.all([listAssistantIntegrations(), getAssistantSettings()]);
-    res.json({ enabled: integrations.length > 0, integrations, retentionDays: settings.retentionDays });
+    const { userId } = sessionUser(req);
+    const [integrations, settings, efficiencyAdvisor] = await Promise.all([
+      listAssistantIntegrations(), getAssistantSettings(), getEfficiencyAdvisor(userId),
+    ]);
+    res.json({ enabled: integrations.length > 0, integrations, retentionDays: settings.retentionDays, efficiencyAdvisor });
+  } catch (err) { next(err); }
+});
+
+// A personal display choice on the caller's own account: the `assistant`
+// read gate the router is mounted behind is the whole permission.
+router.put("/preferences", async (req, res, next) => {
+  try {
+    const { userId } = sessionUser(req);
+    const input = PreferencesSchema.parse(req.body);
+    res.json({ efficiencyAdvisor: await setEfficiencyAdvisor(userId, input.efficiencyAdvisor) });
   } catch (err) { next(err); }
 });
 

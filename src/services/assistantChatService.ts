@@ -47,11 +47,22 @@ import {
   beginTurn,
   finishTurn,
   recentTurns,
+  getEfficiencyAdvisor,
+  recentAdvisorLines,
   type ToolUseRecord,
 } from "./assistantConversationService.js";
 import { WIKI_BASE_URL, wikiPageNames } from "./helpIndexService.js";
+import {
+  asksAboutOutage,
+  lookupShowsOutage,
+  lookupFoundSomething,
+  topicForTool,
+  pickSignOff,
+  pickLookupLine,
+  type TurnSignals,
+} from "./efficiencyAdvisorService.js";
 
-export type AssistantEmit = (event: "start" | "token" | "retract" | "tool" | "report" | "done" | "error", data: unknown) => void;
+export type AssistantEmit = (event: "start" | "token" | "retract" | "tool" | "report" | "preface" | "signoff" | "done" | "error", data: unknown) => void;
 
 /** Cap on one tool result handed back to the model (characters of JSON). */
 const TOOL_RESULT_MAX_CHARS = 24_000;
@@ -133,6 +144,20 @@ export function stopTurn(conversationId: string, userId: string): boolean {
   if (!t || t.userId !== userId) return false;
   t.controller.abort();
   return true;
+}
+
+/** Fold one lookup's result into the turn's Efficiency Advisor signals. */
+function noteLookup(s: TurnSignals, name: string, result: { ok: boolean; data: unknown }, json: string): void {
+  if (name === "search_help") { s.usedHelp = true; return; }
+  s.lookedUp = true;
+  if (!result.ok) {
+    const error = (result.data as { error?: unknown } | null)?.error;
+    if (typeof error === "string" && error.startsWith("Not permitted")) s.denied = true;
+    return;
+  }
+  if (lookupShowsOutage(json)) s.outage = true;
+  if (lookupFoundSomething(result.data)) s.found = true;
+  s.topic = topicForTool(name) ?? s.topic;
 }
 
 /** The system prompt. Exported for tests. */
@@ -299,7 +324,20 @@ export async function streamAssistantTurn(input: {
   // on this event, so its keep-alive covers a slow first token.
   emit("start", { question });
 
-  const turns = await recentTurns(input.conversationId, config.contextMessages ?? LLM_DEFAULTS.contextMessages);
+  const [turns, advisor] = await Promise.all([
+    recentTurns(input.conversationId, config.contextMessages ?? LLM_DEFAULTS.contextMessages),
+    getEfficiencyAdvisor(input.userId),
+  ]);
+  // What the turn did, for the Efficiency Advisor's sign-off (rule 95(h)).
+  // Gathered whether or not the advisor is on; it costs a regex per lookup.
+  const signals: TurnSignals = {
+    question, outage: asksAboutOutage(question), failed: false,
+    denied: false, usedHelp: false, lookedUp: false, found: false,
+  };
+  const recentLines = advisor ? await recentAdvisorLines(input.conversationId) : null;
+  // The line shown when the first lookup starts; retracted on an outage.
+  let preface: string | null = null;
+  let prefaceOffered = false;
   const messages: ChatMessage[] = [
     { role: "system", content: buildSystemPrompt({ username: input.username, extra: config.systemPromptExtra, displayName: config.displayName }) },
     ...turns,
@@ -387,12 +425,23 @@ export async function streamAssistantTurn(input: {
       for (const tc of calls) {
         if (signal.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
         const name = tc.function.name;
+        if (recentLines && !prefaceOffered && !signals.outage) {
+          preface = pickLookupLine(recentLines.prefaces);
+          emit("preface", { text: preface });
+        }
+        prefaceOffered = true;
         emit("tool", { name, label: toolLabel(name), status: "running" });
         const result = await runAssistantTool(name, tc.function.arguments, toolCtx);
         toolsUsed.push({ name, label: toolLabel(name), ok: result.ok });
         emit("tool", { name, label: toolLabel(name), status: "done", ok: result.ok });
-        messages.push({ role: "tool", tool_call_id: tc.id, content: clipJson(result.data) });
+        const content = clipJson(result.data);
+        messages.push({ role: "tool", tool_call_id: tc.id, content });
         if (result.ok && REPORT_SOURCES.has(name)) lastListCall = { name, args: tc.function.arguments };
+        noteLookup(signals, name, result, content);
+        if (preface && signals.outage) {
+          preface = null;
+          emit("preface", { text: null });
+        }
       }
     }
 
@@ -430,6 +479,15 @@ export async function streamAssistantTurn(input: {
     }
   }
 
+  // The Efficiency Advisor sign-off (rule 95(h)): picked here, never written
+  // by the model; none after an outage, an error or a Stop.
+  let signOff: string | null = null;
+  if (recentLines && (answer.trim() || reports.length)) {
+    signals.failed = stopped || failure !== null;
+    signOff = pickSignOff(signals, recentLines.signOffs);
+    if (signOff) emit("signoff", { text: signOff });
+  }
+
   // Persist whatever the user saw. An error before any text stores nothing —
   // the question stays and /retry re-asks it.
   let messageId: string | null = null;
@@ -439,6 +497,8 @@ export async function streamAssistantTurn(input: {
       toolsUsed,
       stopped: stopped || failure !== null,
       reports,
+      preface,
+      signOff,
     });
     messageId = saved.messageId;
   }

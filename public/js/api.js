@@ -1039,6 +1039,7 @@ const api = {
     clearConversation: (id)        => request("DELETE", `/assistant/conversations/${id}/messages`),
     stopTurn:          (id)        => request("POST", `/assistant/conversations/${id}/stop`),
     updateSettings:    (body)      => request("PUT", "/assistant/settings", body),
+    setPreferences:    (body)      => request("PUT", "/assistant/preferences", body),
   },
   monitorSettings: {
     // Manual tier — settings for orphan/non-integration-discovered assets.

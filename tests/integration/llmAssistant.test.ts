@@ -235,6 +235,34 @@ d("the assistant (rule 95(a), (c), (d))", () => {
     expect(g.body.messages).toEqual([]);
   });
 
+  it("Efficiency Advisor: saved per user, signs off a plain turn, the line stored apart from the answer (95(h))", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    try {
+      expect((await agent.get("/api/v1/assistant/status")).body.efficiencyAdvisor).toBe(false);
+      const put = await agent.put("/api/v1/assistant/preferences").set("X-CSRF-Token", csrf).send({ efficiencyAdvisor: true });
+      expect(put.body).toEqual({ efficiencyAdvisor: true });
+      expect((await agent.get("/api/v1/assistant/status")).body.efficiencyAdvisor).toBe(true);
+      expect((await agent.put("/api/v1/assistant/preferences").set("X-CSRF-Token", csrf).send({ efficiencyAdvisor: "yes" })).status).toBe(400);
+
+      const c = await agent.post("/api/v1/assistant/conversations").set("X-CSRF-Token", csrf).send({ title: "IT-llm advisor" });
+      const r = await agent.post(`/api/v1/assistant/conversations/${c.body.id}/messages`).set("X-CSRF-Token", csrf)
+        .send({ content: "Report the switches", integrationId });
+      const m = r.text.match(/event: signoff\ndata: (\{.*\})/);
+      expect(m).not.toBeNull();
+      const line = JSON.parse(m![1]).text as string;
+      const g = await agent.get(`/api/v1/assistant/conversations/${c.body.id}`);
+      expect(g.body.messages[1].signOff).toBe(line);
+      expect(g.body.messages[1].content).not.toContain(line);
+
+      // An outage question earns no line.
+      const o = await agent.post(`/api/v1/assistant/conversations/${c.body.id}/messages`).set("X-CSRF-Token", csrf)
+        .send({ content: "Report the down switches", integrationId });
+      expect(o.text).not.toMatch(/event: signoff/);
+    } finally {
+      await agent.put("/api/v1/assistant/preferences").set("X-CSRF-Token", csrf).send({ efficiencyAdvisor: false });
+    }
+  });
+
   it("the audit Event names the lookup, never the question", async () => {
     const ev = await prisma.event.findFirst({ where: { action: "assistant.chat", resourceId: integrationId }, orderBy: { timestamp: "desc" } });
     expect(ev?.message).toMatch(/create_report/);

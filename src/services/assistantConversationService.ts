@@ -55,6 +55,38 @@ export async function updateAssistantSettings(input: Partial<AssistantSettings>)
   return value;
 }
 
+/** The caller's Efficiency Advisor checkbox (rule 95(h)). */
+export async function getEfficiencyAdvisor(userId: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { assistantEfficiencyAdvisor: true } });
+  return user?.assistantEfficiencyAdvisor === true;
+}
+
+export async function setEfficiencyAdvisor(userId: string, on: boolean): Promise<boolean> {
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data: { assistantEfficiencyAdvisor: on },
+    select: { assistantEfficiencyAdvisor: true },
+  });
+  return user.assistantEfficiencyAdvisor;
+}
+
+/**
+ * The Efficiency Advisor lines of this conversation's last `n` answers,
+ * newest first — so a line is not repeated back to back.
+ */
+export async function recentAdvisorLines(conversationId: string, n = 5): Promise<{ prefaces: string[]; signOffs: string[] }> {
+  const rows = await prisma.assistantMessage.findMany({
+    where: { conversationId, role: "assistant" },
+    orderBy: { createdAt: "desc" },
+    take: n,
+    select: { preface: true, signOff: true },
+  });
+  return {
+    prefaces: rows.flatMap((r) => (r.preface ? [r.preface] : [])),
+    signOffs: rows.flatMap((r) => (r.signOff ? [r.signOff] : [])),
+  };
+}
+
 /** First line of the opening question, trimmed to a title. Exported for tests. */
 export function titleFromQuestion(text: string): string {
   const line = text.replace(/\s+/g, " ").trim();
@@ -103,7 +135,7 @@ export async function getConversation(userId: string, id: string) {
       messages: {
         orderBy: { createdAt: "asc" },
         select: {
-          id: true, role: true, content: true, toolsUsed: true, stopped: true, createdAt: true,
+          id: true, role: true, content: true, toolsUsed: true, stopped: true, preface: true, signOff: true, createdAt: true,
           reports: {
             orderBy: { generatedAt: "asc" },
             select: { id: true, title: true, columns: true, rows: true, rowCount: true, truncated: true, generatedAt: true },
@@ -193,10 +225,13 @@ export async function beginTurn(
   return { question: content };
 }
 
-/** Store the assistant's answer (whole, or partial with stopped=true) and its reports. */
+/** Store the assistant's answer (whole, or partial with stopped=true), its Efficiency Advisor lines and its reports. */
 export async function finishTurn(
   conversationId: string,
-  answer: { content: string; toolsUsed: ToolUseRecord[]; stopped: boolean; reports: AssistantReportPayload[] },
+  answer: {
+    content: string; toolsUsed: ToolUseRecord[]; stopped: boolean; reports: AssistantReportPayload[];
+    preface?: string | null; signOff?: string | null;
+  },
 ): Promise<{ messageId: string; reportIds: string[] }> {
   const message = await prisma.assistantMessage.create({
     data: {
@@ -205,6 +240,8 @@ export async function finishTurn(
       content: answer.content,
       toolsUsed: answer.toolsUsed as never,
       stopped: answer.stopped,
+      preface: answer.preface ?? null,
+      signOff: answer.signOff ?? null,
     },
     select: { id: true },
   });
