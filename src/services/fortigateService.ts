@@ -14,6 +14,15 @@ import { Netmask } from "netmask";
 import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
 import { tlsFetch } from "../utils/tlsDispatcher.js";
+import { logger } from "../utils/logger.js";
+import {
+  fortiosGateKey,
+  authPauseRemainingMs,
+  recordFortiosAuthResult,
+  consecutive401sFor,
+  withFortiosGateSlot,
+  FortiosGateBusyError,
+} from "../utils/fortiosRequestGate.js";
 import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } from "undici";
 import { normalizeMacOrNull, normalizeMacsDistinct } from "../utils/mac.js";
 import { parseRangeFirstIp, isValidIpv4 } from "../utils/cidr.js";
@@ -163,23 +172,91 @@ async function fgErrorDetail(res: UndiciResponse): Promise<string> {
   }
 }
 
+/**
+ * A request fgRequest refused WITHOUT sending, because the gate is inside a
+ * 401 pause (see fgRequest). The message keeps the "Authentication failed
+ * (HTTP 401)" prefix push-error classifiers already read. A monitor probe
+ * that catches this must report `skipped`, not a miss: Polaris chose not to
+ * ask, so it learned nothing about whether the device is up.
+ */
+export class FortiosAuthPausedError extends AppError {
+  readonly remainingMs: number;
+  constructor(host: string, port: number, remainingMs: number) {
+    super(
+      502,
+      `Authentication failed (HTTP 401) for ${host}:${port} — Polaris has paused requests to this FortiGate ` +
+      `for ${Math.ceil(remainingMs / 1000)} s after it rejected the API token, so FortiOS's API-key lockout for this ` +
+      `server can expire. Check the API token (and any per-asset REST credential) for this gate`,
+    );
+    this.name = "FortiosAuthPausedError";
+    this.remainingMs = remainingMs;
+  }
+}
+
+export interface FgRequestOptions {
+  query?: Record<string, string>;
+  body?: unknown;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  /**
+   * Return the whole FortiOS envelope instead of unwrapping to `results`.
+   * Only for callers that need an envelope-level field (`serial`, `version`,
+   * `build`) — read them through `utils/fortiosEnvelope.ts` rather than by
+   * hand, so one module owns which half each field is in.
+   */
+  envelope?: boolean;
+}
+
+/**
+ * Every direct FortiOS REST call goes through here, paced per gate by
+ * utils/fortiosRequestGate.ts so Polaris cannot drive FortiOS 7.6's
+ * per-source-IP API-key lockout (business rule 95):
+ *
+ *  - at most POLARIS_FORTIOS_PER_GATE_CONCURRENCY requests in flight per
+ *    host:port (default 2, below FortiOS's default lockout threshold of 3);
+ *  - after a 401 nothing is sent to that gate for a pause that doubles on each
+ *    consecutive 401 (60 s → 30 min). A paused request fails fast with the
+ *    same "Authentication failed (HTTP 401)" prefix callers already classify,
+ *    and never reaches the gate.
+ *
+ * The pause is re-checked after the slot is granted, so requests queued behind
+ * the one that drew the 401 are not sent either.
+ */
 export async function fgRequest<T>(
   config: FortiGateConfig,
   method: "GET" | "POST" | "PUT" | "DELETE",
   path: string,
-  opts: {
-    query?: Record<string, string>;
-    body?: unknown;
-    signal?: AbortSignal;
-    timeoutMs?: number;
-    /**
-     * Return the whole FortiOS envelope instead of unwrapping to `results`.
-     * Only for callers that need an envelope-level field (`serial`, `version`,
-     * `build`) — read them through `utils/fortiosEnvelope.ts` rather than by
-     * hand, so one module owns which half each field is in.
-     */
-    envelope?: boolean;
-  } = {},
+  opts: FgRequestOptions = {},
+): Promise<T> {
+  const port = config.port || 443;
+  const gateKey = fortiosGateKey(config.host, port);
+  const refuseIfPaused = () => {
+    const remaining = authPauseRemainingMs(gateKey);
+    if (remaining > 0) throw new FortiosAuthPausedError(config.host, port, remaining);
+  };
+  refuseIfPaused();
+  try {
+    return await withFortiosGateSlot(
+      gateKey,
+      async () => {
+        refuseIfPaused();
+        return fgRequestUnpaced<T>(config, method, path, opts);
+      },
+      // Waiting for a slot may use up to one request timeout; the request's own
+      // timeout starts only once it is sent.
+      { signal: opts.signal, maxWaitMs: opts.timeoutMs ?? 15_000 },
+    );
+  } catch (err) {
+    if (err instanceof FortiosGateBusyError) throw new AppError(504, err.message);
+    throw err;
+  }
+}
+
+async function fgRequestUnpaced<T>(
+  config: FortiGateConfig,
+  method: "GET" | "POST" | "PUT" | "DELETE",
+  path: string,
+  opts: FgRequestOptions,
 ): Promise<T> {
   const port = config.port || 443;
   const qs = new URLSearchParams(opts.query || {});
@@ -217,6 +294,17 @@ export async function fgRequest<T>(
       init.body = JSON.stringify(opts.body);
     }
     const res = await tlsFetch(url, init, config.verifySsl);
+
+    // Every HTTP answer feeds the gate's 401 pause (utils/fortiosRequestGate.ts):
+    // a 401 starts or lengthens it, anything else ends the run.
+    const gateKey = fortiosGateKey(config.host, port);
+    const pauseMs = recordFortiosAuthResult(gateKey, res.status);
+    if (pauseMs > 0) {
+      logger.warn(
+        { host: config.host, port, path, consecutive401s: consecutive401sFor(gateKey), pauseSec: Math.round(pauseMs / 1000) },
+        "FortiGate answered 401 — pausing all REST requests to it so FortiOS's per-source-IP API-key lockout can expire",
+      );
+    }
 
     // 401 and 403 are DIFFERENT operator problems and must not share a message.
     // 401 = the token is wrong. 403 = the token authenticated fine, but FortiOS

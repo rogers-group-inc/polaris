@@ -27,6 +27,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { asciiForDevice } from "../../src/services/assetQuarantineService.js";
 import { fgRequest } from "../../src/services/fortigateService.js";
+import { _resetFortiosGateState } from "../../src/utils/fortiosRequestGate.js";
 
 // The FortiManager/FortiGate transports call `tlsFetch` — undici's own fetch
 // paired with its own dispatcher, because a dispatcher is only valid to the
@@ -111,6 +112,8 @@ describe("fgRequest surfaces the FortiOS error body", () => {
   beforeEach(() => {
     fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
+    // Each 401 below would otherwise pause 10.0.0.1 for the cases after it.
+    _resetFortiosGateState();
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -160,6 +163,7 @@ describe("fgRequest surfaces the FortiOS error body", () => {
     // fgRequestStatusMapping.test.ts; the detail suffix is for the generic path.
     mock(401, { error: -1 });
     await expect(fgRequest(config, "GET", "/api/v2/cmdb/x")).rejects.toThrow(/check your API token/);
+    _resetFortiosGateState(); // the 401 above paused this host
     mock(403, { error: -1 });
     await expect(fgRequest(config, "GET", "/api/v2/cmdb/x")).rejects.toThrow(/access profile/);
     mock(404, { error: -1 });
