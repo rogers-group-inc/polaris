@@ -274,7 +274,7 @@ describe("what the asset-type filter puts on the wire", () => {
   it("sends a legacy enabled list as the built-ins it hides", async () => {
     const qs = await call({ assetTypes: ["server", "switch"] });
     expect(qs).toContain("hideAssetTypes=");
-    expect(decodeURIComponent(qs)).toContain("access_point,firewall,hypervisor");
+    expect(decodeURIComponent(qs)).toContain("access_point,container,firewall,hypervisor");
     expect(decodeURIComponent(qs)).not.toContain("server");
   });
 });

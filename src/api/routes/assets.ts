@@ -6536,7 +6536,12 @@ router.post("/:id/agent/install", requirePermission("assets", "fullwrite"), asyn
     // can't run third-party binaries. Gate on the asset's class, not the
     // integration type (the vcenter source matrix must allow "agent" for VMs).
     if (asset.assetType === "hypervisor") {
-      throw new AppError(400, "Polaris Agent cannot be installed on a hypervisor (ESXi) host.");
+      throw new AppError(400, "Polaris Agent cannot be installed on a hypervisor host (ESXi, Unraid, TrueNAS SCALE).");
+    }
+    // A container is not a machine: the agent would land in an image layer
+    // the next update throws away. Its host's integration reports it.
+    if (asset.assetType === "container") {
+      throw new AppError(400, "Polaris Agent cannot be installed on a container.");
     }
 
     // Resolve transport: explicit body value wins; otherwise default by

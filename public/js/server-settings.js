@@ -5811,7 +5811,7 @@ function _wireMibWalkCopy(result) {
 
 var _deviceIconAssetTypes = [
   "firewall", "switch", "access_point", "router",
-  "server", "workstation", "printer", "other",
+  "server", "workstation", "printer", "hypervisor", "container", "other",
 ];
 
 // ─── Device Types ──────────────────────────────────────────────────────────

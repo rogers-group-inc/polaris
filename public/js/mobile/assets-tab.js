@@ -34,7 +34,9 @@
     server:       { icon: "#i-server",       cls: "ico-srv",   label: "Servers" },
     workstation:  { icon: "#i-desktop",      cls: "ico-wks",   label: "Workstations" },
     printer:      { icon: "#i-printer",      cls: "ico-prn",   label: "Printers" },
-    other:        { icon: "#i-server",       cls: "ico-other", label: "Other" },
+    hypervisor:   { icon: "#i-server",       cls: "ico-srv",   label: "Hypervisors" },
+    container:    { icon: "#i-container",    cls: "ico-ctr",   label: "Containers" },
+    other:       { icon: "#i-server",       cls: "ico-other", label: "Other" },
   };
 
   // Filter chips, in display order. `type` null = no assetType filter.
@@ -47,6 +49,7 @@
     { key: "server",       label: "Servers",      type: "server" },
     { key: "workstation",  label: "Workstations", type: "workstation" },
     { key: "printer",      label: "Printers",     type: "printer" },
+    { key: "container",    label: "Containers",   type: "container" },
     { key: "other",        label: "Other",        type: "other" },
   ];
 

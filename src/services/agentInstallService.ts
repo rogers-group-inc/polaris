@@ -680,7 +680,8 @@ export async function bulkInstallAgents(input: BulkInstallInput): Promise<BulkIn
     if (a.managedAgent && !failedRow) { skip(`agent already installed (status=${a.managedAgent.installStatus})`); continue; }
     const sourceKind = assetSourceKindFromIntegrationType(a.discoveredByIntegration?.type ?? null);
     if (!isPollingMethodCompatible(sourceKind, "agent")) { skip(`Polaris Agent is not compatible with ${sourceKind} sources`); continue; }
-    if (a.assetType === "hypervisor") { skip("agent cannot be installed on a hypervisor (ESXi) host"); continue; }
+    if (a.assetType === "hypervisor") { skip("agent cannot be installed on a hypervisor host (ESXi, Unraid, TrueNAS SCALE)"); continue; }
+    if (a.assetType === "container") { skip("agent cannot be installed on a container"); continue; }
     const host = a.ipAddress || a.dnsName || a.hostname || "";
     if (!host) { skip("no IP / DNS / hostname to reach the device"); continue; }
 
