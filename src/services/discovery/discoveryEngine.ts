@@ -7291,7 +7291,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
 // elsewhere keeps colon-separated uppercase form. Delegates to the shared
 // util, which also rejects the all-zero MAC so two unrelated devices
 // reporting 00:00:00:00:00:00 can't collide into one match key.
-function normalizeMacKey(mac: string | null | undefined): string {
+export function normalizeMacKey(mac: string | null | undefined): string {
   return macHexKeyOrNull(mac) ?? "";
 }
 
@@ -7303,7 +7303,7 @@ const NETBIOS_LIMIT = 15;
 
 // Index a hostname under its full lowercase form, plus its 15-char prefix
 // when the full form is longer (so a future shorter lookup can still find it).
-function indexHostname(map: Map<string, any>, hostname: string, asset: any): void {
+export function indexHostname(map: Map<string, any>, hostname: string, asset: any): void {
   const lower = hostname.toLowerCase();
   if (!map.has(lower)) map.set(lower, asset);
   if (lower.length > NETBIOS_LIMIT) {
@@ -7315,7 +7315,7 @@ function indexHostname(map: Map<string, any>, hostname: string, asset: any): voi
 // Look up `hostname` in a map populated via indexHostname. Returns the matched
 // asset and how the match was made: "exact" (full hostnames are equal) or
 // "netbios" (matched only after truncating one side to 15 chars).
-function lookupHostname(map: Map<string, any>, hostname: string): { asset: any; via: "exact" | "netbios" } | null {
+export function lookupHostname(map: Map<string, any>, hostname: string): { asset: any; via: "exact" | "netbios" } | null {
   const lower = hostname.toLowerCase();
   const direct = map.get(lower);
   if (direct) {
@@ -7379,7 +7379,8 @@ function snapshotExistingAsset(asset: any): Record<string, any> {
 }
 
 // Upsert a pending hostname-collision conflict, deduped on proposedDeviceId.
-async function upsertAssetConflict(args: {
+// Exported for the workload sync (services/discovery/workloadSync.ts).
+export async function upsertAssetConflict(args: {
   collisionAssetId: string;
   integrationId: string;
   proposedDeviceId: string;
