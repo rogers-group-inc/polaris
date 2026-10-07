@@ -956,6 +956,10 @@ const api = {
     // assets:read (the facts are stamped on IPAM reservations).
     vips:                 (id) => request("GET", `/assets/${id}/vips`),
     virtualization:       (id) => request("GET", `/assets/${id}/virtualization`),
+    // Unraid / TrueNAS VM + container control (business rule 94).
+    workload:             (id)       => request("GET",  `/assets/${id}/workload`),
+    workloadAction:       (id, verb, body) => request("POST", `/assets/${id}/workload/${encodeURIComponent(verb)}`, body || {}),
+    workloadCheckUpdates: (id)       => request("POST", `/assets/${id}/workload/check-updates`, {}),
     // Firmware upgrade (business rule 87): what the Repository can offer this
     // device (plus its pending booking, `schedule`), the start (assets:write;
     // `imageId` is the image the operator approved by name), and the asset's

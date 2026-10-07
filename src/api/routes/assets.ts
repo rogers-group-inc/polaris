@@ -3738,6 +3738,46 @@ router.get("/:id/virtualization", requirePermission("assets", "read"), async (re
     });
     if (!asset) throw new AppError(404, "Asset not found");
     const v = asset.virtualization as Record<string, any> | null;
+    // Unraid / TrueNAS blobs (`platform` set) have their own shape: a VM or
+    // container links to its host; the host lists the workloads placed on it
+    // (VMs and containers alike) and carries its pools inline.
+    if (v && (v.platform === "unraid" || v.platform === "truenas")) {
+      if (v.role === "vm" || v.role === "container") {
+        const hostAsset = typeof v.hostAssetId === "string" && v.hostAssetId
+          ? await prisma.asset.findUnique({
+              where: { id: v.hostAssetId },
+              select: { id: true, hostname: true, monitorStatus: true, monitored: true },
+            })
+          : null;
+        res.json({ virtualization: v, hostAsset });
+        return;
+      }
+      if (v.role === "host") {
+        const children = await prisma.asset.findMany({
+          where: { virtualization: { path: ["hostAssetId"], equals: id }, status: { not: "decommissioned" } },
+          select: { id: true, hostname: true, assetType: true, monitorStatus: true, monitored: true, virtualization: true },
+          orderBy: { hostname: "asc" },
+          take: 1000,
+        });
+        res.json({
+          virtualization: v,
+          workloads: children.map((c) => {
+            const cv = (c.virtualization as Record<string, any> | null) ?? {};
+            return {
+              id: c.id,
+              hostname: c.hostname,
+              role: cv.role ?? null,
+              state: cv.state ?? null,
+              image: cv.image ?? null,
+              updateAvailable: cv.updateAvailable ?? null,
+              monitorStatus: c.monitorStatus,
+              monitored: c.monitored,
+            };
+          }),
+        });
+        return;
+      }
+    }
     if (!v || (v.role !== "vm" && v.role !== "host")) {
       res.json({ virtualization: null });
       return;

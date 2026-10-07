@@ -2859,6 +2859,8 @@ function renderIntegrationFailedStatus() {
     if (t === "activedirectory") return "Active Directory";
     if (t === "vcenter") return "vCenter";
     if (t === "azurearc") return "Azure Arc";
+    if (t === "unraid") return "Unraid";
+    if (t === "truenas") return "TrueNAS SCALE";
     return t || "";
   }
   container.innerHTML =
