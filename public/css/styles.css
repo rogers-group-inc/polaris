@@ -93,6 +93,11 @@
      --shadow-pill, and it carries a fainter inset rim because in the dark
      family the rim is what reads as raised. */
   --shadow-tab-idle: 0 2px 4px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.03);
+  /* Cast DOWN from the frozen page header (.page-top-sticky) onto whatever
+     scrolls under it. The negative spread equal to the offset keeps it off
+     the bar's top and sides, so only the bottom edge throws a shadow. Per
+     FAMILY, like --shadow-pill. */
+  --shadow-page-top: 0 12px 18px -12px rgba(0,0,0,.7);
   --shadow-md: 0 8px 32px rgba(0,0,0,.5);
   /* Drop shadow for a frosted panel that floats free of a screen edge — the
      modal. It paints --panel-glass-bg, only 70% opaque, so --shadow-md's
@@ -283,6 +288,7 @@
   --color-fill-subtle: rgba(0,0,0,0.05);
   --shadow-pill: 0 1px 2px rgba(60,40,10,.22);
   --shadow-tab-idle: 0 1px 3px rgba(60,40,10,.14);
+  --shadow-page-top: 0 12px 18px -12px rgba(60,40,10,.28);
   --shadow-sm: 0 1px 4px rgba(0,0,0,.08);
   --shadow-md: 0 8px 32px rgba(0,0,0,.12);
   --shadow-panel: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.10);
@@ -1757,6 +1763,10 @@ code {
   padding-top: 2rem;
   margin-top: -2rem;
   margin-bottom: 1.5rem;
+  /* Drawn outside the bar only (an outer shadow never paints under a
+     transparent box), so it adds no fill. It paints above the curtain
+     (html::after, one z-index lower), so it lands on the scrolled content. */
+  box-shadow: var(--shadow-page-top);
 }
 /* Inside the bar the header and the tab strip sit tight; the gap to the
    content below is the wrapper's margin. The header draws no rule of its own:
