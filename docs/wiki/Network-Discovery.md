@@ -61,6 +61,14 @@ Typed as ranges, CIDRs or single addresses — up to 50 rows and 65,536
 addresses. A live preview resolves what you typed as you type, with no packets
 sent, and reports how many of those addresses inventory already carries.
 
+A **Subnet (CIDR)** row also lists the IPv4 networks IPAM already knows when
+you click into it. Typing filters the list by CIDR, name, VLAN, FortiGate or
+block — every word you type has to match, so `ash 20` finds Ashfield's VLAN 20
+— and a click or Enter fills in the CIDR. Deprecated networks are left out. The
+box still accepts any subnet you type, including one IPAM has never seen. You
+need read access to Networks to get the list; without it the row is a plain
+text box.
+
 ### Methods
 
 Pick from **ICMP (ping)**, **SNMP**, **REST API**, **SSH** and **WinRM**, each
