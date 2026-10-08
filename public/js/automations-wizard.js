@@ -3307,7 +3307,8 @@ async function openAutomationWizard(existing, opts) {
         '<div style="display:flex;gap:6px;align-items:center">' +
           '<span class="aw-grip" draggable="true" title="Drag to move">&#x2842;</span>' +
           '<select class="tgl-what" style="flex:0 1 220px;min-width:0">' + tgWhatOptions(kind, "d:sdwanMemberIp") + '</select>' +
-          '<select class="tgl-memberip-op" style="flex:0 0 auto">' +
+          // Pinned like the condition row's .tgl-op (a bare select stretches).
+          '<select class="tgl-memberip-op" style="flex:0 0 80px;width:80px">' +
             '<option value="!="' + (mp.operator === "!=" ? " selected" : "") + '>is not</option>' +
             '<option value="=="' + (mp.operator === "==" ? " selected" : "") + '>is</option>' +
           '</select>' +
