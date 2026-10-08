@@ -1285,6 +1285,38 @@ export async function readPollingHistorySummary(assetId: string): Promise<Pollin
 /** How far back the SD-WAN Members table's Health Check Status strip reaches. */
 export const SDWAN_STATUS_STRIP_MINUTES = 30;
 
+/** How old a tunnel member's newest IPsec sample may be and still drive its
+ *  Link column. Unpinned tunnels are only written on the full system-info
+ *  pass, so this has to outlast that cadence; 24h matches the unpinned
+ *  IPsec detail retention, past which there is no row to read anyway. */
+export const SDWAN_TUNNEL_LINK_MAX_AGE_HOURS = 24;
+
+const IPSEC_LINK_STATES = new Set(["up", "down", "partial", "dynamic"]);
+
+/**
+ * The SD-WAN Members table's Link state for one member. A member with a recent
+ * IPsec sample is an overlay and reads that tunnel's status; a member whose
+ * interface is typed `tunnel` but has no IPsec sample (an SNMP-only gate, a
+ * GRE / VXLAN overlay) reads null — an interface operStatus on a tunnel is
+ * not its state. Everything else reads its interface operStatus. Pure.
+ */
+export function sdwanMemberLinkState(
+  iface: { ifType: string | null; operStatus: string | null } | null,
+  ipsecStatus: string | undefined,
+): { linkState: SdwanMemberRow["linkState"]; linkSource: SdwanMemberRow["linkSource"] } {
+  if (ipsecStatus !== undefined) {
+    const s = ipsecStatus.trim().toLowerCase();
+    return IPSEC_LINK_STATES.has(s)
+      ? { linkState: s as SdwanMemberRow["linkState"], linkSource: "ipsec" }
+      : { linkState: null, linkSource: null };
+  }
+  if (!iface || iface.ifType === "tunnel") return { linkState: null, linkSource: null };
+  if (iface.operStatus == null) return { linkState: null, linkSource: null };
+  // Any reported state other than "up" (SNMP's lowerLayerDown, dormant…) is
+  // down, as it always was here.
+  return { linkState: iface.operStatus === "up" ? "up" : "down", linkSource: "interface" };
+}
+
 export interface SdwanMemberHealthCheck {
   healthCheck: string;
   state:       string;        // "up" | "down"
@@ -1299,6 +1331,14 @@ export interface SdwanMemberRow {
   ip:           string | null;
   linkSpeedBps: number | null;
   linkUp:       boolean | null;
+  /** The Link column's state. A physical / VLAN member reads its interface
+   *  operStatus ("up" / "down"); a tunnel member (an IPsec overlay) reads its
+   *  newest IPsec sample, so it can also be "partial" (some phase-2 selectors
+   *  down) or "dynamic" (a dial-up hub template, which has no single state).
+   *  Null = nothing trustworthy to show. */
+  linkState:    "up" | "down" | "partial" | "dynamic" | null;
+  /** Where linkState came from. */
+  linkSource:   "interface" | "ipsec" | null;
   txBytes:      number | null; // interface outOctets (cumulative)
   rxBytes:      number | null; // interface inOctets (cumulative)
   healthChecks: SdwanMemberHealthCheck[];
@@ -1392,7 +1432,7 @@ export async function readSdwanMembers(
   );
 
   // C: current interface state per member ifName (IP / speed / link state /
-  // bytes), from the CURRENT-STATE inventory. A WAN member is frequently NOT
+  // bytes / type), from the CURRENT-STATE inventory. A WAN member is frequently NOT
   // pinned, so reading the pinned-only sample table here would silently blank
   // these columns for exactly the common case. The previous DISTINCT ON also
   // had no time bound at all, so it could return an arbitrarily old reading.
@@ -1400,11 +1440,31 @@ export async function readSdwanMembers(
   const ifaceRows = await prisma.assetInterface.findMany({
     where: { assetId, ifName: { in: links } },
     select: {
-      ifName: true, ipAddress: true, speedBps: true,
+      ifName: true, ipAddress: true, speedBps: true, ifType: true,
       operStatus: true, inOctets: true, outOctets: true,
     },
   });
   const ifaceByName = new Map(ifaceRows.map((r) => [r.ifName, r]));
+
+  // D: a tunnel member's real state is its IPsec SA, not an interface link.
+  // An overlay has no carrier: the REST path stores its operStatus as null,
+  // but SNMP ifOperStatus (and some monitor payloads' `link: false`) report a
+  // healthy, SLA-green overlay as down — the Link column then read "▼ down"
+  // beside an all-green health check. Newest IPsec sample per member name,
+  // bounded to SDWAN_TUNNEL_LINK_MAX_AGE_HOURS so a stream that stopped never
+  // keeps a tunnel green. A member with an IPsec sample is a tunnel even when
+  // its interface row is missing or untyped. Naive-UTC cutoff, as in B.
+  const ipsecRows = await prisma.$queryRawUnsafe<Array<{ tunnelName: string; status: string }>>(
+    `SELECT DISTINCT ON ("tunnelName") "tunnelName", "status"
+     FROM "asset_ipsec_tunnel_samples"
+     WHERE "assetId" = $1 AND "tunnelName" = ANY($2::text[])
+       AND "timestamp" > (now() AT TIME ZONE 'UTC') - make_interval(hours => $3::int)
+     ORDER BY "tunnelName", "timestamp" DESC`,
+    assetId,
+    links,
+    SDWAN_TUNNEL_LINK_MAX_AGE_HOURS,
+  ) ?? [];
+  const ipsecByName = new Map(ipsecRows.map((r) => [r.tunnelName, r.status]));
   // Fold per (member, scrape): rows arrive ordered by link then timestamp, so
   // each scrape's health checks are adjacent.
   const recentByLink = new Map<string, SdwanStripSegment[]>();
@@ -1437,13 +1497,17 @@ export async function readSdwanMembers(
     const hcs = hcByLink.get(link) ?? [];
     const iface = ifaceByName.get(link) ?? null;
     const recent = recentByLink.get(link) ?? [];
+    const { linkState, linkSource } = sdwanMemberLinkState(iface, ipsecByName.get(link));
     return {
       link,
       zone:         zoneByLink.get(link) ?? null,
       state:        hcs.length && hcs.every((h) => h.state === "up") ? "up" : "down",
       ip:           iface?.ipAddress ?? null,
       linkSpeedBps: iface?.speedBps != null ? Number(iface.speedBps) : null,
-      linkUp:       iface ? iface.operStatus === "up" : null,
+      // Kept for older clients: true / false only where the state is binary.
+      linkUp:       linkState === "up" || linkState === "partial" ? true : linkState === "down" ? false : null,
+      linkState,
+      linkSource,
       txBytes:      iface?.outOctets != null ? Number(iface.outOctets) : null,
       rxBytes:      iface?.inOctets  != null ? Number(iface.inOctets)  : null,
       healthChecks: hcs,
