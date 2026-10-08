@@ -14,9 +14,11 @@
  *      scan has no reason to touch a device Polaris already knows, and not
  *      probing it is both cheaper and quieter. The count is reported so
  *      "nothing new" stays distinguishable from "nothing there".
- *   2. **Liveness** — one ICMP echo per address, when the operator enabled
- *      ICMP. This is the cheap filter that keeps a /16 of empty space from
- *      costing an authentication attempt per address.
+ *   2. **Liveness** — up to two ICMP echoes per address (the second only if
+ *      the first went unanswered — see SCAN_PING_ATTEMPTS), when the operator
+ *      enabled ICMP. This is the cheap filter that keeps a /16 of empty space
+ *      from costing an authentication attempt per address. A ping that could
+ *      not RUN is counted apart from a silent address and reported on the run.
  *   3. **Identification** — for each live address, the enabled methods in the
  *      operator's order, each against its credentials in order, stopping at
  *      the first that answers. SNMP additionally walks the system group (who
@@ -111,6 +113,60 @@ export interface ScanHit {
 export const SCAN_PING_CONCURRENCY = 64;
 /** ICMP timeout. Short: a live host on a local segment answers in ms. */
 export const SCAN_PING_TIMEOUT_MS = 1500;
+/**
+ * Echoes sent to an address before it is called silent. Two, not one: the first
+ * echo to a quiet host on a ROUTED subnet is routinely lost while the gateway
+ * ARPs for it (a FortiGate or a Cisco drops it rather than queueing it), and a
+ * single-echo sweep reads every such host as empty space. The monitor never
+ * shows that loss, because its pings repeat and the gateway has learned the
+ * host by the second — which is exactly how a device could answer its ICMP
+ * monitor and still be missing from a Discovery of its own network. The retry
+ * goes out immediately, while the ARP entry the first echo caused is fresh,
+ * and only a silent address pays for it.
+ */
+export const SCAN_PING_ATTEMPTS = 2;
+
+// ─── Liveness ───────────────────────────────────────────────────────────────
+
+/**
+ * What one address's liveness check found.
+ *
+ * `toolError` is set when `ping` itself could not run — not installed, no
+ * CAP_NET_RAW, no route out of this server — which is a fact about the SERVER,
+ * not the address. It is kept apart from a silent address so a sweep where
+ * ping never worked can say so instead of reporting a quiet network.
+ */
+export interface LivenessResult {
+  alive: boolean;
+  toolError?: string;
+}
+
+/**
+ * Does this `pingHost` failure mean "no reply"? iputils and Windows both exit 1
+ * when the echo went out and nothing came back; pingHost's own wall-clock timer
+ * is the same verdict. Anything else — a spawn error (ENOENT, EPERM), exit 2
+ * ("socket: Operation not permitted", "Network is unreachable") — means the
+ * probe never really happened.
+ */
+export function isNoReply(error: string | undefined): boolean {
+  return error === "ping exit 1" || error === "ping timed out";
+}
+
+/**
+ * Ping one address up to SCAN_PING_ATTEMPTS times, stopping at the first reply.
+ * A tool failure is not retried: it will fail the same way again.
+ */
+export async function checkLiveness(
+  address: string,
+  ping: (host: string, timeoutMs: number) => Promise<{ success: boolean; error?: string }> = pingHost,
+): Promise<LivenessResult> {
+  for (let attempt = 0; attempt < SCAN_PING_ATTEMPTS; attempt++) {
+    const res = await ping(address, SCAN_PING_TIMEOUT_MS);
+    if (res.success) return { alive: true };
+    if (!isNoReply(res.error)) return { alive: false, toolError: res.error || "ping failed" };
+  }
+  return { alive: false };
+}
 /**
  * Identification attempts in flight. Much lower than the ping stage — each one
  * is an authentication attempt plus (for SNMP) three walks, and this is the
@@ -496,12 +552,20 @@ export async function runScan(runId: string, actor: string): Promise<void> {
     // operator's choice to make: a range where ICMP is firewalled off is
     // exactly the case where the cheap filter would hide every device.
     let candidates: { address: string; icmpAnswered: boolean }[];
+    // Addresses ping could not even be attempted against, and one example
+    // reason — a server-side fault that must not read as an empty network.
+    let pingToolFailures = 0;
+    let pingToolError: string | null = null;
     if (icmpEnabled) {
       const live: { address: string; icmpAnswered: boolean }[] = [];
       await mapSettledWithConcurrency(addresses, SCAN_PING_CONCURRENCY, async (address) => {
         if (aborted) return;
-        const res = await pingHost(address, SCAN_PING_TIMEOUT_MS);
-        if (res.success) {
+        const res = await checkLiveness(address);
+        if (res.toolError) {
+          pingToolFailures += 1;
+          pingToolError ??= res.toolError;
+        }
+        if (res.alive) {
           live.push({ address, icmpAnswered: true });
           // A responder, but not yet fully processed — stage 2 counts it as
           // scanned. It is already a HIT: identifyAddress always returns one
@@ -560,10 +624,19 @@ export async function runScan(runId: string, actor: string): Promise<void> {
       );
     }
 
+    // Stays a COMPLETED run — the addresses that did answer are real results —
+    // but the error line on the Run step says why the rest read as silent.
+    const pingNote = pingToolFailures
+      ? `ping could not run from this server for ${pingToolFailures} of ${addresses.length} address(es) ` +
+        `(${pingToolError}) — those were not tested, not found silent`
+      : null;
+    if (pingNote) logger.warn({ runId, scanId: scan.id, pingToolFailures, pingToolError }, "network scan: ping could not run");
+
     await prisma.networkScanRun.update({
       where: { id: runId },
       data: {
         status: aborted ? "aborted" : "completed",
+        ...(pingNote ? { error: pingNote } : {}),
         scannedCount: progress.scannedCount,
         hitCount: hits.length,
         hits: hits as unknown as object,
@@ -579,15 +652,17 @@ export async function runScan(runId: string, actor: string): Promise<void> {
       resourceId: scan.id,
       resourceName: scan.name,
       actor,
-      level: aborted ? "warning" : "info",
+      level: aborted || pingNote ? "warning" : "info",
       message:
         `Discovery "${scan.name}" ${aborted ? "aborted" : "completed"}: ` +
-        `${hits.length} responder(s) from ${progress.scannedCount} address(es) scanned`,
+        `${hits.length} responder(s) from ${progress.scannedCount} address(es) scanned` +
+        (pingNote ? ` — ${pingNote}` : ""),
       details: {
         hits: hits.length,
         scanned: progress.scannedCount,
         skippedKnown,
         hitsTruncated,
+        pingToolFailures,
         durationMs: Date.now() - startedAt.getTime(),
       },
     });
