@@ -179,4 +179,42 @@ d("poll-counted holds", () => {
     await evaluateAllNotificationRules();
     expect(await activeAlerts()).toBe(1);
   });
+
+  // A count-cleared reset on a TIME-windowed trigger: the readings it counts
+  // must be fetched even when they reach past the trigger's own window. The
+  // 2026-10-08 SD-WAN case — 15 polls to clear, a 900s window, a collector a
+  // hair slower than a minute — never held 15 samples inside 900s, so the
+  // alert sat at 0% for hours.
+  it("clears when the recovery run reaches past the trigger's window", async () => {
+    await seedRule(
+      { aggregation: "avg", windowSec: 900, forPolls: undefined, forDurationSec: 0, threshold: 20 },
+      { sustainPolls: 15, sustainSec: 900 },
+    );
+    await seedSamples([35, 35, 35]);
+    await evaluateAllNotificationRules();
+    expect(await activeAlerts()).toBe(1);
+
+    // 20 recovered samples 61s apart, the newest 59s old: only 14 of them sit
+    // inside 900s, so a fetch sized from the window alone can never count 15.
+    await prisma.assetTelemetrySample.deleteMany({ where: { assetId } });
+    const now = Date.now();
+    await prisma.assetTelemetrySample.createMany({
+      data: Array.from({ length: 20 }, (_, i) => ({ assetId, timestamp: new Date(now - 59_000 - i * 61_000), cpuPct: 0 })),
+    });
+    await evaluateAllNotificationRules();
+    expect(await activeAlerts()).toBe(0);
+  });
+
+  it("widening the fetch for the clear does not widen the average", async () => {
+    // Older samples sit far over the line; the 900s window is clean. An
+    // average over everything fetched (30 min) would fire.
+    await seedRule(
+      { aggregation: "avg", windowSec: 900, forPolls: undefined, forDurationSec: 0, threshold: 20 },
+      { sustainPolls: 15, sustainSec: 900 },
+    );
+    await seedSamples([100, 100, 100, 100, 100, 100, 100, 100, 100, 100], 16);
+    await seedSamples([0, 0, 0, 0, 0]);
+    await evaluateAllNotificationRules();
+    expect(await activeAlerts()).toBe(0);
+  });
 });
