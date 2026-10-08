@@ -377,8 +377,14 @@ FortiGate polled over the REST API, IPsec interfaces (site-to-site, dial-up,
 ADVPN hub and spoke overlays) and GRE / VXLAN tunnels appear in the Interfaces
 table with their configured address, and that address is tied to the
 firewall like any other interface IP. FortiOS reports no link state or
-counters for them there, so the status and traffic columns stay empty. A
-tunnel's real up/down state is in the IPsec tunnels section. The temporary
+counters for them there, so the status and traffic columns stay empty. An
+IPsec interface is shown as a single row nested under the physical interface
+it runs over, marked with the tree line and an **IPsec** badge. That row
+carries the tunnel's real up/down state, its remote gateway, its traffic and,
+under the name, the tunnel interface's configured address. If you pinned the
+tunnel interface itself for polling, it also keeps its own row so you can
+unpin it. GRE and VXLAN tunnels have no IPsec state and stay under **Other
+Interfaces**. The temporary
 shortcut tunnels ADVPN builds between spokes are not listed. They share their
 parent interface's address.
 
