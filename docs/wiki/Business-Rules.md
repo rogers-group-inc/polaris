@@ -295,6 +295,9 @@ every trigger path: monitored **and** not suppressed. Un-monitoring a device
 packet.** **(a)** Release is asymmetric — entering needs every parent confirmed
 down, leaving needs a parent genuinely back (`up` / `unknown` / `passive` only;
 `warning` holds). **(b)** A miss the upstream explains is **grey, not red**.
+**(c)** A suppressed device keeps its **own** count at the normal probe interval,
+so when its parent reaches **up**, every device below whose own count is
+already **up** leaves Dep. Down in the same moment, all the way down the chain.
 
 ### Rule 39
 **How a person wants to be reached is theirs, not the automation's.** The

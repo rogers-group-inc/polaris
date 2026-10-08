@@ -391,7 +391,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `prisma`, `logger`, `retryOnDeadlock`, metrics (write timer + buffer depth).
 
-**Used by:** `src/services/monitoringService.ts` (`recordProbeResult` enqueues + overlays the pending patch for read-your-writes), `src/app.ts` (boot start + SIGTERM drain).
+**Used by:** `src/services/monitoringService.ts` (`recordProbeResult` enqueues + overlays the pending patch for read-your-writes), `src/services/dependencyTreeService.ts` (`reconcileDependencySuppression` overlays `getPendingProbePatch` onto each asset's `monitorStatus`, because `propagateAfterStatusChange` fires before the flush — business rule 38(c)), `src/app.ts` (boot start + SIGTERM drain).
 
 **Invariants:**
 - **Adding a column is a SIX-point lockstep in one file, and nothing typed guards it.** The flush is a hand-written bulk UPDATE whose values are POSITIONAL: (1) the `ProbePatch` field, (2) the merge in `enqueueProbePatch` (preserve-on-absent or last-write-wins — pick deliberately), (3) the `$${p++}::<type>` placeholder tuple, (4) the `params.push(...)` entry **in the same order**, (5) the `SET "col" = COALESCE(v.alias, t."col")` clause, and (6) the `AS v(...)` alias list. Get two of the three positional lists out of step and Postgres files the wrong value in the wrong column — or the flush throws inside a background timer, where the only symptom is monitor state quietly going stale. `tests/integration/probePatchBufferColumns.test.ts` pins every column against a real database (full patch, sparse patch, and a multi-asset flush, which is where a slip lands values on the wrong ASSET rather than merely the wrong column) — extend it in the same commit.

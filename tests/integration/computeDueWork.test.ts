@@ -115,7 +115,10 @@ dbDescribe("computeDueWork", () => {
     expect(fresh.probes).toEqual([]);
   });
 
-  it("dependency suppression doubles the probe cadence", async () => {
+  it("dependency suppression does NOT slow the probe (business rule 38(c))", async () => {
+    // A suppressed device's own bucket is the count it leaves Dep. Down with,
+    // so it is probed on the configured cadence like any other — the 2× clamp
+    // made every layer down a chain drain half as fast as its parent.
     const staleBy1_5 = ago(Math.round(probeSec * 1.5));
     const normal = await computeDueWork([cand({ lastMonitorAt: staleBy1_5 })], ALL, now);
     expect(probeDueIds(normal)).toHaveLength(1);
@@ -123,12 +126,12 @@ dbDescribe("computeDueWork", () => {
     const suppressed = await computeDueWork(
       [cand({ lastMonitorAt: staleBy1_5, dependencySuppressed: true })], ALL, now,
     );
-    expect(probeDueIds(suppressed)).toEqual([]);
+    expect(probeDueIds(suppressed)).toHaveLength(1);
 
-    const veryStale = await computeDueWork(
-      [cand({ lastMonitorAt: ago(Math.round(probeSec * 2.5)), dependencySuppressed: true })], ALL, now,
+    const fresh = await computeDueWork(
+      [cand({ lastMonitorAt: ago(Math.round(probeSec * 0.5)), dependencySuppressed: true })], ALL, now,
     );
-    expect(probeDueIds(veryStale)).toHaveLength(1);
+    expect(probeDueIds(fresh)).toEqual([]);
   });
 
   it("telemetry runs only for confirmed-up assets on a telemetry-capable method", async () => {

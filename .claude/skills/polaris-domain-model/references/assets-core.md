@@ -267,7 +267,8 @@ Asset
   -- parents are confirmed down (or themselves suppressed); see the
   -- AssetDependencyParent model above for the resolution rules. While
   -- suppressed, telemetry / systemInfo / fastFiltered / sdwan cadences pause and
-  -- the response-time probe runs at 2× the resolved interval, with each
+  -- the response-time probe keeps the resolved interval (business rule
+  -- 38(c) — its own bucket is how it leaves with its parent), with each
   -- failed probe stamped AssetMonitorSample.dependencyDown so the charts
   -- can grey the stretch instead of drawing a red outage over it.
   -- RELEASE IS ASYMMETRIC: the flag is SET when every parent reads `down`,
