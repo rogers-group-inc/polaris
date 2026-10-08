@@ -9,7 +9,8 @@
  * auto-discovered, arc-*, fortiswitch, entraid…) was silently stripped the
  * first time an operator edited the asset's tags. The 2026-10 report: "edit an
  * asset and change the tags, and it removes all the tags created from
- * discovery". `azure:` chips (Arc-owned) are locked but still saved.
+ * discovery". `azure:` tags (Arc-owned) get no chip in the picker — no saved
+ * value either; the server keeps the asset's own (withArcOwnedTags).
  *
  * Same eval-into-happy-dom idiom as tagPickerRegionTags.test.ts.
  */
@@ -78,9 +79,9 @@ describe("tag picker — tags with no registry row", () => {
     await setup();
   });
 
-  it("a save with no edits returns every tag the asset carried", () => {
-    const tags = ["Production", "azurearc", "auto-discovered", "arc-hybrid", "azure:DefenderPlan=P1"];
-    render(tags);
+  it("a save with no edits returns every tag the asset carried, bar the hidden azure: ones", () => {
+    const tags = ["Production", "azurearc", "auto-discovered", "arc-hybrid"];
+    render([...tags, "azure:DefenderPlan=P1"]);
     expect(value()).toEqual([...tags].sort());
   });
 
@@ -109,12 +110,23 @@ describe("tag picker — tags with no registry row", () => {
     expect(labels).not.toContain("Not in tag list");
   });
 
-  it("azure: chips are locked, and a ticked one is still saved", () => {
-    render(["azure:DefenderPlan=P1"]);
-    expect(chip("azure:DefenderPlan=P1")!.disabled).toBe(true);
-    expect(chip("azure:Env=Prod")!.disabled).toBe(true);
-    expect(chip("Production")!.disabled).toBe(false);
-    expect(value()).toEqual(["azure:DefenderPlan=P1"]);
+  it("azure: tags get no chip — not from the registry, not from the asset", () => {
+    render(["azure:DefenderPlan=P1", "azure:Unregistered=x", "Production"]);
+    expect(chip("azure:DefenderPlan=P1")).toBeNull();
+    expect(chip("azure:Env=Prod")).toBeNull();
+    expect(chip("azure:Unregistered=x")).toBeNull();
+    const labels = Array.from(doc.querySelectorAll(".tag-picker-cat-label")).map((e) => e.textContent);
+    expect(labels).not.toContain("Azure Tags");
+    expect(labels).not.toContain("Not in tag list");
+    expect(value()).toEqual(["Production"]);
+  });
+
+  it("the read-only field still shows an azure: tag — only the picker hides them", () => {
+    (doc.getElementById("host") as unknown as HTMLElement).innerHTML =
+      exported<(s: string[], o: object) => string>("tagFieldHTML")(["azure:Env=Prod", "Production"], { readOnly: true });
+    const text = (doc.getElementById("host") as unknown as HTMLElement).textContent || "";
+    expect(text).toContain("Production");
+    expect(text).toContain("azure:Env=Prod");
   });
 });
 

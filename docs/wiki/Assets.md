@@ -268,12 +268,14 @@ being text you re-find by hand. When several switches share the stored name
 by its MAC table, then by the FortiGate that last saw the device — and stays
 plain text when nothing settles it ([rule 91](Business-Rules#rule-91)).
 
-The tag picker in the edit form shows every tag the asset carries. Tags with no
+The tag picker in the edit form shows every tag the asset carries except its
+`azure:` tags, which it leaves out. Tags with no
 entry in the tag list (Server Settings → Identification), such as the ones
 discovery adds (`auto-discovered`, `azurearc`, `fortiswitch`…), appear ticked
 under **Not in tag list** and are kept when you save. Untick one to remove it;
-a discovery tag comes back on the next run. `azure:` tags are locked, because
-the Azure Arc integration owns them ([Azure tags on devices](Integration-Azure-Arc#azure-tags-on-devices)).
+a discovery tag comes back on the next run. `azure:` tags are never offered in
+the picker and are kept on every save, because the Azure Arc integration owns them
+([Azure tags on devices](Integration-Azure-Arc#azure-tags-on-devices)).
 
 Resolution never matches a FortiGate by hostname. `fortinetTopology.controllerFortigate`
 holds FortiManager's *device name*, which diverges from the gate's configured

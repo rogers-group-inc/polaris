@@ -52,6 +52,7 @@ import { recomputeMonitorOverrideForAssets, getAddAsMonitoredFromConfig } from "
 import { reconcileTagsForAsset, listAssetTags } from "../../services/tagAssignmentService.js";
 import { manualCoordPatchError } from "../../utils/geo.js";
 import { reconcileMapRegions, assertAddedRegionTagsNameARegion } from "../../services/mapRegionService.js";
+import { withArcOwnedTags } from "../../utils/tagNormalize.js";
 import { bulkEditAssetTags } from "../../services/assetBulkTagService.js";
 import { mergeAssets, MERGEABLE_FIELDS, type MergeableField, type FieldWinner } from "../../services/assetMergeService.js";
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
@@ -4034,6 +4035,8 @@ router.post("/", requirePermission("assets", "write"), async (req, res, next) =>
     // addition and must name a real region.
     if (input.tags) await assertAddedRegionTagsNameARegion([], input.tags);
     const data: Record<string, unknown> = { ...input };
+    // `azure:` tags are the Arc sync's alone; an operator cannot mint one.
+    if (input.tags) data.tags = withArcOwnedTags([], input.tags);
     if (input.macAddress) data.macAddress = input.macAddress.toUpperCase().replace(/-/g, ":");
     // Description: empty string clears to null (an empty Polaris description
     // is re-seeded from the device on the next discovery when the
@@ -4242,6 +4245,10 @@ async function buildAssetUpdatePatch(
   actor: string | undefined,
 ): Promise<{ data: Record<string, unknown>; ipOverrideTouched: boolean; coordChanged: boolean }> {
   const data: Record<string, unknown> = { ...input };
+  // `azure:` tags are the Arc sync's alone and the edit form's tag picker has
+  // no chip for them, so its wholesale PUT omits them: keep the ones the asset
+  // carries and drop any the body tries to add or remove.
+  if (input.tags) data.tags = withArcOwnedTags(existing.tags ?? [], input.tags);
   if (input.macAddress) data.macAddress = input.macAddress.toUpperCase().replace(/-/g, ":");
   // Description: empty string clears to null (an empty Polaris description
   // is re-seeded from the device on the next discovery when the

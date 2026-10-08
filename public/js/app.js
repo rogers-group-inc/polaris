@@ -4967,7 +4967,8 @@ function _ensureTagCache() {
   // claiming the install had no tags.
   return api.serverSettings.tagCatalog().then(function (payload) {
     _tagCache.enforce = !!(payload && payload.enforce === true);
-    _tagCache.tags = (payload && payload.tags) || [];
+    // The cache feeds the pickers only, so the Arc-owned rows never enter it.
+    _tagCache.tags = ((payload && payload.tags) || []).filter(function (t) { return t && !isPickerHiddenTag(t.name); });
     _tagCache.failed = false;
     _tagCache.loaded = true;
   }).catch(function () {
@@ -5029,7 +5030,7 @@ function _renderTagChips(selected) {
   // save of the edit form. They render ticked in their own group instead:
   // kept unless the operator unticks one.
   var unlisted = selected.filter(function (name, i) {
-    return !registered[name] && selected.indexOf(name) === i;
+    return !registered[name] && !isPickerHiddenTag(name) && selected.indexOf(name) === i;
   });
 
   if (_tagCache.tags.length === 0 && unlisted.length === 0) {
@@ -5054,11 +5055,6 @@ function _renderTagChips(selected) {
           'Region tags are auto-applied to devices inside a Device Map region — removing one from a device still in the region re-adds it on the next reconcile. A tag you add here yourself is never auto-removed.' +
         '</p>';
       }
-      if (cat === AZURE_TAG_CATEGORY) {
-        html += '<p class="hint" style="flex-basis:100%;margin:2px 0 0">' +
-          'Mirrored from Azure resource tags by the Azure Arc integration — change them in Azure; the next discovery run follows.' +
-        '</p>';
-      }
       html += '</div>';
     });
     if (unlisted.length > 0) {
@@ -5074,18 +5070,22 @@ function _renderTagChips(selected) {
 }
 
 // `azure:` tags belong to the Azure Arc sync (it strips and re-adds every one
-// each run), so their chips are locked: unticking one would only last until
-// the next run, and ticking one onto another device would be stripped by it.
-// A locked, ticked chip still counts in getTagFieldValue (`:checked` matches
-// a disabled checkbox), so a save keeps it.
+// each run) and are left OUT of the tag picker — no chip, ticked or not — so
+// an operator can never put an Azure tag on a device whose Arc resource does
+// not carry it. Every other surface (lists, details, filters, search) still
+// shows them. The server keeps an asset's `azure:` tags through every operator
+// write (withArcOwnedTags in src/utils/tagNormalize.ts), which is what lets the
+// edit form save a tag list without them.
 var AZURE_TAG_PREFIX = "azure:";
-var AZURE_TAG_CATEGORY = "Azure Tags";
+
+/** True for a tag the picker never offers (the Arc-owned `azure:` namespace). */
+function isPickerHiddenTag(name) {
+  return String(name == null ? "" : name).toLowerCase().indexOf(AZURE_TAG_PREFIX) === 0;
+}
 
 function _tagChipHTML(name, color, checked) {
-  var locked = String(name).toLowerCase().indexOf(AZURE_TAG_PREFIX) === 0;
-  return '<label class="tag-picker-chip' + (checked ? ' selected' : '') + '" style="' + _tagChipStyle(color, checked) + '"' +
-    (locked ? ' title="Set in Azure — mirrored by the Azure Arc integration"' : '') + '>' +
-    '<input type="checkbox" name="f-tags-cb" value="' + escapeHtml(name) + '"' + (checked ? ' checked' : '') + (locked ? ' disabled' : '') + '>' +
+  return '<label class="tag-picker-chip' + (checked ? ' selected' : '') + '" style="' + _tagChipStyle(color, checked) + '">' +
+    '<input type="checkbox" name="f-tags-cb" value="' + escapeHtml(name) + '"' + (checked ? ' checked' : '') + '>' +
     escapeHtml(name) +
   '</label>';
 }

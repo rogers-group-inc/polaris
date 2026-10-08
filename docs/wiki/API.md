@@ -117,6 +117,10 @@ DELETE /assets/:id
 GET    /credentials                         stored credentials, secrets masked
 ```
 
+`azure:` tags belong to the Azure Arc integration. `POST /assets`, `PUT
+/assets/:id` and `POST /assets/bulk-tags` ignore any `azure:` tag in the body
+and always keep the ones a device already has.
+
 ### Onboarding a device over the API
 
 Creating a device and putting it under monitoring is **two calls**. `POST

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { normalizeTags, unionTags, TAG_MAX_LEN, isAzureTag } from "../../src/utils/tagNormalize.js";
+import { normalizeTags, unionTags, TAG_MAX_LEN, isAzureTag, withArcOwnedTags } from "../../src/utils/tagNormalize.js";
 import { AppError } from "../../src/utils/errors.js";
 
 describe("normalizeTags", () => {
@@ -58,5 +58,23 @@ describe("isAzureTag", () => {
     expect(isAzureTag("azurearc")).toBe(false);
     expect(isAzureTag("arc-sql")).toBe(false);
     expect(isAzureTag("my-azure:tag")).toBe(false);
+  });
+});
+
+describe("withArcOwnedTags", () => {
+  it("keeps the asset's azure: tags when the posted list omits them (the hidden-picker save)", () => {
+    expect(withArcOwnedTags(["azure:Env=Prod", "lab"], ["lab", "prod"])).toEqual(["azure:Env=Prod", "lab", "prod"]);
+  });
+
+  it("drops an azure: tag the posted list tries to add", () => {
+    expect(withArcOwnedTags(["lab"], ["lab", "azure:Env=Prod", "Azure:Owner=IT"])).toEqual(["lab"]);
+  });
+
+  it("cannot remove or rewrite one the asset carries", () => {
+    expect(withArcOwnedTags(["azure:Env=Prod"], ["azure:Env=Dev"])).toEqual(["azure:Env=Prod"]);
+  });
+
+  it("a create (no existing tags) strips every azure: tag", () => {
+    expect(withArcOwnedTags([], ["azure:x", "azurearc"])).toEqual(["azurearc"]);
   });
 });

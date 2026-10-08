@@ -5330,7 +5330,7 @@ function azureArcFormHTML(defaults) {
     formDivider() +
     sectionHeading("Azure Tags") +
     checkboxRow("f-importAzureTags", "Add Azure tags to devices", importTags) +
-    '<p class="hint">Each Azure resource tag becomes a Polaris tag named <code>azure:Key=Value</code> (e.g. <code>azure:DefenderPlan=P1</code>) on the machine or cluster that carries it, and appears in the tag pickers and filters under <em>Azure Tags</em>. Polaris keeps them in step with Azure on every discovery run: a tag removed or changed in Azure is removed or changed here. Turn this off and the next run takes them all back off. Tags you add by hand are never touched.</p>' +
+    '<p class="hint">Each Azure resource tag becomes a Polaris tag named <code>azure:Key=Value</code> (e.g. <code>azure:DefenderPlan=P1</code>) on the machine or cluster that carries it. They show on the device and can be filtered and searched like any tag, but the tag picker never offers them, so nobody can put an Azure tag on a device that does not carry it in Azure. Polaris keeps them in step with Azure on every discovery run: a tag removed or changed in Azure is removed or changed here. Turn this off and the next run takes them all back off. Tags you add by hand are never touched.</p>' +
     '<div class="form-group"><label>Tag keys to add</label>' +
       '<textarea id="f-azureTagKeys" rows="2" placeholder="One key per line — e.g.&#10;DefenderPlan&#10;Environment&#10;Cost*">' + escapeHtml((d.azureTagKeys || []).join("\n")) + '</textarea>' +
       '<p class="hint">Leave empty to add every key. Listing the keys you care about keeps tags that differ on every machine (a creation date, an owner email) from filling the tag list. Matching ignores case; wildcards work (<code>Cost*</code>).</p>' +

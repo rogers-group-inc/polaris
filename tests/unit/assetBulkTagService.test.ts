@@ -8,6 +8,9 @@ describe("normalizeBulkTags", () => {
   it("keeps case variants distinct (asset tags are case-sensitive)", () => {
     expect(normalizeBulkTags(["Lab", "lab"])).toEqual(["Lab", "lab"]);
   });
+  it("drops Arc-owned azure: tags, so a bulk edit can neither add nor remove one", () => {
+    expect(normalizeBulkTags(["azure:Env=Prod", "Azure:x", "lab"])).toEqual(["lab"]);
+  });
 });
 
 describe("computeBulkTags", () => {
@@ -36,5 +39,8 @@ describe("computeBulkTags", () => {
   });
   it("replace with no tags clears everything but the preserved namespaces", () => {
     expect(computeBulkTags("replace", ["x", "region:East"], [])).toEqual(["region:East"]);
+  });
+  it("replace keeps the asset's azure: tags", () => {
+    expect(computeBulkTags("replace", ["x", "azure:Env=Prod"], ["a"])).toEqual(["azure:Env=Prod", "a"]);
   });
 });

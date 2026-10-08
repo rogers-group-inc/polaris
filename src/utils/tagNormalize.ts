@@ -47,6 +47,18 @@ export function isAzureTag(tag: string): boolean {
   return tag.toLowerCase().startsWith(AZURE_TAG_PREFIX);
 }
 
+/**
+ * The tag array an operator write leaves on an asset: the posted tags without
+ * any `azure:` tag, plus the `azure:` tags the asset already carries. Arc owns
+ * that namespace outright — the tag picker has no chip for them, so an edit
+ * form saves a list without them (they must survive), and a tag hand-added
+ * under the prefix would claim an Azure tag the resource does not have (it
+ * must not land).
+ */
+export function withArcOwnedTags(existing: readonly string[], posted: readonly string[]): string[] {
+  return [...existing.filter(isAzureTag), ...posted.filter((t) => !isAzureTag(t))];
+}
+
 /** Strip the `region:` prefix from a map-region tag (case-insensitive). */
 export function stripRegionPrefix(tag: string): string {
   return tag.toLowerCase().startsWith(REGION_TAG_PREFIX)
