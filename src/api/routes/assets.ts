@@ -60,6 +60,7 @@ import { resolvePendingIpOverrideConflicts } from "../../services/ipOverrideServ
 import { getDiscoveredHostnames, getDiscoveredHostname, findAssetIdsByDiscoveredHostname } from "../../services/discoveredHostnameService.js";
 import { buildTagFilter, findAssetIdsByTagSubstring, pageAssetIdsByTags, tagFilterNeedsLookup } from "../../services/assetTagListService.js";
 import { shapeMacRows, selectPrimaryMac, MAC_ROW_SELECT } from "../../utils/macAddresses.js";
+import { isAllZeroMac } from "../../utils/mac.js";
 import { csvParam } from "../../utils/text.js";
 import { buildPrismaTextFilter, TEXT_FILTER_OPS } from "../../utils/prismaTextFilter.js";
 import {
@@ -226,7 +227,12 @@ const macRegex = /^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$/;
 
 const CreateAssetSchema = z.object({
   ipAddress:     z.string().min(1).optional(),
-  macAddress:    z.string().regex(macRegex, "Invalid MAC address format (expected AA:BB:CC:DD:EE:FF)").optional(),
+  // The all-zero MAC is "no MAC", never an address: it parses to null, so a
+  // create stores none and an update clears the field (which is also how an
+  // asset still carrying a zero from before this check sheds it the next
+  // time its edit form is saved, instead of that save being refused).
+  macAddress:    z.string().regex(macRegex, "Invalid MAC address format (expected AA:BB:CC:DD:EE:FF)")
+                   .transform((v) => (isAllZeroMac(v) ? null : v)).optional(),
   hostname:      z.string().optional(),
   dnsName:       z.string().optional(),
   assetTag:      z.string().optional(),
@@ -1588,7 +1594,8 @@ router.get("/ip-check", requirePermission("assets", "read"), async (req, res, ne
       ip: q.ip,
       excludeAssetId: q.excludeAssetId ?? null,
       assetType: q.assetType ?? null,
-      macAddress: q.macAddress ? q.macAddress.toUpperCase().replace(/-/g, ":") : null,
+      // All-zero → null: no incoming device is identified by "no MAC".
+      macAddress: q.macAddress && !isAllZeroMac(q.macAddress) ? q.macAddress.toUpperCase().replace(/-/g, ":") : null,
     });
     res.json({ ...result, canMerge: hasPermission(req, "assets", "fullwrite") });
   } catch (err) {
@@ -5043,7 +5050,12 @@ router.post("/import-pdf", requirePermission("assets", "write"), async (req, res
       for (const f of allowedFields) {
         if (row[f] !== undefined && row[f] !== "") updateData[f] = String(row[f]).trim();
       }
-      if (updateData.macAddress) updateData.macAddress = String(updateData.macAddress).toUpperCase().replace(/-/g, ":");
+      // An all-zero MAC cell imports as no MAC (the cell is skipped, like an
+      // empty one) rather than as an address every such row would share.
+      if (updateData.macAddress) {
+        if (isAllZeroMac(updateData.macAddress)) delete updateData.macAddress;
+        else updateData.macAddress = String(updateData.macAddress).toUpperCase().replace(/-/g, ":");
+      }
 
       const fields: Record<string, string> = {};
       for (const [k, v] of Object.entries(updateData)) fields[k] = String(v);

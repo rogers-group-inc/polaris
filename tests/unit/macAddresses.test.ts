@@ -10,6 +10,7 @@
 import { describe, it, expect } from "vitest";
 import {
   selectPrimaryMac,
+  buildMacRowsForCreate,
   isHardwareMacSource,
   HARDWARE_MAC_SOURCES,
 } from "../../src/utils/macAddresses.js";
@@ -87,5 +88,24 @@ describe("selectPrimaryMac", () => {
       entry("AA:AA:AA:AA:AA:01", "dhcp-lease", "not-a-date"),
       entry("AA:AA:AA:AA:AA:02", "device-inventory", "2026-08-21T00:00:00.000Z"),
     ])).toBe("AA:AA:AA:AA:AA:02");
+  });
+
+  it("the all-zero MAC is never primary, even as the freshest hardware entry", () => {
+    expect(selectPrimaryMac([
+      entry("00:00:00:00:00:00", "polaris-agent", "2026-08-22T00:00:00.000Z"),
+      entry("AA:AA:AA:AA:AA:01", "dhcp-lease", "2026-08-01T00:00:00.000Z"),
+    ])).toBe("AA:AA:AA:AA:AA:01");
+    expect(selectPrimaryMac([entry("00-00-00-00-00-00", "dhcp-lease", "2026-08-22T00:00:00.000Z")])).toBeNull();
+  });
+});
+
+describe("buildMacRowsForCreate", () => {
+  it("drops empty and all-zero entries", () => {
+    const rows = buildMacRowsForCreate([
+      { mac: "", source: "dhcp-lease" },
+      { mac: "00:00:00:00:00:00", source: "fortigate-firewall" },
+      { mac: "AA:AA:AA:AA:AA:01", source: "dhcp-lease" },
+    ] as any);
+    expect(rows.map((r) => r.mac)).toEqual(["AA:AA:AA:AA:AA:01"]);
   });
 });

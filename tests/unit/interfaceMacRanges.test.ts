@@ -46,6 +46,12 @@ describe("foldMacsToRanges", () => {
     expect(foldMacsToRanges([null, undefined, "", "nope", "00:11:22"])).toEqual([]);
   });
 
+  it("drops the all-zero MAC loopback / tunnel interfaces report", () => {
+    expect(foldMacsToRanges(["00:00:00:00:00:00", "000000000000", "aa:bb:cc:dd:ee:00"])).toEqual([
+      { mac: "AA:BB:CC:DD:EE:00", macEnd: null },
+    ]);
+  });
+
   it("keeps isolated MACs as single entries (macEnd null)", () => {
     expect(foldMacsToRanges(["aa:bb:cc:dd:ee:00", "aa:bb:cc:dd:ee:05"])).toEqual([
       { mac: "AA:BB:CC:DD:EE:00", macEnd: null },
