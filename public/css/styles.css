@@ -86,6 +86,13 @@
      smudge. One value per FAMILY rather than per theme; it is separating a
      chip from the surface under it, which is the same job in every theme. */
   --shadow-pill: 0 1px 2px rgba(0,0,0,.45);
+  /* Resting lift for an UNSELECTED page tab (.table-tab, .page-tabs-glass,
+     .dashboard-tab). The selected tab takes --shadow-control; this is the same
+     shape at roughly half the weight, so every tab reads as a chip and the
+     selected one still sits clearly above its peers. Per FAMILY, like
+     --shadow-pill, and it carries a fainter inset rim because in the dark
+     family the rim is what reads as raised. */
+  --shadow-tab-idle: 0 2px 4px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.03);
   --shadow-md: 0 8px 32px rgba(0,0,0,.5);
   /* Drop shadow for a frosted panel that floats free of a screen edge — the
      modal. It paints --panel-glass-bg, only 70% opaque, so --shadow-md's
@@ -275,6 +282,7 @@
   --color-hover-tint: rgba(0,0,0,0.05);
   --color-fill-subtle: rgba(0,0,0,0.05);
   --shadow-pill: 0 1px 2px rgba(60,40,10,.22);
+  --shadow-tab-idle: 0 1px 3px rgba(60,40,10,.14);
   --shadow-sm: 0 1px 4px rgba(0,0,0,.08);
   --shadow-md: 0 8px 32px rgba(0,0,0,.12);
   --shadow-panel: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.10);
@@ -2332,6 +2340,10 @@ html[data-page-top-curtain]::after {
   gap: 2px;
   border-bottom: 1px solid var(--color-border);
   margin-bottom: 0.75rem;
+  /* Room for the tabs' drop shadows: the strip scrolls, so it clips to its
+     padding box, and without this the shadow above and beside the end tabs is
+     cut off. The bottom stays flush — the tabs sit on the rule. */
+  padding: 6px 6px 0;
   /* A long strip scrolls rather than wrapping — the table below must not jump
      a row taller when the operator opens one more view. */
   overflow-x: auto;
@@ -2354,8 +2366,9 @@ html[data-page-top-curtain]::after {
   border: 1px solid transparent;
   border-bottom: 2px solid transparent;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
+  box-shadow: var(--shadow-tab-idle);
   cursor: pointer;
-  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 .table-tab:hover { color: var(--color-text-secondary); background: var(--rail-glass-bg); }
 .table-tab:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
@@ -2369,7 +2382,7 @@ html[data-page-top-curtain]::after {
      on a near-black ground the tint alone leaves the chip's edge to guess. */
   border-color: var(--color-border);
   border-bottom-color: var(--color-accent);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  box-shadow: var(--shadow-control);
   background: var(--chip-glass-bg);
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
@@ -4699,6 +4712,8 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 .page-tabs-glass {
   gap: 2px;
   align-items: flex-end;
+  /* Shadow room — see .table-tabs. */
+  padding: 6px 6px 0;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
@@ -4711,14 +4726,15 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   border: 1px solid transparent;
   border-bottom: 2px solid transparent;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
-  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  box-shadow: var(--shadow-tab-idle);
+  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 .page-tabs-glass .page-tab:hover { color: var(--color-text-secondary); background: var(--rail-glass-bg); }
 .page-tabs-glass .page-tab.active {
   color: var(--color-accent);
   border-color: var(--color-border);
   border-bottom-color: var(--color-accent);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  box-shadow: var(--shadow-control);
   background: var(--chip-glass-bg);
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
@@ -5983,6 +5999,8 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   gap: 2px;
   margin-bottom: 14px;
   border-bottom: 1px solid var(--color-border);
+  /* Shadow room — see .table-tabs. */
+  padding: 6px 6px 0;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
@@ -6001,8 +6019,9 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   padding: 0.45rem 0.9rem;
   font-size: 0.84rem;
   font-weight: 500;
+  box-shadow: var(--shadow-tab-idle);
   cursor: pointer;
-  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 .dashboard-tab:hover { color: var(--color-text-secondary); background: var(--rail-glass-bg); }
 .dashboard-tab:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
@@ -6012,7 +6031,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   color: var(--color-accent);
   border-color: var(--color-border);
   border-bottom-color: var(--color-accent);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  box-shadow: var(--shadow-control);
   background: var(--chip-glass-bg);
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
