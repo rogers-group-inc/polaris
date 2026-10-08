@@ -44,6 +44,7 @@ function fnSrc(name: string): string {
 const FN_NAMES = [
   "_sdwanStripSegment",
   "_sdwanStatusStripHTML",
+  "_sdwanMemberLinkHTML",
   "_sdwanMembersTableHTML",
   "_shotCellText",
   "_shotCellColor",
@@ -187,5 +188,20 @@ describe("SD-WAN Members table — screenshot legibility", () => {
   it("still carries the link state, which was already textual", () => {
     expect(shotText("wan1", "link")).toContain("▲ 1000000000bps");
     expect(shotText("Overlay-1", "link")).toBe("—");
+  });
+
+  it("labels an overlay's link by its IPsec tunnel status, not an interface carrier", () => {
+    const html = (m: Record<string, unknown>) => {
+      const span = doc.createElement("span");
+      span.innerHTML = g._sdwanMemberLinkHTML(m);
+      return span.textContent;
+    };
+    // linkUp:false is what an SNMP-polled tunnel interface used to produce.
+    expect(html({ linkState: "up", linkSource: "ipsec", linkUp: false })).toBe("▲ tunnel up");
+    expect(html({ linkState: "down", linkSource: "ipsec" })).toBe("▼ tunnel down");
+    expect(html({ linkState: "partial", linkSource: "ipsec" })).toBe("◆ partial");
+    expect(html({ linkState: "dynamic", linkSource: "ipsec" })).toBe("dial-up");
+    expect(html({ linkState: null, linkSource: null, linkUp: null })).toBe("—");
+    expect(html({ linkState: "down", linkSource: "interface" })).toBe("▼ down");
   });
 });

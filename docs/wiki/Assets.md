@@ -865,6 +865,13 @@ segment per SD-WAN poll. Each segment is one colour:
 Hover a segment for its time and state: *down*, *out of SLA*, or
 *up — warning by automation*. A poll that never ran leaves no segment.
 
+A member's **Link** column is its interface's link state, except for an IPsec
+overlay: a tunnel has no physical link, so an overlay shows its **IPsec tunnel
+status** instead — *tunnel up*, *tunnel down*, *partial* (some phase-2
+selectors down) or *dial-up* (a hub's dial-up tunnel, which has no single
+state). It reads the tunnel's newest status from the last 24 hours, and shows
+**—** when there is none, for example on a gate polled only over SNMP.
+
 Each section states **where its data came from and how old it is** — the polling
 method, transport and cadence, then `updated 8m ago`, amber with a ⚠ once the
 reading is older than one cadence, exactly as on the snapshot tabs above. Each

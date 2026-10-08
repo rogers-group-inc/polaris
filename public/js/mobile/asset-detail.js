@@ -1744,7 +1744,15 @@
       var sub = [];
       if (m.ip) sub.push('<span class="mono">' + escapeHtml(m.ip) + '</span>');
       if (m.zone) sub.push(escapeHtml(m.zone));
-      if (m.linkUp != null) sub.push(m.linkUp ? ("link up" + (m.linkSpeedBps ? " · " + escapeHtml(formatBps(m.linkSpeedBps)) : "")) : "link down");
+      // An overlay (linkSource "ipsec") reads its IPsec tunnel status, never an
+      // interface carrier. `linkState` is absent on an older server.
+      var ls = m.linkState !== undefined ? m.linkState
+        : (m.linkUp == null ? null : (m.linkUp ? "up" : "down"));
+      var tun = m.linkSource === "ipsec";
+      if (ls === "up") sub.push(tun ? "tunnel up" : ("link up" + (m.linkSpeedBps ? " · " + escapeHtml(formatBps(m.linkSpeedBps)) : "")));
+      else if (ls === "down") sub.push(tun ? "tunnel down" : "link down");
+      else if (ls === "partial") sub.push("tunnel partial");
+      else if (ls === "dynamic") sub.push("dial-up");
       var hcChips = (m.healthChecks || []).map(function (h) {
         var c = h.state === "up" ? "var(--md-success)" : "var(--md-error)";
         var lat = (typeof h.latencyMs === "number") ? (Math.round(h.latencyMs * 100) / 100) + "ms" : "—";
