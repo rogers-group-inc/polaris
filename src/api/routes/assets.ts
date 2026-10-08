@@ -52,7 +52,7 @@ import { recomputeMonitorOverrideForAssets, getAddAsMonitoredFromConfig } from "
 import { reconcileTagsForAsset, listAssetTags } from "../../services/tagAssignmentService.js";
 import { manualCoordPatchError } from "../../utils/geo.js";
 import { reconcileMapRegions, assertAddedRegionTagsNameARegion } from "../../services/mapRegionService.js";
-import { withArcOwnedTags, withoutAzureTags } from "../../utils/tagNormalize.js";
+import { withArcOwnedTags } from "../../utils/tagNormalize.js";
 import { bulkEditAssetTags } from "../../services/assetBulkTagService.js";
 import { mergeAssets, MERGEABLE_FIELDS, type MergeableField, type FieldWinner } from "../../services/assetMergeService.js";
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
@@ -1180,8 +1180,7 @@ router.get("/tags", requirePermission("assets", "read"), async (_req, res, next)
     const rows = await prisma.asset.findMany({ where: { NOT: { tags: { isEmpty: true } } }, select: { tags: true } });
     const set = new Set<string>();
     for (const r of rows) for (const t of r.tags) set.add(t);
-    // Arc-owned `azure:` tags are hidden from every tag filter and picker.
-    res.json({ tags: withoutAzureTags(Array.from(set)).sort() });
+    res.json({ tags: Array.from(set).sort() });
   } catch (err) {
     next(err);
   }
@@ -4239,9 +4238,9 @@ async function buildAssetUpdatePatch(
   actor: string | undefined,
 ): Promise<{ data: Record<string, unknown>; ipOverrideTouched: boolean; coordChanged: boolean }> {
   const data: Record<string, unknown> = { ...input };
-  // `azure:` tags are the Arc sync's alone and hidden in the UI, so the edit
-  // form's wholesale PUT omits them: keep the ones the asset carries and drop
-  // any the body tries to add or remove.
+  // `azure:` tags are the Arc sync's alone and the edit form's tag picker has
+  // no chip for them, so its wholesale PUT omits them: keep the ones the asset
+  // carries and drop any the body tries to add or remove.
   if (input.tags) data.tags = withArcOwnedTags(existing.tags ?? [], input.tags);
   if (input.macAddress) data.macAddress = input.macAddress.toUpperCase().replace(/-/g, ":");
   // Description: empty string clears to null (an empty Polaris description

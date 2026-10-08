@@ -315,7 +315,7 @@
     // Asset tags: asset-level like `type` (expanded to the children by the
     // group-builder) and, like `type`, kept out of `text`.
     if (kind === "tag") {
-      if (n.kind === "asset") visibleTags(n.tags).forEach(add);
+      if (n.kind === "asset") (n.tags || []).forEach(add);
     }
     if (kind === "process" || kind === "text") {
       if (n.kind === "process") add(n.processName);
@@ -1314,10 +1314,8 @@
       html += "<h3>" + esc(n.hostname || n.ipAddress || "asset") + "</h3>";
       html += '<div class="appmap-info-sub">' + esc(n.assetType || "") + (n.ipAddress ? " · " + esc(n.ipAddress) : "") + (n.monitorStatus ? " · " + esc(n.monitorStatus) : "") + "</div>";
       // Tags as buttons: a click adds that tag as a filter pill.
-      // Arc-owned `azure:` tags are hidden from the UI (visibleTags, app.js).
-      var shownTags = visibleTags(n.tags);
-      if (shownTags.length) {
-        html += '<div class="appmap-info-tags">' + shownTags.map(function (t) {
+      if (n.tags && n.tags.length) {
+        html += '<div class="appmap-info-tags">' + n.tags.map(function (t) {
           return '<button type="button" class="tag-chip" data-add-tag="' + esc(t) + '" title="Filter the map to assets tagged ' + esc(t) + '">' + esc(t) + "</button>";
         }).join("") + "</div>";
       }
@@ -1556,7 +1554,7 @@
       (n.listenPorts || []).forEach(function (p) { protos[p.proto] = true; ports[p.port] = true; });
       if (n.kind === "asset") {
         push("asset", n.hostname || n.ipAddress); push("type", n.assetType);
-        visibleTags(n.tags).forEach(function (t) { push("tag", t); });
+        (n.tags || []).forEach(function (t) { push("tag", t); });
       }
       else if (n.kind === "process") push("process", n.processName);
       else if (n.kind === "service") push("service", n.serviceUnit);

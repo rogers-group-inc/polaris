@@ -72,7 +72,7 @@ import {
   type TagCriteria,
 } from "../../services/tagAssignmentService.js";
 import { REGION_TAG_CATEGORY } from "../../services/mapRegionService.js";
-import { REGION_TAG_PREFIX, AZURE_TAG_PREFIX, isAzureTag, NOT_AZURE_TAG_ROW } from "../../utils/tagNormalize.js";
+import { REGION_TAG_PREFIX, AZURE_TAG_PREFIX, isAzureTag } from "../../utils/tagNormalize.js";
 import {
   DEVICE_FILTER_FIELD_OPS,
   scopeConditionMeta,
@@ -606,9 +606,7 @@ function readPostedTagFilter(
 
 router.get("/tags", async (_req, res, next) => {
   try {
-    // Arc-mirrored `azure:` rows are hidden from the Tags tab like every other
-    // tag surface — the Arc sync adds and prunes them, nothing here edits one.
-    const tags = await prisma.tag.findMany({ where: NOT_AZURE_TAG_ROW, orderBy: [{ category: "asc" }, { name: "asc" }] });
+    const tags = await prisma.tag.findMany({ orderBy: [{ category: "asc" }, { name: "asc" }] });
     // Each row carries the fold-forward alongside its stored columns, so the
     // editor opens a tag still on the legacy flat shape in the condition builder
     // with its rules intact. Without it such a tag would render as unfiltered

@@ -4967,7 +4967,8 @@ function _ensureTagCache() {
   // claiming the install had no tags.
   return api.serverSettings.tagCatalog().then(function (payload) {
     _tagCache.enforce = !!(payload && payload.enforce === true);
-    _tagCache.tags = visibleTagRows((payload && payload.tags) || []);
+    // The cache feeds the pickers only, so the Arc-owned rows never enter it.
+    _tagCache.tags = ((payload && payload.tags) || []).filter(function (t) { return t && !isPickerHiddenTag(t.name); });
     _tagCache.failed = false;
     _tagCache.loaded = true;
   }).catch(function () {
@@ -5029,7 +5030,7 @@ function _renderTagChips(selected) {
   // save of the edit form. They render ticked in their own group instead:
   // kept unless the operator unticks one.
   var unlisted = selected.filter(function (name, i) {
-    return !registered[name] && !isHiddenTag(name) && selected.indexOf(name) === i;
+    return !registered[name] && !isPickerHiddenTag(name) && selected.indexOf(name) === i;
   });
 
   if (_tagCache.tags.length === 0 && unlisted.length === 0) {
@@ -5069,26 +5070,17 @@ function _renderTagChips(selected) {
 }
 
 // `azure:` tags belong to the Azure Arc sync (it strips and re-adds every one
-// each run) and are HIDDEN from every tag surface in the UI — pickers, filters,
-// pills, lists — so an operator can never put an Azure tag on a device whose
-// Arc resource does not carry it. The server keeps an asset's `azure:` tags
-// through every operator write (withArcOwnedTags in src/utils/tagNormalize.ts),
-// which is what lets the edit form save a tag list without them.
+// each run) and are left OUT of the tag picker — no chip, ticked or not — so
+// an operator can never put an Azure tag on a device whose Arc resource does
+// not carry it. Every other surface (lists, details, filters, search) still
+// shows them. The server keeps an asset's `azure:` tags through every operator
+// write (withArcOwnedTags in src/utils/tagNormalize.ts), which is what lets the
+// edit form save a tag list without them.
 var AZURE_TAG_PREFIX = "azure:";
 
-/** True for a tag the UI never shows (the Arc-owned `azure:` namespace). */
-function isHiddenTag(name) {
+/** True for a tag the picker never offers (the Arc-owned `azure:` namespace). */
+function isPickerHiddenTag(name) {
   return String(name == null ? "" : name).toLowerCase().indexOf(AZURE_TAG_PREFIX) === 0;
-}
-
-/** A tag-name array without the hidden ones. */
-function visibleTags(names) {
-  return (names || []).filter(function (n) { return !isHiddenTag(n); });
-}
-
-/** Registry rows ({ name, … }) without the hidden ones. */
-function visibleTagRows(rows) {
-  return (rows || []).filter(function (t) { return t && !isHiddenTag(t.name); });
 }
 
 function _tagChipHTML(name, color, checked) {
@@ -5104,7 +5096,7 @@ function tagFieldHTML(selected, opts) {
 
   // Read-only: render selected tags as static badges, no checkboxes or "add new" row.
   if (opts.readOnly) {
-    var visibleSelected = visibleTags(selected);
+    var visibleSelected = selected;
     if (visibleSelected.length === 0) {
       return '<div class="form-group"><label>Tags</label><p style="color:var(--color-text-tertiary);margin:0">—</p></div>';
     }

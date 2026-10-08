@@ -253,8 +253,7 @@ function renderUsersBody() {
  */
 function userTagPillsHtml(u) {
   var regions = Array.isArray(u.regionTags) ? u.regionTags : [];
-  // Arc-owned `azure:` tags are hidden from the UI (visibleTags, app.js).
-  var tags = visibleTags(Array.isArray(u.otherTags) ? u.otherTags : []);
+  var tags = Array.isArray(u.otherTags) ? u.otherTags : [];
   if (!regions.length && !tags.length) return "";
   var html = "";
   // The shared pill helper takes a per-pill title function, so the dimension is

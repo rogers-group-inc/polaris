@@ -50,25 +50,11 @@ export function isAzureTag(tag: string): boolean {
 /**
  * The tag array an operator write leaves on an asset: the posted tags without
  * any `azure:` tag, plus the `azure:` tags the asset already carries. Arc owns
- * that namespace outright — the UI hides it, so an edit form saves a list
- * without them (they must survive), and a tag hand-added under the prefix
- * would claim an Azure tag the resource does not have (it must not land).
+ * that namespace outright — the tag picker has no chip for them, so an edit
+ * form saves a list without them (they must survive), and a tag hand-added
+ * under the prefix would claim an Azure tag the resource does not have (it
+ * must not land).
  */
-/**
- * A `prisma.tag` where-fragment excluding the Arc-mirrored `azure:` registry
- * rows. Every tag VOCABULARY the UI reads (the picker catalogue, the registry
- * list, the automation recipient catalogue) leaves them out, so no picker,
- * filter or pill can offer one. Spread it into a `where`.
- */
-export const NOT_AZURE_TAG_ROW = {
-  NOT: { name: { startsWith: AZURE_TAG_PREFIX, mode: "insensitive" as const } },
-};
-
-/** A tag-name list without `azure:` tags — the inventory vocabularies' filter. */
-export function withoutAzureTags(tags: readonly string[]): string[] {
-  return tags.filter((t) => !isAzureTag(t));
-}
-
 export function withArcOwnedTags(existing: readonly string[], posted: readonly string[]): string[] {
   return [...existing.filter(isAzureTag), ...posted.filter((t) => !isAzureTag(t))];
 }

@@ -9,8 +9,8 @@
  * auto-discovered, arc-*, fortiswitch, entraid…) was silently stripped the
  * first time an operator edited the asset's tags. The 2026-10 report: "edit an
  * asset and change the tags, and it removes all the tags created from
- * discovery". `azure:` tags (Arc-owned) are hidden altogether — no chip, no
- * saved value; the server keeps the asset's own (withArcOwnedTags).
+ * discovery". `azure:` tags (Arc-owned) get no chip in the picker — no saved
+ * value either; the server keeps the asset's own (withArcOwnedTags).
  *
  * Same eval-into-happy-dom idiom as tagPickerRegionTags.test.ts.
  */
@@ -121,12 +121,12 @@ describe("tag picker — tags with no registry row", () => {
     expect(value()).toEqual(["Production"]);
   });
 
-  it("the read-only field shows no azure: pill", () => {
+  it("the read-only field still shows an azure: tag — only the picker hides them", () => {
     (doc.getElementById("host") as unknown as HTMLElement).innerHTML =
       exported<(s: string[], o: object) => string>("tagFieldHTML")(["azure:Env=Prod", "Production"], { readOnly: true });
     const text = (doc.getElementById("host") as unknown as HTMLElement).textContent || "";
     expect(text).toContain("Production");
-    expect(text).not.toContain("azure:");
+    expect(text).toContain("azure:Env=Prod");
   });
 });
 

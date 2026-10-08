@@ -88,14 +88,14 @@ Every machine's and cluster's Azure resource tags are always recorded on its
 Arc source (the **Azure Tags** row of the asset's sources). Turn on **Add Azure
 tags to devices** and they also become ordinary Polaris tags, named
 `azure:Key=Value`. For example, `DefenderPlan = P1` in Azure becomes
-`azure:DefenderPlan=P1`. A tag with no value becomes `azure:Key`.
+`azure:DefenderPlan=P1`. A tag with no value becomes `azure:Key`. They show on
+the device like any other tag, and you can search for them, filter the Assets
+page and scope automations and users by them.
 
-**These tags are hidden everywhere in the UI.** No tag picker, filter, list,
-pill or the Server Settings → Tags tab shows them, so nobody can put an Azure
-tag on a device whose Arc resource does not carry it. Editing an asset keeps
-the ones it has, and Polaris ignores an `azure:` tag sent by any asset edit,
-bulk **Tags** change or API call. The **Azure Tags** row of the asset's Arc
-source is where you see them; change them in Azure.
+**The tag picker never offers them**, so nobody can put an Azure tag on a
+device whose Arc resource does not carry it. Editing an asset keeps the ones it
+has, and Polaris ignores an `azure:` tag sent by any asset edit, bulk **Tags**
+change or API call. Change them in Azure.
 
 - **Polaris keeps them in step with Azure on every discovery run.** A tag you
   change or remove in Azure is changed or removed here. Turn the toggle off and
@@ -103,7 +103,8 @@ source is where you see them; change them in Azure.
 - **Tags you add by hand are never touched.** Only `azure:` tags are managed.
   For the same reason, Polaris refuses a hand-made tag whose name starts with
   `azure:`, a rename of one of the mirrored tags, and an auto-assign filter on
-  one. Change the tag in Azure instead.
+  one. Change the tag in Azure instead. You can still change a mirrored tag's
+  colour and category.
 - **Tag keys to add** limits which keys are imported (one per line, case
   ignored, wildcards like `Cost*` allowed). Leave it empty to import every key.
   Use the list when your tenant has tags whose value is different on every

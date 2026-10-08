@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { normalizeTags, unionTags, TAG_MAX_LEN, isAzureTag, withArcOwnedTags, withoutAzureTags, NOT_AZURE_TAG_ROW } from "../../src/utils/tagNormalize.js";
+import { normalizeTags, unionTags, TAG_MAX_LEN, isAzureTag, withArcOwnedTags } from "../../src/utils/tagNormalize.js";
 import { AppError } from "../../src/utils/errors.js";
 
 describe("normalizeTags", () => {
@@ -76,15 +76,5 @@ describe("withArcOwnedTags", () => {
 
   it("a create (no existing tags) strips every azure: tag", () => {
     expect(withArcOwnedTags([], ["azure:x", "azurearc"])).toEqual(["azurearc"]);
-  });
-});
-
-describe("withoutAzureTags / NOT_AZURE_TAG_ROW", () => {
-  it("filters azure: names out of a vocabulary", () => {
-    expect(withoutAzureTags(["a", "azure:Env=Prod", "AZURE:x", "azurearc"])).toEqual(["a", "azurearc"]);
-  });
-
-  it("excludes the prefix case-insensitively in a Prisma where", () => {
-    expect(NOT_AZURE_TAG_ROW).toEqual({ NOT: { name: { startsWith: "azure:", mode: "insensitive" } } });
   });
 });

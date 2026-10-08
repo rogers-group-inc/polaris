@@ -1,15 +1,14 @@
 /**
  * tests/integration/azureTagsHidden.test.ts
  *
- * `azure:` tags are mirrored from Azure resource tags by the Arc sync and are
- * hidden from every tag surface in the UI, so an operator can never put an
- * Azure tag on a device whose Arc resource does not carry it:
- *
- *   - the tag VOCABULARIES the UI reads leave them out — the picker catalogue,
- *     the registry list, the distinct-asset-tags list;
- *   - every operator write keeps the asset's own `azure:` tags (the edit form,
- *     having no chip for them, PUTs a list without them) and drops any the
- *     body tries to add (withArcOwnedTags / normalizeBulkTags).
+ * `azure:` tags are mirrored from Azure resource tags by the Arc sync. The tag
+ * PICKER leaves them out (client-side, isPickerHiddenTag in public/js/app.js)
+ * so an operator can never put an Azure tag on a device whose Arc resource
+ * does not carry it; every other surface still shows them, so the tag
+ * vocabularies keep listing them. Because the picker has no chip for them,
+ * every operator write keeps the asset's own `azure:` tags (the edit form PUTs
+ * a list without them) and drops any the body tries to add
+ * (withArcOwnedTags / normalizeBulkTags).
  */
 
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
@@ -59,31 +58,19 @@ afterAll(async () => {
   } catch { /* noop */ }
 });
 
-d("azure: tags are hidden from the tag vocabularies", () => {
-  it("the picker catalogue omits them", async () => {
+d("azure: tags stay in the tag vocabularies (only the picker hides them)", () => {
+  it("the catalogue still lists them — the picker filters client-side", async () => {
     const { agent } = await authedAgent(app);
     const res = await agent.get("/api/v1/server-settings/tags/catalog");
     expect(res.status).toBe(200);
-    const names = (res.body.tags as { name: string }[]).map((t) => t.name);
-    expect(names).toContain(`${HOST}-plain`);
-    expect(names).not.toContain(AZ);
+    expect((res.body.tags as { name: string }[]).map((t) => t.name)).toContain(AZ);
   });
 
-  it("the registry list omits them", async () => {
-    const { agent } = await authedAgent(app);
-    const res = await agent.get("/api/v1/server-settings/tags");
-    expect(res.status).toBe(200);
-    const names = (res.body as { name: string }[]).map((t) => t.name);
-    expect(names).toContain(`${HOST}-plain`);
-    expect(names).not.toContain(AZ);
-  });
-
-  it("the distinct asset-tag list omits them", async () => {
+  it("the distinct asset-tag list still offers them to filters", async () => {
     const { agent } = await authedAgent(app);
     const res = await agent.get("/api/v1/assets/tags");
     expect(res.status).toBe(200);
-    expect(res.body.tags).toContain(`${HOST}-plain`);
-    expect(res.body.tags).not.toContain(AZ);
+    expect(res.body.tags).toContain(AZ);
   });
 });
 
