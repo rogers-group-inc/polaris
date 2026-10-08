@@ -1592,16 +1592,6 @@ model AssetInterface {
   ipAddress   String?
   macAddress  String?
 
-  // The last ADDRESSED ipAddress this port reported (bare, no mask), and when.
-  // Carried across the delete-replace in persistInterfaceRows: a scrape that
-  // reports an address refreshes both, one reporting 0.0.0.0 or nothing keeps
-  // them until lastLearnedIpAt is LAST_LEARNED_IP_TTL_MS (30 days) old. It is
-  // what tells a port that was never connected (a template's unused wan2 —
-  // null) from a DHCP WAN that lost its lease when the link dropped (the lease
-  // it held). Read by the "skip unused ports" condition option.
-  lastLearnedIp   String?
-  lastLearnedIpAt DateTime?
-
   // Cumulative counters as of the last full scrape. Current values only -- rate
   // math still comes from AssetInterfaceSample, which is why these are a snapshot
   // rather than a series.

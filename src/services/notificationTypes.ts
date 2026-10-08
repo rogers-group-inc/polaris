@@ -10,7 +10,7 @@
  */
 
 import { z } from "zod";
-import { isValidCidr, isValidIpAddress, ipInCidr } from "../utils/cidr.js";
+import { isValidCidr, isValidIpAddress, ipInCidr, bareInterfaceIp, interfaceIpIsUnaddressed } from "../utils/cidr.js";
 import { compileWildcard } from "../utils/wildcard.js";
 import { TEMPLATE_VARIABLES, formatElapsed } from "../utils/notificationTemplate.js";
 import { defaultAlertEmailTemplate } from "../utils/alertEmailTemplate.js";
@@ -758,6 +758,13 @@ const dimensionFilterSchema = z
     // dimensions because it holds a list.
     healthCheck: z.string().max(1000).optional(),
     link: z.string().max(1000).optional(),
+    // SD-WAN MEMBER IP ADDRESS (business rule 98): "== <ip>" or "!= <ip>",
+    // compared with the member interface's CURRENT address. A comparison, not
+    // a *Pattern — so it is stored as one and parsed by parseMemberIpFilter.
+    // Valid only on SDWAN_MEMBER_IP_TARGETS (validateMemberIpFilter).
+    sdwanMemberIp: z.string().max(100).refine((v) => parseMemberIpFilter(v) !== null, {
+      message: 'SD-WAN member IP address must be "== <address>" or "!= <address>"',
+    }).optional(),
     tunnelName: z.string().max(200).optional(),
     widgetId: z.string().max(200).optional(),
     processNamePattern: z.string().max(200).optional(),
@@ -854,42 +861,11 @@ const assetMetricTrigger = z.object({
    * leaves every pre-existing rule behaving as it always has.
    */
   ignoreAtOrAbove: z.number().min(0).max(100).optional(),
-  /** SKIP UNUSED PORTS — see SKIP_UNUSED_PORT_TARGETS. SD-WAN metrics only. */
-  skipUnusedPorts: z.boolean().optional(),
   /** PATH MONITOR — also evaluate the Polaris server's own run of the check
    *  (see PATH_METRICS). Path metrics only; absent = agent hosts only, which
    *  is every automation authored before the server could alert. */
   includeServer: z.boolean().optional(),
 });
-
-/**
- * SKIP UNUSED PORTS: the conditions that can drop a reading for a port that
- * was never in use (interfaceInventoryService.isUnusedPort — a non-tunnel port
- * reporting 0.0.0.0 with no address remembered in 30 days).
- *
- * The case it exists for (2026-09-28): a FortiGate deployment template enables
- * wan1 AND wan2 on every gate, both SD-WAN members, whether or not the site has
- * a second circuit — so an unplugged wan2 is down on every health check
- * forever, and a "member is down" automation pages about it on every gate that
- * has one. The unused port reads 0.0.0.0, but so does a working DHCP WAN whose
- * link just dropped, so the current address cannot tell them apart; the port's
- * REMEMBERED address (AssetInterface.lastLearnedIp) can.
- *
- * On the SD-WAN member conditions the port is the member's own name (the
- * `link` of the `healthCheck|link` key — the SD-WAN tab joins a member to its
- * interface the same way); on interface oper status it is the interface. A
- * flag on the condition itself rather than a second condition, deliberately:
- * a second "interface IP" condition is folded per DEVICE in a multi-condition
- * automation, so it could never say which port it meant.
- */
-export const SKIP_UNUSED_PORT_TARGETS: ReadonlySet<string> = new Set([
-  "sdwanMemberState", "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss", "ifOperStatus",
-]);
-
-/** The metric/field a condition names, for the SKIP_UNUSED_PORT_TARGETS test. */
-export function leafTargetOf(leaf: { type: string; metric?: string; field?: string }): string | null {
-  return leaf.type === "asset_state" ? leaf.field ?? null : leaf.type === "asset_metric" ? leaf.metric ?? null : null;
-}
 
 const assetStateTrigger = z.object({
   type: z.literal("asset_state"),
@@ -928,9 +904,6 @@ const assetStateTrigger = z.object({
    * asked to be told about a parent's outage keeps not being told.
    */
   alertWhenDependencyDown: z.boolean().optional(),
-  /** SKIP UNUSED PORTS — see SKIP_UNUSED_PORT_TARGETS. SD-WAN member state and
-   *  interface oper status only. */
-  skipUnusedPorts: z.boolean().optional(),
 });
 
 const hostMetricTrigger = z.object({
@@ -2583,12 +2556,7 @@ function stableDimFilter(df: Record<string, unknown> | undefined | null): string
 }
 
 export function triggerSignature(trigger: Trigger): string | null {
-  // "Skip unused ports" narrows WHICH PORTS a condition watches, exactly like a
-  // dimension filter, so it is part of the signature for the same reason: an
-  // automation that skips them and one that does not are watching different
-  // sets and must never carve each other out.
-  const skip = (trigger.type === "asset_metric" || trigger.type === "asset_state") && trigger.skipUnusedPorts ? ":skipUnused" : "";
-  if (trigger.type === "asset_metric") return `am:${trigger.metric}:${stableDimFilter(trigger.dimensionFilter)}${skip}`;
+  if (trigger.type === "asset_metric") return `am:${trigger.metric}:${stableDimFilter(trigger.dimensionFilter)}`;
   if (trigger.type === "asset_state") {
     // monitorStatus is the one state field that is a SINGLE per-asset column
     // with no reading dimensions of its own (neither FIELD_DIMENSIONS nor
@@ -2610,7 +2578,7 @@ export function triggerSignature(trigger: Trigger): string | null {
     if (trigger.field === "monitorStatus") {
       return `as:monitorStatus:${trigger.operator}${String(trigger.value).toLowerCase()}`;
     }
-    return `as:${trigger.field}:${stableDimFilter(trigger.dimensionFilter)}${skip}`;
+    return `as:${trigger.field}:${stableDimFilter(trigger.dimensionFilter)}`;
   }
   return null;
 }
@@ -3290,28 +3258,32 @@ function validateMissedPolls(trigger: Trigger | undefined, ctx: z.RefinementCtx)
   }
 }
 
+/** `includeServer` is a Path Monitor flag: a path metric or the path change. */
 /**
- * `skipUnusedPorts` only means something on the conditions that name a port
- * (SKIP_UNUSED_PORT_TARGETS). Anywhere else it would save, render as nothing
- * and filter nothing — so it is refused rather than kept as an inert flag.
- * Checked on the bare trigger and on every leaf of a composite.
+ * `dimensionFilter.sdwanMemberIp` only means something on the conditions that
+ * read one SD-WAN member per reading (SDWAN_MEMBER_IP_TARGETS). Anywhere else
+ * it would save, render and filter nothing — so it is refused rather than kept
+ * inert. Checked on the bare trigger and on every leaf of a composite.
  */
-function validateSkipUnusedPorts(trigger: Trigger | undefined, ctx: z.RefinementCtx): void {
+function validateMemberIpFilter(trigger: Trigger | undefined, ctx: z.RefinementCtx): void {
   if (!trigger) return;
-  const leaves: Array<{ type: string; metric?: string; field?: string; skipUnusedPorts?: boolean }> =
+  const leaves: Array<{ type: string; metric?: string; field?: string; dimensionFilter?: { sdwanMemberIp?: string } }> =
     trigger.type === "composite" ? (collectTriggerLeaves(trigger) as never) : [trigger as never];
-  const offender = leaves.find((l) => l.skipUnusedPorts != null && !SKIP_UNUSED_PORT_TARGETS.has(leafTargetOf(l) ?? ""));
+  const offender = leaves.find((l) => {
+    if (!l.dimensionFilter?.sdwanMemberIp) return false;
+    const target = l.type === "asset_state" ? l.field : l.type === "asset_metric" ? l.metric : undefined;
+    return !SDWAN_MEMBER_IP_TARGETS.has(target ?? "");
+  });
   if (offender) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      path: trigger.type === "composite" ? ["trigger", "children"] : ["trigger", "skipUnusedPorts"],
+      path: trigger.type === "composite" ? ["trigger", "children"] : ["trigger", "dimensionFilter", "sdwanMemberIp"],
       message:
-        "skipping unused ports only applies to SD-WAN member conditions (member state, latency, jitter, packet loss) and interface oper status — the conditions that name a port",
+        "SD-WAN member IP address only applies to the SD-WAN member conditions — member state, latency, jitter and packet loss",
     });
   }
 }
 
-/** `includeServer` is a Path Monitor flag: a path metric or the path change. */
 function validateIncludeServer(trigger: Trigger | undefined, reset: ResetConfig, ctx: z.RefinementCtx): void {
   if (!trigger || (trigger.type !== "asset_metric" && trigger.type !== "change")) return;
   if (trigger.includeServer != null && !isPathTrigger(trigger)) {
@@ -3351,8 +3323,8 @@ function validateRuleV2(
   validateRepeat(v, ctx);
   validateMissedPolls(trigger, ctx);
   validateGrouping(v, ctx);
-  validateSkipUnusedPorts(trigger, ctx);
   validateIncludeServer(trigger, reset, ctx);
+  validateMemberIpFilter(trigger, ctx);
   if (reset.mode === "timed" && reset.afterSec == null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reset", "afterSec"], message: "timed reset requires afterSec" });
   }
@@ -4436,6 +4408,50 @@ export const DEVICE_FILTER_DIMENSIONS = [
   "hostnamePattern", "ipPattern", "macPattern", "manufacturerPattern", "modelPattern",
 ] as const;
 
+// ── SD-WAN member IP address (business rule 98) ─────────────────────────────
+// A filter on the conditions that read one SD-WAN MEMBER per reading, by that
+// member's current interface address: `dimensionFilter.sdwanMemberIp` =
+// "!= 0.0.0.0" keeps a WAN with no address out of every one of them.
+//
+// Deliberately NOT in METRIC_DIMENSIONS / FIELD_DIMENSIONS: those lists are the
+// reading-KEY space (dimensionSpaceOf), and this narrows readings without
+// keying them — listing it there would split the SD-WAN metrics' space from
+// member state's and break a mixed reset tree. And a filter on the condition,
+// not a second condition: a separate "interface IP" leaf in a multi-condition
+// automation folds per DEVICE, so it could never say which member it meant.
+export const SDWAN_MEMBER_IP_TARGETS: ReadonlySet<string> = new Set([
+  "sdwanMemberState", "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss",
+]);
+
+export interface MemberIpFilter { operator: "==" | "!="; ip: string }
+
+/** "!= 0.0.0.0" → {operator, ip}; null for anything else. Whitespace-tolerant;
+ *  the address must be a real IPv4/IPv6 address (0.0.0.0 included). */
+export function parseMemberIpFilter(raw: string | null | undefined): MemberIpFilter | null {
+  const m = /^\s*(==|!=)\s*(\S+)\s*$/.exec(String(raw ?? ""));
+  if (!m) return null;
+  const ip = m[2]!;
+  if (!isValidIpAddress(ip)) return null;
+  return { operator: m[1] as "==" | "!=", ip };
+}
+
+/**
+ * Does a member whose interface reports `reported` pass the filter? Pure.
+ *
+ * null when the address is UNKNOWN — no interface row, or a scrape that
+ * collected no address field — and the caller KEEPS such a reading: the
+ * filter removes members it has evidence about, never ones it could not read.
+ * "0.0.0.0" in the filter matches every unaddressed shape the transports
+ * report ("0.0.0.0", "0.0.0.0 0.0.0.0", blank) — utils/cidr.interfaceIpIsUnaddressed.
+ */
+export function memberIpPasses(filter: MemberIpFilter, reported: string | null | undefined): boolean | null {
+  if (reported == null) return null;
+  const equal = filter.ip === "0.0.0.0"
+    ? interfaceIpIsUnaddressed(reported)
+    : bareInterfaceIp(reported).toLowerCase() === filter.ip.toLowerCase();
+  return filter.operator === "==" ? equal : !equal;
+}
+
 /**
  * IP dimension matcher. Substring over dotted quads lies ("10.1.1.5" is inside
  * "110.1.1.55"), so the pattern is: a CIDR ("/" present) → containment; a
@@ -5141,13 +5157,13 @@ export function buildSchemaCatalog() {
     // Absent on a pre-upgrade server; the wizard treats that as "state leaves
     // take no dimensions", the old behavior.
     fieldDimensions: FIELD_DIMENSIONS,
-    // The conditions that offer "Skip unused ports" (SKIP_UNUSED_PORT_TARGETS).
-    // Absent on a pre-upgrade server; the wizard then renders no checkbox.
-    skipUnusedPortTargets: Array.from(SKIP_UNUSED_PORT_TARGETS),
     // Device-identifier dimensions, valid on every asset metric/state leaf —
     // the wizard's "+ Condition → Device identifier" filter rows. Absent on a
     // pre-upgrade server; the wizard then offers no identifier rows.
     deviceFilterDimensions: DEVICE_FILTER_DIMENSIONS,
+    // The conditions that take the SD-WAN member IP address filter (business
+    // rule 98). Absent on a pre-upgrade server; the wizard then offers no row.
+    sdwanMemberIpTargets: Array.from(SDWAN_MEMBER_IP_TARGETS),
     // Down-detection authority: which leaf shape carries the missed-poll count,
     // and what an uncovered device reads instead. Sent as data rather than
     // hardcoded in the wizard so the count control, its bounds and the "passive"
@@ -5379,6 +5395,9 @@ export function buildSchemaCatalog() {
       sdwanRulePattern: "on SD-WAN rules matching {value}",
       healthCheck: "for health check {value}",
       link: "on member {value}",
+      // {value} is the stored comparison; the wizard words its operator
+      // ("!= 0.0.0.0" → "is not 0.0.0.0") before substituting.
+      sdwanMemberIp: "on members whose IP address {value}",
       tunnelName: "on tunnel {value}",
       widgetId: "for widget {value}",
       processNamePattern: "for processes matching {value}",
