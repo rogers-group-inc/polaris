@@ -74,24 +74,34 @@
     return Object.keys(seen).length > 1;
   }
 
+  // Cell padding of its own: the global `thead th` / `td` rule pads 1rem a
+  // side, which in a dialog this size left the name columns a letter wide.
+  // No fixed widths either — the short columns hold to one line (nowrap) and
+  // the names take the rest, wrapping between words.
+  var TD = "padding:6px 8px;vertical-align:top";
+  var TH = TD + ";white-space:nowrap";
+  var MONO = ";font-family:var(--font-mono);font-size:0.82rem";
+
   function rowHTML(m, showRule) {
     var recovered = !!m.leftAt;
     var sev = m.severity || "info";
     var status = recovered
-      ? '<span class="badge badge-active" title="' + esc("Recovered " + when(m.leftAt)) + '">Recovered</span>'
+      ? '<span class="badge badge-active">Recovered</span>'
       : '<span class="badge badge-level-' + esc(sev) + '">' + esc(sev.toUpperCase()) + "</span>";
-    var dim = recovered ? ' style="opacity:0.6"' : "";
     // The KEY rides the title: the label is what a human reads ("port12 (AP-1)"),
     // the key is what a dimension filter or another surface calls it.
     var name = m.label || m.key || "Whole device";
     var nameTitle = m.key && m.key !== name ? ' title="' + esc(m.key) + '"' : "";
-    return "<tr" + dim + ">" +
-      "<td>" + status + "</td>" +
-      '<td style="font-family:var(--font-mono);font-size:0.82rem;overflow-wrap:anywhere"' + nameTitle + ">" + esc(name) + "</td>" +
-      (showRule ? "<td>" + esc(m.ruleName || "") + "</td>" : "") +
-      '<td style="font-family:var(--font-mono);font-size:0.82rem">' + esc(m.value == null ? "—" : m.value) + "</td>" +
-      '<td style="font-family:var(--font-mono);font-size:0.82rem;white-space:nowrap">' + esc(when(m.joinedAt)) + "</td>" +
-      '<td style="font-family:var(--font-mono);font-size:0.82rem;white-space:nowrap">' + esc(recovered ? when(m.leftAt) : "—") + "</td>" +
+    // One time column: when it joined, and for a recovered one when it left.
+    var whenCell = recovered
+      ? esc(when(m.joinedAt)) + '<div style="color:var(--color-text-tertiary)">recovered ' + esc(when(m.leftAt)) + "</div>"
+      : "since " + esc(when(m.joinedAt));
+    return "<tr" + (recovered ? ' style="opacity:0.6"' : "") + ">" +
+      '<td style="' + TD + ';white-space:nowrap">' + status + "</td>" +
+      '<td style="' + TD + MONO + ';overflow-wrap:break-word"' + nameTitle + ">" + esc(name) + "</td>" +
+      (showRule ? '<td style="' + TD + ';overflow-wrap:break-word">' + esc(m.ruleName || "") + "</td>" : "") +
+      '<td style="' + TD + MONO + ';white-space:nowrap;text-align:right">' + esc(m.value == null ? "—" : m.value) + "</td>" +
+      '<td style="' + TD + MONO + ';white-space:nowrap">' + whenCell + "</td>" +
       "</tr>";
   }
 
@@ -112,12 +122,13 @@
     if (!members.length) {
       return head + '<p class="empty-state">This alert carries no component list — it was raised before grouping recorded one.</p>';
     }
-    var cols = '<th style="width:110px">Status</th><th>Component</th>' + (showRule ? "<th>Automation</th>" : "") +
-      '<th style="width:90px">Value</th><th style="width:130px">Joined</th><th style="width:130px">Recovered</th>';
+    var cols = '<th style="' + TH + '">Status</th><th style="' + TH + '">Component</th>' +
+      (showRule ? '<th style="' + TH + '">Automation</th>' : "") +
+      '<th style="' + TH + ';text-align:right">Value</th><th style="' + TH + '">When</th>';
     var rows = o.active.concat(o.left).map(function (m) { return rowHTML(m, showRule); }).join("");
     return head +
       '<div class="table-wrapper" style="max-height:60vh;overflow:auto">' +
-        '<table class="data-table"><thead><tr>' + cols + "</tr></thead><tbody>" + rows + "</tbody></table>" +
+        '<table class="data-table alert-members-table"><thead><tr>' + cols + "</tr></thead><tbody>" + rows + "</tbody></table>" +
       "</div>";
   }
 
@@ -127,7 +138,8 @@
   }
 
   function render(alert, opts) {
-    window.openModal("Alerts in this group", bodyHTML(alert), footerHTML(opts));
+    // Wide: five columns of names and times do not fit the default dialog.
+    window.openModal("Alerts in this group", bodyHTML(alert), footerHTML(opts), { wide: true });
     var close = document.getElementById("alert-members-close");
     if (close) close.addEventListener("click", function () { window.closeModal(); });
     var dev = document.getElementById("alert-members-device");

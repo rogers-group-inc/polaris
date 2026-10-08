@@ -27,7 +27,7 @@ interface Members { open: (a: unknown, o?: Record<string, unknown>) => Promise<v
 let win: Window;
 let doc: Window["document"];
 let M: Members;
-let modal: { title: string; body: string; footer: string } | null;
+let modal: { title: string; body: string; footer: string; options?: { wide?: boolean } } | null;
 let fetched: string[];
 let served: Record<string, unknown>;
 let closed: number;
@@ -50,8 +50,8 @@ beforeEach(() => {
   served = {};
   const w = win as unknown as Record<string, unknown>;
   w._alertSevRank = (s: string) => ({ notice: 1, info: 2, warning: 3, serious: 4, critical: 5 } as Record<string, number>)[s] || 0;
-  w.openModal = (title: string, body: string, footer: string) => {
-    modal = { title, body, footer };
+  w.openModal = (title: string, body: string, footer: string, options?: { wide?: boolean }) => {
+    modal = { title, body, footer, options };
     doc.body.innerHTML = '<div id="m">' + body + footer + "</div>";
   };
   w.closeModal = () => { closed++; };
@@ -105,10 +105,26 @@ describe("PolarisAlertMembers", () => {
 
   it("adds the Automation column only when several automations contributed", async () => {
     await M.open({ id: "a4", members: [member({ label: "p1" }), member({ label: "p2" })] });
-    expect(modal!.body).not.toContain("<th>Automation</th>");
+    expect(modal!.body).not.toContain(">Automation</th>");
     await M.open({ id: "a5", members: [member({ label: "p1" }), member({ label: "TMP1", ruleId: "r2", ruleName: "Temperature" })] });
-    expect(modal!.body).toContain("<th>Automation</th>");
+    expect(modal!.body).toContain(">Automation</th>");
     expect(modal!.body).toContain("Temperature");
+  });
+
+  it("opens wide, with no fixed column widths, so the names are not crushed", async () => {
+    // 2026-10-08: in the default dialog the global 1rem cell padding plus
+    // fixed widths left Component and Automation one letter wide.
+    await M.open({ id: "w1", members: [member({ label: "Microsoft / x1" }), member({ label: "Primary WAN / x1", ruleId: "r2", ruleName: "Latency" })] });
+    expect(modal!.options).toEqual({ wide: true });
+    expect(modal!.body).not.toMatch(/<th[^>]*width:/);
+    expect(modal!.body).toContain("padding:6px 8px");
+  });
+
+  it("shows when a recovered component joined and when it came back, in one column", async () => {
+    await M.open({ id: "w2", members: [member({ label: "p1", leftAt: "2026-10-08T17:00:00Z" }), member({ label: "p2" })] });
+    const rows = rowText();
+    expect(rows[0]![rows[0]!.length - 1]).toMatch(/^since /);
+    expect(rows[1]![rows[1]!.length - 1]).toMatch(/recovered /);
   });
 
   it("says so when an alert carries no component list", async () => {
