@@ -3595,6 +3595,19 @@ function ensurePanelScripts(kind) {
   });
 }
 
+// The components of a GROUPED alert (business rule 75), in a modal — the row
+// menu verb on the Active Alerts widget and the asset Alerts tab. Loaded on
+// first use, like a panel bundle: two surfaces on different pages open it and
+// neither page should carry it for the operators who never click it.
+// `alertOrId` is a row already holding `members` (no fetch) or an alert id.
+function openAlertMembers(alertOrId, opts) {
+  return _loadPanelScript("/js/alert-members-modal.js").then(function () {
+    return window.PolarisAlertMembers.open(alertOrId, opts);
+  }).catch(function (err) {
+    if (typeof showToast === "function") showToast((err && err.message) || "Couldn't open the alert's components", "error");
+  });
+}
+
 // ─── The floating AI assistant (business rule 95) ──────────────────────────
 // Desktop app pages only (the ones with a #sidebar — not login, the ack page,
 // the Dash wallboard or the phone SPA). Nothing is fetched for a role without

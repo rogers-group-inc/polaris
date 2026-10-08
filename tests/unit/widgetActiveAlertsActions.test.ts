@@ -42,6 +42,8 @@ interface AlertRow {
   acknowledged?: boolean;
   acknowledgedBy?: string | null;
   raisedAt?: string;
+  dimensionCount?: number | null;
+  groupName?: string | null;
 }
 interface Cfg { minSeverity?: string; rowLimit?: number | null; eventAlerts?: string }
 interface WidgetModule {
@@ -277,6 +279,51 @@ describe("acting on the alert", () => {
     await settle();
     expect(toasts).toEqual([["Forbidden", "error"]]);
     expect(rowIds(el)).toEqual(["n1"]);
+    teardown();
+  });
+});
+
+// A grouped alert (business rule 75) is one row naming many problems; its
+// menu leads with the way to the parts. openAlertMembers is app.js's loader
+// for public/js/alert-members-modal.js — stubbed here, pinned on its own in
+// alertMembersModal.test.ts.
+describe("a grouped alert's components", () => {
+  let membersOpened: Array<[unknown, Record<string, unknown>]>;
+  beforeEach(() => {
+    membersOpened = [];
+    (win as unknown as Record<string, unknown>).openAlertMembers =
+      (idOrRow: unknown, opts: Record<string, unknown>) => { membersOpened.push([idOrRow, opts]); };
+  });
+
+  it("leads the menu with the group's alerts on a grouped row", () => {
+    const { teardown } = mountAndClick([alert({ id: "g1", assetId: "asset-9", dimensionCount: 2 })]);
+    expect(labels()).toEqual(["Show alerts in this group…", "Acknowledge alert…", "Clear alert", "Open device"]);
+    pick("Show alerts in this group…");
+    // By ID: the widget's feed does not carry the members snapshot.
+    expect(membersOpened.length).toBe(1);
+    expect(membersOpened[0]![0]).toBe("g1");
+    expect(typeof membersOpened[0]![1].onOpenDevice).toBe("function");
+    teardown();
+  });
+
+  it("counts an Alert Group's alert as grouped too", () => {
+    const { teardown } = mountAndClick([alert({ id: "g1", groupName: "Switch health" })]);
+    expect(labels()[0]).toBe("Show alerts in this group…");
+    teardown();
+  });
+
+  it("does not offer it on an ungrouped alert", () => {
+    const { teardown } = mountAndClick([alert({ id: "n1" })]);
+    expect(labels()).not.toContain("Show alerts in this group…");
+    teardown();
+  });
+
+  it("keeps it from a role without alerts:read, which the read behind it needs", () => {
+    (win as unknown as Record<string, unknown>).permAtLeast = () => false;
+    const { teardown } = mountAndClick([alert({ id: "g1", assetId: "asset-9", dimensionCount: 3 })]);
+    // Only Open device is left, which opens straight away as it always did.
+    expect(menuItems).toBeNull();
+    expect(openedAsset).toEqual([["asset-9", { tab: "notifications" }]]);
     teardown();
   });
 });

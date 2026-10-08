@@ -22622,10 +22622,24 @@ function _loadAssetNotificationsTab(assetId) {
         var depBadge = n.dependencyDown
           ? ' <span class="badge badge-monitor-dep-down" title="Raised while this device was dependency-down — the message names the upstream device">Dep. Down</span>'
           : "";
+        // A GROUPED alert (business rule 75) names many problems in one
+        // sentence; its message is the row's name and opens a menu whose verb
+        // lists them (openAlertMembers, off this row's own `members` snapshot —
+        // no fetch, so it needs nothing beyond the tab's assets:read).
+        var grouped = !!n.groupKey || n.dimensionCount != null;
+        var msgCell = grouped
+          ? '<button type="button" class="row-menu-trigger asset-alert-group-menu" data-id="' + escapeHtml(n.id) + '" ' +
+            'aria-haspopup="menu" aria-expanded="false" style="white-space:normal;overflow-wrap:anywhere">' +
+            escapeHtml(n.message || "") + '</button>'
+          : escapeHtml(n.message || "");
+        var groupPill = grouped
+          ? ' <span class="widget-pill widget-pill-watch" title="' +
+            escapeHtml("Grouped alert" + (n.dimensionCount ? " — " + n.dimensionCount + " still affected" : "")) + '">GROUP</span>'
+          : "";
         return '<tr>' + sel +
           '<td style="font-family:var(--font-mono);font-size:0.82rem">' + escapeHtml(ts) + '</td>' +
-          '<td><span class="badge badge-level-' + escapeHtml(n.severity || "info") + '">' + escapeHtml((n.severity || "info").toUpperCase()) + '</span>' + depBadge + '</td>' +
-          '<td' + (alertTitle ? ' title="' + escapeHtml(alertTitle) + '"' : "") + '>' + escapeHtml(n.message || "") + '</td>' +
+          '<td><span class="badge badge-level-' + escapeHtml(n.severity || "info") + '">' + escapeHtml((n.severity || "info").toUpperCase()) + '</span>' + depBadge + groupPill + '</td>' +
+          '<td' + (alertTitle ? ' title="' + escapeHtml(alertTitle) + '"' : "") + '>' + msgCell + '</td>' +
           '<td>' + ackCell + '</td>' +
           '<td><div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap">' + parts.join("") + '</div></td></tr>';
       }).join("") : '<tr><td colspan="' + shape.colspan + '" class="empty-state">No active alerts</td></tr>';
@@ -22634,6 +22648,18 @@ function _loadAssetNotificationsTab(assetId) {
       });
       aTbody.querySelectorAll(".asset-alert-clear").forEach(function (btn) {
         btn.addEventListener("click", function () { _clearAssetAlert(btn, assetId); });
+      });
+      aTbody.querySelectorAll(".asset-alert-group-menu").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var id = btn.getAttribute("data-id");
+          var row = active.find(function (x) { return String(x.id) === id; });
+          if (!row) return;
+          showRowMenu(btn, [{
+            label: "Show alerts in this group…",
+            title: "List the components this alert is made of — which are still affected and which have recovered",
+            onSelect: function () { openAlertMembers(row); },
+          }], { label: "Alert actions" });
+        });
       });
       _wireAssetAlertSelection(assetId);
     }
