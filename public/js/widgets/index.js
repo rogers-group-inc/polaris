@@ -1152,6 +1152,19 @@
       if (typeof opts.onChanged === "function") opts.onChanged(kind, opts.alertId, fresh);
     };
     var items = [];
+    // A GROUPED alert (business rule 75) is one row naming many problems; this
+    // opens the list of them. First, because on a grouped row it is the
+    // question the click is usually asking. Reads GET /alerts/:id — the same
+    // read, and the same alerts:read gate, as the acknowledge dialog.
+    if (dialogs && opts.alertId && opts.grouped && at("read") && typeof window.openAlertMembers === "function") {
+      items.push({
+        label: "Show alerts in this group…",
+        title: "List the components this alert is made of — which are still affected and which have recovered",
+        onSelect: function () {
+          window.openAlertMembers(opts.alertId, { onOpenDevice: opts.assetId ? openDevice : undefined });
+        },
+      });
+    }
     if (dialogs && opts.alertId && !opts.acknowledged && at("write") && window.PolarisAlertAckModal && window.openModal) {
       items.push({
         label: "Acknowledge alert…",

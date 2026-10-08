@@ -694,5 +694,16 @@ export async function getAssetNotifications(assetId: string) {
     }),
     findRulesMatchingAsset(assetId, { carveOut: true }),
   ]);
-  return { active: active.map(withAckPolicy), matchingRules };
+  return {
+    active: active.map((row) => ({
+      ...withAckPolicy(row),
+      // Named for the Alerts tab's group dialog (business rule 75): a grouped
+      // alert is named by its Alert Group when one delivers it, else by the
+      // automation folding its own components. Read off the relations this
+      // query already includes.
+      ruleName: row.rule?.name ?? null,
+      groupName: row.alertGroup?.name ?? null,
+    })),
+    matchingRules,
+  };
 }

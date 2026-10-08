@@ -210,6 +210,14 @@ hostname: its message lists every affected component. An ungrouped alert
 still shows its port there, which is what tells two rows from one
 per-interface automation apart.
 
+Clicking a grouped row adds **Show alerts in this group…** at the top of its
+menu (`alerts:read`). It lists every component the alert covers: its own
+severity, its reading, and when it joined. Components still affected come
+first, worst first. Ones that have recovered stay on the list, greyed, with
+the time they came back, so you can see what is left. When an Alert Group
+gathers several automations, an **Automation** column names which one raised
+each component.
+
 A **TEST** pill beside the severity marks a delivery test sent from the
 automation wizard ([Automations](Automations)). It is about a made-up device
 (`EXAMPLE-SWITCH-01`), not one of yours, and clears itself an hour after it

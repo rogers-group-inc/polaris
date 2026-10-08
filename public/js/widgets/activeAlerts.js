@@ -297,6 +297,8 @@
     var tag = r.assetId ? "a" : "div";
     var attrs = ' data-alert-id="' + escapeHtml(r.id || "") + '"' +
       (r.acknowledged ? ' data-alert-ack="1"' : "") +
+      // The row menu offers the group's components (openAlertMembers).
+      (grouped ? ' data-alert-grouped="1"' : "") +
       (r.assetId
         ? ' href="/assets.html#view=asset:' + encodeURIComponent(r.assetId) +
           '&tab=notifications" data-asset-id="' + escapeHtml(r.assetId) + '"'
@@ -364,7 +366,8 @@
         return fetchAlerts(config).then(function (d) { latest = d; paint(); }).catch(function () {});
       };
       paint();
-      // Click an alert → its verbs (Acknowledge / Clear / Open device), which
+      // Click an alert → its verbs (the group's alerts on a grouped one,
+      // Acknowledge / Clear / Open device), which
       // is how an alert with no device gets acted on at all. A row that leaves
       // one verb ("Open device", for a read-only role) opens the device
       // straight away, as the click always did.
@@ -379,6 +382,7 @@
           alertId: link.getAttribute("data-alert-id"),
           assetId: link.getAttribute("data-asset-id"),
           acknowledged: link.getAttribute("data-alert-ack") === "1",
+          grouped: link.getAttribute("data-alert-grouped") === "1",
           onChanged: function (kind, id, fresh) {
             if (kind === "cleared") local.cleared[id] = true;
             else local.acked[id] = fresh || true;

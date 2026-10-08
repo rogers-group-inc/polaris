@@ -757,6 +757,13 @@ Equal timestamps order by dimension **numerically**, so `port2` precedes
 Clearing ends the alert, stops escalation and runs the automation's reset
 actions, so it is confirmed.
 
+A **grouped** alert (one alert covering several components of this device)
+wears a **GROUP** pill beside its severity, and its message is a link. Click
+it and choose **Show alerts in this group…** to list every component the
+alert covers. Ones still affected come first, worst first. Ones that have
+recovered stay on the list, greyed, with the time they came back. This works
+for anyone who can see the tab; it needs no `alerts` permission.
+
 The note prompt is a Polaris modal, never `window.prompt` — the browser box is
 unstyled, dead in an installed PWA, suppressed outright by some browsers, and
 cannot mark a field required, which a note-requiring automation needs. The
