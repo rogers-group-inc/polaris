@@ -559,6 +559,7 @@ function makeAutomationSentences(s) {
     mountPathPattern: "on mounts matching {value}", sdwanRulePattern: "on SD-WAN rules matching {value}",
     healthCheck: "for health check {value}",
     link: "on member {value}", tunnelName: "on tunnel {value}", widgetId: "for widget {value}",
+    sdwanMemberIp: "on members whose IP address {value}",
     processNamePattern: "for processes matching {value}",
     // Mirrors the server's dimensionPhrases. Present as built-in fallbacks too so
     // the factory reads correctly against a partial /schema payload, the same as
@@ -579,6 +580,8 @@ function makeAutomationSentences(s) {
     var v = k === "checkId" && value && value !== "…" ? checkNameOf(value) : value;
     // A multi value reads as a list: "for health check Microsoft or Primary WAN".
     if (awDimIsMulti(k) && value && value !== "…") v = awDimTerms(value).join(" or ");
+    // The SD-WAN member IP filter stores a comparison, not a pattern: word it.
+    if (k === "sdwanMemberIp" && value && value !== "…") v = awMemberIpWords(value);
     return (DIM_PHRASE[k] || k + " = {value}").replace("{value}", v);
   }
 
@@ -874,6 +877,8 @@ function makeAutomationSentences(s) {
         if (p && p.name) v = p.name;
       }
       if (k === "checkId") v = checkNameOf(v).replace(/[«»]/g, "");
+      // A comparison, already carrying its operator: memberIp != 0.0.0.0.
+      if (k === "sdwanMemberIp") { parts.push("memberIp " + String(v).trim().replace(/\s+/, " ")); return; }
       parts.push((FORMULA_DIM[k] || (k + "=")) + '"' + v + '"');
     });
     return parts.length ? "[" + parts.join(", ") + "]" : "";
@@ -1473,6 +1478,21 @@ function awDimNote(res) {
 // the rows from a stored tree. Both are pure and exposed for unit tests.
 
 function awIsFilterLeaf(node) { return !!node && node.type === "asset_filter"; }
+
+/** "!= 0.0.0.0" → {operator, ip}; null for anything else. The browser twin of
+ *  notificationTypes.parseMemberIpFilter, minus the address validation the
+ *  server does on save (business rule 98). */
+function awParseMemberIp(raw) {
+  var m = /^\s*(==|!=)\s*(\S+)\s*$/.exec(String(raw == null ? "" : raw));
+  return m ? { operator: m[1], ip: m[2] } : null;
+}
+
+/** The comparison in words, for a sentence: "!= 0.0.0.0" → "is not 0.0.0.0". */
+function awMemberIpWords(raw) {
+  var p = awParseMemberIp(raw);
+  if (!p) return String(raw == null ? "" : raw);
+  return (p.operator === "!=" ? "is not " : "is ") + p.ip;
+}
 function awIsGroup(node) { return !!node && node.type === undefined && Array.isArray(node.children); }
 
 /** Every condition (non-filter) leaf under a node, groups walked depth-first. */
@@ -1569,7 +1589,10 @@ if (typeof window !== "undefined") {
     displayValue: awDimDisplayValue, storedValue: awDimStoredValue, multiState: awDimMultiState, togglePick: awDimTogglePick,
     note: awDimNote, narrow: awDimNarrow,
   };
-  window.PolarisTriggerFilters = { compile: tgFilterCompile, lift: tgFilterLift };
+  window.PolarisTriggerFilters = {
+    compile: tgFilterCompile, lift: tgFilterLift,
+    parseMemberIp: awParseMemberIp, memberIpWords: awMemberIpWords,
+  };
 }
 
 /**
@@ -1743,7 +1766,7 @@ async function openAutomationWizard(existing, opts) {
       dependencyDownMeta = _sent.dependencyDownMeta, leafAlertsWhenDependencyDown = _sent.leafAlertsWhenDependencyDown,
       monStatusWord = _sent.monStatusWord,
       CMP_PHRASE = _sent.CMP_PHRASE, INV_CMP = _sent.INV_CMP;
-  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick, or type to filter", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick one or more", link: "any WAN member — click to pick one or more", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter", checkId: "which path check — click to pick" };
+  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick, or type to filter", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick one or more", link: "any WAN member — click to pick one or more", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter", checkId: "which path check — click to pick", sdwanMemberIp: "!= 0.0.0.0 (or == an address)" };
   // The same placeholders when the dimension is INTEGRAL to the condition (see
   // tgIntegralDimOf): the row is about ONE component, so the hint asks which
   // and says what blank does instead of describing an optional narrowing.
@@ -1797,7 +1820,13 @@ async function openAutomationWizard(existing, opts) {
     tunnelName: { label: "IPsec tunnel name", rep: "ipsecStatus" },
     mountPathPattern: { label: "Storage mount", rep: "storageUsedPct" },
     sdwanRulePattern: { label: "SD-WAN rule name", rep: "sdwanRuleStatus" },
+    // Business rule 98: a comparison on the member's current address, not a
+    // pattern — its row draws is / is not + an address (tgMemberIpControlHtml).
+    // Offered only when the server publishes its targets (a pre-upgrade server
+    // would refuse the key).
+    sdwanMemberIp: { label: "SD-WAN member IP address", rep: "sdwanPacketLoss", memberIp: true },
   };
+  if (!Array.isArray(s.sdwanMemberIpTargets)) delete TG_FILTER_META.sdwanMemberIp;
   function tgFilterLabel(dim) { return (TG_FILTER_META[dim] && TG_FILTER_META[dim].label) || dim; }
   /**
    * The dimension a field's reading IS ABOUT rather than one that narrows a set
@@ -1827,6 +1856,10 @@ async function openAutomationWizard(existing, opts) {
   function tgSupportsDim(leaf, d) {
     if (!leaf || leaf.type === "asset_filter" || leaf.type === "host_metric") return false;
     if (TG_DEVICE_DIMS.indexOf(d) !== -1) return leaf.type === "asset_metric" || leaf.type === "asset_state";
+    if (d === "sdwanMemberIp") {
+      var target = leaf.type === "asset_state" ? leaf.field : leaf.metric;
+      return (s.sdwanMemberIpTargets || []).indexOf(target) !== -1;
+    }
     if (leaf.type === "asset_state") return (((s.fieldDimensions || {})[leaf.field]) || []).indexOf(d) !== -1;
     return (((s.metricDimensions || {})[leaf.metric]) || []).indexOf(d) !== -1;
   }
@@ -1868,6 +1901,9 @@ async function openAutomationWizard(existing, opts) {
     TG_DEVICE_DIMS.forEach(function (d) {
       if (df && df[d] && out.indexOf(d) === -1) out.push(d);
     });
+    // An unlifted member-IP filter (siblings disagree) is in no base list, so
+    // it would evaluate while drawing nothing — show it where it lives.
+    if (df && df.sdwanMemberIp && out.indexOf("sdwanMemberIp") === -1) out.push("sdwanMemberIp");
     return out;
   }
   // Filter-placement problems from the LAST collect, surfaced by validateStep3 /
@@ -2948,9 +2984,11 @@ async function openAutomationWizard(existing, opts) {
         return '<option value="' + escapeHtml(v) + '"' + (v === selWhat ? " selected" : "") + '>' + escapeHtml(tgFilterLabel(d)) + '</option>';
       };
       var idDims = tgLiftableDims().filter(function (d) { return TG_FILTER_META[d].device; });
-      var nameDims = tgLiftableDims().filter(function (d) { return !TG_FILTER_META[d].device; });
+      var nameDims = tgLiftableDims().filter(function (d) { return !TG_FILTER_META[d].device && !TG_FILTER_META[d].memberIp; });
+      var memberDims = tgLiftableDims().filter(function (d) { return TG_FILTER_META[d].memberIp; });
       html += '<optgroup label="Device identifier (filters this group)">' + idDims.map(filterOpt).join("") + '</optgroup>' +
-        '<optgroup label="Component name (filters this group)">' + nameDims.map(filterOpt).join("") + '</optgroup>';
+        '<optgroup label="Component name (filters this group)">' + nameDims.map(filterOpt).join("") + '</optgroup>' +
+        (memberDims.length ? '<optgroup label="SD-WAN member (filters this group)">' + memberDims.map(filterOpt).join("") + '</optgroup>' : "");
     }
     return html;
   }
@@ -3252,24 +3290,6 @@ async function openAutomationWizard(existing, opts) {
       els.forEach(applyDimOptions);
     }
   }
-  /**
-   * "Skip unused ports" — offered on the conditions the server lists
-   * (skipUnusedPortTargets: SD-WAN member state / latency / jitter / loss and
-   * interface oper status). Absent list (a pre-upgrade server) = no checkbox.
-   * Collected by tgCollectLeaf; a row whose condition changes to one that does
-   * not offer it simply stops rendering it, so the flag is dropped on the next
-   * collect rather than riding along inert (the server would refuse it).
-   */
-  function tgSkipUnusedOffered(target) {
-    return !!target && Array.isArray(s.skipUnusedPortTargets) && s.skipUnusedPortTargets.indexOf(target) !== -1;
-  }
-  function tgSkipUnusedHtml(target, leaf) {
-    if (!tgSkipUnusedOffered(target)) return "";
-    return '<label style="flex-basis:100%;display:flex;gap:6px;align-items:center;font-size:0.8rem;cursor:pointer" ' +
-      'title="A port that reports 0.0.0.0 and has had no address in the last 30 days is treated as never connected (an unused WAN from a deployment template) and never alerts. A port that had an address recently — a DHCP WAN that just lost its lease, a static WAN that went down — still alerts. Tunnels are never skipped.">' +
-      '<input type="checkbox" class="tgl-skip-unused"' + (leaf && leaf.skipUnusedPorts ? " checked" : "") + '> ' +
-      'Skip unused ports (no address in the last 30 days)</label>';
-  }
   function tgLeafRowHtml(leaf, kind) {
     leaf = leaf || tgDefaultLeaf(kind);
     // A FILTER row: "<what> matches <value>". The value control is the same
@@ -3277,6 +3297,26 @@ async function openAutomationWizard(existing, opts) {
     // combobox / cue / note machinery applies unchanged); the fixed "matches"
     // is honest — the stored dimensionFilter is a positive pattern, there is
     // no negative to offer.
+    // The SD-WAN member IP filter (business rule 98) is a COMPARISON, so its
+    // row says "is / is not <address>" instead of "matches <pattern>". Stored
+    // as one string ("!= 0.0.0.0") on the leaf's dimensionFilter, which is
+    // what lets it ride the same compile / lift as every other filter row.
+    if (leaf.type === "asset_filter" && leaf.dim === "sdwanMemberIp") {
+      var mp = awParseMemberIp(leaf.value) || { operator: "!=", ip: "" };
+      return '<div class="scr-row" data-filter-row="1" style="margin:4px 0;padding:4px;border:1px dashed var(--color-border);border-radius:6px">' +
+        '<div style="display:flex;gap:6px;align-items:center">' +
+          '<span class="aw-grip" draggable="true" title="Drag to move">&#x2842;</span>' +
+          '<select class="tgl-what" style="flex:0 1 220px;min-width:0">' + tgWhatOptions(kind, "d:sdwanMemberIp") + '</select>' +
+          '<select class="tgl-memberip-op" style="flex:0 0 auto">' +
+            '<option value="!="' + (mp.operator === "!=" ? " selected" : "") + '>is not</option>' +
+            '<option value="=="' + (mp.operator === "==" ? " selected" : "") + '>is</option>' +
+          '</select>' +
+          '<input type="text" class="tgl-dim" data-dim="sdwanMemberIp" placeholder="0.0.0.0" value="' + escapeHtml(mp.ip) + '" style="flex:1;min-width:120px" ' +
+            'title="Compared with each SD-WAN member interface\'s current address. 0.0.0.0 matches a member with no address. A member whose address could not be read is always kept.">' +
+          '<button type="button" class="btn btn-sm btn-danger scr-remove" title="Remove filter">&times;</button>' +
+        '</div>' +
+      '</div>';
+    }
     if (leaf.type === "asset_filter") {
       var fdf = {}; fdf[leaf.dim] = leaf.value || "";
       return '<div class="scr-row" data-filter-row="1" style="margin:4px 0;padding:4px;border:1px dashed var(--color-border);border-radius:6px">' +
@@ -3355,14 +3395,12 @@ async function openAutomationWizard(existing, opts) {
       // comparison is about.
       var fDims = kind === "host" ? [] : tgInlineDims((s.fieldDimensions && s.fieldDimensions[leaf.field]) || [], leaf.dimensionFilter, leaf);
       var isDD = ddMeta && isDownDetectionLeaf(leaf);
-      var fSkip = kind === "host" ? "" : tgSkipUnusedHtml(leaf.field, leaf);
-      if (fDims.length || isDD || fSkip) {
+      if (fDims.length || isDD) {
         var fDf = leaf.dimensionFilter || {};
         line2 =
           '<div class="tgl-line2" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0 0 22px;font-size:0.8rem;color:var(--color-text-tertiary)">' +
             fDims.map(function (d) { return dimControlHtml(d, fDf, leaf.field, awDimStateOfLeaf(leaf)); }).join("") +
             (fDims.some(function (d) { return DIM_PICKERS[d]; }) ? '<span class="tgl-dim-note" style="flex-basis:100%;font-size:0.78rem"></span>' : "") +
-            fSkip +
             // Both painted asynchronously (syncDownDetection) and rendered
             // rather than omitted, so there is somewhere to paint into: the
             // coverage line depends on the carve-out preview, and the
@@ -3404,7 +3442,6 @@ async function openAutomationWizard(existing, opts) {
           aggControl +
           dimInputs +
           (dims.some(function (d) { return DIM_PICKERS[d]; }) ? '<span class="tgl-dim-note" style="flex-basis:100%;font-size:0.78rem"></span>' : "") +
-          (kind === "host" ? "" : tgSkipUnusedHtml(leaf.metric, leaf)) +
         '</div>';
     }
     var ceiling = !isState && !!leaf && isCeilingMetric(leaf.metric);
@@ -3434,7 +3471,12 @@ async function openAutomationWizard(existing, opts) {
     var what = rowEl.querySelector(".tgl-what").value;
     if (what.indexOf("d:") === 0) {
       var fEl = rowEl.querySelector(".tgl-dim");
-      return { type: "asset_filter", dim: what.slice(2), value: fEl ? fEl.value.trim() : "" };
+      var fVal = fEl ? fEl.value.trim() : "";
+      // is / is not + address → the stored comparison. A blank address stays
+      // blank, so the compile step reports "give it a value".
+      var ipOpEl = rowEl.querySelector(".tgl-memberip-op");
+      if (what === "d:sdwanMemberIp" && ipOpEl && fVal) fVal = ipOpEl.value + " " + fVal;
+      return { type: "asset_filter", dim: what.slice(2), value: fVal };
     }
     var op = rowEl.querySelector(".tgl-op").value;
     if (what.indexOf("f:") === 0) {
@@ -3443,8 +3485,6 @@ async function openAutomationWizard(existing, opts) {
       var sDf = {};
       rowEl.querySelectorAll(".tgl-dim").forEach(function (el) { var v = awDimStoredValue(el.getAttribute("data-dim"), el.value); if (v) sDf[el.getAttribute("data-dim")] = v; });
       if (Object.keys(sDf).length) sLeaf.dimensionFilter = sDf;
-      var sSkip = rowEl.querySelector(".tgl-skip-unused");
-      if (sSkip && sSkip.checked) sLeaf.skipUnusedPorts = true;
       // No missed-poll count is read here any more: the row no longer states
       // one. On a sole down condition it comes off the trigger's "Sustained
       // for" field, stamped in collectStep3 once the tree is known to be that
@@ -3466,8 +3506,6 @@ async function openAutomationWizard(existing, opts) {
       var df = {};
       rowEl.querySelectorAll(".tgl-dim").forEach(function (el) { var v = awDimStoredValue(el.getAttribute("data-dim"), el.value); if (v) df[el.getAttribute("data-dim")] = v; });
       if (Object.keys(df).length) leaf.dimensionFilter = df;
-      var mSkip = rowEl.querySelector(".tgl-skip-unused");
-      if (mSkip && mSkip.checked) leaf.skipUnusedPorts = true;
     }
     return leaf;
   }

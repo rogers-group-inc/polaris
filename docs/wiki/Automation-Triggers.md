@@ -716,24 +716,37 @@ different device filters **never carve each other out**.
 Every stream writes samples for unpinned members too, permanently inside the
 engine's lookback — so the pin is a **gate**, never a side effect of retention.
 
-### Skip unused ports
+### SD-WAN member IP address
 
-**SD-WAN member state**, **SD-WAN latency / jitter / packet loss** and
-**Interface oper status** conditions offer a **Skip unused ports** checkbox
-([rule 88](Business-Rules#rule-88)). Tick it when your FortiGates have WAN ports
-that are enabled (often SD-WAN members) but not always plugged in, such as a
-template that turns on `wan1` and `wan2` everywhere.
+**SD-WAN member state** and **SD-WAN latency / jitter / packet loss** conditions
+can be narrowed by each member's current address
+([rule 98](Business-Rules#rule-98)). Add it with **+ Condition → SD-WAN member
+IP address**. It is a filter row, like a health-check or hostname filter, and it
+narrows every SD-WAN member condition in its group. Choose **is not** or **is**
+and an address. The common use is *SD-WAN member IP address is not 0.0.0.0*,
+which leaves out WAN ports with no address, such as a `wan2` a template enabled
+on every gate but nobody plugged in.
 
-A port is skipped when it reports `0.0.0.0` **and** has had no address in the
-last 30 days. A port that had an address recently still alerts, so a DHCP WAN
-that just lost its lease is not mistaken for an unused one. Tunnels (the overlay
-members) are never skipped. An SD-WAN member is matched to the interface of the
-same name.
+- A member is matched to the interface of the same name (`wan1`, `Overlay-1`),
+  and its **current** address is compared. `0.0.0.0` matches every form a gate
+  reports for "no address".
+- A member whose address Polaris could not read (no interface row, or a scrape
+  that returned no address) is always kept.
+- A member that stops passing never raises an alert, and an alert already open
+  on it clears.
+- **Watch out:** a DHCP WAN that loses its lease also reads `0.0.0.0` while it is
+  down, so *is not 0.0.0.0* leaves that outage out too. Use an **Interface oper
+  status** or **SD-WAN member state** automation without the filter if you need
+  to hear about it.
 
-Use this instead of adding an *Interface IP address is not 0.0.0.0* condition
-beside the member or port condition. With two conditions, each is checked across
-the whole device rather than on the same port: some other interface always has an
-address, so that second condition never filters anything.
+Use the filter row rather than a separate *Interface IP address is not 0.0.0.0*
+condition. With two conditions, each is checked across the whole device rather
+than on the same port: some other interface always has an address, so that
+second condition never filters anything.
+
+**Skip unused ports** was retired on 2026-10-08 ([rule 88](Business-Rules#rule-88)).
+An automation that had it ticked lost it on upgrade, and alerts again on the
+ports it used to skip until you add the filter above.
 
 ---
 
