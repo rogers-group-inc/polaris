@@ -80,6 +80,15 @@ Each live address then gets the remaining methods in your order, each method's
 credentials in order, and the **first that answers wins**. That is what lets
 one sweep cover a mixed estate without you classifying it first.
 
+An address that ignores the first ping gets a **second one straight away**
+before it is called silent. Routers usually drop the first packet to a quiet
+host while they look its address up, and a single ping would miss every such
+device. If ping cannot run from the Polaris server at all, the Run step and the
+completion event say so, and those addresses count as untested, not silent.
+A firewall between Polaris and the target can still block a sweep, for example
+a FortiGate DoS policy with **icmp_sweep** set to block. If a device answers its
+ICMP monitor but never shows up in a Discovery, check that policy first.
+
 **SNMP is the only method that identifies a device** — hostname, vendor, model
 — and the only one that reports interface and storage names during the scan.
 SSH and WinRM prove a login works; their interfaces appear only once an agent
