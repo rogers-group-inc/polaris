@@ -131,6 +131,8 @@
     if (!draft || !draft.id) return true;
     return draft.isOwner !== false || permAtLeast("networkScan", "fullwrite");
   }
+  /** The Targets step's network picker reads GET /subnets, gated subnets:read. */
+  function canPickNetworks() { return permAtLeast("subnets", "read"); }
   function canAdopt() { return canWrite() && permAtLeast("assets", "write"); }
   function portability() { return window.PolarisDiscoveryPortability || null; }
 
@@ -351,17 +353,152 @@
             return '<option value="' + k[0] + '"' + (t.kind === k[0] ? " selected" : "") + '>' + k[1] + '</option>';
           }).join("") +
         '</select>' +
-        '<input type="text" class="form-input nd-t-value" style="flex:1" maxlength="64" ' +
-          'placeholder="' + (t.kind === "range" ? "10.4.0.10-10.4.0.60" : t.kind === "single" ? "10.4.0.7" : "10.4.0.0/24") + '" ' +
-          'value="' + escapeHtml(t.value || "") + '">' +
+        targetValueHtml(t) +
         '<button type="button" class="btn-icon nd-t-remove" title="Remove this target" aria-label="Remove this target">✕</button>' +
       '</div>';
+    }
+
+    /**
+     * The value box. A subnet row is a combobox over the IPAM networks — focus
+     * lists them, typing filters — and still takes free text, since the space
+     * to sweep is often exactly the space IPAM doesn't know about yet. Ranges
+     * and single addresses stay plain inputs: no network IS one.
+     */
+    function targetValueHtml(t) {
+      var input = '<input type="text" class="form-input nd-t-value" style="flex:1" maxlength="64" autocomplete="off" ' +
+        'placeholder="' + (t.kind === "range" ? "10.4.0.10-10.4.0.60" : t.kind === "single" ? "10.4.0.7"
+          : canPickNetworks() ? "10.4.0.0/24, or type to search networks" : "10.4.0.0/24") + '" ' +
+        'value="' + escapeHtml(t.value || "") + '"' +
+        (t.kind === "cidr" && canPickNetworks() ? ' role="combobox" aria-autocomplete="list" aria-expanded="false"' : "") + '>';
+      if (t.kind !== "cidr" || !canPickNetworks()) return input;
+      return '<div class="aw-combo nd-t-combo">' + input + '<div class="aw-suggest nd-t-suggest" role="listbox"></div></div>';
+    }
+
+    // ─── IPAM network picker ─────────────────────────────────────────────
+    // Fetched once per wizard open, on the first focus of a subnet box — the
+    // Networks page's own `limit: 10000` read, so the picker offers what that
+    // page lists. Not module-cached: a network discovered since the last open
+    // must be offerable now. A caller without subnets:read never fetches and
+    // gets the plain text box (the route would 403).
+
+    var networks = null;       // null = not fetched; [] once loaded
+    var networksError = false;
+    var networksLoading = null;
+
+    function loadNetworks() {
+      if (networks || networksLoading) return networksLoading || Promise.resolve();
+      networksLoading = Promise.resolve().then(function () {
+        return api.subnets.list({ limit: 10000 });
+      }).then(function (resp) {
+        var rows = (resp && resp.subnets) || (Array.isArray(resp) ? resp : []);
+        // The scanner sweeps IPv4 only, and a deprecated network is space
+        // IPAM says is out of use — neither is a target worth suggesting.
+        networks = rows.filter(function (s) {
+          return s && s.cidr && String(s.cidr).indexOf(":") === -1 && s.status !== "deprecated";
+        });
+      }).catch(function () {
+        networks = [];
+        networksError = true;
+      }).then(function () { networksLoading = null; });
+      return networksLoading;
+    }
+
+    /** The words a network can be found by: CIDR, name, VLAN, gate, block. */
+    function networkHaystack(s) {
+      return [s.cidr, s.name, s.vlan != null ? "vlan " + s.vlan : "", s.fortigateDevice,
+        s.block && s.block.name].filter(Boolean).join(" ").toLowerCase();
+    }
+
+    /**
+     * Every whitespace-separated word must appear somewhere (so "ash 20" finds
+     * Ashfield's VLAN 20), and a network whose CIDR starts with what was typed
+     * ranks first — typing "10.4." should lead with 10.4.x, not a network that
+     * merely mentions it in its name.
+     */
+    function matchNetworks(query) {
+      var q = String(query || "").trim().toLowerCase();
+      if (!q) return networks.slice();
+      var words = q.split(/\s+/);
+      var hits = networks.filter(function (s) {
+        var hay = networkHaystack(s);
+        return words.every(function (w) { return hay.indexOf(w) !== -1; });
+      });
+      var lead = [], rest = [];
+      hits.forEach(function (s) { (String(s.cidr).toLowerCase().indexOf(q) === 0 ? lead : rest).push(s); });
+      return lead.concat(rest);
+    }
+
+    var NETWORK_SUGGEST_CAP = 60;
+
+    function networkSuggestHtml(query) {
+      if (!networks) return '<div class="aw-suggest-empty">Loading networks…</div>';
+      if (networksError) return '<div class="aw-suggest-empty">Couldn’t load the IPAM networks — typing a subnet still works.</div>';
+      if (!networks.length) return '<div class="aw-suggest-empty">No IPv4 networks in IPAM yet — type a subnet.</div>';
+      var hits = matchNetworks(query);
+      if (!hits.length) {
+        return '<div class="aw-suggest-empty">No network matches “' + escapeHtml(String(query).trim()) +
+          '” — it will be scanned as typed.</div>';
+      }
+      var html = hits.slice(0, NETWORK_SUGGEST_CAP).map(function (s) {
+        var meta = [];
+        if (s.name) meta.push(s.name);
+        if (s.vlan != null) meta.push("VLAN " + s.vlan);
+        if (s.fortigateDevice) meta.push(s.fortigateDevice);
+        var title = s.cidr + (meta.length ? " — " + meta.join(" · ") : "");
+        return '<div class="aw-suggest-item" role="option" data-val="' + escapeHtml(s.cidr) + '" title="' + escapeHtml(title) + '">' +
+          '<strong>' + escapeHtml(s.cidr) + '</strong>' +
+          (meta.length ? ' <span style="color:var(--color-text-tertiary)">' + escapeHtml(meta.join(" · ")) + '</span>' : "") +
+          '</div>';
+      }).join("");
+      if (hits.length > NETWORK_SUGGEST_CAP) {
+        html += '<div class="aw-suggest-empty">+' + (hits.length - NETWORK_SUGGEST_CAP) + ' more — keep typing to narrow.</div>';
+      }
+      return html;
+    }
+
+    function suggestOf(input) {
+      var combo = input && input.closest ? input.closest(".nd-t-combo") : null;
+      return combo ? combo.querySelector(".nd-t-suggest") : null;
+    }
+
+    function openSuggest(input) {
+      var sug = suggestOf(input);
+      if (!sug) return;
+      sug.innerHTML = networkSuggestHtml(input.value);
+      sug.classList.add("open");
+      input.setAttribute("aria-expanded", "true");
+      if (!networks) {
+        loadNetworks().then(function () {
+          // Only repaint a list that is still open on this same box.
+          if (sug.classList.contains("open") && document.activeElement === input) sug.innerHTML = networkSuggestHtml(input.value);
+        });
+      }
+    }
+
+    function closeSuggest(input) {
+      var sug = suggestOf(input);
+      if (!sug) return;
+      sug.classList.remove("open");
+      sug.innerHTML = "";
+      input.setAttribute("aria-expanded", "false");
+    }
+
+    function pickNetwork(input, cidr) {
+      input.value = cidr;
+      closeSuggest(input);
+      schedulePreview();
+    }
+
+    function isPickerInput(el) {
+      return !!(el && el.classList && el.classList.contains("nd-t-value") && suggestOf(el));
     }
 
     function step2Html() {
       return '' +
         stepHead("Which addresses?",
-          'Subnets, ranges or single addresses. Overlapping targets are fine — they are de-duplicated — and loopback, ' +
+          'Subnets, ranges or single addresses' +
+          (canPickNetworks() ? ' — a subnet box lists the networks IPAM already knows, and typing filters them' : '') +
+          '. Overlapping targets are fine — they are de-duplicated — and loopback, ' +
           'link-local (including the cloud-metadata address), multicast and reserved addresses are always excluded, ' +
           'whatever you type.') +
         '<div id="nd-targets">' + draft.targets.map(targetRowHtml).join("") + '</div>' +
@@ -403,7 +540,49 @@
         renderTargets();
       });
       panel.addEventListener("input", function (ev) {
-        if (ev.target.classList && ev.target.classList.contains("nd-t-value")) schedulePreview();
+        if (!(ev.target.classList && ev.target.classList.contains("nd-t-value"))) return;
+        if (isPickerInput(ev.target)) openSuggest(ev.target);
+        schedulePreview();
+      });
+      // The network picker: focus opens it, leaving closes it, a click picks.
+      panel.addEventListener("focusin", function (ev) {
+        if (isPickerInput(ev.target)) openSuggest(ev.target);
+      });
+      panel.addEventListener("focusout", function (ev) {
+        if (isPickerInput(ev.target)) closeSuggest(ev.target);
+      });
+      panel.addEventListener("mousedown", function (ev) {
+        var item = ev.target.closest ? ev.target.closest(".nd-t-suggest .aw-suggest-item") : null;
+        if (!item) return;
+        var input = item.closest(".nd-t-combo").querySelector(".nd-t-value");
+        ev.preventDefault(); // keep focus on the input, so focusout doesn't close first
+        pickNetwork(input, item.getAttribute("data-val"));
+      });
+      panel.addEventListener("keydown", function (ev) {
+        var input = ev.target;
+        if (!isPickerInput(input)) return;
+        var sug = suggestOf(input);
+        var isOpen = sug.classList.contains("open");
+        if (ev.key === "Escape") {
+          if (isOpen) { closeSuggest(input); ev.stopPropagation(); } // keep the modal open
+          return;
+        }
+        if (ev.key === "ArrowDown" && !isOpen) { ev.preventDefault(); openSuggest(input); return; }
+        if (!isOpen) return;
+        var items = Array.prototype.slice.call(sug.querySelectorAll(".aw-suggest-item"));
+        if (!items.length) return;
+        var idx = items.findIndex(function (i) { return i.classList.contains("active"); });
+        if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+          ev.preventDefault();
+          var next = ev.key === "ArrowDown" ? Math.min(idx + 1, items.length - 1) : Math.max(idx - 1, 0);
+          items.forEach(function (i) { i.classList.remove("active"); });
+          items[next].classList.add("active");
+          if (items[next].scrollIntoView) items[next].scrollIntoView({ block: "nearest" });
+        } else if (ev.key === "Enter" && idx >= 0) {
+          // Claims the key, so the wizard's Enter-means-Next doesn't also fire.
+          ev.preventDefault();
+          pickNetwork(input, items[idx].getAttribute("data-val"));
+        }
       });
       panel.addEventListener("change", function (ev) {
         if (ev.target.classList && ev.target.classList.contains("nd-t-kind")) { collectStep2(); renderTargets(); }

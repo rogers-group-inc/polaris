@@ -57,7 +57,10 @@ interface Api {
 }
 
 /** Load the module into a fresh happy-dom with the app-shell globals stubbed. */
-function load(opts: { scan?: "none" | "read" | "write"; assets?: boolean; scans?: unknown[] } = {}): Api {
+function load(opts: {
+  scan?: "none" | "read" | "write"; assets?: boolean; scans?: unknown[];
+  subnetsRead?: boolean; networks?: unknown[];
+} = {}): Api {
   const scan = opts.scan ?? "write";
   const RANK: Record<string, number> = { none: 0, read: 1, write: 2, fullwrite: 3 };
   const win = new Window();
@@ -74,6 +77,7 @@ function load(opts: { scan?: "none" | "read" | "write"; assets?: boolean; scans?
   g.permAtLeast = (key: string, level: string) => {
     if (key === "networkScan") return RANK[scan] >= RANK[level];
     if (key === "assets") return opts.assets !== false;
+    if (key === "subnets") return opts.subnetsRead !== false;
     return true;
   };
   // Mirror production: ONE #modal-overlay, reused, with body/footer replaced.
@@ -93,6 +97,9 @@ function load(opts: { scan?: "none" | "read" | "write"; assets?: boolean; scans?
   };
   g.api = {
     credentials: { list: async () => ({ credentials: [{ id: "c1", name: "public", type: "snmp" }] }) },
+    subnets: {
+      list: vi.fn(async () => ({ subnets: opts.networks ?? [], total: (opts.networks ?? []).length })),
+    },
     networkScans: {
       list: async () => ({ scans: opts.scans ?? [] }),
       previewTargets: async () => ({ total: 6, dropped: 0, droppedBy: { invalid: 0, excluded: 0, cap: 0 }, perTarget: [{ count: 6 }], alreadyKnown: 0, cap: 65536 }),
@@ -299,6 +306,129 @@ describe("PolarisAssetDiscovery — targets step", () => {
     expect(box.classList.contains("aw-preview-compact")).toBe(true);
     expect(box.querySelector(".aw-preview-head")).toBeTruthy();
     expect(box.querySelector(".aw-preview-body")).toBeTruthy();
+  });
+});
+
+describe("PolarisAssetDiscovery — IPAM network picker", () => {
+  const NETS = [
+    { cidr: "10.4.0.0/24", name: "Ashfield Mgmt", vlan: 20, fortigateDevice: "FGT-ASH", status: "available", block: { name: "Ashfield" } },
+    { cidr: "10.5.0.0/24", name: "Brookline Users", vlan: 30, fortigateDevice: "FGT-BRK", status: "available", block: { name: "Brookline" } },
+    { cidr: "192.168.10.0/24", name: "Lab 10.4 overflow", vlan: null, status: "reserved" },
+    { cidr: "10.9.0.0/24", name: "Old Ashfield", status: "deprecated" },
+    { cidr: "2001:db8::/64", name: "Ashfield v6", status: "available" },
+  ];
+  const Ev = (type: string, init: Record<string, unknown> = {}) =>
+    new (doc.defaultView as any).Event(type, { bubbles: true, ...init });
+  const Key = (key: string) => new (doc.defaultView as any).KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  const valueBox = () => doc.querySelector("#nd-targets .nd-t-value") as HTMLInputElement;
+  const items = () => Array.from(doc.querySelectorAll("#nd-targets .nd-t-suggest .aw-suggest-item")) as HTMLElement[];
+  const shownCidrs = () => items().map((i) => i.getAttribute("data-val"));
+
+  async function toTargets(o: Parameters<typeof load>[0] = {}) {
+    const D = load({ networks: NETS, ...o });
+    await D.open();
+    (doc.getElementById("nd-name") as HTMLInputElement).value = "x";
+    click("nd-next");
+    return D;
+  }
+  async function focusBox() {
+    valueBox().focus();
+    valueBox().dispatchEvent(Ev("focusin"));
+    await flush(); await flush();
+  }
+  async function type(text: string) {
+    valueBox().value = text;
+    valueBox().dispatchEvent(Ev("input"));
+    await flush();
+  }
+
+  it("lists IPAM's usable IPv4 networks on focus, skipping deprecated and IPv6", async () => {
+    await toTargets();
+    await focusBox();
+    expect(doc.querySelector(".nd-t-suggest")!.classList.contains("open")).toBe(true);
+    expect(shownCidrs()).toEqual(["10.4.0.0/24", "10.5.0.0/24", "192.168.10.0/24"]);
+    // Fetched once with the Networks page's own read, not per keystroke.
+    await type("10");
+    await type("10.");
+    expect(g.api.subnets.list).toHaveBeenCalledTimes(1);
+    expect(g.api.subnets.list).toHaveBeenCalledWith({ limit: 10000 });
+  });
+
+  it("filters as you type, across CIDR, name, VLAN and gate, every word required", async () => {
+    await toTargets();
+    await focusBox();
+    await type("brook");
+    expect(shownCidrs()).toEqual(["10.5.0.0/24"]);
+    await type("ash vlan 20");
+    expect(shownCidrs()).toEqual(["10.4.0.0/24"]);
+    await type("fgt-");
+    expect(shownCidrs()).toEqual(["10.4.0.0/24", "10.5.0.0/24"]);
+    await type("nothing-like-this");
+    expect(items()).toHaveLength(0);
+    expect(doc.querySelector(".nd-t-suggest")!.textContent).toMatch(/scanned as typed/);
+  });
+
+  it("ranks a CIDR-prefix match ahead of a name that merely mentions it", async () => {
+    await toTargets();
+    await focusBox();
+    await type("10.4");
+    // "Lab 10.4 overflow" matches by name, but 10.4.0.0/24 is what was meant.
+    expect(shownCidrs()).toEqual(["10.4.0.0/24", "192.168.10.0/24"]);
+  });
+
+  it("a click fills the CIDR and closes the list", async () => {
+    await toTargets();
+    await focusBox();
+    await type("brook");
+    items()[0].dispatchEvent(new (doc.defaultView as any).MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    expect(valueBox().value).toBe("10.5.0.0/24");
+    expect(doc.querySelector(".nd-t-suggest")!.classList.contains("open")).toBe(false);
+  });
+
+  it("arrow + Enter picks, and claims Enter so the wizard doesn't also advance", async () => {
+    await toTargets();
+    await focusBox();
+    await type("10.");
+    valueBox().dispatchEvent(Key("ArrowDown"));
+    valueBox().dispatchEvent(Key("ArrowDown"));
+    const enter = Key("Enter");
+    valueBox().dispatchEvent(enter);
+    expect(enter.defaultPrevented).toBe(true);
+    expect(valueBox().value).toBe("10.5.0.0/24");
+    expect(activeStep()).toBe("2");
+  });
+
+  it("still takes free text — a subnet IPAM doesn't know is the common case", async () => {
+    await toTargets();
+    await focusBox();
+    await type("172.16.0.0/24");
+    valueBox().dispatchEvent(Ev("focusout"));
+    click("nd-next");
+    expect(activeStep()).toBe("3");
+  });
+
+  it("offers no picker on range and single rows", async () => {
+    await toTargets();
+    const kind = doc.querySelector("#nd-targets .nd-t-kind") as HTMLSelectElement;
+    kind.value = "range";
+    kind.dispatchEvent(Ev("change"));
+    expect(doc.querySelector("#nd-targets .nd-t-combo")).toBeNull();
+    expect(valueBox()).toBeTruthy();
+  });
+
+  it("a caller without subnets:read gets the plain box and no fetch", async () => {
+    await toTargets({ subnetsRead: false });
+    expect(doc.querySelector("#nd-targets .nd-t-combo")).toBeNull();
+    await focusBox();
+    expect(g.api.subnets.list).not.toHaveBeenCalled();
+  });
+
+  it("degrades to a note, not a broken step, when the network list fails", async () => {
+    await toTargets();
+    g.api.subnets.list = vi.fn(async () => { throw new Error("boom"); });
+    await focusBox();
+    expect(doc.querySelector(".nd-t-suggest")!.textContent).toMatch(/typing a subnet still works/);
   });
 });
 
