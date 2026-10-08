@@ -905,6 +905,14 @@ export async function expandDeliveries(
           subject: composedBody.subject,
           text: composedBody.text,
           ...(composedBody.html ? { html: composedBody.html } : {}),
+          // The all-clear says so to the DRAIN as well, since the blocks it
+          // builds at delivery are drawn per send, not per alert: the
+          // dependency path draws the fire-time chain in each device's state
+          // NOW on the email announcing the alert is over, rather than
+          // re-sending the outage picture under a green header. Same fact
+          // `noAck` already encodes (only the all-clear sets it), under the
+          // name the drain is asking about.
+          ...(noAck ? { allClear: true } : {}),
         });
       } else {
         // Plain (uncomposed) email is one row per address — the legacy shape,

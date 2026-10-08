@@ -108,8 +108,8 @@ describe("probeLossSeriesFrom", () => {
     // mean of bucket ratios and the probe ratio coincide (11 failures / 60
     // probes = 18.3 % either way). That is why disabling the ICMP sampler
     // shrank the discrepancy, and why it does not remove the need for the
-    // override — a polling gap, the anchor trimming a partial bucket, or a
-    // suppressed asset's 2× interval all re-introduce unequal counts.
+    // override — a polling gap, the anchor trimming a partial bucket, or an
+    // operator changing the interval mid-window all re-introduce unequal counts.
     const s = probeLossSeriesFrom(probes(60, Array.from({ length: 11 }, (_, i) => 20 + i)), 2 * 60_000);
     expect(s.ratioPct).toBe(18.3);
     const bucketMean = s.points.reduce((a, p) => a + p.v, 0) / s.points.length;

@@ -188,6 +188,18 @@ describe("expandDeliveries — an all-clear carries no acknowledge button", () =
     // the email.
     expect(meta.subject).toBe("[WARNING] switch-1");
     expect(meta.html).toContain("Open device");
+    // And the drain is told it is an all-clear, so blocks built at delivery
+    // (the dependency path) draw the devices as they are now.
+    expect(meta.allClear).toBe(true);
+  });
+
+  it("does not mark a live composed send as an all-clear", async () => {
+    await expandDeliveries(
+      "n-1",
+      [{ channelId: "c-mail", recipientRegions: ["Atlanta"] }] as never,
+      { composedEmail: composed() },
+    );
+    expect(metaOf(emailRows()[0]!).allClear).toBeUndefined();
   });
 
   it("stamps noAck on every plain-email address, account or not", async () => {

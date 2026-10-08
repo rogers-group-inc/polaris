@@ -57,6 +57,7 @@ import {
 } from "../utils/fortinetParentKey.js";
 import { inferInterfaceTopology } from "./interfaceTopologyService.js";
 import { logEventsBatch } from "./eventLogService.js";
+import { getPendingProbePatch } from "./probePatchBuffer.js";
 import { logger } from "../utils/logger.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -2030,11 +2031,21 @@ export async function reconcileDependencySuppression(): Promise<{
     maintenanceSuppress.set(w.assetId, (maintenanceSuppress.get(w.assetId) ?? false) || suppresses);
   }
 
+  // Read-your-writes, the overlay `recordProbeResult` already applies. The
+  // probe path BUFFERS its status write (probePatchBuffer, up to one 2 s flush
+  // window) and then fires `propagateAfterStatusChange` straight away — so
+  // without this, the hook's own reconcile read the parent's row from before
+  // the edge it was called for. A parent's →up edge then saw `recovering`,
+  // held the subtree, and the release waited for the next 60 s tick; and a
+  // child whose own count had already drained, its latest probe still in the
+  // buffer, held ITS children one tick more — a chain recovered a minute per
+  // layer, which is what rule 38(c) is about. One Map lookup per asset, and the
+  // buffer is per-process: on the 60 s tick in another role it is simply empty.
   const states: SuppressionAssetState[] = assets.map(a => ({
     id:                  a.id,
     layer:               a.dependencyLayer,
     monitored:           a.monitored,
-    monitorStatus:       a.monitorStatus,
+    monitorStatus:       getPendingProbePatch(a.id)?.monitorStatus ?? a.monitorStatus,
     status:              a.status,
     // Default true covers an operator-set manual "maintenance" status with
     // no window rows — that keeps behaving like the launch semantics.

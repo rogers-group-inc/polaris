@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const { sent, rows, assetFindMany } = vi.hoisted(() => {
-  const mk = (id: string, notification: Record<string, unknown>) => ({
+  const mk = (id: string, notification: Record<string, unknown>, extraMeta: Record<string, unknown> = {}) => ({
     id,
     channelId: "c-mail",
     transport: "email",
@@ -20,6 +20,7 @@ const { sent, rows, assetFindMany } = vi.hoisted(() => {
       subject: "S",
       text: "Facts\n{dependency.path}\nEnd",
       html: "<table>{dependency.path}</table>",
+      ...extraMeta,
     },
     attempts: 0,
     notification: {
@@ -47,10 +48,12 @@ const { sent, rows, assetFindMany } = vi.hoisted(() => {
       list: [] as unknown[],
       dep: [mk("d1", dep), mk("d2", dep)],
       plain: [mk("p1", { id: "n-plain", assetId: "srv", dependencyDown: false, dependencyBlame: null })],
+      // The firing email and the all-clear of ONE alert, draining together.
+      both: [mk("f1", dep), mk("c1", dep, { allClear: true })],
     },
     assetFindMany: vi.fn(async () => [
-      { id: "sw", hostname: "SW-1", location: null, description: "a:Mine jb:JB-3", fortinetTopology: null, lastSeenSwitch: null },
-      { id: "plc", hostname: "PLC-7", location: "Shop", description: null, fortinetTopology: null, lastSeenSwitch: "SW-1/port9" },
+      { id: "sw", hostname: "SW-1", location: null, description: "a:Mine jb:JB-3", fortinetTopology: null, lastSeenSwitch: null, status: "active", monitorStatus: "up", dependencySuppressed: false },
+      { id: "plc", hostname: "PLC-7", location: "Shop", description: null, fortinetTopology: null, lastSeenSwitch: "SW-1/port9", status: "active", monitorStatus: "recovering", dependencySuppressed: false },
     ]),
   };
 });
@@ -115,5 +118,21 @@ describe("{dependency.path} in the delivery drain", () => {
     expect(sent[0].html).toBe("<table></table>");
     expect(sent[0].text).not.toContain("{dependency.path}");
     expect(sent[0].attachments ?? []).toHaveLength(0);
+  });
+
+  it("draws the all-clear in each device's state NOW, and never reuses the firing render", async () => {
+    // The resolve email used to repeat the outage picture (red root cause, grey
+    // Dep. Down) under a green header. Same devices, same order — coloured by
+    // what each reads at delivery, which is read rather than assumed: PLC-7's
+    // own count has not drained yet, and the picture says so.
+    rows.list = rows.both;
+    await drainPendingDeliveries();
+    const [fire, clear] = sent;
+    expect(fire.text).toContain("Dependency path  SW-1 [Mine / JB-3] (down) → PLC-7 [Shop] (this alert)");
+    expect(clear.text).toContain("Dependency path now  SW-1 [Mine / JB-3] (up) → PLC-7 [Shop] (this alert, recovering)");
+    expect(clear.html).toContain("Dependency path now");
+    expect(clear.attachments?.map((a) => a.cid)).toContain(DEPENDENCY_PATH_CID);
+    // Two renders: one per kind of send, each shared across that send's rows.
+    expect(assetFindMany).toHaveBeenCalledTimes(2);
   });
 });
