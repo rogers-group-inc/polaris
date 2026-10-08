@@ -190,10 +190,22 @@ const HOLD_LOOKBACK_CAP_MS = 6 * 60 * 60 * 1000;
  * and hold an alert open forever waiting for readings the query excluded.
  */
 const COUNT_WINDOW_LOOKBACK_FACTOR = 2;
-function lookbackMsFor(trigger: {
+type LookbackTrigger = {
   windowSec?: number; forDurationSec?: number; forPolls?: number | null;
   windowPolls?: number | null; aggregation?: string;
-}): number {
+  /** Stamped by `withRecoveryLookback`, never stored: the reset's own span. */
+  recoveryLookbackMs?: number;
+};
+export function lookbackMsFor(trigger: LookbackTrigger): number {
+  return Math.max(fireLookbackMsFor(trigger), trigger.recoveryLookbackMs ?? 0);
+}
+/**
+ * The FIRE side's lookback alone — the window a time-windowed aggregate is
+ * taken over. Kept apart from `lookbackMsFor` because a reset that counts polls
+ * may widen the fetch (so its run can see N readings), and an "avg over 15
+ * minutes" must not quietly become an average over the wider span.
+ */
+export function fireLookbackMsFor(trigger: LookbackTrigger): number {
   const base = Math.max((trigger.windowSec ?? 0) * 1000, DEFAULT_LOOKBACK_MS);
   if (triggerWindowPolls(trigger)) {
     const groups = Math.max(1, triggerHoldPolls(trigger));
@@ -203,6 +215,44 @@ function lookbackMsFor(trigger: {
   }
   if (!triggerHoldPolls(trigger)) return base;
   return Math.max(base, Math.min((trigger.forDurationSec ?? 0) * 2000, HOLD_LOOKBACK_CAP_MS));
+}
+
+/**
+ * A reset that clears after N consecutive recovered readings (`sustainPolls`)
+ * counts them off the SAME fetched series the fire side reads — so the fetch
+ * has to be wide enough to hold N of them. Sized from the trigger alone, it
+ * was not: a 15-poll clear on a 900s window at a one-minute cadence fetched
+ * ~15 samples, and whether all 15 landed inside the window depended on the
+ * phase between the collector and the engine tick. A phase that left the
+ * oldest a few seconds outside held the alert open indefinitely with the
+ * condition long gone (an SD-WAN packet-loss alert on 2026-10-08 sat for
+ * hours at 0% loss).
+ *
+ * Same sizing as a poll-counted hold: `sustainSec` is the wall-clock mirror
+ * of `sustainPolls`, doubled for jitter and a missed poll, capped at 6 hours;
+ * a count with no mirror (API-authored) gets the cap rather than a guess.
+ * Returns the trigger unchanged when the reset counts nothing.
+ */
+export function withRecoveryLookback<T extends Trigger>(trigger: T, reset: ResetConfig | null | undefined): T {
+  // engineSustainPolls' carve-out too: a down rule whose sustain the monitor
+  // state machine consumed counts nothing here, so it fetches nothing extra.
+  if (!reset || engineSustainPolls({ trigger, reset }) <= 0) return trigger;
+  const sustainSec = (reset as { sustainSec?: unknown }).sustainSec;
+  const mirror = typeof sustainSec === "number" && sustainSec > 0 ? sustainSec : 0;
+  const recoveryLookbackMs = mirror > 0
+    ? Math.min(mirror * 1000 * COUNT_WINDOW_LOOKBACK_FACTOR, HOLD_LOOKBACK_CAP_MS)
+    : HOLD_LOOKBACK_CAP_MS;
+  return { ...trigger, recoveryLookbackMs };
+}
+
+/**
+ * The oldest sample a time-windowed aggregate may include: the fire side's
+ * window, or no bound at all when the reset did not widen the fetch past it —
+ * then everything fetched IS the window, exactly as before the widening existed.
+ */
+function aggregateSinceMs(trigger: LookbackTrigger, nowMs: number): number {
+  const fire = fireLookbackMsFor(trigger);
+  return lookbackMsFor(trigger) > fire ? nowMs - fire : -Infinity;
 }
 
 // probeLossPct is a windowed RATIO, so its window is the measurement rather than
@@ -938,13 +988,21 @@ export function applyDeviceFilters<T extends DeviceFilterAsset>(
  * and the series the hold is counted off — become the ROLLING aggregate over the
  * last N valued readings, recomputed at each one.
  */
+/**
+ * The aggregation a reducer applies, and the oldest sample a TIME-windowed
+ * aggregate may include. The fetch can reach further back than the window (a
+ * poll-counted hold or clear needs its N readings in the series), so the
+ * window is stated here rather than inferred from what was fetched.
+ */
+interface AggregationWindow { kind: string; sinceMs: number }
+
 function reduceReadings(
   rows: Array<{ assetId: string; timestamp: Date }>,
   assetIndex: Map<string, ScopeAssetRow>,
   dimKeyFn: (row: any) => string,
   dimLabelFn: (row: any) => string,
   valueFn: (row: any) => number | null,
-  aggregation: string,
+  agg: AggregationWindow,
   windowPolls = 0,
   /** COUNT-WINDOW ONLY. Given this group's series newest-first (each entry
    *  carrying its source row), return the values the window should be built
@@ -953,6 +1011,7 @@ function reduceReadings(
    *  none and its raw values are used as they are. */
   prepare?: (series: Array<{ ts: number; v: number | null; row: any }>) => Array<number | null>,
 ): Reading[] {
+  const aggregation = agg.kind;
   // group by assetId|dimKey
   const groups = new Map<string, { asset: ScopeAssetRow; dimKey: string; dimLabel: string; values: number[]; series: Array<{ ts: number; v: number | null; row: any }>; latest: { ts: number; v: number | null } }>();
   for (const row of rows) {
@@ -966,8 +1025,10 @@ function reduceReadings(
       g = { asset, dimKey, dimLabel: dimLabelFn(row), values: [], series: [], latest: { ts: -1, v: null } };
       groups.set(key, g);
     }
-    if (v !== null) g.values.push(v);
     const ts = row.timestamp.getTime();
+    // Inside the trigger's own window only: older rows are fetched for the run
+    // counts (the series below), never for the aggregate.
+    if (v !== null && (agg.sinceMs === -Infinity || ts >= agg.sinceMs)) g.values.push(v);
     // Every sample, not just the newest: a poll-counted hold is the leading run
     // of qualifying readings, so their ORDER is the reading and a reduced value
     // cannot answer it. Sorted on the way out — rows arrive in whatever order
@@ -1294,8 +1355,12 @@ async function resolveAssetMetricReadings(
   if (ids.length === 0) return [];
   const index = new Map(assets.map((a) => [a.id, a]));
   // Wide enough to SEE a poll-counted hold's N readings (lookbackMsFor).
-  const since = new Date(Date.now() - lookbackMsFor(trigger));
-  const agg = trigger.aggregation;
+  // …and a poll-counted CLEAR's (withRecoveryLookback). A time-windowed
+  // aggregate is still taken over the fire side's window alone, so widening the
+  // fetch for the reset's sake never changes the value the trigger compares.
+  const nowMs = Date.now();
+  const since = new Date(nowMs - lookbackMsFor(trigger));
+  const agg: AggregationWindow = { kind: trigger.aggregation, sinceMs: aggregateSinceMs(trigger, nowMs) };
   // 0 unless this trigger states a COUNT window (business rule 66). Passed to
   // every reducer below rather than to the response-time one alone: an
   // operator smoothing interface errors or a temperature sensor is asking the
@@ -2094,7 +2159,11 @@ async function resolveAssetStateReadings(
 }
 
 async function resolveHostMetricReading(trigger: Extract<Trigger, { type: "host_metric" }>): Promise<Reading | null> {
-  const since = new Date(Date.now() - lookbackMsFor(trigger));
+  const nowMs = Date.now();
+  const since = new Date(nowMs - lookbackMsFor(trigger));
+  // The time-windowed aggregate's own window — narrower than the fetch when a
+  // poll-counted clear widened it (withRecoveryLookback).
+  const aggSinceMs = aggregateSinceMs(trigger, nowMs);
   // Only one of the sample's columns is ever read per rule (valueOf below), so
   // select just that pair rather than 2000 whole rows. An unrecognized metric
   // still fetches timestamps and reads NaN, exactly as valueOf's default did.
@@ -2131,11 +2200,15 @@ async function resolveHostMetricReading(trigger: Extract<Trigger, { type: "host_
       readingAt: rows[0]?.timestamp ?? null,
     };
   }
+  // Nothing inside the window is no reading, exactly as an empty fetch was
+  // before the fetch could reach past it.
+  const inWindow = aggSinceMs === -Infinity ? rows : rows.filter((r: any) => r.timestamp.getTime() >= aggSinceMs);
+  if (inWindow.length === 0) return null;
   let value: number;
-  if (trigger.aggregation === "avg") value = rows.reduce((a, r) => a + valueOf(r), 0) / rows.length;
-  else if (trigger.aggregation === "median") value = median(rows.map(valueOf)) ?? NaN;
-  else if (trigger.aggregation === "min") value = Math.min(...rows.map(valueOf));
-  else if (trigger.aggregation === "max") value = Math.max(...rows.map(valueOf));
+  if (trigger.aggregation === "avg") value = inWindow.reduce((a, r) => a + valueOf(r), 0) / inWindow.length;
+  else if (trigger.aggregation === "median") value = median(inWindow.map(valueOf)) ?? NaN;
+  else if (trigger.aggregation === "min") value = Math.min(...inWindow.map(valueOf));
+  else if (trigger.aggregation === "max") value = Math.max(...inWindow.map(valueOf));
   else value = valueOf(rows[0]); // latest
   // The host samples itself every 30s, so its readings ARE a series and a
   // poll-counted hold counts them the same way a device metric's is counted.
@@ -2581,7 +2654,9 @@ async function evaluateThresholdRule(
    *  needs it: its alert may have been opened by a different automation. */
   tickIndex: TickAlertIndex | null = null,
 ): Promise<void> {
-  const trigger = rule.trigger;
+  // Widened for the FETCH when the reset clears on a count of readings, so the
+  // series that count is taken off can hold them (withRecoveryLookback).
+  const trigger = withRecoveryLookback(rule.trigger, rule.reset);
   let readings: Reading[] = [];
   // Assets silenced this tick (maintenance window / dependency-suppressed).
   const suppressedIds = new Set<string>();
