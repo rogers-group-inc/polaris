@@ -136,6 +136,19 @@ under an unchanged sentence would contradict itself. And it draws at most four d
 cause and the one below it, the upstream device and the alerting device, with a "+N more" gap
 between — because the two ends are what the email is for; the middle is the asset page's job.
 
+**The all-clear draws the chain as it is now (2026-10-08).** The reset email, the one announcing
+the dependency-down alert is over, repeated the fire-time picture: a red "Root cause" and a grey
+"Dep. Down" under a green "Resolved" header. Its one image contradicted the message. The
+operator caught it. The fix keeps the fire-time DEVICES (the same chain, in the same order, so
+the reader recognizes the picture they were paged with) and colours each one by what it reads at
+DELIVERY: Up, Recovering, Missed poll, Down, Dep. Down, In maintenance, or "State unknown" when
+the read failed. Those states are read, never assumed. An alert can end while the root cause is
+still recovering, and a picture that painted everything green would claim a recovery Polaris has
+not seen. The drain learns it is rendering an all-clear from `meta.allClear` on the composed row,
+which `expandDeliveries` stamps from the same fact as `noAck` (only an all-clear sets it). The
+render memo is keyed per kind of send, so a firing email and its all-clear draining in one pass
+never share a picture.
+
 ### The flavour follows the flag
 
 An alert raised while the device was Dep. Down and an alert raised because its own probe failed

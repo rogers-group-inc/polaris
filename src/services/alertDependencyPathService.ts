@@ -33,6 +33,15 @@
  * GENERIC box labelled with its Location field, or "No location codes" — the
  * operator's call (2026-10-02, "generic box for now"); boxes never span the gap.
  *
+ * THE ALL-CLEAR DRAWS THE SAME CHAIN AS IT IS NOW. The email announcing the
+ * alert is over used to repeat the fire-time picture — red root cause, grey Dep.
+ * Down — under a green "Resolved" header, so the one image in the message
+ * contradicted it. On an all-clear send (`allClear`, stamped on the composed
+ * row by expandDeliveries) the devices are still the snapshot's, in the same
+ * order, but each is coloured by what it reads at DELIVERY: Up, Recovering,
+ * Missed, Down, Dep. Down, In maintenance. Read, never assumed — an alert can
+ * end while the root cause is still recovering, and the picture says so.
+ *
  * Geometry is fixed: one column per device, labels shortened to the column
  * rather than measured, because resvg has no text metrics here and an email
  * client must get a predictable 520px image. Rasterized at 2x so the 9–11px
@@ -64,6 +73,9 @@ export const DEPENDENCY_PATH_CID = "polaris-dependency-path@polaris";
 /** Why a drawn device is on the path — the blame reason, or the alert's own device. */
 export type PathNodeRole = DependencyBlameReason | "alerting";
 
+/** What a device reads at delivery — drawn on an all-clear instead of its fire-time role. */
+export type PathNowState = "up" | "recovering" | "warning" | "down" | "suppressed" | "maintenance" | "unknown";
+
 /** One device the diagram can draw. */
 export interface PathNode {
   id: string | null;
@@ -73,6 +85,8 @@ export interface PathNode {
   codes: LocationCodes | null;
   /** The asset's Location field — the generic box's label. */
   location: string | null;
+  /** All-clear only: the device's state at delivery (null = could not be read). */
+  now?: PathNowState | null;
 }
 
 /** A drawn slot: a device, or the gap standing in for `hidden` devices. */
@@ -90,6 +104,26 @@ export interface DependencyPathSpec {
   links: Array<PathLink | null>;
   /** The engine's walk stopped before reaching a device down in its own right. */
   truncated: boolean;
+  /** The alert is over: draw each device's `now` state, not its fire-time role. */
+  allClear?: boolean;
+}
+
+/**
+ * A device's state at delivery, in the diagram's vocabulary. The precedence is
+ * the asset pill's (suppression outranks the five-state label) with maintenance
+ * ahead of both, since a window is the reason the device says nothing.
+ * `passive` / `unknown` render no verdict, so neither does the diagram.
+ */
+export function nowStateOf(a: { status?: string | null; monitorStatus?: string | null; dependencySuppressed?: boolean | null }): PathNowState {
+  if (a.status === "maintenance") return "maintenance";
+  if (a.dependencySuppressed) return "suppressed";
+  switch (a.monitorStatus) {
+    case "up": return "up";
+    case "recovering": return "recovering";
+    case "warning": return "warning";
+    case "down": return "down";
+    default: return "unknown";
+  }
 }
 
 /** The snapshot shape the engine writes (and older rows' subset of it). */
@@ -240,6 +274,34 @@ const ROLE_STYLE: Record<PathNodeRole, { ring: string; caption: string; captionC
   alerting: { ring: "#2563eb", caption: "This alert", captionColor: "#1d4ed8" },
 };
 
+/**
+ * The all-clear's palette — the response-time chart's state colours (green up,
+ * blue recovering, amber missed, dependency grey), so the email reads like the
+ * strip on the asset page. `down` takes the red the fire-time root cause wore.
+ */
+const NOW_STYLE: Record<PathNowState, { ring: string; caption: string; captionColor: string }> = {
+  up: { ring: "#16a34a", caption: "Up", captionColor: "#15803d" },
+  recovering: { ring: "#2563eb", caption: "Recovering", captionColor: "#1d4ed8" },
+  warning: { ring: "#d97706", caption: "Missed poll", captionColor: "#b45309" },
+  down: { ring: "#d32f2f", caption: "Down", captionColor: "#b91c1c" },
+  suppressed: { ring: "#9ca3af", caption: "Dep. Down", captionColor: "#6b7280" },
+  maintenance: { ring: "#7c3aed", caption: "In maintenance", captionColor: "#6d28d9" },
+  unknown: { ring: "#9ca3af", caption: "State unknown", captionColor: "#6b7280" },
+};
+
+/** Ring and caption for one drawn device: its fire-time role, or on an all-clear its state now. */
+function styleOf(node: PathNode, allClear: boolean): { ring: string; caption: string; captionColor: string } {
+  if (!allClear) return ROLE_STYLE[node.role];
+  const now = NOW_STYLE[node.now ?? "unknown"];
+  // The alerting device keeps saying which one this alert is about.
+  return node.role === "alerting" ? { ...now, caption: `This alert · ${now.caption}` } : now;
+}
+
+/** The parenthesised state word in the text form. */
+function nowWord(s: PathNowState): string {
+  return s === "suppressed" ? "dep. down" : s === "warning" ? "missed poll" : s === "maintenance" ? "in maintenance" : s === "unknown" ? "state unknown" : s;
+}
+
 function esc(s: string): string {
   return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
@@ -341,7 +403,7 @@ export function dependencyPathSvg(spec: DependencyPathSpec): string {
       );
       return;
     }
-    const st = ROLE_STYLE[e.node.role];
+    const st = styleOf(e.node, spec.allClear === true);
     const name = fitLabel(e.node.hostname ?? "(unnamed device)", slotW - 6);
     parts.push(
       `<circle cx="${c.toFixed(1)}" cy="${NODE_Y}" r="${NODE_R}" fill="#f3f4f6" stroke="${st.ring}" stroke-width="3"/>`,
@@ -379,13 +441,24 @@ export function dependencyPathText(spec: DependencyPathSpec): string {
   const parts = spec.entries.map((e) => {
     if (e.kind === "gap") return `… +${e.hidden} more`;
     const where = whereOf(e.node);
-    const role = e.node.role === "alerting" ? "this alert"
-      : e.node.role === "suppressed" ? "dep. down"
-      : e.node.role === "dependency_test" ? "dependency test"
-      : e.node.role;
+    let role: string;
+    if (spec.allClear) {
+      const now = nowWord(e.node.now ?? "unknown");
+      role = e.node.role === "alerting" ? `this alert, ${now}` : now;
+    } else {
+      role = e.node.role === "alerting" ? "this alert"
+        : e.node.role === "suppressed" ? "dep. down"
+        : e.node.role === "dependency_test" ? "dependency test"
+        : e.node.role;
+    }
     return `${e.node.hostname ?? "(unnamed device)"}${where ? ` [${where}]` : ""} (${role})`;
   });
-  return `Dependency path  ${parts.join(" → ")}`;
+  return `${pathHeading(spec)}  ${parts.join(" → ")}`;
+}
+
+/** "Dependency path", or on an all-clear "Dependency path now" — no colon (see above). */
+function pathHeading(spec: DependencyPathSpec): string {
+  return spec.allClear ? "Dependency path now" : "Dependency path";
 }
 
 // ─── Delivery-time loading ──────────────────────────────────────────────────
@@ -438,7 +511,7 @@ function deviceDescriptionOf(topology: unknown): string | null {
  * Two reads whatever the chain length — at most four assets, and the LLDP rows
  * among them. A read failure leaves the boxes generic and the edges unlabelled.
  */
-async function hydrate(entries: PathEntry[]): Promise<Array<PathLink | null>> {
+async function hydrate(entries: PathEntry[], allClear: boolean): Promise<Array<PathLink | null>> {
   const nodes = entries.flatMap((e) => (e.kind === "node" && e.node.id ? [e.node] : []));
   const ids = Array.from(new Set(nodes.map((n) => n.id!)));
   const links: Array<PathLink | null> = entries.slice(1).map(() => null);
@@ -447,7 +520,11 @@ async function hydrate(entries: PathEntry[]): Promise<Array<PathLink | null>> {
     const [assets, lldp] = await Promise.all([
       prisma.asset.findMany({
         where: { id: { in: ids } },
-        select: { id: true, hostname: true, location: true, description: true, fortinetTopology: true, lastSeenSwitch: true },
+        select: {
+          id: true, hostname: true, location: true, description: true, fortinetTopology: true, lastSeenSwitch: true,
+          // The all-clear's colours — the same row, so still two reads.
+          status: true, monitorStatus: true, dependencySuppressed: true,
+        },
       }),
       ids.length > 1
         ? prisma.assetLldpNeighbor.findMany({
@@ -464,6 +541,7 @@ async function hydrate(entries: PathEntry[]): Promise<Array<PathLink | null>> {
       n.location = a.location;
       // The snapshot's name is the fire-time one; a renamed device reads as it is now.
       n.hostname = a.hostname ?? n.hostname;
+      if (allClear) n.now = nowStateOf(a);
     }
     for (let i = 0; i + 1 < entries.length; i++) {
       const p = entries[i];
@@ -491,19 +569,32 @@ export interface DependencyPathNotification {
   testRun: boolean;
 }
 
-/** The spec for one alert, or null when it is not a dependency-down alert or names nobody. */
-export async function loadDependencyPath(n: DependencyPathNotification): Promise<DependencyPathSpec | null> {
+/**
+ * The spec for one alert, or null when it is not a dependency-down alert or
+ * names nobody. `allClear` = this send announces the alert is over, so each
+ * device is drawn as it reads now (see the header).
+ */
+export async function loadDependencyPath(
+  n: DependencyPathNotification,
+  opts: { allClear?: boolean } = {},
+): Promise<DependencyPathSpec | null> {
   if (!n.dependencyDown) return null;
+  const allClear = opts.allClear === true;
   const seq = pathEntriesFromBlame(n.dependencyBlame, { id: n.assetId, hostname: n.assetHostname });
   if (!seq) return null;
   if (n.testRun) {
     // A test alert is about an invented device: nothing to read, and real
-    // location codes must not appear in it.
-    for (const e of seq.entries) if (e.kind === "node") e.node.codes = { ...SAMPLE_CODES };
-    return { entries: seq.entries, links: seq.entries.slice(1).map(() => null), truncated: seq.truncated };
+    // location codes must not appear in it. Its all-clear is a specimen of a
+    // recovery, so every invented device is drawn back up.
+    for (const e of seq.entries) {
+      if (e.kind !== "node") continue;
+      e.node.codes = { ...SAMPLE_CODES };
+      if (allClear) e.node.now = "up";
+    }
+    return { entries: seq.entries, links: seq.entries.slice(1).map(() => null), truncated: seq.truncated, allClear };
   }
-  const links = await hydrate(seq.entries);
-  return { entries: seq.entries, links, truncated: seq.truncated };
+  const links = await hydrate(seq.entries, allClear);
+  return { entries: seq.entries, links, truncated: seq.truncated, allClear };
 }
 
 async function rasterize(svg: string): Promise<Buffer | null> {
@@ -529,12 +620,13 @@ export function renderDependencyPathBlocks(spec: DependencyPathSpec | null, png:
   const body = png
     ? `<img src="cid:${DEPENDENCY_PATH_CID}" width="520" alt="${esc(text)}" ` +
       'style="display:block;width:100%;max-width:520px;height:auto;border:1px solid #e5e7eb;border-radius:6px;margin:6px 0 0">'
-    : `<p style="margin:6px 0 0;color:#374151;font-size:13px">${escapeHtml(text.replace(/^Dependency path\s+/, ""))}</p>`;
+    : `<p style="margin:6px 0 0;color:#374151;font-size:13px">${escapeHtml(text.slice(pathHeading(spec).length).trimStart())}</p>`;
   const html = [
     '<tr><td style="padding:14px 22px 0">',
-    '<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;font-weight:700;margin-bottom:2px">Dependency path</div>',
+    `<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;font-weight:700;margin-bottom:2px">${pathHeading(spec)}</div>`,
     body,
-    spec.truncated
+    // The note is about the fire-time walk, which an all-clear does not redraw.
+    spec.truncated && !spec.allClear
       ? '<div style="font-size:12px;color:#6b7280;margin-top:6px">The walk stopped before reaching a device that is down in its own right.</div>'
       : "",
     "</td></tr>",
@@ -546,12 +638,12 @@ export function renderDependencyPathBlocks(spec: DependencyPathSpec | null, png:
 }
 
 /** The whole delivery-time step for one alert: one load, one render, both bodies. */
-export async function buildDependencyPathBlocks(n: DependencyPathNotification): Promise<{
+export async function buildDependencyPathBlocks(n: DependencyPathNotification, opts: { allClear?: boolean } = {}): Promise<{
   html: string;
   text: string;
   attachment: InlineAttachment | null;
 }> {
-  const spec = await loadDependencyPath(n);
+  const spec = await loadDependencyPath(n, opts);
   const png = spec ? await rasterize(dependencyPathSvg(spec)) : null;
   return renderDependencyPathBlocks(spec, png);
 }

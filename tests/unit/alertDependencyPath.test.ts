@@ -50,6 +50,7 @@ import {
   innerBoxOf,
   lastSeenSwitchPort,
   loadDependencyPath,
+  nowStateOf,
   pathEntriesFromBlame,
   portFacing,
   renderDependencyPathBlocks,
@@ -314,5 +315,51 @@ describe("the token", () => {
   it("substitutes the block, or removes the token", () => {
     expect(substituteDependencyPathTokens("a{dependency.path}b", "$&")).toBe("a$&b");
     expect(substituteDependencyPathTokens("a{dependency.path}b", "")).toBe("ab");
+  });
+});
+
+describe("the all-clear draws the chain as it is now", () => {
+  it("reads a device's state with maintenance, then suppression, ahead of its own verdict", () => {
+    expect(nowStateOf({ status: "maintenance", monitorStatus: "down", dependencySuppressed: true })).toBe("maintenance");
+    expect(nowStateOf({ status: "active", monitorStatus: "up", dependencySuppressed: true })).toBe("suppressed");
+    for (const s of ["up", "recovering", "warning", "down"] as const) {
+      expect(nowStateOf({ status: "active", monitorStatus: s, dependencySuppressed: false })).toBe(s);
+    }
+    // No verdict rendered, so none drawn.
+    for (const s of ["passive", "unknown", null]) {
+      expect(nowStateOf({ status: "active", monitorStatus: s, dependencySuppressed: false })).toBe("unknown");
+    }
+  });
+
+  it("colours each device by its state now, not its fire-time role", () => {
+    const seq = pathEntriesFromBlame(
+      { chain: [{ id: "sw", hostname: "SW-1", reason: "down" }] },
+      { id: "plc", hostname: "PLC-7" },
+    )!;
+    const nodes = seq.entries.flatMap((e) => (e.kind === "node" ? [e.node] : []));
+    nodes[0].now = "up";
+    nodes[1].now = "up";
+    const spec = { entries: seq.entries, links: [null], truncated: true, allClear: true };
+    const svg = dependencyPathSvg(spec);
+    expect(svg).toContain("#16a34a");
+    expect(svg).not.toContain("Root cause");
+    expect(svg).toContain("This alert · Up");
+    expect(dependencyPathText(spec)).toBe("Dependency path now  SW-1 (up) → PLC-7 (this alert, up)");
+    // The truncation note describes the fire-time walk, which is not redrawn.
+    expect(renderDependencyPathBlocks(spec, null).html).not.toContain("walk stopped");
+  });
+
+  it("draws an unreadable device as unknown rather than assuming it recovered", () => {
+    const seq = pathEntriesFromBlame({ chain: [{ id: "sw", hostname: "SW-1", reason: "down" }] }, { id: "plc", hostname: "PLC-7" })!;
+    const text = dependencyPathText({ entries: seq.entries, links: [null], truncated: false, allClear: true });
+    expect(text).toBe("Dependency path now  SW-1 (state unknown) → PLC-7 (this alert, state unknown)");
+  });
+
+  it("draws a test alert's all-clear with every invented device back up", async () => {
+    const spec = await loadDependencyPath(
+      { assetId: null, assetHostname: "Example PLC", dependencyDown: true, testRun: true, dependencyBlame: { chain: [{ id: "x", hostname: "Example Switch", reason: "down" }] } },
+      { allClear: true },
+    );
+    expect(dependencyPathText(spec!)).toContain("Example Switch [Example Area / Example Cabinet] (up)");
   });
 });

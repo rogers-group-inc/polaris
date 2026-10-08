@@ -330,9 +330,14 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
     // snapshot, so the picture agrees with the sentence above it; only their
     // location codes and link ports are read here. A complete block or nothing:
     // every alert that is not dependency-down returns before any read. One
-    // render per alert, shared by the email rows of a fan-out.
+    // render per alert and kind of send, shared by the email rows of a fan-out:
+    // the all-clear (`meta.allClear`) draws the same devices in their state
+    // NOW, so it must not reuse the firing render when both drain together.
     if (dependencyPathTokensIn(text, html).size > 0) {
-      const path = await memoize(memo.dependencyPath, d.notification.id, () => buildDependencyPathBlocks(d.notification));
+      const allClear = meta.allClear === true;
+      const path = await memoize(memo.dependencyPath, `${d.notification.id}|${allClear ? "clear" : "fire"}`, () =>
+        buildDependencyPathBlocks(d.notification, { allClear }),
+      );
       text = pruneEmptyTextLines(substituteDependencyPathTokens(text, path.text));
       if (html) {
         html = substituteDependencyPathTokens(html, path.html);
