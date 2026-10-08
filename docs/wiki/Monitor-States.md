@@ -150,8 +150,10 @@ The ICMP loss sweep **never records a probe result** — ICMP does not
 authenticate the device it reaches — so it informs the loss ratio and can never
 move `monitorStatus`.
 
-Exactly **one** clamp applies to the interval: dependency suppression doubles it
-for a device whose parent is dark.
+**Nothing** changes the interval, dependency suppression included. A device
+whose parent is dark is still probed on its normal interval, so its own count
+has caught up when the parent comes back
+([rule 38(c)](Business-Rules#rule-38)).
 
 ### An agent host's silence is a miss
 
