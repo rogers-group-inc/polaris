@@ -360,7 +360,7 @@ PUT    /reservations/:id           DELETE /reservations/:id
 GET    /reservations/push-queue
 ```
 
-Two behaviours to code against:
+Behaviours to code against:
 
 - **Creating over a `dhcp_lease` is a create, not a release.** The lease is
   observed presence; Polaris supersedes it server-side. Creating over a
@@ -376,6 +376,11 @@ Two behaviours to code against:
   creator's username and the hostname. The error names the budget and the
   overage. Nothing is truncated, and nothing is judged on a network with no DHCP
   Push ([rule 74](Business-Rules#rule-74)).
+- **The all-zero MAC is a 400.** `00:00:00:00:00:00` (any separators) names no
+  device, so a create with it, or an update that changes the MAC to it, is
+  refused. Omit `macAddress` instead. An update that sends back a zero the row
+  already holds is accepted. On assets the same value is stored as no MAC
+  rather than refused ([rule 97](Business-Rules#rule-97)).
 
 ### Events
 

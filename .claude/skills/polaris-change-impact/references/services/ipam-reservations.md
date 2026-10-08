@@ -219,6 +219,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - MAC address required when push eligible (subnet discovered by FMG/FortiGate with pushReservations=true)
+- The all-zero MAC is refused with a 400 (business rule 97): `createReservationFlow` checks before loading the subnet; `updateReservation` refuses it only when it CHANGES the stored MAC, so a row already holding zero (pre-rule, or mirrored from the gate) stays editable when the form echoes it. Discovery's reservation mirror is not gated.
 - Full-subnet reservation (ipAddress=null) → subnet.status = "reserved"; per-IP → remains available
 - No duplicate active reservations (unique constraint on subnetId, ipAddress, status="active")
 - Subnet must not be deprecated (409 if status="deprecated")

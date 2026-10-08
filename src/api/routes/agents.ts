@@ -65,7 +65,7 @@ import { SCRIPT_OUTPUT_CAP_BYTES } from "../../services/automationScriptService.
 import { agentConfigChecks, pathCheckEtagFold } from "../../services/pathCheckService.js";
 import { ingestPathCheckSamples, ingestPathCheckTraceroutes } from "../../services/pathCheckIngestService.js";
 import { logger } from "../../utils/logger.js";
-import { macColonUpperOrNull } from "../../utils/mac.js";
+import { normalizeMacOrNull } from "../../utils/mac.js";
 
 // ─── /enroll (public) ─────────────────────────────────────────────────
 //
@@ -1359,9 +1359,10 @@ agentsRouter.post("/system-info", async (req, res, next) => {
 
 // Normalize a MAC string to colon-uppercase (AA:BB:CC:DD:EE:FF) — the
 // stored format on AssetMacAddress.mac. Returns "" when the input isn't a
-// 12-hex-digit MAC after stripping separators.
+// 12-hex-digit MAC after stripping separators, or is the all-zero MAC (a host
+// whose primary adapter is a VPN / virtual NIC can report it; it is "no MAC").
 function formatMacColonUpper(mac: unknown): string {
-  return macColonUpperOrNull(mac) ?? "";
+  return normalizeMacOrNull(typeof mac === "string" ? mac : null) ?? "";
 }
 
 async function computeConfigEtag(assetId: string): Promise<string> {

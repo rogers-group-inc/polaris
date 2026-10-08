@@ -26,6 +26,7 @@ import {
   type PushReservationResult,
 } from "./reservationPushService.js";
 import { logEvent, buildChanges } from "./eventLogService.js";
+import { isAllZeroMac } from "../utils/mac.js";
 import { releaseDnsResolvedAt } from "./dnsResolvedReservationService.js";
 
 export interface CreateReservationInput {
@@ -392,7 +393,17 @@ async function persistReservationRow(
   });
 }
 
+// A reservation is a MAC→IP binding, and 00:00:00:00:00:00 binds the IP to no
+// device at all — on a push-eligible subnet it would also be written to the
+// FortiGate as a live reserved-address entry. Refused with a message the
+// operator can act on; a blank MAC remains the way to say "no MAC yet".
+// Business rule 97.
+const ZERO_MAC_MSG =
+  "00:00:00:00:00:00 is not a device's MAC address — leave the MAC blank, or use Generate for a device that isn't racked yet";
+
 async function createReservationFlow(input: CreateReservationInput) {
+  if (isAllZeroMac(input.macAddress)) throw new AppError(400, ZERO_MAC_MSG);
+
   // 1. Load the target subnet (with integration for push eligibility)
   const subnet = await prisma.subnet.findUnique({
     where: { id: input.subnetId },
@@ -693,6 +704,10 @@ export async function updateReservation(
     : null;
   const macChanged =
     normalizedNewMac !== undefined && normalizedNewMac !== currentNormalizedMac;
+  // Refused only as a CHANGE: a row that already holds the zero MAC (written
+  // before this check, or mirrored from the gate by discovery) must stay
+  // editable when the form sends its MAC back untouched.
+  if (macChanged && isAllZeroMac(normalizedNewMac)) throw new AppError(400, ZERO_MAC_MSG);
 
   // Push eligibility for THIS reservation's subnet.
   const integration = reservation.subnet.integration;

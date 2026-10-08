@@ -301,3 +301,32 @@ d("PUT /assets/:id contract", () => {
     expect(rows.map((r) => r.processName)).toEqual(["nginx"]);
   });
 });
+
+d("the all-zero MAC on operator writes", () => {
+  it("PUT with the all-zero MAC clears the field instead of storing it", async () => {
+    await seedAsset({ macAddress: "AA:BB:CC:00:00:01" });
+    const resp = await put({ macAddress: "00-00-00-00-00-00" });
+    expect(resp.status).toBe(200);
+    const after = await prisma.asset.findUnique({ where: { id: assetId }, select: { macAddress: true } });
+    expect(after?.macAddress).toBeNull();
+  });
+
+  it("an asset still holding a zero MAC saves an unrelated edit and sheds the zero", async () => {
+    await seedAsset({ macAddress: "00:00:00:00:00:00" });
+    const resp = await put({ macAddress: "00:00:00:00:00:00", notes: "edited" });
+    expect(resp.status).toBe(200);
+    const after = await prisma.asset.findUnique({ where: { id: assetId }, select: { macAddress: true, notes: true } });
+    expect(after).toEqual({ macAddress: null, notes: "edited" });
+  });
+
+  it("POST with the all-zero MAC creates the asset with no MAC", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const resp = await agent
+      .post("/api/v1/assets")
+      .set("X-CSRF-Token", csrf)
+      .send({ hostname: `${HOST}-zero-create`, macAddress: "00:00:00:00:00:00" });
+    expect(resp.status).toBe(201);
+    const row = await prisma.asset.findUnique({ where: { id: resp.body.id }, select: { macAddress: true } });
+    expect(row?.macAddress).toBeNull();
+  });
+});
