@@ -740,3 +740,55 @@ d("reservation notes are held to the FortiGate's description budget", () => {
     expect(after?.hostname).toBe("host-a");
   });
 });
+
+// ─── The all-zero MAC ────────────────────────────────────────────────────────
+
+d("reservations and the all-zero MAC", () => {
+  it("refuses a create whose MAC is all zeros, in any separator style", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const { subnet } = await scaffold(agent, csrf, "10.231.0.0/16", "10.231.1.0/24");
+    for (const mac of ["00:00:00:00:00:00", "000000000000"]) {
+      const resp = await agent
+        .post("/api/v1/reservations")
+        .set("X-CSRF-Token", csrf)
+        .send({ subnetId: subnet.id, ipAddress: "10.231.1.5", hostname: "zero", macAddress: mac });
+      expect(resp.status).toBe(400);
+      expect(String(resp.body?.error || "")).toMatch(/not a device's MAC/);
+    }
+    expect(await prisma.reservation.count({ where: { ipAddress: "10.231.1.5" } })).toBe(0);
+  });
+
+  it("refuses an update that changes the MAC to all zeros", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const { subnet } = await scaffold(agent, csrf, "10.232.0.0/16", "10.232.1.0/24");
+    const created = await agent
+      .post("/api/v1/reservations")
+      .set("X-CSRF-Token", csrf)
+      .send({ subnetId: subnet.id, ipAddress: "10.232.1.5", hostname: "real", macAddress: "AA:BB:CC:00:00:01" });
+    expect(created.status).toBe(201);
+    const resp = await agent
+      .put(`/api/v1/reservations/${created.body.id}`)
+      .set("X-CSRF-Token", csrf)
+      .send({ macAddress: "00-00-00-00-00-00" });
+    expect(resp.status).toBe(400);
+    const after = await prisma.reservation.findUnique({ where: { id: created.body.id } });
+    expect(after?.macAddress).toBe("aa:bb:cc:00:00:01");
+  });
+
+  it("keeps a row that already holds the zero MAC editable when the form sends it back", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const { subnet } = await scaffold(agent, csrf, "10.233.0.0/16", "10.233.1.0/24");
+    const created = await agent
+      .post("/api/v1/reservations")
+      .set("X-CSRF-Token", csrf)
+      .send({ subnetId: subnet.id, ipAddress: "10.233.1.5", hostname: "legacy" });
+    // A zero stored before the check existed (or mirrored from a gate).
+    await prisma.reservation.update({ where: { id: created.body.id }, data: { macAddress: "00:00:00:00:00:00" } });
+    const resp = await agent
+      .put(`/api/v1/reservations/${created.body.id}`)
+      .set("X-CSRF-Token", csrf)
+      .send({ macAddress: "00:00:00:00:00:00", notes: "still editable" });
+    expect(resp.status).toBe(200);
+    expect(resp.body.notes).toBe("still editable");
+  });
+});

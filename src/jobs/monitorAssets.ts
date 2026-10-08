@@ -250,15 +250,15 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
       ...a,
       discoveredByIntegrationType: a.discoveredByIntegration?.type ?? null,
     });
-    // Probe cadence: 2× the resolved interval when dependency-suppressed
-    // (parent down), otherwise the configured cadence — no acceleration while a
+    // Probe cadence: the configured cadence in every state, dependency-
+    // suppressed included (business rule 38(c)) — no acceleration while a
     // failure/recovery run is being confirmed (that was the fast-confirm
     // re-probe; extra resolution during a run is now the ICMP loss sampler's
     // job, and it feeds packet loss only). ONE implementation shared with the
     // cursor path (monitoringService.computeDueWork) — the two due-sets are
     // contractually identical, and a second copy of this arithmetic is exactly
     // how they'd drift.
-    const probeIntervalSec = resolveProbeIntervalSec(a, eff);
+    const probeIntervalSec = resolveProbeIntervalSec(eff);
     const probe      = isDue(a.lastMonitorAt,    probeIntervalSec);
     // Pragmatic stream-split: cpuMemoryIntervalSeconds drives the unified
     // telemetry tick; collectTelemetry covers temperature in the same

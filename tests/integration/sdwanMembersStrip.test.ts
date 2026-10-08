@@ -18,6 +18,7 @@ import { readSdwanMembers } from "../../src/services/sampleHistoryService.js";
 
 const ASSET = "00000000-0000-4000-8000-00000000d5a1";
 const ASSET_SLA = "00000000-0000-4000-8000-00000000d5a2";
+const ASSET_TUN = "00000000-0000-4000-8000-00000000d5a3";
 const MIN = 60_000;
 
 beforeAll(async () => {
@@ -47,11 +48,30 @@ beforeAll(async () => {
       row(45, "HC-A", "down"), row(45, "HC-B", "down"),
     ] as never,
   });
+
+  // Two SLA-green overlays: HUB1's IPsec sample is fresh and up (one older
+  // "down" behind it must lose to the newest); HUB2's only sample is 30h old,
+  // past SDWAN_TUNNEL_LINK_MAX_AGE_HOURS, so it shows nothing.
+  await prisma.assetPerfSlaSample.deleteMany({ where: { assetId: ASSET_TUN } });
+  await prisma.assetIpsecTunnelSample.deleteMany({ where: { assetId: ASSET_TUN } });
+  const tunSla = (link: string) => ({
+    assetId: ASSET_TUN, timestamp: new Date(now - 2 * MIN), cadence: "fast",
+    healthCheck: "HUB", link, zone: "overlay", state: "up", latencyMs: 12, jitterMs: 0, packetLoss: 0,
+  });
+  await prisma.assetPerfSlaSample.createMany({ data: [tunSla("HUB1-VPN1"), tunSla("HUB2-VPN1")] as never });
+  await prisma.assetIpsecTunnelSample.createMany({
+    data: [
+      { assetId: ASSET_TUN, timestamp: new Date(now - 60 * MIN),      tunnelName: "HUB1-VPN1", status: "down" },
+      { assetId: ASSET_TUN, timestamp: new Date(now - 5 * MIN),       tunnelName: "HUB1-VPN1", status: "up" },
+      { assetId: ASSET_TUN, timestamp: new Date(now - 30 * 60 * MIN), tunnelName: "HUB2-VPN1", status: "up" },
+    ],
+  });
 });
 
 afterAll(async () => {
   if (!dbReachable) return;
-  await prisma.assetPerfSlaSample.deleteMany({ where: { assetId: { in: [ASSET, ASSET_SLA] } } });
+  await prisma.assetPerfSlaSample.deleteMany({ where: { assetId: { in: [ASSET, ASSET_SLA, ASSET_TUN] } } });
+  await prisma.assetIpsecTunnelSample.deleteMany({ where: { assetId: ASSET_TUN } });
 });
 
 dbDescribe("readSdwanMembers — Health Check Status strip", () => {
@@ -74,5 +94,12 @@ dbDescribe("readSdwanMembers — Health Check Status strip", () => {
       [true, false, null],
     ]);
     expect(asked).toContain("sdwanPacketLoss|HC-A|wan1");
+  });
+
+  it("reads an overlay's Link from its newest recent IPsec sample, and nothing from a stale one", async () => {
+    const { members } = await readSdwanMembers(ASSET_TUN);
+    const byLink = new Map(members.map((m) => [m.link, m]));
+    expect(byLink.get("HUB1-VPN1")).toMatchObject({ linkState: "up", linkSource: "ipsec", linkUp: true });
+    expect(byLink.get("HUB2-VPN1")).toMatchObject({ linkState: null, linkSource: null, linkUp: null });
   });
 });

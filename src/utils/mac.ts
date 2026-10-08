@@ -28,9 +28,9 @@ const ALL_ZERO_HEX = "000000000000";
 /**
  * LOOSE normalize: colon-separated uppercase, or null when the input is
  * empty / not exactly 12 hex digits. Accepts the all-zero MAC — use this
- * where zero is a legitimate value to represent faithfully (global search,
- * the AssetMacAddress side-table's stored-shape normalization), and
- * `normalizeMacOrNull` where a zero MAC must never become an identity.
+ * where zero must still be READABLE (global search, so an operator can find a
+ * straggler; expanding a stored side-table row), and `normalizeMacOrNull`
+ * anywhere a MAC is about to be written onto an asset.
  */
 export function macColonUpperOrNull(raw: unknown): string | null {
   if (!raw) return null;
@@ -44,9 +44,19 @@ export function macColonUpperOrNull(raw: unknown): string | null {
  * empty / not exactly 12 hex digits / all-zero.
  */
 export function normalizeMacOrNull(raw: string | null | undefined): string | null {
+  return isAllZeroMac(raw) ? null : macColonUpperOrNull(raw);
+}
+
+/**
+ * True when the input is a well-formed MAC whose 48 bits are all zero, in any
+ * separator style. The all-zero MAC is never a device's address — it is how
+ * FortiOS, agents and DHCP tables spell "no MAC" — so every write that makes a
+ * MAC part of an asset or a reservation treats it as absent (business rule 97). Malformed input
+ * answers false: format errors are the caller's validation, not this check's.
+ */
+export function isAllZeroMac(raw: unknown): boolean {
   const norm = macColonUpperOrNull(raw);
-  if (norm === null) return null;
-  return norm.replace(/:/g, "") === ALL_ZERO_HEX ? null : norm;
+  return norm !== null && norm.replace(/:/g, "") === ALL_ZERO_HEX;
 }
 
 /**

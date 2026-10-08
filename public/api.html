@@ -456,7 +456,8 @@
             manufacturer?, model?, assetType?, status?, location?, latitude?/longitude?,
             department?, assignedTo?, os?, acquiredAt?, warrantyExpiry?, purchaseOrder?, notes?,
             description?, tags? }</code>. <code>assetType</code> defaults to <code>other</code> and
-            <code>status</code> to <code>active</code>.
+            <code>status</code> to <code>active</code>. An all-zero <code>macAddress</code> is
+            stored as no MAC (on <code>PUT /assets/:id</code> it clears the field).
             <code>azure:</code> tags in <code>tags</code> are dropped: that namespace is mirrored
             from Azure resource tags by the Azure Arc integration and nothing else may write it.
             <code>201</code> with the created record, plus <code>ipConflict</code>: when the new
@@ -1252,7 +1253,9 @@
             <span class="gate">reservations:write</span></div>
           <p>Body: <code>{ subnetId, ipAddress?, hostname, owner?, projectRef?, expiresAt?,
             notes?, macAddress? }</code>. Omit <code>ipAddress</code> to reserve the whole
-            subnet. <code>201</code> with the reservation.</p>
+            subnet. <code>201</code> with the reservation. An all-zero
+            <code>macAddress</code> (<code>00:00:00:00:00:00</code>, any separators) is a
+            <code>400</code>: it names no device. Omit it instead.</p>
           <p>Collision semantics: an existing <em>active</em> row at the same address is a
             <code>409</code> — unless it is merely observed presence (<code>dhcp_lease</code>,
             <code>dns_resolved</code>, or a lease-backed infra row), which the create supersedes
@@ -1286,7 +1289,9 @@
           <div class="endpoint-head"><span class="method m-put">PUT</span> /reservations/:id
             <span class="gate">reservations:write (own rows) / fullwrite</span></div>
           <p>Body: <code>{ hostname?, owner?, projectRef?, expiresAt?, notes?, macAddress? }</code>
-            (<code>macAddress: ""</code> clears it). <code>409</code> for non-active rows and for
+            (<code>macAddress: ""</code> clears it; changing it to the all-zero MAC is a
+            <code>400</code>, while sending back a zero the row already holds is accepted).
+            <code>409</code> for non-active rows and for
             device-owned rows: a FortiGate VIP or interface address is configured on the device
             itself and cannot be edited or released from Polaris.</p>
         </div>

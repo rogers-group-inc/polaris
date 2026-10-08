@@ -15,6 +15,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Invariants:**
 - Ownership split: rows with `source="monitor-interface"` (the only rows that may carry `macEnd`) belong to `reconcileInterfaceMacs`; `reconcileMacAddresses` filters them from its input AND scopes its deletes away from them. Neither writer may churn the other's rows.
 - When another source holds a would-be range's start key, the range starts one past it (the occupied row keeps its richer discovery metadata).
+- The all-zero MAC is never written (business rule 97): `reconcileMacAddresses` filters it with `isAllZeroMac`, and `foldMacsToRanges` normalizes strictly. Because the reconcile deletes rows not in the new set, a zero row stored before the rule disappears on the asset's next reconcile.
 - All writes ride `retryOnDeadlock`; the discovery reconcile sorts by mac asc so ~50 parallel reconciles acquire index-page locks in deterministic order.
 
 **When changing this:** search behavior depends on canonical colon-uppercase storage (string order == numeric order for range containment — see searchService); anything changing the stored MAC shape breaks range lookup.
@@ -481,7 +482,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `DependencyDetectedVia`, `DependencySource`, `FORTINET_INFRA_ASSET_TYPES`, `ENDPOINT_DEPENDENCY_SOURCE`, `DepAsset`, `DependencyEdge`, `LayerAssignment`, `buildDependencyEdgesFromInputs`, `assignLayers`, `evaluateSuppression`, `blameFromGraph` / `resolveDependencyBlame` / `resolveDependencyBlameMany` / `newBlameLoadCache` / `BLAME_MAX_HOPS` (+ `DependencyBlame`, `DependencyBlameNode`, `DependencyBlameReason`, `BlameNodeState`, `BlameLoadCache` — business rule 78), `DepEndpoint`, `EndpointParentResolution`, `switchNameFromLastSeenSwitch`, `resolveEndpointParent`, `buildEndpointDependencyEdges`, `syncEndpointDependencyEdges`, `recomputeDependencyTree`, `reconcileDependencySuppression`, `propagateAfterStatusChange`, `SuppressionAssetState`
 
-**Cross-service deps:** `prisma`, `interfaceTopologyService`, `logEvent`, `logger`, `utils/assetInvariants.EXCLUDED_LIFECYCLE_STATUSES`, `utils/assetSourceLocation.bareFortinetDeviceName`, `utils/fortinetParentKey`, `ipUpstreamChainService` (`resolveOwningGateContexts` + `claimIsFresh`, for the fourth endpoint tier), `duplicateIpConflictService.CLAIM_FRESH_DAYS`.
+**Cross-service deps:** `prisma`, `interfaceTopologyService`, `probePatchBuffer.getPendingProbePatch` (the reconcile's read-your-writes overlay on `monitorStatus`, business rule 38(c)), `logEvent`, `logger`, `utils/assetInvariants.EXCLUDED_LIFECYCLE_STATUSES`, `utils/assetSourceLocation.bareFortinetDeviceName`, `utils/fortinetParentKey`, `ipUpstreamChainService` (`resolveOwningGateContexts` + `claimIsFresh`, for the fourth endpoint tier), `duplicateIpConflictService.CLAIM_FRESH_DAYS`.
 
 **Used by:** `src/api/routes/integrations.ts` + `src/api/routes/assets.ts` (dependency test / admin endpoints), `src/services/monitoringService.ts` (suppression queries), `src/jobs/dependencyReconciler.ts` (reconciler tick), `src/jobs/backfillDependencyTree.ts` (migration), `src/services/notificationService.ts` (`resolveDependencyBlameMany`, lazily imported by `clearSuppressedAlerts` — business rule 16).
 

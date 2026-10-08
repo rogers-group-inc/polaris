@@ -129,8 +129,14 @@ one reconciler tick later, every child re-alerting as plain Down. That is
 precisely the storm suppression exists to prevent, reached through the one door
 left open.
 
-Release **cascades one layer per pass**, which is correct — a gate coming back
-does not mean the switch under it has.
+A gate coming back does not mean the switch under it has, so each layer still
+needs its **own** parent genuinely back. But a suppressed device keeps
+answering its own probes at the normal interval, and its own count keeps
+draining while the parent recovers ([rule 38(c)](Business-Rules#rule-38)). So
+when the gate reaches **up**, every device below it whose own count has already
+reached **up** leaves Dep. Down **in the same moment**, all the way down the
+chain. A device that is still recovering is released but keeps its own
+children held until it reaches **up** itself.
 
 ---
 
@@ -139,14 +145,18 @@ does not mean the switch under it has.
 | | |
 |---|---|
 | Heavy cadences | **paused** |
-| Response-time probe | still runs, at **2× the interval** — the device may answer over a redundant path |
+| Response-time probe | still runs, at the **normal interval** — the device may answer over a redundant path, and its own count is how it comes back with its parent |
 | Probe failures | stamped as dependency-explained, rendered **grey** |
 | Alerts | the device is excluded from firing ([rule 37](Business-Rules#rule-37)) — unless a down automation opted to speak for it, below |
 | Live alerts | retired when the upstream is genuinely down. Behind a parent in **maintenance**, a device-down alert is cleared and every other alert is **kept (paused)** ([rule 16(a)](Business-Rules#rule-16)) |
 
-A suppressed device is **still probed**. That is deliberate: a device with a
-redundant path may well answer, and finding that out is worth one probe at half
-rate.
+A suppressed device is **still probed**, at the same interval as always. That
+is deliberate: a device with a redundant path may well answer, and when the
+upstream recovers the device behind it recovers at the same time. Its own
+count is already caught up when the upstream reaches **up**, so it doesn't sit
+at **Recovering** afterwards. Until 2026-10-08 a suppressed device was probed
+at half rate, so every layer down a chain took longer to read healthy than the
+one above it.
 
 ### One automation may speak for it anyway
 
@@ -175,7 +185,13 @@ A `monitor status is down` automation can opt out of the silence with the
   end with a **+N more** gap between. The plain-text email gets the same chain
   on one line. The diagram is the `{dependency.path}` token, which is in the
   default email — an automation whose email you customized before it existed
-  does not have it, so add it where you want the diagram;
+  does not have it, so add it where you want the diagram. The **reset email**
+  (the one saying the alert is over) draws the **same devices as they are
+  now**, under the heading *Dependency path now*: each one is marked **Up**,
+  **Recovering**, **Missed poll**, **Down**, **Dep. Down** or **In
+  maintenance**, read when the email is sent. It never assumes the whole chain
+  recovered: if the device that was down is still recovering, the picture says
+  so;
 - it is **one notification**: reminders and escalation tiers wait, as they do
   for every suppressed device, until the upstream is back;
 - a live plain Down alert on a device that then turns Dep. Down is **ended and

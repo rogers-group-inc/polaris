@@ -20,7 +20,7 @@
  *     discovery) is documented on the constants and functions below.
  */
 
-import { macColonUpperOrNull } from "./mac.js";
+import { macColonUpperOrNull, normalizeMacOrNull, isAllZeroMac } from "./mac.js";
 
 export interface MacJsonEntry {
   mac: string;
@@ -93,14 +93,14 @@ export function isHardwareMacSource(source: string | null | undefined): boolean 
  * Intune/agent/vCenter coverage) keep the historical freshest-overall rule.
  *
  * Range rows (macEnd set — the interface-fold shape) are never primary: a
- * range is a port block, not a device identity. Returns null only when the
- * list holds no usable single-MAC entry.
+ * range is a port block, not a device identity. Neither is the all-zero MAC.
+ * Returns null only when the list holds no usable single-MAC entry.
  */
 export function selectPrimaryMac(
   macs: ReadonlyArray<Pick<MacJsonEntry, "mac" | "lastSeen" | "source" | "macEnd">> | null | undefined,
 ): string | null {
   if (!Array.isArray(macs) || macs.length === 0) return null;
-  const singles = macs.filter((m) => m && m.mac && !m.macEnd);
+  const singles = macs.filter((m) => m && m.mac && !m.macEnd && !isAllZeroMac(m.mac));
   if (singles.length === 0) return null;
   const hardware = singles.filter((m) => isHardwareMacSource(m.source));
   const candidates = hardware.length > 0 ? hardware : singles;
@@ -143,8 +143,10 @@ export function shapeMacRows(rows: readonly MacRow[] | null | undefined): MacJso
 /**
  * Normalize a MAC to canonical upper-colon form ("AA:BB:CC:DD:EE:FF"), the
  * shape every row in this side table is stored as. Returns null for anything
- * that isn't exactly 12 hex digits. Loose form (all-zero kept) — the side
- * table stores what the device reported; identity decisions live elsewhere.
+ * that isn't exactly 12 hex digits. Loose form (all-zero kept): it READS stored
+ * rows, so a row written before the all-zero MAC was refused still expands.
+ * Every writer into the side table drops the all-zero MAC instead — it is how
+ * devices spell "no MAC", never an address (see isAllZeroMac).
  */
 const macColonUpper = macColonUpperOrNull;
 
@@ -168,7 +170,8 @@ export interface MacRangeEntry {
  * inclusive ranges. Switch/AP/firewall ports typically carry sequentially-
  * allocated MACs off one base, so a 48-port switch folds to a single
  * `{mac, macEnd}` entry; isolated MACs stay single entries (macEnd null).
- * Invalid entries are skipped. Output is sorted ascending.
+ * Invalid and all-zero entries are skipped (loopback / tunnel interfaces
+ * report 00:00:00:00:00:00). Output is sorted ascending.
  */
 export function foldMacsToRanges(
   macs: ReadonlyArray<string | null | undefined>,
@@ -176,7 +179,7 @@ export function foldMacsToRanges(
   const ints = Array.from(
     new Set(
       macs
-        .map((m) => macColonUpper(m))
+        .map((m) => normalizeMacOrNull(m))
         .filter((m): m is string => m !== null)
         .map(macToInt),
     ),
@@ -232,7 +235,7 @@ export function buildMacRowsForCreate(
   lastSeen: Date; firstSeen: Date;
 }> {
   return macs
-    .filter((m) => !!m.mac)
+    .filter((m) => !!m.mac && !isAllZeroMac(m.mac))
     .map((m) => {
       const lastSeen = m.lastSeen ? new Date(m.lastSeen) : new Date();
       return {

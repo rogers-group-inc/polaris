@@ -10,6 +10,7 @@
 
 import { prisma } from "../db.js";
 import { retryOnDeadlock } from "../utils/dbRetry.js";
+import { isAllZeroMac } from "../utils/mac.js";
 import {
   INTERFACE_MAC_SOURCE,
   foldMacsToRanges,
@@ -58,8 +59,12 @@ export async function reconcileMacAddresses(
   // deadlock rate Postgres reports on the secondary `mac` index pages
   // when batchSettled runs ~50 reconciles in parallel during a discovery
   // sync. Sort is in-place safe because we built the array from a copy.
+  //
+  // The all-zero MAC is dropped like an empty one: it is "no MAC", and since
+  // the delete below removes every row not in the new set, a zero row stored
+  // before this filter existed is cleaned up on the asset's next reconcile.
   const newMacs = macs
-    .filter((m) => !!m.mac && m.source !== INTERFACE_MAC_SOURCE)
+    .filter((m) => !!m.mac && !isAllZeroMac(m.mac) && m.source !== INTERFACE_MAC_SOURCE)
     .slice()
     .sort((a, b) => (a.mac < b.mac ? -1 : a.mac > b.mac ? 1 : 0));
 

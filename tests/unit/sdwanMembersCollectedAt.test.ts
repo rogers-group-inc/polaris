@@ -27,7 +27,8 @@ const h = vi.hoisted(() => ({
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
 
-const { readSdwanMembers, SDWAN_STATUS_STRIP_MINUTES } = await import("../../src/services/sampleHistoryService.js");
+const { readSdwanMembers, sdwanMemberLinkState, SDWAN_STATUS_STRIP_MINUTES, SDWAN_TUNNEL_LINK_MAX_AGE_HOURS } =
+  await import("../../src/services/sampleHistoryService.js");
 
 const OLDER = new Date("2026-09-18T12:00:00.000Z");
 const NEWER = new Date("2026-09-18T12:10:00.000Z");
@@ -41,7 +42,8 @@ function mockSamples(rows: Array<Record<string, unknown>>) {
   h.prisma.$queryRawUnsafe.mockReset();
   h.prisma.$queryRawUnsafe
     .mockResolvedValueOnce(rows)   // A: latest per (link, healthCheck)
-    .mockResolvedValueOnce([]);    // B: recent strip
+    .mockResolvedValueOnce([])     // B: recent strip
+    .mockResolvedValueOnce([]);    // D: IPsec status of tunnel members
   h.prisma.assetInterface.findMany.mockResolvedValue([]);
 }
 
@@ -107,5 +109,65 @@ describe("readSdwanMembers status strip", () => {
     const res = await readSdwanMembers("asset-1");
     expect(res.members[0]!.recent).toHaveLength(60);
     expect(res.members[0]!.recent[0]!.up).toBe(false);
+  });
+});
+
+// The Link column. An IPsec overlay has no carrier, so an interface
+// operStatus on it is not its state: SNMP ifOperStatus reported SLA-green
+// overlays as "▼ down". A tunnel member reads its IPsec tunnel status instead.
+describe("sdwanMemberLinkState", () => {
+  const phys = (operStatus: string | null) => ({ ifType: "physical", operStatus });
+  const tun  = (operStatus: string | null) => ({ ifType: "tunnel", operStatus });
+
+  it("reads an IPsec status over the interface's operStatus", () => {
+    expect(sdwanMemberLinkState(tun("down"), "up")).toEqual({ linkState: "up", linkSource: "ipsec" });
+    expect(sdwanMemberLinkState(null, "down")).toEqual({ linkState: "down", linkSource: "ipsec" });
+    expect(sdwanMemberLinkState(tun(null), "partial")).toEqual({ linkState: "partial", linkSource: "ipsec" });
+    expect(sdwanMemberLinkState(tun(null), "dynamic")).toEqual({ linkState: "dynamic", linkSource: "ipsec" });
+  });
+
+  it("shows nothing for a tunnel interface with no IPsec sample, whatever its operStatus says", () => {
+    expect(sdwanMemberLinkState(tun("down"), undefined)).toEqual({ linkState: null, linkSource: null });
+    expect(sdwanMemberLinkState(tun("up"), undefined)).toEqual({ linkState: null, linkSource: null });
+  });
+
+  it("keeps a physical member on its interface operStatus", () => {
+    expect(sdwanMemberLinkState(phys("up"), undefined)).toEqual({ linkState: "up", linkSource: "interface" });
+    expect(sdwanMemberLinkState(phys("down"), undefined)).toEqual({ linkState: "down", linkSource: "interface" });
+    expect(sdwanMemberLinkState(phys("lowerLayerDown"), undefined)).toEqual({ linkState: "down", linkSource: "interface" });
+    expect(sdwanMemberLinkState(phys(null), undefined)).toEqual({ linkState: null, linkSource: null });
+    expect(sdwanMemberLinkState(null, undefined)).toEqual({ linkState: null, linkSource: null });
+  });
+
+  it("ignores an IPsec status it does not know", () => {
+    expect(sdwanMemberLinkState(tun("down"), "weird")).toEqual({ linkState: null, linkSource: null });
+  });
+});
+
+describe("readSdwanMembers Link column", () => {
+  it("shows an SLA-green overlay as up when SNMP called its tunnel interface down", async () => {
+    h.prisma.$queryRawUnsafe.mockReset();
+    h.prisma.$queryRawUnsafe
+      .mockResolvedValueOnce([
+        { link: "wan1",     healthCheck: "HUB", zone: "underlay", state: "up", latencyMs: 10, jitterMs: 0, packetLoss: 0, timestamp: NEWER },
+        { link: "HUB1-VPN1", healthCheck: "HUB", zone: "overlay",  state: "up", latencyMs: 12, jitterMs: 0, packetLoss: 0, timestamp: NEWER },
+      ])
+      .mockResolvedValueOnce([])                                              // B: strip
+      .mockResolvedValueOnce([{ tunnelName: "HUB1-VPN1", status: "up" }]);    // D: IPsec
+    h.prisma.assetInterface.findMany.mockResolvedValue([
+      { ifName: "wan1",      ipAddress: "203.0.113.2", speedBps: 1_000_000_000n, ifType: "physical", operStatus: "up",   inOctets: null, outOctets: null },
+      { ifName: "HUB1-VPN1", ipAddress: "10.255.0.2",  speedBps: null,           ifType: "tunnel",   operStatus: "down", inOctets: null, outOctets: null },
+    ]);
+    const res = await readSdwanMembers("asset-1");
+    const byLink = new Map(res.members.map((m) => [m.link, m]));
+    expect(byLink.get("HUB1-VPN1")).toMatchObject({ linkState: "up", linkSource: "ipsec", linkUp: true });
+    expect(byLink.get("wan1")).toMatchObject({ linkState: "up", linkSource: "interface", linkUp: true });
+
+    const [sql, assetId, names, hours] = h.prisma.$queryRawUnsafe.mock.calls[2]!;
+    expect(String(sql)).toContain("asset_ipsec_tunnel_samples");
+    expect(String(sql)).toContain(`(now() AT TIME ZONE 'UTC') - make_interval(hours => $3::int)`);
+    expect(assetId).toBe("asset-1");
+    expect(names).toEqual(["wan1", "HUB1-VPN1"]);
+    expect(hours).toBe(SDWAN_TUNNEL_LINK_MAX_AGE_HOURS);
   });
 });

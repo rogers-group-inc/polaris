@@ -11832,8 +11832,9 @@ export async function recordProbeResult(
     error: result.success ? null : (result.error ?? null),
     uptimeSec,
     // Mark the miss as EXPLAINED when the parent was dark at probe time. The
-    // probe keeps running while suppressed (half cadence — the device may still
-    // answer over a redundant path or out-of-band management), so these rows
+    // probe keeps running while suppressed (full cadence — the device may still
+    // answer over a redundant path, and its own count is what lets it leave
+    // Dep. Down with its parent, business rule 38(c)), so these rows
     // exist either way; the flag is what lets every chart draw the stretch grey
     // instead of the red dive that claims an unexplained outage. Read off the
     // asset row rather than re-derived here: `dependencySuppressed` is owned by
@@ -13572,13 +13573,18 @@ export type MonitorWork = { id: string; kind: MonitorWorkKind };
 /**
  * Effective probe spacing in seconds for one asset.
  *
- * ONE clamp: a dependency-suppressed asset (its parent is dark) drops to 2× the
- * configured interval. It is unlikely to answer until the parent recovers, but
- * half-rate polling still catches the cases where it answers over a redundant
- * L3 path or out-of-band management. A `disabled` stream has nothing to slow.
+ * The response-time poll runs at EXACTLY the configured cadence in every state
+ * — dependency-suppressed included (business rule 38(c)). A suppressed asset
+ * used to drop to 2× the interval on the theory that it would not answer until
+ * its parent recovered, but its own leaky bucket keeps counting under the
+ * suppression, and that is the count it leaves Dep. Down with: when the parent
+ * comes back, the device behind it is answering again at the same moment, and
+ * half-rate polling made it drain its bucket half as fast as the parent did —
+ * so every layer down a dependency chain read `recovering` for longer than the
+ * layer above it, for no reason but the clamp.
  *
- * Otherwise the response-time poll runs at EXACTLY the configured cadence —
- * including while a failure or recovery run is being confirmed. There is
+ * No acceleration either, including while a failure or recovery run is being
+ * confirmed. There is
  * deliberately no acceleration: `down` is declared by `failureThreshold`
  * consecutive misses of the configured method at the configured cadence, so
  * time-to-down is `failureThreshold × intervalSeconds` and the figure an
@@ -13595,10 +13601,8 @@ export type MonitorWork = { id: string; kind: MonitorWorkKind };
  * now read by nothing.
  */
 export function resolveProbeIntervalSec(
-  a: { dependencySuppressed: boolean },
-  eff: Pick<MonitorTierSettings, "intervalSeconds"> & { responseTimePolling: string | null },
+  eff: Pick<MonitorTierSettings, "intervalSeconds">,
 ): number {
-  if (a.dependencySuppressed && eff.responseTimePolling !== "disabled") return eff.intervalSeconds * 2;
   return eff.intervalSeconds;
 }
 
@@ -13667,12 +13671,9 @@ export async function computeDueWork(
     // hosts, and no acceleration while a failure/recovery run is being
     // confirmed. Down-host suppression below stops heavy cadences regardless;
     // the cheap response-time probe keeps firing at base cadence so recovery is
-    // detected within one tick. ONE exception: dependency suppression active
-    // (parent is down) slows the probe to 2× the configured interval, since the
-    // asset is unlikely to answer until the parent recovers, but we still poll
-    // at half-rate to catch cases where it answers via a redundant L3 path or
-    // out-of-band management. Disabled streams stay disabled regardless of
-    // suppression — there's nothing to slow down.
+    // detected within one tick — dependency-suppressed assets included, since
+    // their own count is what lets them leave Dep. Down with their parent
+    // (business rule 38(c)).
     //
     // Extra resolution DURING a run is the ICMP loss sampler's job
     // (utils/lossSweep.ts, queued below): it feeds packet-loss statistics
@@ -13682,7 +13683,7 @@ export async function computeDueWork(
     // publisher's mirrored due-calc in jobs/monitorAssets.ts, which must stay
     // byte-identical in behavior — the two paths' due-sets are contractually
     // the same).
-    const probeIntervalSec = resolveProbeIntervalSec(a, eff);
+    const probeIntervalSec = resolveProbeIntervalSec(eff);
     const probe      = isDue(a.lastMonitorAt,    probeIntervalSec);
     // Pragmatic stream-split: the dispatcher tick treats CPU/memory's
     // cadence as the unified "telemetry due" trigger. collectTelemetry

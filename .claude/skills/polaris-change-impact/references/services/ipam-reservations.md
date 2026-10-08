@@ -219,6 +219,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - MAC address required when push eligible (subnet discovered by FMG/FortiGate with pushReservations=true)
+- The all-zero MAC is refused with a 400 (business rule 97): `createReservationFlow` checks before loading the subnet; `updateReservation` refuses it only when it CHANGES the stored MAC, so a row already holding zero (pre-rule, or mirrored from the gate) stays editable when the form echoes it. Discovery's reservation mirror is not gated.
 - Full-subnet reservation (ipAddress=null) → subnet.status = "reserved"; per-IP → remains available
 - No duplicate active reservations (unique constraint on subnetId, ipAddress, status="active")
 - Subnet must not be deprecated (409 if status="deprecated")
@@ -286,7 +287,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/networkScanRunner.ts
 
-**What it owns:** Execution of ONE network **Discovery** (business rule 34) — expand the operator's targets, subtract what inventory already has, ICMP for liveness, then the enabled methods in the operator's order for identification. Owns the run row's transitions (`running` → `completed` / `aborted` / `error`), its counters, its heartbeat, and the `hits` blob the wizard's Results step reads. Owns the pacing constants (`SCAN_PING_CONCURRENCY` 64 / `SCAN_PING_TIMEOUT_MS` 1500 / `SCAN_IDENTIFY_CONCURRENCY` 12 / `SCAN_WALK_MAX_ROWS` 800 / `SCAN_MAX_HITS` 2000 / `SCAN_PROGRESS_FLUSH_MS` 2000) — constants rather than env vars because a Discovery is an explicit, cancellable, progress-visible action with no steady-state tuning problem.
+**What it owns:** Execution of ONE network **Discovery** (business rule 34) — expand the operator's targets, subtract what inventory already has, ICMP for liveness, then the enabled methods in the operator's order for identification. Owns the run row's transitions (`running` → `completed` / `aborted` / `error`), its counters, its heartbeat, and the `hits` blob the wizard's Results step reads. Owns the pacing constants (`SCAN_PING_CONCURRENCY` 64 / `SCAN_PING_TIMEOUT_MS` 1500 / `SCAN_PING_ATTEMPTS` 2 — a silent address gets an immediate second echo because the first to a quiet host on a routed subnet is lost to the gateway's ARP, and a ping that couldn't RUN (`isNoReply` false) is counted apart and lands on the completed run's `error` / `SCAN_IDENTIFY_CONCURRENCY` 12 / `SCAN_WALK_MAX_ROWS` 800 / `SCAN_MAX_HITS` 2000 / `SCAN_PROGRESS_FLUSH_MS` 2000) — constants rather than env vars because a Discovery is an explicit, cancellable, progress-visible action with no steady-state tuning problem.
 
 **Public API:** `runScan(runId, actor)` (never throws — a failed run is a `status:"error"` row, because the row IS the wizard's view of it), `identifyAddress(address, methods, creds, opts)` (the per-address method/credential cascade; returns null when nothing answered), `parseStoredTargets` / `parseStoredMethods` (JSON-column normalizers), `loadKnownAddresses`, `SCAN_METHODS`, and the pacing constants. Types `ScanMethod` / `ScanMethodType` / `ScanHit`.
 

@@ -1900,7 +1900,7 @@ async function resolveAssetStateReadings(
       opts?.dependencyDownReadsDown && a.dependencySuppressed
         // The upstream's confirmed verdict IS the evidence (rule 78): the
         // device turned Dep. Down, and that is the edge the operator asked to
-        // hear about — not its own probe reaching the count at half cadence.
+        // hear about — not its own probe reaching the count some polls later.
         ? { ...mk(a, "", "", "down"), readingAt: probeAt(a), dependencyDown: true, ownMonitorStatus: a.monitorStatus }
         : { ...mk(a, "", "", a.monitorStatus), readingAt: probeAt(a) });
     case "status": return assets.map((a) => ({ ...mk(a, "", "", a.status), readingAt: probeAt(a) }));

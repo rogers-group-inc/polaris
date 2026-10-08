@@ -765,6 +765,24 @@ describe("evaluateSuppression — release hysteresis", () => {
     expect(out.get("ap")).toBe(true);
   });
 
+  it("releases the whole chain in ONE pass when each layer's own count already drained (rule 38(c))", () => {
+    // A suppressed device keeps probing at full cadence and its own bucket keeps
+    // counting under the suppression, so the switch and AP behind a recovering
+    // gate drain alongside it. When the gate reaches `up`, every layer whose
+    // own count already reads `up` leaves Dep. Down in the same evaluation — the
+    // layer-order walk settles the switch before the AP asks about it — instead
+    // of one reconciler tick per layer.
+    const out = evaluateSuppression(
+      [st3("fg", 1, "up"), st3("sw", 2, "up", true), st3("ap", 3, "up", true), st3("cam", 4, "recovering", true)],
+      new Map([["sw", ["fg"]], ["ap", ["sw"]], ["cam", ["ap"]]]),
+    );
+    expect(out.get("sw")).toBe(false);
+    expect(out.get("ap")).toBe(false);
+    // The leaf is released too (its parent is genuinely back); it simply reads
+    // its own `recovering` until its own count finishes.
+    expect(out.get("cam")).toBe(false);
+  });
+
   it("never strands a subtree behind a parent that renders no verdict", () => {
     // `passive` (business rule 36) and `unknown` are not claims that the
     // parent is unreachable. Gating release on them would leave the child in

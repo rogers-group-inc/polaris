@@ -9,7 +9,22 @@ import {
   macColonUpperOrNull,
   macHexKeyOrNull,
   normalizeMacLowerColon,
+  isAllZeroMac,
 } from "../../src/utils/mac.js";
+
+describe("isAllZeroMac", () => {
+  it("recognizes the all-zero MAC in every separator style and case", () => {
+    for (const z of ["00:00:00:00:00:00", "00-00-00-00-00-00", "000000000000", "0000.0000.0000"]) {
+      expect(isAllZeroMac(z)).toBe(true);
+    }
+  });
+
+  it("is false for a real MAC, a near-zero MAC, malformed and empty input", () => {
+    for (const v of ["00:00:00:00:00:01", "AA:BB:CC:DD:EE:FF", "00:00:00", "", null, undefined, 0]) {
+      expect(isAllZeroMac(v)).toBe(false);
+    }
+  });
+});
 
 describe("normalizeMacOrNull", () => {
   it("normalizes colon-separated lowercase to uppercase", () => {

@@ -295,6 +295,9 @@ every trigger path: monitored **and** not suppressed. Un-monitoring a device
 packet.** **(a)** Release is asymmetric — entering needs every parent confirmed
 down, leaving needs a parent genuinely back (`up` / `unknown` / `passive` only;
 `warning` holds). **(b)** A miss the upstream explains is **grey, not red**.
+**(c)** A suppressed device keeps its **own** count at the normal probe interval,
+so when its parent reaches **up**, every device below whose own count is
+already **up** leaves Dep. Down in the same moment, all the way down the chain.
 
 ### Rule 39
 **How a person wants to be reached is theirs, not the automation's.** The
@@ -1598,3 +1601,25 @@ behind an "Inherit" stream, sent a burst of bad keys every monitor pass and kept
 the server locked out of one gate for hours.
 
 See [Monitoring → How Polaris paces FortiOS REST calls](Monitoring#how-polaris-paces-fortios-rest-calls).
+
+### Rule 97
+
+**The all-zero MAC means "no MAC": it never becomes an asset's MAC, and a
+reservation refuses it.** `00:00:00:00:00:00` is not a device's address.
+FortiGates report it for loopback, tunnel and unconfigured interfaces, and an
+agent can report it when a host's main adapter is a VPN or virtual NIC. Stored
+as a MAC, it would let unrelated devices match each other and merge.
+
+- **On an asset, entering it clears the MAC.** Creating or editing an asset with
+  an all-zero MAC saves it with no MAC, and a CSV import skips the cell. You are
+  never refused, so an asset that already carries a zero MAC can still be edited.
+- **Discovery and the Polaris Agent never record it.** An all-zero MAC is left
+  out of an asset's MAC list and is never chosen as its primary MAC.
+- **A reservation refuses it.** Creating a reservation with an all-zero MAC, or
+  changing a reservation's MAC to zero, is rejected: leave the MAC blank, or use
+  **Generate** for a device that isn't racked yet. A reservation that already
+  holds a zero MAC (for example, one mirrored from the FortiGate) can still be
+  edited.
+- **Upgrading clears existing zeros from assets.** Each asset whose MAC is
+  cleared gets an `asset.mac.cleared` event. Reservations are left as they are.
+- **Search still finds it**, so you can look for any that remain.

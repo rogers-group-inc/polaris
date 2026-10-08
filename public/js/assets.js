@@ -15845,6 +15845,31 @@ function _sdwanStatusStripHTML(recent) {
     ' style="display:flex;gap:1px;align-items:stretch;min-width:120px;max-width:340px">' + segs + '</span>';
 }
 
+// The Link cell. An overlay member (linkSource "ipsec") reads its IPsec
+// tunnel's status, never an interface carrier — a tunnel has none, and SNMP
+// reported healthy overlays as down. `linkState` is absent on an older server;
+// fall back to the boolean then.
+function _sdwanMemberLinkHTML(m) {
+  var state = m.linkState !== undefined ? m.linkState
+    : (m.linkUp == null ? null : (m.linkUp ? "up" : "down"));
+  var tunnel = m.linkSource === "ipsec";
+  var title = tunnel ? ' title="IPsec tunnel status"' : '';
+  if (state === "up") {
+    var label = tunnel ? "tunnel up" : (m.linkSpeedBps ? _fmtBitsPerSec(m.linkSpeedBps) : "up");
+    return '<span' + title + ' style="color:' + MONITOR_STATE_COLORS.up + '">▲ ' + escapeHtml(label) + '</span>';
+  }
+  if (state === "down") {
+    return '<span' + title + ' style="color:' + MONITOR_STATE_COLORS.down + '">▼ ' + (tunnel ? "tunnel down" : "down") + '</span>';
+  }
+  if (state === "partial") {
+    return '<span title="IPsec tunnel status — some phase-2 selectors are down" style="color:' + MONITOR_STATE_COLORS.warning + '">◆ partial</span>';
+  }
+  if (state === "dynamic") {
+    return '<span title="Dial-up tunnel — no single up/down state" style="color:var(--color-text-secondary)">dial-up</span>';
+  }
+  return '<span style="color:var(--color-text-tertiary)">—</span>';
+}
+
 // SD-WAN Members table body — canonical applyTableLayout column template.
 // Members are grouped by SD-WAN zone: a full-width zone header row, then that
 // zone's members indented beneath it (dependency-tree style). When no member
@@ -15871,11 +15896,7 @@ function _sdwanMembersTableHTML(members) {
         '<span data-shot-text="' + (h.state === "up" ? '▲' : '▼') + '" style="color:' + c + '">●</span> ' +
         escapeHtml(h.healthCheck) + ' ' + lat + '</span>';
     }).join("") || '<span style="color:var(--color-text-tertiary)">—</span>';
-    var link = m.linkUp == null
-      ? '<span style="color:var(--color-text-tertiary)">—</span>'
-      : (m.linkUp
-          ? '<span style="color:' + MONITOR_STATE_COLORS.up + '">▲ ' + (m.linkSpeedBps ? _fmtBitsPerSec(m.linkSpeedBps) : "up") + '</span>'
-          : '<span style="color:' + MONITOR_STATE_COLORS.down + '">▼ down</span>');
+    var link = _sdwanMemberLinkHTML(m);
     var bytes = (m.txBytes != null || m.rxBytes != null)
       ? (m.txBytes != null ? _fmtBytes(m.txBytes) : "—") + ' / ' + (m.rxBytes != null ? _fmtBytes(m.rxBytes) : "—")
       : '<span style="color:var(--color-text-tertiary)">—</span>';

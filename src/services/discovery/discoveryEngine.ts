@@ -29,7 +29,7 @@ import { isWorkloadPlatform } from "../../utils/workloadSources.js";
 import * as azureArc from "../azureArcService.js";
 import * as llm from "../llmService.js";
 import { ipInCidr, normalizeCidr, cidrContains, cidrOverlaps } from "../../utils/cidr.js";
-import { normalizeMacsDistinct, macHexKeyOrNull } from "../../utils/mac.js";
+import { normalizeMacsDistinct, macHexKeyOrNull, normalizeMacOrNull, isAllZeroMac } from "../../utils/mac.js";
 import {
   isInfraSourceType,
   decideInfraDhcpBinding,
@@ -4235,7 +4235,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     // Management MAC cross-joined from the detected-device fortilink-peer
     // rows at discovery time. Used for the orphan-endpoint dedup lookup
     // below and to seed Asset.macAddress / macAddressRows on create.
-    const normalizedSwMac = sw.baseMac ? sw.baseMac.toUpperCase().replace(/-/g, ":") : null;
+    const normalizedSwMac = normalizeMacOrNull(sw.baseMac);
     try {
       let existingAsset: any = sw.serial ? assetIdx.findBySerial(sw.serial) : null;
       // MAC fallback before name/IP fallback — adopts an orphan
@@ -4531,7 +4531,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     const dhcpFallback = dhcpByHostname.get(ap.name.toLowerCase()) ?? dhcpByHostname.get(ap.serial.toLowerCase()) ?? null;
     const resolvedIp = ap.ipAddress || dhcpFallback?.ip || null;
     const rawMac = ap.baseMac || dhcpFallback?.mac || "";
-    const normalizedMac = rawMac ? rawMac.toUpperCase().replace(/-/g, ":") : null;
+    const normalizedMac = normalizeMacOrNull(rawMac);
     try {
       let existingAsset: any = ap.serial ? assetIdx.findBySerial(ap.serial) : null;
       if (!existingAsset && normalizedMac) existingAsset = assetIdx.findByMac(normalizedMac);
@@ -5837,6 +5837,10 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
 
     for (const entry of result.dhcpEntries) {
       if (!entry.macAddress || !entry.ipAddress) continue;
+      // A zero-MAC row (a reserved-address entry with no MAC set) names no
+      // device. The MAC index already can't match it, but a hostname match
+      // would otherwise stamp 00:00:00:00:00:00 onto that asset as its MAC.
+      if (isAllZeroMac(entry.macAddress)) continue;
       const normalized = entry.macAddress.toUpperCase().replace(/-/g, ":");
 
       // DHCP IPs recycle across devices, so IP-only matches would staple
@@ -6203,7 +6207,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
 
     for (const inv of result.deviceInventory) {
       if (!inv.macAddress && !inv.ipAddress) continue;
-      const normalizedMac = inv.macAddress ? inv.macAddress.toUpperCase().replace(/-/g, ":") : "";
+      const normalizedMac = normalizeMacOrNull(inv.macAddress) ?? "";
 
       const handledByDhcp = normalizedMac && dhcpMacs.has(normalizedMac);
 

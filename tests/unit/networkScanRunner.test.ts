@@ -42,7 +42,10 @@ const {
   parseStoredTargets,
   parseStoredMethods,
   identifyAddress,
+  checkLiveness,
+  isNoReply,
   SCAN_METHODS,
+  SCAN_PING_ATTEMPTS,
 } = await import("../../src/services/networkScanRunner.js");
 
 type Cred = { id: string; name: string; type: string; config: Record<string, unknown> };
@@ -279,5 +282,49 @@ describe("identifyAddress — SNMP detail", () => {
     probeMock.mockResolvedValue(ok(42));
     const hit = await identifyAddress("10.4.0.9", [{ type: "ssh", credentialIds: ["c"] }], creds(cred("c")));
     expect(hit!.responseTimeMs).toBe(42);
+  });
+});
+
+describe("checkLiveness — the ICMP liveness pass", () => {
+  /** A scripted ping: each call returns the next result in the list. */
+  const scripted = (...results: { success: boolean; error?: string }[]) =>
+    vi.fn(async () => results.shift() ?? { success: false, error: "ping exit 1" });
+
+  it("retries a silent address once — the first echo is lost while the gateway ARPs", async () => {
+    // The field report: a host that answered its ICMP monitor was missing from
+    // a Discovery of its own subnet, because the sweep's only echo was the one
+    // the router dropped while it resolved the host.
+    expect(SCAN_PING_ATTEMPTS).toBe(2);
+    const ping = scripted({ success: false, error: "ping exit 1" }, { success: true });
+    expect(await checkLiveness("10.4.0.7", ping)).toEqual({ alive: true });
+    expect(ping).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry an address that answered", async () => {
+    const ping = scripted({ success: true });
+    expect(await checkLiveness("10.4.0.7", ping)).toEqual({ alive: true });
+    expect(ping).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls an address silent only after every attempt went unanswered", async () => {
+    const ping = scripted({ success: false, error: "ping exit 1" }, { success: false, error: "ping timed out" });
+    expect(await checkLiveness("10.4.0.7", ping)).toEqual({ alive: false });
+    expect(ping).toHaveBeenCalledTimes(SCAN_PING_ATTEMPTS);
+  });
+
+  it("reports a ping that could not RUN apart from a silent address, without retrying", async () => {
+    // No CAP_NET_RAW / no binary / no route: a fact about the server, which a
+    // sweep must say rather than reporting an empty network.
+    const ping = scripted({ success: false, error: "spawn ping EPERM" });
+    expect(await checkLiveness("10.4.0.7", ping)).toEqual({ alive: false, toolError: "spawn ping EPERM" });
+    expect(ping).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies exit 1 and the wall-clock timeout as no-reply, everything else as a tool failure", () => {
+    expect(isNoReply("ping exit 1")).toBe(true);
+    expect(isNoReply("ping timed out")).toBe(true);
+    expect(isNoReply("ping exit 2")).toBe(false);
+    expect(isNoReply("spawn ping ENOENT")).toBe(false);
+    expect(isNoReply(undefined)).toBe(false);
   });
 });

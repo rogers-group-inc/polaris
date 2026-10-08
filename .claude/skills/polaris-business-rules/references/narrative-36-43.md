@@ -118,6 +118,18 @@ Four decisions inside that:
 
 The grey is duplicated in four places by design (`_CHART_DEP_COLOR` in `public/js/assets.js`, read by `assets-compare.js`; `DEP_COLOR` in `public/js/mobile/charts.js`; `DEP_COLOR` in `src/utils/sparklineSvg.ts`), the same way the failure red already is. Change one, change all of them, or one outage renders two ways.
 
+### (c) A suppressed device keeps its own count, and leaves with its parent (2026-10-08)
+
+The operator asked for this: when a gate comes back, the switches and APs behind it come back with it, so a device further down a dependency chain should not take longer to read healthy than the device above it. It did, for two reasons, and neither was a decision anyone would have made on purpose.
+
+**The half-rate probe.** A suppressed asset was probed at 2× its interval, on the theory that it would not answer until its parent recovered. But its own leaky bucket never stopped counting under the suppression — `recordProbeResult` runs `nextFailureBucket` whatever `dependencySuppressed` says — and that bucket is the count the device leaves Dep. Down with. When a parent recovers, the devices behind it start answering at the same moment, and at half rate each one drained its bucket half as fast as the parent did. So the gate reached `up`, the switch was released still reading `recovering`, and the AP behind the switch was held until the switch caught up. Every layer added its own delay. The clamp is gone: `resolveProbeIntervalSec` now takes only the settings, so a per-asset slow-down cannot come back without changing its signature and failing the test that pins it. What the half rate saved was one probe per interval against a device behind a dark gate. ICMP is batched, and the steady-state fleet already pays that rate.
+
+**The hook read the row from before its own edge.** `propagateAfterStatusChange` exists to release a subtree within a probe tick of the parent's →up edge instead of waiting for the 60 s reconciler. But `recordProbeResult` BUFFERS its status write (`probePatchBuffer`, a 2 s flush) and fires the hook straight away, and the reconcile read `monitorStatus` from the database. That was still the parent's `recovering`, so the hook held the subtree it was called to release, and the release waited for the 60 s tick. A child whose own count drained a probe later (its patch also buffered) held its children for one more tick, so a chain recovered about a minute per layer. The reconcile now overlays the buffer exactly as `recordProbeResult` does (`getPendingProbePatch`), one Map lookup per asset. The buffer is per-process, so on a role that does not probe the overlay is empty and the database answer stands.
+
+What did NOT change is the release rule (a). The child still needs its PARENT genuinely back, and a child released while its own count reads `recovering` still holds its own children until it reaches `up` itself. Nothing here lets a device leave on a single packet. It only stops making each layer of the chain wait its turn at half speed and then wait again for the next tick.
+
+The same day, the email that ends a dependency-down alert stopped redrawing the outage. See rule 78's narrative ("The all-clear draws the chain as it is now").
+
 ---
 
 <a id="rule-39"></a>
