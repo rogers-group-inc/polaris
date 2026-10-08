@@ -8537,6 +8537,11 @@ function _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll) {
   // top-level (orphan/unbound), depth=1 → nested under a top-level interface,
   // depth=2 → nested under a VLAN/aggregate child. `collapseGroupName`, when
   // set, ties the row to a top-level parent's expand/collapse toggle.
+  function tunnelOverlayIp(tn) {
+    var iface = tunnelIfaceByName[tn.tunnelName];
+    return (iface && iface.ipAddress) || "";
+  }
+
   function buildTunnelRow(tn, opts) {
     opts = opts || {};
     var depth = opts.depth || 0;
@@ -8551,11 +8556,18 @@ function _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll) {
     var ipsecBadge =
       '<span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#f59e0b18;color:#f59e0b;border:1px solid #f59e0b30;margin-left:5px;white-space:nowrap" title="' +
         escapeHtml(p2title) + '">IPsec</span>';
+    // The folded tunnel interface's configured (overlay) address — the IP
+    // column already holds the remote gateway, so it rides under the name.
+    var overlayIp = tunnelOverlayIp(tn);
+    var overlaySub = overlayIp
+      ? '<span style="display:block;font-size:0.7rem;opacity:0.6;font-weight:normal" title="Tunnel interface address">' + escapeHtml(overlayIp) + '</span>'
+      : '';
     var nameCell =
       '<td class="mono" style="' + pad + '" title="' + escapeHtml(tn.tunnelName) + '">' + bullet +
         '<a href="#" class="asset-ipsec-link" data-name="' + escapeHtml(tn.tunnelName) + '" style="color:var(--color-accent);text-decoration:none">' +
           escapeHtml(tn.tunnelName) +
         '</a>' + ipsecBadge +
+        overlaySub +
       "</td>";
     // "dynamic" = FortiOS phase1-interface type "dynamic" (dial-up server
     // template). Render as a neutral storage-style pill — not red, since the
@@ -8605,9 +8617,26 @@ function _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll) {
   // top-level rows nor under a parent cluster that never got built — so the
   // ports vanished from the System tab at exactly the moment the trunk went
   // down. Same treatment orphanTunnels already gets below.
-  var ifaceNameSet = new Set(rows.map(function (r) { return r.ifName; }));
+  //
+  // A FortiGate IPsec tunnel can arrive TWICE: as an IPsec-stream tunnel (which
+  // knows its phase-1 parent and nests under it) and as a `tunnel`-typed
+  // interface row — the CMDB back-fill on REST-polled gates, IF-MIB on SNMP
+  // ones. The interface row has no ifParent (the underlay is not a containment
+  // parent), so it rendered top-level under "Other Interfaces" with no tree
+  // connector, beside its own nested twin. Fold it into the tunnel row instead:
+  // the tunnel row keeps the SA status, the throughput and the parent, and
+  // carries the interface's configured address. An interface row that is
+  // itself pinned stays separate, so its pin can still be seen and removed.
+  var tunnelNames = new Set(tunnelsAll.map(function (tn) { return tn.tunnelName; }));
+  var tunnelIfaceByName = {};
+  var treeRows = rows.filter(function (r) {
+    if (r.ifType !== "tunnel" || !tunnelNames.has(r.ifName) || monitored.has(r.ifName)) return true;
+    tunnelIfaceByName[r.ifName] = r;
+    return false;
+  });
+  var ifaceNameSet = new Set(treeRows.map(function (r) { return r.ifName; }));
   var childMap = {};
-  rows.forEach(function (r) {
+  treeRows.forEach(function (r) {
     if (r.ifParent && ifaceNameSet.has(r.ifParent)) {
       if (!childMap[r.ifParent]) childMap[r.ifParent] = [];
       childMap[r.ifParent].push(r);
@@ -8743,7 +8772,9 @@ function _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll) {
       ifname: [tn.tunnelName],
       status: tn.status || "",
       speed: null,
-      ip: tn.remoteGateway || "",     // the IP column's value for a tunnel row
+      // The IP column's value for a tunnel row, plus the folded interface's
+      // overlay address so filtering on it still finds the tunnel.
+      ip: [tn.remoteGateway, tunnelOverlayIp(tn)].filter(Boolean),
       addressing: "",
       mac: "",
       "native-vlan": null,
@@ -8758,7 +8789,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll) {
 
   // Top-level: no ifParent set, or a parent that isn't in this list (see the
   // childMap note — a down FortiLink trunk's members land here).
-  var topLevel = rows.filter(function (r) {
+  var topLevel = treeRows.filter(function (r) {
     return !r.ifParent || !ifaceNameSet.has(r.ifParent);
   });
   topLevel.sort(function (a, b) {

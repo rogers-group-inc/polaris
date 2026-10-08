@@ -568,3 +568,54 @@ describe("interface name → interface or network", () => {
     expect(openedIface).toBe("port1");
   });
 });
+
+// A FortiGate IPsec tunnel arrives twice: as an IPsec-stream tunnel that knows
+// its phase-1 parent, and as a `tunnel`-typed interface row with no ifParent
+// (the CMDB back-fill on REST-polled gates, IF-MIB on SNMP ones). Rendered
+// apart, the interface twin sat top-level under "Other Interfaces" with no
+// tree connector — the tunnel no longer read as a child of its parent port.
+describe("a tunnel listed both as an interface and as an IPsec tunnel", () => {
+  function renderSi(monitoredInterfaces: string[]): void {
+    doc.body.innerHTML = '<div id="ifaces"></div>';
+    g._renderInterfacesTable(doc.getElementById("ifaces"), {
+      lastSystemInfoAt: new Date().toISOString(),
+      monitoredInterfaces, monitoredIpsecTunnels: [], lldpNeighbors: [],
+      interfaces: [
+        { ifName: "wan1",   ifType: "physical", adminStatus: "up", operStatus: "up", ipAddress: "198.51.100.2" },
+        { ifName: "vpn-hq", ifType: "tunnel",   adminStatus: "up", operStatus: null, ipAddress: "10.255.0.1" },
+        { ifName: "gre1",   ifType: "tunnel",   adminStatus: "up", operStatus: null, ipAddress: "10.254.0.1" },
+      ],
+      ipsecTunnels: [
+        { tunnelName: "vpn-hq", status: "up", parentInterface: "wan1", remoteGateway: "203.0.113.7" },
+      ],
+    }, ASSET);
+  }
+
+  it("renders one row, nested under the parent with the tree connector", () => {
+    renderSi([]);
+    expect(names().filter((n) => n === "vpn-hq")).toHaveLength(1);
+    const n = names();
+    expect(n.indexOf("vpn-hq")).toBe(n.indexOf("wan1") + 1);
+    expect(rowFor("vpn-hq").querySelector(".asset-ipsec-link")).not.toBeNull();
+    expect(rowFor("vpn-hq").textContent).toContain("└─");
+  });
+
+  it("carries the interface's configured address on the tunnel row", async () => {
+    renderSi([]);
+    expect(rowFor("vpn-hq").textContent).toContain("10.255.0.1");
+    expect(rowFor("vpn-hq").textContent).toContain("203.0.113.7");
+    await typeFilter("ip", "10.255.0.1");
+    expect(names()).toEqual(["vpn-hq"]);
+  });
+
+  it("leaves a tunnel interface with no IPsec twin (GRE / VXLAN) where it was", () => {
+    renderSi([]);
+    expect(rowFor("gre1").querySelector(".asset-iface-link")).not.toBeNull();
+    expect(sectionLabels().some((s) => /Other Interfaces \(1\)/.test(s))).toBe(true);
+  });
+
+  it("keeps a pinned tunnel interface visible so the pin can be removed", () => {
+    renderSi(["vpn-hq"]);
+    expect(dataRows().filter((tr) => nameOf(tr) === "vpn-hq")).toHaveLength(2);
+  });
+});
