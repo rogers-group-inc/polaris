@@ -55,6 +55,7 @@ import { compileWildcard } from "./autoMonitorInterfacesService.js";
 import { isValidCidr, isValidIpAddress } from "../utils/cidr.js";
 import { isKnownAssetType, normalizeAssetTypeName } from "../utils/assetTypes.js";
 import { criteriaToCondition } from "../utils/criteriaToCondition.js";
+import { NOT_AZURE_TAG_ROW, withoutAzureTags } from "../utils/tagNormalize.js";
 import {
   conditionFields,
   conditionNeedsInterfaces,
@@ -604,7 +605,8 @@ export async function listAssetTags(): Promise<string[]> {
   });
   const set = new Set<string>();
   for (const r of rows) for (const t of r.tags) set.add(t);
-  return Array.from(set).sort();
+  // Arc-owned `azure:` tags are hidden from every builder's value picker.
+  return withoutAzureTags(Array.from(set)).sort();
 }
 
 // ─── Matcher (pure predicate) ─────────────────────────────────────────────────
@@ -980,6 +982,9 @@ export async function listTagCatalog(): Promise<{
 }> {
   const [tags, settings] = await Promise.all([
     prisma.tag.findMany({
+      // The Arc-mirrored `azure:` rows never reach a picker: an operator must
+      // not tick an Azure tag onto a device whose Arc resource lacks it.
+      where: NOT_AZURE_TAG_ROW,
       orderBy: [{ category: "asc" }, { name: "asc" }],
       select: { id: true, name: true, category: true, color: true },
     }),

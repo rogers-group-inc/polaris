@@ -214,7 +214,11 @@
   // the account has none (unrestricted), rather than an empty "Tags:" line.
   function accountTagsHtml(user) {
     var regions = Array.isArray(user.regions) ? user.regions : [];
-    var tags = Array.isArray(user.tags) ? user.tags : [];
+    // Arc-owned `azure:` tags are hidden from the UI — the desktop's
+    // isHiddenTag (app.js), which this document does not load.
+    var tags = (Array.isArray(user.tags) ? user.tags : []).filter(function (t) {
+      return String(t).toLowerCase().indexOf("azure:") !== 0;
+    });
     if (!regions.length && !tags.length) return "";
     var pill = function (cls, title) {
       return function (t) {

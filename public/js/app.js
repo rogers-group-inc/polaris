@@ -4967,7 +4967,7 @@ function _ensureTagCache() {
   // claiming the install had no tags.
   return api.serverSettings.tagCatalog().then(function (payload) {
     _tagCache.enforce = !!(payload && payload.enforce === true);
-    _tagCache.tags = (payload && payload.tags) || [];
+    _tagCache.tags = visibleTagRows((payload && payload.tags) || []);
     _tagCache.failed = false;
     _tagCache.loaded = true;
   }).catch(function () {
@@ -5029,7 +5029,7 @@ function _renderTagChips(selected) {
   // save of the edit form. They render ticked in their own group instead:
   // kept unless the operator unticks one.
   var unlisted = selected.filter(function (name, i) {
-    return !registered[name] && selected.indexOf(name) === i;
+    return !registered[name] && !isHiddenTag(name) && selected.indexOf(name) === i;
   });
 
   if (_tagCache.tags.length === 0 && unlisted.length === 0) {
@@ -5054,11 +5054,6 @@ function _renderTagChips(selected) {
           'Region tags are auto-applied to devices inside a Device Map region — removing one from a device still in the region re-adds it on the next reconcile. A tag you add here yourself is never auto-removed.' +
         '</p>';
       }
-      if (cat === AZURE_TAG_CATEGORY) {
-        html += '<p class="hint" style="flex-basis:100%;margin:2px 0 0">' +
-          'Mirrored from Azure resource tags by the Azure Arc integration — change them in Azure; the next discovery run follows.' +
-        '</p>';
-      }
       html += '</div>';
     });
     if (unlisted.length > 0) {
@@ -5074,18 +5069,31 @@ function _renderTagChips(selected) {
 }
 
 // `azure:` tags belong to the Azure Arc sync (it strips and re-adds every one
-// each run), so their chips are locked: unticking one would only last until
-// the next run, and ticking one onto another device would be stripped by it.
-// A locked, ticked chip still counts in getTagFieldValue (`:checked` matches
-// a disabled checkbox), so a save keeps it.
+// each run) and are HIDDEN from every tag surface in the UI — pickers, filters,
+// pills, lists — so an operator can never put an Azure tag on a device whose
+// Arc resource does not carry it. The server keeps an asset's `azure:` tags
+// through every operator write (withArcOwnedTags in src/utils/tagNormalize.ts),
+// which is what lets the edit form save a tag list without them.
 var AZURE_TAG_PREFIX = "azure:";
-var AZURE_TAG_CATEGORY = "Azure Tags";
+
+/** True for a tag the UI never shows (the Arc-owned `azure:` namespace). */
+function isHiddenTag(name) {
+  return String(name == null ? "" : name).toLowerCase().indexOf(AZURE_TAG_PREFIX) === 0;
+}
+
+/** A tag-name array without the hidden ones. */
+function visibleTags(names) {
+  return (names || []).filter(function (n) { return !isHiddenTag(n); });
+}
+
+/** Registry rows ({ name, … }) without the hidden ones. */
+function visibleTagRows(rows) {
+  return (rows || []).filter(function (t) { return t && !isHiddenTag(t.name); });
+}
 
 function _tagChipHTML(name, color, checked) {
-  var locked = String(name).toLowerCase().indexOf(AZURE_TAG_PREFIX) === 0;
-  return '<label class="tag-picker-chip' + (checked ? ' selected' : '') + '" style="' + _tagChipStyle(color, checked) + '"' +
-    (locked ? ' title="Set in Azure — mirrored by the Azure Arc integration"' : '') + '>' +
-    '<input type="checkbox" name="f-tags-cb" value="' + escapeHtml(name) + '"' + (checked ? ' checked' : '') + (locked ? ' disabled' : '') + '>' +
+  return '<label class="tag-picker-chip' + (checked ? ' selected' : '') + '" style="' + _tagChipStyle(color, checked) + '">' +
+    '<input type="checkbox" name="f-tags-cb" value="' + escapeHtml(name) + '"' + (checked ? ' checked' : '') + '>' +
     escapeHtml(name) +
   '</label>';
 }
@@ -5096,7 +5104,7 @@ function tagFieldHTML(selected, opts) {
 
   // Read-only: render selected tags as static badges, no checkboxes or "add new" row.
   if (opts.readOnly) {
-    var visibleSelected = selected;
+    var visibleSelected = visibleTags(selected);
     if (visibleSelected.length === 0) {
       return '<div class="form-group"><label>Tags</label><p style="color:var(--color-text-tertiary);margin:0">—</p></div>';
     }

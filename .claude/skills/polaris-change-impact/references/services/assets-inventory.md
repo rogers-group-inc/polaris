@@ -42,7 +42,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The bulk tag edit behind the Assets bulk bar's **Tags** button — one tag set applied to many assets in one of three modes (`add` / `remove` / `replace`), and the list of managed namespaces a replace keeps.
 
-**Public API:** `bulkEditAssetTags({ ids, mode, tags })` → `{ updated, unchanged, notFound, tags }`; the pure `computeBulkTags(mode, existing, tags)` and `normalizeBulkTags(tags)`; `REPLACE_PRESERVED_PREFIXES`; `BulkTagMode`.
+**Public API:** `bulkEditAssetTags({ ids, mode, tags })` → `{ updated, unchanged, notFound, tags }`; the pure `computeBulkTags(mode, existing, tags)` and `normalizeBulkTags(tags)`; `REPLACE_PRESERVED_PREFIXES`; `BulkTagMode`. `normalizeBulkTags` drops Arc-owned `azure:` tags and replace keeps them (`isAzureTag`), so no bulk mode can add or remove one.
 
 **Cross-service deps:** `mapRegionService.assertAddedRegionTagsNameARegion` (the PUT's `region:` guard, asked once per batch); `utils/chunk.ts → chunkArray`; `prisma.asset` (`select: { id, tags }` read, per-row `update` in 50-row `$transaction`s).
 

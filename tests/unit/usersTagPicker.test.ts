@@ -97,6 +97,9 @@ beforeAll(() => {
   g.currentUsername = "alice";
   g.formatDate = () => "";
   g.regionPillsHtml = () => "";
+  // users.html loads app.js first; its hidden-tag helpers are what the pills read.
+  const appSrc = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8").replace(/\r\n/g, "\n");
+  (0, eval)(appSrc.slice(appSrc.indexOf("var AZURE_TAG_PREFIX"), appSrc.indexOf("function _tagChipHTML")));
   g.TableSF = function () {};
   g.setupColumnLayout = () => null;
   g.userReady = Promise.resolve();

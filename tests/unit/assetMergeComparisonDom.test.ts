@@ -27,6 +27,8 @@ vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 const g = globalThis as Record<string, any>;
 const modalLines = readFileSync(resolve(__dirname, "../../public/js/asset-merge-modal.js"), "utf8").split(/\r?\n/);
+const APP_SRC = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8").replace(/\r\n/g, "\n");
+const APP_HIDDEN_TAG_SRC = APP_SRC.slice(APP_SRC.indexOf("var AZURE_TAG_PREFIX"), APP_SRC.indexOf("function _tagChipHTML"));
 
 /** Slice a top-level `function NAME(...) {` … `}` block out of asset-merge-modal.js. */
 function fnSrc(name: string): string {
@@ -134,6 +136,9 @@ beforeEach(() => {
   g._mergeThisDeps = null;
   g._mergeOtherDeps = null;
   g._mergePreselected = true;
+  // The host pages load app.js first; its hidden-tag helpers are what the
+  // comparison's Tags row reads.
+  (0, eval)(APP_HIDDEN_TAG_SRC);
   (0, eval)(arrSrc("_mergeCompareFields"));
   for (const fn of HELPERS) (0, eval)(fnSrc(fn));
 });

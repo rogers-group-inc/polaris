@@ -59,6 +59,10 @@ beforeAll(() => {
   };
   (sandbox.window as any).document = sandbox.document;
   vm.createContext(sandbox);
+  // appmap.html loads app.js first; its hidden-tag helpers (visibleTags…) are
+  // the one piece of it the map's tag filter reads.
+  const appSrc = readFileSync(resolve(here, "../../public/js/app.js"), "utf8").replace(/\r\n/g, "\n");
+  vm.runInContext(appSrc.slice(appSrc.indexOf("var AZURE_TAG_PREFIX"), appSrc.indexOf("function _tagChipHTML")), sandbox);
   vm.runInContext(code, sandbox);
   applyGraphFilter = sandbox.window.PolarisAppMap.applyGraphFilter;
   buildFilterCatalog = sandbox.window.PolarisAppMap.buildFilterCatalog;
@@ -298,6 +302,18 @@ describe("applyGraphFilter — asset tags", () => {
     const tags = buildFilterCatalog(nodes, edges).filter((c) => c.kind === "tag").map((c) => c.value).sort();
     expect(tags).toEqual(["db", "prod", "production", "web-tier"]);
     expect(rankSuggestions(buildFilterCatalog(nodes, edges), "web-t")[0]).toEqual({ kind: "tag", value: "web-tier" });
+  });
+
+  it("never offers an Arc-owned azure: tag, and an azure: pill matches nothing", () => {
+    const { nodes, edges } = tagged();
+    nodes.find((n) => n.id === "asset:B")!.tags = ["db", "azure:Env=Prod"];
+    const tags = buildFilterCatalog(nodes, edges).filter((c) => c.kind === "tag").map((c) => c.value);
+    expect(tags).not.toContain("azure:Env=Prod");
+    const r = applyGraphFilter(nodes, edges, noFilter({ pills: [{ kind: "tag", value: "azure:Env=Prod" }] }), NOW);
+    expect(nodeIds(r)).toEqual([]);
+    // …while a visible tag on the same asset still matches.
+    const db = applyGraphFilter(nodes, edges, noFilter({ pills: [{ kind: "tag", value: "db" }] }), NOW);
+    expect(nodeIds(db)).toContain("asset:B");
   });
 });
 

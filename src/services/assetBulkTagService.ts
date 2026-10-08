@@ -31,6 +31,7 @@ import { prisma } from "../db.js";
 import { chunkArray } from "../utils/chunk.js";
 import { AppError } from "../utils/errors.js";
 import { assertAddedRegionTagsNameARegion } from "./mapRegionService.js";
+import { isAzureTag } from "../utils/tagNormalize.js";
 
 export type BulkTagMode = "add" | "remove" | "replace";
 
@@ -41,15 +42,19 @@ const BATCH = 50;
 
 function isPreservedOnReplace(tag: string): boolean {
   const k = tag.toLowerCase();
-  return REPLACE_PRESERVED_PREFIXES.some((p) => k.startsWith(p));
+  return isAzureTag(tag) || REPLACE_PRESERVED_PREFIXES.some((p) => k.startsWith(p));
 }
 
-/** Trim, drop empties, dedupe (exact match — asset tags are case-sensitive). */
+/**
+ * Trim, drop empties, dedupe (exact match — asset tags are case-sensitive).
+ * `azure:` tags are dropped too: the Arc sync owns them, so a bulk edit can
+ * neither add nor remove one, and replace keeps them (isPreservedOnReplace).
+ */
 export function normalizeBulkTags(tags: readonly string[]): string[] {
   const out: string[] = [];
   for (const raw of tags) {
     const t = raw.trim();
-    if (t && !out.includes(t)) out.push(t);
+    if (t && !isAzureTag(t) && !out.includes(t)) out.push(t);
   }
   return out;
 }

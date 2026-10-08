@@ -457,6 +457,8 @@
             department?, assignedTo?, os?, acquiredAt?, warrantyExpiry?, purchaseOrder?, notes?,
             description?, tags? }</code>. <code>assetType</code> defaults to <code>other</code> and
             <code>status</code> to <code>active</code>.
+            <code>azure:</code> tags in <code>tags</code> are dropped: that namespace is mirrored
+            from Azure resource tags by the Azure Arc integration and nothing else may write it.
             <code>201</code> with the created record, plus <code>ipConflict</code>: when the new
             device's address is already recorded by another network-present asset, Polaris raises
             a Duplicate IP conflict on the spot (rather than on its ten-minute sweep) and returns
@@ -486,7 +488,9 @@
             When the update <em>changes</em> <code>ipAddress</code>, the response carries
             <code>ipConflict</code> exactly as <code>POST /assets</code> does &mdash; the conflict on
             the new address, or <code>null</code> &mdash; and a conflict the device just moved off
-            is closed in the same call.</p>
+            is closed in the same call.
+            <code>tags</code> replaces the device's tags, except that its <code>azure:</code> tags
+            (Azure Arc's) are always kept and any <code>azure:</code> tag in the body is ignored.</p>
           <p>Refusals worth coding against:</p>
           <ul>
             <li><code>400</code> &mdash; <code>Credential … not found</code>, naming the id.
@@ -532,8 +536,9 @@
             <code>add</code> keeps each device's own tags and appends the new ones;
             <code>remove</code> strips them from the devices that carry them;
             <code>replace</code> leaves each device with exactly <code>tags</code>, except that
-            <code>region:</code>, <code>prev-entra:</code> and <code>prev-ad:</code> tags are kept.
-            Unknown ids come back in <code>notFound</code> with HTTP 200. An empty <code>tags</code>
+            <code>region:</code>, <code>prev-entra:</code>, <code>prev-ad:</code> and
+            <code>azure:</code> tags are kept. An <code>azure:</code> tag in <code>tags</code> is
+            ignored in every mode &mdash; Azure Arc owns that namespace. Unknown ids come back in <code>notFound</code> with HTTP 200. An empty <code>tags</code>
             is a <code>400</code> for add and remove (replace with none clears), as is adding a
             <code>region:</code> tag that names no map region.</p>
         </div>

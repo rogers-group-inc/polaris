@@ -36,6 +36,7 @@ import {
 } from "./notificationTypes.js";
 import { isBlockedOutboundHost } from "../utils/netGuard.js";
 import { listRegions, REGION_TAG_CATEGORY } from "./mapRegionService.js";
+import { NOT_AZURE_TAG_ROW } from "../utils/tagNormalize.js";
 import { regionLevelIndex } from "./regionHierarchyService.js";
 import { ipInCidr } from "../utils/cidr.js";
 import { invalidateDownDetectionCache } from "./downDetectionService.js";
@@ -388,7 +389,8 @@ export async function listScopeOptions(): Promise<{
     prisma.tag
       .findMany({
         select: { name: true, category: true },
-        where: { category: { not: REGION_TAG_CATEGORY } },
+        // Arc-mirrored `azure:` rows are hidden from every tag picker.
+        where: { category: { not: REGION_TAG_CATEGORY }, ...NOT_AZURE_TAG_ROW },
         orderBy: [{ category: "asc" }, { name: "asc" }],
       })
       .catch(() => [] as { name: string; category: string | null }[]),

@@ -507,7 +507,7 @@ function _renderMergeComparison() {
     ctxRow("Polling history", _mergeHistoryCell(_mergeThisHistory), _mergeHistoryCell(_mergeOtherHistory)) +
     ctxRow("Sources", _mergeSourcesSummary(_mergeThisSources), _mergeSourcesSummary(_mergeOtherSources)) +
     ctxRow("Last Seen", escapeHtml(A.lastSeen ? formatDate(A.lastSeen) : "-"), escapeHtml(B.lastSeen ? formatDate(B.lastSeen) : "-")) +
-    ctxRow("Tags", (A.tags && A.tags.length ? A.tags.map(escapeHtml).join(", ") : "-"), (B.tags && B.tags.length ? B.tags.map(escapeHtml).join(", ") : "-"));
+    ctxRow("Tags", (visibleTags(A.tags).map(escapeHtml).join(", ") || "-"), (visibleTags(B.tags).map(escapeHtml).join(", ") || "-"));
 
   // Dependency parents — context row that becomes a CONFLICT row (highlight +
   // Keep A/B radios) when both sides have effective parents and they differ.
@@ -654,7 +654,8 @@ function _buildMergePlan(survivor, fieldWinners, dependencyWinner) {
   var survTags = (survivorAsset.tags || []);
   var have = {};
   survTags.forEach(function (t) { have[t] = true; });
-  var tagsAdded = (absorbedAsset.tags || []).filter(function (t) { return !have[t]; });
+  // Arc-owned `azure:` tags are hidden from the UI, here as everywhere.
+  var tagsAdded = visibleTags(absorbedAsset.tags).filter(function (t) { return !have[t]; });
 
   // monitored is OR-ed server-side; only the OFF→ON direction is a change worth
   // showing. Mirrors assetMergeService's carriedMonitoring, including the

@@ -1778,7 +1778,7 @@ function renderAssetsPage() {
       '<td>' + assetMonitoredViaCell(a) + '</td>' +
       '<td>' + escapeHtml(a.location || a.learnedLocation || "-") + '</td>' +
       '<td>' + escapeHtml(a.description || "-") + '</td>' +
-      '<td>' + escapeHtml((a.tags || []).join(", ") || "-") + '</td>' +
+      '<td>' + escapeHtml(visibleTags(a.tags).join(", ") || "-") + '</td>' +
       '<td>' + _copyableCell(a.assetTag) + '</td>' +
       '<td>' + escapeHtml(a.manufacturer || "-") + '</td>' +
       '<td>' + escapeHtml(a.model || "-") + '</td>' +
@@ -5790,7 +5790,7 @@ function _assetGeneralTabHTML(a, sources) {
       viewRow("Acquired", (a.acquiredAt || a.createdAt) ? formatDate(a.acquiredAt || a.createdAt) : null) +
       viewRow("Warranty Expires", a.warrantyExpiry ? formatDate(a.warrantyExpiry) : null) +
       viewRow("Purchase Order", a.purchaseOrder) +
-      viewRow("Tags", (a.tags || []).join(", ") || null, false, true) +
+      viewRow("Tags", visibleTags(a.tags).join(", ") || null, false, true) +
       viewRow("Description", a.description
         ? a.description + (a.descriptionSync && a.descriptionSync.status === "failed"
             ? " ⚠ (device sync failed)"
