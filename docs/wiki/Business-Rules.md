@@ -1377,6 +1377,10 @@ See [Server Settings → Repository](Server-Settings#repository) and
 
 ### Rule 88
 
+*Retired 2026-10-08 — see [rule 98](#rule-98).* The **Skip unused ports** option
+and the 30-day remembered address behind it were removed. The text below is kept
+as the record of what the rule was.
+
 **A port Polaris has positive evidence was never in use does not alert when the
 automation asks it to skip unused ports. "Unused" is decided by the port's
 remembered address, never its current one.**
@@ -1402,7 +1406,8 @@ raises an alert, and an alert already open on one clears. A port that had an
 address recently (a DHCP WAN that just lost its lease, a static WAN that went
 down) still alerts. A port down for more than 30 days is treated as unused.
 
-See [Automation Triggers → Skip unused ports](Automation-Triggers#skip-unused-ports).
+Its replacement is described under
+[Automation Triggers → SD-WAN member IP address](Automation-Triggers#sd-wan-member-ip-address).
 
 ### Rule 89
 
@@ -1623,3 +1628,36 @@ as a MAC, it would let unrelated devices match each other and merge.
 - **Upgrading clears existing zeros from assets.** Each asset whose MAC is
   cleared gets an `asset.mac.cleared` event. Reservations are left as they are.
 - **Search still finds it**, so you can look for any that remain.
+
+### Rule 98
+
+**An SD-WAN condition may be narrowed to the members whose current address
+passes a comparison. A member whose address Polaris could not read is kept.**
+
+Some deployment templates enable every WAN port on every FortiGate, as SD-WAN
+members, whether or not a circuit is plugged into them. An unused `wan2` is then
+down on every health check, and a "member is down" automation alerts about it on
+every gate that has one.
+
+Add **SD-WAN member IP address** to an SD-WAN member state, latency, jitter or
+packet loss condition to leave such members out. It compares each member's
+interface address now, as **is** or **is not** an address. *Is not 0.0.0.0*
+leaves out every member with no address.
+
+- The member is matched to the interface of the same name.
+- `0.0.0.0` matches every form a gate reports for "no address".
+- A member with no interface row, or whose scrape returned no address, is kept.
+  The filter only removes members it has evidence about.
+- A member that stops passing raises no alert, and an alert already open on it
+  clears.
+- The filter is part of what makes two automations "the same trigger" for
+  precedence ([rule 18](#rule-18)), so a filtered and an unfiltered automation
+  never carve each other out.
+
+It compares the current address only. A DHCP WAN whose lease dropped when its
+link went down reads `0.0.0.0` too, and *is not 0.0.0.0* leaves that outage out.
+This replaced **Skip unused ports** ([rule 88](#rule-88)), which used a 30-day
+remembered address to tell the two apart; it was retired on 2026-10-08 in favour
+of a filter an operator can read and set directly.
+
+See [Automation Triggers → SD-WAN member IP address](Automation-Triggers#sd-wan-member-ip-address).

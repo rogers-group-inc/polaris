@@ -119,6 +119,8 @@ import {
   buildShadowIndex,
   isAssetShadowed,
   alertOwnerOf,
+  parseMemberIpFilter,
+  memberIpPasses,
   type DeliveryOwner,
   type ShadowIndex as ShadowIndexOf,
 } from "./notificationTypes.js";
@@ -133,7 +135,6 @@ import { computeStorageForecast } from "./storageForecastService.js";
 import { buildComposedEmail, scopeRegionTagsOf } from "./notificationRecipientService.js";
 import { executeActions, type ActionExecContext } from "./automationActionService.js";
 import { queryProbeLossRatios } from "./probeLossQuery.js";
-import { isUnusedPort } from "./interfaceInventoryService.js";
 import { logger } from "../utils/logger.js";
 import { alarmStatusToFlag } from "../utils/hardwareSensors.js";
 import { median } from "../utils/stats.js";
@@ -1085,41 +1086,40 @@ function reduceReadings(
  * preview pass nothing: they only need the reading gone.
  */
 /**
- * "Skip unused ports" (SKIP_UNUSED_PORT_TARGETS): drop the readings whose port
- * was never in use — interfaceInventoryService.isUnusedPort over the port's
- * current-state row. `portOf` names the port a reading is about: the interface
- * itself for ifOperStatus, the member (`link`, the second half of the
- * `healthCheck|link` key) for the SD-WAN conditions.
+ * SD-WAN member IP address (business rule 98): keep only the member readings
+ * whose member interface's CURRENT address passes `dimensionFilter.sdwanMemberIp`
+ * ("!= 0.0.0.0" keeps a WAN with no address out of the condition). The member
+ * is the `link` half of the `healthCheck|link` key, joined to its interface by
+ * name — the SD-WAN tab's join.
  *
- * A dropped port produces NO reading, the same contract as an unpinned
+ * A dropped member produces NO reading, the same contract as an unpinned
  * interface: a live alert on it is retired by clearVanishedStates, and one is
- * never raised. ONE read on AssetInterface narrowed to the assets AND port
- * names in play (a handful of WAN names per gate), so a 2000-gate fleet costs
- * one small indexed query per evaluation, and none at all when the option is
- * off. A failed read keeps every reading — the option removes ports it has
- * positive evidence about, never ones it could not check.
+ * never raised. A member whose address is unknown (no interface row, or a
+ * scrape that collected no address) is KEPT, and so is every member when the
+ * read fails — the filter removes members it has evidence about, never ones it
+ * could not check. ONE read on AssetInterface narrowed to the gates AND member
+ * names in play, none at all when the filter is unset.
  */
-async function dropUnusedPorts(
-  trigger: { skipUnusedPorts?: boolean },
+async function filterByMemberIp(
+  df: { sdwanMemberIp?: string } | undefined,
   readings: Reading[],
-  portOf: (r: Reading) => string,
-  now: Date = new Date(),
 ): Promise<Reading[]> {
-  if (!trigger.skipUnusedPorts || readings.length === 0) return readings;
+  const filter = parseMemberIpFilter(df?.sdwanMemberIp);
+  if (!filter || readings.length === 0) return readings;
   const assetIds = Array.from(new Set(readings.map((r) => r.assetId)));
-  const names = Array.from(new Set(readings.map(portOf)));
-  let rows: Array<{ assetId: string; ifName: string; ifType: string | null; ipAddress: string | null; lastLearnedIp: string | null; lastLearnedIpAt: Date | null }>;
+  const names = Array.from(new Set(readings.map(sdwanMemberOf)));
+  let rows: Array<{ assetId: string; ifName: string; ipAddress: string | null }>;
   try {
     rows = await prisma.assetInterface.findMany({
       where: { assetId: { in: assetIds }, ifName: { in: names } },
-      select: { assetId: true, ifName: true, ifType: true, ipAddress: true, lastLearnedIp: true, lastLearnedIpAt: true },
+      select: { assetId: true, ifName: true, ipAddress: true },
     });
   } catch (err) {
-    logger.warn({ err: (err as Error)?.message }, "skip-unused-ports lookup failed — keeping every port");
+    logger.warn({ err: (err as Error)?.message }, "SD-WAN member IP lookup failed — keeping every member");
     return readings;
   }
-  const unused = new Set(rows.filter((r) => isUnusedPort(r, now)).map((r) => `${r.assetId}|${r.ifName}`));
-  return unused.size === 0 ? readings : readings.filter((r) => !unused.has(`${r.assetId}|${portOf(r)}`));
+  const ipOf = new Map(rows.map((r) => [`${r.assetId}|${r.ifName}`, r.ipAddress]));
+  return readings.filter((r) => memberIpPasses(filter, ipOf.get(`${r.assetId}|${sdwanMemberOf(r)}`) ?? null) !== false);
 }
 
 /**
@@ -1554,10 +1554,10 @@ async function resolveAssetMetricReadings(
       // Any-of over "|"-joined terms (utils/sdwanDimensions) — a single
       // pattern is one term and reads exactly as it always did.
       const filtered = rows.filter((r) => sdwanDimensionMatch(r.healthCheck, df.healthCheck) && sdwanDimensionMatch(r.link, df.link));
-      const kept = await dropUnusedPorts(
-        trigger,
+      // Business rule 98: narrowed by the member's current address.
+      const kept = await filterByMemberIp(
+        df,
         reduceReadings(filtered, index, (r) => `${r.healthCheck}|${r.link}`, (r) => `${r.healthCheck} / ${r.link}`, (r) => r[col] ?? null, agg, winPolls),
-        sdwanMemberOf,
       );
       return yieldToSdwanParents(trigger, trigger.metric, kept, sdwanYielded);
     }
@@ -2067,8 +2067,7 @@ async function resolveAssetStateReadings(
       if (trigger.field === "poeStatus" && (poeFaultCoversUnpinned(trigger) || opts?.coverUnpinnedPoe)) {
         out.push(...await unpinnedPoeFaultReadings(index, ids, df, mk));
       }
-      // "Skip unused ports" — offered on oper status only (validateSkipUnusedPorts).
-      return trigger.field === "ifOperStatus" ? dropUnusedPorts(trigger, out, (r) => r.dimKey) : out;
+      return out;
     }
     case "ipsecStatus": {
       const since = new Date(Date.now() - lookbackMsFor(trigger));
@@ -2132,9 +2131,9 @@ async function resolveAssetStateReadings(
           readingAt: r.timestamp,
         };
       });
-      // "Skip unused ports": a template's unplugged wan2 is down on every
-      // health check forever — see SKIP_UNUSED_PORT_TARGETS.
-      const kept = await dropUnusedPorts(trigger, memberReadings, sdwanMemberOf);
+      // Business rule 98: a member with no address (a template's unplugged
+      // wan2, down on every health check forever) is left out by "!= 0.0.0.0".
+      const kept = await filterByMemberIp(df, memberReadings);
       // Business rule 90: a dead wan2 explains its dead overlays.
       return yieldToSdwanParents(trigger, trigger.field, kept, opts?.sdwanYielded);
     }
