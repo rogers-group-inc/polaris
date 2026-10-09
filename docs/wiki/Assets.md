@@ -1007,6 +1007,19 @@ confirmed, whether it is pinned) and asks how to proceed:
 A record whose address claim has gone stale is listed for information but does
 not count as a collision. Re-saving an asset without changing its IP asks nothing.
 
+### Changing or clearing an asset's IP
+
+The IP Address field in the edit form overrides what discovery reports.
+
+| You | Then |
+|---|---|
+| **type a different address** | it is pinned (*overridden* on the details page). Discovery reporting the same address releases the pin; a different one raises an [IP override conflict](Conflict-Resolution#ip-override-conflicts) |
+| **clear the field** on an asset that has an address | the asset has **no address** and stays that way (*cleared* on the details page). Discovery cannot put one back; an address it reports raises the same conflict, where **Accept** takes it and **Reject** keeps the asset blank |
+| **click Revert to discovered IP** (shown under a pinned or cleared field) | the pin is released and the asset takes whatever discovery reports, on save |
+
+Saving the form while the field is already empty changes nothing, so editing
+another field on an asset with no address never pins it blank.
+
 ## Deleting an asset
 
 Three ways in, all `assets:write` and all the same act:

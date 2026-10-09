@@ -260,6 +260,12 @@ Note the self-disabling case that is *not* a conflict: a discovery write staging
 the **same** IP as the pin **releases** the pin in that write, audited. The pin
 did its job.
 
+**An asset whose IP an operator cleared** raises the same card. The card shows
+the pinned side as *no address (cleared)*, and any address discovery reports
+raises it. **Accept** gives the asset the discovered address; **Reject** keeps
+it with no address. A blank pin never releases itself; only an operator ends
+it.
+
 ---
 
 ## Two FortiGates claim one device

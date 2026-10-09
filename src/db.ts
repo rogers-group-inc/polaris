@@ -30,6 +30,8 @@
  *      override releases the pin in the same write; a different staged IP is
  *      rewritten back to the override and an ip-override Conflict is raised
  *      (fire-and-forget, via ipOverrideService) for the operator to resolve.
+ *      Asset.ipBlankPinned (an operator pin to NO address) is enforced the
+ *      same way: a staged address is dropped and raises that conflict.
  *      The same read also enforces Asset.ipCleared (rule 40(j)): an address
  *      the operator blanked is dropped from a write re-staging it while
  *      another network-present asset still records it; any other staged
@@ -53,6 +55,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { normalizeManufacturer } from "./utils/manufacturerNormalize.js";
 import {
   applyHostnameOverride,
+  applyIpBlankPin,
   applyIpCleared,
   applyIpOverride,
   stagedIpOf,
@@ -394,12 +397,12 @@ async function enforceOperatorOverrides(
   const d = data as Record<string, unknown> | undefined;
   if (!d || typeof d !== "object") return null;
   const guardHostname = "hostname" in d && !("hostnameOverride" in d);
-  const guardIp = "ipAddress" in d && !("ipOverride" in d);
+  const guardIp = "ipAddress" in d && !("ipOverride" in d) && !("ipBlankPinned" in d);
   if (!guardHostname && !guardIp) return null;
   try {
     const row = await base.asset.findFirst({
       where: where as any,
-      select: { id: true, hostnameOverride: true, ipOverride: true, ipCleared: true },
+      select: { id: true, hostnameOverride: true, ipOverride: true, ipBlankPinned: true, ipCleared: true },
     });
     if (guardHostname) applyHostnameOverride(d, row?.hostnameOverride);
     if (guardIp) {
@@ -408,6 +411,10 @@ async function enforceOperatorOverrides(
         typeof srcRaw === "string"
           ? srcRaw
           : (srcRaw && typeof srcRaw === "object" && typeof (srcRaw as any).set === "string" ? (srcRaw as any).set : null);
+      // The operator pinned the asset to NO address: a discovered address is
+      // dropped and raises the same ip-override conflict an address pin does.
+      const blank = applyIpBlankPin(d, row?.ipBlankPinned);
+      if (blank.action !== "none") return { ip: blank, stagedIpSource };
       const ip = applyIpOverride(d, row?.ipOverride);
       if (ip.action !== "none") return { ip, stagedIpSource };
       // Business rule 40(j): an operator-blanked address. The "is it still

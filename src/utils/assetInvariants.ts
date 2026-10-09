@@ -135,6 +135,51 @@ export function applyIpOverride(
 }
 
 /**
+ * Apply the operator's blank pin (Asset.ipBlankPinned) to a pending Asset
+ * write — the "no address" sibling of applyIpOverride, with the same
+ * discovery-gets-a-vote outcome vocabulary:
+ *
+ *   "none"       — no pin, the write doesn't stage ipAddress, the write
+ *                  touches ipOverride / ipBlankPinned itself (an operator or
+ *                  conflict-accept path — authoritative), or it stages a
+ *                  clear (discovery agreeing with the blank keeps the pin:
+ *                  unlike an address pin it does NOT self-release, or the
+ *                  next source to report an address would quietly fill it).
+ *   "reasserted" — the write stages an address: it is dropped (ipAddress and
+ *                  any staged ipSource written back to null) and
+ *                  `discoveredIp` names it, so the caller raises the
+ *                  ip-override Conflict.
+ *
+ * Mutates `data` in place.
+ */
+export function applyIpBlankPin(
+  data: Record<string, unknown>,
+  pinned: boolean | null | undefined,
+): IpOverrideOutcome {
+  if (!data || typeof data !== "object") return { action: "none" };
+  if (!("ipAddress" in data)) return { action: "none" };
+  if ("ipOverride" in data || "ipBlankPinned" in data) return { action: "none" };
+  if (!pinned) return { action: "none" };
+  const staged = stagedIpOf(data);
+  if (!staged) return { action: "none" };
+  const v = data.ipAddress;
+  if (v !== null && typeof v === "object" && "set" in (v as Record<string, unknown>)) {
+    (v as Record<string, unknown>).set = null;
+  } else {
+    data.ipAddress = null;
+  }
+  if (data.ipSource !== undefined) {
+    const src = data.ipSource;
+    if (src !== null && typeof src === "object" && "set" in (src as Record<string, unknown>)) {
+      (src as Record<string, unknown>).set = null;
+    } else {
+      data.ipSource = null;
+    }
+  }
+  return { action: "reasserted", discoveredIp: staged };
+}
+
+/**
  * The address a pending Asset write stages, trimmed, or null when the write
  * stages none or a clear. Handles the plain and Prisma nested (`{ set }`)
  * shapes.

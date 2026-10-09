@@ -708,6 +708,8 @@ async function acceptIpOverrideConflict(conflict: any, actor?: string) {
     data: {
       ipAddress: discoveredIp,
       ipOverride: null,
+      // Releases a BLANK pin too (the operator had cleared the address).
+      ipBlankPinned: false,
       ipSource: typeof proposed.ipSource === "string" && proposed.ipSource ? proposed.ipSource : "discovery",
     },
   });
@@ -718,8 +720,14 @@ async function acceptIpOverrideConflict(conflict: any, actor?: string) {
     resourceId: conflict.assetId,
     resourceName: label,
     actor,
-    message: `IP override conflict accepted on "${label}" — adopted discovered address ${discoveredIp}, released the override (was ${proposed.overrideIp ?? "unknown"})`,
+    message: `IP override conflict accepted on "${label}" — adopted discovered address ${discoveredIp}, released the override (was ${pinnedIpLabel(proposed)})`,
   });
+}
+
+/** What the pin was, for the audit line: an address, or a blank pin. */
+function pinnedIpLabel(proposed: Record<string, any>): string {
+  if (typeof proposed.overrideIp === "string" && proposed.overrideIp) return proposed.overrideIp;
+  return proposed.blankPinned ? "no address (cleared)" : "unknown";
 }
 
 // Reject = keep the pin. No asset write — the guard already re-asserted the
@@ -734,7 +742,7 @@ async function rejectIpOverrideConflict(conflict: any, actor?: string) {
     resourceId: conflict.assetId,
     resourceName: label,
     actor,
-    message: `IP override conflict rejected on "${label}" — kept pinned address ${proposed.overrideIp ?? "unknown"}; discovered ${proposed.ipAddress ?? "unknown"} dismissed (the same address won't re-raise)`,
+    message: `IP override conflict rejected on "${label}" — kept pinned address ${pinnedIpLabel(proposed)}; discovered ${proposed.ipAddress ?? "unknown"} dismissed (the same address won't re-raise)`,
   });
 }
 

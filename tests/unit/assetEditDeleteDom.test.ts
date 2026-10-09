@@ -84,6 +84,7 @@ async function openEdit(opts?: { perm?: string; hostname?: string }) {
   g._ensureTagCache = async () => {};
   g.wireDescriptionCapWarning = () => {};
   g.wireTagPicker = () => {};
+  g._wireIpRevertLink = () => {};
   g._wireMonitorEditTab = () => {};
   g._populateUploadedMibsInDropdowns = () => {};
 

@@ -275,9 +275,12 @@ const PollingMethodEnum = z.enum(["rest_api", "snmp", "winrm", "ssh", "icmp", "d
 
 const UpdateAssetSchema = CreateAssetSchema.partial().extend({
   // Unlike create (min(1)), update accepts "" — blanking the IP Address field
-  // releases the operator IP pin (Asset.ipOverride) and reverts to the
-  // discovery-projected address, mirroring the hostname-override clear path.
+  // of an asset that HAS an address pins it to no address (Asset.ipBlankPinned):
+  // discovery can no longer fill it. `ipRevertToDiscovered: true` is the
+  // other way out of a pin — release it and take the discovery-projected
+  // address (it wins over `ipAddress` in the same body).
   ipAddress:             z.string().optional(),
+  ipRevertToDiscovered:  z.literal(true).optional(),
   monitored:             z.boolean().optional(),
   monitorCredentialId:          z.string().uuid().nullable().optional(),
   responseTimeCredentialId:     z.string().uuid().nullable().optional(),
@@ -4308,28 +4311,41 @@ async function buildAssetUpdatePatch(
   // discovery-gets-a-vote semantics on later writes (see Asset.ipOverride
   // in schema.prisma: discovery reporting the pinned IP releases the pin;
   // a different IP re-asserts it and raises an ip-override Conflict).
-  // Only a real change pins; clearing (empty string) releases the pin and
-  // reverts to the discovery-projected address. Any set/clear here also
-  // closes the asset's pending ip-override conflict — the operator just
-  // made the call the conflict was asking about.
+  // Only a real change pins. Clearing an address the asset HAS pins it to no
+  // address (ipBlankPinned) — it used to re-project, which put a discovered
+  // address straight back on save. A blank that is already blank is a no-op
+  // (the form re-sends the empty field on every save; pinning there would
+  // lock every address-less asset against discovery). "Revert to discovered"
+  // (`ipRevertToDiscovered`) releases either pin and re-projects. Any
+  // set/clear/revert closes the asset's pending ip-override conflict — the
+  // operator just made the call the conflict was asking about.
   let ipOverrideTouched = false;
-  if (input.ipAddress !== undefined) {
+  delete data.ipRevertToDiscovered;
+  if (input.ipRevertToDiscovered) {
+    const { projected, provenance } = await loadProjection();
+    data.ipOverride = null;
+    data.ipBlankPinned = false;
+    data.ipAddress = projected.ipAddress;
+    data.ipSource = projected.ipAddress ? (provenance.ipAddress ?? "discovery") : null;
+    ipOverrideTouched = !!existing.ipOverride || existing.ipBlankPinned;
+  } else if (input.ipAddress !== undefined) {
     const trimmed = input.ipAddress.trim();
-    if (!trimmed && existing.ipCleared && !existing.ipAddress && !existing.ipOverride) {
-      // Business rule 40(j): the address was blanked from a duplicate-IP
-      // card and is waiting for discovery. The form re-sends the blank field
-      // on every save; re-projecting here would put the contested address
-      // straight back, so a blank that is already blank is a no-op.
+    if (!trimmed && !existing.ipAddress) {
+      // Already blank — a blank pin, a rule 40(j) hold (blanked from a
+      // duplicate-IP card, waiting for discovery), or simply no address.
+      // Re-sending the empty field changes none of them.
       delete data.ipAddress;
     } else if (!trimmed) {
+      data.ipAddress = null;
       data.ipOverride = null;
-      const { projected, provenance } = await loadProjection();
-      data.ipAddress = projected.ipAddress;
-      data.ipSource = projected.ipAddress ? (provenance.ipAddress ?? "discovery") : null;
-      ipOverrideTouched = !!existing.ipOverride;
+      data.ipBlankPinned = true;
+      data.ipSource = null;
+      data.ipCleared = null; // the pin supersedes any rule 40(j) hold
+      ipOverrideTouched = true;
     } else if (trimmed !== existing.ipAddress) {
       data.ipAddress = trimmed;
       data.ipOverride = trimmed;
+      data.ipBlankPinned = false;
       data.ipSource = "manual";
       data.ipCleared = null; // a typed address ends any rule 40(j) blank hold
       ipOverrideTouched = true;
@@ -4490,7 +4506,7 @@ async function applyAssetUpdateSideEffects(
   }
   // `os` is in the tracked set; `osVersion` deliberately isn't, because
   // UpdateAssetSchema doesn't accept it — firmware is discovery/agent-owned.
-  const trackFields = ["hostname", "hostnameOverride", "ipAddress", "ipOverride", "macAddress", "manufacturer", "model", "serialNumber", "assetType", "status", "location", "latitude", "longitude", "notes", "description", "dnsName", "os"] as const;
+  const trackFields = ["hostname", "hostnameOverride", "ipAddress", "ipOverride", "ipBlankPinned", "macAddress", "manufacturer", "model", "serialNumber", "assetType", "status", "location", "latitude", "longitude", "notes", "description", "dnsName", "os"] as const;
   const before: Record<string, unknown> = {};
   const after: Record<string, unknown> = {};
   for (const f of trackFields) { before[f] = (existing as any)[f]; after[f] = (asset as any)[f]; }

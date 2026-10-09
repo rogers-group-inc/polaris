@@ -1382,20 +1382,28 @@ function getAlertsFormData() {
     var existing = c.existingAssetSnapshot || c.asset || {};
     var proposed = c.proposedAssetFields || {};
     var isResolved = c.status !== "pending";
-    var pinned = proposed.overrideIp || existing.ipOverride || existing.ipAddress || null;
+    // A BLANK pin (the operator cleared the address) has no address to show.
+    var blankPinned = !!(proposed.blankPinned || (existing.ipBlankPinned && !existing.ipOverride));
+    var pinned = blankPinned ? null : (proposed.overrideIp || existing.ipOverride || existing.ipAddress || null);
     var discovered = proposed.ipAddress || null;
     var hostLabel = existing.hostname || proposed.hostname || "(asset)";
 
     var rows =
       '<tr class="conflict-changed">' +
         '<td class="conflict-field">IP Address</td>' +
-        '<td>' + (pinned ? '<span class="mono">' + escapeHtml(pinned) + '</span>' : '<span style="color:var(--color-text-tertiary);font-style:italic">—</span>') + '</td>' +
+        '<td>' + (pinned ? '<span class="mono">' + escapeHtml(pinned) + '</span>'
+          : blankPinned ? '<span style="font-style:italic">no address (cleared)</span>'
+          : '<span style="color:var(--color-text-tertiary);font-style:italic">—</span>') + '</td>' +
         '<td>' + (discovered ? '<strong class="mono">' + escapeHtml(discovered) + '</strong>' : '<span style="color:var(--color-text-tertiary);font-style:italic">—</span>') + '</td>' +
       '</tr>';
 
-    var explainer = 'IP override conflict — discovery reports a different address' +
-      (proposed.ipSource ? ' (via ' + escapeHtml(proposed.ipSource) + ')' : '') +
-      ' than this asset\'s manually pinned IP. <strong>Accept</strong> to adopt the discovered address and release the override; <strong>Reject</strong> to keep the pinned address (the same discovered address won\'t re-raise, but a new one will).';
+    var explainer = blankPinned
+      ? 'IP override conflict — discovery reports an address' +
+        (proposed.ipSource ? ' (via ' + escapeHtml(proposed.ipSource) + ')' : '') +
+        ' for this asset, but its address was manually cleared. <strong>Accept</strong> to adopt the discovered address; <strong>Reject</strong> to keep the asset with no address (the same discovered address won\'t re-raise, but a new one will).'
+      : 'IP override conflict — discovery reports a different address' +
+        (proposed.ipSource ? ' (via ' + escapeHtml(proposed.ipSource) + ')' : '') +
+        ' than this asset\'s manually pinned IP. <strong>Accept</strong> to adopt the discovered address and release the override; <strong>Reject</strong> to keep the pinned address (the same discovered address won\'t re-raise, but a new one will).';
 
     var actions = isResolved
       ? resolvedActionsHtml(c)
@@ -1406,7 +1414,8 @@ function getAlertsFormData() {
       '<div class="conflict-card-header">' +
         '<span class="badge badge-warning">IP Override</span>' +
         '<strong>' + escapeHtml(hostLabel) + '</strong>' +
-        (pinned ? '<span class="conflict-card-subnet" style="font-family:var(--font-mono);font-size:0.78rem">pinned ' + escapeHtml(pinned) + '</span>' : '') +
+        (pinned ? '<span class="conflict-card-subnet" style="font-family:var(--font-mono);font-size:0.78rem">pinned ' + escapeHtml(pinned) + '</span>'
+          : blankPinned ? '<span class="conflict-card-subnet" style="font-size:0.78rem">address cleared</span>' : '') +
       '</div>' +
       '<div style="padding:6px 14px;font-size:0.78rem;color:var(--color-text-secondary)">' + explainer + '</div>' +
       '<div class="conflict-table" style="padding:0">' +

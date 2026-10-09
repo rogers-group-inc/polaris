@@ -1061,7 +1061,7 @@ export async function reassignDuplicateIpAsset(
   await prisma.asset.update({
     where: { id: assetId },
     // ipCleared: null — an operator address ends any rule 40(j) blank hold.
-    data: { ipAddress: newIp, ipOverride: newIp, ipSource: "manual", ipCleared: null },
+    data: { ipAddress: newIp, ipOverride: newIp, ipBlankPinned: false, ipSource: "manual", ipCleared: null },
   });
 
   // Setting the pin makes any pending ip-override conflict on this asset moot —
@@ -1139,7 +1139,8 @@ export async function clearDuplicateIpAsset(
 
   await prisma.asset.update({
     where: { id: assetId },
-    data: { ipAddress: null, ipOverride: null, ipSource: null, ipCleared: ip },
+    // A rule 40(j) hold waits for discovery — it replaces any blank pin.
+    data: { ipAddress: null, ipOverride: null, ipBlankPinned: false, ipSource: null, ipCleared: ip },
   });
 
   // Dropping the pin makes any pending ip-override conflict on this asset moot.

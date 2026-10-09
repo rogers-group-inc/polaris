@@ -151,19 +151,54 @@ d("PUT /assets/:id contract", () => {
     expect(row?.hostname).toBeNull();
   });
 
-  it("ipAddress: a real change pins with ipSource=manual, a clear releases", async () => {
+  it("ipAddress: a real change pins with ipSource=manual; clearing pins the asset BLANK", async () => {
     let resp = await put({ ipAddress: "10.97.0.99" });
     expect(resp.status).toBe(200);
     let row = await prisma.asset.findUnique({ where: { id: assetId } });
     expect(row?.ipAddress).toBe("10.97.0.99");
     expect(row?.ipOverride).toBe("10.97.0.99");
+    expect(row?.ipBlankPinned).toBe(false);
     expect(row?.ipSource).toBe("manual");
 
+    // Clear → no address, and a blank pin (it used to re-project, which put a
+    // discovered address straight back on save).
     resp = await put({ ipAddress: "" });
     expect(resp.status).toBe(200);
     row = await prisma.asset.findUnique({ where: { id: assetId } });
     expect(row?.ipOverride).toBeNull();
-    expect(row?.ipAddress).toBeNull(); // no sources to project from
+    expect(row?.ipAddress).toBeNull();
+    expect(row?.ipBlankPinned).toBe(true);
+
+    // A discovery-style write (stages ipAddress, never the pin fields) is dropped.
+    await prisma.asset.update({ where: { id: assetId }, data: { ipAddress: "10.97.0.50", ipSource: "fortigate" } });
+    row = await prisma.asset.findUnique({ where: { id: assetId } });
+    expect(row?.ipAddress).toBeNull();
+    expect(row?.ipSource).toBeNull();
+
+    // Re-saving the form with the field still empty changes nothing.
+    resp = await put({ ipAddress: "", notes: "re-saved" });
+    expect(resp.status).toBe(200);
+    row = await prisma.asset.findUnique({ where: { id: assetId } });
+    expect(row?.ipBlankPinned).toBe(true);
+
+    // Revert → releases the pin and takes the projection (none here).
+    resp = await put({ ipAddress: "", ipRevertToDiscovered: true });
+    expect(resp.status).toBe(200);
+    row = await prisma.asset.findUnique({ where: { id: assetId } });
+    expect(row?.ipBlankPinned).toBe(false);
+    expect(row?.ipAddress).toBeNull();
+
+    // An asset that never had an address is NOT pinned by a blank save.
+    resp = await put({ ipAddress: "" });
+    row = await prisma.asset.findUnique({ where: { id: assetId } });
+    expect(row?.ipBlankPinned).toBe(false);
+
+    // Typing an address ends a blank pin.
+    await prisma.asset.update({ where: { id: assetId }, data: { ipBlankPinned: true } });
+    resp = await put({ ipAddress: "10.97.0.77" });
+    row = await prisma.asset.findUnique({ where: { id: assetId } });
+    expect(row?.ipAddress).toBe("10.97.0.77");
+    expect(row?.ipBlankPinned).toBe(false);
   });
 
   // The edit form used to fold an emptied Location to undefined, which dropped

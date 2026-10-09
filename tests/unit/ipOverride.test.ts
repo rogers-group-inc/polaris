@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { applyIpOverride } from "../../src/utils/assetInvariants.js";
+import { applyIpBlankPin, applyIpOverride } from "../../src/utils/assetInvariants.js";
 
 describe("applyIpOverride", () => {
   it("releases the pin when the staged IP equals the override", () => {
@@ -89,5 +89,37 @@ describe("applyIpOverride", () => {
   it("tolerates non-object data", () => {
     expect(applyIpOverride(null as unknown as Record<string, unknown>, "x")).toEqual({ action: "none" });
     expect(applyIpOverride(undefined as unknown as Record<string, unknown>, "x")).toEqual({ action: "none" });
+  });
+});
+
+describe("applyIpBlankPin", () => {
+  it("drops a staged address on a blank-pinned row and names it for the conflict", () => {
+    const data: Record<string, unknown> = { ipAddress: "10.0.1.50", ipSource: "fortigate" };
+    expect(applyIpBlankPin(data, true)).toEqual({ action: "reasserted", discoveredIp: "10.0.1.50" });
+    expect(data.ipAddress).toBeNull();
+    expect(data.ipSource).toBeNull();
+  });
+
+  it("handles the nested { set } shape", () => {
+    const data: Record<string, unknown> = { ipAddress: { set: "10.0.1.50" }, ipSource: { set: "agent" } };
+    applyIpBlankPin(data, true);
+    expect(data.ipAddress).toEqual({ set: null });
+    expect(data.ipSource).toEqual({ set: null });
+  });
+
+  it("keeps the pin when a source stages a clear — it does not self-release", () => {
+    const data: Record<string, unknown> = { ipAddress: null };
+    expect(applyIpBlankPin(data, true)).toEqual({ action: "none" });
+    expect("ipBlankPinned" in data).toBe(false);
+  });
+
+  it("never touches an operator / conflict-accept write, or a row with no pin", () => {
+    const typed: Record<string, unknown> = { ipAddress: "10.0.1.7", ipOverride: "10.0.1.7", ipBlankPinned: false };
+    expect(applyIpBlankPin(typed, true)).toEqual({ action: "none" });
+    expect(typed.ipAddress).toBe("10.0.1.7");
+    const accept: Record<string, unknown> = { ipAddress: "10.0.1.8", ipOverride: null };
+    expect(applyIpBlankPin(accept, true)).toEqual({ action: "none" });
+    expect(applyIpBlankPin({ ipAddress: "10.0.1.9" }, false)).toEqual({ action: "none" });
+    expect(applyIpBlankPin({ notes: "x" }, true)).toEqual({ action: "none" });
   });
 });
