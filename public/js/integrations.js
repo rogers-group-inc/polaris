@@ -5530,7 +5530,7 @@ function llmFormHTML(defaults) {
       '<div class="form-group"><label>Lookup rounds per answer</label><input type="number" id="f-maxToolRounds" value="' + (d.maxToolRounds || 6) + '" min="1" max="12"></div>' +
       '<div class="form-group"><label>Rows per lookup</label><input type="number" id="f-maxRowsPerTool" value="' + (d.maxRowsPerTool || 200) + '" min="10" max="1000"><p class="hint">Reports go up to 5,000 regardless.</p></div>' +
       '<div class="form-group"><label>Messages of history sent</label><input type="number" id="f-contextMessages" value="' + (d.contextMessages || 20) + '" min="2" max="100"><p class="hint">At most — older ones are dropped first when they would not fit the context window.</p></div>' +
-      '<div class="form-group"><label>Context window</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-contextWindow" value="' + (d.contextWindow || 8192) + '" min="2048" max="1000000" step="1024" style="width:110px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">tokens</span></div><p class="hint">Match the model server. Ollama uses 4096 unless <code>OLLAMA_CONTEXT_LENGTH</code> raises it; 8192 or more leaves room for lookups.</p></div>' +
+      '<div class="form-group"><label>Context window</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-contextWindow" value="' + (d.contextWindow || 8192) + '" min="2048" max="1000000" step="1024" style="width:110px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">tokens</span></div><p class="hint" id="f-contextWindow-hint">' + _llmContextWindowHint(azure) + '</p></div>' +
       '<div class="form-group"><label>Response timeout</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-requestTimeoutSec" value="' + timeoutSec + '" min="5" max="600" style="width:90px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">seconds idle</span></div></div>' +
     '</div>' +
     '<div class="form-group"><label>Extra instructions</label><textarea id="f-systemPromptExtra" rows="3" maxlength="4000" placeholder="Optional — e.g. site naming conventions, who to escalate to">' + escapeHtml(d.systemPromptExtra || "") + '</textarea></div>' +
@@ -5605,6 +5605,18 @@ function _llmAzureEndpointText(c) {
 }
 
 /** Show the fields of the chosen provider (and Azure auth mode / API shape), hide the rest. */
+/**
+ * The Context window field's hint, per provider. The window sizes every turn
+ * on EVERY provider (assistantChatService.contextBudget) — left at the 8192
+ * default on a hosted model, Polaris trims history and lookups as if the model
+ * were small. Static markup, no operator text.
+ */
+function _llmContextWindowHint(azure) {
+  return azure
+    ? "Match the deployment's context window: Claude Haiku 5.5, Sonnet 5.5 and Opus 5.5 take <code>1000000</code>; most current GPT deployments 128000 or more. Polaris sizes each question to fit it — history is still capped by <em>Messages of history sent</em> and each lookup at 24,000 characters, so a large window does not mean a large bill."
+    : "Match the model server. Ollama uses 4096 unless <code>OLLAMA_CONTEXT_LENGTH</code> raises it; 8192 or more leaves room for lookups.";
+}
+
 function _applyLlmProvider(id) {
   var azure = val("f-llmProvider") === "azure";
   var entra = val("f-azureAuth") === "entra";
@@ -5621,6 +5633,8 @@ function _applyLlmProvider(id) {
   set("f-model-label", azure ? "Deployment name *" : "Model");
   set("f-apiToken-label", azure ? "API key *" : "API key");
   set("f-apiToken-hint", azure ? "Stored encrypted. Key 1 or Key 2 from the resource's Keys and Endpoint page." : "Stored encrypted. Ollama and LM Studio need none by default.");
+  var ctxHint = document.getElementById("f-contextWindow-hint");
+  if (ctxHint) ctxHint.innerHTML = _llmContextWindowHint(azure);
   var host = document.getElementById("f-host");
   if (host) host.placeholder = azure ? "https://my-resource.openai.azure.com" : "e.g. 10.1.5.20 or llm.example.com";
   var model = document.getElementById("f-model");
