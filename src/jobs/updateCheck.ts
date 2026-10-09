@@ -1,7 +1,9 @@
 /**
  * src/jobs/updateCheck.ts
  *
- * Scheduled job: checks for application updates weekly via git fetch.
+ * Scheduled job: checks for application updates — weekly via git fetch, or
+ * daily against the container registry on a Docker install (no .git tree;
+ * see updateService.ts → checkImageForUpdates).
  * The result is stored in the update status so the Database tab can
  * show a notification without the admin clicking "Check for Updates".
  *
@@ -9,11 +11,11 @@
  *   import "./jobs/updateCheck.js";
  */
 
-import { checkForUpdates, getUpdateStatus } from "../services/updateService.js";
+import { checkForUpdates, getUpdateStatus, isImageUpdateMode, updateCheckIntervalMs } from "../services/updateService.js";
 import { logger } from "../utils/logger.js";
 import { runInstrumentedJob } from "./_metrics.js";
 
-const INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
+const INTERVAL_MS = updateCheckIntervalMs(); // weekly; daily on a container install
 
 async function runCheck(): Promise<void> {
   try {
@@ -25,7 +27,9 @@ async function runCheck(): Promise<void> {
         current.state === "applying" ||
         current.state === "restarting" ||
         current.state === "complete" ||
-        current.state === "available"
+        // A git "available" waits for Apply; an image one is re-checked so a
+        // newer push after the first one still moves the version it names.
+        (current.state === "available" && !isImageUpdateMode())
       ) {
         return;
       }
@@ -46,6 +50,6 @@ async function runCheck(): Promise<void> {
   }
 }
 
-// First check 60 seconds after startup, then weekly
+// First check 60 seconds after startup, then every INTERVAL_MS
 setTimeout(runCheck, 60 * 1000);
 setInterval(runCheck, INTERVAL_MS);

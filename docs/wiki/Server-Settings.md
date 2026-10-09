@@ -401,7 +401,13 @@ install** rather than assumed.
 The **Capacity Advisor** card beside Updates appears only when it has something
 to recommend: the queue mode, the connection-pool and worker-count variables,
 and PostgreSQL tuning (`max_connections`, `shared_buffers` and friends). Tick
-the rows you want, **Stage** them, and **Restart Polaris to apply**. The
+the rows you want, **Stage** them, and **Restart Polaris to apply**. On a
+Docker / podman / Unraid install there is no restart button: the card asks you
+to restart the Polaris container yourself (`docker compose restart` for a
+compose stack, `docker restart <name>`, or Restart on Unraid's Docker page).
+Polaris can't see a container's restart policy, and a container whose policy
+is "no" — Unraid's default — would stay stopped after a self-restart
+([rule 99](Business-Rules#rule-99)). The
 PostgreSQL rows are advisory only — they have no Stage button, and a value you
 set yourself with `ALTER SYSTEM` is honoured.
 

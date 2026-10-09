@@ -1661,3 +1661,24 @@ remembered address to tell the two apart; it was retired on 2026-10-08 in favour
 of a filter an operator can read and set directly.
 
 See [Automation Triggers → SD-WAN member IP address](Automation-Triggers#sd-wan-member-ip-address).
+
+### Rule 99
+
+**Polaris never restarts its own container. In a container it asks you to.**
+
+On a script install, **Restart Polaris to apply** on the Capacity Advisor card
+restarts the Polaris services through systemd. A container has no systemd, so a
+restart from inside it can only exit. Whether the container then comes back
+depends on its restart policy, which Polaris cannot see. On Unraid and with a
+plain `docker run` the default is "no", and the container stays stopped.
+
+So on a Docker, podman or Unraid install:
+
+- After you **Stage** recommendations, the card asks you to restart the Polaris
+  container yourself (`docker compose restart` for a compose stack, so every
+  role reads the new `.env`; `docker restart <name>`; or Restart on your Docker
+  page). It has no restart button.
+- The restart endpoint, `POST /api/v1/server-settings/restart`, refuses with
+  409.
+
+See [Server Settings → Capacity Advisor](Server-Settings#capacity-advisor).

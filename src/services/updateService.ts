@@ -33,6 +33,7 @@ import {
 import { resolveDashPort } from "../utils/dashConfig.js";
 import { createBackup } from "./backupService.js";
 import { logEvent } from "./eventLogService.js";
+import { fetchImageBuildInfo } from "../utils/imageRegistry.js";
 
 /**
  * Every shell-out in this file goes through `execAsync`, which is a thin
@@ -431,6 +432,15 @@ export interface UpdateStatus {
   releaseTag?: string;
   // Informational note surfaced in the UI (e.g. release train with no tags yet).
   note?: string;
+  // "image" on a container install: the status compares this image with the
+  // published tag in the registry, and the update is a pull + recreate done
+  // by the operator — there is no Apply, train or pre-update backup.
+  updateMethod?: "git" | "image";
+  // Image mode: the image reference checked, and the repository URL its
+  // labels name (for a "what changed" link).
+  image?: string;
+  source?: string;
+  checkedAt?: string;
 }
 
 /**
@@ -628,6 +638,9 @@ let _applying = false;
 // Computed once at module load — neither signal changes at runtime.
 const _updateEnvironment = (function detectUpdateEnvironment(): {
   available: boolean;
+  /** A published container image with no .git tree: the update check reads
+   *  the registry instead of git (checkImageForUpdates), and nothing applies. */
+  imageMode?: boolean;
   reason?: string;
   method?: string;
 } {
@@ -638,9 +651,11 @@ const _updateEnvironment = (function detectUpdateEnvironment(): {
     if (inDocker) {
       return {
         available: false,
+        imageMode: true,
         reason: "In-app updates are disabled in Docker.",
         method:
-          "To update, pull the latest image and recreate the container. " +
+          "To update, pull the latest image and recreate the container " +
+          "(docker compose pull && docker compose up -d, or Apply Update on Unraid's Docker page). " +
           "Data and settings persist on the mounted state volume.",
       };
     }
@@ -659,7 +674,64 @@ function disabledStatus(): UpdateStatus {
     currentVersion: readCurrentVersion(),
     error: _updateEnvironment.reason,
     method: _updateEnvironment.method,
+    ...(_updateEnvironment.imageMode ? { updateMethod: "image" as const } : {}),
   };
+}
+
+/** The image a container install compares itself against. POLARIS_UPDATE_IMAGE
+ *  overrides it for a fork or a mirror; the default is the published image. */
+export const DEFAULT_UPDATE_IMAGE = "ghcr.io/rogers-group-inc/polaris:latest";
+
+/** True on a container install with no .git tree — the registry-checked path. */
+export function isImageUpdateMode(): boolean {
+  return Boolean(_updateEnvironment.imageMode);
+}
+
+/** How often the background job checks: daily on a container install (the
+ *  check is three small registry GETs and the operator acts on it by hand),
+ *  weekly where a check is a git fetch. */
+export function updateCheckIntervalMs(): number {
+  return isImageUpdateMode() ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+}
+
+/**
+ * Container install: compare this image's baked-in commit count with the
+ * published tag's. Reports "available" / "up-to-date" with updateMethod
+ * "image"; a registry failure or an image built without a commit count
+ * reports "disabled" with a note, never "failed" (which the card reads as a
+ * failed update).
+ */
+export async function checkImageForUpdates(fetchImpl?: typeof fetch): Promise<UpdateStatus> {
+  const image = (process.env.POLARIS_UPDATE_IMAGE || "").trim() || DEFAULT_UPDATE_IMAGE;
+  const base = { ...disabledStatus(), updateMethod: "image" as const, image, checkedAt: new Date().toISOString() };
+  const localCount = Number.parseInt(process.env.POLARIS_BUILD_COMMIT_COUNT || "", 10);
+  if (!Number.isFinite(localCount) || localCount <= 0) {
+    return { ...base, note: "This image was built without a commit count (a local build?), so it can't be compared with the published image." };
+  }
+  let info;
+  try {
+    info = await fetchImageBuildInfo(image, fetchImpl);
+  } catch (err: any) {
+    logger.warn({ err: err?.message, image }, "Image update check failed");
+    return { ...base, note: `Couldn't check ${image} for a newer image: ${err?.message ?? String(err)}` };
+  }
+  if (info.commitCount === null) {
+    return { ...base, note: `${image} doesn't say which build it is, so it can't be compared with this one.` };
+  }
+  const behind = info.commitCount - localCount;
+  const result: UpdateStatus = {
+    state: behind > 0 ? "available" : "up-to-date",
+    updateMethod: "image",
+    image,
+    checkedAt: base.checkedAt,
+    currentVersion: readCurrentVersion(),
+    latestVersion: computeVersion(readPackageMinor(), info.commitCount),
+    latestCommit: info.revision ? info.revision.slice(0, 7) : undefined,
+    commitsBehind: Math.max(0, behind),
+    method: _updateEnvironment.method,
+    ...(info.source && /^https:\/\/github\.com\//.test(info.source) ? { source: info.source } : {}),
+  };
+  return result;
 }
 
 function readPackageMinor(): string {
@@ -749,6 +821,10 @@ export function initUpdateStatus() {
 }
 
 export function getUpdateStatus(): UpdateStatus {
+  // Image mode keeps the last registry check, so the sidebar badge and the
+  // card show "update available" between checks; before the first one it is
+  // the plain disabled status.
+  if (_updateEnvironment.imageMode) return _status.updateMethod === "image" ? { ..._status } : disabledStatus();
   if (!_updateEnvironment.available) return disabledStatus();
   return { ..._status, steps: _status.steps ? [..._status.steps] : undefined };
 }
@@ -799,6 +875,10 @@ export async function getRecentCommits(
  * Check if a newer version is available on the remote.
  */
 export async function checkForUpdates(): Promise<UpdateStatus> {
+  if (_updateEnvironment.imageMode) {
+    _status = await checkImageForUpdates();
+    return _status;
+  }
   if (!_updateEnvironment.available) {
     _status = disabledStatus();
     return _status;
