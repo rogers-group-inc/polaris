@@ -1666,9 +1666,12 @@ code {
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 0.75rem;
 }
+/* Half-glass over the Database card's own 30% rail glass: solid enough that
+   the four tiles still read as boxes, thin enough to share the card's
+   material instead of sitting on it as opaque slabs. */
 .capacity-stat-card {
   padding: 0.75rem 0.85rem;
-  background: var(--color-bg-secondary);
+  background: color-mix(in srgb, var(--color-bg-secondary) 50%, transparent);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
 }
