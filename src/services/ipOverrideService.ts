@@ -134,26 +134,31 @@ export async function raiseIpOverrideConflict(
         hostname: true,
         ipAddress: true,
         ipOverride: true,
+        ipBlankPinned: true,
         ipSource: true,
         discoveredByIntegrationId: true,
       },
     });
-    // Race guards: the override may have been cleared (or moved onto the
-    // discovered IP) between the guarded write and this follow-up.
-    if (!asset?.ipOverride) return;
-    if (asset.ipOverride === discoveredIp) return;
+    // Race guards: the pin may have been cleared (or moved onto the
+    // discovered IP) between the guarded write and this follow-up. A BLANK
+    // pin (ipBlankPinned) disagrees with every discovered address.
+    if (!asset || (!asset.ipOverride && !asset.ipBlankPinned)) return;
+    if (asset.ipOverride && asset.ipOverride === discoveredIp) return;
+    const pinnedLabel = asset.ipOverride ?? "no address (cleared)";
 
     const proposedAssetFields = {
       collisionReason: IP_OVERRIDE_COLLISION_REASON,
       hostname: asset.hostname ?? null, // conflict-queue widget subtitle
       ipAddress: discoveredIp,
       ipSource: ipSource || null,
-      overrideIp: asset.ipOverride,
+      overrideIp: asset.ipOverride ?? null,
+      blankPinned: !asset.ipOverride && asset.ipBlankPinned,
     };
     const existingAssetSnapshot = {
       hostname: asset.hostname ?? null,
       ipAddress: asset.ipAddress ?? null,
-      ipOverride: asset.ipOverride,
+      ipOverride: asset.ipOverride ?? null,
+      ipBlankPinned: asset.ipBlankPinned,
       ipSource: asset.ipSource ?? null,
     };
 
@@ -198,10 +203,10 @@ export async function raiseIpOverrideConflict(
       action: "conflict.detected",
       resourceType: "asset",
       resourceId: assetId,
-      resourceName: asset.hostname || asset.ipOverride,
+      resourceName: asset.hostname || asset.ipOverride || discoveredIp,
       actor: "system",
-      message: `IP override conflict on "${asset.hostname || assetId}" — discovery reports ${discoveredIp}${ipSource ? ` (via ${ipSource})` : ""} but the address is pinned to ${asset.ipOverride}`,
-      details: { collisionReason: IP_OVERRIDE_COLLISION_REASON, discoveredIp, overrideIp: asset.ipOverride, ipSource: ipSource || null },
+      message: `IP override conflict on "${asset.hostname || assetId}" — discovery reports ${discoveredIp}${ipSource ? ` (via ${ipSource})` : ""} but the address is pinned to ${pinnedLabel}`,
+      details: { collisionReason: IP_OVERRIDE_COLLISION_REASON, discoveredIp, overrideIp: asset.ipOverride ?? null, blankPinned: proposedAssetFields.blankPinned, ipSource: ipSource || null },
     });
   } catch (err) {
     logger.warn(

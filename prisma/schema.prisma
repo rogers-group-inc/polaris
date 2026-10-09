@@ -684,6 +684,14 @@ model Asset {
   // Address field in the edit form — ipAddress then reverts to the
   // discovery-projected value. See src/services/ipOverrideService.ts.
   ipOverride            String?
+  // Operator pin to NO address — the blank sibling of ipOverride. Set by
+  // clearing an IP the asset had in the edit form (ipAddress then null).
+  // The src/db.ts guard drops any later discovery write staging an address
+  // and raises the same ip-override Conflict (accept takes the discovered
+  // address and releases the pin; reject keeps the asset blank). Released by
+  // typing an address, by "Revert to discovered IP" in the form, or by
+  // accepting that conflict. Never set together with ipOverride.
+  ipBlankPinned         Boolean   @default(false)
   // The address an operator BLANKED from a duplicate-IP conflict card (rule
   // 40(j) — "Clear" on an offline device's row). ipAddress is null while this
   // is set. The src/db.ts guard drops any later discovery write re-staging

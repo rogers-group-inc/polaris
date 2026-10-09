@@ -3354,10 +3354,16 @@ function assetFormHTML(defaults) {
         // DIFFERENT address keeps the pin and raises a conflict to resolve
         // on the Events → Conflicts tab. data-override-field tells
         // getAssetFormData to always send the value (including "" to clear).
-        '<div class="form-group"><label>IP Address</label><input type="text" id="f-ipAddress" data-override-field="1" value="' + escapeHtml(d.ipAddress || "") + '" placeholder="e.g. 10.0.1.50">' +
-          (d.ipOverride
-            ? '<p class="hint">Manually overridden — clear the field to resume the discovered IP. If discovery reports this same address the override releases itself; a different discovered address raises a conflict.</p>'
-            : (d.discoveredByIntegrationId ? '<p class="hint">Discovered — saving a change pins it as a manual override (a matching discovery releases it; a differing one raises a conflict).</p>' : '')) +
+        '<div class="form-group"><label>IP Address</label><input type="text" id="f-ipAddress" data-override-field="1" value="' + escapeHtml(d.ipAddress || "") + '" placeholder="' + (d.ipBlankPinned ? "no address (cleared)" : "e.g. 10.0.1.50") + '">' +
+          (d.ipBlankPinned
+            ? '<p class="hint">Manually cleared — discovery will not put an address back; one it reports raises a conflict. Type an address to set one.</p>'
+            : d.ipOverride
+            ? '<p class="hint">Manually overridden. If discovery reports this same address the override releases itself; a different discovered address raises a conflict. Clearing the field leaves the asset with no address.</p>'
+            : (d.discoveredByIntegrationId ? '<p class="hint">Discovered — saving a change pins it as a manual override (a matching discovery releases it; a differing one raises a conflict). Clearing it leaves the asset with no address.</p>' : '')) +
+          // Revert: the one way back from either pin to what discovery says.
+          ((d.ipBlankPinned || d.ipOverride)
+            ? '<p class="hint" id="f-ipRevert-wrap" style="margin-top:0.25rem"><a href="#" id="f-ipRevert">Revert to discovered IP</a></p>'
+            : '') +
         '</div>' +
         '<div class="form-group" style="grid-column:1 / -1"><label>Serial Number</label><input type="text" id="f-serialNumber" value="' + escapeHtml(d.serialNumber || "") + '" placeholder="e.g. SN-DELL-001"></div>' +
       '</div>'
@@ -3618,6 +3624,9 @@ function getAssetFormData() {
   if (document.getElementById("f-dnsName"))      data.dnsName      = val("f-dnsName") || undefined;
   var ipEl = document.getElementById("f-ipAddress");
   if (ipEl) data.ipAddress = ipEl.hasAttribute("data-override-field") ? val("f-ipAddress") : (val("f-ipAddress") || undefined);
+  // "Revert to discovered IP" was clicked: release the pin (address or
+  // blank) and take discovery's address. Wins over the field server-side.
+  if (ipEl && ipEl.getAttribute("data-ip-revert") === "1") data.ipRevertToDiscovered = true;
   if (document.getElementById("f-macAddress"))   data.macAddress   = val("f-macAddress") || undefined;
   if (document.getElementById("f-serialNumber")) data.serialNumber = val("f-serialNumber") || undefined;
 
@@ -4788,6 +4797,26 @@ async function openCreateModal() {
   });
 }
 
+// "Revert to discovered IP" under a pinned IP field. Marks the field so
+// getAssetFormData sends ipRevertToDiscovered; the address itself is decided
+// server-side on save (the projection), so the field shows a placeholder
+// until then. Typing an address afterwards cancels the revert.
+function _wireIpRevertLink() {
+  var link = document.getElementById("f-ipRevert");
+  var input = document.getElementById("f-ipAddress");
+  if (!link || !input) return;
+  link.addEventListener("click", function (e) {
+    e.preventDefault();
+    input.setAttribute("data-ip-revert", "1");
+    input.value = "";
+    input.placeholder = "discovered address — applied on save";
+    link.parentNode.textContent = "Will revert to the discovered address on save.";
+  });
+  input.addEventListener("input", function () {
+    if (input.value.trim() !== "") input.removeAttribute("data-ip-revert");
+  });
+}
+
 async function openEditModal(id, opts) {
   opts = opts || {};
   try {
@@ -4834,6 +4863,7 @@ async function openEditModal(id, opts) {
     }
     wireDescriptionCapWarning("f-description", "f-description-cap-warn");
     wireTagPicker();
+    _wireIpRevertLink();
     _wireMonitorEditTab(asset);
     _populateUploadedMibsInDropdowns();
 
@@ -18585,7 +18615,16 @@ function _wireHoverTriggersIn(container) {
 
 function ipViewRow(asset) {
   var ips = Array.isArray(asset.associatedIps) ? asset.associatedIps : [];
+  var blankPin = asset.ipBlankPinned
+    ? '<span style="font-size:0.75rem;color:var(--color-warning,#ffc107);margin-left:8px" title="Manually cleared — discovery will not put an address back; one it reports raises a conflict. Edit the asset to set one, or Revert to discovered IP.">cleared</span>'
+    : '';
   if (!asset.ipAddress && ips.length === 0) {
+    // A blank pin is a decision, not a gap: no IP Lookup offer (discovery-
+    // style writes are dropped while it holds).
+    if (blankPin) {
+      return '<div class="detail-row"><span class="detail-label">IP Address</span>' +
+        '<span class="detail-value mono">-' + blankPin + '</span></div>';
+    }
     var noIpInner = asset.hostname
       ? '- <button class="btn btn-sm btn-secondary" onclick="singleForwardLookup(\'' + asset.id + '\')" title="Forward DNS lookup (A/AAAA record)">IP Lookup</button>'
       : '-';
@@ -18602,7 +18641,7 @@ function ipViewRow(asset) {
     ? '<span style="font-size:0.75rem;color:var(--color-warning,#ffc107);margin-left:8px" title="Manually overridden — discovery reporting this address releases the pin; a different address raises a conflict">overridden</span>'
     : '';
   return '<div class="detail-row"><span class="detail-label">IP Address</span>' +
-    '<span class="detail-value mono">' + ipCellHTML(asset) + src + pin + '</span></div>';
+    '<span class="detail-value mono">' + ipCellHTML(asset) + src + pin + blankPin + '</span></div>';
 }
 
 // ─── Management access (allowaccess) — Open HTTPS / Open SSH + AP warning ──────
