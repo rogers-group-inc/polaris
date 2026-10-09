@@ -36,6 +36,13 @@ permitted" back, which the system prompt tells the model to relay rather than wo
 It is READ_ONLY and seeded `read` on every role but the token roles, including the protected
 `readonly` — which, being uneditable, could otherwise never be granted it.
 
+The model is also TOLD what the person may do (2026-10-09): the system prompt carries their role
+name and every area they hold, with its level (`permissionsPromptBlock`, from the request's role
+snapshot). Before that, a how-to answer could only hedge: "your role needs write access to
+networks; if you get Not permitted, ask an admin", to a user who had write access. The block
+is information, never authority. A model that misreads it still gets "Not permitted" from the
+code, because every lookup is checked against the role, not against the prompt.
+
 ### (b) Read-only, because model output is untrusted
 
 Tool results carry text that came off the network — hostnames, descriptions, alert messages —
@@ -208,9 +215,21 @@ What Polaris still decides in code:
 - **when it stops:** a lookup `lookupShowsOutage` matches appends `PERSONA_SUSPENDED` as a
   system message after that round's tool results, so the rest of the turn is plain;
 - **what stays true:** the persona text repeats the rules that kept (h) safe — facts come only
-  from lookups, the answer comes first, at most two in-character sentences — and every
-  code-side guard (report rows from the database, tables held after a report, link checking)
-  is unchanged.
+  from lookups, every step and figure stays exact and complete — and every code-side guard
+  (report rows from the database, tables held after a report, link checking) is unchanged.
+
+The first cut held the voice to "at most two in-character sentences", which on Claude Haiku 5.5
+read as a plain answer with a remark tacked on. On 2026-10-09 the owner asked for the
+character to run through the WHOLE answer (tables and lists stay plain data). The owner also
+supplied two lines verbatim, for when someone asks what R.A.L.P.H. is: "I'm running in that mode
+because you feel you need all the help you can get." and "If you don't want your performance to
+be scrutinized and logged then de-select R.A.L.P.H. at the top." The model had been offering to
+"drop the act" on request. It may not: only the button turns R.A.L.P.H. off, so the switch
+and the voice cannot disagree. The checkbox became a toggle button that glows while on, on
+the desktop and in the phone's Chat tab. While it is on, the window itself is R.A.L.P.H.: the title,
+the welcome ("I'm R.A.L.P.H., your Real-time Assesser of Labor and Productivity Habits" plus one of
+`RALPH_INTROS`, client-only like the greetings) and, on a hosted model, the name the model is
+given. The configured assistant name is withheld from those turns so the model has one name.
 
 The in-character answer is the model's own text, so it is stored in `content` and sent back as
 history. On a hosted model that is accepted. It was the copying trap of (h) only for a model

@@ -57,6 +57,7 @@ import {
   type ToolUseRecord,
 } from "./assistantConversationService.js";
 import { WIKI_BASE_URL, wikiPageNames } from "./helpIndexService.js";
+import { FUNCTION_KEYS, normalizePermissions, isAdminEquivalentPermissions } from "../api/middleware/permissions.js";
 import {
   getMemoryEnabled,
   listMemory,
@@ -178,8 +179,36 @@ function noteLookup(s: TurnSignals, name: string, result: { ok: boolean; data: u
   s.topic = topicForTool(name) ?? s.topic;
 }
 
+const LEVEL_WORDS: Record<string, string> = { read: "Read", write: "Read-Write", fullwrite: "Full Read-Write" };
+// The matrix calls networks "Subnets"; every screen says Networks (and the prompt forbids "subnet").
+const KEY_WORDS: Record<string, string> = { subnets: "Networks" };
+
+/**
+ * What the person asking may do, for the system prompt: their role and every
+ * area they have access to, so a how-to answer can say "your role can do
+ * this" instead of "if you get Not permitted, ask an admin". Informational
+ * only — every lookup is still checked against the role in code (rule
+ * 95(a)); a model that misreads this list cannot read or change more.
+ * Null when the request carries no role. Exported for tests.
+ */
+export function permissionsPromptBlock(snap: { name?: string; permissions?: unknown } | null | undefined): string | null {
+  if (!snap) return null;
+  const perms = normalizePermissions(snap.permissions);
+  const granted = FUNCTION_KEYS
+    .filter((k) => perms[k.key] && perms[k.key] !== "none")
+    .map((k) => `${KEY_WORDS[k.key] ?? k.label}: ${LEVEL_WORDS[perms[k.key]] ?? perms[k.key]}`);
+  return [
+    `The person's role is "${snap.name ?? "unknown"}"${isAdminEquivalentPermissions(perms) ? " (an administrator role)" : ""}. ` +
+      "Their access, by area (Read = view; Read-Write = create and change; Full Read-Write = also other people's rows and deletes):",
+    granted.length ? granted.join("; ") + "." : "No access to any area.",
+    "Any area not listed is No access. When they ask how to do something, say plainly whether their role allows it " +
+      "from this list — do not hedge with \"if you get Not permitted\". If it does not, say which access they would " +
+      "need and that an administrator can grant it under Users → Roles.",
+  ].join("\n");
+}
+
 /** The system prompt. Exported for tests. */
-export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?: string; displayName?: string; persona?: string; memory?: string }): string {
+export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?: string; displayName?: string; persona?: string; memory?: string; access?: string | null }): string {
   const now = opts.now ?? new Date();
   const name = opts.displayName?.trim();
   const lines = [
@@ -219,6 +248,7 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
   // The Efficiency Advisor persona (rule 95(k)): only on a hosted model, only
   // for a user who ticked it, never on a turn about an outage. Before the
   // operator's instructions, so those still have the last word.
+  if (opts.access) lines.push("", opts.access);
   if (opts.persona?.trim()) lines.push("", opts.persona.trim());
   if (opts.extra?.trim()) lines.push("", "Operator instructions:", opts.extra.trim());
   // Rule 95(i): the person's memory, framed as background about them — after
@@ -470,8 +500,11 @@ export async function streamAssistantTurn(input: {
   const systemPrompt = buildSystemPrompt({
     username: input.username,
     extra: config.systemPromptExtra,
-    displayName: config.displayName,
+    // In character the model's name is R.A.L.P.H. (ADVISOR_PERSONA); the
+    // configured assistant name would give it two.
+    displayName: personaActive ? undefined : config.displayName,
     persona: personaActive ? ADVISOR_PERSONA : undefined,
+    access: permissionsPromptBlock(req.roleSnapshot ?? req.session?.roleSnapshot),
     memory: memoryTurn ? memoryPromptBlock(memoryTurn.entries, input.username) : undefined,
   });
   const turns = fitHistory(estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools)), allTurns, budget.promptTokens);
