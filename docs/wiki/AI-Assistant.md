@@ -2,7 +2,7 @@
 
 A chat assistant in the bottom-right corner of every page, backed by a language
 model **you run** — Ollama, LM Studio, vLLM, the llama.cpp server, LocalAI or
-Open WebUI. Ask it about your devices, alerts, networks and events, have it build
+Open WebUI — or an **Azure AI Foundry** GPT deployment. Ask it about your devices, alerts, networks and events, have it build
 a report you can download, ask it to help correlate an outage, or ask how
 something in Polaris works.
 
@@ -21,6 +21,7 @@ something in Polaris works.
 | Field | |
 |---|---|
 | Assistant name | what people see in the chat window — its title, the button's tooltip and the greeting (blank = "Assistant"). The model is told to answer to it |
+| Provider | **Local / OpenAI-compatible** (the default) for a server you run, or **Azure AI Foundry** — see [Azure AI Foundry](#azure-ai-foundry) below for that form |
 | Host / IP, Port | where the model server listens — Ollama's default port is `11434` |
 | API path | `/v1` for Ollama, LM Studio, vLLM and llama.cpp; `/api` for Open WebUI |
 | Use HTTPS / Verify TLS | for a server behind TLS; untick Verify for a self-signed lab certificate |
@@ -47,8 +48,28 @@ Polaris asks the model it will actually use (the one you picked, or the Auto
 choice) to call a dummy tool, then shows the result in a notification and on
 the card's **Tool Calling** row: **✓ Verified**, **✗ Not supported — chat
 only, no lookups**, or **Could not tell**, with the model's name and when it
-was checked. Changing the host, port, API path or model clears the result
-until the next save checks again.
+was checked. Changing the provider, host, port, API path or model clears the
+result until the next save checks again.
+
+### Azure AI Foundry
+
+Choose **Azure AI Foundry** as the Provider to use a GPT deployment from an Azure
+OpenAI or Foundry resource. The form then shows:
+
+| Field | |
+|---|---|
+| Endpoint | the resource's endpoint from its **Keys and Endpoint** page, e.g. `https://my-resource.openai.azure.com` (a `…services.ai.azure.com` endpoint works too). Paste it whole — anything from `/openai` on is ignored |
+| API shape | **v1** (the default — `/openai/v1`, no API version needed) or **Deployments** for the older dated path; Deployments also asks for an **API version** such as `2024-10-21` |
+| Authentication | **API key** — Key 1 or Key 2 from Keys and Endpoint — or **Entra ID app**: the app registration's Tenant ID, Client ID and Client secret. Give the app's service principal the **Cognitive Services OpenAI User** role on the resource. Keys and secrets are stored encrypted. **Token scope** is advanced; leave it at `https://cognitiveservices.azure.com/.default` unless your cloud needs another |
+| Deployment name | the name **you gave the deployment** in Foundry, not the model's name. Foundry cannot list deployments, so there is no Load models button |
+| Omit temperature | tick for reasoning models (o-series, gpt-5), which refuse it. If you forget, Polaris retries once without it |
+
+**Test Connection** sends one short chat message to the deployment, the only way
+to prove the endpoint, the credential and the deployment name are all right. The
+background connection check repeats that every 10 minutes while the integration
+is enabled, so it costs a few tokens per check. Everything else — lookups as the
+person asking, read-only, the role and token it creates — is the same as for a
+local server.
 
 ### What creating it also does
 
@@ -192,5 +213,10 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 | Answers arrive all at once instead of streaming | a proxy or load balancer in front of Polaris buffers responses; the answer still arrives |
 | "Not permitted" in an answer | your role cannot read that area — the assistant is telling you, not failing |
 | "Help is not available on this install" | the `docs/wiki` folder is missing from this install |
+| Azure: "refused the API key (HTTP 401)" | the key is wrong or was regenerated — paste Key 1 or Key 2 again |
+| Azure: "Entra ID refused the token request … AADSTS…" | the tenant ID, client ID or secret is wrong, or the secret expired; the AADSTS code says which |
+| Azure: "refused the app registration (HTTP 403)" | the app has no data-plane access — grant its service principal **Cognitive Services OpenAI User** on the resource (role assignments can take a few minutes to apply) |
+| Azure: "Deployment … was not found (HTTP 404)" | **Deployment name** holds the model name instead of the deployment's name, or the resource does not support the chosen API shape — try **Deployments** |
+| Azure: "Unsupported parameter: 'temperature'" | a reasoning model; tick **Omit temperature** |
 
 Rule: [95](Business-Rules#rule-95).

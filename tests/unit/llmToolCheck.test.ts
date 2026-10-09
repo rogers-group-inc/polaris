@@ -64,6 +64,18 @@ describe("checkLlmToolCalling", () => {
     expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ level: "info" }));
   });
 
+  it("Azure AI Foundry: probes the deployment directly, never listing models (rule 95(j))", async () => {
+    h.findUnique.mockResolvedValueOnce(row({ provider: "azure", host: "res.openai.azure.com", model: "gpt-4o-prod" }))
+      .mockResolvedValueOnce({ config: { provider: "azure", host: "res.openai.azure.com", model: "gpt-4o-prod" } });
+    h.probeToolCalling.mockResolvedValueOnce("yes");
+    const out = await checkLlmToolCalling("i1", "dana");
+    expect(out.model).toBe("gpt-4o-prod");
+    expect(h.listModels).not.toHaveBeenCalled();
+    h.findUnique.mockResolvedValueOnce(row({ provider: "azure", host: "res.openai.azure.com", model: "" }));
+    await expect(checkLlmToolCalling("i1", "dana")).rejects.toMatchObject({ httpStatus: 409 });
+    expect(h.listModels).not.toHaveBeenCalled();
+  });
+
   it("refuses a missing integration, another type, and a server with no chat model", async () => {
     h.findUnique.mockResolvedValueOnce(null);
     await expect(checkLlmToolCalling("i1", "dana")).rejects.toMatchObject({ httpStatus: 404 });

@@ -1574,6 +1574,12 @@ and an API token for the model server's own use; the chat itself never uses that
 token. "Allow loopback" lets the model server be on the Polaris host itself, and
 allows nothing else that is normally blocked.
 
+The model server may also be an **Azure AI Foundry** deployment (95(j)). Every
+promise above holds the same way on it: lookups still run as you, it is still
+read-only, and a report's rows still come from the database. It is optional and
+off unless an administrator adds it. Its API key or Entra ID client secret is
+stored encrypted, and is never shown again or written to a log.
+
 See [AI Assistant](AI-Assistant).
 
 ### Rule 96

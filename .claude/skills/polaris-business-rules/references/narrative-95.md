@@ -108,9 +108,37 @@ is identical on every model, which answers the original question. It is a per-us
 in the chat window, off by default, and the owner chose to keep it out of the README and the
 operator wiki.
 
+### (j) A provider is a transport, not a policy
+
+2026-10-09. The owner runs Qwen locally and wants Azure AI Foundry in production, where the
+organisation routes all inference through Foundry. The choice was a Provider field on the
+existing `llm` integration, not a new integration type. A new type would have needed its own
+copy of the role and token provisioning, the conversation store and the assistant routes, and
+every guarantee in (a)–(i) would then have to be kept true in two places. With a field, Foundry
+changes only how a request is ADDRESSED and AUTHENTICATED: the path (`/openai/v1/...`, or the
+dated deployments path), the `api-key` header or an Entra ID client-credentials bearer, and the
+fact that Foundry cannot list deployments. That last one is why Test Connection sends one
+tiny chat round instead of reading a model list. All of it lives in `llmService.ts`, so the
+chat orchestrator, the tool layer and the memory feature never learn which provider answered.
+Rows made before this have no `provider` and read as `openai`. Nothing about them changes, and
+their first plain save does not count as a "move" that drops the tool-calling verdict.
+
+Secrets went where the existing ones already go. The key reuses `apiToken`, and the service
+principal's secret `clientSecret`. Both are in `SECRET_CONFIG_KEYS`, so they are sealed at rest
+and masked on read with no new code. The Edit form sends both blank to mean "keep", so the
+test routes restore them from the stored row BEFORE the shape check, which requires them for
+Azure. The Entra token is cached under a hash of the secret, so a rotated secret never reuses
+a token minted with the old one.
+
+Reasoning deployments (o-series, gpt-5) refuse `temperature`. Polaris offers an "Omit
+temperature" box, and also retries once without the parameter when Azure answers 400 naming
+it, so a missed tick costs one request, not an outage. Rejected: the Responses API (a
+different dialect for no gain here) and a `max_completion_tokens` setting (deferred until
+someone needs it).
+
 ### What is deliberately not here
 
 The assistant is desktop-only for now (not the phone SPA or the Dash wallboard), takes no action
-on the operator's behalf, and speaks one dialect — OpenAI-compatible chat completions — rather
-than per-vendor clients. Help answers come from a keyword index over `docs/wiki/` shipped with
+on the operator's behalf, and speaks one dialect — OpenAI-compatible chat completions, which
+Azure AI Foundry's GPT deployments also speak (95(j)) — rather than per-vendor clients. Help answers come from a keyword index over `docs/wiki/` shipped with
 the build (the Docker image copies it), not from embeddings.

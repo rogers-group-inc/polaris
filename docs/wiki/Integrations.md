@@ -30,7 +30,7 @@ discovery at `write`.
 | **TrueNAS SCALE** | TrueNAS JSON-RPC WebSocket API (25.04+) | host, VMs, Apps | [TrueNAS SCALE](Integration-TrueNAS) |
 
 Plus one integration that discovers nothing: **Local AI Assistant** — the model server
-behind the [AI assistant](AI-Assistant). It has no Discover button, no
+behind the [AI assistant](AI-Assistant), either one you run or an Azure AI Foundry deployment. It has no Discover button, no
 auto-discovery and no Monitoring tab.
 
 The page has a second tab, **Polaris Agents** — the

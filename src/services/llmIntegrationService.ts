@@ -27,6 +27,7 @@ import { logEvent } from "./eventLogService.js";
 import { createRole, deleteRole } from "./roleService.js";
 import { createToken, deleteToken } from "./apiTokenService.js";
 import {
+  isAzureProvider,
   listModels,
   matchModelId,
   pickDefaultModel,
@@ -201,10 +202,17 @@ export async function checkLlmToolCalling(integrationId: string, actor: string):
   if (integration.type !== "llm") throw new AppError(400, "Only Local AI Assistant integrations have a tool-calling check");
   const config = (integration.config ?? {}) as Record<string, unknown> & LlmConfig;
 
-  const models = await listModels(config);
   const configured = (config.model ?? "").trim();
-  const model = configured ? (matchModelId(models.map((m) => m.id), configured) ?? configured) : pickDefaultModel(models);
-  if (!model) throw new AppError(409, "The LLM server lists no chat model — set Model on the integration");
+  let model: string | null;
+  if (isAzureProvider(config)) {
+    // Foundry cannot list deployments; Model IS the deployment name.
+    model = configured || null;
+    if (!model) throw new AppError(409, "Set Model on the integration to the Azure deployment name");
+  } else {
+    const models = await listModels(config);
+    model = configured ? (matchModelId(models.map((m) => m.id), configured) ?? configured) : pickDefaultModel(models);
+    if (!model) throw new AppError(409, "The LLM server lists no chat model — set Model on the integration");
+  }
 
   const result = await probeToolCalling(config, model);
   const toolCheck: LlmToolCheck = { model, result, at: new Date().toISOString() };

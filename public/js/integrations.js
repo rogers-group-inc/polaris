@@ -743,12 +743,17 @@ async function loadIntegrations() {
 
       var detailRows;
       if (isLlm) {
-        var llmEndpoint = (config.useHttps ? "https" : "http") + "://" + (config.host || "-") + ":" + (config.port || 11434) + (config.basePath || "");
+        var llmAzure = config.provider === "azure";
+        var llmEndpoint = llmAzure ? _llmAzureEndpointText(config)
+          : (config.useHttps ? "https" : "http") + "://" + (config.host || "-") + ":" + (config.port || 11434) + (config.basePath || "");
         detailRows =
           '<div class="detail-row"><span class="detail-label">Assistant Name</span><span class="detail-value">' + escapeHtml(config.displayName || "Assistant") + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Provider</span><span class="detail-value">' + (llmAzure ? "Azure AI Foundry" + (config.azureApiShape === "deployments" ? " (deployments API " + escapeHtml(config.azureApiVersion || "") + ")" : " (v1 API)") : "Local / OpenAI-compatible") + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Endpoint</span><span class="detail-value mono">' + escapeHtml(llmEndpoint) + '</span></div>' +
-          '<div class="detail-row"><span class="detail-label">Model</span><span class="detail-value mono">' + (config.model ? escapeHtml(config.model) : '<span style="color:var(--color-text-tertiary)">Auto (the server\'s first tool-calling model)</span>') + '</span></div>' +
-          '<div class="detail-row"><span class="detail-label">API Key</span><span class="detail-value">' + (config.apiToken ? "Set" : '<span style="color:var(--color-text-tertiary)">None</span>') + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">' + (llmAzure ? "Deployment" : "Model") + '</span><span class="detail-value mono">' + (config.model ? escapeHtml(config.model) : '<span style="color:var(--color-text-tertiary)">Auto (the server\'s first tool-calling model)</span>') + '</span></div>' +
+          (llmAzure && config.azureAuth === "entra"
+            ? '<div class="detail-row"><span class="detail-label">Authentication</span><span class="detail-value">Entra ID app <span class="mono">' + escapeHtml(config.clientId || "") + '</span>' + (config.clientSecret ? "" : ' <span style="color:var(--color-warning)">(no secret)</span>') + '</span></div>'
+            : '<div class="detail-row"><span class="detail-label">API Key</span><span class="detail-value">' + (config.apiToken ? "Set" : '<span style="color:var(--color-text-tertiary)">None</span>') + '</span></div>') +
           (config.useHttps ? '<div class="detail-row"><span class="detail-label">Verify TLS</span><span class="detail-value">' + (config.verifySsl !== false ? "Yes" : "No") + '</span></div>' : '') +
           '<div class="detail-row"><span class="detail-label">Tool Calling</span><span class="detail-value">' + _llmToolCheckHTML(config.toolCheck) + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Lookups</span><span class="detail-value">Up to ' + (config.maxToolRounds || 6) + ' rounds, ' + (config.maxRowsPerTool || 200) + ' rows each · ' + Math.round((config.contextWindow || 8192) / 1024) + 'K-token window</span></div>' +
@@ -5392,34 +5397,74 @@ function getArcFormConfig() {
 // paths read it for every type.
 function llmFormHTML(defaults) {
   var d = defaults || {};
+  var azure = d.provider === "azure";
   var enabledChecked = d.enabled !== false ? "checked" : "";
   var timeoutSec = Math.round((d.requestTimeoutMs || 120000) / 1000);
   return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. Ollama on gpu-01"></div>' +
     '<div class="form-group"><label>Assistant name</label><input type="text" id="f-displayName" maxlength="40" value="' + escapeHtml(d.displayName || "") + '" placeholder="Assistant"><p class="hint">What people see in the chat window — its title, the button\'s tooltip and the greeting. The model is told to answer to it too.</p></div>' +
-    infoBox('Connects the <strong style="color:var(--color-text-primary)">AI assistant</strong> (the chat button in the bottom-right corner) to a model server you run. Any <strong style="color:var(--color-text-primary)">OpenAI-compatible</strong> endpoint works: Ollama, LM Studio, vLLM, the llama.cpp server, LocalAI or Open WebUI. Pick a model that supports <strong style="color:var(--color-text-primary)">tool calling</strong> (for example Qwen 2.5 / 3, Llama 3.1+ or Mistral Small), or the assistant can chat but cannot look anything up.') +
+    infoBox('Connects the <strong style="color:var(--color-text-primary)">AI assistant</strong> (the chat button in the bottom-right corner) to a model server. Any <strong style="color:var(--color-text-primary)">OpenAI-compatible</strong> endpoint you run works — Ollama, LM Studio, vLLM, the llama.cpp server, LocalAI or Open WebUI — or an <strong style="color:var(--color-text-primary)">Azure AI Foundry</strong> GPT deployment. Pick a model that supports <strong style="color:var(--color-text-primary)">tool calling</strong> (for example Qwen 2.5 / 3, Llama 3.1+ or Mistral Small), or the assistant can chat but cannot look anything up.') +
     calloutHTML("note", "Lookups use each person's own permissions",
       'When someone asks the assistant a question, Polaris runs every lookup with <strong>that person\'s</strong> role, so the assistant can never show them more than their role already allows. It is read-only: it cannot change, acknowledge or push anything.') +
     formDivider() +
     sectionHeading("Model Server") +
+    // Provider (rule 95(j)): "openai" is any OpenAI-compatible server — the
+    // default, and what every row made before Azure support is. "azure" is
+    // Azure AI Foundry; _applyLlmProvider shows / hides the fields per choice.
+    // Every field below is in the DOM for both providers and read by
+    // getLlmFormConfig, so a hidden one is never stripped on save.
+    '<div class="form-group"><label>Provider</label><select id="f-llmProvider">' +
+      '<option value="openai"' + (azure ? "" : " selected") + '>Local / OpenAI-compatible (Ollama, LM Studio, vLLM…)</option>' +
+      '<option value="azure"' + (azure ? " selected" : "") + '>Azure AI Foundry (Azure OpenAI deployment)</option>' +
+    '</select></div>' +
     '<div style="display:grid;grid-template-columns:1fr auto;gap:8px">' +
-      '<div class="form-group"><label>Host / IP *</label><input type="text" id="f-host" value="' + escapeHtml(d.host || "") + '" placeholder="e.g. 10.1.5.20 or llm.example.com"></div>' +
-      '<div class="form-group"><label>Port</label><input type="number" id="f-port" value="' + (d.port || 11434) + '" min="1" max="65535" style="width:100px"></div>' +
+      '<div class="form-group"><label id="f-host-label">' + (azure ? "Endpoint *" : "Host / IP *") + '</label><input type="text" id="f-host" value="' + escapeHtml(azure ? _llmAzureEndpointText(d) : (d.host || "")) + '" placeholder="' + (azure ? "https://my-resource.openai.azure.com" : "e.g. 10.1.5.20 or llm.example.com") + '"></div>' +
+      '<div class="form-group llm-openai-only"><label>Port</label><input type="number" id="f-port" value="' + (d.port || 11434) + '" min="1" max="65535" style="width:100px"></div>' +
     '</div>' +
-    '<div class="form-group"><label>API path</label><input type="text" id="f-basePath" value="' + escapeHtml(d.basePath != null ? d.basePath : "/v1") + '" placeholder="/v1"><p class="hint"><code>/v1</code> for Ollama, LM Studio, vLLM and llama.cpp; <code>/api</code> for Open WebUI.</p></div>' +
-    checkboxRow("f-useHttps", "Use HTTPS", d.useHttps === true) +
+    '<div class="llm-openai-only">' +
+      '<div class="form-group"><label>API path</label><input type="text" id="f-basePath" value="' + escapeHtml(d.basePath != null ? d.basePath : "/v1") + '" placeholder="/v1"><p class="hint"><code>/v1</code> for Ollama, LM Studio, vLLM and llama.cpp; <code>/api</code> for Open WebUI.</p></div>' +
+      checkboxRow("f-useHttps", "Use HTTPS", d.useHttps === true) +
+    '</div>' +
     checkboxRow("f-verifySsl", "Verify TLS certificate", d.verifySsl !== false) +
-    '<div class="form-group"><label>API key</label><input type="password" id="f-apiToken" value="" placeholder="' + escapeHtml(d.apiTokenPlaceholder || "Optional — only if the server requires one") + '" autocomplete="new-password"><p class="hint">Stored encrypted. Ollama and LM Studio need none by default.</p></div>' +
-    '<div class="form-group"><label>Model</label>' +
+    '<div class="llm-azure-only">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+        '<div class="form-group"><label>API shape</label><select id="f-azureApiShape">' +
+          '<option value="v1"' + (d.azureApiShape === "deployments" ? "" : " selected") + '>v1 (/openai/v1)</option>' +
+          '<option value="deployments"' + (d.azureApiShape === "deployments" ? " selected" : "") + '>Deployments (dated api-version)</option>' +
+        '</select></div>' +
+        '<div class="form-group" id="f-azureApiVersion-group"><label>API version</label><input type="text" id="f-azureApiVersion" value="' + escapeHtml(d.azureApiVersion || "2024-10-21") + '" placeholder="2024-10-21"></div>' +
+      '</div>' +
+      '<div class="form-group"><label>Authentication</label><select id="f-azureAuth">' +
+        '<option value="apiKey"' + (d.azureAuth === "entra" ? "" : " selected") + '>API key</option>' +
+        '<option value="entra"' + (d.azureAuth === "entra" ? " selected" : "") + '>Entra ID app (service principal)</option>' +
+      '</select></div>' +
+      '<div class="llm-entra-only">' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+          '<div class="form-group"><label>Tenant ID *</label><input type="text" id="f-tenantId" value="' + escapeHtml(d.tenantId || "") + '" placeholder="Directory (tenant) ID"></div>' +
+          '<div class="form-group"><label>Client ID *</label><input type="text" id="f-clientId" value="' + escapeHtml(d.clientId || "") + '" placeholder="Application (client) ID"></div>' +
+        '</div>' +
+        '<div class="form-group"><label>Client secret *</label><input type="password" id="f-clientSecret" value="" placeholder="' + escapeHtml(d.clientSecretPlaceholder || "The app registration's client secret") + '" autocomplete="new-password"><p class="hint">Stored encrypted. Give the app\'s service principal the <strong>Cognitive Services OpenAI User</strong> role on the Azure OpenAI / Foundry resource.</p></div>' +
+        '<div class="form-group"><label>Token scope</label><input type="text" id="f-azureScope" value="' + escapeHtml(d.azureScope || "https://cognitiveservices.azure.com/.default") + '"><p class="hint">Advanced — leave as is unless your cloud uses a different audience.</p></div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="form-group" id="f-apiToken-group"><label id="f-apiToken-label">' + (azure ? "API key *" : "API key") + '</label><input type="password" id="f-apiToken" value="" placeholder="' + escapeHtml(d.apiTokenPlaceholder || "Optional — only if the server requires one") + '" autocomplete="new-password"><p class="hint" id="f-apiToken-hint">' + (azure ? "Stored encrypted. Key 1 or Key 2 from the resource's Keys and Endpoint page." : "Stored encrypted. Ollama and LM Studio need none by default.") + '</p></div>' +
+    '<div class="form-group"><label id="f-model-label">' + (azure ? "Deployment name *" : "Model") + '</label>' +
       '<div style="display:flex;gap:8px;align-items:center">' +
-        '<input type="text" id="f-model" value="' + escapeHtml(d.model || "") + '" placeholder="Blank = the server\'s first tool-calling model" style="flex:1">' +
+        '<input type="text" id="f-model" value="' + escapeHtml(d.model || "") + '" placeholder="' + (azure ? "The deployment name, not the model name" : "Blank = the server\'s first tool-calling model") + '" style="flex:1">' +
         '<select id="f-model-select" style="flex:1;display:none" aria-label="Model"></select>' +
-        '<button type="button" class="btn btn-secondary btn-sm" id="f-llm-load" style="white-space:nowrap">Load models</button>' +
+        '<button type="button" class="btn btn-secondary btn-sm llm-openai-only" id="f-llm-load" style="white-space:nowrap">Load models</button>' +
       '</div>' +
       '<div id="f-llm-model-status" class="hint" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">Load the server\'s models (Test Connection does too) to pick one and see which support tool calling.</div>' +
     '</div>' +
+    '<div class="form-group llm-azure-only">' +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+        '<input type="checkbox" id="f-omitTemperature"' + (d.omitTemperature === true ? " checked" : "") + ' style="width:auto">' +
+        '<label for="f-omitTemperature" style="margin:0">Omit temperature (reasoning models such as o-series and gpt-5)</label>' +
+      '</div>' +
+      '<p class="hint">If a deployment refuses <code>temperature</code>, Polaris retries once without it anyway — tick this to skip that first attempt.</p>' +
+    '</div>' +
     // Not checkboxRow(): the note must sit inside the same .form-group,
     // because `.hint` is only styled there (`.form-group .hint`).
-    '<div class="form-group">' +
+    '<div class="form-group llm-openai-only">' +
       '<div style="display:flex;align-items:center;gap:8px">' +
         '<input type="checkbox" id="f-allowLoopback"' + (d.allowLoopback === true ? " checked" : "") + ' style="width:auto">' +
         '<label for="f-allowLoopback" style="margin:0">Allow loopback (the model server runs on this Polaris host)</label>' +
@@ -5462,7 +5507,9 @@ function getLlmFormConfig() {
     var n = el ? parseFloat(el.value) : NaN;
     return isNaN(n) ? fallback : n;
   }
-  return {
+  var provider = val("f-llmProvider") === "azure" ? "azure" : "openai";
+  var cfg = {
+    provider: provider,
     displayName: val("f-displayName"),
     host: val("f-host"),
     port: Math.round(num("f-port", 11434)),
@@ -5472,6 +5519,14 @@ function getLlmFormConfig() {
     apiToken: val("f-apiToken"),
     model: val("f-model"),
     allowLoopback: document.getElementById("f-allowLoopback").checked,
+    azureApiShape: val("f-azureApiShape") === "deployments" ? "deployments" : "v1",
+    azureApiVersion: val("f-azureApiVersion"),
+    azureAuth: val("f-azureAuth") === "entra" ? "entra" : "apiKey",
+    tenantId: val("f-tenantId"),
+    clientId: val("f-clientId"),
+    clientSecret: val("f-clientSecret"),
+    azureScope: val("f-azureScope"),
+    omitTemperature: document.getElementById("f-omitTemperature").checked,
     temperature: num("f-temperature", 0.2),
     maxToolRounds: Math.round(num("f-maxToolRounds", 6)),
     maxRowsPerTool: Math.round(num("f-maxRowsPerTool", 200)),
@@ -5481,6 +5536,69 @@ function getLlmFormConfig() {
     systemPromptExtra: (document.getElementById("f-systemPromptExtra").value || "").trim(),
     verboseLogging: readVerboseLoggingFromForm(),
   };
+  // Azure: the Endpoint box carries the whole URL in `host`; the server splits
+  // it into host / port / scheme / prefix (normalizeLlmProviderInput), so the
+  // hidden OpenAI-only port / path / HTTPS fields must not override it.
+  if (provider === "azure") { delete cfg.port; delete cfg.basePath; delete cfg.useHttps; }
+  return cfg;
+}
+
+/** An Azure llm config's endpoint as the URL the operator pasted (port shown only when not the scheme's default). */
+function _llmAzureEndpointText(c) {
+  if (!c || !c.host) return "";
+  var https = c.useHttps !== false;
+  var port = c.port && c.port !== (https ? 443 : 80) ? ":" + c.port : "";
+  var host = String(c.host).indexOf(":") !== -1 ? "[" + c.host + "]" : c.host;
+  return (https ? "https" : "http") + "://" + host + port + (c.basePath || "");
+}
+
+/** Show the fields of the chosen provider (and Azure auth mode / API shape), hide the rest. */
+function _applyLlmProvider(id) {
+  var azure = val("f-llmProvider") === "azure";
+  var entra = val("f-azureAuth") === "entra";
+  function show(el, on) { if (el) el.style.display = on ? "" : "none"; }
+  document.querySelectorAll(".llm-openai-only").forEach(function (el) { show(el, !azure); });
+  document.querySelectorAll(".llm-azure-only").forEach(function (el) { show(el, azure); });
+  document.querySelectorAll(".llm-entra-only").forEach(function (el) { show(el, azure && entra); });
+  show(document.getElementById("f-azureApiVersion-group"), azure && val("f-azureApiShape") === "deployments");
+  show(document.getElementById("f-apiToken-group"), !(azure && entra));
+  var set = function (elId, text) { var el = document.getElementById(elId); if (el) el.textContent = text; };
+  set("f-host-label", azure ? "Endpoint *" : "Host / IP *");
+  set("f-model-label", azure ? "Deployment name *" : "Model");
+  set("f-apiToken-label", azure ? "API key *" : "API key");
+  set("f-apiToken-hint", azure ? "Stored encrypted. Key 1 or Key 2 from the resource's Keys and Endpoint page." : "Stored encrypted. Ollama and LM Studio need none by default.");
+  var host = document.getElementById("f-host");
+  if (host) host.placeholder = azure ? "https://my-resource.openai.azure.com" : "e.g. 10.1.5.20 or llm.example.com";
+  var model = document.getElementById("f-model");
+  var select = document.getElementById("f-model-select");
+  if (model) model.placeholder = azure ? "The deployment name, not the model name" : "Blank = the server's first tool-calling model";
+  if (azure) {
+    // Foundry has no model list: a free-text deployment name, and the
+    // tool-calling check runs against it directly.
+    _llmModels = [];
+    if (select) select.style.display = "none";
+    if (model) model.style.display = "";
+    _renderAzureModelStatus(id);
+  } else {
+    var st = document.getElementById("f-llm-model-status");
+    if (st && !_llmModels.length) st.textContent = "Load the server's models (Test Connection does too) to pick one and see which support tool calling.";
+  }
+}
+
+function _renderAzureModelStatus(id, verdict) {
+  var status = document.getElementById("f-llm-model-status");
+  if (!status) return;
+  var html = verdict
+    ? '<span style="color:' + (verdict === "yes" ? "var(--color-success)" : verdict === "no" ? "var(--color-warning)" : "var(--color-text-tertiary)") + '">' + escapeHtml(_llmToolLabel(verdict)) + ' (checked)</span>'
+    : '<span>Use a GPT deployment that supports tool calling. Saving runs the check too.</span>';
+  if (verdict !== "yes") html += '<button type="button" class="btn btn-secondary btn-sm" id="f-llm-probe">Check tool calling</button>';
+  status.innerHTML = html;
+  var probe = document.getElementById("f-llm-probe");
+  if (probe) probe.addEventListener("click", function () {
+    var dep = val("f-model");
+    if (!dep) { showToast("Enter the deployment name first", "error"); return; }
+    _probeLlmModel(dep, id);
+  });
 }
 
 /**
@@ -5742,7 +5860,7 @@ function showTypePicker() {
       '</button>' +
       '<button class="btn btn-secondary" id="pick-llm" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
         '<strong>Local AI Assistant</strong>' +
-        '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">AI assistant via an OpenAI-compatible model server</span>' +
+        '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">AI assistant via an OpenAI-compatible model server or Azure AI Foundry</span>' +
       '</button>' +
     '</div>';
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>';
@@ -6123,6 +6241,7 @@ async function _loadLlmModels(id) {
   try {
     var cfg = getLlmFormConfig();
     if (id && !cfg.apiToken) delete cfg.apiToken;
+    if (id && !cfg.clientSecret) delete cfg.clientSecret;
     var result = await api.integrations.testNew({ id: id || undefined, type: "llm", name: val("f-name") || "Test", config: cfg });
     if (result.models) _renderLlmModelPicker(result.models, id);
     else if (status) status.textContent = result.message || "Could not list the server's models";
@@ -6139,9 +6258,14 @@ async function _probeLlmModel(model, id) {
   try {
     var cfg = getLlmFormConfig();
     if (id && !cfg.apiToken) delete cfg.apiToken;
+    if (id && !cfg.clientSecret) delete cfg.clientSecret;
     var r = await api.integrations.llmProbeTools({ config: cfg, model: model, id: id || undefined });
-    _llmModels.forEach(function (m) { if (m.id === model) { m.toolCalling = r.toolCalling; m.toolCallingSource = "probe"; } });
-    _renderLlmModelPicker(_llmModels, id);
+    if (cfg.provider === "azure") {
+      _renderAzureModelStatus(id, r.toolCalling);
+    } else {
+      _llmModels.forEach(function (m) { if (m.id === model) { m.toolCalling = r.toolCalling; m.toolCallingSource = "probe"; } });
+      _renderLlmModelPicker(_llmModels, id);
+    }
     showToast(model + ": " + _llmToolLabel(r.toolCalling), r.toolCalling === "yes" ? "success" : "warning");
   } catch (err) {
     showToast((err && err.message) || "The tool-calling check failed", "error");
@@ -6153,8 +6277,14 @@ function _wireLlmForm(id) {
   _llmModels = [];
   var btn = document.getElementById("f-llm-load");
   if (btn) btn.addEventListener("click", function () { _loadLlmModels(id); });
-  // Editing a configured integration: show its server's models straight away.
-  if (id && val("f-host")) _loadLlmModels(id);
+  ["f-llmProvider", "f-azureAuth", "f-azureApiShape"].forEach(function (elId) {
+    var el = document.getElementById(elId);
+    if (el) el.addEventListener("change", function () { _applyLlmProvider(id); });
+  });
+  _applyLlmProvider(id);
+  // Editing a configured integration: show its server's models straight away
+  // (an OpenAI-compatible server only — Azure Foundry has no model list).
+  if (id && val("f-host") && val("f-llmProvider") !== "azure") _loadLlmModels(id);
   _loadLlmRetention();
 }
 
@@ -6549,6 +6679,15 @@ function _intgEditFormSpec(intg, config) {
         apiTokenPlaceholder: config.apiToken ? "Leave blank to keep the current key" : "Optional — only if the server requires one",
         model: config.model,
         allowLoopback: config.allowLoopback === true,
+        provider: config.provider === "azure" ? "azure" : "openai",
+        azureApiShape: config.azureApiShape,
+        azureApiVersion: config.azureApiVersion,
+        azureAuth: config.azureAuth,
+        tenantId: config.tenantId,
+        clientId: config.clientId,
+        clientSecretPlaceholder: config.clientSecret ? "Leave blank to keep the current secret" : "The app registration's client secret",
+        azureScope: config.azureScope,
+        omitTemperature: config.omitTemperature === true,
         temperature: config.temperature,
         maxToolRounds: config.maxToolRounds,
         maxRowsPerTool: config.maxRowsPerTool,
@@ -6566,6 +6705,7 @@ function _intgEditFormSpec(intg, config) {
       formGetter = function () {
         var fc = getLlmFormConfig();
         if (!fc.apiToken) delete fc.apiToken;
+        if (!fc.clientSecret) delete fc.clientSecret;
         return fc;
       };
       return { body: body, formGetter: formGetter, defaults: defaults };

@@ -41,6 +41,20 @@ function startFakeLlm(): Promise<void> {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", () => {
+      // Standing in for Azure AI Foundry (rule 95(j)): its paths, its api-key header.
+      if (req.url?.startsWith("/openai/")) {
+        if (req.headers["api-key"] !== "az-key" || req.headers.authorization) {
+          res.writeHead(401, { "Content-Type": "application/json" });
+          res.end('{"error":{"code":"401","message":"Access denied due to invalid subscription key"}}');
+          return;
+        }
+        const v1 = req.url === "/openai/v1/chat/completions" && JSON.parse(body || "{}").model === "fake-deployment";
+        if (!v1 && !req.url.startsWith("/openai/deployments/fake-deployment/chat/completions?api-version=2024-10-21")) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end('{"error":{"code":"DeploymentNotFound","message":"The API deployment for this resource does not exist."}}');
+          return;
+        }
+      }
       if (req.url === "/v1/models") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ data: [{ id: "fake-model" }] }));
@@ -206,6 +220,102 @@ d("llm integration — provisioning (rule 95(f))", () => {
     expect((await put(16384)).status).toBe(200);
     expect(((await prisma.integration.findUnique({ where: { id: integrationId } }))!.config as any).contextWindow).toBe(16384);
     expect((await put(1000)).status).toBe(400);
+  });
+});
+
+d("llm integration — Azure AI Foundry provider (rule 95(j))", () => {
+  const AZ = `${NAME} azure`;
+  let azId = "";
+  const azBody = (over: Record<string, unknown> = {}) => ({
+    type: "llm",
+    name: AZ,
+    config: { provider: "azure", host: `http://127.0.0.1:${llmPort}/openai/v1`, allowLoopback: true, model: "fake-deployment", apiToken: "az-key", ...over },
+  });
+
+  it("refuses an Azure config without its deployment, key, Entra secret, or a valid api-version", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const post = (over: Record<string, unknown>) => agent.post("/api/v1/integrations").set("X-CSRF-Token", csrf).send(azBody(over));
+    const noDeployment = await post({ model: "" });
+    expect(noDeployment.status).toBe(400);
+    expect(JSON.stringify(noDeployment.body)).toMatch(/Deployment name is required/);
+    expect((await post({ apiToken: "" })).status).toBe(400);
+    expect((await post({ azureAuth: "entra", tenantId: "t", clientId: "c" })).status).toBe(400);
+    expect((await post({ azureApiShape: "deployments", azureApiVersion: "latest" })).status).toBe(400);
+    expect(await prisma.integration.count({ where: { name: AZ } })).toBe(0);
+  });
+
+  it("splits a pasted endpoint, masks the key, and still mints the role + token", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const r = await agent.post("/api/v1/integrations").set("X-CSRF-Token", csrf).send(azBody());
+    expect(r.status).toBe(201);
+    azId = r.body.id;
+    expect(r.body.llmAccess.rawToken).toMatch(/^polaris_/);
+    expect(r.body.config).toMatchObject({ provider: "azure", host: "127.0.0.1", port: llmPort, useHttps: false, basePath: "", azureApiShape: "v1", azureAuth: "apiKey" });
+    expect(r.body.config.apiToken).not.toBe("az-key");
+  });
+
+  it("Test Connection sends one chat round with the api-key header; a blank key on the form test uses the stored one", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const t = await agent.post(`/api/v1/integrations/${azId}/test`).set("X-CSRF-Token", csrf);
+    expect(t.body).toMatchObject({ ok: true });
+    expect(t.body.message).toMatch(/deployment "fake-deployment" answered/);
+    const form = await agent.post("/api/v1/integrations/test").set("X-CSRF-Token", csrf).send({ ...azBody({ apiToken: "" }), id: azId });
+    expect(form.body).toMatchObject({ ok: true });
+    const wrong = await agent.post("/api/v1/integrations/test").set("X-CSRF-Token", csrf).send(azBody({ apiToken: "nope" }));
+    expect(wrong.body.ok).toBe(false);
+    expect(wrong.body.message).toMatch(/refused the API key/);
+  });
+
+  it("the legacy deployments shape, and a missing deployment named as such", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const legacy = await agent.post("/api/v1/integrations/test").set("X-CSRF-Token", csrf)
+      .send(azBody({ azureApiShape: "deployments", azureApiVersion: "2024-10-21" }));
+    expect(legacy.body).toMatchObject({ ok: true });
+    const missing = await agent.post("/api/v1/integrations/test").set("X-CSRF-Token", csrf).send(azBody({ model: "nope" }));
+    expect(missing.body.message).toMatch(/Deployment "nope" was not found/);
+  });
+
+  it("check-tools probes the deployment without listing models", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const r = await agent.post(`/api/v1/integrations/${azId}/llm/check-tools`).set("X-CSRF-Token", csrf);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ model: "fake-deployment", result: "yes" });
+  });
+
+  it("switching to Entra stores the client secret masked, and a blank secret on PUT keeps it", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const put = (config: Record<string, unknown>) => agent.put(`/api/v1/integrations/${azId}`).set("X-CSRF-Token", csrf).send({ config });
+    const switched = await put({ azureAuth: "entra", tenantId: "contoso.onmicrosoft.com", clientId: "11111111-2222-3333-4444-555555555555", clientSecret: "sp-secret" });
+    expect(switched.status).toBe(200);
+    expect(switched.body.config.clientSecret).not.toBe("sp-secret");
+    expect((await put({ clientSecret: "", temperature: 0.3 })).status).toBe(200);
+    const row = (await prisma.integration.findUnique({ where: { id: azId } }))!.config as any;
+    expect(row.clientSecret).toBe("sp-secret");
+    expect(row.temperature).toBe(0.3);
+    const g = await agent.get(`/api/v1/integrations/${azId}`);
+    expect(JSON.stringify(g.body)).not.toContain("sp-secret");
+    expect(JSON.stringify(g.body)).not.toContain("az-key");
+  });
+
+  it("an OpenAI-compatible row saved before Azure support keeps its verdict on a plain save", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const cfg = ((await prisma.integration.findUnique({ where: { id: integrationId } }))!.config as any);
+    const legacy = { ...cfg, toolCheck: { model: "fake-model", result: "yes", at: new Date().toISOString() } };
+    delete legacy.provider;
+    delete legacy.azureApiShape;
+    await prisma.integration.update({ where: { id: integrationId }, data: { config: legacy } });
+    const put = await agent.put(`/api/v1/integrations/${integrationId}`).set("X-CSRF-Token", csrf).send({ config: { temperature: 0.25 } });
+    expect(put.status).toBe(200);
+    const after = (await prisma.integration.findUnique({ where: { id: integrationId } }))!.config as any;
+    expect(after.provider).toBe("openai");
+    expect(after.toolCheck).toMatchObject({ result: "yes" });
+  });
+
+  it("deleting it removes its token and role like any llm integration", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const cfg = ((await prisma.integration.findUnique({ where: { id: azId } }))!.config as any);
+    expect((await agent.delete(`/api/v1/integrations/${azId}`).set("X-CSRF-Token", csrf)).status).toBeLessThan(300);
+    expect(await prisma.role.count({ where: { id: cfg.roleId } })).toBe(0);
   });
 });
 

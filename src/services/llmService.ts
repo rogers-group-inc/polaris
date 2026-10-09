@@ -11,6 +11,16 @@
  * works against a self-signed lab server without pulling in undici — the same
  * transport choice as vcenterService / fortigateService.
  *
+ * Providers (rule 95(j)): `provider` absent or "openai" is everything above.
+ * "azure" is Azure AI Foundry's Azure OpenAI deployments — the same chat
+ * dialect on a different path (`/openai/v1/chat/completions`, or the legacy
+ * `/openai/deployments/<name>/chat/completions?api-version=…`), authenticated
+ * by an `api-key` header or an Entra ID client-credentials bearer token, with
+ * `model` holding the DEPLOYMENT name. Foundry cannot list deployments, so
+ * listModels refuses and testConnection sends one tiny chat round instead.
+ * Every provider difference lives in this file; the chat orchestrator only
+ * ever sees chatCompletionRound.
+ *
  * Streaming: the upstream SSE body is parsed incrementally. Text deltas are
  * handed to `onText` as they arrive; tool-call deltas (which arrive in
  * fragments — the function name in one chunk, the JSON arguments spread over
@@ -21,10 +31,29 @@
 
 import http from "node:http";
 import https from "node:https";
+import { createHash } from "node:crypto";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
+import { buildClientCredentialsTokenRequest } from "../utils/entraClientCredentials.js";
+
+export type LlmProvider = "openai" | "azure";
 
 export interface LlmConfig {
+  /** Absent = "openai" (any OpenAI-compatible server) — every row made before Azure support. */
+  provider?: LlmProvider;
+  /** Azure: "v1" (`/openai/v1/…`, no api-version) or the legacy "deployments" path. */
+  azureApiShape?: "v1" | "deployments";
+  /** Azure "deployments" shape only, e.g. "2024-10-21". */
+  azureApiVersion?: string;
+  /** Azure: an `api-key` header (the key lives in apiToken) or an Entra ID service principal. */
+  azureAuth?: "apiKey" | "entra";
+  tenantId?: string;
+  clientId?: string;
+  clientSecret?: string;
+  /** Entra token scope; blank = AZURE_DEFAULTS.scope. */
+  azureScope?: string;
+  /** Never send `temperature` — reasoning deployments (o-series, gpt-5) refuse it. */
+  omitTemperature?: boolean;
   host: string;
   port?: number;
   useHttps?: boolean;
@@ -93,6 +122,20 @@ export interface CompletionRound {
   finishReason: string | null;
 }
 
+export const AZURE_DEFAULTS = {
+  apiShape: "v1",
+  /** Latest GA dated version for the legacy deployments path. */
+  apiVersion: "2024-10-21",
+  scope: "https://cognitiveservices.azure.com/.default",
+} as const;
+
+/** The api-version form Azure accepts: a date, optionally "-preview". */
+export const AZURE_API_VERSION_RE = /^\d{4}-\d{2}-\d{2}(-preview)?$/;
+
+export function isAzureProvider(config: Pick<LlmConfig, "provider">): boolean {
+  return config.provider === "azure";
+}
+
 /** Normalize the operator-entered path prefix: leading slash, no trailing slash. */
 export function normalizeBasePath(p: string | undefined): string {
   const raw = (p ?? LLM_DEFAULTS.basePath).trim();
@@ -101,11 +144,167 @@ export function normalizeBasePath(p: string | undefined): string {
   return withLead.replace(/\/+$/, "");
 }
 
+/**
+ * The path prefix requests are built under. For an OpenAI-compatible server it
+ * is the API path ("/v1" when unset). For Azure it is empty unless the
+ * endpoint sits behind a gateway that adds one — never a default "/v1",
+ * because Azure's own paths already start at "/openai".
+ */
+function basePrefix(config: LlmConfig): string {
+  return isAzureProvider(config) ? normalizeBasePath(config.basePath ?? "") : normalizeBasePath(config.basePath);
+}
+
+/**
+ * Azure's chat-completions path for the configured API shape. The deployment
+ * name rides `model`; on the legacy shape it is a path segment, so it is
+ * encoded. Exported for tests.
+ */
+export function azureChatPath(config: LlmConfig): string {
+  const prefix = basePrefix(config);
+  if ((config.azureApiShape ?? AZURE_DEFAULTS.apiShape) === "deployments") {
+    const version = (config.azureApiVersion ?? "").trim() || AZURE_DEFAULTS.apiVersion;
+    return `${prefix}/openai/deployments/${encodeURIComponent((config.model ?? "").trim())}/chat/completions?api-version=${encodeURIComponent(version)}`;
+  }
+  return `${prefix}/openai/v1/chat/completions`;
+}
+
+/** The full request path for chat completions, per provider. Exported for tests. */
+export function chatCompletionsPath(config: LlmConfig): string {
+  return isAzureProvider(config) ? azureChatPath(config) : `${basePrefix(config)}/chat/completions`;
+}
+
+/**
+ * Split a pasted Azure endpoint ("https://res.openai.azure.com/",
+ * "https://res.services.ai.azure.com/openai/v1", "res.openai.azure.com") into
+ * the host / port / scheme / prefix the transport uses. Anything from
+ * "/openai" on is dropped — Polaris builds that part per API shape. Returns
+ * null for text that is not a host or URL. Exported for tests and the route.
+ */
+export function parseAzureEndpoint(input: string): { host: string; port: number; useHttps: boolean; basePath: string } | null {
+  const raw = (input ?? "").trim();
+  if (!raw) return null;
+  let url: URL;
+  try {
+    url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (!url.hostname) return null;
+  const useHttps = url.protocol === "https:";
+  const port = url.port ? Number(url.port) : useHttps ? 443 : 80;
+  let path = url.pathname.replace(/\/+$/, "");
+  const cut = path.search(/\/openai(\/|$)/i);
+  if (cut !== -1) path = path.slice(0, cut);
+  // URL keeps IPv6 literals bracketed; the transport wants the bare address.
+  const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
+  return { host, port, useHttps, basePath: path };
+}
+
+/**
+ * The authentication headers for one request: a Bearer API key for an
+ * OpenAI-compatible server (only when one is set), `api-key` for an Azure
+ * key, or the Entra access token as a Bearer. Exported for tests.
+ */
+export function llmAuthHeaders(config: LlmConfig, entraToken?: string): Record<string, string> {
+  if (isAzureProvider(config)) {
+    if ((config.azureAuth ?? "apiKey") === "entra") {
+      return entraToken ? { Authorization: `Bearer ${entraToken}` } : {};
+    }
+    return config.apiToken ? { "api-key": config.apiToken } : {};
+  }
+  return config.apiToken ? { Authorization: `Bearer ${config.apiToken}` } : {};
+}
+
+// ─── Entra ID token (Azure, azureAuth "entra") ───────────────────────────────
+//
+// Client credentials against login.microsoftonline.com, the request shape
+// shared with entraIdService / azureArcService. Cached per tenant | client |
+// scope | sha256(secret) — a rotated secret is a new key, so a token minted
+// with the old one is never reused — and refreshed 5 minutes before expiry.
+// Concurrent turns share one in-flight fetch. A failure is never cached. The
+// token and the secret are never logged.
+
+const ENTRA_REFRESH_MARGIN_MS = 5 * 60_000;
+const entraTokenCache = new Map<string, { token: string; expiresAt: number }>();
+const entraInFlight = new Map<string, Promise<string>>();
+
+function entraCacheKey(config: LlmConfig): string {
+  const secretHash = createHash("sha256").update(config.clientSecret ?? "").digest("hex");
+  return [config.tenantId ?? "", config.clientId ?? "", azureScope(config), secretHash].join("|");
+}
+
+function azureScope(config: LlmConfig): string {
+  return (config.azureScope ?? "").trim() || AZURE_DEFAULTS.scope;
+}
+
+/** An Entra access token for the Azure data plane, from cache when fresh. Exported for tests. */
+export async function getAzureEntraToken(config: LlmConfig): Promise<string> {
+  if (!config.tenantId || !config.clientId || !config.clientSecret) {
+    throw new AppError(400, "Entra ID authentication needs a tenant ID, client ID and client secret");
+  }
+  const key = entraCacheKey(config);
+  const cached = entraTokenCache.get(key);
+  if (cached && cached.expiresAt - ENTRA_REFRESH_MARGIN_MS > Date.now()) return cached.token;
+  const pending = entraInFlight.get(key);
+  if (pending) return pending;
+  const p = fetchEntraToken(config)
+    .then(({ token, expiresInSec }) => {
+      entraTokenCache.set(key, { token, expiresAt: Date.now() + expiresInSec * 1000 });
+      return token;
+    })
+    .finally(() => entraInFlight.delete(key));
+  entraInFlight.set(key, p);
+  return p;
+}
+
+async function fetchEntraToken(config: LlmConfig): Promise<{ token: string; expiresInSec: number }> {
+  const { url, body } = buildClientCredentialsTokenRequest({
+    tenantId: config.tenantId!,
+    clientId: config.clientId!,
+    clientSecret: config.clientSecret!,
+    scope: azureScope(config),
+  });
+  let res: Response;
+  try {
+    res = await globalThis.fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (err: any) {
+    throw new AppError(502, `Could not reach Entra ID (login.microsoftonline.com) for a token: ${err?.message || err}`);
+  }
+  const text = await res.text();
+  let parsed: any = null;
+  try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+  if (!res.ok) {
+    // error_description carries the AADSTS code and reason; never the secret.
+    const why = parsed?.error_description ? String(parsed.error_description).split(/\r?\n/)[0]
+      : parsed?.error ? String(parsed.error) : `HTTP ${res.status}`;
+    throw new AppError(502, `Entra ID refused the token request (HTTP ${res.status}): ${why.slice(0, 300)}`);
+  }
+  if (!parsed?.access_token) throw new AppError(502, "Entra ID token response had no access_token");
+  const expiresInSec = Number(parsed.expires_in) > 0 ? Number(parsed.expires_in) : 3600;
+  return { token: String(parsed.access_token), expiresInSec };
+}
+
+function invalidateEntraToken(config: LlmConfig): void {
+  entraTokenCache.delete(entraCacheKey(config));
+}
+
+/** Test hook. */
+export function _clearEntraTokenCache(): void {
+  entraTokenCache.clear();
+  entraInFlight.clear();
+}
+
 /** Human-readable endpoint for messages and the integration card. */
 export function describeEndpoint(config: LlmConfig): string {
   const scheme = config.useHttps ? "https" : "http";
   const port = config.port ?? LLM_DEFAULTS.port;
-  return `${scheme}://${config.host}:${port}${normalizeBasePath(config.basePath)}`;
+  return `${scheme}://${config.host}:${port}${basePrefix(config)}`;
 }
 
 interface RawResponse {
@@ -114,14 +313,15 @@ interface RawResponse {
   stream: http.IncomingMessage;
 }
 
-function openRequest(
+/** `path` is the FULL request path (prefix included) — see chatCompletionsPath. */
+async function openRequest(
   config: LlmConfig,
   method: "GET" | "POST",
   path: string,
   body: unknown,
   signal: AbortSignal | undefined,
 ): Promise<RawResponse> {
-  if (!config.host) return Promise.reject(new AppError(400, "LLM host is required"));
+  if (!config.host) throw new AppError(400, "LLM host is required");
   const mod = config.useHttps ? https : http;
   const payload = body === undefined ? undefined : JSON.stringify(body);
   const headers: Record<string, string> = { Accept: "application/json, text/event-stream" };
@@ -129,7 +329,8 @@ function openRequest(
     headers["Content-Type"] = "application/json";
     headers["Content-Length"] = String(Buffer.byteLength(payload));
   }
-  if (config.apiToken) headers.Authorization = `Bearer ${config.apiToken}`;
+  const entraToken = isAzureProvider(config) && config.azureAuth === "entra" ? await getAzureEntraToken(config) : undefined;
+  Object.assign(headers, llmAuthHeaders(config, entraToken));
   const timeout = config.requestTimeoutMs ?? LLM_DEFAULTS.requestTimeoutMs;
 
   return new Promise((resolve, reject) => {
@@ -138,7 +339,7 @@ function openRequest(
         host: config.host,
         port: config.port ?? LLM_DEFAULTS.port,
         method,
-        path: normalizeBasePath(config.basePath) + path,
+        path,
         headers,
         signal,
         ...(config.useHttps ? { rejectUnauthorized: config.verifySsl !== false } : {}),
@@ -171,13 +372,35 @@ async function readAll(stream: http.IncomingMessage, cap = 2_000_000): Promise<s
   return out;
 }
 
-function upstreamError(status: number, body: string): AppError {
-  let detail = body.trim();
+function upstreamDetail(body: string): string {
+  let detail: unknown = body.trim();
   try {
     const j = JSON.parse(body);
     detail = j?.error?.message ?? j?.error ?? j?.message ?? detail;
   } catch { /* plain-text body */ }
-  if (typeof detail !== "string") detail = JSON.stringify(detail);
+  return typeof detail === "string" ? detail : JSON.stringify(detail);
+}
+
+/** Exported for tests. */
+export function upstreamError(status: number, body: string, config?: LlmConfig): AppError {
+  const detail = upstreamDetail(body);
+  if (config && isAzureProvider(config)) {
+    const entra = config.azureAuth === "entra";
+    if (status === 401) {
+      return new AppError(502, entra
+        ? `Azure AI Foundry refused the Entra ID token (HTTP 401) — check the tenant ID and that the token scope is ${azureScope(config)}`
+        : "Azure AI Foundry refused the API key (HTTP 401) — copy Key 1 or Key 2 from the resource's Keys and Endpoint page");
+    }
+    if (status === 403) {
+      return new AppError(502, entra
+        ? "Azure AI Foundry refused the app registration (HTTP 403) — grant its service principal the Cognitive Services OpenAI User role on the resource"
+        : `Azure AI Foundry refused the request (HTTP 403): ${detail.slice(0, 300)}`);
+    }
+    if (status === 404) {
+      return new AppError(502, `Deployment "${(config.model ?? "").trim()}" was not found at ${describeEndpoint(config)} (HTTP 404) — Model must be the DEPLOYMENT name, and the resource must support the ${(config.azureApiShape ?? AZURE_DEFAULTS.apiShape) === "v1" ? "v1" : "deployments"} API shape`);
+    }
+    return new AppError(502, `Azure AI Foundry error (HTTP ${status}): ${detail.slice(0, 300)}`);
+  }
   if (status === 401 || status === 403) {
     return new AppError(502, `The LLM server refused the API key (HTTP ${status})`);
   }
@@ -242,6 +465,7 @@ async function getJson(config: LlmConfig, method: "GET" | "POST", path: string, 
  * Ollama server (or one too old to report capabilities). Exported for tests.
  */
 export async function ollamaCapabilities(config: LlmConfig, ids: string[]): Promise<Map<string, string[]> | null> {
+  if (isAzureProvider(config)) return null;
   const base = normalizeBasePath(config.basePath);
   if (base !== "/v1" && base !== "") return null;
   const native: LlmConfig = { ...config, basePath: "", requestTimeoutMs: 10_000 };
@@ -274,7 +498,10 @@ export async function ollamaCapabilities(config: LlmConfig, ids: string[]): Prom
  */
 export async function listModels(config: LlmConfig): Promise<LlmModelInfo[]> {
   if (!config.host) throw new AppError(400, "Host is required");
-  const res = await openRequest({ ...config, requestTimeoutMs: Math.min(config.requestTimeoutMs ?? 15_000, 15_000) }, "GET", "/models", undefined, undefined);
+  if (isAzureProvider(config)) {
+    throw new AppError(400, "Azure AI Foundry cannot list deployments — enter the deployment name as Model");
+  }
+  const res = await openRequest({ ...config, requestTimeoutMs: Math.min(config.requestTimeoutMs ?? 15_000, 15_000) }, "GET", `${basePrefix(config)}/models`, undefined, undefined);
   const body = await readAll(res.stream);
   if (res.status < 200 || res.status >= 300) throw upstreamError(res.status, body);
   const ids = parseModelIds(body);
@@ -380,6 +607,7 @@ export async function testConnection(config: LlmConfig): Promise<LlmTestResult> 
 
 async function testConnectionInner(config: LlmConfig): Promise<LlmTestResult> {
   if (!config.host) return { ok: false, message: "Host is required" };
+  if (isAzureProvider(config)) return testAzureConnection(config);
   let models: LlmModelInfo[];
   try {
     models = await listModels(config);
@@ -411,6 +639,41 @@ async function testConnectionInner(config: LlmConfig): Promise<LlmTestResult> {
   return { ok: true, message: `Connected — "${hit}" is available and ${note} (${n} model(s) on the server)`, models, model: hit };
 }
 
+/**
+ * Azure Test Connection: Foundry has no deployment list, so the only proof
+ * that the endpoint, the credential AND the deployment are right is one tiny
+ * chat round (no tools). Its failures already name the auth mode — an AADSTS
+ * reason from the token request, or upstreamError's 401 / 403 / 404 wording.
+ */
+async function testAzureConnection(config: LlmConfig): Promise<LlmTestResult> {
+  const deployment = (config.model ?? "").trim();
+  if (!deployment) return { ok: false, message: "Model (the deployment name) is required for Azure AI Foundry", model: null };
+  const how = config.azureAuth === "entra" ? "Entra ID app" : "API key";
+  const shape = (config.azureApiShape ?? AZURE_DEFAULTS.apiShape) === "deployments"
+    ? `deployments API ${(config.azureApiVersion ?? "").trim() || AZURE_DEFAULTS.apiVersion}` : "v1 API";
+  try {
+    await chatCompletionRound(
+      config,
+      [
+        { role: "system", content: "You are a connectivity check. Reply with the single word OK." },
+        { role: "user", content: "ping" },
+      ],
+      [],
+      { signal: AbortSignal.timeout(Math.min(config.requestTimeoutMs ?? LLM_DEFAULTS.requestTimeoutMs, 90_000)) },
+    );
+  } catch (err: any) {
+    if (err?.name === "AbortError" || err?.name === "TimeoutError") {
+      return { ok: false, message: `Deployment "${deployment}" did not answer within 90 s`, model: null };
+    }
+    return { ok: false, message: err instanceof AppError ? err.message : err?.message || "Unknown error", model: null };
+  }
+  return {
+    ok: true,
+    message: `Connected — Azure AI Foundry deployment "${deployment}" answered (${shape}, ${how}). Tool calling not verified — use Check tool calling`,
+    model: deployment,
+  };
+}
+
 /** The models a test of this config would offer, as a plain list for the form. */
 export async function describeModels(config: LlmConfig): Promise<{ models: LlmModelInfo[]; defaultModel: string | null }> {
   const models = await listModels(config);
@@ -430,6 +693,7 @@ const RESOLVE_TTL_MS = 5 * 60_000;
 export async function resolveChatModel(integrationId: string, config: LlmConfig): Promise<string> {
   const configured = (config.model ?? "").trim();
   if (configured) return configured;
+  if (isAzureProvider(config)) throw new AppError(409, "Set Model on the integration to the Azure deployment name");
   const hit = resolvedModelCache.get(integrationId);
   if (hit && Date.now() - hit.at < RESOLVE_TTL_MS) return hit.model;
   const pick = pickDefaultModel(await listModels(config));
@@ -553,6 +817,17 @@ export function applyStreamChunk(
   return text;
 }
 
+// Azure deployments that answered 400 to `temperature`, by host + path + deployment.
+const refusesTemperature = new Set<string>();
+function temperatureKey(config: LlmConfig): string {
+  return `${config.host}|${basePrefix(config)}|${(config.model ?? "").trim()}`;
+}
+
+/** Test hook. */
+export function _clearTemperatureRefusals(): void {
+  refusesTemperature.clear();
+}
+
 /**
  * One chat-completions round. Streams text through `onText`; returns the
  * full text plus any tool calls the model asked for.
@@ -563,19 +838,35 @@ export async function chatCompletionRound(
   tools: ChatToolDef[],
   opts: { signal?: AbortSignal; onText?: (text: string) => void; onReasoning?: (totalChars: number) => void } = {},
 ): Promise<CompletionRound> {
+  const azure = isAzureProvider(config);
   const body: Record<string, unknown> = {
     model: config.model,
     messages,
     stream: true,
-    temperature: config.temperature ?? LLM_DEFAULTS.temperature,
   };
+  if (!(azure && (config.omitTemperature || refusesTemperature.has(temperatureKey(config))))) {
+    body.temperature = config.temperature ?? LLM_DEFAULTS.temperature;
+  }
   if (tools.length) {
     body.tools = tools;
     body.tool_choice = "auto";
   }
-  const res = await openRequest(config, "POST", "/chat/completions", body, opts.signal);
+  let res = await openRequest(config, "POST", chatCompletionsPath(config), body, opts.signal);
+  if (azure && res.status === 400 && body.temperature !== undefined) {
+    // A reasoning deployment (o-series, gpt-5…) answers 400 naming
+    // `temperature`. Retry once without it, and remember the refusal for
+    // this deployment so later rounds do not pay the extra request.
+    const errBody = await readAll(res.stream);
+    if (!/temperature/i.test(errBody)) throw upstreamError(res.status, errBody, config);
+    refusesTemperature.add(temperatureKey(config));
+    delete body.temperature;
+    res = await openRequest(config, "POST", chatCompletionsPath(config), body, opts.signal);
+  }
   if (res.status < 200 || res.status >= 300) {
-    throw upstreamError(res.status, await readAll(res.stream));
+    // A stale cached Entra token (revoked, or minted before a role change)
+    // must not be reused for the next request.
+    if (azure && config.azureAuth === "entra" && res.status === 401) invalidateEntraToken(config);
+    throw upstreamError(res.status, await readAll(res.stream), config);
   }
 
   const round = { content: "", toolCalls: new Map<number, ChatToolCall>(), finishReason: null as string | null, reasoningChars: 0 };
@@ -627,7 +918,7 @@ async function readRound(
           if (config.verboseLogging) logger.debug({ data: data.slice(0, 200) }, "llm: unparseable SSE chunk skipped");
           continue;
         }
-        if (parsed?.error) throw upstreamError(500, JSON.stringify(parsed));
+        if (parsed?.error) throw upstreamError(500, JSON.stringify(parsed), config);
         const before = round.reasoningChars;
         const text = applyStreamChunk(round, parsed);
         if (text) opts.onText?.(text);
