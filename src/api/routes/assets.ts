@@ -1700,6 +1700,11 @@ router.get("/:id/effective-monitor-settings", requirePermission("assets", "read"
       select: {
         id:                         true,
         assetType:                  true,
+        // The workload sources' response-time default depends on it (ICMP
+        // when there is an address, the platform's state check when not) —
+        // without it this endpoint reported the state check for every
+        // workload asset while the monitor pinged.
+        ipAddress:                  true,
         discoveredByIntegrationId:  true,
         discoveredByIntegration:    { select: { name: true, type: true, pollInterval: true } },
         monitorIntervalSec:         true,
