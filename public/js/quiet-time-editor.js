@@ -127,12 +127,17 @@
    * send goes out live. Ticking a severity ticks all four; unticking its last
    * kind unticks the severity.
    */
-  function severityTreeHtml(prefix, held, sevs) {
+  function severityTreeHtml(prefix, held, sevs, scope) {
     sevs = sevs || ALL_SEVERITIES;
+    // `scope` (sev → kind → bool) hides the sends the host can never make — an
+    // automation with no reminders has no Reminders box. A hidden box still
+    // carries its value, so what was stored round-trips untouched.
+    if (scope) sevs = sevs.filter(function (sv) { return !!scope[sv]; });
     var kind = function (sv, key, indent) {
       var on = !!(held[sv] && held[sv][key]);
-      return '<label style="display:inline-flex;align-items:center;gap:5px;margin:0' + (indent ? ";margin-left:1.4rem" : "") + ';font-weight:400;cursor:pointer;font-size:0.85rem">' +
-        '<input type="checkbox" class="qte-kind" data-kind="' + key + '"' + (on ? " checked" : "") + ' style="width:auto"> ' + esc(KIND_LABELS[key]) + '</label>';
+      var shown = !scope || !!scope[sv][key];
+      return '<label class="qte-kind-wrap" style="display:' + (shown ? "inline-flex" : "none") + ';align-items:center;gap:5px;margin:0' + (indent ? ";margin-left:1.4rem" : "") + ';font-weight:400;cursor:pointer;font-size:0.85rem">' +
+        '<input type="checkbox" class="qte-kind' + (shown ? "" : " qte-kind-hidden") + '" data-kind="' + key + '"' + (on ? " checked" : "") + ' style="width:auto"> ' + esc(KIND_LABELS[key]) + '</label>';
     };
     return '<div class="qte-sevtree" data-qte-prefix="' + esc(prefix || "qte") + '" style="display:grid;gap:6px">' +
       sevs.map(function (sv) {
@@ -165,7 +170,9 @@
         if (t.checked) row.querySelectorAll(".qte-kind").forEach(function (k) { k.checked = true; });
         if (kinds) kinds.hidden = !t.checked;
       } else if (t.classList.contains("qte-kind")) {
-        var any = Array.prototype.some.call(row.querySelectorAll(".qte-kind"), function (k) { return k.checked; });
+        // Only the boxes on screen count: unticking the last VISIBLE one lets
+        // the severity through, whatever a hidden one says.
+        var any = Array.prototype.some.call(row.querySelectorAll(".qte-kind:not(.qte-kind-hidden)"), function (k) { return k.checked; });
         if (!any && sev) { sev.checked = false; if (kinds) kinds.hidden = true; }
       }
       if (typeof onChange === "function") onChange();
@@ -179,12 +186,13 @@
     root.querySelectorAll(".qte-sevrow").forEach(function (row) {
       var sev = row.querySelector(".qte-sev");
       if (!sev || !sev.checked) return;
-      var k = {};
+      var k = {}, visible = false;
       KIND_KEYS.forEach(function (key) {
         var box = row.querySelector('.qte-kind[data-kind="' + key + '"]');
         k[key] = !!(box && box.checked);
+        if (k[key] && !box.classList.contains("qte-kind-hidden")) visible = true;
       });
-      if (anyKind(k)) held[row.getAttribute("data-sev")] = k;
+      if (visible) held[row.getAttribute("data-sev")] = k;
     });
     return held;
   }
@@ -205,10 +213,13 @@
 
   // One-click starting points for the rules editor. Each is the whole rule
   // list; "Outside business hours" is the one that INVERTS — its rules say
-  // when people are at work and everything else goes quiet.
+  // when people are at work and everything else goes quiet. Nights and
+  // weekends puts SUNDAY on the night rule too: Sunday all day ends at
+  // midnight, and only a Sunday 22:00–06:00 carries the quiet through to
+  // 06:00 Monday (the recurrence editor keeps that tail).
   var NIGHT = [{ startTime: "22:00", endTime: "06:00" }];
   var QUIET_PRESETS = [
-    { key: "nights", label: "Nights and weekends", rules: [{ days: [1, 2, 3, 4, 5], ranges: NIGHT }, { days: [0, 6], ranges: [] }] },
+    { key: "nights", label: "Nights and weekends", rules: [{ days: [0, 1, 2, 3, 4, 5], ranges: NIGHT }, { days: [0, 6], ranges: [] }] },
     { key: "everynight", label: "Every night", rules: [{ days: [0, 1, 2, 3, 4, 5, 6], ranges: NIGHT }] },
     { key: "weekends", label: "Weekends only", rules: [{ days: [0, 6], ranges: [] }] },
     { key: "business", label: "Outside business hours", invert: true, rules: [{ days: [1, 2, 3, 4, 5], ranges: [{ startTime: "08:00", endTime: "18:00" }] }] },
@@ -253,7 +264,11 @@
    * @param prefix  id prefix ("awq", "qtw")
    * @param cfg     the stored policy, or null for a new one
    * @param meta    { severities: [...], channels: [...], serverClock, showSeverities?: boolean,
+   *                  scope?: { sev: { alerts, alertReminders, escalations, escalationReminders } },
    *                  defaultStart?, defaultEnd? }
+   *                `scope` limits the tree to the severities the host can fire
+   *                at and the sends it actually makes there (an automation's
+   *                own Quiet time step); absent = every severity, every send.
    */
   function html(prefix, cfg, meta) {
     meta = meta || {};
@@ -273,7 +288,7 @@
       '<div class="form-group" style="margin-top:0.9rem">' +
         '<label style="font-weight:600">What goes quiet</label>' +
         '<p style="font-size:0.8rem;color:var(--color-text-tertiary);margin:0 0 0.4rem">Per severity: the first alert, the escalation tiers, and each one’s reminders. The alert is still raised and shows on the Active Alerts page; what changes is who hears about it, and when.</p>' +
-        severityTreeHtml(p, held, sevs) +
+        severityTreeHtml(p, held, sevs, meta.scope || null) +
       '</div>';
 
     return '<div class="qte" data-qte-prefix="' + p + '">' +

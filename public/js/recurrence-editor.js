@@ -523,17 +523,26 @@
     // covering one minute of the SAME day — Friday 22:00–06:00 running into
     // "Saturday all day" is the normal shape of nights-and-weekends, not a
     // clash, and must not paint Saturday as one.
+    // An overnight range on a day another rule makes all day is not one either:
+    // its point is the next morning (crossRuleOverlap says why).
     var own = [], spill = [], conflict = [false, false, false, false, false, false, false];
+    var allDay = allDayDays(rules);
+    var allDaySeen = [0, 0, 0, 0, 0, 0, 0];
     for (var d = 0; d < 7; d++) { own.push(new Uint8Array(1440)); spill.push(new Uint8Array(1440)); }
     rules.forEach(function (r) {
       if (r.error) return;
       r.days.forEach(function (dow) {
-        if (r.allDay) { for (var i = 0; i < 1440; i++) { if (own[dow][i]) conflict[dow] = true; own[dow][i] = 1; } return; }
+        if (r.allDay) {
+          if (++allDaySeen[dow] > 1) conflict[dow] = true;
+          for (var i = 0; i < 1440; i++) own[dow][i] = 1;
+          return;
+        }
         (r.ranges || []).forEach(function (h) {
           var a = minutesOfDay(h.startTime), b = minutesOfDay(h.endTime);
           if (b <= a) b += 1440;
+          else if (allDay[dow]) conflict[dow] = true;
           for (var k = a; k < b; k++) {
-            if (k < 1440) { if (own[dow][k]) conflict[dow] = true; own[dow][k] = 1; }
+            if (k < 1440) { if (own[dow][k] && !allDay[dow]) conflict[dow] = true; own[dow][k] = 1; }
             else spill[(dow + 1) % 7][k % 1440] = 1;
           }
         });
@@ -587,13 +596,27 @@
       return stitchMidnight(r.m.map(maskRanges));
     }
     var byDay = [[], [], [], [], [], [], []];
+    var allDay = allDayDays(rules);
+    var tails = [[], [], [], [], [], [], []];
     rules.forEach(function (rule) {
       if (rule.error) return;
       rule.days.forEach(function (dow) {
-        if (rule.allDay || byDay[dow] === null) { byDay[dow] = null; return; }
+        if (allDay[dow]) {
+          // The day is quiet all day already, so an overnight range on it adds
+          // only what it carries past midnight: Sunday all day + Sunday
+          // 22:00–06:00 is "through 06:00 Monday", stored as Monday 00:00–06:00.
+          if (!rule.allDay) (rule.ranges || []).forEach(function (h) {
+            if (crossesMidnight(h) && h.endTime !== "00:00") tails[(dow + 1) % 7].push({ startTime: "00:00", endTime: h.endTime });
+          });
+          byDay[dow] = null;
+          return;
+        }
         byDay[dow] = byDay[dow].concat(rule.ranges || []);
       });
     });
+    for (var d = 0; d < 7; d++) {
+      if (byDay[d] !== null && tails[d].length) byDay[d] = tails[d].concat(byDay[d]);
+    }
     return byDay;
   }
 
@@ -612,17 +635,37 @@
     return { freq: "weekly", daysOfWeek: days, hoursByDay: days.map(function (d) { return { dow: d, hours: byDay[d] === null ? [] : byDay[d] }; }) };
   }
 
+  /** Does an hour range run past midnight into the next day? */
+  function crossesMidnight(h) {
+    return minutesOfDay(h.endTime) <= minutesOfDay(h.startTime);
+  }
+
+  /** Which days some rule makes quiet all day. */
+  function allDayDays(rules) {
+    var out = [false, false, false, false, false, false, false];
+    (rules || []).forEach(function (r) {
+      if (!r.error && r.allDay) r.days.forEach(function (d) { out[d] = true; });
+    });
+    return out;
+  }
+
   /** Same-day overlap across rules, named by day. */
   function crossRuleOverlap(byDay, rules) {
     // An all-day period sharing a day with any other period: the union would
-    // quietly be "all day", which hides that the day is listed twice.
+    // quietly be "all day", which hides that the day is listed twice. The one
+    // exception is an overnight range: it ALSO covers the next morning, so
+    // "Sun–Fri 22:00–06:00" next to "Sat, Sun all day" means something (it is
+    // what closes the Monday-morning gap) and rulesPerDay keeps its tail.
     for (var d0 = 0; d0 < 7; d0++) {
       var here = (rules || []).filter(function (r) { return !r.error && r.days.indexOf(d0) >= 0; });
       if (here.length < 2) continue;
       var allDay = here.filter(function (r) { return r.allDay; });
       if (!allDay.length) continue;
-      var other = here.filter(function (r) { return r !== allDay[0]; })[0];
-      var otherText = other.allDay ? "all day" : (other.ranges || []).map(function (h) { return h.startTime + "–" + h.endTime; }).join(", ");
+      var other = here.filter(function (r) {
+        return r !== allDay[0] && (r.allDay || (r.ranges || []).some(function (h) { return !crossesMidnight(h); }));
+      })[0];
+      if (!other) continue;
+      var otherText = other.allDay ? "all day" : (other.ranges || []).filter(function (h) { return !crossesMidnight(h); }).map(function (h) { return h.startTime + "–" + h.endTime; }).join(", ");
       return DAY_SHORT[d0] + ": all day overlaps " + otherText + " — a day that is quiet all day needs no other period; remove it from one.";
     }
     for (var d = 0; d < 7; d++) {

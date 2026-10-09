@@ -7146,7 +7146,50 @@ async function openAutomationWizard(existing, opts) {
       channels: _ruleChannels || [],
       serverClock: quietMeta().serverClock,
       showSeverities: true,
+      scope: quietScope(),
     };
+  }
+
+  /**
+   * What this automation can actually send, per severity — the "What goes
+   * quiet" tree shows only these. Severities: the base one plus every band's
+   * (bands only where the trigger takes them). Under each: Alerts always;
+   * Reminders when a notify action at that severity repeats; Escalation
+   * alerts when a chain reaches it; their Reminders when a tier repeats. With
+   * per-severity actions off, every band runs the base actions and chain
+   * (tierForSeverity / escalationChainsForSeverity on the server).
+   */
+  function quietScope() {
+    var chainsOf = function (chain, actions) {
+      var out = [];
+      if (chain && (chain.tiers || []).length) out.push(chain);
+      (actions || []).forEach(function (a) { if (a && a.escalation && (a.escalation.tiers || []).length) out.push(a.escalation); });
+      return out;
+    };
+    var kindsFor = function (chain, actions) {
+      var chains = chainsOf(chain, actions);
+      return {
+        alerts: true,
+        alertReminders: !!draft.repeat || (actions || []).some(function (a) { return a && a.type === "notify" && !!a.repeat; }),
+        escalations: chains.length > 0,
+        escalationReminders: chains.some(function (c) { return c.tiers.some(function (t) { return t && t.repeatEveryMin; }); }),
+      };
+    };
+    var scope = {};
+    var base = kindsFor(draft.escalation, draft.actions);
+    scope[draft.severity || "warning"] = base;
+    var bands = (bandsApplicable(draft.trigger) && draft.severityBands) || [];
+    var perSev = bandActionsPerSeverityOn();
+    bands.forEach(function (b) {
+      if (!b || !b.severity || scope[b.severity]) return;
+      if (!perSev) { scope[b.severity] = base; return; }
+      // The engine's fallback (escalationChainsForSeverity): a band's own
+      // actions / chain only when it has some, else the base tier's.
+      var acts = b.actions && b.actions.length ? b.actions : draft.actions;
+      var chain = b.escalation && (b.escalation.tiers || []).length ? b.escalation : draft.escalation;
+      scope[b.severity] = kindsFor(chain, acts);
+    });
+    return scope;
   }
   function renderStep6() {
     var panel = document.getElementById("aw-step-6");
