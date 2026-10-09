@@ -181,3 +181,37 @@ describe("list_assets — regions (the person's own, or named)", () => {
     expect(h.prisma.asset.findMany).not.toHaveBeenCalled();
   });
 });
+
+describe("decommissioned assets and retired networks stay out unless asked for", () => {
+  const req = reqWith({ assets: "read", subnets: "read" });
+  beforeEach(() => {
+    h.prisma.asset.findMany.mockResolvedValue([]); h.prisma.asset.count.mockResolvedValue(0);
+    h.prisma.subnet.findMany.mockResolvedValue([]); h.prisma.subnet.count.mockResolvedValue(0);
+    h.prisma.asset.groupBy.mockResolvedValue([]);
+  });
+
+  it("list_assets leaves decommissioned out by default, and includes it when the status asks", async () => {
+    await runAssistantTool("list_assets", '{"monitorStatus":"down"}', { req, maxRows: 50 });
+    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toContainEqual({ status: { not: "decommissioned" } });
+    h.prisma.asset.findMany.mockClear();
+    await runAssistantTool("list_assets", '{"status":["decommissioned"]}', { req, maxRows: 50 });
+    const and = h.prisma.asset.findMany.mock.calls[0][0].where.AND;
+    expect(and).toContainEqual({ status: { in: ["decommissioned"] } });
+    expect(and).not.toContainEqual({ status: { not: "decommissioned" } });
+  });
+
+  it("list_networks leaves deprecated networks out by default, and lists them when asked", async () => {
+    await runAssistantTool("list_networks", "{}", { req, maxRows: 50 });
+    expect(h.prisma.subnet.findMany.mock.calls[0][0].where.status).toEqual({ not: "deprecated" });
+    h.prisma.subnet.findMany.mockClear();
+    await runAssistantTool("list_networks", '{"status":"deprecated"}', { req, maxRows: 50 });
+    expect(h.prisma.subnet.findMany.mock.calls[0][0].where.status).toBe("deprecated");
+  });
+
+  it("fleet_summary counts no decommissioned assets", async () => {
+    await runAssistantTool("fleet_summary", "{}", { req, maxRows: 50 });
+    for (const call of h.prisma.asset.groupBy.mock.calls.filter((c: any[]) => c[0].by[0] !== "monitorStatus")) {
+      expect(call[0].where).toEqual({ status: { not: "decommissioned" } });
+    }
+  });
+});

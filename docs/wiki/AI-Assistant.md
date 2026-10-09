@@ -144,6 +144,10 @@ your regions, and "how do I…" answers say whether your role can do it. That
 knowledge only shapes the answer: every lookup is still checked against your
 role.
 
+**Decommissioned** assets and **deprecated** (retired) networks are left out of
+answers, counts and reports unless you ask about them ("list the decommissioned
+switches"). Searching for one by name still finds it.
+
 ### Reports
 
 When you ask for a report, list or export, the answer carries a **report card**

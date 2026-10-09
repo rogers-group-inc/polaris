@@ -248,7 +248,8 @@ const listAssetsTool: ListToolDef = {
   description:
     "List assets (devices) with filters. monitorStatus 'down' finds devices that are currently down. " +
     "assetType values include firewall, switch, access_point, server, workstation, printer, other. " +
-    "network filters to assets whose IP is inside a network CIDR.",
+    "network filters to assets whose IP is inside a network CIDR. Decommissioned assets are left out unless " +
+    "status includes \"decommissioned\" — pass it only when the person asks about decommissioned assets.",
   parameters: {
     type: "object",
     properties: {
@@ -291,7 +292,10 @@ const listAssetsTool: ListToolDef = {
       });
     }
     if (a.assetType) and.push({ assetType: { in: a.assetType } });
+    // Decommissioned assets are history, not inventory: left out unless the
+    // status filter asks for them (owner's call, 2026-10-09).
     if (a.status) and.push({ status: { in: a.status } });
+    else and.push({ status: { not: "decommissioned" } });
     if (a.monitorStatus) and.push({ monitorStatus: { in: a.monitorStatus }, monitored: true });
     if (typeof a.monitored === "boolean") and.push({ monitored: a.monitored });
     if (a.tag) and.push({ tags: { has: a.tag } });
@@ -589,7 +593,7 @@ const listSubnetsTool: ListToolDef = {
     type: "object",
     properties: {
       search: { type: "string", description: "Matches the network name, CIDR or purpose" },
-      status: { type: "string", description: "available, reserved, deprecated" },
+      status: { type: "string", description: "available, reserved, deprecated. Deprecated (retired) networks are left out unless asked for here" },
       tag: { type: "string" },
       vlan: { type: "number" },
       minUtilizationPercent: { type: "number" },
@@ -608,7 +612,8 @@ const listSubnetsTool: ListToolDef = {
     if (!p.success) return invalid(p.error);
     const a = p.data;
     const where: Record<string, unknown> = {};
-    if (a.status) where.status = a.status;
+    // A deprecated (retired) network is left out unless asked for by status.
+    where.status = a.status ? a.status : { not: "deprecated" };
     if (a.tag) where.tags = { has: a.tag };
     if (a.vlan) where.vlan = a.vlan;
     if (a.search) {
@@ -735,7 +740,8 @@ const fleetSummaryTool: ToolDef = {
         const [byMonitor, byType, byStatus] = await Promise.all([
           prisma.asset.groupBy({ by: ["monitorStatus"], where: { monitored: true }, _count: { _all: true } }),
           prisma.asset.groupBy({ by: ["assetType"], where: { status: { not: "decommissioned" } }, _count: { _all: true } }),
-          prisma.asset.groupBy({ by: ["status"], _count: { _all: true } }),
+          // Decommissioned assets are left out of the overview (owner's call, 2026-10-09).
+          prisma.asset.groupBy({ by: ["status"], where: { status: { not: "decommissioned" } }, _count: { _all: true } }),
         ]);
         out.monitoredByStatus = Object.fromEntries(byMonitor.map((r) => [r.monitorStatus ?? "unknown", r._count._all]));
         out.assetsByType = Object.fromEntries(byType.map((r) => [r.assetType, r._count._all]));
