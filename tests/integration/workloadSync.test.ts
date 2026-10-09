@@ -244,6 +244,20 @@ d("syncWorkloadDevices — several hosts", () => {
     expect((after?.virtualization as any)?.online).toBe(false);
   });
 
+  it("keeps an offline node's last pools instead of blanking them", async () => {
+    await syncWorkloadDevices(integrationId, NAME, {}, clusterResult("n1"));
+    const offline = clusterResult("n1");
+    offline.hosts[1] = { ...offline.hosts[1], online: false, pools: [] };
+    await syncWorkloadDevices(integrationId, NAME, {}, offline);
+    const n2 = await byName("n2");
+    expect((n2?.virtualization as any)?.pools?.map((p: any) => p.name)).toEqual(["array"]);
+    // An ONLINE node that reports no pools really has none.
+    const emptied = clusterResult("n1");
+    emptied.hosts[1] = { ...emptied.hosts[1], pools: [] };
+    await syncWorkloadDevices(integrationId, NAME, {}, emptied);
+    expect(((await byName("n2"))?.virtualization as any)?.pools).toEqual([]);
+  });
+
   it("sweeps a node removed from the cluster", async () => {
     await syncWorkloadDevices(integrationId, NAME, {}, clusterResult("n1", ["n1", "n2", "n3"]));
     await syncWorkloadDevices(integrationId, NAME, {}, clusterResult("n1", ["n1", "n2"]));

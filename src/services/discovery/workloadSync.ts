@@ -863,6 +863,13 @@ export async function syncWorkloadDevices(
     const onHost = (w: { hostKey?: string | null }) => (w.hostKey ?? null) === hostKey;
     const hostExternalId = workloadHostExternalId(integrationId, hostKey);
     currentHostIds.push(hostExternalId);
+    // An offline cluster node cannot be asked about its storage, so it reports
+    // none — keep the last pools it did report rather than blank the layout
+    // for exactly the time an operator is looking at it.
+    if (h.online === false && h.pools.length === 0) {
+      const prior = assetByExternalId.get(`${kinds.host}|${hostExternalId}`)?.virtualization as Record<string, unknown> | null | undefined;
+      if (Array.isArray(prior?.pools)) h.pools = prior.pools as WorkloadPool[];
+    }
     const hostAssetId = await syncOne({
       role: "host",
       externalId: hostExternalId,
