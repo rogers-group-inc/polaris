@@ -152,10 +152,12 @@ describe("Efficiency Advisor lines (rule 95(h))", () => {
     expect(html).toContain("Thank you for activating R.A.L.P.H.");
   });
 
-  it("shows the advisor as R.A.L.P.H., spelled out on hover", () => {
+  it("shows the advisor as a R.A.L.P.H. toggle button, spelled out on hover, glowing while on", () => {
     const src = readFileSync(resolve(__dirname, "../../public/js/assistant.js"), "utf8");
-    expect(src).toContain('<label class="asst-advisor" title="Real-time Assesser of Labor and Productivity Habits">');
-    expect(src).toContain('<input type="checkbox" data-r="advisor"> R.A.L.P.H.</label>');
+    const css = readFileSync(resolve(__dirname, "../../public/css/assistant.css"), "utf8");
+    expect(src).toContain('<button type="button" class="asst-ralph" data-r="advisor" aria-pressed="false" title="Real-time Assesser of Labor and Productivity Habits">R.A.L.P.H.</button>');
+    expect(src).toContain('S.els.advisor.addEventListener("click", setAdvisor)');
+    expect(css).toMatch(/\.asst-ralph\.on \{[^}]*box-shadow/);
     expect([...A._ADVISOR_GREETINGS, ...A._ADVISOR_FAREWELLS].join(" ")).not.toMatch(/Efficiency Advisor/);
   });
 

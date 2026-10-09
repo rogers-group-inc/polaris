@@ -2702,7 +2702,12 @@ html:active-view-transition-type(polaris-theme)::view-transition-new(polaris-the
    bottom of the scroller, lifted by --navbar-h so it rests on the glass navbar
    instead of under it (canon-mobile.md: anything near the bottom clears the
    bar). It wears the sheet glass, so the log reads through it. */
-.chat { display: flex; flex-direction: column; min-height: 100%; }
+/* .app-body has no definite height, so a percentage min-height on .chat resolves
+   to nothing and a short chat left the composer floating mid-screen above the
+   navbar. As a flex column, the body stretches .chat to its full height and the
+   composer rests on the navbar whether the log is empty or long. */
+.app[data-tab="chat"] > .app-body { display: flex; flex-direction: column; }
+.chat { display: flex; flex-direction: column; flex: 1 0 auto; }
 .chat-log { flex: 1 1 auto; padding: 12px 12px 8px; display: flex; flex-direction: column; gap: 10px; }
 .chat-msg { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
 .chat-msg.user { align-items: flex-end; }
@@ -2739,13 +2744,15 @@ html:active-view-transition-type(polaris-theme)::view-transition-new(polaris-the
 .chat-report-meta { font-size: 13px; color: var(--md-on-surface-variant); margin: 2px 0 10px; }
 .chat-report-actions { display: flex; gap: 8px; }
 .chat-composer {
+  /* Flush on the navbar: sticky at its top edge, little padding of its own below the field. */
   position: sticky; bottom: var(--navbar-h); z-index: 5;
-  display: flex; align-items: flex-end; gap: 8px; padding: 8px 12px 10px;
+  display: flex; align-items: flex-end; gap: 8px; padding: 6px 10px 4px;
   background: var(--panel-glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
   border-top: 1px solid var(--md-outline-variant);
 }
 .chat-composer textarea {
-  flex: 1 1 auto; resize: none; min-height: 40px; max-height: 140px; padding: 9px 14px;
+  /* Height is set by chat-tab.js autosize(): grows upward to 3 lines, then scrolls inside. */
+  flex: 1 1 auto; resize: none; min-height: 40px; padding: 9px 14px; overflow-y: hidden;
   border-radius: 20px; border: 1px solid var(--md-outline); background: var(--md-surface);
   color: var(--md-on-surface); font: inherit; font-size: 16px; line-height: 1.35;
 }
@@ -2758,3 +2765,26 @@ html:active-view-transition-type(polaris-theme)::view-transition-new(polaris-the
 }
 .chat-send svg { width: 22px; height: 22px; fill: currentColor; }
 .chat-send:active { filter: brightness(.92); }
+
+/* R.A.L.P.H. in the Chat top bar: the desktop's toggle button (assistant.css
+   .asst-ralph) in the phone's palette — a quiet pill off, glowing on. */
+.chat-ralph {
+  margin-right: 4px; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--md-outline); background: transparent;
+  color: var(--md-on-surface-variant); font: inherit; font-size: 12px; font-weight: 600; letter-spacing: .04em;
+  white-space: nowrap; -webkit-tap-highlight-color: transparent;
+  transition: color .2s, border-color .2s, box-shadow .2s, background-color .2s;
+}
+.chat-ralph.on {
+  color: var(--md-primary); border-color: var(--md-primary);
+  background: color-mix(in srgb, var(--md-primary) 14%, transparent);
+  box-shadow: 0 0 8px 1px color-mix(in srgb, var(--md-primary) 55%, transparent);
+  text-shadow: 0 0 6px color-mix(in srgb, var(--md-primary) 60%, transparent);
+  animation: chat-ralph-glow 2.8s ease-in-out infinite;
+}
+.chat-ralph:disabled { opacity: .7; }
+@keyframes chat-ralph-glow {
+  0%, 100% { box-shadow: 0 0 6px 0 color-mix(in srgb, var(--md-primary) 45%, transparent); }
+  50%      { box-shadow: 0 0 12px 2px color-mix(in srgb, var(--md-primary) 70%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) { .chat-ralph.on { animation: none; } }

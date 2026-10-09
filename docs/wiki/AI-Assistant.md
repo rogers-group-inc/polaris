@@ -188,6 +188,11 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
   time it loads or opens, or within a minute on a page left open. Nothing is
   deleted: `/resume` reopens the conversation it set aside, and it is still in
   History.
+- **Conversations follow you between the desktop and the phone.** Opening the
+  chat continues the conversation you used most recently on either device, as
+  long as it was within the last 30 minutes — unless you have used this device
+  more recently since. A chat open on both at once does not update live; reopen
+  it, or open it from History.
 - They are **private to you** — no other user, administrators included, can
   read them.
 - A conversation untouched for **90 days** is deleted automatically. Change
