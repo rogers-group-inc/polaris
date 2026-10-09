@@ -13,12 +13,17 @@
  *   POST   /conversations/:id/stop          Stop the running turn (a page change does not)
  *   POST   /conversations/:id/messages      ask; answers as a text/event-stream
  *   PUT    /settings                        conversation retention (serverSettingsSystem write)
- *   PUT    /preferences                     the caller's own Efficiency Advisor checkbox (rule 95(h))
+ *   PUT    /preferences                     the caller's own Efficiency Advisor checkbox (rule 95(h)) and
+ *                                            "Remember things" switch (rule 95(i))
+ *   GET    /memory                          the caller's own memory entries (rule 95(i))
+ *   POST   /memory                          add one (typed by the user; content-filtered like the model's)
+ *   DELETE /memory/:id                      remove one of the caller's entries
+ *   DELETE /memory                          forget everything
  *
  * SESSION-ONLY: a conversation belongs to a user, and a bearer token has none,
  * so token callers get a 403 here even when their role holds `assistant`.
  * Every conversation route is owner-scoped in the service (404 for anyone
- * else's id — rule 95(d)).
+ * else's id — rule 95(d)). Memory is the same: owner-only, no admin view.
  */
 
 import { Router, type Request, type Response, type NextFunction } from "express";
@@ -47,6 +52,15 @@ import {
   isTurnRunning,
   stopTurn,
 } from "../../services/assistantChatService.js";
+import {
+  getMemoryEnabled,
+  setMemoryEnabled,
+  listMemory,
+  addMemory,
+  deleteMemory,
+  clearMemory,
+  MEMORY_LIMITS,
+} from "../../services/assistantMemoryService.js";
 
 const router = Router();
 
@@ -69,7 +83,12 @@ const SettingsSchema = z.object({
 });
 
 const PreferencesSchema = z.object({
-  efficiencyAdvisor: z.boolean(),
+  efficiencyAdvisor: z.boolean().optional(),
+  memory: z.boolean().optional(),
+}).refine((b) => b.efficiencyAdvisor !== undefined || b.memory !== undefined, "Nothing to change");
+
+const MemoryAddSchema = z.object({
+  text: z.string().min(1).max(MEMORY_LIMITS.entryChars),
 });
 
 const IdParam = z.string().uuid();
@@ -99,10 +118,10 @@ function convId(req: Request): string {
 router.get("/status", async (req, res, next) => {
   try {
     const { userId } = sessionUser(req);
-    const [integrations, settings, efficiencyAdvisor] = await Promise.all([
-      listAssistantIntegrations(), getAssistantSettings(), getEfficiencyAdvisor(userId),
+    const [integrations, settings, efficiencyAdvisor, memory] = await Promise.all([
+      listAssistantIntegrations(), getAssistantSettings(), getEfficiencyAdvisor(userId), getMemoryEnabled(userId),
     ]);
-    res.json({ enabled: integrations.length > 0, integrations, retentionDays: settings.retentionDays, efficiencyAdvisor });
+    res.json({ enabled: integrations.length > 0, integrations, retentionDays: settings.retentionDays, efficiencyAdvisor, memory });
   } catch (err) { next(err); }
 });
 
@@ -112,7 +131,48 @@ router.put("/preferences", async (req, res, next) => {
   try {
     const { userId } = sessionUser(req);
     const input = PreferencesSchema.parse(req.body);
-    res.json({ efficiencyAdvisor: await setEfficiencyAdvisor(userId, input.efficiencyAdvisor) });
+    const [efficiencyAdvisor, memory] = await Promise.all([
+      input.efficiencyAdvisor === undefined ? getEfficiencyAdvisor(userId) : setEfficiencyAdvisor(userId, input.efficiencyAdvisor),
+      input.memory === undefined ? getMemoryEnabled(userId) : setMemoryEnabled(userId, input.memory),
+    ]);
+    res.json({ efficiencyAdvisor, memory });
+  } catch (err) { next(err); }
+});
+
+// The caller's own memory (rule 95(i)). Like /preferences, the `assistant`
+// read gate is the whole permission: these rows are the caller's, and every
+// query is scoped to the session user (another user's id answers 404).
+router.get("/memory", async (req, res, next) => {
+  try {
+    const { userId } = sessionUser(req);
+    const [entries, enabled] = await Promise.all([listMemory(userId), getMemoryEnabled(userId)]);
+    res.json({ enabled, entries, limits: MEMORY_LIMITS });
+  } catch (err) { next(err); }
+});
+
+router.post("/memory", async (req, res, next) => {
+  try {
+    const { userId, username } = sessionUser(req);
+    const input = MemoryAddSchema.parse(req.body);
+    const { entry, duplicate } = await addMemory(userId, input.text, "user", username);
+    res.status(duplicate ? 200 : 201).json({ entry, duplicate });
+  } catch (err) { next(err); }
+});
+
+router.delete("/memory/:id", async (req, res, next) => {
+  try {
+    const { userId, username } = sessionUser(req);
+    const p = IdParam.safeParse(req.params.id);
+    if (!p.success) throw new AppError(404, "Memory entry not found");
+    await deleteMemory(userId, p.data, "user", username);
+    res.status(204).send();
+  } catch (err) { next(err); }
+});
+
+router.delete("/memory", async (req, res, next) => {
+  try {
+    const { userId, username } = sessionUser(req);
+    res.json({ removed: await clearMemory(userId, username) });
   } catch (err) { next(err); }
 });
 

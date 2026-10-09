@@ -1041,6 +1041,10 @@ const api = {
     stopTurn:          (id)        => request("POST", `/assistant/conversations/${id}/stop`),
     updateSettings:    (body)      => request("PUT", "/assistant/settings", body),
     setPreferences:    (body)      => request("PUT", "/assistant/preferences", body),
+    listMemory:        ()          => request("GET", "/assistant/memory"),
+    addMemory:         (text)      => request("POST", "/assistant/memory", { text: text }),
+    deleteMemory:      (id)        => request("DELETE", `/assistant/memory/${id}`),
+    clearMemory:       ()          => request("DELETE", "/assistant/memory"),
   },
   monitorSettings: {
     // Manual tier — settings for orphan/non-integration-discovered assets.
