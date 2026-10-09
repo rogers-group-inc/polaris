@@ -240,7 +240,10 @@ export function snapshotAddAsMonitoredByAssetType(
  *
  * Assets with no `discoveredByIntegrationId`, or whose assetType doesn't
  * map to a per-class block, are excluded by the WHERE clause and keep
- * their default (false). Same JSON-path logic as the cutover migration —
+ * their default (false). So are a Generic API integration's assets: it
+ * carries no class blocks and holds no monitoring intent, so there is no
+ * default to diverge FROM — without the exclusion every monitored generic
+ * asset would read as an operator override. Same JSON-path logic as the cutover migration —
  * keep these two in sync.
  *
  * HA-standby exception (firewall class only): a standby member's effective
@@ -283,6 +286,7 @@ export async function recomputeMonitorOverrideForAssets(
     FROM "integrations" i
     WHERE a."discoveredByIntegrationId" = i."id"
       AND a."id" = ANY(${assetIds}::text[])
+      AND i."type" <> 'genericapi'
       AND a."assetType" IN ('firewall', 'switch', 'access_point', 'workstation', 'server', 'hypervisor', 'kubernetes_cluster', 'container')
   `;
 }
@@ -331,6 +335,7 @@ export async function sweepMonitoredForIntegration(
     FROM "integrations" i
     WHERE a."discoveredByIntegrationId" = i."id"
       AND i."id" = ${integrationId}::text
+      AND i."type" <> 'genericapi'
       AND a."monitorOverride" = false
       AND a."assetType" IN ('firewall', 'switch', 'access_point', 'workstation', 'server', 'hypervisor', 'kubernetes_cluster', 'container')
       AND a."monitored" IS DISTINCT FROM COALESCE(

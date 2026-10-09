@@ -29,6 +29,8 @@
  *                                                                 response time, which is ICMP on any asset
  *                                                                 with an address — see below)
  *   TrueNAS SCALE     → ICMP, SNMP, WinRM, SSH, Agent, TrueNAS   (same, with "truenas")
+ *   Generic API       → ICMP, SNMP, WinRM, SSH, Agent            (a record can be any device; ICMP response time
+ *                                                                 is the only default)
  *   Manual            → any                                       (operator-chosen)
  *
  * ── The retired "http" method (2026-08) ──────────────────────────────────────
@@ -148,6 +150,7 @@ export type AssetSourceKind =
   | "azurearc"
   | "unraid"
   | "truenas"
+  | "genericapi"
   | "manual";
 
 const ALL_METHODS: ReadonlyArray<PollingMethod> = ["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas"];
@@ -185,6 +188,12 @@ const COMPATIBILITY: Readonly<Record<AssetSourceKind, ReadonlySet<PollingMethod>
   // method reads all three classes (host, VM, container / App).
   unraid:          new Set<PollingMethod>(["icmp", "snmp", "winrm", "ssh", "disabled", "agent", "unraid"]),
   truenas:         new Set<PollingMethod>(["icmp", "snmp", "winrm", "ssh", "disabled", "agent", "truenas"]),
+  // Generic API: a record can be ANY kind of device (a printer, a camera, a
+  // server), so every transport an operator can hold a credential for is
+  // allowed. Not rest_api (that is FortiOS REST), and none of the methods that
+  // read a specific integration (vcenter / fortimanager / unraid / truenas) —
+  // the feed is not that integration.
+  genericapi:      new Set<PollingMethod>(["icmp", "snmp", "winrm", "ssh", "disabled", "agent"]),
   // Spelled out rather than `ALL_METHODS`. Manual is the most permissive set
   // by design (the operator picks the credential), but "most permissive" is not
   // "everything that exists": `fortimanager` reads a specific integration's
@@ -222,6 +231,7 @@ export function assetSourceKindFromIntegrationType(integrationType: string | nul
     case "azurearc":        return "azurearc";
     case "unraid":          return "unraid";
     case "truenas":         return "truenas";
+    case "genericapi":      return "genericapi";
     default:                return "manual";
   }
 }

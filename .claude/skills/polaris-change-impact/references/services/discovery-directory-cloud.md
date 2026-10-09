@@ -120,6 +120,55 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/genericApiService.ts
+
+**What it owns:** The Generic API ("build your own") integration's client and mapper (business rule 99). It reads an operator-described REST endpoint and maps each record onto asset fields through JSON paths (utils/jsonPath.ts). The request is host + port + origin-relative path, GET or POST (with a JSON body), extra headers, and one of six auth types: none, bearer, a key in a header, a key in the query string, Basic, or OAuth 2.0 client credentials (`fetchOauthToken`, one token per run, never cached). Pagination is one of five modes (`none` / `page` / `offset` / `cursor` / `link`). The record list sits at `recordsPath`, and `fieldMap` maps paths onto 11 fields (`GENERIC_API_FIELDS`). One of four identity fields keeps a record on one asset (`id` / `serialNumber` / `macAddress` / `hostname`, normalized by `identityKeyFor`). The service also owns the asset-type translation table and the default type and manufacturer. Inventory only: it neither monitors, pushes, nor writes to the source.
+
+**Public API:** testConnection, previewGenericApi, discoverGenericApi, fetchGenericApiRecords, mapGenericRecord, fetchOauthToken; pure pieces: buildRequestUrl, buildAuthHeaders, endpointOrigin, isSafeRequestPath, resolveSameOriginUrl, parseNextLink, identityKeyFor, passesDeviceFilter, findInvalidPath, GENERIC_API_FIELDS, GENERIC_API_LIMITS; test seam `_setRequestImplForTests`; types GenericApiConfig, GenericApiMappedRecord, GenericApiDiscoveryResult, GenericApiPreview.
+
+**Cross-service deps:** none. Utils only: netGuard (`assertOutboundHostAllowed`), jsonPath, mac (`normalizeMacsDistinct`), serialNumber (`usableSerialOrNull`), cidr (`isValidIpAddress`), integrationFilter (`matchesWildcard`).
+
+**Used by:** src/api/routes/integrations.ts uses it for both test-connection handlers, `POST /integrations/generic-api/preview`, and the config schema's `isSafeRequestPath` / `findInvalidPath` refinements. src/services/discovery/discoveryEngine.ts uses it for the preflight (`runPreflightTest`) and for runDiscovery's genericapi branch (`discoverGenericApi` → `syncGenericApiDevices`). src/services/discovery/genericApiSync.ts imports only its types.
+
+**Invariants:**
+- Every outbound request goes through `send()`: the scheme check and `assertOutboundHostAllowed` run BEFORE the transport, for the endpoint, an OAuth token URL and every next-page URL alike. A Link-header or cursor URL is accepted only on the endpoint's own origin (`resolveSameOriginUrl`); the request path must be origin-relative (`isSafeRequestPath`). Redirects are reported, never followed.
+- An incomplete read is reported as incomplete (`complete: false`), never as a short feed. That covers a later page that failed, the page or record cap, a next URL off-origin, a source that answers the same page twice (`fingerprint` of the first record), and a cancelled run. A FIRST page that fails throws instead, so the run errors and writes nothing.
+- Page / offset paging without a page-size parameter keeps asking until an empty page; with one, a short page is the last.
+- A page body over `GENERIC_API_LIMITS.maxPageBytes` (25 MB) is refused, never truncated into JSON.parse.
+- Mapping drops the all-zero MAC (rule 97) and refuses a placeholder serial (rule 84); a value in the IP field that is not an address is ignored. A record without a usable identity is counted (`unmapped`, first five reasons kept), never silently skipped; a repeated identity keeps the first record (`duplicates`).
+- `presentIdentities` is the identity set BEFORE the device filter (rule 70(b)): a filtered-out record still exists.
+- Secrets live only under the sealed keys `apiToken` / `password` / `clientSecret`; custom headers are not sealed.
+
+**When changing this:**
+- A new mapped field must land in four places together: `GENERIC_API_FIELDS`, the route's `GenericApiConfigSchema.fieldMap`, `_GENERIC_API_FIELDS` in public/js/integrations.js, and the observed blob in genericApiSync + a `generic-api` projection rule.
+- A new auth type or pagination mode must also be added to the route schema enum, the dialog's pickers (`data-ga-auth` / `data-ga-page`), and the tests in tests/unit/genericApiService.test.ts. Each pagination mode has a fake-transport case there; the SSRF guard refuses loopback, so the tests cannot run a local server.
+
+---
+
+## services/discovery/genericApiSync.ts
+
+**What it owns:** The Generic API asset sync. `syncGenericApiDevices` turns a `GenericApiDiscoveryResult` into assets with one `generic-api` AssetSource row per record, externalId `${integrationId}:${identity}` (utils/genericApiSource.ts). It also runs the opt-in missing-record sweep. See polaris-monitoring-discovery → discovery-directory-vcenter-arc.md § Generic API.
+
+**Public API:** syncGenericApiDevices, genericApiObserved, resolveGenericAssetType, genericApiSweepBlockedReason, GenericApiSyncSummary.
+
+**Cross-service deps:** discoveryEngine (exported `indexHostname` / `lookupHostname` / `normalizeMacKey` / `upsertAssetConflict`), assetTypeService.listAssetTypes, eventLogService, maintenanceScheduleService.releaseAssetsForDecommission, macAddressService.reconcileMacAddresses.
+
+**Used by:** src/services/discovery/discoveryEngine.ts (runDiscovery's genericapi branch).
+
+**Invariants:**
+- It never writes `Asset.lastSeen` (rule 12). The source row's own `lastSeen` is "the feed listed it", which is projection freshness only. Presence comes from the post-sync presence pass (`generic-api` is a presenceVerificationService candidate kind).
+- It never writes `monitored`: it calls no `buildMonitoredSweep` and has no class block. monitorOverrideService's recompute and sweep exclude `genericapi` integrations, so a monitored generic asset never reads as an override.
+- The match cascade is own source row → MAC → unique serial (`indexUniqueBy`) → hostname collision → pending Conflict (`sourceType: "genericapi"`, `genericObserved` = the full blob) → create. A MAC or serial hit on an asset that already carries a DIFFERENT record of this integration is refused and falls through.
+- On update it claims an UNOWNED asset only (`discoveredByIntegrationId`), retypes only from `other`, fills the serial only when blank, and otherwise writes the projection, where `generic-api` ranks below every first-party source.
+- An asset type is the mapped type if the AssetTypeDef registry knows it, else the integration default if known, else `other` (`resolveGenericAssetType`). The registry refuses unknown types at write time.
+- The sweep is off unless `decommissionMissing`. It is refused on an incomplete read and on an empty read against a populated integration (`genericApiSweepBlockedReason`), and past `absenceExceedsGuard`. It decommissions only assets no other inventory source claims AND that this integration owns or nothing owns (rule 70); otherwise only this feed's row goes.
+
+**When changing this:**
+- A new observed key: `genericApiObserved` + its projection rule + the conflict fallback blob in conflictResolutionService (`upsertConflictAssetSource`).
+- Extend tests/unit/genericApiSync.test.ts (pure parts + projection placement) and tests/integration/genericApiSync.test.ts (the DB round trip).
+
+---
+
 ## services/activeDirectoryService.ts
 
 **What it owns:** On-prem Active Directory device discovery via LDAP/LDAPS client (computer objects, OU filtering, SID/GUID identity, disabled-account handling).
