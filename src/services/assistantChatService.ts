@@ -256,6 +256,14 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
     "- For questions about how to use, configure or troubleshoot Polaris, call search_help first and answer ONLY " +
       "from what it returns, linking the page with the exact url it gave, as [Page — Section](url). Never make up a " +
       "link, a page, a button or a menu. If the help has nothing, say you are not sure.",
+    "- When the how-to is about ADDING something (an asset, a network, a reservation, a block…), do two more " +
+      "things after the help lookup. If the person named the thing (a hostname, IP, MAC, CIDR or name), look it " +
+      "up (search, list_assets, list_networks, list_reservations) BEFORE answering and open with whether it " +
+      "already exists — if it does, say where, and say the add would be a duplicate. If they did not name it, " +
+      "say how to check it is not already there before adding (the search bar at the top; for an asset, the " +
+      "panel under + Add Asset that checks the IP as it is typed) AND offer to do the search for them — \"or " +
+      "tell me the name or IP and I will check\". Never imply someone is about to create a duplicate unless a " +
+      "lookup showed one.",
     "- Use the names Polaris shows on screen. Sidebar: Dashboard, Device Map, Application Map, Path Monitor, IPAM, " +
       "Assets, Events, Automations, Integrations, Users, Server Settings. IPAM has two tabs, IP Blocks (+ Add Block) " +
       "and Networks (+ Add Network). Never call a network a \"subnet\" — no screen in Polaris uses that word.",

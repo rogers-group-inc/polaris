@@ -109,7 +109,7 @@ turn orchestrator, the conversation store, the per-user memory, the help index o
 - **Text after a report is HELD, then table-stripped** (`stripMarkdownTables`). The model only ever sees a report's row COUNT, so a table it types afterwards is invented — seen live 2026-10-07 (qwen2.5:7b re-typed a "report" of networks that do not exist beside the real card). Rounds after the first `create_report` are buffered instead of streamed, tables removed, and an all-table reply becomes `REPORT_READY_TEXT`. This is rule 95(c) enforced in code, not left to the prompt.
 
 **When changing this:**
-- The system prompt is the behavioural contract (tools for facts, search_help for how-to, create_report for downloads, read-only) — `tests/unit/assistantChatService.test.ts → buildSystemPrompt` pins its load-bearing lines.
+- The system prompt is the behavioural contract (tools for facts, search_help for how-to, create_report for downloads, read-only; since 2026-10-09 also: a how-to about ADDING something looks the named thing up BEFORE answering and opens with whether it exists, or says how to search and offers to search for them — a live answer had told someone how to add an asset without checking for it) — `tests/unit/assistantChatService.test.ts → buildSystemPrompt` pins its load-bearing lines.
 - Changing the event vocabulary changes `public/js/assistant.js → ask()` in the same commit.
 
 ---
