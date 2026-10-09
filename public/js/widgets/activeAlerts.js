@@ -295,10 +295,12 @@
     // which never hover. The bare "ack" stays as the fallback for a feed that
     // gives no name. The note typed with the acknowledgement is the hover — the
     // feed withholds it on /dash, where the title falls back to the owner.
+    // A dependency-down alert acknowledged BY INHERITANCE (business rule 78a)
+    // carries the root cause's note, and the hover says whose it is.
     var ackWho = r.acknowledgedBy ? "ack " + r.acknowledgedBy : "ack";
     var ack = r.acknowledged
       ? '<span class="widget-pill widget-pill-neutral" style="margin-left:4px" title="' +
-        escapeHtml(PolarisWidgets.ackPillTitle(r.acknowledgedBy, r.acknowledgeNote)) + '">' +
+        escapeHtml(PolarisWidgets.ackPillTitle(r.acknowledgedBy, r.acknowledgeNote, r.ackInheritedFrom)) + '">' +
         escapeHtml(ackWho) + '</span>'
       : "";
     // Every row is a prompt to DO something, so every row is clickable —

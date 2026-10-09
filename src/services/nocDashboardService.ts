@@ -1171,6 +1171,16 @@ export function dependencyUpstreamOf(blame: unknown): string | null {
   return up ?? root ?? null;
 }
 
+/** The root-cause device a dependency-down alert's acknowledgement was
+ *  inherited from, out of `Notification.acknowledgedVia` (business rule 78a)
+ *  — null on a direct acknowledgement or an unreadable snapshot. */
+export function ackInheritedFromOf(via: unknown): string | null {
+  if (!via || typeof via !== "object") return null;
+  const v = via as { hostname?: unknown; assetId?: unknown };
+  if (typeof v.hostname === "string" && v.hostname) return v.hostname;
+  return typeof v.assetId === "string" && v.assetId ? v.assetId : null;
+}
+
 export interface AlertRow {
   id: string;
   /** The alerting asset, for the widget's click-through to its details
@@ -1214,6 +1224,10 @@ export interface AlertRow {
    *  Operator-typed incident text, so getNocSummaryPayload withholds it from
    *  a caller that did not sign in (the /dash wallboard listener). */
   acknowledgeNote: string | null;
+  /** Business rule 78a — the root-cause device whose down alert this
+   *  dependency-down alert took its acknowledgement (and note) from; null on
+   *  a direct acknowledgement. The ack pill's hover says so. */
+  ackInheritedFrom: string | null;
   /** Business rule 78 — raised for a dependency-suppressed device by a down
    *  automation that opted in; the widget badges it "Dep. Down" and names the
    *  upstream device in the badge's tooltip. */
@@ -1289,7 +1303,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     select: {
       id: true, ruleId: true, assetId: true, assetHostname: true, dimension: true, message: true,
       severity: true, triggeredAt: true,
-      acknowledged: true, acknowledgedBy: true, acknowledgeNote: true, rule: { select: { name: true } },
+      acknowledged: true, acknowledgedBy: true, acknowledgeNote: true, acknowledgedVia: true, rule: { select: { name: true } },
       // Grouped alerts (business rule 75): the widget's row TITLE is what kind
       // of problem this is, and for a grouped alert that is the group's name —
       // without it the row renders titleless. `dimensionCount` drives the "+N"
@@ -1326,6 +1340,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     acknowledged: n.acknowledged,
     acknowledgedBy: n.acknowledgedBy ?? null,
     acknowledgeNote: n.acknowledged ? n.acknowledgeNote ?? null : null,
+    ackInheritedFrom: n.acknowledged ? ackInheritedFromOf(n.acknowledgedVia) : null,
     dependencyDown: n.dependencyDown === true,
     dependencyUpstream: dependencyUpstreamOf(n.dependencyBlame),
     testRun: n.testRun === true,

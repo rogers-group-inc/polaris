@@ -25,6 +25,11 @@ reports to download as CSV or Markdown, **History** and **New** in its top bar,
 and the same fresh chat after the integration's idle time (`/resume` goes back).
 Opening Chat continues the conversation you were just having on the desktop,
 if you used it within that idle time (30 minutes unless the integration says otherwise).
+The text box grows to three lines as you
+type, then scrolls inside. While the keyboard is open the navigation bar steps
+aside and the conversation scrolls in the space above the text box, so you can
+scroll up to read earlier answers while you write; if you were at the newest
+answer, it stays in view as the box grows.
 The More tab holds the rest, top to bottom: the **Device Map** (sites and topology) and
 **Blocks**; **Events** (the audit log, last 7 days); the **Notification
 preference**; **Add to Home Screen** when the app is not installed yet; the

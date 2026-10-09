@@ -371,6 +371,14 @@ export async function acknowledgeNotifications(
     const problem = ackNoteProblem(needy, ids.length, trimmed);
     if (problem) throw new AppError(400, problem);
   }
+  // Business rule 78a — the down alerts in this batch whose acknowledgement
+  // the dependency-down alerts below them inherit. Read BEFORE the write so
+  // only rows this call actually acknowledges cascade; bounded by the ids
+  // the operator selected.
+  const roots = await prisma.notification.findMany({
+    where: { id: { in: ids }, acknowledged: false, ...ROOT_DOWN_ALERT_WHERE },
+    select: { id: true, assetId: true, assetHostname: true },
+  });
   const res = await prisma.notification.updateMany({
     where: { id: { in: ids }, acknowledged: false },
     data: {
@@ -387,7 +395,158 @@ export async function acknowledgeNotifications(
     message: `Acknowledged ${res.count} notification${res.count === 1 ? "" : "s"}`,
     details: { ids, count: res.count, hasNote: trimmed.length > 0, source: opts?.source ?? "ui" },
   });
+  if (roots.length > 0) {
+    // Best-effort: the operator's own acknowledgement has landed; a failed
+    // cascade leaves the dependency alerts open, never the root one.
+    await cascadeRootCauseAcks(roots, actor, trimmed.length > 0 ? trimmed : null).catch(() => 0);
+  }
   return res.count;
+}
+
+// ─── Business rule 78a — a dependency-down alert inherits its root cause's ack ──
+
+/**
+ * The root cause's own down alert: live, about a device, raised by its probe
+ * (`metric: "monitorStatus"`, what a down automation stamps) rather than a
+ * dependency-flavoured alert or a wizard test. Shared by the cascade and the
+ * fire-time lookup so the two can never disagree about which alert counts.
+ */
+export const ROOT_DOWN_ALERT_WHERE = {
+  cleared: false,
+  dependencyDown: false,
+  testRun: false,
+  metric: "monitorStatus",
+  assetId: { not: null },
+} satisfies Prisma.NotificationWhereInput;
+
+/** An acknowledgement a dependency-down alert takes from its root cause's alert. */
+export interface InheritedAck {
+  notificationId: string;
+  assetId: string;
+  hostname: string | null;
+  acknowledgedBy: string | null;
+  acknowledgeNote: string | null;
+}
+
+/**
+ * The root-cause asset id a dependency-down alert would inherit an
+ * acknowledgement from, read off its `dependencyBlame` snapshot. Null unless
+ * the root cause is dark IN ITS OWN RIGHT (`reason: "down"`): a device in
+ * maintenance or under a dependency test raises no down alert of its own, so
+ * there is nothing to inherit. Pure.
+ */
+export function inheritableRootCauseId(blame: unknown): string | null {
+  if (!blame || typeof blame !== "object") return null;
+  const root = (blame as { rootCause?: { id?: unknown; reason?: unknown } | null }).rootCause;
+  if (!root || root.reason !== "down" || typeof root.id !== "string" || root.id.length === 0) return null;
+  return root.id;
+}
+
+/** The write that marks a dependency-down alert acknowledged by inheritance.
+ *  `acknowledgedBy` and the note are the root alert's, so every surface that
+ *  already prints them prints the right thing; `acknowledgedVia` says whose. */
+export function inheritedAckData(ack: InheritedAck, at: Date = new Date()) {
+  return {
+    acknowledged: true,
+    acknowledgedBy: ack.acknowledgedBy,
+    acknowledgedAt: at,
+    acknowledgeNote: ack.acknowledgeNote,
+    acknowledgedVia: { notificationId: ack.notificationId, assetId: ack.assetId, hostname: ack.hostname } as Prisma.InputJsonValue,
+  };
+}
+
+/**
+ * Fire time: a dependency-down alert raised AFTER its root cause's alert was
+ * acknowledged is born acknowledged. The newest acknowledgement wins when the
+ * root carries more than one live down alert. Never throws — a failed read
+ * raises the alert unacknowledged, which is what it would have been anyway.
+ */
+export async function rootCauseAckFor(rootCauseAssetId: string): Promise<InheritedAck | null> {
+  try {
+    const row = await prisma.notification.findFirst({
+      where: { ...ROOT_DOWN_ALERT_WHERE, assetId: rootCauseAssetId, acknowledged: true },
+      orderBy: { acknowledgedAt: "desc" },
+      select: { id: true, assetId: true, assetHostname: true, acknowledgedBy: true, acknowledgeNote: true },
+    });
+    if (!row || !row.assetId) return null;
+    return {
+      notificationId: row.id,
+      assetId: row.assetId,
+      hostname: row.assetHostname ?? null,
+      acknowledgedBy: row.acknowledgedBy ?? null,
+      acknowledgeNote: row.acknowledgeNote ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Acknowledge time: every live, unacknowledged dependency-down alert whose
+ * root cause is one of these just-acknowledged down alerts' devices takes the
+ * same acknowledgement. One read (the JSON-path OR is bounded by the roots in
+ * the batch, not by fleet size), one updateMany per root inside a single
+ * transaction, one audit Event. The note policy is NOT re-asked of the
+ * dependency alerts' automations: the acknowledgement was made, with whatever
+ * note its own automation demanded, and it is that acknowledgement — note and
+ * all — the dependency alert carries.
+ */
+async function cascadeRootCauseAcks(
+  roots: { id: string; assetId: string | null; assetHostname: string | null }[],
+  actor: string,
+  note: string | null,
+): Promise<number> {
+  const rootByAsset = new Map<string, { id: string; assetId: string; assetHostname: string | null }>();
+  for (const r of roots) if (r.assetId && !rootByAsset.has(r.assetId)) rootByAsset.set(r.assetId, { ...r, assetId: r.assetId });
+  if (rootByAsset.size === 0) return 0;
+  const children = await prisma.notification.findMany({
+    where: {
+      cleared: false,
+      acknowledged: false,
+      dependencyDown: true,
+      OR: [...rootByAsset.keys()].map((id) => ({ dependencyBlame: { path: ["rootCause", "id"], equals: id } })),
+    },
+    select: { id: true, dependencyBlame: true },
+  });
+  const idsByRoot = new Map<string, string[]>();
+  for (const c of children) {
+    const rootId = inheritableRootCauseId(c.dependencyBlame);
+    if (!rootId || !rootByAsset.has(rootId)) continue;
+    const list = idsByRoot.get(rootId) ?? [];
+    list.push(c.id);
+    idsByRoot.set(rootId, list);
+  }
+  if (idsByRoot.size === 0) return 0;
+  const at = new Date();
+  const results = await prisma.$transaction(
+    [...idsByRoot].map(([rootId, childIds]) => {
+      const root = rootByAsset.get(rootId)!;
+      return prisma.notification.updateMany({
+        where: { id: { in: childIds }, acknowledged: false, cleared: false },
+        data: inheritedAckData(
+          { notificationId: root.id, assetId: root.assetId, hostname: root.assetHostname, acknowledgedBy: actor, acknowledgeNote: note },
+          at,
+        ),
+      });
+    }),
+  );
+  const count = results.reduce((n, r) => n + r.count, 0);
+  if (count > 0) {
+    const childIds = [...idsByRoot.values()].flat();
+    await logEvent({
+      action: "notification.acknowledged",
+      resourceType: "notification",
+      actor,
+      message: `Acknowledged ${count} dependency-down alert${count === 1 ? "" : "s"} with ${count === 1 ? "its" : "their"} root cause's alert`,
+      details: {
+        ids: childIds,
+        count,
+        hasNote: !!note,
+        inheritedFrom: [...idsByRoot.keys()].map((rootId) => rootByAsset.get(rootId)!.id),
+      },
+    });
+  }
+  return count;
 }
 
 /** Soft-clear a batch (cleared=true → filtered from the default list). */

@@ -934,6 +934,26 @@ about a dependency-down device.
 See [Dependency suppression](Dependency-Suppression) and
 [Automation triggers](Automation-Triggers#monitorstatus--down-is-the-down-detection-automation).
 
+### Rule 78a
+
+**A dependency-down alert is acknowledged when its root cause's own alert is,
+and says whose acknowledgement it carries.**
+
+When the device that is actually down — the root cause a dependency-down alert
+names — has its own Down alert acknowledged, every live DEPENDENCY DOWN alert
+naming that device is acknowledged with it: same person, same note. A
+dependency-down alert raised after that acknowledgement is raised already
+acknowledged. It is still delivered; the acknowledgement says the outage is
+owned, not that nobody else needs to know.
+
+On the Active Alerts widget, hovering the **ack** pill on one of these alerts
+shows who acknowledged it, the line *Inherited from the root cause's alert on
+&lt;device&gt;*, and the note typed on that alert.
+
+It works one way only: acknowledging a dependency-down alert acknowledges
+nothing upstream. A root cause that is in a maintenance window or under a
+dependency test raises no Down alert of its own, so there is nothing to inherit.
+
 ### Rule 79
 
 **Removing a MAC from an asset is a correction, not a block.**
