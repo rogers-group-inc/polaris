@@ -15,6 +15,9 @@ name: Check docs
 #   check-deps      installed dependency majors match the recorded targets, and
 #                   the hand-maintained overrides block still has a reason for
 #                   every entry. Fails here, warns in the pre-commit hook.
+#   check-wiki      the operator wiki source (docs/wiki/): every page in the
+#                   sidebar, bare page-name links that resolve, anchors that match
+#                   a heading, no relative image paths — all silent on GitHub.
 #
 # The workflow name and job id stay "Check docs" / check-docs on purpose: they are
 # the status-check name any branch protection rule refers to, and renaming a
@@ -59,3 +62,7 @@ jobs:
       - name: Dependency-target check
         if: ${{ !cancelled() }}
         run: node scripts/check-deps.mjs
+
+      - name: Operator wiki structure check
+        if: ${{ !cancelled() }}
+        run: node scripts/check-wiki.mjs

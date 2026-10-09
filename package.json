@@ -28,6 +28,8 @@
     "check:docs": "node scripts/check-docs.mjs",
     "check:versions": "node scripts/check-versions.mjs",
     "check:deps": "node scripts/check-deps.mjs",
+    "check:wiki": "node scripts/check-wiki.mjs",
+    "wiki:publish": "node scripts/wiki-publish.mjs",
     "rules:next": "node scripts/next-rule-number.mjs",
     "audit:deps": "npm outdated || true && npm audit --audit-level=high || true && node -e \"console.log('\\nTriage: .claude/skills/polaris-tech-lifecycle/references/dependency-audit.md')\""
   },

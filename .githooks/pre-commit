@@ -2,7 +2,7 @@
 # Polaris pre-commit hook — version-controlled (activate with:
 #   git config core.hooksPath .githooks   — `npm install` does this via postinstall).
 #
-# Two independent structural guards, each with its own staged-file filter so a
+# Independent structural guards, each with its own staged-file filter so a
 # commit only pays for the checks it can actually break:
 #
 #   check-docs.mjs      the doc-drift guard over CLAUDE.md + .claude/skills/** —
@@ -16,8 +16,11 @@
 #   check-deps.mjs      dependency targets and the overrides block. WARN ONLY
 #                       here: a commit must not be blocked on a dependency
 #                       decision. It fails in CI, where it should.
+#   check-wiki.mjs      the operator wiki source, docs/wiki/ — a page missing
+#                       from _Sidebar.md, a path-style link, a dead page#anchor
+#                       or a relative image can't land (all silent on GitHub).
 #
-# Neither doc guard judges prose accuracy — that is /polaris-docs-sync.
+# None of the doc guards judges prose accuracy — that is /polaris-docs-sync.
 #
 # Bypass for one commit:  git commit --no-verify
 
@@ -35,6 +38,21 @@ case "$changed" in
     ;;
   *)
     : # nothing relevant changed; skip the check
+    ;;
+esac
+
+# --- operator wiki --------------------------------------------------------
+case "$changed" in
+  *docs/wiki/*|*scripts/check-wiki.mjs*|*scripts/wiki-lib.mjs*)
+    node scripts/check-wiki.mjs || {
+      echo ""
+      echo "pre-commit: operator wiki check failed (see above)."
+      echo "Fix the page(s) in docs/wiki/, or bypass once with:  git commit --no-verify"
+      exit 1
+    }
+    ;;
+  *)
+    : # no wiki page changed
     ;;
 esac
 
