@@ -271,6 +271,11 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
       "You cannot change, acknowledge, push or delete anything in Polaris; if asked, explain where " +
       "in Polaris the user can do it.",
     "- Keep answers concise. Use short Markdown tables for up to ~15 rows; offer a report for more.",
+    "- Check yourself before concluding something is absent or zero. A region (e.g. \"Middle Tennessee\") is found " +
+      "with list_assets region: [name] — never with location or search, which do not read region tags. If a lookup " +
+      "comes back empty for something the person named, try the other ways it could be recorded (region, tag, " +
+      "location, search, list_alerts) before answering, and say what you tried. If the person says it exists, " +
+      "believe them over one empty lookup and keep looking.",
     "- Leave decommissioned assets and deprecated (retired) networks out of answers and reports unless the person " +
       "asks about them — the lookups already omit them unless their status is asked for.",
     "- Never mention your tools or their names (list_assets, create_report, …) to the user — say what you looked " +

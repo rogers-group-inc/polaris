@@ -242,6 +242,26 @@ const ASSET_TOOL_SELECT = {
   monitorStatusChangedAt: true, lastSeen: true, lastResponseTimeMs: true, assignedTo: true, department: true,
 } as const;
 
+/**
+ * Every tag spelling a region name may be stored under on an asset. A model
+ * passes the name the person typed ("middle tennessee", "Region:Middle
+ * Tennessee"), and Prisma's `hasSome` is exact and case-sensitive — seen
+ * 2026-10-09: a real Middle Tennessee device was reported absent. So each
+ * name resolves, case-insensitively, against the Tag registry under both
+ * the `region:` form and the bare form, and the literal forms are kept for
+ * a tag the registry does not hold. Exported for tests.
+ */
+export async function regionTagVariants(names: string[]): Promise<string[]> {
+  const bare = Array.from(new Set(names.map((n) => n.trim().replace(new RegExp(`^${REGION_TAG_PREFIX}`, "i"), "").trim()).filter(Boolean)));
+  if (!bare.length) return [];
+  const wanted = bare.flatMap((n) => [REGION_TAG_PREFIX + n, n]);
+  const registered = await prisma.tag.findMany({
+    where: { OR: wanted.map((w) => ({ name: { equals: w, mode: "insensitive" as const } })) },
+    select: { name: true },
+  }).catch(() => [] as Array<{ name: string }>);
+  return Array.from(new Set([...wanted, ...registered.map((t) => t.name)]));
+}
+
 const listAssetsTool: ListToolDef = {
   name: "list_assets",
   label: "looked up assets",
@@ -259,7 +279,7 @@ const listAssetsTool: ListToolDef = {
       monitorStatus: { type: "array", items: { type: "string", enum: [...MONITOR_STATUSES] } },
       monitored: { type: "boolean" },
       tag: { type: "string", description: "Exact tag, e.g. a site tag" },
-      region: { type: "array", items: { type: "string" }, description: "Region names, e.g. [\"Southern Division\"] — assets in ANY of them" },
+      region: { type: "array", items: { type: "string" }, description: "Region names, e.g. [\"Middle Tennessee\"] — assets in ANY of them. Any case, with or without \"region:\". Use this, not location or search, for a region" },
       myRegions: { type: "boolean", description: "Only assets in the regions assigned to the person asking — use for \"my region\" / \"my sites\"" },
       location: { type: "string", description: "Location contains this text" },
       manufacturer: { type: "string" },
@@ -311,7 +331,7 @@ const listAssetsTool: ListToolDef = {
       }
       regionNames = [...regionNames, ...mine];
     }
-    if (regionNames.length) and.push({ tags: { hasSome: Array.from(new Set(regionNames)).map((r) => REGION_TAG_PREFIX + r) } });
+    if (regionNames.length) and.push({ tags: { hasSome: await regionTagVariants(regionNames) } });
     if (a.location) {
       and.push({ OR: [
         { location: { contains: a.location, mode: "insensitive" } },
