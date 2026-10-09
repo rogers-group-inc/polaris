@@ -23,6 +23,8 @@ to the top of More. **Chat** is the same assistant as the desktop's chat
 button: the same saved conversations, lookups made with your own permissions,
 reports to download as CSV or Markdown, **History** and **New** in its top bar,
 and the same fresh chat after 30 minutes without activity (`/resume` goes back).
+Opening Chat continues the conversation you were just having on the desktop,
+if you used it in the last 30 minutes.
 The More tab holds the rest, top to bottom: the **Device Map** (sites and topology) and
 **Blocks**; **Events** (the audit log, last 7 days); the **Notification
 preference**; **Add to Home Screen** when the app is not installed yet; the

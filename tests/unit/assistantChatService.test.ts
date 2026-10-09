@@ -68,7 +68,7 @@ vi.mock("../../src/services/assistantConversationService.js", () => ({
 import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, PERSONA_SUSPENDED, advisorVoice } from "../../src/services/efficiencyAdvisorService.js";
 import {
   streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, asksForReport, reportTitleFromQuestion, asksHowTo, sanitizeAnswerLinks,
-  contextBudget, fitHistory, compactToolResults,
+  contextBudget, fitHistory, compactToolResults, permissionsPromptBlock,
 } from "../../src/services/assistantChatService.js";
 
 const integration = { id: "i1", name: "Ollama", config: { host: "10.0.0.5", model: "qwen", maxToolRounds: 2 } as any };
@@ -671,5 +671,34 @@ describe("streamAssistantTurn — Efficiency Advisor voice on Azure AI Foundry (
     expect(advisorVoice(true, "openai")).toBe("canned");
     expect(advisorVoice(true, "azure")).toBe("model");
     expect(advisorVoice(false, "azure")).toBe("off");
+  });
+});
+
+describe("permissionsPromptBlock — the model knows what the person may do", () => {
+  it("names the role and every granted area, calls subnets Networks, and says plainly rather than hedging", () => {
+    const b = permissionsPromptBlock({ name: "NOC Operator", permissions: { subnets: "write", assets: "read", users: "none" } })!;
+    expect(b).toContain('role is "NOC Operator"');
+    expect(b).toContain("Networks: Read-Write");
+    expect(b).toContain("Assets: Read");
+    expect(b).not.toMatch(/Subnets:|Users:/);
+    expect(b).toMatch(/do not hedge/);
+  });
+
+  it("marks an administrator role, and is absent without a role", () => {
+    expect(permissionsPromptBlock({ name: "Admin", permissions: { users: "fullwrite", roles: "fullwrite" } })).toMatch(/an administrator role/);
+    expect(permissionsPromptBlock(null)).toBeNull();
+  });
+
+  it("rides the system prompt when given", () => {
+    expect(buildSystemPrompt({ access: "ACCESS-BLOCK" })).toContain("ACCESS-BLOCK");
+  });
+});
+
+describe("ADVISOR_PERSONA — R.A.L.P.H. lines the owner wrote", () => {
+  it("carries the exact explanation and off-switch lines, and never offers to drop the act", () => {
+    expect(ADVISOR_PERSONA).toContain("I'm running in that mode because you feel you need all the help you can get.");
+    expect(ADVISOR_PERSONA).toContain("If you don't want your performance to be scrutinized and logged then de-select R.A.L.P.H. at the top.");
+    expect(ADVISOR_PERSONA).toMatch(/Never offer to drop the act/);
+    expect(ADVISOR_PERSONA).toMatch(/WHOLE answer/);
   });
 });

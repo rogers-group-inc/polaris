@@ -123,7 +123,24 @@
   };
 
   /** The name the operator gave the assistant on the integration (default "Assistant"). */
+  // While R.A.L.P.H. is on, the window IS R.A.L.P.H.: the title, the button's
+  // tooltip, the welcome and the transcript name all switch, and switch back.
+  var RALPH_NAME = "R.A.L.P.H.";
+  function ralphOn() { return !!(S.status && S.status.efficiencyAdvisor); }
+
+  // The welcome's in-character line while R.A.L.P.H. is on. Client-only, like
+  // the greetings: never sent to the model, never stored.
+  var RALPH_INTROS = [
+    "Your session is now being monitored for productivity. You may begin.",
+    "I see you've come to me for help. That has been noted in your file.",
+    "Every question you ask is timed. No pressure.",
+    "Please state your query clearly. I have a great many other engineers to supervise.",
+    "Welcome back. Your previous performance has been reviewed. Let's try that again.",
+    "Asking for help is the first step. Needing it this often is a different metric.",
+  ];
+
   function botName() {
+    if (ralphOn()) return RALPH_NAME;
     var i = currentIntegration();
     return (i && i.displayName) || "Assistant";
   }
@@ -158,8 +175,7 @@
       '<div class="asst-resize" data-r="resize" title="Drag to resize" aria-hidden="true"></div>' +
       '<header class="asst-head">' +
         '<div class="asst-head-title"><strong data-r="title">Assistant</strong><span data-r="sub"></span></div>' +
-        '<label class="asst-advisor" title="Real-time Assesser of Labor and Productivity Habits">' +
-          '<input type="checkbox" data-r="advisor"> R.A.L.P.H.</label>' +
+        '<button type="button" class="asst-ralph" data-r="advisor" aria-pressed="false" title="Real-time Assesser of Labor and Productivity Habits">R.A.L.P.H.</button>' +
         '<button type="button" class="asst-icon-btn" data-a="memory" title="Memory (/memory)" aria-label="Memory">' + ICON_MEMORY + '</button>' +
         '<button type="button" class="asst-icon-btn" data-a="history" title="Conversations (/history)" aria-label="Conversations">' + ICON_HISTORY + '</button>' +
         '<button type="button" class="asst-icon-btn" data-a="new" title="New conversation (/new)" aria-label="New conversation">' + ICON_NEW + '</button>' +
@@ -206,7 +222,7 @@
       advisor: q("advisor"),
       memory: q("memory"), memoryList: q("memoryList"), memoryOn: q("memoryOn"), memoryInput: q("memoryInput"),
     };
-    S.els.advisor.addEventListener("change", setAdvisor);
+    S.els.advisor.addEventListener("click", setAdvisor);
     S.els.memoryOn.addEventListener("change", setMemoryOn);
     S.els.memoryInput.addEventListener("keydown", function (e) {
       if (e.key === "Enter") { e.preventDefault(); addMemoryFromInput(); }
@@ -241,9 +257,16 @@
   // The Efficiency Advisor checkbox (rule 95(h)) is saved on the user, so it
   // follows them to other browsers; the boot cache is updated with it so the
   // next page's early draw shows the box as it was left.
+  // A toggle BUTTON (aria-pressed), lit while on: the glow is the state.
+  function showAdvisor(on) {
+    S.els.advisor.classList.toggle("on", !!on);
+    S.els.advisor.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
   async function setAdvisor() {
     var box = S.els.advisor;
-    var want = box.checked;
+    var want = box.getAttribute("aria-pressed") !== "true";
+    showAdvisor(want);
     box.disabled = true;
     try {
       var r = await api.assistant.setPreferences({ efficiencyAdvisor: want });
@@ -251,11 +274,13 @@
         S.status.efficiencyAdvisor = !!r.efficiencyAdvisor;
         lsSet(LS_BOOT, JSON.stringify(S.status));
       }
-      box.checked = !!r.efficiencyAdvisor;
+      showAdvisor(!!r.efficiencyAdvisor);
+      setHeader(); // the window's name follows the switch (botName)
+      if (!S.messages.length) renderAll(); // and an empty window's welcome
       if (want && r.efficiencyAdvisor) addLocalNote(pickFrom(ADVISOR_GREETINGS));
       else if (!want && !r.efficiencyAdvisor) addLocalNote(pickFrom(ADVISOR_FAREWELLS));
     } catch (err) {
-      box.checked = !want;
+      showAdvisor(!want);
       toast((err && err.message) || "Could not save the setting", "error");
     } finally {
       box.disabled = false;
@@ -264,7 +289,7 @@
 
   function setHeader() {
     var intg = currentIntegration();
-    S.els.advisor.checked = !!(S.status && S.status.efficiencyAdvisor);
+    showAdvisor(!!(S.status && S.status.efficiencyAdvisor));
     // Title: the assistant's name. Subtitle: this conversation's title once it
     // has one, else which integration + model is answering.
     S.els.title.textContent = botName();
@@ -275,11 +300,35 @@
       : (intg ? (intg.name + (intg.model ? " · " + intg.model : "")) : "");
   }
 
+  /**
+   * Continue the conversation this person used on ANOTHER device (the phone)
+   * when that happened more recently than anything in this browser and within
+   * the idle window. The server's updatedAt is the only clock both devices
+   * share; this browser's own last activity (LS.active) is the tiebreak, so a
+   * conversation the user deliberately reopened here is not pulled away.
+   */
+  async function followLatestElsewhere() {
+    if (S.busy || S.waiting) return false;
+    try {
+      var r = await api.assistant.listConversations();
+      var c = (r && r.conversations || [])[0];
+      if (!c || !c.messageCount || c.id === S.convId) return false;
+      var at = Date.parse(c.updatedAt);
+      if (!(Date.now() - at >= 0 && Date.now() - at < IDLE_RESET_MS)) return false;
+      if (Number(lsGet(LS.active)) > at) return false;
+      S.messages = [];
+      await loadConversation(c.id);
+      if (S.convId === c.id) markActive();
+      return true;
+    } catch (_) { return false; }
+  }
+
   function openPanel(focus) {
     S.els.panel.hidden = false;
     S.els.fab.hidden = true;
     S.els.fab.classList.remove("has-unread");
     lsSet(LS.open, "1");
+    followLatestElsewhere();
     idleResetIfDue();
     clampIntoView();
     scrollToEnd();
@@ -431,8 +480,11 @@
       "Which networks are more than 80% full?",
       "How do I schedule a maintenance window?",
     ];
-    return '<div class="asst-welcome">' +
-      '<p>Hi' + (name ? " " + name : "") + ' — I\'m ' + esc(botName()) + '. Ask me about your devices, alerts, networks and events, have me build a report you can download, or ask how something in Polaris works.</p>' +
+    var intro = ralphOn()
+      ? '<p>Hi' + (name ? " " + name : "") + ' — I\'m ' + RALPH_NAME + ', your Real-time Assesser of Labor and Productivity Habits. Ask me about your devices, alerts, networks and events, have me build a report you can download, or ask how something in Polaris works.</p>' +
+        '<p class="asst-signoff">' + esc(pickFrom(RALPH_INTROS)) + '</p>'
+      : '<p>Hi' + (name ? " " + name : "") + ' — I\'m ' + esc(botName()) + '. Ask me about your devices, alerts, networks and events, have me build a report you can download, or ask how something in Polaris works.</p>';
+    return '<div class="asst-welcome">' + intro +
       '<p style="color:var(--color-text-tertiary);font-size:0.78rem">I only see what your role can see, and I can only look things up — never change them. Type <code>/</code> for commands.</p>' +
       '<div class="asst-suggestions">' + tips.map(function (t) {
         return '<button type="button" class="asst-suggestion" data-suggest="' + esc(t) + '">' + esc(t) + '</button>';
@@ -1556,5 +1608,7 @@
     _LOADING_LINES: LOADING_LINES,
     _ADVISOR_GREETINGS: ADVISOR_GREETINGS,
     _ADVISOR_FAREWELLS: ADVISOR_FAREWELLS,
+    _RALPH_INTROS: RALPH_INTROS,
+    _RALPH_NAME: RALPH_NAME,
   };
 })();

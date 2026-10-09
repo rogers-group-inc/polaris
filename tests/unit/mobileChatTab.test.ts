@@ -40,6 +40,7 @@ function setup(status: unknown) {
       getConversation: vi.fn(async (id: string) => ({ id, title: "Earlier", messages: [{ role: "user", content: "old question" }, { role: "assistant", content: "old answer" }] })),
       listConversations: vi.fn(async () => ({ conversations: [] })),
       stopTurn: vi.fn(async () => ({})),
+      setPreferences: vi.fn(async (b: any) => ({ efficiencyAdvisor: !!b.efficiencyAdvisor, memory: true })),
     },
   };
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -118,5 +119,51 @@ describe("mobile Chat tab", () => {
     await spec.render(body, {});
     expect(g.api.assistant.getConversation).toHaveBeenCalledWith("c-old");
     expect(body.textContent).toContain("old question");
+  });
+
+  it("continues the conversation the person used on another device within the last 30 minutes", async () => {
+    const { spec, body } = setup({ enabled: true, integrations: [{ id: "i1", name: "Foundry" }] });
+    g.api.assistant.listConversations = vi.fn(async () => ({ conversations: [
+      { id: "c-desktop", title: "From the desktop", updatedAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(), messageCount: 2 },
+    ] }));
+    localStorage.setItem("polaris-assistant-conv", "c-phone-old");
+    await spec.render(body, {});
+    expect(g.api.assistant.getConversation).toHaveBeenCalledWith("c-desktop");
+    expect(localStorage.getItem("polaris-assistant-conv")).toBe("c-desktop");
+  });
+
+  it("does not resurrect a conversation idle for over 30 minutes on every device", async () => {
+    const { spec, body } = setup({ enabled: true, integrations: [{ id: "i1", name: "Foundry" }] });
+    g.api.assistant.listConversations = vi.fn(async () => ({ conversations: [
+      { id: "c-stale", title: "Old", updatedAt: new Date(Date.now() - 45 * 60 * 1000).toISOString(), messageCount: 4 },
+    ] }));
+    await spec.render(body, {});
+    expect(g.api.assistant.getConversation).not.toHaveBeenCalled();
+    expect(body.querySelector("#chat-input")).toBeTruthy();
+  });
+
+  it("while R.A.L.P.H. is on the tab is named R.A.L.P.H. and introduces itself in character", async () => {
+    const { spec, body } = setup({ enabled: true, efficiencyAdvisor: true, integrations: [{ id: "i1", name: "Foundry", displayName: "Polaris AI" }] });
+    await spec.render(body, {});
+    expect(document.getElementById("chat-title")!.textContent).toBe("R.A.L.P.H.");
+    expect(body.textContent).toContain("I'm R.A.L.P.H.");
+    expect(body.textContent).toContain("Real-time Assesser of Labor and Productivity Habits");
+    const intros: string[] = g.PolarisAssistant._RALPH_INTROS;
+    expect(intros.some((l) => body.textContent!.includes(l))).toBe(true);
+  });
+
+  it("R.A.L.P.H. is a button in the top bar that glows while on and saves the switch", async () => {
+    const { spec, body } = setup({ enabled: true, efficiencyAdvisor: false, integrations: [{ id: "i1", name: "Foundry" }] });
+    await spec.render(body, {});
+    const btn = document.getElementById("chat-ralph-btn")!;
+    expect(btn.getAttribute("title")).toBe("Real-time Assesser of Labor and Productivity Habits");
+    expect(btn.classList.contains("on")).toBe(false);
+    btn.click();
+    await flush();
+    expect(g.api.assistant.setPreferences).toHaveBeenCalledWith({ efficiencyAdvisor: true });
+    expect(btn.classList.contains("on")).toBe(true);
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+    expect(document.getElementById("chat-title")!.textContent).toBe("R.A.L.P.H.");
+    expect(body.querySelector(".chat-bubble.local")).toBeTruthy(); // the greeting note
   });
 });

@@ -10,9 +10,11 @@
 //
 // What the phone leaves out: the slash-command popup (only /new and /resume
 // are understood here; the History and New buttons cover the rest), PDF
-// export, the model picker, and the Efficiency Advisor checkbox and its
-// client-side loading lines (the advisor is still honoured — its lines come
-// from the server). Lookups always run as the signed-in user (rule 95(a)).
+// export, the model picker, and the advisor's client-side loading lines. The
+// R.A.L.P.H. button is here (the same per-user switch as the desktop's), and
+// on open the tab continues the conversation the person was active in on ANY
+// device inside the idle window, so a phone picks up a desktop chat. Lookups
+// always run as the signed-in user (rule 95(a)).
 //
 // Everything a model wrote is rendered through PolarisMarkdown, which escapes
 // first; everything else goes through escapeHtml.
@@ -79,6 +81,17 @@
   }
 
   function emptyHTML() {
+    if (ralphOn()) {
+      var intros = A()._RALPH_INTROS || [];
+      var quip = intros.length ? intros[Math.floor(Math.random() * intros.length)] : "";
+      return ''
+        + '<div class="empty-state" style="padding-top:32px;">'
+        + '  <div class="icon"><svg viewBox="0 0 24 24"><use href="#i-chat"/></svg></div>'
+        + '  <div class="ttl">I\'m R.A.L.P.H.</div>'
+        + '  <div class="desc">Your Real-time Assesser of Labor and Productivity Habits. Ask about devices, alerts, networks and events — looked up with your own permissions.</div>'
+        + (quip ? '  <div class="desc chat-aside" style="margin-top:8px;">' + escapeHtml(quip) + '</div>' : '')
+        + '</div>';
+    }
     var name = (S.status && S.status.integrations && S.status.integrations[0] && S.status.integrations[0].displayName) || "the assistant";
     return ''
       + '<div class="empty-state" style="padding-top:32px;">'
@@ -100,11 +113,16 @@
       btn.innerHTML = '<svg viewBox="0 0 24 24"><use href="' + (S.busy ? "#i-stop" : "#i-send") + '"/></svg>';
     }
     var title = document.getElementById("chat-title");
-    if (title) title.textContent = S.title && S.title !== "New conversation" ? S.title : headerName();
+    // R.A.L.P.H. owns the title while on; otherwise the conversation's title, else the assistant's name.
+    if (title) title.textContent = !ralphOn() && S.title && S.title !== "New conversation" ? S.title : headerName();
     scrollToEnd();
   }
 
+  function ralphOn() { return !!(S.status && S.status.efficiencyAdvisor); }
+
+  // While R.A.L.P.H. is on the tab IS R.A.L.P.H., as on the desktop (botName).
   function headerName() {
+    if (ralphOn()) return A()._RALPH_NAME || "R.A.L.P.H.";
     var i = S.status && S.status.integrations && S.status.integrations[0];
     return (i && i.displayName) || "Assistant";
   }
@@ -136,6 +154,54 @@
     resetToNew();
     addLocalNote("Started a fresh chat after 30 minutes without activity. Your previous conversation is saved — type `/resume` to pick it up again, or open History.");
     return true;
+  }
+
+  /**
+   * The person's most recently active conversation, when it was touched (on
+   * any device) inside the idle window; null otherwise, or when the list
+   * cannot be read. Exported for tests via the spec.
+   */
+  function latestActiveConversation() {
+    var idleMs = A()._IDLE_RESET_MS || 30 * 60 * 1000;
+    return api.assistant.listConversations().then(function (r) {
+      var c = (r && r.conversations || [])[0];
+      if (!c || !c.messageCount) return null;
+      var at = Date.parse(c.updatedAt);
+      var age = Date.now() - at;
+      if (!(age >= 0 && age < idleMs)) return null;
+      // This phone was used more recently than that conversation changed: a
+      // chat reopened here on purpose stays put (the desktop's tiebreak too).
+      if (c.id !== lsGet(LS.conv) && Number(lsGet(LS.active)) > at) return null;
+      return c;
+    }).catch(function () { return null; });
+  }
+
+  // ─── R.A.L.P.H. (the Efficiency Advisor) ──────────────────────────────
+  // The same per-user switch as the desktop's button (PUT /assistant/
+  // preferences), drawn the same way: a pill that glows while on.
+  function showRalph(on) {
+    var b = document.getElementById("chat-ralph-btn");
+    if (!b) return;
+    b.classList.toggle("on", !!on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  function toggleRalph() {
+    var b = document.getElementById("chat-ralph-btn");
+    if (!b || b.disabled) return;
+    var want = b.getAttribute("aria-pressed") !== "true";
+    showRalph(want);
+    b.disabled = true;
+    api.assistant.setPreferences({ efficiencyAdvisor: want }).then(function (r) {
+      var on = !!(r && r.efficiencyAdvisor);
+      if (S.status) S.status.efficiencyAdvisor = on;
+      showRalph(on);
+      var lines = on ? A()._ADVISOR_GREETINGS : A()._ADVISOR_FAREWELLS;
+      if (lines && lines.length) addLocalNote(lines[Math.floor(Math.random() * lines.length)]);
+    }).catch(function (err) {
+      showRalph(!want);
+      snack((err && err.message) || "Could not save the setting", { error: true });
+    }).then(function () { b.disabled = false; });
   }
 
   function loadConversation(id) {
@@ -267,9 +333,20 @@
     ask(text);
   }
 
+  // The box grows UPWARD (the composer is pinned at its bottom edge) one line at
+  // a time, to at most COMPOSER_MAX_LINES; past that it scrolls inside, and the
+  // user drags the text to see what they typed at the beginning.
+  var COMPOSER_MAX_LINES = 3;
   function autosize(el) {
+    var cs = getComputedStyle(el);
+    var line = parseFloat(cs.lineHeight) || 21;
+    var pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    var border = (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+    var max = Math.round(line * COMPOSER_MAX_LINES + pad + border);
     el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 140) + "px";
+    var want = el.scrollHeight + border;
+    el.style.height = Math.min(want, max) + "px";
+    el.style.overflowY = want > max ? "auto" : "hidden";
   }
 
   // ─── Downloads ─────────────────────────────────────────────────────────
@@ -374,6 +451,8 @@
     });
     var hist = document.getElementById("chat-history-btn");
     if (hist) hist.addEventListener("click", openHistory);
+    var ralph = document.getElementById("chat-ralph-btn");
+    if (ralph) ralph.addEventListener("click", toggleRalph);
     var fresh = document.getElementById("chat-new-btn");
     if (fresh) fresh.addEventListener("click", function () {
       if (S.busy) { snack("Wait for the current answer, or press Stop"); return; }
@@ -390,6 +469,7 @@
         + '  <div class="leading"></div>'
         + '  <div class="title" id="chat-title">' + escapeHtml(headerName()) + '</div>'
         + '  <div class="trailing">'
+        + '    <button class="chat-ralph" id="chat-ralph-btn" aria-pressed="false" title="Real-time Assesser of Labor and Productivity Habits">R.A.L.P.H.</button>'
         + '    <button class="icon-btn" id="chat-history-btn" aria-label="Conversations"><svg viewBox="0 0 24 24"><use href="#i-history"/></svg></button>'
         + '    <button class="icon-btn" id="chat-new-btn" aria-label="New conversation"><svg viewBox="0 0 24 24"><use href="#i-add"/></svg></button>'
         + '  </div>'
@@ -412,11 +492,25 @@
           + '  </form>'
           + '</div>';
         wire(body);
-        if (!S.convId) S.convId = lsGet(LS.conv) || null;
-        if (S.convId && !S.busy && !idleResetIfDue()) {
-          if (!S.messages.length) return loadConversation(S.convId);
-        }
-        renderLog();
+        showRalph(!!s.efficiencyAdvisor);
+        // Already holding a conversation in this page (back from another tab): keep it.
+        if (S.busy || (S.convId && S.messages.length)) { renderLog(); return; }
+        return latestActiveConversation().then(function (latest) {
+          if (S.body !== body) return;
+          // Activity on ANY device counts: the conversation this person used
+          // within the idle window — on the desktop, say — is the one to open,
+          // not whatever this phone last had. The server's updatedAt is the
+          // only clock both devices share.
+          if (latest) {
+            S.convId = latest.id;
+            lsSet(LS.conv, latest.id);
+            markActive();
+            return loadConversation(latest.id);
+          }
+          S.convId = lsGet(LS.conv) || null;
+          if (S.convId && !idleResetIfDue()) return loadConversation(S.convId);
+          renderLog();
+        });
       }).catch(function (err) {
         if (S.body !== body) return;
         // A role without `assistant` gets 403 here.
