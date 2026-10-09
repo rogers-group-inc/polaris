@@ -37,6 +37,7 @@ interface AlertRow {
   acknowledged?: boolean;
   acknowledgedBy?: string | null;
   acknowledgeNote?: string | null;
+  ackInheritedFrom?: string | null;
   raisedAt?: string;
   maintenanceHold?: "self" | "upstream" | null;
   triggerType?: string | null;
@@ -119,6 +120,28 @@ describe("dependency-down badge (business rule 78)", () => {
     expect(badge.textContent).toBe("Dep. Down");
     expect(badge.getAttribute("title")).toContain("SW-PLANT-3");
     expect(rows[1].querySelector(".badge-monitor-dep-down")).toBeNull();
+  });
+
+  // Business rule 78a — an acknowledgement inherited from the root cause's
+  // alert shows that alert's note, and the hover says whose note it is.
+  it("hovers the root cause's acknowledge note on an inherited ack pill, naming the root cause", () => {
+    const el = render([
+      alert({
+        id: "dep", severity: "critical", hostname: "PLC-7", dependencyDown: true, dependencyUpstream: "SW-PLANT-3",
+        acknowledged: true, acknowledgedBy: "jsmith", acknowledgeNote: "ISP fibre cut, ticket 4411", ackInheritedFrom: "FG-PLANT",
+      }),
+      alert({ id: "direct", severity: "critical", hostname: "SRV-1", acknowledged: true, acknowledgedBy: "amy", acknowledgeNote: "rebooting" }),
+    ], 2, { minSeverity: "warning", rowLimit: 100 });
+    const rows = rowsOf(el);
+    const ackPill = (row: any) =>
+      (Array.from(row.querySelectorAll(".widget-pill")) as any[]).find((p) => /^ack/.test(p.textContent));
+    const inherited = ackPill(rows[0]);
+    expect(inherited.textContent).toBe("ack jsmith");
+    expect(inherited.getAttribute("title")).toBe(
+      "Acknowledged by jsmith\nInherited from the root cause's alert on FG-PLANT\nISP fibre cut, ticket 4411",
+    );
+    // A direct acknowledgement reads exactly as before.
+    expect(ackPill(rows[1]).getAttribute("title")).toBe("Acknowledged by amy\nrebooting");
   });
 });
 

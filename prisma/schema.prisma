@@ -5500,6 +5500,13 @@ model Notification {
   // — the same device on a one-hop chain, the FortiGate above a suppressed
   // switch on a two-hop one. NULL unless dependencyDown.
   dependencyBlame Json?
+  // Business rule 78a — set when this dependency-down alert was acknowledged
+  // BY INHERITANCE from the root cause's own down alert, rather than by a
+  // person acknowledging this row: { notificationId, assetId, hostname } of
+  // that alert. `acknowledgedBy` / `acknowledgeNote` are copied from it, so
+  // every existing reader still sees who and why; this column is what lets
+  // the ack pill say the note is the root cause's. NULL on a direct ack.
+  acknowledgedVia Json?
 
   // ─── Quiet time (business rule 92) ─────────────────────────────────────────
   // Set when this alert FIRED inside a quiet window and its people-facing sends

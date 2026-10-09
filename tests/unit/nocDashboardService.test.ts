@@ -497,6 +497,8 @@ describe("getRecentAlerts", () => {
       ruleName: "Asset down", triggerType: null, acknowledged: true, acknowledgedBy: "jsmith",
       // Acknowledged without a note — the ack pill hovers the owner alone.
       acknowledgeNote: null,
+      // Business rule 78a — acknowledged directly, not inherited from a root cause.
+      ackInheritedFrom: null,
       // Grouped alerts (business rule 75): an alert about a single thing
       // reports both as null, which is what keeps the widget's "+N" affordance
       // off every ungrouped row.

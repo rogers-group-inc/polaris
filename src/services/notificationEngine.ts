@@ -33,7 +33,7 @@ import { sensorReadingDisplay, chartKeysForChangeEvent, chartTokensForAlert, cha
 import { INTERFACE_DIMENSION_METRICS } from "./alertInterfaceService.js";
 import { processRankingForMetric } from "./alertProcessService.js";
 import { poeIsFault } from "../utils/poePorts.js";
-import { REGION_TAG_PREFIX } from "./notificationService.js";
+import { REGION_TAG_PREFIX, rootCauseAckFor, inheritableRootCauseId, inheritedAckData, type InheritedAck } from "./notificationService.js";
 import { POLARIS_SERVER_SUBJECT } from "./pathCheckIngestService.js";
 import {
   isPathTrigger,
@@ -4549,7 +4549,7 @@ async function joinGroupAlert(
       dimension: primary?.key || null,
       ...(groupWantsContext(rule) ? { templateCtx: ctx as any } : {}),
       ...(reopening
-        ? { acknowledged: false, acknowledgedBy: null, acknowledgedAt: null, acknowledgeNote: null, escalationState: Prisma.DbNull }
+        ? { acknowledged: false, acknowledgedBy: null, acknowledgedAt: null, acknowledgeNote: null, acknowledgedVia: Prisma.DbNull, escalationState: Prisma.DbNull }
         : {}),
     },
   });
@@ -4738,6 +4738,12 @@ async function fire(
   await applySensorUnitToSummary(rule, reading, ctx);
   const message = renderMessage(rule, reading, ctx);
   ctx["message"] = message;
+  // Business rule 78a — a dependency-down alert raised after its root cause's
+  // own down alert was acknowledged is born acknowledged, with that note. It
+  // still DELIVERS (the plant still needs telling); the acknowledgement is
+  // what keeps its reminders and acknowledge-stopped escalation quiet.
+  const rootCauseId = reading.dependencyDown ? inheritableRootCauseId(blame) : null;
+  const inheritedAck: InheritedAck | null = rootCauseId ? await rootCauseAckFor(rootCauseId) : null;
   const notif = await prisma.notification.create({
     data: {
       ruleId: rule.id,
@@ -4775,6 +4781,7 @@ async function fire(
           ownStatus: reading.ownMonitorStatus ?? null,
         } as Prisma.InputJsonValue,
       } : {}),
+      ...(inheritedAck ? inheritedAckData(inheritedAck, now) : {}),
     },
   });
   await prisma.notificationRuleState.upsert({
@@ -4804,6 +4811,19 @@ async function fire(
           rootCauseAssetId: blame?.rootCause.id ?? null,
         } : {}),
       },
+    });
+  }
+  // An acknowledgement nobody typed on THIS row is still an acknowledgement on
+  // the record — unconditionally, not as a removable action.
+  if (inheritedAck) {
+    await logEvent({
+      action: "notification.acknowledged",
+      resourceType: "notification",
+      resourceId: notif.id,
+      resourceName: rule.name,
+      actor: "system:notification-engine",
+      message: `${reading.hostname ?? "Device"}: dependency-down alert raised acknowledged — its root cause ${inheritedAck.hostname ?? inheritedAck.assetId} was already acknowledged${inheritedAck.acknowledgedBy ? ` by ${inheritedAck.acknowledgedBy}` : ""}`,
+      details: { ids: [notif.id], count: 1, hasNote: !!inheritedAck.acknowledgeNote, inheritedFrom: [inheritedAck.notificationId] },
     });
   }
 }

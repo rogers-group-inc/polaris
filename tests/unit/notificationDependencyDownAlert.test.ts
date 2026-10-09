@@ -19,7 +19,7 @@ const h = vi.hoisted(() => ({
   prisma: {
     notificationRule: { findMany: vi.fn() },
     notificationRuleState: { findMany: vi.fn(), update: vi.fn(), upsert: vi.fn(), findUnique: vi.fn() },
-    notification: { create: vi.fn(), createMany: vi.fn(), updateMany: vi.fn(), findMany: vi.fn() },
+    notification: { create: vi.fn(), createMany: vi.fn(), updateMany: vi.fn(), findMany: vi.fn(), findFirst: vi.fn() },
     asset: { findMany: vi.fn(), findUnique: vi.fn() },
     event: { findMany: vi.fn() },
     setting: { findUnique: vi.fn(), upsert: vi.fn() },
@@ -111,6 +111,7 @@ beforeEach(() => {
   h.prisma.notificationRuleState.findUnique.mockResolvedValue(null);
   h.prisma.notification.create.mockResolvedValue({ id: "n-new" });
   h.prisma.notification.findMany.mockResolvedValue([]);
+  h.prisma.notification.findFirst.mockResolvedValue(null);
   h.prisma.setting.findUnique.mockResolvedValue(null);
   h.prisma.event.findMany.mockResolvedValue([]);
   h.blame.mockResolvedValue(ONE_HOP);
@@ -320,5 +321,64 @@ describe("the alert's flavour follows the asset's suppression flag", () => {
     h.prisma.notificationRuleState.findMany.mockResolvedValue([firingRow("srv", "n-x")]);
     await evaluateAllNotificationRules();
     expect(h.prisma.notification.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("a dependency-down alert inherits its root cause's acknowledgement (business rule 78a)", () => {
+  const ROOT_ACK = {
+    id: "n-root", assetId: "fg", assetHostname: "FG-PLANT",
+    acknowledgedBy: "jsmith", acknowledgeNote: "ISP fibre cut, ticket 4411",
+  };
+
+  it("is born acknowledged, with the root cause's note, when that alert was already acknowledged", async () => {
+    h.blame.mockResolvedValue(TWO_HOPS);
+    h.prisma.notification.findFirst.mockResolvedValue(ROOT_ACK);
+    h.prisma.asset.findMany.mockResolvedValue([
+      scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
+    ]);
+    await evaluateAllNotificationRules();
+
+    // It asks about the ROOT CAUSE (the gate), not the suppressed switch above the PLC.
+    const where = h.prisma.notification.findFirst.mock.calls[0][0].where;
+    expect(where).toMatchObject({ assetId: "fg", acknowledged: true, dependencyDown: false, metric: "monitorStatus", cleared: false });
+
+    const data = created()[0];
+    expect(data).toMatchObject({
+      dependencyDown: true,
+      acknowledged: true,
+      acknowledgedBy: "jsmith",
+      acknowledgeNote: "ISP fibre cut, ticket 4411",
+      acknowledgedVia: { notificationId: "n-root", assetId: "fg", hostname: "FG-PLANT" },
+    });
+    const acks = h.logEvent.mock.calls.map((c) => c[0] as any).filter((e) => e.action === "notification.acknowledged");
+    expect(acks).toHaveLength(1);
+    expect(acks[0].details).toMatchObject({ ids: ["n-new"], inheritedFrom: ["n-root"] });
+  });
+
+  it("is raised unacknowledged when the root cause's alert is not acknowledged", async () => {
+    h.prisma.asset.findMany.mockResolvedValue([
+      scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
+    ]);
+    await evaluateAllNotificationRules();
+    expect(h.prisma.notification.findFirst).toHaveBeenCalledTimes(1);
+    expect(created()[0].acknowledged).toBeUndefined();
+  });
+
+  it("does not look for one when the root cause is in maintenance — it raises no down alert of its own", async () => {
+    h.blame.mockResolvedValue({ ...ONE_HOP, rootCause: { id: "sw", hostname: "SW-PLANT-3", reason: "maintenance" } });
+    h.prisma.asset.findMany.mockResolvedValue([
+      scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
+    ]);
+    await evaluateAllNotificationRules();
+    expect(h.prisma.notification.findFirst).not.toHaveBeenCalled();
+    expect(created()[0].acknowledged).toBeUndefined();
+  });
+
+  it("never touches a plain Down alert", async () => {
+    h.prisma.notification.findFirst.mockResolvedValue(ROOT_ACK);
+    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("srv", { monitorStatus: "down" })]);
+    await evaluateAllNotificationRules();
+    expect(h.prisma.notification.findFirst).not.toHaveBeenCalled();
+    expect(created()[0].acknowledged).toBeUndefined();
   });
 });

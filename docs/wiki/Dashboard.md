@@ -195,7 +195,9 @@ The **Active Alerts** widget is not read-only. Each unacknowledged row carries:
   *required* when the automation demands one.
 
   An acknowledged row keeps an **ack** pill naming its owner; hover it to read
-  the note they wrote.
+  the note they wrote. A dependency-down alert acknowledged along with the
+  device that is actually down says so on the hover, above that alert's note
+  ([rule 78a](Business-Rules#rule-78a)).
 - **Clear** (`alerts:fullwrite`) — ends the alert. This stops escalation and
   runs the automation's reset actions, so it is confirmed first.
 

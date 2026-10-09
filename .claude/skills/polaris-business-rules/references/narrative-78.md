@@ -8,6 +8,7 @@
 Verbatim from BUSINESS-RULES.md: each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
 - [Rule 78](#rule-78) — An automation may choose to speak for a silenced device, and then it must name who silenced it
+- [Rule 78a](#rule-78a) — A dependency-down alert is acknowledged when its root cause's own alert is, and says whose acknowledgement it carries
 
 <a id="rule-78"></a>
 
@@ -229,3 +230,69 @@ Trigger-step re-collect, the strip on a composite).
 
 **An automation may choose to speak for a silenced device, and then it must name who silenced it** — dependency suppression silences every automation about a device behind a dark parent (rules 16 and 37), and exactly ONE thing may opt out of that silence: the `monitorStatus == down` trigger itself, through its own key `alertWhenDependencyDown` (in the trigger JSON beside `missedPolls`, refused anywhere else and inside a multi-condition trigger, read only through `notificationTypes.ruleAlertsWhenDependencyDown`, and not part of `triggerIdentityOf`). An opted-in automation keeps its dependency-suppressed devices in evaluation and **fires on the suppression EDGE** — `resolveAssetStateReadings` hands each such device a synthesized `down` reading flagged `dependencyDown`, because the upstream's confirmed verdict IS the evidence and waiting for the device's own count at half cadence would tell the plant operator late what the pill already says. The alert it raises **says DEPENDENCY DOWN** (the `{dependency.summary}` banner, the ` · DEPENDENCY DOWN` subject tag, `{trigger.summary}` replaced by `dependencyTriggerSummary`, the in-app message the whole sentence) **and names who silenced it**: `dependencyTreeService.resolveDependencyBlame` walks UP from the device — a parent is blamed as `dependency_test` / `maintenance` / `suppressed` / `down` in that order, so a switch that is both suppressed and reading `down` under a dark gate keeps the walk going to the gate — and the alert carries the UPSTREAM device (directly above) and the ROOT CAUSE (dark in its own right; blank in the template when it is the upstream itself, so the row prunes rather than repeats), snapshotted on `Notification.dependencyDown` + `dependencyBlame` so the row explains itself after the tree is recomputed. **The alert's flavour follows the asset's flag**: a live plain Down alert whose device turns Dep. Down, or a dependency-down alert whose upstream is back while the device stays dark, is ENDED (`system:dependency-down` / `system:dependency-released`, audited as `notification.superseded`, NO reset actions — nothing recovered) and raised again in the other flavour, so the operators hear "and it is the switch" or "and now it is the PLC itself". Three things the opt-out does NOT reach: a **maintenance window still silences** (rule 16 wins — announced downtime is not an outage to report); **reminders and escalation still pause** while the asset is suppressed (rule 16's pause in the escalation sweep, unchanged — the operator asked for one notification); and **`clearSuppressedAlerts` never retires a `dependencyDown` row** — the sweep excludes them in its query, because retiring the one alert that is supposed to be live on a suppressed asset would have the engine re-raise it every tick. A blame walk that fails still lets the alert out, worded without a name: "your PLC is dependency down" beats silence even when the switch cannot be named. Every automation WITHOUT the key behaves exactly as before.
 
+
+<a id="rule-78a"></a>
+
+## Rule 78a — A dependency-down alert is acknowledged when its root cause's own alert is, and says whose acknowledgement it carries
+
+Asked for on 2026-10-09: with Dependency-Down Bypass on, a gate going dark raises its own Down
+alert and one DEPENDENCY DOWN alert per opted-in device behind it. The NOC acknowledges the
+gate's alert, with a note saying what happened and who is on it, and every dependency alert
+underneath stays unacknowledged. On the Active Alerts widget that reads as a dozen problems
+nobody owns, when there is one problem somebody owns. The operator's words: when the
+triggering asset's alert is acknowledged, acknowledge the bypass alerts too, and when hovering
+the acknowledge pill, show the reason typed on the triggering alert.
+
+### Which alert is "the triggering asset's"
+
+The ROOT CAUSE's, not the upstream's. Rule 78's blame walk already separates the two: on a
+two-hop chain the upstream is a switch that is itself suppressed — a victim — and the device
+actually down is the FortiGate above it. The FortiGate's alert is the one the NOC acknowledges.
+The root's alert is identified by shape, shared by both edges through `ROOT_DOWN_ALERT_WHERE`:
+live, about a device, not a wizard test, not itself dependency-flavoured, and stamped
+`metric: "monitorStatus"` (what every down automation writes). A root cause blamed for
+`maintenance` or `dependency_test` raises no down alert of its own, so there is nothing to
+inherit and nothing is looked up.
+
+### Both edges, because either can come first
+
+Acknowledging the root's alert cascades to every live dependency alert already naming it. But a
+dependency alert can also be raised AFTER the acknowledgement — a device behind the gate flips
+Dep. Down a tick later, or a plain Down alert is handed off into the dependency flavour (rule
+78). Without the fire-time half, those would sit unacknowledged under an acknowledged outage,
+which is the exact picture the operator asked to get rid of. So the engine asks
+`rootCauseAckFor` before creating the row and writes it acknowledged.
+
+### What is copied, and what says it was copied
+
+`acknowledgedBy` and `acknowledgeNote` are the root alert's, copied — every surface that already
+prints them (the "ack jsmith" pill, the ack card's Note row, the asset tab, the phone) prints the
+right person and the right reason without learning anything new. What they cannot tell on their
+own is that the note was typed about a different device, so `Notification.acknowledgedVia`
+records the root alert (`{notificationId, assetId, hostname}`) and the ack pill's hover says
+"Inherited from the root cause's alert on FG-PLANT" above the note. A column rather than a
+marker in the note: the note is the operator's text and is quoted back verbatim.
+
+### Decisions worth keeping
+
+- **The dependency automation's note policy is not re-asked.** The acknowledgement was made,
+  under the root automation's own policy; refusing the cascade because a different automation
+  wants a note would leave the very rows this rule exists to close open.
+- **A born-acknowledged alert still delivers.** The plant operators the bypass exists for (rule
+  78) still need to hear their PLC is down; the acknowledgement says the NOC owns the outage, not
+  that nobody else should be told. Reminders and escalation were already paused for a
+  dependency alert while its device is suppressed.
+- **One way only.** Acknowledging a dependency alert acknowledges nothing upstream: a plant
+  operator seeing their PLC alert does not own the gate.
+- **The cascade is best-effort.** It runs after the operator's own write and its failure is
+  swallowed — the operator's acknowledgement of the root must never fail because the children
+  could not be read. The return value stays the count the operator acknowledged.
+- **A flavour hand-off is a new alert.** When the upstream recovers and the device stays down,
+  rule 78 ends the dependency alert and raises a plain Down one — that is the device's own
+  outage now, and it inherits nothing.
+
+Pinned by `tests/integration/dependencyDownAckInherit.test.ts` (the JSON-path match against a
+real database, the feed's `ackInheritedFrom`, one-way only), `tests/unit/dependencyDownAckInherit.test.ts` (the cascade and the pure helpers),
+`tests/unit/notificationDependencyDownAlert.test.ts` (born acknowledged, the root-cause lookup,
+the maintenance and plain-Down exclusions) and `tests/unit/widgetActiveAlerts.test.ts` (the
+hover).

@@ -51,7 +51,7 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 | touch probes, `monitorStatus`, the failure bucket, packet loss, dependency suppression | 29, 30, 36, 38, 55, 59, 66, 67, 78, 86, 90, 91 — the state machine itself is `polaris-change-impact` → cross-cutting/five-state-monitor-machine.md |
 | resolve a device from a NAME — `lastSeenSwitch` / `lastSeenAp`, an AP's `parentSwitch`, an LLDP `systemName`, two switches or APs sharing a hostname, the duplicate-hostname merge | 91 (the scope that settles a shared name, and the refusal when nothing does), 41 and 83 (the serial identities it falls back on) |
 | touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56, 58, 59, 60, 65, 66, 67, 75, 78, 85, 89, 90, 98 (the SD-WAN member IP filter) |
-| touch what an alert says about a device that is dependency-down, or who may alert about one | 16 and 37 (the silence), then 78 (the one opt-out from it) |
+| touch what an alert says about a device that is dependency-down, or who may alert about one | 16 and 37 (the silence), then 78 (the one opt-out from it) and 78a (its acknowledgement follows the root cause's) |
 | touch what an alert EMAIL says — the timezone a timestamp is drawn in, who is on the To line, whether one send may become two, the Acknowledge button | 25 first (it forbids splitting a send), then 56 and 60 |
 | touch a maintenance window, a hold Polaris takes for itself, or any surface that REPORTS one | 16 (what a window does), 37 (the gate that reads it), 80 + 80a (holds and event-time), 73 (reporting) |
 | touch discovery writes (assets, descriptions, locations, ARP, MACs) | 13, 14, 15, 17, 22, 26, 28, 35, 40, 41, 45, 53, 55, 79, 83; 100 for the Generic API feed |
@@ -179,6 +179,7 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 76 | Access is granted on the network profile the endpoint is actually on, and scoping it counts for nothing while a wider rule stands beside it | invariants-30-43 | narrative-76 |
 | 77 | A VIP describes an address; it does not claim it — and the status says every fact it has | invariants-30-43 | narrative-77 |
 | 78 | An automation may choose to speak for a silenced device, and then it must name who silenced it | invariants-30-43 | narrative-78 |
+| 78a | A dependency-down alert is acknowledged when its root cause's own alert is, and says whose acknowledgement it carries | invariants-30-43 | narrative-78 |
 | 79 | An operator's removal of a MAC is a correction, not a suppression | invariants-30-43 | narrative-79 |
 | 80 | Downtime Polaris itself causes is not an incident — and a silence it grants expires on its own | invariants-30-43 | narrative-80 |
 | 80a | A silence is granted for when the event HAPPENED, not for when something got round to reading it | invariants-30-43 | narrative-80 |
