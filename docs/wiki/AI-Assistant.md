@@ -15,7 +15,7 @@ something in Polaris works.
 
 ## Turning it on
 
-1. **Integrations → + Add Integration → Local AI Assistant.**
+1. **Integrations → + Add Integration → AI Assistant.**
 2. Fill in the model server:
 
 | Field | |
@@ -73,7 +73,7 @@ local server.
 
 ### What creating it also does
 
-Creating a Local AI Assistant integration also creates, for the **model server's own
+Creating an AI Assistant integration also creates, for the **model server's own
 use**:
 
 - a **read-only role** named `llm-<integration name>` — it reads inventory,
@@ -87,13 +87,13 @@ server, a script — see [REST API](API)). The chat in Polaris does **not** use
 this token. Use **Regenerate Token** on the integration card if it leaks;
 deleting the integration deletes the token and the role.
 
-Because it creates a role and a token, adding a Local AI Assistant integration needs
+Because it creates a role and a token, adding an AI Assistant integration needs
 **Read-Write on Roles and on API Tokens** as well as on Integrations.
 
 ### Who sees the button
 
 Anyone whose role has **AI Assistant** at Read (every built-in role does, the
-read-only role included) — once at least one Local AI Assistant integration is enabled.
+read-only role included) — once at least one AI Assistant integration is enabled.
 To hide it from a role, set **AI Assistant** to None under
 [Users → Roles](Users-Roles-and-Permissions).
 
@@ -165,7 +165,7 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 | `/export [md\|pdf]` | Download this conversation, reports included |
 | `/rename <title>` | Rename this conversation |
 | `/delete` | Delete this conversation permanently |
-| `/model [name]` | Show the model in use, or switch to another Local AI Assistant integration |
+| `/model [name]` | Show the model in use, or switch to another AI Assistant integration |
 | `/help` | List these commands |
 
 ---
@@ -204,7 +204,7 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 
 | Symptom | Likely cause |
 |---|---|
-| No button | no **enabled** Local AI Assistant integration, or your role has AI Assistant set to None |
+| No button | no **enabled** AI Assistant integration, or your role has AI Assistant set to None |
 | "Connected, but model … is not on the server" | the model was removed from the server — pick another with **Load models**, or set it to Auto |
 | Loopback refused | tick **Allow loopback**, or use the host's LAN address |
 | It chats but never looks anything up | the model does not support tool calling — the card's **Tool Calling** row says ✗; choose one that does |

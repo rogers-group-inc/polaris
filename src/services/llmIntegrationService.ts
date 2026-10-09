@@ -82,7 +82,7 @@ async function uniqueRoleName(base: string): Promise<string> {
     const clash = await prisma.role.findFirst({ where: { name: { equals: candidate, mode: "insensitive" } }, select: { id: true } });
     if (!clash) return candidate;
   }
-  throw new AppError(409, "Could not find a free role name for the Local AI Assistant integration");
+  throw new AppError(409, "Could not find a free role name for the AI Assistant integration");
 }
 
 async function uniqueTokenName(base: string): Promise<string> {
@@ -91,7 +91,7 @@ async function uniqueTokenName(base: string): Promise<string> {
     const clash = await prisma.apiToken.findUnique({ where: { name: candidate }, select: { id: true } });
     if (!clash) return candidate;
   }
-  throw new AppError(409, "Could not find a free token name for the Local AI Assistant integration");
+  throw new AppError(409, "Could not find a free token name for the AI Assistant integration");
 }
 
 /**
@@ -102,13 +102,13 @@ export function assertCanProvision(req: Request): void {
   if (!hasPermission(req, "roles", "write") || !hasPermission(req, "apiTokens", "write")) {
     throw new AppError(
       403,
-      "Forbidden — creating a Local AI Assistant integration also creates a read-only role and an API token for the LLM server, " +
+      "Forbidden — creating an AI Assistant integration also creates a read-only role and an API token for the LLM server, " +
         "which needs Roles Read-Write and API Tokens Read-Write. Ask an administrator.",
     );
   }
   // The bot role is never admin-equivalent, so this is a no-op today; it is
   // here so a future change to botPermissions() cannot quietly break rule 48.
-  assertNoPrivilegeEscalation(req, botPermissions(), "the Local AI Assistant integration's role");
+  assertNoPrivilegeEscalation(req, botPermissions(), "the AI Assistant integration's role");
 }
 
 export interface ProvisionResult {
@@ -126,7 +126,7 @@ export async function provisionLlmAccess(
   const roleName = await uniqueRoleName(botRoleBaseName(integration.name));
   const role = await createRole({
     name: roleName,
-    description: `Read-only access for the "${integration.name}" Local AI Assistant integration's API token. Managed by that integration.`,
+    description: `Read-only access for the "${integration.name}" AI Assistant integration's API token. Managed by that integration.`,
     permissions: botPermissions(),
   }, actor);
   try {
@@ -138,7 +138,7 @@ export async function provisionLlmAccess(
       resourceId: integration.id,
       resourceName: integration.name,
       actor,
-      message: `Local AI Assistant integration "${integration.name}" provisioned read-only role "${roleName}" and API token "${tokenName}"`,
+      message: `AI Assistant integration "${integration.name}" provisioned read-only role "${roleName}" and API token "${tokenName}"`,
       details: { roleId: role.id, tokenId: token.id },
     });
     return { roleId: role.id, roleName, tokenId: token.id, tokenName, rawToken };
@@ -170,7 +170,7 @@ export async function regenerateLlmToken(
     resourceName: integration.name,
     actor,
     level: "warning",
-    message: `API token for Local AI Assistant integration "${integration.name}" regenerated — the previous token no longer works`,
+    message: `API token for AI Assistant integration "${integration.name}" regenerated — the previous token no longer works`,
     details: { oldTokenId, tokenId: token.id },
   });
   return { tokenId: token.id, tokenName, rawToken, roleName: role.name };
@@ -199,7 +199,7 @@ export async function checkLlmToolCalling(integrationId: string, actor: string):
     select: { id: true, name: true, type: true, config: true },
   });
   if (!integration) throw new AppError(404, "Integration not found");
-  if (integration.type !== "llm") throw new AppError(400, "Only Local AI Assistant integrations have a tool-calling check");
+  if (integration.type !== "llm") throw new AppError(400, "Only AI Assistant integrations have a tool-calling check");
   const config = (integration.config ?? {}) as Record<string, unknown> & LlmConfig;
 
   const configured = (config.model ?? "").trim();
@@ -232,10 +232,10 @@ export async function checkLlmToolCalling(integrationId: string, actor: string):
     actor,
     level: result === "no" ? "warning" : "info",
     message: result === "yes"
-      ? `Local AI Assistant "${integration.name}": model "${model}" calls tools — lookups will work`
+      ? `AI Assistant "${integration.name}": model "${model}" calls tools — lookups will work`
       : result === "no"
-        ? `Local AI Assistant "${integration.name}": model "${model}" did NOT call a tool — the assistant can chat but cannot look anything up`
-        : `Local AI Assistant "${integration.name}": tool calling for model "${model}" could not be determined`,
+        ? `AI Assistant "${integration.name}": model "${model}" did NOT call a tool — the assistant can chat but cannot look anything up`
+        : `AI Assistant "${integration.name}": tool calling for model "${model}" could not be determined`,
     details: { model, result },
   });
   return toolCheck;
@@ -271,7 +271,7 @@ export async function deprovisionLlmAccess(
     actor,
     level: problems.length ? "warning" : "info",
     message: problems.length
-      ? `Local AI Assistant integration "${integration.name}" removed; clean-up left something behind (${problems.join("; ")})`
-      : `Local AI Assistant integration "${integration.name}" removed its API token and role`,
+      ? `AI Assistant integration "${integration.name}" removed; clean-up left something behind (${problems.join("; ")})`
+      : `AI Assistant integration "${integration.name}" removed its API token and role`,
   });
 }

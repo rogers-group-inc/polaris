@@ -7,7 +7,7 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 (`/api/v1/assistant`, `assistant` read, session-only); integration CRUD stays in
 `src/api/routes/integrations.ts`. Frontend: `public/js/assistant.js`,
 `public/js/assistant-markdown.js`, `public/css/assistant.css` (booted by
-`public/js/app.js → _bootAssistant()`), and the Local AI Assistant form in `public/js/integrations.js`.
+`public/js/app.js → _bootAssistant()`), and the AI Assistant form in `public/js/integrations.js`.
 
 ---
 
@@ -110,7 +110,7 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 
 ## services/assistantConversationService.ts
 
-**What it owns:** The saved conversations (AssistantConversation / AssistantMessage / AssistantReport). Every function takes the session user's id and scopes every query to it — someone else's id answers 404 (rule 95(d)). List / create / get / rename / delete / clear; `beginTurn` / `finishTurn` / `recentTurns` for the chat service; the `assistant` Setting (`retentionDays`, default 90) and `pruneAssistantConversations` (rule 95(e)). Creating past 200 conversations for one user drops that user's oldest. `updateAssistantSettings(input, actor)` writes an `assistant.settings.updated` Event when the value changes — a warning when it shortens, because the next prune then deletes conversations. The operator edits it from the Local AI Assistant integration form ("Keep conversations for"), which calls PUT /assistant/settings after the integration saves; it stays a server-wide Setting, not integration config.
+**What it owns:** The saved conversations (AssistantConversation / AssistantMessage / AssistantReport). Every function takes the session user's id and scopes every query to it — someone else's id answers 404 (rule 95(d)). List / create / get / rename / delete / clear; `beginTurn` / `finishTurn` / `recentTurns` for the chat service; the `assistant` Setting (`retentionDays`, default 90) and `pruneAssistantConversations` (rule 95(e)). Creating past 200 conversations for one user drops that user's oldest. `updateAssistantSettings(input, actor)` writes an `assistant.settings.updated` Event when the value changes — a warning when it shortens, because the next prune then deletes conversations. The operator edits it from the AI Assistant integration form ("Keep conversations for"), which calls PUT /assistant/settings after the integration saves; it stays a server-wide Setting, not integration config.
 
 **Public API:** AssistantSettings, ToolUseRecord, getAssistantSettings, updateAssistantSettings, getEfficiencyAdvisor, setEfficiencyAdvisor, recentAdvisorLines, titleFromQuestion, listConversations, createConversation, getConversation, renameConversation, deleteConversation, clearConversation, recentTurns, beginTurn, finishTurn, pruneAssistantConversations.
 

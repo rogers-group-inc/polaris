@@ -2861,7 +2861,7 @@ function renderIntegrationFailedStatus() {
     if (t === "azurearc") return "Azure Arc";
     if (t === "unraid") return "Unraid";
     if (t === "truenas") return "TrueNAS SCALE";
-    if (t === "llm") return "Local AI Assistant";
+    if (t === "llm") return "AI Assistant";
     return t || "";
   }
   container.innerHTML =

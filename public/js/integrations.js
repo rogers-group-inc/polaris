@@ -705,7 +705,7 @@ async function loadIntegrations() {
     var result = await api.integrations.list();
     var integrations = result.integrations || result;
     if (integrations.length === 0) {
-      container.innerHTML = '<div class="empty-state-card"><p>No integrations configured.</p><p style="color:var(--color-text-tertiary);font-size:0.85rem;margin-top:0.5rem">Add a FortiManager, FortiGate, Windows Server, Microsoft Entra ID, Active Directory, VMware vCenter, Azure Arc, Unraid, or TrueNAS SCALE connection to get started — or a Local AI Assistant to turn on the AI assistant.</p></div>';
+      container.innerHTML = '<div class="empty-state-card"><p>No integrations configured.</p><p style="color:var(--color-text-tertiary);font-size:0.85rem;margin-top:0.5rem">Add a FortiManager, FortiGate, Windows Server, Microsoft Entra ID, Active Directory, VMware vCenter, Azure Arc, Unraid, or TrueNAS SCALE connection to get started — or an AI Assistant to turn on the AI assistant.</p></div>';
       return;
     }
     var activeDiscoveries = (window._getServerDiscoveries && window._getServerDiscoveries()) || [];
@@ -722,9 +722,9 @@ async function loadIntegrations() {
         intg.type === "azurearc" ? "Azure Arc" :
         intg.type === "unraid" ? "Unraid" :
         intg.type === "truenas" ? "TrueNAS SCALE" :
-        intg.type === "llm" ? "Local AI Assistant" :
+        intg.type === "llm" ? "AI Assistant" :
         "FortiManager";
-      // The Local AI Assistant integration discovers nothing: no Discover button and no
+      // The AI Assistant integration discovers nothing: no Discover button and no
       // auto-discovery rows on its card.
       var isLlm = intg.type === "llm";
 
@@ -5388,7 +5388,7 @@ function getArcFormConfig() {
   };
 }
 
-// ─── Local AI Assistant (AI assistant, business rule 95) ─────────────────────────────
+// ─── AI Assistant integration (business rule 95) ─────────────────────────────
 //
 // A flat, untabbed form: the integration discovers nothing and monitors
 // nothing — it is the model behind the floating assistant. Creating one also
@@ -5859,7 +5859,7 @@ function showTypePicker() {
         '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Host, VMs &amp; Apps via the JSON-RPC API</span>' +
       '</button>' +
       '<button class="btn btn-secondary" id="pick-llm" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
-        '<strong>Local AI Assistant</strong>' +
+        '<strong>AI Assistant</strong>' +
         '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">AI assistant via an OpenAI-compatible model server or Azure AI Foundry</span>' +
       '</button>' +
     '</div>';
@@ -5937,7 +5937,7 @@ var _INTEGRATION_PRODUCTS = {
   azurearc:        "Azure Arc",
   unraid:          "Unraid",
   truenas:         "TrueNAS SCALE",
-  llm:             "Local AI Assistant",
+  llm:             "AI Assistant",
 };
 
 /** The product an operator picked to get here. Unknown types fall back to the
@@ -6150,7 +6150,7 @@ function _integrationTabs(ctx) {
   return nonFortinet;
 }
 
-// ─── Local AI Assistant model picker ──────────────────────────────────────────────────
+// ─── AI Assistant model picker ──────────────────────────────────────────────────
 //
 // The server's models come from POST /integrations/test (llmService.listModels):
 // each carries toolCalling "yes" | "no" | "unknown" — from Ollama's reported

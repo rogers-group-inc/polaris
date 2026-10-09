@@ -2,7 +2,7 @@
  * tests/unit/llmToolCheck.test.ts
  *
  * checkLlmToolCalling (business rule 95) — the check the integration form
- * runs after every save of a Local AI Assistant:
+ * runs after every save of an AI Assistant:
  *   - it asks the model the integration will really chat with (the configured
  *     one as the server names it, or the default pick for a blank Model);
  *   - it stamps { model, result, at } on config.toolCheck WITHOUT clobbering

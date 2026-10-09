@@ -29,7 +29,7 @@ discovery at `write`.
 | **Unraid** | Unraid GraphQL API (7.2+) | host, VMs, containers | [Unraid](Integration-Unraid) |
 | **TrueNAS SCALE** | TrueNAS JSON-RPC WebSocket API (25.04+) | host, VMs, Apps | [TrueNAS SCALE](Integration-TrueNAS) |
 
-Plus one integration that discovers nothing: **Local AI Assistant** — the model server
+Plus one integration that discovers nothing: **AI Assistant** — the model server
 behind the [AI assistant](AI-Assistant), either one you run or an Azure AI Foundry deployment. It has no Discover button, no
 auto-discovery and no Monitoring tab.
 
@@ -56,7 +56,7 @@ The modal is tabbed, and the tab set depends on the type:
 | Entra ID / Intune | General → Monitoring → Directory → Script Publishing |
 | Azure Arc | General → Monitoring → Script Publishing |
 | Windows Server, vCenter, Unraid, TrueNAS SCALE | General → Monitoring |
-| Local AI Assistant | one untabbed form — Model Server, then Assistant Behaviour ([AI assistant](AI-Assistant)) |
+| AI Assistant | one untabbed form — Model Server, then Assistant Behaviour ([AI assistant](AI-Assistant)) |
 
 Outside the Fortinet pair, the connection settings **and** the filters live on
 the General tab. **The FortiManager and standalone FortiGate layouts are

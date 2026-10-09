@@ -986,7 +986,7 @@ const WorkloadConfigSchema = z.object({
   verboseLogging: z.boolean().optional().default(false),
 }).superRefine(refineConfigHost);
 
-// Local AI Assistant (model server) for the AI assistant (business rule 95). OpenAI-compatible
+// AI Assistant (model server) for the AI assistant (business rule 95). OpenAI-compatible
 // chat completions — Ollama, LM Studio, vLLM, llama.cpp, LocalAI, Open WebUI.
 // No discovery, no monitoring, no assets: it is read by the assistant routes
 // only. The host guard is the llm variant (rule 95(g)): `allowLoopback` lifts
@@ -2455,7 +2455,7 @@ router.post("/:id/llm/regenerate-token", requirePermission("apiTokens", "write")
   try {
     const integration = await prisma.integration.findUnique({ where: { id: req.params.id as string } });
     if (!integration) throw new AppError(404, "Integration not found");
-    if (integration.type !== "llm") throw new AppError(400, "Only Local AI Assistant integrations carry a provisioned API token");
+    if (integration.type !== "llm") throw new AppError(400, "Only AI Assistant integrations carry a provisioned API token");
     const config = integration.config as Record<string, unknown>;
     const out = await regenerateLlmToken(
       { id: integration.id, name: integration.name, config },

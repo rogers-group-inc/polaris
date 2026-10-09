@@ -1568,7 +1568,7 @@ user accounts, roles, sign-in settings, automation scripts or server settings.
 A report it builds is a database extract: Polaris runs the query itself (up to
 5,000 rows), so the rows you download were never written by the model. Your
 conversations are visible only to you — administrators included — and are
-deleted after 90 days without activity. Creating a Local AI Assistant integration needs
+deleted after 90 days without activity. Creating an AI Assistant integration needs
 Read-Write on Roles and on API Tokens, because it also creates a read-only role
 and an API token for the model server's own use; the chat itself never uses that
 token. "Allow loopback" lets the model server be on the Polaris host itself, and

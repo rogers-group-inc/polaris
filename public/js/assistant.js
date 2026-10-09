@@ -63,7 +63,7 @@
     { name: "export",  arg: "[md|pdf]",    desc: "Download this conversation, reports included" },
     { name: "rename",  arg: "<title>",     desc: "Rename this conversation", needsArg: true },
     { name: "delete",  arg: "",            desc: "Delete this conversation permanently" },
-    { name: "model",   arg: "[name]",      desc: "Show the model in use, or switch to another Local AI Assistant integration" },
+    { name: "model",   arg: "[name]",      desc: "Show the model in use, or switch to another AI Assistant integration" },
     { name: "help",    arg: "",            desc: "List these commands" },
   ];
 
@@ -885,7 +885,7 @@
     var q = arg.toLowerCase();
     var hit = list.find(function (i) { return i.name.toLowerCase() === q || i.model.toLowerCase() === q; }) ||
       list.find(function (i) { return i.name.toLowerCase().indexOf(q) !== -1 || i.model.toLowerCase().indexOf(q) !== -1; });
-    if (!hit) { addLocalNote("No Local AI Assistant integration matches “" + esc(arg) + "”. Type `/model` to see the list."); return; }
+    if (!hit) { addLocalNote("No AI Assistant integration matches “" + esc(arg) + "”. Type `/model` to see the list."); return; }
     S.integrationId = hit.id;
     lsSet(LS.model, hit.id);
     setHeader();
