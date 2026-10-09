@@ -86,15 +86,22 @@ export function invalidateWorkloadSnapshot(integrationId?: string): void {
   snapshotCache.invalidate(integrationId);
 }
 
+/** One platform's snapshot read — explicit per platform, never a fall-through to another platform's client. */
+async function fetchPlatformSnapshot(platform: WorkloadPlatform, config: Record<string, unknown>): Promise<WorkloadSnapshot> {
+  switch (platform) {
+    case "unraid":  return unraid.fetchUnraidSnapshot(config as unknown as unraid.UnraidConfig);
+    case "truenas": return truenas.fetchTrueNasSnapshot(config as unknown as truenas.TrueNasConfig);
+    default:        throw new Error(`No snapshot reader for ${workloadPlatformLabel(platform)} yet`);
+  }
+}
+
 export async function fetchWorkloadSnapshotCached(integration: {
   id: string;
   type: WorkloadPlatform;
   config: Record<string, unknown>;
 }): Promise<CacheEntry> {
   return snapshotCache.getOrCompute(integration.id, async () => {
-    const snap = integration.type === "unraid"
-      ? await unraid.fetchUnraidSnapshot(integration.config as unknown as unraid.UnraidConfig)
-      : await truenas.fetchTrueNasSnapshot(integration.config as unknown as truenas.TrueNasConfig);
+    const snap = await fetchPlatformSnapshot(integration.type, integration.config);
     const hostsById = new Map<string, WorkloadHost>();
     for (const h of snap.inventory.hosts) hostsById.set(workloadHostExternalId(integration.id, h.key), h);
     const vmsById = new Map<string, WorkloadVm>();

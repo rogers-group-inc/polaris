@@ -271,7 +271,7 @@ const CreateAssetSchema = z.object({
 // apply to the asset's source. Includes "disabled" (universally allowed
 // opt-out) and "agent" (Polaris Agent; allowed on AD/Entra/WinServer/Manual
 // sources, ignored on fortimanager/fortigate).
-const PollingMethodEnum = z.enum(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas"]);
+const PollingMethodEnum = z.enum(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas", "proxmox"]);
 
 const UpdateAssetSchema = CreateAssetSchema.partial().extend({
   // Unlike create (min(1)), update accepts "" — blanking the IP Address field
@@ -3752,10 +3752,10 @@ router.get("/:id/virtualization", requirePermission("assets", "read"), async (re
     });
     if (!asset) throw new AppError(404, "Asset not found");
     const v = asset.virtualization as Record<string, any> | null;
-    // Unraid / TrueNAS blobs (`platform` set) have their own shape: a VM or
-    // container links to its host; the host lists the workloads placed on it
-    // (VMs and containers alike) and carries its pools inline.
-    if (v && (v.platform === "unraid" || v.platform === "truenas")) {
+    // Unraid / TrueNAS / Proxmox blobs (`platform` set) have their own shape: a
+    // VM or container links to its host; the host lists the workloads placed on
+    // it (VMs and containers alike) and carries its pools inline.
+    if (v && isWorkloadPlatform(v.platform)) {
       if (v.role === "vm" || v.role === "container") {
         const hostAsset = typeof v.hostAssetId === "string" && v.hostAssetId
           ? await prisma.asset.findUnique({
@@ -4154,7 +4154,7 @@ async function validateAssetUpdate(id: string, existing: ExistingAssetForUpdate,
           throw new AppError(400, "vCenter polling requires this asset to be a vCenter-discovered VM or ESXi host (no vCenter source on file)");
         }
       }
-      // "unraid" / "truenas": the vCenter guard for the workload integrations —
+      // "unraid" / "truenas" / "proxmox": the vCenter guard for the workload integrations —
       // the stream must be one the host's API answers, and the asset must carry
       // a source row of THAT platform to resolve the integration through.
       if (isWorkloadPollingMethod(value)) {

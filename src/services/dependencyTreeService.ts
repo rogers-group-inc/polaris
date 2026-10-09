@@ -73,12 +73,13 @@ export type DependencyDetectedVia =
   | "wireless"
   | "sighting"
   | "subnet";
-// "unraid" / "truenas": a VM or container → the Unraid / TrueNAS host it runs
-// on (services/workloadSync.ts), the vCenter placement edge's twin.
-export type DependencySource = "computed" | "override" | "endpoint" | "vcenter" | "unraid" | "truenas";
+// "unraid" / "truenas" / "proxmox": a VM or container → the Unraid / TrueNAS
+// host or Proxmox node it runs on (services/workloadSync.ts), the vCenter
+// placement edge's twin.
+export type DependencySource = "computed" | "override" | "endpoint" | "vcenter" | "unraid" | "truenas" | "proxmox";
 
 /** Hypervisor-placement edge sources: the endpoint half never overlays these. */
-export const PLACEMENT_DEPENDENCY_SOURCES: readonly DependencySource[] = ["vcenter", "unraid", "truenas"];
+export const PLACEMENT_DEPENDENCY_SOURCES: readonly DependencySource[] = ["vcenter", "unraid", "truenas", "proxmox"];
 
 /**
  * The Fortinet infra types the BFS-layered half of the DAG is built from.

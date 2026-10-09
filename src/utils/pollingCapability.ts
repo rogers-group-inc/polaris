@@ -121,9 +121,10 @@ export function collectorCapability(
   if (method === "disabled") return OK;
   if (method === "vcenter") return OK;
   if (method === "fortimanager") return OK;
-  // Unraid / TrueNAS read the host's own API (WORKLOAD_STREAMS-scoped); a
-  // stream a class cannot answer (a container's temperature) comes back empty.
-  if (method === "unraid" || method === "truenas") return OK;
+  // Unraid / TrueNAS / Proxmox read the host's own API (WORKLOAD_STREAMS /
+  // PROXMOX_STREAMS-scoped); a stream a class cannot answer (a container's
+  // temperature) comes back empty.
+  if (method === "unraid" || method === "truenas" || method === "proxmox") return OK;
 
   if (method === "icmp") {
     return stream === "responseTime"

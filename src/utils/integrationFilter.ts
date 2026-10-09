@@ -152,10 +152,10 @@ export function assetMatchesIntegrationFilter(
     return { included: true };
   }
 
-  // Unraid / TrueNAS: the vCenter rule, split by class — VMs against the VM
-  // pair, containers / Apps against the container pair. Same include-wins
-  // semantics as the discovery-side filter (services/workloadSync.ts).
-  if (type === "unraid" || type === "truenas") {
+  // Unraid / TrueNAS / Proxmox: the vCenter rule, split by class — VMs against
+  // the VM pair, containers / Apps against the container pair. Same
+  // include-wins semantics as the discovery-side filter (services/workloadSync.ts).
+  if (type === "unraid" || type === "truenas" || type === "proxmox") {
     if (asset.assetType === "hypervisor") return { included: true };
     const isContainer = asset.assetType === "container";
     const incKey = isContainer ? "containerInclude" : "vmInclude";

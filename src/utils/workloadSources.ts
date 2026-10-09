@@ -1,33 +1,41 @@
 /**
  * src/utils/workloadSources.ts
  *
- * The vocabulary the two workload integrations (Unraid, TrueNAS SCALE) share:
- * their AssetSource kinds per role, and the predicates every guard, collector
- * and sync pass uses to go from one to the other. One place, so the polling
- * PUT guard, the collectors' integration lookup and the disappearance sweep
- * cannot disagree about which source rows belong to which platform.
+ * The vocabulary the workload integrations (Unraid, TrueNAS SCALE, Proxmox VE)
+ * share: their AssetSource kinds per role, and the predicates every guard,
+ * collector and sync pass uses to go from one to the other. One place, so the
+ * polling PUT guard, the collectors' integration lookup and the disappearance
+ * sweep cannot disagree about which source rows belong to which platform.
  *
- *   role       Unraid              TrueNAS SCALE      Asset.assetType
- *   host       unraid-host         truenas-host       hypervisor
- *   vm         unraid-vm           truenas-vm         server
- *   container  unraid-container    truenas-app        container
+ *   role       Unraid              TrueNAS SCALE      Proxmox VE       Asset.assetType
+ *   host       unraid-host         truenas-host       proxmox-node     hypervisor
+ *   vm         unraid-vm           truenas-vm         proxmox-qemu     server
+ *   container  unraid-container    truenas-app        proxmox-lxc      container
  *
  * A TrueNAS "container" asset is an App (a compose project, possibly several
  * Docker containers) — the unit TrueNAS itself starts, stops and upgrades.
+ * Proxmox is the one clustered platform: one integration, many hosts (nodes).
  */
 
-export type WorkloadPlatform = "unraid" | "truenas";
+export type WorkloadPlatform = "unraid" | "truenas" | "proxmox";
 export type WorkloadRole = "host" | "vm" | "container";
 
-export const WORKLOAD_PLATFORMS: ReadonlyArray<WorkloadPlatform> = ["unraid", "truenas"];
+export const WORKLOAD_PLATFORMS: ReadonlyArray<WorkloadPlatform> = ["unraid", "truenas", "proxmox"];
 
 const KINDS: Readonly<Record<WorkloadPlatform, Readonly<Record<WorkloadRole, string>>>> = {
   unraid:  { host: "unraid-host",  vm: "unraid-vm",  container: "unraid-container" },
   truenas: { host: "truenas-host", vm: "truenas-vm", container: "truenas-app" },
+  proxmox: { host: "proxmox-node", vm: "proxmox-qemu", container: "proxmox-lxc" },
+};
+
+const LABELS: Readonly<Record<WorkloadPlatform, string>> = {
+  unraid: "Unraid",
+  truenas: "TrueNAS SCALE",
+  proxmox: "Proxmox VE",
 };
 
 export function isWorkloadPlatform(v: unknown): v is WorkloadPlatform {
-  return v === "unraid" || v === "truenas";
+  return typeof v === "string" && (WORKLOAD_PLATFORMS as readonly string[]).includes(v);
 }
 
 /** The AssetSource.sourceKind for a platform + role. */
@@ -66,7 +74,7 @@ export function assetTypeForWorkloadRole(role: WorkloadRole): "hypervisor" | "se
 
 /** Operator-facing platform name. */
 export function workloadPlatformLabel(platform: WorkloadPlatform): string {
-  return platform === "unraid" ? "Unraid" : "TrueNAS SCALE";
+  return LABELS[platform];
 }
 
 /** What the platform calls its container role: a TrueNAS App is a compose project, not one container. */

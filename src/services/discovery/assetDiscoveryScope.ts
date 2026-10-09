@@ -121,6 +121,10 @@ const NOT_YET_SCOPED: Record<string, string> = {
   "truenas-host": "TrueNAS SCALE",
   "truenas-vm": "TrueNAS SCALE",
   "truenas-app": "TrueNAS SCALE",
+  // Proxmox reads the whole cluster in one call for the same reason.
+  "proxmox-node": "Proxmox VE",
+  "proxmox-qemu": "Proxmox VE",
+  "proxmox-lxc": "Proxmox VE",
 };
 
 /**

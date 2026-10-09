@@ -142,8 +142,16 @@ export async function getWorkloadStatus(assetId: string): Promise<WorkloadStatus
     version: c?.version ?? null,
     latestVersion: c?.latestVersion ?? null,
     monitoringPausedByStop: t.asset.virtualization?.[PAUSED_BY_STOP_KEY] === true,
-    verbs: allowedVerbs(t.role, w.state, c?.updateAvailable),
+    verbs: platformHasActions(t.platform) ? allowedVerbs(t.role, w.state, c?.updateAvailable) : [],
   };
+}
+
+/**
+ * Proxmox VE is monitored read-only: its integration authenticates with a
+ * PVEAuditor token, so Polaris offers no start / stop / restart there.
+ */
+export function platformHasActions(platform: WorkloadPlatform): boolean {
+  return platform === "unraid" || platform === "truenas";
 }
 
 const HOLD_KIND: Partial<Record<WorkloadVerb, "workload-restart" | "workload-update">> = {
@@ -160,6 +168,7 @@ async function dispatch(t: Target, platformId: string, verb: WorkloadVerb): Prom
     }
     return unraid.containerAction(cfg, platformId, verb);
   }
+  if (t.platform !== "truenas") throw new AppError(400, `${workloadPlatformLabel(t.platform)} workloads have no actions in Polaris`);
   const cfg = t.integration.config as unknown as truenas.TrueNasConfig;
   if (t.role === "vm") {
     if (verb === "update") throw new AppError(400, "VMs have no update action");
@@ -179,6 +188,7 @@ export interface RunWorkloadActionInput {
 export async function runWorkloadAction(input: RunWorkloadActionInput): Promise<{ ok: true; message: string }> {
   const t = await loadTarget(input.assetId);
   const label = workloadPlatformLabel(t.platform);
+  if (!platformHasActions(t.platform)) throw new AppError(400, `${label} workloads have no actions in Polaris`);
   const what = t.role === "vm" ? "VM" : t.platform === "truenas" ? "App" : "container";
   const name = t.asset.hostname || t.asset.id;
   const audit = (level: "info" | "warning" | "error", message: string, details: Record<string, unknown> = {}) =>
@@ -261,6 +271,7 @@ export async function runWorkloadAction(input: RunWorkloadActionInput): Promise<
 export async function checkWorkloadUpdates(assetId: string, actor: string): Promise<WorkloadStatus> {
   const t = await loadTarget(assetId);
   if (t.role !== "container") throw new AppError(400, "Update checks apply to containers / Apps");
+  if (!platformHasActions(t.platform)) throw new AppError(400, `${workloadPlatformLabel(t.platform)} containers have no update check in Polaris`);
   try {
     if (t.platform === "unraid") await unraid.refreshUpdateChecks(t.integration.config as unknown as unraid.UnraidConfig);
     else await truenas.refreshUpdateChecks(t.integration.config as unknown as truenas.TrueNasConfig);
