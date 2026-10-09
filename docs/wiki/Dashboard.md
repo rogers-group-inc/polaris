@@ -223,6 +223,16 @@ automation wizard ([Automations](Automations)). It is about a made-up device
 (`EXAMPLE-SWITCH-01`), not one of yours, and clears itself an hour after it
 fired.
 
+A purple **MAINT** badge marks an alert that is paused for planned work
+([rule 16](Business-Rules#rule-16)): its device is in a maintenance window, or
+sits behind a device that is. The row is dimmed like an acknowledged one. A
+window does not clear an alert that was already open (only "device is down"
+alerts are cleared), because the problem started before the work did. It stays
+listed, but sends no reminders or escalation until the window ends. Afterwards
+it clears on its own once the condition recovers, or you clear it by hand.
+Hover the badge to see whether the device itself or an upstream device is in
+maintenance.
+
 The **Active Maintenance** widget is the other one you can act from. A
 **+ New schedule** button at the top of it opens the Maintenance editor to
 create one without leaving the dashboard — it is there over the empty widget

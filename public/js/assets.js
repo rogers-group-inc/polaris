@@ -22632,13 +22632,20 @@ function _loadAssetNotificationsTab(assetId) {
             'aria-haspopup="menu" aria-expanded="false" style="white-space:normal;overflow-wrap:anywhere">' +
             escapeHtml(n.message || "") + '</button>'
           : escapeHtml(n.message || "");
+        // Frozen for planned work (business rule 16) — the same MAINT badge
+        // the Active Alerts widget wears: still listed, paging nobody.
+        var maintPill = n.maintenanceHold
+          ? ' <span class="badge badge-maintenance" title="' + escapeHtml(n.maintenanceHold === "upstream"
+              ? "Paused — an upstream device is in a maintenance window. No reminders or escalation until it ends."
+              : "Paused — this device is in a maintenance window. No reminders or escalation until it ends.") + '">MAINT</span>'
+          : "";
         var groupPill = grouped
           ? ' <span class="widget-pill widget-pill-watch" title="' +
             escapeHtml("Grouped alert" + (n.dimensionCount ? " — " + n.dimensionCount + " still affected" : "")) + '">GROUP</span>'
           : "";
         return '<tr>' + sel +
           '<td style="font-family:var(--font-mono);font-size:0.82rem">' + escapeHtml(ts) + '</td>' +
-          '<td><span class="badge badge-level-' + escapeHtml(n.severity || "info") + '">' + escapeHtml((n.severity || "info").toUpperCase()) + '</span>' + depBadge + groupPill + '</td>' +
+          '<td><span class="badge badge-level-' + escapeHtml(n.severity || "info") + '">' + escapeHtml((n.severity || "info").toUpperCase()) + '</span>' + depBadge + maintPill + groupPill + '</td>' +
           '<td' + (alertTitle ? ' title="' + escapeHtml(alertTitle) + '"' : "") + '>' + msgCell + '</td>' +
           '<td>' + ackCell + '</td>' +
           '<td><div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap">' + parts.join("") + '</div></td></tr>';

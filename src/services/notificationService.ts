@@ -684,8 +684,31 @@ export async function activeAlertSummaryByAsset(
  * notifications for the asset + the enabled rules that can trigger for it
  * (scope matches, and no more-specific same-signature automation supersedes).
  */
+/**
+ * Which of these assets have their alerts FROZEN for planned work (business
+ * rule 16): "self" when the asset is in a maintenance window itself,
+ * "upstream" when it is dependency-suppressed behind one. Assets with neither
+ * are absent.
+ *
+ * "upstream" needs no blame-chain walk: `clearSuppressedAlerts` retires every
+ * live alert on a dependency-suppressed asset whose chain holds no maintenance
+ * link, so an alert still live on one is frozen by maintenance upstream. ONE
+ * query bounded to the ids handed in (a feed's live alerts), none when empty.
+ */
+export async function maintenanceHoldsByAsset(assetIds: string[]): Promise<Map<string, "self" | "upstream">> {
+  const out = new Map<string, "self" | "upstream">();
+  const ids = Array.from(new Set(assetIds.filter(Boolean)));
+  if (ids.length === 0) return out;
+  const rows = await prisma.asset.findMany({
+    where: { id: { in: ids }, OR: [{ status: "maintenance" }, { dependencySuppressed: true }] },
+    select: { id: true, status: true },
+  });
+  for (const r of rows) out.set(r.id, r.status === "maintenance" ? "self" : "upstream");
+  return out;
+}
+
 export async function getAssetNotifications(assetId: string) {
-  const [active, matchingRules] = await Promise.all([
+  const [active, matchingRules, holds] = await Promise.all([
     prisma.notification.findMany({
       where: { assetId, cleared: false },
       orderBy: { triggeredAt: "desc" },
@@ -693,7 +716,11 @@ export async function getAssetNotifications(assetId: string) {
       include: ACK_POLICY_INCLUDE,
     }),
     findRulesMatchingAsset(assetId, { carveOut: true }),
+    maintenanceHoldsByAsset([assetId]),
   ]);
+  // Rule 16: every live alert on a held device is frozen, so the whole tab
+  // shares one answer — the Alerts tab pills it MAINT.
+  const maintenanceHold = holds.get(assetId) ?? null;
   return {
     active: active.map((row) => ({
       ...withAckPolicy(row),
@@ -703,6 +730,7 @@ export async function getAssetNotifications(assetId: string) {
       // query already includes.
       ruleName: row.rule?.name ?? null,
       groupName: row.alertGroup?.name ?? null,
+      maintenanceHold,
     })),
     matchingRules,
   };
