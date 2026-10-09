@@ -32,6 +32,16 @@ describe("defaultPollingForSource — Unraid / TrueNAS", () => {
     });
   }
 
+  it("proxmox: the same defaults, minus temperature — Proxmox VE publishes no sensors", () => {
+    expect(defaultPollingForSource("proxmox", "responseTime", { hasIp: true })).toBe("icmp");
+    expect(defaultPollingForSource("proxmox", "responseTime", { hasIp: false })).toBe("proxmox");
+    expect(defaultPollingForSource("proxmox", "cpuMemory", { hasIp: true })).toBe("proxmox");
+    expect(defaultPollingForSource("proxmox", "interfaces", { hasIp: true })).toBe("proxmox");
+    expect(defaultPollingForSource("proxmox", "storage", { hasIp: true })).toBe("proxmox");
+    expect(defaultPollingForSource("proxmox", "temperature", { hasIp: true })).toBeNull();
+    expect(defaultPollingForSource("proxmox", "storage", { hasIp: true, assetType: "container" })).toBeNull();
+  });
+
   it("does not change any other source's response-time default", () => {
     expect(defaultPollingForSource("vcenter", "responseTime", { hasIp: true })).toBe("vcenter");
     expect(defaultPollingForSource("fortigate", "responseTime", { hasIp: false })).toBe("icmp");

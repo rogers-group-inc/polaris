@@ -29,7 +29,7 @@ import { request as httpRequest } from "node:http";
 import WebSocket from "ws";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
-import { normalizeWorkloadState } from "../utils/workloadSources.js";
+import { normalizeWorkloadState, workloadHostUsageKey } from "../utils/workloadSources.js";
 import type {
   WorkloadContainer,
   WorkloadDisk,
@@ -507,7 +507,7 @@ export function parseUnraidInventory(
 
   return {
     platform: "unraid",
-    host,
+    hosts: [host],
     vms,
     containers,
     inventoryComplete: !partial.dockerFailed && !partial.vmsFailed,
@@ -871,7 +871,7 @@ export async function discoverInventory(config: UnraidConfig, signal?: AbortSign
   // pool details, never the inventory.
   try {
     const { data: storage } = await unraidGraphql<any>(config, UNRAID_STORAGE_QUERY, undefined, { signal });
-    result.host.pools = applyUnraidStorageLayout(result.host.pools, storage);
+    result.hosts[0].pools = applyUnraidStorageLayout(result.hosts[0].pools, storage);
   } catch (err: any) {
     if (signal?.aborted) throw err;
     logger.debug({ host: config.host, err: err?.message }, "unraid: storage layout read failed — pools keep their summary only");
@@ -901,9 +901,9 @@ export async function fetchUnraidSnapshot(config: UnraidConfig): Promise<Workloa
     fetchedAt: Date.now(),
     durationMs,
     inventory,
-    host,
+    hosts: new Map([[workloadHostUsageKey(null), host]]),
     vmUsage: new Map(),
-    containerUsage: normalizeUnraidContainerUsage(stats, inventory.containers, inventory.host.cpuCount),
+    containerUsage: normalizeUnraidContainerUsage(stats, inventory.containers, inventory.hosts[0].cpuCount),
   };
 }
 

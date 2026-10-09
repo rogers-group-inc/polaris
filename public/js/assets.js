@@ -3030,6 +3030,7 @@ var _MONITORED_VIA_LABELS = {
   fortimanager: "FortiManager",
   unraid:   "Unraid",
   truenas:  "TrueNAS",
+  proxmox:  "Proxmox",
 };
 
 // "Monitored Via" cell — renders how the asset is actually monitored from the
@@ -6369,9 +6370,9 @@ function _agentStatusColor(s) {
 // has nowhere to put a Go binary.
 var _AGENT_INSTALLABLE_SOURCES = [
   "manual", "activedirectory", "entraid", "windowsserver", "azurearc", "vcenter",
-  // A VM on an Unraid / TrueNAS host is a guest OS like a vCenter VM; the host
-  // and its containers are refused below by type.
-  "unraid", "truenas",
+  // A VM on an Unraid / TrueNAS host or a Proxmox node is a guest OS like a
+  // vCenter VM; the host and its containers are refused below by type.
+  "unraid", "truenas", "proxmox",
   // A Generic API record can be any device; a server or workstation it lists
   // takes the agent like a manually added one.
   "genericapi",
@@ -7521,7 +7522,10 @@ function _confirmUninstallAgent(a, force) {
 // can carry either method too, and _resolvedStreamPolling is the same walk
 // the section badge and the stale banner use.
 var _SPLIT_CHART_METHODS = ["agent", "vcenter"];
-var _SPLIT_CHART_HOST_METHODS = ["unraid", "truenas"];
+// proxmox — a NODE: no per-core figures (the API publishes none, so the CPU
+// chart draws its aggregate line alone), but memory splits used / ZFS ARC /
+// free, which only the split memory chart can draw.
+var _SPLIT_CHART_HOST_METHODS = ["unraid", "truenas", "proxmox"];
 
 function _telemetrySplitsCpuMemory(a) {
   var method = _resolvedStreamPolling(a, "telemetry");
@@ -8068,7 +8072,7 @@ function _resolvedStreamPolling(asset, stream) {
 // the vendor disk-scalar pair as fallback, ssh reads `df`, winrm reads
 // Get-Volume) and the heavy system-info pass (the same SNMP walk, the agent's
 // own push, or the vCenter warm cache's guest filesystems / host datastores).
-var _STORAGE_DELIVERING_METHODS = ["snmp", "ssh", "winrm", "agent", "vcenter", "unraid", "truenas"];
+var _STORAGE_DELIVERING_METHODS = ["snmp", "ssh", "winrm", "agent", "vcenter", "unraid", "truenas", "proxmox"];
 
 // Interfaces-stream methods that deliver ANY heavy-cadence system data, and so
 // gate the System tab as a whole. `vcenter` belongs here since the 2026-08
@@ -8077,7 +8081,7 @@ var _STORAGE_DELIVERING_METHODS = ["snmp", "ssh", "winrm", "agent", "vcenter", "
 // table like any other inventory (see the Virtualization section's own note).
 // It was missing, so a vCenter-monitored asset was told to switch to a
 // transport it doesn't use in order to see data it was already collecting.
-var _SYSTEM_TAB_IFACE_METHODS = ["rest_api", "snmp", "agent", "vcenter", "unraid", "truenas"];
+var _SYSTEM_TAB_IFACE_METHODS = ["rest_api", "snmp", "agent", "vcenter", "unraid", "truenas", "proxmox"];
 
 function _storageStreamDelivers(asset) {
   if (!asset) return false;
@@ -11189,12 +11193,18 @@ function _wlUpdateBadge(updateAvailable) {
 // What the network mode means for how Polaris can reach the container.
 // Only drawn when it has no address of its own (unraidService.containerOwnIp
 // decides that; `v.ip` is the result).
+/** The workload integrations (Unraid, TrueNAS SCALE, Proxmox VE) — utils/workloadSources.ts's WORKLOAD_PLATFORMS. */
+function _isWorkloadPlatform(p) {
+  return p === "unraid" || p === "truenas" || p === "proxmox";
+}
+
 function _wlNetworkHint(v) {
   if (v.ip) return "";
   var m = String(v.networkMode || "").toLowerCase();
   var why = m === "host" ? "shares its host's network stack and address"
     : m.indexOf("container:") === 0 ? "shares another container's network"
     : v.platform === "truenas" ? "has no address of its own that TrueNAS publishes"
+    : v.platform === "proxmox" ? "has no address Proxmox reports (none in its config, and none read while it was running)"
     : "is NATed behind its host's address";
   return ' <span style="color:var(--color-text-tertiary);font-size:0.85em">— ' + why + '</span>';
 }
@@ -11202,7 +11212,8 @@ function _wlNetworkHint(v) {
 function _assetWorkloadHTML(res) {
   var v = res.virtualization || {};
   var isTn = v.platform === "truenas";
-  var product = isTn ? "TrueNAS SCALE" : "Unraid";
+  var isPve = v.platform === "proxmox";
+  var product = isPve ? "Proxmox VE" : isTn ? "TrueNAS SCALE" : "Unraid";
   var header = '<p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1px;color:var(--color-text-tertiary);margin:1.25rem 0 0.75rem 0">' + escapeHtml(product) + '</p>';
   var tableStyle = 'width:100%;border-collapse:collapse;font-size:0.83rem';
   var thStyle = 'text-align:left;padding:4px 8px;color:var(--color-text-tertiary);font-weight:500;border-bottom:1px solid var(--color-border)';
@@ -11212,6 +11223,9 @@ function _assetWorkloadHTML(res) {
     var rows =
       '<div class="asset-view-grid">' +
         '<div class="detail-row"><span class="detail-label">Platform</span><span class="detail-value">' + escapeHtml((v.os || product) + (v.osVersion ? " " + v.osVersion : "")) + '</span></div>' +
+        // A cluster node: what its peers said about it at the last discovery
+        // (live up / down is the monitor status, which refreshes every tick).
+        (v.hostKey ? '<div class="detail-row"><span class="detail-label">Cluster</span><span class="detail-value">' + (v.online === false ? '<span style="color:var(--color-danger)">Node offline</span>' : 'Node online') + ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(at last discovery)</span></span></div>' : '') +
         (v.cpuCount != null ? '<div class="detail-row"><span class="detail-label">CPU Threads</span><span class="detail-value">' + escapeHtml(String(v.cpuCount)) + '</span></div>' : '') +
         (v.memTotalBytes != null ? '<div class="detail-row"><span class="detail-label">Memory</span><span class="detail-value">' + _fmtBytes(v.memTotalBytes) + '</span></div>' : '') +
         '<div class="detail-row"><span class="detail-label">Workloads</span><span class="detail-value">' + (v.vmCount || 0) + ' VM(s), ' + (v.containerCount || 0) + (isTn ? ' App(s)' : ' container(s)') + '</span></div>' +
@@ -11234,7 +11248,8 @@ function _assetWorkloadHTML(res) {
       '<div class="detail-row"><span class="detail-label">State</span><span class="detail-value" data-wl-state>' + _wlStateBadge(v.state) + (v.rawState && String(v.rawState).toLowerCase() !== String(v.state || "").toLowerCase() ? ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(' + escapeHtml(v.rawState) + ')</span>' : '') + '</span></div>' +
       (isCtr && v.image ? '<div class="detail-row"><span class="detail-label">Image</span><span class="detail-value mono">' + escapeHtml(v.image) + '</span></div>' : '') +
       (isCtr && v.version ? '<div class="detail-row"><span class="detail-label">Version</span><span class="detail-value">' + escapeHtml(v.version) + (v.latestVersion && v.latestVersion !== v.version ? ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(latest ' + escapeHtml(v.latestVersion) + ')</span>' : '') + '</span></div>' : '') +
-      (isCtr ? '<div class="detail-row"><span class="detail-label">Updates</span><span class="detail-value" data-wl-update>' + (v.updateAvailable === true ? _wlUpdateBadge(true) : v.updateAvailable === false ? 'Up to date' : '<span style="color:var(--color-text-tertiary)">Not checked</span>') + '</span></div>' : '') +
+      // Proxmox has no image to update — an LXC is its own OS.
+      (isCtr && !isPve ? '<div class="detail-row"><span class="detail-label">Updates</span><span class="detail-value" data-wl-update>' + (v.updateAvailable === true ? _wlUpdateBadge(true) : v.updateAvailable === false ? 'Up to date' : '<span style="color:var(--color-text-tertiary)">Not checked</span>') + '</span></div>' : '') +
       (isCtr && isTn && v.memberCount != null ? '<div class="detail-row"><span class="detail-label">Containers</span><span class="detail-value">' + escapeHtml(String(v.memberCount)) + '</span></div>' : '') +
       (isCtr && v.networkMode ? '<div class="detail-row"><span class="detail-label">Network</span><span class="detail-value"><span class="mono">' + escapeHtml(v.networkMode) + '</span>' + _wlNetworkHint(v) + '</span></div>' : '') +
       (ports.length > 0 ? '<div class="detail-row"><span class="detail-label">Ports</span><span class="detail-value mono">' + escapeHtml(ports.join(", ")) + '</span></div>' : '') +
@@ -11269,6 +11284,13 @@ function _wireWorkloadActions(mount, asset, res) {
       var cls = verb === "stop" ? "btn-danger" : verb === "update" ? "btn-primary" : "btn-secondary";
       return '<button type="button" class="btn btn-sm ' + cls + '" data-wl-verb="' + verb + '" style="margin-right:6px">' + labels[verb] + '</button>';
     }).join("");
+    // Proxmox is monitored read-only (a PVEAuditor token): no verbs, no update check.
+    if (status.platform === "proxmox") {
+      bar.innerHTML = '<span style="color:var(--color-text-tertiary);font-size:0.82rem">Read-only — Polaris monitors Proxmox guests but does not start or stop them.</span>';
+      var pveState = mount.querySelector("[data-wl-state]");
+      if (pveState) pveState.innerHTML = _wlStateBadge(status.state);
+      return;
+    }
     if (status.role === "container") {
       btns += '<button type="button" class="btn btn-sm btn-secondary" data-wl-check style="margin-right:6px">Check for updates</button>';
     }
@@ -11330,7 +11352,7 @@ function _wireWorkloadActions(mount, asset, res) {
 }
 
 function _assetVirtualizationHTML(res) {
-  if (res && res.virtualization && (res.virtualization.platform === "unraid" || res.virtualization.platform === "truenas")) {
+  if (res && res.virtualization && _isWorkloadPlatform(res.virtualization.platform)) {
     return _assetWorkloadHTML(res);
   }
   var v = res.virtualization || {};
@@ -11467,7 +11489,7 @@ function _hostWorkloadsTabEligible(a) {
 function _hostWorkloadsTabLabel(a) {
   var v = (a && a.virtualization) || {};
   if (v.platform === "truenas") return "VMs & Apps";
-  if (v.platform === "unraid") return "VMs & Containers";
+  if (v.platform === "unraid" || v.platform === "proxmox") return "VMs & Containers";
   return "Virtual Machines";
 }
 
@@ -11488,10 +11510,10 @@ function _hostWorkloadsBodyHTML(res) {
     return '<a href="#" class="dep-tree-link" data-asset-id="' + escapeHtml(w.id) + '">' + escapeHtml(w.hostname || w.id) + '</a>';
   };
 
-  if (v.platform === "unraid" || v.platform === "truenas") {
+  if (_isWorkloadPlatform(v.platform)) {
     var isTn = v.platform === "truenas";
     var wls = res.workloads || [];
-    if (wls.length === 0) return '<p class="empty-state">No VMs or ' + (isTn ? "Apps" : "containers") + ' on this host.</p>';
+    if (wls.length === 0) return '<p class="empty-state">No VMs or ' + (isTn ? "Apps" : "containers") + ' on this ' + (v.platform === "proxmox" ? "node" : "host") + '.</p>';
     return '<div style="overflow-x:auto"><table style="' + tableStyle + '">' +
       '<thead><tr><th style="' + thStyle + '">Workload</th><th style="' + thStyle + '">Kind</th><th style="' + thStyle + '">State</th><th style="' + thStyle + '">Network</th><th style="' + thStyle + '">Monitor</th></tr></thead><tbody>' +
       wls.map(function (w) {
@@ -11531,7 +11553,7 @@ var _assetStorageDetails = null; // { assetId, byName: { [name]: { type, health,
 function _setStorageDetailsFromVirtualization(assetId, res) {
   var v = (res && res.virtualization) || {};
   var byName = {};
-  if (v.role === "host" && (v.platform === "unraid" || v.platform === "truenas")) {
+  if (v.role === "host" && _isWorkloadPlatform(v.platform)) {
     (Array.isArray(v.pools) ? v.pools : []).forEach(function (p) {
       if (!p || !p.name) return;
       var fs = p.filesystem ? String(p.filesystem).replace(/^unraid-array/, "Unraid array") : null;
@@ -12737,8 +12759,15 @@ var _MEM_BANDS_TRUENAS = _MEM_BANDS_AGENT.map(function (b) {
   return { key: b.key, label: label, color: b.color };
 });
 
+// A Proxmox node: Proxmox's own "used" with the ZFS ARC carved out of it.
+var _MEM_BANDS_PROXMOX = _MEM_BANDS_AGENT.map(function (b) {
+  var label = b.key === "processes" ? "Used" : b.key === "cache" ? "ZFS ARC" : b.label;
+  return { key: b.key, label: label, color: b.color };
+});
+
 function _memAgentBandsFor(asset) {
   var v = asset && asset.virtualization;
+  if (v && v.platform === "proxmox" && v.role === "host") return _MEM_BANDS_PROXMOX;
   return v && v.platform === "truenas" && v.role === "host" ? _MEM_BANDS_TRUENAS : _MEM_BANDS_AGENT;
 }
 
@@ -13340,6 +13369,7 @@ function _probeMethodLabel(a) {
     case "vcenter":      return "vCenter";
     case "unraid":       return "Unraid";
     case "truenas":      return "TrueNAS";
+    case "proxmox":      return "Proxmox";
     case "agent":        return "Polaris Agent";
     default:             return polling;
   }
@@ -13375,6 +13405,7 @@ function _assetIntegrationLabelWithController(asset, joiner) {
     azurearc:        "Azure Arc",
     unraid:          "Unraid",
     truenas:         "TrueNAS SCALE",
+    proxmox:         "Proxmox VE",
     genericapi:      "Generic API",
   };
   var label = (typeLabels[integration.type] || integration.type) + joiner + integration.name;
@@ -13768,10 +13799,11 @@ function _assetDiscoverNowBtnHTML(a) {
     || integ.type === "vcenter" || integ.type === "azurearc");
 
   var disabledReason = "";
-  if (integ && (integ.type === "unraid" || integ.type === "truenas")) {
-    // Mirrors NOT_YET_SCOPED in assetDiscoveryScope.ts: the whole host is one
-    // read, so the integration's own Discover is the refresh.
-    disabledReason = "Unraid / TrueNAS read the whole host in one call — run Discover on the integration to refresh it. State and usage refresh every monitor tick.";
+  if (integ && _isWorkloadPlatform(integ.type)) {
+    // Mirrors NOT_YET_SCOPED in assetDiscoveryScope.ts: the whole host (or
+    // the whole Proxmox cluster) is one read, so the integration's own
+    // Discover is the refresh.
+    disabledReason = "Unraid / TrueNAS / Proxmox read the whole host or cluster in one call — run Discover on the integration to refresh it. State and usage refresh every monitor tick.";
   } else if (!isGate && !isInfra && !isDirectory) {
     disabledReason = "No discovery source owns this asset, so there is nothing to re-run.";
   } else if (isGate && !fortinetIntg) {
@@ -14309,6 +14341,8 @@ async function _loadMonitorHistoryFor(assetId, selection, callOpts) {
 function _responseTimeHostFor(asset) {
   var v = asset && asset.virtualization;
   if (!v || v.role !== "container" || !v.hostAssetId) return null;
+  // Not Proxmox: an LXC with no known address still has its own NIC — it does
+  // not answer on its node's address the way a host-networked Docker container does.
   if (v.platform !== "unraid" && v.platform !== "truenas") return null;
   if (asset.ipAddress) return null;
   return { id: v.hostAssetId, name: v.hostName || null, networkMode: v.networkMode || null };

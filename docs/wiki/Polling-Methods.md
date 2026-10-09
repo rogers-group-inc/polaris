@@ -56,6 +56,7 @@ resolution time**; the route layer rejects it at write time with a clear 400.
 | `fortimanager` | reads FortiManager's device database, not the device |
 | `unraid` | reads the Unraid host's API, not the VM or container |
 | `truenas` | reads the TrueNAS SCALE host's API, not the VM or App |
+| `proxmox` | reads the Proxmox VE cluster's API, not the node's OS or the guest. Shown as *Proxmox* |
 | `disabled` | universally allowed — *do not poll this stream* |
 
 > The **`http`** method was retired in 2026-08. The HTTP check it ran is now a
@@ -71,15 +72,17 @@ everywhere):
 |---|---|
 | **FortiManager** | `icmp`, `snmp`, `ssh`, `rest_api`, `fortimanager` |
 | **FortiGate** | `icmp`, `snmp`, `ssh`, `rest_api` |
-| **AD / Entra / Windows Server / Azure Arc** | `icmp`, `winrm`, `ssh`, `agent`, `vcenter`, `unraid`, `truenas` |
+| **AD / Entra / Windows Server / Azure Arc** | `icmp`, `winrm`, `ssh`, `agent`, `vcenter`, `unraid`, `truenas`, `proxmox` |
 | **vCenter** | `icmp`, `snmp`, `winrm`, `ssh`, `agent`, `vcenter` |
 | **Unraid** | `icmp`, `snmp`, `winrm`, `ssh`, `agent`, `unraid` |
 | **TrueNAS SCALE** | `icmp`, `snmp`, `winrm`, `ssh`, `agent`, `truenas` |
+| **Proxmox VE** | `icmp`, `snmp`, `winrm`, `ssh`, `agent`, `proxmox` |
 | **Manual** | everything except `fortimanager` |
 
-`vcenter`, `unraid` and `truenas` appear on the directory sources because a VM
-that Active Directory or Entra found first can later be merged with its vCenter
-or NAS record. Within a source, each stream narrows the list further: ICMP is
+`vcenter`, `unraid`, `truenas` and `proxmox` appear on the directory sources
+because a VM that Active Directory or Entra found first can later be merged with
+its vCenter, NAS or Proxmox record. A workload method is never offered on
+another workload platform's assets. Within a source, each stream narrows the list further: ICMP is
 response-time only, and a method with no collector for that stream is not
 offered (see [compatibility vs capability](Monitoring#compatibility-vs-capability)).
 
@@ -94,6 +97,7 @@ offered (see [compatibility vs capability](Monitoring#compatibility-vs-capabilit
 | **vCenter** | `vcenter` | `vcenter` | — | `vcenter` | — | `vcenter` |
 | **Unraid** | `icmp`; `unraid` for an asset with no IP | `unraid` | `unraid` (host) | `unraid` (host) | — | `unraid` (host) |
 | **TrueNAS SCALE** | `icmp`; `truenas` for an asset with no IP | `truenas` | `truenas` (host) | `truenas` (host) | — | `truenas` (host) |
+| **Proxmox VE** | `icmp`; `proxmox` for an asset with no IP | `proxmox` | — | `proxmox` | — | `proxmox` (node) |
 
 `—` means *not delivered* until you pick a method. **processes** and
 **eventLog** default to `disabled` on every source — they are opt-in — except
@@ -102,7 +106,8 @@ that an installed Polaris Agent turns its own process inventory on (below).
 **Response time defaults to ICMP wherever there is an address to ping**,
 because ICMP is the cheapest universal liveness probe. The exceptions read a
 manager instead: vCenter assets (`vcenter` — power and connection state, no
-guest IP needed) and Unraid / TrueNAS workloads with no address of their own.
+guest IP needed) and Unraid / TrueNAS / Proxmox VE workloads with no address of
+their own.
 Operators wanting a heavier transport — FortiOS `/sys/status`, SNMP
 `sysUpTime` — opt in per asset, per class, or at the integration tier.
 
@@ -242,6 +247,34 @@ Unraid samples per-container CPU and memory over a short WebSocket stats
 window (4 s by default); TrueNAS reads host usage from its `reporting.realtime`
 event and per-App usage from `app.stats`. See [Unraid](Integration-Unraid) and
 [TrueNAS SCALE](Integration-TrueNAS).
+
+---
+
+## The `proxmox` method
+
+Reads the **Proxmox VE cluster's own API** for every node, VM and LXC container
+the integration discovered. No credential in any guest, no SNMP, and no
+reachable guest IP is needed. Any configured node answers for the whole
+cluster.
+
+| Stream | Node | VM | Container |
+|---|---|---|---|
+| responseTime | the cluster reports the node online | the guest's running state | the guest's running state |
+| cpuMemory | one node-wide CPU figure; memory as Used / ZFS ARC / free | a share of the VM's own vCPUs, while running | same, while running |
+| interfaces | one *all interfaces* row (Proxmox has no per-NIC counters) | one row, every NIC summed | one row, every NIC summed |
+| storage | the node's ZFS pools and other active storage, with Ceph health on Ceph storage | — | — |
+| temperature | **no** — Proxmox publishes no sensors | — | — |
+| lldp | — | — | — |
+
+**One cached read per integration per 30 s** answers every asset in the
+cluster; storage is re-read at most every five minutes. **Response time
+defaults to ICMP** for any asset with an address — every node, and every guest
+whose IP Polaris knows. The method answers response time for a guest with no
+known address: running is up, stopped is down, charted at **0 ms**. A node its
+peers report **offline probes down**, and its guests are then
+[dependency-suppressed](Dependency-Suppression). If no configured address
+answers, nodes on the method fail and guests on it are skipped. See
+[Proxmox VE](Integration-Proxmox).
 
 ---
 

@@ -132,7 +132,9 @@ export function deriveAssetSourceState(
     case "unraid-vm":
     case "unraid-container":
     case "truenas-vm":
-    case "truenas-app": {
+    case "truenas-app":
+    case "proxmox-qemu":
+    case "proxmox-lxc": {
       // Normalized by the workload services to running / stopped / paused /
       // other (services/workloadSync.ts → normalizeWorkloadState).
       const state = str(o.state).toLowerCase();

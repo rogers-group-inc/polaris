@@ -4,6 +4,7 @@ import {
   assetTypeForWorkloadRole,
   isWorkloadPlatform,
   parseWorkloadSourceKind,
+  workloadContainerNoun,
   workloadPlatformLabel,
   workloadSourceKind,
   workloadSourceKindsFor,
@@ -15,8 +16,15 @@ describe("workload source kinds", () => {
   it("names one kind per platform + role, TrueNAS containers being Apps", () => {
     expect(workloadSourceKindsFor("unraid")).toEqual(["unraid-host", "unraid-vm", "unraid-container"]);
     expect(workloadSourceKindsFor("truenas")).toEqual(["truenas-host", "truenas-vm", "truenas-app"]);
+    expect(workloadSourceKindsFor("proxmox")).toEqual(["proxmox-node", "proxmox-qemu", "proxmox-lxc"]);
     expect(workloadSourceKind("truenas", "container")).toBe("truenas-app");
-    expect(ALL_WORKLOAD_SOURCE_KINDS).toHaveLength(6);
+    expect(ALL_WORKLOAD_SOURCE_KINDS).toHaveLength(9);
+  });
+
+  it("names the container role the way each platform does", () => {
+    expect(workloadContainerNoun("truenas")).toBe("App");
+    expect(workloadContainerNoun("unraid")).toBe("Container");
+    expect(workloadContainerNoun("proxmox")).toBe("Container");
   });
 
   it("parses every kind back, and nothing else", () => {
@@ -33,8 +41,11 @@ describe("workload source kinds", () => {
     expect(assetTypeForWorkloadRole("vm")).toBe("server");
     expect(assetTypeForWorkloadRole("container")).toBe("container");
     expect(workloadPlatformLabel("truenas")).toBe("TrueNAS SCALE");
+    expect(workloadPlatformLabel("proxmox")).toBe("Proxmox VE");
     expect(isWorkloadPlatform("unraid")).toBe(true);
+    expect(isWorkloadPlatform("proxmox")).toBe(true);
     expect(isWorkloadPlatform("vcenter")).toBe(false);
+    expect(isWorkloadPlatform(undefined)).toBe(false);
   });
 });
 

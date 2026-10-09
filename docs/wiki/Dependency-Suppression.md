@@ -37,6 +37,7 @@ Edges live on the asset and come from these sources:
 | `endpoint` | a fleet-wide pass giving each endpoint **one** parent |
 | `vcenter` | VM → ESXi host placement |
 | `unraid` / `truenas` | VM or container (App) → the Unraid / TrueNAS host it runs on |
+| `proxmox` | VM or LXC container → the Proxmox VE node it runs on. When a guest migrates, its edge moves to the new node on the next read |
 | `override` | operator-managed, never touched by recompute |
 
 **Layer assignment is physical-first**: a breadth-first walk from any FortiGate

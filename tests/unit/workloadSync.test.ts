@@ -16,7 +16,9 @@ const {
   resolveWorkloadHostAddress,
   staleContainerIps,
   workloadContainerExternalId,
+  workloadContainerKey,
   workloadHostExternalId,
+  workloadHostUsageKey,
   workloadSweepBlockedReason,
   workloadVmExternalId,
 } = await import("../../src/services/discovery/workloadSync.js");
@@ -26,10 +28,10 @@ type Result = Parameters<typeof applyWorkloadFilters>[0];
 function result(over: Partial<Result> = {}): Result {
   return {
     platform: "unraid",
-    host: {
+    hosts: [{
       hostname: "tower", os: "Unraid", osVersion: "7.2.0", ip: "10.0.0.2", serial: null, manufacturer: null, model: null,
       cpuCount: 8, memTotalBytes: 32e9, uptimeSeconds: 100, pools: [], disks: [],
-    },
+    }],
     vms: [],
     containers: [],
     inventoryComplete: true,
@@ -94,6 +96,17 @@ describe("identity", () => {
     expect(workloadHostExternalId("i1")).toBe("i1:host");
     expect(workloadContainerExternalId("i1", "plex")).toBe("i1:ctr:plex");
     expect(workloadVmExternalId("i1", { uuid: "ABCD-1234", name: "win11" })).toBe("abcd-1234");
+  });
+  it("keys a cluster node on its name, and leaves the single-host id exactly as it was", () => {
+    expect(workloadHostExternalId("i1", "pve2")).toBe("i1:node:pve2");
+    expect(workloadHostExternalId("i1", null)).toBe("i1:host");
+    expect(workloadHostUsageKey(null)).toBe("");
+    expect(workloadHostUsageKey("pve2")).toBe("pve2");
+  });
+  it("keys a container on its identityKey when the platform sets one, else its name", () => {
+    expect(workloadContainerKey({ name: "web", identityKey: "105" })).toBe("105");
+    expect(workloadContainerKey({ name: "plex" })).toBe("plex");
+    expect(workloadContainerKey({ name: "plex", identityKey: null })).toBe("plex");
   });
   it("falls back to the name for a missing or placeholder UUID", () => {
     expect(workloadVmExternalId("i1", { uuid: null, name: "win11" })).toBe("i1:vm:win11");

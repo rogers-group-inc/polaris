@@ -127,13 +127,14 @@ function assetTagPrefixFor(proposed: Record<string, any>): string {
 // `sourceType: "vcenter"` in proposedAssetFields (with assetType
 // discriminating VM vs ESXi host) and Azure Arc conflicts `sourceType:
 // "azurearc"`; AD/Entra keep the legacy tag-prefix convention via
-// assetTagPrefixFor. Unraid / TrueNAS conflicts carry `sourceType: "unraid"
-// | "truenas"` plus `workloadRole` (host / vm / container), which names the
+// assetTagPrefixFor. Unraid / TrueNAS / Proxmox conflicts carry `sourceType:
+// "unraid" | "truenas" | "proxmox"` plus `workloadRole` (host / vm / container), which names the
 // source kind directly (utils/workloadSources.ts). Generic API conflicts carry
 // `sourceType: "genericapi"` and map to the one `generic-api` kind.
 type WorkloadConflictSource =
   | "unraid-host" | "unraid-vm" | "unraid-container"
-  | "truenas-host" | "truenas-vm" | "truenas-app";
+  | "truenas-host" | "truenas-vm" | "truenas-app"
+  | "proxmox-node" | "proxmox-qemu" | "proxmox-lxc";
 type AssetConflictSource = "ad" | "entra" | "vcenter-vm" | "vcenter-host" | "arc" | WorkloadConflictSource | typeof GENERIC_API_SOURCE_KIND;
 function conflictSourceFor(proposed: Record<string, any>): AssetConflictSource {
   if (proposed.sourceType === "vcenter") {
@@ -162,6 +163,9 @@ function conflictSourceLabel(src: AssetConflictSource): string {
     case "truenas-host":     return "TrueNAS SCALE host";
     case "truenas-vm":       return "TrueNAS SCALE VM";
     case "truenas-app":      return "TrueNAS SCALE App";
+    case "proxmox-node":     return "Proxmox VE node";
+    case "proxmox-qemu":     return "Proxmox VE VM";
+    case "proxmox-lxc":      return "Proxmox VE container";
     case "generic-api":      return "Generic API record";
   }
 }

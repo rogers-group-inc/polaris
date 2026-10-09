@@ -110,7 +110,7 @@ Setup is not a blank slate. It creates:
 - **The asset-type registry** — the eight historical built-ins (`server`,
   `switch`, `router`, `firewall`, `workstation`, `printer`, `access_point`,
   `other`) plus `hypervisor`, `kubernetes_cluster` and `container` (a Docker
-  container on Unraid, or a TrueNAS SCALE App).
+  container on Unraid, a TrueNAS SCALE App, or a Proxmox VE LXC container).
 - **Baseline automations**, seeded on the first start of the application —
   down detection, the threshold rules the dashboard widgets mirror (CPU,
   memory, temperature, disk, response time, packet loss, interface and IPsec

@@ -62,6 +62,11 @@ describe("allowedVerbs", () => {
     expect(svc.allowedVerbs("vm", "running", true)).toEqual(["stop", "restart"]);
     expect(svc.allowedVerbs("vm", "paused", null)).toEqual(["start", "stop"]);
   });
+  it("offers actions on Unraid and TrueNAS only — Proxmox is monitored read-only", () => {
+    expect(svc.platformHasActions("unraid")).toBe(true);
+    expect(svc.platformHasActions("truenas")).toBe(true);
+    expect(svc.platformHasActions("proxmox")).toBe(false);
+  });
 });
 
 describe("runWorkloadAction", () => {

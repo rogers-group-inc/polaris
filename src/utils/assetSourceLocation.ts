@@ -148,17 +148,22 @@ export const LOCATION_CONTRIBUTORS: LocationContributor[] = [
     observedKeys: ["clusterName"],
     describe: "The host's vSphere cluster. A standalone host contributes nothing.",
   },
-  // Unraid / TrueNAS: a VM or container is placed on its host — a real place
-  // for a workload, ranked with vCenter's for the same reason. The hosts
-  // themselves contribute nothing (they are the place).
-  ...(["unraid-vm", "unraid-container", "truenas-vm", "truenas-app"] as const).map((kind): LocationContributor => ({
+  // Unraid / TrueNAS / Proxmox: a VM or container is placed on its host — a
+  // real place for a workload, ranked with vCenter's for the same reason. The
+  // hosts themselves contribute nothing (they are the place).
+  ...([
+    ["unraid-vm", "Unraid (VM)"],
+    ["unraid-container", "Unraid (container)"],
+    ["truenas-vm", "TrueNAS SCALE (VM)"],
+    ["truenas-app", "TrueNAS SCALE (App)"],
+    ["proxmox-qemu", "Proxmox VE (VM)"],
+    ["proxmox-lxc", "Proxmox VE (container)"],
+  ] as const).map(([kind, label]): LocationContributor => ({
     kind,
-    label: kind.startsWith("unraid")
-      ? (kind === "unraid-vm" ? "Unraid (VM)" : "Unraid (container)")
-      : (kind === "truenas-vm" ? "TrueNAS SCALE (VM)" : "TrueNAS SCALE (App)"),
+    label,
     mode: "field",
     observedKeys: ["hostName"],
-    describe: "The Unraid / TrueNAS host it runs on.",
+    describe: "The Unraid / TrueNAS host or Proxmox node it runs on.",
   })),
   {
     kind: "ad",

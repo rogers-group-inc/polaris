@@ -3,7 +3,7 @@
 Reads a Windows DHCP server over **WinRM** and turns its IPv4 scopes into
 Polaris networks.
 
-This is the narrowest of the nine integrations: it is about **address space**,
+This is the narrowest of the eleven integrations: it is about **address space**,
 not about devices. If you want the Windows hosts themselves in inventory, use
 [Active Directory or Entra ID](Integration-Directory), or the
 [Polaris Agent](Polaris-Agent).

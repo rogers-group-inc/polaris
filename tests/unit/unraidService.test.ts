@@ -60,12 +60,12 @@ describe("unraid parsing", () => {
 
   it("reads the host, falling back to the baseboard past an O.E.M. placeholder", () => {
     expect(inv.platform).toBe("unraid");
-    expect(inv.host.hostname).toBe("tower");
-    expect(inv.host.osVersion).toBe("7.2.0");
-    expect(inv.host.manufacturer).toBe("ASRock");
-    expect(inv.host.serial).toBe("M80-AB123");
-    expect(inv.host.cpuCount).toBe(16);
-    expect(inv.host.ip).toBe("10.0.0.2");
+    expect(inv.hosts[0].hostname).toBe("tower");
+    expect(inv.hosts[0].osVersion).toBe("7.2.0");
+    expect(inv.hosts[0].manufacturer).toBe("ASRock");
+    expect(inv.hosts[0].serial).toBe("M80-AB123");
+    expect(inv.hosts[0].cpuCount).toBe(16);
+    expect(inv.hosts[0].ip).toBe("10.0.0.2");
   });
 
   it("reads containers: name without the slash, state, update flag, own IP only off-bridge", () => {
@@ -99,9 +99,9 @@ describe("unraid parsing", () => {
   });
 
   it("drops a zero temperature (a spun-down disk) rather than charting 0 °C", () => {
-    const disk1 = inv.host.disks.find((d) => d.name === "disk1")!;
+    const disk1 = inv.hosts[0].disks.find((d) => d.name === "disk1")!;
     expect(disk1.temperatureC).toBeNull();
-    expect(inv.host.disks.find((d) => d.name === "cache")!.temperatureC).toBe(41);
+    expect(inv.hosts[0].disks.find((d) => d.name === "cache")!.temperatureC).toBe(41);
   });
 
   it("reads host usage with memory in use = total − available", () => {
