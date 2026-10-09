@@ -120,6 +120,32 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/proxmoxService.ts
+
+**What it owns:** The Proxmox VE integration's client — REST over HTTPS (`/api2/json`, default port 8006) with an API token (`Authorization: PVEAPIToken=<user@realm!name>=<secret>`), GET only. The one CLUSTERED workload platform: every node is a host (`WorkloadHost.key` = node name, `online` from `/cluster/status`), every guest names its node (`hostKey`), and an LXC carries `identityKey` = its VMID. `proxmoxGet` tries each configured address (`host` + `fallbackHosts`) in order, starting with the last one that answered; only a CONNECTION failure (`EndpointUnreachable`) moves on — any HTTP answer, a 401 included, is the cluster's verdict and is thrown. Discovery (`readCluster` with storage + guest refresh) reads `/cluster/status` + `/cluster/resources`, `/cluster/ceph/status` (an error = no Ceph), per online node `status` + the last RRD row + `storage` + `disks/zfs` (+ `disks/zfs/<pool>` detail) + `disks/list`, and per guest its `config` plus — when running — the guest agent's `network-get-interfaces` (QEMU, only when `agent` is enabled) or `interfaces` (LXC). A snapshot reads only status + resources + per-node status/RRD; guest detail is cached per integration (30 min, refreshed by every discovery; a tick reads only guests it has not seen) and pools are cached (a tick re-reads storage only when the cache is over 5 min old).
+
+**Public API:** testConnection, discoverInventory, fetchProxmoxSnapshot, proxmoxGet, proxmoxEndpoints, proxyQuery + isProxyReadPath (a path allow-list regex: version, cluster status/resources/HA/ceph, node status/network/storage/disks/rrddata, guest config/status/interfaces/agent network + osinfo — never `/access`, never an action), ProxmoxApiError; pure parsers parseProxmoxClusterStatus / parseProxmoxResources / parseProxmoxNetConfig / parseProxmoxGuestDetail / firstGuestIpv4 / buildProxmoxGuests / parseProxmoxZfsGroups / parseProxmoxZfsScan / parseProxmoxPools / parseProxmoxCephHealth / parseProxmoxDisks / proxmoxVersion / lastRrdRow / proxmoxNodeUsage / proxmoxGuestUsage / buildProxmoxHost; ProxmoxConfig.
+
+**Cross-service deps:** discovery/workloadSync (types only), truenasService.RateCounters (node traffic), utils/concurrency.mapWithConcurrency (6 node / guest reads in flight per integration).
+
+**Used by:** src/api/routes/integrations.ts — both test-connection handlers + the Query API branch. src/services/discovery/discoveryEngine.ts — preflight + dispatch (`discoverInventory` → `syncWorkloadDevices`). src/services/workloadMonitorService.ts — `fetchProxmoxSnapshot` behind the per-integration workload snapshot cache (the `proxmox` polling method). NOT workloadActionService: Proxmox is read-only (`platformHasActions`).
+
+**Invariants:**
+- Templates (`template: 1` in `/cluster/resources`) are dropped — they never run.
+- `/cluster/resources` lists every guest on every node, online or not, so the guest LIST is complete whenever it answered; a guest whose config could not be read sets `inventoryComplete: false` (its identity could fall back to its name) so the sweep holds.
+- A VM's identity is its `smbios1` UUID; an LXC's is its VMID (`identityKey`) — LXC hostnames need not be unique across a cluster.
+- Guest address: the guest agent's / container's live first usable IPv4 (never loopback or link-local), else the config's static one (QEMU cloud-init `ipconfigN`, LXC `netN ip=`); `dhcp` is not an address.
+- Node memory: Proxmox's `used` is total − available and INCLUDES the ZFS ARC; the ARC (RRD `arcsize`, rounded) is carved out into `memCachedBytes`, `memFreeBytes` = total − used — used + cached + free = total. Verified against the kernel on PVE 9.2.
+- Guest CPU is a share of the guest's OWN vCPU allotment (`cpu` × 100), the figure the guest itself would report. Guest network is one cumulative row ("all interfaces", from `netin`/`netout`), only while running. The node has NO per-NIC counters in the API: its RRD node-wide rate is integrated by `RateCounters` into one row.
+- Pools: each ZFS pool once (layout from `disks/zfs/<pool>`, scan from its `scan:` line), every other ACTIVE storage as a capacity row; a `zfspool` storage is not repeated. Ceph health (`HEALTH_*` + first check summaries) rides `rbd` / `cephfs` storage rows. Shared storage appears on every node that mounts it.
+- The API publishes no sensors and no hardware identity: no temperature stream (`PROXMOX_STREAMS`), and node serial / manufacturer stay null (`model` is the CPU model).
+
+**When changing this:**
+- Shapes were captured from a live two-node PVE 9.2 cluster (the WSL lab); refresh tests/unit/proxmoxService.test.ts from a real capture, not from the docs. Ceph was NOT available in the lab — its shapes come from the API docs and are unverified.
+- A new projected field → the `workloadRule` entries in `src/utils/assetProjection.ts` + the shared observed builders in workloadSync.
+
+---
+
 ## services/activeDirectoryService.ts
 
 **What it owns:** On-prem Active Directory device discovery via LDAP/LDAPS client (computer objects, OU filtering, SID/GUID identity, disabled-account handling).
