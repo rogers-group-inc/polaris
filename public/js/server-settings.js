@@ -2555,7 +2555,7 @@ async function loadDatabaseInfo() {
     var updateCardHtml =
       '<div class="settings-card" id="update-card">' +
         '<h4>Application Updates</h4>' +
-        '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
+        '<p id="update-card-intro" style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
           'Check for new versions and apply updates directly from the browser. Automatic rollback on failure.' +
         '</p>' +
         '<div id="update-status-area">' +
@@ -2573,7 +2573,9 @@ async function loadDatabaseInfo() {
         // Lives outside #update-status-area so it survives status re-renders.
         '<div id="update-repo-info" style="margin-top:0.75rem;font-size:0.8rem;color:var(--color-text-tertiary)"></div>' +
         // Update train — nightly (every commit) vs release (tagged releases only).
-        '<div style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
+        // The train, backup and history sections are the git updater's; a
+        // container install removes them (_applyImageUpdateLayout).
+        '<div id="update-train-section" style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
           '<label for="update-train-select" style="display:block;font-size:0.85rem;font-weight:600;margin-bottom:0.35rem">Update train</label>' +
           '<select id="update-train-select" style="max-width:280px">' +
             '<option value="nightly">Nightly — latest commits</option>' +
@@ -2583,7 +2585,7 @@ async function loadDatabaseInfo() {
             'Nightly tracks every change on the update branch. Release only downloads published, tagged releases.' +
           '</p>' +
         '</div>' +
-        '<div style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
+        '<div id="update-backup-section" style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
           '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">' +
             '<input type="checkbox" id="update-backup-checkbox" style="width:15px;height:15px;flex-shrink:0">' +
             '<span style="font-size:0.85rem">Back up database before applying updates</span>' +
@@ -3395,7 +3397,9 @@ function initUpdateControls() {
 
   // Check if there's a pending notification from a background check or previous restart
   api.serverSettings.getUpdateStatus().then(function (status) {
-    if (status.state === "disabled") {
+    if (status.updateMethod === "image") {
+      renderImageUpdate(status);
+    } else if (status.state === "disabled") {
       renderUpdateDisabled(status);
     } else if (status.state === "complete") {
       renderUpdateComplete(status);
@@ -3427,6 +3431,76 @@ function renderUpdateDisabled(status) {
         ? '<div style="font-size:0.82rem;color:var(--color-text-secondary)">' + escapeHtml(status.method) + '</div>'
         : '') +
     '</div>';
+}
+
+// A container install updates by pulling a newer image, so the card keeps
+// only what applies there: the version, a daily registry check the operator
+// can re-run, and how to update. The update train, the pre-update backup
+// toggle and the git history are the in-app updater's and are removed.
+function _applyImageUpdateLayout() {
+  ["update-train-section", "update-backup-section", "update-history"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.remove();
+  });
+  var repo = document.getElementById("update-repo-info");
+  if (repo) repo.innerHTML = "";
+  var intro = document.getElementById("update-card-intro");
+  if (intro) intro.textContent = "Polaris checks the published image once a day and tells you here, and in the sidebar, when a newer one is out.";
+}
+
+function renderImageUpdate(status) {
+  _applyImageUpdateLayout();
+  var area = document.getElementById("update-status-area");
+  if (!area) return;
+  var available = status.state === "available";
+  var behind = status.commitsBehind || 0;
+
+  var latestHtml = "";
+  if (available) {
+    var changesLink = status.source && status.latestCommit
+      ? ' <a href="' + escapeHtml(status.source) + '/commits/' + encodeURIComponent(status.latestCommit) + '" target="_blank" rel="noopener noreferrer" style="font-size:0.8rem">What changed</a>'
+      : "";
+    latestHtml =
+      '<div style="background:color-mix(in srgb, var(--color-primary) 10%, transparent);border:1px solid var(--color-primary);border-radius:6px;padding:1rem;margin-bottom:1rem">' +
+        '<div style="color:var(--color-primary);font-weight:600;font-size:0.95rem;margin-bottom:0.5rem">Update Available</div>' +
+        '<div class="db-info-grid">' +
+          '<div class="db-info-label">Latest</div><div class="db-info-value">v' + escapeHtml(status.latestVersion || "?") +
+            (status.latestCommit ? ' <span class="mono" style="color:var(--color-text-tertiary)">(' + escapeHtml(status.latestCommit) + ')</span>' : "") +
+            ' <span style="color:var(--color-text-tertiary);font-size:0.8rem">' + behind + ' commit' + (behind === 1 ? "" : "s") + ' newer</span>' + changesLink +
+          '</div>' +
+        '</div>' +
+        (status.method ? '<div style="font-size:0.82rem;color:var(--color-text-secondary);margin-top:0.6rem">' + escapeHtml(status.method) + '</div>' : "") +
+      '</div>';
+  }
+
+  var stateLine;
+  if (available) {
+    stateLine = "";
+  } else if (status.state === "up-to-date") {
+    stateLine = '<span style="color:var(--color-success)">Up to date with ' + escapeHtml(status.image || "the published image") + '</span>';
+  } else if (status.note) {
+    stateLine = '<span style="color:var(--color-text-secondary)">' + escapeHtml(status.note) + '</span>';
+  } else {
+    stateLine = '<span style="color:var(--color-text-tertiary)">Not checked yet — the first check runs a minute after Polaris starts.</span>';
+  }
+
+  area.innerHTML =
+    '<div class="db-info-grid" style="margin-bottom:1rem">' +
+      '<div class="db-info-label">Current Version</div>' +
+      '<div class="db-info-value" id="update-current-version">v' + escapeHtml(status.currentVersion || "?") + '</div>' +
+      (status.checkedAt
+        ? '<div class="db-info-label">Last checked</div><div class="db-info-value">' + escapeHtml(formatLocalTime(status.checkedAt)) + '</div>'
+        : "") +
+    '</div>' +
+    latestHtml +
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+      '<button class="btn btn-secondary" id="btn-check-updates">' + (available ? "Check Again" : "Check for Updates") + '</button>' +
+      '<span id="update-check-status" style="font-size:0.82rem">' + stateLine + '</span>' +
+    '</div>' +
+    (!available && status.method
+      ? '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0.6rem 0 0">' + escapeHtml(status.method) + '</p>'
+      : "");
+  document.getElementById("btn-check-updates").addEventListener("click", checkForUpdatesUI);
 }
 
 async function loadUpdateRepoInfo() {
@@ -3489,6 +3563,11 @@ async function checkForUpdatesUI() {
 
   try {
     var result = await api.serverSettings.checkForUpdates();
+
+    if (result.updateMethod === "image") {
+      renderImageUpdate(result);
+      return;
+    }
 
     if (result.state === "disabled") {
       renderUpdateDisabled(result);

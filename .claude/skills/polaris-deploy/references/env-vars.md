@@ -210,6 +210,13 @@ POLARIS_STATE_DIR=
 # needed a guard.
 POLARIS_UPDATE_REPO=
 
+# Container installs only (no .git tree): the image the daily update check
+# compares this one against (default ghcr.io/rogers-group-inc/polaris:latest).
+# updateService.ts → checkImageForUpdates reads the tag's config blob
+# anonymously (utils/imageRegistry.ts) and compares its
+# POLARIS_BUILD_COMMIT_COUNT with this image's; it never pulls or restarts.
+POLARIS_UPDATE_IMAGE=
+
 # PEM bundle of extra CAs Node should trust, for networks that re-sign HTTPS
 # with an internal CA. Node ships its OWN CA store and ignores the OS one, so a
 # root the whole host trusts is still rejected inside Polaris and inside npm —
