@@ -64,6 +64,7 @@ Sonnet or Opus from the Foundry model catalog). The form then shows:
 | Authentication | **API key** — Key 1 or Key 2 from Keys and Endpoint — or **Entra ID app**: the app registration's Tenant ID, Client ID and Client secret. Give the app's service principal the **Cognitive Services OpenAI User** role on the resource (for Claude, **Foundry User** or **Cognitive Services User**). Keys and secrets are stored encrypted. **Token scope** is advanced; leave it blank for the default (`https://cognitiveservices.azure.com/.default` for GPT, `https://ai.azure.com/.default` for Claude) |
 | Deployment name | the name **you gave the deployment** in Foundry, not the model's name. Foundry cannot list deployments, so there is no Load models button |
 | Omit temperature | GPT only: tick for reasoning models (o-series, gpt-5), which refuse it. If you forget, Polaris retries once without it. Claude never gets a temperature, so the box is hidden |
+| Context window | under **Assistant Behaviour** — set it to the deployment's window: `1000000` for Claude Haiku, Sonnet or Opus 5.5. Left at the 8192 default, Polaris trims history and lookups as if the model were small |
 
 **Test Connection** sends one short chat message to the deployment, the only way
 to prove the endpoint, the credential and the deployment name are all right. The
@@ -239,7 +240,7 @@ See [rule 95](Business-Rules#rule-95).
 | Lookup rounds per answer | how many rounds of lookups one answer may take (default 6) |
 | Rows per lookup | rows one lookup hands the model (default 200); reports go to 5,000 regardless |
 | Messages of history sent | the most earlier turns sent with each question (default 20); older ones are dropped first when they would not fit the context window |
-| Context window | the model server's context size in tokens (default 8192) — set it to match the server. Polaris sizes each question to fit: the conversation, the lookup results (cut down for a small window) and room for the answer. **Ollama uses 4096 unless `OLLAMA_CONTEXT_LENGTH` raises it**, and the assistant's own instructions take about 2,700 of those, so raise it to 8192 or more on the server and here. Test Connection warns below 6000 |
+| Context window | the model server's context size in tokens (default 8192) — set it to match the server. Polaris sizes each question to fit: the conversation, the lookup results (cut down for a small window) and room for the answer. **Ollama uses 4096 unless `OLLAMA_CONTEXT_LENGTH` raises it**, and the assistant's own instructions take about 2,700 of those, so raise it to 8192 or more on the server and here. Test Connection warns below 6000. On **Azure AI Foundry** use the deployment's window (`1000000` for Claude 5.5 models); history stays capped by *Messages of history sent* and each lookup at 24,000 characters, so a large window does not mean large requests |
 | Response timeout | how long the model may go silent before the answer fails |
 | Extra instructions | added to the assistant's instructions — site naming conventions, who to escalate to |
 | Keep conversations for | how long a conversation nobody has touched is kept (default 90 days). One setting for every assistant on the install |
