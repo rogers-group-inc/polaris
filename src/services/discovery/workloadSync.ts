@@ -51,7 +51,10 @@ import { absenceExceedsGuard } from "../../utils/directoryAbsence.js";
 import {
   assetTypeForWorkloadRole,
   workloadContainerExternalId,
+  workloadContainerKey,
+  workloadContainerNoun,
   workloadHostExternalId,
+  workloadHostUsageKey,
   workloadPlatformLabel,
   workloadSourceKind,
   workloadSourceKindsFor,
@@ -150,6 +153,18 @@ export interface WorkloadDisk {
 }
 
 export interface WorkloadHost {
+  /**
+   * Which host this is, on a platform with more than one per integration (a
+   * Proxmox cluster node's name). Absent / null on a single-host platform —
+   * the host keeps the `${integrationId}:host` identity it always had.
+   */
+  key?: string | null;
+  /**
+   * false when the platform reports the host down while still answering for
+   * it (a cluster node a peer says is offline). Absent / null = the host
+   * answered its own API, which IS presence.
+   */
+  online?: boolean | null;
   /** The host's configured hostname. */
   hostname: string | null;
   /** "Unraid" / "TrueNAS SCALE". */
@@ -181,6 +196,8 @@ export interface WorkloadVm {
   ip: string | null;
   macs: string[];
   autostart: boolean | null;
+  /** The WorkloadHost.key it runs on now; absent / null = the integration's single host. */
+  hostKey?: string | null;
 }
 
 export interface WorkloadContainer {
@@ -207,11 +224,16 @@ export interface WorkloadContainer {
   memberCount: number | null;
   ports: string[];
   autostart: boolean | null;
+  /** The WorkloadHost.key it runs on now; absent / null = the integration's single host. */
+  hostKey?: string | null;
+  /** What its identity is built from when the name is not unique (see workloadContainerKey). */
+  identityKey?: string | null;
 }
 
 export interface WorkloadDiscoveryResult {
   platform: WorkloadPlatform;
-  host: WorkloadHost;
+  /** One entry on a single-host platform; every cluster node (online or not) otherwise. */
+  hosts: WorkloadHost[];
   vms: WorkloadVm[];
   containers: WorkloadContainer[];
   /**
@@ -250,6 +272,8 @@ export interface WorkloadUsage {
   interfaces?: WorkloadInterfaceReading[];
 }
 
+export type WorkloadHostUsage = WorkloadUsage & { interfaces: WorkloadInterfaceReading[] };
+
 export interface WorkloadInterfaceReading {
   name: string;
   operUp: boolean | null;
@@ -278,7 +302,8 @@ export interface WorkloadSnapshot {
   /** The round trip, reported as the response time of every asset it answers. */
   durationMs: number;
   inventory: WorkloadDiscoveryResult;
-  host: WorkloadUsage & { interfaces: WorkloadInterfaceReading[] };
+  /** Keyed by workloadHostUsageKey(host.key) — "" for a single-host platform. A host with no entry reported no usage. */
+  hosts: Map<string, WorkloadHostUsage>;
   /** Keyed by WorkloadVm.platformId. Absent = the platform reports no VM usage. */
   vmUsage: Map<string, WorkloadUsage>;
   /** Keyed by WorkloadContainer.platformId. */
@@ -291,7 +316,9 @@ export interface WorkloadSnapshot {
 export {
   normalizeWorkloadState,
   workloadContainerExternalId,
+  workloadContainerKey,
   workloadHostExternalId,
+  workloadHostUsageKey,
   workloadVmExternalId,
 } from "../../utils/workloadSources.js";
 
@@ -432,6 +459,7 @@ function hostObserved(platform: WorkloadPlatform, h: WorkloadHost, syncedAt: Dat
     model: h.model,
     cpuCount: h.cpuCount,
     memTotalBytes: h.memTotalBytes,
+    ...(h.key ? { hostKey: h.key, online: h.online !== false } : {}),
   };
 }
 
@@ -477,6 +505,7 @@ function containerObserved(
     ports: c.ports,
     autostart: c.autostart,
     hostName,
+    ...(c.identityKey ? { identityKey: c.identityKey } : {}),
   };
 }
 
@@ -558,6 +587,7 @@ export async function syncWorkloadDevices(
   const sourcesByAssetId = new Map<string, SourceEntry[]>();
   const priorChildAssetIds = new Set<string>();
   let priorWorkloadCount = 0;
+  let priorHostCount = 0;
   for (const src of allSources) {
     const entry: SourceEntry = {
       sourceKind: src.sourceKind, externalId: src.externalId, inferred: src.inferred,
@@ -572,6 +602,8 @@ export async function syncWorkloadDevices(
     if (src.integrationId === integrationId && src.sourceKind !== kinds.host) {
       priorChildAssetIds.add(src.assetId);
       priorWorkloadCount++;
+    } else if (src.integrationId === integrationId) {
+      priorHostCount++;
     }
   }
 
@@ -816,46 +848,83 @@ export async function syncWorkloadDevices(
     }
   };
 
-  // ── Pass A — the host ──────────────────────────────────────────────────────
-  const hostAddr = await resolveWorkloadHostAddress(result.host.ip);
-  if (hostAddr.dnsName && !hostAddr.ip) {
-    syncLog("warning", `${label} host "${hostAddr.dnsName}" did not resolve to an IP address — the host asset's IP was left unchanged.`);
-  }
-  const h = { ...result.host, ip: hostAddr.ip };
-  const hostName = h.hostname;
-  const hostExternalId = workloadHostExternalId(integrationId);
-  const hostAssetId = await syncOne({
-    role: "host",
-    externalId: hostExternalId,
-    displayName: hostName || h.ip || label,
-    observed: hostObserved(platform, h, now),
-    virtualization: {
+  // ── Pass A — the host(s) ───────────────────────────────────────────────────
+  // One on Unraid / TrueNAS; every cluster node on Proxmox. Each workload is
+  // placed on the host its `hostKey` names (absent = the single host).
+  const placementByKey = new Map<string, { assetId: string | null; name: string | null; ip: string | null }>();
+  const currentHostIds: string[] = [];
+  for (const rawHost of result.hosts) {
+    const hostAddr = await resolveWorkloadHostAddress(rawHost.ip);
+    if (hostAddr.dnsName && !hostAddr.ip) {
+      syncLog("warning", `${label} host "${hostAddr.dnsName}" did not resolve to an IP address — the host asset's IP was left unchanged.`);
+    }
+    const h = { ...rawHost, ip: hostAddr.ip };
+    const hostKey = h.key ?? null;
+    const onHost = (w: { hostKey?: string | null }) => (w.hostKey ?? null) === hostKey;
+    const hostExternalId = workloadHostExternalId(integrationId, hostKey);
+    currentHostIds.push(hostExternalId);
+    const hostAssetId = await syncOne({
       role: "host",
-      platform,
-      integrationId,
-      os: h.os,
-      osVersion: h.osVersion,
-      cpuCount: h.cpuCount,
-      memTotalBytes: h.memTotalBytes,
-      uptimeSeconds: h.uptimeSeconds,
-      pools: h.pools,
-      vmCount: result.vms.length,
-      containerCount: result.containers.length,
-      syncedAt: now.toISOString(),
-    },
-    // The host answered its own API — that IS presence.
-    present: true,
-    macs: [],
-    dnsName: hostAddr.dnsName,
-    collisionFields: { os: h.os, osVersion: h.osVersion, ipAddress: h.ip, serialNumber: h.serial },
-  });
+      externalId: hostExternalId,
+      displayName: h.hostname || h.ip || (hostKey ?? label),
+      observed: hostObserved(platform, h, now),
+      virtualization: {
+        role: "host",
+        platform,
+        integrationId,
+        ...(hostKey ? { hostKey, online: h.online !== false } : {}),
+        os: h.os,
+        osVersion: h.osVersion,
+        cpuCount: h.cpuCount,
+        memTotalBytes: h.memTotalBytes,
+        uptimeSeconds: h.uptimeSeconds,
+        pools: h.pools,
+        vmCount: result.vms.filter(onHost).length,
+        containerCount: result.containers.filter(onHost).length,
+        syncedAt: now.toISOString(),
+      },
+      // A host that answered its own API is present; a cluster node its peers
+      // report offline is not (its lastSeen stays where it was).
+      present: h.online !== false,
+      macs: [],
+      dnsName: hostAddr.dnsName,
+      collisionFields: { os: h.os, osVersion: h.osVersion, ipAddress: h.ip, serialNumber: h.serial },
+    });
+    placementByKey.set(workloadHostUsageKey(hostKey), { assetId: hostAssetId, name: h.hostname, ip: h.ip });
+  }
+  const placementOf = (w: { hostKey?: string | null }) =>
+    placementByKey.get(workloadHostUsageKey(w.hostKey)) ?? { assetId: null, name: null, ip: null };
+
+  // A workload whose host changed since the last sync moved (a live migration,
+  // or an HA restart on a peer) — worth an Event, because the dependency edge
+  // and therefore its alert suppression move with it.
+  const noteMove = (
+    assetId: string, role: WorkloadRole, name: string,
+    prior: Record<string, unknown> | null, toHostAssetId: string | null, toHostName: string | null,
+  ) => {
+    const fromId = typeof prior?.hostAssetId === "string" ? prior.hostAssetId : null;
+    if (!fromId || !toHostAssetId || fromId === toHostAssetId) return;
+    const from = typeof prior?.hostName === "string" ? prior.hostName : fromId;
+    logEvent({
+      action: `asset.${platform}.moved`,
+      resourceType: "asset",
+      resourceId: assetId,
+      resourceName: name,
+      actor,
+      message: `${role === "vm" ? "VM" : workloadContainerNoun(platform)} "${name}" moved from ${label} host ${from} to ${toHostName ?? toHostAssetId}`,
+      details: { integrationId, integrationName, fromHostAssetId: fromId, toHostAssetId },
+    });
+  };
 
   // ── Pass B — VMs ──────────────────────────────────────────────────────────
   const childAssetIds: string[] = [];
+  const edges: Array<{ assetId: string; parentAssetId: string }> = [];
   const currentVmIds: string[] = [];
   for (const vm of result.vms) {
     const externalId = workloadVmExternalId(integrationId, vm);
     currentVmIds.push(externalId);
+    const { assetId: hostAssetId, name: hostName } = placementOf(vm);
+    const priorVirt = (assetByExternalId.get(`${kinds.vm}|${externalId}`)?.virtualization ?? null) as Record<string, unknown> | null;
     const id = await syncOne({
       role: "vm",
       externalId,
@@ -879,14 +948,19 @@ export async function syncWorkloadDevices(
       macs: vm.macs,
       collisionFields: { ipAddress: vm.ip, macAddress: vm.macs[0] ?? null },
     });
-    if (id) childAssetIds.push(id);
+    if (id) {
+      childAssetIds.push(id);
+      edges.push(...buildWorkloadDependencyEdges([id], hostAssetId));
+      noteMove(id, "vm", vm.name, priorVirt, hostAssetId, hostName);
+    }
   }
 
   // ── Pass C — containers / Apps ─────────────────────────────────────────────
   const currentContainerIds: string[] = [];
   for (const c of result.containers) {
-    const externalId = workloadContainerExternalId(integrationId, c.name);
+    const externalId = workloadContainerExternalId(integrationId, workloadContainerKey(c));
     currentContainerIds.push(externalId);
+    const { assetId: hostAssetId, name: hostName, ip: hostIp } = placementOf(c);
     const prior = assetByExternalId.get(`${kinds.container}|${externalId}`);
     const priorVirt = (prior?.virtualization ?? null) as Record<string, unknown> | null;
     // An update check the platform could not answer this run keeps the last
@@ -920,18 +994,21 @@ export async function syncWorkloadDevices(
       },
       present: c.state === "running",
       macs: [],
-      staleIps: c.ip === null ? staleContainerIps(h.ip, prior ? sourcesByAssetId.get(prior.id) : undefined, kinds.container) : [],
+      staleIps: c.ip === null ? staleContainerIps(hostIp, prior ? sourcesByAssetId.get(prior.id) : undefined, kinds.container) : [],
       collisionFields: { ipAddress: c.ip, os: c.image },
     });
-    if (id) childAssetIds.push(id);
+    if (id) {
+      childAssetIds.push(id);
+      edges.push(...buildWorkloadDependencyEdges([id], hostAssetId));
+      noteMove(id, "container", c.name, priorVirt, hostAssetId, hostName);
+    }
   }
 
-  // ── Pass D — placement edges (VM / container → host) ──────────────────────
+  // ── Pass D — placement edges (VM / container → its host) ──────────────────
   // Delete-replace scoped to this integration's workloads (prior + current)
   // and this platform's edge source. Skipped on a scoped run, for vCenter's
   // reason: the prior set is the whole fleet, the current set one device.
   if (mode === "full") try {
-    const edges = buildWorkloadDependencyEdges(childAssetIds, hostAssetId);
     const scopeIds = [...new Set([...priorChildAssetIds, ...childAssetIds])];
     await prisma.$transaction([
       ...(scopeIds.length > 0
@@ -965,19 +1042,30 @@ export async function syncWorkloadDevices(
           OR: [
             { sourceKind: kinds.vm, externalId: { notIn: currentVmIds } },
             { sourceKind: kinds.container, externalId: { notIn: currentContainerIds } },
+            // A cluster node removed from the cluster. A single-host platform's
+            // `:host` row is always current, so this never touches it.
+            ...(currentHostIds.length > 0 ? [{ sourceKind: kinds.host, externalId: { notIn: currentHostIds } }] : []),
           ],
         },
         select: { id: true, assetId: true, sourceKind: true, observed: true },
       });
-      // A filtered-out workload still exists: keep its identity.
+      // A filtered-out workload still exists: keep its identity. Hosts are
+      // never name-filtered, so a host row here is simply gone.
       const presentVm = new Set(rawResult.presentVmNames);
       const presentCtr = new Set(rawResult.presentContainerNames);
+      const presentKeys = new Set(rawResult.containers.map((c) => workloadContainerKey(c)));
       const gone = staleRows.filter((r) => {
-        const name = String(((r.observed as Record<string, unknown> | null) ?? {}).name ?? "");
-        return r.sourceKind === kinds.vm ? !presentVm.has(name) : !presentCtr.has(name);
+        if (r.sourceKind === kinds.host) return true;
+        const observed = (r.observed as Record<string, unknown> | null) ?? {};
+        const name = String(observed.name ?? "");
+        if (r.sourceKind === kinds.vm) return !presentVm.has(name);
+        // An identityKey'd container (Proxmox LXC) is present by key, not name.
+        const key = typeof observed.identityKey === "string" ? observed.identityKey : null;
+        return key ? !presentKeys.has(key) : !presentCtr.has(name);
       });
-      if (gone.length > 0 && absenceExceedsGuard(gone.length, priorWorkloadCount)) {
-        syncLog("warning", `Stale-source sweep refused — ${gone.length} of ${priorWorkloadCount} workload(s) vanished in one read, which is more than the guard allows. Nothing was removed; if this is real, the next runs will keep reporting it.`);
+      const goneHosts = gone.filter((r) => r.sourceKind === kinds.host).length;
+      if (gone.length > 0 && (absenceExceedsGuard(gone.length - goneHosts, priorWorkloadCount) || absenceExceedsGuard(goneHosts, priorHostCount))) {
+        syncLog("warning", `Stale-source sweep refused — ${gone.length - goneHosts} of ${priorWorkloadCount} workload(s) and ${goneHosts} of ${priorHostCount} host(s) vanished in one read, which is more than the guard allows. Nothing was removed; if this is real, the next runs will keep reporting it.`);
       } else if (gone.length > 0) {
         await prisma.assetSource.deleteMany({ where: { id: { in: gone.map((r) => r.id) } } });
         syncLog("info", `Swept ${gone.length} stale ${label} source row(s) no longer present on the host.`);
@@ -1011,7 +1099,7 @@ export async function syncWorkloadDevices(
                 resourceId: a.id,
                 resourceName: name,
                 actor,
-                message: `${a.assetType === "container" ? (platform === "truenas" ? "App" : "Container") : "VM"} "${name}" decommissioned — no longer present in "${integrationName}", and no other discovery source claims it`,
+                message: `${a.assetType === "container" ? workloadContainerNoun(platform) : a.assetType === "hypervisor" ? "Host" : "VM"} "${name}" decommissioned — no longer present in "${integrationName}", and no other discovery source claims it`,
                 details: { reason: `missing-from-${platform}-inventory`, integrationId, integrationName },
               });
             }
@@ -1023,6 +1111,6 @@ export async function syncWorkloadDevices(
     syncLog("error", `Failed to sweep stale ${label} source rows: ${err.message || "Unknown error"}`);
   }
 
-  syncLog("info", `${label} sync: ${created.length} created, ${updated.length} updated, ${skipped.length} skipped, ${decommissioned.length} decommissioned (${result.vms.length} VM(s), ${result.containers.length} container(s), ${result.host.pools.length} pool(s))`);
+  syncLog("info", `${label} sync: ${created.length} created, ${updated.length} updated, ${skipped.length} skipped, ${decommissioned.length} decommissioned (${result.hosts.length > 1 ? `${result.hosts.length} host(s), ` : ""}${result.vms.length} VM(s), ${result.containers.length} container(s), ${result.hosts.reduce((n, h) => n + h.pools.length, 0)} pool(s))`);
   return { created, updated, skipped, decommissioned };
 }

@@ -69,6 +69,11 @@ export function workloadPlatformLabel(platform: WorkloadPlatform): string {
   return platform === "unraid" ? "Unraid" : "TrueNAS SCALE";
 }
 
+/** What the platform calls its container role: a TrueNAS App is a compose project, not one container. */
+export function workloadContainerNoun(platform: WorkloadPlatform): string {
+  return platform === "truenas" ? "App" : "Container";
+}
+
 // ─── Identity + state (pure; shared by the sync, the services and the collectors) ─
 
 /** running / stopped / paused / other — the four states the rest of Polaris reads. */
@@ -88,9 +93,18 @@ export function normalizeWorkloadState(raw: string | null | undefined): Workload
   return "other";
 }
 
-/** The host: one per integration. */
-export function workloadHostExternalId(integrationId: string): string {
-  return `${integrationId}:host`;
+/**
+ * A host. A single-host platform (Unraid, TrueNAS) passes no key: its one host
+ * is `${integrationId}:host`, as it always was. A clustered platform passes
+ * the node's name, which is stable across the cluster's lifetime.
+ */
+export function workloadHostExternalId(integrationId: string, hostKey?: string | null): string {
+  return hostKey ? `${integrationId}:node:${hostKey}` : `${integrationId}:host`;
+}
+
+/** The key a host's usage is filed under in a WorkloadSnapshot — "" for a single-host platform. */
+export function workloadHostUsageKey(hostKey: string | null | undefined): string {
+  return hostKey ?? "";
 }
 
 /** A VM: its UUID when the platform reports a real one, else integration + name. */
@@ -104,4 +118,13 @@ export function workloadVmExternalId(integrationId: string, vm: { uuid: string |
 /** A container / App: integration + NAME — never the container id, which changes on every recreate. */
 export function workloadContainerExternalId(integrationId: string, name: string): string {
   return `${integrationId}:ctr:${name}`;
+}
+
+/**
+ * The key a container's externalId is built from: its `identityKey` when the
+ * platform sets one (a Proxmox LXC's VMID — LXC hostnames need not be unique
+ * and a VMID survives a rename), else its name.
+ */
+export function workloadContainerKey(c: { name: string; identityKey?: string | null }): string {
+  return c.identityKey ?? c.name;
 }

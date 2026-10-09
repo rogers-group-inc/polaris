@@ -38,7 +38,10 @@ import {
   ALL_WORKLOAD_SOURCE_KINDS,
   parseWorkloadSourceKind,
   workloadContainerExternalId,
+  workloadContainerKey,
+  workloadContainerNoun,
   workloadHostExternalId,
+  workloadHostUsageKey,
   workloadPlatformLabel,
   workloadVmExternalId,
   type WorkloadPlatform,
@@ -47,6 +50,8 @@ import * as unraid from "./unraidService.js";
 import * as truenas from "./truenasService.js";
 import type {
   WorkloadContainer,
+  WorkloadHost,
+  WorkloadHostUsage,
   WorkloadSnapshot,
   WorkloadUsage,
   WorkloadVm,
@@ -66,6 +71,8 @@ export const WORKLOAD_SNAPSHOT_TTL_MS = 30_000;
 
 interface CacheEntry {
   snap: WorkloadSnapshot;
+  /** Keyed by host externalId — one entry on a single-host platform, one per node on a cluster. */
+  hostsById: Map<string, WorkloadHost>;
   vmsById: Map<string, WorkloadVm>;
   containersById: Map<string, WorkloadContainer>;
 }
@@ -88,16 +95,18 @@ export async function fetchWorkloadSnapshotCached(integration: {
     const snap = integration.type === "unraid"
       ? await unraid.fetchUnraidSnapshot(integration.config as unknown as unraid.UnraidConfig)
       : await truenas.fetchTrueNasSnapshot(integration.config as unknown as truenas.TrueNasConfig);
+    const hostsById = new Map<string, WorkloadHost>();
+    for (const h of snap.inventory.hosts) hostsById.set(workloadHostExternalId(integration.id, h.key), h);
     const vmsById = new Map<string, WorkloadVm>();
     for (const vm of snap.inventory.vms) vmsById.set(workloadVmExternalId(integration.id, vm), vm);
     const containersById = new Map<string, WorkloadContainer>();
-    for (const c of snap.inventory.containers) containersById.set(workloadContainerExternalId(integration.id, c.name), c);
-    return { snap, vmsById, containersById };
+    for (const c of snap.inventory.containers) containersById.set(workloadContainerExternalId(integration.id, workloadContainerKey(c)), c);
+    return { snap, hostsById, vmsById, containersById };
   });
 }
 
 export type WorkloadReading =
-  | { kind: "host"; platform: WorkloadPlatform; snap: WorkloadSnapshot }
+  | { kind: "host"; platform: WorkloadPlatform; host: WorkloadHost; usage: WorkloadHostUsage | null; snap: WorkloadSnapshot }
   | { kind: "vm"; platform: WorkloadPlatform; vm: WorkloadVm; usage: WorkloadUsage | null; snap: WorkloadSnapshot }
   | { kind: "container"; platform: WorkloadPlatform; container: WorkloadContainer; usage: WorkloadUsage | null; snap: WorkloadSnapshot }
   | { kind: "absent"; error: string }
@@ -140,10 +149,11 @@ export async function readWorkloadAsset(assetId: string): Promise<WorkloadReadin
   }
   const { snap } = entry;
   if (parsed.role === "host") {
-    if (source.externalId !== workloadHostExternalId(source.integration.id)) {
-      return { kind: "absent", error: `This host is not the one the ${label} integration reads` };
+    const host = entry.hostsById.get(source.externalId);
+    if (!host) {
+      return { kind: "absent", error: `This host is not one the ${label} integration reads (removed from the cluster?)` };
     }
-    return { kind: "host", platform: parsed.platform, snap };
+    return { kind: "host", platform: parsed.platform, host, usage: snap.hosts.get(workloadHostUsageKey(host.key)) ?? null, snap };
   }
   if (parsed.role === "vm") {
     const vm = entry.vmsById.get(source.externalId);
@@ -161,7 +171,7 @@ export async function readWorkloadAsset(assetId: string): Promise<WorkloadReadin
     if (!snap.inventory.inventoryComplete && snap.inventory.containers.length === 0) {
       return { kind: "unreachable", error: `${label} returned no container list this tick (Docker / Apps service stopped?)`, role: "container" };
     }
-    return { kind: "absent", error: `${parsed.platform === "truenas" ? "App" : "Container"} not present on the ${label} host (removed or renamed?)` };
+    return { kind: "absent", error: `${workloadContainerNoun(parsed.platform)} not present on the ${label} host (removed or renamed?)` };
   }
   return { kind: "container", platform: parsed.platform, container, usage: snap.containerUsage.get(container.platformId) ?? null, snap };
 }
@@ -186,8 +196,13 @@ export async function probeWorkload(assetId: string, _start: number): Promise<Pr
   if (reading.kind === "absent") return { success: false, responseTimeMs: 0, error: reading.error };
   const rtt = 0;
   if (reading.kind === "host") {
+    // A cluster node its peers report offline: the API answered (through a
+    // peer), and what it said about this host is "down".
+    if (reading.host.online === false) {
+      return { success: false, responseTimeMs: 0, error: `${workloadPlatformLabel(reading.platform)} reports this node offline` };
+    }
     const ok: ProbeResult = { success: true, responseTimeMs: rtt };
-    if (reading.snap.inventory.host.uptimeSeconds !== null) ok.uptimeSec = reading.snap.inventory.host.uptimeSeconds;
+    if (reading.host.uptimeSeconds !== null) ok.uptimeSec = reading.host.uptimeSeconds;
     return ok;
   }
   const state = reading.kind === "vm" ? reading.vm.state : reading.container.state;
@@ -197,7 +212,7 @@ export async function probeWorkload(assetId: string, _start: number): Promise<Pr
   if (state === "other") {
     return { success: false, responseTimeMs: 0, skipped: true, error: `In transition (${raw ?? "unknown state"})` };
   }
-  const what = reading.kind === "vm" ? "VM" : reading.platform === "truenas" ? "App" : "Container";
+  const what = reading.kind === "vm" ? "VM" : workloadContainerNoun(reading.platform);
   return { success: false, responseTimeMs: rtt, error: `${what} is ${raw ?? state}` };
 }
 
@@ -207,14 +222,14 @@ export async function collectTelemetryWorkload(assetId: string): Promise<Collect
   const reading = await readWorkloadAsset(assetId);
   if (reading.kind === "absent" || reading.kind === "unreachable") return { supported: true, error: reading.error };
   if (reading.kind === "host") {
-    const h = reading.snap.host;
-    if (h.cpuPct === null && h.memUsedBytes === null) return { supported: true, error: "The host reported no CPU / memory usage this tick" };
+    const h = reading.usage;
+    if (!h || (h.cpuPct === null && h.memUsedBytes === null)) return { supported: true, error: "The host reported no CPU / memory usage this tick" };
     return {
       supported: true,
       data: {
         cpuPct: clampPct(h.cpuPct),
         memUsedBytes: h.memUsedBytes,
-        memTotalBytes: h.memTotalBytes ?? reading.snap.inventory.host.memTotalBytes,
+        memTotalBytes: h.memTotalBytes ?? reading.host.memTotalBytes,
         cpuCorePcts: h.perCorePct && h.perCorePct.length > 0 ? h.perCorePct.map((p) => clampPct(p) ?? 0) : null,
         // The agent's band set, when the platform splits memory (TrueNAS:
         // ARC as cached). Buffers are not reported, so that band stays null.
@@ -256,7 +271,7 @@ export function buildWorkloadSystemInfo(reading: WorkloadReading): SystemInfoSam
   // A container / App: its own network's traffic, when it has a network of its
   // own. No storage — a container's disk is its host's pools.
   const rows = reading.kind === "host"
-    ? reading.snap.host.interfaces
+    ? reading.usage?.interfaces ?? []
     : reading.kind === "container" ? reading.usage?.interfaces ?? [] : [];
   for (const i of rows) {
     interfaces.push({
@@ -275,7 +290,7 @@ export function buildWorkloadSystemInfo(reading: WorkloadReading): SystemInfoSam
   if (reading.kind !== "host") return { interfaces, storage };
   // A host's storage is its pools: the Unraid array + cache pools, the TrueNAS
   // ZFS pools. One row per pool, keyed by pool name.
-  for (const p of reading.snap.inventory.host.pools) {
+  for (const p of reading.host.pools) {
     storage.push({ mountPath: p.name, totalBytes: p.totalBytes, usedBytes: p.usedBytes });
   }
   return { interfaces, storage };
@@ -315,7 +330,7 @@ export async function collectHardwareSensorsWorkload(assetId: string): Promise<C
   const reading = await readWorkloadAsset(assetId);
   if (reading.kind === "absent" || reading.kind === "unreachable") return { supported: true, error: reading.error };
   if (reading.kind !== "host") return { supported: false };
-  const data: HardwareSensorSample[] = reading.snap.inventory.host.disks
+  const data: HardwareSensorSample[] = reading.host.disks
     .filter((d) => d.temperatureC !== null)
     .map((d) => ({
       sensorName: d.pool ? `${d.name} (${d.pool})` : d.name,

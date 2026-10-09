@@ -11,12 +11,16 @@
  *   5. the shrink guard refuses a read that lost most of the fleet at once;
  *   6. a name collision with an unlinked asset becomes a pending Conflict,
  *      never a merge;
- *   7. a Polaris stop's monitoring-pause flag survives the sync.
+ *   7. a Polaris stop's monitoring-pause flag survives the sync;
+ *   8. several hosts per integration (a cluster): one host asset per node,
+ *      each workload placed on its own node, a migration moves the edge and
+ *      logs `asset.<platform>.moved`, an offline node keeps its asset without
+ *      a lastSeen bump, and a node removed from the cluster is swept.
  *
  * Skips cleanly when DATABASE_URL isn't reachable (tests/integration/_helpers).
  */
 
-import { it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable } from "./_helpers.js";
 import { syncWorkloadDevices, type WorkloadDiscoveryResult } from "../../src/services/discovery/workloadSync.js";
@@ -64,11 +68,11 @@ function result(over: Partial<WorkloadDiscoveryResult> = {}, containers = [ctr("
   }];
   return {
     platform: "unraid",
-    host: {
+    hosts: [{
       hostname: `${PREFIX}tower`, os: "Unraid", osVersion: "7.2.0", ip: "10.250.0.2", serial: null, manufacturer: null, model: null,
       cpuCount: 8, memTotalBytes: 32e9, uptimeSeconds: 100,
       pools: [{ name: "array", kind: "array", totalBytes: 1000, usedBytes: 400, health: "STARTED" }], disks: [],
-    },
+    }],
     vms,
     containers,
     inventoryComplete: true,
@@ -164,5 +168,86 @@ d("syncWorkloadDevices", () => {
     const after = await byName("plex");
     expect((after?.virtualization as any)?.monitoringPausedByStop).toBe(true);
     expect((after?.virtualization as any)?.state).toBe("stopped");
+  });
+});
+
+// ─── Several hosts per integration (a Proxmox-style cluster) ─────────────────
+
+function clusterResult(vmOn: string, nodes = ["n1", "n2"], over: Partial<WorkloadDiscoveryResult> = {}): WorkloadDiscoveryResult {
+  const base = result();
+  const vms = base.vms.map((v) => ({ ...v, hostKey: vmOn }));
+  // Two LXCs with the SAME name on different nodes — told apart by identityKey.
+  const containers = [
+    { ...ctr("web"), platformId: "101", identityKey: "101", hostKey: "n1" },
+    { ...ctr("web"), platformId: "201", identityKey: "201", hostKey: "n2" },
+  ];
+  return {
+    ...base,
+    hosts: nodes.map((k, i) => ({ ...base.hosts[0], key: k, online: true, hostname: `${PREFIX}${k}`, ip: `10.250.1.${i + 1}` })),
+    vms,
+    containers,
+    presentVmNames: vms.map((v) => v.name),
+    presentContainerNames: containers.map((c) => c.name),
+    ...over,
+  };
+}
+
+const edgeParent = async (assetId: string) =>
+  (await prisma.assetDependencyParent.findMany({ where: { source: "unraid", assetId }, select: { parentAssetId: true } })).map((e) => e.parentAssetId);
+
+d("syncWorkloadDevices — several hosts", () => {
+  it("creates one host asset per node and places each workload on its own node", async () => {
+    await syncWorkloadDevices(integrationId, NAME, {}, clusterResult("n1"));
+    const n1 = await byName("n1");
+    const n2 = await byName("n2");
+    expect(n1?.assetType).toBe("hypervisor");
+    expect(n2?.assetType).toBe("hypervisor");
+    const hostIds = (await prisma.assetSource.findMany({ where: { integrationId, sourceKind: "unraid-host" }, select: { externalId: true } }))
+      .map((s) => s.externalId).sort();
+    expect(hostIds).toEqual([`${integrationId}:node:n1`, `${integrationId}:node:n2`]);
+
+    const vm = await byName("win11");
+    expect(await edgeParent(vm!.id)).toEqual([n1!.id]);
+    expect((vm?.virtualization as any)?.hostName).toBe(`${PREFIX}n1`);
+
+    const webs = await prisma.asset.findMany({ where: { hostname: `${PREFIX}web` }, select: { id: true } });
+    expect(webs).toHaveLength(2);
+    const parents = (await Promise.all(webs.map((w) => edgeParent(w.id)))).flat().sort();
+    expect(parents).toEqual([n1!.id, n2!.id].sort());
+    expect((n1?.virtualization as any)?.vmCount).toBe(1);
+    expect((n2?.virtualization as any)?.vmCount).toBe(0);
+  });
+
+  it("moves the placement edge when a VM migrates, and records the move", async () => {
+    await syncWorkloadDevices(integrationId, NAME, {}, clusterResult("n1"));
+    await syncWorkloadDevices(integrationId, NAME, {}, clusterResult("n2"));
+    const vm = await byName("win11");
+    const n2 = await byName("n2");
+    expect(await edgeParent(vm!.id)).toEqual([n2!.id]);
+    expect(await prisma.asset.count({ where: { hostname: `${PREFIX}win11` } })).toBe(1);
+    // The sync logs without awaiting (as every sync does) — wait for the row.
+    await vi.waitFor(async () => {
+      const moved = await prisma.event.findFirst({ where: { action: "asset.unraid.moved", resourceId: vm!.id } });
+      expect(moved?.message).toMatch(/moved from .*n1 to .*n2/);
+    });
+  });
+
+  it("keeps an offline node's asset but does not bump its lastSeen", async () => {
+    await syncWorkloadDevices(integrationId, NAME, {}, clusterResult("n1"));
+    const before = await prisma.asset.findFirst({ where: { hostname: `${PREFIX}n2` }, select: { lastSeen: true } });
+    const offline = clusterResult("n1");
+    offline.hosts[1] = { ...offline.hosts[1], online: false };
+    await syncWorkloadDevices(integrationId, NAME, {}, offline);
+    const after = await prisma.asset.findFirst({ where: { hostname: `${PREFIX}n2` }, select: { lastSeen: true, status: true, virtualization: true } });
+    expect(after?.status).toBe("active");
+    expect(after?.lastSeen?.getTime()).toBe(before?.lastSeen?.getTime());
+    expect((after?.virtualization as any)?.online).toBe(false);
+  });
+
+  it("sweeps a node removed from the cluster", async () => {
+    await syncWorkloadDevices(integrationId, NAME, {}, clusterResult("n1", ["n1", "n2", "n3"]));
+    await syncWorkloadDevices(integrationId, NAME, {}, clusterResult("n1", ["n1", "n2"]));
+    expect((await byName("n3"))?.status).toBe("decommissioned");
+    expect((await byName("n2"))?.status).toBe("active");
   });
 });

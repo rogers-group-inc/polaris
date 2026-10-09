@@ -242,8 +242,9 @@ describe("truenas session (stub server)", () => {
 
   it("builds a snapshot from the two event sources on one socket", async () => {
     const snap = await tn.fetchTrueNasSnapshot(cfg());
-    expect(snap.host.cpuPct).toBe(11);
-    expect(snap.host.memUsedBytes).toBe(60);
+    expect(snap.inventory.hosts).toHaveLength(1);
+    expect(snap.hosts.get("")?.cpuPct).toBe(11);
+    expect(snap.hosts.get("")?.memUsedBytes).toBe(60);
     expect(snap.containerUsage.get("plex")).toEqual({ cpuPct: 3, memUsedBytes: 50, memTotalBytes: null });
   });
 

@@ -31,7 +31,7 @@
 import WebSocket from "ws";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
-import { normalizeWorkloadState } from "../utils/workloadSources.js";
+import { normalizeWorkloadState, workloadHostUsageKey } from "../utils/workloadSources.js";
 import type {
   WorkloadContainer,
   WorkloadDisk,
@@ -698,7 +698,7 @@ function toResult(raw: RawRead, config: TrueNasConfig): WorkloadDiscoveryResult 
   const containers = parseTrueNasApps(raw.apps);
   return {
     platform: "truenas",
-    host: parseTrueNasHost(raw.info, raw.pools, raw.temps, raw.disks, config),
+    hosts: [parseTrueNasHost(raw.info, raw.pools, raw.temps, raw.disks, config)],
     vms,
     containers,
     inventoryComplete: !raw.appsFailed && !raw.vmsFailed,
@@ -743,9 +743,9 @@ export async function fetchTrueNasSnapshot(config: TrueNasConfig): Promise<Workl
       fetchedAt: Date.now(),
       durationMs,
       inventory: toResult(raw, config),
-      host: realtime
+      hosts: new Map([[workloadHostUsageKey(null), realtime
         ? parseTrueNasRealtime(realtime, countersFor(config.host), Date.now())
-        : { cpuPct: null, perCorePct: null, memUsedBytes: null, memTotalBytes: num(raw.info?.physmem), interfaces: [] },
+        : { cpuPct: null, perCorePct: null, memUsedBytes: null, memTotalBytes: num(raw.info?.physmem), interfaces: [] }]]),
       vmUsage,
       containerUsage: appStats ? appUsageWithCounters(config.host, appStats) : new Map(),
     };
