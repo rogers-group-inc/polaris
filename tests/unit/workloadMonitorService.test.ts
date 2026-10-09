@@ -153,6 +153,15 @@ describe("collectors", () => {
     });
   });
 
+  it("carries a host interface's IP, MAC and VLAN into the sample when the platform reported them", async () => {
+    h.fetchUnraidSnapshot.mockResolvedValue(snapshot({
+      host: { ...snapshot().host, interfaces: [{ name: "br0.20", operUp: true, rxBytes: 1, txBytes: 2, rxErrors: 0, txErrors: 0, rxDrops: 0, txDrops: 0, speedMbps: null, ipAddress: "10.0.20.2", macAddress: "AA:BB:CC:DD:EE:01", vlanId: 20 }] },
+    }));
+    h.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
+    const r = await wm.collectSystemInfoWorkload("h", { interfacesPolling: "unraid", storagePolling: null });
+    expect(r.data?.interfaces[0]).toMatchObject({ ifName: "br0.20", ipAddress: "10.0.20.2", macAddress: "AA:BB:CC:DD:EE:01", vlanId: 20 });
+  });
+
   it("answers nothing (not an empty table) for a running container missing from this tick's stats", async () => {
     h.fetchUnraidSnapshot.mockResolvedValue(snapshot({ containerUsage: new Map() }));
     h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));

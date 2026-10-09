@@ -556,6 +556,126 @@ export function parseUnraidHostUsage(data: any): WorkloadUsage & { interfaces: W
   };
 }
 
+// ─── Interface addressing ────────────────────────────────────────────────────
+
+/**
+ * `metrics.network` is traffic only — no address, MAC or speed. Addressing
+ * lives in `info.networkInterfaces` (current API) or, MAC + speed only, the
+ * older `info.devices.network`. Read on its own, never folded into the
+ * inventory query: a field the host's API does not know fails the WHOLE
+ * GraphQL query, and this must cost at most the addressing.
+ */
+export const UNRAID_IFACE_QUERIES = [
+  `query PolarisIfaces { info { networkInterfaces { name macAddress speed vlanId ipAddress ipv4Addresses { address } } } }`,
+  `query PolarisIfacesLegacy { info { devices { network { iface mac speed } } } }`,
+] as const;
+
+/** One row of addressing, keyed by interface name. */
+export interface UnraidIfaceAddressing {
+  ipAddress: string | null;
+  macAddress: string | null;
+  speedMbps: number | null;
+  vlanId: number | null;
+}
+
+/**
+ * Interfaces whose address is private to the host's Docker / libvirt plumbing:
+ * docker0 (172.17.0.1 on EVERY Docker host), user bridges (br-<id>), veth
+ * pairs, libvirt's virbr / vnet, and the macvlan `shim-` interfaces that mirror
+ * the host's own address. Their MAC still shows; their address is not
+ * recorded — an interface IP becomes an associated IP (IP history, path-check
+ * hop resolution, the application map, search), and one shared 172.17.0.1
+ * would tie every Unraid server in the fleet to the same address.
+ */
+const HOST_INTERNAL_IFACE_RE = /^(docker\d+|br-[0-9a-f]+|veth|virbr\d+|vnet\d+|shim-|vhost|tunl\d+)/i;
+
+function reportableIpv4(name: string, ip: string | null): string | null {
+  if (!ip || HOST_INTERNAL_IFACE_RE.test(name)) return null;
+  if (/^(127\.|169\.254\.|0\.)/.test(ip)) return null;
+  return ip;
+}
+
+/** Either query's answer → addressing by interface name. */
+export function parseUnraidIfaceAddressing(data: any): Map<string, UnraidIfaceAddressing> {
+  const out = new Map<string, UnraidIfaceAddressing>();
+  const mac = (v: unknown) => {
+    const s = str(v);
+    return s && !/^0{2}([:-]?0{2}){5}$/.test(s) ? s.toUpperCase().replace(/-/g, ":") : null;
+  };
+  const speed = (v: unknown) => {
+    const n = num(v);
+    return n !== null && n > 0 ? n : null; // -1 / 0 = no link or not reported
+  };
+  for (const i of (data?.info?.networkInterfaces ?? []) as any[]) {
+    const name = str(i?.name);
+    if (!name) continue;
+    const listed = ((i?.ipv4Addresses ?? []) as any[]).map((a) => str(a?.address)).find((a): a is string => !!a);
+    out.set(name, {
+      ipAddress: reportableIpv4(name, listed ?? str(i?.ipAddress)),
+      macAddress: mac(i?.macAddress),
+      speedMbps: speed(i?.speed),
+      vlanId: num(i?.vlanId),
+    });
+  }
+  for (const d of (data?.info?.devices?.network ?? []) as any[]) {
+    const name = str(d?.iface);
+    if (!name || out.has(name)) continue;
+    out.set(name, { ipAddress: null, macAddress: mac(d?.mac), speedMbps: speed(d?.speed), vlanId: null });
+  }
+  return out;
+}
+
+/** Fill the metrics rows' addressing; a row the addressing does not name is left as it was. */
+export function applyUnraidIfaceAddressing(
+  interfaces: WorkloadInterfaceReading[],
+  addressing: ReadonlyMap<string, UnraidIfaceAddressing>,
+): WorkloadInterfaceReading[] {
+  return interfaces.map((i) => {
+    const a = addressing.get(i.name);
+    if (!a) return i;
+    return {
+      ...i,
+      speedMbps: i.speedMbps ?? a.speedMbps,
+      ipAddress: a.ipAddress,
+      macAddress: a.macAddress,
+      vlanId: a.vlanId,
+    };
+  });
+}
+
+/**
+ * Which of UNRAID_IFACE_QUERIES each host answers, remembered so an older API
+ * is not sent a refused query every 30 s. Re-probed after IFACE_TIER_RETRY_MS
+ * so an Unraid upgrade is picked up without a restart. -1 = neither works.
+ */
+const IFACE_TIER_RETRY_MS = 6 * 60 * 60_000;
+const ifaceTierByHost = new Map<string, { tier: number; at: number }>();
+
+async function readUnraidIfaceAddressing(config: UnraidConfig): Promise<Map<string, UnraidIfaceAddressing>> {
+  const known = ifaceTierByHost.get(config.host);
+  const fresh = known && Date.now() - known.at < IFACE_TIER_RETRY_MS;
+  if (fresh && known.tier < 0) return new Map();
+  const tiers = fresh ? [known.tier] : UNRAID_IFACE_QUERIES.map((_, i) => i);
+  for (const tier of tiers) {
+    try {
+      const { data } = await unraidGraphql<any>(config, UNRAID_IFACE_QUERIES[tier]);
+      if (!fresh) ifaceTierByHost.set(config.host, { tier, at: Date.now() });
+      return parseUnraidIfaceAddressing(data);
+    } catch (err: any) {
+      logger.debug({ host: config.host, tier, err: err?.message }, "unraid: interface addressing query failed");
+      // Only a REFUSAL (the API answered with errors and no data — an unknown
+      // field) says this tier does not work here. A timeout or a dropped
+      // connection says nothing about the schema: give up this tick without
+      // remembering anything, or one blip would pin the legacy tier for hours.
+      if (!/^Unraid API error/.test(String(err?.message ?? ""))) return new Map();
+      // A remembered tier that is now refused (the API changed under us) re-probes next time.
+      if (fresh) { ifaceTierByHost.delete(config.host); return new Map(); }
+    }
+  }
+  ifaceTierByHost.set(config.host, { tier: -1, at: Date.now() });
+  return new Map();
+}
+
 /** Which top-level fields came back as errors (the key's role may hide some). */
 function failedRoots(errors: Array<{ path?: unknown }>): Set<string> {
   const out = new Set<string>();
@@ -769,12 +889,19 @@ export async function fetchUnraidSnapshot(config: UnraidConfig): Promise<Workloa
     vmsFailed: failed.has("vms") || !data?.vms,
   });
   const running = new Set(inventory.containers.filter((c) => c.state === "running").map((c) => c.platformId));
-  const stats = await sampleUnraidContainerStats(config, running, config.statsWindowMs);
+  // The addressing read rides the stats window's wait — it adds no time to
+  // the tick, and it never rejects.
+  const [stats, addressing] = await Promise.all([
+    sampleUnraidContainerStats(config, running, config.statsWindowMs),
+    readUnraidIfaceAddressing(config).catch(() => new Map<string, UnraidIfaceAddressing>()),
+  ]);
+  const host = parseUnraidHostUsage(data);
+  host.interfaces = applyUnraidIfaceAddressing(host.interfaces, addressing);
   return {
     fetchedAt: Date.now(),
     durationMs,
     inventory,
-    host: parseUnraidHostUsage(data),
+    host,
     vmUsage: new Map(),
     containerUsage: normalizeUnraidContainerUsage(stats, inventory.containers, inventory.host.cpuCount),
   };

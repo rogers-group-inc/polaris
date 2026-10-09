@@ -6,8 +6,12 @@ vi.mock("../../src/services/discovery/discoveryEngine.js", () => ({
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 const {
+  UNRAID_IFACE_QUERIES,
+  UNRAID_INVENTORY_QUERY,
+  applyUnraidIfaceAddressing,
   applyUnraidStorageLayout,
   containerOwnIp,
+  parseUnraidIfaceAddressing,
   normalizeUnraidContainerUsage,
   parseDockerMemUsage,
   parseDockerSize,
@@ -225,6 +229,64 @@ describe("applyUnraidStorageLayout", () => {
 
   it("leaves the pools untouched when the layout answer is missing", () => {
     expect(applyUnraidStorageLayout(pools, null)).toBe(pools);
+  });
+});
+
+describe("interface addressing", () => {
+  const metrics = parseUnraidHostUsage({
+    metrics: {
+      network: [
+        { name: "br0", operstate: "up", bytesReceived: "10", bytesSent: "20" },
+        { name: "eth0", operstate: "up", bytesReceived: "1", bytesSent: "2" },
+        { name: "docker0", operstate: "up", bytesReceived: "0", bytesSent: "0" },
+        { name: "wg0", operstate: "down", bytesReceived: "0", bytesSent: "0" },
+      ],
+    },
+  }).interfaces;
+
+  it("reads the current API's networkInterfaces: first listed IPv4, upper-case MAC, speed, VLAN", () => {
+    const a = parseUnraidIfaceAddressing({ info: { networkInterfaces: [
+      { name: "br0", macAddress: "aa:bb:cc:dd:ee:01", speed: -1, vlanId: null, ipAddress: "10.0.0.9", ipv4Addresses: [{ address: "10.0.0.2" }, { address: "10.0.0.3" }] },
+      { name: "eth0", macAddress: "aa:bb:cc:dd:ee:02", speed: 2500, vlanId: null, ipAddress: null, ipv4Addresses: [] },
+      { name: "br0.20", macAddress: "aa-bb-cc-dd-ee-03", speed: null, vlanId: 20, ipAddress: "10.0.20.2", ipv4Addresses: [] },
+    ] } });
+    expect(a.get("br0")).toEqual({ ipAddress: "10.0.0.2", macAddress: "AA:BB:CC:DD:EE:01", speedMbps: null, vlanId: null });
+    expect(a.get("eth0")).toEqual({ ipAddress: null, macAddress: "AA:BB:CC:DD:EE:02", speedMbps: 2500, vlanId: null });
+    expect(a.get("br0.20")).toMatchObject({ ipAddress: "10.0.20.2", macAddress: "AA:BB:CC:DD:EE:03", vlanId: 20 });
+  });
+
+  it("falls back to the older devices.network list for MAC + speed", () => {
+    const a = parseUnraidIfaceAddressing({ info: { devices: { network: [{ iface: "eth0", mac: "aa:bb:cc:dd:ee:02", speed: 1000 }] } } });
+    expect(a.get("eth0")).toEqual({ ipAddress: null, macAddress: "AA:BB:CC:DD:EE:02", speedMbps: 1000, vlanId: null });
+  });
+
+  it("records no address for Docker's own plumbing, link-local, or an all-zero MAC — but keeps their MAC", () => {
+    const a = parseUnraidIfaceAddressing({ info: { networkInterfaces: [
+      { name: "docker0", macAddress: "02:42:ac:11:00:01", ipv4Addresses: [{ address: "172.17.0.1" }] },
+      { name: "br-0a1b2c3d4e5f", macAddress: "02:42:00:00:00:02", ipv4Addresses: [{ address: "172.18.0.1" }] },
+      { name: "shim-br0", macAddress: "aa:bb:cc:dd:ee:09", ipv4Addresses: [{ address: "10.0.0.2" }] },
+      { name: "eth1", macAddress: "00:00:00:00:00:00", ipv4Addresses: [{ address: "169.254.3.4" }] },
+    ] } });
+    expect(a.get("docker0")).toMatchObject({ ipAddress: null, macAddress: "02:42:AC:11:00:01" });
+    expect(a.get("br-0a1b2c3d4e5f")!.ipAddress).toBeNull();
+    expect(a.get("shim-br0")!.ipAddress).toBeNull();
+    expect(a.get("eth1")).toMatchObject({ ipAddress: null, macAddress: null });
+  });
+
+  it("fills the metrics rows by name, keeping their counters, and leaves an unnamed row alone", () => {
+    const filled = applyUnraidIfaceAddressing(metrics, new Map([
+      ["br0", { ipAddress: "10.0.0.2", macAddress: "AA:BB:CC:DD:EE:01", speedMbps: null, vlanId: null }],
+      ["eth0", { ipAddress: null, macAddress: "AA:BB:CC:DD:EE:02", speedMbps: 2500, vlanId: null }],
+    ]));
+    expect(filled[0]).toMatchObject({ name: "br0", rxBytes: 10, ipAddress: "10.0.0.2", macAddress: "AA:BB:CC:DD:EE:01" });
+    expect(filled[1]).toMatchObject({ name: "eth0", speedMbps: 2500, macAddress: "AA:BB:CC:DD:EE:02" });
+    expect(filled[3]).toBe(metrics[3]);
+  });
+
+  it("asks for the addressing in queries of their own, never the inventory query", () => {
+    expect(UNRAID_INVENTORY_QUERY).not.toMatch(/networkInterfaces/);
+    expect(UNRAID_IFACE_QUERIES[0]).toMatch(/networkInterfaces/);
+    expect(UNRAID_IFACE_QUERIES[1]).toMatch(/devices \{ network/);
   });
 });
 
