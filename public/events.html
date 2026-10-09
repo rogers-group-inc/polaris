@@ -52,7 +52,10 @@
       <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;padding:0.5rem 0 1rem">
         <span></span>
         <div id="pagination-top" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
-        <div class="filter-bar" style="margin:0;padding:0;justify-self:end">
+        <!-- .filter-bar for its field shadows only: its own opaque fill and
+             sticky pin are for the full-width bar, and here they drew a dark
+             box behind "Show". -->
+        <div class="filter-bar" style="margin:0;padding:0;justify-self:end;background:none;position:static">
           <label>Show</label>
           <select id="filter-pagesize" style="width:auto">
             <option value="15" selected>15</option>

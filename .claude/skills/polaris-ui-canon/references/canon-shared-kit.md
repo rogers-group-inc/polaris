@@ -284,8 +284,9 @@ unselected page tab).
   tab strip's bottom border is the bar's one line) is UNFILLED — it never paints a box of its own. It casts NO shadow
   either: a bottom-only `box-shadow` on it was tried and dropped on 2026-10-08 — its blur still
   outlined the bar as a faint box over the glow. Its CONTENTS carry the shadows instead: buttons,
-  search field and tabs already had theirs, and the title, username and caret take
-  `--shadow-text` (per family) and the avatar `--shadow-control` — on every `.page-header`, frozen
+  search field and tabs already had theirs, the title takes `--shadow-title` (`--shadow-control`'s
+  two drop layers, so it lifts as far as the buttons beside it; text-shadow only), the username
+  and caret take `--shadow-text` (per family) and the avatar `--shadow-control` — on every `.page-header`, frozen
   or not. `--shadow-text` is the general token for loose text and glyphs on the page ground
   (`--shadow-control`'s counterpart for things with no box); the Application Map toolbar uses it on
   its labels and status, and as `drop-shadow()` on its native checkboxes and icon-button svgs, and

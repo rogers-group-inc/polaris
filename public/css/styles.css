@@ -98,6 +98,11 @@
      Fields and buttons take --shadow-control; this is its counterpart for
      things with no box. Per FAMILY, like --shadow-pill. */
   --shadow-text: 0 2px 4px rgba(0,0,0,.6);
+  /* The page title's: --shadow-control's two drop layers, so the title lifts
+     exactly as far as the buttons beside it. --shadow-text alone read as no
+     shadow at all on 1.35rem caps. Two layers, so text-shadow only — never
+     inside drop-shadow(), which takes one. */
+  --shadow-title: 0 3px 8px rgba(0,0,0,.85), 0 1px 3px rgba(0,0,0,.7);
   --shadow-md: 0 8px 32px rgba(0,0,0,.5);
   /* Drop shadow for a frosted panel that floats free of a screen edge — the
      modal. It paints --panel-glass-bg, only 70% opaque, so --shadow-md's
@@ -289,6 +294,7 @@
   --shadow-pill: 0 1px 2px rgba(60,40,10,.22);
   --shadow-tab-idle: 0 1px 3px rgba(60,40,10,.14);
   --shadow-text: 0 1px 2px rgba(60,40,10,.22);
+  --shadow-title: 0 2px 5px rgba(60,40,10,.22), 0 1px 2px rgba(60,40,10,.16);
   --shadow-sm: 0 1px 4px rgba(0,0,0,.08);
   --shadow-md: 0 8px 32px rgba(0,0,0,.12);
   --shadow-panel: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.10);
@@ -1775,7 +1781,7 @@ code {
    badge lift the same everywhere. Not a filter: drop-shadow() on the bar or
    the header would make it the backdrop root of the frosted "Dashboards ▾"
    menu (see ::before) and double the buttons' own shadows. */
-.page-header h2,
+.page-header h2 { text-shadow: var(--shadow-title); }
 .user-badge-name { text-shadow: var(--shadow-text); }
 .user-badge-avatar { box-shadow: var(--shadow-control); }
 .user-badge-caret { filter: drop-shadow(var(--shadow-text)); }
@@ -3374,6 +3380,7 @@ th.fav-col, td.fav-col { width: 20px; min-width: 20px; text-align: center; paddi
   margin-right: -4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  text-shadow: var(--shadow-text);
 }
 /* The page-level search / filter fields. Scoped to .filter-bar rather than put
    on the shared `input, select, textarea` rule: that one dresses every field in
