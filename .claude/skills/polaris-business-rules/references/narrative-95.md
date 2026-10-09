@@ -136,6 +136,25 @@ it, so a missed tick costs one request, not an outage. Rejected: the Responses A
 different dialect for no gain here) and a `max_completion_tokens` setting (deferred until
 someone needs it).
 
+Later the same day the owner chose Claude Haiku 5.5 on Foundry. Claude deployments do not
+speak chat completions: they serve Anthropic's Messages API at `/anthropic/v1/messages`, with
+`x-api-key` or an Entra token for `https://ai.azure.com/.default`. So that is a third API shape,
+`anthropic`. The owner chose Anthropic's official SDK (`@anthropic-ai/foundry-sdk`) over another
+hand-rolled transport. The SDK is the supported path, it tracks the event-stream format as
+Anthropic changes it, and it handles retries. The cost is two npm dependencies.
+
+Three things the SDK does not decide, kept in `llmService.ts`:
+- **credentials:** every one is passed explicitly, because the SDK otherwise falls back to
+  `ANTHROPIC_FOUNDRY_*` environment variables, and a variable left on a host would silently
+  change who Polaris authenticates as;
+- **idle timeout:** the SDK's timeout ends when the response headers arrive, so Polaris keeps
+  its own idle watchdog on the stream;
+- **thinking replay:** Claude's thinking blocks must go back unchanged with the tool calls they
+  preceded, so a round's raw blocks ride the next round's assistant message.
+
+No `temperature` is ever sent to Claude, because current Claude models refuse non-default
+sampling.
+
 ### (k) On a hosted model, the Efficiency Advisor is the model's own voice
 
 2026-10-09, the same day as (j). With Azure AI Foundry in place, the owner asked for a fuller

@@ -582,6 +582,18 @@ describe("streamAssistantTurn — Efficiency Advisor voice on Azure AI Foundry (
     expect(second[toolIdx + 1]).toEqual({ role: "system", content: PERSONA_SUSPENDED });
   });
 
+  it("carries a round's raw provider blocks onto the next round's assistant turn (Claude thinking replay)", async () => {
+    h.beginTurn.mockResolvedValueOnce({ question: "how many networks?" });
+    const raw = [{ type: "thinking", thinking: "", signature: "s" }, { type: "tool_use", id: "t1", name: "list_networks", input: {} }];
+    let second: any[] = [];
+    h.chatCompletionRound
+      .mockImplementationOnce(async () => ({ content: "", toolCalls: [{ id: "t1", type: "function", function: { name: "list_networks", arguments: "{}" } }], finishReason: "tool_calls", raw }))
+      .mockImplementationOnce(async (c: any, m: any[], t: any, o: any) => { second = [...m]; return say("42.")(c, m, t, o); });
+    h.runAssistantTool.mockResolvedValueOnce({ ok: true, data: { total: 42, rows: [] } });
+    await run({ integration: azure }).p;
+    expect(second.find((m) => m.role === "assistant")?.raw).toBe(raw);
+  });
+
   it("picks the voice from the toggle and the provider", () => {
     expect(advisorVoice(true, undefined)).toBe("canned");
     expect(advisorVoice(true, "openai")).toBe("canned");

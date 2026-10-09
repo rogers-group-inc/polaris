@@ -748,7 +748,7 @@ async function loadIntegrations() {
           : (config.useHttps ? "https" : "http") + "://" + (config.host || "-") + ":" + (config.port || 11434) + (config.basePath || "");
         detailRows =
           '<div class="detail-row"><span class="detail-label">Assistant Name</span><span class="detail-value">' + escapeHtml(config.displayName || "Assistant") + '</span></div>' +
-          '<div class="detail-row"><span class="detail-label">Provider</span><span class="detail-value">' + (llmAzure ? "Azure AI Foundry" + (config.azureApiShape === "deployments" ? " (deployments API " + escapeHtml(config.azureApiVersion || "") + ")" : " (v1 API)") : "Local / OpenAI-compatible") + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Provider</span><span class="detail-value">' + (llmAzure ? "Azure AI Foundry" + (config.azureApiShape === "anthropic" ? " (Claude)" : config.azureApiShape === "deployments" ? " (deployments API " + escapeHtml(config.azureApiVersion || "") + ")" : " (v1 API)") : "Local / OpenAI-compatible") + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Endpoint</span><span class="detail-value mono">' + escapeHtml(llmEndpoint) + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">' + (llmAzure ? "Deployment" : "Model") + '</span><span class="detail-value mono">' + (config.model ? escapeHtml(config.model) : '<span style="color:var(--color-text-tertiary)">Auto (the server\'s first tool-calling model)</span>') + '</span></div>' +
           (llmAzure && config.azureAuth === "entra"
@@ -5428,8 +5428,9 @@ function llmFormHTML(defaults) {
     '<div class="llm-azure-only">' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
         '<div class="form-group"><label>API shape</label><select id="f-azureApiShape">' +
-          '<option value="v1"' + (d.azureApiShape === "deployments" ? "" : " selected") + '>v1 (/openai/v1)</option>' +
-          '<option value="deployments"' + (d.azureApiShape === "deployments" ? " selected" : "") + '>Deployments (dated api-version)</option>' +
+          '<option value="v1"' + (d.azureApiShape === "deployments" || d.azureApiShape === "anthropic" ? "" : " selected") + '>GPT — v1 (/openai/v1)</option>' +
+          '<option value="deployments"' + (d.azureApiShape === "deployments" ? " selected" : "") + '>GPT — deployments (dated api-version)</option>' +
+          '<option value="anthropic"' + (d.azureApiShape === "anthropic" ? " selected" : "") + '>Claude (Anthropic Messages API)</option>' +
         '</select></div>' +
         '<div class="form-group" id="f-azureApiVersion-group"><label>API version</label><input type="text" id="f-azureApiVersion" value="' + escapeHtml(d.azureApiVersion || "2024-10-21") + '" placeholder="2024-10-21"></div>' +
       '</div>' +
@@ -5443,7 +5444,7 @@ function llmFormHTML(defaults) {
           '<div class="form-group"><label>Client ID *</label><input type="text" id="f-clientId" value="' + escapeHtml(d.clientId || "") + '" placeholder="Application (client) ID"></div>' +
         '</div>' +
         '<div class="form-group"><label>Client secret *</label><input type="password" id="f-clientSecret" value="" placeholder="' + escapeHtml(d.clientSecretPlaceholder || "The app registration's client secret") + '" autocomplete="new-password"><p class="hint">Stored encrypted. Give the app\'s service principal the <strong>Cognitive Services OpenAI User</strong> role on the Azure OpenAI / Foundry resource.</p></div>' +
-        '<div class="form-group"><label>Token scope</label><input type="text" id="f-azureScope" value="' + escapeHtml(d.azureScope || "https://cognitiveservices.azure.com/.default") + '"><p class="hint">Advanced — leave as is unless your cloud uses a different audience.</p></div>' +
+        '<div class="form-group"><label>Token scope</label><input type="text" id="f-azureScope" value="' + escapeHtml(d.azureScope || "") + '" placeholder="Default for the API shape"><p class="hint">Advanced — leave blank for the default: <code>https://cognitiveservices.azure.com/.default</code> for GPT, <code>https://ai.azure.com/.default</code> for Claude.</p></div>' +
       '</div>' +
     '</div>' +
     '<div class="form-group" id="f-apiToken-group"><label id="f-apiToken-label">' + (azure ? "API key *" : "API key") + '</label><input type="password" id="f-apiToken" value="" placeholder="' + escapeHtml(d.apiTokenPlaceholder || "Optional — only if the server requires one") + '" autocomplete="new-password"><p class="hint" id="f-apiToken-hint">' + (azure ? "Stored encrypted. Key 1 or Key 2 from the resource's Keys and Endpoint page." : "Stored encrypted. Ollama and LM Studio need none by default.") + '</p></div>' +
@@ -5455,7 +5456,7 @@ function llmFormHTML(defaults) {
       '</div>' +
       '<div id="f-llm-model-status" class="hint" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">Load the server\'s models (Test Connection does too) to pick one and see which support tool calling.</div>' +
     '</div>' +
-    '<div class="form-group llm-azure-only">' +
+    '<div class="form-group llm-azure-only" id="f-omitTemperature-group">' +
       '<div style="display:flex;align-items:center;gap:8px">' +
         '<input type="checkbox" id="f-omitTemperature"' + (d.omitTemperature === true ? " checked" : "") + ' style="width:auto">' +
         '<label for="f-omitTemperature" style="margin:0">Omit temperature (reasoning models such as o-series and gpt-5)</label>' +
@@ -5519,7 +5520,7 @@ function getLlmFormConfig() {
     apiToken: val("f-apiToken"),
     model: val("f-model"),
     allowLoopback: document.getElementById("f-allowLoopback").checked,
-    azureApiShape: val("f-azureApiShape") === "deployments" ? "deployments" : "v1",
+    azureApiShape: val("f-azureApiShape") === "deployments" || val("f-azureApiShape") === "anthropic" ? val("f-azureApiShape") : "v1",
     azureApiVersion: val("f-azureApiVersion"),
     azureAuth: val("f-azureAuth") === "entra" ? "entra" : "apiKey",
     tenantId: val("f-tenantId"),
@@ -5561,6 +5562,8 @@ function _applyLlmProvider(id) {
   document.querySelectorAll(".llm-azure-only").forEach(function (el) { show(el, azure); });
   document.querySelectorAll(".llm-entra-only").forEach(function (el) { show(el, azure && entra); });
   show(document.getElementById("f-azureApiVersion-group"), azure && val("f-azureApiShape") === "deployments");
+  // Claude never gets `temperature` (llmService.anthropicRound), so the box only applies to GPT shapes.
+  show(document.getElementById("f-omitTemperature-group"), azure && val("f-azureApiShape") !== "anthropic");
   show(document.getElementById("f-apiToken-group"), !(azure && entra));
   var set = function (elId, text) { var el = document.getElementById(elId); if (el) el.textContent = text; };
   set("f-host-label", azure ? "Endpoint *" : "Host / IP *");

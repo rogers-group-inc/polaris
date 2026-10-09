@@ -53,16 +53,17 @@ result until the next save checks again.
 
 ### Azure AI Foundry
 
-Choose **Azure AI Foundry** as the Provider to use a GPT deployment from an Azure
-OpenAI or Foundry resource. The form then shows:
+Choose **Azure AI Foundry** as the Provider to use a **GPT** deployment from an
+Azure OpenAI or Foundry resource, or a **Claude** deployment (Claude Haiku,
+Sonnet or Opus from the Foundry model catalog). The form then shows:
 
 | Field | |
 |---|---|
-| Endpoint | the resource's endpoint from its **Keys and Endpoint** page, e.g. `https://my-resource.openai.azure.com` (a `…services.ai.azure.com` endpoint works too). Paste it whole — anything from `/openai` on is ignored |
-| API shape | **v1** (the default — `/openai/v1`, no API version needed) or **Deployments** for the older dated path; Deployments also asks for an **API version** such as `2024-10-21` |
-| Authentication | **API key** — Key 1 or Key 2 from Keys and Endpoint — or **Entra ID app**: the app registration's Tenant ID, Client ID and Client secret. Give the app's service principal the **Cognitive Services OpenAI User** role on the resource. Keys and secrets are stored encrypted. **Token scope** is advanced; leave it at `https://cognitiveservices.azure.com/.default` unless your cloud needs another |
+| Endpoint | the resource's endpoint from its **Keys and Endpoint** page, e.g. `https://my-resource.openai.azure.com` (a `…services.ai.azure.com` endpoint works too). For Claude, paste the deployment's **Target URI**. Paste it whole — anything from `/openai` or `/anthropic` on is ignored |
+| API shape | for GPT, **v1** (the default — `/openai/v1`, no API version needed) or **Deployments** for the older dated path, which also asks for an **API version** such as `2024-10-21`. For a Claude deployment choose **Claude (Anthropic Messages API)** |
+| Authentication | **API key** — Key 1 or Key 2 from Keys and Endpoint — or **Entra ID app**: the app registration's Tenant ID, Client ID and Client secret. Give the app's service principal the **Cognitive Services OpenAI User** role on the resource (for Claude, **Foundry User** or **Cognitive Services User**). Keys and secrets are stored encrypted. **Token scope** is advanced; leave it blank for the default (`https://cognitiveservices.azure.com/.default` for GPT, `https://ai.azure.com/.default` for Claude) |
 | Deployment name | the name **you gave the deployment** in Foundry, not the model's name. Foundry cannot list deployments, so there is no Load models button |
-| Omit temperature | tick for reasoning models (o-series, gpt-5), which refuse it. If you forget, Polaris retries once without it |
+| Omit temperature | GPT only: tick for reasoning models (o-series, gpt-5), which refuse it. If you forget, Polaris retries once without it. Claude never gets a temperature, so the box is hidden |
 
 **Test Connection** sends one short chat message to the deployment, the only way
 to prove the endpoint, the credential and the deployment name are all right. The
@@ -224,5 +225,6 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 | Azure: "refused the app registration (HTTP 403)" | the app has no data-plane access — grant its service principal **Cognitive Services OpenAI User** on the resource (role assignments can take a few minutes to apply) |
 | Azure: "Deployment … was not found (HTTP 404)" | **Deployment name** holds the model name instead of the deployment's name, or the resource does not support the chosen API shape — try **Deployments** |
 | Azure: "Unsupported parameter: 'temperature'" | a reasoning model; tick **Omit temperature** |
+| Azure Claude: refused or not found right after the deployment was created | check **API shape** is **Claude (Anthropic Messages API)** and Deployment name matches the deployment exactly |
 
 Rule: [95](Business-Rules#rule-95).

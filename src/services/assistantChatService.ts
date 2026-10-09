@@ -542,7 +542,9 @@ export async function streamAssistantTurn(input: {
       const spoke = Boolean(roundText.trim());
       if (calls.length === 0 || lastRound) break;
 
-      messages.push({ role: "assistant", content: spoke ? roundText : null, tool_calls: calls });
+      // `raw` (Claude's own blocks, thinking included) is replayed verbatim —
+      // but only for calls the model really made, not ones recovered from text.
+      messages.push({ role: "assistant", content: spoke ? roundText : null, tool_calls: calls, raw: calls === res.toolCalls ? res.raw : undefined });
       // A round that spoke before calling tools ("Let me check…") gets a
       // paragraph break so the next round's text doesn't run on.
       if (spoke && !answer.endsWith("\n")) onText("\n\n");

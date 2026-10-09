@@ -1043,13 +1043,15 @@ const LlmConfigSchema = z.preprocess(normalizeLlmProviderInput, z.object({
   allowLoopback:    z.boolean().optional().default(false),
   verboseLogging:   z.boolean().optional().default(false),
   // Azure AI Foundry only (provider "azure"); ignored for an OpenAI-compatible server.
-  azureApiShape:    z.enum(["v1", "deployments"]).optional().default("v1"),
+  // "anthropic" = a Claude deployment on the Messages API, through the official Foundry SDK.
+  azureApiShape:    z.enum(["v1", "deployments", "anthropic"]).optional().default("v1"),
   azureApiVersion:  z.string().trim().max(40).optional().default(llm.AZURE_DEFAULTS.apiVersion),
   azureAuth:        z.enum(["apiKey", "entra"]).optional().default("apiKey"),
   tenantId:         z.string().trim().max(100).optional().default(""),
   clientId:         z.string().trim().max(100).optional().default(""),
   clientSecret:     z.string().max(2048).optional().default(""),
-  azureScope:       z.string().trim().max(300).optional().default(llm.AZURE_DEFAULTS.scope),
+  // Blank = the API shape's own audience (llmService.azureScope).
+  azureScope:       z.string().trim().max(300).optional().default(""),
   omitTemperature:  z.boolean().optional().default(false),
 }).superRefine((cfg, ctx) => {
   if (cfg.host && isBlockedLlmHost(cfg.host, cfg.allowLoopback)) {
@@ -1070,7 +1072,7 @@ const LlmConfigSchema = z.preprocess(normalizeLlmProviderInput, z.object({
     need(!!cfg.tenantId, "tenantId", "Tenant ID is required for Entra ID authentication");
     need(!!cfg.clientId, "clientId", "Client ID is required for Entra ID authentication");
     need(!!cfg.clientSecret, "clientSecret", "Client secret is required for Entra ID authentication");
-    need(/^https:\/\/\S+$/.test(cfg.azureScope), "azureScope", "Token scope must be an https:// URI, e.g. https://cognitiveservices.azure.com/.default");
+    need(!cfg.azureScope || /^https:\/\/\S+$/.test(cfg.azureScope), "azureScope", "Token scope must be blank (the default) or an https:// URI, e.g. https://cognitiveservices.azure.com/.default");
   } else {
     need(!!cfg.apiToken, "apiToken", "API key is required for Azure AI Foundry key authentication");
   }

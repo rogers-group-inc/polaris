@@ -41,6 +41,31 @@ function startFakeLlm(): Promise<void> {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", () => {
+      // Standing in for a Claude deployment on Foundry: the Messages API event stream.
+      if (req.url === "/anthropic/v1/messages") {
+        if (req.headers["x-api-key"] !== "claude-key") {
+          res.writeHead(401, { "Content-Type": "application/json" });
+          res.end('{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}');
+          return;
+        }
+        const j = JSON.parse(body || "{}");
+        const probe = (j.tools || []).some((t: any) => t.name === "polaris_probe");
+        const ev = (o: any) => res.write(`event: ${o.type}\ndata: ${JSON.stringify(o)}\n\n`);
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        ev({ type: "message_start", message: { id: "m", type: "message", role: "assistant", model: j.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } });
+        if (probe) {
+          ev({ type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tu", name: "polaris_probe", input: {} } });
+          ev({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"ok":true}' } });
+        } else {
+          ev({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+          ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "OK" } });
+        }
+        ev({ type: "content_block_stop", index: 0 });
+        ev({ type: "message_delta", delta: { stop_reason: probe ? "tool_use" : "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } });
+        ev({ type: "message_stop" });
+        res.end();
+        return;
+      }
       // Standing in for Azure AI Foundry (rule 95(j)): its paths, its api-key header.
       if (req.url?.startsWith("/openai/")) {
         if (req.headers["api-key"] !== "az-key" || req.headers.authorization) {
@@ -309,6 +334,26 @@ d("llm integration — Azure AI Foundry provider (rule 95(j))", () => {
     const after = (await prisma.integration.findUnique({ where: { id: integrationId } }))!.config as any;
     expect(after.provider).toBe("openai");
     expect(after.toolCheck).toMatchObject({ result: "yes" });
+  });
+
+  it("a Claude deployment (shape anthropic): pasted Target URI, Test Connection and check-tools through the SDK", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const body = {
+      type: "llm",
+      name: `${AZ} claude`,
+      config: { provider: "azure", azureApiShape: "anthropic", host: `http://127.0.0.1:${llmPort}/anthropic/v1/messages`, allowLoopback: true, model: "claude-haiku-5-5", apiToken: "claude-key" },
+    };
+    const created = await agent.post("/api/v1/integrations").set("X-CSRF-Token", csrf).send(body);
+    expect(created.status).toBe(201);
+    expect(created.body.config).toMatchObject({ host: "127.0.0.1", basePath: "", azureApiShape: "anthropic", azureScope: "" });
+    const t = await agent.post(`/api/v1/integrations/${created.body.id}/test`).set("X-CSRF-Token", csrf);
+    expect(t.body).toMatchObject({ ok: true });
+    expect(t.body.message).toMatch(/Claude Messages API/);
+    const tools = await agent.post(`/api/v1/integrations/${created.body.id}/llm/check-tools`).set("X-CSRF-Token", csrf);
+    expect(tools.body).toMatchObject({ model: "claude-haiku-5-5", result: "yes" });
+    const wrong = await agent.post("/api/v1/integrations/test").set("X-CSRF-Token", csrf).send({ ...body, config: { ...body.config, apiToken: "nope" } });
+    expect(wrong.body.message).toMatch(/refused the API key/);
+    expect((await agent.delete(`/api/v1/integrations/${created.body.id}`).set("X-CSRF-Token", csrf)).status).toBeLessThan(300);
   });
 
   it("deleting it removes its token and role like any llm integration", async () => {
