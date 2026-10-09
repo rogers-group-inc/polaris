@@ -6563,7 +6563,7 @@ function assetAgentSubpanelHTML(a, agent) {
         : '');
   }
 
-  return '<div id="asset-agent-panel" data-asset-id="' + escapeHtml(a.id) + '" style="margin:0 0 1.5rem;padding:1rem;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface)">' +
+  return '<div id="asset-agent-panel" data-asset-id="' + escapeHtml(a.id) + '" style="margin:0 0 1.5rem;padding:1rem;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface);box-shadow:var(--shadow-card)">' +
     '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.5rem">' +
       '<h4 style="margin:0;display:flex;align-items:baseline;gap:0.5rem">Polaris Agent ' + headerBadge + '</h4>' +
     '</div>' +
@@ -6867,7 +6867,7 @@ function assetFirmwarePanelHTML(a, fw) {
   }
   if (!fw.error && fw.schedule) body += _fwScheduleHTML(fw.schedule, canFlash);
   if (!fw.error && fw.state !== "running" && fw.lastRun) body += _fwRunResultHTML(fw.lastRun);
-  return '<div id="asset-firmware-panel" data-asset-id="' + escapeHtml(a.id) + '" style="margin:0 0 1.5rem;padding:1rem;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface)">' +
+  return '<div id="asset-firmware-panel" data-asset-id="' + escapeHtml(a.id) + '" style="margin:0 0 1.5rem;padding:1rem;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface);box-shadow:var(--shadow-card)">' +
     '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.5rem">' +
       '<h4 style="margin:0;display:flex;align-items:baseline;gap:0.5rem">Firmware ' + badge + '</h4>' +
     '</div>' +
