@@ -28,6 +28,13 @@ vi.mock("../../src/services/monitoringService.js", () => ({
   resolveMonitorSettings: vi.fn(),
 }));
 
+// The Active Alerts feed asks which devices are maintenance-held (business
+// rule 16). Pinned against a real DB in tests/integration/alertMaintenanceHold;
+// here nothing is held, unless a test says otherwise.
+vi.mock("../../src/services/notificationService.js", () => ({
+  maintenanceHoldsByAsset: vi.fn(async () => new Map()),
+}));
+
 import * as noc from "../../src/services/nocDashboardService.js";
 import { prisma } from "../../src/db.js";
 import { resolveMonitorSettings } from "../../src/services/monitoringService.js";
@@ -500,6 +507,8 @@ describe("getRecentAlerts", () => {
       testRun: false,
       // Not held for quiet time (business rule 92).
       quietHeld: false,
+      // Not frozen by a maintenance window (business rule 16).
+      maintenanceHold: null,
     });
     // It reads ALERTS, never audit Events — the whole point of the feed.
     expect(eventFindMany).not.toHaveBeenCalled();

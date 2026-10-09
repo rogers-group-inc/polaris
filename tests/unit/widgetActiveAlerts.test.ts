@@ -38,6 +38,7 @@ interface AlertRow {
   acknowledgedBy?: string | null;
   acknowledgeNote?: string | null;
   raisedAt?: string;
+  maintenanceHold?: "self" | "upstream" | null;
   triggerType?: string | null;
   dependencyDown?: boolean;
   dependencyUpstream?: string | null;
@@ -118,6 +119,27 @@ describe("dependency-down badge (business rule 78)", () => {
     expect(badge.textContent).toBe("Dep. Down");
     expect(badge.getAttribute("title")).toContain("SW-PLANT-3");
     expect(rows[1].querySelector(".badge-monitor-dep-down")).toBeNull();
+  });
+});
+
+describe("maintenance pill (business rule 16)", () => {
+  // A window FREEZES an open alert rather than clearing it: still listed, but
+  // paging nobody. The pill is what tells a wallboard reader it is paused.
+  it("badges a frozen alert MAINT, dims it, and says which kind of hold in the tooltip", () => {
+    const el = render([
+      alert({ id: "self", severity: "warning", maintenanceHold: "self" }),
+      alert({ id: "up", severity: "warning", maintenanceHold: "upstream" }),
+      alert({ id: "plain", severity: "warning" }),
+    ], 3, { minSeverity: "warning", rowLimit: 100 });
+    const rows = rowsOf(el);
+    const self = rows[0].querySelector(".badge-maintenance");
+    expect(self.textContent).toBe("MAINT");
+    expect(self.getAttribute("title")).toContain("this device is in a maintenance window");
+    expect(rows[1].querySelector(".badge-maintenance").getAttribute("title")).toContain("upstream device");
+    expect(rows[2].querySelector(".badge-maintenance")).toBeNull();
+    // Dimmed like an acknowledged row — the severity pill carries the fade.
+    expect(rows[0].querySelector(".widget-pill").getAttribute("style")).toContain("opacity:.6");
+    expect(rows[2].querySelector(".widget-pill").getAttribute("style")).not.toContain("opacity");
   });
 });
 

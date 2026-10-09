@@ -215,7 +215,9 @@
     // Fading the whole row compounded .6 onto an already-tertiary grey and put
     // the owner's name near the AA floor — on precisely the rows someone still
     // has to read it off. Dim the alert, never the annotation on it.
-    var fade = r.acknowledged ? "opacity:.6" : "";
+    // A maintenance-frozen alert (business rule 16) dims the same way: it is
+    // listed, but nobody needs to act on it until the window ends.
+    var fade = r.acknowledged || r.maintenanceHold ? "opacity:.6" : "";
     var fadeTail = fade ? ";" + fade : "";      // append to an existing inline style
     var fadeAttr = fade ? ' style="' + fade + '"' : "";  // for a span carrying none
     // The automation's name is the row's title — it says what KIND of problem
@@ -272,6 +274,18 @@
       ? '<span class="badge badge-monitor-dep-down" style="margin-left:4px' + fadeTail + '" title="' +
         escapeHtml("Dependency down" + (r.dependencyUpstream ? " — upstream " + r.dependencyUpstream + " is down" : "")) + '">Dep. Down</span>'
       : "";
+    // Frozen for planned work (business rule 16): the device is in a
+    // maintenance window, or suppressed behind one. The alert stays listed —
+    // the problem predates the work — but pages nobody until the window ends,
+    // and the maintenance badge every other surface wears says so. The fade
+    // matches an acknowledged row: neither needs anyone right now.
+    var maint = r.maintenanceHold
+      ? '<span class="badge badge-maintenance" style="margin-left:4px" title="' +
+        escapeHtml(r.maintenanceHold === "upstream"
+          ? "Paused — an upstream device is in a maintenance window. No reminders or escalation until it ends."
+          : "Paused — this device is in a maintenance window. No reminders or escalation until it ends.") +
+        '">MAINT</span>'
+      : "";
     // An acknowledged alert is still active — hiding it would surprise, so it
     // stays listed and says who has it, and the alert dims to push the
     // unhandled alerts forward on a wallboard.
@@ -310,7 +324,7 @@
     return "<" + tag + ' class="recent-item' + (actionable ? " recent-item-link" : "") + '"' + attrs +
       ' style="border-left:3px solid ' + bar + ';padding-left:8px">' +
       '<div style="min-width:0">' +
-        '<div class="recent-item-title"><span class="widget-pill ' + pillCls + '" style="margin-right:6px' + fadeTail + '">' + escapeHtml(sev) + '</span>' + test + quiet + title + group + who + dim + dep + ack + '</div>' +
+        '<div class="recent-item-title"><span class="widget-pill ' + pillCls + '" style="margin-right:6px' + fadeTail + '">' + escapeHtml(sev) + '</span>' + test + quiet + title + group + who + dim + dep + maint + ack + '</div>' +
         '<div class="recent-item-meta"' + fadeAttr + '>' + escapeHtml(r.message || "") + '</div>' +
       '</div>' +
       '<span class="recent-item-time">' + timeAgo(r.raisedAt) + '</span>' +

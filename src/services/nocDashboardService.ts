@@ -39,6 +39,7 @@ import { queryProbeLossRatios } from "./probeLossQuery.js";
 import { createTtlCache } from "../utils/ttlCache.js";
 import { ALERT_SEVERITY_RANK } from "../utils/alertSeverity.js";
 import { getActiveMaintenanceSchedules } from "./maintenanceScheduleService.js";
+import { maintenanceHoldsByAsset } from "./notificationService.js";
 
 // Asset types treated as "infrastructure" for the uptime % gauge — mirrors the
 // SolarWinds Fortinet-only uptime tile. These are the built-in network-gear
@@ -1228,6 +1229,11 @@ export interface AlertRow {
    *  period ends. The widget pills it QUIET so a wallboard reader knows the
    *  silence is deliberate. */
   quietHeld: boolean;
+  /** FROZEN for planned work (business rule 16): "self" — the device is in a
+   *  maintenance window; "upstream" — it is suppressed behind one. Null
+   *  otherwise. A frozen alert stays listed (the problem predates the work)
+   *  but pages nobody, and the widget pills it MAINT so it reads as paused. */
+  maintenanceHold: "self" | "upstream" | null;
 }
 
 export interface ActiveAlerts {
@@ -1296,7 +1302,10 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     },
     orderBy: { triggeredAt: "desc" },
   });
-  const triggerTypeByRule = await triggerTypesFor(rows);
+  const [triggerTypeByRule, holds] = await Promise.all([
+    triggerTypesFor(rows),
+    maintenanceHoldsByAsset(rows.map((n) => n.assetId ?? "")),
+  ]);
   const out: AlertRow[] = rows.map((n) => ({
     id: n.id,
     assetId: n.assetId ?? null,
@@ -1321,6 +1330,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     dependencyUpstream: dependencyUpstreamOf(n.dependencyBlame),
     testRun: n.testRun === true,
     quietHeld: !!n.quietHeldAt && !n.quietSummarizedAt,
+    maintenanceHold: (n.assetId && holds.get(n.assetId)) || null,
   }));
   out.sort((a, b) => {
     const d = (ALERT_SEVERITY_RANK[b.severity] ?? 0) - (ALERT_SEVERITY_RANK[a.severity] ?? 0);

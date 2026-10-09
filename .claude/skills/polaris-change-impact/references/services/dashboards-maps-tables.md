@@ -306,7 +306,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
-## services/nocDashboardService.ts
+## services/nocDashboardService.ts
+
+- **Active Alerts rows carry `maintenanceHold`** (2026-10-08, business rule 16): `getRecentAlerts` asks `notificationService.maintenanceHoldsByAsset` once for the rows' asset ids (bounded by live alerts) and stamps "self" / "upstream" / null; the widget pills it MAINT (`badge-maintenance`) and dims the row like an acknowledged one. A unit test of this feed must mock `notificationService.js` — the prisma mock's bare `asset.findMany` returns undefined.
 
 **What it owns:** Fleet-wide read-only aggregates for the SolarWinds-style NOC dashboard widgets, surfaced via `GET /dashboard/noc-summary`.
 

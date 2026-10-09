@@ -757,6 +757,11 @@ Equal timestamps order by dimension **numerically**, so `port2` precedes
 Clearing ends the alert, stops escalation and runs the automation's reset
 actions, so it is confirmed.
 
+A purple **MAINT** badge beside the severity means the alert is paused for
+planned work: this device is in a maintenance window, or sits behind one that
+is. It stays listed but sends no reminders or escalation until the window ends
+(see [Dashboard](Dashboard) for the full behaviour).
+
 A **grouped** alert (one alert covering several components of this device)
 wears a **GROUP** pill beside its severity, and its message is a link. Click
 it and choose **Show alerts in this group…** to list every component the
