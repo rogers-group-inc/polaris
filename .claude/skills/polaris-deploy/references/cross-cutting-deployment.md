@@ -152,6 +152,13 @@ Four properties are load-bearing rather than incidental, all added 2026-09:
   the versioned package is the whole fix: no `$GITHUB_PATH` edit, no env override, and CI then
   exercises the same `source: "versioned-dir"` resolution production does. Both numbers are
   registered as `postgres-major` sites, so `check:versions` fails if they ever drift apart.
+- **The `integration` job pulls its service image through `public.ecr.aws/docker/library/`,
+  never from Docker Hub directly.** It is the same official `postgres` image served by AWS's
+  mirror of Docker Hub's library. Hosted runners share egress IPs, so an anonymous Docker Hub
+  pull hits `toomanyrequests` often enough to fail the job — and, because `build` needs it, to
+  publish no image — and a rerun lands on the same exhausted quota (2026-10-09). The
+  `check:versions` regex for the CI service image accepts that prefix; any new service
+  container goes through the same mirror.
 
 The Dependabot side of this (grouping, what is ignored, how to resolve a new pin) lives in
 `polaris-tech-lifecycle` → dependency-audit.md. `npm run check:versions` scans these files by
