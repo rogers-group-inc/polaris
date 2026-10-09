@@ -285,7 +285,11 @@ unselected page tab).
   either: a bottom-only `box-shadow` on it was tried and dropped on 2026-10-08 — its blur still
   outlined the bar as a faint box over the glow. Its CONTENTS carry the shadows instead: buttons,
   search field and tabs already had theirs, and the title, username and caret take
-  `--shadow-page-top-text` (per family) and the avatar `--shadow-control`. Never `filter:
+  `--shadow-text` (per family) and the avatar `--shadow-control` — on every `.page-header`, frozen
+  or not. `--shadow-text` is the general token for loose text and glyphs on the page ground
+  (`--shadow-control`'s counterpart for things with no box); the Application Map toolbar uses it on
+  its labels and status, and as `drop-shadow()` on its native checkboxes and icon-button svgs, and
+  gives its select `--shadow-control`. Never `filter:
   drop-shadow()` on the bar or `.page-header` — that makes it the backdrop root of the frosted
   "Dashboards ▾" menu and doubles the buttons' own shadows. (`.dashboard-tabs[hidden]` needs its own
   `display: none`: the strip's `display: flex` beat `[hidden]`, so with one dashboard an empty strip

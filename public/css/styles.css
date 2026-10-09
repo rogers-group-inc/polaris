@@ -93,11 +93,11 @@
      --shadow-pill, and it carries a fainter inset rim because in the dark
      family the rim is what reads as raised. */
   --shadow-tab-idle: 0 2px 4px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.03);
-  /* Drop shadow for the TEXT and glyphs in the frozen page header
-     (.page-top-sticky): the title, the username, the caret. The bar itself
-     casts none — any shadow on its box outlines the box. Per FAMILY, like
-     --shadow-pill. */
-  --shadow-page-top-text: 0 2px 4px rgba(0,0,0,.6);
+  /* Drop shadow for loose TEXT and glyphs resting on the page ground: the
+     page title, the username and caret, toolbar labels, bare icon buttons.
+     Fields and buttons take --shadow-control; this is its counterpart for
+     things with no box. Per FAMILY, like --shadow-pill. */
+  --shadow-text: 0 2px 4px rgba(0,0,0,.6);
   --shadow-md: 0 8px 32px rgba(0,0,0,.5);
   /* Drop shadow for a frosted panel that floats free of a screen edge — the
      modal. It paints --panel-glass-bg, only 70% opaque, so --shadow-md's
@@ -288,7 +288,7 @@
   --color-fill-subtle: rgba(0,0,0,0.05);
   --shadow-pill: 0 1px 2px rgba(60,40,10,.22);
   --shadow-tab-idle: 0 1px 3px rgba(60,40,10,.14);
-  --shadow-page-top-text: 0 1px 2px rgba(60,40,10,.22);
+  --shadow-text: 0 1px 2px rgba(60,40,10,.22);
   --shadow-sm: 0 1px 4px rgba(0,0,0,.08);
   --shadow-md: 0 8px 32px rgba(0,0,0,.12);
   --shadow-panel: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.10);
@@ -1771,13 +1771,14 @@ code {
    only from the bottom edge — outlined the bar as a faint box over the glow
    (tried and dropped 2026-10-08). Its CONTENTS cast the shadows instead. The
    buttons, search field and tabs already carry theirs; these are the parts
-   that had none. Not a filter: drop-shadow() on the bar or the header would
-   make it the backdrop root of the frosted "Dashboards ▾" menu (see
-   ::before) and double the buttons' own shadows. */
-.page-top-sticky .page-header h2,
-.page-top-sticky .user-badge-name { text-shadow: var(--shadow-page-top-text); }
-.page-top-sticky .user-badge-avatar { box-shadow: var(--shadow-control); }
-.page-top-sticky .user-badge-caret { filter: drop-shadow(var(--shadow-page-top-text)); }
+   that had none — on EVERY page header, frozen or not, so the title and user
+   badge lift the same everywhere. Not a filter: drop-shadow() on the bar or
+   the header would make it the backdrop root of the frosted "Dashboards ▾"
+   menu (see ::before) and double the buttons' own shadows. */
+.page-header h2,
+.user-badge-name { text-shadow: var(--shadow-text); }
+.user-badge-avatar { box-shadow: var(--shadow-control); }
+.user-badge-caret { filter: drop-shadow(var(--shadow-text)); }
 /* Inside the bar the header and the tab strip sit tight; the gap to the
    content below is the wrapper's margin. The header draws no rule of its own:
    the tab strip's bottom border is the bar's one line. */

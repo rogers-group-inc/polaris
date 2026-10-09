@@ -36,6 +36,12 @@
   width: auto;
   padding: 4px 8px;
   font-size: 13px;
+  /* Same lift as the filter box above it (--shadow-control); the global
+     select rule draws none. */
+  box-shadow: var(--shadow-control);
+}
+.appmap-toolbar-field select:focus {
+  box-shadow: var(--shadow-control), 0 0 0 2px rgba(79,195,247,0.15);
 }
 
 .appmap-check {
@@ -47,6 +53,16 @@
   cursor: pointer;
   user-select: none;
 }
+/* Every control in the toolbar casts a shadow: the boxed ones take
+   --shadow-control, the loose label text, the native checkboxes and the bare
+   icon buttons take --shadow-text. drop-shadow() on the checkbox and the
+   icon's svg, not box-shadow: it follows the drawn shape (the rounded box,
+   the glyph's strokes) rather than a rectangle. */
+.appmap-toolbar-field > span,
+.appmap-check,
+.appmap-status { text-shadow: var(--shadow-text); }
+.appmap-check input[type="checkbox"],
+.appmap-toolbar-actions .btn-icon svg { filter: drop-shadow(var(--shadow-text)); }
 
 /* Token/pill filter. The box stays a single-row input (pills live in their own
    row below) so a long filter set can never squeeze the typing area.
