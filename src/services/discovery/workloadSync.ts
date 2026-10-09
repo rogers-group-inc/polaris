@@ -249,8 +249,12 @@ export interface WorkloadDiscoveryResult {
 /** Live usage for one workload (or the host), as one monitor tick reads it. */
 export interface WorkloadUsage {
   /**
-   * A share of the WHOLE host, 0-100 — never docker's per-core figure (where
-   * 100 % is one core): each platform normalizes before it lands here.
+   * 0-100 of the capacity the workload can actually use — never docker's
+   * per-core figure (where 100 % is one core): each platform normalizes before
+   * it lands here. For an unconfined Docker container / App (Unraid, TrueNAS)
+   * that capacity is the WHOLE host; for a guest with its own vCPU allotment
+   * (a Proxmox VM or LXC) it is that allotment — the figure the guest itself
+   * would report. A host's is its own threads.
    */
   cpuPct: number | null;
   /** Per-core load, host only. */

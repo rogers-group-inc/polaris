@@ -47,6 +47,7 @@
 - [Azure Arc](Integration-Azure-Arc)
 - [Unraid](Integration-Unraid)
 - [TrueNAS SCALE](Integration-TrueNAS)
+- [Proxmox VE](Integration-Proxmox)
 - [Windows Server DHCP](Integration-Windows-Server)
 - [Polaris Agent](Polaris-Agent)
 - [Network Discovery (active scan)](Network-Discovery)

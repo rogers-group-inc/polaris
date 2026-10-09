@@ -15,7 +15,7 @@ discovery at `write`.
 
 ---
 
-## The nine types
+## The ten types
 
 | Type | Reads | Produces | Page |
 |---|---|---|---|
@@ -28,6 +28,7 @@ discovery at `write`.
 | **Azure Arc** | Azure Resource Manager | assets | [Azure Arc](Integration-Azure-Arc) |
 | **Unraid** | Unraid GraphQL API (7.2+) | host, VMs, containers | [Unraid](Integration-Unraid) |
 | **TrueNAS SCALE** | TrueNAS JSON-RPC WebSocket API (25.04+) | host, VMs, Apps | [TrueNAS SCALE](Integration-TrueNAS) |
+| **Proxmox VE** | Proxmox VE REST API (9.x), read-only | cluster nodes, VMs, LXC containers | [Proxmox VE](Integration-Proxmox) |
 
 Plus one integration that discovers nothing: **Local AI Assistant** — the model server
 behind the [AI assistant](AI-Assistant). It has no Discover button, no
@@ -55,7 +56,7 @@ The modal is tabbed, and the tab set depends on the type:
 | Active Directory | General → Monitoring → Directory |
 | Entra ID / Intune | General → Monitoring → Directory → Script Publishing |
 | Azure Arc | General → Monitoring → Script Publishing |
-| Windows Server, vCenter, Unraid, TrueNAS SCALE | General → Monitoring |
+| Windows Server, vCenter, Unraid, TrueNAS SCALE, Proxmox VE | General → Monitoring |
 | Local AI Assistant | one untabbed form — Model Server, then Assistant Behaviour ([AI assistant](AI-Assistant)) |
 
 Outside the Fortinet pair, the connection settings **and** the filters live on
@@ -79,7 +80,7 @@ Plus, on the integration row itself:
 | `name` | |
 | `enabled` | |
 | `autoDiscover` | on by default |
-| `pollInterval` | hours, 1–24 — 12 for most types, 4 for Windows Server, 1 for Unraid and TrueNAS |
+| `pollInterval` | hours, 1–24 — 12 for most types, 4 for Windows Server, 1 for Unraid, TrueNAS and Proxmox VE |
 
 ### Test Connection
 
@@ -130,12 +131,13 @@ Every integration carries a **Monitoring** tab: the integration tier of the
 | Entra / AD / Windows Server / Arc | Workstations · Servers (Arc adds Kubernetes) |
 | vCenter | VMs · ESXi hosts |
 | Unraid / TrueNAS | Host · Virtual Machines · Containers (Apps on TrueNAS) |
+| Proxmox VE | Nodes · Virtual Machines · Containers |
 
 Each block carries `addAsMonitored`, per-stream polling methods and credentials,
 and — on the classes that support it — agent auto-deploy and interface/storage
 auto-monitor. The AD, Entra, Arc and vCenter VM blocks carry the full set;
-Windows Server, ESXi hosts, Kubernetes clusters and the Unraid / TrueNAS
-classes carry `addAsMonitored` and streams only.
+Windows Server, ESXi hosts, Kubernetes clusters and the Unraid / TrueNAS /
+Proxmox VE classes carry `addAsMonitored` and streams only.
 
 AD, Entra, Arc and vCenter also carry **Verify network presence after
 discovery** (on by default) at the top of the tab — see
@@ -172,7 +174,9 @@ Unraid and TrueNAS add one more: **starting, stopping, restarting and updating
 a VM or container** from its asset, by a user with Assets Read-Write and only
 when the integration's API key is allowed to
 ([rule 94](Business-Rules#rule-94); see [Unraid](Integration-Unraid#workload-actions)
-and [TrueNAS SCALE](Integration-TrueNAS#workload-actions)).
+and [TrueNAS SCALE](Integration-TrueNAS#workload-actions)). Proxmox VE does
+not: it is monitored read-only, and its guests carry no action bar
+([Proxmox VE](Integration-Proxmox#read-only-by-design)).
 
 Everything else Polaris does is a **read**.
 

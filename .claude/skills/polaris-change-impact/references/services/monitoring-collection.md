@@ -251,34 +251,35 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/workloadMonitorService.ts
 
-**What it owns:** The `unraid` / `truenas` polling methods' collectors — response time, CPU/memory, interfaces, storage and hardware sensors for an Unraid / TrueNAS SCALE host, its VMs and its containers / Apps, all from ONE warm-cached `WorkloadSnapshot` per integration (`fetchWorkloadSnapshotCached`: `createTtlCache`, 30 s TTL, promise-shared, rejections never cached). `readWorkloadAsset` resolves the asset through its workload AssetSource row (never `discoveredByIntegration`) into `host | vm | container | absent | unreachable`. monitoringService dispatches each stream here BEFORE its IP guard.
+**What it owns:** The `unraid` / `truenas` / `proxmox` polling methods' collectors — response time, CPU/memory, interfaces, storage and hardware sensors for an Unraid / TrueNAS SCALE host or a Proxmox VE cluster node, its VMs and its containers / Apps / LXCs, all from ONE warm-cached `WorkloadSnapshot` per integration (`fetchWorkloadSnapshotCached`: `createTtlCache`, 30 s TTL, promise-shared, rejections never cached). The snapshot read is an explicit per-platform switch (`fetchPlatformSnapshot`) — never a fall-through to another platform's client. The cache entry indexes the snapshot as `hostsById` (keyed by the host externalId, `workloadHostExternalId(integrationId, host.key)`), `vmsById`, `containersById` (keyed by `workloadContainerKey`). `readWorkloadAsset` resolves the asset through its workload AssetSource row (never `discoveredByIntegration`) into `host | vm | container | absent | unreachable`; a host reading is `{ kind: "host", host, usage, snap }` with `usage` from `snap.hosts.get(workloadHostUsageKey(host.key))`. monitoringService dispatches each stream here BEFORE its IP guard.
 
 **Public API:** fetchWorkloadSnapshotCached, invalidateWorkloadSnapshot, readWorkloadAsset, probeWorkload, collectTelemetryWorkload, collectSystemInfoWorkload (optional `pinned` subset = the fast cadence), buildWorkloadSystemInfo, collectHardwareSensorsWorkload, WORKLOAD_SNAPSHOT_TTL_MS, WorkloadReading.
 
-**Cross-service deps:** unraidService.fetchUnraidSnapshot, truenasService.fetchTrueNasSnapshot; types from monitoringService and discovery/workloadSync (type-only imports — no runtime cycle).
+**Cross-service deps:** unraidService.fetchUnraidSnapshot, truenasService.fetchTrueNasSnapshot, proxmoxService.fetchProxmoxSnapshot; types from monitoringService and discovery/workloadSync (type-only imports — no runtime cycle).
 
-**Used by:** src/services/monitoringService.ts — `probeAsset`, `collectTelemetry`, `collectSystemInfo`, `collectFastFiltered`, `collectHardwareSensors` dispatch on `polling === "unraid" | "truenas"`. src/services/workloadActionService.ts — reads a FRESH snapshot (invalidate first) for the action handle and invalidates again afterwards.
+**Used by:** src/services/monitoringService.ts — `probeAsset`, `collectTelemetry`, `collectSystemInfo`, `collectFastFiltered`, `collectHardwareSensors` dispatch on `isWorkloadPollingMethod(polling)` (`unraid` / `truenas` / `proxmox`). src/services/workloadActionService.ts — reads a FRESH snapshot (invalidate first) for the action handle and invalidates again afterwards.
 
 **Invariants:**
 - `unreachable` SKIPS a VM / container probe (one NAS reboot must not declare sixty containers down; the placement edges then suppress them once the host fails) but FAILS the HOST probe — the host's own API not answering IS the finding about the host.
+- A cluster node the platform reports OFFLINE (`host.online === false` — the API answered through a peer) PROBES DOWN (`Proxmox VE reports this node offline`); it is not skipped. A host externalId missing from the snapshot is `absent` ("removed from the cluster?").
 - A workload missing from a list that failed to read this tick (`inventoryComplete: false` with an empty list — Docker / Apps stopped) is `unreachable`, never `absent`.
 - `other` state (DEPLOYING, STOPPING, NOSTATE) is a skipped probe — no verdict during a transition.
-- The probe reports `responseTimeMs: 0` — a state read carries no latency of the workload (operator decision 2026-10-07; the shared API round trip used to be charted and read as a slow device). It only ANSWERS response time for an asset with no address: `defaultPollingForSource` makes ICMP the default for any Unraid / TrueNAS asset with an `ipAddress` (`AssetMonitorContext.ipAddress` → `hasIp`).
+- The probe reports `responseTimeMs: 0` — a state read carries no latency of the workload (operator decision 2026-10-07; the shared API round trip used to be charted and read as a slow device). It only ANSWERS response time for an asset with no address: `defaultPollingForSource` makes ICMP the default for any Unraid / TrueNAS / Proxmox asset with an `ipAddress` (`AssetMonitorContext.ipAddress` → `hasIp`).
 - `WorkloadUsage.cpuPct` arrives as a share of the HOST — each platform service normalizes (unraidService divides docker's per-core figure by the thread count; TrueNAS already does). `clampPct` here is a 0-100 guard, NOT the normalization. An Unraid VM has NO usage source → telemetry `{supported:false}`, never a zero.
-- Storage + temperatures exist on the HOST only (storage = its pools, `mountPath` = pool name; temps = `sensorClass: "disk"`). A CONTAINER also answers interfaces — its own network's counters from `usage.interfaces`; a running container missing from this tick's stats window answers an ERROR (not an empty set, which would read as "no interfaces"); a stopped one an empty set. VMs answer `{supported:false}`. Each stream is gated on its own resolved method.
+- Storage + temperatures exist on the HOST only (storage = its pools, `mountPath` = pool name; temps = `sensorClass: "disk"`, read from `reading.host.disks` — that node's, not the integration's first host). Proxmox publishes no sensors, so its temperature stream defaults to null (`PROXMOX_STREAMS`). A CONTAINER also answers interfaces — its own network's counters from `usage.interfaces`; a running container missing from this tick's stats window answers an ERROR (not an empty set, which would read as "no interfaces"); a stopped one an empty set. A VM answers interfaces only when its usage carries `interfaces` (Proxmox: one cumulative "all interfaces" row from `netin` / `netout`); Unraid / TrueNAS VMs answer `{supported:false}`. Each stream is gated on its own resolved method.
 - A host's `memCachedBytes` / `memFreeBytes` (TrueNAS: the ARC) pass through only when the platform split them — onto the agent's band columns (recordTelemetryResult).
 
 **When changing this:**
-- A new stream for these methods = `WORKLOAD_STREAMS` (pollingCompatibility.ts) + `defaultPollingForSource` + a collector here + the dispatch branch in monitoringService + the assets.ts PUT guard + the browser mirrors in integrations.js.
+- A new stream for these methods = `WORKLOAD_STREAMS` / `PROXMOX_STREAMS` (pollingCompatibility.ts) + `defaultPollingForSource` + a collector here + the dispatch branch in monitoringService + the assets.ts PUT guard + the browser mirrors in integrations.js.
 - Keep `computeDueWork` and jobs/monitorAssets `canTelemetry` in lockstep if a gate ever needs to exclude these methods (today both pass them).
 
 ---
 
 ## services/workloadActionService.ts
 
-**What it owns:** Business rule 94 — operator actions on a VM or container / App discovered by an Unraid or TrueNAS SCALE integration: `runWorkloadAction` (start / stop / restart / update), `getWorkloadStatus` (live state + the verbs it allows, for the asset card), `checkWorkloadUpdates` (asks the host to re-check, then returns a fresh status and stamps `virtualization.updateAvailable`).
+**What it owns:** Business rule 94 — operator actions on a VM or container / App discovered by an Unraid or TrueNAS SCALE integration (Proxmox VE is READ-ONLY — `platformHasActions(platform)` is true for `unraid` / `truenas` only; its integration authenticates with a PVEAuditor token): `runWorkloadAction` (start / stop / restart / update), `getWorkloadStatus` (live state + the verbs it allows, for the asset card), `checkWorkloadUpdates` (asks the host to re-check, then returns a fresh status and stamps `virtualization.updateAvailable`).
 
-**Public API:** runWorkloadAction, getWorkloadStatus, checkWorkloadUpdates, allowedVerbs, WORKLOAD_VERBS, PAUSED_BY_STOP_KEY, WorkloadVerb, WorkloadStatus.
+**Public API:** runWorkloadAction, getWorkloadStatus, checkWorkloadUpdates, platformHasActions, allowedVerbs, WORKLOAD_VERBS, PAUSED_BY_STOP_KEY, WorkloadVerb, WorkloadStatus.
 
 **Cross-service deps:** workloadMonitorService (fresh snapshot + invalidate), unraidService.containerAction / vmAction / refreshUpdateChecks, truenasService.appAction / vmAction / refreshUpdateChecks, maintenanceScheduleService.openMaintenanceHold / releaseMaintenanceHold, monitorOverrideService.recomputeMonitorOverrideForAssets, eventLogService.logEvent.
 
@@ -290,6 +291,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Restart / update: hold opened before, released in `finally` (success or failure); the snapshot cache is invalidated afterwards. Holds are only taken on monitored assets (openMaintenanceHold's own rule).
 - Stop: no hold. `monitored=false` + override recompute + `virtualization.monitoringPausedByStop=true` (unless `pauseMonitoring: false`). Start resumes ONLY when that flag is set. workloadSync carries the flag across discovery runs — remove that carry and the next sync silently forgets the pause.
 - Every refusal / failure / success writes `asset.workload.<verb>`.
+- A platform without actions (Proxmox) gets `verbs: []` from `getWorkloadStatus`; `runWorkloadAction` and `checkWorkloadUpdates` refuse it with 400 before any snapshot read, hold or platform call. `dispatch` refuses anything not Unraid / TrueNAS explicitly — never a fall-through to the TrueNAS client.
 
 **When changing this:**
 - A new verb = `WORKLOAD_VERBS` + `allowedVerbs` + `dispatch` + both platform services + the hold map if it takes the device down + the asset card in public/js/assets.js.

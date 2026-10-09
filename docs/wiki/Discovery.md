@@ -3,7 +3,7 @@
 Discovery is how devices, networks, reservations and VIPs get into Polaris
 without anyone typing them.
 
-Nine integration types feed it. Every one is **optional and absent by
+Ten integration types feed it. Every one is **optional and absent by
 default** — but they are what Polaris is built around. An install with none
 still works (hand-entered assets, monitored over SNMP / SSH / WinRM / ICMP or
 the agent, plus the address registry), it just does the smaller half of the
@@ -20,6 +20,7 @@ job.
 | **[Azure Arc](Integration-Azure-Arc)** | Azure Resource Manager | assets |
 | **[Unraid](Integration-Unraid)** | Unraid GraphQL API | host, VMs, containers |
 | **[TrueNAS SCALE](Integration-TrueNAS)** | TrueNAS JSON-RPC WebSocket API | host, VMs, Apps |
+| **[Proxmox VE](Integration-Proxmox)** | Proxmox VE REST API (read-only) | cluster nodes, VMs, LXC containers |
 
 Runs are triggered manually, or by the scheduler on each integration's
 `pollInterval` (hours).
@@ -121,8 +122,9 @@ After the type-specific phases, a run performs up to four fleet-wide passes:
 | **Network-presence verification** | AD / Entra / Arc / vCenter | **on** |
 | **Directory (GAL) sync** | Entra / AD | **off** |
 
-Unraid and TrueNAS run none of them: their class blocks carry no agent or
-auto-monitor settings, and the host's own answer is the presence signal.
+Unraid, TrueNAS and Proxmox VE run none of them: their class blocks carry no
+agent or auto-monitor settings, and the host's (or cluster's) own answer is the
+presence signal.
 
 **Presence verification** establishes `Asset.lastSeen` for directory-sourced
 assets, cheapest signal first: already-fresh lastSeen → agent heartbeat →
@@ -176,6 +178,7 @@ Polaris picks the right integration and the right scope:
 | vCenter VM / host | by managed-object reference |
 | Arc machine | by ARM resource id |
 | Unraid / TrueNAS host, VM or container | **not offered** — Discover Now is disabled on these; the integration's own Discover reads the whole host in one call |
+| Proxmox VE node, VM or container | **not offered**, for the same reason — the integration's own Discover reads the whole cluster in one pass |
 
 A scoped run:
 
@@ -205,6 +208,7 @@ differences are deliberate.
 | Entra / Intune / AD | the directory object's own **disabled** flag; plus, **only when *Decommission missing* is turned on** (off by default), absence from the directory — judged by which integration *manages* the asset, and refused on a partial, empty or suspiciously shrunken read ([rule 70](Business-Rules#rule-70)) |
 | Azure Arc | **never writes status at all** |
 | Unraid / TrueNAS | absence of a VM or container from the host, if nothing else claims the asset — skipped on a partial read, refused when one read loses more than max(50, 20%) of the host's workloads |
+| Proxmox VE | the same rule across the cluster, plus **a node removed from the cluster** — nodes are checked against the same guard separately. A guest that migrated to another node is moved, not missing |
 
 **The vCenter rule is the one to internalise**: when a VM or host leaves the
 inventory, the stale vCenter source rows are deleted — and an asset thereby left

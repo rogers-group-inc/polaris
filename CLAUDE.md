@@ -1,6 +1,6 @@
 ## Project Overview
 
-**Polaris** is an **asset management and network monitoring tool**, focused on pulling the systems an operator already runs into one dashboard. Nine integrations — FortiManager / FortiGate, Entra ID / Intune, Active Directory, Windows DHCP, vCenter, Azure Arc, Unraid, TrueNAS SCALE — are read into one multi-source asset record, monitored over eight telemetry streams, and acted on by automations. Named after the North Star.
+**Polaris** is an **asset management and network monitoring tool**, focused on pulling the systems an operator already runs into one dashboard. Ten integrations — FortiManager / FortiGate, Entra ID / Intune, Active Directory, Windows DHCP, vCenter, Azure Arc, Unraid, TrueNAS SCALE, Proxmox VE — are read into one multi-source asset record, monitored over eight telemetry streams, and acted on by automations. Named after the North Star.
 
 **IPAM is one of the things it does, not the thing it is** (repositioned 2026-09-15). The address registry — blocks, networks, individual IPs, reservations, conflict prevention, utilization — is still a first-class surface and every rule governing it still stands; it simply is not the headline any more. When writing anything operator- or reader-facing, lead with assets, monitoring and integration, and treat address space as one capability among them.
 
