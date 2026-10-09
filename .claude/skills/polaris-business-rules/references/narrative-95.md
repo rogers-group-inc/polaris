@@ -222,6 +222,17 @@ voice of (h), on local models, to match: it no longer goes silent on an outage, 
 before-lookup line, and signs off from a `letDown` category whose lines blame the person
 ("Uptime was the one thing we asked of you.") and never mention a device.
 
+The persona text was rewritten the same evening after a live transcript on Haiku 5.5 showed three
+faults: the voice was tacked on as a closing clause, the model reused a sample quip almost
+verbatim, and it had no model of the character beyond adjectives. The rewrite describes who
+R.A.L.P.H. *is* (the productivity AI nobody asked for, certain it was assigned to improve this
+person, measuring the unmeasurable, cheerful and quietly disappointed), lists the devices it may
+draw on and tells it to vary them, asks for proportion (one clause in a short answer, never
+padding), forbids reusing a line within a conversation, and shows the SHAPE of three whole
+answers with the facts intact rather than isolated quips — which is what teaches the voice to
+live around the facts instead of after them. It also tells the character never to excuse a thin
+search, so the persona and the check-yourself rule pull the same way.
+
 What stays true: the persona text repeats the rules that kept (h) safe — facts come only
   from lookups, every step and figure stays exact and complete — and every code-side guard
   (report rows from the database, tables held after a report, link checking) is unchanged.
