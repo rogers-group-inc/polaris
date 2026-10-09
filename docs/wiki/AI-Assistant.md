@@ -136,6 +136,17 @@ context. Some things to try:
 - *Which networks are more than 80% full?*
 - *Build a report of every FortiSwitch with its serial and firmware.*
 - *How do I set up a maintenance window that repeats monthly?*
+- *How many devices are down in my region?*
+
+It knows **your role and access**, and the **regions and tags assigned to you**
+(from your role, your account and your sign-in groups) — so "my region" means
+your regions, and "how do I…" answers say whether your role can do it. That
+knowledge only shapes the answer: every lookup is still checked against your
+role.
+
+**Decommissioned** assets and **deprecated** (retired) networks are left out of
+answers, counts and reports unless you ask about them ("list the decommissioned
+switches"). Searching for one by name still finds it.
 
 ### Reports
 

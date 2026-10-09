@@ -210,11 +210,17 @@ not by a per-model guess (`advisorVoice`). The two voices never mix: on Azure no
 preface or sign-off is shown, because a scripted line beside a model already in character
 reads as two people talking.
 
-What Polaris still decides in code:
-- **when the voice is absent:** a question `asksAboutOutage` matches gets no persona at all;
-- **when it stops:** a lookup `lookupShowsOutage` matches appends `PERSONA_SUSPENDED` as a
-  system message after that round's tool results, so the rest of the turn is plain;
-- **what stays true:** the persona text repeats the rules that kept (h) safe — facts come only
+The first cut also had Polaris switch the voice off in code: no persona on a question
+`asksAboutOutage` matched, and a `PERSONA_SUSPENDED` system message once a lookup showed
+something down or critical. On a live NOC fleet (145 devices down) nearly every question tripped
+one or the other, and the owner saw "zero personality". On 2026-10-09 they chose to keep the
+character on through outages, under one rule written into `ADVISOR_PERSONA`: **never a joke
+about the devices, the outage or its impact.** Those facts are stated plainly. The character
+is aimed at the person instead: the company let down on their watch, the outage noted in their
+performance file. The code-side switch-off is gone; the canned voice of (h), on local models,
+still goes silent on an outage.
+
+What stays true: the persona text repeats the rules that kept (h) safe — facts come only
   from lookups, every step and figure stays exact and complete — and every code-side guard
   (report rows from the database, tables held after a report, link checking) is unchanged.
 

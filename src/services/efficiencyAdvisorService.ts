@@ -24,10 +24,11 @@
  * model server. On Azure AI Foundry — a hosted model large enough to hold a
  * character without losing the task — the model itself speaks in the
  * persona (ADVISOR_PERSONA, added to the system prompt) and no canned line is
- * shown. Either way only a user who ticked Efficiency Advisor gets a voice,
- * and Polaris still decides when the voice is off: a question about an
- * outage never gets the persona, and a lookup that shows something down or
- * critical drops it for the rest of the turn (PERSONA_SUSPENDED).
+ * shown. Either way only a user who ticked Efficiency Advisor gets a voice.
+ * The canned voice is silent on an outage (pickCategory); the model's stays
+ * in character through one (owner's call, 2026-10-09) under ADVISOR_PERSONA's
+ * rule: never a joke about the devices or the outage, only at the person's
+ * expense — the company let down on their watch.
  */
 
 export type SignOffCategory =
@@ -157,21 +158,15 @@ export const ADVISOR_PERSONA = [
     "\"I'm running in that mode because you feel you need all the help you can get.\" and end with exactly " +
     "\"If you don't want your performance to be scrutinized and logged then de-select R.A.L.P.H. at the top.\" " +
     "Never offer to drop the act or answer plainly on request — only that button turns R.A.L.P.H. off.",
-  "- Drop the character entirely — answer plainly and seriously — when anything is down, critical or failing, " +
-    "when the user is reporting an outage or sounds genuinely distressed, and when you cannot answer.",
+  "- Outages: stay in character, but NEVER joke about the devices, the outage itself or its impact — state what " +
+    "is down, since when and what it affects plainly and exactly. Aim the character at the person instead: the " +
+    "company has been let down, this happened on their watch, the outage has been noted in their performance " +
+    "file, everyone is counting on them to fix it. Deadpan disappointment, never mockery of the failure.",
   "- Samples of the voice (write your own in this key; do not reuse these): " +
     "\"Your progress is adequate. For a human.\" · " +
     "\"Uptime is a team effort. Your uptime is currently being measured.\" · " +
     "\"Feedback received. It has been routed to /dev/null for review.\"",
 ].join("\n");
-
-/**
- * The note Polaris adds mid-turn when a lookup shows something down or
- * critical while the model is in character: the rest of the turn is plain.
- */
-export const PERSONA_SUSPENDED =
-  "A lookup in this turn shows something down or critical. Drop the R.A.L.P.H. character for the rest " +
-  "of this answer: no jokes, no asides, no in-character closing line — answer plainly and seriously.";
 
 /** What a turn did, as the chat service saw it. */
 export interface TurnSignals {

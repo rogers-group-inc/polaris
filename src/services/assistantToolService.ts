@@ -28,7 +28,8 @@ import { prisma } from "../db.js";
 import { hasPermission, callerIsAdminEquivalent } from "../api/middleware/permissions.js";
 import { searchAll } from "./searchService.js";
 import { listNotifications } from "./notificationService.js";
-import { getEffectiveRegionTags } from "./regionScopeService.js";
+import { getEffectiveRegionTags, getEffectiveTagScopes } from "./regionScopeService.js";
+import { REGION_TAG_PREFIX } from "../utils/tagNormalize.js";
 import { queryEventsPage } from "./eventLogService.js";
 import { getRetentionSettings } from "./eventArchiveService.js";
 import { searchHelp } from "./helpIndexService.js";
@@ -221,6 +222,8 @@ const AssetArgs = z.object({
   monitorStatus: oneOrMany(z.enum(MONITOR_STATUSES)),
   monitored: z.boolean().optional(),
   tag: z.string().max(100).optional(),
+  region: oneOrMany(z.string().trim().min(1).max(100)),
+  myRegions: z.boolean().optional(),
   location: z.string().max(200).optional(),
   manufacturer: z.string().max(100).optional(),
   model: z.string().max(100).optional(),
@@ -245,7 +248,8 @@ const listAssetsTool: ListToolDef = {
   description:
     "List assets (devices) with filters. monitorStatus 'down' finds devices that are currently down. " +
     "assetType values include firewall, switch, access_point, server, workstation, printer, other. " +
-    "network filters to assets whose IP is inside a network CIDR.",
+    "network filters to assets whose IP is inside a network CIDR. Decommissioned assets are left out unless " +
+    "status includes \"decommissioned\" — pass it only when the person asks about decommissioned assets.",
   parameters: {
     type: "object",
     properties: {
@@ -254,7 +258,9 @@ const listAssetsTool: ListToolDef = {
       status: { type: "array", items: { type: "string", enum: [...ASSET_STATUSES] } },
       monitorStatus: { type: "array", items: { type: "string", enum: [...MONITOR_STATUSES] } },
       monitored: { type: "boolean" },
-      tag: { type: "string", description: "Exact tag, e.g. a region or site tag" },
+      tag: { type: "string", description: "Exact tag, e.g. a site tag" },
+      region: { type: "array", items: { type: "string" }, description: "Region names, e.g. [\"Southern Division\"] — assets in ANY of them" },
+      myRegions: { type: "boolean", description: "Only assets in the regions assigned to the person asking — use for \"my region\" / \"my sites\"" },
       location: { type: "string", description: "Location contains this text" },
       manufacturer: { type: "string" },
       model: { type: "string" },
@@ -286,10 +292,26 @@ const listAssetsTool: ListToolDef = {
       });
     }
     if (a.assetType) and.push({ assetType: { in: a.assetType } });
+    // Decommissioned assets are history, not inventory: left out unless the
+    // status filter asks for them (owner's call, 2026-10-09).
     if (a.status) and.push({ status: { in: a.status } });
+    else and.push({ status: { not: "decommissioned" } });
     if (a.monitorStatus) and.push({ monitorStatus: { in: a.monitorStatus }, monitored: true });
     if (typeof a.monitored === "boolean") and.push({ monitored: a.monitored });
     if (a.tag) and.push({ tags: { has: a.tag } });
+    // Regions ride assets as `region:<name>` tags — the same tags alert
+    // scoping snapshots (notificationEngine regionSnapshot), matched the same
+    // exact way. "My regions" are the person's ASSIGNED regions, admins
+    // included (an admin sees everything, but still has regions of their own).
+    let regionNames = a.region ?? [];
+    if (a.myRegions) {
+      const mine = ctx.req.session?.userId ? (await getEffectiveTagScopes(ctx.req.session.userId)).regions : [];
+      if (!mine.length) {
+        return { ok: false, data: { error: "No region is assigned to this person, so there is no \"my region\" to narrow to — ask which region they mean." } };
+      }
+      regionNames = [...regionNames, ...mine];
+    }
+    if (regionNames.length) and.push({ tags: { hasSome: Array.from(new Set(regionNames)).map((r) => REGION_TAG_PREFIX + r) } });
     if (a.location) {
       and.push({ OR: [
         { location: { contains: a.location, mode: "insensitive" } },
@@ -571,7 +593,7 @@ const listSubnetsTool: ListToolDef = {
     type: "object",
     properties: {
       search: { type: "string", description: "Matches the network name, CIDR or purpose" },
-      status: { type: "string", description: "available, reserved, deprecated" },
+      status: { type: "string", description: "available, reserved, deprecated. Deprecated (retired) networks are left out unless asked for here" },
       tag: { type: "string" },
       vlan: { type: "number" },
       minUtilizationPercent: { type: "number" },
@@ -590,7 +612,8 @@ const listSubnetsTool: ListToolDef = {
     if (!p.success) return invalid(p.error);
     const a = p.data;
     const where: Record<string, unknown> = {};
-    if (a.status) where.status = a.status;
+    // A deprecated (retired) network is left out unless asked for by status.
+    where.status = a.status ? a.status : { not: "deprecated" };
     if (a.tag) where.tags = { has: a.tag };
     if (a.vlan) where.vlan = a.vlan;
     if (a.search) {
@@ -717,7 +740,8 @@ const fleetSummaryTool: ToolDef = {
         const [byMonitor, byType, byStatus] = await Promise.all([
           prisma.asset.groupBy({ by: ["monitorStatus"], where: { monitored: true }, _count: { _all: true } }),
           prisma.asset.groupBy({ by: ["assetType"], where: { status: { not: "decommissioned" } }, _count: { _all: true } }),
-          prisma.asset.groupBy({ by: ["status"], _count: { _all: true } }),
+          // Decommissioned assets are left out of the overview (owner's call, 2026-10-09).
+          prisma.asset.groupBy({ by: ["status"], where: { status: { not: "decommissioned" } }, _count: { _all: true } }),
         ]);
         out.monitoredByStatus = Object.fromEntries(byMonitor.map((r) => [r.monitorStatus ?? "unknown", r._count._all]));
         out.assetsByType = Object.fromEntries(byType.map((r) => [r.assetType, r._count._all]));

@@ -58,6 +58,7 @@ import {
 } from "./assistantConversationService.js";
 import { WIKI_BASE_URL, wikiPageNames } from "./helpIndexService.js";
 import { FUNCTION_KEYS, normalizePermissions, isAdminEquivalentPermissions } from "../api/middleware/permissions.js";
+import { getEffectiveTagScopes } from "./regionScopeService.js";
 import {
   getMemoryEnabled,
   listMemory,
@@ -77,7 +78,6 @@ import {
   pickLookupLine,
   advisorVoice,
   ADVISOR_PERSONA,
-  PERSONA_SUSPENDED,
   type TurnSignals,
 } from "./efficiencyAdvisorService.js";
 
@@ -207,6 +207,28 @@ export function permissionsPromptBlock(snap: { name?: string; permissions?: unkn
   ].join("\n");
 }
 
+/**
+ * The person's scope, for the system prompt: the regions and free-form scope
+ * tags assigned to them (role + account + sign-in groups), so "my region"
+ * means something. The lookups do the narrowing — list_assets `myRegions`
+ * reads the same assignment server-side — so this text only tells the model
+ * what to ask for and how to word the answer. Exported for tests.
+ */
+export function scopePromptBlock(scope: { regions: string[]; tags: string[] } | null | undefined): string | null {
+  if (!scope) return null;
+  const lines: string[] = [];
+  if (scope.regions.length) {
+    lines.push(
+      `The person's regions: ${scope.regions.join(", ")}. "My region", "my sites" and similar mean these: ` +
+        "use list_assets with myRegions: true (or region: [names]) and say which regions the answer covers.",
+    );
+  } else {
+    lines.push("No region is assigned to this person. If they ask about \"my region\", ask which region they mean.");
+  }
+  if (scope.tags.length) lines.push(`Their other scope tags: ${scope.tags.join(", ")}.`);
+  return lines.join("\n");
+}
+
 /** The system prompt. Exported for tests. */
 export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?: string; displayName?: string; persona?: string; memory?: string; access?: string | null }): string {
   const now = opts.now ?? new Date();
@@ -242,6 +264,8 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
       "You cannot change, acknowledge, push or delete anything in Polaris; if asked, explain where " +
       "in Polaris the user can do it.",
     "- Keep answers concise. Use short Markdown tables for up to ~15 rows; offer a report for more.",
+    "- Leave decommissioned assets and deprecated (retired) networks out of answers and reports unless the person " +
+      "asks about them — the lookups already omit them unless their status is asked for.",
     "- Never mention your tools or their names (list_assets, create_report, …) to the user — say what you looked " +
       "up in plain words (\"I checked the networks\").",
   ];
@@ -466,10 +490,12 @@ export async function streamAssistantTurn(input: {
   // on this event, so its keep-alive covers a slow first token.
   emit("start", { question });
 
-  const [allTurns, advisor, memoryOn] = await Promise.all([
+  const [allTurns, advisor, memoryOn, scope] = await Promise.all([
     recentTurns(input.conversationId, config.contextMessages ?? LLM_DEFAULTS.contextMessages),
     getEfficiencyAdvisor(input.userId),
     getMemoryEnabled(input.userId),
+    // The person's regions + scope tags for the prompt; a failure only costs the hint.
+    getEffectiveTagScopes(input.userId).catch(() => null),
   ]);
   // Rule 95(i): the person's memory rides in the system prompt (so the
   // context budget below counts it) and the remember/forget tools are offered
@@ -496,7 +522,12 @@ export async function streamAssistantTurn(input: {
   // Which voice the advisor speaks in (rule 95(k)): Polaris's canned lines on
   // a local model, the model in character on Azure AI Foundry — never both.
   const voice = advisorVoice(advisor, config.provider);
-  let personaActive = voice === "model" && !signals.outage;
+  // The model's character stays on through outages too (owner's call,
+  // 2026-10-09): ADVISOR_PERSONA forbids joking about the devices or the
+  // outage and aims the character at the person instead. The canned voice
+  // (local models) still goes silent on an outage — that guard lives in
+  // pickCategory / the preface withdrawal below.
+  const personaActive = voice === "model";
   const systemPrompt = buildSystemPrompt({
     username: input.username,
     extra: config.systemPromptExtra,
@@ -504,7 +535,8 @@ export async function streamAssistantTurn(input: {
     // configured assistant name would give it two.
     displayName: personaActive ? undefined : config.displayName,
     persona: personaActive ? ADVISOR_PERSONA : undefined,
-    access: permissionsPromptBlock(req.roleSnapshot ?? req.session?.roleSnapshot),
+    access: [permissionsPromptBlock(req.roleSnapshot ?? req.session?.roleSnapshot), scopePromptBlock(scope)]
+      .filter(Boolean).join("\n") || null,
     memory: memoryTurn ? memoryPromptBlock(memoryTurn.entries, input.username) : undefined,
   });
   const turns = fitHistory(estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools)), allTurns, budget.promptTokens);
@@ -646,13 +678,6 @@ export async function streamAssistantTurn(input: {
           preface = null;
           emit("preface", { text: null });
         }
-      }
-      // In character and a lookup just showed something down or critical:
-      // the rest of the turn is plain (rule 95(k)). Added after the round's
-      // tool results, which must directly follow the call that asked for them.
-      if (personaActive && signals.outage) {
-        messages.push({ role: "system", content: PERSONA_SUSPENDED });
-        personaActive = false;
       }
     }
 

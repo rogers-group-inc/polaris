@@ -231,11 +231,11 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The principal side of region scope — both directions. READ: the shared effective-tag resolver, `union(role, user, group)` for region + other tags. WRITE: carrying a region RENAME into `User.regionTags` / `Role.regionTags` / `GroupMapping.regionTags`, and reporting who a region DELETE strands.
 
-**Public API:** `resolveTagScopesForUser(u)`, `getEffectiveRegionTags(userId)`, `TagScope`/`UserTagScopes`, `renameRegionInPrincipalScopes(previousName, nextName)`, `principalsScopedToRegion(name)`, `PrincipalScopeMoves`.
+**Public API:** `resolveTagScopesForUser(u)`, `getEffectiveRegionTags(userId)`, `getEffectiveTagScopes(userId)` (both dimensions; admins NOT treated as unscoped — it describes a person's assignment, it is not a visibility filter), `TagScope`/`UserTagScopes`, `renameRegionInPrincipalScopes(previousName, nextName)`, `principalsScopedToRegion(name)`, `PrincipalScopeMoves`.
 
 **Cross-service deps:** `prisma` (user + role + groupMapping), `groupMappingService.resolveGroupsToAccess`, `tagNormalize.unionTags` + `tagNormalize.renameTagInList` (pure rewrite; unit-tested in tests/unit/regionScopeRename.test.ts).
 
-**Used by:** `src/api/routes/auth.ts` (`GET /auth/me`), `src/api/routes/notifications.ts` (region-scoped list + single-alert read via `getEffectiveRegionTags`, skipped for an admin-equivalent caller), `src/api/routes/mapRegions.ts` (`PUT` rename → `renameRegionInPrincipalScopes`, `DELETE` → `principalsScopedToRegion`).
+**Used by:** `src/api/routes/auth.ts` (`GET /auth/me`), `src/api/routes/notifications.ts` (region-scoped list + single-alert read via `getEffectiveRegionTags`, skipped for an admin-equivalent caller), `src/api/routes/mapRegions.ts` (`PUT` rename → `renameRegionInPrincipalScopes`, `DELETE` → `principalsScopedToRegion`), `src/services/assistantChatService.ts` (`getEffectiveTagScopes` → the AI assistant's `scopePromptBlock`) and `src/services/assistantToolService.ts` (`list_assets` `myRegions`).
 
 **Invariants:**
 - Group-derived tags are re-resolved live from `ssoGroups` each call — never persisted onto the user's own columns.

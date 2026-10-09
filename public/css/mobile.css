@@ -2744,8 +2744,11 @@ html:active-view-transition-type(polaris-theme)::view-transition-new(polaris-the
 .chat-report-meta { font-size: 13px; color: var(--md-on-surface-variant); margin: 2px 0 10px; }
 .chat-report-actions { display: flex; gap: 8px; }
 .chat-composer {
-  /* Flush on the navbar: sticky at its top edge, little padding of its own below the field. */
-  position: sticky; bottom: var(--navbar-h); z-index: 5;
+  /* Flush on the navbar. bottom: 0, NOT var(--navbar-h): .app-body already pads
+     its bottom by the navbar's height, and sticky offsets are measured inside
+     that padding — --navbar-h here floated the box a whole navbar above the bar
+     with the log showing through the gap (seen on a phone 2026-10-09). */
+  position: sticky; bottom: 0; z-index: 5;
   display: flex; align-items: flex-end; gap: 8px; padding: 6px 10px 4px;
   background: var(--panel-glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
   border-top: 1px solid var(--md-outline-variant);

@@ -21,12 +21,13 @@ const h = vi.hoisted(() => ({
   },
   listNotifications: vi.fn(),
   searchAll: vi.fn(),
+  tagScopes: vi.fn(async () => ({ regions: [] as string[], tags: [] as string[] })),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
 vi.mock("../../src/services/notificationService.js", () => ({ listNotifications: h.listNotifications }));
 vi.mock("../../src/services/searchService.js", () => ({ searchAll: h.searchAll }));
-vi.mock("../../src/services/regionScopeService.js", () => ({ getEffectiveRegionTags: async () => [] }));
+vi.mock("../../src/services/regionScopeService.js", () => ({ getEffectiveRegionTags: async () => [], getEffectiveTagScopes: h.tagScopes }));
 vi.mock("../../src/services/eventLogService.js", () => ({ queryEventsPage: vi.fn(async () => ({ events: [], total: 0 })) }));
 vi.mock("../../src/services/eventArchiveService.js", () => ({ getRetentionSettings: async () => ({ retentionDays: 7 }) }));
 
@@ -154,5 +155,63 @@ describe("assistantToolDefs", () => {
     expect(names).toContain("search_help");
     expect(names).toContain("create_report");
     for (const n of names) expect(n).not.toMatch(/^(create|update|delete|ack|push|clear|set)_(?!report)/);
+  });
+});
+
+describe("list_assets — regions (the person's own, or named)", () => {
+  const req = reqWith({ assets: "read" });
+  beforeEach(() => { h.prisma.asset.findMany.mockResolvedValue([]); h.prisma.asset.count.mockResolvedValue(0); });
+
+  it("myRegions narrows to the region tags assigned to the person asking", async () => {
+    h.tagScopes.mockResolvedValueOnce({ regions: ["Middle Tennessee", "Alabama"], tags: [] });
+    await runAssistantTool("list_assets", '{"monitorStatus":"down","myRegions":true}', { req, maxRows: 50 });
+    expect(h.tagScopes).toHaveBeenCalledWith("u1");
+    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toContainEqual({ tags: { hasSome: ["region:Middle Tennessee", "region:Alabama"] } });
+  });
+
+  it("a named region matches its region: tag", async () => {
+    await runAssistantTool("list_assets", '{"region":"Southern Division"}', { req, maxRows: 50 });
+    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toContainEqual({ tags: { hasSome: ["region:Southern Division"] } });
+  });
+
+  it("myRegions with no region assigned asks instead of returning the whole install", async () => {
+    const r = await runAssistantTool("list_assets", '{"myRegions":true}', { req, maxRows: 50 });
+    expect(r.ok).toBe(false);
+    expect(JSON.stringify(r.data)).toMatch(/No region is assigned/);
+    expect(h.prisma.asset.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("decommissioned assets and retired networks stay out unless asked for", () => {
+  const req = reqWith({ assets: "read", subnets: "read" });
+  beforeEach(() => {
+    h.prisma.asset.findMany.mockResolvedValue([]); h.prisma.asset.count.mockResolvedValue(0);
+    h.prisma.subnet.findMany.mockResolvedValue([]); h.prisma.subnet.count.mockResolvedValue(0);
+    h.prisma.asset.groupBy.mockResolvedValue([]);
+  });
+
+  it("list_assets leaves decommissioned out by default, and includes it when the status asks", async () => {
+    await runAssistantTool("list_assets", '{"monitorStatus":"down"}', { req, maxRows: 50 });
+    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toContainEqual({ status: { not: "decommissioned" } });
+    h.prisma.asset.findMany.mockClear();
+    await runAssistantTool("list_assets", '{"status":["decommissioned"]}', { req, maxRows: 50 });
+    const and = h.prisma.asset.findMany.mock.calls[0][0].where.AND;
+    expect(and).toContainEqual({ status: { in: ["decommissioned"] } });
+    expect(and).not.toContainEqual({ status: { not: "decommissioned" } });
+  });
+
+  it("list_networks leaves deprecated networks out by default, and lists them when asked", async () => {
+    await runAssistantTool("list_networks", "{}", { req, maxRows: 50 });
+    expect(h.prisma.subnet.findMany.mock.calls[0][0].where.status).toEqual({ not: "deprecated" });
+    h.prisma.subnet.findMany.mockClear();
+    await runAssistantTool("list_networks", '{"status":"deprecated"}', { req, maxRows: 50 });
+    expect(h.prisma.subnet.findMany.mock.calls[0][0].where.status).toBe("deprecated");
+  });
+
+  it("fleet_summary counts no decommissioned assets", async () => {
+    await runAssistantTool("fleet_summary", "{}", { req, maxRows: 50 });
+    for (const call of h.prisma.asset.groupBy.mock.calls.filter((c: any[]) => c[0].by[0] !== "monitorStatus")) {
+      expect(call[0].where).toEqual({ status: { not: "decommissioned" } });
+    }
   });
 });
