@@ -264,8 +264,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - A workload missing from a list that failed to read this tick (`inventoryComplete: false` with an empty list — Docker / Apps stopped) is `unreachable`, never `absent`.
 - `other` state (DEPLOYING, STOPPING, NOSTATE) is a skipped probe — no verdict during a transition.
 - The probe reports `responseTimeMs: 0` — a state read carries no latency of the workload (operator decision 2026-10-07; the shared API round trip used to be charted and read as a slow device). It only ANSWERS response time for an asset with no address: `defaultPollingForSource` makes ICMP the default for any Unraid / TrueNAS asset with an `ipAddress` (`AssetMonitorContext.ipAddress` → `hasIp`).
-- Container CPU is clamped to 100 % (docker-stats reports multi-core containers above it). An Unraid VM has NO usage source → telemetry `{supported:false}`, never a zero.
-- Interfaces + storage + temperatures exist on the HOST only (storage = its pools, `mountPath` = pool name; temps = `sensorClass: "disk"`). Each stream is gated on its own resolved method.
+- `WorkloadUsage.cpuPct` arrives as a share of the HOST — each platform service normalizes (unraidService divides docker's per-core figure by the thread count; TrueNAS already does). `clampPct` here is a 0-100 guard, NOT the normalization. An Unraid VM has NO usage source → telemetry `{supported:false}`, never a zero.
+- Storage + temperatures exist on the HOST only (storage = its pools, `mountPath` = pool name; temps = `sensorClass: "disk"`). A CONTAINER also answers interfaces — its own network's counters from `usage.interfaces`; a running container missing from this tick's stats window answers an ERROR (not an empty set, which would read as "no interfaces"); a stopped one an empty set. VMs answer `{supported:false}`. Each stream is gated on its own resolved method.
+- A host's `memCachedBytes` / `memFreeBytes` (TrueNAS: the ARC) pass through only when the platform split them — onto the agent's band columns (recordTelemetryResult).
 
 **When changing this:**
 - A new stream for these methods = `WORKLOAD_STREAMS` (pollingCompatibility.ts) + `defaultPollingForSource` + a collector here + the dispatch branch in monitoringService + the assets.ts PUT guard + the browser mirrors in integrations.js.

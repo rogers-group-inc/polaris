@@ -1415,8 +1415,9 @@ model AssetTelemetrySample {
   // aggregate that does not pay for itself), so a range that resolves to a
   // rollup tier charts the aggregate `cpuPct` alone and the chart says so.
   cpuCorePcts   Json?
-  // Memory BREAKDOWN (bytes) — the parts `memUsedBytes` is not. Agent-only
-  // today. The four bands are defined to sum EXACTLY to memTotalBytes:
+  // Memory BREAKDOWN (bytes) — the parts `memUsedBytes` is not. Filled by the
+  // agent, and by a TrueNAS host (ZFS ARC as cached, buffers null). The four
+  // bands are defined to sum EXACTLY to memTotalBytes:
   //
   //   memUsedBytes + memBuffersBytes + memCachedBytes + memFreeBytes = total
   //

@@ -120,6 +120,11 @@ function _polarisSourceDefaultPolling(source, stream, opts) {
     // without — a bridged container, a VM with no published IP — which this
     // per-source label cannot see); everything else but LLDP is the host's API.
     if (stream === "responseTime") return "icmp";
+    // A container / App reports CPU/memory and its own network only — no
+    // disks or sensors of its own.
+    if (opts && (opts.klass === "container" || opts.klass === "containers")) {
+      return (stream === "cpuMemory" || stream === "telemetry" || stream === "interfaces") ? source : null;
+    }
     if (_WORKLOAD_STREAMS.indexOf(stream) !== -1) return source;
     return null;
   }

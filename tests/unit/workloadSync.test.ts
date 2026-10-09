@@ -14,6 +14,7 @@ const {
   normalizeWorkloadState,
   passesNameFilter,
   resolveWorkloadHostAddress,
+  staleContainerIps,
   workloadContainerExternalId,
   workloadHostExternalId,
   workloadSweepBlockedReason,
@@ -42,7 +43,7 @@ const vm = (name: string, uuid: string | null = null) => ({
   platformId: name, name, uuid, state: "running" as const, rawState: "RUNNING", cpuCount: 2, memoryBytes: 4e9, ip: null, macs: [], autostart: true,
 });
 const ctr = (name: string) => ({
-  platformId: name, name, image: `img/${name}`, state: "running" as const, rawState: "RUNNING", ip: null,
+  platformId: name, name, image: `img/${name}`, state: "running" as const, rawState: "RUNNING", ip: null, networkMode: "bridge",
   updateAvailable: null, version: null, latestVersion: null, memberCount: 1, ports: [], autostart: true,
 });
 
@@ -138,5 +139,16 @@ describe("buildWorkloadDependencyEdges", () => {
   });
   it("writes nothing when the host itself could not be synced (pending conflict)", () => {
     expect(buildWorkloadDependencyEdges(["v1"], null)).toEqual([]);
+  });
+});
+
+describe("staleContainerIps", () => {
+  const kind = "unraid-container";
+  it("names the host's address and the address this platform last reported", () => {
+    expect(staleContainerIps("10.0.0.2", [{ sourceKind: kind, observed: { ip: "10.0.0.53" } }], kind)).toEqual(["10.0.0.2", "10.0.0.53"]);
+  });
+  it("never names an address the platform did not report (an operator's own stays)", () => {
+    expect(staleContainerIps("10.0.0.2", [{ sourceKind: "ad", observed: { ip: "10.0.0.99" } }], kind)).toEqual(["10.0.0.2"]);
+    expect(staleContainerIps(null, undefined, kind)).toEqual([]);
   });
 });

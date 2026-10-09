@@ -159,6 +159,17 @@ Teaming policy, port counts and the port-group VLAN table are *inventory* and
 render on the host's General tab instead. A distributed switch's own
 configuration is a per-vCenter object and is deliberately not read.
 
+### Where a host's datastores and VMs appear
+
+An ESXi host's **datastores** are on its **System** tab's **Storage** table,
+one row per mounted datastore. That is where they have history, pinning and
+alerting. Each row also shows the datastore's **type**, **backing** array and
+**provisioned** size, and is flagged *(inaccessible)* when vCenter reports it
+so. The **VMs** placed on the host are on a **Virtual Machines** tab of their
+own. Neither appears on the General tab any more. A host that is not monitored
+has no System tab content, so its datastores are not shown until monitoring is
+turned on.
+
 **Temperature and LLDP are unavailable** on this method. The dedicated
 storage-only cadence stays SNMP-only, because vCenter storage already rides the
 system-info pass.

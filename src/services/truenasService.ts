@@ -39,6 +39,9 @@ import type {
   WorkloadHost,
   WorkloadInterfaceReading,
   WorkloadPool,
+  WorkloadPoolGroup,
+  WorkloadPoolMember,
+  WorkloadPoolScan,
   WorkloadSnapshot,
   WorkloadUsage,
   WorkloadVm,
@@ -268,21 +271,134 @@ export function parseTrueNasHost(
     cpuCount: num(info?.cores),
     memTotalBytes: num(info?.physmem),
     uptimeSeconds: num(info?.uptime_seconds),
-    pools: parseTrueNasPools(pools),
+    pools: parseTrueNasPools(pools, trueNasDiskFacts(temps, disks)),
     disks: parseTrueNasDisks(temps, disks),
   };
 }
 
-export function parseTrueNasPools(pools: any[]): WorkloadPool[] {
+/** Per-disk facts from disk.query / disk.temperatures, keyed by disk name ("sda"). */
+export interface TrueNasDiskFacts {
+  serial: string | null;
+  model: string | null;
+  sizeBytes: number | null;
+  mediaType: string | null;
+  temperatureC: number | null;
+}
+
+const ZFS_GROUP_ROLES = ["data", "special", "dedup", "log", "cache", "spare"] as const;
+
+/** ZFS's `{ $date: ms }` / ISO / epoch-seconds times → ISO. */
+function zfsTime(v: unknown): string | null {
+  const raw = v && typeof v === "object" && "$date" in (v as any) ? (v as any).$date : v;
+  const n = num(raw);
+  if (n !== null) return new Date(n > 1e12 ? n : n * 1000).toISOString();
+  const s = str(raw);
+  if (!s) return null;
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+
+function zfsScan(scan: any): WorkloadPoolScan | null {
+  if (!scan || typeof scan !== "object") return null;
+  const kind = str(scan.function)?.toLowerCase() ?? null;
+  const state = str(scan.state)?.toLowerCase() ?? null;
+  if (!kind && !state) return null;
+  const running = state === "scanning";
+  return {
+    kind,
+    state: running ? "running" : state,
+    at: zfsTime(running ? scan.start_time : (scan.end_time ?? scan.start_time)),
+    percent: running ? num(scan.percentage) : null,
+    errors: num(scan.errors),
+  };
+}
+
+/** One leaf (a disk) of a vdev. `disk` is the whole-disk name, `device` the partition ZFS uses. */
+function zfsMember(leaf: any, facts: ReadonlyMap<string, TrueNasDiskFacts>): WorkloadPoolMember {
+  const diskName = str(leaf?.disk);
+  const f = diskName ? facts.get(diskName) : undefined;
+  const st = leaf?.stats ?? {};
+  return {
+    name: diskName ?? str(leaf?.unavail_disk?.name) ?? str(leaf?.name) ?? "?",
+    device: str(leaf?.device),
+    serial: f?.serial ?? null,
+    model: f?.model ?? null,
+    health: str(leaf?.status),
+    sizeBytes: f?.sizeBytes ?? num(st.size),
+    readErrors: num(st.read_errors),
+    writeErrors: num(st.write_errors),
+    checksumErrors: num(st.checksum_errors),
+    errors: null,
+    temperatureC: f?.temperatureC ?? null,
+    filesystem: null,
+    mediaType: f?.mediaType ?? null,
+    smart: null,
+  };
+}
+
+/**
+ * pool.query `topology` → groups. A top-level entry of type DISK is a vdev of
+ * one disk (no redundancy — "stripe"); MIRROR / RAIDZn / DRAID carry their
+ * disks as children.
+ */
+export function parseZfsTopology(topology: any, facts: ReadonlyMap<string, TrueNasDiskFacts> = new Map()): WorkloadPoolGroup[] {
+  if (!topology || typeof topology !== "object") return [];
+  const groups: WorkloadPoolGroup[] = [];
+  for (const role of ZFS_GROUP_ROLES) {
+    for (const vdev of (Array.isArray(topology[role]) ? topology[role] : []) as any[]) {
+      const type = (str(vdev?.type) ?? "").toUpperCase();
+      const children = Array.isArray(vdev?.children) ? vdev.children : [];
+      const isLeaf = type === "DISK" || children.length === 0;
+      groups.push({
+        role,
+        layout: isLeaf ? (role === "data" ? "stripe" : null) : type.toLowerCase(),
+        name: isLeaf ? null : str(vdev?.name),
+        health: str(vdev?.status),
+        members: (isLeaf ? [vdev] : children).map((c: any) => zfsMember(c, facts)),
+      });
+    }
+  }
+  return groups;
+}
+
+export function parseTrueNasPools(pools: any[], facts: ReadonlyMap<string, TrueNasDiskFacts> = new Map()): WorkloadPool[] {
   return (pools ?? [])
     .filter((p) => str(p?.name))
-    .map((p) => ({
-      name: String(p.name),
-      kind: "zfs",
-      totalBytes: num(p?.size),
-      usedBytes: num(p?.allocated),
-      health: str(p?.status),
-    }));
+    .map((p) => {
+      const pool: WorkloadPool = {
+        name: String(p.name),
+        kind: "zfs",
+        totalBytes: num(p?.size),
+        usedBytes: num(p?.allocated),
+        health: str(p?.status),
+      };
+      // Layout only when the answer carried a topology — an older or trimmed
+      // answer leaves the pool as it always was.
+      if (p?.topology && typeof p.topology === "object") {
+        pool.filesystem = "zfs";
+        pool.healthDetail = str(p?.status_detail);
+        pool.scan = zfsScan(p?.scan);
+        pool.groups = parseZfsTopology(p.topology, facts);
+      }
+      return pool;
+    });
+}
+
+/** disk.query rows + disk.temperatures → facts keyed by disk name. */
+export function trueNasDiskFacts(temps: Record<string, unknown> | null, disks: any[]): Map<string, TrueNasDiskFacts> {
+  const out = new Map<string, TrueNasDiskFacts>();
+  for (const d of parseTrueNasDisks(temps, disks)) {
+    const row = (disks ?? []).find((x) => str(x?.name) === d.name);
+    const type = str(row?.type)?.toUpperCase() ?? null;
+    out.set(d.name, {
+      serial: d.serial,
+      model: str(row?.model),
+      sizeBytes: num(row?.size),
+      mediaType: type === "SSD" && /^nvme/i.test(d.name) ? "NVMe" : type,
+      temperatureC: d.temperatureC,
+    });
+  }
+  return out;
 }
 
 /**
@@ -328,6 +444,20 @@ export function parseTrueNasVms(vms: any[]): WorkloadVm[] {
     });
 }
 
+/**
+ * active_workloads.networks is docker's own network objects, passed through.
+ * Compose's per-project "<app>_default" network is noise next to a named one,
+ * but it is still the App's network when it is the only one.
+ */
+export function appNetworkNames(networks: unknown): string | null {
+  const names = (Array.isArray(networks) ? networks : [])
+    .map((n: any) => str(n?.Name ?? n?.name))
+    .filter((n): n is string => !!n);
+  if (names.length === 0) return null;
+  const named = names.filter((n) => !/_default$/.test(n));
+  return [...new Set(named.length > 0 ? named : names)].join(", ");
+}
+
 export function parseTrueNasApps(apps: any[]): WorkloadContainer[] {
   return (apps ?? [])
     .filter((a) => str(a?.name))
@@ -354,6 +484,7 @@ export function parseTrueNasApps(apps: any[]): WorkloadContainer[] {
         state: normalizeWorkloadState(raw),
         rawState: raw,
         ip: null,
+        networkMode: appNetworkNames(wl.networks),
         updateAvailable,
         version: str(a.human_version) ?? str(a.version),
         latestVersion: str(a.latest_version),
@@ -364,8 +495,27 @@ export function parseTrueNasApps(apps: any[]): WorkloadContainer[] {
     });
 }
 
-/** reporting.realtime → host usage. Interface counters are rates here, so only link state + speed are kept. */
-export function parseTrueNasRealtime(fields: any): WorkloadUsage & { interfaces: WorkloadInterfaceReading[] } {
+/**
+ * reporting.realtime → host usage.
+ *
+ * Interfaces: TrueNAS publishes link state, speed and `received_bytes_rate` /
+ * `sent_bytes_rate` (bytes per second) — no counters, no errors, no drops.
+ * With `counters` the rates are integrated into running byte counters (see
+ * RateCounters), which is the shape the interface pipeline charts; without
+ * them the traffic columns stay null. Errors and drops are null: TrueNAS does
+ * not report them, and null is "not reported", not zero.
+ *
+ * Memory is split the way TrueNAS's own dashboard splits it: ZFS Cache is the
+ * ARC (`arc_size`), Free is `physical_memory_available`, and Services is the
+ * rest. Linux does not count the ARC as available, so total − available alone
+ * read every NAS as nearly full — "used" here excludes the ARC, which is
+ * reclaimable, and it rides the separate `cached` band instead.
+ */
+export function parseTrueNasRealtime(
+  fields: any,
+  counters?: RateCounters,
+  nowMs: number = Date.now(),
+): WorkloadUsage & { interfaces: WorkloadInterfaceReading[] } {
   const cpu = fields?.cpu ?? {};
   const cores = Object.keys(cpu)
     .filter((k) => /^cpu\d+$/.test(k))
@@ -373,36 +523,132 @@ export function parseTrueNasRealtime(fields: any): WorkloadUsage & { interfaces:
     .map((k) => num(cpu[k]?.usage) ?? 0);
   const total = num(fields?.memory?.physical_memory_total);
   const avail = num(fields?.memory?.physical_memory_available);
+  const arc = num(fields?.memory?.arc_size);
   const interfaces: WorkloadInterfaceReading[] = Object.entries((fields?.interfaces ?? {}) as Record<string, any>).map(([name, i]) => ({
     name,
     operUp: i?.link_state === "LINK_STATE_UP" ? true : i?.link_state === "LINK_STATE_DOWN" ? false : null,
-    rxBytes: null,
-    txBytes: null,
+    rxBytes: counters ? counters.advance(`host|${name}|rx`, num(i?.received_bytes_rate), nowMs) : null,
+    txBytes: counters ? counters.advance(`host|${name}|tx`, num(i?.sent_bytes_rate), nowMs) : null,
     rxErrors: null,
     txErrors: null,
     rxDrops: null,
     txDrops: null,
     speedMbps: num(i?.speed),
   }));
+  let memUsedBytes: number | null = null;
+  let memCachedBytes: number | null = null;
+  let memFreeBytes: number | null = null;
+  if (total !== null && avail !== null) {
+    const free = Math.min(total, Math.max(0, avail));
+    const cache = arc !== null ? Math.min(total - free, Math.max(0, arc)) : null;
+    memUsedBytes = total - free - (cache ?? 0);
+    if (cache !== null) {
+      memCachedBytes = cache;
+      memFreeBytes = free;
+    }
+  }
   return {
     cpuPct: num(cpu.cpu?.usage),
     perCorePct: cores.length > 0 ? cores : null,
-    memUsedBytes: total !== null && avail !== null ? Math.max(0, total - avail) : null,
+    memUsedBytes,
     memTotalBytes: total,
+    memCachedBytes,
+    memFreeBytes,
     interfaces,
   };
 }
 
-/** app.stats `fields` (an array of per-app rows) → usage keyed by app name. */
-export function parseTrueNasAppStats(fields: any): Map<string, WorkloadUsage> {
+/**
+ * app.stats `fields` (an array of per-app rows) → usage keyed by app name.
+ *
+ * `cpu_usage` is already a share of the whole host — TrueNAS divides by its
+ * core count — so it is NOT divided again (Unraid's docker figure is).
+ *
+ * `networks[]` carries `rx_bytes` / `tx_bytes` as bytes PER SECOND over
+ * TrueNAS's own sampling interval, not counters. The interface pipeline
+ * derives rates from cumulative counters, so each rate is integrated into a
+ * running counter (`counters`, kept by the caller across ticks): the rate
+ * Polaris then derives between two ticks is the rate TrueNAS reported at the
+ * later one.
+ */
+export function parseTrueNasAppStats(
+  fields: any,
+  counters?: RateCounters,
+  nowMs: number = Date.now(),
+): Map<string, WorkloadUsage> {
   const out = new Map<string, WorkloadUsage>();
   const rows = Array.isArray(fields) ? fields : Array.isArray(fields?.fields) ? fields.fields : [];
   for (const r of rows) {
     const name = str(r?.app_name);
     if (!name) continue;
-    out.set(name, { cpuPct: num(r?.cpu_usage), memUsedBytes: num(r?.memory), memTotalBytes: null });
+    const usage: WorkloadUsage = { cpuPct: num(r?.cpu_usage), memUsedBytes: num(r?.memory), memTotalBytes: null };
+    if (counters && Array.isArray(r?.networks) && r.networks.length > 0) {
+      usage.interfaces = (r.networks as any[])
+        .filter((n) => str(n?.interface_name))
+        .map((n) => {
+          const iface = String(n.interface_name);
+          return {
+            name: iface,
+            operUp: true,
+            rxBytes: counters.advance(`${name}|${iface}|rx`, num(n?.rx_bytes), nowMs),
+            txBytes: counters.advance(`${name}|${iface}|tx`, num(n?.tx_bytes), nowMs),
+            rxErrors: null,
+            txErrors: null,
+            rxDrops: null,
+            txDrops: null,
+            speedMbps: null,
+          };
+        });
+    }
+    out.set(name, usage);
   }
   return out;
+}
+
+/** Past this gap a counter restarts at 0 rather than invent the traffic in between. */
+const RATE_COUNTER_MAX_GAP_MS = 5 * 60_000;
+
+/**
+ * Integrates per-second rates into cumulative counters, per key. A gap longer
+ * than RATE_COUNTER_MAX_GAP_MS (the monitor was down, the App was stopped)
+ * restarts the counter at 0, which the interface pipeline reads as a counter
+ * reset — a missing point, never a spike.
+ */
+export class RateCounters {
+  private readonly state = new Map<string, { total: number; at: number }>();
+
+  advance(key: string, ratePerSec: number | null, nowMs: number): number | null {
+    if (ratePerSec === null || ratePerSec < 0) return null;
+    const prev = this.state.get(key);
+    const elapsed = prev ? nowMs - prev.at : 0;
+    const total = prev && elapsed > 0 && elapsed <= RATE_COUNTER_MAX_GAP_MS
+      ? prev.total + Math.round(ratePerSec * (elapsed / 1000))
+      : 0;
+    this.state.set(key, { total, at: nowMs });
+    return total;
+  }
+
+  /** Forget keys not advanced since `cutoffMs` (Apps that went away). */
+  prune(cutoffMs: number): void {
+    for (const [k, v] of this.state) if (v.at < cutoffMs) this.state.delete(k);
+  }
+}
+
+/**
+ * One RateCounters per TrueNAS host (its interfaces and its Apps' networks),
+ * for the life of the process — only the monitor role takes snapshots.
+ */
+const rateCountersByHost = new Map<string, RateCounters>();
+
+function countersFor(host: string): RateCounters {
+  let counters = rateCountersByHost.get(host);
+  if (!counters) { counters = new RateCounters(); rateCountersByHost.set(host, counters); }
+  counters.prune(Date.now() - RATE_COUNTER_MAX_GAP_MS);
+  return counters;
+}
+
+function appUsageWithCounters(host: string, appStats: unknown): Map<string, WorkloadUsage> {
+  return parseTrueNasAppStats(appStats, countersFor(host), Date.now());
 }
 
 // ─── Reads ───────────────────────────────────────────────────────────────────
@@ -439,7 +685,7 @@ async function readRaw(s: TrueNasSession): Promise<RawRead> {
     soft<any[]>("app.query", [], []),
     soft<any[]>("vm.query", [], []),
     soft<Record<string, unknown> | null>("disk.temperatures", [[]], null),
-    soft<any[]>("disk.query", [[], { select: ["name", "serial", "pool"] }], []),
+    soft<any[]>("disk.query", [[], { select: ["name", "serial", "pool", "model", "size", "type"] }], []),
   ]);
   return {
     info, pools: pools.v, apps: apps.v, vms: vms.v, temps: temps.v, disks: disks.v,
@@ -498,10 +744,10 @@ export async function fetchTrueNasSnapshot(config: TrueNasConfig): Promise<Workl
       durationMs,
       inventory: toResult(raw, config),
       host: realtime
-        ? parseTrueNasRealtime(realtime)
+        ? parseTrueNasRealtime(realtime, countersFor(config.host), Date.now())
         : { cpuPct: null, perCorePct: null, memUsedBytes: null, memTotalBytes: num(raw.info?.physmem), interfaces: [] },
       vmUsage,
-      containerUsage: appStats ? parseTrueNasAppStats(appStats) : new Map(),
+      containerUsage: appStats ? appUsageWithCounters(config.host, appStats) : new Map(),
     };
   });
 }

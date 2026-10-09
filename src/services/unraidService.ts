@@ -37,6 +37,7 @@ import type {
   WorkloadHost,
   WorkloadInterfaceReading,
   WorkloadPool,
+  WorkloadPoolMember,
   WorkloadSnapshot,
   WorkloadUsage,
   WorkloadVm,
@@ -183,8 +184,26 @@ export const UNRAID_INVENTORY_QUERY = `query PolarisInventory {
   vms { domains { id name state } }
 }`;
 
-const CONTAINER_STATS_SUBSCRIPTION = `subscription PolarisContainerStats {
-  dockerContainerStats { id cpuPercent memUsage memPercent }
+/**
+ * The storage LAYOUT — per-disk health, errors and filesystem, the parity
+ * check, each disk's SMART verdict. A query of its own, not part of the
+ * inventory read: these fields arrived across Unraid API releases, and a
+ * GraphQL validation error fails the WHOLE query, so a host on an older API
+ * must lose only this, never the inventory.
+ */
+const ARRAY_DISK_LAYOUT_FIELDS = "name device size status temp numErrors fsType rotational type";
+export const UNRAID_STORAGE_QUERY = `query PolarisStorage {
+  array {
+    parityCheckStatus { status date errors progress running paused }
+    parities { ${ARRAY_DISK_LAYOUT_FIELDS} }
+    disks { ${ARRAY_DISK_LAYOUT_FIELDS} }
+    caches { ${ARRAY_DISK_LAYOUT_FIELDS} fsSize }
+  }
+  disks { device name serialNum smartStatus interfaceType }
+}`;
+
+const CONTAINER_STATS_SUBSCRIPTION =`subscription PolarisContainerStats {
+  dockerContainerStats { id cpuPercent memUsage memPercent netIO }
 }`;
 
 // ─── Parsing (pure; exported for tests) ──────────────────────────────────────
@@ -232,19 +251,37 @@ export function parseDockerMemUsage(s: string | null | undefined): { used: numbe
 }
 
 /**
- * A container's own address: the first IP on a network that is not the
- * shared bridge / host stack. A bridged container answers on its host's
- * address, so it gets none (two assets must not claim one IP).
+ * Unraid's LAN-attached custom networks (macvlan / ipvlan on a host
+ * interface): `br0`, `eth0`, `bond0`, `wg0`, and their VLAN children
+ * (`br0.20`). An address on one of these is on the LAN, reachable from
+ * Polaris.
  */
-export function containerOwnIp(networkMode: string | null, networkSettings: unknown): string | null {
+const UNRAID_LAN_NETWORK_RE = /^(br|eth|bond|wg)\d+(\.\d+)?$/i;
+
+/**
+ * A container's own, REACHABLE address — or null when it has none and answers
+ * on its host's (two assets must not claim one IP, and ICMP to a NATed
+ * address would call a running container down).
+ *
+ *   host / none / container:<x>  share another stack — none.
+ *   bridge (docker's default)    NATed behind the host — none.
+ *   a user-defined bridge        ALSO NATed (a 172.x address on a Linux
+ *                                bridge inside the host), and indistinguishable
+ *                                by name from a custom macvlan — so its address
+ *                                counts only when Unraid lists it among the
+ *                                container's LAN ports.
+ *   br0 / eth0 / bond0 / wg0 (+ .vlan)  on the LAN — its address.
+ */
+export function containerOwnIp(networkMode: string | null, networkSettings: unknown, lanIpPorts: readonly string[] = []): string | null {
   const mode = (networkMode ?? "").toLowerCase();
   if (mode === "host" || mode === "none" || mode.startsWith("container:")) return null;
   const nets = (networkSettings as any)?.Networks ?? (networkSettings as any)?.networks;
   if (!nets || typeof nets !== "object") return null;
+  const lanIps = new Set(lanIpPorts.map((p) => String(p).replace(/:\d+$/, "").replace(/^\[(.*)\]$/, "$1")));
   for (const [name, n] of Object.entries(nets as Record<string, any>)) {
     if (name === "bridge" || name === "host") continue;
     const ip = str(n?.IPAddress ?? n?.ipAddress);
-    if (ip) return ip;
+    if (ip && (UNRAID_LAN_NETWORK_RE.test(name) || lanIps.has(ip))) return ip;
   }
   return null;
 }
@@ -280,6 +317,103 @@ export function parseUnraidPools(array: any): WorkloadPool[] {
     });
   }
   return pools;
+}
+
+/** "/dev/sdb" / "sdb" → "sdb". */
+function devBase(v: unknown): string | null {
+  const s = str(v);
+  return s ? s.replace(/^\/dev\//, "") : null;
+}
+
+function unraidMember(d: any, physical: ReadonlyMap<string, any>): WorkloadPoolMember {
+  const dev = devBase(d?.device);
+  const p = dev ? physical.get(dev) : undefined;
+  const t = num(d?.temp);
+  const iface = str(p?.interfaceType)?.toUpperCase() ?? null;
+  return {
+    name: str(d?.name) ?? dev ?? "?",
+    device: dev,
+    serial: str(p?.serialNum),
+    model: str(p?.name),
+    health: str(d?.status),
+    // ArrayDisk sizes are KiB, like fsSize.
+    sizeBytes: kbToBytes(d?.size),
+    readErrors: null,
+    writeErrors: null,
+    checksumErrors: null,
+    errors: num(d?.numErrors),
+    temperatureC: t !== null && t > 0 ? t : null,
+    filesystem: str(d?.fsType),
+    mediaType: iface === "PCIE" || /^nvme/i.test(dev ?? "") ? "NVMe" : d?.rotational === false ? "SSD" : d?.rotational === true ? "HDD" : null,
+    smart: str(p?.smartStatus),
+  };
+}
+
+/**
+ * Lay out Unraid's pools from UNRAID_STORAGE_QUERY. Unraid publishes no vdev
+ * tree — even a ZFS pool is a flat member list — so the groups are what it
+ * does publish:
+ *
+ *   array        parity disks + data disks, each data disk its own filesystem
+ *                (xfs / btrfs / zfs) behind dedicated parity; the parity check
+ *                is its scan.
+ *   named pools  one member group. Members are named `<pool>`, `<pool>2`,
+ *                `<pool>3`…, and only the first reports the filesystem size,
+ *                so a member belongs to the longest pool name it extends with
+ *                digits.
+ *
+ * Returns the pools enriched; one the layout answer does not mention is left
+ * exactly as it was.
+ */
+export function applyUnraidStorageLayout(pools: WorkloadPool[], data: any): WorkloadPool[] {
+  const array = data?.array;
+  if (!array) return pools;
+  const physical = new Map<string, any>();
+  for (const p of (data?.disks ?? []) as any[]) {
+    const dev = devBase(p?.device);
+    if (dev) physical.set(dev, p);
+  }
+  const member = (d: any) => unraidMember(d, physical);
+  const parities = ((array.parities ?? []) as any[]).filter((d) => str(d?.status) !== "DISK_NP");
+  const dataDisks = ((array.disks ?? []) as any[]).filter((d) => str(d?.status) !== "DISK_NP");
+  const caches = (array.caches ?? []) as any[];
+  const pc = array.parityCheckStatus;
+  const fsTypes = [...new Set(dataDisks.map((d) => str(d?.fsType)).filter((f): f is string => !!f))];
+
+  return pools.map((pool) => {
+    if (pool.kind === "array") {
+      return {
+        ...pool,
+        filesystem: fsTypes.length > 0 ? `unraid-array (${fsTypes.join(", ")})` : "unraid-array",
+        scan: pc ? {
+          kind: "parity-check",
+          state: pc.running === true ? (pc.paused === true ? "paused" : "running") : (str(pc.status)?.toLowerCase() ?? null),
+          at: str(pc.date) ? new Date(String(pc.date)).toISOString() : null,
+          percent: pc.running === true ? num(pc.progress) : null,
+          errors: num(pc.errors),
+        } : null,
+        groups: [
+          ...(parities.length > 0 ? [{ role: "parity", layout: null, name: null, health: null, members: parities.map(member) }] : []),
+          { role: "data", layout: null, name: null, health: null, members: dataDisks.map(member) },
+        ],
+      };
+    }
+    const members = caches.filter((d) => {
+      const name = str(d?.name);
+      if (!name) return false;
+      if (name === pool.name) return true;
+      if (!new RegExp(`^${pool.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\d+$`).test(name)) return false;
+      // A longer pool name that this member also extends wins ("cache" vs "cache_nvme").
+      return !pools.some((o) => o.name.length > pool.name.length && name.startsWith(o.name));
+    });
+    if (members.length === 0) return pool;
+    const lead = members.find((d) => str(d?.name) === pool.name) ?? members[0];
+    return {
+      ...pool,
+      filesystem: str(lead?.fsType),
+      groups: [{ role: "data", layout: null, name: null, health: null, members: members.map(member) }],
+    };
+  });
 }
 
 export function parseUnraidDisks(array: any): WorkloadDisk[] {
@@ -356,7 +490,12 @@ export function parseUnraidInventory(
       image: str(c?.image),
       state: normalizeWorkloadState(c?.state),
       rawState: str(c?.status) ?? str(c?.state),
-      ip: containerOwnIp(str(c?.hostConfig?.networkMode), c?.networkSettings),
+      ip: containerOwnIp(
+        str(c?.hostConfig?.networkMode),
+        c?.networkSettings,
+        Array.isArray(c?.lanIpPorts) ? c.lanIpPorts.filter((p: unknown): p is string => typeof p === "string") : [],
+      ),
+      networkMode: str(c?.hostConfig?.networkMode),
       updateAvailable: typeof c?.isUpdateAvailable === "boolean" ? c.isUpdateAvailable : null,
       version: null,
       latestVersion: null,
@@ -429,6 +568,66 @@ function failedRoots(errors: Array<{ path?: unknown }>): Set<string> {
 
 // ─── Container stats subscription ────────────────────────────────────────────
 
+/** One dockerContainerStats event, as docker printed it (CPU per CORE). */
+export interface UnraidContainerStat {
+  cpuPct: number | null;
+  memUsedBytes: number | null;
+  memTotalBytes: number | null;
+  netRxBytes: number | null;
+  netTxBytes: number | null;
+}
+
+/** Network modes in which a container has no network stack of its own. */
+function sharesHostStack(networkMode: string | null): boolean {
+  const m = (networkMode ?? "").toLowerCase();
+  return m === "host" || m === "none" || m.startsWith("container:");
+}
+
+/**
+ * docker stats → the shared WorkloadUsage.
+ *
+ * CPU: docker's CPUPerc counts 100 % per CORE (a container busy on two
+ * threads reads 200 %), and Unraid's API passes it through unchanged. The
+ * chart and the alerts read a share of the host, so it is divided by the
+ * host's thread count — what Unraid's own Docker page shows. A host that did
+ * not report its thread count leaves the figure as docker printed it.
+ *
+ * Network: one row named after the container's network. A container on the
+ * host's stack gets none — docker reports 0 / 0 for it, and its traffic is
+ * the host's.
+ */
+export function normalizeUnraidContainerUsage(
+  stats: ReadonlyMap<string, UnraidContainerStat>,
+  containers: ReadonlyArray<Pick<WorkloadContainer, "platformId" | "networkMode">>,
+  hostThreads: number | null,
+): Map<string, WorkloadUsage> {
+  const modeById = new Map(containers.map((c) => [c.platformId, c.networkMode]));
+  const out = new Map<string, WorkloadUsage>();
+  for (const [id, s] of stats) {
+    const mode = modeById.get(id) ?? null;
+    const usage: WorkloadUsage = {
+      cpuPct: s.cpuPct !== null && hostThreads && hostThreads > 0 ? s.cpuPct / hostThreads : s.cpuPct,
+      memUsedBytes: s.memUsedBytes,
+      memTotalBytes: s.memTotalBytes,
+    };
+    if (!sharesHostStack(mode) && (s.netRxBytes !== null || s.netTxBytes !== null)) {
+      usage.interfaces = [{
+        name: mode || "eth0",
+        operUp: true,
+        rxBytes: s.netRxBytes,
+        txBytes: s.netTxBytes,
+        rxErrors: null,
+        txErrors: null,
+        rxDrops: null,
+        txDrops: null,
+        speedMbps: null,
+      }];
+    }
+    out.set(id, usage);
+  }
+  return out;
+}
+
 /**
  * Collect one dockerContainerStats reading per running container over a short
  * window. Resolves early once every expected container has reported. Never
@@ -439,13 +638,13 @@ export async function sampleUnraidContainerStats(
   config: UnraidConfig,
   expectedIds: ReadonlySet<string>,
   windowMs = DEFAULT_STATS_WINDOW_MS,
-): Promise<Map<string, WorkloadUsage>> {
-  const out = new Map<string, WorkloadUsage>();
+): Promise<Map<string, UnraidContainerStat>> {
+  const out = new Map<string, UnraidContainerStat>();
   if (expectedIds.size === 0) return out;
   const useTls = config.useTls !== false;
   const url = `${useTls ? "wss" : "ws"}://${config.host}:${defaultPort(config)}/graphql`;
   const wait = Math.min(Math.max(windowMs, 1000), MAX_STATS_WINDOW_MS);
-  return await new Promise<Map<string, WorkloadUsage>>((resolve) => {
+  return await new Promise<Map<string, UnraidContainerStat>>((resolve) => {
     let done = false;
     let ws: WebSocket | null = null;
     const finish = () => {
@@ -485,7 +684,10 @@ export async function sampleUnraidContainerStats(
         if (!s?.id) return;
         const id = String(s.id);
         const mem = parseDockerMemUsage(s.memUsage);
-        out.set(id, { cpuPct: num(s.cpuPercent), memUsedBytes: mem.used, memTotalBytes: mem.limit });
+        // NetIO is "received / sent", cumulative since the container started —
+        // the same "a / b" shape as MemUsage.
+        const net = parseDockerMemUsage(s.netIO);
+        out.set(id, { cpuPct: num(s.cpuPercent), memUsedBytes: mem.used, memTotalBytes: mem.limit, netRxBytes: net.used, netTxBytes: net.limit });
         if ([...expectedIds].every((x) => out.has(x))) finish();
         return;
       }
@@ -541,10 +743,20 @@ async function readInventory(config: UnraidConfig, signal?: AbortSignal): Promis
  */
 export async function discoverInventory(config: UnraidConfig, signal?: AbortSignal): Promise<WorkloadDiscoveryResult> {
   const { data, failed } = await readInventory(config, signal);
-  return parseUnraidInventory(data, config, {
+  const result = parseUnraidInventory(data, config, {
     dockerFailed: failed.has("docker") || !data?.docker,
     vmsFailed: failed.has("vms") || !data?.vms,
   });
+  // The layout is best-effort: an older API that refuses a field costs the
+  // pool details, never the inventory.
+  try {
+    const { data: storage } = await unraidGraphql<any>(config, UNRAID_STORAGE_QUERY, undefined, { signal });
+    result.host.pools = applyUnraidStorageLayout(result.host.pools, storage);
+  } catch (err: any) {
+    if (signal?.aborted) throw err;
+    logger.debug({ host: config.host, err: err?.message }, "unraid: storage layout read failed — pools keep their summary only");
+  }
+  return result;
 }
 
 /** One monitor tick's worth: inventory + host usage + per-container stats. */
@@ -557,14 +769,14 @@ export async function fetchUnraidSnapshot(config: UnraidConfig): Promise<Workloa
     vmsFailed: failed.has("vms") || !data?.vms,
   });
   const running = new Set(inventory.containers.filter((c) => c.state === "running").map((c) => c.platformId));
-  const containerUsage = await sampleUnraidContainerStats(config, running, config.statsWindowMs);
+  const stats = await sampleUnraidContainerStats(config, running, config.statsWindowMs);
   return {
     fetchedAt: Date.now(),
     durationMs,
     inventory,
     host: parseUnraidHostUsage(data),
     vmUsage: new Map(),
-    containerUsage,
+    containerUsage: normalizeUnraidContainerUsage(stats, inventory.containers, inventory.host.cpuCount),
   };
 }
 

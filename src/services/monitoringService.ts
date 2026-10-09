@@ -1031,6 +1031,12 @@ export function defaultPollingForSource(
     // platform's state check — ICMP there would fail every probe and call a
     // running container down. That probe reports 0 ms (probeWorkload).
     if (stream === "responseTime") return opts?.hasIp ? "icmp" : source;
+    // A container / App: CPU / memory and its own network's traffic. It has
+    // no disks or sensors of its own — those are its host's — so storage and
+    // temperature are left uncollected rather than asked and answered empty.
+    if (opts?.assetType === "container") {
+      return stream === "cpuMemory" || stream === "interfaces" ? source : null;
+    }
     // Everything else the host's API answers for, it answers for, out of ONE
     // cached read per integration per tick. Temperature too — a NAS reports
     // its disks' temperatures, which land on the host as `sensorClass:
@@ -4592,6 +4598,15 @@ export interface TelemetrySample {
    * its own push path instead. Null, never `[]` — see the column comment.
    */
   cpuCorePcts?:   number[] | null;
+  /**
+   * The agent's memory bands, in bytes: memUsedBytes + buffers + cached +
+   * free = memTotalBytes exactly. The agent fills them on its own push path;
+   * the only server-side collector that does is a TrueNAS host (ZFS ARC as
+   * `cached`, buffers 0). Never mixed with the vCenter set below.
+   */
+  memBuffersBytes?: number | null;
+  memCachedBytes?:  number | null;
+  memFreeBytes?:    number | null;
   /**
    * The vCenter memory bands, in bytes. Disjoint from the agent's
    * buffers/cache/free set and never mixed with it in one row — a VM fills
@@ -9597,13 +9612,13 @@ export async function recordTelemetryResult(assetId: string, result: CollectionR
       // which writes this buffer directly. FortiOS REST, SNMP, WinRM and SSH
       // expose no per-core figure at all and leave it null.
       cpuCorePcts:     d.cpuCorePcts ?? null,
-      // The agent's band set. No server-side collector fills it — the
-      // per-OS reconciliation that makes the four bands sum to the total is
-      // the agent's own work — so these stay explicitly null rather than
-      // being left off the row.
-      memBuffersBytes: null,
-      memCachedBytes:  null,
-      memFreeBytes:    null,
+      // The agent's band set (used + buffers + cached + free = total). One
+      // server-side collector fills it — a TrueNAS host, whose ZFS ARC is the
+      // `cached` band (workloadMonitorService) and which reconciles the sum
+      // itself. Everything else leaves it null.
+      memBuffersBytes: bytesOrNull(d.memBuffersBytes),
+      memCachedBytes:  bytesOrNull(d.memCachedBytes),
+      memFreeBytes:    bytesOrNull(d.memFreeBytes),
       swapUsedBytes:   null,
       swapTotalBytes:  null,
       // The vCenter band set, disjoint from the one above. Null everywhere

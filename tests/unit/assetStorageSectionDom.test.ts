@@ -56,8 +56,12 @@ function varSrc(name: string): string {
   return line;
 }
 
-const FN_NAMES = ["_storageStreamDelivers", "_renderStorageTable"];
+const FN_NAMES = [
+  "_storageStreamDelivers", "_renderStorageTable", "_storageDetailsFor", "_storageHealthCell", "_setStorageDetailsFromVirtualization",
+  "_poolLayoutsHTML", "_poolMemberUnhealthy", "_poolScanText",
+];
 const SRC = varSrc("_STORAGE_DELIVERING_METHODS") + "\n" +
+  varSrc("_assetStorageDetails") + "\n" +
   FN_NAMES.map(fnSrc).join("\n") + "\n" +
   "globalThis._STORAGE_DELIVERING_METHODS = _STORAGE_DELIVERING_METHODS;\n" +
   FN_NAMES.map((n) => `globalThis.${n} = ${n};`).join("\n");
@@ -80,6 +84,7 @@ beforeEach(() => {
   g._fmtBytes = (n: number) => String(n);
   g._storagePctCell = (p: number | null) => `<span>${p == null ? "—" : Math.round(p)}</span>`;
   g._assetTableTypeKey = () => "asset-storage";
+  g.timeAgo = () => "2 days ago";
   g.applyTableLayout = undefined;
   g._POLLING_LABELS = { snmp: "SNMP", rest_api: "REST API", disabled: "Disabled", agent: "Polaris Agent", vcenter: "vCenter" };
   g._notAvailableViaPollingHTML = (label: string, method: string, desc: string) =>
@@ -153,5 +158,84 @@ describe("_renderStorageTable empty states", () => {
     expect(el.querySelector("[data-na]")).toBeNull();
     expect(el.querySelector("table")).not.toBeNull();
     expect(el.textContent).toContain("flash");
+  });
+});
+
+describe("a hypervisor's volumes", () => {
+  const headers = (el: HTMLElement) => Array.from(el.querySelectorAll("th")).map((t) => t.textContent);
+
+  it("adds a vCenter datastore's type, backing and provisioned size, and flags one inaccessible", () => {
+    withStreams({ storage: "vcenter" });
+    g._setStorageDetailsFromVirtualization("H1", {
+      virtualization: { role: "host" },
+      datastores: [{ name: "ds-1", dsType: "VMFS", backingLabel: "array-A", provisionedBytes: "900", accessible: false }],
+    });
+    const el = render([{ mountPath: "ds-1", usedBytes: 400, totalBytes: 1000 }], { id: "H1", assetType: "hypervisor" });
+    expect(headers(el)).toEqual(["", "Mount", "Type", "Backing", "Provisioned", "Used", "Total", "Used %"]);
+    expect(el.textContent).toContain("VMFS");
+    expect(el.textContent).toContain("array-A");
+    expect(el.textContent).toContain("(inaccessible)");
+  });
+
+  it("adds an Unraid / TrueNAS pool's kind and health, and no column nobody filled", () => {
+    withStreams({ storage: "truenas" });
+    g._setStorageDetailsFromVirtualization("H2", {
+      virtualization: { role: "host", platform: "truenas", pools: [{ name: "tank", kind: "zfs", health: "DEGRADED" }] },
+    });
+    const el = render([{ mountPath: "tank", usedBytes: 1, totalBytes: 2 }], { id: "H2", assetType: "hypervisor" });
+    expect(headers(el)).toEqual(["", "Mount", "Type", "Health", "Used", "Total", "Used %"]);
+    expect(el.textContent).toContain("DEGRADED");
+  });
+
+  const disk = (name: string, over: Record<string, unknown> = {}) => ({
+    name, device: null, serial: null, model: null, health: "ONLINE", sizeBytes: 100,
+    readErrors: 0, writeErrors: 0, checksumErrors: 0, errors: null, temperatureC: 35, filesystem: null, mediaType: "HDD", smart: null, ...over,
+  });
+
+  it("lays a ZFS pool out by vdev, and opens it when a disk is erroring", () => {
+    withStreams({ storage: "truenas" });
+    g._setStorageDetailsFromVirtualization("H3", {
+      virtualization: { role: "host", platform: "truenas", pools: [{
+        name: "tank", kind: "zfs", health: "DEGRADED", filesystem: "zfs", healthDetail: "One or more devices has experienced an error",
+        scan: { kind: "scrub", state: "finished", at: "2026-10-01T00:00:00Z", percent: null, errors: 0 },
+        groups: [{ role: "data", layout: "raidz1", name: "raidz1-0", health: "DEGRADED", members: [disk("sda"), disk("sdb", { checksumErrors: 4, health: "DEGRADED" })] }],
+      }] },
+    });
+    const el = render([{ mountPath: "tank", usedBytes: 1, totalBytes: 2 }], { id: "H3", assetType: "hypervisor" });
+    const block = el.querySelector("details")!;
+    expect(block.hasAttribute("open")).toBe(true);
+    expect(block.textContent).toContain("Data · raidz1");
+    expect(block.textContent).toContain("Scrub: finished 2 days ago, 0 errors");
+    expect(block.textContent).toContain("0 / 0 / 4");
+    expect(block.textContent).toContain("One or more devices");
+  });
+
+  it("lays Unraid's array out as parity + data with each disk's filesystem, closed when healthy", () => {
+    withStreams({ storage: "unraid" });
+    g._setStorageDetailsFromVirtualization("H4", {
+      virtualization: { role: "host", platform: "unraid", pools: [{
+        name: "array", kind: "array", health: "STARTED", filesystem: "unraid-array (xfs)",
+        scan: { kind: "parity-check", state: "ok", at: "2026-10-01T00:00:00Z", percent: null, errors: 0 },
+        groups: [
+          { role: "parity", layout: null, name: null, health: null, members: [disk("parity", { health: "DISK_OK", readErrors: null, writeErrors: null, checksumErrors: null, errors: 0, smart: "OK" })] },
+          { role: "data", layout: null, name: null, health: null, members: [disk("disk1", { health: "DISK_OK", readErrors: null, writeErrors: null, checksumErrors: null, errors: 0, filesystem: "xfs", smart: "OK" })] },
+        ],
+      }] },
+    });
+    const el = render([{ mountPath: "array", usedBytes: 1, totalBytes: 2 }], { id: "H4", assetType: "hypervisor" });
+    const block = el.querySelector("details")!;
+    expect(block.hasAttribute("open")).toBe(false);
+    expect(Array.from(block.querySelectorAll("th")).map((t) => t.textContent)).toEqual(
+      ["Group", "Device", "Health", "Errors", "SMART", "Filesystem", "Size", "Temp", "Model / Serial"],
+    );
+    expect(block.textContent).toContain("Unraid array (xfs)");
+    expect(block.textContent).toContain("Parity check: ok");
+  });
+
+  it("never applies one host's details to another asset", () => {
+    withStreams({ storage: "vcenter" });
+    g._setStorageDetailsFromVirtualization("H1", { virtualization: { role: "host" }, datastores: [{ name: "ds-1", dsType: "VMFS" }] });
+    const el = render([{ mountPath: "ds-1", usedBytes: 1, totalBytes: 2 }], { id: "OTHER", assetType: "hypervisor" });
+    expect(headers(el)).toEqual(["", "Mount", "Used", "Total", "Used %"]);
   });
 });
