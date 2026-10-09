@@ -23,8 +23,6 @@ registry which build the published image is and compares it with its own. When
 the published one is newer, the card shows **Update Available** with the new
 version, how many commits newer it is and a *What changed* link, and the
 sidebar shows *Update available*. Nothing is downloaded and nothing restarts.
-The card leaves out what only the in-app updater uses: the update train, the
-pre-update backup option and the commit history.
 
 It checks `ghcr.io/rogers-group-inc/polaris:latest`. If you run a fork or pull
 through a mirror, set `POLARIS_UPDATE_IMAGE` in the state volume's `.env` to

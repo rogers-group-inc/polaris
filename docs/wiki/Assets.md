@@ -353,10 +353,6 @@ the monitor status), CPU threads, memory and workload counts; the node's VMs
 and containers are on its **VMs & Containers** tab. On a **VM or container**:
 its node, state, vCPUs and memory (VMs), network and autostart.
 
-Proxmox is **read-only**. A guest carries no action bar and no Updates line,
-only the note *Read-only — Polaris monitors Proxmox guests but does not start
-or stop them.*
-
 ### System
 
 Live telemetry and history: response time, CPU, memory, temperature,
@@ -398,9 +394,7 @@ carries the tunnel's real up/down state, its remote gateway, its traffic and,
 under the name, the tunnel interface's configured address. If you pinned the
 tunnel interface itself for polling, it also keeps its own row so you can
 unpin it. GRE and VXLAN tunnels have no IPsec state and stay under **Other
-Interfaces**. The temporary
-shortcut tunnels ADVPN builds between spokes are not listed. They share their
-parent interface's address.
+Interfaces**.
 
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
@@ -488,7 +482,7 @@ device. It is one of:
 - **Not supported** — no upgrade engine for this manufacturer (Fortinet only,
   over HTTPS straight to the device). Images can still be stored. A
   **FortiGate in an HA cluster** also reads *Not supported*, with the cluster
-  mode and role: upgrading HA clusters is not supported yet.
+  mode and role: upgrade HA clusters outside Polaris.
 - **No image** — nothing in the repository for this device's platform, with a
   link to the Repository.
 - **Current** — nothing newer than what it runs.
@@ -553,8 +547,7 @@ A run ends *succeeded* (the device came back reporting the image's version),
 it on the device) or *failed* (the transcript says at which stage). The
 asset's OS/firmware field is not rewritten by the run: the next discovery
 reads the new version, and until it does the card says *Flashed*. **Run
-history** lists every attempt with a **View log**. No bulk upgrade exists; it
-is this device, from this card. On the phone the upgrade lives in the
+history** lists every attempt with a **View log**. On the phone the upgrade lives in the
 asset's OS row instead — see [Mobile and Dash](Mobile-and-Dash#assets-and-networks).
 
 **Scheduling an upgrade for later**
@@ -664,7 +657,7 @@ like, and critical is merely the default severity of a seeded down automation.
 
 A merged unit and process inventory — systemd units / Windows services with
 state, and (with *Include processes* ticked) the per-program process inventory
-in the same table. Read-only.
+in the same table.
 
 **CPU %** and **Memory** on a service row come from the agent (0.22.0+ for
 CPU, and for memory on Windows):
@@ -702,13 +695,13 @@ console's wording (*Automatic (Delayed Start)*, *Manual*, …; the enablement
 state on Linux), main process, CPU, memory, the other services sharing its
 process, its ports and connections, and its log.
 
-Mapping implies monitoring, one way. There is no Alert column, because
-[Automations](Automations) own alerting.
+Mapping implies monitoring, one way. Alerting on a service belongs to
+[Automations](Automations).
 
 ### Software
 
 The programs installed on the host, with their version, publisher, install
-date and size. Read-only. Up to three places can supply the list, and the tab
+date and size. Up to three places can supply the list, and the tab
 shows **one at a time**:
 
 | Source | Where it comes from | How fresh |
@@ -796,7 +789,7 @@ note at all.
 
 The second table lists matching automations: **Name · Trigger · Scope**, where
 Trigger is the automation's plain-English sentence — every severity tier
-included, which is why there is no separate Severity column. The name opens the
+included. The name opens the
 automation in the wizard in place, for `automationManagement:write`.
 
 ### Custom MIB
@@ -922,8 +915,7 @@ instead of showing nothing.
 
 SD-WAN has its own polling pass, separate from interfaces: every 60 seconds by
 default, set per integration by the SD-WAN tab's **Polling Interval** (see
-[Integration-Fortinet](Integration-Fortinet)). There is no Refresh button on
-this tab. An on-demand poll (the mobile asset sheet's refresh, or
+[Integration-Fortinet](Integration-Fortinet)). An on-demand poll (the mobile asset sheet's refresh, or
 `POST /assets/:id/probe-now` over the [API](API)) re-reads SD-WAN along with the
 probe; the snapshot tabs' **Refresh** (which re-reads system info) does not.
 

@@ -539,8 +539,7 @@ That scope gates the unauthenticated developer-docs page at `/api`:
 | **`rfc1918`** | the default |
 | `custom` | entries must sit **inside RFC1918**, and are re-filtered on read |
 
-There is deliberately **no "all"**. Loopback is always allowed while the page is
-enabled.
+Loopback is always allowed while the page is enabled.
 
 The gate **drops the socket and fails closed** — the opposite of login
 restriction's fail-open — because this fronts an unauthenticated disclosure

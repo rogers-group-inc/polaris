@@ -32,16 +32,14 @@ discovery at `write`.
 | **Generic API** | any REST API returning JSON, mapped field by field | assets | [Generic API](Integration-Generic-API) |
 
 Plus one integration that discovers nothing: **AI Assistant** — the model server
-behind the [AI assistant](AI-Assistant), either one you run or an Azure AI Foundry deployment. It has no Discover button, no
-auto-discovery and no Monitoring tab.
+behind the [AI assistant](AI-Assistant), either one you run or an Azure AI Foundry deployment.
 
 The page has a second tab, **Polaris Agents** — the
 [Polaris Agent](Polaris-Agent) build, SSH deployment, and service/process
 discovery rules — which is not an integration row.
 
 **[Network Discovery](Network-Discovery)** — saved active scans of IP ranges —
-is deliberately **not** an integration type, and lives on the Assets page under
-**+ Add Asset(s)**.
+lives on the Assets page under **+ Add Asset(s)**.
 
 ---
 
@@ -58,7 +56,7 @@ The modal is tabbed, and the tab set depends on the type:
 | Entra ID / Intune | General → Monitoring → Directory → Script Publishing |
 | Azure Arc | General → Monitoring → Script Publishing |
 | Windows Server, vCenter, Unraid, TrueNAS SCALE, Proxmox VE | General → Monitoring |
-| Generic API | General → Records & Mapping → Preview (no Monitoring tab — its assets are monitored one by one, like manually added ones) |
+| Generic API | General → Records & Mapping → Preview (its assets are monitored one by one, like manually added ones) |
 | AI Assistant | one untabbed form — Model Server, then Assistant Behaviour ([AI assistant](AI-Assistant)) |
 
 Outside the Fortinet pair, the connection settings **and** the filters live on
@@ -176,9 +174,8 @@ Unraid and TrueNAS add one more: **starting, stopping, restarting and updating
 a VM or container** from its asset, by a user with Assets Read-Write and only
 when the integration's API key is allowed to
 ([rule 94](Business-Rules#rule-94); see [Unraid](Integration-Unraid#workload-actions)
-and [TrueNAS SCALE](Integration-TrueNAS#workload-actions)). Proxmox VE does
-not: it is monitored read-only, and its guests carry no action bar
-([Proxmox VE](Integration-Proxmox#read-only-by-design)).
+and [TrueNAS SCALE](Integration-TrueNAS#workload-actions)). Proxmox VE is
+monitored read-only ([Proxmox VE](Integration-Proxmox#read-only-by-design)).
 
 Everything else Polaris does is a **read**.
 

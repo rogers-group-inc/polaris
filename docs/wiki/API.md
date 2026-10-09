@@ -33,7 +33,7 @@ Tokens look like `polaris_<32-character-tail>`.
 | a request the token's role does not permit | `403` — except on filter-don't-403 surfaces, which narrow instead |
 | **any** unknown path under `/api/v1` to an anonymous caller | **`401`, not `404`** — the API does not tell an anonymous caller which endpoints exist |
 
-There is **no token-introspection endpoint**. `GET /auth/me` answers
+`GET /auth/me` answers
 `{"authenticated": false}` for bearer callers. To smoke-test a token, call a
 cheap read and check for 200.
 

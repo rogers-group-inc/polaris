@@ -116,7 +116,7 @@ There is **no enabled control in the wizard** — enabling is the list's toggle.
 
 **Import from file…** (create only — never offered while editing, where
 replacing the open automation would be a data-loss trap). The file is read in
-the browser; there is no upload route.
+the browser.
 
 Two things always happen on import:
 

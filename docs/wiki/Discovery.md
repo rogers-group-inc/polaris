@@ -136,7 +136,7 @@ devices only report interfaces and mounts via the agent. That is self-healing,
 not a bug.
 
 Directory sync runs **last**, so a directory outage cannot affect the asset
-passes, and it is never its own scheduler job.
+passes.
 
 Installed software is **not** one of these passes. It is read inside the
 Entra ID / Intune and Azure Arc runs themselves, right after their devices are
@@ -192,7 +192,7 @@ A scoped run:
   decommissions assets, so it carries a second independent guard).
 
 For Entra and AD, the opt-in disappearance sweep is refused on a scoped run as
-well. Arc needs no such guard — its sync has no fleet-absence pass.
+well.
 
 ---
 

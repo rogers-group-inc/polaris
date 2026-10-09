@@ -194,8 +194,8 @@ administrator, whom region scope never narrows on alerts. See
 
 ### Rule 26
 **A generated MAC is a placeholder until the network proves otherwise.** The
-placeholder prefix is the **only** marker — there is no boolean column, because
-the prefix is visible on the gate's own table. Adoption is double-gated, works on
+placeholder prefix is the **only** marker — one visible on the gate's own
+table. Adoption is double-gated, works on
 ARP and device-inventory evidence only, and is not retroactive in either
 direction.
 
@@ -267,8 +267,8 @@ method. The body match is load-bearing, redirects are never followed, and it
 
 ### Rule 34
 **An active scan finds things; a separate grant adds them.** Scanning and
-adopting are separate grants, chained at the route. Opt-in, IDS-visible, no
-scheduler, no shipped default range. Adoption is new-addresses-only. A Discovery
+adopting are separate grants, chained at the route. Opt-in and IDS-visible: you
+run a scan when you mean to. Adoption is new-addresses-only. A Discovery
 is **private or shared**: who can see and run it is its visibility, who can edit
 it is its owner (or anyone with Full Read-Write on Network Discovery). See
 [Network Discovery](Network-Discovery).
@@ -1118,7 +1118,7 @@ that has genuinely lost the device stops reporting it.
 **Polaris changes nothing on the devices, and picks no winner.** A completed
 move and a forgotten roster entry look identical for as long as both gates keep
 answering, and only you know which happened — the fix is on the FortiGates
-either way. So there is no "accept": remove the device from the gate that no
+either way. So remove the device from the gate that no
 longer owns it, and **the card closes itself** once that gate has stopped
 reporting it for two days. A stale entry keeps being reported, so it keeps the
 card.
@@ -1319,7 +1319,7 @@ An upgrade does not start on a device that is down, warning, recovering,
 behind a parent that is down, decommissioned, quarantined, in storage or
 disabled; nor while another flash is running on that device, on a switch above
 or below it, or on its MCLAG peer. A **FortiGate in an HA cluster** is not
-upgraded at all (not supported yet): its Firmware card says so, booking is
+upgraded at all: its Firmware card says so, booking is
 refused, and the upgrade checks the gate's own HA setting again before it
 sends anything. A device in a scheduled maintenance window
 is fine — that is when you flash. The flash opens a
@@ -1482,7 +1482,7 @@ until Polaris starts it, and every attempt is on the record.** On an Unraid or
 TrueNAS SCALE integration, a VM or container (an App on TrueNAS) can be
 started, stopped, restarted and updated from its asset by anyone with Read-Write
 on Assets, the same level as a firmware upgrade. Reading its live state needs
-only Read-Only. The host itself cannot be started or stopped from Polaris.
+only Read-Only.
 
 - **Restart and update take a maintenance hold**, as an agent upgrade does
   ([rule 80](#rule-80)), so downtime you asked for does not page you. The hold
@@ -1630,7 +1630,7 @@ So on a Docker, podman or Unraid install:
 - After you **Stage** recommendations, the card asks you to restart the Polaris
   container yourself (`docker compose restart` for a compose stack, so every
   role reads the new `.env`; `docker restart <name>`; or Restart on your Docker
-  page). It has no restart button.
+  page).
 - The restart endpoint, `POST /api/v1/server-settings/restart`, refuses with
   409.
 

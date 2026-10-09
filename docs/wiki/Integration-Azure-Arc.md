@@ -122,7 +122,7 @@ Software* section of the General tab) and each discovery run fills the
 **Software** tab ([Assets](Assets)) of every Arc machine with its installed
 programs and versions.
 
-Polaris does not inventory the machines itself here. It reads what **Azure
+Polaris reads what **Azure
 Change Tracking & Inventory** has already collected into a Log Analytics
 workspace (the `ConfigurationData` table). Before turning this on:
 
@@ -163,7 +163,7 @@ unchanged. Plus `k8sMonitor` for connected clusters.
 
 The workstation and server blocks carry the full set: add-as-monitored,
 per-stream polling and credentials, **agent auto-deploy**, and **interface
-auto-monitor**. (Storage auto-monitor is AD/Entra only.)
+auto-monitor**.
 
 ---
 

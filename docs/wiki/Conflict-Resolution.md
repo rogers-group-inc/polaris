@@ -10,8 +10,7 @@ operator's decision is worse than a queue nobody has cleared.
 
 Reached from the **Conflicts** button on the **Events** page, the **Conflict
 Queue** dashboard widget, and the conflict slide-over. Everyone who can see the
-queue sees every flavour — there is no per-role split between reservation and
-asset conflicts.
+queue sees every flavour.
 
 | Gate | |
 |---|---|
@@ -288,9 +287,8 @@ which is the column that tells the two causes apart:
 | Both gates reporting recently | the device was moved and the **old gate still has it configured**, or two integrations cover the same equipment |
 | One gate's "last confirmed" going stale | the move is settling; the card will close itself |
 
-**Polaris changes nothing on the FortiGates, and does not pick a winner.** There
-is no Accept — remove the device from the roster of the gate that no longer owns
-it, and once that gate stops reporting it for **two days** the conflict closes
+**Polaris changes nothing on the FortiGates, and does not pick a winner.**
+Remove the device from the roster of the gate that no longer owns it, and once that gate stops reporting it for **two days** the conflict closes
 itself as auto-resolved. **Acknowledge** dismisses the card and changes nothing; the
 same pair of gates will not raise it again, but a different pair will.
 
@@ -319,8 +317,7 @@ device could have, or a merge that failed. The verbs below are for those.
 | **Review & merge…** | opens the full [comparison](Conflict-Resolution#merging-assets-by-hand) first; the card closes as soon as that merge completes |
 | **Reject** | they really are different units; the same set will not re-raise |
 
-Merging needs **full read-write on Assets** — it deletes a record. There is no
-Accept: there is nothing to adopt.
+Merging needs **full read-write on Assets** — it deletes a record.
 
 Polaris ignores serials that identify nothing rather than reporting them: the
 placeholders some hardware ships (`To Be Filled By O.E.M.`, `Default string`,

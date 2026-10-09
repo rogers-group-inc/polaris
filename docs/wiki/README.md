@@ -112,6 +112,11 @@ troubleshooting rows that only apply to older builds. Where a past incident
 explains a design, state the reason in the present tense ("without X, Y would
 happen"). The incident narratives live in the skills.
 
+Pages also describe what Polaris **does**, not what it lacks: no "there is no X
+control", no out-of-scope lists. A negative stays only when it tells the
+operator what an action does to their data or devices, is a security
+guarantee, or points to where the thing is done instead.
+
 `npm run check:wiki` (pre-commit hook and CI) enforces the structure a flat wiki
 needs and GitHub never reports: every page linked from `_Sidebar.md`, links as
 bare page names that exist, every `Page#anchor` matching a real heading, no

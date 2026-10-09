@@ -75,7 +75,6 @@ against them.
 
 Recipients are chosen per notify action, not here. Enrollment is per browser and
 driven by each user's own [notification preference](Navigation-and-Account#notification-preference)
-— there is no "enable push" switch anywhere in Polaris
 ([rule 39](Business-Rules#rule-39)).
 
 ## Slack / Microsoft Teams

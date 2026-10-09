@@ -249,8 +249,7 @@ Clicking a schedule offers:
 
 Both need `maintenanceManagement:write` — the level the Maintenance modal
 itself needs. A role that can only *read* maintenance still sees the widget;
-its rows simply do nothing. Neither verb is offered on the Dash wallboard,
-which has no session to act with. See
+its rows simply do nothing. See
 [Maintenance Windows](Maintenance-Windows).
 
 **A widget with more rows than fit scrolls itself** — a slow creep through the

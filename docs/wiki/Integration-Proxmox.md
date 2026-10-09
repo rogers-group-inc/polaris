@@ -193,8 +193,7 @@ The Monitoring tab has one subtab per class:
 | **Containers** | off | |
 
 Each subtab carries its **Auto-Monitor** toggle and its per-stream polling
-settings. There is **no agent auto-deploy and no auto-monitor pinning** for
-these classes.
+settings.
 
 ---
 
@@ -328,9 +327,6 @@ On a **VM or container**:
 - the note **Read-only — Polaris monitors Proxmox guests but does not start or
   stop them.**
 
-There is no Updates line and no Check-for-updates button: an LXC container is
-its own operating system, not an image Polaris could update.
-
 **Discover Now** is disabled on Proxmox assets. The integration's own
 **Discover** reads the whole cluster in one pass, so a single-asset run would
 cost the same and do less.
@@ -346,9 +342,7 @@ guest.
 
 Polaris **never starts, stops, restarts or migrates** a Proxmox guest, and never
 changes the cluster. The token is meant to be read-only (PVEAuditor), and the
-integration issues reads only. Unlike Unraid and TrueNAS SCALE, Proxmox assets
-carry **no workload action bar** ([rule 94](Business-Rules#rule-94) does not
-apply).
+integration issues reads only.
 
 ---
 

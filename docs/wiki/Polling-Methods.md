@@ -1,8 +1,7 @@
 # Polling methods
 
-Every stream on every asset resolves to exactly one **polling method**. There is
-no per-asset "monitor type" column — the answer is computed, per stream, from a
-four-tier hierarchy.
+Every stream on every asset resolves to exactly one **polling method**, computed
+per stream from a four-tier hierarchy.
 
 ---
 
@@ -59,8 +58,8 @@ resolution time**; the route layer rejects it at write time with a clear 400.
 | `proxmox` | reads the Proxmox VE cluster's API, not the node's OS or the guest. Shown as *Proxmox* |
 | `disabled` | universally allowed — *do not poll this stream* |
 
-> An **HTTP check** is not a polling method — it is a **manufacturer custom
-> widget** ([rule 33](Business-Rules#rule-33)); see [below](#the-http-check).
+> An **HTTP check** is configured as a **manufacturer custom widget**
+> ([rule 33](Business-Rules#rule-33)); see [below](#the-http-check).
 
 ### Which source takes which method
 
@@ -163,13 +162,6 @@ eventLog**.
 Interfaces and storage ride **one connection per host per tick** when both are
 on the same transport.
 
-**Still absent over a shell, and correctly reported as such:**
-
-- **Temperature** — Linux hwmon is readable, but `MSAcpi_ThermalZoneTemperature`
-  is unimplemented on most real Windows hardware. Neither side ships rather than
-  working on half a fleet.
-- **LLDP** — no shell equivalent at all.
-
 Two design notes on the event-log stream:
 
 - The window is derived from the stream's own interval (**1.5×**) rather than a
@@ -227,7 +219,6 @@ and no reachable workload IP is needed.
 | interfaces | yes | — | — |
 | storage | the pools: the Unraid array and cache pools, TrueNAS ZFS pools | — | — |
 | temperature | disk temperatures | — | — |
-| lldp | — | — | — |
 
 **One cached read per integration per 30 s** answers every asset on the host.
 **Response time defaults to ICMP** for any of these assets that has an address
@@ -262,8 +253,6 @@ cluster.
 | cpuMemory | one node-wide CPU figure; memory as Used / ZFS ARC / free | a share of the VM's own vCPUs, while running | same, while running |
 | interfaces | one *all interfaces* row (Proxmox has no per-NIC counters) | one row, every NIC summed | one row, every NIC summed |
 | storage | the node's ZFS pools and other active storage, with Ceph health on Ceph storage | — | — |
-| temperature | **no** — Proxmox publishes no sensors | — | — |
-| lldp | — | — | — |
 
 **One cached read per integration per 30 s** answers every asset in the
 cluster; storage is re-read at most every five minutes. **Response time
@@ -305,7 +294,7 @@ install.
 
 ## The HTTP check
 
-Not a polling method. A **manufacturer custom widget**, keyed by manufacturer
+A **manufacturer custom widget**, keyed by manufacturer
 plus an optional model pattern ([rule 33](Business-Rules#rule-33)).
 
 The reason is ownership of the *definition*. As a polling method the check would
@@ -318,7 +307,7 @@ How it behaves:
 
 | | |
 |---|---|
-| Body match | **load-bearing** — a 200 whose body does not match **fails**. There is no lax toggle |
+| Body match | **load-bearing** — a 200 whose body does not match **fails** |
 | Order | status is judged **before** content |
 | Redirects | **never followed** |
 | Body | capped at 64 KB |

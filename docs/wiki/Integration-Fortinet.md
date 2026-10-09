@@ -68,12 +68,6 @@ a note names the token as the thing that unlocks them. See
 **Proxy *with* a token is a legitimate setup** — discovery and writes ride FMG,
 monitoring reaches the gates directly — and keeps the normal REST defaults.
 
-Two fallbacks that look obvious and are **forbidden**, so do not ask for them:
-falling back to FMG's device-record IP (which can be a public or NAT address),
-and falling back to the proxy transport when direct fails (which turns "I
-disabled proxy" into "except when something is wrong, in which case it silently
-re-enables and overruns FMG's session limit").
-
 ### Filters
 
 Each filter is an **Include** or **Exclude** list — one mode at a time —
@@ -171,7 +165,7 @@ FortiManager and standalone FortiGate integrations. SLA charts and SD-WAN
 alerts therefore move once a minute by default, and an SD-WAN automation
 "sustained for N polls" means N reads at this interval. Only gates whose
 interfaces are polled over FortiOS REST are asked. A gate moved to SNMP gets no
-SD-WAN reads, and managed switches and APs have no SD-WAN.
+SD-WAN reads.
 
 Also on the Monitoring tab, under the FortiGate subtab's LLDP stream:
 **`excludeFortilinkLldp`**, which stops internal FortiGate↔FortiSwitch links

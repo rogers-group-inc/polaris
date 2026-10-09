@@ -64,12 +64,11 @@ vcenter-vm source row by external id (instance UUID, then moref)
       → create
 ```
 
-### Guest filesystems are not a discovery fact
+### Guest filesystems
 
-Discovery does not pull per-VM guest filesystems — that would be one REST call
-per VM per run — because the **`vcenter` storage stream samples them every
-system-info pass** instead. They belong in the System tab's Storage table with
-history, pinning and alerting, rather than as a static table on the General tab.
+The **`vcenter` storage stream samples each VM's guest filesystems every
+system-info pass**, so they appear in the System tab's Storage table with
+history, pinning and alerting.
 
 ---
 
@@ -155,8 +154,7 @@ A vSwitch's operational status is **derived** — up while any uplink is up, and
 outage. It carries no speed, vCenter publishing no aggregate rate.
 
 Teaming policy, port counts and the port-group VLAN table are *inventory* and
-render on the host's General tab instead. A distributed switch's own
-configuration is a per-vCenter object and is deliberately not read.
+render on the host's General tab instead.
 
 ### Where a host's datastores and VMs appear
 
@@ -243,5 +241,5 @@ source row**, not through `discoveredByIntegration` — which is also why the
 | Every VM went `down` at once | that should be a *skip*, not a miss — check whether Polaris can reach vCenter at all |
 | A VM was decommissioned that still exists | it left the inventory **and** had no other source. Check for a filter change (which should retain it) and for an incomplete read |
 | VMs vanished after editing `vmInclude` | they should not — the pre-filter retention exists for exactly this. Check the run's Events |
-| No storage history on VMs | the `vcenter` storage stream is the source; discovery does not pull guest filesystems |
+| No storage history on VMs | the `vcenter` storage stream is the source, not discovery |
 | Datastore capacity looks stale | it is a **delete-replace per run** — check whether the host-snapshot half of the paired fetch failed |

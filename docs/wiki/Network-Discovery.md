@@ -8,7 +8,8 @@ It lives on the **Assets** page: **+ Add Asset(s) → New discovery** starts one
 and **Saved discoveries** lists them (row menu: *Open…*, *Run now*, *Export
 config*, *Delete*). It is for equipment that answers SNMP or an API but belongs
 to no controller and no directory — PDUs, UPSes, sensors, cameras, older
-switches.
+switches. It is **opt-in and IDS-visible**, and that is stated where you use
+it; you run it when you mean to.
 
 | Gate | Grants |
 |---|---|
@@ -30,20 +31,6 @@ put it in inventory.
 
 The wizard **renders** the missing grant rather than discovering it at the POST,
 so you find out before you have filled in the form.
-
----
-
-## What it is not
-
-- **Not an integration type.** It creates no `Integration` row and no
-  integration discovery run.
-- **No `network-scan` source kind.** An adopted asset is created exactly like a
-  hand-typed one — a `manual` source row — with its provenance in the asset's
-  notes (*Found by Polaris Discovery "…" at …*) and in an Event.
-- **No scheduler.** There is no recurring sweep, and no shipped default range.
-  You run it when you mean to.
-
-It is **opt-in and IDS-visible**, and that is stated where you use it.
 
 ---
 
@@ -125,6 +112,10 @@ An adopted device is typed by the asset-type rules for scanned devices (else
 interface and storage pins from the Monitor step. It is **not** switched to
 monitored — that is a separate decision per asset. Up to 500 addresses per add.
 
+An adopted asset is created exactly like a hand-typed one — a `manual` source
+row — with its provenance in the asset's notes (*Found by Polaris Discovery "…"
+at …*) and in an Event.
+
 ---
 
 ## Private or shared
@@ -161,6 +152,6 @@ Three things worth settling first:
 1. **Tell whoever runs your IDS.** An unannounced sweep of a range is exactly
    what they are watching for, and this is the feature most likely to generate a
    ticket about Polaris rather than from it.
-2. **Scope it narrowly.** There is no default range on purpose.
+2. **Scope it narrowly.**
 3. **Decide who may adopt.** Scanning is reversible; putting two hundred rows in
    inventory is a cleanup job.
