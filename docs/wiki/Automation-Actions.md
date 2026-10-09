@@ -526,8 +526,7 @@ way, so an accidental un-tick does not destroy typed actions before save.
 
 ### Recovery is announced once
 
-Severity bands have no recovery actions of their own. Recovery is announced by
-the rule's **reset actions** — which every automation has, banded or not — so
+Recovery is announced by the rule's **reset actions** — which every automation has, banded or not — so
 people are told once.
 
 ### How the reset list follows your Notify actions

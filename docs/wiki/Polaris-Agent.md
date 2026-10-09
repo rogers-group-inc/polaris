@@ -15,9 +15,6 @@ asset slide-over.
 actions**. The only queued action it accepts is `run_script` — see
 [Automation scripts](Automation-Scripts#agent).
 
-There is **no** process or service start / stop / restart control, and no
-full-root tier.
-
 | Platform | Runs as |
 |---|---|
 | **Linux** | a hardened systemd unit — `DynamicUser`, `NoNewPrivileges`, `ProtectSystem=strict` — at one of two tiers |
@@ -105,7 +102,7 @@ ed25519 keypair used to install the agent over OpenSSH, owns the credential
 holding it, and emits the scripts that authorise the public half fleet-wide.
 
 The private half is **sealed at rest and never returned by any read path**.
-There is no escrow — recovery is regenerate and re-run the script, which is why
+Recovery is regenerate and re-run the script, which is why
 the scripts are idempotent. The public key is deliberately non-secret so the
 script can be re-rendered without rotating the key.
 

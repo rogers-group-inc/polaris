@@ -124,8 +124,7 @@ On by default. A traceroute runs on the first run, every *N* runs after that
 failure always has a fresh path to look at. *Max hops* (default 30) and *Probes
 per hop* (default 3) set how far and how thoroughly it looks.
 
-macOS agents do not trace in this version; their checks still run. The Polaris
-server traces with the system `traceroute` (or `tracepath`). If neither is
+The Polaris server traces with the system `traceroute` (or `tracepath`). If neither is
 installed, its traces come back empty with a note saying so (see
 [Installation](https://github.com/rogers-group-inc/polaris/blob/main/docs/INSTALL.md#optional-traceroute-path-checks-run-from-this-server)).
 

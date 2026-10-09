@@ -41,8 +41,6 @@ Each tier (**+ Escalation Action**; up to five per chain) carries:
 The chain as a whole carries **Stop escalating when**: *Acknowledged (or
 cleared)*, the default, or *Cleared only — acknowledging does not stop it*.
 
-Tier-hosted action rows carry **no escalation footer**: no chains inside chains.
-
 ### The pattern this exists for
 
 > The trigger notifies `Asset's L1 Region Users` — the site's own people.
@@ -185,8 +183,7 @@ push). **One email per person, in that person's own time zone.** It lists:
   the quiet time), listed with the count and every time it fired, whether or not
   it has recovered. It is not repeated under Still outstanding.
 
-No graphs and no Acknowledge button; each device name opens the device in
-Polaris.
+Each device name opens the device in Polaris.
 
 **The all-quiet email.** When the quiet period ends with nothing to list —
 every held alert recovered, or nothing was held at all — the summary still

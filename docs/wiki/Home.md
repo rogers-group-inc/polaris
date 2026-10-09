@@ -35,18 +35,6 @@ Alongside those, it keeps a full **address registry** — blocks, networks,
 individual addresses and reservations, with overlaps refused, CIDRs normalised
 and deletions protected while reservations are live. See [IPAM](IPAM).
 
-## What it deliberately does not do
-
-- DNS record management.
-- Full DHCP server configuration (scopes, policies, lease times). Individual
-  reservation push and lease release *are* supported, via the Fortinet
-  integrations.
-- Network device provisioning.
-- Cloud VPC / subnet creation (AWS, GCP, Azure).
-- Acting as an identity provider. Polaris authenticates *against* local
-  accounts, Azure SAML, OIDC, LDAP/AD or Entra App Proxy — it issues
-  identities for nothing.
-
 ---
 
 ## Reading this wiki

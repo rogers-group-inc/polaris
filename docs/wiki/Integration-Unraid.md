@@ -131,8 +131,7 @@ The Monitoring tab has one subtab per class:
 | **Containers** | off | |
 
 Each subtab carries its **Auto-Monitor** toggle and its per-stream polling
-settings. There is **no agent auto-deploy and no auto-monitor pinning** for
-these classes.
+settings.
 
 > **Turning on Auto-Monitor for containers can add a lot of monitored assets at
 > once** on a busy Unraid server. Look at what the class contains first.
@@ -297,8 +296,7 @@ Users with **Assets Read-Write** see an action bar on a VM or container:
 | **Update** | containers, only when an update is available | re-pulls the container's image |
 | **Check for updates** | containers | |
 
-Reading the live state needs only Assets Read-Only. The host itself cannot be
-started or stopped from Polaris.
+Reading the live state needs only Assets Read-Only.
 
 What Polaris does around each action is [rule 94](Business-Rules#rule-94):
 

@@ -122,12 +122,11 @@ Click your username, top right. What appears depends on your account:
 ### Notification preference
 
 `Email`, `Push`, or `Email and push`. This is an **account setting, not a
-browser switch** ([rule 39](Business-Rules#rule-39)): there is no "enable push"
-toggle anywhere in Polaris. Every client instead reconciles *its own*
+browser switch** ([rule 39](Business-Rules#rule-39)): every client reconciles *its own*
 subscription to your stored preference at boot, which is what makes "prefer
 push" mean push on every device you use.
 
-Three things follow from that:
+Four things follow from that:
 
 - The boot-time reconcile **never prompts** — a page load has no user
   activation — so it can only enroll a browser that has already granted

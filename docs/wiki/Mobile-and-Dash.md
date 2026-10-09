@@ -133,8 +133,7 @@ backup, and the run history and its log, are on the desktop's Firmware card,
 and the Repository itself is desktop-only. See
 [Assets → Firmware](Assets#firmware).
 
-A reservation is seen and changed in its network — there is no separate
-reservations tab.
+A reservation is seen and changed in its network.
 
 ## Installing it
 
@@ -156,8 +155,6 @@ would 401 for everyone.
 > push-bearing preference routes you to the install instructions **and saves
 > nothing**. A preference this phone cannot honour, chosen on this phone, is a
 > promise Polaris would break.
-
-Desktop pages deliberately carry **no** manifest link.
 
 ## Notifications
 
@@ -224,7 +221,7 @@ An explicit **Sign out** draws the login form once, even where a silent SSO
 provider would otherwise sign you straight back in. The desktop counterpart is a
 form-less signed-out page.
 
-The app is **online-only**: there is no offline cache, and a test enforces that.
+The app is **online-only**.
 
 ---
 

@@ -61,27 +61,11 @@ just that WinRM answers.
 |---|---|
 | IPv4 DHCP scopes (`Get-DhcpServerv4Scope`) | **networks**, named after the scope |
 
-That is all it reads. Reservations and leases on a Windows DHCP server are
-**not** imported — address-level DHCP data in Polaris comes from the Fortinet
-integrations.
+Polaris reads this server; it never writes to it.
 
 Networks it created are **deprecated** only when they were discovered from a
 server that is no longer this integration's Host. A scope deleted on the server
 is not deprecated on the next run; retire that network by hand.
-
----
-
-## What it does **not** do
-
-- **No device discovery.** It creates no assets of its own.
-- **No reservations or leases.** Scopes only.
-- **No push.** There is no DHCP Push or Quarantine Push tab — those are Fortinet
-  surfaces. Polaris reads this server; it does not write to it.
-- **No fleet-absence pass.** Nothing here decommissions anything.
-
-Full DHCP server configuration — creating scopes, server policies, lease-time
-settings — is explicitly [out of scope](Home#what-it-deliberately-does-not-do)
-for Polaris.
 
 ---
 

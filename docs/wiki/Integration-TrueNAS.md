@@ -138,8 +138,7 @@ The Monitoring tab has one subtab per class:
 | **Apps** | off | |
 
 Each subtab carries its **Auto-Monitor** toggle and its per-stream polling
-settings. There is **no agent auto-deploy and no auto-monitor pinning** for
-these classes.
+settings.
 
 ---
 
@@ -265,8 +264,7 @@ Users with **Assets Read-Write** see an action bar on a VM or App:
 | **Update** | Apps, only when an update is available | see below |
 | **Check for updates** | Apps | |
 
-Reading the live state needs only Assets Read-Only. The host itself cannot be
-started or stopped from Polaris.
+Reading the live state needs only Assets Read-Only.
 
 **Update** upgrades a catalog App to the **latest version in the catalog**. For
 a custom App, it pulls the App's images and redeploys it. **Polaris never

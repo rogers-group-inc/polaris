@@ -279,8 +279,7 @@ affect the asset passes, and never its own scheduler job.
 > **Before you enable it:** this puts employee names, addresses, titles,
 > departments and phone numbers **in your database and in every backup**.
 
-Read in bulk — Graph paged with `$select` / `$filter` / `$top` and deliberately
-**no `$search`**; LDAP via the paged-results control with an `objectGUID`
+Read in bulk — Graph paged with `$select` / `$filter` / `$top`; LDAP via the paged-results control with an `objectGUID`
 identity.
 
 Its five guarantees are on the [Address Book](Address-Book#what-sync-guarantees)

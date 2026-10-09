@@ -367,8 +367,8 @@ Two further toggles ride on top of DHCP Push, both **off by default**:
   [rule 26](Business-Rules#rule-26).
 
 A generated MAC is a placeholder **until the network proves otherwise**, and the
-prefix is the only marker — there is no boolean column, because the prefix is
-visible on the gate's own reserved-address table. The prefix must be a
+prefix is the only marker — one that is visible on the gate's own
+reserved-address table. The prefix must be a
 locally-administered unicast address, so no factory MAC can fall inside it.
 Changing it is not retroactive in either direction.
 
