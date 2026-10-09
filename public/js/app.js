@@ -2861,6 +2861,7 @@ function renderIntegrationFailedStatus() {
     if (t === "azurearc") return "Azure Arc";
     if (t === "unraid") return "Unraid";
     if (t === "truenas") return "TrueNAS SCALE";
+    if (t === "proxmox") return "Proxmox VE";
     if (t === "genericapi") return "Generic API";
     if (t === "llm") return "Local AI Assistant";
     return t || "";

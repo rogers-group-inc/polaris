@@ -29,6 +29,7 @@
  *                                                                 response time, which is ICMP on any asset
  *                                                                 with an address — see below)
  *   TrueNAS SCALE     → ICMP, SNMP, WinRM, SSH, Agent, TrueNAS   (same, with "truenas")
+ *   Proxmox VE        → ICMP, SNMP, WinRM, SSH, Agent, Proxmox   (same, with "proxmox"; no temperature stream)
  *   Generic API       → ICMP, SNMP, WinRM, SSH, Agent            (a record can be any device; ICMP response time
  *                                                                 is the only default)
  *   Manual            → any                                       (operator-chosen)
@@ -128,7 +129,7 @@
  * "Polling-method compatibility matrix".
  */
 
-export type PollingMethod = "rest_api" | "snmp" | "winrm" | "ssh" | "icmp" | "disabled" | "agent" | "vcenter" | "fortimanager" | "unraid" | "truenas";
+export type PollingMethod = "rest_api" | "snmp" | "winrm" | "ssh" | "icmp" | "disabled" | "agent" | "vcenter" | "fortimanager" | "unraid" | "truenas" | "proxmox";
 
 /** Streams resolved independently by the four-tier monitor settings hierarchy. */
 export type Stream =
@@ -150,10 +151,11 @@ export type AssetSourceKind =
   | "azurearc"
   | "unraid"
   | "truenas"
+  | "proxmox"
   | "genericapi"
   | "manual";
 
-const ALL_METHODS: ReadonlyArray<PollingMethod> = ["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas"];
+const ALL_METHODS: ReadonlyArray<PollingMethod> = ["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas", "proxmox"];
 
 // Each entry is the full set of valid methods for that source. A `Set` is
 // O(1) lookup which matters for the resolver running in the hot monitor
@@ -169,16 +171,16 @@ const COMPATIBILITY: Readonly<Record<AssetSourceKind, ReadonlySet<PollingMethod>
   fortigate:       new Set<PollingMethod>(["rest_api", "snmp", "ssh", "icmp", "disabled"]),
   // "vcenter" on the directory sources covers VMs those integrations
   // discovered FIRST that a vCenter sync merged into — see header note.
-  // "unraid" / "truenas" ride along for the same merged-VM reason.
-  activedirectory: new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas"]),
-  entraid:         new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas"]),
-  windowsserver:   new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas"]),
+  // "unraid" / "truenas" / "proxmox" ride along for the same merged-VM reason.
+  activedirectory: new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox"]),
+  entraid:         new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox"]),
+  windowsserver:   new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox"]),
   // Arc-enabled machines are ordinary Windows/Linux hosts, so they take the
   // same set as the directory sources. "vcenter" is included for the same
   // reason it is there — an Arc machine can also be a vCenter-merged VM, and
   // in fact the Arc↔vCenter vmUuid cross-link makes that MORE likely, not
   // less. No rest_api (no shared host API) and no snmp.
-  azurearc:        new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas"]),
+  azurearc:        new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox"]),
   // Union across the two vCenter classes: VMs are guest OSes (icmp / winrm /
   // ssh / agent like the directory sources), ESXi hosts answer snmp/ssh, and
   // "vcenter" delivers the hypervisor-view cpuMemory stream for VMs.
@@ -188,10 +190,11 @@ const COMPATIBILITY: Readonly<Record<AssetSourceKind, ReadonlySet<PollingMethod>
   // method reads all three classes (host, VM, container / App).
   unraid:          new Set<PollingMethod>(["icmp", "snmp", "winrm", "ssh", "disabled", "agent", "unraid"]),
   truenas:         new Set<PollingMethod>(["icmp", "snmp", "winrm", "ssh", "disabled", "agent", "truenas"]),
+  proxmox:         new Set<PollingMethod>(["icmp", "snmp", "winrm", "ssh", "disabled", "agent", "proxmox"]),
   // Generic API: a record can be ANY kind of device (a printer, a camera, a
   // server), so every transport an operator can hold a credential for is
   // allowed. Not rest_api (that is FortiOS REST), and none of the methods that
-  // read a specific integration (vcenter / fortimanager / unraid / truenas) —
+  // read a specific integration (vcenter / fortimanager / unraid / truenas / proxmox) —
   // the feed is not that integration.
   genericapi:      new Set<PollingMethod>(["icmp", "snmp", "winrm", "ssh", "disabled", "agent"]),
   // Spelled out rather than `ALL_METHODS`. Manual is the most permissive set
@@ -200,7 +203,7 @@ const COMPATIBILITY: Readonly<Record<AssetSourceKind, ReadonlySet<PollingMethod>
   // device roster, and an orphan asset has no integration to read. Writing the
   // list out means a future method has to be added here deliberately instead of
   // being inherited by accident.
-  manual:          new Set<PollingMethod>(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas"]),
+  manual:          new Set<PollingMethod>(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox"]),
 };
 
 /**
@@ -231,6 +234,7 @@ export function assetSourceKindFromIntegrationType(integrationType: string | nul
     case "azurearc":        return "azurearc";
     case "unraid":          return "unraid";
     case "truenas":         return "truenas";
+    case "proxmox":         return "proxmox";
     case "genericapi":      return "genericapi";
     default:                return "manual";
   }
@@ -301,14 +305,23 @@ export const WORKLOAD_STREAMS: ReadonlySet<Stream> = new Set<Stream>([
   "responseTime", "cpuMemory", "interfaces", "storage", "temperature",
 ]);
 
-/** True for the two workload-integration polling methods. */
-export function isWorkloadPollingMethod(m: string | null | undefined): m is "unraid" | "truenas" {
-  return m === "unraid" || m === "truenas";
+/**
+ * Streams the "proxmox" method can serve: vCenter's four. Proxmox VE publishes
+ * no sensor readings through its API (a disk's temperature sits behind a
+ * per-disk SMART read, and nothing else is exposed), so there is no
+ * temperature stream.
+ */
+export const PROXMOX_STREAMS: ReadonlySet<Stream> = VCENTER_STREAMS;
+
+/** True for the workload-integration polling methods (Unraid, TrueNAS SCALE, Proxmox VE). */
+export function isWorkloadPollingMethod(m: string | null | undefined): m is "unraid" | "truenas" | "proxmox" {
+  return m === "unraid" || m === "truenas" || m === "proxmox";
 }
 
 export function isMethodValidForStream(stream: Stream, method: PollingMethod): boolean {
   if (method === "vcenter") return VCENTER_STREAMS.has(stream);
   if (method === "fortimanager") return FORTIMANAGER_STREAMS.has(stream);
+  if (method === "proxmox") return PROXMOX_STREAMS.has(stream);
   if (method === "unraid" || method === "truenas") return WORKLOAD_STREAMS.has(stream);
   const allowed = STREAM_METHODS[stream];
   return allowed ? allowed.has(method) : true;
@@ -370,6 +383,7 @@ export function pollingMethodLabel(method: PollingMethod): string {
     case "fortimanager": return "FortiManager";
     case "unraid":   return "Unraid";
     case "truenas":  return "TrueNAS";
+    case "proxmox":  return "Proxmox";
   }
 }
 
@@ -404,6 +418,7 @@ export function credentialTypeForPollingMethod(
     case "fortimanager":
     case "unraid":
     case "truenas":
+    case "proxmox":
       return null;
   }
 }

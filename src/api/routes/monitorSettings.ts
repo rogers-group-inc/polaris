@@ -49,7 +49,7 @@ const AssetTypeSchema = z.string().min(2).max(32).refine(
 // compatibility is enforced at resolution time inside resolveMonitorSettings —
 // not here — so a class-override that sets winrm on a fortinet integration is
 // stored fine but silently ignored when resolving that integration's assets.
-const PollingMethodEnum = z.enum(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas"]);
+const PollingMethodEnum = z.enum(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas", "proxmox"]);
 
 // Tier-3 / "complete" settings: every cadence field present (no nulls). The
 // per-stream polling fields are optional/nullable at every tier — null means

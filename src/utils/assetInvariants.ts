@@ -261,6 +261,7 @@ export type LastSeenSource =
   | "arc"               // Azure Arc reported status="Connected" at scrape time (a live himds heartbeat)
   | "unraid"            // Unraid reported the VM / container running (host: its API answered) at scrape time
   | "truenas"           // TrueNAS SCALE reported the VM / App running (host: its API answered) at scrape time
+  | "proxmox"           // Proxmox VE reported the VM / LXC running (node: online in the cluster) at scrape time
   | "agent"             // Polaris Agent heartbeat
   | "probe"             // successful monitor probe
   | "ping"              // AD/Entra presence-verification ICMP fallback
@@ -293,9 +294,10 @@ export type LastSeenSource =
 // Note the evidence timestamp is always RUN TIME, never
 // properties.lastStatusChange — that records when the status last CHANGED, so
 // a machine Connected for 90 days carries a 90-day-old value.
-// "unraid" / "truenas" are deferred for vCenter's reason: a running state read
-// off the host's API is real-time, but a monitored workload's probe owns presence.
-const POLLING_DEFERRED_SOURCES = new Set<string>(["discovery", "device-inventory", "dhcp-lease", "vcenter", "arc", "unraid", "truenas"]);
+// "unraid" / "truenas" / "proxmox" are deferred for vCenter's reason: a running
+// state read off the host's API is real-time, but a monitored workload's probe
+// owns presence.
+const POLLING_DEFERRED_SOURCES = new Set<string>(["discovery", "device-inventory", "dhcp-lease", "vcenter", "arc", "unraid", "truenas", "proxmox"]);
 
 /**
  * Single write path for Asset.lastSeen: advance it to `evidenceAt` (stamping

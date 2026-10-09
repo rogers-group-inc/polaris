@@ -19,6 +19,7 @@ import * as activeDirectory from "../../services/activeDirectoryService.js";
 import * as vcenter from "../../services/vcenterService.js";
 import * as unraid from "../../services/unraidService.js";
 import * as truenas from "../../services/truenasService.js";
+import * as proxmox from "../../services/proxmoxService.js";
 import * as azureArc from "../../services/azureArcService.js";
 import { isValidIpAddress, ipInCidr, isPrivateIpv4 } from "../../utils/cidr.js";
 import { isFortinetIntegrationType } from "../../utils/pollingCompatibility.js";
@@ -988,6 +989,43 @@ const WorkloadConfigSchema = z.object({
   verboseLogging: z.boolean().optional().default(false),
 }).superRefine(refineConfigHost);
 
+// Proxmox VE. The workload classes and blocks above, with Proxmox's own
+// transport: an API token (`user@realm!name` + secret) instead of an API key,
+// and a list of node addresses — any node answers for the cluster, so the
+// extra ones are tried in order when the first does not answer. Every address
+// gets the same SSRF guard as `host`.
+const PROXMOX_TOKEN_ID_RE = /^[^\s@!]+@[^\s@!]+![A-Za-z][A-Za-z0-9._-]*$/;
+
+const ProxmoxConfigSchema = z.object({
+  host:          z.string().optional().default(""),
+  fallbackHosts: z.array(z.string().trim().min(1)).max(32).optional().default([]),
+  port:          z.number().int().min(1).max(65535).optional().default(8006),
+  verifyTls:     z.boolean().optional().default(true),
+  apiTokenId:    z.string().trim().optional().default("")
+    .refine((v) => v === "" || PROXMOX_TOKEN_ID_RE.test(v), "Token ID must look like user@realm!tokenname (e.g. polaris@pve!monitor)"),
+  // The token's secret, stored under the sealed `apiToken` key.
+  apiToken:      z.string().optional().default(""),
+  vmInclude:        z.array(z.string()).optional().default([]),
+  vmExclude:        z.array(z.string()).optional().default([]),
+  containerInclude: z.array(z.string()).optional().default([]),
+  containerExclude: z.array(z.string()).optional().default([]),
+  hostMonitor:      WorkloadHostClassMonitorSchema,
+  vmMonitor:        VcenterHostClassMonitorSchema,
+  containerMonitor: VcenterHostClassMonitorSchema,
+  verboseLogging: z.boolean().optional().default(false),
+}).superRefine((cfg, ctx) => {
+  refineConfigHost(cfg, ctx);
+  cfg.fallbackHosts.forEach((h, i) => {
+    if (isBlockedOutboundHost(h)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["fallbackHosts", i],
+        message: `Host "${h}" is in a blocked range (loopback / link-local / metadata / multicast) and cannot be used as an integration target.`,
+      });
+    }
+  });
+});
+
 // Local AI Assistant (model server) for the AI assistant (business rule 95). OpenAI-compatible
 // chat completions — Ollama, LM Studio, vLLM, llama.cpp, LocalAI, Open WebUI.
 // No discovery, no monitoring, no assets: it is read by the assistant routes
@@ -1207,6 +1245,14 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
     type:         z.literal("truenas"),
     name:         z.string().min(1, "Name is required"),
     config:       WorkloadConfigSchema,
+    enabled:      z.boolean().optional().default(true),
+    autoDiscover: z.boolean().optional().default(true),
+    pollInterval: z.number().int().min(1).max(24).optional().default(1),
+  }),
+  z.object({
+    type:         z.literal("proxmox"),
+    name:         z.string().min(1, "Name is required"),
+    config:       ProxmoxConfigSchema,
     enabled:      z.boolean().optional().default(true),
     autoDiscover: z.boolean().optional().default(true),
     pollInterval: z.number().int().min(1).max(24).optional().default(1),
@@ -1592,6 +1638,22 @@ router.put("/:id", async (req, res, next) => {
           `Use the device's routable LAN address.`,
         );
       }
+      // Proxmox carries more targets than `host` and a token ID with a fixed
+      // shape — the loose update schema checks neither, so check them here.
+      if (existing.type === "proxmox") {
+        const fallbacks = newConfig.fallbackHosts;
+        if (fallbacks !== undefined && (!Array.isArray(fallbacks) || fallbacks.some((h) => typeof h !== "string"))) {
+          throw new AppError(400, "fallbackHosts must be a list of addresses");
+        }
+        for (const h of (fallbacks as string[] | undefined) ?? []) {
+          if (isBlockedOutboundHost(h)) {
+            throw new AppError(400, `Host "${h.trim()}" is in a blocked range (loopback / link-local / metadata / multicast) and cannot be used as an integration target.`);
+          }
+        }
+        if (typeof newConfig.apiTokenId === "string" && newConfig.apiTokenId !== "" && !PROXMOX_TOKEN_ID_RE.test(newConfig.apiTokenId.trim())) {
+          throw new AppError(400, "Token ID must look like user@realm!tokenname (e.g. polaris@pve!monitor)");
+        }
+      }
       // Validate the optional FMG/FortiGate response-time SNMP override.
       // Empty string and null both mean "clear" — normalize to null so the
       // probe path sees a consistent "not set" signal.
@@ -1707,7 +1769,7 @@ router.put("/:id", async (req, res, next) => {
       const newSnap = snapshotAddAsMonitoredByAssetType(existing.type, updated.config as Record<string, unknown>);
       // Every class the snapshot carries — a hand-written list here once left
       // kubernetes_cluster's flag flips unswept. Under a vcenter / unraid /
-      // truenas integration the server key reads vmMonitor and hypervisor
+      // truenas / proxmox integration the server key reads vmMonitor and hypervisor
       // hostMonitor; container covers containerMonitor.
       const flipped = (Object.keys(newSnap) as Array<keyof typeof newSnap>)
         .some((k) => oldSnap[k] !== newSnap[k]);
@@ -1835,6 +1897,8 @@ router.post("/:id/test", async (req, res, next) => {
       result = await unraid.testConnection(config as any);
     } else if (integration.type === "truenas") {
       result = await truenas.testConnection(config as any);
+    } else if (integration.type === "proxmox") {
+      result = await proxmox.testConnection(config as any);
     } else if (integration.type === "llm") {
       result = await llm.testConnection(config as any);
     } else if (integration.type === GENERIC_API_TYPE) {
@@ -2099,6 +2163,14 @@ router.post("/:id/query", async (req, res, next) => {
         params: z.array(z.unknown()).optional().default([]),
       }).parse(req.body);
       const result = await truenas.proxyQuery(integration.config as any, method, params);
+      sendProxyJson(res, result);
+      return;
+    }
+
+    if (integration.type === "proxmox") {
+      // GET only, and only paths on proxmoxService's read allow-list.
+      const { path } = z.object({ path: z.string().min(1).max(500) }).parse(req.body);
+      const result = await proxmox.proxyQuery(integration.config as any, path);
       sendProxyJson(res, result);
       return;
     }
@@ -2623,7 +2695,7 @@ router.post("/test", async (req, res, next) => {
         if (input.type === "azurearc" && needsRestore(cfg.clientSecret)) {
           cfg.clientSecret = stored.clientSecret;
         }
-        if ((input.type === "unraid" || input.type === "truenas") && needsRestore(cfg.apiToken)) {
+        if ((input.type === "unraid" || input.type === "truenas" || input.type === "proxmox") && needsRestore(cfg.apiToken)) {
           cfg.apiToken = stored.apiToken;
         }
         // The llm API key is optional, so only restore when one is stored.
@@ -2654,6 +2726,8 @@ router.post("/test", async (req, res, next) => {
       result = await unraid.testConnection(input.config as unraid.UnraidConfig);
     } else if (input.type === "truenas") {
       result = await truenas.testConnection(input.config as truenas.TrueNasConfig);
+    } else if (input.type === "proxmox") {
+      result = await proxmox.testConnection(input.config as proxmox.ProxmoxConfig);
     } else if (input.type === "llm") {
       result = await llm.testConnection(input.config);
     } else if (input.type === "genericapi") {

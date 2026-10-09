@@ -34,7 +34,7 @@ The **star** left of Hostname marks a favourite. Favourites pin to the top of
 the list, and each view tab keeps its own set.
 
 **Monitored Via** names the polling method actually in use — *ICMP*, *SNMP*,
-*REST API*, *Agent*, *vCenter*, *FortiManager*, *Unraid*, *TrueNAS* and so on —
+*REST API*, *Agent*, *vCenter*, *FortiManager*, *Unraid*, *TrueNAS*, *Proxmox* and so on —
 resolved per stream as [Polling methods](Polling-Methods) describes. An asset
 whose streams use more than one reads **Multiple**, with the list in the
 tooltip; an unmonitored asset reads `—`.
@@ -344,6 +344,19 @@ their duration; Stop pauses its monitoring unless you keep it, and a Start from
 Polaris resumes it ([rule 94](Business-Rules#rule-94)). Details are on
 [Unraid → Workload actions](Integration-Unraid#workload-actions).
 
+#### Proxmox VE nodes and guests
+
+An asset discovered by a [Proxmox VE](Integration-Proxmox) integration gets a
+**Proxmox VE** section. On a **node**: platform and version, a **Cluster** row
+(*Node online* or *Node offline*, **at last discovery** — the live up/down is
+the monitor status), CPU threads, memory and workload counts; the node's VMs
+and containers are on its **VMs & Containers** tab. On a **VM or container**:
+its node, state, vCPUs and memory (VMs), network and autostart.
+
+Proxmox is **read-only**. A guest carries no action bar and no Updates line,
+only the note *Read-only — Polaris monitors Proxmox guests but does not start
+or stop them.*
+
 ### System
 
 Live telemetry and history: response time, CPU, memory, temperature,
@@ -368,9 +381,10 @@ one-hour view, longer on longer ranges; the tooltip names it), and the line
 breaks where nothing was probed rather than dropping to 0 %. The **Packet
 loss** figure above the chart is the same measurement over the whole window.
 Hovering a response-time point still says whether *that poll* was missed.
-An Unraid or TrueNAS workload with no address of its own charts its response
-time at **0 ms**: its up/down is the platform's state read, which has no
-latency ([Polling methods](Polling-Methods#the-unraid-and-truenas-methods)).
+An Unraid, TrueNAS or Proxmox VE workload with no address of its own charts its
+response time at **0 ms**: its up/down is the platform's state read, which has
+no latency ([Polling methods](Polling-Methods#the-unraid-and-truenas-methods),
+[the `proxmox` method](Polling-Methods#the-proxmox-method)).
 
 **FortiGate tunnel interfaces are listed from the configuration.** On a
 FortiGate polled over the REST API, IPsec interfaces (site-to-site, dial-up,
@@ -398,7 +412,8 @@ actually contains the address.
 
 **CPU & Memory is one chart, or two, depending on what is collecting it.**
 Three sources report CPU per core and memory in bytes, and on those the
-section splits into a CPU chart and a Memory chart:
+section splits into a CPU chart and a Memory chart. A Proxmox VE node splits
+too, for its memory bands, though its CPU chart has a single line:
 
 | Source | CPU chart | Memory chart |
 |---|---|---|
@@ -406,6 +421,7 @@ section splits into a CPU chart and a Memory chart:
 | [vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) — VM | one line per vCPU | private / shared / ballooned / host-swapped / compressed against configured RAM |
 | [vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) — ESXi host | one line per physical core | consumed / ballooned / host-swapped against installed RAM |
 | [Unraid](Integration-Unraid) / [TrueNAS](Integration-TrueNAS) — host | one line per core | used against installed RAM (one band) |
+| [Proxmox VE](Integration-Proxmox) — node | one line for the whole node (Proxmox publishes no per-core figures) | Used / ZFS ARC / free against installed RAM |
 
 A percentage and a byte scale cannot share an axis, but they are two readings
 of the same sample, so the two charts keep one range selector — picking a
@@ -951,9 +967,10 @@ auto-deploy, interface/storage auto-monitor, presence verification and directory
 sync — which read the database fleet-wide. Auto-deploy in particular would start
 agent installs across the whole fleet from one click.
 
-On an Unraid or TrueNAS SCALE VM or container, **Discover Now is disabled**: the
-integration's own **Discover** reads the whole host in one call, so there is
-nothing cheaper to scope to.
+On an Unraid or TrueNAS SCALE VM or container, and on any Proxmox VE node, VM or
+container, **Discover Now is disabled**: the integration's own **Discover**
+reads the whole host or cluster in one call, so there is nothing cheaper to
+scope to.
 
 ---
 

@@ -16,7 +16,7 @@ Companion pages: [Polling methods](Polling-Methods) ·
 | Stream | Collects |
 |---|---|
 | **responseTime** | is it answering, and how fast — the liveness probe |
-| **cpuMemory** | CPU and memory utilisation. Two transports also carry **per-core CPU** and a **memory breakdown**, and the System tab splits CPU & Memory into two charts on those (an [Unraid](Integration-Unraid) / [TrueNAS](Integration-TrueNAS) host splits too: per-core CPU, and memory as used against installed RAM): the [Polaris Agent](Polaris-Agent) (per logical core; processes / buffers / cache / free, plus swap or page file, as the guest OS accounts for it) and [vCenter](Integration-vCenter) (per vCPU or physical core; the hypervisor's own bands — ballooned and host-swapped among them). FortiOS, SNMP, WinRM and SSH report one CPU figure and one memory figure and keep the combined chart |
+| **cpuMemory** | CPU and memory utilisation. Two transports also carry **per-core CPU** and a **memory breakdown**, and the System tab splits CPU & Memory into two charts on those (an [Unraid](Integration-Unraid) / [TrueNAS](Integration-TrueNAS) host splits too: per-core CPU, and memory as used against installed RAM; so does a [Proxmox VE](Integration-Proxmox) node: one CPU line, since Proxmox publishes no per-core figures, and memory as Used / ZFS ARC / free): the [Polaris Agent](Polaris-Agent) (per logical core; processes / buffers / cache / free, plus swap or page file, as the guest OS accounts for it) and [vCenter](Integration-vCenter) (per vCPU or physical core; the hypervisor's own bands — ballooned and host-swapped among them). FortiOS, SNMP, WinRM and SSH report one CPU figure and one memory figure and keep the combined chart |
 | **temperature** | hardware sensors and their alarm bits |
 | **interfaces** | per-port state, counters, PoE, IP, LLDP-adjacent data |
 | **lldp** | LLDP neighbours |
@@ -84,6 +84,7 @@ it bumps the cadence anchor alone, so spacing is preserved. The sources:
 | **vCenter unreachable** | the thing that answers for the device is not the device — one vCenter outage must not down a virtual fleet |
 | **FortiManager unreachable** | same reasoning, for the `fortimanager` method |
 | **Unraid / TrueNAS host API unreachable** | same reasoning, for the VMs and containers on the `unraid` / `truenas` method (the host itself fails — its own API is the finding) |
+| **Proxmox VE API unreachable** | the same, when no configured node address answers: guests on the `proxmox` method are skipped, nodes on it fail. A node its **peers report offline** is not a skip — the cluster answered, and the node probes down |
 | **A workload mid-transition** | an Unraid / TrueNAS state such as TrueNAS's *DEPLOYING* says neither up nor down |
 | **`responseTimePolling = "disabled"`** | the operator saying *do not poll this* |
 
@@ -116,6 +117,7 @@ re-runs the due check at pickup; a duplicate records nothing at all.
 | REST (FortiOS) | one per asset, **except** two cross-device caches |
 | vCenter | two warm caches, one SOAP round trip per integration per tick |
 | Unraid / TrueNAS | one cached read of the host's API per integration per 30 s answers every asset on the host |
+| Proxmox VE | one cached read of the cluster per integration per 30 s answers every node and guest; per-guest details come from discovery, and storage is re-read at most every 5 minutes |
 | Agent | the agent pushes on its own schedule; a deployed agent that goes quiet counts as missed polls ([Monitor states](Monitor-States#an-agent-hosts-silence-is-a-miss)) |
 
 The cross-device batchers matter at scale: **one FortiManager `/dvmdb` read

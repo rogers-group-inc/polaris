@@ -48,6 +48,7 @@ import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { AppError } from "../utils/errors.js";
 import { setEnvVar } from "../utils/envFile.js";
+import { isWorkloadPlatform } from "../utils/workloadSources.js";
 import { getMonitorWorkHistogramValues, type HistogramBucketValue } from "../metrics.js";
 import { setQueueMode, isPgbossInstalled, QUEUE_NAMES } from "./queueService.js";
 import type { CapacitySnapshot } from "./capacityService.js";
@@ -834,7 +835,7 @@ async function readIntegrationBreakdown(): Promise<IntegrationBreakdown> {
       out.vcenter += 1;
     } else if (r.type === "azurearc") {
       out.azurearc += 1;
-    } else if (r.type === "unraid" || r.type === "truenas") {
+    } else if (isWorkloadPlatform(r.type)) {
       out.workload = (out.workload ?? 0) + 1;
     } else if (r.type === "genericapi") {
       out.genericapi = (out.genericapi ?? 0) + 1;

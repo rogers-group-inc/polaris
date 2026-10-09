@@ -205,6 +205,7 @@ import {
   isWorkloadPollingMethod,
   responseTimeProbeShouldQueue,
 } from "../utils/pollingCompatibility.js";
+import { isWorkloadPlatform } from "../utils/workloadSources.js";
 import {
   collectHardwareSensorsWorkload,
   collectSystemInfoWorkload,
@@ -1022,7 +1023,7 @@ export function defaultPollingForSource(
         || stream === "interfaces" || stream === "storage") return "vcenter";
     return null;
   }
-  if (source === "unraid" || source === "truenas") {
+  if (source === "unraid" || source === "truenas" || source === "proxmox") {
     // Response time is ICMP whenever there is an address to ping (operator
     // decision 2026-10-07): the API-state probe's "response time" was the
     // whole host-API round trip — hundreds of ms of GraphQL / JSON-RPC, not
@@ -1040,9 +1041,10 @@ export function defaultPollingForSource(
     // Everything else the host's API answers for, it answers for, out of ONE
     // cached read per integration per tick. Temperature too — a NAS reports
     // its disks' temperatures, which land on the host as `sensorClass:
-    // "disk"` readings. LLDP is never published.
-    if (stream === "cpuMemory" || stream === "interfaces"
-        || stream === "storage" || stream === "temperature") return source;
+    // "disk"` readings — on Unraid / TrueNAS; Proxmox publishes no sensors
+    // (PROXMOX_STREAMS). LLDP is never published.
+    if (stream === "cpuMemory" || stream === "interfaces" || stream === "storage") return source;
+    if (stream === "temperature") return source === "proxmox" ? null : source;
     return null;
   }
   // manual — and genericapi, deliberately: a Generic API record can be any
@@ -1098,7 +1100,7 @@ function pickClassStreamsBlock(
     const streams = block.streams as Record<string, unknown> | undefined;
     return streams && typeof streams === "object" ? streams : undefined;
   }
-  if (integrationType === "unraid" || integrationType === "truenas") {
+  if (isWorkloadPlatform(integrationType)) {
     // vCenter's block names plus containerMonitor (monitorOverrideService).
     let block: Record<string, unknown> | undefined;
     if (assetType === "server")          block = cfg.vmMonitor        as Record<string, unknown> | undefined;
@@ -2241,7 +2243,7 @@ export async function probeAsset(
     }
     // Unraid / TrueNAS: the same posture — the host's API answers for the
     // asset, so no asset IP is needed (services/workloadMonitorService.ts).
-    if (polling === "unraid" || polling === "truenas") {
+    if (isWorkloadPollingMethod(polling)) {
       return await probeWorkload(assetId, dispatchStart);
     }
 
@@ -4960,7 +4962,7 @@ export async function collectTelemetry(assetId: string, preloaded?: TelemetryAss
   if (polling === "vcenter") {
     return await collectTelemetryVcenter(assetId);
   }
-  if (polling === "unraid" || polling === "truenas") {
+  if (isWorkloadPollingMethod(polling)) {
     return await collectTelemetryWorkload(assetId);
   }
 
@@ -5081,7 +5083,7 @@ export async function collectHardwareSensors(assetId: string, preloaded?: Teleme
   if (polling === "agent") return { supported: false };
   const timeoutMs = effective.temperatureTimeoutMs;
   // Unraid / TrueNAS: the host's disk temperatures, from the cached snapshot.
-  if (polling === "unraid" || polling === "truenas") {
+  if (isWorkloadPollingMethod(polling)) {
     return await collectHardwareSensorsWorkload(assetId);
   }
 
@@ -5227,7 +5229,7 @@ export async function collectFastFiltered(assetId: string): Promise<CollectionRe
   }
 
   // Unraid / TrueNAS: the pinned subset of the same cached snapshot.
-  if (polling === "unraid" || polling === "truenas") {
+  if (isWorkloadPollingMethod(polling)) {
     return await collectSystemInfoWorkload(assetId, effective, { interfaces: wantedIfaces, storage: wantedStorage });
   }
 

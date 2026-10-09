@@ -55,10 +55,11 @@ const WORKSTATION_SERVER_TYPES = new Set([
   "azurearc",
 ]);
 const VCENTER_TYPES = new Set(["vcenter"]);
-// Unraid / TrueNAS SCALE reuse vCenter's class-block NAMES (hostMonitor for
-// the `hypervisor` host, vmMonitor for its `server` VMs) and add one of their
-// own, containerMonitor, for the `container` type only they produce.
-const WORKLOAD_TYPES = new Set(["unraid", "truenas"]);
+// Unraid / TrueNAS SCALE / Proxmox VE reuse vCenter's class-block NAMES
+// (hostMonitor for the `hypervisor` host, vmMonitor for its `server` VMs) and
+// add one of their own, containerMonitor, for the `container` type only they
+// produce.
+const WORKLOAD_TYPES = new Set(["unraid", "truenas", "proxmox"]);
 // Azure Arc is the only integration that owns connected Kubernetes clusters.
 const ARC_TYPES = new Set(["azurearc"]);
 
@@ -75,9 +76,9 @@ const ARC_TYPES = new Set(["azurearc"]);
  *                                                         the class block kept its vm name)
  *   hypervisor    → hostMonitor.addAsMonitored           (vcenter)
  *   kubernetes_cluster → k8sMonitor.addAsMonitored       (azurearc)
- *   server        → vmMonitor.addAsMonitored             (unraid/truenas VMs)
- *   hypervisor    → hostMonitor.addAsMonitored           (unraid/truenas hosts)
- *   container     → containerMonitor.addAsMonitored      (unraid/truenas)
+ *   server        → vmMonitor.addAsMonitored             (unraid/truenas/proxmox VMs)
+ *   hypervisor    → hostMonitor.addAsMonitored           (unraid/truenas hosts, proxmox nodes)
+ *   container     → containerMonitor.addAsMonitored      (unraid/truenas/proxmox)
  *
  * Returns null when:
  *  - the asset type doesn't map to a per-class block
@@ -272,7 +273,7 @@ export async function recomputeMonitorOverrideForAssets(
           WHEN 'switch'       THEN (i."config" #>> '{fortiswitchMonitor,addAsMonitored}')::boolean
           WHEN 'access_point' THEN (i."config" #>> '{fortiapMonitor,addAsMonitored}')::boolean
           WHEN 'workstation'  THEN (i."config" #>> '{workstationMonitor,addAsMonitored}')::boolean
-          WHEN 'server'       THEN (CASE WHEN i."type" IN ('vcenter', 'unraid', 'truenas')
+          WHEN 'server'       THEN (CASE WHEN i."type" IN ('vcenter', 'unraid', 'truenas', 'proxmox')
                                          THEN (i."config" #>> '{vmMonitor,addAsMonitored}')::boolean
                                          ELSE (i."config" #>> '{serverMonitor,addAsMonitored}')::boolean END)
           WHEN 'hypervisor'   THEN (i."config" #>> '{hostMonitor,addAsMonitored}')::boolean
@@ -323,7 +324,7 @@ export async function sweepMonitoredForIntegration(
         WHEN 'switch'       THEN (i."config" #>> '{fortiswitchMonitor,addAsMonitored}')::boolean
         WHEN 'access_point' THEN (i."config" #>> '{fortiapMonitor,addAsMonitored}')::boolean
         WHEN 'workstation'  THEN (i."config" #>> '{workstationMonitor,addAsMonitored}')::boolean
-        WHEN 'server'       THEN (CASE WHEN i."type" IN ('vcenter', 'unraid', 'truenas')
+        WHEN 'server'       THEN (CASE WHEN i."type" IN ('vcenter', 'unraid', 'truenas', 'proxmox')
                                        THEN (i."config" #>> '{vmMonitor,addAsMonitored}')::boolean
                                        ELSE (i."config" #>> '{serverMonitor,addAsMonitored}')::boolean END)
         WHEN 'hypervisor'   THEN (i."config" #>> '{hostMonitor,addAsMonitored}')::boolean
@@ -346,7 +347,7 @@ export async function sweepMonitoredForIntegration(
           WHEN 'switch'       THEN (i."config" #>> '{fortiswitchMonitor,addAsMonitored}')::boolean
           WHEN 'access_point' THEN (i."config" #>> '{fortiapMonitor,addAsMonitored}')::boolean
           WHEN 'workstation'  THEN (i."config" #>> '{workstationMonitor,addAsMonitored}')::boolean
-          WHEN 'server'       THEN (CASE WHEN i."type" IN ('vcenter', 'unraid', 'truenas')
+          WHEN 'server'       THEN (CASE WHEN i."type" IN ('vcenter', 'unraid', 'truenas', 'proxmox')
                                          THEN (i."config" #>> '{vmMonitor,addAsMonitored}')::boolean
                                          ELSE (i."config" #>> '{serverMonitor,addAsMonitored}')::boolean END)
           WHEN 'hypervisor'   THEN (i."config" #>> '{hostMonitor,addAsMonitored}')::boolean

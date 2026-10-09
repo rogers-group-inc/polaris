@@ -27,7 +27,7 @@ asset conflicts any more.
 | Flavour | Entity | Raised when |
 |---|---|---|
 | **Field conflict** | reservation | a discovered value differs from a **manual** reservation, or a VIP row could take a value a DHCP entry for the same address carries |
-| **Hostname collision** | asset | a device found by Entra ID / Intune, Active Directory, vCenter, Azure Arc, Unraid or TrueNAS has the same hostname as an existing asset |
+| **Hostname collision** | asset | a device found by Entra ID / Intune, Active Directory, vCenter, Azure Arc, Unraid, TrueNAS or Proxmox VE has the same hostname as an existing asset |
 | **`duplicate-ip`** | asset | two network-present devices claim one address |
 | **IP override** | asset | discovery disagrees with an operator's IP pin |
 | **`serial-two-controllers`** | asset | one managed FortiSwitch/FortiAP is on **two FortiGates'** rosters |
@@ -66,7 +66,7 @@ only echoing back what Polaris wrote.
 ## Hostname collisions
 
 A device found by Entra ID / Intune, Active Directory, vCenter, Azure Arc,
-Unraid or TrueNAS whose hostname matches an existing asset raises a conflict
+Unraid, TrueNAS or Proxmox VE whose hostname matches an existing asset raises a conflict
 rather than merging. Names also match when one side is the 15-character NetBIOS
 truncation of the other; on Accept the longer name wins. The card snapshots
 both sides — what was proposed, and what the existing asset looked like when

@@ -121,6 +121,10 @@ const NOT_YET_SCOPED: Record<string, string> = {
   "truenas-host": "TrueNAS SCALE",
   "truenas-vm": "TrueNAS SCALE",
   "truenas-app": "TrueNAS SCALE",
+  // Proxmox reads the whole cluster in one call for the same reason.
+  "proxmox-node": "Proxmox VE",
+  "proxmox-qemu": "Proxmox VE",
+  "proxmox-lxc": "Proxmox VE",
   // A Generic API feed has no "fetch one record" request Polaris could rely
   // on — the operator described a list endpoint — so a per-asset refresh is
   // the integration's own Discover.

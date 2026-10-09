@@ -76,3 +76,9 @@ judgment call, for an act the catalogue already places.
 - No scheduled actions. A workload action runs now or not at all.
 - An update is "the newest the platform offers" (Unraid's image digest; TrueNAS's latest
   catalog version, or a pull + redeploy for a custom App) — Polaris does not choose versions.
+- No action on a Proxmox VE guest (the third workload platform, 2026-10-09). That integration
+  authenticates with a PVEAuditor token and is monitored read-only:
+  `workloadActionService.platformHasActions` is true for Unraid and TrueNAS only, so a Proxmox
+  guest's status answers `verbs: []`, `runWorkloadAction` / `checkWorkloadUpdates` refuse it
+  with 400 before any hold or platform call, and the asset card says so instead of offering
+  buttons.

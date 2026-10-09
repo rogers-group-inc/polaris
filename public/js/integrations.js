@@ -21,6 +21,7 @@ var _POLLING_LABELS = {
   fortimanager: "FortiManager",
   unraid:   "Unraid",
   truenas:  "TrueNAS",
+  proxmox:  "Proxmox",
 };
 
 // "agent" is intentionally NOT in any of these arrays — the Polaris Agent
@@ -44,17 +45,18 @@ var _POLLING_COMPAT = {
   // source and nowhere else — nothing else has a FortiManager to ask.
   fortimanager:    ["rest_api", "snmp", "ssh", "icmp", "disabled", "fortimanager"],
   fortigate:       ["rest_api", "snmp", "ssh", "icmp", "disabled"],
-  activedirectory: ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas"],
-  entraid:         ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas"],
-  windowsserver:   ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas"],
-  azurearc:        ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas"],
+  activedirectory: ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas", "proxmox"],
+  entraid:         ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas", "proxmox"],
+  windowsserver:   ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas", "proxmox"],
+  azurearc:        ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas", "proxmox"],
   vcenter:         ["icmp", "snmp", "winrm", "ssh", "disabled", "vcenter"],
   // vCenter's shape with the integration's own method (pollingCompatibility.ts).
   unraid:          ["icmp", "snmp", "winrm", "ssh", "disabled", "unraid"],
   truenas:         ["icmp", "snmp", "winrm", "ssh", "disabled", "truenas"],
+  proxmox:         ["icmp", "snmp", "winrm", "ssh", "disabled", "proxmox"],
   // A Generic API record can be any device (pollingCompatibility.ts).
   genericapi:      ["icmp", "snmp", "winrm", "ssh", "disabled"],
-  manual:          ["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "vcenter", "unraid", "truenas"],
+  manual:          ["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "vcenter", "unraid", "truenas", "proxmox"],
 };
 
 // Per-stream method restriction — mirrors STREAM_METHODS in
@@ -82,6 +84,12 @@ var _FORTIMANAGER_STREAMS = ["responseTime"];
 // in src/utils/pollingCompatibility.ts: vCenter's four plus temperature (host
 // disk temperatures). "telemetry" is the dropdowns' legacy name for cpuMemory.
 var _WORKLOAD_STREAMS = ["responseTime", "cpuMemory", "telemetry", "interfaces", "storage", "temperature"];
+
+// "proxmox" serves the same minus temperature — mirrors PROXMOX_STREAMS: the
+// Proxmox VE API publishes no sensor readings.
+var _PROXMOX_STREAMS = ["responseTime", "cpuMemory", "telemetry", "interfaces", "storage"];
+
+function _isWorkloadType(t) { return t === "unraid" || t === "truenas" || t === "proxmox"; }
 
 // Source-default polling for one stream. Mirrors defaultPollingForSource() in
 // src/services/monitoringService.ts. Used to label the "Inherit" option.
@@ -116,7 +124,7 @@ function _polarisSourceDefaultPolling(source, stream, opts) {
         || stream === "interfaces" || stream === "storage") return "vcenter";
     return null;
   }
-  if (source === "unraid" || source === "truenas") {
+  if (_isWorkloadType(source)) {
     // Mirrors defaultPollingForSource: response time is ICMP for any asset with
     // an address (the server falls back to the platform's state check for one
     // without — a bridged container, a VM with no published IP — which this
@@ -127,7 +135,7 @@ function _polarisSourceDefaultPolling(source, stream, opts) {
     if (opts && (opts.klass === "container" || opts.klass === "containers")) {
       return (stream === "cpuMemory" || stream === "telemetry" || stream === "interfaces") ? source : null;
     }
-    if (_WORKLOAD_STREAMS.indexOf(stream) !== -1) return source;
+    if ((source === "proxmox" ? _PROXMOX_STREAMS : _WORKLOAD_STREAMS).indexOf(stream) !== -1) return source;
     return null;
   }
   if (stream === "responseTime") return "icmp";
@@ -184,7 +192,7 @@ function _fmgFortiosRestUnavailable(integrationType) {
 function _collectorExists(source, stream, klass) {
   return function (method) {
     if (method === "disabled" || method === "vcenter" || method === "fortimanager") return true;
-    if (method === "unraid" || method === "truenas") return true;
+    if (_isWorkloadType(method)) return true;
     if (method === "icmp")  return stream === "responseTime";
     // The agent walks no LLDP neighbours.
     if (method === "agent") return stream !== "lldp";
@@ -239,6 +247,9 @@ function _streamAllowedMethods(source, stream, klass) {
   if (_WORKLOAD_STREAMS.indexOf(stream) === -1) {
     allowed = allowed.filter(function (m) { return m !== "unraid" && m !== "truenas"; });
   }
+  if (_PROXMOX_STREAMS.indexOf(stream) === -1) {
+    allowed = allowed.filter(function (m) { return m !== "proxmox"; });
+  }
   // Finally: drop anything with no collector behind it. Offering a method that
   // silently gathers nothing is how a stream gets configured into permanent
   // silence with every indicator green. The dropdown labels cpuMemory as
@@ -266,6 +277,7 @@ function _polarisSourceLabel(source, opts) {
   if (source === "azurearc")        return "Azure Arc";
   if (source === "unraid")          return "Unraid";
   if (source === "truenas")         return "TrueNAS SCALE";
+  if (source === "proxmox")         return "Proxmox VE";
   if (source === "genericapi")      return "Generic API";
   return "Manual";
 }
@@ -708,7 +720,7 @@ async function loadIntegrations() {
     var result = await api.integrations.list();
     var integrations = result.integrations || result;
     if (integrations.length === 0) {
-      container.innerHTML = '<div class="empty-state-card"><p>No integrations configured.</p><p style="color:var(--color-text-tertiary);font-size:0.85rem;margin-top:0.5rem">Add a FortiManager, FortiGate, Windows Server, Microsoft Entra ID, Active Directory, VMware vCenter, Azure Arc, Unraid, or TrueNAS SCALE connection — or a Generic API for anything else that lists devices — to get started — or a Local AI Assistant to turn on the AI assistant.</p></div>';
+      container.innerHTML = '<div class="empty-state-card"><p>No integrations configured.</p><p style="color:var(--color-text-tertiary);font-size:0.85rem;margin-top:0.5rem">Add a FortiManager, FortiGate, Windows Server, Microsoft Entra ID, Active Directory, VMware vCenter, Azure Arc, Unraid, TrueNAS SCALE, or Proxmox VE connection — or a Generic API for anything else that lists devices — to get started — or a Local AI Assistant to turn on the AI assistant.</p></div>';
       return;
     }
     var activeDiscoveries = (window._getServerDiscoveries && window._getServerDiscoveries()) || [];
@@ -725,6 +737,7 @@ async function loadIntegrations() {
         intg.type === "azurearc" ? "Azure Arc" :
         intg.type === "unraid" ? "Unraid" :
         intg.type === "truenas" ? "TrueNAS SCALE" :
+        intg.type === "proxmox" ? "Proxmox VE" :
         intg.type === "genericapi" ? "Generic API" :
         intg.type === "llm" ? "Local AI Assistant" :
         "FortiManager";
@@ -743,6 +756,7 @@ async function loadIntegrations() {
         (intg.type === "unraid" || intg.type === "truenas") && config.useTls === false ? 80 :
         intg.type === "windowsserver" ? 5985 :
         intg.type === "activedirectory" ? (config.useLdaps === false ? 389 : 636) :
+        intg.type === "proxmox" ? 8006 :
         443;
 
       var detailRows;
@@ -833,6 +847,15 @@ async function loadIntegrations() {
           '<div class="detail-row"><span class="detail-label">Verify TLS</span><span class="detail-value">' + (config.useTls === false ? "—" : config.verifyTls !== false ? "Yes" : "No") + '</span></div>' +
           filterRow("VMs", config.vmInclude, config.vmExclude) +
           filterRow(intg.type === "truenas" ? "Apps" : "Containers", config.containerInclude, config.containerExclude);
+      } else if (intg.type === "proxmox") {
+        var pveFallbacks = config.fallbackHosts || [];
+        detailRows =
+          '<div class="detail-row"><span class="detail-label">Host</span><span class="detail-value mono">' + escapeHtml(config.host || "-") + ':' + (config.port || defaultPort) + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Fallback Nodes</span><span class="detail-value mono">' + (pveFallbacks.length > 0 ? escapeHtml(pveFallbacks.join(", ")) : '<span style="color:var(--color-text-tertiary)">None</span>') + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">API Token</span><span class="detail-value mono">' + escapeHtml(config.apiTokenId || "-") + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Verify TLS</span><span class="detail-value">' + (config.verifyTls !== false ? "Yes" : "No") + '</span></div>' +
+          filterRow("VMs", config.vmInclude, config.vmExclude) +
+          filterRow("Containers", config.containerInclude, config.containerExclude);
       } else if (intg.type === "fortigate") {
         detailRows =
           '<div class="detail-row"><span class="detail-label">Host</span><span class="detail-value mono">' + escapeHtml(config.host || "-") + ':' + (config.port || defaultPort) + '</span></div>' +
@@ -918,7 +941,7 @@ async function loadIntegrations() {
             (intg.type === "azurearc" ? '<button class="btn btn-sm btn-secondary" onclick="openArcApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
             (intg.type === "activedirectory" ? '<button class="btn btn-sm btn-secondary" onclick="openAdApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
             (intg.type === "vcenter" ? '<button class="btn btn-sm btn-secondary" onclick="openVcenterApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
-            ((intg.type === "unraid" || intg.type === "truenas") ? '<button class="btn btn-sm btn-secondary" onclick="openWorkloadApiQueryModal(\'' + intg.id + '\', \'' + intg.type + '\')">Query API</button>' : '') +
+            (_isWorkloadType(intg.type) ? '<button class="btn btn-sm btn-secondary" onclick="openWorkloadApiQueryModal(\'' + intg.id + '\', \'' + intg.type + '\')">Query API</button>' : '') +
             (isLlm && config.roleName && permAtLeast("apiTokens", "write") ? '<button class="btn btn-sm btn-secondary" onclick="regenerateLlmToken(\'' + intg.id + '\', this)">Regenerate Token</button>' : '') +
             '<button class="btn btn-sm btn-secondary" onclick="testConnection(\'' + intg.id + '\', this)">Test Connection</button>' +
             '<button class="btn btn-sm btn-secondary" onclick="openIntegrationEditModal(\'' + intg.id + '\')">Edit</button>' +
@@ -1887,6 +1910,14 @@ var _CLASS_SUBTAB_SPECS = {
       { key: "containers", label: "Apps"             },
     ],
   },
+  proxmox: {
+    primary: "wlhosts",
+    classes: [
+      { key: "wlhosts",    label: "Nodes"            },
+      { key: "wlvms",      label: "Virtual Machines" },
+      { key: "containers", label: "Containers"       },
+    ],
+  },
 };
 
 // Integration types whose Workstations/Servers class subtabs carry the FULL
@@ -2152,7 +2183,9 @@ function _classStreamSubtabHTML(idPrefix, sourceKind, klass, stream, settings, c
     } else {
       intervalDefault = 600; intervalMin = 60; intervalMax = 86400; timeoutDefault = 10000;
     }
-    var intervalHint = "How often this stream collects from each monitored " + escapeHtml(klass) + ".";
+    // The workload class keys are internal names (wlhosts / wlvms) — say what they hold.
+    var klassNoun = { wlhosts: "host", wlvms: "virtual machine", vms: "virtual machine", hosts: "host", containers: "container" }[klass] || klass;
+    var intervalHint = "How often this stream collects from each monitored " + escapeHtml(klassNoun) + ".";
     var timeoutHint = "Per-request timeout.";
     cadenceHtml = numInput(stream.intervalField, "Interval (seconds)", settings[stream.intervalField], intervalDefault, intervalMin, intervalMax, intervalHint, false) +
       numInput(stream.timeoutField, "Timeout (ms)", settings[stream.timeoutField], timeoutDefault, 100, 120000, timeoutHint, stream.key === "responseTime");
@@ -3919,11 +3952,11 @@ function monitorSettingsFormHTML(s, opts) {
         _classAddAsMonitoredHTML("f-mon-clusters-", "Kubernetes cluster", k8sCfg.addAsMonitored === true) + '</section>';
     }
     // Unraid / TrueNAS — addAsMonitored only, per class. Everything else the
-    // workloads report rides the "unraid" / "truenas" polling method on the
-    // stream subtabs; nothing is installed and nothing is pinned for them.
+    // workloads report rides the "unraid" / "truenas" / "proxmox" polling
+    // method on the stream subtabs; nothing is installed and nothing is pinned.
     if (klass === "wlhosts") {
       return '<section style="margin-bottom:1.25rem">' + autoMonitoringHeader() +
-        _classAddAsMonitoredHTML("f-mon-wlhost-", "host", wlHostCfg.addAsMonitored !== false) + '</section>';
+        _classAddAsMonitoredHTML("f-mon-wlhost-", integrationType === "proxmox" ? "node" : "host", wlHostCfg.addAsMonitored !== false) + '</section>';
     }
     if (klass === "wlvms") {
       return '<section style="margin-bottom:1.25rem">' + autoMonitoringHeader() +
@@ -5702,6 +5735,95 @@ function getWorkloadFormConfig() {
   return cfg;
 }
 
+// ─── Proxmox VE ─────────────────────────────────────────────────────────────
+// The workload classes with Proxmox's own transport: an API token (token ID +
+// secret) and a list of node addresses — any node answers for the cluster. The
+// setup steps and CLI were verified on Proxmox VE 9.2; when the GUI paths move,
+// update this AND docs/wiki/Integration-Proxmox.md.
+function proxmoxFormHTML(defaults) {
+  var d = defaults || {};
+  var verifyTls = d.verifyTls !== false;
+  var enabledChecked = d.enabled !== false ? "checked" : "";
+  var autoChecked = d.autoDiscover !== false ? "checked" : "";
+  var vmMode = (d.vmInclude && d.vmInclude.length > 0) ? "include" : "exclude";
+  var vmNames = vmMode === "include" ? (d.vmInclude || []) : (d.vmExclude || []);
+  var ctrMode = (d.containerInclude && d.containerInclude.length > 0) ? "include" : "exclude";
+  var ctrNames = ctrMode === "include" ? (d.containerInclude || []) : (d.containerExclude || []);
+  var setupSteps =
+    '<ol style="margin:0.25rem 0 0 1.1rem;padding:0">' +
+      '<li><strong>Create a user</strong> — <em>Datacenter → Permissions → Users → Add</em>: user name <code>polaris</code>, realm <strong>Proxmox VE authentication server</strong> (<code>pve</code>). No password is needed — Polaris signs in with a token.</li>' +
+      '<li><strong>Grant read-only access</strong> — <em>Datacenter → Permissions → Add → User Permission</em>: path <code>/</code>, user <code>polaris@pve</code>, role <strong>PVEAuditor</strong>, <em>Propagate</em> ticked. PVEAuditor reads every node, guest and storage and can change nothing; Polaris starts and stops nothing on Proxmox.</li>' +
+      '<li><strong>Create the token</strong> — <em>Datacenter → Permissions → API Tokens → Add</em>: user <code>polaris@pve</code>, token ID e.g. <code>monitor</code>, and <strong>untick Privilege Separation</strong> so the token inherits the user&rsquo;s PVEAuditor role (or leave it ticked and grant PVEAuditor on <code>/</code> to the token itself).</li>' +
+      '<li><strong>Copy the secret now</strong> — Proxmox shows it only once. The token ID to enter below is the full <code>polaris@pve!monitor</code>.</li>' +
+      '<li><strong>TLS:</strong> Proxmox ships a self-signed certificate on port 8006. Install a trusted one (<em>System → Certificates</em> on each node) or untick <em>Verify TLS certificate</em>.</li>' +
+      '<li><strong>Test Connection</strong> should name the cluster, the Proxmox VE version and the node, VM and container counts. &ldquo;No nodes visible&rdquo; means the token has no role on <code>/</code>.</li>' +
+    '</ol>' +
+    '<p style="margin:0.4rem 0 0 0">The same from a node&rsquo;s shell:<br><code>pveum user add polaris@pve</code><br><code>pveum acl modify / --users polaris@pve --roles PVEAuditor</code><br><code>pveum user token add polaris@pve monitor --privsep 0</code></p>';
+  function filterBlock(idMode, idNames, mode, names, what, matched, example) {
+    return '<div class="form-group">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
+        '<select id="' + idMode + '" style="width:auto">' +
+          '<option value="include"' + (mode === "include" ? " selected" : "") + '>Include</option>' +
+          '<option value="exclude"' + (mode === "exclude" ? " selected" : "") + '>Exclude</option>' +
+        '</select>' +
+        '<span style="font-size:0.85rem;color:var(--color-text-secondary)">these ' + what + ' (matched against ' + matched + ')</span>' +
+      '</div>' +
+      '<textarea id="' + idNames + '" rows="3" placeholder="One per line — e.g.&#10;' + example + '">' + escapeHtml(names.join("\n")) + '</textarea>' +
+    '</div>';
+  }
+  return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. Proxmox cluster"></div>' +
+    infoBox('Connects to a <strong style="color:var(--color-text-primary)">Proxmox VE</strong> cluster (or a standalone node) and discovers every node, its QEMU virtual machines and its LXC containers, each as an asset parented by the node it runs on — a guest that migrates moves with it. State, CPU, memory, network traffic and each node&rsquo;s storage and ZFS pools are read from the API on every monitor tick — nothing is installed anywhere.') +
+    calloutHTML("tip", "Set up Proxmox VE first", setupSteps) +
+    formDivider() +
+    sectionHeading("Connection Settings") +
+    '<div style="display:grid;grid-template-columns:1fr auto;gap:8px">' +
+      '<div class="form-group"><label>Node Address *</label><input type="text" id="f-host" value="' + escapeHtml(d.host || "") + '" placeholder="e.g. pve1.lan"></div>' +
+      '<div class="form-group"><label>Port</label><input type="number" id="f-port" value="' + escapeHtml(d.port ? String(d.port) : "") + '" min="1" max="65535" placeholder="8006" style="width:90px"></div>' +
+    '</div>' +
+    '<div class="form-group"><label>Fallback Node Addresses</label><textarea id="f-fallbackHosts" rows="2" placeholder="One per line — e.g.&#10;pve2.lan&#10;pve3.lan">' + escapeHtml((d.fallbackHosts || []).join("\n")) + '</textarea>' +
+      '<p class="hint">Any node answers for the whole cluster. These are tried in order when the address above does not answer, so the integration keeps working while that node is down — and reports it offline.</p></div>' +
+    checkboxRow("f-verifyTls", "Verify TLS certificate", verifyTls) +
+    '<p class="hint">Turn off only while the nodes still use Proxmox&rsquo;s self-signed certificate — it lets a network attacker capture the token.</p>' +
+    '<div class="form-group"><label>API Token ID *</label><input type="text" id="f-apiTokenId" value="' + escapeHtml(d.apiTokenId || "") + '" placeholder="polaris@pve!monitor" autocomplete="off"><p class="hint">The full ID: <code>user@realm!tokenname</code>.</p></div>' +
+    '<div class="form-group"><label>API Token Secret *</label><input type="password" id="f-apiToken" value="" placeholder="' + escapeHtml(d.apiTokenPlaceholder || "Token secret") + '" autocomplete="off"></div>' +
+    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
+      '<input type="checkbox" id="f-enabled" ' + enabledChecked + ' style="width:auto">' +
+      '<label for="f-enabled" style="margin:0">Enabled</label>' +
+    '</div>' +
+    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
+      '<input type="checkbox" id="f-autoDiscover" ' + autoChecked + ' style="width:auto">' +
+      '<label for="f-autoDiscover" style="margin:0">Enable auto-discovery</label>' +
+    '</div>' +
+    '<div class="form-group"><label>Auto-Discovery Interval</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-pollInterval" value="' + (d.pollInterval || 1) + '" min="1" max="24" style="width:80px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">hours</span></div><p class="hint">How often to look for new, removed or migrated guests (1–24 hours). Their up/down state, usage and which node they run on are read every monitor tick regardless.</p></div>' +
+    formDivider() +
+    sectionHeading("Filters") +
+    filterBlock("f-vmMode", "f-vmNames", vmMode, vmNames, "VMs", "the VM name", "win-*") +
+    filterBlock("f-ctrMode", "f-ctrNames", ctrMode, ctrNames, "containers", "the container hostname", "*-test") +
+    '<p class="hint">Leave empty to sync everything. Wildcards: <code>web*</code>, <code>*db*</code>. Nodes are never filtered, and templates are always skipped. Narrowing a filter does not decommission what it drops — those assets simply stop updating.</p>' +
+    verboseLoggingFormHTML(d);
+}
+
+function getProxmoxFormConfig() {
+  var port = document.getElementById("f-port").value;
+  var vmMode = document.getElementById("f-vmMode").value;
+  var vmNames = linesToArray("f-vmNames");
+  var ctrMode = document.getElementById("f-ctrMode").value;
+  var ctrNames = linesToArray("f-ctrNames");
+  return {
+    host: val("f-host"),
+    port: port ? parseInt(port, 10) : 8006,
+    fallbackHosts: linesToArray("f-fallbackHosts"),
+    verifyTls: document.getElementById("f-verifyTls").checked,
+    apiTokenId: val("f-apiTokenId"),
+    apiToken: val("f-apiToken"),
+    vmInclude: vmMode === "include" ? vmNames : [],
+    vmExclude: vmMode === "exclude" ? vmNames : [],
+    containerInclude: ctrMode === "include" ? ctrNames : [],
+    containerExclude: ctrMode === "exclude" ? ctrNames : [],
+    verboseLogging: readVerboseLoggingFromForm(),
+  };
+}
+
 function getVcenterFormConfig() {
   var port = document.getElementById("f-port").value;
   var devMode = document.getElementById("f-deviceMode").value;
@@ -6097,6 +6219,9 @@ function showTypePicker() {
         '<strong>TrueNAS SCALE</strong>' +
         '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Host, VMs &amp; Apps via the JSON-RPC API</span>' +
       '</button>' +
+      '<button class="btn btn-secondary" id="pick-proxmox" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
+        '<strong>Proxmox VE</strong>' +
+        '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Cluster nodes, VMs &amp; LXC containers via the REST API</span>' +
       '<button class="btn btn-secondary" id="pick-generic" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
         '<strong>Generic API</strong>' +
         '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Any REST API that lists devices as JSON</span>' +
@@ -6117,6 +6242,7 @@ function showTypePicker() {
   document.getElementById("pick-arc").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("azurearc"); });
   document.getElementById("pick-unraid").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("unraid"); });
   document.getElementById("pick-truenas").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("truenas"); });
+  document.getElementById("pick-proxmox").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("proxmox"); });
   document.getElementById("pick-generic").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("genericapi"); });
   document.getElementById("pick-llm").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("llm"); });
 }
@@ -6131,6 +6257,7 @@ function _formHTMLForType(type, defaults) {
   if (type === "vcenter") return vcenterFormHTML(defaults);
   if (type === "azurearc") return azureArcFormHTML(defaults);
   if (type === "unraid" || type === "truenas") return workloadFormHTML(type, defaults);
+  if (type === "proxmox") return proxmoxFormHTML(defaults);
   return fortiManagerFormHTML(defaults);
 }
 
@@ -6144,6 +6271,7 @@ function _formConfigForType(type) {
   if (type === "vcenter") return getVcenterFormConfig();
   if (type === "azurearc") return getArcFormConfig();
   if (type === "unraid" || type === "truenas") return getWorkloadFormConfig();
+  if (type === "proxmox") return getProxmoxFormConfig();
   return getFormConfig();
 }
 
@@ -6183,6 +6311,7 @@ var _INTEGRATION_PRODUCTS = {
   azurearc:        "Azure Arc",
   unraid:          "Unraid",
   truenas:         "TrueNAS SCALE",
+  proxmox:         "Proxmox VE",
   genericapi:      "Generic API",
   llm:             "Local AI Assistant",
 };
@@ -6229,6 +6358,7 @@ var _INTEGRATION_REQUIRED_FIELDS = {
   fortigate:    [["f-host", "host"], ["f-apiToken", "API token", true]],
   unraid:       [["f-host", "host"], ["f-apiToken", "API key", true]],
   truenas:      [["f-host", "host"], ["f-apiToken", "API key", true]],
+  proxmox:      [["f-host", "node address"], ["f-apiTokenId", "API token ID"], ["f-apiToken", "API token secret", true]],
   // The API key is optional (Ollama / LM Studio need none), and a blank Model
   // means the server's default pick, so only the host is required.
   llm:          [["f-host", "host"]],
@@ -6245,7 +6375,7 @@ function _integrationRequires(type, mode) {
 
 // The five non-Fortinet types that carry a Monitoring tab. A type in neither
 // this list nor the Fortinet pair gets the flat, untabbed form.
-var _NON_FORTINET_TABBED = ["activedirectory", "entraid", "windowsserver", "vcenter", "azurearc", "unraid", "truenas"];
+var _NON_FORTINET_TABBED = ["activedirectory", "entraid", "windowsserver", "vcenter", "azurearc", "unraid", "truenas", "proxmox"];
 
 /**
  * The tab set for one integration type, in order, for BOTH flows.
@@ -6623,7 +6753,7 @@ async function openIntegrationCreateModal(type) {
   var isWin = type === "windowsserver";
   var isVc = type === "vcenter";
   var isArc = type === "azurearc";
-  var isWl = type === "unraid" || type === "truenas";
+  var isWl = _isWorkloadType(type);
   var isFmgOrFgt = isFmg || isFgt;
 
   // Every type with a Monitoring tab seeds it from the MANUAL tier — the
@@ -6649,6 +6779,7 @@ async function openIntegrationCreateModal(type) {
   var createDefaults = isFmg ? { verifySsl: true, fortigateVerifySsl: true }
     : isFgt ? { verifySsl: true }
     : (isAd || isVc) ? { verifyTls: true }
+    : type === "proxmox" ? { verifyTls: true }
     : isWl ? { verifyTls: true, useTls: true }
     : type === "genericapi" ? { useHttps: true, verifySsl: true } : {};
 
@@ -6706,7 +6837,7 @@ async function _createIntegration(type, tested) {
   var isWin = type === "windowsserver";
   var isVc = type === "vcenter";
   var isArc = type === "azurearc";
-  var isWl = type === "unraid" || type === "truenas";
+  var isWl = _isWorkloadType(type);
   var autoDiscoverEl = document.getElementById("f-autoDiscover");
   var createConfig = _formConfigForType(type);
   if (isWl) {
@@ -6912,7 +7043,7 @@ function _intgEditFormSpec(intg, config) {
     var isAd = intg.type === "activedirectory";
     var isVc = intg.type === "vcenter";
     var isArc = intg.type === "azurearc";
-    var isWl = intg.type === "unraid" || intg.type === "truenas";
+    var isWl = _isWorkloadType(intg.type);
     var body, formGetter;
 
     if (intg.type === "llm") {
@@ -6997,9 +7128,17 @@ function _intgEditFormSpec(intg, config) {
         verboseLogging: config.verboseLogging === true,
         verboseLoggingEnabledAt: config.verboseLoggingEnabledAt,
       };
-      body = workloadFormHTML(intg.type, defaults);
+      if (intg.type === "proxmox") {
+        delete defaults.useTls;
+        defaults.fallbackHosts = config.fallbackHosts || [];
+        defaults.apiTokenId = config.apiTokenId || "";
+        defaults.apiTokenPlaceholder = "Leave blank to keep current secret";
+        body = proxmoxFormHTML(defaults);
+      } else {
+        body = workloadFormHTML(intg.type, defaults);
+      }
       formGetter = function () {
-        var fc = getWorkloadFormConfig();
+        var fc = intg.type === "proxmox" ? getProxmoxFormConfig() : getWorkloadFormConfig();
         if (!fc.apiToken) delete fc.apiToken;
         return fc;
       };
@@ -7282,8 +7421,8 @@ async function _saveIntegration(id, intg, formGetter) {
     var isAd = intg.type === "activedirectory";
     var isVc = intg.type === "vcenter";
     var isArc = intg.type === "azurearc";
-    var isWl = intg.type === "unraid" || intg.type === "truenas";
-    var isFmgOrFgt = (intg.type === "fortimanager" || intg.type === "fortigate");
+    var isWl = _isWorkloadType(intg.type);
+    var isFmgOrFgt =(intg.type === "fortimanager" || intg.type === "fortigate");
     // Reads the form into an editConfig WITHOUT persisting it. Split from
     // commitSave so the Auto-Monitor capacity-warning confirm can run BEFORE
     // the PUT — previously the integration was already saved by the time the
@@ -9077,10 +9216,11 @@ function openVcenterApiQueryModal(id) {
   });
 }
 
-// ─── Unraid / TrueNAS API Query modal ──────────────────────────────────────
+// ─── Unraid / TrueNAS / Proxmox API Query modal ────────────────────────────
 // Read-only by construction on the server: Unraid takes GraphQL QUERIES only
 // (mutations / subscriptions refused), TrueNAS takes read methods only
-// (`.query`, `.get_instance`, `.config`, … — truenasService.isProxyReadMethod).
+// (`.query`, `.get_instance`, `.config`, … — truenasService.isProxyReadMethod),
+// Proxmox takes GET paths on proxmoxService.isProxyReadPath's allow-list.
 // Same saved-query console as the vCenter modal, one store per platform.
 
 var _UNRAID_PRESET_QUERIES = [
@@ -9097,13 +9237,33 @@ var _TRUENAS_PRESET_QUERIES = [
   { name: "Disk temperatures", method: "disk.temperatures", params: "[[]]" },
   { name: "Update summary for an App (edit the name)", method: "app.upgrade_summary", params: "[\"plex\"]" },
 ];
+// Proxmox: a GET path, limited server-side to proxmoxService.isProxyReadPath.
+var _PROXMOX_PRESET_QUERIES = [
+  { name: "Cluster resources (every node + guest)", path: "/cluster/resources" },
+  { name: "Cluster status (nodes, quorum)", path: "/cluster/status" },
+  { name: "Ceph health", path: "/cluster/ceph/status" },
+  { name: "Node status (edit the node)", path: "/nodes/pve1/status" },
+  { name: "Node storage (edit the node)", path: "/nodes/pve1/storage" },
+  { name: "Node ZFS pools (edit the node)", path: "/nodes/pve1/disks/zfs" },
+  { name: "VM config (edit node + VMID)", path: "/nodes/pve1/qemu/100/config" },
+  { name: "VM guest-agent addresses (edit node + VMID)", path: "/nodes/pve1/qemu/100/agent/network-get-interfaces" },
+  { name: "Container addresses (edit node + VMID)", path: "/nodes/pve1/lxc/100/interfaces" },
+];
 var _WL_QUERIES_VERSION = 1;
 var _unraidQueryStore = _makeSavedQueryStore("polaris-unraid-queries", _WL_QUERIES_VERSION, _UNRAID_PRESET_QUERIES);
 var _truenasQueryStore = _makeSavedQueryStore("polaris-truenas-queries", _WL_QUERIES_VERSION, _TRUENAS_PRESET_QUERIES);
+var _proxmoxQueryStore = _makeSavedQueryStore("polaris-proxmox-queries", _WL_QUERIES_VERSION, _PROXMOX_PRESET_QUERIES);
 
 function openWorkloadApiQueryModal(id, type) {
   var isTn = type === "truenas";
-  var inputs = isTn
+  var isPve = type === "proxmox";
+  var inputs = isPve
+    ? '<div class="form-group" style="margin:0">' +
+        '<label>Path <span style="font-size:0.8rem;color:var(--color-text-tertiary)">(under /api2/json)</span></label>' +
+        '<input type="text" id="wl-path" value="/cluster/resources" placeholder="/cluster/resources" style="font-family:monospace;font-size:0.85rem">' +
+        '<p class="hint">GET only, and only the reads discovery itself makes — cluster status and resources, Ceph health, a node&rsquo;s status, storage, ZFS and disks, a guest&rsquo;s config and addresses. Nothing that changes the cluster, and nothing under <code>/access</code>.</p>' +
+      '</div>'
+    : isTn
     ? '<div class="form-group" style="margin:0">' +
         '<label>Method</label>' +
         '<input type="text" id="wl-method" value="app.query" placeholder="app.query" style="font-family:monospace;font-size:0.85rem">' +
@@ -9146,16 +9306,20 @@ function openWorkloadApiQueryModal(id, type) {
       '<pre id="wl-response" style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:0.75rem;font-size:0.78rem;overflow:auto;max-height:300px;white-space:pre-wrap;word-break:break-all;margin:0"></pre>' +
     '</div>';
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Close</button>';
-  openModal((isTn ? "TrueNAS SCALE" : "Unraid") + " API Query", body, footer, { wide: true });
+  openModal((isPve ? "Proxmox VE" : isTn ? "TrueNAS SCALE" : "Unraid") + " API Query", body, footer, { wide: true });
 
-  _wireSavedQueryConsole(isTn ? _truenasQueryStore : _unraidQueryStore, "wl",
+  _wireSavedQueryConsole(isPve ? _proxmoxQueryStore : isTn ? _truenasQueryStore : _unraidQueryStore, "wl",
     function () {
-      return isTn
+      return isPve
+        ? { path: document.getElementById("wl-path").value.trim() }
+        : isTn
         ? { method: document.getElementById("wl-method").value.trim(), params: document.getElementById("wl-params").value }
         : { query: document.getElementById("wl-query").value, variables: document.getElementById("wl-vars").value };
     },
     function (q) {
-      if (isTn) {
+      if (isPve) {
+        document.getElementById("wl-path").value = q.path || "";
+      } else if (isTn) {
         document.getElementById("wl-method").value = q.method || "";
         document.getElementById("wl-params").value = q.params || "[]";
       } else {
@@ -9168,7 +9332,11 @@ function openWorkloadApiQueryModal(id, type) {
     var btn = this;
     var payload;
     try {
-      if (isTn) {
+      if (isPve) {
+        var path = document.getElementById("wl-path").value.trim();
+        if (!path) { showToast("Enter a path (e.g. /cluster/resources)", "error"); return; }
+        payload = { path: path };
+      } else if (isTn) {
         var method = document.getElementById("wl-method").value.trim();
         if (!method) { showToast("Enter a method (e.g. app.query)", "error"); return; }
         var params = JSON.parse(document.getElementById("wl-params").value.trim() || "[]");

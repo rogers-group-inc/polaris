@@ -1,6 +1,6 @@
 ---
 name: polaris-domain-model
-description: "Polaris data model: every Prisma entity (Asset, Subnet, Reservation, Integration, NotificationRule/Notification, Role, Credential, the firmware repository tables (FirmwareImage / FirmwareCredentialBinding / FirmwareUpgradeRun / FirmwareUpgradeSchedule — a scheduled or booked firmware upgrade), the sample hypertables and rollups, every Asset* side table), its fields, enums and load-bearing invariants. Load whenever a task names a table, model, column, enum, AssetSource kind, sourceType, monitorStatus or dhcpBinding; asks what a field means or where something is stored; adds a field/column/model; edits prisma/schema.prisma; or writes a migration."
+description: "Polaris data model: every Prisma entity (Asset, Subnet, Reservation, Integration, NotificationRule/Notification, Role, Credential, the firmware repository tables (FirmwareImage / FirmwareCredentialBinding / FirmwareUpgradeRun / FirmwareUpgradeSchedule — a scheduled or booked firmware upgrade), the sample hypertables and rollups, every Asset* side table), its fields, enums and load-bearing invariants. Load whenever a task names a table, model, column, enum, AssetSource kind (including the workload kinds unraid-* / truenas-* / proxmox-node / proxmox-qemu / proxmox-lxc), sourceType, monitorStatus, dhcpBinding or the Asset.virtualization blob; asks what a field means or where something is stored; adds a field/column/model; edits prisma/schema.prisma; or writes a migration."
 ---
 
 # Polaris domain model
@@ -57,7 +57,7 @@ AssetStatus:             active | maintenance | decommissioned | storage | disab
 // integration added `kubernetes_cluster` the same way (migration
 // 20260807020000) for Arc-enabled connected clusters, and the Unraid /
 // TrueNAS SCALE integrations added `container` (migration 20261007000000;
-// a Docker container on Unraid, an App on TrueNAS) — note that
+// a Docker container on Unraid, an App on TrueNAS, an LXC on Proxmox VE) — note that
 // registration is a SIX-WAY lockstep. Backend three: the migration,
 // BUILT_IN_ASSET_TYPES, AND the BUILT_IN_SEEDS entry, because
 // seedBuiltInAssetTypes skips any seed whose name isn't in the built-in list.

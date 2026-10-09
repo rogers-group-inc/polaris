@@ -24,6 +24,7 @@ import { syncArcSoftware, syncIntuneSoftware } from "../softwareInventoryService
 import * as vcenter from "../vcenterService.js";
 import * as unraid from "../unraidService.js";
 import * as truenas from "../truenasService.js";
+import * as proxmox from "../proxmoxService.js";
 import { syncWorkloadDevices } from "./workloadSync.js";
 import { isWorkloadPlatform } from "../../utils/workloadSources.js";
 import * as genericApi from "../genericApiService.js";
@@ -568,6 +569,7 @@ export async function runPreflightTest(integration: { id: string; type: string; 
   if (integration.type === "azurearc") return azureArc.testConnection(config as any);
   if (integration.type === "unraid") return unraid.testConnection(config as any);
   if (integration.type === "truenas") return truenas.testConnection(config as any);
+  if (integration.type === "proxmox") return proxmox.testConnection(config as any);
   if (integration.type === "llm") return llm.testConnection(config as any);
   if (integration.type === GENERIC_API_TYPE) return genericApi.testConnection(config as any);
   return { ok: false, message: `Unknown integration type: ${integration.type}` };
@@ -633,6 +635,9 @@ export async function triggerDiscovery(
     }
     if (isWorkloadPlatform(integration.type) && !config.apiToken) {
       throw new AppError(400, "Integration has no API key configured");
+    }
+    if (integration.type === "proxmox" && !config.apiTokenId) {
+      throw new AppError(400, "Integration has no API token ID configured");
     }
     // Generic API: the mapping is what makes a record an asset, so a run with
     // nothing mapped for the identity would read the feed and write nothing.
@@ -924,16 +929,20 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.skipped.push(...r.skipped);
         syncTotals.decommissionedAssets.push(...r.decommissioned);
       }
-    } else if (integration.type === "unraid" || integration.type === "truenas") {
-      // Unraid / TrueNAS SCALE produce assets only — the host, its VMs and its
-      // containers / Apps — through ONE shared sync (discovery/workloadSync.ts).
-      // No scoped mode: one host per integration, and the whole inventory is
-      // one read, so a single-device run would save nothing.
+    } else if (isWorkloadPlatform(integration.type)) {
+      // Unraid / TrueNAS SCALE / Proxmox VE produce assets only — the host(s),
+      // the VMs and the containers / Apps — through ONE shared sync
+      // (discovery/workloadSync.ts). No scoped mode: the whole inventory is one
+      // read (a whole cluster's, on Proxmox), so a single-device run would save
+      // nothing.
       const result = integration.type === "unraid"
         ? await unraid.discoverInventory(config as any, ac.signal)
-        : await truenas.discoverInventory(config as any);
+        : integration.type === "truenas"
+          ? await truenas.discoverInventory(config as any)
+          : await proxmox.discoverInventory(config as any);
       if (!ac.signal.aborted) {
-        onProgress("discover.inventory", "info", `${result.vms.length} VM(s), ${result.containers.length} container(s) read${result.inventoryComplete ? "" : " (part of the inventory could not be read)"}`);
+        const hosts = result.hosts.length > 1 ? `${result.hosts.length} host(s), ` : "";
+        onProgress("discover.inventory", "info", `${hosts}${result.vms.length} VM(s), ${result.containers.length} container(s) read${result.inventoryComplete ? "" : " (part of the inventory could not be read)"}`);
         const r = await syncWorkloadDevices(integrationId, integrationName, config, result, actor, "full");
         syncTotals.created.push(...r.created);
         syncTotals.updated.push(...r.updated);
