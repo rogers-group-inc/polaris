@@ -98,6 +98,10 @@ read-only role included) — once at least one AI Assistant integration is enabl
 To hide it from a role, set **AI Assistant** to None under
 [Users → Roles](Users-Roles-and-Permissions).
 
+The same people get a **Chat** tab in the [phone app](Mobile-and-Dash), in the
+slot Networks otherwise takes (Networks moves to More). It opens the same
+conversations as the desktop.
+
 ---
 
 ## Using it

@@ -440,6 +440,33 @@
     { id: "map", spec: Map, navTab: "more" },
   ];
 
+  // ─── Chat (the AI assistant) ───────────────────────────────────────────
+  // Real spec lives in /js/mobile/chat-tab.js. Chat takes the Networks slot
+  // ONLY when this user can use the assistant (an enabled AI Assistant
+  // integration + `assistant` read) — most installs have none, and a dead tab
+  // must not push Networks out of the bar. While Chat holds the slot,
+  // Networks is a route tab under More (like the Device Map); otherwise
+  // #chat is a route tab with no slot, which explains why it is unavailable.
+  var Chat = (window.PolarisChatTab && window.PolarisChatTab.spec) || {
+    title: "Chat",
+    icon: "#i-chat",
+    renderTopbar: function () { return ''; },
+    render: function (body) { body.innerHTML = placeholder("Chat module not loaded", "PolarisChatTab is missing — check script load order."); },
+  };
+  var chatInBar = false;
+  ROUTE_TABS.push({ id: "chat", spec: Chat, navTab: "" });
+
+  /** Put Chat in the Networks slot (true) or give the slot back (false). Returns whether anything changed. */
+  function setChatInBar(on) {
+    on = !!on;
+    if (on === chatInBar) return false;
+    chatInBar = on;
+    TABS[3] = on ? { id: "chat", spec: Chat } : { id: "networks", spec: Networks };
+    ROUTE_TABS = ROUTE_TABS.filter(function (r) { return r.id !== "chat" && r.id !== "networks"; });
+    ROUTE_TABS.push(on ? { id: "networks", spec: Networks, navTab: "more" } : { id: "chat", spec: Chat, navTab: "" });
+    return true;
+  }
+
   /** The navbar slot a route — a tab, a route tab, or a detail's parentTab — lights. */
   function navTabFor(id) {
     if (!id) return "";
@@ -774,6 +801,8 @@
       return null;
     },
     navTabFor: navTabFor,
+    setChatInBar: setChatInBar,
+    chatInBar: function () { return chatInBar; },
     escapeHtml: escapeHtml,
     placeholder: placeholder,
     showSnackbar: showSnackbar,

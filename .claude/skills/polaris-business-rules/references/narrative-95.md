@@ -188,7 +188,7 @@ and the README.
 
 ### What is deliberately not here
 
-The assistant is desktop-only for now (not the phone SPA or the Dash wallboard), takes no action
+The assistant is not on the Dash wallboard (the phone app gained a Chat tab on 2026-10-09, shown only where the assistant is usable), takes no action
 on the operator's behalf, and speaks one dialect — OpenAI-compatible chat completions, which
 Azure AI Foundry's GPT deployments also speak (95(j)) — rather than per-vendor clients. Help answers come from a keyword index over `docs/wiki/` shipped with
 the build (the Docker image copies it), not from embeddings.

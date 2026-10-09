@@ -444,7 +444,12 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
     // Make the current user available to api.js callers (avatar, role checks).
     window.__polarisUser = user;
 
+    // Chat takes the Networks slot only when the assistant is usable here:
+    // the last answer this phone saw decides the first paint, the live
+    // status corrects it (refreshChatSlot).
+    PolarisTabs.setChatInBar(chatPermitted(user) && lsChatAvailable() === "1");
     renderShell();
+    refreshChatSlot(user);
     PolarisRouter.onChange(routeChanged);
     if (!window.location.hash) PolarisRouter.go("search", { replace: true });
     initPushOnce();
@@ -634,6 +639,38 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
       PolarisSearch.runSearch("");
       input.focus();
     });
+  }
+
+  // ─── The Chat slot ─────────────────────────────────────────────────────
+  // The AI assistant is optional and off by default, so the navbar's fourth
+  // slot is Chat only for a user whose role reads `assistant` on an install
+  // with an enabled AI Assistant integration; everyone else keeps Networks
+  // there (PolarisTabs.setChatInBar). The answer is cached per phone so the
+  // bar does not change shape on every load.
+  var LS_CHAT_OK = "polaris-mobile-chat-available";
+  function lsChatAvailable() { try { return localStorage.getItem(LS_CHAT_OK); } catch (_) { return null; } }
+  function chatPermitted(user) {
+    var rank = { none: 0, read: 1, write: 2, fullwrite: 3 };
+    return (rank[(user && user.permissions && user.permissions.assistant) || "none"] || 0) >= 1;
+  }
+  function applyChatSlot(on) {
+    try { localStorage.setItem(LS_CHAT_OK, on ? "1" : "0"); } catch (_) { /* private mode */ }
+    if (!PolarisTabs.setChatInBar(on)) return;
+    var nav = document.getElementById("navbar");
+    if (nav) {
+      nav.outerHTML = buildNavbar();
+      wireNavbar();
+    }
+    // Re-dispatch so the current page agrees with the new bar (the More menu
+    // gains or loses its Networks row; #chat / #networks change home).
+    var cur = PolarisRouter.current();
+    if (cur) routeChanged(cur);
+  }
+  function refreshChatSlot(user) {
+    if (!chatPermitted(user) || !api.assistant) { applyChatSlot(false); return; }
+    api.assistant.status()
+      .then(function (s) { applyChatSlot(!!(s && s.enabled)); })
+      .catch(function () { /* offline or transient — keep what the cache said */ });
   }
 
   function buildNavbar() {

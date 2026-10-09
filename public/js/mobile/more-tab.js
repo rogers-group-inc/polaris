@@ -240,6 +240,10 @@
 
     body.innerHTML = ''
       + '<div class="section-head">Network</div>'
+      // Networks lives here while Chat holds its navbar slot (PolarisTabs.setChatInBar).
+      + (window.PolarisTabs && PolarisTabs.chatInBar && PolarisTabs.chatInBar()
+        ? menuRow({ route: "networks" }, "i-subnet", "Networks", "Networks, utilization and addresses") + '<div class="list-divider"></div>'
+        : '')
       + menuRow({ route: "map" }, "i-map", "Device Map", "Sites and topology")
       + '<div class="list-divider"></div>'
       + menuRow("blocks", "i-block",   "Blocks",       "")
