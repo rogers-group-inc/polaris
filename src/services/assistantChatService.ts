@@ -594,7 +594,12 @@ export async function streamAssistantTurn(input: {
     ...(playbook ? [{ role: "system" as const, content: playbook.guidance }] : []),
     ...turns,
   ];
-  const playbookTools = playbook ? tools.filter((t) => playbook.firstRoundTools.includes(t.function.name)) : [];
+  // A playbook narrows round 0 to its lookups, but never hides the memory tools: a user who says
+  // "remember X, and what is the status of Y?" is still asking for a write, and the grounding
+  // check (rule 95(i)) only runs when the model can reach `remember` at all.
+  const playbookTools = playbook
+    ? tools.filter((t) => playbook.firstRoundTools.includes(t.function.name) || MEMORY_TOOL_NAMES.has(t.function.name))
+    : [];
   const wantsReport = asksForReport(question);
   const reportOnlyTools = tools.filter((t) => t.function.name === "create_report");
   const wantsHowTo = !wantsReport && asksHowTo(question);

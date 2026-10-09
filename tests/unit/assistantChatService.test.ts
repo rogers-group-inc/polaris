@@ -477,6 +477,19 @@ describe("playbooks steer round 0", () => {
     expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ details: expect.objectContaining({ playbook: "correlate" }) }));
   });
 
+  it("a playbook never hides the memory tools (rule 95(i) needs `remember` reachable to refuse it)", async () => {
+    h.getMemoryEnabled.mockResolvedValueOnce(true);
+    h.beginTurn.mockResolvedValueOnce({ question: "what is the status of the branch switch?" });
+    let round0Tools: string[] = [];
+    h.chatCompletionRound.mockImplementationOnce(async (_c: any, _m: any, tools: any[], o: any) => {
+      round0Tools = tools.map((t) => t.function.name);
+      o.onText("Up.");
+      return { content: "Up.", toolCalls: [], finishReason: "stop" };
+    });
+    await run().p;
+    expect(round0Tools.sort()).toEqual(["forget", "get_asset", "list_alerts", "remember", "search"]);
+  });
+
   it("every tool is back from round 1", async () => {
     h.beginTurn.mockResolvedValueOnce({ question: "what changed overnight?" });
     let round1Tools: string[] = [];

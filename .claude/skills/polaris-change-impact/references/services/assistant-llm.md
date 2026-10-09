@@ -200,7 +200,7 @@ turn orchestrator, its playbooks, the conversation store, the per-user memory, t
 **Cross-service deps:** none (pure).
 
 **Used by:**
-- src/services/assistantChatService.ts → streamAssistantTurn — the guidance rides as a SECOND leading system message for the turn (a Claude deployment folds it into `system`; an OpenAI server sees two system messages) and `firstRoundTools` are the only tools offered on round 0, every tool again from round 1 — the same steering `asksForReport` / `asksHowTo` do, which keep priority. The audit Event carries `details.playbook`.
+- src/services/assistantChatService.ts → streamAssistantTurn — the guidance rides as a SECOND leading system message for the turn (a Claude deployment folds it into `system`; an OpenAI server sees two system messages) and `firstRoundTools` are the only tools offered on round 0 — plus `remember` / `forget` whenever memory is on, because rule 95(i)'s grounding refusal only runs when the model can reach `remember` at all (the integration test's poison question "what is the status of the branch switch?" matched the `health` playbook and the memory tools vanished with it, 2026-10-09) — every tool again from round 1. The same steering `asksForReport` / `asksHowTo` do, which keep priority. The audit Event carries `details.playbook`.
 
 **Invariants:**
 - A playbook changes the ORDER of lookups, never what a lookup may see — every tool still runs as the caller (rule 95(a)).
