@@ -47,6 +47,7 @@
 - [Azure Arc](Integration-Azure-Arc)
 - [Unraid](Integration-Unraid)
 - [TrueNAS SCALE](Integration-TrueNAS)
+- [Generic API (build your own)](Integration-Generic-API)
 - [Windows Server DHCP](Integration-Windows-Server)
 - [Polaris Agent](Polaris-Agent)
 - [Network Discovery (active scan)](Network-Discovery)
