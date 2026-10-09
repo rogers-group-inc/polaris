@@ -193,6 +193,22 @@ unreachable.) Combined with
 dependency suppression, a powered-off Unraid server produces one alert, not one
 per container.
 
+### The host's interfaces
+
+The host's **Interfaces** table shows each interface's traffic, link state,
+**IP address**, **MAC address**, speed and VLAN. Unraid reports traffic and
+addressing through two different parts of its API, and Polaris reads both on
+each pass.
+
+- **Older Unraid API:** if it has no per-interface addresses, the table shows
+  MAC and speed only. If it has neither, it shows traffic only. Monitoring
+  keeps working either way.
+- **Docker's and the VM manager's own interfaces** (`docker0`, `br-…`,
+  `veth…`, `virbr…`, `vnet…`, `shim-…`) show their MAC but no IP. Those
+  addresses are private to the server, and `docker0` has the same 172.17.0.1
+  on every Docker host. Recording them would tie every Unraid server to the
+  same address in IP history and searches.
+
 ### Container CPU and memory
 
 Per-container CPU, memory and network traffic come from the API's

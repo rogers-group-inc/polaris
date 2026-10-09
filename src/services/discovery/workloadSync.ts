@@ -260,6 +260,11 @@ export interface WorkloadInterfaceReading {
   rxDrops: number | null;
   txDrops: number | null;
   speedMbps: number | null;
+  /** First IPv4, bare (no prefix) — the shape every other collector writes. */
+  ipAddress?: string | null;
+  /** Upper-case, colon-separated. */
+  macAddress?: string | null;
+  vlanId?: number | null;
 }
 
 /**
