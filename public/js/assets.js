@@ -22965,7 +22965,7 @@ function _loadAssetNotificationsTab(assetId) {
         // 78): the same slate badge the Status pill wears, beside the
         // severity, so the row reads as that state at a glance.
         var depBadge = n.dependencyDown
-          ? ' <span class="badge badge-monitor-dep-down" title="Raised while this device was dependency-down — the message names the upstream device">Dep. Down</span>'
+          ? ' <span class="badge badge-monitor-dep-down" title="Raised while this device was dependency-down — the message names the upstream device. No reminders or escalation until the upstream recovers.">Dep. Down</span>'
           : "";
         // A GROUPED alert (business rule 75) names many problems in one
         // sentence; its message is the row's name and opens a menu whose verb

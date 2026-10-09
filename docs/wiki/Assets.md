@@ -776,7 +776,10 @@ actions, so it is confirmed.
 A purple **MAINT** badge beside the severity means the alert is paused for
 planned work: this device is in a maintenance window, or sits behind one that
 is. It stays listed but sends no reminders or escalation until the window ends
-(see [Dashboard](Dashboard) for the full behaviour).
+(see [Dashboard](Dashboard) for the full behaviour). A **Dep. Down** alert
+with no MAINT badge is also paused, but by the upstream outage rather than
+by maintenance: its reminders and escalation resume once the upstream device
+is back (see [rule 78](Business-Rules#rule-78)).
 
 A **grouped** alert (one alert covering several components of this device)
 wears a **GROUP** pill beside its severity, and its message is a link. Click

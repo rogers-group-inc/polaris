@@ -195,6 +195,18 @@ email a minute until the switch came back. The exclusion is in the query rather 
 because such rows must never even reach the asset lookup: they are the one alert that is SUPPOSED
 to be live on a suppressed asset, and the engine owns their end.
 
+**So a live alert on a suppressed device is not evidence of maintenance** (2026-10-09).
+`notificationService.maintenanceHoldsByAsset`, which stamps the MAINT pill on the Active Alerts
+widget and the asset Alerts tab, used to answer "upstream" from `dependencySuppressed` alone, on
+the premise that the sweep had already retired everything not owed to a window. This exemption is
+exactly where that premise fails: a site gate went down, the truck-scale server behind it got its
+DEPENDENCY DOWN alert, and the row wore MAINT ("an upstream device is in a maintenance window")
+while no window was open anywhere. "upstream" is now read off `resolveDependencyBlameMany` — a
+`maintenance` link in the chain, the same test the sweep applies — and a failed walk claims
+nothing. The pause the pill described was real; only its cause was wrong, so the Dep. Down
+badge's tooltip now says reminders and escalation wait for the upstream. Pinned by
+`tests/integration/alertMaintenanceHold.test.ts`.
+
 ### Where it shows
 
 The Active Alerts widget, the asset's Notifications tab and the phone's alert list badge the row

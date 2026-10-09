@@ -690,10 +690,14 @@ export async function activeAlertSummaryByAsset(
  * "upstream" when it is dependency-suppressed behind one. Assets with neither
  * are absent.
  *
- * "upstream" needs no blame-chain walk: `clearSuppressedAlerts` retires every
- * live alert on a dependency-suppressed asset whose chain holds no maintenance
- * link, so an alert still live on one is frozen by maintenance upstream. ONE
- * query bounded to the ids handed in (a feed's live alerts), none when empty.
+ * "upstream" is read off the blame walk, never inferred from the flag alone.
+ * It once was — `clearSuppressedAlerts` retires every live alert on a device
+ * suppressed behind a plain outage, so anything still live looked owed to
+ * maintenance — but rule 78 keeps a `dependencyDown` alert live on exactly
+ * such a device, and every one of them wore MAINT for a window nobody opened.
+ * A failed walk claims nothing. One query bounded to the ids handed in (a
+ * feed's live alerts), plus one batched walk over the suppressed ones only;
+ * none when empty.
  */
 export async function maintenanceHoldsByAsset(assetIds: string[]): Promise<Map<string, "self" | "upstream">> {
   const out = new Map<string, "self" | "upstream">();
@@ -703,7 +707,19 @@ export async function maintenanceHoldsByAsset(assetIds: string[]): Promise<Map<s
     where: { id: { in: ids }, OR: [{ status: "maintenance" }, { dependencySuppressed: true }] },
     select: { id: true, status: true },
   });
-  for (const r of rows) out.set(r.id, r.status === "maintenance" ? "self" : "upstream");
+  const toWalk: string[] = [];
+  for (const r of rows) {
+    if (r.status === "maintenance") out.set(r.id, "self");
+    else toWalk.push(r.id);
+  }
+  if (toWalk.length > 0) {
+    // Lazy for the same reason as clearSuppressedAlerts' walk.
+    const { resolveDependencyBlameMany } = await import("./dependencyTreeService.js");
+    const blameById = await resolveDependencyBlameMany(toWalk);
+    for (const id of toWalk) {
+      if (blameById.get(id)?.chain.some((node) => node.reason === "maintenance")) out.set(id, "upstream");
+    }
+  }
   return out;
 }
 

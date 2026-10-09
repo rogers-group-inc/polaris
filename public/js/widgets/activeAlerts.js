@@ -272,7 +272,8 @@
     // row has no room for the sentence.
     var dep = r.dependencyDown
       ? '<span class="badge badge-monitor-dep-down" style="margin-left:4px' + fadeTail + '" title="' +
-        escapeHtml("Dependency down" + (r.dependencyUpstream ? " — upstream " + r.dependencyUpstream + " is down" : "")) + '">Dep. Down</span>'
+        escapeHtml("Dependency down" + (r.dependencyUpstream ? " — upstream " + r.dependencyUpstream + " is down" : "") +
+          ". No reminders or escalation until it recovers.") + '">Dep. Down</span>'
       : "";
     // Frozen for planned work (business rule 16): the device is in a
     // maintenance window, or suppressed behind one. The alert stays listed —
