@@ -38,7 +38,7 @@ beforeAll(() => {
 
 const NIGHT = [{ startTime: "22:00", endTime: "06:00" }];
 const PRESETS = [
-  { key: "nights", label: "Nights and weekends", rules: [{ days: [1, 2, 3, 4, 5], ranges: NIGHT }, { days: [0, 6], ranges: [] }] },
+  { key: "nights", label: "Nights and weekends", rules: [{ days: [0, 1, 2, 3, 4, 5], ranges: NIGHT }, { days: [0, 6], ranges: [] }] },
   { key: "business", label: "Outside business hours", invert: true, rules: [{ days: [1, 2, 3, 4, 5], ranges: [{ startTime: "08:00", endTime: "18:00" }] }] },
 ];
 
@@ -104,12 +104,36 @@ describe("what it refuses", () => {
     expect(rec.collectRulesEditor(root).error).toMatch(/^Mon: 22:00–06:00 overlaps 23:00–01:00/);
   });
 
-  it("an all-day period sharing a day with an hours period, by day — the union would hide the double listing", () => {
+  it("an all-day period sharing a day with a same-day hours period, by day — the union would hide the double listing", () => {
     const root = mount(null);
     click(root.querySelector('.rc-preset[data-preset="nights"]')!);
-    // Tick Sunday on the weeknight rule too — the mis-click behind the first bug report.
-    click(root.querySelectorAll(".rc-rule")[0]!.querySelector('.rc-chip[data-dow="0"]')!);
-    expect(rec.collectRulesEditor(root).error).toMatch(/^Sun: all day overlaps 22:00–06:00/);
+    // A Sunday 09:00–17:00 next to Sunday all day adds nothing: refused.
+    click(root.querySelector(".rc-rule-add")!);
+    const third = root.querySelectorAll(".rc-rule")[2]!;
+    click(third.querySelector('.rc-chip[data-dow="0"]')!);
+    (third.querySelector(".rc-start") as HTMLInputElement).value = "09:00";
+    (third.querySelector(".rc-end") as HTMLInputElement).value = "17:00";
+    expect(rec.collectRulesEditor(root).error).toMatch(/^Sun: all day overlaps 09:00–17:00/);
+  });
+
+  it("an OVERNIGHT range on an all-day day is kept for its next-morning tail — Sunday night covers Monday 00:00–06:00", () => {
+    // The report: nights-and-weekends left Monday 00:00–06:00 loud, and putting
+    // Sunday on the night rule (the obvious fix) was refused as an overlap.
+    const root = mount(null);
+    click(root.querySelector('.rc-preset[data-preset="nights"]')!);
+    const got = rec.collectRulesEditor(root);
+    expect(got.error).toBeUndefined();
+    const mon = got.hoursByDay.find((d: { dow: number }) => d.dow === 1);
+    expect(mon.hours).toEqual([{ startTime: "00:00", endTime: "06:00" }, ...NIGHT]);
+    expect(got.hoursByDay.find((d: { dow: number }) => d.dow === 0).hours).toEqual([]); // Sunday: all day
+    expect(got.hoursByDay.find((d: { dow: number }) => d.dow === 2).hours).toEqual(NIGHT);
+    // Painted plainly: Sunday is not a conflict, and Monday's first six hours are quiet.
+    const strip = root.querySelectorAll(".rc-strip > div");
+    const sun = Array.from(strip[0]!.querySelectorAll("i")) as HTMLElement[];
+    expect(sun.some((c) => c.getAttribute("style")!.includes("--color-warning"))).toBe(false);
+    const monCells = Array.from(strip[1]!.querySelectorAll("i")) as HTMLElement[];
+    expect(monCells.slice(0, 12).every((c) => c.getAttribute("style")!.includes("--color-accent"))).toBe(true);
+    expect(monCells[12]!.getAttribute("style")).toContain("transparent");
   });
 
   it("a preset's overnight range running into the next all-day day is NOT a conflict", () => {
@@ -120,8 +144,8 @@ describe("what it refuses", () => {
     const satCells = Array.from(root.querySelectorAll(".rc-strip > div")[6]!.querySelectorAll("i")) as HTMLElement[];
     expect(satCells.some((c) => c.getAttribute("style")!.includes("--color-warning"))).toBe(false);
     expect(satCells.every((c) => c.getAttribute("style")!.includes("--color-accent"))).toBe(true);
-    // And the preset leaves Sunday OFF the weeknight rule.
-    expect(root.querySelectorAll(".rc-rule")[0]!.querySelector('.rc-chip[data-dow="0"]')!.getAttribute("aria-pressed")).toBe("false");
+    // And the preset puts Sunday ON the night rule — that is what covers Monday 00:00–06:00.
+    expect(root.querySelectorAll(".rc-rule")[0]!.querySelector('.rc-chip[data-dow="0"]')!.getAttribute("aria-pressed")).toBe("true");
     expect(rec.collectRulesEditor(root).error).toBeUndefined();
   });
 
@@ -139,7 +163,7 @@ describe("presets and invert", () => {
     expect(ruleCount(root)).toBe(2);
     expect(root.querySelector('.rc-preset[data-preset="nights"]')!.getAttribute("aria-pressed")).toBe("true");
     expect(rec.collectRulesEditor(root)).toEqual({ freq: "weekly", daysOfWeek: [0, 1, 2, 3, 4, 5, 6], hoursByDay: [
-      { dow: 0, hours: [] }, { dow: 1, hours: NIGHT }, { dow: 2, hours: NIGHT }, { dow: 3, hours: NIGHT }, { dow: 4, hours: NIGHT }, { dow: 5, hours: NIGHT }, { dow: 6, hours: [] },
+      { dow: 0, hours: [] }, { dow: 1, hours: [{ startTime: "00:00", endTime: "06:00" }, ...NIGHT] }, { dow: 2, hours: NIGHT }, { dow: 3, hours: NIGHT }, { dow: 4, hours: NIGHT }, { dow: 5, hours: NIGHT }, { dow: 6, hours: [] },
     ] });
     click(root.querySelectorAll(".rc-rule")[1]!.querySelector('.rc-chip[data-dow="6"]')!);
     expect(root.querySelector('.rc-preset[data-preset="nights"]')!.getAttribute("aria-pressed")).toBe("false");
