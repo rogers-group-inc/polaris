@@ -74,15 +74,11 @@ most likely to meet ([rule 62](Business-Rules#rule-62)).
 
 An install is identified by a **uuid persisted under its state directory**, not
 by the hostname — because in a container the hostname is the container id, which
-the runtime regenerates on every recreate, and that made **every image upgrade
-refuse to boot**.
+the runtime regenerates on every recreate, so a hostname identity would make
+**every image upgrade refuse to boot**.
 
-Three consequences:
+Two consequences:
 
-- **A stamp carrying no instance id still compares on hostname.** It was written
-  by an older release, that peer may genuinely be live, and treating an unknown
-  stamp as "probably me" would open exactly the hole the guard closes. The cost
-  is one 90-second wait on the upgrade that introduces the id.
 - **A clean shutdown releases the claim** — only ever its own, never a peer's —
   so a restart, an upgrade or a promotion waits for nothing. A `kill -9` leaves
   the stamp and the window applies as designed.

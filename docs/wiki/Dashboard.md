@@ -157,8 +157,8 @@ against your own, so the two agree wherever you are sitting.
 shows its rows in an order you choose (the **⇅** button, while customizing) and
 *then* cuts the list to its Row limit. So the order is not only cosmetic: on
 "Severity, then newest" a low limit hides the least severe rows, and on "Down
-longest first" it hides the most recent ones. Each widget's first option is the
-order it has always used, and a widget you never touch keeps it.
+longest first" it hides the most recent ones. Each widget's first option is its
+default order, and a widget you never touch keeps it.
 
 Besides the default, the listing widgets offer **Most recent first**, **Down
 longest / Longest outstanding first** (the problem nobody has dealt with, which

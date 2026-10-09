@@ -46,9 +46,9 @@ controller edges as a fallback for assets the physical pass did not reach.
 
 ### Endpoints get exactly one parent
 
-Since 2026-08 the tree covers endpoints too — before that, a server or camera
-behind a dead gate alerted as plain Down while the switches behind the same gate
-read "Dep. Down".
+The tree covers endpoints too, so a server or camera behind a dead gate reads
+"Dep. Down" alongside the switches behind the same gate rather than alerting as
+plain Down.
 
 An endpoint's parent is the **most specific** of, in order:
 
@@ -84,9 +84,8 @@ uplink is healthy.
 
 **An empty parent set never suppresses.** That is why a broken parent lookup is
 invisible-but-total: a child that resolves no parent does not fail loudly, it
-just never suppresses — which is how one long-standing bug presented as *"a
-FortiGate in maintenance leaves its switches reading Down"* rather than as an
-error anywhere.
+just never suppresses — so a broken lookup shows up as *"a FortiGate in
+maintenance leaves its switches reading Down"* rather than as an error anywhere.
 
 ### Overrides
 
@@ -119,16 +118,14 @@ subtree.**
 
 `unknown` and `passive` release because neither is a claim about reachability,
 and gating on them would strand a subtree with nothing able to clear it.
-`warning` sat with them until 2026-09-14, and the argument never applied to it:
-it is the one state in which the parent has just **missed a poll** — the least
-plausible moment to call it recovered — and it can strand nothing, being
-transient by construction.
+That argument does not apply to `warning`: it is the one state in which the
+parent has just **missed a poll** — the least plausible moment to call it
+recovered — and it can strand nothing, being transient by construction.
 
-What that leak produced was real: a parent flapping `down` → `recovering` →
+Releasing on `warning` would let a parent flapping `down` → `recovering` →
 `recovering` → `warning` put its whole subtree back on the air **mid-outage**
-one reconciler tick later, every child re-alerting as plain Down. That is
-precisely the storm suppression exists to prevent, reached through the one door
-left open.
+one reconciler tick later, every child re-alerting as plain Down — precisely the
+storm suppression exists to prevent.
 
 A gate coming back does not mean the switch under it has, so each layer still
 needs its **own** parent genuinely back. But a suppressed device keeps
@@ -155,9 +152,7 @@ A suppressed device is **still probed**, at the same interval as always. That
 is deliberate: a device with a redundant path may well answer, and when the
 upstream recovers the device behind it recovers at the same time. Its own
 count is already caught up when the upstream reaches **up**, so it doesn't sit
-at **Recovering** afterwards. Until 2026-10-08 a suppressed device was probed
-at half rate, so every layer down a chain took longer to read healthy than the
-one above it.
+at **Recovering** afterwards.
 
 ### One automation may speak for it anyway
 
@@ -185,8 +180,8 @@ A `monitor status is down` automation can opt out of the silence with the
   them. At most four devices are drawn: a longer chain shows the two at each
   end with a **+N more** gap between. The plain-text email gets the same chain
   on one line. The diagram is the `{dependency.path}` token, which is in the
-  default email — an automation whose email you customized before it existed
-  does not have it, so add it where you want the diagram. The **reset email**
+  default email — an automation whose email you have customized may not have
+  it, so add it where you want the diagram. The **reset email**
   (the one saying the alert is over) draws the **same devices as they are
   now**, under the heading *Dependency path now*: each one is marked **Up**,
   **Recovering**, **Missed poll**, **Down**, **Dep. Down** or **In
@@ -234,7 +229,7 @@ Why that is not cosmetic: an unmonitored parent is **transparent** — the walk
 recurses to grandparents and returns "ok" when there are none. A firewall is
 layer 1 with no parents, so a retired gate is a **permanent ok vote** that
 vetoes suppression for every child still bound to it, and it can never go down
-again to lift the veto. A switch behind a replaced gate sat at plain Down
+again to lift the veto — a switch behind a replaced gate would sit at plain Down
 instead of Dep. Down.
 
 **A stale LLDP row is not good enough to draw an edge from.** An LLDP neighbour

@@ -152,9 +152,9 @@ reservations to `ArchivedSubnet` / `ArchivedReservation`. This is not the same
 as deprecating.
 
 A *deprecated* row still holds the `(blockId, cidr)` unique index while being
-invisible to discovery's lookup — so its CIDR became **unrecordable rather than
-reusable**: every run skipped it with a self-overlap message, and address
-lookups dropped every lease, DHCP reservation, VIP and interface IP inside it.
+invisible to discovery's lookup — so its CIDR is **unrecordable rather than
+reusable**: every run skips it with a self-overlap message, and address lookups
+drop every lease, DHCP reservation, VIP and interface IP inside it.
 Moving the row out is the only thing that frees the index, and it makes the
 retired rows locked by construction. See [rule 41](Business-Rules#rule-41).
 
@@ -169,9 +169,9 @@ scope for the networks list. See [rule 42](Business-Rules#rule-42).
 It exists because a Polaris network is one row per CIDR, while some address
 space is genuinely the *same* at every site — a management VLAN, an
 out-of-band range, an appliance's fixed subnet. The first site discovered
-claims the row and every other site collides with it; since the chassis-identity
-rule, that collision is raised as a `chassis-replaced` **conflict** about a box
-nobody swapped, with a fresh serial pair each run so dedup never catches it.
+claims the row and every other site collides with it; that collision is raised
+as a `chassis-replaced` **conflict** about a box nobody swapped, with a fresh
+serial pair each run so dedup never catches it.
 
 | Property | Behaviour |
 |---|---|

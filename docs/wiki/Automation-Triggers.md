@@ -12,7 +12,7 @@ Step 3 of the wizard. What the automation watches, at what severity.
 | **Asset state** | a field on the Asset row, or a per-dimension state | yes |
 | **Path Monitor** | a [path check](Path-Monitor)'s results, or its route changing | agent hosts only, plus the Polaris server if ticked |
 | **Host metric** | the Polaris server's own health | **no** |
-| **Event** | an audit Event arriving | yes (since 2026-09) |
+| **Event** | an audit Event arriving | yes |
 | **Change** | a tracked field changing | yes |
 | **Composite** | a tree of the above | yes (device-kind) |
 
@@ -91,9 +91,6 @@ would be, and:
 - it cannot be combined with a **custom reset condition** (the wizard refuses
   the save) — reset automatically instead.
 
-Automations made before Path Monitor existed keep working unchanged. They open
-under Path Monitor with the server **unticked**, which is what they always did.
-
 The device a path alert is about is the **host that ran the check**, not the
 target. Path results never change that host's Up / Down status. A tree can't
 mix path conditions with device conditions — make them separate automations.
@@ -159,8 +156,7 @@ Three things it does that no other metric does
   `warning` only. A dark passive device would otherwise sit at 100 % with no
   asset-down alert to supersede it.
 - **A reading at or above the rule's `ignoreAtOrAbove` ceiling is not a
-  reading** — default 100, so an untouched rule is unchanged and only a total
-  outage is suppressed. Polaris opts its own baseline rule out at **90**.
+  reading** — default 100, so only a total outage is suppressed. Polaris opts its own baseline rule out at **90**.
   Lower it if you do not want an alert trailing every outage. This box is
   offered for packet loss only — a path check's failure rate has no ceiling,
   because 100 % there means every run to the target failed, which is the alert.
@@ -190,9 +186,9 @@ Nothing new fires about the device while it is down. If the condition is still
 bad when the device comes back, it fires again as a fresh alert once its hold
 is met.
 
-Without this, an alert that was open when the device went dark froze, because
-no readings arrived to recover it. It then sat beside the asset-down alert for
-the whole outage and mailed "resolved" the moment the device returned.
+Without this, an alert open when the device goes dark would freeze, because no
+readings arrive to recover it. It would sit beside the asset-down alert for the
+whole outage and mail "resolved" the moment the device returned.
 
 This does **not** apply to:
 
@@ -297,8 +293,8 @@ readings — the picker is closed.
 
 The usual rule is `!= current`, and the baseline automation **Firmware differs
 from repository primary** (informational, switches and access points) is
-exactly that. FortiGates have readings too (since FortiGate upgrades arrived),
-but the baseline's scope was not widened — add **Firewall** to its scope, or
+exactly that. FortiGates have readings too, but the baseline's scope does not
+include them — add **Firewall** to its scope, or
 write a rule of your own, to be told about gates. It is a to-do list, not a fault: the alert clears on its own once
 the device is upgraded, or once a different image is made primary. `== newer`
 names the fleet that is *ahead* of the image someone selected — useful the day
@@ -381,7 +377,7 @@ To find the field names an action offers, open **Events**, click the event you
 want to alert on and read its details — those keys are what a condition can
 name.
 
-Since 2026-09 an event automation **is** device-scoped, and the filter filters
+An event automation **is** device-scoped, and the filter filters
 the event's **subject** ([rule 46](Business-Rules#rule-46)). Two refusals follow
 from "the subject is a device":
 
@@ -392,9 +388,9 @@ from "the subject is a device":
 - Neither does an event whose asset row is **already gone** (`asset.deleted`).
 
 "Unconstrained" is asked first and separately: `{allAssets: true}`, a bare `{}`,
-or a condition tree with no rules. That distinction is load-bearing — every event
-automation saved before 2026-09 carries `{}` meaning "any device", while a
-builder-authored empty scope selects *nothing*.
+or a condition tree with no rules. That distinction is load-bearing — a stored
+`{}` on an event automation means "any device", while a builder-authored empty
+scope selects *nothing*.
 
 ---
 
@@ -455,9 +451,9 @@ automation whose sole condition is that verdict.
 The two units are not a cosmetic difference, and which one you get is not a
 preference — it is what the rule actually stores. A window is saved as
 `windowSec` and the engine reads it as wall-clock time, so stating it in polls
-meant multiplying by whatever cadence the wizard had observed and presenting the
-result as though you had said it; a hold is saved as `forPolls` and the engine
-genuinely counts readings. Each field now states the half that is true, and its
+would mean multiplying by whatever cadence the wizard had observed and presenting
+the result as though you had said it; a hold is saved as `forPolls` and the engine
+genuinely counts readings. Each field states the half that is true, and its
 caption names the other half — the poll estimate under a window, the wall clock
 under a hold. Switching a condition's aggregation **re-denominates** the number
 in the box rather than reinterpreting it: 10 minutes on a fleet polled every two
@@ -483,9 +479,9 @@ engine's default lookback.
 
 ### Holds are counted in readings, not seconds
 
-Since 2026-08-29 a trigger states `forPolls` and a reset states
+A trigger states `forPolls` and a reset states
 `reset.sustainPolls`, and the engine counts **consecutive qualifying readings**
-([rule 19](Business-Rules#rule-19)). The seconds value survives as the
+([rule 19](Business-Rules#rule-19)). A seconds value is kept as the
 wall-clock mirror — what the prose reads, and what sizes the sample window.
 
 This matters because the engine ticks every 60 seconds while a device may be
@@ -495,13 +491,12 @@ so it can convert, and says which cadence it converted at.
 
 ### Windows are measured in minutes, not readings
 
-The same is not true of a measurement window, and since 2026-09-16 the two are
-no longer stated in the same unit. A window is `windowSec` — the engine takes
-every sample whose timestamp falls inside it and reduces them. It does not count
-to N. So "60 polls" was never what the rule said: it was 60 × the cadence the
-wizard happened to observe when you typed it, and it stopped describing the rule
-the moment that cadence changed — a window authored against a 60s poll stayed an
-hour after the fleet moved to 300s, while the label still claimed 60 readings.
+The same is not true of a measurement window, so the two are not stated in the
+same unit. A window is `windowSec` — the engine takes every sample whose
+timestamp falls inside it and reduces them. It does not count to N. A window
+typed as "60 polls" would really be 60 × the cadence the wizard happened to
+observe, and would stop describing the rule the moment that cadence changed — a
+window authored against a 60s poll stays an hour after the fleet moves to 300s.
 
 The number of readings a window holds is a **consequence** of the window and the
 fleet's cadence, so it belongs in the caption, where it updates as the cadence
@@ -601,13 +596,6 @@ You can still change the number, or switch back to minutes, on any individual
 automation. The default only applies to a new automation that hasn't stated a
 window yet, and it never overrides a choice you have made.
 
-> **On upgrade, existing response-time automations were converted** to the
-> 10-poll group, including ones you had edited. Each one is named in an Event
-> along with the window it used to have, so you can see exactly what changed and
-> set any of them back by hand. They were not left alone because the problem being
-> fixed is what a minutes window *measures* — an edited rule measured it just as
-> wrongly as an unedited one.
-
 ---
 
 ## Severity bands
@@ -644,8 +632,8 @@ counts.
 For substring-matched dimensions (a sensor name, an interface, a mount) a
 **match cue** sits beside the field: *"✓ matches 2 of 14 reported hardware
 sensors"*, *"✓ exact match"*, or a warning that it *"matches none … would never
-fire"*. The dimension is a free-text pattern the server cannot reject, so before
-this a typo saved cleanly and then silently never matched.
+fire"*. The dimension is a free-text pattern the server cannot reject, so
+without the cue a typo would save cleanly and then silently never match.
 
 A stored value the devices no longer report is **kept and flagged**, never
 silently widened to "any".
@@ -665,7 +653,7 @@ itself** and needs no filter row for it: the four interface conditions
 *Interface PoE status*) name an interface, and *IPsec tunnel status* names a
 tunnel. Click the box for the component names the scoped devices actually
 monitor. **Leave it blank and the condition covers every monitored component**,
-one alert each — which is what these conditions have always meant. A filter row
+one alert each. A filter row
 still works there too — it folds into the condition and re-opens on the row —
 but the row is where these say what they are about.
 
@@ -747,10 +735,6 @@ condition. With two conditions, each is checked across the whole device rather
 than on the same port: some other interface always has an address, so that
 second condition never filters anything.
 
-**Skip unused ports** was retired on 2026-10-08 ([rule 88](Business-Rules#rule-88)).
-An automation that had it ticked lost it on upgrade, and alerts again on the
-ports it used to skip until you add the filter above.
-
 ---
 
 ## SD-WAN
@@ -779,7 +763,7 @@ Microsoft or Primary WAN"*.
   still fires on the other picks.
 
 The member list follows the health checks you picked: it shows only the members
-of those health checks. Automations saved with one value work exactly as before.
+of those health checks.
 
 ### Graphs in the alert email
 
@@ -886,8 +870,7 @@ matching event arrives"** instead, prefilled from the server's known
 counterparts — `agent.disconnected` → `agent.connected`, scoped to the **same
 subject** the alert is about.
 
-A new draft with a known counterpart lands on that mode rather than on the
-four-hour timer that used to be the default.
+A new draft with a known counterpart lands on that mode rather than on a timer.
 
 The known counterparts are `agent.disconnected` → `agent.connected`,
 `agent.upgrade_failed` / `agent.upgrade_skipped` → `agent.upgrade_succeeded`,
@@ -911,9 +894,3 @@ silent by default — the built-in rules ship with in-app alerts only and no
 delivery channel, so they resolve the alert on the Alerts tab and write a
 `notification.auto_cleared` Event (which reaches syslog/SFTP archival if you
 have it configured) without emailing anyone.
-
-Existing installs had their **Capacity severity escalated** rule moved off its
-24-hour timer and onto the all-clear automatically, unless you had edited that
-rule — an edited rule keeps whatever reset you chose, and an Event
-(`automation.seed.v8_capacity_reset_event`) names it so you can change it
-yourself.

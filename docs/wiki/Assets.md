@@ -76,8 +76,8 @@ with a reason** rather than leaning on the silent clamp — a form that saves an
 comes back unticked reads as a bug.
 
 `quarantined` parks the flag so releasing a quarantine restores status *and*
-monitoring together; otherwise releasing handed the device back to the network
-with nobody watching it. Flipping a status back to `active` does **not**
+monitoring together; otherwise releasing would hand the device back to the
+network with nobody watching it. Flipping a status back to `active` does **not**
 auto-resume monitoring — re-enabling is deliberate.
 
 `maintenance` is deliberately **not** on that list: a window pauses polling
@@ -664,7 +664,7 @@ like, and critical is merely the default severity of a seeded down automation.
 
 A merged unit and process inventory — systemd units / Windows services with
 state, and (with *Include processes* ticked) the per-program process inventory
-in the same table. Read-only: start/stop/restart control was removed.
+in the same table. Read-only.
 
 **CPU %** and **Memory** on a service row come from the agent (0.22.0+ for
 CPU, and for memory on Windows):
@@ -676,10 +676,10 @@ CPU, and for memory on Windows):
   restarts, and while the service is stopped.
 - **Memory** is the unit's cgroup on Linux and the service process's working
   set on Windows.
-- A **process** row's CPU % is measured the same way from agent 0.22.1: the
-  mean since the previous scrape. Older agents showed each process's average
-  since it started, so a long-running process that had just started spinning
-  read low.
+- A **process** row's CPU % is measured the same way (agent 0.22.1+): the
+  mean since the previous scrape. An older agent reports each process's
+  average since it started, so a long-running process that has just started
+  spinning reads low.
 - On Windows several services can share one `svchost.exe`. Each of them then
   shows that **whole process's** figures, marked **shared**. Hover the tag for
   the process and how many services it holds. Polaris does not split the
@@ -1100,8 +1100,9 @@ The same order decides the merge modal's per-field defaults. An unranked kind
 ranks **last** there, never first.
 
 One invariant is worth knowing because its failure mode is silent: **a source
-blob may never be built from the projection's own output.** Doing so laundered
-an AD OU path into a FortiGate-sourced field and accumulated a prefix per cycle.
+blob may never be built from the projection's own output.** Doing so launders
+one source's value into another's — an AD OU path lands in a FortiGate-sourced
+field and gains another prefix every cycle.
 
 ### Manual Monitoring
 

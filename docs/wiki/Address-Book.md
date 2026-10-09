@@ -37,8 +37,8 @@ stores nothing. They are withheld from anyone who may not see synced rows.
 | **Push devices** | how many browsers a Polaris **account** has enrolled |
 | Added by | the creator, or *Directory sync* |
 
-The two device columns are deliberately distinct. "Responsible for" was once
-called *Devices*, which read as "this person's devices". **Push devices** is the
+The two device columns are deliberately distinct. "Responsible for" is the
+devices this person answers for, not "this person's devices". **Push devices** is the
 same cell the wizard's push picker renders, shown only on tabs where an account
 can appear, with **zero called out in the warning colour** — "none" is the most
 common reason a push automation delivers nothing.

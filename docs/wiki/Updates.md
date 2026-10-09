@@ -161,23 +161,19 @@ a host that already runs Polaris, you want `UPGRADING.md`.
 
 ### "Another host holds a fresh active-instance heartbeat"
 
-A guard against two Polaris instances sharing one database. In a container it
-used to identify an instance by `os.hostname()` — **which is the container id,
-regenerated on every recreate**. So every image upgrade read the stamp the
-previous container had written seconds earlier, found a name that was not its
-own, and **refused to boot** ([rule 62](Business-Rules#rule-62)).
-
-It self-healed after 90 seconds **only where the restart policy retried**. On
-Unraid, a plain `docker run` or a foreground compose it stayed down.
-
-Identity is now a **uuid persisted under the state directory**, which outlives
-the process — exactly the lifetime an install has. Two hosts pointed at one
-database still hold two state directories and so two ids, so the case the guard
-exists for is untouched.
+A guard against two Polaris instances sharing one database
+([rule 62](Business-Rules#rule-62)). An instance is identified by a **uuid
+persisted under the state directory**, not by `os.hostname()` — in a container
+that is the container id, regenerated on every recreate. The state directory
+outlives the process — exactly the lifetime an install has — so a recreated
+container keeps its identity, while two hosts pointed at one database hold two
+state directories and so two ids.
 
 A **clean shutdown releases the claim**, so a restart, an upgrade or a promotion
 waits for nothing. A `kill -9` leaves the stamp and the 90-second window applies
-as designed.
+as designed. The refusal clears after 90 seconds **only where the restart
+policy retries**; on Unraid, a plain `docker run` or a foreground compose,
+start the container again once the window has passed.
 
 One consequence if you run [HA](High-Availability): **the instance id file must
 be excluded from the standby sync**, or the standby inherits the primary's

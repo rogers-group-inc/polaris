@@ -72,7 +72,7 @@ differ.
 |---|---|
 | `host` | absent on Entra and Arc, whose endpoints are fixed |
 | `port` | |
-| `verifySsl` / `verifyTls` | **on by default for new integrations**. An existing row keeps its stored value, so this never changes a configured integration's behaviour. Windows Server has **Use SSL** instead, and Entra and Arc talk only to Microsoft's fixed endpoints |
+| `verifySsl` / `verifyTls` | **on by default**. Windows Server has **Use SSL** instead, and Entra and Arc talk only to Microsoft's fixed endpoints |
 | `verboseLogging` | always the **last** element on the General tab |
 
 Plus, on the integration row itself:

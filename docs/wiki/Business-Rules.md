@@ -1,7 +1,8 @@
 # Business rules
 
-Polaris carries **93 numbered rules**, 1 to 94 (81 is a deliberate gap). Each one records a decision *and* the
-incident or constraint that forced it. The reasoning is the point — a great deal
+Polaris carries **100 rule numbers**, 1 to 100: 98 rules in force plus rule 80a,
+with 81 and 88 not in use. Each one records a decision *and* the reasoning
+behind it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
 where the reasons live.
 
@@ -9,8 +10,8 @@ where the reasons live.
 of this wiki cite "rule 23". They are never renumbered; a retired rule is retired
 in place.
 
-> The full narrative for every rule — the incident, the alternatives considered,
-> the failure mode — lives in the repository under
+> The full narrative for every rule — the failure mode it prevents and the
+> alternatives considered — lives in the repository under
 > `.claude/skills/polaris-business-rules/`. This page is the index, in the rules'
 > own terms.
 
@@ -68,11 +69,11 @@ set in the [Events](Events) page's **Settings**) are archived and then pruned; s
 `quarantined`. Enforced centrally in **both** directions, so no write path can
 stage monitoring onto one.
 
-`quarantined` joined the list because a quarantined device is isolated at the
-gate and **every probe fails by design** — a security action was producing an
-outage alert storm about the isolation working. Because quarantine is reversible
-the flag is **parked** and restored on release; otherwise releasing handed the
-device back with nobody watching it.
+`quarantined` is on the list because a quarantined device is isolated at the
+gate and **every probe fails by design** — monitoring it would raise an outage
+alert storm about the isolation working. Because quarantine is reversible the
+flag is **parked** and restored on release, so a released device does not come
+back with nobody watching it.
 
 `maintenance` is deliberately **not** on the list. The two operator-facing paths
 **refuse with a reason** rather than leaning on the silent clamp — a form that
@@ -157,9 +158,9 @@ error refuses rather than silently skipping.
 ### Rule 22
 **The Sources column is `location || learnedLocation`, and the order is
 operator-set.** It feeds the **projection**, not just rendering. Invariant: **a
-source blob may never be built from the projection's own output** — that
-laundered an AD OU path into a FortiGate-sourced field and accumulated a prefix
-per cycle.
+source blob may never be built from the projection's own output** — doing so
+launders one source's value (an AD OU path) into another's field (a
+FortiGate-sourced one) and accumulates a prefix per cycle.
 
 ### Rule 23
 **Who owns an IP and how the gate hands it out are two facts, not one.**
@@ -256,8 +257,7 @@ triggers get a **counterpart Event** instead — and a signal Polaris writes und
 one action for both directions is split so it has one (`capacity.severity_recovered`,
 `platform.lifecycle_recovered`), written only on a landing back at healthy, never
 on a partial recovery. The direction a trigger fires on is an editable **detail
-condition** on the trigger step, not a hidden setting. The re-notify cooldown was
-retired from the builder and its stored values cleared.
+condition** on the trigger step, not a hidden setting.
 
 ### Rule 33
 **A device that answers is not a device that works — and the check belongs to the
@@ -316,20 +316,20 @@ The short version: only network-present assets, only current claims, two
 one claimant must be equipment somebody addressed on purpose **or** the address
 itself must be deliberate with disjoint reporting sources.
 
-**Since 2026-09-22 the sweep is not the only trigger.** Creating an asset with an
+**The sweep is not the only trigger.** Creating an asset with an
 IP, or changing an asset's IP in the edit form, re-checks that address on the
 spot: the form first asks whether another network-present asset already records
 it and, if so, offers *Save & submit for conflict review* — and, to an operator
 with Assets **full read-write**, *Save & review merge* — before anything is
 written. The save then raises the Duplicate IP conflict immediately instead of
-on the sweep's next tick. A third reason a pair qualifies came with it: **an
-address an operator typed** counts as deliberately assigned whatever the device
-types are, so two workstations one of which you addressed by hand is a conflict.
-Merging assets now requires Assets **full read-write** everywhere — it edits one
+on the sweep's next tick. A third reason a pair qualifies: **an address an
+operator typed** counts as deliberately assigned whatever the device types are,
+so two workstations one of which you addressed by hand is a conflict. Merging
+assets requires Assets **full read-write** everywhere — it edits one
 record and deletes another. See
 [Conflict Resolution](Conflict-Resolution#i-or-an-operator-typed-the-address).
 
-**Since 2026-10-07 an offline device can be cleared.** When one claimant is off and
+**An offline device can be cleared.** When one claimant is off and
 its next address is unknown, *Clear* on its row blanks the address instead of
 pinning a new one; discovery fills the blank the first time it reports the device
 on a different address, and won't put the old one back while the other device
@@ -348,9 +348,9 @@ it serves, but the [Conflicts](Conflict-Resolution#chassis-replaced) page shows
 them as **one card** with one *Adopt* for every network, and the nav badge
 counts the swap once. Adopting can also **merge the old gate's asset into the
 new one**. And the old gate's asset is **decommissioned by discovery** when
-FortiManager lists the same name with a different serial — a swap that keeps
-the name no longer leaves the old record active. Its switches and APs are not
-touched, because they now belong to the new gate.
+FortiManager lists the same name with a different serial, so a swap that keeps
+the name does not leave the old record active. Its switches and APs are not
+touched, because they belong to the new gate.
 
 ### Rule 42
 **Some address space is not one network, and the way to say so is to exclude it.**
@@ -363,36 +363,30 @@ refusal**, and it **destroys nothing**.
 `assets:fullwrite`, not `write`. `assetsProbe` is a **read-only key**.
 `credentials` carries the ownership dimension, testing a stored row included.
 
-Extended across the whole catalogue on 2026-09-22: **a level exists only where it
-grants something the level below it does not.** Eighteen keys were offering a rung
-no button or route ever asked for, so picking it and picking the one below it were
-the same grant. `processControl`, which had gated nothing since process control was
-removed, is gone. **Nothing lost a capability** — a stored level folds onto the one
-that always actually delivered it. Two levels also moved because they misdescribed
-the act: **downloading a backup is the whole database leaving the host**, so it is no
-longer a read, and the asset auto-decommission thresholds moved off the audit-log key
-onto monitor settings. See
+Across the whole catalogue, **a level exists only where it grants something the
+level below it does not.** A rung no button or route asks for is not offered,
+because picking it and picking the one below it would be the same grant. A level
+also sits where the act belongs: **downloading a backup is the whole database
+leaving the host**, so it is not a read, and the asset auto-decommission
+thresholds sit on monitor settings rather than the audit-log key. See
 [Users, roles and permissions](Users-Roles-and-Permissions#short-ladders).
 
-A level can also be *divided* in the wrong place. On 2026-09-23 the identity
-providers, passkey policy and password policy moved out of Server Settings —
-System onto a key of their own, **Authentication**, because repointing every
-login at a different provider had been a lesser grant than changing the logo,
-and neither job could be delegated without the other. One kind of custom role
-is narrowed by this. See
+A level can also be *divided* in the wrong place. The identity providers,
+passkey policy and password policy sit on a key of their own,
+**Authentication**, rather than under Server Settings — System, because
+repointing every login at a different provider must not be a lesser grant than
+changing the logo, and each job can be delegated without the other. See
 [Who may change how people log in](Users-Roles-and-Permissions#who-may-change-how-people-log-in).
 
-The opposite mistake also happens: one act split across two keys. The
-manufacturer alias map had a key of its own, but an alias decides which
-**manufacturer profile** a device gets, so it could never really be granted
-apart from the profiles. On 2026-09-23 it was folded into **Manufacturer
-Profiles**. A custom role that held the two at different levels kept the
-lower one; no built-in role changed.
+The opposite mistake is one act split across two keys. An alias decides which
+**manufacturer profile** a device gets, so the manufacturer alias map could
+never really be granted apart from the profiles; it is part of **Manufacturer
+Profiles** rather than a key of its own.
 
 ### Rule 44
 **A quiet window holds the reminder, never skips it — and the reminder that
 follows says how long.** Held, never skipped. The hold is closed by the **send**,
-not by the window ending. Since October 2026 this is the mechanics inside
+not by the window ending. This is the mechanics inside
 [rule 92](#rule-92): the windows belong to the automation (or to a global quiet
 time), and quiet reaches the escalation tiers too — and, when the quiet time
 holds everything, the first alert.
@@ -443,8 +437,9 @@ anonymous caller gets **401, not 404**.
 **A `DATABASE_URL` is a driver URL; its `sslmode` is translated into libpq's
 vocabulary, never copied.** `no-verify` maps to `require`; an unrecognised value
 is **refused** rather than dropped, because omitting it silently downgrades TLS
-to opportunistic. This broke **every backup path on every install created through
-the wizard with self-signed certificates ticked**, behind one generic message.
+to opportunistic. Copying it unchanged breaks **every backup path on an install
+created through the wizard with self-signed certificates ticked**, behind one
+generic message.
 
 ### Rule 52
 **TimescaleDB is part of the install, not a tuning option.** Its absence is a
@@ -521,9 +516,10 @@ or the still-open page 403s on its next write with nothing thrown anywhere.
 ### Rule 62
 **An install is identified by something it persists, never by the name the runtime
 handed the process.** In a container `os.hostname()` is the container id, which is
-regenerated on every recreate — so **every image upgrade refused to boot**,
-reading the stamp the previous container had written seconds earlier. Identity is
-now a persisted id under the state directory.
+regenerated on every recreate — an install identified by it would **refuse to
+boot after every image upgrade**, reading the stamp the previous container had
+written seconds earlier as another host's. Identity is a persisted id under the
+state directory.
 
 ### Rule 63
 **The complexity bar belongs to the operator, and a password that no longer meets
@@ -638,7 +634,7 @@ commit.
 **Absence from a directory decommissions what that directory manages, and only
 when the read was whole.** Deleting a computer object, or disabling a device
 account, is how an operator retires a machine — so Active Directory and Entra ID
-can act on it, the way the vCenter integration already acts on a VM that leaves
+can act on it, the way the vCenter integration acts on a VM that leaves
 the inventory. The pass is **opt-in** per integration (*Decommission devices
 that leave the directory*, off by default) because the first run of a sweep
 nobody asked for is a fleet-wide status change.
@@ -671,9 +667,9 @@ Three habits make these easier to apply:
 1. **The invariant is the contract; the narrative is the reason.** When you need
    to know whether something is allowed, read the invariant. When you need to
    know whether to change it, read the narrative first.
-2. **Most of these exist because of a specific, observed failure** — often a
-   silent one. Where a rule looks over-careful, it is usually because the
-   obvious simpler version was tried and failed invisibly.
+2. **Most of these guard against a specific failure** — often a silent one.
+   Where a rule looks over-careful, it is usually because the obvious simpler
+   version fails invisibly.
 3. **Never paraphrase a rule when quoting it.** The wording is load-bearing, and
    half of them turn on a distinction one adjective carries.
 
@@ -699,8 +695,8 @@ major-version upgrade. **"Hypertable sizing is degraded"** means
 Polaris could not read TimescaleDB's chunk catalog, so the sample tables are
 listed at their parent size — near zero — and their real bytes appear under
 *Unattributed*. Neither condition is left to be inferred from a number that
-looks small, because that is exactly what happened before this rule existed: a
-76.6 GB database whose largest listed table was 1.4 GB, for a day, unnoticed.
+looks small: a degraded reading can show a 76.6 GB database whose largest
+listed table is 1.4 GB, and nothing else on the card would look wrong.
 
 See [Server-Settings](Server-Settings) for the card itself.
 
@@ -730,14 +726,11 @@ remediation itself sets up with the same server address (see
 rule scoped to that address and for Windows' own rule being off. Without one, it
 checks that Windows' own rule covers the Domain profile. It never demands
 anything the remediation would not do, because a check nothing can satisfy would
-make the pair remediate forever. (Until 2026-09 the firewall was not checked at
-all, so a machine set up by hand could stay unreachable on a domain network
-while reporting healthy.)
+make the pair remediate forever.
 
-One consequence you will see: both scripts now refuse to download until you have
-named the account on the **SSH Deployment** card. Before, the Windows detection
-script would render without one — and could not tell you anything useful when
-it did.
+One consequence you will see: both scripts refuse to download until you have
+named the account on the **SSH Deployment** card, because a detection script
+without one could not tell you anything useful.
 
 See [Polaris-Agent](Polaris-Agent) for the card and the scripts.
 
@@ -793,16 +786,15 @@ Everything in those 255 characters competes, so the room left for notes is
 less. The form counts it down for you while you type.
 
 Going over is **refused** — the save fails, naming the budget, what you typed
-and how many characters to cut. Polaris does not truncate. It used to, at a much
-smaller limit, and it cost twice: a comment was cut on the firewall with nothing
-said at either end, and the cut took the trailing `[hostname]` with it, after
-which the next discovery read the tail of the note back as the device's
-hostname.
+and how many characters to cut. Polaris does not truncate, because a cut costs
+twice: the comment is shortened on the firewall with nothing said at either
+end, and the cut takes the trailing `[hostname]` with it, after which the next
+discovery would read the tail of the note back as the device's hostname.
 
 Two things this does **not** do. It does not apply off a pushing network —
 there is no device field to fit. And it does not block an edit to some other
-field on a reservation whose note was written before the rule existed (or by
-discovery): only a save that actually changes the notes or the hostname is
+field on a reservation whose stored note is already over budget (one written by
+discovery, for example): only a save that actually changes the notes or the hostname is
 judged, so a row can always be shortened rather than being stuck.
 
 See [IPAM](IPAM#pushing-reservations-to-the-gate).
@@ -813,7 +805,7 @@ See [IPAM](IPAM#pushing-reservations-to-the-gate).
 last of them does.**
 
 A PoE fault rarely hits one port. A power supply browns out and eight ports
-fault inside the same minute — and without this rule that is eight alerts,
+fault inside the same minute — and alerted one per port that is eight alerts,
 eight emails and eight acknowledge links for one problem.
 
 An automation that watches something per component (per interface, per mount,
@@ -878,26 +870,24 @@ fact it has.**
 
 A FortiGate virtual IP states what happens to traffic for an address. That is a
 third fact about the address, beside who holds it and how the gate hands it out
-([rule 23](#rule-23)), and treating it as the single answer caused two problems
-at once.
+([rule 23](#rule-23)), and it is never treated as the single answer.
 
-**You could not reserve one.** A VIP row was refused like an interface address.
-But the addresses behind a VIP — its mapped addresses, a virtual server's
-realserver pool — are ordinary hosts that want a DHCP reservation, and holding
-the external one in the address register is a reasonable thing to want. Those
-are now reservable, and the VIP rides along: the new reservation carries it, the
-address keeps reporting it, and the row reads **VIP / Reserved**. Editing and
-releasing a VIP row are still refused, because that mapping belongs to the
-device. An interface address is still refused outright: it is live on an
+**An address behind a VIP can be reserved.** The addresses behind a VIP — its
+mapped addresses, a virtual server's realserver pool — are ordinary hosts that
+want a DHCP reservation, and holding the external one in the address register
+is a reasonable thing to want. The VIP rides along: the new reservation carries
+it, the address keeps reporting it, and the row reads **VIP / Reserved**.
+Editing and releasing a VIP row are refused, because that mapping belongs to
+the device. An interface address is refused outright: it is live on an
 interface.
 
-**And you often could not see the VIP at all.** The Status column showed one
-fact per address, so a VIP on a leased address read "DHCP Lease" and a VIP on a
-conflicted address read "Conflict" — including, at worst, on an address whose
-reservation had just been refused *because* of that VIP. Status now reports the
-VIP first and what is happening to the address second: **VIP / Leased**, **VIP /
-Reserved**, **VIP / Conflict**, or **VS /…** for a load-balance virtual server.
-Labels on addresses with no VIP are unchanged. The exports of the address list
+**The VIP is always visible.** One fact per address would hide it — a VIP on a
+leased address would read "DHCP Lease", and a VIP on a conflicted address
+"Conflict", even on an address whose reservation was refused *because* of that
+VIP. So Status reports the VIP first and what is happening to the address
+second: **VIP / Leased**, **VIP / Reserved**, **VIP / Conflict**, or **VS /…**
+for a load-balance virtual server. Addresses with no VIP show the plain label.
+The exports of the address list
 use the same wording, so a PDF cannot disagree with the table it came from.
 
 The per-network **Discover** button reads the gate's VIP table as part of its
@@ -916,8 +906,8 @@ A device behind a down switch or firewall is **dependency-down** (Dep. Down),
 and every automation stays silent about it — the outage is the parent's, and one
 alert on the parent is the whole story ([rule 37](#rule-37), [rule 16](#rule-16)).
 That is right for the network team and wrong for the people who only watch one
-device: the operators subscribed to a PLC's down automation heard nothing when
-the switch above it died.
+device: the operators subscribed to a PLC's down automation hear nothing when
+the switch above it dies.
 
 So a `monitor status is down` automation — and only that kind — can tick
 **Dependency-Down Bypass** on its Actions step. With it on, the automation still
@@ -938,8 +928,8 @@ Neither sends a "resolved" message — nothing recovered.
 Three things the toggle does **not** change. A **maintenance window still
 silences** the device. **Reminders and escalation still wait** while the device
 is dependency-down — you get one notification, and the follow-ups resume when
-the upstream is back. And every automation **without** the toggle behaves
-exactly as before.
+the upstream is back. And every automation **without** the toggle stays silent
+about a dependency-down device.
 
 See [Dependency suppression](Dependency-Suppression) and
 [Automation triggers](Automation-Triggers#monitorstatus--down-is-the-down-detection-automation).
@@ -1016,9 +1006,8 @@ and [Polaris Agent](Polaris-Agent#upgrading).
 **A silence is granted for when the event happened, not for when something got
 round to reading it.**
 
-Rule 80 shipped and operators were still paged by their own agent upgrades. The
-maintenance window was being taken correctly every time — you can see it in the
-asset's own event list:
+An agent upgrade's maintenance window is only about two seconds wide — you can
+see it in the asset's own event list:
 
 ```
 10:30:47  agent.upgrade_kickoff     0.19.0 -> 0.20.0
@@ -1028,21 +1017,17 @@ asset's own event list:
 10:30:49  maintenance.exited
 ```
 
-The device really was in maintenance when the disconnect was recorded. But
-**automations that watch events are evaluated once a minute**, against a
-backlog — and they used to ask "is this device in maintenance?" rather than
-"was it in maintenance when this happened?". By the time the automation looked,
-the two-second window had been shut for most of a minute, the device was back
-to active, and the alert went out.
+The device is in maintenance when the disconnect is recorded. But **automations
+that watch events are evaluated once a minute**, against a backlog, so by the
+time one looks, that window has been shut for most of a minute and the device
+is back to active. Asking "is this device in maintenance?" at that point would
+mean **any maintenance window shorter than a minute suppresses nothing at
+all** — an agent upgrade, a short scheduled window, or releasing a device from
+maintenance shortly after something happened to it.
 
-The consequence was general, not specific to agents: **any maintenance window
-shorter than a minute suppressed nothing at all.** A short scheduled window, or
-releasing a device from maintenance shortly after something happened to it,
-leaked the same way. An agent upgrade just made it happen every single time,
-because the window is only about two seconds wide.
-
-Event automations now check the device's maintenance **history** at the moment
-the event was recorded. In practice:
+So event automations ask "was it in maintenance when this happened?", checking
+the device's maintenance **history** at the moment the event was recorded. In
+practice:
 
 - **An event that happened inside a maintenance window stays silent**, however
   briefly that window was open and however long ago it closed.
@@ -1066,44 +1051,36 @@ See [Maintenance Windows](Maintenance-Windows) and
 [Automation Triggers](Automation-Triggers).
 
 ### Rule 81
-**Not in use.** Rule 81 was published and then withdrawn in full the same week
-(2026-09-22). The number is left empty on purpose and will never be given to a
-different rule, so a reference to "rule 81" anywhere means that withdrawn change,
-not something current.
+Not in use — the number is not reused.
 
 ### Rule 82
 
 **A measurement of the host must not be dominated by the measurer, and a
 scheduling offset is not a way to protect one.**
 
-The [Polaris Agent](Polaris-Agent#what-the-cpu-number-measures) used to report
-host CPU by measuring **one second out of every sixty**. On a host with cores to
-spare that is just an imprecise way to describe a minute. On a **single-vCPU VM**
-it was actively wrong: if one of the agent's own collections was still running
-when that one-second window opened, it held the only core, and the sample
-reported close to 100% CPU for a host that was otherwise idle.
+The [Polaris Agent](Polaris-Agent#what-the-cpu-number-measures) does not measure
+host CPU over a short sampling window. On a **single-vCPU VM** such a window is
+actively wrong: if one of the agent's own collections is still running when the
+window opens, it holds the only core, and the sample reports close to 100% CPU
+for a host that is otherwise idle.
 
-The error was not random, which is what made it worth a rule. The same
-collections overrun on the same hosts every minute, so those hosts read high the
-same way every time, and nothing on the chart said so.
+The error is not random, which is what makes it worth a rule. The same
+collections overrun on the same hosts every minute, so those hosts would read
+high the same way every time, and nothing on the chart would say so.
 
-Spreading the collections across the minute — which Polaris already does, and
-which fixed an [earlier problem](Polaris-Agent#the-collections-are-spread-across-the-minute)
-of the same family — could not fix this one. **An offset controls when a
-collection starts, not how long it runs**, and on the small hosts where this
-matters everything runs long. One collection only had to overrun by 11 seconds
-to land on the reading.
+[Spreading the collections across the minute](Polaris-Agent#the-collections-are-spread-across-the-minute)
+cannot prevent this. **An offset controls when a collection starts, not how long
+it runs**, and on the small hosts where this matters everything runs long.
 
-So the sampling window was removed rather than moved. The agent now reads the
-operating system's running CPU counters and reports the difference since its
-previous sample, which means:
+So there is no sampling window. The agent reads the operating system's running
+CPU counters and reports the difference since its previous sample, which
+means:
 
 - **The measured span is the whole interval between samples** — by default 60
   seconds. Nothing goes unmeasured, and the agent's own work can only ever
   count for what it actually costs.
 - **The chart is flatter, and CPU thresholds fire on a sustained average**
-  rather than on whichever second happened to be sampled. If you tuned a CPU
-  threshold before agent 0.20.0, re-check it.
+  rather than on whichever second happened to be sampled.
 - **The sample interval is the smoothing.** Shorten `telemetry_interval_sec` on
   a host you want a sharper chart for; that shortens the averaging window too.
 
@@ -1111,8 +1088,6 @@ This applies to host CPU. Per-program CPU still takes a brief sample, because a
 single program's percentage is measured against elapsed time rather than against
 the machine — a collection competing with it makes that number read *low*, not
 high.
-
-An agent already installed keeps its old behaviour until it is upgraded.
 
 See [Polaris Agent](Polaris-Agent#what-the-cpu-number-measures).
 
@@ -1122,19 +1097,19 @@ See [Polaris Agent](Polaris-Agent#what-the-cpu-number-measures).
 never a silent winner.**
 
 A serial number is meant to settle arguments, and two situations can make it the
-argument instead. Polaris now reports both on the
+argument instead. Polaris reports both on the
 [Conflicts](Conflict-Resolution) page.
 
 **One device, two FortiGates.** A FortiSwitch or FortiAP is discovered through
 the gate that manages it. If two gates both carry it on their managed roster —
 because the device was moved and nobody removed it from the old gate's
 configuration, or because two integrations cover overlapping equipment — then
-**whichever integration ran discovery most recently owned the record**, and the
-next run of the other one took it back. That decided the device's parent for
-[dependency suppression](Dependency-Suppression), where it appeared on the
-[Device Map](Device-Map), which region tags it carried, and which gate a
-description sync was addressed to. None of it was visible: the record simply
-said something different depending on which run was last.
+**whichever integration ran discovery most recently would own the record**, and
+the next run of the other one would take it back. That decides the device's
+parent for [dependency suppression](Dependency-Suppression), where it appears on
+the [Device Map](Device-Map), which region tags it carries, and which gate a
+description sync is addressed to. None of it would be visible: the record would
+simply say something different depending on which run was last.
 
 The card names both gates and, for each, when it last reported the device. That
 last column is the one that tells the two explanations apart, because a gate
@@ -1224,7 +1199,7 @@ describes whether that source can reach the target, so:
 
 - **It never changes the host's status.** A laptop that cannot reach the
   intranet is not a laptop that is down. The host's own Up / Down comes only
-  from its agent's response time, exactly as before.
+  from its agent's response time.
 - **A check has no threshold.** You set the SLA in a **Path Monitor**
   automation on the path-check metrics (latency, failure rate, HTTP status,
   pass / fail, hop count, TLS days remaining). It only ever watches hosts with
@@ -1271,7 +1246,7 @@ the one that stopped listening.**
 
 Nothing polls a host that is monitored by the Polaris Agent. The agent sends its
 own response-time readings, so a host that dies, crashes, loses its network or
-has its agent stopped simply stops sending. Polaris now counts that silence as a
+has its agent stopped simply stops sending. Polaris counts that silence as a
 missed poll.
 
 Once an agent that finished deploying has not been heard from for **two polling
@@ -1307,8 +1282,7 @@ See [Polaris Agent](Polaris-Agent#when-the-host-stops-reporting) and
 platform, and only forward; the flash takes a hold and never records a version
 it has not read back.**
 
-This covers Fortinet switches, access points and — since 2026-10-06 —
-FortiGate firewalls. The [Repository](Server-Settings#repository) files
+This covers Fortinet switches, access points and FortiGate firewalls. The [Repository](Server-Settings#repository) files
 firmware images under a model, but a device is matched on its **platform** — the token in the image's
 own header, which is the first six characters of the serial numbers the image
 was built for. An image whose header cannot be read is stored and never
@@ -1377,37 +1351,8 @@ See [Server Settings → Repository](Server-Settings#repository) and
 
 ### Rule 88
 
-*Retired 2026-10-08 — see [rule 98](#rule-98).* The **Skip unused ports** option
-and the 30-day remembered address behind it were removed. The text below is kept
-as the record of what the rule was.
-
-**A port Polaris has positive evidence was never in use does not alert when the
-automation asks it to skip unused ports. "Unused" is decided by the port's
-remembered address, never its current one.**
-
-Some deployment templates enable every WAN port on every FortiGate, as SD-WAN
-members, whether or not a circuit is plugged into them. An unused `wan2` is then
-down on every health check, and a "member is down" automation alerts about it on
-every gate that has one.
-
-An unused port reads `0.0.0.0`, but so does a working DHCP WAN whose link just
-dropped and whose lease was released. So the current address cannot tell them
-apart. Polaris therefore **remembers the last address each interface reported**,
-for 30 days after it last had one. A port counts as unused only when all of these
-are true:
-
-- it is not a tunnel (IPsec and other overlays are never skipped)
-- it reports an address, and that address is `0.0.0.0`
-- it has had no address in the last 30 days
-
-Tick **Skip unused ports** on an SD-WAN member state, SD-WAN latency / jitter /
-packet loss, or interface oper status condition to use it. A skipped port never
-raises an alert, and an alert already open on one clears. A port that had an
-address recently (a DHCP WAN that just lost its lease, a static WAN that went
-down) still alerts. A port down for more than 30 days is treated as unused.
-
-Its replacement is described under
-[Automation Triggers → SD-WAN member IP address](Automation-Triggers#sd-wan-member-ip-address).
+Retired — the number is not reused. Leaving unused SD-WAN members out of an
+alert is governed by [rule 98](#rule-98).
 
 ### Rule 89
 
@@ -1459,12 +1404,12 @@ share is resolved by where the device sits, or not at all.**
 
 On a FortiLink fleet the switch name is often set per site, so "IDF-1" exists
 behind every FortiGate. A device's *Last Seen Switch*, its *Last Seen AP* and an
-access point's uplink switch are all recorded by name, and Polaris used to turn
-such a name into whichever same-named device it happened to find first, which
-could be at another site. The dependency tree then drifted: devices were shown
-under, and silenced behind, a switch they never sat under.
+access point's uplink switch are all recorded by name. Turning such a name into
+whichever same-named device turns up first could pick one at another site, and
+the dependency tree would drift: devices shown under, and silenced behind, a
+switch they never sat under.
 
-Now a shared name is settled by evidence about the device itself: first the
+So a shared name is settled by evidence about the device itself: first the
 switch whose MAC table currently holds the device's MAC, then the FortiGate that
 last saw the device (or, for an access point, its own controller), then the
 FortiGate that owns the device's network. When none of those singles out one
@@ -1487,7 +1432,7 @@ an alert it covers is still raised and shown — with a QUIET pill — and its
 scripts, API calls and audit event still run; what is held is, per severity,
 whichever of the four people-facing sends the quiet time ticks — the first
 alert, its reminders, the escalation tiers' first runs, the tiers' own repeats.
-Holding everything but the first alert is the old reminder-only quiet time: the
+Holding everything but the first alert is a reminder-only quiet time: the
 first alert and the all-clear go through, the chasing waits. Only a held first
 alert owes a summary. Nothing in the alert's clocks moves while a send is held.
 
@@ -1612,11 +1557,9 @@ API tool at once.
   reading rather than a failure, so a token problem cannot mark a site down.
 - **A stored per-stream credential is always shown on the asset.** It stays in
   force on "Inherit", so the Monitoring tab shows it there and **Source
-  default** clears it.
-
-This came from a production incident: a stale per-asset REST credential, hidden
-behind an "Inherit" stream, sent a burst of bad keys every monitor pass and kept
-the server locked out of one gate for hours.
+  default** clears it. A stale per-asset REST credential hidden behind an
+  "Inherit" stream would otherwise send a burst of bad keys every monitor pass
+  and could keep the server locked out of one gate for hours.
 
 See [Monitoring → How Polaris paces FortiOS REST calls](Monitoring#how-polaris-paces-fortios-rest-calls).
 
@@ -1638,7 +1581,7 @@ as a MAC, it would let unrelated devices match each other and merge.
   **Generate** for a device that isn't racked yet. A reservation that already
   holds a zero MAC (for example, one mirrored from the FortiGate) can still be
   edited.
-- **Upgrading clears existing zeros from assets.** Each asset whose MAC is
+- **A zero already stored on an asset is cleared.** Each asset whose MAC is
   cleared gets an `asset.mac.cleared` event. Reservations are left as they are.
 - **Search still finds it**, so you can look for any that remain.
 
@@ -1669,9 +1612,6 @@ leaves out every member with no address.
 
 It compares the current address only. A DHCP WAN whose lease dropped when its
 link went down reads `0.0.0.0` too, and *is not 0.0.0.0* leaves that outage out.
-This replaced **Skip unused ports** ([rule 88](#rule-88)), which used a 30-day
-remembered address to tell the two apart; it was retired on 2026-10-08 in favour
-of a filter an operator can read and set directly.
 
 See [Automation Triggers → SD-WAN member IP address](Automation-Triggers#sd-wan-member-ip-address).
 

@@ -195,8 +195,8 @@ port again.
 ## Interaction
 
 - **Tap any node → the info rail only.** The asset detail slide-in opens from
-  the rail's *Open asset details* button alone. Tapping a box used to pop the
-  panel, which buried the services and ports list you had just opened.
+  the rail's *Open asset details* button alone, so the panel never buries the
+  services and ports list you have just opened.
 - **Hovering an edge** brings it to full opacity (stale edges render faded).
 - **Drag** to rearrange; the layout is **shared** for `applicationMap` writers,
   with browser storage as the fallback for readers.

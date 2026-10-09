@@ -66,9 +66,8 @@ installed software (**Log Analytics Reader** on each workspace) and Run Command
 | **Kubernetes** | one query | **yes** — `kubernetes_cluster` assets |
 | **Network profile** | **one GET per machine** — concurrency-capped and deadline-bounded | no |
 
-The first two fold into the owning machine's observed blob. They are off by
-default so an existing integration keeps its current blob shape until you opt
-in.
+The first two fold into the owning machine's observed blob, and are off until
+you opt in.
 
 **VM instances** is the one with a second purpose: Arc-enabled VMware and SCVMM
 placement also supplies the **instance UUID**, which is what **deduplicates an

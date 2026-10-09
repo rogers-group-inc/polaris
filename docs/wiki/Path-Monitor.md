@@ -83,8 +83,8 @@ it and show *upgrade agent* until they are upgraded.
 authenticates is never sent to an agent, so the password or token stays on the
 Polaris server. Choosing a credential turns on *Run from this Polaris server* and
 locks it on; setting Authentication back to *None* hands the toggle back. Anyone with at least *Read-Only* on Credentials can
-pick any credential and test with it; changing the credential still needs the
-Credentials permissions it always did. A credential a check
+pick any credential and test with it; changing the credential itself still
+needs the usual Credentials permissions. A credential a check
 uses cannot be deleted until the check stops using it. Authentication and the
 Host header are sent only to the original site: a redirect that leaves it gets
 neither. Basic and Bearer over plain `http://` send the secret unencrypted, and
@@ -152,15 +152,6 @@ The filter only **finds** hosts. It is saved so the check reopens with it, but
 a host that matches it later does **not** join the check by itself: open the
 check and tick it. A ticked host keeps running the check even if it stops
 matching the filter (it is marked *outside filter*).
-
-A check made before this change may:
-
-- **run from both** the server and agent hosts. Editing one says so; saving it
-  with the toggle on keeps only the server, and with it off only the agent
-  hosts;
-- **follow its filter**, so every matching host ran it. Editing one ticks every
-  host the filter matches now and says so; saving keeps exactly the ticked
-  hosts.
 
 A host runs at most 20 checks. If it matches more, it runs the oldest 20, and
 Polaris writes a `path_check.agent_over_cap` event naming it.
@@ -304,7 +295,7 @@ out on the retention schedule.
 | An ICMP check from the server fails with `icmp unsupported on this server` | the system `ping` could not run for the Polaris service account. The same `ping` serves Polaris's own ICMP monitoring, so fix it there |
 | ICMP check fails with `icmp unsupported on this host (ping_group_range)` | Linux only. See [Polaris Agent → Troubleshooting](Polaris-Agent#troubleshooting) for the one-line fix. HTTP, TCP and traceroute are unaffected |
 | Every hop after the first shows `* * *` | the network drops the ICMP replies traceroute relies on. The check result is unaffected |
-| A few middle hops show `* * *` (often the carrier's core, several in a row) but `tracert` or `traceroute` on the same host lists them | upgrade the agent to **0.23.1 or later**. Earlier agents sent many probes at once, and carrier (MPLS) core routers drop most of a burst of replies; 0.23.1 sends one probe at a time, as `tracert` does. A trace can take a little longer when hops stay silent |
+| A few middle hops show `* * *` (often the carrier's core, several in a row) but `tracert` or `traceroute` on the same host lists them | upgrade the agent to **0.23.1 or later**, which sends one probe at a time, as `tracert` does. Carrier (MPLS) core routers drop most of a burst of replies, and an agent before 0.23.1 sends its probes as a burst. A trace can take a little longer when hops stay silent |
 | An agent host on Linux never reaches the destination, but the Windows hosts do | Linux agents trace with UDP probes and learn they arrived from the destination's *port unreachable* reply; a target whose firewall drops UDP never sends it. The hops up to it are still correct |
 | An HTTPS check fails with a certificate error | the host does not trust the target's certificate. Fix the certificate or its chain, or turn off *Verify the TLS certificate* |
 | A 302 fails the check | redirects are not followed unless you tick *Follow redirects* (General step). Or point the check at the final URL, or accept `300-399` |

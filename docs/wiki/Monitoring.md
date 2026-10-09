@@ -54,11 +54,11 @@ Four statuses **cannot** carry monitoring — `decommissioned`, `disabled`,
 `storage`, `quarantined` ([rule 10](Business-Rules#rule-10)). Staging one of
 them clears the flag in every write path.
 
-`quarantined` joined that list because a quarantined device is isolated at the
-FortiGate, so **every probe fails by design** — a security action was producing
-an outage alert storm about the isolation working. Because quarantine is
-reversible, the flag is *parked* and restored on release; otherwise releasing a
-quarantine handed the device back with nobody watching it.
+`quarantined` is on that list because a quarantined device is isolated at the
+FortiGate, so **every probe fails by design** — monitoring it would turn a
+security action into an outage alert storm about the isolation working. Because
+quarantine is reversible, the flag is *parked* and restored on release, so
+releasing a quarantine hands the device back with monitoring still on.
 
 `maintenance` is deliberately **not** on the list: a window pauses polling while
 `monitored` keeps your intent, so it survives the window.
@@ -71,8 +71,9 @@ Each stream's interval resolves from the same hierarchy the polling method
 does — **per asset → class override → integration → manual tier → hardcoded
 floor**. The figure the monitor-settings card reports is the figure you get.
 
-Exactly **one** clamp is applied on top: dependency suppression doubles the
-interval for a device whose parent is dark. That is it.
+**No** clamp is applied on top — not even dependency suppression: a device
+whose parent is dark keeps its response-time probe at the normal interval
+([Dependency suppression](Dependency-Suppression#what-suppression-actually-does)).
 
 ### What a probe can decline to be
 
@@ -88,22 +89,16 @@ it bumps the cadence anchor alone, so spacing is preserved. The sources:
 | **A workload mid-transition** | an Unraid / TrueNAS state such as TrueNAS's *DEPLOYING* says neither up nor down |
 | **`responseTimePolling = "disabled"`** | the operator saying *do not poll this* |
 
-That last one was a *failure* until 2026-08-28. Every other stream's publisher
-checked its resolved method before queueing and the probe's did not, so
-`disabled` reached the dispatcher, fell past every branch to an unknown-method
-error, and was recorded as a **missed poll** — switching Response Time off drove
-the device to `down`.
-
 **A skip is not a miss**, so N consecutive misses still means N times the
 transport actually answered nothing about a device it could reach.
 
 ### A re-queued job is not a second reading
 
 The probe queue lets one job queue behind an active job with the same key, and a
-batched ICMP chunk can outlive the 5-second publisher tick. The same poll
-therefore ran twice, seconds apart: **two samples per cycle, and two misses
-toward the threshold**. Jobs now carry their resolved interval and the worker
-re-runs the due check at pickup; a duplicate records nothing at all.
+batched ICMP chunk can outlive the 5-second publisher tick, so the same poll can
+be queued twice, seconds apart. Jobs carry their resolved interval and the worker
+re-runs the due check at pickup; a duplicate records nothing at all, so a cycle
+never yields **two samples, or two misses toward the threshold**.
 
 ---
 
@@ -219,8 +214,8 @@ Two things about it ([rule 30](Business-Rules#rule-30)):
 - **It never records a probe result.** ICMP does not authenticate the device it
   reaches, so the sweep informs the loss ratio and **can never move
   `monitorStatus`**.
-- **It is uniform**, unlike the per-asset sampler it replaced, which ran only
-  while an asset looked unhealthy — itself a sampling bias.
+- **It is uniform** — every eligible asset, every cycle, not only while an
+  asset looks unhealthy, which would itself be a sampling bias.
 
 "`fping` not available" covers **not installed** *and* installed-but-unexecutable:
 on Debian, `fping` and `ping` carry `cap_net_raw=ep`, so a process without
@@ -251,28 +246,20 @@ at save.
 ### Per-asset FortiOS REST credentials
 
 An integration's API token is fleet-wide by construction — the field's own hint
-says it must be the same across all managed FortiGates. A fleet where each gate
-carries its own api-user therefore could not be polled over REST at all.
-
-Since 2026-09 a `restapi`-typed credential selected on an asset's stream is
-preferred. It contributes **authentication, port and TLS verification only —
-the target stays the asset's own address**, so one credential mistakenly
-selected on twenty gates cannot poll one device and file its CPU under all
-twenty.
-
-> This is worth knowing because of what it fixed. The asset modal had been
-> offering that picker on every REST stream all along, while the collector never
-> read it: the selection persisted, resolved, rendered — and **collected
-> nothing, forever, with the tick reporting success.**
+says it must be the same across all managed FortiGates. For a fleet where each
+gate carries its own api-user, a `restapi`-typed credential selected on an
+asset's stream is preferred. It contributes **authentication, port and TLS
+verification only — the target stays the asset's own address**, so one
+credential mistakenly selected on twenty gates cannot poll one device and file
+its CPU under all twenty.
 
 **A stored credential stays in force when you set the stream back to
 "Inherit".** It is applied whenever the inherited method takes that credential
 type. The modal therefore shows the Credential picker on any stream that stores
 one, with a note saying so, even on "Inherit". To stop using it, choose
-**Source default**. Before 2026-10 the picker was hidden on "Inherit": the
-stream read as "nothing set" while Polaris kept sending the stored token, and a
-stale one could lock the server out of that gate's API
-([rule 96](Business-Rules#rule-96)).
+**Source default**. Hiding the picker on "Inherit" would make the stream read as
+"nothing set" while Polaris kept sending the stored token, and a stale one can
+lock the server out of that gate's API ([rule 96](Business-Rules#rule-96)).
 
 ### How Polaris paces FortiOS REST calls
 
@@ -286,8 +273,7 @@ monitoring, pushes and the Query API tool together. To stay clear of it
 
 - **At most 2 requests are in flight to one gate at a time**
   (`POLARIS_FORTIOS_PER_GATE_CONCURRENCY`, per Polaris process). One bad moment
-  then costs at most two failures, not the burst that used to trip the
-  threshold.
+  then costs at most two failures, not a burst that trips the threshold.
 - **After a 401, Polaris sends that gate nothing for a while**: 60 seconds,
   doubling on each consecutive 401 up to 30 minutes, and ending at the first
   answer that is not a 401. Requests during the pause fail at once with
@@ -301,13 +287,13 @@ monitoring, pushes and the Query API tool together. To stay clear of it
 
 ## Compatibility vs capability
 
-Two different questions, and only the first used to be checked:
+Two different questions, and Polaris checks both:
 
 - **Compatibility** — is this method *meaningful* for this source kind?
 - **Capability** — does the **collector actually exist**?
 
-A stream could be configured into permanent quiet — resolving fine and
-collecting nothing while the tick recorded success. Now the validators **warn**
+A method with no collector would leave a stream in permanent quiet — resolving
+fine and collecting nothing while the tick records success. So the validators **warn**
 (not refuse — a 400 would punish re-saving an existing value), the dropdowns
 stop offering the combination, and an audit names what is already stored. One
 case is a hard refusal: **ICMP on a non-response-time stream** via the
@@ -337,10 +323,10 @@ members too, permanently inside the engine's lookback.
 An unpinned member **never alerts**, and there is no opt-out. Un-pinning is how
 alerting stops.
 
-Storage was the last dimension to be closed and the one that hurt most: a device
-reports every filesystem it has, so a fleet-wide "disk over 90 %" automation
-alerted on removable volumes, ISO mounts, recovery partitions, mapped network
-drives and archive shares that are **full by design**.
+Storage is where this matters most: a device reports every filesystem it has,
+so without the pin gate a fleet-wide "disk over 90 %" automation would alert on
+removable volumes, ISO mounts, recovery partitions, mapped network drives and
+archive shares that are **full by design**.
 
 Pin from the asset's own tabs, from an integration's auto-monitor pass
 (additive only), or in bulk from

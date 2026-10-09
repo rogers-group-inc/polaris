@@ -123,16 +123,16 @@ target** per channel, and each target into delivery rows.
 
 **Nothing about the reader splits an email** ([rule 25](Business-Rules#rule-25)).
 One notify action produces **one message**, with everyone it names on the To
-line — not a copy each. Two things used to split it and no longer do:
+line — not a copy each. Two things that might be expected to split it do not:
 
-- **Recipient timezone.** Timestamps are now rendered in the Polaris server's
+- **Recipient timezone.** Timestamps are rendered in the Polaris server's
   own zone for everybody, and the default footer says which zone that is
   (`{time.zone}` — e.g. "Times shown in CDT (America/Chicago)"). A user's
-  timezone setting still governs the Polaris UI; it no longer reaches email.
+  timezone setting governs the Polaris UI; it does not reach email.
 - **Acknowledge capability.** Everyone gets the Acknowledge button, including a
   reader whose role holds `alerts` below `write`. They are refused, with a
   reason, on the acknowledge page — not by silently receiving a different
-  email. (Web **push** still omits the tray action for such a role: a push is
+  email. (Web **push** omits the tray action for such a role: a push is
   addressed to one browser, so leaving it off costs nobody a shared To line.)
 
 A send is still wider than one copy of it — a second notify action in the same
@@ -154,6 +154,6 @@ a reminder's footer never names someone who is only on an escalation tier.
   the 410 also prunes the subscription and every later alert takes the
   fire-time path instead.
 - A **recipient with no email address** is dropped, and the builder warns about
-  it. (It warned about missing *push* devices long before it warned about this.)
+  it.
 - A failed send is retried on the next sweep. A reminder whose channel was dead
   retries and is still the one that reports a quiet-time hold.

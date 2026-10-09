@@ -11,7 +11,7 @@ operator's decision is worse than a queue nobody has cleared.
 Reached from the **Conflicts** button on the **Events** page, the **Conflict
 Queue** dashboard widget, and the conflict slide-over. Everyone who can see the
 queue sees every flavour — there is no per-role split between reservation and
-asset conflicts any more.
+asset conflicts.
 
 | Gate | |
 |---|---|
@@ -38,7 +38,7 @@ asset conflicts any more.
 
 ## Field conflicts on reservations
 
-The original flavour, in two shapes. The fields compared are hostname, owner and
+Two shapes. The fields compared are hostname, owner and
 project reference.
 
 **A manual reservation.** Discovery finds a DHCP entry, VIP, FortiGate
@@ -277,9 +277,8 @@ and that gate becomes the device's owner: its parent for
 description sync writes to.
 
 When **two** gates carry the same device on their managed roster, whichever
-integration ran discovery last owned the record — and the other one took it back
-on its next run. Nothing said so; the record just changed. This card is Polaris
-telling you it is happening.
+integration runs discovery last owns the record — and the other one takes it
+back on its next run. This card is Polaris telling you it is happening.
 
 The card lists each claiming gate with **when it last reported the device**,
 which is the column that tells the two causes apart:
@@ -338,7 +337,10 @@ rule [83](Business-Rules#rule-83).
 
 A network records the **serial** of the gate serving it. When the gate answers
 with a serial that is neither the stored one nor any member of its cluster, the
-physical FortiGate was swapped ([rule 41](Business-Rules#rule-41)).
+physical FortiGate was swapped ([rule 41](Business-Rules#rule-41)). Without
+the serial, a same-name RMA swap would match by CIDR and by roster, and the new
+chassis would silently inherit **every reservation row of the old one** —
+marked synced, with dead device-side pointers.
 
 The conflict is **additive and destroys nothing**:
 
@@ -362,7 +364,7 @@ listed underneath with its own **Review reservations**, and the decision once:
   location, monitoring settings and dependent devices. The old box's serial
   source and MAC addresses are dropped, since they belong to hardware that is
   gone. Monitoring history is not carried.
-- **Dismiss all** — each network keeps its own dismissal, as before.
+- **Dismiss all** — each network keeps its own dismissal.
 
 The nav badge counts the swap once. A swap with a single network keeps the
 single-network card, whose verbs are **Adopt new chassis**, **Review
@@ -376,7 +378,7 @@ live network; they are queued for push when DHCP push is enabled. VIPs and
 interface addresses cannot be copied, because the new gate's own configuration
 states those.
 
-You no longer need to decommission the old gate yourself: when FortiManager (or
+You do not need to decommission the old gate yourself: when FortiManager (or
 the standalone FortiGate) lists the same name with a different serial, discovery
 retires the old gate's asset. It does **not** take the old gate's switches and
 APs with it — after a same-name swap they belong to the new gate.
@@ -389,12 +391,6 @@ APs with it — after a same-name swap they belong to the new gate.
 | **unreadable** serial this run | *unknown* — applies **no constraint**, never "different". One failed read must not declare the fleet replaced |
 | **HA cluster** | compared against a **set**: the reporting gate plus every cluster member. FMG flips the top-level serial to whichever member is active, so a single-value comparison would report a replacement on **every failover** |
 | a chassis re-registered under another FMG device entry | genuinely a replacement **for this network** — the comparison is per device, not fleet-wide |
-
-### What it closed
-
-A same-name RMA swap previously matched by CIDR, matched the roster, and let the
-new chassis inherit **every reservation row of the old one** — marked synced,
-with dead device-side pointers. Silently.
 
 ### If you see this about a box nobody swapped
 

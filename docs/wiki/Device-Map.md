@@ -2,9 +2,7 @@
 
 A geographic map of your FortiGates, and the topology graph behind each site.
 
-Gated by **`deviceMap:read`** — the whole mount, not just the page. Before that
-gate was added, any authenticated session or token could enumerate every gate's
-hostname, coordinates and full topology regardless of role.
+Gated by **`deviceMap:read`** — the whole mount, not just the page.
 
 Drawing regions needs `mapRegions`.
 
@@ -84,7 +82,7 @@ the memoised payload**, since an edit can have changed every level in the tree.
 The columns holding region assignments on users, roles and group mappings hold
 **bare names with no foreign key**. So:
 
-- **A rename carries them with it.** A rename that left them behind revoked every
+- **A rename carries them with it.** Leaving them behind would revoke every
   scoped operator's region **in silence** — tag present, matching no region, and
   every name-resolving consumer quietly reaching nobody.
 - **A delete never strips them.** There is no new name to move an assignment to,
@@ -105,16 +103,14 @@ The obvious fix — strip every `region:` tag matching no region — is the one 
 this must **not** do, because manual attachments survive every reconciler forever
 and an operator could hand-apply `region:Narnia` to a printer.
 
-**A name that is live again is reclaimed, not stripped.** New orphans can no
-longer be created, but neither guard is retroactive.
+**A name that is live again is reclaimed, not stripped.**
 
 > Why this matters beyond tidiness: an orphaned region tag makes an automation's
 > **level-scoped routing abstain entirely** ([rule 58](Business-Rules#rule-58)),
-> rather than promote the container. One production install carried thousands of
-> switches tagged with a **misspelled** retired name, so every down alert
-> resolved L1 to the *division* and mailed the division pair while the two people
-> scoped to the site were never reached. The automation was "working" by every
-> check the UI could offer.
+> rather than promote the container. Switches tagged with a **misspelled**
+> retired name resolve every down alert's L1 to the *division*, mailing the
+> division's recipients while the people scoped to the site are never reached —
+> and the automation looks "working" by every check the UI can offer.
 
 ### My regions
 
@@ -123,8 +119,8 @@ pills, each tooltipped with **where that scope comes from** — your account, yo
 role, or an IdP group. An empty scope is stated as **"all regions"**, since
 empty means unrestricted.
 
-It answers *"which regions am I assigned to?"* — which the Users page could only
-tell whoever administers users — and is deliberately **not a filter**: the map
+It answers *"which regions am I assigned to?"* — which the Users page shows only
+to whoever administers users — and is deliberately **not a filter**: the map
 already shows exactly the sites you may read.
 
 ---
