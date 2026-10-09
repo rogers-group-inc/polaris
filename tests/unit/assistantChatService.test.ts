@@ -68,7 +68,7 @@ vi.mock("../../src/services/assistantConversationService.js", () => ({
 import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, PERSONA_SUSPENDED, advisorVoice } from "../../src/services/efficiencyAdvisorService.js";
 import {
   streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, asksForReport, reportTitleFromQuestion, asksHowTo, sanitizeAnswerLinks,
-  contextBudget, fitHistory, compactToolResults, permissionsPromptBlock,
+  contextBudget, fitHistory, compactToolResults, permissionsPromptBlock, scopePromptBlock,
 } from "../../src/services/assistantChatService.js";
 
 const integration = { id: "i1", name: "Ollama", config: { host: "10.0.0.5", model: "qwen", maxToolRounds: 2 } as any };
@@ -700,5 +700,19 @@ describe("ADVISOR_PERSONA — R.A.L.P.H. lines the owner wrote", () => {
     expect(ADVISOR_PERSONA).toContain("If you don't want your performance to be scrutinized and logged then de-select R.A.L.P.H. at the top.");
     expect(ADVISOR_PERSONA).toMatch(/Never offer to drop the act/);
     expect(ADVISOR_PERSONA).toMatch(/WHOLE answer/);
+  });
+});
+
+describe("scopePromptBlock — \"my region\" means something", () => {
+  it("names the person's regions and tags and points at list_assets myRegions", () => {
+    const b = scopePromptBlock({ regions: ["Middle Tennessee", "Alabama"], tags: ["nashville-noc"] })!;
+    expect(b).toContain("The person's regions: Middle Tennessee, Alabama.");
+    expect(b).toMatch(/myRegions: true/);
+    expect(b).toContain("Their other scope tags: nashville-noc.");
+  });
+
+  it("says to ask when no region is assigned, and is absent without a scope", () => {
+    expect(scopePromptBlock({ regions: [], tags: [] })).toMatch(/No region is assigned/);
+    expect(scopePromptBlock(null)).toBeNull();
   });
 });

@@ -58,6 +58,7 @@ import {
 } from "./assistantConversationService.js";
 import { WIKI_BASE_URL, wikiPageNames } from "./helpIndexService.js";
 import { FUNCTION_KEYS, normalizePermissions, isAdminEquivalentPermissions } from "../api/middleware/permissions.js";
+import { getEffectiveTagScopes } from "./regionScopeService.js";
 import {
   getMemoryEnabled,
   listMemory,
@@ -205,6 +206,28 @@ export function permissionsPromptBlock(snap: { name?: string; permissions?: unkn
       "from this list — do not hedge with \"if you get Not permitted\". If it does not, say which access they would " +
       "need and that an administrator can grant it under Users → Roles.",
   ].join("\n");
+}
+
+/**
+ * The person's scope, for the system prompt: the regions and free-form scope
+ * tags assigned to them (role + account + sign-in groups), so "my region"
+ * means something. The lookups do the narrowing — list_assets `myRegions`
+ * reads the same assignment server-side — so this text only tells the model
+ * what to ask for and how to word the answer. Exported for tests.
+ */
+export function scopePromptBlock(scope: { regions: string[]; tags: string[] } | null | undefined): string | null {
+  if (!scope) return null;
+  const lines: string[] = [];
+  if (scope.regions.length) {
+    lines.push(
+      `The person's regions: ${scope.regions.join(", ")}. "My region", "my sites" and similar mean these: ` +
+        "use list_assets with myRegions: true (or region: [names]) and say which regions the answer covers.",
+    );
+  } else {
+    lines.push("No region is assigned to this person. If they ask about \"my region\", ask which region they mean.");
+  }
+  if (scope.tags.length) lines.push(`Their other scope tags: ${scope.tags.join(", ")}.`);
+  return lines.join("\n");
 }
 
 /** The system prompt. Exported for tests. */
@@ -466,10 +489,12 @@ export async function streamAssistantTurn(input: {
   // on this event, so its keep-alive covers a slow first token.
   emit("start", { question });
 
-  const [allTurns, advisor, memoryOn] = await Promise.all([
+  const [allTurns, advisor, memoryOn, scope] = await Promise.all([
     recentTurns(input.conversationId, config.contextMessages ?? LLM_DEFAULTS.contextMessages),
     getEfficiencyAdvisor(input.userId),
     getMemoryEnabled(input.userId),
+    // The person's regions + scope tags for the prompt; a failure only costs the hint.
+    getEffectiveTagScopes(input.userId).catch(() => null),
   ]);
   // Rule 95(i): the person's memory rides in the system prompt (so the
   // context budget below counts it) and the remember/forget tools are offered
@@ -504,7 +529,8 @@ export async function streamAssistantTurn(input: {
     // configured assistant name would give it two.
     displayName: personaActive ? undefined : config.displayName,
     persona: personaActive ? ADVISOR_PERSONA : undefined,
-    access: permissionsPromptBlock(req.roleSnapshot ?? req.session?.roleSnapshot),
+    access: [permissionsPromptBlock(req.roleSnapshot ?? req.session?.roleSnapshot), scopePromptBlock(scope)]
+      .filter(Boolean).join("\n") || null,
     memory: memoryTurn ? memoryPromptBlock(memoryTurn.entries, input.username) : undefined,
   });
   const turns = fitHistory(estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools)), allTurns, budget.promptTokens);

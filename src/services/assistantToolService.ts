@@ -28,7 +28,8 @@ import { prisma } from "../db.js";
 import { hasPermission, callerIsAdminEquivalent } from "../api/middleware/permissions.js";
 import { searchAll } from "./searchService.js";
 import { listNotifications } from "./notificationService.js";
-import { getEffectiveRegionTags } from "./regionScopeService.js";
+import { getEffectiveRegionTags, getEffectiveTagScopes } from "./regionScopeService.js";
+import { REGION_TAG_PREFIX } from "../utils/tagNormalize.js";
 import { queryEventsPage } from "./eventLogService.js";
 import { getRetentionSettings } from "./eventArchiveService.js";
 import { searchHelp } from "./helpIndexService.js";
@@ -221,6 +222,8 @@ const AssetArgs = z.object({
   monitorStatus: oneOrMany(z.enum(MONITOR_STATUSES)),
   monitored: z.boolean().optional(),
   tag: z.string().max(100).optional(),
+  region: oneOrMany(z.string().trim().min(1).max(100)),
+  myRegions: z.boolean().optional(),
   location: z.string().max(200).optional(),
   manufacturer: z.string().max(100).optional(),
   model: z.string().max(100).optional(),
@@ -254,7 +257,9 @@ const listAssetsTool: ListToolDef = {
       status: { type: "array", items: { type: "string", enum: [...ASSET_STATUSES] } },
       monitorStatus: { type: "array", items: { type: "string", enum: [...MONITOR_STATUSES] } },
       monitored: { type: "boolean" },
-      tag: { type: "string", description: "Exact tag, e.g. a region or site tag" },
+      tag: { type: "string", description: "Exact tag, e.g. a site tag" },
+      region: { type: "array", items: { type: "string" }, description: "Region names, e.g. [\"Southern Division\"] — assets in ANY of them" },
+      myRegions: { type: "boolean", description: "Only assets in the regions assigned to the person asking — use for \"my region\" / \"my sites\"" },
       location: { type: "string", description: "Location contains this text" },
       manufacturer: { type: "string" },
       model: { type: "string" },
@@ -290,6 +295,19 @@ const listAssetsTool: ListToolDef = {
     if (a.monitorStatus) and.push({ monitorStatus: { in: a.monitorStatus }, monitored: true });
     if (typeof a.monitored === "boolean") and.push({ monitored: a.monitored });
     if (a.tag) and.push({ tags: { has: a.tag } });
+    // Regions ride assets as `region:<name>` tags — the same tags alert
+    // scoping snapshots (notificationEngine regionSnapshot), matched the same
+    // exact way. "My regions" are the person's ASSIGNED regions, admins
+    // included (an admin sees everything, but still has regions of their own).
+    let regionNames = a.region ?? [];
+    if (a.myRegions) {
+      const mine = ctx.req.session?.userId ? (await getEffectiveTagScopes(ctx.req.session.userId)).regions : [];
+      if (!mine.length) {
+        return { ok: false, data: { error: "No region is assigned to this person, so there is no \"my region\" to narrow to — ask which region they mean." } };
+      }
+      regionNames = [...regionNames, ...mine];
+    }
+    if (regionNames.length) and.push({ tags: { hasSome: Array.from(new Set(regionNames)).map((r) => REGION_TAG_PREFIX + r) } });
     if (a.location) {
       and.push({ OR: [
         { location: { contains: a.location, mode: "insensitive" } },

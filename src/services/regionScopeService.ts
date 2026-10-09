@@ -93,6 +93,20 @@ export async function getEffectiveRegionTags(userId: string): Promise<string[]> 
   return scopes.regionTags.effective;
 }
 
+/**
+ * Both effective scope dimensions for a user id — the region names and the
+ * free-form scope tags their role, account and sign-in groups give them —
+ * for surfaces that DESCRIBE a person's scope (the AI assistant's prompt).
+ * Unlike the alert scoping, administrators are not treated as unscoped here:
+ * an admin with regions assigned still has regions of their own.
+ */
+export async function getEffectiveTagScopes(userId: string): Promise<{ regions: string[]; tags: string[] }> {
+  const u = await prisma.user.findUnique({ where: { id: userId }, include: { role: true } });
+  if (!u) return { regions: [], tags: [] };
+  const scopes = await resolveTagScopesForUser(u);
+  return { regions: scopes.regionTags.effective, tags: scopes.otherTags.effective };
+}
+
 // ─── The write side: a region's name changing, or going away ────────────────
 //
 // The three principal scope columns (`User.regionTags`, `Role.regionTags`,
