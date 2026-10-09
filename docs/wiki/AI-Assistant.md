@@ -158,6 +158,7 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 |---|---|
 | `/clear` | Clear this conversation and start over in the same thread |
 | `/new` | Start a new conversation (this one stays in history) |
+| `/resume` | Reopen the conversation set aside after 30 minutes without activity |
 | `/history` | Open your past conversations |
 | `/retry` | Ask for the last answer again |
 | `/report <what>` | Build a downloadable report, e.g. `/report switches down in the last 24h` |
@@ -174,6 +175,11 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 
 - Conversations are **saved** and reopen where you left off. The history button
   (or `/history`) lists them; rename or delete from there.
+- After **30 minutes without activity** (no question, answer or opened
+  conversation in this browser) the window starts a **fresh chat** the next
+  time it loads or opens, or within a minute on a page left open. Nothing is
+  deleted: `/resume` reopens the conversation it set aside, and it is still in
+  History.
 - They are **private to you** — no other user, administrators included, can
   read them.
 - A conversation untouched for **90 days** is deleted automatically. Change

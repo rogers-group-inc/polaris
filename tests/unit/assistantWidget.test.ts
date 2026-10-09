@@ -79,17 +79,26 @@ describe("slash commands", () => {
 
   it("filters the popup by prefix while the command name is being typed", () => {
     expect(A.matchCommands("/").length).toBe(A.COMMANDS.length);
-    expect(A.matchCommands("/re").map((c: any) => c.name)).toEqual(["retry", "report", "rename"]);
+    expect(A.matchCommands("/re").map((c: any) => c.name)).toEqual(["resume", "retry", "report", "rename"]);
     expect(A.matchCommands("/zz")).toEqual([]);
     expect(A.matchCommands("/report x")).toBeNull();
     expect(A.matchCommands("hello")).toBeNull();
   });
 
-  it("offers clear, new, history, retry, report, docs, export, rename, delete, model and help", () => {
+  it("offers clear, new, resume, history, retry, report, docs, export, rename, delete, model and help", () => {
     expect(A.COMMANDS.map((c: any) => c.name).sort()).toEqual(
-      ["clear", "delete", "docs", "export", "help", "history", "model", "new", "rename", "report", "retry"],
+      ["clear", "delete", "docs", "export", "help", "history", "model", "new", "rename", "report", "resume", "retry"],
     );
     for (const c of A.COMMANDS) expect(c.desc.length).toBeGreaterThan(10);
+  });
+
+  it("sets a conversation aside after 30 idle minutes, never without an activity stamp", () => {
+    const now = Date.parse("2026-10-09T12:00:00Z");
+    expect(A._IDLE_RESET_MS).toBe(30 * 60 * 1000);
+    expect(A._idleExpired(String(now - 30 * 60 * 1000), now)).toBe(true);
+    expect(A._idleExpired(String(now - 29 * 60 * 1000), now)).toBe(false);
+    expect(A._idleExpired(null, now)).toBe(false);
+    expect(A._idleExpired("garbage", now)).toBe(false);
   });
 });
 
