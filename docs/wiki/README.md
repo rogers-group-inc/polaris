@@ -105,6 +105,13 @@ directory — when a change lands that alters a page, a screen, a permission
 key, an integration field, an automation control or an API endpoint, the
 matching page here is updated in the **same commit** as the code.
 
+Pages describe Polaris **as it is today**. The wiki teaches how to use the
+application and how it works, so it carries no change history: no "before X
+was added", no dated "since / until" notes, no retired features, no
+troubleshooting rows that only apply to older builds. Where a past incident
+explains a design, state the reason in the present tense ("without X, Y would
+happen"). The incident narratives live in the skills.
+
 `npm run check:wiki` (pre-commit hook and CI) enforces the structure a flat wiki
 needs and GitHub never reports: every page linked from `_Sidebar.md`, links as
 bare page names that exist, every `Page#anchor` matching a real heading, no

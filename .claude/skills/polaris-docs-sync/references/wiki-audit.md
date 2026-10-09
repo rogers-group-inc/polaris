@@ -29,7 +29,9 @@ catches the first two.
 3. **Give each group to a parallel agent.** Its brief: for every factual claim on the page
    (a control, a field, a default, a permission key, a limit, a behaviour), find the code
    that implements it and report each claim as *true*, *false (with what the code does)*
-   or *unverifiable*. Point each agent at the skills that own the area, since the skills
+   or *unverifiable*. Also report any sentence describing how things *used to* be (a date,
+   "before X was added", "no longer", a retired feature, an older-build troubleshooting
+   row): the wiki is present tense only. Point each agent at the skills that own the area, since the skills
    are the faster index. Ask for findings only, with no edits, so the fixes land in one
    reviewable diff.
 4. **Apply the fixes yourself** against the code, not against the agent's summary. Where a
