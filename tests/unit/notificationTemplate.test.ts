@@ -10,6 +10,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   TEMPLATE_VARIABLES,
+  TEMPLATE_VARIABLE_SECTIONS,
+  TEMPLATE_VARIABLE_PLACEMENT,
   buildTemplateContext,
   renderNotificationTemplate,
   escapeHtml,
@@ -27,6 +29,9 @@ const FULL_PARTS: TemplateContextParts = {
   metric: "cpuPct",
   value: "97.5",
   threshold: "90",
+  metricLabel: "CPU utilization",
+  valueDisplay: "97.5 %",
+  thresholdDisplay: "above 90 %",
   dimension: "port1",
   // Grouped alerts (business rule 75): the three ways back to the parts of a
   // multi-component {dimension}. Set on every alert, so they are set here too.
@@ -222,6 +227,21 @@ describe("buildTemplateContext", () => {
     for (const v of CONTEXT_TOKENS) {
       expect(renderNotificationTemplate(v.token, ctx), `${v.token} rendered empty`).not.toBe("");
       expect(renderNotificationTemplate(v.token, ctx)).not.toBe(v.token);
+    }
+  });
+
+  it("files every cataloged token in exactly one section", () => {
+    const sections = new Set(TEMPLATE_VARIABLE_SECTIONS.map((x) => x.key));
+    const tokens = TEMPLATE_VARIABLES.map((v) => v.token);
+    expect(new Set(tokens).size).toBe(tokens.length);
+    // No placement for a token that left the catalogue, none missing for one in it.
+    expect(Object.keys(TEMPLATE_VARIABLE_PLACEMENT).sort()).toEqual([...tokens].sort());
+    for (const v of TEMPLATE_VARIABLES) expect(sections.has(v.section), `${v.token} section`).toBe(true);
+  });
+
+  it("marks every deferred token as filled at delivery, and nothing else", () => {
+    for (const v of TEMPLATE_VARIABLES) {
+      expect(v.sentOn === "delivery", `${v.token} sentOn`).toBe(isDeferredToken(v.token.slice(1, -1)));
     }
   });
 

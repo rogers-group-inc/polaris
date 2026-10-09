@@ -244,6 +244,77 @@ const SDWAN_CHART_TOKENS: readonly ChartToken[] = ["chart.sdwanLatency", "chart.
 /** The device-story charts an SD-WAN alert replaces. */
 const DEVICE_CHART_TOKENS: readonly ChartToken[] = ["chart.cpu", "chart.memory", "chart.responseTime", "chart.probeLoss"];
 
+/**
+ * Which of `tokens` an alert on `metric` can draw — the scope swaps
+ * buildAlertCharts applies before it reads any samples, as a pure function so
+ * the automation wizard's variable list can say which charts a trigger will
+ * ever show without a second copy of these rules. `chart.trigger` comes back
+ * resolved to the chart it aliases. `has` says whether the alert carries what
+ * a scoped chart needs: a WAN port to chart (interface alerts), a sensor name,
+ * a mount path.
+ */
+export function chartTokensForAlert(
+  tokens: Iterable<ChartToken>,
+  metric: string | null | undefined,
+  has: { port: boolean; sensor: boolean; mount: boolean },
+): Set<ChartToken> {
+  const wanted = new Set(tokens);
+  const primary = chartTokenForMetric(metric);
+  if (wanted.delete("chart.trigger") && primary) wanted.add(primary);
+  // An alert about one port never draws the device charts — see
+  // isPortScopedAlert. The only thing it can draw is the SD-WAN trio, when the
+  // port is an SD-WAN member; without a port to ask about it draws nothing.
+  // Returning the empty set (rather than filtering the token list) is what
+  // makes every chart token render away and `pruneEmptyChartSection` drop the
+  // "Last hour" heading with them, and it skips every sample query.
+  const interfaceScoped = isPortScopedAlert(metric);
+  if (interfaceScoped && !has.port) return new Set();
+  // Same for a path-check alert (see PATH_CHECK_SCOPED_METRICS).
+  if (isPathCheckScopedAlert(metric)) return new Set();
+  // A sensor chart with no sensor has nothing to draw. Dropping it here (rather
+  // than rendering "no data") is what keeps the token invisible on the ~all
+  // alerts that aren't about a hardware sensor.
+  if (!has.sensor) wanted.delete("chart.sensor");
+  // The storage swap (see STORAGE_SCOPED_METRICS) — the same shape as the
+  // SD-WAN one below: a storage alert loses the device charts and the sensor
+  // chart (its dimension is a mount path, not a sensor), and every other alert
+  // — or a storage alert with no mount to draw — loses the storage token.
+  const storageScoped = isStorageScopedAlert(metric);
+  if (storageScoped) {
+    for (const t of DEVICE_CHART_TOKENS) wanted.delete(t);
+    wanted.delete("chart.sensor");
+  }
+  if (!storageScoped || !has.mount) wanted.delete("chart.storage");
+  // The SD-WAN swap (see SDWAN_SCOPED_METRICS): a path alert charts the health
+  // check and NOT the firewall, so the four device charts come out of the token
+  // set even though the body asked for them. Every other alert loses the SD-WAN
+  // tokens the same way the sensor token goes: no query, and nothing rendered.
+  //
+  // Nothing is force-ADDED. The default body carries all three SD-WAN tokens
+  // (latency, jitter and loss are one picture of a link), and a body customized
+  // before they existed still leads with the right graph through
+  // `{chart.trigger}` — which is what the alias is for — rather than having
+  // charts it never asked for stitched into it.
+  //
+  // An interface alert keeps the SD-WAN tokens and NOTHING else: the device
+  // charts are dropped as for an SD-WAN alert, and the sensor token has no
+  // sensor to draw. Whether the trio then renders depends on the port being a
+  // member (loadWanMemberSeries); a LAN port gets no rows and draws nothing.
+  if (interfaceScoped) {
+    for (const t of Array.from(wanted)) if (!SDWAN_CHART_TOKENS.includes(t)) wanted.delete(t);
+  } else {
+    for (const t of isSdwanScopedAlert(metric) ? DEVICE_CHART_TOKENS : SDWAN_CHART_TOKENS) wanted.delete(t);
+  }
+  // A CPU / memory alert keeps its two load charts and nothing else (see
+  // RESOURCE_SCOPED_METRICS): the response-time and packet-loss connectivity
+  // graphs come out even though the body asked for them. Nothing is added — a
+  // body that dropped {chart.memory} still gets only what it asked for.
+  if (isResourceScopedAlert(metric)) {
+    for (const t of Array.from(wanted)) if (!RESOURCE_CHART_TOKENS.includes(t)) wanted.delete(t);
+  }
+  return wanted;
+}
+
 export const CHART_WINDOW_MS = 60 * 60 * 1000;
 
 /** Cap the plotted points: an agent host reports per-minute, but a busy
@@ -1765,70 +1836,21 @@ export async function buildAlertCharts(
     ruleThreshold?: number | null;
   },
 ): Promise<Map<ChartToken, RenderedChart>> {
-  const wanted = new Set(tokens);
   // Resolve the alias up front: from here on it's an ordinary token request,
   // and the alias entry is filled in at the end from whatever it points at.
   const primary = chartTokenForMetric(opts?.metric);
-  const aliasWanted = wanted.delete("chart.trigger");
-  if (aliasWanted && primary) wanted.add(primary);
+  const aliasWanted = new Set(tokens).has("chart.trigger");
   const out = new Map<ChartToken, RenderedChart>();
-  // An alert about one port never draws the device charts — see
-  // isPortScopedAlert. The only thing it can draw is the SD-WAN trio, when the
-  // port is an SD-WAN member; that needs a real asset and a named port, so
-  // without them it returns the empty map right here. Returning the empty map
-  // (rather than filtering the token list) is what makes every chart token
-  // render away and `pruneEmptyChartSection` drop the "Last hour" heading with
-  // them, and it skips every sample query. A test alert (sampleData) lands here
-  // too: its device is invented, so whether its port is a WAN member is not a
-  // question with an answer.
   const interfaceScoped = isPortScopedAlert(opts?.metric);
   const wanPort = interfaceScoped ? (opts?.dimension ?? opts?.sensorName ?? null) : null;
-  if (interfaceScoped && (!assetId || opts?.sampleData || !wanPort)) return out;
-  // Same for a path-check alert (see PATH_CHECK_SCOPED_METRICS).
-  if (isPathCheckScopedAlert(opts?.metric)) return out;
-  // A sensor chart with no sensor has nothing to draw. Dropping it here (rather
-  // than rendering "no data") is what keeps the token invisible on the ~all
-  // alerts that aren't about a hardware sensor.
-  if (!opts?.sensorName) wanted.delete("chart.sensor");
-  // The SD-WAN swap (see SDWAN_SCOPED_METRICS): a path alert charts the health
-  // check and NOT the firewall, so the four device charts come out of the token
-  // set even though the body asked for them. Every other alert loses the SD-WAN
-  // tokens the same way the sensor token goes: no query, and nothing rendered.
-  //
-  // Nothing is force-ADDED. The default body carries all three SD-WAN tokens
-  // (latency, jitter and loss are one picture of a link), and a body customized
-  // before they existed still leads with the right graph through
-  // `{chart.trigger}` — which is what the alias is for — rather than having
-  // charts it never asked for stitched into it.
-  //
-  // An interface alert keeps the SD-WAN tokens and NOTHING else: the device
-  // charts are dropped as for an SD-WAN alert, and the sensor token has no
-  // sensor to draw. Whether the trio then renders depends on the port being a
-  // member (loadWanMemberSeries); a LAN port gets no rows and draws nothing.
-  // The storage swap (see STORAGE_SCOPED_METRICS) — the same shape as the
-  // SD-WAN one below: a storage alert loses the device charts and the sensor
-  // chart (its dimension is a mount path, not a sensor), and every other alert
-  // — or a storage alert with no mount to draw — loses the storage token.
-  const storageScoped = isStorageScopedAlert(opts?.metric);
-  const mountPath = storageScoped ? (opts?.dimension ?? opts?.sensorName ?? null) : null;
-  if (storageScoped) {
-    for (const t of DEVICE_CHART_TOKENS) wanted.delete(t);
-    wanted.delete("chart.sensor");
-  }
-  if (!mountPath) wanted.delete("chart.storage");
-  const sdwanScoped = isSdwanScopedAlert(opts?.metric);
-  if (interfaceScoped) {
-    for (const t of Array.from(wanted)) if (!SDWAN_CHART_TOKENS.includes(t)) wanted.delete(t);
-  } else {
-    for (const t of sdwanScoped ? DEVICE_CHART_TOKENS : SDWAN_CHART_TOKENS) wanted.delete(t);
-  }
-  // A CPU / memory alert keeps its two load charts and nothing else (see
-  // RESOURCE_SCOPED_METRICS): the response-time and packet-loss connectivity
-  // graphs come out even though the body asked for them. Nothing is added — a
-  // body that dropped {chart.memory} still gets only what it asked for.
-  if (isResourceScopedAlert(opts?.metric)) {
-    for (const t of Array.from(wanted)) if (!RESOURCE_CHART_TOKENS.includes(t)) wanted.delete(t);
-  }
+  const mountPath = isStorageScopedAlert(opts?.metric) ? (opts?.dimension ?? opts?.sensorName ?? null) : null;
+  const wanted = chartTokensForAlert(tokens, opts?.metric, {
+    // A test alert (sampleData) has an invented device, so whether its port is
+    // a WAN member is not a question with an answer.
+    port: !!assetId && !opts?.sampleData && !!wanPort,
+    sensor: !!opts?.sensorName,
+    mount: !!mountPath,
+  });
   if (wanted.size === 0) return out;
 
   const now = opts?.now ?? new Date();
