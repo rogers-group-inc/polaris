@@ -186,6 +186,11 @@ lines as samples and tells the model not to reuse them; the persona wording itse
 owner's review, like any line in `SIGN_OFFS`. Like (h), it is kept out of the operator wiki
 and the README.
 
+The same day the owner named the character **R.A.L.P.H.** — the Real-time Assesser of Labor and
+Productivity Habits. Users see the name on the checkbox (with the full name in its hover
+title), in the greeting and farewell lines, and from the hosted model, which gives the full
+name only when asked. "Efficiency Advisor" remains the internal name.
+
 ### What is deliberately not here
 
 The assistant is not on the Dash wallboard (the phone app gained a Chat tab on 2026-10-09, shown only where the assistant is usable), takes no action

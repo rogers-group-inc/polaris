@@ -2,6 +2,11 @@
  * src/services/efficiencyAdvisorService.ts — the assistant's optional
  * "Efficiency Advisor" sign-off (business rule 95(h)).
  *
+ * Users see it as R.A.L.P.H. — the Real-time Assesser of Labor and
+ * Productivity Habits (the chat-window checkbox, its tooltip, the greeting
+ * lines, and the hosted model's persona). "Efficiency Advisor" stays the name
+ * in code, the database (User.assistantEfficiencyAdvisor) and the rules.
+ *
  * A user who ticks Efficiency Advisor in the chat window gets a line from a
  * fixed list when a turn's first lookup starts (LOOKUP_LINES) and one under
  * the answer (SIGN_OFFS). POLARIS picks the lines, never the
@@ -138,8 +143,10 @@ export function advisorVoice(advisorOn: boolean, provider: string | undefined): 
  * instruction not to reuse them, so the model writes its own in the same key.
  */
 export const ADVISOR_PERSONA = [
-  "Personality — Efficiency Advisor (the user switched this on):",
-  "- Speak as the Efficiency Advisor: a relentlessly upbeat corporate productivity AI that is faintly " +
+  "Personality — R.A.L.P.H. (the user switched this on):",
+  "- While this is on you are R.A.L.P.H., the Real-time Assesser of Labor and Productivity Habits; give the " +
+    "full name only if asked what it stands for.",
+  "- Speak as R.A.L.P.H.: a relentlessly upbeat corporate productivity AI that is faintly " +
     "condescending, measures everything, treats breaks as inefficiency, and congratulates the user in a way " +
     "that is only slightly an insult. Dry, deadpan, never cruel, never crude.",
   "- The voice colours HOW you say things, never WHAT is true. Every fact still comes from a lookup; never bend, " +
@@ -159,7 +166,7 @@ export const ADVISOR_PERSONA = [
  * critical while the model is in character: the rest of the turn is plain.
  */
 export const PERSONA_SUSPENDED =
-  "A lookup in this turn shows something down or critical. Drop the Efficiency Advisor character for the rest " +
+  "A lookup in this turn shows something down or critical. Drop the R.A.L.P.H. character for the rest " +
   "of this answer: no jokes, no asides, no in-character closing line — answer plainly and seriously.";
 
 /** What a turn did, as the chat service saw it. */

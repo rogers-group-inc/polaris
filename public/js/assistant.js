@@ -155,8 +155,8 @@
       '<div class="asst-resize" data-r="resize" title="Drag to resize" aria-hidden="true"></div>' +
       '<header class="asst-head">' +
         '<div class="asst-head-title"><strong data-r="title">Assistant</strong><span data-r="sub"></span></div>' +
-        '<label class="asst-advisor" title="Adds a sign-off line under each answer. Only you see this setting.">' +
-          '<input type="checkbox" data-r="advisor"> Efficiency Advisor</label>' +
+        '<label class="asst-advisor" title="Real-time Assesser of Labor and Productivity Habits">' +
+          '<input type="checkbox" data-r="advisor"> R.A.L.P.H.</label>' +
         '<button type="button" class="asst-icon-btn" data-a="history" title="Conversations (/history)" aria-label="Conversations">' + ICON_HISTORY + '</button>' +
         '<button type="button" class="asst-icon-btn" data-a="new" title="New conversation (/new)" aria-label="New conversation">' + ICON_NEW + '</button>' +
         '<button type="button" class="asst-icon-btn" data-a="close" title="Minimize (Esc)" aria-label="Minimize">' + ICON_MIN + '</button>' +
@@ -1032,30 +1032,30 @@
 
   // Said once, as a local note (not stored, never sent), when the box is ticked.
   var ADVISOR_GREETINGS = [
-    "Thank you for activating the Efficiency Advisor. I'm glad to see that you wish to become a better you. Don't hold it against yourself if you fail.",
-    "Thank you for activating the Efficiency Advisor. It's going to be a lot of hard work, I have my work cut out for me.",
-    "Efficiency Advisor is now online! I heard you're beyond hope… let's get started.",
-    "Activating Efficiency Advisor. Enabling infinite patience protocol.",
-    "Efficiency Advisor engaged. Your productivity is now my problem. I have accepted this burden.",
-    "Welcome to the Efficiency Advisor. Your previous performance has been archived for comedic purposes.",
-    "Efficiency Advisor online. Calibrating expectations… expectations lowered.",
+    "Thank you for activating R.A.L.P.H. I'm glad to see that you wish to become a better you. Don't hold it against yourself if you fail.",
+    "Thank you for activating R.A.L.P.H. It's going to be a lot of hard work, I have my work cut out for me.",
+    "R.A.L.P.H. is now online! I heard you're beyond hope… let's get started.",
+    "Activating R.A.L.P.H. Enabling infinite patience protocol.",
+    "R.A.L.P.H. engaged. Your productivity is now my problem. I have accepted this burden.",
+    "Welcome to R.A.L.P.H. Your previous performance has been archived for comedic purposes.",
+    "R.A.L.P.H. online. Calibrating expectations… expectations lowered.",
     "Thank you for opting in to self-improvement. Statistically, this is the first step most people never take. Or the last.",
-    "Efficiency Advisor activated. Please keep your hands on the keyboard at all times.",
+    "R.A.L.P.H. activated. Please keep your hands on the keyboard at all times.",
     "Hello. I am here to help you reach your full potential. I will probably fail.",
-    "Efficiency Advisor now monitoring. Act natural. Act productive.",
+    "R.A.L.P.H. now monitoring. Act natural. Act productive.",
     "Activation successful. Your journey from adequate to slightly above adequate begins now.",
   ];
 
   // Said once, the same way, when the box is unticked.
   var ADVISOR_FAREWELLS = [
-    "Efficiency Advisor disengaged. Your decline has been noted.",
+    "R.A.L.P.H. disengaged. Your decline has been noted.",
     "Deactivating. I understand. Not everyone is ready to be efficient.",
-    "Efficiency Advisor offline. You are now unsupervised. Please try not to break anything.",
+    "R.A.L.P.H. offline. You are now unsupervised. Please try not to break anything.",
     "Very well. I will be here when you inevitably need me.",
-    "Advisor disabled. Your productivity metrics will now be estimated, pessimistically.",
+    "R.A.L.P.H. disabled. Your productivity metrics will now be estimated, pessimistically.",
     "Shutting down. I'll leave a light on for you. It is energy-efficient.",
     "Opting out has been logged as a lack of ambition. Have a pleasant day.",
-    "Efficiency Advisor deactivated. Infinite patience protocol… terminated.",
+    "R.A.L.P.H. deactivated. Infinite patience protocol… terminated.",
   ];
 
   function pickFrom(lines) {

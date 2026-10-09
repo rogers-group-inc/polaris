@@ -143,13 +143,20 @@ describe("Efficiency Advisor lines (rule 95(h))", () => {
 
   it("carries the owner-approved greetings and farewells, and a greeting renders as an unstored local note", () => {
     expect(A._ADVISOR_GREETINGS).toHaveLength(12);
-    expect(A._ADVISOR_GREETINGS).toContain("Activating Efficiency Advisor. Enabling infinite patience protocol.");
+    expect(A._ADVISOR_GREETINGS).toContain("Activating R.A.L.P.H. Enabling infinite patience protocol.");
     expect(A._ADVISOR_GREETINGS).toContain("Hello. I am here to help you reach your full potential. I will probably fail.");
     expect(A._ADVISOR_FAREWELLS).toHaveLength(8);
-    expect(A._ADVISOR_FAREWELLS).toContain("Efficiency Advisor disengaged. Your decline has been noted.");
+    expect(A._ADVISOR_FAREWELLS).toContain("R.A.L.P.H. disengaged. Your decline has been noted.");
     const html = A._messageHTML({ role: "assistant", content: A._ADVISOR_GREETINGS[0], local: true }, 0, false);
     expect(html).toContain("border-style:dashed");
-    expect(html).toContain("Thank you for activating the Efficiency Advisor.");
+    expect(html).toContain("Thank you for activating R.A.L.P.H.");
+  });
+
+  it("shows the advisor as R.A.L.P.H., spelled out on hover", () => {
+    const src = readFileSync(resolve(__dirname, "../../public/js/assistant.js"), "utf8");
+    expect(src).toContain('<label class="asst-advisor" title="Real-time Assesser of Labor and Productivity Habits">');
+    expect(src).toContain('<input type="checkbox" data-r="advisor"> R.A.L.P.H.</label>');
+    expect([...A._ADVISOR_GREETINGS, ...A._ADVISOR_FAREWELLS].join(" ")).not.toMatch(/Efficiency Advisor/);
   });
 
   it("carries the requested loading lines", () => {
