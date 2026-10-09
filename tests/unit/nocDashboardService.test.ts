@@ -26,6 +26,8 @@ vi.mock("../../src/db.js", () => ({
 
 vi.mock("../../src/services/monitoringService.js", () => ({
   resolveMonitorSettings: vi.fn(),
+  // Mirrors the real helper (pinned by its own test): the configured interval.
+  resolveProbeIntervalSec: (eff: { intervalSeconds: number }) => eff.intervalSeconds,
 }));
 
 // The Active Alerts feed asks which devices are maintenance-held (business
@@ -442,18 +444,19 @@ describe("getPacketLoss", () => {
 });
 
 describe("getStalePolls", () => {
-  it("keeps assets overdue past grace*interval and doubles the window for suppressed assets", async () => {
+  it("keeps assets overdue past grace*interval, suppressed ones included (rule 38(c))", async () => {
     const now = Date.now();
     findMany.mockResolvedValueOnce([
       // last polled 10 min ago, interval 60s, grace 3 -> overdue (10min >> 3min)
       { id: "stale", hostname: "s", ipAddress: null, lastMonitorAt: new Date(now - 10 * 60_000), assetType: "switch", discoveredByIntegrationId: null, discoveredByIntegration: null, monitorIntervalSec: null, cpuMemoryIntervalSec: null, temperatureIntervalSec: null, systemInfoIntervalSec: null, lldpIntervalSec: null, storageIntervalSec: null, probeTimeoutMs: null, dependencySuppressed: false },
-      // last polled 6 min ago, suppressed -> window = 3*60*2 = 6 min, 6min is not > 6min boundary unless ==; use 5min to stay fresh
-      { id: "fresh-suppressed", hostname: "f", ipAddress: null, lastMonitorAt: new Date(now - 5 * 60_000), assetType: "switch", discoveredByIntegrationId: null, discoveredByIntegration: null, monitorIntervalSec: null, cpuMemoryIntervalSec: null, temperatureIntervalSec: null, systemInfoIntervalSec: null, lldpIntervalSec: null, storageIntervalSec: null, probeTimeoutMs: null, dependencySuppressed: true },
+      // suppressed, last polled 5 min ago -> window = 3*60 = 3 min, so stale too:
+      // a suppressed device is probed at its configured cadence, not half rate
+      { id: "stale-suppressed", hostname: "f", ipAddress: null, lastMonitorAt: new Date(now - 5 * 60_000), assetType: "switch", discoveredByIntegrationId: null, discoveredByIntegration: null, monitorIntervalSec: null, cpuMemoryIntervalSec: null, temperatureIntervalSec: null, systemInfoIntervalSec: null, lldpIntervalSec: null, storageIntervalSec: null, probeTimeoutMs: null, dependencySuppressed: true },
     ]);
     resolve.mockResolvedValue({ intervalSeconds: 60 });
     const r = await noc.getStalePolls(3);
-    expect(r.map((x) => x.id)).toEqual(["stale"]);
-    expect(r[0].expectedIntervalSec).toBe(60);
+    expect(r.map((x) => x.id).sort()).toEqual(["stale", "stale-suppressed"]);
+    for (const row of r) expect(row.expectedIntervalSec).toBe(60);
   });
 
   it("treats a never-polled asset as stale", async () => {

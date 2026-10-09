@@ -33,7 +33,7 @@
 import { EXCLUDED_LIFECYCLE_STATUSES } from "../utils/assetInvariants.js";
 import { BUILT_IN_ASSET_TYPES } from "../utils/assetTypes.js";
 import { prisma } from "../db.js";
-import { resolveMonitorSettings } from "./monitoringService.js";
+import { resolveMonitorSettings, resolveProbeIntervalSec } from "./monitoringService.js";
 import { computeStorageForecast } from "./storageForecastService.js";
 import { queryProbeLossRatios } from "./probeLossQuery.js";
 import { createTtlCache } from "../utils/ttlCache.js";
@@ -1094,7 +1094,7 @@ export async function getStalePolls(grace = 3, limit: number | null = 50, assetI
       discoveredByIntegration: { select: { type: true } },
       monitorIntervalSec: true, cpuMemoryIntervalSec: true, temperatureIntervalSec: true,
       systemInfoIntervalSec: true, lldpIntervalSec: true, storageIntervalSec: true,
-      probeTimeoutMs: true, dependencySuppressed: true,
+      probeTimeoutMs: true,
     },
     orderBy: { lastMonitorAt: { sort: "asc", nulls: "first" } },
     take: limit == null ? undefined : 500,
@@ -1114,8 +1114,9 @@ export async function getStalePolls(grace = 3, limit: number | null = 50, assetI
       storageIntervalSec: a.storageIntervalSec,
       probeTimeoutMs: a.probeTimeoutMs,
     });
-    // Suppressed assets probe at 2× their interval (same rule as monitorAssets).
-    const intervalSec = eff.intervalSeconds * (a.dependencySuppressed ? 2 : 1);
+    // The same probe spacing the monitor uses — dependency-suppressed assets
+    // included, which are probed at their configured cadence (business rule 38(c)).
+    const intervalSec = resolveProbeIntervalSec(eff);
     const overdueMs = grace * intervalSec * 1000;
     const last = a.lastMonitorAt ? a.lastMonitorAt.getTime() : null;
     if (last === null || now - last >= overdueMs) {
