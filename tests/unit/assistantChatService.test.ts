@@ -503,6 +503,10 @@ describe("buildSystemPrompt", () => {
     expect(p).toMatch(/search_help/);
     expect(p).toMatch(/create_report/);
     expect(p).toMatch(/Never invent/);
+    // Seen live 2026-10-09: a how-to for adding an asset neither checked for the asset nor said how to.
+    expect(p).toMatch(/how-to is about ADDING something[\s\S]*look it up[\s\S]*BEFORE answering/);
+    expect(p).toMatch(/offer to do the search for them/);
+    expect(p).toMatch(/Never imply someone is about to create a duplicate/);
     expect(p).toMatch(/Operator instructions:\nSites are named NSH-\*\./);
   });
 
@@ -720,6 +724,8 @@ describe("ADVISOR_PERSONA — R.A.L.P.H. lines the owner wrote", () => {
     expect(ADVISOR_PERSONA).toContain("If you don't want your performance to be scrutinized and logged then de-select R.A.L.P.H. at the top.");
     expect(ADVISOR_PERSONA).toMatch(/Never offer to drop the act/);
     expect(ADVISOR_PERSONA).toMatch(/WHOLE answer/);
+    expect(ADVISOR_PERSONA).toMatch(/never invents a fact about their situation/);
+    expect(ADVISOR_PERSONA).toContain("If your fingers lack the dexterity to search for it yourself, I would be happy to perform a more accurate search for you.");
   });
 });
 

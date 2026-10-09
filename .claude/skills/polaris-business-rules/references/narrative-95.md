@@ -241,6 +241,13 @@ canned voice on local models follows the same shape in code: `advisorLeads()` fl
 turn between the before-lookup line and the sign-off, so a turn carries one line, not two; a turn
 with no lookup can only close.
 
+A live how-to the same evening ("how do I add an asset?") opened with "asking for help before
+adding a duplicate was the right move" and then neither checked whether the asset existed nor
+said how to. Two rules followed: the prompt now has a how-to about adding something look the
+named thing up first and open with whether it exists, or say how to search and offer to search
+for them; and the persona may tease the person but never invent a fact about their situation —
+"before adding a duplicate" was a premise nothing had looked up.
+
 What stays true: the persona text repeats the rules that kept (h) safe — facts come only
   from lookups, every step and figure stays exact and complete — and every code-side guard
   (report rows from the database, tables held after a report, link checking) is unchanged.
