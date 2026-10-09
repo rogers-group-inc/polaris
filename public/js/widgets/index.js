@@ -1542,8 +1542,12 @@
   // callers escape it into the title attribute. The note is absent on /dash
   // (the feed withholds it from a caller that did not sign in) and on an
   // acknowledgement made without one, so the owner line always stands alone.
-  window.PolarisWidgets.ackPillTitle = function (by, note) {
+  // `via` names the root-cause device whose down alert a dependency-down alert
+  // inherited its acknowledgement from (business rule 78a): the note shown is
+  // that alert's, and the hover says so rather than passing it off as this one's.
+  window.PolarisWidgets.ackPillTitle = function (by, note, via) {
     var head = "Acknowledged" + (by ? " by " + by : "");
+    if (via) head += "\nInherited from the root cause's alert on " + via;
     var text = note == null ? "" : String(note).trim();
     return text ? head + "\n" + text : head;
   };

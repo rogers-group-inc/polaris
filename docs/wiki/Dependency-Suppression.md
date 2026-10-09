@@ -190,6 +190,13 @@ A `monitor status is down` automation can opt out of the silence with the
   so;
 - it is **one notification**: reminders and escalation tiers wait, as they do
   for every suppressed device, until the upstream is back;
+- it is **acknowledged with the device that is actually down**
+  ([rule 78a](Business-Rules#rule-78a)): acknowledging that device's own Down
+  alert acknowledges every dependency-down alert naming it, with the same
+  person and note, and one raised afterwards arrives already acknowledged
+  (it is still sent). Hover its **ack** pill on the Active Alerts widget to
+  read the note, marked as inherited from the root cause's alert.
+  Acknowledging a dependency-down alert acknowledges nothing upstream;
 - a live plain Down alert on a device that then turns Dep. Down is **ended and
   raised again** in the dependency flavour, so the operators hear which device
   is responsible — and on the way back, a dependency-down alert whose upstream
