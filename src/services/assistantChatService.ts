@@ -63,6 +63,9 @@ import {
   topicForTool,
   pickSignOff,
   pickLookupLine,
+  advisorVoice,
+  ADVISOR_PERSONA,
+  PERSONA_SUSPENDED,
   type TurnSignals,
 } from "./efficiencyAdvisorService.js";
 
@@ -165,7 +168,7 @@ function noteLookup(s: TurnSignals, name: string, result: { ok: boolean; data: u
 }
 
 /** The system prompt. Exported for tests. */
-export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?: string; displayName?: string }): string {
+export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?: string; displayName?: string; persona?: string }): string {
   const now = opts.now ?? new Date();
   const name = opts.displayName?.trim();
   const lines = [
@@ -199,6 +202,10 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
     "- Never mention your tools or their names (list_assets, create_report, …) to the user — say what you looked " +
       "up in plain words (\"I checked the networks\").",
   ];
+  // The Efficiency Advisor persona (rule 95(k)): only on a hosted model, only
+  // for a user who ticked it, never on a turn about an outage. Before the
+  // operator's instructions, so those still have the last word.
+  if (opts.persona?.trim()) lines.push("", opts.persona.trim());
   if (opts.extra?.trim()) lines.push("", "Operator instructions:", opts.extra.trim());
   return lines.join("\n");
 }
@@ -414,19 +421,28 @@ export async function streamAssistantTurn(input: {
 
   const tools = assistantToolDefs();
   const budget = contextBudget(config.contextWindow);
-  const systemPrompt = buildSystemPrompt({ username: input.username, extra: config.systemPromptExtra, displayName: config.displayName });
   const [allTurns, advisor] = await Promise.all([
     recentTurns(input.conversationId, config.contextMessages ?? LLM_DEFAULTS.contextMessages),
     getEfficiencyAdvisor(input.userId),
   ]);
-  const turns = fitHistory(estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools)), allTurns, budget.promptTokens);
   // What the turn did, for the Efficiency Advisor's sign-off (rule 95(h)).
   // Gathered whether or not the advisor is on; it costs a regex per lookup.
   const signals: TurnSignals = {
     question, outage: asksAboutOutage(question), failed: false,
     denied: false, usedHelp: false, lookedUp: false, found: false,
   };
-  const recentLines = advisor ? await recentAdvisorLines(input.conversationId) : null;
+  // Which voice the advisor speaks in (rule 95(k)): Polaris's canned lines on
+  // a local model, the model in character on Azure AI Foundry — never both.
+  const voice = advisorVoice(advisor, config.provider);
+  let personaActive = voice === "model" && !signals.outage;
+  const systemPrompt = buildSystemPrompt({
+    username: input.username,
+    extra: config.systemPromptExtra,
+    displayName: config.displayName,
+    persona: personaActive ? ADVISOR_PERSONA : undefined,
+  });
+  const turns = fitHistory(estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools)), allTurns, budget.promptTokens);
+  const recentLines = voice === "canned" ? await recentAdvisorLines(input.conversationId) : null;
   // The line shown when the first lookup starts; retracted on an outage.
   let preface: string | null = null;
   let prefaceOffered = false;
@@ -551,6 +567,13 @@ export async function streamAssistantTurn(input: {
           preface = null;
           emit("preface", { text: null });
         }
+      }
+      // In character and a lookup just showed something down or critical:
+      // the rest of the turn is plain (rule 95(k)). Added after the round's
+      // tool results, which must directly follow the call that asked for them.
+      if (personaActive && signals.outage) {
+        messages.push({ role: "system", content: PERSONA_SUSPENDED });
+        personaActive = false;
       }
     }
 

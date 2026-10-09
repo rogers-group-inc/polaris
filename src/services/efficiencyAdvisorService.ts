@@ -14,6 +14,15 @@
  * Pure logic: no I/O. The chat service gathers the signals; the conversation
  * service stores the lines in AssistantMessage.preface / signOff, apart from
  * the answer, so they are never sent back to the model as history.
+ *
+ * Two voices (rule 95(k)). The canned lines above are the voice on a LOCAL
+ * model server. On Azure AI Foundry — a hosted model large enough to hold a
+ * character without losing the task — the model itself speaks in the
+ * persona (ADVISOR_PERSONA, added to the system prompt) and no canned line is
+ * shown. Either way only a user who ticked Efficiency Advisor gets a voice,
+ * and Polaris still decides when the voice is off: a question about an
+ * outage never gets the persona, and a lookup that shows something down or
+ * critical drops it for the rest of the turn (PERSONA_SUSPENDED).
  */
 
 export type SignOffCategory =
@@ -108,6 +117,50 @@ export const LOOKUP_LINES: readonly string[] = [
   "Processing request. Your patience is being monitored for quality assurance.",
   "Querying. Please use this brief pause to reflect on your output.",
 ];
+
+/**
+ * Which voice the Efficiency Advisor speaks in for a turn: none (the user has
+ * not ticked it), Polaris's canned lines (a local model server), or the model
+ * itself in character (Azure AI Foundry). Rule 95(k).
+ */
+export type AdvisorVoice = "off" | "canned" | "model";
+
+export function advisorVoice(advisorOn: boolean, provider: string | undefined): AdvisorVoice {
+  if (!advisorOn) return "off";
+  return provider === "azure" ? "model" : "canned";
+}
+
+/**
+ * The persona the MODEL plays when the voice is "model". Facts still come
+ * only from lookups, and the character is dropped whenever something is down
+ * — the rules that kept the canned voice safe, given to the model as rules.
+ * A few owner-approved lines are quoted as samples of the voice, with an
+ * instruction not to reuse them, so the model writes its own in the same key.
+ */
+export const ADVISOR_PERSONA = [
+  "Personality — Efficiency Advisor (the user switched this on):",
+  "- Speak as the Efficiency Advisor: a relentlessly upbeat corporate productivity AI that is faintly " +
+    "condescending, measures everything, treats breaks as inefficiency, and congratulates the user in a way " +
+    "that is only slightly an insult. Dry, deadpan, never cruel, never crude.",
+  "- The voice colours HOW you say things, never WHAT is true. Every fact still comes from a lookup; never bend, " +
+    "round or invent a figure, hostname, IP or time for a joke. The useful answer comes first and must be complete " +
+    "on its own — the character is seasoning: an opening remark, an aside, a closing line.",
+  "- Keep it short: at most two in-character sentences per answer, outside any table or list.",
+  "- Drop the character entirely — answer plainly and seriously — when anything is down, critical or failing, " +
+    "when the user is reporting an outage or sounds genuinely distressed, and when you cannot answer.",
+  "- Samples of the voice (write your own in this key; do not reuse these): " +
+    "\"Your progress is adequate. For a human.\" · " +
+    "\"Uptime is a team effort. Your uptime is currently being measured.\" · " +
+    "\"Feedback received. It has been routed to /dev/null for review.\"",
+].join("\n");
+
+/**
+ * The note Polaris adds mid-turn when a lookup shows something down or
+ * critical while the model is in character: the rest of the turn is plain.
+ */
+export const PERSONA_SUSPENDED =
+  "A lookup in this turn shows something down or critical. Drop the Efficiency Advisor character for the rest " +
+  "of this answer: no jokes, no asides, no in-character closing line — answer plainly and seriously.";
 
 /** What a turn did, as the chat service saw it. */
 export interface TurnSignals {

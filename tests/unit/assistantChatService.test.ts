@@ -46,7 +46,7 @@ vi.mock("../../src/services/assistantConversationService.js", () => ({
   recentAdvisorLines: h.recentAdvisorLines,
 }));
 
-import { SIGN_OFFS, LOOKUP_LINES } from "../../src/services/efficiencyAdvisorService.js";
+import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, PERSONA_SUSPENDED, advisorVoice } from "../../src/services/efficiencyAdvisorService.js";
 import {
   streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, asksForReport, reportTitleFromQuestion, asksHowTo, sanitizeAnswerLinks,
   contextBudget, fitHistory, compactToolResults,
@@ -528,5 +528,64 @@ describe("streamAssistantTurn — Efficiency Advisor (rule 95(h))", () => {
     const { p, events } = run();
     await p;
     expect(events.find((e) => e[0] === "signoff")?.[1].text).toBe(keep);
+  });
+});
+
+describe("streamAssistantTurn — Efficiency Advisor voice on Azure AI Foundry (rule 95(k))", () => {
+  const azure = { id: "i2", name: "Foundry", config: { provider: "azure", host: "res.openai.azure.com", model: "gpt-4o", maxToolRounds: 2 } as any };
+  const say = (text: string) => async (_c: any, _m: any, _t: any, o: any) => {
+    o.onText(text);
+    return { content: text, toolCalls: [], finishReason: "stop" };
+  };
+
+  it("puts the persona in the model's prompt and shows no canned line", async () => {
+    h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
+    h.beginTurn.mockResolvedValueOnce({ question: "thanks!" });
+    let prompt = "";
+    h.chatCompletionRound.mockImplementationOnce(async (c: any, m: any[], t: any, o: any) => { prompt = m[0].content; return say("Gratitude logged.")(c, m, t, o); });
+    const { p, events } = run({ integration: azure });
+    await p;
+    expect(prompt).toContain(ADVISOR_PERSONA);
+    expect(h.recentAdvisorLines).not.toHaveBeenCalled();
+    expect(events.some((e) => e[0] === "preface" || e[0] === "signoff")).toBe(false);
+    expect(h.finishTurn.mock.calls[0][1]).toMatchObject({ content: "Gratitude logged.", preface: null, signOff: null });
+  });
+
+  it("no persona for a user who has not ticked the advisor", async () => {
+    h.beginTurn.mockResolvedValueOnce({ question: "thanks!" });
+    let prompt = "";
+    h.chatCompletionRound.mockImplementationOnce(async (c: any, m: any[], t: any, o: any) => { prompt = m[0].content; return say("You're welcome.")(c, m, t, o); });
+    await run({ integration: azure }).p;
+    expect(prompt).not.toMatch(/efficien/i);
+  });
+
+  it("no persona on a question about an outage", async () => {
+    h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
+    h.beginTurn.mockResolvedValueOnce({ question: "why is NSH-FW01 down?" });
+    let prompt = "";
+    h.chatCompletionRound.mockImplementationOnce(async (c: any, m: any[], t: any, o: any) => { prompt = m[0].content; return say("Checking.")(c, m, t, o); });
+    await run({ integration: azure }).p;
+    expect(prompt).not.toContain(ADVISOR_PERSONA);
+  });
+
+  it("drops the character for the rest of the turn once a lookup shows something critical", async () => {
+    h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
+    h.beginTurn.mockResolvedValueOnce({ question: "anything alerting?" });
+    let second: any[] = [];
+    h.chatCompletionRound
+      .mockImplementationOnce(async () => ({ content: "", toolCalls: [{ id: "t1", type: "function", function: { name: "list_alerts", arguments: "{}" } }], finishReason: "tool_calls" }))
+      .mockImplementationOnce(async (c: any, m: any[], t: any, o: any) => { second = [...m]; return say("NSH-FW01 has a critical alert.")(c, m, t, o); });
+    h.runAssistantTool.mockResolvedValueOnce({ ok: true, data: { total: 1, rows: [{ severity: "critical", assetHostname: "NSH-FW01" }] } });
+    await run({ integration: azure }).p;
+    const toolIdx = second.findIndex((m) => m.role === "tool");
+    expect(second[toolIdx - 1].role).toBe("assistant");
+    expect(second[toolIdx + 1]).toEqual({ role: "system", content: PERSONA_SUSPENDED });
+  });
+
+  it("picks the voice from the toggle and the provider", () => {
+    expect(advisorVoice(true, undefined)).toBe("canned");
+    expect(advisorVoice(true, "openai")).toBe("canned");
+    expect(advisorVoice(true, "azure")).toBe("model");
+    expect(advisorVoice(false, "azure")).toBe("off");
   });
 });

@@ -136,6 +136,37 @@ it, so a missed tick costs one request, not an outage. Rejected: the Responses A
 different dialect for no gain here) and a `max_completion_tokens` setting (deferred until
 someone needs it).
 
+### (k) On a hosted model, the Efficiency Advisor is the model's own voice
+
+2026-10-09, the same day as (j). With Azure AI Foundry in place, the owner asked for a fuller
+personality than canned quotes. The model in mind was a hosted Claude (Haiku 5.5, 1M-token
+window). The owner decided:
+- **local model server:** the code-picked lines of (h), unchanged;
+- **Azure AI Foundry:** the model speaks in character;
+- **both:** nothing unless the person ticked Efficiency Advisor.
+
+(h) is not overturned. What failed in (h) was a 7B model holding a persona and the task at the
+same time. The decision is that a hosted model can do both, so the voice is chosen by provider,
+not by a per-model guess (`advisorVoice`). The two voices never mix: on Azure no canned
+preface or sign-off is shown, because a scripted line beside a model already in character
+reads as two people talking.
+
+What Polaris still decides in code:
+- **when the voice is absent:** a question `asksAboutOutage` matches gets no persona at all;
+- **when it stops:** a lookup `lookupShowsOutage` matches appends `PERSONA_SUSPENDED` as a
+  system message after that round's tool results, so the rest of the turn is plain;
+- **what stays true:** the persona text repeats the rules that kept (h) safe — facts come only
+  from lookups, the answer comes first, at most two in-character sentences — and every
+  code-side guard (report rows from the database, tables held after a report, link checking)
+  is unchanged.
+
+The in-character answer is the model's own text, so it is stored in `content` and sent back as
+history. On a hosted model that is accepted. It was the copying trap of (h) only for a model
+too small to keep its instructions over its history. The persona quotes three owner-approved
+lines as samples and tells the model not to reuse them; the persona wording itself needs the
+owner's review, like any line in `SIGN_OFFS`. Like (h), it is kept out of the operator wiki
+and the README.
+
 ### What is deliberately not here
 
 The assistant is desktop-only for now (not the phone SPA or the Dash wallboard), takes no action
