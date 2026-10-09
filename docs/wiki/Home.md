@@ -11,9 +11,10 @@ people when something breaks.
 
 Four things, in the order a new install grows into them:
 
-1. **Discovers what exists.** Ten integration types read your FortiManager,
+1. **Discovers what exists.** Eleven integration types read your FortiManager,
    FortiGates, Entra ID / Intune, Active Directory, Windows DHCP servers,
-   vCenter, Azure Arc, Unraid, TrueNAS SCALE and Proxmox VE. See
+   vCenter, Azure Arc, Unraid, TrueNAS SCALE and Proxmox VE — and, through
+   the build-your-own Generic API, any REST feed that lists devices. See
    [Discovery](Discovery).
 2. **Keeps one record per device, from all of them.** This is the part that
    makes a central dashboard worth having. An asset that AD, Intune, Azure Arc

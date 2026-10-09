@@ -1,9 +1,9 @@
 # Services — the AI assistant and the `llm` integration
 
-The floating chat assistant (business rule 95) and the integration type that backs it. Seven
+The floating chat assistant (business rule 95) and the integration type that backs it. Eight
 services: the transport to the model server, the tool layer that answers its lookups, the
-turn orchestrator, the conversation store, the help index over `docs/wiki/`, and the
-role + API token an llm integration provisions. Route: `src/api/routes/assistant.ts`
+turn orchestrator, the conversation store, the per-user memory, the help index over
+`docs/wiki/`, and the role + API token an llm integration provisions. Route: `src/api/routes/assistant.ts`
 (`/api/v1/assistant`, `assistant` read, session-only); integration CRUD stays in
 `src/api/routes/integrations.ts`. Frontend: `public/js/assistant.js`,
 `public/js/assistant-markdown.js`, `public/css/assistant.css` (booted by
@@ -82,7 +82,9 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 
 **Efficiency Advisor (rule 95(h), 2026-10-07):** when the caller's `User.assistantEfficiencyAdvisor` is on, the turn emits `preface { text }` as its FIRST tool call starts (before that tool's `tool` event), `preface { text: null }` to withdraw it if a lookup then shows an outage, and `signoff { text }` after the answer; both lines are stored on the AssistantMessage (`preface` / `signOff`), never in `content`. The signals (`TurnSignals`) are gathered by `noteLookup` per tool result whether or not the advisor is on. The model's system prompt carries NO persona — see efficiencyAdvisorService.
 
-**Cross-service deps:** llmService (chatCompletionRound, estimateTokens, LLM_DEFAULTS), assistantToolService (assistantToolDefs, runAssistantTool, toolLabel), assistantConversationService (beginTurn, finishTurn, recentTurns, getEfficiencyAdvisor, recentAdvisorLines), efficiencyAdvisorService (asksAboutOutage, lookupShowsOutage, lookupFoundSomething, topicForTool, pickSignOff, pickLookupLine), eventLogService (logEvent).
+**Memory (rule 95(i), 2026-10-09):** when the caller's `User.assistantMemory` is on, the turn loads their entries (`listMemory`), adds `memoryPromptBlock` to the system prompt AFTER the operator's instructions (so `fitHistory` budgets it), and appends `remember` / `forget` to the tool list. A call to either goes to `assistantMemoryService.runMemoryTool` with a `MemoryTurn` holding THIS turn's question (what `remember` must be grounded in) — never to `runAssistantTool`, and with no Efficiency Advisor line or lookup signal. A successful change emits `memory { action, text }`. Memory off → no block, no tools; a memory call the model makes anyway reaches `runAssistantTool` and is answered "Unknown tool".
+
+**Cross-service deps:** llmService (chatCompletionRound, estimateTokens, LLM_DEFAULTS), assistantToolService (assistantToolDefs, runAssistantTool, toolLabel), assistantConversationService (beginTurn, finishTurn, recentTurns, getEfficiencyAdvisor, recentAdvisorLines), assistantMemoryService (getMemoryEnabled, listMemory, memoryPromptBlock, memoryToolDefs, memoryToolLabel, runMemoryTool, MEMORY_TOOL_NAMES), efficiencyAdvisorService (asksAboutOutage, lookupShowsOutage, lookupFoundSomething, topicForTool, pickSignOff, pickLookupLine), eventLogService (logEvent).
 
 **Used by:**
 - src/api/routes/assistant.ts → GET /status (listAssistantIntegrations), POST /conversations/:id/messages (resolveAssistantIntegration + streamAssistantTurn)
@@ -126,6 +128,32 @@ role + API token an llm integration provisions. Route: `src/api/routes/assistant
 **When changing this:**
 - Any new read path MUST take `userId` and scope by it; there is no admin override by design.
 - A schema change here is a migration + `polaris-domain-model/references/platform.md`.
+
+---
+
+## services/assistantMemoryService.ts
+
+**What it owns:** The assistant's per-user memory (business rule 95(i), `AssistantMemoryEntry`): short sentences about the PERSON sent in every turn's system prompt. The `remember` / `forget` tool definitions and `runMemoryTool`, which the chat service calls with a per-turn `MemoryTurn`; the store (`listMemory` / `addMemory` / `deleteMemory` / `clearMemory`) behind the Memory drawer's routes; the per-user switch (`getMemoryEnabled` / `setMemoryEnabled`, `User.assistantMemory`, default on). Pure checks: `checkMemoryText` (no IP / CIDR / MAC via `utils/cidr`, no URL, nothing credential-shaped, no prompt-override phrasing, ≤200 chars), `groundedInMessage` (≥70 % of the fact's meaningful words, stemmed, appear in the user's message), `asksToForget`, `memoryPromptBlock` (numbered entries, framed as background, never instructions).
+
+**Public API:** MEMORY_LIMITS, MemorySource, MemoryEntry, normalizeMemoryText, checkMemoryText, groundedInMessage, asksToForget, memoryPromptBlock, MEMORY_TOOL_NAMES, memoryToolDefs, memoryToolLabel, getMemoryEnabled, setMemoryEnabled, listMemory, addMemory, deleteMemory, clearMemory, MemoryTurn, runMemoryTool.
+
+**Cross-service deps:** eventLogService (logEvent — `assistant.memory.added` / `.removed` / `.cleared`, never the text); utils/cidr (isValidIpAddress, isValidCidr).
+
+**Used by:**
+- src/services/assistantChatService.ts → streamAssistantTurn — the switch, the entries, the prompt block, the tool definitions, runMemoryTool per memory call
+- src/api/routes/assistant.ts → GET /status, PUT /preferences, GET / POST / DELETE /memory, DELETE /memory/:id
+
+**Invariants:**
+- `remember` is refused unless `groundedInMessage(fact, turn.question)` — text from a lookup result never reaches memory. This is the guard; the prompt wording is not.
+- `checkMemoryText` runs inside `addMemory`, so the user's own writes pass the same filter as the model's.
+- The tools take NO user id; `MemoryTurn.userId` comes from the session. Every store query is scoped by `userId`; a foreign id is a 404.
+- `runMemoryTool` never throws — refusals come back `{ ok: false, data: { error } }` for the model to relay.
+- At most one `remember` and one `forget` per turn; 25 entries and 2000 characters per user (`MEMORY_LIMITS`).
+
+**When changing this:**
+- Loosening `groundedInMessage` or `asksToForget` widens the prompt-injection path rule 95(i) closes — pin any change with a poisoned case in `tests/unit/assistantMemoryService.test.ts`.
+- A new memory source (a nightly distil, an import) must not write text the user did not type that turn; see the rejected alternatives in narrative-95.md § (i).
+- Event vocabulary changes go to `public/js/assistant.js → ask()` in the same commit.
 
 ---
 

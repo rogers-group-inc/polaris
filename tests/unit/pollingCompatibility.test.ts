@@ -106,6 +106,15 @@ describe("compatibility matrix — locked values per asset source", () => {
     expect(isPollingMethodCompatible("fortigate", "proxmox")).toBe(false);
     expect(assetSourceKindFromIntegrationType("proxmox")).toBe("proxmox");
   });
+  // A Generic API record can be any device, so every transport an operator can
+  // hold a credential for — and nothing that reads a specific integration.
+  it("Generic API: the credential-backed transports, no integration-specific method, no FortiOS REST", () => {
+    expect(compatibleMethodsFor("genericapi")).toEqual(["snmp", "winrm", "ssh", "icmp", "disabled", "agent"]);
+    for (const m of ["rest_api", "vcenter", "fortimanager", "unraid", "truenas", "proxmox"] as const) {
+      expect(isPollingMethodCompatible("genericapi", m), m).toBe(false);
+    }
+    expect(assetSourceKindFromIntegrationType("genericapi")).toBe("genericapi");
+  });
   it("Fortinet appliance sources never get the vcenter method (their telemetry rides FortiOS REST)", () => {
     expect(isPollingMethodCompatible("fortimanager", "vcenter")).toBe(false);
     expect(isPollingMethodCompatible("fortigate", "vcenter")).toBe(false);
@@ -211,7 +220,7 @@ describe("per-stream method restrictions (cross-transport streams)", () => {
   it("http is no longer a polling method anywhere", () => {
     expect(isPollingMethod("http")).toBe(false);
     expect(allPollingMethods()).not.toContain("http");
-    (["fortimanager", "fortigate", "activedirectory", "entraid", "windowsserver", "azurearc", "vcenter", "unraid", "truenas", "proxmox", "manual"] as const)
+    (["fortimanager", "fortigate", "activedirectory", "entraid", "windowsserver", "azurearc", "vcenter", "unraid", "truenas", "proxmox", "genericapi", "manual"] as const)
       .forEach((src) => {
         expect(compatibleMethodsFor(src), src).not.toContain("http");
       });

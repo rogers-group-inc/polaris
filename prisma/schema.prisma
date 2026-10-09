@@ -3647,6 +3647,11 @@ model User {
   // browser, so the choice follows the person; off by default.
   assistantEfficiencyAdvisor Boolean @default(false) @map("assistant_efficiency_advisor")
 
+  // The chat window's "Remember things" switch (business rule 95(i)): whether
+  // the assistant may read and write this person's memory entries. On by
+  // default; turning it off hides the memory from the model without deleting it.
+  assistantMemory Boolean @default(true) @map("assistant_memory")
+
   // The zone this account's BROWSER last reported, reported by the client on
   // boot. Never operator-set and never shown as a choice — it exists so that
   // "auto" can mean something on a surface with no browser.
@@ -3680,6 +3685,7 @@ model User {
   tableTabs         UserTableTabs[]
   passkeys          UserPasskey[]
   assistantConversations AssistantConversation[]
+  assistantMemoryEntries AssistantMemoryEntry[]
 
   @@index([roleId])
   @@map("users")
@@ -6300,6 +6306,25 @@ model AssistantMessage {
 
   @@index([conversationId, createdAt])
   @@map("assistant_messages")
+}
+
+// One line of a user's assistant memory (business rule 95(i)): a short
+// sentence about the PERSON — their team, the sites they look after, how they
+// like answers — sent in the system prompt of every turn they start. Owner-only,
+// like a conversation. source = "assistant" (the model's remember tool, which
+// only stores what the user's own message says) or "user" (typed in the
+// Memory panel or with /remember). Never IPs, MACs, URLs or credentials —
+// assistantMemoryService refuses them on every write path. Capped per user.
+model AssistantMemoryEntry {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text      String   @db.VarChar(200)
+  source    String   @default("assistant") // assistant | user
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("assistant_memory_entries")
 }
 
 // A downloadable report the assistant produced (rule 95(c)): rows come from

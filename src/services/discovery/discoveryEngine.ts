@@ -27,6 +27,9 @@ import * as truenas from "../truenasService.js";
 import * as proxmox from "../proxmoxService.js";
 import { syncWorkloadDevices } from "./workloadSync.js";
 import { isWorkloadPlatform } from "../../utils/workloadSources.js";
+import * as genericApi from "../genericApiService.js";
+import { syncGenericApiDevices } from "./genericApiSync.js";
+import { GENERIC_API_TYPE } from "../../utils/genericApiSource.js";
 import * as azureArc from "../azureArcService.js";
 import * as llm from "../llmService.js";
 import { ipInCidr, normalizeCidr, cidrContains, cidrOverlaps } from "../../utils/cidr.js";
@@ -568,6 +571,7 @@ export async function runPreflightTest(integration: { id: string; type: string; 
   if (integration.type === "truenas") return truenas.testConnection(config as any);
   if (integration.type === "proxmox") return proxmox.testConnection(config as any);
   if (integration.type === "llm") return llm.testConnection(config as any);
+  if (integration.type === GENERIC_API_TYPE) return genericApi.testConnection(config as any);
   return { ok: false, message: `Unknown integration type: ${integration.type}` };
 }
 
@@ -635,6 +639,13 @@ export async function triggerDiscovery(
     if (integration.type === "proxmox" && !config.apiTokenId) {
       throw new AppError(400, "Integration has no API token ID configured");
     }
+    // Generic API: the mapping is what makes a record an asset, so a run with
+    // nothing mapped for the identity would read the feed and write nothing.
+    if (integration.type === GENERIC_API_TYPE) {
+      const fm = (config.fieldMap ?? {}) as Record<string, unknown>;
+      const idField = (config.identityField as string | undefined) ?? "id";
+      if (!fm[idField]) throw new AppError(400, `Integration has no path mapped for its identity field (${idField})`);
+    }
   }
 
   // Coalesce concurrent triggers. The scheduler already gates on
@@ -695,7 +706,8 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
   const integrationType = integration.type;
   const label = actor === "auto-discovery" ? "Scheduled" : "Manual";
   const baseKindLabel = (integration.type === "entraid" || integration.type === "activedirectory"
-    || integration.type === "vcenter" || integration.type === "azurearc" || isWorkloadPlatform(integration.type))
+    || integration.type === "vcenter" || integration.type === "azurearc" || isWorkloadPlatform(integration.type)
+    || integration.type === GENERIC_API_TYPE)
     ? "device discovery" : "DHCP discovery";
   // Scoped runs label every start/complete/abort/error Event with the device.
   const kindLabel = scopeDeviceName ? `${baseKindLabel} (device "${scopeDeviceName}")` : baseKindLabel;
@@ -937,6 +949,23 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.skipped.push(...r.skipped);
         syncTotals.decommissionedAssets.push(...r.decommissioned);
       }
+    } else if (integration.type === GENERIC_API_TYPE) {
+      // Generic API ("build your own"): an operator-described REST feed,
+      // mapped record by record onto assets (services/genericApiService.ts →
+      // discovery/genericApiSync.ts). Assets only, no scoped mode — the feed
+      // is one read. A first page that fails throws and the run errors; a
+      // later page that fails yields an INCOMPLETE read, which the sync's
+      // missing-record sweep refuses to act on.
+      const result = await genericApi.discoverGenericApi(config as any, ac.signal, onProgress);
+      if (!ac.signal.aborted) {
+        onProgress("discover.inventory", "info",
+          `${result.rawCount} record(s) over ${result.pages} page(s)${result.complete ? "" : " — the feed was not read to the end"}`);
+        const r = await syncGenericApiDevices(integrationId, integrationName, config, result, actor);
+        syncTotals.created.push(...r.created);
+        syncTotals.updated.push(...r.updated);
+        syncTotals.skipped.push(...r.skipped);
+        syncTotals.decommissionedAssets.push(...r.decommissioned);
+      }
     } else if (integration.type === "azurearc") {
       // Azure Arc discovery produces assets only — Arc-enabled machines. No
       // subnets, reservations, or VIPs.
@@ -1075,7 +1104,8 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
     // tab for an asset-only type. (The fourth is narrower still: only the two
     // DIRECTORY types have a directory of people to sync.)
     const assetsOnly = integration.type === "entraid" || integration.type === "activedirectory"
-      || integration.type === "vcenter" || integration.type === "azurearc" || isWorkloadPlatform(integration.type);
+      || integration.type === "vcenter" || integration.type === "azurearc" || isWorkloadPlatform(integration.type)
+      || integration.type === GENERIC_API_TYPE;
 
     // ── AD/Entra post-sync passes (agent auto-deploy + interface/storage
     // auto-monitor) ──────────────────────────────────────────────────────────
@@ -1086,8 +1116,27 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
     // Not for Unraid / TrueNAS: their class blocks carry no agent deploy or
     // interface / storage auto-monitor, and the sync itself is the presence
     // signal (the host answered; a workload reported running).
+    // Generic API runs only the presence pass (below): it carries no class
+    // blocks, so there is nothing to auto-deploy or auto-monitor.
     if (
-      !isWorkloadPlatform(integration.type) &&
+      integration.type === GENERIC_API_TYPE &&
+      assetOnlyPostSyncPassesEnabled({ assetsOnly, scoped: scope !== undefined, aborted: ac.signal.aborted }) &&
+      (config as Record<string, unknown>).verifyPresence !== false
+    ) {
+      await presenceVerification
+        .runPresenceVerification({
+          integrationId,
+          integrationName,
+          pollIntervalHours: integration.pollInterval,
+          actor,
+          signal: ac.signal,
+        })
+        .catch((err: any) => {
+          logEvent({ action: "integration.presence_verification.error", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level: "error", message: `Presence verification failed for "${integrationName}": ${err?.message || "Unknown error"}` });
+        });
+    }
+    if (
+      !isWorkloadPlatform(integration.type) && integration.type !== GENERIC_API_TYPE &&
       assetOnlyPostSyncPassesEnabled({ assetsOnly, scoped: scope !== undefined, aborted: ac.signal.aborted })
     ) {
       // 1) Agent auto-deploy FIRST so newly-discovered, agent-less devices get

@@ -108,6 +108,39 @@ is identical on every model, which answers the original question. It is a per-us
 in the chat window, off by default, and the owner chose to keep it out of the README and the
 operator wiki.
 
+### (i) Memory is grounded in what the person typed
+
+2026-10-09. The owner asked whether each user could have their own memory saved in Polaris for
+the local model to use, and chose memory the MODEL writes automatically over memory the user
+types. The (b) argument is why that needed a clause rather than a tool: a lookup result carries
+text off the network, and a model steered by a hostname can be steered into a write. Without
+memory the damage ends with the turn; with it, the poisoned sentence rides the system prompt of
+every turn after. So the write is judged in code, not by the prompt. `remember` stores a
+sentence only when at least 70 % of its meaningful words (stemmed) appear in the message the user
+typed THIS turn — the model may rephrase "I manage Nashville" as "Manages Nashville", but cannot
+store a sentence nobody typed. `forget` needs that message to ask for a removal or a change, so
+text in a lookup cannot wipe someone's memory either. Both are limited to one per turn.
+
+A second filter runs on every write, the user's own included: no IP, network or MAC (memory
+about the fleet would replay data a role change later hides — the reason (d) never stores tool
+results), no link, nothing that looks like a password, key, token or connection string, and no
+"ignore your instructions" phrasing. Entries are capped at 200 characters, 25 per user and 2000
+characters in all, which also bounds what memory costs a small context window; the block rides
+the system prompt, so `fitHistory` counts it.
+
+Memory is the owner's like a conversation: every query is scoped to the session user, another
+user's entry answers 404, there is no admin view, and the rows go with the user. The audit
+Events (`assistant.memory.added` / `.removed` / `.cleared`) say who changed it and how many
+entries there are — never the text, because the event log is readable by other roles. The
+chat window's Memory drawer lists every entry with who wrote it, and a turn that remembered or
+forgot something says so under the answer in Polaris's words. A per-user "Remember things"
+switch (on by default) withholds both the block and the tools without deleting anything.
+
+Rejected: encrypting entries at rest (rule 20b) — the credential filter keeps secrets out, and
+conversations, which hold more, are not encrypted either; a nightly model pass that distils
+memory from conversations — it would write from text the user did not just type, which is the
+injection path this clause exists to close.
+
 ### What is deliberately not here
 
 The assistant is desktop-only for now (not the phone SPA or the Dash wallboard), takes no action

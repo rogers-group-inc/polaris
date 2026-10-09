@@ -157,6 +157,8 @@ export interface IntegrationBreakdown {
   azurearc: number;
   /** Unraid + TrueNAS SCALE integrations (optional: older callers predate them). */
   workload?: number;
+  /** Generic API integrations (optional, as `workload`). */
+  genericapi?: number;
 }
 
 export interface PgRecommendation {
@@ -449,7 +451,9 @@ export function buildAdvisorState(inputs: AdvisorInputs): AdvisorState {
     // `?? 0` — older callers/tests may pass a breakdown built before the
     // vcenter member existed.
     (integrations.entra + integrations.activedirectory + integrations.windowsserver + (integrations.vcenter ?? 0)
-      + (integrations.workload ?? 0)) * 2;
+      + (integrations.workload ?? 0)) * 2 +
+    // A Generic API sync is one sequential reader + writer: one connection.
+    (integrations.genericapi ?? 0) * 1;
 
   // 3. Prisma / pg-boss / max_connections.
   //
@@ -807,6 +811,7 @@ async function readIntegrationBreakdown(): Promise<IntegrationBreakdown> {
     vcenter: 0,
     azurearc: 0,
     workload: 0,
+    genericapi: 0,
   };
   for (const r of rows) {
     const cfg = (r.config ?? {}) as Record<string, unknown>;
@@ -832,6 +837,8 @@ async function readIntegrationBreakdown(): Promise<IntegrationBreakdown> {
       out.azurearc += 1;
     } else if (isWorkloadPlatform(r.type)) {
       out.workload = (out.workload ?? 0) + 1;
+    } else if (r.type === "genericapi") {
+      out.genericapi = (out.genericapi ?? 0) + 1;
     }
   }
   return out;

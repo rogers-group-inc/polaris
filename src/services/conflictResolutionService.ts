@@ -110,6 +110,7 @@ import {
   type WorkloadPlatform,
   type WorkloadRole,
 } from "../utils/workloadSources.js";
+import { GENERIC_API_SOURCE_KIND, GENERIC_API_TYPE } from "../utils/genericApiSource.js";
 
 // Shared with the discovery sync that writes these tags — see
 // src/utils/assetSourceTags.ts (imported at the top of this file).
@@ -128,12 +129,13 @@ function assetTagPrefixFor(proposed: Record<string, any>): string {
 // "azurearc"`; AD/Entra keep the legacy tag-prefix convention via
 // assetTagPrefixFor. Unraid / TrueNAS / Proxmox conflicts carry `sourceType:
 // "unraid" | "truenas" | "proxmox"` plus `workloadRole` (host / vm / container), which names the
-// source kind directly (utils/workloadSources.ts).
+// source kind directly (utils/workloadSources.ts). Generic API conflicts carry
+// `sourceType: "genericapi"` and map to the one `generic-api` kind.
 type WorkloadConflictSource =
   | "unraid-host" | "unraid-vm" | "unraid-container"
   | "truenas-host" | "truenas-vm" | "truenas-app"
   | "proxmox-node" | "proxmox-qemu" | "proxmox-lxc";
-type AssetConflictSource = "ad" | "entra" | "vcenter-vm" | "vcenter-host" | "arc" | WorkloadConflictSource;
+type AssetConflictSource = "ad" | "entra" | "vcenter-vm" | "vcenter-host" | "arc" | WorkloadConflictSource | typeof GENERIC_API_SOURCE_KIND;
 function conflictSourceFor(proposed: Record<string, any>): AssetConflictSource {
   if (proposed.sourceType === "vcenter") {
     return proposed.assetType === "hypervisor" ? "vcenter-host" : "vcenter-vm";
@@ -144,6 +146,7 @@ function conflictSourceFor(proposed: Record<string, any>): AssetConflictSource {
     return workloadSourceKind(proposed.sourceType, role) as WorkloadConflictSource;
   }
   if (proposed.sourceType === "azurearc") return "arc";
+  if (proposed.sourceType === GENERIC_API_TYPE) return GENERIC_API_SOURCE_KIND;
   return assetTagPrefixFor(proposed) === AD_ASSET_TAG_PREFIX ? "ad" : "entra";
 }
 
@@ -163,6 +166,7 @@ function conflictSourceLabel(src: AssetConflictSource): string {
     case "proxmox-node":     return "Proxmox VE node";
     case "proxmox-qemu":     return "Proxmox VE VM";
     case "proxmox-lxc":      return "Proxmox VE container";
+    case "generic-api":      return "Generic API record";
   }
 }
 
@@ -436,6 +440,7 @@ async function acceptAssetConflict(
   const isVcenter = src === "vcenter-vm" || src === "vcenter-host";
   const isArc = src === "arc";
   const wlPlatform = workloadPlatformOf(src);
+  const isGeneric = src === GENERIC_API_SOURCE_KIND;
   const sourceLabel = conflictSourceLabel(src);
 
   // Per-field merge. fieldWinners (from POST /:id/merge) overrides the default
@@ -499,9 +504,10 @@ async function acceptAssetConflict(
   const sourceTags: string[] = isVcenter
     ? ["vcenter", "auto-discovered"]
     : wlPlatform ? [wlPlatform, "auto-discovered"]
+    : isGeneric ? [GENERIC_API_TYPE, "auto-discovered"]
     : isArc ? ["azurearc", "auto-discovered"]
     : isAd ? ["activedirectory", "auto-discovered"] : ["entraid", "auto-discovered"];
-  if (wlPlatform) {
+  if (wlPlatform || isGeneric) {
     // nothing source-specific to tag
   } else if (isArc) {
     if (proposed.arcStatus && String(proposed.arcStatus).toLowerCase() !== "connected") {
@@ -538,8 +544,9 @@ async function acceptAssetConflict(
   const sourceKind = src;
   // AD/Entra ids are case-normalized to lowercase everywhere; vCenter
   // externalIds (instanceUuid or `${integrationId}:${moref}`) and the
-  // workload ids (`${integrationId}:…`) must match the sync's key verbatim.
-  const externalId = isVcenter || wlPlatform
+  // workload / Generic API ids (`${integrationId}:…`) must match the sync's
+  // key verbatim.
+  const externalId = isVcenter || wlPlatform || isGeneric
     ? String(conflict.proposedDeviceId)
     : String(conflict.proposedDeviceId).toLowerCase();
   const existingSourceForId = await prisma.assetSource.findUnique({
@@ -785,6 +792,7 @@ async function rejectAssetConflict(conflict: any, actor?: string) {
   const isVcenter = src === "vcenter-vm" || src === "vcenter-host";
   const isArc = src === "arc";
   const wlPlatform = workloadPlatformOf(src);
+  const isGeneric = src === GENERIC_API_SOURCE_KIND;
   const sourceLabel = conflictSourceLabel(src);
 
   // Sibling flavour — the proposed device ALREADY has its own asset (its
@@ -795,7 +803,7 @@ async function rejectAssetConflict(conflict: any, actor?: string) {
   // device's real asset, orphaning it. The resolved conflict row itself is
   // what suppresses a re-raise (upsertAssetConflict's resolved-pair check).
   {
-    const rejectExternalId = isVcenter || wlPlatform
+    const rejectExternalId = isVcenter || wlPlatform || isGeneric
       ? String(conflict.proposedDeviceId)
       : String(conflict.proposedDeviceId).toLowerCase();
     const alreadyOwned = await prisma.assetSource.findUnique({
@@ -822,9 +830,10 @@ async function rejectAssetConflict(conflict: any, actor?: string) {
   const tags: string[] = isVcenter
     ? ["vcenter", "auto-discovered"]
     : wlPlatform ? [wlPlatform, "auto-discovered"]
+    : isGeneric ? [GENERIC_API_TYPE, "auto-discovered"]
     : isArc ? ["azurearc", "auto-discovered"]
     : isAd ? ["activedirectory", "auto-discovered"] : ["entraid", "auto-discovered"];
-  if (wlPlatform) {
+  if (wlPlatform || isGeneric) {
     // nothing source-specific to tag
   } else if (isArc) {
     if (proposed.arcStatus && String(proposed.arcStatus).toLowerCase() !== "connected") {
@@ -852,6 +861,7 @@ async function rejectAssetConflict(conflict: any, actor?: string) {
     // anyway — this is only the fallback when it couldn't decide.
     assetType: proposed.assetType
       || (wlPlatform ? assetTypeForWorkloadRole(parseWorkloadSourceKind(src)!.role)
+        : isGeneric ? "other"
         : isVcenter || isArc ? "server" : isAd ? "other" : "workstation"),
     status: proposed.status || defaultStatus,
     statusChangedAt: new Date(),
@@ -900,9 +910,10 @@ async function upsertConflictAssetSource(
 ): Promise<void> {
   const isVcenter = sourceKind === "vcenter-vm" || sourceKind === "vcenter-host";
   const wl = parseWorkloadSourceKind(sourceKind);
-  // AD/Entra ids are lowercase everywhere; vCenter / workload externalIds must
-  // match the discovery sync's key verbatim.
-  const externalId = isVcenter || wl
+  const isGeneric = sourceKind === GENERIC_API_SOURCE_KIND;
+  // AD/Entra ids are lowercase everywhere; vCenter / workload / Generic API
+  // externalIds must match the discovery sync's key verbatim.
+  const externalId = isVcenter || wl || isGeneric
     ? String(conflict.proposedDeviceId)
     : String(conflict.proposedDeviceId).toLowerCase();
   let observed: Record<string, unknown>;
@@ -958,6 +969,21 @@ async function upsertConflictAssetSource(
           name: proposed.hostname ?? null,
           hostname: wl.role === "host" ? (proposed.hostname ?? null) : null,
           ip: proposed.ipAddress ?? null,
+          os: proposed.os ?? null,
+          osVersion: proposed.osVersion ?? null,
+        };
+  } else if (isGeneric) {
+    // The sync stamps its full observed blob on the conflict (genericApiObserved);
+    // the fallback carries the keys the projection reads.
+    observed = (proposed.genericObserved && typeof proposed.genericObserved === "object")
+      ? { ...(proposed.genericObserved as Record<string, unknown>) }
+      : {
+          kind: GENERIC_API_SOURCE_KIND,
+          hostname: proposed.hostname ?? null,
+          ip: proposed.ipAddress ?? null,
+          serial: proposed.serialNumber ?? null,
+          manufacturer: proposed.manufacturer ?? null,
+          model: proposed.model ?? null,
           os: proposed.os ?? null,
           osVersion: proposed.osVersion ?? null,
         };

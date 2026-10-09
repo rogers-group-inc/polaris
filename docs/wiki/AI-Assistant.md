@@ -145,6 +145,8 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 | `/rename <title>` | Rename this conversation |
 | `/delete` | Delete this conversation permanently |
 | `/model [name]` | Show the model in use, or switch to another Local AI Assistant integration |
+| `/memory` | See and edit what the assistant remembers about you |
+| `/remember <text>` | Save something about you for future conversations, e.g. `/remember I look after the Nashville sites` |
 | `/help` | List these commands |
 
 ---
@@ -165,6 +167,37 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
   beginning; `/new` starts fresh.
 - The [event log](Events) records that you asked something and which lookups
   ran — never what you asked or what was answered.
+
+## Memory
+
+The assistant can remember a few short things **about you** between
+conversations — your team, the sites you look after, how you like answers — so
+you don't have to repeat them.
+
+- **It saves what you tell it.** Say *"I look after the Nashville sites"* or
+  *"remember I prefer short tables"* and it saves a note; a line under the
+  answer says *Remembered: …*. Say something is wrong or no longer true and it
+  removes it (*Forgot: …*).
+- **It only saves what you typed in that message.** It cannot save something it
+  looked up, or text from a device name or description — so nothing on the
+  network can plant a note in your memory.
+- **Never** addresses, networks, MAC addresses, links, passwords, keys or
+  tokens — Polaris refuses those, whether the assistant or you try to save them.
+- **The Memory button** in the chat window's title bar (or `/memory`) lists every
+  note, with who saved it. Add one there or with `/remember <text>`, remove one,
+  or **Forget everything**. Up to 25 notes of 200 characters each.
+- **Remember things about me** in that drawer turns it off: the assistant stops
+  reading and saving notes, and the ones you have are kept until you turn it
+  back on or remove them.
+- Your memory is **private to you** — no other user, administrators included,
+  can read it — and is deleted with your account. The [event log](Events)
+  records that your memory changed, never what it says.
+- Notes are background about you, not facts about your network: the assistant
+  still looks up devices, alerts and networks with your permissions every time.
+  Notes count against the model's **context window**, so a small window leaves a
+  little less room for the conversation.
+
+See [rule 95](Business-Rules#rule-95).
 
 ## Tuning (on the integration)
 

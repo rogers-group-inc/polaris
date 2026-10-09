@@ -15,7 +15,7 @@ discovery at `write`.
 
 ---
 
-## The ten types
+## The eleven types
 
 | Type | Reads | Produces | Page |
 |---|---|---|---|
@@ -29,6 +29,7 @@ discovery at `write`.
 | **Unraid** | Unraid GraphQL API (7.2+) | host, VMs, containers | [Unraid](Integration-Unraid) |
 | **TrueNAS SCALE** | TrueNAS JSON-RPC WebSocket API (25.04+) | host, VMs, Apps | [TrueNAS SCALE](Integration-TrueNAS) |
 | **Proxmox VE** | Proxmox VE REST API (9.x), read-only | cluster nodes, VMs, LXC containers | [Proxmox VE](Integration-Proxmox) |
+| **Generic API** | any REST API returning JSON, mapped field by field | assets | [Generic API](Integration-Generic-API) |
 
 Plus one integration that discovers nothing: **Local AI Assistant** — the model server
 behind the [AI assistant](AI-Assistant). It has no Discover button, no
@@ -57,6 +58,7 @@ The modal is tabbed, and the tab set depends on the type:
 | Entra ID / Intune | General → Monitoring → Directory → Script Publishing |
 | Azure Arc | General → Monitoring → Script Publishing |
 | Windows Server, vCenter, Unraid, TrueNAS SCALE, Proxmox VE | General → Monitoring |
+| Generic API | General → Records & Mapping → Preview (no Monitoring tab — its assets are monitored one by one, like manually added ones) |
 | Local AI Assistant | one untabbed form — Model Server, then Assistant Behaviour ([AI assistant](AI-Assistant)) |
 
 Outside the Fortinet pair, the connection settings **and** the filters live on

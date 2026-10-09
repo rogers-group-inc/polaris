@@ -1047,7 +1047,9 @@ export function defaultPollingForSource(
     if (stream === "temperature") return source === "proxmox" ? null : source;
     return null;
   }
-  // manual
+  // manual — and genericapi, deliberately: a Generic API record can be any
+  // device, so nothing beyond the ICMP response time is collected until an
+  // operator picks a transport and a credential for it.
   return stream === "responseTime" ? "icmp" : null;
 }
 

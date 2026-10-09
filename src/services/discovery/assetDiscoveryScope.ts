@@ -125,6 +125,10 @@ const NOT_YET_SCOPED: Record<string, string> = {
   "proxmox-node": "Proxmox VE",
   "proxmox-qemu": "Proxmox VE",
   "proxmox-lxc": "Proxmox VE",
+  // A Generic API feed has no "fetch one record" request Polaris could rely
+  // on — the operator described a list endpoint — so a per-asset refresh is
+  // the integration's own Discover.
+  "generic-api": "Generic API",
 };
 
 /**

@@ -162,7 +162,7 @@ much sample data exists for it.
 
 ## Cross-cutting
 
-**Integration** — a configured connection to an external system. Ten types.
+**Integration** — a configured connection to an external system. Eleven types.
 Every one is optional and absent by default.
 
 **Discovery run** — one execution of an integration's discovery, in numbered

@@ -5483,6 +5483,10 @@ router.post("/:id/sources/:sourceId/split", requirePermission("assets", "write")
     } else if (splitWorkload) {
       assetType = assetTypeForWorkloadRole(splitWorkload.role);
       tagSet.add(splitWorkload.platform);
+    } else if (target.sourceKind === "generic-api") {
+      // The record's own type is on the blob; the next discovery run retypes
+      // the new asset from "other" (genericApiSync's rule).
+      tagSet.add("genericapi");
     }
 
     // Manufacturer fallback — projection only gives "Fortinet" for fortinet

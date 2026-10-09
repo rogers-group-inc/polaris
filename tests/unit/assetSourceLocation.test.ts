@@ -35,6 +35,9 @@ describe("assetSourceLocation — catalogue", () => {
     // Sources card. See the catalogue's header comment for the reasoning.
     expect(DEFAULT_LOCATION_ORDER).toEqual([
       "fortigate-endpoint",
+      // A Generic API record's MAPPED location — a field someone wrote down
+      // as a place; contributes nothing when no location is mapped.
+      "generic-api",
       "arc",
       "intune",
       "entra",
