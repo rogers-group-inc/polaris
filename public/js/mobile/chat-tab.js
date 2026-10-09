@@ -336,8 +336,19 @@
   // The box grows UPWARD (the composer is pinned at its bottom edge) one line at
   // a time, to at most COMPOSER_MAX_LINES; past that it scrolls inside, and the
   // user drags the text to see what they typed at the beginning.
+  //
+  // The composer is the LAST thing in the scroller, so a taller box pushes the
+  // end of the log up behind it while scrollTop stays put — the newest answer
+  // slid out of view with every line typed. A reader who was at the bottom is
+  // kept there; one who had scrolled up to read is left where they were.
   var COMPOSER_MAX_LINES = 3;
+  var AT_BOTTOM_SLACK_PX = 24;
+  function atBottom() {
+    var b = S.body;
+    return !b || b.scrollHeight - b.scrollTop - b.clientHeight <= AT_BOTTOM_SLACK_PX;
+  }
   function autosize(el) {
+    var follow = atBottom();
     var cs = getComputedStyle(el);
     var line = parseFloat(cs.lineHeight) || 21;
     var pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
@@ -347,6 +358,66 @@
     var want = el.scrollHeight + border;
     el.style.height = Math.min(want, max) + "px";
     el.style.overflowY = want > max ? "auto" : "hidden";
+    if (follow) scrollToEnd();
+  }
+
+  // ─── On-screen keyboard fit (canon-mobile.md, the auth.js pattern) ─────
+  // iOS keeps the layout viewport full height when the keyboard opens, so the
+  // log's scroller ran on BEHIND the keyboard: with the composer grown to
+  // three lines, what was left above it was a sliver that could not be
+  // scrolled to show the latest answers. While the keyboard is up on this tab
+  // .app is pinned to the visible rect (.chat-kb-open in mobile.css) — the log
+  // then scrolls in exactly the space above the composer. Same threshold, rAF
+  // coalescing and self-unmount check as auth.js; its own class, because
+  // auth.js strips .kb-open whenever no login form is on screen.
+  var KEYBOARD_MIN_PX = 120;   // below this it's browser chrome, not a keyboard
+  var kb = { installed: false, pending: 0, open: false };
+
+  function applyKeyboardFit() {
+    kb.pending = 0;
+    var app = document.getElementById("app");
+    var vv = window.visualViewport;
+    if (!app || !vv) return;
+    // The tab is swapped out wholesale with no teardown hook, so every
+    // measurement re-checks that the chat is still on screen.
+    var layoutH = Math.max(window.innerHeight, document.documentElement.clientHeight || 0);
+    var open = !!onThisTab() && layoutH - vv.height > KEYBOARD_MIN_PX;
+    if (!open) { resetKeyboardFit(); return; }
+    var follow = atBottom();
+    app.style.setProperty("--chat-vv-height", vv.height + "px");
+    app.style.setProperty("--chat-vv-offset-top", vv.offsetTop + "px");
+    app.classList.add("chat-kb-open");
+    // Only on the edge (keyboard just opened), and only for a reader already
+    // at the newest answer — re-running on every viewport event would fight
+    // the user's own scrolling.
+    if (!kb.open && follow) scrollToEnd();
+    kb.open = true;
+  }
+
+  function resetKeyboardFit() {
+    var app = document.getElementById("app");
+    if (app) {
+      app.classList.remove("chat-kb-open");
+      app.style.removeProperty("--chat-vv-height");
+      app.style.removeProperty("--chat-vv-offset-top");
+    }
+    kb.open = false;
+  }
+
+  function scheduleKeyboardFit() {
+    if (!kb.pending) kb.pending = window.requestAnimationFrame(applyKeyboardFit);
+  }
+
+  // Idempotent — every render of the tab calls it; the listeners live for the
+  // page's lifetime and are a no-op once the chat is gone.
+  function installKeyboardFit() {
+    if (kb.installed || !window.visualViewport) return;
+    kb.installed = true;
+    window.visualViewport.addEventListener("resize", scheduleKeyboardFit);
+    window.visualViewport.addEventListener("scroll", scheduleKeyboardFit);
+    window.addEventListener("orientationchange", scheduleKeyboardFit);
+    document.addEventListener("focusin", scheduleKeyboardFit);
+    document.addEventListener("focusout", scheduleKeyboardFit);
   }
 
   // ─── Downloads ─────────────────────────────────────────────────────────
@@ -435,6 +506,8 @@
     var input = document.getElementById("chat-input");
     form.addEventListener("submit", function (e) { e.preventDefault(); if (S.busy) stop(); else submit(); });
     input.addEventListener("input", function () { autosize(input); });
+    installKeyboardFit();
+    scheduleKeyboardFit();
     input.addEventListener("keydown", function (e) {
       // A hardware keyboard: Enter sends, Shift+Enter is a new line. The
       // on-screen keyboard's return key keeps inserting a new line.

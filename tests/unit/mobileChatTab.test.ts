@@ -167,3 +167,122 @@ describe("mobile Chat tab", () => {
     expect(body.querySelector(".chat-bubble.local")).toBeTruthy(); // the greeting note
   });
 });
+
+// A long question grows the composer to three lines; with the on-screen
+// keyboard up as well, the latest answers have to stay reachable above it.
+describe("mobile Chat tab — composer growth and the on-screen keyboard", () => {
+  const LAYOUT_H = 800;
+  let rafQueue: Array<() => void> = [];
+  const flushRaf = () => { const q = rafQueue; rafQueue = []; q.forEach((fn) => fn()); };
+
+  function fakeViewport(height: number) {
+    const listeners: Record<string, Array<() => void>> = {};
+    return {
+      height, offsetTop: 0,
+      addEventListener(type: string, fn: () => void) { (listeners[type] ||= []).push(fn); },
+      removeEventListener() { /* never detached */ },
+      emit(type: string) { (listeners[type] || []).forEach((fn) => fn()); },
+    };
+  }
+
+  /** A scroller with real-looking metrics: happy-dom lays nothing out. */
+  function scrollMetrics(el: HTMLElement, scrollHeight: number, clientHeight: number, scrollTop: number) {
+    let top = scrollTop;
+    Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => scrollHeight });
+    Object.defineProperty(el, "clientHeight", { configurable: true, get: () => clientHeight });
+    Object.defineProperty(el, "scrollTop", { configurable: true, get: () => top, set: (v: number) => { top = Math.min(v, scrollHeight - clientHeight); } });
+  }
+
+  async function mount() {
+    const vv = fakeViewport(LAYOUT_H);
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: vv });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: LAYOUT_H });
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((fn: FrameRequestCallback) => { rafQueue.push(() => fn(0)); return rafQueue.length; });
+    const { spec, body } = setup({ enabled: true, integrations: [{ id: "i1", name: "Foundry" }] });
+    // The shell: the tab body lives inside #app, which the fit pins.
+    const app = document.createElement("div");
+    app.id = "app";
+    document.body.appendChild(app);
+    app.appendChild(body);
+    await spec.render(body, {});
+    flushRaf();
+    return { vv, app, body };
+  }
+  const keyboardTo = (vv: ReturnType<typeof fakeViewport>, h: number, offsetTop = 0) => {
+    vv.height = h; vv.offsetTop = offsetTop; vv.emit("resize"); flushRaf();
+  };
+
+  beforeEach(() => { rafQueue = []; });
+
+  it("pins the shell to the visible rect while the keyboard is up, and lets go when it closes", async () => {
+    const { vv, app } = await mount();
+    expect(app.classList.contains("chat-kb-open")).toBe(false);
+    keyboardTo(vv, 420, 30);
+    expect(app.classList.contains("chat-kb-open")).toBe(true);
+    expect(app.style.getPropertyValue("--chat-vv-height")).toBe("420px");
+    expect(app.style.getPropertyValue("--chat-vv-offset-top")).toBe("30px");
+    keyboardTo(vv, LAYOUT_H);
+    expect(app.classList.contains("chat-kb-open")).toBe(false);
+    expect(app.style.getPropertyValue("--chat-vv-height")).toBe("");
+  });
+
+  it("ignores a collapsing URL bar — only a keyboard-sized drop pins", async () => {
+    const { vv, app } = await mount();
+    keyboardTo(vv, LAYOUT_H - 80);
+    expect(app.classList.contains("chat-kb-open")).toBe(false);
+  });
+
+  it("unpins once the chat is no longer on screen", async () => {
+    const { vv, app, body } = await mount();
+    keyboardTo(vv, 420);
+    body.innerHTML = "<div>another tab</div>";
+    keyboardTo(vv, 410);
+    expect(app.classList.contains("chat-kb-open")).toBe(false);
+  });
+
+  it("brings the newest answer into view when the keyboard opens on a reader at the bottom", async () => {
+    const { vv, app, body } = await mount();
+    // The scroller is the full screen until the pin shrinks it to the visible rect
+    // (writing scrollTop forces that layout in a browser, so the end is the new one).
+    let top = 1200;                             // at the bottom of 2000 / 800
+    const client = () => (app.classList.contains("chat-kb-open") ? 420 : 800);
+    Object.defineProperty(body, "scrollHeight", { configurable: true, get: () => 2000 });
+    Object.defineProperty(body, "clientHeight", { configurable: true, get: client });
+    Object.defineProperty(body, "scrollTop", { configurable: true, get: () => top, set: (v: number) => { top = Math.min(v, 2000 - client()); } });
+    keyboardTo(vv, 420);
+    expect(body.scrollTop).toBe(1580);          // the newest answer sits on the composer, not behind the keyboard
+    top = 900;                                  // the reader scrolls up to read
+    keyboardTo(vv, 421);                        // a follow-up viewport event must not drag them back
+    expect(body.scrollTop).toBe(900);
+  });
+
+  it("leaves a reader who had scrolled up where they were when the keyboard opens", async () => {
+    const { vv, body } = await mount();
+    scrollMetrics(body, 2000, 800, 300);
+    keyboardTo(vv, 420);
+    expect(body.scrollTop).toBe(300);
+  });
+
+  it("keeps a reader at the bottom there as the composer grows", async () => {
+    const { body } = await mount();
+    const input = body.querySelector("#chat-input") as HTMLTextAreaElement;
+    // The content is a line taller once autosize has set the box's height —
+    // the end of the log moves down while scrollTop stays where it was.
+    let top = 1600;                             // at the bottom of 2000 / 400
+    Object.defineProperty(body, "scrollHeight", { configurable: true, get: () => (input.style.height ? 2021 : 2000) });
+    Object.defineProperty(body, "clientHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(body, "scrollTop", { configurable: true, get: () => top, set: (v: number) => { top = Math.min(v, body.scrollHeight - 400); } });
+    input.value = "a long question\nthat wraps";
+    input.dispatchEvent(new Event("input"));
+    expect(body.scrollTop).toBe(1621);          // followed the end down, not left 21px short of it
+  });
+
+  it("leaves a reader who scrolled up to read where they were", async () => {
+    const { body } = await mount();
+    scrollMetrics(body, 2000, 400, 300);
+    const input = body.querySelector("#chat-input") as HTMLTextAreaElement;
+    input.value = "a long question\nthat wraps\nand wraps";
+    input.dispatchEvent(new Event("input"));
+    expect(body.scrollTop).toBe(300);
+  });
+});
