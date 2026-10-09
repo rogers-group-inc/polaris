@@ -1335,6 +1335,11 @@ async function deleteCA(id, name) {
 
 var _dbLoaded = false;
 var _advisorJustStaged = false;
+// True when Polaris runs in a container. There the advisor asks the operator
+// to restart the container instead of offering a self-restart — a self-exit
+// leaves a container with no restart policy stopped, and POST /restart
+// refuses with 409.
+var _advisorInContainer = false;
 var _retentionLoaded = false;
 
 // ─── Retention Tab (sample retention only — event retention lives on the
@@ -1754,7 +1759,9 @@ function renderCapacityAdvisorCard(advisor, pgConfigFile, dbConnectionMode) {
   var staged = recs.filter(function (r) { return r.applyMode !== "advisory-only" && r.changeRequired; }).length;
   var stageBtn;
   if (_advisorJustStaged && staged === 0) {
-    stageBtn = '<button class="btn btn-warning" id="capacity-advisor-restart-btn">Restart Polaris to apply</button>';
+    stageBtn = _advisorInContainer
+      ? _advisorContainerRestartHtml()
+      : '<button class="btn btn-warning" id="capacity-advisor-restart-btn">Restart Polaris to apply</button>';
   } else if (staged > 0) {
     stageBtn = '<button class="btn btn-primary" id="capacity-advisor-stage-btn" data-staged-count="' + staged + '">Stage selected</button>';
   } else {
@@ -1798,7 +1805,7 @@ function renderCapacityAdvisorCard(advisor, pgConfigFile, dbConnectionMode) {
     pgConfigHint +
     '<div style="margin-top:0.85rem;display:flex;align-items:center;gap:0.75rem">' +
       stageBtn +
-      '<span class="hint" style="font-size:0.78rem">Computed ' + escapeHtml(formatLocalTime(advisor.computedAt)) + '. Restart Polaris after Stage to pick up changes.</span>' +
+      '<span class="hint" style="font-size:0.78rem">Computed ' + escapeHtml(formatLocalTime(advisor.computedAt)) + '. ' + (_advisorInContainer ? 'Restart the Polaris container(s) after Stage to pick up changes.' : 'Restart Polaris after Stage to pick up changes.') + '</span>' +
     '</div>' +
   '</div>';
 }
@@ -2538,6 +2545,7 @@ async function loadDatabaseInfo() {
     var capacity = advisorResp && advisorResp.capacity ? advisorResp.capacity : null;
     var pgTuning = advisorResp && advisorResp.pgTuning ? advisorResp.pgTuning : null;
     var dbConnectionMode = advisorResp && advisorResp.dbConnectionMode ? advisorResp.dbConnectionMode : "direct";
+    _advisorInContainer = !!(advisorResp && advisorResp.runtimeIsContainer);
     _dbLoaded = true;
 
     var advisorHtml = renderCapacityAdvisorCard(advisor, pgTuning && pgTuning.pgConfigFile, dbConnectionMode);
@@ -2547,7 +2555,7 @@ async function loadDatabaseInfo() {
     var updateCardHtml =
       '<div class="settings-card" id="update-card">' +
         '<h4>Application Updates</h4>' +
-        '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
+        '<p id="update-card-intro" style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
           'Check for new versions and apply updates directly from the browser. Automatic rollback on failure.' +
         '</p>' +
         '<div id="update-status-area">' +
@@ -2565,7 +2573,9 @@ async function loadDatabaseInfo() {
         // Lives outside #update-status-area so it survives status re-renders.
         '<div id="update-repo-info" style="margin-top:0.75rem;font-size:0.8rem;color:var(--color-text-tertiary)"></div>' +
         // Update train — nightly (every commit) vs release (tagged releases only).
-        '<div style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
+        // The train, backup and history sections are the git updater's; a
+        // container install removes them (_applyImageUpdateLayout).
+        '<div id="update-train-section" style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
           '<label for="update-train-select" style="display:block;font-size:0.85rem;font-weight:600;margin-bottom:0.35rem">Update train</label>' +
           '<select id="update-train-select" style="max-width:280px">' +
             '<option value="nightly">Nightly — latest commits</option>' +
@@ -2575,7 +2585,7 @@ async function loadDatabaseInfo() {
             'Nightly tracks every change on the update branch. Release only downloads published, tagged releases.' +
           '</p>' +
         '</div>' +
-        '<div style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
+        '<div id="update-backup-section" style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
           '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">' +
             '<input type="checkbox" id="update-backup-checkbox" style="width:15px;height:15px;flex-shrink:0">' +
             '<span style="font-size:0.85rem">Back up database before applying updates</span>' +
@@ -2820,6 +2830,19 @@ function wireAdvisorRestartBtn(restartBtn) {
 }
 
 /**
+ * In a container the advisor asks the operator to restart it rather than
+ * offering a button: Polaris can't see the container's restart policy, and a
+ * self-exit under Unraid's default ("no") leaves the container stopped.
+ */
+function _advisorContainerRestartHtml() {
+  return '<span class="hint" id="capacity-advisor-container-restart" style="font-size:0.82rem;color:var(--color-warning)">' +
+    '<strong>Staged.</strong> Restart the Polaris container yourself to apply — ' +
+    '<code>docker compose restart</code> for a compose stack (every role reads <code>.env</code>), ' +
+    '<code>docker restart &lt;name&gt;</code>, or Restart on your container host\'s Docker page.' +
+    '</span>';
+}
+
+/**
  * Mark a staged advisor row in place: drop the checkbox, flip the Status pill
  * to "Staged". Staged env values live in .env but don't reach the running
  * process until restart, so a re-fetch would still show them as pending —
@@ -2879,10 +2902,15 @@ function initCapacityAdvisorActions() {
       // "Restart Polaris to apply" in place — no full-tab reload.
       _advisorJustStaged = true;
       appliedRows.forEach(function (r) { markAdvisorRowStaged(card, r.key); });
-      showToast("Staged " + applied + " value" + (applied === 1 ? "" : "s") + ". Restart Polaris to apply.", "success");
+      showToast("Staged " + applied + " value" + (applied === 1 ? "" : "s") + ". " +
+        (_advisorInContainer ? "Restart the Polaris container(s) to apply." : "Restart Polaris to apply."), "success");
 
       var remaining = card.querySelectorAll("input.advisor-stage-checkbox").length;
-      if (remaining === 0) {
+      if (remaining === 0 && _advisorInContainer) {
+        var holder = document.createElement("span");
+        holder.innerHTML = _advisorContainerRestartHtml();
+        stageBtn.replaceWith(holder.firstChild);
+      } else if (remaining === 0) {
         var restartBtn = document.createElement("button");
         restartBtn.className = "btn btn-warning";
         restartBtn.id = "capacity-advisor-restart-btn";
@@ -3369,7 +3397,9 @@ function initUpdateControls() {
 
   // Check if there's a pending notification from a background check or previous restart
   api.serverSettings.getUpdateStatus().then(function (status) {
-    if (status.state === "disabled") {
+    if (status.updateMethod === "image") {
+      renderImageUpdate(status);
+    } else if (status.state === "disabled") {
       renderUpdateDisabled(status);
     } else if (status.state === "complete") {
       renderUpdateComplete(status);
@@ -3401,6 +3431,76 @@ function renderUpdateDisabled(status) {
         ? '<div style="font-size:0.82rem;color:var(--color-text-secondary)">' + escapeHtml(status.method) + '</div>'
         : '') +
     '</div>';
+}
+
+// A container install updates by pulling a newer image, so the card keeps
+// only what applies there: the version, a daily registry check the operator
+// can re-run, and how to update. The update train, the pre-update backup
+// toggle and the git history are the in-app updater's and are removed.
+function _applyImageUpdateLayout() {
+  ["update-train-section", "update-backup-section", "update-history"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.remove();
+  });
+  var repo = document.getElementById("update-repo-info");
+  if (repo) repo.innerHTML = "";
+  var intro = document.getElementById("update-card-intro");
+  if (intro) intro.textContent = "Polaris checks the published image once a day and tells you here, and in the sidebar, when a newer one is out.";
+}
+
+function renderImageUpdate(status) {
+  _applyImageUpdateLayout();
+  var area = document.getElementById("update-status-area");
+  if (!area) return;
+  var available = status.state === "available";
+  var behind = status.commitsBehind || 0;
+
+  var latestHtml = "";
+  if (available) {
+    var changesLink = status.source && status.latestCommit
+      ? ' <a href="' + escapeHtml(status.source) + '/commits/' + encodeURIComponent(status.latestCommit) + '" target="_blank" rel="noopener noreferrer" style="font-size:0.8rem">What changed</a>'
+      : "";
+    latestHtml =
+      '<div style="background:color-mix(in srgb, var(--color-primary) 10%, transparent);border:1px solid var(--color-primary);border-radius:6px;padding:1rem;margin-bottom:1rem">' +
+        '<div style="color:var(--color-primary);font-weight:600;font-size:0.95rem;margin-bottom:0.5rem">Update Available</div>' +
+        '<div class="db-info-grid">' +
+          '<div class="db-info-label">Latest</div><div class="db-info-value">v' + escapeHtml(status.latestVersion || "?") +
+            (status.latestCommit ? ' <span class="mono" style="color:var(--color-text-tertiary)">(' + escapeHtml(status.latestCommit) + ')</span>' : "") +
+            ' <span style="color:var(--color-text-tertiary);font-size:0.8rem">' + behind + ' commit' + (behind === 1 ? "" : "s") + ' newer</span>' + changesLink +
+          '</div>' +
+        '</div>' +
+        (status.method ? '<div style="font-size:0.82rem;color:var(--color-text-secondary);margin-top:0.6rem">' + escapeHtml(status.method) + '</div>' : "") +
+      '</div>';
+  }
+
+  var stateLine;
+  if (available) {
+    stateLine = "";
+  } else if (status.state === "up-to-date") {
+    stateLine = '<span style="color:var(--color-success)">Up to date with ' + escapeHtml(status.image || "the published image") + '</span>';
+  } else if (status.note) {
+    stateLine = '<span style="color:var(--color-text-secondary)">' + escapeHtml(status.note) + '</span>';
+  } else {
+    stateLine = '<span style="color:var(--color-text-tertiary)">Not checked yet — the first check runs a minute after Polaris starts.</span>';
+  }
+
+  area.innerHTML =
+    '<div class="db-info-grid" style="margin-bottom:1rem">' +
+      '<div class="db-info-label">Current Version</div>' +
+      '<div class="db-info-value" id="update-current-version">v' + escapeHtml(status.currentVersion || "?") + '</div>' +
+      (status.checkedAt
+        ? '<div class="db-info-label">Last checked</div><div class="db-info-value">' + escapeHtml(formatLocalTime(status.checkedAt)) + '</div>'
+        : "") +
+    '</div>' +
+    latestHtml +
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+      '<button class="btn btn-secondary" id="btn-check-updates">' + (available ? "Check Again" : "Check for Updates") + '</button>' +
+      '<span id="update-check-status" style="font-size:0.82rem">' + stateLine + '</span>' +
+    '</div>' +
+    (!available && status.method
+      ? '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0.6rem 0 0">' + escapeHtml(status.method) + '</p>'
+      : "");
+  document.getElementById("btn-check-updates").addEventListener("click", checkForUpdatesUI);
 }
 
 async function loadUpdateRepoInfo() {
@@ -3463,6 +3563,11 @@ async function checkForUpdatesUI() {
 
   try {
     var result = await api.serverSettings.checkForUpdates();
+
+    if (result.updateMethod === "image") {
+      renderImageUpdate(result);
+      return;
+    }
 
     if (result.state === "disabled") {
       renderUpdateDisabled(result);

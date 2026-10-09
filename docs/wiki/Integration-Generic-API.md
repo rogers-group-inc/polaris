@@ -26,7 +26,7 @@ many as you need, one per feed.
 A record is an **inventory entry**, not evidence the device is online. Polaris
 never sets **Last Seen** from the feed. After each discovery a presence check
 asks the [Polaris Agent](Polaris-Agent), the monitor probe, or a ping, and sets
-Last Seen only when the device answers. See [rule 99](Business-Rules#rule-99).
+Last Seen only when the device answers. See [rule 100](Business-Rules#rule-100).
 
 ---
 

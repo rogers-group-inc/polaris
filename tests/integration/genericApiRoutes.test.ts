@@ -1,6 +1,6 @@
 /**
  * tests/integration/genericApiRoutes.test.ts — the Generic API integration's
- * route contract (business rule 99) against a real database:
+ * route contract (business rule 100) against a real database:
  *   - create validates the whole config: an unmapped identity field, a path
  *     that does not parse, a request path naming another host, a blocked
  *     host or token URL, and an injecting header are all 400s;

@@ -1032,7 +1032,7 @@ const LlmConfigSchema = z.object({
   }
 });
 
-// Generic API ("build your own") — business rule 99. An operator-described
+// Generic API ("build your own") — business rule 100. An operator-described
 // REST feed mapped record by record onto assets through JSON paths
 // (services/genericApiService.ts). Inventory only: no monitoring blocks, no
 // push. Secrets live ONLY under the sealed keys apiToken / password /

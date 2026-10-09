@@ -12,9 +12,24 @@ Applying an update is gated `serverSettingsData` (Read-Write — the key has no
 Read rung); looking at the card rides `serverSettingsSystem` Read.
 
 **Docker / podman installs do not use it.** A container image carries no git
-checkout, so the card reports *"In-app updates are disabled in Docker"* — pull
-the new image and recreate the container instead; data and settings persist on
-the mounted state volume.
+checkout, so Polaris cannot apply an update — pull the new image and recreate
+the container instead (`docker compose pull && docker compose up -d`, or
+**Apply Update** on Unraid's Docker page); data and settings persist on the
+mounted state volume.
+
+It does still **tell you when one is out**. Once a day (and a minute after it
+starts, or when you click **Check for Updates**) a container install asks the
+registry which build the published image is and compares it with its own. When
+the published one is newer, the card shows **Update Available** with the new
+version, how many commits newer it is and a *What changed* link, and the
+sidebar shows *Update available*. Nothing is downloaded and nothing restarts.
+The card leaves out what only the in-app updater uses: the update train, the
+pre-update backup option and the commit history.
+
+It checks `ghcr.io/rogers-group-inc/polaris:latest`. If you run a fork or pull
+through a mirror, set `POLARIS_UPDATE_IMAGE` in the state volume's `.env` to
+the image you actually run. If the registry can't be reached, the card says so
+and the next check tries again.
 
 ---
 

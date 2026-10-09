@@ -3,7 +3,7 @@
  * integration: read an operator-described REST endpoint, page through it, and
  * map each record onto an asset through JSON paths.
  *
- * Business rule 99. Inventory only (v1). The service READS and MAPS; turning mapped records into
+ * Business rule 100. Inventory only (v1). The service READS and MAPS; turning mapped records into
  * assets is `services/discovery/genericApiSync.ts`. Nothing here monitors,
  * pushes or writes to the source.
  *

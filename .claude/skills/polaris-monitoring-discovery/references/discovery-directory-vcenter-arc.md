@@ -126,7 +126,7 @@ Pinned by `tests/integration/workloadSync.test.ts` (real Postgres) and `tests/un
 
 ## Generic API Discovery Workflow
 
-The `genericapi` integration type (business rule 99): an operator-described REST endpoint, mapped record by record onto assets. Assets-only, `pollInterval` 12 by default, no scoped mode (`assetDiscoveryScope` lists `generic-api` under NOT_YET_SCOPED — a list endpoint has no reliable "fetch one record"). `triggerDiscovery` refuses a config with no path mapped for its identity field.
+The `genericapi` integration type (business rule 100): an operator-described REST endpoint, mapped record by record onto assets. Assets-only, `pollInterval` 12 by default, no scoped mode (`assetDiscoveryScope` lists `generic-api` under NOT_YET_SCOPED — a list endpoint has no reliable "fetch one record"). `triggerDiscovery` refuses a config with no path mapped for its identity field.
 
 **The read** (`genericApiService.discoverGenericApi` → `fetchGenericApiRecords`):
 - An OAuth token first when `authType: "oauth2"` (client-credentials grant against `tokenUrl`; one per run). Then page 1 — a failure here THROWS and the run errors with nothing written.

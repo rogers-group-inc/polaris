@@ -5718,7 +5718,7 @@ function getVcenterFormConfig() {
   };
 }
 
-// ─── Generic API ("build your own", business rule 99) ─────────────────────────
+// ─── Generic API ("build your own", business rule 100) ─────────────────────────
 //
 // Three tabs, all in the DOM at once so getGenericApiFormConfig() reads the
 // whole form in one pass: General (connection + authentication), Records &

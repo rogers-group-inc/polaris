@@ -6,7 +6,7 @@
  * the identity is the operator's choice of field (an id, a serial, a MAC or
  * a hostname), scoped to the integration (utils/genericApiSource.ts).
  *
- * What a generic feed is trusted with, and what it is not (business rule 99):
+ * What a generic feed is trusted with, and what it is not (business rule 100):
  *
  *   - It is an INVENTORY claim, not a presence signal. A record's existence
  *     says nothing about whether the device answered anything, so this sync

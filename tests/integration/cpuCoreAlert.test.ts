@@ -98,6 +98,9 @@ d("per-core CPU alert (business rule 89)", () => {
     expect(alerts[0]!.metric).toBe("cpuCorePct");
     expect(alerts[0]!.message).toContain("Core 1 (97%), Core 3 (93%)");
     expect(alerts[0]!.message).not.toContain("Core 0");
+    // the cores carry their own readings — no "cpuCorePct = 97" repeating one
+    expect(alerts[0]!.message).toMatch(/\[Core 1 \(97%\), Core 3 \(93%\)\] \(threshold 90\)$/);
+    expect(alerts[0]!.message).not.toContain("cpuCorePct =");
   });
 
   it("fires when the SAME core is over the line for the held number of polls, naming it", async () => {

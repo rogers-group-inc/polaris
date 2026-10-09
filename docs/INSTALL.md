@@ -1068,6 +1068,14 @@ succeeds. `POLARIS_HA_HEARTBEAT=off` in `./state/.env` disables the guard
 entirely; do that only if you accept the two-instance failure mode
 ([docs/HA.md](HA.md)).
 
+**Updates are a pull, not an in-app button.** A container install checks
+`ghcr.io/rogers-group-inc/polaris:latest` once a day (outbound HTTPS to
+`ghcr.io`, anonymous, nothing downloaded) and shows *Update available* on the
+Maintenance tab and in the sidebar when a newer build is published. Apply it
+with `docker compose pull && docker compose up -d` (or **Apply Update** on
+Unraid's Docker page). Set `POLARIS_UPDATE_IMAGE` in `./state/.env` if you run a
+fork or pull through a mirror.
+
 Two container-specific cautions:
 
 - **`./state/.env` is on a bind mount, not in the image.** A `docker compose
