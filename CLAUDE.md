@@ -132,7 +132,7 @@ npm run test:fmg
 # Type check / lint / structural guards (the checks also run in CI + pre-commit)
 npm run typecheck
 npm run lint
-npm run check:docs && npm run check:versions && npm run check:deps
+npm run check:docs && npm run check:versions && npm run check:deps && npm run check:wiki
 ```
 
 ---
