@@ -11220,8 +11220,9 @@ function _assetWorkloadHTML(res) {
     var rows =
       '<div class="asset-view-grid">' +
         '<div class="detail-row"><span class="detail-label">Platform</span><span class="detail-value">' + escapeHtml((v.os || product) + (v.osVersion ? " " + v.osVersion : "")) + '</span></div>' +
-        // A cluster node: what its peers last said about it.
-        (v.hostKey ? '<div class="detail-row"><span class="detail-label">Cluster</span><span class="detail-value">' + (v.online === false ? '<span style="color:var(--color-danger)">Node offline</span>' : 'Node online') + '</span></div>' : '') +
+        // A cluster node: what its peers said about it at the last discovery
+        // (live up / down is the monitor status, which refreshes every tick).
+        (v.hostKey ? '<div class="detail-row"><span class="detail-label">Cluster</span><span class="detail-value">' + (v.online === false ? '<span style="color:var(--color-danger)">Node offline</span>' : 'Node online') + ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(at last discovery)</span></span></div>' : '') +
         (v.cpuCount != null ? '<div class="detail-row"><span class="detail-label">CPU Threads</span><span class="detail-value">' + escapeHtml(String(v.cpuCount)) + '</span></div>' : '') +
         (v.memTotalBytes != null ? '<div class="detail-row"><span class="detail-label">Memory</span><span class="detail-value">' + _fmtBytes(v.memTotalBytes) + '</span></div>' : '') +
         '<div class="detail-row"><span class="detail-label">Workloads</span><span class="detail-value">' + (v.vmCount || 0) + ' VM(s), ' + (v.containerCount || 0) + (isTn ? ' App(s)' : ' container(s)') + '</span></div>' +

@@ -2165,7 +2165,9 @@ function _classStreamSubtabHTML(idPrefix, sourceKind, klass, stream, settings, c
     } else {
       intervalDefault = 600; intervalMin = 60; intervalMax = 86400; timeoutDefault = 10000;
     }
-    var intervalHint = "How often this stream collects from each monitored " + escapeHtml(klass) + ".";
+    // The workload class keys are internal names (wlhosts / wlvms) — say what they hold.
+    var klassNoun = { wlhosts: "host", wlvms: "virtual machine", vms: "virtual machine", hosts: "host", containers: "container" }[klass] || klass;
+    var intervalHint = "How often this stream collects from each monitored " + escapeHtml(klassNoun) + ".";
     var timeoutHint = "Per-request timeout.";
     cadenceHtml = numInput(stream.intervalField, "Interval (seconds)", settings[stream.intervalField], intervalDefault, intervalMin, intervalMax, intervalHint, false) +
       numInput(stream.timeoutField, "Timeout (ms)", settings[stream.timeoutField], timeoutDefault, 100, 120000, timeoutHint, stream.key === "responseTime");
