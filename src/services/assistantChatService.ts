@@ -76,6 +76,7 @@ import {
   topicForTool,
   pickSignOff,
   pickLookupLine,
+  advisorLeads,
   advisorVoice,
   ADVISOR_PERSONA,
   type TurnSignals,
@@ -552,6 +553,10 @@ export async function streamAssistantTurn(input: {
   });
   const turns = fitHistory(estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools)), allTurns, budget.promptTokens);
   const recentLines = voice === "canned" ? await recentAdvisorLines(input.conversationId) : null;
+  // One canned line per turn, leading (at the first lookup) or closing (under
+  // the answer) — a coin flip, so neither becomes a formula. A turn that runs
+  // no lookup can only close.
+  const leadWithLine = recentLines ? advisorLeads() : false;
   // The line shown when the first lookup starts; retracted on an outage.
   let preface: string | null = null;
   let prefaceOffered = false;
@@ -674,7 +679,7 @@ export async function streamAssistantTurn(input: {
         }
         // Outage turns get a line too (owner's call, 2026-10-09) — every
         // LOOKUP_LINES entry is about the person, never the devices.
-        if (recentLines && !prefaceOffered) {
+        if (recentLines && leadWithLine && !prefaceOffered) {
           preface = pickLookupLine(recentLines.prefaces);
           emit("preface", { text: preface });
         }
@@ -725,9 +730,10 @@ export async function streamAssistantTurn(input: {
   }
 
   // The Efficiency Advisor sign-off (rule 95(h)): picked here, never written
-  // by the model; none after an outage, an error or a Stop.
+  // by the model; none after an error or a Stop, and none when this turn's
+  // line already led (the before-lookup line) — one line per turn.
   let signOff: string | null = null;
-  if (recentLines && (answer.trim() || reports.length)) {
+  if (recentLines && !preface && (answer.trim() || reports.length)) {
     signals.failed = stopped || failure !== null;
     signOff = pickSignOff(signals, recentLines.signOffs);
     if (signOff) emit("signoff", { text: signOff });

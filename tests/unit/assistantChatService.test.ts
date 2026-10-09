@@ -65,7 +65,7 @@ vi.mock("../../src/services/assistantConversationService.js", () => ({
   recentAdvisorLines: h.recentAdvisorLines,
 }));
 
-import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, advisorVoice } from "../../src/services/efficiencyAdvisorService.js";
+import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, advisorVoice, _setAdvisorPlacementRand } from "../../src/services/efficiencyAdvisorService.js";
 import {
   streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, asksForReport, reportTitleFromQuestion, asksHowTo, sanitizeAnswerLinks,
   contextBudget, fitHistory, compactToolResults, permissionsPromptBlock, scopePromptBlock,
@@ -526,6 +526,10 @@ describe("streamAssistantTurn — Efficiency Advisor (rule 95(h))", () => {
     h.runAssistantTool.mockResolvedValueOnce({ ok: true, data });
   };
 
+  // One canned line per turn, leading or closing on a coin flip: pin the coin
+  // to CLOSE here, and to LEAD in the tests about the before-lookup line.
+  beforeEach(() => _setAdvisorPlacementRand(() => 0.9));
+
   it("adds nothing when the user has it off", async () => {
     h.chatCompletionRound.mockImplementationOnce(answerWith("Hello."));
     const { p, events } = run({ content: "hi" });
@@ -547,7 +551,8 @@ describe("streamAssistantTurn — Efficiency Advisor (rule 95(h))", () => {
     expect(saved.signOff).toBe(line);
   });
 
-  it("shows a before-lookup line as the first lookup starts, before the tool chip, and stores it", async () => {
+  it("shows a before-lookup line as the first lookup starts, before the tool chip, and stores it — and then no sign-off", async () => {
+    _setAdvisorPlacementRand(() => 0.1);
     h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
     h.beginTurn.mockResolvedValueOnce({ question: "how many networks do we have?" });
     lookupThen({ total: 42, rows: [] }, "You have 42 networks.");
@@ -557,7 +562,19 @@ describe("streamAssistantTurn — Efficiency Advisor (rule 95(h))", () => {
     expect(names.indexOf("preface")).toBeLessThan(names.indexOf("tool"));
     const line = events.find((e) => e[0] === "preface")?.[1].text;
     expect(LOOKUP_LINES).toContain(line);
-    expect(h.finishTurn.mock.calls[0][1].preface).toBe(line);
+    expect(events.some((e) => e[0] === "signoff")).toBe(false);
+    expect(h.finishTurn.mock.calls[0][1]).toMatchObject({ preface: line, signOff: null });
+  });
+
+  it("a turn with no lookup closes even when the coin said lead — the only place a line can go", async () => {
+    _setAdvisorPlacementRand(() => 0.1);
+    h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
+    h.beginTurn.mockResolvedValueOnce({ question: "thanks!" });
+    h.chatCompletionRound.mockImplementationOnce(answerWith("You're welcome."));
+    const { p, events } = run();
+    await p;
+    expect(events.some((e) => e[0] === "preface")).toBe(false);
+    expect(SIGN_OFFS.funDetected).toContain(events.find((e) => e[0] === "signoff")?.[1].text);
   });
 
   it("no before-lookup line on a turn with no lookup", async () => {
@@ -569,7 +586,8 @@ describe("streamAssistantTurn — Efficiency Advisor (rule 95(h))", () => {
     expect(h.finishTurn.mock.calls[0][1].preface).toBeNull();
   });
 
-  it("on an outage keeps the before-lookup line and signs off with a let-down line (owner's call)", async () => {
+  it("on an outage the before-lookup line leads when the coin says so (owner's call)", async () => {
+    _setAdvisorPlacementRand(() => 0.1);
     h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
     h.beginTurn.mockResolvedValueOnce({ question: "anything alerting?" });
     lookupThen({ total: 1, rows: [{ severity: "critical", assetHostname: "NSH-FW01" }] }, "NSH-FW01 has a critical alert.");
@@ -578,18 +596,17 @@ describe("streamAssistantTurn — Efficiency Advisor (rule 95(h))", () => {
     const prefaces = events.filter((e) => e[0] === "preface").map((e) => e[1].text);
     expect(prefaces).toHaveLength(1);
     expect(LOOKUP_LINES).toContain(prefaces[0]);
-    const signOff = events.find((e) => e[0] === "signoff")?.[1].text;
-    expect(SIGN_OFFS.letDown).toContain(signOff);
-    expect(h.finishTurn.mock.calls[0][1]).toMatchObject({ preface: prefaces[0], signOff });
+    expect(events.some((e) => e[0] === "signoff")).toBe(false);
+    expect(h.finishTurn.mock.calls[0][1]).toMatchObject({ preface: prefaces[0], signOff: null });
   });
 
-  it("an outage question gets the lines too", async () => {
+  it("an outage question closes with a let-down line when the coin says close", async () => {
     h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
     h.beginTurn.mockResolvedValueOnce({ question: "why is NSH-FW01 down?" });
     lookupThen({ total: 0, rows: [] }, "No such device.");
     const { p, events } = run();
     await p;
-    expect(events.some((e) => e[0] === "preface")).toBe(true);
+    expect(events.some((e) => e[0] === "preface")).toBe(false);
     expect(SIGN_OFFS.letDown).toContain(events.find((e) => e[0] === "signoff")?.[1].text);
   });
 

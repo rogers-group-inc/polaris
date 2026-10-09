@@ -233,6 +233,14 @@ answers with the facts intact rather than isolated quips — which is what teach
 live around the facts instead of after them. It also tells the character never to excuse a thin
 search, so the persona and the check-yourself rule pull the same way.
 
+Then the owner asked for the remark to come FIRST — "asking for my help is the right move,
+otherwise you may be here all day" — and, on reflection, to be placed by context: an opening
+when it frames the request, a close when the result itself invites a verdict, one placement per
+answer and never both ends, varied so it is not a formula. The persona says exactly that. The
+canned voice on local models follows the same shape in code: `advisorLeads()` flips a coin per
+turn between the before-lookup line and the sign-off, so a turn carries one line, not two; a turn
+with no lookup can only close.
+
 What stays true: the persona text repeats the rules that kept (h) safe — facts come only
   from lookups, every step and figure stays exact and complete — and every code-side guard
   (report rows from the database, tables held after a report, link checking) is unchanged.
