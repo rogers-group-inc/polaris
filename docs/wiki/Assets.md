@@ -157,8 +157,8 @@ A selection past the 500-id cap is refused **with the count**, rather than
 ## The asset slide-over
 
 Click a row. Tabs, in order, each shown only where it applies: **General ·
-System · Wireless · SD-WAN · Paths · MAC Table · ARP Table · Services · Software ·
-Quarantine · Events · Alerts · Custom MIB · SNMP Walk · Sources**. General,
+System · Wireless · SD-WAN · IPsec · Paths · MAC Table · ARP Table · Services ·
+Software · Quarantine · Events · Alerts · Custom MIB · SNMP Walk · Sources**. General,
 System and Sources are always there.
 
 Three are device-type specific: **Wireless** on a monitored access point, **MAC
@@ -167,6 +167,8 @@ Table** on a switch, **ARP Table** on a firewall.
 The rest are conditional:
 
 - **SD-WAN** — on a FortiGate that has reported SD-WAN data.
+- **IPsec** — on a FortiGate that has reported IPsec tunnels or connected
+  peers.
 - **Paths** — on a host that runs at least one [path check](Path-Monitor).
 - **Services** and **Software** — only when something is actually pulling
   that information in for this asset: **Services** when the Polaris Agent
@@ -222,12 +224,12 @@ Copying to the clipboard needs a browser clipboard permission, and on most
 browsers an **HTTPS** page (or `localhost`). On a plain-HTTP install the
 capture still runs but the copy is refused, and the toast says so.
 
-### Snapshot tabs: Wireless, MAC Table, ARP Table
+### Snapshot tabs: Wireless, MAC Table, ARP Table, IPsec
 
-These three are not charts. Each is a picture of what the device answered the
+These four are not charts. Each is a picture of what the device answered the
 last time Polaris asked — connected clients, a forwarding database, a neighbour
-cache — and every one of them empties out on its own between reads. So all
-three carry the same heading row:
+cache, the peers on its VPN tunnels — and every one of them changes on its own
+between reads. So all four carry the same heading row:
 
 - **How often it is re-read** (`every 10m`), resolved for *this* device, not a
   fleet-wide figure.
@@ -870,6 +872,50 @@ gets. The stated figure is always the one that actually applies to this device.
 
 A historical range adds a *Last seen* column; Current omits it because every row
 shares one instant.
+
+### IPsec (FortiGate firewalls)
+
+The gate's IPsec tunnels and **who is connected through them**. Headed by the
+cadence · freshness · **Refresh** row described above, and the same snapshot
+disclaimer: ADVPN shortcuts form on demand and tear down when idle, and remote
+users come and go, so a peer missing here may simply not have been connected
+when the gate was last read.
+
+**Tunnels & peers** lists every configured phase-1 tunnel — site-to-site
+tunnels and dial-up templates — with its status, remote gateway, the interface
+it rides and its byte counters. Under each tunnel, marked with the tree line,
+are the peers connected through it:
+
+- On an **ADVPN hub**, each spoke dialled into the hub's template, shown as
+  **ADVPN spoke**. A dial-up template's status reads **dynamic** (it is
+  working as configured whether or not anyone is on it) and its second line
+  says how many peers are connected.
+- On an **ADVPN spoke**, each on-demand shortcut to another spoke, shown as
+  **ADVPN shortcut**. A quiet spoke has none, which is normal.
+- A site dialled into a dial-up template that is not ADVPN shows as **Dial-up
+  peer**.
+
+Each peer row carries its **remote gateway** (the peer's public / underlay
+address), its **tunnel IP** (its overlay or assigned address), how long it
+has been **up**, and its traffic. The **Device** column links to the peer's
+own asset when Polaris knows an asset at either address; otherwise it shows
+the IKE identity the peer presented, which is usually its own name.
+
+**Remote access** lists FortiClient users: those on an IPsec dial-up tunnel
+(one using XAuth or EAP, or built by the FortiClient wizard) and, on firmware
+that still offers it, those on SSL-VPN. Each row shows the user, the
+connection type, the tunnel, the address they connected from, the address
+they were assigned, how long they have been connected, and their traffic.
+Once there are more than a handful, a filter box searches by user, address or
+tunnel.
+
+The tab works the same for a gate managed through FortiManager and a
+standalone FortiGate integration. It needs the gate to be monitored with
+FortiOS REST API access — the IPsec read runs over the REST API even when the
+gate's interfaces are polled over SNMP — and it is refreshed on the gate's
+system-info cadence. The REST credential needs read access to VPN monitoring;
+SSL-VPN sessions are read separately, so a credential that can see one and not
+the other still fills in the half it can see.
 
 ### SD-WAN (FortiGate firewalls)
 

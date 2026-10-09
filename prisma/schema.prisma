@@ -1243,6 +1243,7 @@ model Asset {
   // MCLAG ICL peers (when this asset is a FortiSwitch in an MCLAG pair) and
   // the back-link for the switch on the far end of each ICL leg.
   mclagPeers             AssetMclagPeer[]         @relation("AssetMclagPeers")
+  ipsecConnections       AssetIpsecConnection[]   @relation("AssetIpsecConnections")
   physicalEntities       AssetPhysicalEntity[]    @relation("AssetPhysicalEntities")
   // Current-state interface inventory (one row per ifName), delete-replaced per
   // full system-info scrape. The pinned-only time-series lives in
@@ -2343,6 +2344,41 @@ model AssetMclagPeer {
   @@index([peerSn])
   @@index([matchedAssetId])
   @@map("asset_mclag_peers")
+}
+
+// Who is connected through a FortiGate's IPsec / SSL-VPN right now: a hub's
+// ADVPN spokes and dial-up peers, a spoke's on-demand ADVPN shortcuts,
+// FortiClient remote-access users. CURRENT-STATE — the full system-info pass
+// delete-replaces it (the IPsec half and the SSL-VPN half independently,
+// each only when its own read answered). The phase-1 tunnels themselves stay
+// in asset_ipsec_tunnel_samples; these rows are the dynamic children
+// FortiOS hangs under them, which come and go with peers and traffic and are
+// never pinned or sampled. The remote peer is resolved to an Asset at READ
+// time (remoteGateway / tunnelIp → resolveIpsToAssets), not stored.
+model AssetIpsecConnection {
+  id      String @id @default(uuid())
+  assetId String
+  asset   Asset  @relation("AssetIpsecConnections", fields: [assetId], references: [id], onDelete: Cascade)
+  // FortiOS child name ("Overlay-1_0"), or "ssl:<index>" for an SSL-VPN session.
+  name String
+  // advpn-spoke | advpn-shortcut | dialup-peer | remote-access | ssl-vpn
+  kind          String
+  parentTunnel  String? // the configured phase-1 it hangs off; null for SSL-VPN
+  peerId        String? // the peer's IKE identity (its localid)
+  userName      String? // xauth / EAP / SSL-VPN user
+  remoteGateway String? // the peer's underlay / public address
+  tunnelIp      String? // the peer's overlay or assigned address
+  status        String // up | down | partial
+  incomingBytes BigInt?
+  outgoingBytes BigInt?
+  connectedSince DateTime? // scrape time minus the uptime the gate reported
+
+  firstSeen DateTime @default(now())
+  lastSeen  DateTime @default(now())
+
+  @@unique([assetId, name])
+  @@index([assetId])
+  @@map("asset_ipsec_connections")
 }
 
 // Field-replaceable hardware inventory from ENTITY-MIB (RFC 4133)
