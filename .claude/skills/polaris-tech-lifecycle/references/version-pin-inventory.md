@@ -93,7 +93,7 @@ Currently **17** across 18 checked sites. Moved from 15 on 2026-09-09.
 | `deploy/ha/setup-rhel-ha.sh` | `PG_MAJOR=17` — the Patroni node's server packages, `PG_BIN`, `PGDATA` and the TimescaleDB package | pin |
 | `deploy/dropins/20-postgres.conf.example` | `After=` / `Requires=postgresql-17.service` — the reference copy of the per-host drop-in | pin |
 | `compose.dev.yml` | `timescale/timescaledb:latest-pg17` | pin (floating patch) |
-| `.github/workflows/docker-publish.yml` | `image: postgres:17-alpine` service container | pin |
+| `.github/workflows/docker-publish.yml` | `image: public.ecr.aws/docker/library/postgres:17-alpine` service container — the official image through AWS's Docker Hub mirror, because unauthenticated Docker Hub pulls from shared runner IPs hit the rate limit (2026-10-09) | pin |
 | `.github/workflows/docker-publish.yml` | `postgresql-client-17` in the `integration` job. The CI **client**, and it has to agree with the service image directly above it: the job dumps that container, and pg_dump refuses a server newer than itself (rule 47). Registered 2026-09-10 — the service image had moved to 17 while the job went on using the runner's own 16, so every backup test failed and the image build was skipped for 200 commits | pin |
 | `Dockerfile`, `Dockerfile.dev` | `postgresql-client-17` — named, and checked. Was the unversioned `postgresql-client`, i.e. whatever the base image shipped | pin |
 | `docs/INSTALL.md` | `timescaledb-2-postgresql-17`, `/usr/pgsql-17/bin/`, `postgresql17-server` | pin |
