@@ -217,8 +217,10 @@ one or the other, and the owner saw "zero personality". On 2026-10-09 they chose
 character on through outages, under one rule written into `ADVISOR_PERSONA`: **never a joke
 about the devices, the outage or its impact.** Those facts are stated plainly. The character
 is aimed at the person instead: the company let down on their watch, the outage noted in their
-performance file. The code-side switch-off is gone; the canned voice of (h), on local models,
-still goes silent on an outage.
+performance file. The code-side switch-off is gone. The same day the owner asked for the canned
+voice of (h), on local models, to match: it no longer goes silent on an outage, keeps its
+before-lookup line, and signs off from a `letDown` category whose lines blame the person
+("Uptime was the one thing we asked of you.") and never mention a device.
 
 What stays true: the persona text repeats the rules that kept (h) safe — facts come only
   from lookups, every step and figure stays exact and complete — and every code-side guard

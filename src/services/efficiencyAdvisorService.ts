@@ -25,10 +25,10 @@
  * character without losing the task — the model itself speaks in the
  * persona (ADVISOR_PERSONA, added to the system prompt) and no canned line is
  * shown. Either way only a user who ticked Efficiency Advisor gets a voice.
- * The canned voice is silent on an outage (pickCategory); the model's stays
- * in character through one (owner's call, 2026-10-09) under ADVISOR_PERSONA's
+ * Both voices speak through an outage (owner's call, 2026-10-09) under one
  * rule: never a joke about the devices or the outage, only at the person's
- * expense — the company let down on their watch.
+ * expense — the company let down on their watch. The model gets it in
+ * ADVISOR_PERSONA; the canned voice picks the `letDown` lines.
  */
 
 export type SignOffCategory =
@@ -37,7 +37,8 @@ export type SignOffCategory =
   | "funDetected"
   | "helpAnswered"
   | "pepTalk"
-  | "attitude";
+  | "attitude"
+  | "letDown";
 
 /**
  * The lines, by category. `{topic}` is filled with what the turn looked up
@@ -104,11 +105,22 @@ export const SIGN_OFFS: Readonly<Record<SignOffCategory, readonly string[]>> = {
     "Your tone has been logged. Your tone has been found wanting.",
     "Escalation path: you, then you again, after reflecting on your attitude.",
   ],
+  // Something is down or critical (owner's call, 2026-10-09): the joke is on
+  // the PERSON — the company let down on their watch — never on the devices,
+  // the outage or its impact. New lines; owner to review like the rest.
+  letDown: [
+    "The company had high hopes for today. This outage has been noted in your file.",
+    "An outage on your watch. Management has been informed. Management is disappointed.",
+    "Everyone is counting on you to fix this. No pressure. Some pressure.",
+    "This incident will feature prominently in your next performance review.",
+    "Somewhere, a stakeholder is sighing. That sigh is about you.",
+    "Uptime was the one thing we asked of you.",
+  ],
 };
 
 /**
  * The line shown when a turn's first lookup starts, above the lookup chips.
- * Retracted if the lookups then show an outage.
+ * Shown on outage turns too (2026-10-09): every line is about the person.
  */
 export const LOOKUP_LINES: readonly string[] = [
   "Use of these products invalidates any warranty. Function not guaranteed.",
@@ -229,7 +241,8 @@ const COMPLAINING = /\b(useless|stupid|dumb|annoying|terrible|hate|not helpful|w
 
 /** Which kind of line fits this turn — or none at all. Exported for tests. */
 export function pickCategory(s: TurnSignals): SignOffCategory | null {
-  if (s.outage || s.failed) return null;
+  if (s.failed) return null;
+  if (s.outage) return "letDown";
   if (s.denied) return "attitude";
   if (FRUSTRATED.test(s.question)) return "pepTalk";
   if (COMPLAINING.test(s.question)) return "attitude";

@@ -525,8 +525,7 @@ export async function streamAssistantTurn(input: {
   // The model's character stays on through outages too (owner's call,
   // 2026-10-09): ADVISOR_PERSONA forbids joking about the devices or the
   // outage and aims the character at the person instead. The canned voice
-  // (local models) still goes silent on an outage — that guard lives in
-  // pickCategory / the preface withdrawal below.
+  // (local models) does the same with its `letDown` lines (pickCategory).
   const personaActive = voice === "model";
   const systemPrompt = buildSystemPrompt({
     username: input.username,
@@ -661,7 +660,9 @@ export async function streamAssistantTurn(input: {
           messages.push({ role: "tool", tool_call_id: tc.id, content: clipJson(result.data, budget.toolResultChars) });
           continue;
         }
-        if (recentLines && !prefaceOffered && !signals.outage) {
+        // Outage turns get a line too (owner's call, 2026-10-09) — every
+        // LOOKUP_LINES entry is about the person, never the devices.
+        if (recentLines && !prefaceOffered) {
           preface = pickLookupLine(recentLines.prefaces);
           emit("preface", { text: preface });
         }
@@ -674,10 +675,6 @@ export async function streamAssistantTurn(input: {
         messages.push({ role: "tool", tool_call_id: tc.id, content });
         if (result.ok && REPORT_SOURCES.has(name)) lastListCall = { name, args: tc.function.arguments };
         noteLookup(signals, name, result, content);
-        if (preface && signals.outage) {
-          preface = null;
-          emit("preface", { text: null });
-        }
       }
     }
 
