@@ -169,7 +169,10 @@ const searchTool: ToolDef = {
   label: "searched Polaris",
   description:
     "Global search across assets, networks, IP blocks, reservations and sites by name, IP, " +
-    "MAC or hostname. Good first step when the user names a device or address.",
+    "MAC or hostname. Good first step when the user names a device or address. For an address, each asset hit " +
+    "says why it matched: matchedOn \"ipAddress\" (its current primary IP) or \"ipHistory\" with heldThisAddress " +
+    "(a WAN, secondary or former address the device held, and when it was last seen there) — such a device IS " +
+    "a hit for that address.",
   parameters: {
     type: "object",
     properties: { query: { type: "string", description: "Hostname, IP, MAC, CIDR or name fragment" } },
@@ -190,6 +193,30 @@ const searchTool: ToolDef = {
     const trimmed: Record<string, unknown> = {};
     for (const [group, hits] of Object.entries(results as unknown as Record<string, unknown>)) {
       if (Array.isArray(hits)) trimmed[group] = hits.slice(0, cap);
+    }
+    // An address query: say WHY each asset matched. searchAll also finds a
+    // device by an address in its IP history (a WAN / secondary / rotated-off
+    // address) and returns the device with its CURRENT primary IP — which a
+    // model read as a text coincidence and dismissed (seen live 2026-10-09,
+    // a FortiGate that held 153.66.102.165 "not recorded in Polaris").
+    const ipv4 = /\b(?:\d{1,3}\.){3}\d{1,3}\b/.exec(p.data.query)?.[0];
+    const assets = trimmed.assets as Array<Record<string, unknown>> | undefined;
+    if (ipv4 && assets?.length) {
+      const ids = assets.map((a) => a.id).filter((id): id is string => typeof id === "string");
+      const held = ids.length
+        ? await prisma.assetIpHistory.findMany({
+          where: { ip: ipv4, assetId: { in: ids } },
+          select: { assetId: true, ip: true, source: true, firstSeen: true, lastSeen: true },
+        })
+        : [];
+      const byAsset = new Map(held.map((h) => [h.assetId, h]));
+      trimmed.assets = assets.map((a) => {
+        if (a.ipAddress === ipv4) return { ...a, matchedOn: "ipAddress" };
+        const h = byAsset.get(String(a.id));
+        if (!h) return a;
+        const { assetId: _assetId, ...rest } = h;
+        return { ...a, matchedOn: "ipHistory", heldThisAddress: plain(rest) };
+      });
     }
     return { ok: true, data: trimmed };
   },
@@ -383,7 +410,8 @@ const getAssetTool: ToolDef = {
   label: "opened an asset",
   description:
     "Full detail for ONE asset by id, exact hostname or IP: identity, monitoring state, the upstream device " +
-    "it hangs off, its active alerts and its most recent monitor status changes. Use to investigate a device.",
+    "it hangs off, its active alerts, its most recent monitor status changes, and ipHistory — every address it " +
+    "has held (primary, secondary, WAN) with first/last seen. Use to investigate a device.",
   parameters: {
     type: "object",
     properties: {
@@ -407,11 +435,20 @@ const getAssetTool: ToolDef = {
         dnsName: true, description: true, assetTag: true, createdAt: true,
         lastMonitorAt: true, dependencySuppressed: true, maintenanceReturnStatus: true,
         discoveredByIntegration: { select: { name: true, type: true } },
+        // Every address the device has held (primary, secondary, WAN) — the
+        // Sources tab's IP History. A question about an address the device no
+        // longer shows as its IP is answered from here.
+        ipHistory: { select: { ip: true, source: true, firstSeen: true, lastSeen: true }, orderBy: { lastSeen: "desc" }, take: 30 },
       },
     });
     if (!asset) return { ok: true, data: { found: false } };
-    const { discoveredByIntegration, ...rest } = asset;
-    const out: Record<string, unknown> = { found: true, ...plain(rest), discoveredBy: discoveredByIntegration?.name ?? null };
+    const { discoveredByIntegration, ipHistory, ...rest } = asset;
+    const out: Record<string, unknown> = {
+      found: true,
+      ...plain(rest),
+      discoveredBy: discoveredByIntegration?.name ?? null,
+      ipHistory: (ipHistory ?? []).map((h) => plain(h)),
+    };
 
     const tasks: Promise<void>[] = [];
     if (hasPermission(ctx.req, "alerts", "read")) {

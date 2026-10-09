@@ -525,6 +525,16 @@
       }
     });
     body.querySelector("#chat-log").addEventListener("click", function (e) {
+      // An asset-details link in an answer (the desktop's slide-over deep
+      // link, /assets.html#view=asset:<id>) opens the phone's own asset
+      // screen instead of loading the desktop page.
+      var a = e.target.closest && e.target.closest('a[href^="/assets.html#view=asset:"]');
+      if (a) {
+        e.preventDefault();
+        var m = /#view=asset:([^&]+)/.exec(a.getAttribute("href") || "");
+        if (m && window.PolarisRouter) PolarisRouter.go("asset/" + decodeURIComponent(m[1]));
+        return;
+      }
       var d = e.target.closest("[data-dl]");
       if (!d) return;
       var msg = S.messages[+d.getAttribute("data-m")];

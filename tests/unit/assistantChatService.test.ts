@@ -791,3 +791,35 @@ describe("scopePromptBlock — \"my region\" means something", () => {
     expect(scopePromptBlock(null)).toBeNull();
   });
 });
+
+describe("asset links in an answer", () => {
+  const pages = new Set<string>();
+  it("keeps an asset link whose id a lookup returned this turn, and strips one that did not", () => {
+    const ids = new Set(["11111111-1111-4111-8111-111111111111"]);
+    const ok = "[sw-1](/assets.html#view=asset:11111111-1111-4111-8111-111111111111)";
+    const bad = "[sw-9](/assets.html#view=asset:99999999-9999-4999-8999-999999999999)";
+    expect(sanitizeAnswerLinks(`${ok} and ${bad}`, pages, ids)).toBe(`${ok} and sw-9`);
+    expect(sanitizeAnswerLinks(`${bad}`, pages, new Set())).toBe("sw-9");
+    // Other same-origin paths are untouched.
+    expect(sanitizeAnswerLinks("[Assets](/assets.html)", pages, ids)).toBe("[Assets](/assets.html)");
+  });
+
+  it("the prompt asks for the link and for honouring an IP-history hit", () => {
+    const p = buildSystemPrompt({});
+    expect(p).toContain("[hostname](/assets.html#view=asset:ID)");
+    expect(p).toMatch(/never a guessed or\s+remembered id/);
+    expect(p).toMatch(/Never dismiss such a hit as a text match/);
+  });
+
+  it("a turn strips an asset link the lookups never returned and keeps one they did", async () => {
+    h.beginTurn.mockResolvedValueOnce({ question: "which switches are down?" });
+    const seen = "22222222-2222-4222-8222-222222222222";
+    const answer = `[sw-2](/assets.html#view=asset:${seen}) and [sw-x](/assets.html#view=asset:33333333-3333-4333-8333-333333333333) are down.`;
+    h.chatCompletionRound
+      .mockImplementationOnce(async () => ({ content: "", toolCalls: [{ id: "t1", type: "function", function: { name: "list_assets", arguments: "{}" } }], finishReason: "tool_calls" }))
+      .mockImplementationOnce(async (_c: any, _m: any, _t: any, o: any) => { o.onText(answer); return { content: answer, toolCalls: [], finishReason: "stop" }; });
+    h.runAssistantTool.mockResolvedValueOnce({ ok: true, data: { total: 1, rows: [{ id: seen, hostname: "sw-2" }] } });
+    await run().p;
+    expect(h.finishTurn.mock.calls[0][1].content).toBe(`[sw-2](/assets.html#view=asset:${seen}) and sw-x are down.`);
+  });
+});

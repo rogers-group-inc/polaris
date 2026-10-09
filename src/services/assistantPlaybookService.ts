@@ -22,7 +22,7 @@
  */
 
 export interface AssistantPlaybook {
-  id: "correlate" | "changed" | "health" | "capacity";
+  id: "correlate" | "changed" | "health" | "capacity" | "address";
   /** Shown in the audit Event and tests. */
   label: string;
   match: RegExp;
@@ -101,6 +101,25 @@ export const PLAYBOOKS: readonly AssistantPlaybook[] = [
         "month are the first space to reclaim.",
       "4. Answer with the worst networks first, each with its numbers; then the reclaimable space. More than " +
         "about 15 rows → offer a report instead of a long table. " + SEPARATE,
+    ].join("\n"),
+  },
+  {
+    id: "address",
+    label: "address lookup",
+    // An IPv4 literal plus a lookup verb. Last, so "why is 10.1.1.5 down" and
+    // "is 10.1.1.5 ok" keep their own playbooks.
+    match: /(?=.*\b(?:\d{1,3}\.){3}\d{1,3}\b)(?=.*\b(look ?up|whose|who (has|owns|uses|is using)|where is|which (device|asset|host)|what (is|device|asset|has)|find|identify|belongs?|anything (on|about|for))\b)/i,
+    firstRoundTools: ["search", "get_asset", "list_reservations"],
+    guidance: [
+      "Playbook — address lookup. Follow these steps in order:",
+      "1. search the exact address. Read matchedOn on each asset hit: \"ipAddress\" means it is the device's " +
+        "current primary IP; \"ipHistory\" with heldThisAddress means the device held that address (WAN, " +
+        "secondary or former) — it IS a hit, not a text coincidence.",
+      "2. get_asset on each hit (by id) for its ipHistory and current state, so you can say when the address " +
+        "was first and last seen on it and what the device's primary IP is now.",
+      "3. list_reservations with search set to the address, for a reservation or lease that names it.",
+      "4. Answer: which device holds the address now (if any), which held it before and when, and any " +
+        "reservation — each device linked to its details. If nothing holds it, say what you checked. " + SEPARATE,
     ].join("\n"),
   },
 ];

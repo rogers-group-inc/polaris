@@ -26,6 +26,11 @@ describe("pickPlaybook", () => {
     ["networks over 80%", "capacity"],
     ["are we running out of addresses in Nashville", "capacity"],
     ["utilization of the guest vlan", "capacity"],
+    ["look up ip 153.66.102.165", "address"],
+    ["whose address is 10.10.3.178?", "address"],
+    ["what is 172.22.63.254", "address"],
+    ["why is 10.10.3.178 down?", "correlate"],
+    ["is 10.10.3.178 ok?", "health"],
   ])("%s → %s", (q, id) => {
     expect(pickPlaybook(q)?.id).toBe(id);
   });
