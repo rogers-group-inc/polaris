@@ -1574,6 +1574,13 @@ and an API token for the model server's own use; the chat itself never uses that
 token. "Allow loopback" lets the model server be on the Polaris host itself, and
 allows nothing else that is normally blocked.
 
+**Memory (95(i)).** The assistant can keep a few short notes about you between
+conversations. It saves only what you typed in that same message — never
+something it looked up — and removes a note only when you ask. Addresses,
+links, passwords, keys and tokens are refused whoever tries to save them. Your
+notes are visible only to you, capped at 25, and the event log records that
+they changed, never what they say.
+
 See [AI Assistant](AI-Assistant).
 
 ### Rule 96
