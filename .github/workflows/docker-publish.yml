@@ -56,7 +56,11 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17-alpine
+        # The official Docker Hub image, pulled through AWS's public mirror of
+        # Docker Hub's library. Hosted runners share egress IPs, so an
+        # unauthenticated Docker Hub pull hits its rate limit often enough to
+        # fail this job (and skip the image build) for hours at a time.
+        image: public.ecr.aws/docker/library/postgres:17-alpine
         env:
           POSTGRES_USER: polaris
           POSTGRES_PASSWORD: polaris
