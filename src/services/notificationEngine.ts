@@ -2412,6 +2412,11 @@ function renderMessage(
   if (reading.dependencyDown && ctx["dependency.summary"]) {
     return `${rule.name}: ${ctx["dependency.summary"]}`;
   }
+  // Per-core CPU (business rule 89): the label already prints each hot core
+  // with its own reading, so "cpuCorePct = 6.6" would repeat one of them.
+  if (reading.dimLabel && rule.trigger.type === "asset_metric" && rule.trigger.metric === "cpuCorePct") {
+    return `${rule.name}: ${ctx["asset"]}${dim} (threshold ${ctx["threshold"]})`;
+  }
   return `${rule.name}: ${ctx["asset"]}${dim} — ${ctx["metric"]} = ${ctx["value"]} (threshold ${ctx["threshold"]})`;
 }
 
