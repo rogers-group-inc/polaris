@@ -25,7 +25,7 @@ import { prisma } from "../../src/db.js";
 import { authedAgent, dbDescribe, dbReachable, ensureTestUser } from "./_helpers.js";
 import { createToken } from "../../src/services/apiTokenService.js";
 import { createRole } from "../../src/services/roleService.js";
-import { SIGN_OFFS } from "../../src/services/efficiencyAdvisorService.js";
+import { SIGN_OFFS, _setAdvisorPlacementRand } from "../../src/services/efficiencyAdvisorService.js";
 
 const d = dbDescribe;
 const NAME = "IT llm assistant";
@@ -448,6 +448,7 @@ d("the assistant (rule 95(a), (c), (d))", () => {
     const { agent, csrf } = await authedAgent(app);
     try {
       expect((await agent.get("/api/v1/assistant/status")).body.efficiencyAdvisor).toBe(false);
+      _setAdvisorPlacementRand(() => 0.9); // pin the canned line to CLOSE, so the sign-off is what this test reads
       const put = await agent.put("/api/v1/assistant/preferences").set("X-CSRF-Token", csrf).send({ efficiencyAdvisor: true });
       expect(put.body).toMatchObject({ efficiencyAdvisor: true });
       expect((await agent.get("/api/v1/assistant/status")).body.efficiencyAdvisor).toBe(true);
