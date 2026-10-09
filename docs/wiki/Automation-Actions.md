@@ -27,10 +27,21 @@ would show it for one of the devices you selected — Polaris picks one at
 random. Pick another from the drop-down beside it, or press **Random**. The
 example follows your typing, and uses the device's current reading as
 `{value}` (it shows `n/a` when the device has no reading for the trigger).
-Hover over a chip under **Insert variable…** to see what that variable would
-be for the example device. Variables marked "Filled in when the alert is
-sent" — the acknowledge link, charts, recipients — only exist once a real
-alert is delivered.
+**Insert variable…** opens the list of variables. Each row gives the
+variable's name, what it means, and what it says for the example device.
+Rows are grouped by subject: Alert, Component, Device, Charts &
+diagnostics, Interface, Audit event, Dependency down, Time & links,
+Automation, Reminders & escalation, and Email furniture. Type in the search
+box to filter. Click a row to insert the variable at the cursor of the
+template field you last clicked in, or the field below the list if you
+haven't clicked one.
+
+Variables your trigger can never fill sit in a collapsed **Not used by this
+trigger** section. Examples are the audit-event variables on a CPU trigger,
+or the interface facts on a storage trigger. Rows marked "Filled in when the
+email is sent" (the acknowledge link, charts, recipients) only exist once a
+real alert is delivered. Rows marked "Only on reminders" or "Only on
+escalation emails" are blank on the first send.
 
 > The **audit Event** is separate and *is* removable — a "Create an Event"
 > action row, present by default, with no config. It is a no-op on event and
@@ -304,17 +315,25 @@ Available in the message template, the email subject and body, the `api_call`
 body, and a script's args:
 
 **The alert**
-`{asset}` `{metric}` `{value}` `{threshold}` `{dimension}` `{dimension.label}`
+`{asset}` `{metric}` `{value}` `{threshold}` `{metric.label}` `{value.display}`
+`{threshold.display}` `{dimension}` `{dimension.label}`
 `{dimension.suffix}` `{dimension.count}` `{dimension.first}` `{dimension.list}`
 `{conditions}` `{message}` `{severity}` `{severity.upper}` `{severity.color}`
 `{time}` `{time.local}` `{time.zone}` `{link}` `{ack}`
+
+`{metric}`, `{value}` and `{threshold}` are the raw stored values (`cpuPct`,
+`97.24`, `90`). Their readable versions are `{metric.label}` ("CPU
+utilization"), `{value.display}` ("97.2 %") and `{threshold.display}` ("above
+90 %", or "is down" for a state trigger), so
+`{metric.label} is {value.display}, {threshold.display}` reads as a sentence.
 
 `{ack}` is the alert's acknowledge-page link — the same for every recipient,
 empty when `POLARIS_PUBLIC_URL` is unset. `{dimension.list}` is every affected
 component, uncapped, for a body rather than a subject line.
 
 `{dimension}` is the part of the device the alert is about — the port, the
-sensor, the mount, the tunnel. `{dimension.label}` is what that part is CALLED
+sensor, the mount, the tunnel. On a **CPU core utilization** trigger it is the
+hot cores, each with its own reading: `Core 3 (97%), Core 7 (93%)`. `{dimension.label}` is what that part is CALLED
 ("Interface", "Sensor", "IPsec tunnel"), so a template can label it rather than
 printing a bare port name, and `{dimension.suffix}` is the same value carrying
 its own separator (" · port12") for appending to a subject line. All three are
@@ -358,7 +377,9 @@ the subject fragment away when they are.
 `{push.recipients}` `{email.recipients}`
 
 **Charts and blocks** — each renders away on an alert it does not fit
-`{chart.responseTime}` `{chart.cpu}` `{chart.memory}` `{chart.storage}`
+`{chart.trigger}` (the chart of whatever fired — the CPU chart on a CPU
+alert, the storage chart on a storage alert)
+`{chart.responseTime}` `{chart.probeLoss}` `{chart.cpu}` `{chart.memory}` `{chart.storage}`
 `{chart.sensor}` `{chart.sdwanLatency}` `{chart.sdwanJitter}`
 `{chart.sdwanLoss}` `{processes.top}` `{interface.ip}` `{interface.lldp}`
 `{brand.header}` (the install's logo, name and subtitle — the default email's
@@ -369,7 +390,7 @@ letterhead)
 `{dependency.rootCause}` `{dependency.path}` (a diagram of the chain)
 `{dependency.tag}` (`" · DEPENDENCY DOWN"`, for a subject line)
 
-A token palette (**Insert variable…**) is visible in both view modes.
+The same variable list sits above the body in both view modes.
 
 > **One email, one To line, one clock.** Everyone a notify action names
 > receives the *same* message, with each other's addresses visible on it — an
