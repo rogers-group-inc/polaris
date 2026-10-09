@@ -281,7 +281,20 @@ unselected page tab).
   binds to the layer it follows and the other would scroll and tile. A sticky band pinned at the top of the page sits exactly where the
   glow is brightest, so `.page-top-sticky` (the wrapper that pins a page's header AND its tab
   strip together — Dashboard, /dash, Server Settings, Integrations; the header draws no rule of its own, the
-  tab strip's bottom border is the bar's one line) is UNFILLED — it never paints a box of its own. A 70% `--color-bg-secondary` tint was tried and rejected on 2026-10-04: it read as a
+  tab strip's bottom border is the bar's one line) is UNFILLED — it never paints a box of its own. It casts NO shadow
+  either: a bottom-only `box-shadow` on it was tried and dropped on 2026-10-08 — its blur still
+  outlined the bar as a faint box over the glow. Its CONTENTS carry the shadows instead: buttons,
+  search field and tabs already had theirs, the title takes `--shadow-title` (`--shadow-control`'s
+  two drop layers, so it lifts as far as the buttons beside it; text-shadow only), the username
+  and caret take `--shadow-text` (per family) and the avatar `--shadow-control` — on every `.page-header`, frozen
+  or not. `--shadow-text` is the general token for loose text and glyphs on the page ground
+  (`--shadow-control`'s counterpart for things with no box); the Application Map toolbar uses it on
+  its labels and status, and as `drop-shadow()` on its native checkboxes and icon-button svgs, and
+  gives its select `--shadow-control`. Never `filter:
+  drop-shadow()` on the bar or `.page-header` — that makes it the backdrop root of the frosted
+  "Dashboards ▾" menu and doubles the buttons' own shadows. (`.dashboard-tabs[hidden]` needs its own
+  `display: none`: the strip's `display: flex` beat `[hidden]`, so with one dashboard an empty strip
+  drew its bottom border as a stray rule under the bar.) A 70% `--color-bg-secondary` tint was tried and rejected on 2026-10-04: it read as a
   dark box sitting on the glow. Since 2026-10-06 content scrolling under it VANISHES behind a
   **curtain**, `html[data-page-top-curtain]::after`: a second copy of the page's own ground (body
   colour + the glow layer's gradients, `background-attachment: fixed`), so it is invisible where

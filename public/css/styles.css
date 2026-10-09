@@ -93,6 +93,16 @@
      --shadow-pill, and it carries a fainter inset rim because in the dark
      family the rim is what reads as raised. */
   --shadow-tab-idle: 0 2px 4px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.03);
+  /* Drop shadow for loose TEXT and glyphs resting on the page ground: the
+     page title, the username and caret, toolbar labels, bare icon buttons.
+     Fields and buttons take --shadow-control; this is its counterpart for
+     things with no box. Per FAMILY, like --shadow-pill. */
+  --shadow-text: 0 2px 4px rgba(0,0,0,.6);
+  /* The page title's: --shadow-control's two drop layers, so the title lifts
+     exactly as far as the buttons beside it. --shadow-text alone read as no
+     shadow at all on 1.35rem caps. Two layers, so text-shadow only — never
+     inside drop-shadow(), which takes one. */
+  --shadow-title: 0 3px 8px rgba(0,0,0,.85), 0 1px 3px rgba(0,0,0,.7);
   --shadow-md: 0 8px 32px rgba(0,0,0,.5);
   /* Drop shadow for a frosted panel that floats free of a screen edge — the
      modal. It paints --panel-glass-bg, only 70% opaque, so --shadow-md's
@@ -283,6 +293,8 @@
   --color-fill-subtle: rgba(0,0,0,0.05);
   --shadow-pill: 0 1px 2px rgba(60,40,10,.22);
   --shadow-tab-idle: 0 1px 3px rgba(60,40,10,.14);
+  --shadow-text: 0 1px 2px rgba(60,40,10,.22);
+  --shadow-title: 0 2px 5px rgba(60,40,10,.22), 0 1px 2px rgba(60,40,10,.16);
   --shadow-sm: 0 1px 4px rgba(0,0,0,.08);
   --shadow-md: 0 8px 32px rgba(0,0,0,.12);
   --shadow-panel: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.10);
@@ -1065,13 +1077,16 @@ code {
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
   border-right: 1px solid var(--color-border);
-  /* Cast RIGHT, onto the content area — the sidebar is full-height and the
-     leftmost element of .layout, so that is the only edge with anything to
-     separate from. Same one-sided idiom (and same hardcoded rgba, dark in
-     every theme) as the slide-over's; it lands above the content without a
-     z-index change because .sidebar is already z-index 100, and the
+  /* Cast RIGHT, onto the content area, and LEFT as the mirror image: past
+     --layout-max-width (a wide or ultrawide screen) .layout is centred and
+     there is open page to the rail's left too, where an unshadowed edge read
+     as the rail pasted flat on the ground. At the window's own left edge the
+     left cast simply falls off-screen. Same idiom (and same hardcoded rgba,
+     dark in every theme) as the slide-over's; it lands above the content
+     without a z-index change because .sidebar is already z-index 100, and the
      element's own overflow-y does not clip its own shadow. */
-  box-shadow: 8px 0 24px rgba(0,0,0,.22), 1px 0 4px rgba(0,0,0,.14);
+  box-shadow: 8px 0 24px rgba(0,0,0,.22), 1px 0 4px rgba(0,0,0,.14),
+              -8px 0 24px rgba(0,0,0,.22), -1px 0 4px rgba(0,0,0,.14);
   padding: 1.25rem 0;
   position: sticky;
   top: 0;
@@ -1758,6 +1773,18 @@ code {
   margin-top: -2rem;
   margin-bottom: 1.5rem;
 }
+/* The bar draws no shadow of its own: a box-shadow on it — even one cast
+   only from the bottom edge — outlined the bar as a faint box over the glow
+   (tried and dropped 2026-10-08). Its CONTENTS cast the shadows instead. The
+   buttons, search field and tabs already carry theirs; these are the parts
+   that had none — on EVERY page header, frozen or not, so the title and user
+   badge lift the same everywhere. Not a filter: drop-shadow() on the bar or
+   the header would make it the backdrop root of the frosted "Dashboards ▾"
+   menu (see ::before) and double the buttons' own shadows. */
+.page-header h2 { text-shadow: var(--shadow-title); }
+.user-badge-name { text-shadow: var(--shadow-text); }
+.user-badge-avatar { box-shadow: var(--shadow-control); }
+.user-badge-caret { filter: drop-shadow(var(--shadow-text)); }
 /* Inside the bar the header and the tab strip sit tight; the gap to the
    content below is the wrapper's margin. The header draws no rule of its own:
    the tab strip's bottom border is the bar's one line. */
@@ -3353,6 +3380,7 @@ th.fav-col, td.fav-col { width: 20px; min-width: 20px; text-align: center; paddi
   margin-right: -4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  text-shadow: var(--shadow-text);
 }
 /* The page-level search / filter fields. Scoped to .filter-bar rather than put
    on the shared `input, select, textarea` rule: that one dresses every field in
@@ -6005,6 +6033,10 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   overflow-y: hidden;
   scrollbar-width: thin;
 }
+/* display: flex above beats the UA's [hidden] rule, so with one dashboard the
+   empty strip still rendered: 7px of padding and a bottom border drawn as a
+   stray rule under the frozen header. */
+.dashboard-tabs[hidden] { display: none; }
 .dashboard-tab {
   display: inline-flex;
   align-items: center;
