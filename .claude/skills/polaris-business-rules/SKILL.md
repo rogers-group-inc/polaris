@@ -54,7 +54,7 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 | touch what an alert says about a device that is dependency-down, or who may alert about one | 16 and 37 (the silence), then 78 (the one opt-out from it) |
 | touch what an alert EMAIL says — the timezone a timestamp is drawn in, who is on the To line, whether one send may become two, the Acknowledge button | 25 first (it forbids splitting a send), then 56 and 60 |
 | touch a maintenance window, a hold Polaris takes for itself, or any surface that REPORTS one | 16 (what a window does), 37 (the gate that reads it), 80 + 80a (holds and event-time), 73 (reporting) |
-| touch discovery writes (assets, descriptions, locations, ARP, MACs) | 13, 14, 15, 17, 22, 26, 28, 35, 40, 41, 45, 53, 55, 79, 83 |
+| touch discovery writes (assets, descriptions, locations, ARP, MACs) | 13, 14, 15, 17, 22, 26, 28, 35, 40, 41, 45, 53, 55, 79, 83; 100 for the Generic API feed |
 | touch a serial number — what identifies a device, which controller owns its record, two records carrying one serial, what the agent reports | 41 (the chassis identity it builds on), 83, 84, 82 (what the agent measures), 91 (what a HOSTNAME is not) |
 | touch how a device's upstream switch / AP / gate is derived or displayed | 45 (the ARP-chain sweep that WRITES placement) and 55 (IPAM as the last-resort parent it READS) |
 | touch how a discovery run reports what it did or did not read | 53 |
@@ -100,13 +100,13 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 - [references/narrative-36-43.md](references/narrative-36-43.md) — narrative, rules 36–43
 - [references/narrative-44-48.md](references/narrative-44-48.md) — narrative, rules 44–59 (split 2026-09-09 when 36–43 passed 100 KB)
 - [references/narrative-60-64.md](references/narrative-60-64.md) — narrative, rules 60–74 (split 2026-09-15; rules 76, 77 and 79 moved out to their own files 2026-09-22 to keep it under the ceiling)
-- one file per rule from here on: [narrative-75.md](references/narrative-75.md), [narrative-76.md](references/narrative-76.md), [narrative-77.md](references/narrative-77.md), [narrative-78.md](references/narrative-78.md), [narrative-79.md](references/narrative-79.md), [narrative-80.md](references/narrative-80.md) (80 and 80a), [narrative-82.md](references/narrative-82.md), [narrative-83.md](references/narrative-83.md), [narrative-84.md](references/narrative-84.md), [narrative-85.md](references/narrative-85.md), [narrative-86.md](references/narrative-86.md), [narrative-87.md](references/narrative-87.md), [narrative-88.md](references/narrative-88.md), [narrative-89.md](references/narrative-89.md), [narrative-90.md](references/narrative-90.md), [narrative-91.md](references/narrative-91.md), [narrative-92.md](references/narrative-92.md), [narrative-93.md](references/narrative-93.md), [narrative-94.md](references/narrative-94.md), [narrative-95.md](references/narrative-95.md), [narrative-96.md](references/narrative-96.md), [narrative-97.md](references/narrative-97.md), [narrative-98.md](references/narrative-98.md), [narrative-99.md](references/narrative-99.md)
+- one file per rule from here on: [narrative-75.md](references/narrative-75.md), [narrative-76.md](references/narrative-76.md), [narrative-77.md](references/narrative-77.md), [narrative-78.md](references/narrative-78.md), [narrative-79.md](references/narrative-79.md), [narrative-80.md](references/narrative-80.md) (80 and 80a), [narrative-82.md](references/narrative-82.md), [narrative-83.md](references/narrative-83.md), [narrative-84.md](references/narrative-84.md), [narrative-85.md](references/narrative-85.md), [narrative-86.md](references/narrative-86.md), [narrative-87.md](references/narrative-87.md), [narrative-88.md](references/narrative-88.md), [narrative-89.md](references/narrative-89.md), [narrative-90.md](references/narrative-90.md), [narrative-91.md](references/narrative-91.md), [narrative-92.md](references/narrative-92.md), [narrative-93.md](references/narrative-93.md), [narrative-94.md](references/narrative-94.md), [narrative-95.md](references/narrative-95.md), [narrative-96.md](references/narrative-96.md), [narrative-97.md](references/narrative-97.md), [narrative-98.md](references/narrative-98.md), [narrative-99.md](references/narrative-99.md), [narrative-100.md](references/narrative-100.md)
 
 ## Rules 1–11
 
 One-line invariants, in [references/invariants-01-11.md](references/invariants-01-11.md): no overlapping subnets (1), subnet within block (2), no duplicate reservations (3), deletion protection (4), CIDR normalization (5), `sourceType` tracking (6), conflict detection (7), event retention (8), `acquiredAt ≤ lastSeen` (9), the four unmonitorable statuses (10), DNS-resolved reservations (11).
 
-## Rules 12–99 (index)
+## Rules 12–100 (index)
 
 Pairs that are two halves of one concern are marked; each keeps its own number because code cites both.
 
@@ -201,6 +201,7 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 97 | The all-zero MAC means "no MAC": it never becomes an asset's MAC, and a reservation refuses it as a change | invariants-30-43 | narrative-97 |
 | 98 | An SD-WAN condition may be narrowed to the members whose CURRENT address passes a comparison, and a member whose address cannot be read is kept | invariants-30-43 | narrative-98 |
 | 99 | Polaris never restarts its own container: in a container it asks the operator to | invariants-30-43 | narrative-99 |
+| 100 | A feed an operator describes is an inventory claim: it never vouches for presence or decides monitoring, never outranks a first-party source, and never reaches past its own host | invariants-30-43 | narrative-100 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain, and the dormant
 columns they retired), `polaris-change-impact` (who else reads or writes the fields a rule

@@ -73,6 +73,8 @@ export interface LocationContributor {
  *      site. (Which is also why getting this one WRONG is the loudest failure:
  *      see the blob-laundering note in discoveryEngine's
  *      buildFortigateEndpointObservedBlob.)
+ *   1a. A Generic API record's mapped location — only when the operator
+ *      mapped one, and then it is a field someone wrote down as a place.
  *   2. Then the label-only cloud sources (Arc, Intune, Entra, Arc-K8s). They
  *      say nothing about place, but for a cloud-only device nothing else can
  *      either, so naming who knows it beats a blank cell.
@@ -97,6 +99,16 @@ export const LOCATION_CONTRIBUTORS: LocationContributor[] = [
     observedKeys: ["learnedLocation"],
     fortinetDevice: true,
     describe: "The FortiGate that sighted the device as a DHCP / ARP client.",
+  },
+  // A Generic API feed's location only exists when the operator mapped one —
+  // and then it is a field someone wrote down AS a place (a CMDB's site or
+  // room), which is closer to the question than any label-only source.
+  {
+    kind: "generic-api",
+    label: "Generic API",
+    mode: "field",
+    observedKeys: ["location"],
+    describe: "The location field the integration's mapping reads from each record. Nothing when no location is mapped.",
   },
   {
     kind: "arc",

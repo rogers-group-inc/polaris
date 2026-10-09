@@ -187,6 +187,12 @@ export function deriveAssetSources(asset: AssetSnapshot): DerivedSource[] {
     return [];
   }
 
+  // 3a'. Generic API assets (tag "genericapi") — an explicit `generic-api`
+  //      row written by syncGenericApiDevices; same suppression.
+  if (out.length === 0 && tags.includes("genericapi")) {
+    return [];
+  }
+
   // 3b. Azure Arc assets (tag "azurearc") are owned by an explicit `arc`
   //     source row written by syncArcDevices — same story as vCenter, no
   //     legacy assetTag convention to derive from. Suppress the manual

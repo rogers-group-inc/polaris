@@ -88,6 +88,9 @@ export type AssetSourceKind =
   | "truenas-host"
   | "truenas-vm"
   | "truenas-app"
+  // A record read by a Generic API integration (utils/genericApiSource.ts) —
+  // an operator-mapped feed, ranked below every first-party source.
+  | "generic-api"
   // The device's OWN answer to sysDescr, parsed through its vendor's
   // documented format (utils/snmpDescrIdentity.ts) on the monitor path.
   // ENRICHMENT, not ownership: it says what the device claims to be, never
@@ -283,6 +286,12 @@ const HOSTNAME_RULES: FieldRule[] = [
   { sourceKind: "fortigate-firewall", pick: (o) => obsString(o, "hostname") },
   { sourceKind: "fortiswitch", pick: (o) => obsString(o, "switchId") },
   { sourceKind: "fortiap", pick: (o) => obsString(o, "name") },
+  // Generic API (an operator-built feed — a CMDB, a vendor portal, a
+  // spreadsheet behind an API). Below every directory, hypervisor, controller
+  // and agent source; above only the DHCP client identifier, because a name
+  // someone wrote into an inventory is more deliberate than one a client
+  // volunteered to DHCP.
+  { sourceKind: "generic-api", pick: (o) => obsString(o, "hostname") },
   // fortigate-endpoint hostname — the FortiGate's DHCP client identifier.
   // Lowest priority because DHCP client IDs are operator-set and may not
   // match the device's "real" hostname (random strings, owner names,
@@ -325,6 +334,10 @@ const SERIAL_RULES: FieldRule[] = [
   // The NAS host's SMBIOS serial, as its own OS reads it. Through obsSerial,
   // so a "To Be Filled By O.E.M." board yields nothing (rule 84).
   ...workloadRule("host", (o) => obsSerial(o, "serial")),
+  // Generic API: last, and through obsSerial (rule 84) — the sync also drops
+  // a placeholder before it reaches the blob, but the projection does not
+  // rely on that.
+  { sourceKind: "generic-api", pick: (o) => obsSerial(o, "serial") },
 ];
 
 const MANUFACTURER_RULES: FieldRule[] = [
@@ -391,6 +404,12 @@ const MANUFACTURER_RULES: FieldRule[] = [
   // (vendor only, no model fidelity) but better than nothing for assets
   // that have no MDM source. Same alias-normalization pass as Intune so
   // "Dell Inc." → "Dell" matches the canonical Asset value.
+  // Generic API sits just above it, for the hostname rule's reason.
+  { sourceKind: "generic-api", pick: (o) => {
+      const raw = obsString(o, "manufacturer");
+      return raw ? normalizeManufacturer(raw) : null;
+    }
+  },
   { sourceKind: "fortigate-endpoint", pick: (o) => {
       const raw = obsString(o, "hardwareVendor");
       return raw ? normalizeManufacturer(raw) : null;
@@ -430,6 +449,7 @@ const MODEL_RULES: FieldRule[] = [
   // Software: Windows Version 6.3" never gets one, and cannot displace
   // Intune's model with it.
   { sourceKind: "snmp-sysdescr", pick: (o) => obsString(o, "model") },
+  { sourceKind: "generic-api", pick: (o) => obsString(o, "model") },
   // fortigate-endpoint model — DHCP fingerprint or device-inventory model
   // string. Coarse signal but better than nothing for non-MDM assets.
   { sourceKind: "fortigate-endpoint", pick: (o) => obsString(o, "model") },
@@ -491,6 +511,7 @@ const OS_RULES: FieldRule[] = [
   // fortigate-endpoint os — FortiGate device-inventory's OS detection
   // (rough fingerprint based on DHCP options + traffic). Coarse but
   // useful when no MDM/AD source has the device.
+  { sourceKind: "generic-api", pick: (o) => obsString(o, "os") },
   { sourceKind: "fortigate-endpoint", pick: (o) => obsString(o, "os") },
 ];
 
@@ -522,6 +543,7 @@ const OS_VERSION_RULES: FieldRule[] = [
   // Software: Windows Version 6.3" never gets one, and cannot displace
   // Intune's model with it.
   { sourceKind: "snmp-sysdescr", pick: (o) => obsString(o, "osVersion") },
+  { sourceKind: "generic-api", pick: (o) => obsString(o, "osVersion") },
   { sourceKind: "fortigate-endpoint", pick: (o) => obsString(o, "osVersion") },
 ];
 
@@ -659,6 +681,9 @@ const IP_ADDRESS_RULES: FieldRule[] = [
   // source, so this rule is effectively first for them). MDM sources
   // don't carry IP at all.
   { sourceKind: "fortigate-endpoint", pick: (o) => obsString(o, "ipAddress") },
+  // Generic API: an inventory's recorded address, BELOW the live DHCP/ARP
+  // binding — a CMDB is often a step behind the network.
+  { sourceKind: "generic-api", pick: (o) => obsString(o, "ip") },
 ];
 
 // Coord resolution priority on the fortigate-firewall source. SNMP sysLocation

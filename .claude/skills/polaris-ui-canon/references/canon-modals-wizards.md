@@ -52,7 +52,7 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 
 ---
 
-## Integration modal (one shape for all nine)
+## Integration modal (one shape for all ten)
 
 **What it is:** Any "connect us to another system" dialog — the Add / Edit form for FortiManager, standalone FortiGate, Active Directory, Entra ID, Windows Server, vCenter, Azure Arc, Unraid and TrueNAS SCALE. (The last two share ONE General-tab form, `workloadFormHTML(type, defaults)` / `getWorkloadFormConfig()`, branching only on the copy — and their Monitoring tab uses its own class keys `wlhosts` / `wlvms` / `containers` so the subtabs render the reduced addAsMonitored-only card rather than vCenter's agent-deploy set.)
 
@@ -77,6 +77,7 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 - Add the tab to `_integrationTabs` — once. Both flows pick it up.
 - Add the type to `_INTEGRATION_PRODUCTS`, to `_INTEGRATION_REQUIRED_FIELDS` (marking secret fields with a third `true`), and to `_NON_FORTINET_TABBED` if it carries a Monitoring tab.
 - Add its per-type wiring to `_wireIntegrationModal`, not to the flows.
+- A type that discovers but has NO class (Generic API, `genericapi`) gets its own tab set straight out of `_integrationTabs` — General · Records & Mapping · Preview — and stays out of `_NON_FORTINET_TABBED` (no Monitoring tab: its assets can be any type, so there is no class to monitor by). Its pickers render with `data-ga-value` and `_wireGenericApiForm` assigns each select's value in JS (the `renderBandCond` rule — a parser that mis-applies `selected`, as happy-dom does, must not be able to save the wrong option). A Preview tab that calls the server with the unsaved form is fine; it strips blank keep-current secrets and passes the integration id so the server fills them in. Pinned by `tests/unit/genericApiIntegrationDom.test.ts` (the four-places round trip for every field).
 - A type with no Monitoring tab and nothing to discover (`llm`, the AI assistant's model server) stays OUT of `_NON_FORTINET_TABBED` and gets the flat form; its card hides the Discover button and the auto-discovery rows, and a create that returns a once-only secret (`llmAccess`) is revealed by its own "save it now" modal (`_showLlmAccessModal`, the `_showRawTokenModal` contract) instead of the conflict / no-blocks follow-ups.
 - Anything the tab COLLECTS must exist in that type's create schema in `src/api/routes/integrations.ts` — `z.object` strips unknown keys, so a field the modal offers and the schema omits is dropped in silence on Add and the tab reopens showing the default. See polaris-change-impact → cross-cutting/fmg-fortigate-parity-surfaces.md.
 
