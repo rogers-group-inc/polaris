@@ -32,7 +32,7 @@ import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { mapWithConcurrency } from "../utils/concurrency.js";
 import { normalizeWorkloadState, workloadHostUsageKey } from "../utils/workloadSources.js";
-import { RateCounters } from "./truenasService.js";
+import { RATE_COUNTER_MAX_GAP_MS, RateCounters } from "../utils/rateCounters.js";
 import type {
   WorkloadContainer,
   WorkloadDiscoveryResult,
@@ -55,8 +55,11 @@ export interface ProxmoxConfig {
   fallbackHosts?: string[];
   port?: number;
   verifyTls?: boolean;
-  /** `user@realm!tokenname`. */
-  tokenId: string;
+  /**
+   * `user@realm!tokenname`. Named apiTokenId, not tokenId: an llm
+   * integration's config already uses `tokenId` for a Polaris API token.
+   */
+  apiTokenId: string;
   /** The token's secret (stored under the sealed `apiToken` config key). */
   apiToken: string;
   vmInclude?: string[];
@@ -82,7 +85,7 @@ export function proxmoxEndpoints(config: Pick<ProxmoxConfig, "host" | "fallbackH
 
 /** The address that answered last, per integration config (process lifetime). */
 const lastGoodEndpoint = new Map<string, string>();
-const endpointKey = (config: ProxmoxConfig) => `${proxmoxEndpoints(config).join(",")}|${config.tokenId}`;
+const endpointKey = (config: ProxmoxConfig) => `${proxmoxEndpoints(config).join(",")}|${config.apiTokenId}`;
 
 /** A failure that says nothing about the cluster — try the next address. */
 class EndpointUnreachable extends AppError {}
@@ -125,7 +128,7 @@ async function getOnce(config: ProxmoxConfig, host: string, path: string): Promi
         method: "GET",
         headers: {
           Accept: "application/json",
-          Authorization: `PVEAPIToken=${config.tokenId}=${config.apiToken}`,
+          Authorization: `PVEAPIToken=${config.apiTokenId}=${config.apiToken}`,
         },
         rejectUnauthorized: config.verifyTls !== false,
         timeout: REQUEST_TIMEOUT_MS,
@@ -772,7 +775,7 @@ function countersFor(config: ProxmoxConfig): RateCounters {
   const key = endpointKey(config);
   let c = rateCountersByIntegration.get(key);
   if (!c) { c = new RateCounters(); rateCountersByIntegration.set(key, c); }
-  c.prune(Date.now() - 5 * 60_000);
+  c.prune(Date.now() - RATE_COUNTER_MAX_GAP_MS);
   return c;
 }
 

@@ -32,6 +32,7 @@ import WebSocket from "ws";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { normalizeWorkloadState, workloadHostUsageKey } from "../utils/workloadSources.js";
+import { RATE_COUNTER_MAX_GAP_MS, RateCounters } from "../utils/rateCounters.js";
 import type {
   WorkloadContainer,
   WorkloadDisk,
@@ -605,34 +606,9 @@ export function parseTrueNasAppStats(
   return out;
 }
 
-/** Past this gap a counter restarts at 0 rather than invent the traffic in between. */
-const RATE_COUNTER_MAX_GAP_MS = 5 * 60_000;
-
-/**
- * Integrates per-second rates into cumulative counters, per key. A gap longer
- * than RATE_COUNTER_MAX_GAP_MS (the monitor was down, the App was stopped)
- * restarts the counter at 0, which the interface pipeline reads as a counter
- * reset — a missing point, never a spike.
- */
-export class RateCounters {
-  private readonly state = new Map<string, { total: number; at: number }>();
-
-  advance(key: string, ratePerSec: number | null, nowMs: number): number | null {
-    if (ratePerSec === null || ratePerSec < 0) return null;
-    const prev = this.state.get(key);
-    const elapsed = prev ? nowMs - prev.at : 0;
-    const total = prev && elapsed > 0 && elapsed <= RATE_COUNTER_MAX_GAP_MS
-      ? prev.total + Math.round(ratePerSec * (elapsed / 1000))
-      : 0;
-    this.state.set(key, { total, at: nowMs });
-    return total;
-  }
-
-  /** Forget keys not advanced since `cutoffMs` (Apps that went away). */
-  prune(cutoffMs: number): void {
-    for (const [k, v] of this.state) if (v.at < cutoffMs) this.state.delete(k);
-  }
-}
+// RateCounters moved to utils/rateCounters.ts (shared with Proxmox); re-exported
+// so this module's callers and tests keep their import.
+export { RateCounters };
 
 /**
  * One RateCounters per TrueNAS host (its interfaces and its Apps' networks),

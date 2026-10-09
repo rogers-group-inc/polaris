@@ -4,11 +4,13 @@ const h = vi.hoisted(() => ({
   findFirst: vi.fn(),
   fetchUnraidSnapshot: vi.fn(),
   fetchTrueNasSnapshot: vi.fn(),
+  fetchProxmoxSnapshot: vi.fn(),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: { assetSource: { findFirst: h.findFirst } } }));
 vi.mock("../../src/services/unraidService.js", () => ({ fetchUnraidSnapshot: h.fetchUnraidSnapshot }));
 vi.mock("../../src/services/truenasService.js", () => ({ fetchTrueNasSnapshot: h.fetchTrueNasSnapshot }));
+vi.mock("../../src/services/proxmoxService.js", () => ({ fetchProxmoxSnapshot: h.fetchProxmoxSnapshot }));
 
 const wm = await import("../../src/services/workloadMonitorService.js");
 
@@ -198,6 +200,17 @@ describe("collectors", () => {
   });
 });
 
+describe("snapshot dispatch", () => {
+  it("reads a Proxmox asset through the Proxmox client — never another platform's", async () => {
+    h.fetchProxmoxSnapshot.mockResolvedValue(snapshot());
+    h.findFirst.mockResolvedValue({ sourceKind: "proxmox-lxc", externalId: "int9:ctr:plex", integration: { ...INTEGRATION, id: "int9", type: "proxmox" } });
+    await wm.probeWorkload("c", 0);
+    expect(h.fetchProxmoxSnapshot).toHaveBeenCalledTimes(1);
+    expect(h.fetchUnraidSnapshot).not.toHaveBeenCalled();
+    expect(h.fetchTrueNasSnapshot).not.toHaveBeenCalled();
+  });
+});
+
 describe("a multi-host (clustered) snapshot", () => {
   const node = (key: string, online: boolean, uptime: number) => ({
     ...snapshot().inventory.hosts[0], key, online, hostname: key, uptimeSeconds: uptime,
@@ -238,6 +251,15 @@ describe("a multi-host (clustered) snapshot", () => {
     expect((await wm.probeWorkload("n9", 0)).error).toMatch(/removed from the cluster/);
     h.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
     expect((await wm.probeWorkload("h", 0)).success).toBe(false);
+  });
+
+  it("charts a VM's traffic where the platform reports it, and still answers nothing for one that does not", async () => {
+    const vmIfaces = [{ name: "all interfaces", operUp: true, rxBytes: 10, txBytes: 20, rxErrors: null, txErrors: null, rxDrops: null, txDrops: null, speedMbps: null }];
+    h.fetchUnraidSnapshot.mockResolvedValue(snapshot({ vmUsage: new Map([["vm1", { cpuPct: 5, memUsedBytes: 1, memTotalBytes: 2, interfaces: vmIfaces }]]) }));
+    h.findFirst.mockResolvedValue(source("unraid-vm", "int1:vm:win"));
+    const r = await wm.collectSystemInfoWorkload("v", { interfacesPolling: "unraid", storagePolling: "unraid" });
+    expect(r.data?.interfaces).toEqual([expect.objectContaining({ ifName: "all interfaces", inOctets: 10, outOctets: 20 })]);
+    expect(r.data?.storage).toEqual([]);
   });
 
   it("tells two same-named containers apart by identityKey", async () => {

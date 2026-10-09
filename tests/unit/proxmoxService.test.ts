@@ -16,7 +16,7 @@ const h = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock("node:https", () => ({ request: h.request }));
 
 const pve = await import("../../src/services/proxmoxService.js");
-const { RateCounters } = await import("../../src/services/truenasService.js");
+const { RateCounters } = await import("../../src/utils/rateCounters.js");
 
 // ─── Fixtures (trimmed from a live cluster) ──────────────────────────────────
 
@@ -292,7 +292,7 @@ function fakeHttps(byHost: Record<string, Behaviour>) {
   });
 }
 
-const CFG = { host: "10.0.0.1", fallbackHosts: ["10.0.0.2", "10.0.0.1"], tokenId: "polaris@pve!mon", apiToken: "s3cret", verifyTls: false };
+const CFG = { host: "10.0.0.1", fallbackHosts: ["10.0.0.2", "10.0.0.1"], apiTokenId: "polaris@pve!mon", apiToken: "s3cret", verifyTls: false };
 
 describe("proxmoxGet", () => {
   beforeEach(() => h.request.mockReset());

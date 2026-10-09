@@ -48,6 +48,7 @@ import {
 } from "../utils/workloadSources.js";
 import * as unraid from "./unraidService.js";
 import * as truenas from "./truenasService.js";
+import * as proxmox from "./proxmoxService.js";
 import type {
   WorkloadContainer,
   WorkloadHost,
@@ -91,7 +92,7 @@ async function fetchPlatformSnapshot(platform: WorkloadPlatform, config: Record<
   switch (platform) {
     case "unraid":  return unraid.fetchUnraidSnapshot(config as unknown as unraid.UnraidConfig);
     case "truenas": return truenas.fetchTrueNasSnapshot(config as unknown as truenas.TrueNasConfig);
-    default:        throw new Error(`No snapshot reader for ${workloadPlatformLabel(platform)} yet`);
+    case "proxmox": return proxmox.fetchProxmoxSnapshot(config as unknown as proxmox.ProxmoxConfig);
   }
 }
 
@@ -277,9 +278,10 @@ export function buildWorkloadSystemInfo(reading: WorkloadReading): SystemInfoSam
   const storage: StorageSample[] = [];
   // A container / App: its own network's traffic, when it has a network of its
   // own. No storage — a container's disk is its host's pools.
-  const rows = reading.kind === "host"
+  // A VM: its traffic where the platform reports it (Proxmox), else none.
+  const rows = reading.kind === "host" || reading.kind === "container" || reading.kind === "vm"
     ? reading.usage?.interfaces ?? []
-    : reading.kind === "container" ? reading.usage?.interfaces ?? [] : [];
+    : [];
   for (const i of rows) {
     interfaces.push({
       ifName: i.name,
@@ -310,9 +312,11 @@ export async function collectSystemInfoWorkload(
 ): Promise<CollectionResult<SystemInfoSample>> {
   const reading = await readWorkloadAsset(assetId);
   if (reading.kind === "absent" || reading.kind === "unreachable") return { supported: true, error: reading.error };
-  // VMs publish nothing here. A container publishes its network traffic (no
-  // storage); one stopped, or on its host's network stack, simply has no rows.
-  if (reading.kind === "vm") return { supported: false };
+  // A VM publishes its network traffic only where the platform reports it
+  // (Proxmox: `netin` / `netout`); Unraid and TrueNAS report none. A container
+  // publishes its network traffic (no storage); one stopped, or on its host's
+  // network stack, simply has no rows.
+  if (reading.kind === "vm" && !reading.usage?.interfaces) return { supported: false };
   // Running but missing from this tick's stats window: no answer, rather than
   // an empty one that would read as "it has no interfaces".
   if (reading.kind === "container" && reading.container.state === "running" && !reading.usage) {
