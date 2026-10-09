@@ -30,22 +30,25 @@ accepted trade — the wiki is the reading surface.
 ## Publishing
 
 A GitHub wiki is its own git repository — `<repo>.wiki.git` — so publishing is
-a copy plus a commit:
+a mirror plus a commit. `scripts/wiki-publish.mjs` does it:
 
 ```bash
-SRC=/path/to/polaris                       # this checkout
-WIKI=$(mktemp -d)
-
-git clone https://github.com/rogers-group-inc/polaris.wiki.git "$WIKI"
-cp "$SRC"/docs/wiki/*.md "$WIKI"/
-rm -f "$WIKI"/README.md                    # repo-only, never published
-
-git -C "$WIKI" add -A
-git -C "$WIKI" commit -m "wiki: sync from polaris@$(git -C "$SRC" rev-parse --short HEAD)"
-git -C "$WIKI" push origin master
+npm run wiki:publish                         # plan: pages to add / update / DELETE vs the live wiki
+npm run wiki:publish -- --apply              # commit in a temp clone, print the push command
+npm run wiki:publish -- --apply --push       # …and publish
 ```
 
-Four things that bite an unattended publisher:
+It publishes `origin/main` (fetched first; `--ref` overrides), never the working
+tree, so a page goes live only once its images exist at their raw `main` URLs.
+It runs `npm run check:wiki` over that ref and refuses on a failure, skips this
+README, deletes wiki pages the source no longer has, writes LF and re-reads every
+committed blob to prove it, and pushes `master`. Each publish commit is titled
+`wiki: sync from polaris@<sha>`; the next run reports how far `docs/wiki/` has
+moved since. A fork gets its own wiki for free — the URL is derived from
+`origin` (`--wiki-url` overrides). `/polaris-deploy` offers the publish after
+every push that changed `docs/wiki/`.
+
+The traps it handles — worth knowing when it reports one:
 
 - **The wiki's default branch is `master`, not `main`.** GitHub has never
   changed it for wikis. A script that pushes `main` creates a second branch
@@ -54,24 +57,28 @@ Four things that bite an unattended publisher:
 - **The wiki must be initialised once through the GitHub UI** — create a page,
   titled `Home` — before `.wiki.git` exists to clone at all. Until then the
   clone fails with a plain "repository not found".
-- **`commit` exits non-zero when nothing changed.** That is the normal state
-  between doc changes, so treat "nothing to commit" as success, not as a
-  failure worth alerting on.
-- **This copies in; it never deletes.** A page removed from `docs/wiki/`, or one
-  somebody hand-created in the web UI, stays on the wiki forever. Renaming a
-  page therefore leaves the old title behind as a stale duplicate — delete it in
-  the wiki UI, or have the publisher `git rm` what the source no longer has.
+- **Nothing to publish is the steady state.** The script exits 0 with "the wiki
+  is current" rather than letting `git commit` fail on an empty change.
+- **A plain copy never deletes**, so a removed or renamed page would outlive its
+  source as a stale duplicate. The script mirrors instead: the plan lists every
+  page it will DELETE, including ones hand-created in the web UI. Read that line
+  before `--push`.
+- **On Windows, `text=auto` makes `git archive` and a CRLF checkout emit CRLF**,
+  which turns every page into a whole-file rewrite. The script reads blobs with
+  `git show`, writes LF into a clone with `core.autocrlf=false`, and fails before
+  pushing if a committed blob differs from its source.
 
-Anything edited in the GitHub wiki UI is **overwritten by the next sync, with
-no warning and no conflict** — this is a one-way publish. Corrections belong in
-`docs/wiki/` as an ordinary commit.
+Anything edited in the GitHub wiki UI is **overwritten — or deleted — by the
+next sync, with no warning and no conflict**: this is a one-way publish.
+Corrections belong in `docs/wiki/` as an ordinary commit.
 
 ## Images
 
 The publish step copies `docs/wiki/*.md` and nothing else, so **a relative path
 to an image outside this directory resolves while you read the file in the repo
 and 404s on the published wiki** — the one failure mode here that looks fine
-right up until it is live. Reference images by absolute raw URL instead:
+right up until it is live (`npm run check:wiki` fails on one). Reference images
+by absolute raw URL instead:
 
 ```markdown
 ![alt text](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/desktop-noon-dashboard.png)
@@ -97,6 +104,14 @@ it is read as current. `/polaris-docs-sync` carries a routing row for this
 directory — when a change lands that alters a page, a screen, a permission
 key, an integration field, an automation control or an API endpoint, the
 matching page here is updated in the **same commit** as the code.
+
+`npm run check:wiki` (pre-commit hook and CI) enforces the structure a flat wiki
+needs and GitHub never reports: every page linked from `_Sidebar.md`, links as
+bare page names that exist, every `Page#anchor` matching a real heading, no
+relative images. It cannot tell whether a page is still *true*: the per-commit
+routing only refreshes pages a change touches, so a rarely touched page drifts.
+The periodic whole-wiki audit for that is
+`.claude/skills/polaris-docs-sync/references/wiki-audit.md`.
 
 The pages are written from the project skills under `.claude/skills/`, which
 are themselves kept in sync by `/polaris-docs-sync`. When the two disagree, the
