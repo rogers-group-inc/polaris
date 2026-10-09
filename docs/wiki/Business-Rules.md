@@ -1574,6 +1574,13 @@ and an API token for the model server's own use; the chat itself never uses that
 token. "Allow loopback" lets the model server be on the Polaris host itself, and
 allows nothing else that is normally blocked.
 
+**Memory (95(i)).** The assistant can keep a few short notes about you between
+conversations. It saves only what you typed in that same message — never
+something it looked up — and removes a note only when you ask. Addresses,
+links, passwords, keys and tokens are refused whoever tries to save them. Your
+notes are visible only to you, capped at 25, and the event log records that
+they changed, never what they say.
+
 The model server may also be an **Azure AI Foundry** deployment (95(j)). Every
 promise above holds the same way on it: lookups still run as you, it is still
 read-only, and a report's rows still come from the database. It is optional and
@@ -1688,3 +1695,35 @@ So on a Docker, podman or Unraid install:
   409.
 
 See [Server Settings → Capacity Advisor](Server-Settings#capacity-advisor).
+
+### Rule 100
+
+**A feed you describe yourself is an inventory list. It never proves a device
+is on the network or decides what is monitored. It never overrides a source
+that reads the device directly, and it never reaches beyond its own host.**
+
+A [Generic API](Integration-Generic-API) integration can read any REST API.
+Polaris knows nothing about the system on the other end beyond what you mapped,
+so it trusts the feed for exactly one thing: *this device is in that system's
+list*. In practice:
+
+- **No Last Seen from the feed.** A CMDB lists a scrapped device as confidently
+  as a live one. Presence is checked after each run (agent, monitor probe, or
+  ping), as for Active Directory ([rule 12](#rule-12)).
+- **No monitoring decision.** A record can be any kind of device, so the
+  integration has no "add as monitored" setting. You monitor its assets as you
+  would a manually added one.
+- **Lowest rank among real sources.** Where Active Directory, vCenter, Entra, a
+  controller or the Polaris Agent also reports a field, theirs wins. The feed
+  ranks above only a FortiGate's DHCP client name. The sync claims only assets
+  nobody owns, retypes only `other`, and turns a hostname match into a
+  [conflict](Conflict-Resolution), never a merge ([rule 91](#rule-91)).
+- **Its own host only.** Loopback, link-local and metadata addresses are
+  refused for the API and the OAuth token URL. The request path cannot name
+  another host, next-page links must stay on the same host, and redirects are
+  not followed. Only the token, password and client secret are stored
+  encrypted; extra headers are stored as typed.
+- **An incomplete read removes nothing.** The opt-in *decommission missing*
+  setting works as [rule 70](#rule-70) does for directories. A run that stopped
+  part way (a failed page, a page or record limit, a repeated page) or an empty
+  read is never treated as deletions.

@@ -52,6 +52,8 @@ var _POLLING_COMPAT = {
   // vCenter's shape with the integration's own method (pollingCompatibility.ts).
   unraid:          ["icmp", "snmp", "winrm", "ssh", "disabled", "unraid"],
   truenas:         ["icmp", "snmp", "winrm", "ssh", "disabled", "truenas"],
+  // A Generic API record can be any device (pollingCompatibility.ts).
+  genericapi:      ["icmp", "snmp", "winrm", "ssh", "disabled"],
   manual:          ["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "vcenter", "unraid", "truenas"],
 };
 
@@ -264,6 +266,7 @@ function _polarisSourceLabel(source, opts) {
   if (source === "azurearc")        return "Azure Arc";
   if (source === "unraid")          return "Unraid";
   if (source === "truenas")         return "TrueNAS SCALE";
+  if (source === "genericapi")      return "Generic API";
   return "Manual";
 }
 
@@ -705,7 +708,7 @@ async function loadIntegrations() {
     var result = await api.integrations.list();
     var integrations = result.integrations || result;
     if (integrations.length === 0) {
-      container.innerHTML = '<div class="empty-state-card"><p>No integrations configured.</p><p style="color:var(--color-text-tertiary);font-size:0.85rem;margin-top:0.5rem">Add a FortiManager, FortiGate, Windows Server, Microsoft Entra ID, Active Directory, VMware vCenter, Azure Arc, Unraid, or TrueNAS SCALE connection to get started — or an AI Assistant to turn on the AI assistant.</p></div>';
+      container.innerHTML = '<div class="empty-state-card"><p>No integrations configured.</p><p style="color:var(--color-text-tertiary);font-size:0.85rem;margin-top:0.5rem">Add a FortiManager, FortiGate, Windows Server, Microsoft Entra ID, Active Directory, VMware vCenter, Azure Arc, Unraid, or TrueNAS SCALE connection — or a Generic API for anything else that lists devices — to get started — or an AI Assistant to turn on the AI assistant.</p></div>';
       return;
     }
     var activeDiscoveries = (window._getServerDiscoveries && window._getServerDiscoveries()) || [];
@@ -722,6 +725,7 @@ async function loadIntegrations() {
         intg.type === "azurearc" ? "Azure Arc" :
         intg.type === "unraid" ? "Unraid" :
         intg.type === "truenas" ? "TrueNAS SCALE" :
+        intg.type === "genericapi" ? "Generic API" :
         intg.type === "llm" ? "AI Assistant" :
         "FortiManager";
       // The AI Assistant integration discovers nothing: no Discover button and no
@@ -813,6 +817,20 @@ async function loadIntegrations() {
           '<div class="detail-row"><span class="detail-label">Username</span><span class="detail-value">' + escapeHtml(config.username || "-") + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Verify TLS</span><span class="detail-value">' + (config.verifyTls !== false ? "Yes" : "No") + '</span></div>' +
           filterRow("VMs", config.vmInclude, config.vmExclude);
+      } else if (intg.type === "genericapi") {
+        var gaAuthLabels = { none: "None", bearer: "Bearer token", header: "API key (header)", query: "API key (query string)", basic: "Basic", oauth2: "OAuth 2.0" };
+        var gaPg = (config.pagination && config.pagination.mode) || "none";
+        var gaIdLabels = { id: "Record ID", serialNumber: "Serial number", macAddress: "MAC address", hostname: "Hostname" };
+        var gaEndpoint = (config.useHttps === false ? "http" : "https") + "://" + (config.host || "-") + (config.port ? ":" + config.port : "") + (config.path || "/");
+        detailRows =
+          '<div class="detail-row"><span class="detail-label">Endpoint</span><span class="detail-value mono">' + escapeHtml((config.method || "GET") + " " + gaEndpoint) + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Authentication</span><span class="detail-value">' + escapeHtml(gaAuthLabels[config.authType || "none"] || config.authType) + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Records Path</span><span class="detail-value mono">' + (config.recordsPath ? escapeHtml(config.recordsPath) : '<span style="color:var(--color-text-tertiary)">(response root)</span>') + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Pagination</span><span class="detail-value">' + escapeHtml(gaPg === "none" ? "None" : gaPg) + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Identity</span><span class="detail-value">' + escapeHtml(gaIdLabels[config.identityField || "id"] || config.identityField) +
+            ((config.fieldMap || {})[config.identityField || "id"] ? ' <span class="mono" style="color:var(--color-text-tertiary)">(' + escapeHtml(config.fieldMap[config.identityField || "id"]) + ')</span>' : '') + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Decommission Missing</span><span class="detail-value">' + (config.decommissionMissing === true ? "Yes" : "No") + '</span></div>' +
+          filterRow("Devices", config.deviceInclude, config.deviceExclude);
       } else if (intg.type === "unraid" || intg.type === "truenas") {
         detailRows =
           '<div class="detail-row"><span class="detail-label">Host</span><span class="detail-value mono">' + escapeHtml(config.host || "-") + ':' + (config.port || defaultPort) + '</span></div>' +
@@ -5821,6 +5839,345 @@ function getVcenterFormConfig() {
   };
 }
 
+// ─── Generic API ("build your own", business rule 100) ─────────────────────────
+//
+// Three tabs, all in the DOM at once so getGenericApiFormConfig() reads the
+// whole form in one pass: General (connection + authentication), Records &
+// Mapping (where the list is, how to page it, which path fills which asset
+// field) and Preview (the first page, mapped — POST
+// /integrations/generic-api/preview). Inventory only: no Monitoring tab, the
+// discovered assets are monitored per asset like a manually added one.
+
+/** The asset fields a record can map onto, in form order — mirrors GENERIC_API_FIELDS (services/genericApiService.ts). */
+var _GENERIC_API_FIELDS = [
+  ["id",           "Record ID",        "id",               "A value unique to each record — the source's own id"],
+  ["hostname",     "Hostname",         "name",             ""],
+  ["ipAddress",    "IP address",       "ip_address",       "A list is fine; the first valid address is used"],
+  ["macAddress",   "MAC address(es)",  "nics[*].mac",      "Every MAC the path reaches is kept"],
+  ["serialNumber", "Serial number",    "serial",           "Placeholders (“Default string”, “To Be Filled By O.E.M.”) are ignored"],
+  ["manufacturer", "Manufacturer",     "vendor",           ""],
+  ["model",        "Model",            "model",            ""],
+  ["os",           "Operating system", "os.name",          ""],
+  ["osVersion",    "OS version",       "os.version",       ""],
+  ["assetType",    "Asset type",       "type",             "The source's own word — translate it below"],
+  ["location",     "Location",         "site.name",        "Shown in the Location column when nothing closer to a place has one"],
+];
+
+var _GENERIC_API_ASSET_TYPES = ["server", "workstation", "switch", "router", "firewall", "access_point", "printer", "hypervisor", "container", "other"];
+
+// The intended value also rides on data-value, and _wireGenericApiForm
+// assigns it in JS — the renderBandCond rule: a parser that mis-applies
+// `selected` (happy-dom does) must not be able to save the wrong option.
+function _genericSelect(id, value, options) {
+  return '<select id="' + id + '" data-ga-value="' + escapeHtml(value) + '">' + options.map(function (o) {
+    return '<option value="' + escapeHtml(o[0]) + '"' + (o[0] === value ? " selected" : "") + '>' + escapeHtml(o[1]) + '</option>';
+  }).join("") + '</select>';
+}
+
+function genericApiGeneralHTML(defaults) {
+  var d = defaults || {};
+  var enabledChecked = d.enabled !== false ? "checked" : "";
+  var autoChecked = d.autoDiscover !== false ? "checked" : "";
+  var useHttps = d.useHttps !== false;
+  var auth = d.authType || "none";
+  var headerLines = (d.headers || []).map(function (h) { return h.name + ": " + h.value; }).join("\n");
+  var keep = function (has, what) { return has ? "Leave blank to keep the current " + what : ""; };
+  return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. Facilities CMDB"></div>' +
+    infoBox('Reads devices from <strong style="color:var(--color-text-primary)">any REST API that returns JSON</strong> — a CMDB, a vendor portal, a camera or printer management server, an internal inventory — and turns each record into an asset. You describe the request here, then on <strong style="color:var(--color-text-primary)">Records &amp; Mapping</strong> say where the list is and which field is which. <strong style="color:var(--color-text-primary)">Preview</strong> shows what discovery would write before anything is saved.') +
+    calloutHTML("note", "What a feed can and cannot do",
+      'Polaris only <strong>reads</strong> from the API. A record is an inventory entry, not proof the device is on the network — presence is checked separately, and the assets are monitored only when you choose to monitor them. A field a first-party source (Active Directory, vCenter, an agent…) also reports is taken from that source; the feed fills the gaps.') +
+    formDivider() +
+    sectionHeading("Request") +
+    '<div style="display:grid;grid-template-columns:1fr auto;gap:8px">' +
+      '<div class="form-group"><label>Host / IP *</label><input type="text" id="f-host" value="' + escapeHtml(d.host || "") + '" placeholder="e.g. cmdb.example.com"></div>' +
+      '<div class="form-group"><label>Port</label><input type="number" id="f-port" value="' + escapeHtml(d.port ? String(d.port) : "") + '" min="1" max="65535" placeholder="' + (useHttps ? "443" : "80") + '" style="width:90px"></div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:auto 1fr;gap:8px">' +
+      '<div class="form-group"><label>Method</label>' + _genericSelect("f-gaMethod", d.method || "GET", [["GET", "GET"], ["POST", "POST"]]) + '</div>' +
+      '<div class="form-group"><label>Request path</label><input type="text" id="f-gaPath" value="' + escapeHtml(d.path || "/") + '" placeholder="/api/v2/devices?status=active"><p class="hint">Path and query string on the host above. Paging parameters are added for you.</p></div>' +
+    '</div>' +
+    '<div class="form-group" id="f-gaBodyWrap"' + ((d.method || "GET") === "POST" ? "" : ' style="display:none"') + '><label>Request body (JSON)</label><textarea id="f-gaBody" rows="3" placeholder="{&quot;filter&quot;: {&quot;active&quot;: true}}">' + escapeHtml(d.body || "") + '</textarea></div>' +
+    checkboxRow("f-useHttps", "Use HTTPS", useHttps) +
+    checkboxRow("f-verifySsl", "Verify TLS certificate", d.verifySsl !== false) +
+    '<div class="form-group"><label>Extra headers</label><textarea id="f-gaHeaders" rows="2" placeholder="One per line — e.g.&#10;X-Tenant: east">' + escapeHtml(headerLines) + '</textarea><p class="hint">Stored as typed, <strong>not</strong> encrypted — put a secret in Authentication below instead.</p></div>' +
+    formDivider() +
+    sectionHeading("Authentication") +
+    '<div class="form-group"><label>Type</label>' + _genericSelect("f-gaAuthType", auth, [
+      ["none", "None"], ["bearer", "Bearer token"], ["header", "API key in a header"],
+      ["query", "API key in the query string"], ["basic", "Username and password (Basic)"], ["oauth2", "OAuth 2.0 client credentials"],
+    ]) + '</div>' +
+    '<div data-ga-auth="bearer header query"' + (["bearer", "header", "query"].indexOf(auth) === -1 ? ' style="display:none"' : '') + '>' +
+      '<div class="form-group" data-ga-auth="header"' + (auth === "header" ? "" : ' style="display:none"') + '><label>Header name</label><input type="text" id="f-gaAuthHeaderName" value="' + escapeHtml(d.authHeaderName || "X-API-Key") + '"></div>' +
+      '<div class="form-group" data-ga-auth="query"' + (auth === "query" ? "" : ' style="display:none"') + '><label>Parameter name</label><input type="text" id="f-gaAuthQueryParam" value="' + escapeHtml(d.authQueryParam || "api_key") + '"><p class="hint">A key in the URL can end up in the source’s access logs — prefer a header when the API allows it.</p></div>' +
+      '<div class="form-group"><label>Token / key</label><input type="password" id="f-apiToken" value="" placeholder="' + escapeHtml(keep(d.hasApiToken, "token") || "Token or API key") + '" autocomplete="new-password"><p class="hint">Stored encrypted.</p></div>' +
+    '</div>' +
+    '<div data-ga-auth="basic"' + (auth === "basic" ? "" : ' style="display:none"') + '>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+        '<div class="form-group"><label>Username</label><input type="text" id="f-gaUsername" value="' + escapeHtml(d.username || "") + '" autocomplete="off"></div>' +
+        '<div class="form-group"><label>Password</label><input type="password" id="f-password" value="" placeholder="' + escapeHtml(keep(d.hasPassword, "password") || "Stored encrypted") + '" autocomplete="new-password"></div>' +
+      '</div>' +
+    '</div>' +
+    '<div data-ga-auth="oauth2"' + (auth === "oauth2" ? "" : ' style="display:none"') + '>' +
+      '<div class="form-group"><label>Token URL</label><input type="text" id="f-gaTokenUrl" value="' + escapeHtml(d.tokenUrl || "") + '" placeholder="https://login.example.com/oauth2/token"></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+        '<div class="form-group"><label>Client ID</label><input type="text" id="f-gaClientId" value="' + escapeHtml(d.clientId || "") + '" autocomplete="off"></div>' +
+        '<div class="form-group"><label>Client secret</label><input type="password" id="f-clientSecret" value="" placeholder="' + escapeHtml(keep(d.hasClientSecret, "secret") || "Stored encrypted") + '" autocomplete="new-password"></div>' +
+      '</div>' +
+      '<div class="form-group"><label>Scope</label><input type="text" id="f-gaScope" value="' + escapeHtml(d.scope || "") + '" placeholder="Optional"></div>' +
+    '</div>' +
+    formDivider() +
+    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
+      '<input type="checkbox" id="f-enabled" ' + enabledChecked + ' style="width:auto">' +
+      '<label for="f-enabled" style="margin:0">Enabled</label>' +
+    '</div>' +
+    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
+      '<input type="checkbox" id="f-autoDiscover" ' + autoChecked + ' style="width:auto">' +
+      '<label for="f-autoDiscover" style="margin:0">Enable auto-discovery</label>' +
+    '</div>' +
+    '<div class="form-group"><label>Auto-Discovery Interval</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-pollInterval" value="' + (d.pollInterval || 12) + '" min="1" max="24" style="width:80px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">hours</span></div></div>' +
+    verboseLoggingFormHTML(d);
+}
+
+function genericApiMappingHTML(defaults) {
+  var d = defaults || {};
+  var pg = d.pagination || {};
+  var mode = pg.mode || "none";
+  var fm = d.fieldMap || {};
+  var identity = d.identityField || "id";
+  var devMode = (d.deviceInclude && d.deviceInclude.length > 0) ? "include" : "exclude";
+  var devNames = devMode === "include" ? (d.deviceInclude || []) : (d.deviceExclude || []);
+  var typeMapLines = Object.keys(d.assetTypeMap || {}).map(function (k) { return k + " = " + d.assetTypeMap[k]; }).join("\n");
+  var showFor = function (modes) { return modes.indexOf(mode) === -1 ? ' style="display:none"' : ""; };
+  var fieldRows = _GENERIC_API_FIELDS.map(function (f) {
+    return '<div class="form-group" style="margin-bottom:0.5rem">' +
+      '<label for="f-gaMap-' + f[0] + '">' + escapeHtml(f[1]) + '</label>' +
+      '<input type="text" id="f-gaMap-' + f[0] + '" value="' + escapeHtml(fm[f[0]] || "") + '" placeholder="e.g. ' + escapeHtml(f[2]) + '">' +
+      (f[3] ? '<p class="hint">' + escapeHtml(f[3]) + '</p>' : '') +
+    '</div>';
+  }).join("");
+  return infoBox('Paths are written against <strong style="color:var(--color-text-primary)">one record</strong>: <code>name</code>, <code>os.version</code>, <code>nics[0].mac</code>, <code>nics[*].mac</code> (every NIC), <code>[\'serial number\']</code> (a key with a space). The <strong style="color:var(--color-text-primary)">Preview</strong> tab shows a real record to copy them from.') +
+    sectionHeading("Records") +
+    '<div class="form-group"><label>Records path</label><input type="text" id="f-gaRecordsPath" value="' + escapeHtml(d.recordsPath || "") + '" placeholder="e.g. data.devices — blank when the response IS the list"><p class="hint">Where the list of devices sits in each response.</p></div>' +
+    '<div class="form-group"><label>Pagination</label>' + _genericSelect("f-gaPageMode", mode, [
+      ["none", "None — one request returns everything"],
+      ["page", "Page number (?page=1, 2, 3…)"],
+      ["offset", "Offset (?offset=0, 100, 200…)"],
+      ["cursor", "Cursor / next token in the response"],
+      ["link", "Link header (rel=\"next\")"],
+    ]) + '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+      '<div class="form-group" data-ga-page="page offset"' + showFor(["page", "offset"]) + '><label>Page / offset parameter</label><input type="text" id="f-gaPageParam" value="' + escapeHtml(pg.pageParam || "") + '" placeholder="page or offset"></div>' +
+      '<div class="form-group" data-ga-page="page"' + showFor(["page"]) + '><label>First page</label>' + _genericSelect("f-gaStartPage", String(pg.startPage != null ? pg.startPage : 1), [["1", "1"], ["0", "0"]]) + '</div>' +
+      '<div class="form-group" data-ga-page="page offset"' + showFor(["page", "offset"]) + '><label>Page-size parameter</label><input type="text" id="f-gaSizeParam" value="' + escapeHtml(pg.sizeParam || "") + '" placeholder="e.g. per_page — optional"></div>' +
+      '<div class="form-group" data-ga-page="page offset"' + showFor(["page", "offset"]) + '><label>Page size</label><input type="number" id="f-gaPageSize" value="' + (pg.pageSize || 100) + '" min="1" max="10000"></div>' +
+      '<div class="form-group" data-ga-page="cursor"' + showFor(["cursor"]) + '><label>Next-cursor path</label><input type="text" id="f-gaCursorPath" value="' + escapeHtml(pg.cursorPath || "") + '" placeholder="e.g. meta.next_cursor or links.next"></div>' +
+      '<div class="form-group" data-ga-page="cursor"' + showFor(["cursor"]) + '><label>Cursor parameter</label><input type="text" id="f-gaCursorParam" value="' + escapeHtml(pg.cursorParam || "") + '" placeholder="cursor"><p class="hint">Not used when the cursor is a full URL.</p></div>' +
+      '<div class="form-group" data-ga-page="page offset cursor link"' + showFor(["page", "offset", "cursor", "link"]) + '><label>Max pages</label><input type="number" id="f-gaMaxPages" value="' + (pg.maxPages || 100) + '" min="1" max="1000"></div>' +
+    '</div>' +
+    '<p class="hint" data-ga-page="page offset"' + showFor(["page", "offset"]) + '>Without a page-size parameter Polaris keeps asking until a page comes back empty.</p>' +
+    formDivider() +
+    sectionHeading("Field mapping") +
+    '<div class="form-group"><label>Identity — what keeps one record on one asset *</label>' + _genericSelect("f-gaIdentity", identity, [
+      ["id", "Record ID"], ["serialNumber", "Serial number"], ["macAddress", "MAC address"], ["hostname", "Hostname"],
+    ]) + '<p class="hint">Must be mapped below and stable between runs. A hostname is the weakest choice — it changes and repeats.</p></div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' + fieldRows + '</div>' +
+    formDivider() +
+    sectionHeading("Asset type & manufacturer") +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+      '<div class="form-group"><label>Default asset type</label>' + _genericSelect("f-gaTypeDefault", d.assetTypeDefault || "other",
+        _GENERIC_API_ASSET_TYPES.map(function (t) { return [t, t.replace("_", " ")]; })) + '<p class="hint">For a record with no type, or one Polaris does not know.</p></div>' +
+      '<div class="form-group"><label>Default manufacturer</label><input type="text" id="f-gaManufacturer" value="' + escapeHtml(d.manufacturerDefault || "") + '" placeholder="e.g. Axis — optional"></div>' +
+    '</div>' +
+    '<div class="form-group"><label>Translate asset types</label><textarea id="f-gaTypeMap" rows="3" placeholder="One per line: source word = Polaris type&#10;Network Camera = other&#10;Core Switch = switch">' + escapeHtml(typeMapLines) + '</textarea><p class="hint">Matched without regard to case. A word not listed is used as-is when Polaris knows it (<code>server</code>, <code>printer</code>…), otherwise the default applies.</p></div>' +
+    formDivider() +
+    sectionHeading("Filters") +
+    '<div class="form-group">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
+        '<select id="f-deviceMode" style="width:auto"><option value="include"' + (devMode === "include" ? " selected" : "") + '>Include</option><option value="exclude"' + (devMode === "exclude" ? " selected" : "") + '>Exclude</option></select>' +
+        '<span style="font-size:0.85rem;color:var(--color-text-secondary)">these devices (matched against the mapped hostname)</span>' +
+      '</div>' +
+      '<textarea id="f-deviceNames" rows="3" placeholder="One per line — e.g.&#10;cam-*">' + escapeHtml(devNames.join("\n")) + '</textarea>' +
+    '</div>' +
+    formDivider() +
+    sectionHeading("Lifecycle & limits") +
+    checkboxRow("f-gaDecommission", "Decommission an asset when its record leaves the feed", d.decommissionMissing === true) +
+    '<p class="hint">Only after a complete read, never when most records vanish at once, and never an asset another integration also owns. Off: the asset stays and simply stops updating.</p>' +
+    checkboxRow("f-verifyPresence", "Verify network presence after each discovery", d.verifyPresence !== false) +
+    '<p class="hint">A record is not proof a device is on the network; this checks (agent, monitor probe, then a ping) and sets Last Seen only on an answer.</p>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+      '<div class="form-group"><label>Max records</label><input type="number" id="f-gaMaxRecords" value="' + (d.maxRecords || 10000) + '" min="1" max="50000"></div>' +
+      '<div class="form-group"><label>Request timeout</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-gaTimeoutSec" value="' + Math.round((d.requestTimeoutMs || 30000) / 1000) + '" min="1" max="120" style="width:80px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">seconds</span></div></div>' +
+    '</div>';
+}
+
+function genericApiPreviewHTML() {
+  return '<p class="hint">Reads the <strong>first page</strong> with the settings on the other tabs — saved or not — and shows the first record as the API sent it, then the first rows as discovery would write them. Nothing is stored.</p>' +
+    '<div style="display:flex;gap:8px;align-items:center;margin:0.75rem 0">' +
+      '<button type="button" class="btn btn-secondary btn-sm" id="f-gaPreviewBtn">Run preview</button>' +
+      '<span id="f-gaPreviewStatus" class="hint" style="margin:0"></span>' +
+    '</div>' +
+    '<div id="f-gaPreviewResult"></div>';
+}
+
+function _gaVal(id) {
+  var el = document.getElementById(id);
+  return el ? String(el.value || "").trim() : "";
+}
+
+function _gaInt(id, fallback) {
+  var n = parseInt(_gaVal(id), 10);
+  return isNaN(n) ? fallback : n;
+}
+
+function getGenericApiFormConfig() {
+  var headers = linesToArray("f-gaHeaders").map(function (line) {
+    var i = line.indexOf(":");
+    return i > 0 ? { name: line.slice(0, i).trim(), value: line.slice(i + 1).trim() } : null;
+  }).filter(Boolean);
+  var typeMap = {};
+  linesToArray("f-gaTypeMap").forEach(function (line) {
+    var i = line.indexOf("=");
+    if (i > 0) typeMap[line.slice(0, i).trim()] = line.slice(i + 1).trim().toLowerCase();
+  });
+  var fieldMap = {};
+  _GENERIC_API_FIELDS.forEach(function (f) { var v = _gaVal("f-gaMap-" + f[0]); if (v) fieldMap[f[0]] = v; });
+  var devMode = _gaVal("f-deviceMode");
+  var devNames = linesToArray("f-deviceNames");
+  var mode = _gaVal("f-gaPageMode") || "none";
+  var cfg = {
+    host: val("f-host"),
+    useHttps: document.getElementById("f-useHttps").checked,
+    verifySsl: document.getElementById("f-verifySsl").checked,
+    method: _gaVal("f-gaMethod") || "GET",
+    path: _gaVal("f-gaPath") || "/",
+    body: (document.getElementById("f-gaBody").value || "").trim(),
+    headers: headers,
+    authType: _gaVal("f-gaAuthType") || "none",
+    apiToken: val("f-apiToken"),
+    authHeaderName: _gaVal("f-gaAuthHeaderName"),
+    authQueryParam: _gaVal("f-gaAuthQueryParam"),
+    username: _gaVal("f-gaUsername"),
+    password: val("f-password"),
+    tokenUrl: _gaVal("f-gaTokenUrl"),
+    clientId: _gaVal("f-gaClientId"),
+    clientSecret: val("f-clientSecret"),
+    scope: _gaVal("f-gaScope"),
+    pagination: {
+      mode: mode,
+      pageParam: _gaVal("f-gaPageParam"),
+      sizeParam: _gaVal("f-gaSizeParam"),
+      pageSize: _gaInt("f-gaPageSize", 100),
+      startPage: _gaInt("f-gaStartPage", 1),
+      cursorPath: _gaVal("f-gaCursorPath"),
+      cursorParam: _gaVal("f-gaCursorParam"),
+      maxPages: _gaInt("f-gaMaxPages", 100),
+    },
+    recordsPath: _gaVal("f-gaRecordsPath"),
+    fieldMap: fieldMap,
+    identityField: _gaVal("f-gaIdentity") || "id",
+    assetTypeDefault: _gaVal("f-gaTypeDefault") || "other",
+    assetTypeMap: typeMap,
+    manufacturerDefault: _gaVal("f-gaManufacturer"),
+    deviceInclude: devMode === "include" ? devNames : [],
+    deviceExclude: devMode === "exclude" ? devNames : [],
+    decommissionMissing: document.getElementById("f-gaDecommission").checked,
+    verifyPresence: document.getElementById("f-verifyPresence").checked,
+    maxRecords: _gaInt("f-gaMaxRecords", 10000),
+    requestTimeoutMs: _gaInt("f-gaTimeoutSec", 30) * 1000,
+    verboseLogging: readVerboseLoggingFromForm(),
+  };
+  var port = _gaVal("f-port");
+  if (port) cfg.port = parseInt(port, 10);
+  return cfg;
+}
+
+/** Show the fields that belong to the chosen auth type / pagination mode / method. */
+function _gaSyncVisibility() {
+  var auth = _gaVal("f-gaAuthType") || "none";
+  document.querySelectorAll("[data-ga-auth]").forEach(function (el) {
+    el.style.display = el.getAttribute("data-ga-auth").split(" ").indexOf(auth) === -1 ? "none" : "";
+  });
+  var mode = _gaVal("f-gaPageMode") || "none";
+  document.querySelectorAll("[data-ga-page]").forEach(function (el) {
+    el.style.display = el.getAttribute("data-ga-page").split(" ").indexOf(mode) === -1 ? "none" : "";
+  });
+  var bodyWrap = document.getElementById("f-gaBodyWrap");
+  if (bodyWrap) bodyWrap.style.display = _gaVal("f-gaMethod") === "POST" ? "" : "none";
+}
+
+function _renderGenericApiPreview(result) {
+  var box = document.getElementById("f-gaPreviewResult");
+  if (!box) return;
+  var cols = ["hostname", "ipAddress", "serialNumber", "manufacturer", "model", "assetType", "location"];
+  var labels = { hostname: "Hostname", ipAddress: "IP", serialNumber: "Serial", manufacturer: "Manufacturer", model: "Model", assetType: "Type", location: "Location" };
+  var rows = (result.rows || []).map(function (r) {
+    if (!r.outcome.ok) {
+      return '<tr><td>' + (r.index + 1) + '</td><td colspan="' + (cols.length + 1) + '" style="color:var(--color-warning)">Skipped — ' + escapeHtml(r.outcome.reason) + '</td></tr>';
+    }
+    var rec = r.outcome.record;
+    return '<tr' + (r.filteredOut ? ' style="opacity:0.55" title="Filtered out by the device filter"' : '') + '><td>' + (r.index + 1) + '</td>' +
+      '<td class="mono">' + escapeHtml(rec.identity) + '</td>' +
+      cols.map(function (c) {
+        var v = rec[c];
+        if (c === "assetType" && rec.rawAssetType && rec.rawAssetType.toLowerCase() !== v) v = (v || "—") + " (" + rec.rawAssetType + ")";
+        return '<td>' + (v ? escapeHtml(String(v)) : '<span style="color:var(--color-text-tertiary)">—</span>') + '</td>';
+      }).join("") + '</tr>';
+  }).join("");
+  var warnings = (result.warnings || []).length
+    ? calloutHTML("warning", "Notes", '<ul style="margin:0;padding-left:1.1rem">' + result.warnings.map(function (w) { return '<li>' + escapeHtml(w) + '</li>'; }).join("") + '</ul>')
+    : "";
+  var sample = result.sampleRecord
+    ? sectionHeading("First record, as the API sent it") +
+      '<pre class="mono" style="max-height:220px;overflow:auto;font-size:0.78rem;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:0.6rem;white-space:pre-wrap;word-break:break-all">' +
+        escapeHtml(JSON.stringify(result.sampleRecord, null, 2).slice(0, 8000)) + '</pre>'
+    : "";
+  var table = rows
+    ? sectionHeading("As discovery would write them") +
+      '<div style="overflow:auto"><table class="data-table" style="font-size:0.8rem"><thead><tr><th>#</th><th>Identity</th>' +
+        cols.map(function (c) { return '<th>' + labels[c] + '</th>'; }).join("") + '</tr></thead><tbody>' + rows + '</tbody></table></div>'
+    : "";
+  box.innerHTML = warnings + sample + (sample && table ? formDivider() : "") + table;
+}
+
+async function _runGenericApiPreview(id) {
+  var btn = document.getElementById("f-gaPreviewBtn");
+  var status = document.getElementById("f-gaPreviewStatus");
+  if (!val("f-host")) { showToast("Enter the host on the General tab first", "error"); return; }
+  var cfg = getGenericApiFormConfig();
+  if (id) { if (!cfg.apiToken) delete cfg.apiToken; if (!cfg.password) delete cfg.password; if (!cfg.clientSecret) delete cfg.clientSecret; }
+  if (btn) { btn.disabled = true; btn.textContent = "Reading…"; }
+  try {
+    var result = await api.integrations.genericApiPreview({ id: id || undefined, config: cfg, limit: 10 });
+    if (status) {
+      status.textContent = result.message || "";
+      status.style.color = result.ok ? "var(--color-success)" : "var(--color-warning)";
+    }
+    _renderGenericApiPreview(result);
+  } catch (err) {
+    if (status) { status.textContent = (err && err.message) || "Preview failed"; status.style.color = "var(--color-danger)"; }
+    var box = document.getElementById("f-gaPreviewResult");
+    if (box) box.innerHTML = "";
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Run preview"; }
+  }
+}
+
+function _wireGenericApiForm(id) {
+  document.querySelectorAll("select[data-ga-value]").forEach(function (sel) {
+    sel.value = sel.getAttribute("data-ga-value");
+  });
+  // The Filters mode select is the shared f-deviceMode markup; pin it the same way.
+  var devMode = document.getElementById("f-deviceMode");
+  if (devMode && devMode.querySelector("option[selected]")) devMode.value = devMode.querySelector("option[selected]").value;
+  ["f-gaAuthType", "f-gaPageMode", "f-gaMethod"].forEach(function (elId) {
+    var el = document.getElementById(elId);
+    if (el) el.addEventListener("change", _gaSyncVisibility);
+  });
+  _gaSyncVisibility();
+  var btn = document.getElementById("f-gaPreviewBtn");
+  if (btn) btn.addEventListener("click", function () { _runGenericApiPreview(id); });
+}
+
 function showTypePicker() {
   var body =
     '<p style="font-size:0.9rem;color:var(--color-text-secondary);margin-bottom:1rem">Select the type of integration to add:</p>' +
@@ -5861,6 +6218,10 @@ function showTypePicker() {
         '<strong>TrueNAS SCALE</strong>' +
         '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Host, VMs &amp; Apps via the JSON-RPC API</span>' +
       '</button>' +
+      '<button class="btn btn-secondary" id="pick-generic" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
+        '<strong>Generic API</strong>' +
+        '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Any REST API that lists devices as JSON</span>' +
+      '</button>' +
       '<button class="btn btn-secondary" id="pick-llm" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
         '<strong>AI Assistant</strong>' +
         '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">AI assistant via an OpenAI-compatible model server or Azure AI Foundry</span>' +
@@ -5877,11 +6238,13 @@ function showTypePicker() {
   document.getElementById("pick-arc").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("azurearc"); });
   document.getElementById("pick-unraid").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("unraid"); });
   document.getElementById("pick-truenas").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("truenas"); });
+  document.getElementById("pick-generic").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("genericapi"); });
   document.getElementById("pick-llm").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("llm"); });
 }
 
 function _formHTMLForType(type, defaults) {
   if (type === "llm") return llmFormHTML(defaults);
+  if (type === "genericapi") return genericApiGeneralHTML(defaults);
   if (type === "windowsserver") return windowsServerFormHTML(defaults);
   if (type === "fortigate") return fortiGateFormHTML(defaults);
   if (type === "entraid") return entraIdFormHTML(defaults);
@@ -5894,6 +6257,7 @@ function _formHTMLForType(type, defaults) {
 
 function _formConfigForType(type) {
   if (type === "llm") return getLlmFormConfig();
+  if (type === "genericapi") return getGenericApiFormConfig();
   if (type === "windowsserver") return getWinFormConfig();
   if (type === "fortigate") return getFgtFormConfig();
   if (type === "entraid") return getEntraFormConfig();
@@ -5940,6 +6304,7 @@ var _INTEGRATION_PRODUCTS = {
   azurearc:        "Azure Arc",
   unraid:          "Unraid",
   truenas:         "TrueNAS SCALE",
+  genericapi:      "Generic API",
   llm:             "AI Assistant",
 };
 
@@ -5988,6 +6353,9 @@ var _INTEGRATION_REQUIRED_FIELDS = {
   // The API key is optional (Ollama / LM Studio need none), and a blank Model
   // means the server's default pick, so only the host is required.
   llm:          [["f-host", "host"]],
+  // The identity path is required too, but which input holds it depends on
+  // the identity picker — the server names it if it is missing.
+  genericapi:   [["f-host", "host"]],
 };
 
 function _integrationRequires(type, mode) {
@@ -6102,6 +6470,14 @@ function _integrationTabs(ctx) {
       },
     ];
     return tabs;
+  }
+
+  if (type === "genericapi") {
+    return [
+      { key: "general", label: "General", html: ctx.generalHtml },
+      { key: "mapping", label: "Records & Mapping", html: genericApiMappingHTML(Object.assign({}, defaults, config)) },
+      { key: "preview", label: "Preview", html: genericApiPreviewHTML() },
+    ];
   }
 
   if (_NON_FORTINET_TABBED.indexOf(type) === -1) return null;   // flat form only
@@ -6350,6 +6726,7 @@ function _autoCheckLlmTools(id, name) {
 /** The per-type wiring both flows run after the modal is in the DOM. */
 function _wireIntegrationModal(type, id) {
   if (type === "llm") { _wireLlmForm(id); return; }
+  if (type === "genericapi") { _wireGenericApiForm(id); return; }
   var isFmgOrFgt = (type === "fortimanager" || type === "fortigate");
   if (isFmgOrFgt) {
     _wireMonitoringTabSubtabs(type);
@@ -6405,7 +6782,8 @@ async function openIntegrationCreateModal(type) {
   var createDefaults = isFmg ? { verifySsl: true, fortigateVerifySsl: true }
     : isFgt ? { verifySsl: true }
     : (isAd || isVc) ? { verifyTls: true }
-    : isWl ? { verifyTls: true, useTls: true } : {};
+    : isWl ? { verifyTls: true, useTls: true }
+    : type === "genericapi" ? { useHttps: true, verifySsl: true } : {};
 
   // The Fortinet pair build their General tab from their own split
   // general/filters helpers, so this is only consulted by the other five —
@@ -6714,6 +7092,34 @@ function _intgEditFormSpec(intg, config) {
       return { body: body, formGetter: formGetter, defaults: defaults };
     }
 
+    if (intg.type === "genericapi") {
+      // Every stored key rides into the defaults (the mapping tab reads the
+      // same blob via _integrationTabs), secrets as "is one stored" flags.
+      var gaDefaults = Object.assign({}, config, {
+        name: intg.name,
+        enabled: intg.enabled,
+        autoDiscover: intg.autoDiscover !== false,
+        pollInterval: intg.pollInterval,
+        hasApiToken: !!config.apiToken,
+        hasPassword: !!config.password,
+        hasClientSecret: !!config.clientSecret,
+        verboseLogging: config.verboseLogging === true,
+        verboseLoggingEnabledAt: config.verboseLoggingEnabledAt,
+      });
+      delete gaDefaults.apiToken; delete gaDefaults.password; delete gaDefaults.clientSecret;
+      return {
+        body: genericApiGeneralHTML(gaDefaults),
+        defaults: gaDefaults,
+        formGetter: function () {
+          var fc = getGenericApiFormConfig();
+          if (!fc.apiToken) delete fc.apiToken;
+          if (!fc.password) delete fc.password;
+          if (!fc.clientSecret) delete fc.clientSecret;
+          return fc;
+        },
+      };
+    }
+
     if (isWl) {
       // All four places a field must land (schema, service, form + reader,
       // these defaults) carry every key below — round-trip Add → Save → Edit.
@@ -6971,7 +7377,11 @@ async function _testExistingIntegration(id, intg) {
   var isArc = intg.type === "azurearc";
   var formConfig = _formConfigForType(intg.type);
   // Strip blank secrets so the server fills them in from the stored config.
-  if (isWin || isVc) { if (!formConfig.password) delete formConfig.password; }
+  if (intg.type === "genericapi") {
+    if (!formConfig.apiToken) delete formConfig.apiToken;
+    if (!formConfig.password) delete formConfig.password;
+    if (!formConfig.clientSecret) delete formConfig.clientSecret;
+  } else if (isWin || isVc) { if (!formConfig.password) delete formConfig.password; }
   else if (isEntra || isArc) { if (!formConfig.clientSecret) delete formConfig.clientSecret; }
   else if (isAd) { if (!formConfig.bindPassword) delete formConfig.bindPassword; }
   else {

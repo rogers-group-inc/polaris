@@ -8,7 +8,11 @@
  *   - the round cap forces a final no-tools answer;
  *   - Stop saves the partial answer with stopped=true;
  *   - a failure before any text saves NOTHING (the question stays for /retry),
- *     and the audit Event never carries the question or answer text.
+ *     and the audit Event never carries the question or answer text;
+ *   - memory (rule 95(i)): off → no block, no remember/forget tools; on → the
+ *     block rides the system prompt, the tools are offered, and a memory call
+ *     goes to runMemoryTool (grounded in THIS turn's question), never to the
+ *     read-only lookup runner.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -22,6 +26,9 @@ const h = vi.hoisted(() => ({
   getEfficiencyAdvisor: vi.fn(async () => false),
   recentAdvisorLines: vi.fn(async () => ({ prefaces: [] as string[], signOffs: [] as string[] })),
   logEvent: vi.fn(async () => {}),
+  getMemoryEnabled: vi.fn(async () => false),
+  listMemory: vi.fn(async () => [] as any[]),
+  runMemoryTool: vi.fn(),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
@@ -38,6 +45,18 @@ vi.mock("../../src/services/assistantToolService.js", () => ({
   runAssistantTool: h.runAssistantTool,
   toolLabel: (n: string) => `did ${n}`,
 }));
+vi.mock("../../src/services/assistantMemoryService.js", async () => {
+  const real = await vi.importActual<typeof import("../../src/services/assistantMemoryService.js")>("../../src/services/assistantMemoryService.js");
+  return {
+    getMemoryEnabled: h.getMemoryEnabled,
+    listMemory: h.listMemory,
+    runMemoryTool: h.runMemoryTool,
+    memoryPromptBlock: real.memoryPromptBlock,
+    memoryToolDefs: real.memoryToolDefs,
+    memoryToolLabel: real.memoryToolLabel,
+    MEMORY_TOOL_NAMES: real.MEMORY_TOOL_NAMES,
+  };
+});
 vi.mock("../../src/services/assistantConversationService.js", () => ({
   beginTurn: h.beginTurn,
   finishTurn: h.finishTurn,
@@ -73,6 +92,59 @@ function run(over: Partial<Parameters<typeof streamAssistantTurn>[0]> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("streamAssistantTurn — memory (rule 95(i))", () => {
+  it("sends no memory block and no memory tools while memory is off", async () => {
+    h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], tools: any[]) => {
+      expect(msgs[0].content).not.toContain("Memory —");
+      expect(tools.map((t: any) => t.function.name)).toEqual(["list_assets"]);
+      return { content: "ok", toolCalls: [], finishReason: "stop" };
+    });
+    await run().p;
+    expect(h.listMemory).not.toHaveBeenCalled();
+  });
+
+  it("puts the entries in the system prompt and offers remember/forget while on", async () => {
+    h.getMemoryEnabled.mockResolvedValueOnce(true);
+    h.listMemory.mockResolvedValueOnce([{ id: "e1", text: "Manages Nashville", source: "user", createdAt: new Date() }]);
+    h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], tools: any[]) => {
+      expect(msgs[0].content).toContain("[1] Manages Nashville");
+      expect(tools.map((t: any) => t.function.name)).toEqual(["list_assets", "remember", "forget"]);
+      return { content: "ok", toolCalls: [], finishReason: "stop" };
+    });
+    await run().p;
+  });
+
+  it("routes a remember call to the memory runner with this turn's question, and emits the change", async () => {
+    h.getMemoryEnabled.mockResolvedValueOnce(true);
+    h.beginTurn.mockResolvedValueOnce({ question: "remember I manage Nashville" });
+    h.runMemoryTool.mockImplementationOnce(async (_n: string, _a: string, turn: any) => {
+      turn.onChange({ action: "remembered", text: "Manages Nashville" });
+      return { ok: true, data: { remembered: "Manages Nashville" } };
+    });
+    h.chatCompletionRound
+      .mockImplementationOnce(async () => ({ content: "", toolCalls: [{ id: "t1", type: "function", function: { name: "remember", arguments: '{"fact":"Manages Nashville"}' } }], finishReason: "tool_calls" }))
+      .mockImplementationOnce(async (_c: any, _m: any, _t: any, o: any) => {
+        o.onText("Noted.");
+        return { content: "Noted.", toolCalls: [], finishReason: "stop" };
+      });
+    const { p, events } = run({ content: "remember I manage Nashville" });
+    await p;
+    expect(h.runAssistantTool).not.toHaveBeenCalled();
+    expect(h.runMemoryTool).toHaveBeenCalledWith("remember", '{"fact":"Manages Nashville"}', expect.objectContaining({ question: "remember I manage Nashville", userId: "u1" }));
+    expect(events.find((e) => e[0] === "memory")).toEqual(["memory", { action: "remembered", text: "Manages Nashville" }]);
+    expect(h.finishTurn.mock.calls[0][1].toolsUsed).toEqual([{ name: "remember", label: "updated memory", ok: true }]);
+  });
+
+  it("does not run a memory tool the model calls while memory is off", async () => {
+    h.chatCompletionRound
+      .mockImplementationOnce(async () => ({ content: "", toolCalls: [{ id: "t1", type: "function", function: { name: "remember", arguments: '{"fact":"x"}' } }], finishReason: "tool_calls" }))
+      .mockImplementationOnce(async () => ({ content: "ok", toolCalls: [], finishReason: "stop" }));
+    h.runAssistantTool.mockResolvedValueOnce({ ok: false, data: { error: "Unknown tool remember" } });
+    await run().p;
+    expect(h.runMemoryTool).not.toHaveBeenCalled();
+  });
 });
 
 describe("streamAssistantTurn", () => {

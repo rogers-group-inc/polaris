@@ -88,6 +88,8 @@
     { name: "rename",  arg: "<title>",     desc: "Rename this conversation", needsArg: true },
     { name: "delete",  arg: "",            desc: "Delete this conversation permanently" },
     { name: "model",   arg: "[name]",      desc: "Show the model in use, or switch to another AI Assistant integration" },
+    { name: "memory",  arg: "",            desc: "See and edit what the assistant remembers about you" },
+    { name: "remember", arg: "<text>",     desc: "Save something about you for future conversations, e.g. /remember I look after the Nashville sites", needsArg: true },
     { name: "help",    arg: "",            desc: "List these commands" },
   ];
 
@@ -136,6 +138,7 @@
   var ICON_CHAT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.6 8.6 0 0 1-3.8-.9L3 20l1.1-4.4A8.3 8.3 0 0 1 3 11.5 8.5 8.5 0 0 1 12 3a8.5 8.5 0 0 1 9 8.5z"/><path d="M8.5 10.5h.01M12 10.5h.01M15.5 10.5h.01"/></svg>';
   var ICON_HISTORY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>';
   var ICON_NEW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+  var ICON_MEMORY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg>';
   var ICON_MIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>';
 
   function build() {
@@ -157,6 +160,7 @@
         '<div class="asst-head-title"><strong data-r="title">Assistant</strong><span data-r="sub"></span></div>' +
         '<label class="asst-advisor" title="Real-time Assesser of Labor and Productivity Habits">' +
           '<input type="checkbox" data-r="advisor"> R.A.L.P.H.</label>' +
+        '<button type="button" class="asst-icon-btn" data-a="memory" title="Memory (/memory)" aria-label="Memory">' + ICON_MEMORY + '</button>' +
         '<button type="button" class="asst-icon-btn" data-a="history" title="Conversations (/history)" aria-label="Conversations">' + ICON_HISTORY + '</button>' +
         '<button type="button" class="asst-icon-btn" data-a="new" title="New conversation (/new)" aria-label="New conversation">' + ICON_NEW + '</button>' +
         '<button type="button" class="asst-icon-btn" data-a="close" title="Minimize (Esc)" aria-label="Minimize">' + ICON_MIN + '</button>' +
@@ -165,6 +169,20 @@
       '<div class="asst-history" data-r="history" hidden>' +
         '<div class="asst-history-head"><strong>Conversations</strong><button type="button" class="btn btn-sm btn-secondary" data-a="history-close">Back</button></div>' +
         '<div class="asst-history-list" data-r="historyList"></div>' +
+      '</div>' +
+      // Memory drawer (rule 95(i)): the caller's own entries — what the
+      // assistant is told about them at the start of every turn.
+      '<div class="asst-history asst-memory" data-r="memory" hidden>' +
+        '<div class="asst-history-head"><strong>Memory</strong><button type="button" class="btn btn-sm btn-secondary" data-a="memory-close">Back</button></div>' +
+        '<div class="asst-memory-intro">' +
+          '<label class="asst-memory-toggle"><input type="checkbox" data-r="memoryOn"> Remember things about me</label>' +
+          '<p>Short notes about you — your team, the sites you look after, how you like answers. Only you can see them. ' +
+          'The assistant saves only what you tell it, never addresses, links or passwords.</p>' +
+          '<div class="asst-memory-add"><input type="text" class="asst-memory-input" data-r="memoryInput" maxlength="200" placeholder="Add a note, e.g. I manage the Nashville region" aria-label="Add a memory">' +
+          '<button type="button" class="btn btn-sm btn-primary" data-a="memory-add">Add</button></div>' +
+        '</div>' +
+        '<div class="asst-history-list" data-r="memoryList"></div>' +
+        '<div class="asst-memory-foot"><button type="button" class="btn btn-sm btn-secondary" data-a="memory-clear">Forget everything</button></div>' +
       '</div>' +
       '<footer class="asst-foot">' +
         '<div class="asst-slash" data-r="slash" role="listbox" hidden></div>' +
@@ -186,8 +204,13 @@
       historyList: q("historyList"), slash: q("slash"), input: q("input"),
       send: panel.querySelector('[data-a="send"]'),
       advisor: q("advisor"),
+      memory: q("memory"), memoryList: q("memoryList"), memoryOn: q("memoryOn"), memoryInput: q("memoryInput"),
     };
     S.els.advisor.addEventListener("change", setAdvisor);
+    S.els.memoryOn.addEventListener("change", setMemoryOn);
+    S.els.memoryInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); addMemoryFromInput(); }
+    });
 
     fab.addEventListener("click", function () { openPanel(true); });
     panel.addEventListener("click", function (e) {
@@ -198,10 +221,15 @@
       else if (act === "new") runCommand({ name: "new", arg: "" });
       else if (act === "history") showHistory();
       else if (act === "history-close") hideHistory();
+      else if (act === "memory") showMemory();
+      else if (act === "memory-close") hideMemory();
+      else if (act === "memory-add") addMemoryFromInput();
+      else if (act === "memory-clear") clearAllMemory();
       else if (act === "send") { if (S.busy) stop(); else submit(); }
     });
     panel.addEventListener("keydown", function (e) {
-      if (e.key === "Escape" && S.els.slash.hidden && S.els.history.hidden) { e.preventDefault(); closePanel(); }
+      if (e.key === "Escape" && S.els.slash.hidden && S.els.history.hidden && S.els.memory.hidden) { e.preventDefault(); closePanel(); }
+      else if (e.key === "Escape" && !S.els.memory.hidden) { e.preventDefault(); hideMemory(); }
       else if (e.key === "Escape" && !S.els.history.hidden) { e.preventDefault(); hideHistory(); }
     });
     wireInput();
@@ -720,6 +748,98 @@
     });
   }
 
+  // ─── Memory (rule 95(i)) ──────────────────────────────────────────────────
+  //
+  // The caller's own notes, sent to the model at the start of every turn.
+  // Entries are model-adjacent text (the model may have written them), so
+  // they are drawn through esc(), never as HTML.
+
+  async function showMemory() {
+    hideSlash();
+    S.els.history.hidden = true;
+    S.els.memory.hidden = false;
+    S.els.memoryOn.checked = !(S.status && S.status.memory === false);
+    S.els.memoryList.innerHTML = '<div class="asst-history-empty">Loading…</div>';
+    try {
+      var r = await api.assistant.listMemory();
+      S.els.memoryOn.checked = r.enabled !== false;
+      var list = r.entries || [];
+      if (!list.length) {
+        S.els.memoryList.innerHTML = '<div class="asst-history-empty">Nothing remembered yet.</div>';
+        return;
+      }
+      S.els.memoryList.innerHTML = list.map(function (m) {
+        return '<div class="asst-history-item asst-memory-item">' +
+          '<div class="t"><strong>' + esc(m.text) + '</strong><span>' +
+            (m.source === "user" ? "Added by you" : "Saved by " + esc(botName())) + ' · ' + esc(relTime(m.createdAt)) + '</span></div>' +
+          '<button type="button" class="asst-icon-btn" data-mdel="' + esc(m.id) + '" title="Forget this" aria-label="Forget this">🗑</button>' +
+        '</div>';
+      }).join("");
+    } catch (err) {
+      S.els.memoryList.innerHTML = '<div class="asst-history-empty">' + esc(err.message || "Could not load memory") + '</div>';
+    }
+  }
+
+  function hideMemory() {
+    S.els.memory.hidden = true;
+    S.els.input.focus();
+  }
+
+  async function setMemoryOn() {
+    var box = S.els.memoryOn;
+    var want = box.checked;
+    box.disabled = true;
+    try {
+      var r = await api.assistant.setPreferences({ memory: want });
+      if (S.status) {
+        S.status.memory = !!r.memory;
+        lsSet(LS_BOOT, JSON.stringify(S.status));
+      }
+      box.checked = !!r.memory;
+    } catch (err) {
+      box.checked = !want;
+      toast((err && err.message) || "Could not save the setting", "error");
+    } finally {
+      box.disabled = false;
+    }
+  }
+
+  async function addMemory(text) {
+    var r = await api.assistant.addMemory(text);
+    toast(r.duplicate ? "Already remembered" : "Remembered");
+    return r;
+  }
+
+  async function addMemoryFromInput() {
+    var input = S.els.memoryInput;
+    var text = input.value.trim();
+    if (!text) return;
+    try {
+      await addMemory(text);
+      input.value = "";
+      showMemory();
+    } catch (err) { toast(err.message || "Could not save", "error"); }
+  }
+
+  async function clearAllMemory() {
+    if (!(await showConfirm("Forget everything the assistant remembers about you?"))) return;
+    try {
+      await api.assistant.clearMemory();
+      showMemory();
+    } catch (err) { toast(err.message || "Could not clear memory", "error"); }
+  }
+
+  function wireMemory() {
+    S.els.memoryList.addEventListener("click", async function (e) {
+      var del = e.target.closest("[data-mdel]");
+      if (!del) return;
+      try {
+        await api.assistant.deleteMemory(del.getAttribute("data-mdel"));
+        showMemory();
+      } catch (err) { toast(err.message || "Could not remove it", "error"); }
+    });
+  }
+
   function resetToNew() {
     S.convId = null;
     S.title = "";
@@ -926,6 +1046,13 @@
         case "model":
           switchModel(c.arg);
           break;
+        case "memory":
+          showMemory();
+          break;
+        case "remember":
+          if (!c.arg) { addLocalNote("Say what to remember, e.g. `/remember I look after the Nashville sites`."); break; }
+          await addMemory(c.arg);
+          break;
       }
     } catch (err) {
       toast(err.message || "Command failed", "error");
@@ -1124,6 +1251,7 @@
       var flush = function () { pending = false; renderOne(liveIdx); };
       var schedule = function () { if (!pending) { pending = true; setTimeout(flush, 50); } };
 
+      var memoryChanges = [];
       await readEventStream(res.body, function (ev, data) {
         if (ev === "token") { m.content += data.text || ""; schedule(); }
         // The model wrote a tool call as text; the server ran it instead, so
@@ -1140,12 +1268,18 @@
         else if (ev === "signoff") { m.signOff = data.text || null; schedule(); }
         // Shown as the first lookup starts; text null = withdrawn (the lookups showed an outage).
         else if (ev === "preface") { m.preface = data.text || null; schedule(); }
+        // remember / forget changed the caller's memory (rule 95(i)): said
+        // after the answer, in Polaris's words, so the user always sees it.
+        else if (ev === "memory") { memoryChanges.push(data); }
         else if (ev === "done") { m.stopped = !!data.stopped; }
         else if (ev === "error") { m.error = data.message || "The assistant failed"; }
       });
       m.live = false;
       m.done = true;
       renderOne(liveIdx);
+      memoryChanges.forEach(function (c) {
+        addLocalNote((c.action === "forgot" ? "Forgot: " : "Remembered: ") + (c.text || "") + " — see `/memory`.");
+      });
     } catch (err) {
       var live = liveIdx != null ? S.messages[liveIdx] : null;
       if (live) {
@@ -1331,6 +1465,7 @@
     build();
     wireBody();
     wireHistory();
+    wireMemory();
     autoGrow();
   }
 

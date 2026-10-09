@@ -170,6 +170,33 @@ describe("PolarisQuietTimeEditor", () => {
     expect(qte.collect(root).config.severities).toEqual(["critical"]);
   });
 
+  it("a scope limits the tree to the automation's own severities and sends; hidden boxes keep their value", () => {
+    // An automation at warning with a critical band: warning has escalation
+    // tiers but nothing repeats; critical only alerts.
+    const scope = {
+      warning: { alerts: true, alertReminders: false, escalations: true, escalationReminders: false },
+      critical: { alerts: true, alertReminders: false, escalations: false, escalationReminders: false },
+    };
+    const root = mountEditor(null, { ...META, scope });
+    const rows = Array.from(root.querySelectorAll(".qte-sevrow")) as HTMLElement[];
+    expect(rows.map((r) => r.getAttribute("data-sev"))).toEqual(["warning", "critical"]);
+    const shown = (row: Element) => Array.from(row.querySelectorAll(".qte-kind:not(.qte-kind-hidden)")).map((k) => k.getAttribute("data-kind"));
+    expect(shown(rows[0]!)).toEqual(["alerts", "escalations"]);
+    expect(shown(rows[1]!)).toEqual(["alerts"]);
+    // Untouched: every shown severity, every kind (hidden ones held too) — the compact "everything".
+    const untouched = qte.collect(root).config;
+    expect(untouched.held).toBeUndefined();
+    expect(untouched.severities).toBeNull();
+
+    // Unticking critical's only visible box lets critical through entirely,
+    // even though its hidden boxes are still ticked.
+    set(rows[1]!, '.qte-kind[data-kind="alerts"]', false);
+    expect((rows[1]!.querySelector(".qte-sev") as HTMLInputElement).checked).toBe(false);
+    const got = qte.collect(root).config;
+    expect(got.severities).toEqual(["warning"]);
+    expect(got.held).toEqual({ warning: ALL });
+  });
+
   it("unticking Alerts everywhere leaves nothing to summarise: the summary section hides and saves no summary fields", () => {
     const root = mountEditor(null);
     root.querySelectorAll(".qte-sevrow").forEach((row) => set(row, '.qte-kind[data-kind="alerts"]', false));

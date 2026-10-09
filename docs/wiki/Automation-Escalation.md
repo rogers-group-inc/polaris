@@ -135,6 +135,13 @@ the old reminder-only quiet time: the first alert and the all-clear still send,
 the chasing waits for the period to end. With no severity holding its first
 alert there is nothing to report, and the summary section disappears.
 
+On an automation's own quiet time (**Override Global Quiet Time**) the tree
+shows only what that automation can actually send: its own severity and its
+severity bands' — not all five — and under each, **Reminders** only when a
+notify action at that severity repeats, **Escalation alerts** only when an
+escalation reaches it, and their **Reminders** only when a tier repeats. Add a
+reminder or an escalation on the Actions step and its box appears here, held.
+
 Held means held, never skipped: nothing in the alert's escalation clock moves
 while a send is quiet. The reminder that ends a hold still says *"Reminders
 resumed after a quiet period — this alert has been active for 9h 12m"* and
@@ -159,7 +166,12 @@ periods as the week needs, or start from a preset (*Nights and weekends*,
 *Every night*, *Weekends only*, *Outside business hours*). **Quiet outside these hours** turns the
 periods inside out, so working hours are what you type and the quiet time is
 everything else. A week strip and a per-day breakdown under the periods show
-exactly what will be quiet. Monthly and yearly schedules take a day of the
+exactly what will be quiet. An overnight range carries into the next morning,
+so *Nights and weekends* puts Sunday on the 22:00–06:00 period as well as on
+the all-day one — that is what keeps Monday 00:00–06:00 quiet. A day that is
+quiet all day may share an *overnight* range with another period (only its
+next-morning tail counts); any other range on it is refused as a double
+listing. Monthly and yearly schedules take a day of the
 period and an hour list, and every schedule can carry a first and last date.
 Times are **server-local wall clock** —
 the zone is printed beside the hours, and a browser prefilling 22:00 from its

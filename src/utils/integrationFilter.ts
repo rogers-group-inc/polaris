@@ -8,6 +8,7 @@
  * Per-integration matching:
  *   - fortimanager / fortigate: deviceInclude/deviceExclude vs hostname
  *   - entraid:                   deviceInclude/deviceExclude vs hostname (Entra displayName lands in Asset.hostname)
+ *   - genericapi:                deviceInclude/deviceExclude vs hostname (the record's mapped hostname)
  *   - azurearc:                  deviceInclude/deviceExclude vs hostname. Its
  *     resourceGroup/tag filters are deliberately not re-evaluated here — see
  *     the note at that branch.
@@ -94,7 +95,7 @@ export function assetMatchesIntegrationFilter(
   // isn't threaded with, and the failure mode of skipping them is benign
   // (a probe-now refresh proceeds on an asset the next sweep might drop),
   // whereas guessing would block legitimate refreshes.
-  if (type === "fortimanager" || type === "fortigate" || type === "entraid" || type === "azurearc") {
+  if (type === "fortimanager" || type === "fortigate" || type === "entraid" || type === "azurearc" || type === "genericapi") {
     const include = asStringArray(cfg.deviceInclude);
     const exclude = asStringArray(cfg.deviceExclude);
     const candidate = asset.hostname || "";

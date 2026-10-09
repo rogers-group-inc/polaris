@@ -23,6 +23,7 @@
  *                                        only, never the text), at most every 400 ms
  *   tool   { name, label, status, ok? }   status: "running" | "done"
  *   report { id?, title, columns, rows, rowCount, truncated }
+ *   memory { action, text }              remember/forget changed the caller's memory (rule 95(i))
  *   done   { messageId, stopped }
  *   error  { message }
  */
@@ -57,6 +58,16 @@ import {
 } from "./assistantConversationService.js";
 import { WIKI_BASE_URL, wikiPageNames } from "./helpIndexService.js";
 import {
+  getMemoryEnabled,
+  listMemory,
+  memoryPromptBlock,
+  memoryToolDefs,
+  memoryToolLabel,
+  runMemoryTool,
+  MEMORY_TOOL_NAMES,
+  type MemoryTurn,
+} from "./assistantMemoryService.js";
+import {
   asksAboutOutage,
   lookupShowsOutage,
   lookupFoundSomething,
@@ -69,7 +80,7 @@ import {
   type TurnSignals,
 } from "./efficiencyAdvisorService.js";
 
-export type AssistantEmit = (event: "start" | "token" | "retract" | "thinking" | "tool" | "report" | "preface" | "signoff" | "done" | "error", data: unknown) => void;
+export type AssistantEmit = (event: "start" | "token" | "retract" | "thinking" | "tool" | "report" | "preface" | "signoff" | "memory" | "done" | "error", data: unknown) => void;
 
 /** Ceiling on one tool result handed back to the model (characters of JSON); contextBudget sizes it down for small windows. */
 const TOOL_RESULT_MAX_CHARS = 24_000;
@@ -168,7 +179,7 @@ function noteLookup(s: TurnSignals, name: string, result: { ok: boolean; data: u
 }
 
 /** The system prompt. Exported for tests. */
-export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?: string; displayName?: string; persona?: string }): string {
+export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?: string; displayName?: string; persona?: string; memory?: string }): string {
   const now = opts.now ?? new Date();
   const name = opts.displayName?.trim();
   const lines = [
@@ -196,7 +207,10 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
     "- When the user asks for a report, export, list to download, or spreadsheet, call create_report with the " +
       "right source and filters. The user sees the finished table with download buttons; you do not see its rows, " +
       "so never type a table or rows for it — reply with one sentence naming what it holds.",
-    "- You can only look things up. You cannot change, acknowledge, push or delete anything; if asked, explain where " +
+    (opts.memory
+      ? "- Apart from your memory of the user, you can only look things up. "
+      : "- You can only look things up. ") +
+      "You cannot change, acknowledge, push or delete anything in Polaris; if asked, explain where " +
       "in Polaris the user can do it.",
     "- Keep answers concise. Use short Markdown tables for up to ~15 rows; offer a report for more.",
     "- Never mention your tools or their names (list_assets, create_report, …) to the user — say what you looked " +
@@ -207,6 +221,9 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
   // operator's instructions, so those still have the last word.
   if (opts.persona?.trim()) lines.push("", opts.persona.trim());
   if (opts.extra?.trim()) lines.push("", "Operator instructions:", opts.extra.trim());
+  // Rule 95(i): the person's memory, framed as background about them — after
+  // the operator's instructions so it can never read as overriding them.
+  if (opts.memory) lines.push("", opts.memory);
   return lines.join("\n");
 }
 
@@ -419,12 +436,27 @@ export async function streamAssistantTurn(input: {
   // on this event, so its keep-alive covers a slow first token.
   emit("start", { question });
 
-  const tools = assistantToolDefs();
-  const budget = contextBudget(config.contextWindow);
-  const [allTurns, advisor] = await Promise.all([
+  const [allTurns, advisor, memoryOn] = await Promise.all([
     recentTurns(input.conversationId, config.contextMessages ?? LLM_DEFAULTS.contextMessages),
     getEfficiencyAdvisor(input.userId),
+    getMemoryEnabled(input.userId),
   ]);
+  // Rule 95(i): the person's memory rides in the system prompt (so the
+  // context budget below counts it) and the remember/forget tools are offered
+  // only while their "Remember things" switch is on.
+  const memoryTurn: MemoryTurn | null = memoryOn
+    ? {
+      userId: input.userId,
+      username: input.username,
+      question,
+      entries: await listMemory(input.userId),
+      remembered: 0,
+      forgotten: 0,
+      onChange: (change) => emit("memory", change),
+    }
+    : null;
+  const tools = memoryTurn ? [...assistantToolDefs(), ...memoryToolDefs()] : assistantToolDefs();
+  const budget = contextBudget(config.contextWindow);
   // What the turn did, for the Efficiency Advisor's sign-off (rule 95(h)).
   // Gathered whether or not the advisor is on; it costs a regex per lookup.
   const signals: TurnSignals = {
@@ -440,6 +472,7 @@ export async function streamAssistantTurn(input: {
     extra: config.systemPromptExtra,
     displayName: config.displayName,
     persona: personaActive ? ADVISOR_PERSONA : undefined,
+    memory: memoryTurn ? memoryPromptBlock(memoryTurn.entries, input.username) : undefined,
   });
   const turns = fitHistory(estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools)), allTurns, budget.promptTokens);
   const recentLines = voice === "canned" ? await recentAdvisorLines(input.conversationId) : null;
@@ -552,6 +585,17 @@ export async function streamAssistantTurn(input: {
       for (const tc of calls) {
         if (signal.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
         const name = tc.function.name;
+        // remember / forget (rule 95(i)) write the caller's own memory: not a
+        // lookup, so no Efficiency Advisor line and no lookup signals.
+        if (memoryTurn && MEMORY_TOOL_NAMES.has(name)) {
+          const label = memoryToolLabel(name) ?? name;
+          emit("tool", { name, label, status: "running" });
+          const result = await runMemoryTool(name, tc.function.arguments, memoryTurn);
+          toolsUsed.push({ name, label, ok: result.ok });
+          emit("tool", { name, label, status: "done", ok: result.ok });
+          messages.push({ role: "tool", tool_call_id: tc.id, content: clipJson(result.data, budget.toolResultChars) });
+          continue;
+        }
         if (recentLines && !prefaceOffered && !signals.outage) {
           preface = pickLookupLine(recentLines.prefaces);
           emit("preface", { text: preface });

@@ -1024,6 +1024,8 @@ const api = {
     autoMonitorAssetsPreflight: (id, proposed) => request("POST", `/integrations/${id}/auto-monitor-assets/preflight`, { proposed: proposed }),
     llmRegenerateToken: (id) => request("POST", `/integrations/${id}/llm/regenerate-token`),
     llmProbeTools:      (body) => trackedRequest("Checking tool calling", "POST", "/integrations/llm/probe-tools", body),
+    // Generic API Preview tab: the first page, mapped (nothing is written).
+    genericApiPreview:  (body) => trackedRequest("Reading the first page", "POST", "/integrations/generic-api/preview", body),
     llmCheckTools:      (id)   => trackedRequest("Checking tool calling", "POST", `/integrations/${id}/llm/check-tools`),
   },
   // The floating AI assistant (public/js/assistant.js, business rule 95). The
@@ -1041,6 +1043,10 @@ const api = {
     stopTurn:          (id)        => request("POST", `/assistant/conversations/${id}/stop`),
     updateSettings:    (body)      => request("PUT", "/assistant/settings", body),
     setPreferences:    (body)      => request("PUT", "/assistant/preferences", body),
+    listMemory:        ()          => request("GET", "/assistant/memory"),
+    addMemory:         (text)      => request("POST", "/assistant/memory", { text: text }),
+    deleteMemory:      (id)        => request("DELETE", `/assistant/memory/${id}`),
+    clearMemory:       ()          => request("DELETE", "/assistant/memory"),
   },
   monitorSettings: {
     // Manual tier — settings for orphan/non-integration-discovered assets.

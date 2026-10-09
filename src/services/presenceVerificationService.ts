@@ -127,7 +127,10 @@ export async function runPresenceVerification(opts: {
           // most of them classify as "fresh" without a ping: the sync already
           // stamped lastSeen from a Connected heartbeat, which collapses the
           // ping queue at fleet scale.
-          sourceKind: { in: ["ad", "entra", "intune", "arc"] },
+          // "generic-api": a Generic API feed is an inventory claim and never
+          // writes lastSeen (rule 12), so presence is established here the
+          // way it is for a directory.
+          sourceKind: { in: ["ad", "entra", "intune", "arc", "generic-api"] },
         },
       },
     },

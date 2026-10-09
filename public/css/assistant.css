@@ -361,6 +361,17 @@ body.asst-mounted .toast-container { bottom: 5.25rem; }
 .asst-history-item .t span { font-size: 0.7rem; color: var(--color-text-tertiary); }
 .asst-history-empty { padding: 1rem; font-size: 0.82rem; color: var(--color-text-tertiary); text-align: center; }
 
+/* Memory drawer (rule 95(i)) — the history drawer's shape, plus a switch, an
+   add row and a footer. Entries wrap: a note is read whole, not as a title. */
+.asst-memory-intro { padding: 0.6rem 0.85rem; border-bottom: 1px solid var(--color-border); font-size: 0.78rem; color: var(--color-text-secondary); }
+.asst-memory-intro p { margin: 0.4rem 0 0.55rem; }
+.asst-memory-toggle { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--color-text-primary); cursor: pointer; }
+.asst-memory-add { display: flex; gap: 6px; }
+.asst-memory-input { flex: 1; min-width: 0; }
+.asst-memory-item { cursor: default; }
+.asst-memory-item .t strong { white-space: normal; overflow: visible; }
+.asst-memory-foot { padding: 0.5rem 0.85rem; border-top: 1px solid var(--color-border); display: flex; justify-content: flex-end; }
+
 .asst-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 @media (max-width: 640px) {

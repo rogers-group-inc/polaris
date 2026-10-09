@@ -79,15 +79,15 @@ describe("slash commands", () => {
 
   it("filters the popup by prefix while the command name is being typed", () => {
     expect(A.matchCommands("/").length).toBe(A.COMMANDS.length);
-    expect(A.matchCommands("/re").map((c: any) => c.name)).toEqual(["resume", "retry", "report", "rename"]);
+    expect(A.matchCommands("/re").map((c: any) => c.name)).toEqual(["resume", "retry", "report", "rename", "remember"]);
     expect(A.matchCommands("/zz")).toEqual([]);
     expect(A.matchCommands("/report x")).toBeNull();
     expect(A.matchCommands("hello")).toBeNull();
   });
 
-  it("offers clear, new, resume, history, retry, report, docs, export, rename, delete, model and help", () => {
+  it("offers clear, new, resume, history, retry, report, docs, export, rename, delete, model, memory, remember and help", () => {
     expect(A.COMMANDS.map((c: any) => c.name).sort()).toEqual(
-      ["clear", "delete", "docs", "export", "help", "history", "model", "new", "rename", "report", "resume", "retry"],
+      ["clear", "delete", "docs", "export", "help", "history", "memory", "model", "new", "remember", "rename", "report", "resume", "retry"],
     );
     for (const c of A.COMMANDS) expect(c.desc.length).toBeGreaterThan(10);
   });

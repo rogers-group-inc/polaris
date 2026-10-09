@@ -9,6 +9,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 - **ApiToken** — bearer tokens for external callers (e.g. SIEM quarantine, NOC kiosk); each token is bound to a Role and acts with that role's permission matrix.
 
 - **AssistantConversation** / **AssistantMessage** / **AssistantReport** — the floating AI assistant's saved chats (business rule 95). A conversation belongs to exactly ONE user (`userId`, cascade) and is **owner-only** — every read and write is scoped to the session user, admins included, and someone else's id answers 404. Only `user` / `assistant` turns are stored (CHECK); **tool calls and their results never are**, so a stored thread cannot replay data its owner has since lost access to. A report is a **snapshot** of rows the `create_report` tool read from the database (never model text), capped at 5000. `integrationId` (SetNull) names the `llm` integration that answered last. Pruned after `Setting assistant.retentionDays` (default 90) of inactivity by the hourly `pruneEvents` job; capped at 200 per user. An answer's `preface` / `signOff` are the Efficiency Advisor's canned lines (rule 95(h)) — chosen by Polaris, kept OUT of `content` so they are never resent to the model.
+- **AssistantMemoryEntry** — one short sentence about a PERSON (their team, the sites they look after, how they like answers) that the assistant is given at the start of every turn that person starts (business rule 95(i)). Owner-only like a conversation; `userId` cascades. `source` is `assistant` (the model's `remember` tool, which may only store what the user typed that turn) or `user` (typed in the Memory drawer or with `/remember`). `text` is `VARCHAR(200)`; `assistantMemoryService` refuses addresses, links, credential-shaped and prompt-override text on every write path and caps a user at 25 entries / 2000 characters. Read only when `User.assistantMemory` is on.
 
 - **SshHostKey** — trust-on-first-use pins for SSH **server** host keys, one row per dialed `(host, port)` — no Asset FK, since a host is often onboarded before it exists as an Asset. A changed key **refuses** the connection. Gated per credential by `SshConfig.verifyHostKey`. See business rule 21.
 
@@ -106,6 +107,14 @@ AssistantReport                 -- A downloadable table the create_report tool b
   generatedAt DateTime
   @@index([messageId]); @@map("assistant_reports")
 
+AssistantMemoryEntry            -- One line of a user's assistant memory (rule 95(i)). Owner-only.
+  id        String   PK uuid
+  userId    String   FK->User (Cascade)
+  text      String   VARCHAR(200)   -- content-filtered on every write (assistantMemoryService.checkMemoryText)
+  source    String   default "assistant"  -- "assistant" | "user"
+  createdAt DateTime
+  @@index([userId, createdAt]); @@map("assistant_memory_entries")
+
 Credential                      -- Named credentials for monitoring probes (SNMP / WinRM / SSH)
   id            UUID PK
   name          String @unique
@@ -143,6 +152,7 @@ User
   totpEnabledAt   DateTime?     -- Null = not enabled; set on first valid confirm code
   totpBackupCodes String[]      -- argon2id-hashed single-use recovery codes
   assistantEfficiencyAdvisor Boolean @default(false) -- (`assistant_efficiency_advisor`) the AI chat window's "Efficiency Advisor" checkbox (rule 95(h)); on the USER so it follows them across browsers; set via PUT /assistant/preferences
+  assistantMemory Boolean @default(true) -- (`assistant_memory`) the chat window's "Remember things" switch (rule 95(i)): off withholds the memory block AND the remember/forget tools, without deleting entries; set via PUT /assistant/preferences
   passkeys        UserPasskey[] -- Registered WebAuthn credentials (local accounts only; cascade delete)
   needsRoleReview Boolean       -- Flipped true at the password step the first time the user logs in (Asset.lastLogin transitions null → set), EXCEPT for users whose role is already `admin` (an admin reviewing their own role is redundant; this keeps the seed admin's first login on a fresh install from triggering a self-notification). Drives the admin-only "new user logged in" panel in the sidebar (#role-review-status, rendered above #query-status). Auto-cleared when an admin PUTs /users/:id/role (implicit review) or DELETEs /users/:id/role-review (explicit Dismiss). Dismiss is global — clearing the flag hides the row for every admin at once. SAML SSO sets it on auto-provision (always `readonly`) and on first-ever login of an existing non-admin account.
 
