@@ -78,7 +78,6 @@ import {
   pickLookupLine,
   advisorVoice,
   ADVISOR_PERSONA,
-  PERSONA_SUSPENDED,
   type TurnSignals,
 } from "./efficiencyAdvisorService.js";
 
@@ -265,6 +264,8 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
       "You cannot change, acknowledge, push or delete anything in Polaris; if asked, explain where " +
       "in Polaris the user can do it.",
     "- Keep answers concise. Use short Markdown tables for up to ~15 rows; offer a report for more.",
+    "- Leave decommissioned assets and deprecated (retired) networks out of answers and reports unless the person " +
+      "asks about them — the lookups already omit them unless their status is asked for.",
     "- Never mention your tools or their names (list_assets, create_report, …) to the user — say what you looked " +
       "up in plain words (\"I checked the networks\").",
   ];
@@ -521,7 +522,12 @@ export async function streamAssistantTurn(input: {
   // Which voice the advisor speaks in (rule 95(k)): Polaris's canned lines on
   // a local model, the model in character on Azure AI Foundry — never both.
   const voice = advisorVoice(advisor, config.provider);
-  let personaActive = voice === "model" && !signals.outage;
+  // The model's character stays on through outages too (owner's call,
+  // 2026-10-09): ADVISOR_PERSONA forbids joking about the devices or the
+  // outage and aims the character at the person instead. The canned voice
+  // (local models) still goes silent on an outage — that guard lives in
+  // pickCategory / the preface withdrawal below.
+  const personaActive = voice === "model";
   const systemPrompt = buildSystemPrompt({
     username: input.username,
     extra: config.systemPromptExtra,
@@ -672,13 +678,6 @@ export async function streamAssistantTurn(input: {
           preface = null;
           emit("preface", { text: null });
         }
-      }
-      // In character and a lookup just showed something down or critical:
-      // the rest of the turn is plain (rule 95(k)). Added after the round's
-      // tool results, which must directly follow the call that asked for them.
-      if (personaActive && signals.outage) {
-        messages.push({ role: "system", content: PERSONA_SUSPENDED });
-        personaActive = false;
       }
     }
 

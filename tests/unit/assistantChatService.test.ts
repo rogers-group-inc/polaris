@@ -65,7 +65,7 @@ vi.mock("../../src/services/assistantConversationService.js", () => ({
   recentAdvisorLines: h.recentAdvisorLines,
 }));
 
-import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, PERSONA_SUSPENDED, advisorVoice } from "../../src/services/efficiencyAdvisorService.js";
+import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, advisorVoice } from "../../src/services/efficiencyAdvisorService.js";
 import {
   streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, asksForReport, reportTitleFromQuestion, asksHowTo, sanitizeAnswerLinks,
   contextBudget, fitHistory, compactToolResults, permissionsPromptBlock, scopePromptBlock,
@@ -631,16 +631,18 @@ describe("streamAssistantTurn — Efficiency Advisor voice on Azure AI Foundry (
     expect(prompt).not.toMatch(/efficien/i);
   });
 
-  it("no persona on a question about an outage", async () => {
+  it("keeps the persona on a question about an outage (owner's call) — its outage rule does the restraint", async () => {
     h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
     h.beginTurn.mockResolvedValueOnce({ question: "why is NSH-FW01 down?" });
     let prompt = "";
     h.chatCompletionRound.mockImplementationOnce(async (c: any, m: any[], t: any, o: any) => { prompt = m[0].content; return say("Checking.")(c, m, t, o); });
     await run({ integration: azure }).p;
-    expect(prompt).not.toContain(ADVISOR_PERSONA);
+    expect(prompt).toContain(ADVISOR_PERSONA);
+    expect(ADVISOR_PERSONA).toMatch(/NEVER joke about the devices, the outage itself or its impact/);
+    expect(ADVISOR_PERSONA).toMatch(/company has been let down/);
   });
 
-  it("drops the character for the rest of the turn once a lookup shows something critical", async () => {
+  it("adds no mid-turn note when a lookup shows something critical — the character carries on", async () => {
     h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
     h.beginTurn.mockResolvedValueOnce({ question: "anything alerting?" });
     let second: any[] = [];
@@ -649,9 +651,8 @@ describe("streamAssistantTurn — Efficiency Advisor voice on Azure AI Foundry (
       .mockImplementationOnce(async (c: any, m: any[], t: any, o: any) => { second = [...m]; return say("NSH-FW01 has a critical alert.")(c, m, t, o); });
     h.runAssistantTool.mockResolvedValueOnce({ ok: true, data: { total: 1, rows: [{ severity: "critical", assetHostname: "NSH-FW01" }] } });
     await run({ integration: azure }).p;
-    const toolIdx = second.findIndex((m) => m.role === "tool");
-    expect(second[toolIdx - 1].role).toBe("assistant");
-    expect(second[toolIdx + 1]).toEqual({ role: "system", content: PERSONA_SUSPENDED });
+    expect(second.filter((m) => m.role === "system")).toHaveLength(1);
+    expect(second[0].content).toContain(ADVISOR_PERSONA);
   });
 
   it("carries a round's raw provider blocks onto the next round's assistant turn (Claude thinking replay)", async () => {
