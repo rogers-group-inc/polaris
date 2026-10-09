@@ -1,6 +1,6 @@
 /**
  * tests/unit/capacityAdvisorRestartDom.test.ts — the Capacity Advisor card's
- * post-Stage footer (public/js/server-settings.js).
+ * post-Stage footer (public/js/server-settings.js). Business rule 99.
  *
  * On a host install the footer offers "Restart Polaris to apply". In a
  * container it must NOT: a self-restart is a plain process exit there, and a

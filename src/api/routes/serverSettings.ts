@@ -1931,7 +1931,7 @@ router.post("/security-tokens/generate", requirePermission("serverSettingsData",
 // Responds before the exit so the client sees a clean 200 and can switch to
 // its restart-polling UI.
 //
-// Refused in a container. There is no systemd to bring the process back, so
+// Business rule 99 — refused in a container. There is no systemd to bring the process back, so
 // restartService() falls through to a plain exit, and whether the container
 // comes back depends on a restart policy Polaris cannot see — Unraid's
 // default ("no") leaves it stopped. The operator restarts the container

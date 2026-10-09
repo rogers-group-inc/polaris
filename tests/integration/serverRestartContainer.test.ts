@@ -1,7 +1,7 @@
 /**
  * tests/integration/serverRestartContainer.test.ts
  *
- * POST /server-settings/restart refuses inside a container. There is no
+ * Business rule 99. POST /server-settings/restart refuses inside a container. There is no
  * systemd there, so restartService() falls through to a plain exit, and a
  * container whose restart policy is "no" (Unraid's default) stays stopped —
  * which is how a Capacity Advisor "Restart Polaris to apply" click took an
