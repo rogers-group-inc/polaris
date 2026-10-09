@@ -1335,6 +1335,11 @@ async function deleteCA(id, name) {
 
 var _dbLoaded = false;
 var _advisorJustStaged = false;
+// True when Polaris runs in a container. There the advisor asks the operator
+// to restart the container instead of offering a self-restart — a self-exit
+// leaves a container with no restart policy stopped, and POST /restart
+// refuses with 409.
+var _advisorInContainer = false;
 var _retentionLoaded = false;
 
 // ─── Retention Tab (sample retention only — event retention lives on the
@@ -1754,7 +1759,9 @@ function renderCapacityAdvisorCard(advisor, pgConfigFile, dbConnectionMode) {
   var staged = recs.filter(function (r) { return r.applyMode !== "advisory-only" && r.changeRequired; }).length;
   var stageBtn;
   if (_advisorJustStaged && staged === 0) {
-    stageBtn = '<button class="btn btn-warning" id="capacity-advisor-restart-btn">Restart Polaris to apply</button>';
+    stageBtn = _advisorInContainer
+      ? _advisorContainerRestartHtml()
+      : '<button class="btn btn-warning" id="capacity-advisor-restart-btn">Restart Polaris to apply</button>';
   } else if (staged > 0) {
     stageBtn = '<button class="btn btn-primary" id="capacity-advisor-stage-btn" data-staged-count="' + staged + '">Stage selected</button>';
   } else {
@@ -1798,7 +1805,7 @@ function renderCapacityAdvisorCard(advisor, pgConfigFile, dbConnectionMode) {
     pgConfigHint +
     '<div style="margin-top:0.85rem;display:flex;align-items:center;gap:0.75rem">' +
       stageBtn +
-      '<span class="hint" style="font-size:0.78rem">Computed ' + escapeHtml(formatLocalTime(advisor.computedAt)) + '. Restart Polaris after Stage to pick up changes.</span>' +
+      '<span class="hint" style="font-size:0.78rem">Computed ' + escapeHtml(formatLocalTime(advisor.computedAt)) + '. ' + (_advisorInContainer ? 'Restart the Polaris container(s) after Stage to pick up changes.' : 'Restart Polaris after Stage to pick up changes.') + '</span>' +
     '</div>' +
   '</div>';
 }
@@ -2538,6 +2545,7 @@ async function loadDatabaseInfo() {
     var capacity = advisorResp && advisorResp.capacity ? advisorResp.capacity : null;
     var pgTuning = advisorResp && advisorResp.pgTuning ? advisorResp.pgTuning : null;
     var dbConnectionMode = advisorResp && advisorResp.dbConnectionMode ? advisorResp.dbConnectionMode : "direct";
+    _advisorInContainer = !!(advisorResp && advisorResp.runtimeIsContainer);
     _dbLoaded = true;
 
     var advisorHtml = renderCapacityAdvisorCard(advisor, pgTuning && pgTuning.pgConfigFile, dbConnectionMode);
@@ -2820,6 +2828,19 @@ function wireAdvisorRestartBtn(restartBtn) {
 }
 
 /**
+ * In a container the advisor asks the operator to restart it rather than
+ * offering a button: Polaris can't see the container's restart policy, and a
+ * self-exit under Unraid's default ("no") leaves the container stopped.
+ */
+function _advisorContainerRestartHtml() {
+  return '<span class="hint" id="capacity-advisor-container-restart" style="font-size:0.82rem;color:var(--color-warning)">' +
+    '<strong>Staged.</strong> Restart the Polaris container yourself to apply — ' +
+    '<code>docker compose restart</code> for a compose stack (every role reads <code>.env</code>), ' +
+    '<code>docker restart &lt;name&gt;</code>, or Restart on your container host\'s Docker page.' +
+    '</span>';
+}
+
+/**
  * Mark a staged advisor row in place: drop the checkbox, flip the Status pill
  * to "Staged". Staged env values live in .env but don't reach the running
  * process until restart, so a re-fetch would still show them as pending —
@@ -2879,10 +2900,15 @@ function initCapacityAdvisorActions() {
       // "Restart Polaris to apply" in place — no full-tab reload.
       _advisorJustStaged = true;
       appliedRows.forEach(function (r) { markAdvisorRowStaged(card, r.key); });
-      showToast("Staged " + applied + " value" + (applied === 1 ? "" : "s") + ". Restart Polaris to apply.", "success");
+      showToast("Staged " + applied + " value" + (applied === 1 ? "" : "s") + ". " +
+        (_advisorInContainer ? "Restart the Polaris container(s) to apply." : "Restart Polaris to apply."), "success");
 
       var remaining = card.querySelectorAll("input.advisor-stage-checkbox").length;
-      if (remaining === 0) {
+      if (remaining === 0 && _advisorInContainer) {
+        var holder = document.createElement("span");
+        holder.innerHTML = _advisorContainerRestartHtml();
+        stageBtn.replaceWith(holder.firstChild);
+      } else if (remaining === 0) {
         var restartBtn = document.createElement("button");
         restartBtn.className = "btn btn-warning";
         restartBtn.id = "capacity-advisor-restart-btn";
