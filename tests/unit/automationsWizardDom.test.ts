@@ -2768,6 +2768,43 @@ describe("automation wizard DOM render", () => {
     expect(saved.severityBands.map((b: any) => b.forDurationSec)).toEqual([undefined, undefined]);
   });
 
+  it("typing a multi-digit History with severity tiers keeps the field focused — '3' of '30' is not clamped to 5", async () => {
+    // Every keystroke re-anchors the hold fields inside the base tier; moving a
+    // node that is already in place blurred it, and the blurred "3" then
+    // clamped to the 5-minute floor before the "0" could be typed.
+    const win = g.window as InstanceType<typeof Window>;
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      ...LOSS_BASE, id: "r-loss-typing", name: "High packet loss",
+      reset: { mode: "auto", clearThreshold: 5 },
+      severityBands: [{ threshold: 20, severity: "serious", actions: [] }],
+      bandNotify: { onIncrease: true, onDecrease: false, onResolved: true, resolvedMode: "reuse" },
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    await pickMetric("probeLossPct");
+    type Field = { value: string; focus: () => void; dispatchEvent: (e: unknown) => void };
+    for (const id of ["#tf-duration-min", "#tf-sustain-min"]) {
+      const field = doc.querySelector(id) as unknown as Field;
+      field.focus();
+      for (const typed of ["3", "30"]) {
+        field.value = typed;
+        field.dispatchEvent(new win.Event("input", { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(doc.activeElement).toBe(field);
+        expect(field.value).toBe(typed);
+      }
+    }
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    expect((savedPayloads[0]! as Record<string, any>).trigger.windowSec).toBe(1800);
+  });
+
   it("offers the saturation ceiling on packet loss but not on a path check's failure rate", async () => {
     // Both are windowed ratios, but only loss has an outage owner at 100% (rule
     // 29). A path check failing every run is the alert itself (rule 85), so the

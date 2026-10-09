@@ -6651,10 +6651,14 @@ async function openAutomationWizard(existing, opts) {
     }
     // Below the conditions, above the +Condition/+Group/+Severity row — the
     // place the mirrors take in every added tier. Re-anchored on each pass
-    // rather than moved once: the tree re-renders under this function.
+    // rather than moved once: the tree re-renders under this function. Moved
+    // only when it is NOT already in place — this runs on every keystroke, and
+    // moving a node blurs the field the operator is typing in, after which the
+    // History minimum clamps the half-typed value ("3" of "30" becomes 5).
     if (btnRow) {
-      if (durGroup) root.insertBefore(durGroup, btnRow);
-      if (sustainGroup) root.insertBefore(sustainGroup, btnRow);
+      if (sustainGroup && sustainGroup.nextElementSibling !== btnRow) root.insertBefore(sustainGroup, btnRow);
+      var durAnchor = sustainGroup || btnRow;
+      if (durGroup && durGroup.nextElementSibling !== durAnchor) root.insertBefore(durGroup, durAnchor);
     }
     // The +Condition row is moved in/marked on a different tick, so (re)mark
     // whatever is currently there rather than assuming order.
