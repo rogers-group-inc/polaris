@@ -569,26 +569,28 @@ describe("streamAssistantTurn — Efficiency Advisor (rule 95(h))", () => {
     expect(h.finishTurn.mock.calls[0][1].preface).toBeNull();
   });
 
-  it("stays silent when a lookup shows something critical, withdrawing the before-lookup line", async () => {
+  it("on an outage keeps the before-lookup line and signs off with a let-down line (owner's call)", async () => {
     h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
     h.beginTurn.mockResolvedValueOnce({ question: "anything alerting?" });
     lookupThen({ total: 1, rows: [{ severity: "critical", assetHostname: "NSH-FW01" }] }, "NSH-FW01 has a critical alert.");
     const { p, events } = run();
     await p;
     const prefaces = events.filter((e) => e[0] === "preface").map((e) => e[1].text);
-    expect(prefaces).toHaveLength(2);
-    expect(prefaces[1]).toBeNull();
-    expect(events.some((e) => e[0] === "signoff")).toBe(false);
-    expect(h.finishTurn.mock.calls[0][1]).toMatchObject({ preface: null, signOff: null });
+    expect(prefaces).toHaveLength(1);
+    expect(LOOKUP_LINES).toContain(prefaces[0]);
+    const signOff = events.find((e) => e[0] === "signoff")?.[1].text;
+    expect(SIGN_OFFS.letDown).toContain(signOff);
+    expect(h.finishTurn.mock.calls[0][1]).toMatchObject({ preface: prefaces[0], signOff });
   });
 
-  it("no before-lookup line at all on an outage question", async () => {
+  it("an outage question gets the lines too", async () => {
     h.getEfficiencyAdvisor.mockResolvedValueOnce(true);
     h.beginTurn.mockResolvedValueOnce({ question: "why is NSH-FW01 down?" });
     lookupThen({ total: 0, rows: [] }, "No such device.");
     const { p, events } = run();
     await p;
-    expect(events.some((e) => e[0] === "preface" || e[0] === "signoff")).toBe(false);
+    expect(events.some((e) => e[0] === "preface")).toBe(true);
+    expect(SIGN_OFFS.letDown).toContain(events.find((e) => e[0] === "signoff")?.[1].text);
   });
 
   it("does not repeat this conversation's recent lines while others are left", async () => {

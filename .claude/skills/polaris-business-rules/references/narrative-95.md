@@ -217,8 +217,21 @@ one or the other, and the owner saw "zero personality". On 2026-10-09 they chose
 character on through outages, under one rule written into `ADVISOR_PERSONA`: **never a joke
 about the devices, the outage or its impact.** Those facts are stated plainly. The character
 is aimed at the person instead: the company let down on their watch, the outage noted in their
-performance file. The code-side switch-off is gone; the canned voice of (h), on local models,
-still goes silent on an outage.
+performance file. The code-side switch-off is gone. The same day the owner asked for the canned
+voice of (h), on local models, to match: it no longer goes silent on an outage, keeps its
+before-lookup line, and signs off from a `letDown` category whose lines blame the person
+("Uptime was the one thing we asked of you.") and never mention a device.
+
+The persona text was rewritten the same evening after a live transcript on Haiku 5.5 showed three
+faults: the voice was tacked on as a closing clause, the model reused a sample quip almost
+verbatim, and it had no model of the character beyond adjectives. The rewrite describes who
+R.A.L.P.H. *is* (the productivity AI nobody asked for, certain it was assigned to improve this
+person, measuring the unmeasurable, cheerful and quietly disappointed), lists the devices it may
+draw on and tells it to vary them, asks for proportion (one clause in a short answer, never
+padding), forbids reusing a line within a conversation, and shows the SHAPE of three whole
+answers with the facts intact rather than isolated quips — which is what teaches the voice to
+live around the facts instead of after them. It also tells the character never to excuse a thin
+search, so the persona and the check-yourself rule pull the same way.
 
 What stays true: the persona text repeats the rules that kept (h) safe — facts come only
   from lookups, every step and figure stays exact and complete — and every code-side guard

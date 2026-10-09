@@ -74,8 +74,8 @@ describe("topicForTool", () => {
 });
 
 describe("pickCategory", () => {
-  it("says nothing on an outage or a failed turn", () => {
-    expect(pickCategory(sig({ outage: true, lookedUp: true, found: true }))).toBeNull();
+  it("lets the person down on an outage, and says nothing on a failed turn", () => {
+    expect(pickCategory(sig({ outage: true, lookedUp: true, found: true }))).toBe("letDown");
     expect(pickCategory(sig({ failed: true }))).toBeNull();
   });
 
@@ -121,8 +121,11 @@ describe("pickSignOff", () => {
     expect(LOOKUP_LINES).toContain(pickLookupLine([]));
   });
 
-  it("returns null when the turn earns nothing", () => {
-    expect(pickSignOff(sig({ outage: true }), [])).toBeNull();
+  it("returns null when the turn earns nothing, and an outage line blames the person, not the devices", () => {
+    expect(pickSignOff(sig({ failed: true }), [])).toBeNull();
+    const line = pickSignOff(sig({ outage: true }), [])!;
+    expect(SIGN_OFFS.letDown).toContain(line);
+    for (const l of SIGN_OFFS.letDown) expect(l).not.toMatch(/(device|switch|firewall|server|router|down)/i);
   });
 
   it("says engineer, never pioneer, and carries no planetfall line", () => {

@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
     asset: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn(), groupBy: vi.fn() },
     reservation: { findMany: vi.fn(), count: vi.fn() },
     subnet: { findMany: vi.fn(), count: vi.fn() },
+    tag: { findMany: vi.fn(async () => [] as Array<{ name: string }>) },
   },
   listNotifications: vi.fn(),
   searchAll: vi.fn(),
@@ -166,12 +167,21 @@ describe("list_assets — regions (the person's own, or named)", () => {
     h.tagScopes.mockResolvedValueOnce({ regions: ["Middle Tennessee", "Alabama"], tags: [] });
     await runAssistantTool("list_assets", '{"monitorStatus":"down","myRegions":true}', { req, maxRows: 50 });
     expect(h.tagScopes).toHaveBeenCalledWith("u1");
-    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toContainEqual({ tags: { hasSome: ["region:Middle Tennessee", "region:Alabama"] } });
+    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toContainEqual({ tags: { hasSome: ["region:Middle Tennessee", "Middle Tennessee", "region:Alabama", "Alabama"] } });
   });
 
-  it("a named region matches its region: tag", async () => {
+  it("a named region matches its region: tag and its bare form", async () => {
     await runAssistantTool("list_assets", '{"region":"Southern Division"}', { req, maxRows: 50 });
-    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toContainEqual({ tags: { hasSome: ["region:Southern Division"] } });
+    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toContainEqual({ tags: { hasSome: ["region:Southern Division", "Southern Division"] } });
+  });
+
+  it("a region typed in another case, or with the prefix, resolves to the registered tag (seen live: Middle Tennessee reported absent)", async () => {
+    h.prisma.tag.findMany.mockResolvedValueOnce([{ name: "region:Middle Tennessee" }]);
+    await runAssistantTool("list_assets", '{"region":["REGION:middle tennessee"]}', { req, maxRows: 50 });
+    const tags = h.prisma.asset.findMany.mock.calls[0][0].where.AND.find((c: any) => c.tags)?.tags.hasSome;
+    expect(tags).toContain("region:Middle Tennessee");
+    expect(tags).toContain("region:middle tennessee");
+    expect(h.prisma.tag.findMany.mock.calls[0][0].where.OR).toContainEqual({ name: { equals: "region:middle tennessee", mode: "insensitive" } });
   });
 
   it("myRegions with no region assigned asks instead of returning the whole install", async () => {

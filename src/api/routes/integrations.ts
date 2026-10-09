@@ -1079,6 +1079,10 @@ const LlmConfigSchema = z.preprocess(normalizeLlmProviderInput, z.object({
   // against (assistantChatService.contextBudget). Ollama's default is 4096
   // unless OLLAMA_CONTEXT_LENGTH raises it.
   contextWindow:    z.number().int().min(2048).max(1_000_000).optional().default(8192),
+  // Minutes a conversation may sit idle before the chat window sets it aside
+  // and starts fresh (/resume brings it back); 0 = never. Read by the desktop
+  // widget and the phone's Chat tab via GET /assistant/status.
+  idleResetMinutes: z.number().int().min(0).max(1440).optional().default(30),
   systemPromptExtra: z.string().max(4000).optional().default(""),
   allowLoopback:    z.boolean().optional().default(false),
   verboseLogging:   z.boolean().optional().default(false),

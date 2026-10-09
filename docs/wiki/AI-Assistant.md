@@ -175,7 +175,7 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 |---|---|
 | `/clear` | Clear this conversation and start over in the same thread |
 | `/new` | Start a new conversation (this one stays in history) |
-| `/resume` | Reopen the conversation set aside after 30 minutes without activity |
+| `/resume` | Reopen the conversation set aside after a spell without activity |
 | `/history` | Open your past conversations |
 | `/retry` | Ask for the last answer again |
 | `/report <what>` | Build a downloadable report, e.g. `/report switches down in the last 24h` |
@@ -194,14 +194,15 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 
 - Conversations are **saved** and reopen where you left off. The history button
   (or `/history`) lists them; rename or delete from there.
-- After **30 minutes without activity** (no question, answer or opened
+- After **30 minutes without activity** by default — set it with **Start a fresh
+  chat after** on the integration; 0 turns it off — (no question, answer or opened
   conversation in this browser) the window starts a **fresh chat** the next
   time it loads or opens, or within a minute on a page left open. Nothing is
   deleted: `/resume` reopens the conversation it set aside, and it is still in
   History.
 - **Conversations follow you between the desktop and the phone.** Opening the
   chat continues the conversation you used most recently on either device, as
-  long as it was within the last 30 minutes — unless you have used this device
+  long as it was within that same idle time — unless you have used this device
   more recently since. A chat open on both at once does not update live; reopen
   it, or open it from History.
 - They are **private to you** — no other user, administrators included, can
@@ -258,6 +259,7 @@ See [rule 95](Business-Rules#rule-95).
 | Messages of history sent | the most earlier turns sent with each question (default 20); older ones are dropped first when they would not fit the context window |
 | Context window | the model server's context size in tokens (default 8192) — set it to match the server. Polaris sizes each question to fit: the conversation, the lookup results (cut down for a small window) and room for the answer. **Ollama uses 4096 unless `OLLAMA_CONTEXT_LENGTH` raises it**, and the assistant's own instructions take about 2,700 of those, so raise it to 8192 or more on the server and here. Test Connection warns below 6000. On **Azure AI Foundry** use the deployment's window (`1000000` for Claude 5.5 models); history stays capped by *Messages of history sent* and each lookup at 24,000 characters, so a large window does not mean large requests |
 | Response timeout | how long the model may go silent before the answer fails |
+| Start a fresh chat after | how long a conversation can sit idle before the chat window saves it, sets it aside and opens fresh (default 30 minutes; 0 = never). `/resume` or History brings it back |
 | Extra instructions | added to the assistant's instructions — site naming conventions, who to escalate to |
 | Keep conversations for | how long a conversation nobody has touched is kept (default 90 days). One setting for every assistant on the install |
 

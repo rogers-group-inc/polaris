@@ -100,6 +100,17 @@ describe("slash commands", () => {
     expect(A._idleExpired(null, now)).toBe(false);
     expect(A._idleExpired("garbage", now)).toBe(false);
   });
+
+  it("uses the integration's own window, and 0 means never", () => {
+    const now = Date.parse("2026-10-09T12:00:00Z");
+    expect(A._idleExpired(String(now - 11 * 60 * 1000), now, 10 * 60 * 1000)).toBe(true);
+    expect(A._idleExpired(String(now - 9 * 60 * 1000), now, 10 * 60 * 1000)).toBe(false);
+    expect(A._idleExpired(String(now - 999 * 60 * 1000), now, 0)).toBe(false);
+    expect(A._idleWindowText(30 * 60000)).toBe("30 minutes");
+    expect(A._idleWindowText(60 * 60000)).toBe("1 hour");
+    expect(A._idleWindowText(120 * 60000)).toBe("2 hours");
+    expect(A._idleWindowText(90 * 60000)).toBe("90 minutes");
+  });
 });
 
 describe("readEventStream", () => {

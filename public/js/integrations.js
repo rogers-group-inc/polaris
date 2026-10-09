@@ -5532,6 +5532,7 @@ function llmFormHTML(defaults) {
       '<div class="form-group"><label>Messages of history sent</label><input type="number" id="f-contextMessages" value="' + (d.contextMessages || 20) + '" min="2" max="100"><p class="hint">At most — older ones are dropped first when they would not fit the context window.</p></div>' +
       '<div class="form-group"><label>Context window</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-contextWindow" value="' + (d.contextWindow || 8192) + '" min="2048" max="1000000" step="1024" style="width:110px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">tokens</span></div><p class="hint" id="f-contextWindow-hint">' + _llmContextWindowHint(azure) + '</p></div>' +
       '<div class="form-group"><label>Response timeout</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-requestTimeoutSec" value="' + timeoutSec + '" min="5" max="600" style="width:90px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">seconds idle</span></div></div>' +
+      '<div class="form-group"><label>Start a fresh chat after</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-idleResetMinutes" value="' + (d.idleResetMinutes != null ? d.idleResetMinutes : 30) + '" min="0" max="1440" style="width:90px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">minutes idle</span></div><p class="hint">A conversation nobody has used for this long is saved and set aside; the chat opens fresh, and <code>/resume</code> or History brings it back. 0 = never.</p></div>' +
     '</div>' +
     '<div class="form-group"><label>Extra instructions</label><textarea id="f-systemPromptExtra" rows="3" maxlength="4000" placeholder="Optional — e.g. site naming conventions, who to escalate to">' + escapeHtml(d.systemPromptExtra || "") + '</textarea></div>' +
     // Not part of this integration's config: one server-wide setting (PUT
@@ -5584,6 +5585,7 @@ function getLlmFormConfig() {
     maxRowsPerTool: Math.round(num("f-maxRowsPerTool", 200)),
     contextMessages: Math.round(num("f-contextMessages", 20)),
     contextWindow: Math.round(num("f-contextWindow", 8192)),
+    idleResetMinutes: Math.max(0, Math.min(1440, Math.round(num("f-idleResetMinutes", 30)))),
     requestTimeoutMs: Math.round(num("f-requestTimeoutSec", 120)) * 1000,
     systemPromptExtra: (document.getElementById("f-systemPromptExtra").value || "").trim(),
     verboseLogging: readVerboseLoggingFromForm(),
@@ -7219,6 +7221,7 @@ function _intgEditFormSpec(intg, config) {
         maxRowsPerTool: config.maxRowsPerTool,
         contextMessages: config.contextMessages,
         contextWindow: config.contextWindow,
+        idleResetMinutes: config.idleResetMinutes,
         requestTimeoutMs: config.requestTimeoutMs,
         systemPromptExtra: config.systemPromptExtra,
         roleName: config.roleName,

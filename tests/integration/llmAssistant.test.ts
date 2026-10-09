@@ -25,6 +25,7 @@ import { prisma } from "../../src/db.js";
 import { authedAgent, dbDescribe, dbReachable, ensureTestUser } from "./_helpers.js";
 import { createToken } from "../../src/services/apiTokenService.js";
 import { createRole } from "../../src/services/roleService.js";
+import { SIGN_OFFS } from "../../src/services/efficiencyAdvisorService.js";
 
 const d = dbDescribe;
 const NAME = "IT llm assistant";
@@ -393,7 +394,7 @@ d("the assistant (rule 95(a), (c), (d))", () => {
     expect(r.body.enabled).toBe(true);
     const mine = r.body.integrations.find((i: any) => i.id === integrationId);
     // Names only — never config. No Assistant name was set, so the default.
-    expect(mine).toEqual({ id: integrationId, name: NAME, model: "fake-model", displayName: "Assistant" });
+    expect(mine).toEqual({ id: integrationId, name: NAME, model: "fake-model", displayName: "Assistant", idleResetMinutes: 30 });
   });
 
   it("streams a turn: tool as the caller, text, a DB-sourced report, all stored", async () => {
@@ -462,10 +463,12 @@ d("the assistant (rule 95(a), (c), (d))", () => {
       expect(g.body.messages[1].signOff).toBe(line);
       expect(g.body.messages[1].content).not.toContain(line);
 
-      // An outage question earns no line.
+      // An outage question earns a let-down line — at the person's expense, never the devices' (owner's call, 2026-10-09).
       const o = await agent.post(`/api/v1/assistant/conversations/${c.body.id}/messages`).set("X-CSRF-Token", csrf)
         .send({ content: "Report the down switches", integrationId });
-      expect(o.text).not.toMatch(/event: signoff/);
+      const om = o.text.match(/event: signoff\ndata: (\{.*\})/);
+      expect(om).not.toBeNull();
+      expect(SIGN_OFFS.letDown).toContain(JSON.parse(om![1]).text);
     } finally {
       await agent.put("/api/v1/assistant/preferences").set("X-CSRF-Token", csrf).send({ efficiencyAdvisor: false });
     }

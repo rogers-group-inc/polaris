@@ -144,15 +144,24 @@
     lsSet(LS.conv, null);
   }
 
-  /** The desktop's 30-minute rule (assistant.js → idleResetIfDue), same keys. */
+  /** The integration's idle window in ms (idleResetMinutes, default 30); 0 = never set a chat aside. */
+  function idleResetMs() {
+    var i = S.status && S.status.integrations && S.status.integrations[0];
+    var m = i && typeof i.idleResetMinutes === "number" ? i.idleResetMinutes : 30;
+    return Math.max(0, m) * 60000;
+  }
+
+  /** The desktop's idle rule (assistant.js → idleResetIfDue), same keys, same window. */
   function idleResetIfDue() {
     if (!S.convId || S.busy) return false;
-    var expired = A()._idleExpired ? A()._idleExpired(lsGet(LS.active), Date.now()) : false;
+    var win = idleResetMs();
+    var expired = A()._idleExpired ? A()._idleExpired(lsGet(LS.active), Date.now(), win) : false;
     if (!expired) return false;
     lsSet(LS.resume, JSON.stringify({ id: S.convId, title: S.title || "" }));
     lsSet(LS.active, null);
     resetToNew();
-    addLocalNote("Started a fresh chat after 30 minutes without activity. Your previous conversation is saved — type `/resume` to pick it up again, or open History.");
+    var span = A()._idleWindowText ? A()._idleWindowText(win) : Math.round(win / 60000) + " minutes";
+    addLocalNote("Started a fresh chat after " + span + " without activity. Your previous conversation is saved — type `/resume` to pick it up again, or open History.");
     return true;
   }
 
@@ -162,7 +171,7 @@
    * cannot be read. Exported for tests via the spec.
    */
   function latestActiveConversation() {
-    var idleMs = A()._IDLE_RESET_MS || 30 * 60 * 1000;
+    var idleMs = idleResetMs() || Infinity; // 0 = never set aside, so any newer conversation is followed
     return api.assistant.listConversations().then(function (r) {
       var c = (r && r.conversations || [])[0];
       if (!c || !c.messageCount) return null;
