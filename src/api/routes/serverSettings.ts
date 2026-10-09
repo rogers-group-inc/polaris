@@ -101,6 +101,7 @@ import { validateBackupPassword } from "../../utils/backupPassword.js";
 import { getServerCertFingerprint, getServerCertHostnames, getServerCertExpiry } from "../../services/certInfo.js";
 import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
+import { runtimeIsContainer } from "../../utils/deploymentContext.js";
 import { hasActiveDiscoveries } from "../../services/discovery/discoveryEngine.js";
 import { logger } from "../../utils/logger.js";
 import { Prisma } from "../../generated/prisma/client.js";
@@ -1801,6 +1802,9 @@ router.get("/capacity-advisor", async (_req, res, next) => {
         pgConfigFile: tuning?.pgConfigFile ?? null,
       },
       dbConnectionMode: getDbConnectionMode(),
+      // The card swaps its "Restart Polaris to apply" button for an
+      // instruction to restart the container — POST /restart refuses there.
+      runtimeIsContainer: runtimeIsContainer(),
     });
   } catch (err) {
     next(err);
@@ -1926,8 +1930,20 @@ router.post("/security-tokens/generate", requirePermission("serverSettingsData",
 // Exits with code 1 so systemd's Restart=on-failure brings the process back.
 // Responds before the exit so the client sees a clean 200 and can switch to
 // its restart-polling UI.
+//
+// Business rule 99 — refused in a container. There is no systemd to bring the process back, so
+// restartService() falls through to a plain exit, and whether the container
+// comes back depends on a restart policy Polaris cannot see — Unraid's
+// default ("no") leaves it stopped. The operator restarts the container
+// from their container host instead; the advisor card tells them to.
 router.post("/restart", requirePermission("serverSettingsData", "write"), async (req, res, next) => {
   try {
+    if (runtimeIsContainer()) {
+      throw new AppError(
+        409,
+        "Polaris runs in a container and does not restart itself. Restart the Polaris container(s) from your container host to apply.",
+      );
+    }
     await logEvent({
       level: "warning",
       action: "server.restart.requested",

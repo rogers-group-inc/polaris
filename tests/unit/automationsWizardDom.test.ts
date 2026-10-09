@@ -499,6 +499,11 @@ describe("automation wizard DOM render", () => {
     expect((doc.querySelector("#aw-quiet-ignore") as unknown as { checked: boolean }).checked).toBe(false);
     expect((doc.querySelector("#aw-quiet-fields") as unknown as { hidden: boolean }).hidden).toBe(true);
     expect(doc.querySelector("#aw-quiet-fields .qte")).toBeTruthy();
+    // "What goes quiet" lists only the severities this automation can fire at
+    // — its own and the step-3 band's — not all five.
+    const sevRows = Array.from(doc.querySelectorAll("#aw-quiet-fields .qte-sevrow")).map((r) => r.getAttribute("data-sev"));
+    expect(sevRows).toHaveLength(2);
+    expect(sevRows).toContain("critical");
     (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
     expect(doc.querySelector("#aw-step-7.visible")).toBeTruthy();

@@ -25,6 +25,8 @@ import { isFortinetIntegrationType } from "../../utils/pollingCompatibility.js";
 import { SECRET_MASK, isMaskedSecret } from "../../utils/secretMask.js";
 import { isBlockedOutboundHost, isBlockedLlmHost, isLoopbackHost } from "../../utils/netGuard.js";
 import * as llm from "../../services/llmService.js";
+import * as genericApi from "../../services/genericApiService.js";
+import { GENERIC_API_TYPE } from "../../utils/genericApiSource.js";
 import {
   assertCanProvision,
   provisionLlmAccess,
@@ -1030,6 +1032,107 @@ const LlmConfigSchema = z.object({
   }
 });
 
+// Generic API ("build your own") — business rule 100. An operator-described
+// REST feed mapped record by record onto assets through JSON paths
+// (services/genericApiService.ts). Inventory only: no monitoring blocks, no
+// push. Secrets live ONLY under the sealed keys apiToken / password /
+// clientSecret; custom headers are stored as typed and the form says so.
+const GenericApiHeaderSchema = z.object({
+  // RFC 7230 token characters — anything else would be refused by Node, or
+  // worse, be a header injection.
+  name:  z.string().trim().min(1).max(100).regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/, "Header names may only use letters, digits and !#$%&'*+.^_`|~-"),
+  value: z.string().max(2000).refine((v) => !/[\r\n]/.test(v), "Header values may not contain line breaks"),
+});
+
+const GenericApiPathSchema = z.string().trim().max(512).optional();
+
+const GenericApiConfigSchema = z.object({
+  host:      z.string().trim().min(1, "Host is required").max(255)
+    .refine((h) => !/[\/\s]/.test(h), "Host is a name or an address only — put the path in Request path"),
+  port:      z.number().int().min(1).max(65535).optional(),
+  useHttps:  z.boolean().optional().default(true),
+  verifySsl: z.boolean().optional().default(true),
+  path:      z.string().trim().max(2000).optional().default("/")
+    .refine((p) => genericApi.isSafeRequestPath(p), "Request path must start with a single \"/\" (it may not name another host)"),
+  method:    z.enum(["GET", "POST"]).optional().default("GET"),
+  body:      z.string().max(20_000).optional().default(""),
+  headers:   z.array(GenericApiHeaderSchema).max(20).optional().default([]),
+  authType:  z.enum(["none", "bearer", "basic", "header", "query", "oauth2"]).optional().default("none"),
+  apiToken:       z.string().max(4096).optional().default(""),
+  authHeaderName: z.string().trim().max(100).optional().default("X-API-Key"),
+  authQueryParam: z.string().trim().max(100).optional().default("api_key"),
+  username:       z.string().max(256).optional().default(""),
+  password:       z.string().max(1024).optional().default(""),
+  tokenUrl:       z.string().trim().max(2000).optional().default(""),
+  clientId:       z.string().max(512).optional().default(""),
+  clientSecret:   z.string().max(4096).optional().default(""),
+  scope:          z.string().max(1000).optional().default(""),
+  pagination: z.object({
+    mode:        z.enum(["none", "page", "offset", "cursor", "link"]).optional().default("none"),
+    pageParam:   z.string().trim().max(100).optional().default(""),
+    sizeParam:   z.string().trim().max(100).optional().default(""),
+    pageSize:    z.number().int().min(1).max(10_000).optional().default(100),
+    startPage:   z.number().int().min(0).max(1).optional().default(1),
+    cursorPath:  GenericApiPathSchema,
+    cursorParam: z.string().trim().max(100).optional().default(""),
+    maxPages:    z.number().int().min(1).max(1000).optional().default(100),
+  }).optional().default({ mode: "none" }),
+  recordsPath: z.string().trim().max(512).optional().default(""),
+  fieldMap: z.object({
+    id:           GenericApiPathSchema,
+    hostname:     GenericApiPathSchema,
+    ipAddress:    GenericApiPathSchema,
+    macAddress:   GenericApiPathSchema,
+    serialNumber: GenericApiPathSchema,
+    manufacturer: GenericApiPathSchema,
+    model:        GenericApiPathSchema,
+    os:           GenericApiPathSchema,
+    osVersion:    GenericApiPathSchema,
+    assetType:    GenericApiPathSchema,
+    location:     GenericApiPathSchema,
+  }).optional().default({}),
+  identityField:       z.enum(["id", "serialNumber", "macAddress", "hostname"]).optional().default("id"),
+  assetTypeDefault:    z.string().trim().max(32).optional().default("other"),
+  assetTypeMap:        z.record(z.string().trim().max(32))
+    .refine((m) => Object.keys(m).length <= 100, "At most 100 type mappings").optional().default({}),
+  manufacturerDefault: z.string().trim().max(100).optional().default(""),
+  deviceInclude: z.array(z.string()).optional().default([]),
+  deviceExclude: z.array(z.string()).optional().default([]),
+  // Rule 70's opt-in: off, a record that leaves the feed keeps its asset AND
+  // its source row.
+  decommissionMissing: z.boolean().optional().default(false),
+  // Post-sync network-presence verification — see EntraIdConfigSchema note.
+  verifyPresence:   z.boolean().optional().default(true),
+  maxRecords:       z.number().int().min(1).max(50_000).optional().default(10_000),
+  requestTimeoutMs: z.number().int().min(1000).max(120_000).optional().default(30_000),
+  verboseLogging:   z.boolean().optional().default(false),
+}).superRefine((cfg, ctx) => {
+  refineConfigHost(cfg, ctx);
+  const badPath = genericApi.findInvalidPath(cfg as genericApi.GenericApiConfig);
+  if (badPath) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["fieldMap"], message: badPath });
+  if (cfg.authType === "oauth2") {
+    let tokenHost: string | null = null;
+    try { tokenHost = new URL(cfg.tokenUrl).hostname; } catch { /* reported below */ }
+    if (!tokenHost) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["tokenUrl"], message: "OAuth needs a token URL (https://…)" });
+    } else if (isBlockedOutboundHost(tokenHost)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["tokenUrl"], message: `Token URL host "${tokenHost}" is in a blocked range (loopback / link-local / metadata / multicast)` });
+    }
+  }
+  if (cfg.method === "POST" && cfg.body.trim()) {
+    try { JSON.parse(cfg.body); } catch {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["body"], message: "Request body is not valid JSON" });
+    }
+  }
+  if (!cfg.fieldMap[cfg.identityField]?.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["fieldMap", cfg.identityField],
+      message: `Map a path for the identity field (${cfg.identityField}) — it is what keeps one record on one asset`,
+    });
+  }
+});
+
 /** Server-stamped llm config keys a client may never set or overwrite. */
 const LLM_SERVER_KEYS = ["roleId", "roleName", "tokenId", "toolCheck"] as const;
 
@@ -1107,6 +1210,14 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
     enabled:      z.boolean().optional().default(true),
     autoDiscover: z.boolean().optional().default(true),
     pollInterval: z.number().int().min(1).max(24).optional().default(1),
+  }),
+  z.object({
+    type:         z.literal("genericapi"),
+    name:         z.string().min(1, "Name is required"),
+    config:       GenericApiConfigSchema,
+    enabled:      z.boolean().optional().default(true),
+    autoDiscover: z.boolean().optional().default(true),
+    pollInterval: z.number().int().min(1).max(24).optional().default(12),
   }),
   z.object({
     type:         z.literal("llm"),
@@ -1458,6 +1569,16 @@ router.put("/:id", async (req, res, next) => {
         if (moved) delete newConfig.toolCheck;
         data.autoDiscover = false;
       }
+      if (existing.type === GENERIC_API_TYPE) {
+        // The loose update schema skips GenericApiConfigSchema, so the merged
+        // config is run through it here — the mapping, the paths, the token
+        // URL guard and the header rules all apply to an edit as to a create.
+        const { verboseLoggingEnabledAt, ...rest } = newConfig;
+        const parsed = GenericApiConfigSchema.safeParse(rest);
+        if (!parsed.success) throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "));
+        for (const k of Object.keys(newConfig)) delete newConfig[k];
+        Object.assign(newConfig, parsed.data, verboseLoggingEnabledAt ? { verboseLoggingEnabledAt } : {});
+      }
       // SSRF guard — the update path validates config as a loose record, so the
       // per-type schema's host refinement (refineConfigHost) doesn't run here.
       // Re-check the merged host explicitly so an edit can't smuggle in a
@@ -1716,6 +1837,8 @@ router.post("/:id/test", async (req, res, next) => {
       result = await truenas.testConnection(config as any);
     } else if (integration.type === "llm") {
       result = await llm.testConnection(config as any);
+    } else if (integration.type === GENERIC_API_TYPE) {
+      result = await genericApi.testConnection(config as any);
     } else {
       result = { ok: false, message: `Unknown integration type: ${integration.type}` };
     }
@@ -2425,6 +2548,44 @@ router.post("/:id/discover", async (req, res, next) => {
   }
 });
 
+// POST /api/v1/integrations/generic-api/preview — the Generic API dialog's
+// Preview tab: read the FIRST page with the form's (unsaved) config and show
+// the first raw record plus the first rows as discovery would map them. A
+// read: nothing is written, nothing is stored. `id` (an existing Generic API
+// integration) fills in secrets the edit form left blank. Router-level gate
+// (integrations:write) — the same as Test Connection, which this extends.
+const GenericApiPreviewSchema = z.object({
+  id:     z.string().optional(),
+  config: GenericApiConfigSchema,
+  limit:  z.number().int().min(1).max(50).optional().default(10),
+});
+
+router.post("/generic-api/preview", async (req, res, next) => {
+  try {
+    const body = GenericApiPreviewSchema.parse(req.body);
+    const cfg = body.config as Record<string, unknown>;
+    if (body.id) {
+      const stored = await prisma.integration.findFirst({ where: { id: body.id, type: GENERIC_API_TYPE }, select: { config: true } });
+      if (stored) restoreGenericApiSecrets(cfg, stored.config as Record<string, unknown>);
+    }
+    res.json(await genericApi.previewGenericApi(cfg as unknown as genericApi.GenericApiConfig, body.limit));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * A Generic API edit form leaves a stored secret blank ("leave blank to keep
+ * the current one"); restore each from the stored config so a Test or a
+ * Preview runs with the real credential. Only when one is stored.
+ */
+function restoreGenericApiSecrets(cfg: Record<string, unknown>, stored: Record<string, unknown>): void {
+  for (const key of ["apiToken", "password", "clientSecret"] as const) {
+    const v = cfg[key];
+    if ((!v || typeof v !== "string" || isMaskedSecretSentinel(v)) && stored[key]) cfg[key] = stored[key];
+  }
+}
+
 // POST /api/v1/integrations/test — test without saving (for the create form)
 router.post("/test", async (req, res, next) => {
   try {
@@ -2469,6 +2630,9 @@ router.post("/test", async (req, res, next) => {
         if (input.type === "llm" && needsRestore(cfg.apiToken) && stored.apiToken) {
           cfg.apiToken = stored.apiToken;
         }
+        if (input.type === GENERIC_API_TYPE && existing.type === GENERIC_API_TYPE) {
+          restoreGenericApiSecrets(cfg, stored);
+        }
       }
     }
 
@@ -2492,6 +2656,8 @@ router.post("/test", async (req, res, next) => {
       result = await truenas.testConnection(input.config as truenas.TrueNasConfig);
     } else if (input.type === "llm") {
       result = await llm.testConnection(input.config);
+    } else if (input.type === "genericapi") {
+      result = await genericApi.testConnection(input.config as genericApi.GenericApiConfig);
     } else {
       result = { ok: false, message: `Unknown integration type: ${(input as any).type}` };
     }

@@ -208,3 +208,51 @@ export function triggerSummary(parts: TriggerSummaryParts): string {
   }
   return `${subject} is ${v}${unit ? ` ${unit}` : ""}`;
 }
+
+/**
+ * The readable halves of `{metric} = {value} (threshold {threshold})`:
+ *   metricLabel      "CPU utilization"   (not "cpuPct")
+ *   valueDisplay     "97 %"              (unit included; "in ALARM" for a sensor alarm)
+ *   thresholdDisplay "above 90 %"        (the comparison included)
+ * Each is "" where the trigger has nothing to say — a composite has no single
+ * metric, an event has no threshold — so a template using them never prints
+ * a dangling unit.
+ */
+export function triggerTokenParts(
+  trigger: SummarizableTrigger,
+  value?: number | string | boolean | null,
+): { metricLabel: string; valueDisplay: string; thresholdDisplay: string } {
+  const cmp = (op: string | undefined): string => (CMP_PHRASE[op ?? ""] ?? op ?? "").replace(/^is /, "");
+  if (trigger.type === "asset_metric" || trigger.type === "host_metric") {
+    const metricLabel = (trigger.metric ? METRIC_META[trigger.metric]?.label : null) ?? trigger.metric ?? "";
+    const unit = triggerUnit(trigger);
+    const withUnit = (v: string | null): string => (v === null ? "" : `${v}${unit ? ` ${unit}` : ""}`);
+    if (trigger.metric === "hwSensorAlarm") {
+      const flag = value;
+      const valueDisplay = value === null || value === undefined ? "" : flag === 1 || flag === true || flag === "1" ? "in ALARM" : "OK";
+      return { metricLabel, valueDisplay, thresholdDisplay: "" };
+    }
+    const thr = formatValue(trigger.threshold ?? null);
+    return {
+      metricLabel,
+      valueDisplay: withUnit(formatValue(value)),
+      thresholdDisplay: thr === null ? "" : `${cmp(trigger.operator)} ${withUnit(thr)}`,
+    };
+  }
+  if (trigger.type === "asset_state") {
+    const metricLabel = (trigger.field ? FIELD_META[trigger.field]?.label : null) ?? trigger.field ?? "";
+    const state = (v: number | string | boolean | null | undefined): string => {
+      const raw = formatValue(v);
+      if (raw === null) return "";
+      return trigger.field === "monitorStatus" ? monitorStatusLabel(raw).toLowerCase() : raw;
+    };
+    const target = state(trigger.value ?? null);
+    // A state reads "is down" / "is not up", never "equals down".
+    const op = trigger.operator === "==" ? "is" : trigger.operator === "!=" ? "is not" : cmp(trigger.operator);
+    return { metricLabel, valueDisplay: state(value), thresholdDisplay: target ? `${op} ${target}` : "" };
+  }
+  if (trigger.type === "change") {
+    return { metricLabel: (trigger.changeType ? CHANGE_TYPE_META[trigger.changeType] : null) ?? trigger.changeType ?? "", valueDisplay: "", thresholdDisplay: "" };
+  }
+  return { metricLabel: "", valueDisplay: "", thresholdDisplay: "" };
+}

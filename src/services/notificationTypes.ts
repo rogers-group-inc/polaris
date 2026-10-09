@@ -12,7 +12,7 @@
 import { z } from "zod";
 import { isValidCidr, isValidIpAddress, ipInCidr, bareInterfaceIp, interfaceIpIsUnaddressed } from "../utils/cidr.js";
 import { compileWildcard } from "../utils/wildcard.js";
-import { TEMPLATE_VARIABLES, formatElapsed } from "../utils/notificationTemplate.js";
+import { TEMPLATE_VARIABLES, TEMPLATE_VARIABLE_SECTIONS, formatElapsed } from "../utils/notificationTemplate.js";
 import { defaultAlertEmailTemplate } from "../utils/alertEmailTemplate.js";
 import { SENSOR_CLASS_UNITS } from "../utils/hardwareSensors.js";
 import { POE_STATUS_VALUES } from "../utils/poePorts.js";
@@ -5240,6 +5240,8 @@ export function buildSchemaCatalog() {
     channelTypes: CHANNEL_TYPE_META,
     recipientRoutedTypes: RECIPIENT_ROUTED_TYPES,
     templateVariables: TEMPLATE_VARIABLES,
+    // The order and names of the variable list's sections (TemplateVariable.section).
+    templateSections: TEMPLATE_VARIABLE_SECTIONS,
     // The default alert email, verbatim. The wizard prefills a new Notify
     // action with these strings so the operator sees — and can edit — exactly
     // what Polaris will send; a rule that leaves them alone renders through

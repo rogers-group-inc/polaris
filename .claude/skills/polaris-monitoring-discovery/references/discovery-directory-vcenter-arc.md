@@ -123,3 +123,19 @@ Two integration types (`unraid`, `truenas`), one per host, sharing ONE sync. Eac
 - **E — disappearance sweep**: refused on `workloadSweepBlockedReason` (incomplete read; an empty read of a host that had workloads) and on rule 70's `absenceExceedsGuard` (max(50, 20 %)); a VM / container dropped by a name FILTER keeps its source row (`presentVmNames` / `presentContainerNames` are the pre-filter lists). Otherwise vCenter's claim-based decommission: only an asset no other ownership-bearing source claims, through `releaseAssetsForDecommission`, Event `asset.<platform>.decommissioned`.
 
 Pinned by `tests/integration/workloadSync.test.ts` (real Postgres) and `tests/unit/workloadSync.test.ts` / `unraidService.test.ts` / `truenasService.test.ts` (the latter runs the JSON-RPC session against a stub server).
+
+## Generic API Discovery Workflow
+
+The `genericapi` integration type (business rule 100): an operator-described REST endpoint, mapped record by record onto assets. Assets-only, `pollInterval` 12 by default, no scoped mode (`assetDiscoveryScope` lists `generic-api` under NOT_YET_SCOPED — a list endpoint has no reliable "fetch one record"). `triggerDiscovery` refuses a config with no path mapped for its identity field.
+
+**The read** (`genericApiService.discoverGenericApi` → `fetchGenericApiRecords`):
+- An OAuth token first when `authType: "oauth2"` (client-credentials grant against `tokenUrl`; one per run). Then page 1 — a failure here THROWS and the run errors with nothing written.
+- Paging per `pagination.mode`: `page` / `offset` (a short page ends the read only when Polaris sent the page size; otherwise it asks until an empty page), `cursor` (a token sent back in `cursorParam`, or a same-origin URL followed), `link` (RFC 8288 `rel="next"`, same-origin only). A page identical to the last (first-record fingerprint), `maxPages`, `maxRecords`, an off-origin next URL or a later page that fails all stop the read with `complete: false` and a warning.
+- Each record at `recordsPath` is mapped (`mapGenericRecord`): identity normalized per field; IPs must parse; MACs normalized, all-zero dropped; placeholder serials refused; the source's type word translated through `assetTypeMap`. Records with no identity are counted with reasons; a repeated identity keeps the first; the device filter (hostname, include wins) is applied AFTER `presentIdentities` is taken.
+
+**The sync** (`syncGenericApiDevices`, one preload of assets + sources + the AssetTypeDef names):
+- Cascade per record: own `generic-api` row → MAC → unique serial (`indexUniqueBy`) → hostname collision ⇒ pending Conflict (`sourceType: "genericapi"`, full blob as `genericObserved`) → create (status `active`, tags `genericapi` + `auto-discovered`, `discoveredByIntegrationId`, the creation-time note). A cross-link onto an asset already holding a DIFFERENT record of this integration is refused.
+- No `lastSeen`, no `monitored`: a feed is an inventory claim. The presence pass that follows (`verifyPresence`, default on — the only post-sync pass this type runs) establishes Last Seen from the agent, a monitor probe or a ping.
+- **Sweep** (opt-in `decommissionMissing`): refused on an incomplete read, an empty read against a populated integration, or past `absenceExceedsGuard`. Stale rows go; an asset is decommissioned (after `releaseAssetsForDecommission`) only when no other inventory source claims it and it is owned by this integration or by nothing.
+
+Pinned by `tests/unit/jsonPath.test.ts`, `tests/unit/genericApiService.test.ts` (every pagination mode, the SSRF and origin guards, OAuth, against a fake transport — the guard refuses loopback, so no local server), `tests/unit/genericApiSync.test.ts` (projection placement, sweep guards), `tests/integration/genericApiSync.test.ts` and `tests/integration/genericApiRoutes.test.ts` (real Postgres).

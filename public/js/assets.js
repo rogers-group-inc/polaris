@@ -6372,6 +6372,9 @@ var _AGENT_INSTALLABLE_SOURCES = [
   // A VM on an Unraid / TrueNAS host is a guest OS like a vCenter VM; the host
   // and its containers are refused below by type.
   "unraid", "truenas",
+  // A Generic API record can be any device; a server or workstation it lists
+  // takes the agent like a manually added one.
+  "genericapi",
 ];
 
 // True when an install could actually succeed on this asset: compatible
@@ -13372,6 +13375,7 @@ function _assetIntegrationLabelWithController(asset, joiner) {
     azurearc:        "Azure Arc",
     unraid:          "Unraid",
     truenas:         "TrueNAS SCALE",
+    genericapi:      "Generic API",
   };
   var label = (typeLabels[integration.type] || integration.type) + joiner + integration.name;
   if (asset.assetType !== "switch" && asset.assetType !== "access_point") return label;

@@ -27,9 +27,11 @@ import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { logEvent } from "./eventLogService.js";
 import { loadPrimaryFirmwareImages, firmwareVsPrimary } from "./firmwareRepositoryService.js";
-import { triggerSummary } from "../utils/triggerSummary.js";
+import { triggerSummary, triggerTokenParts } from "../utils/triggerSummary.js";
 import { eventSubjectLabel } from "../utils/alertSubject.js";
-import { sensorReadingDisplay, chartKeysForChangeEvent } from "./alertChartService.js";
+import { sensorReadingDisplay, chartKeysForChangeEvent, chartTokensForAlert, chartTokenForMetric, CHART_TOKENS, type ChartToken } from "./alertChartService.js";
+import { INTERFACE_DIMENSION_METRICS } from "./alertInterfaceService.js";
+import { processRankingForMetric } from "./alertProcessService.js";
 import { poeIsFault } from "../utils/poePorts.js";
 import { REGION_TAG_PREFIX } from "./notificationService.js";
 import { POLARIS_SERVER_SUBJECT } from "./pathCheckIngestService.js";
@@ -146,8 +148,10 @@ import {
   templateNeedsAsset,
   setRecoverySentence,
   notificationsPageUrl,
+  TEMPLATE_VARIABLES,
   type AssetTemplateDetail,
   type TemplateContextParts,
+  type TemplateVariableScope,
 } from "../utils/notificationTemplate.js";
 
 const LAST_EVENT_SETTING_KEY = "notificationEngine.lastEventCursor";
@@ -2346,7 +2350,11 @@ function readingContextParts(
   const threshold = trigger.type === "asset_metric" || trigger.type === "host_metric" ? String(trigger.threshold)
     : trigger.type === "asset_state" ? String(trigger.value) : "";
   const valueStr = reading.value === null ? "n/a" : typeof reading.value === "number" ? round2(reading.value) : String(reading.value);
-  return { ...base, metric: String(metric), value: valueStr, threshold };
+  const readable = triggerTokenParts(trigger as never, reading.value);
+  return {
+    ...base, metric: String(metric), value: valueStr, threshold,
+    metricLabel: readable.metricLabel, valueDisplay: readable.valueDisplay, thresholdDisplay: readable.thresholdDisplay,
+  };
 }
 
 /**
@@ -2411,6 +2419,11 @@ function renderMessage(
   // and chat bodies show, so it carries the name on every surface.
   if (reading.dependencyDown && ctx["dependency.summary"]) {
     return `${rule.name}: ${ctx["dependency.summary"]}`;
+  }
+  // Per-core CPU (business rule 89): the label already prints each hot core
+  // with its own reading, so "cpuCorePct = 6.6" would repeat one of them.
+  if (reading.dimLabel && rule.trigger.type === "asset_metric" && rule.trigger.metric === "cpuCorePct") {
+    return `${rule.name}: ${ctx["asset"]}${dim} (threshold ${ctx["threshold"]})`;
   }
   return `${rule.name}: ${ctx["asset"]}${dim} — ${ctx["metric"]} = ${ctx["value"]} (threshold ${ctx["threshold"]})`;
 }
@@ -5632,6 +5645,9 @@ async function runEventTail(rules: DbRule[]): Promise<void> {
         metric: ev.action,
         value: ev.message,
         threshold: "",
+        // A change trigger names its change type ("LLDP neighbor appeared"); an
+        // audit-event one has no metric of its own, so this stays empty.
+        metricLabel: triggerTokenParts(c.rule.trigger as never).metricLabel,
         dimension: "",
         severity: c.rule.severity,
         time: ev.timestamp,
@@ -6464,6 +6480,61 @@ async function previewCompositeRule(trigger: CompositeTrigger, input: PreviewRul
 /** How many of the draft's devices the in-app example's picker offers. */
 const MESSAGE_EXAMPLE_CANDIDATE_CAP = 200;
 
+/**
+ * Which catalogued tokens this trigger can ever give a value — the wizard's
+ * variable list shows the rest folded away as "not used by this trigger".
+ * Answers TemplateVariable.appliesTo from the same predicates the fire and
+ * delivery paths gate on (dimensionNounOf, chartTokensForAlert,
+ * INTERFACE_DIMENSION_METRICS, processRankingForMetric,
+ * ruleAlertsWhenDependencyDown), so the list cannot offer a token the alert
+ * will silently drop. A multiple-conditions trigger counts a token when ANY of
+ * its leaves would — except the per-reading ones (component, interface,
+ * processes, a scoped chart), which a composite alert never fills: it is one
+ * alert per device with no single metric behind it.
+ */
+export function applicableTemplateTokens(trigger: Trigger | null | undefined): string[] {
+  type Leafish = { type: string; metric?: string; field?: string; changeType?: string };
+  const t = trigger as (Leafish & { kind?: string }) | null | undefined;
+  const isHost = !!t && (t.type === "host_metric" || (t.type === "composite" && t.kind === "host"));
+  const isComposite = t?.type === "composite";
+  const isEvent = t?.type === "event" || t?.type === "change";
+  const keyOf = (x: Leafish): string | null =>
+    x.type === "asset_metric" || x.type === "host_metric" ? x.metric ?? null
+      : x.type === "asset_state" ? x.field ?? null
+        // An SD-WAN failover is the one change event charted as a metric.
+        : x.type === "change" && x.changeType === "sdwan_failover" ? "sdwanSelectedMember"
+          : null;
+  const metricKey = t && !isComposite ? keyOf(t) : null;
+  // A chart needs a device to read samples for; a host trigger has none. A
+  // WAN port and a mount are taken as present — the list says what CAN render,
+  // the email decides what does. The sensor chart is the exception: delivery
+  // hands every alert's dimension over as a "sensor name", so only a sensor
+  // trigger has one that names a real sensor.
+  const charts: Set<ChartToken> = !t || isHost
+    ? new Set()
+    : chartTokensForAlert(CHART_TOKENS, metricKey, { port: true, sensor: chartTokenForMetric(metricKey) === "chart.sensor", mount: true });
+  if (charts.size && !isComposite && chartTokenForMetric(metricKey)) charts.add("chart.trigger");
+  const has: Record<TemplateVariableScope, boolean> = {
+    device: !!t && !isHost,
+    metric: !!t && !isComposite && t.type !== "event",
+    threshold: !!t && (t.type === "asset_metric" || t.type === "asset_state" || t.type === "host_metric"),
+    component: !!t && !isComposite && dimensionNounOf(t) !== "",
+    composite: isComposite,
+    event: isEvent,
+    chart: charts.size > 0,
+    interface: !!metricKey && t?.type !== "change" && INTERFACE_DIMENSION_METRICS.has(metricKey),
+    processes: !isHost && !!metricKey && processRankingForMetric(metricKey) !== null,
+    dependency: !!t && ruleAlertsWhenDependencyDown(t as Trigger),
+  };
+  return TEMPLATE_VARIABLES
+    .filter((v) => {
+      if (!v.appliesTo) return true;
+      if (v.appliesTo === "chart") return charts.has(v.token.slice(1, -1) as ChartToken);
+      return has[v.appliesTo];
+    })
+    .map((v) => v.token);
+}
+
 export interface MessageExampleResult {
   /** The devices the example can be about — the draft's monitored scope, capped. */
   candidates: Array<{ id: string; hostname: string | null }>;
@@ -6479,6 +6550,8 @@ export interface MessageExampleResult {
   values: Record<string, string>;
   /** The draft has no readings for this device right now — {value} is "n/a". */
   noReading: boolean;
+  /** Tokens this trigger can give a value (applicableTemplateTokens). */
+  applicable: string[];
 }
 
 /**
@@ -6550,6 +6623,7 @@ export async function previewAlertMessage(input: PreviewRuleInput, assetId?: str
       metric: eventAction,
       value: eventStandIn,
       threshold: "",
+      metricLabel: triggerTokenParts(trigger as never).metricLabel,
       dimension: "",
       severity,
       time: new Date(),
@@ -6581,5 +6655,6 @@ export async function previewAlertMessage(input: PreviewRuleInput, assetId?: str
     severity,
     values: ctx,
     noReading,
+    applicable: applicableTemplateTokens(trigger),
   };
 }

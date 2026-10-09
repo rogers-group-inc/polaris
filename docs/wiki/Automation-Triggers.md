@@ -110,7 +110,10 @@ over 90% once, which is how ordinary multi-threaded load looks, does not fire.
 Set the number of polls in **Sustained for**, as for any other condition.
 
 - **One alert per device.** It names the cores that stayed over the line for
-  the whole hold, busiest first, for example `Core 3 (97%)`. The email shows
+  the whole hold, busiest first, for example `Core 3 (97%)`. With the In-app
+  Alert template left blank, the message reads
+  `<automation>: <device> [Core 3 (97%)] (threshold 90)`. In your own template,
+  `{dimension}` prints the same core list. The email shows
   them in a **CPU cores** row, with the **top 5 processes by CPU** and the CPU
   and memory charts.
 - **It clears when every core is back under the line** for the reset's
