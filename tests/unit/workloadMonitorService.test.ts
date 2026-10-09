@@ -138,6 +138,45 @@ describe("collectors", () => {
     expect(pinned.data).toEqual({ interfaces: [], storage: [{ mountPath: "array", totalBytes: 100, usedBytes: 40 }] });
   });
 
+  it("gives a container its own network's counters and no storage", async () => {
+    h.fetchUnraidSnapshot.mockResolvedValue(snapshot({
+      containerUsage: new Map([["c1", {
+        cpuPct: 5, memUsedBytes: 10, memTotalBytes: 1000,
+        interfaces: [{ name: "br0", operUp: true, rxBytes: 700, txBytes: 800, rxErrors: null, txErrors: null, rxDrops: null, txDrops: null, speedMbps: null }],
+      }]]),
+    }));
+    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
+    const r = await wm.collectSystemInfoWorkload("c", { interfacesPolling: "unraid", storagePolling: null });
+    expect(r).toEqual({
+      supported: true,
+      data: { interfaces: [{ ifName: "br0", operStatus: "up", speedBps: null, inOctets: 700, outOctets: 800, inErrors: null, outErrors: null }], storage: [] },
+    });
+  });
+
+  it("answers nothing (not an empty table) for a running container missing from this tick's stats", async () => {
+    h.fetchUnraidSnapshot.mockResolvedValue(snapshot({ containerUsage: new Map() }));
+    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
+    const r = await wm.collectSystemInfoWorkload("c", { interfacesPolling: "unraid", storagePolling: null });
+    expect(r).toMatchObject({ supported: true, error: expect.stringMatching(/No usage/) });
+    expect(r.data).toBeUndefined();
+  });
+
+  it("gives a stopped container an empty interface set, and a VM nothing", async () => {
+    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:db"));
+    expect(await wm.collectSystemInfoWorkload("c", { interfacesPolling: "unraid", storagePolling: null }))
+      .toEqual({ supported: true, data: { interfaces: [], storage: [] } });
+    h.findFirst.mockResolvedValue(source("unraid-vm", "int1:vm:win"));
+    expect(await wm.collectSystemInfoWorkload("v", { interfacesPolling: "unraid", storagePolling: null })).toEqual({ supported: false });
+  });
+
+  it("passes a host's cache / free memory bands through when the platform splits them", async () => {
+    h.fetchUnraidSnapshot.mockResolvedValue(snapshot({
+      host: { ...snapshot().host, memUsedBytes: 300, memCachedBytes: 500, memFreeBytes: 200 },
+    }));
+    h.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
+    expect((await wm.collectTelemetryWorkload("h")).data).toMatchObject({ memUsedBytes: 300, memCachedBytes: 500, memFreeBytes: 200 });
+  });
+
   it("reports readable disk temperatures as disk-class sensors on the host only", async () => {
     h.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
     expect((await wm.collectHardwareSensorsWorkload("h")).data).toEqual([

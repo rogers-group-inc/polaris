@@ -6,7 +6,9 @@ vi.mock("../../src/services/discovery/discoveryEngine.js", () => ({
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 const {
+  applyUnraidStorageLayout,
   containerOwnIp,
+  normalizeUnraidContainerUsage,
   parseDockerMemUsage,
   parseDockerSize,
   parseUnraidHostUsage,
@@ -119,6 +121,9 @@ describe("docker-stats parsing", () => {
   it("splits mem usage into used / limit", () => {
     expect(parseDockerMemUsage("256MiB / 2GiB")).toEqual({ used: 256 * 1024 ** 2, limit: 2 * 1024 ** 3 });
   });
+  it("splits NetIO (received / sent, decimal units) the same way", () => {
+    expect(parseDockerMemUsage("1.5GB / 300MB")).toEqual({ used: 1.5e9, limit: 3e8 });
+  });
 });
 
 describe("helpers", () => {
@@ -130,6 +135,100 @@ describe("helpers", () => {
     expect(containerOwnIp("host", { Networks: { host: { IPAddress: "10.0.0.2" } } })).toBeNull();
     expect(containerOwnIp("container:vpn", {})).toBeNull();
   });
+  it("gives a user-defined bridge's NATed address no claim unless Unraid lists it as a LAN port", () => {
+    const nets = { Networks: { proxynet: { IPAddress: "172.18.0.5" } } };
+    expect(containerOwnIp("proxynet", nets)).toBeNull();
+    expect(containerOwnIp("proxynet", nets, ["10.0.0.2:443"])).toBeNull();
+    expect(containerOwnIp("lan", { Networks: { lan: { IPAddress: "10.0.0.60" } } }, ["10.0.0.60:80"])).toBe("10.0.0.60");
+  });
+  it("gives a container on br0 / a VLAN child / bond0 its LAN address", () => {
+    expect(containerOwnIp("br0.20", { Networks: { "br0.20": { IPAddress: "10.0.20.5" } } })).toBe("10.0.20.5");
+    expect(containerOwnIp("bond0", { Networks: { bond0: { IPAddress: "10.0.0.7" } } })).toBe("10.0.0.7");
+  });
+  it("records each container's network mode", () => {
+    const inv = parseUnraidInventory(FIXTURE, { host: "10.0.0.2" }, { dockerFailed: false, vmsFailed: false });
+    expect(inv.containers.map((c) => c.networkMode)).toEqual(["bridge", "br0"]);
+  });
+});
+
+describe("normalizeUnraidContainerUsage", () => {
+  const stat = (over: Partial<Record<string, number | null>> = {}) => ({
+    cpuPct: 200, memUsedBytes: 10, memTotalBytes: 100, netRxBytes: 5000, netTxBytes: 6000, ...over,
+  });
+
+  it("divides docker's per-core CPU by the host's thread count", () => {
+    const u = normalizeUnraidContainerUsage(new Map([["c1", stat()]]), [{ platformId: "c1", networkMode: "bridge" }], 32);
+    expect(u.get("c1")!.cpuPct).toBe(6.25);
+  });
+
+  it("leaves CPU as docker printed it when the host reported no thread count", () => {
+    const u = normalizeUnraidContainerUsage(new Map([["c1", stat({ cpuPct: 3 })]]), [{ platformId: "c1", networkMode: "bridge" }], null);
+    expect(u.get("c1")!.cpuPct).toBe(3);
+  });
+
+  it("names the traffic row after the container's network", () => {
+    const u = normalizeUnraidContainerUsage(new Map([["c1", stat()]]), [{ platformId: "c1", networkMode: "br0" }], 4);
+    expect(u.get("c1")!.interfaces).toEqual([
+      { name: "br0", operUp: true, rxBytes: 5000, txBytes: 6000, rxErrors: null, txErrors: null, rxDrops: null, txDrops: null, speedMbps: null },
+    ]);
+  });
+
+  it("gives a container on the host's stack no interface — its traffic is the host's", () => {
+    const u = normalizeUnraidContainerUsage(
+      new Map([["c1", stat({ netRxBytes: 0, netTxBytes: 0 })], ["c2", stat()]]),
+      [{ platformId: "c1", networkMode: "host" }, { platformId: "c2", networkMode: "container:vpn" }],
+      4,
+    );
+    expect(u.get("c1")!.interfaces).toBeUndefined();
+    expect(u.get("c2")!.interfaces).toBeUndefined();
+  });
+});
+
+describe("applyUnraidStorageLayout", () => {
+  const ad = (name: string, device: string, over: Record<string, unknown> = {}) => ({
+    name, device, size: "1000", status: "DISK_OK", temp: 30, numErrors: "0", fsType: null, rotational: true, type: "DATA", ...over,
+  });
+  const LAYOUT = {
+    array: {
+      parityCheckStatus: { status: "OK", date: "2026-10-01T00:00:00Z", errors: 0, progress: 0, running: false, paused: false },
+      parities: [ad("parity", "sdb", { type: "PARITY" })],
+      disks: [ad("disk1", "sdc", { fsType: "xfs" }), ad("disk2", "sdd", { fsType: "btrfs", numErrors: "3" }), ad("disk3", "", { status: "DISK_NP" })],
+      caches: [
+        ad("cache", "nvme0n1", { fsType: "zfs", fsSize: "200", rotational: false }),
+        ad("cache2", "nvme1n1", { fsType: "zfs", rotational: false }),
+        ad("cache_ssd", "sde", { fsType: "btrfs", fsSize: "100", rotational: false }),
+      ],
+    },
+    disks: [{ device: "/dev/sdc", name: "WDC WD40", serialNum: "WD-1", smartStatus: "OK", interfaceType: "SATA" }],
+  };
+  const pools = [
+    { name: "array", kind: "array", totalBytes: 1, usedBytes: 0, health: "STARTED" },
+    { name: "cache", kind: "pool", totalBytes: 1, usedBytes: 0, health: "DISK_OK" },
+    { name: "cache_ssd", kind: "pool", totalBytes: 1, usedBytes: 0, health: "DISK_OK" },
+  ];
+
+  it("lays the array out as parity + data, each data disk with its own filesystem, empty slots dropped", () => {
+    const [array] = applyUnraidStorageLayout(pools, LAYOUT);
+    expect(array.filesystem).toBe("unraid-array (xfs, btrfs)");
+    expect(array.scan).toMatchObject({ kind: "parity-check", state: "ok", errors: 0, percent: null });
+    expect(array.groups!.map((g) => [g.role, g.members.map((m) => m.name)])).toEqual([["parity", ["parity"]], ["data", ["disk1", "disk2"]]]);
+    expect(array.groups![1].members[0]).toMatchObject({ filesystem: "xfs", serial: "WD-1", model: "WDC WD40", smart: "OK", mediaType: "HDD", sizeBytes: 1000 * 1024, errors: 0 });
+    expect(array.groups![1].members[1].errors).toBe(3);
+  });
+
+  it("gathers a named pool's members (`cache`, `cache2`) without claiming another pool's", () => {
+    const [, cache, ssd] = applyUnraidStorageLayout(pools, LAYOUT);
+    expect(cache.filesystem).toBe("zfs");
+    expect(cache.groups![0].members.map((m) => [m.name, m.mediaType])).toEqual([["cache", "NVMe"], ["cache2", "NVMe"]]);
+    expect(ssd.groups![0].members.map((m) => m.name)).toEqual(["cache_ssd"]);
+  });
+
+  it("leaves the pools untouched when the layout answer is missing", () => {
+    expect(applyUnraidStorageLayout(pools, null)).toBe(pools);
+  });
+});
+
+describe("query tool", () => {
   it("refuses mutations and subscriptions in the query tool", async () => {
     const cfg = { host: "h", apiToken: "k" };
     await expect(proxyQuery(cfg, "mutation { docker { stop(id: \"x\") { id } } }")).rejects.toThrow(/Only queries/);

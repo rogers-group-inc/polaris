@@ -152,7 +152,7 @@ is the source default for this integration's assets. It covers:
 |---|---|---|---|
 | **Response Time** | ICMP by default | when it has no IP | yes (Apps have no IP of their own) |
 | **CPU / Memory** | yes, from the `reporting.realtime` event | **no** (see below) | yes, from `app.stats` |
-| **Interfaces** | yes | — | — |
+| **Interfaces** | yes | — | its networks' traffic, from `app.stats` |
 | **Storage** | yes: the ZFS pools | — | — |
 | **Hardware Sensors** | yes: disk temperatures | — | — |
 | **LLDP** | — | — | — |
@@ -172,8 +172,32 @@ ports) or a VM, since TrueNAS does not publish guest IPs — cannot be pinged, s
 its response time stays on the **TrueNAS** method: up and down is **TrueNAS's
 own state** (running is up, stopped is down; a state in transition such as
 DEPLOYING is skipped with no verdict), and it is charted at **0 ms**, because a
-state read has no latency to report. You can switch any asset to the other
-method on its Monitoring tab.
+state read has no latency to report. On the asset page, an App's **Response
+Time** chart shows the **host's** response time instead, with a note saying so,
+since that is the only latency there is for it. You can switch any asset to the
+other method on its Monitoring tab.
+
+### CPU, memory and traffic
+
+**An App's CPU is a share of the whole server**, as TrueNAS reports it. TrueNAS
+already divides by the server's core count, and Polaris does not divide again.
+
+**The host's memory is split the way the TrueNAS dashboard splits it**:
+**Services**, **ZFS Cache** (the ARC) and free. The ZFS cache gives memory back
+when services need it, so it ships switched off in the chart and does not
+count as memory in use. Click its legend chip to show it. Hosts monitored
+before this change charted the ARC as used memory, so their memory figure drops
+after the update.
+
+TrueNAS reports interface and App traffic as **rates**, with no running totals
+and no error or drop counts. Polaris adds each rate up into a running total
+between polls, so the host's and each App's **Interfaces** table shows traffic.
+The error and drop columns stay empty. A gap of more than five minutes between
+polls, such as a monitor restart, starts the totals over; the chart shows a
+missing point, not a spike.
+
+An App has no **Hardware Sensors**, **Storage** or **LLDP** of its own, so those
+sections are not shown on it.
 
 If the host's API cannot be reached while the host is on the **TrueNAS** method,
 **the host is reported down and its VMs and Apps are skipped** rather than all
@@ -195,15 +219,29 @@ The asset's **General** tab has a section titled **TrueNAS SCALE**.
 
 On the **host**:
 
-- platform and version, CPU threads, memory, and workload counts;
-- a **Pools** table: name, kind, health, capacity, used, and a usage bar;
-- a **Workloads** table: each VM and App (linked to its own asset), its kind,
-  state, an update badge, and its monitor status.
+- platform and version, CPU threads, memory, and workload counts.
+
+The host's **VMs & Apps** tab lists each VM and App (linked to its own asset),
+its kind, state, network, an update badge, and its monitor status.
+
+The ZFS pools are on the **System** tab's **Storage** table, with each pool's
+type and health beside its usage. Below the table, **Pool devices** has one
+block per pool. A block opens by itself when something in it is unhealthy.
+
+- **The pool's vdevs:** grouped by role (data, log, cache, spare, special,
+  dedup) and layout (mirror, RAIDZ1/2/3, dRAID, or a single-disk stripe).
+- **Each disk:** its state, its **read / write / checksum** error counts,
+  size, temperature, model and serial.
+- **The last scrub or resilver:** its result and how many errors it found, plus
+  TrueNAS's own explanation when the pool is not healthy.
+
+These details are as of the **last discovery run**, not the last poll.
 
 On a **VM or App**:
 
 - a link to its host, and its state;
 - its image and its **version**;
+- its **Network** (Apps): the Docker network(s) it is on;
 - **Updates**: an *Update available* badge, *Up to date*, or *Not checked*;
 - its ports and whether it starts automatically.
 

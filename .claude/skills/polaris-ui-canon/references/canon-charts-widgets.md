@@ -109,8 +109,8 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 **What it is:** A time-series chart whose bands stack to a meaningful total, for a reading that is a COMPOSITION rather than a level — memory today.
 
 **Canonical implementation:** Asset Details → System → **Memory** chart.
-- Renderer: `_renderMemoryChart()` in `public/js/assets.js`; band tables `_MEM_BANDS_AGENT` and `_MEM_BANDS_VSPHERE`. Legend toggles: `_wireMemLegend()` + `_memBandVisible()` / `_setMemBandVisible()`.
-- Mounted only under the agent, vCenter and an Unraid / TrueNAS host (used + total bytes: the one-band shape) — see the gate in **Many-series chart** above. Every other source's memory rides the combined `_renderSystemChart()` as a percentage instead.
+- Renderer: `_renderMemoryChart()` in `public/js/assets.js`; band tables `_MEM_BANDS_AGENT` and `_MEM_BANDS_VSPHERE`, plus `_MEM_BANDS_TRUENAS` — the agent table relabelled (Services / ZFS Cache, same keys and colours) for a TrueNAS host, chosen by `_memAgentBandsFor(asset)`; the ARC ships off like page cache. Legend toggles: `_wireMemLegend()` + `_memBandVisible()` / `_setMemBandVisible()`.
+- Mounted only under the agent, vCenter and an Unraid / TrueNAS host (Unraid: used + total bytes, the one-band shape; TrueNAS: used + ARC + free) — see the gate in **Many-series chart** above. Every other source's memory rides the combined `_renderSystemChart()` as a percentage instead.
 - Per-sample shaping: `_memBandsFor(sample)` — also picks WHICH band table, off the columns the row carries. Gap splitting: `_memRuns(points, gapMarkers)`.
 - Degraded fallback: `_renderMemoryPctChart()`.
 

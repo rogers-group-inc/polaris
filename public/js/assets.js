@@ -3664,13 +3664,15 @@ function getAssetFormData() {
     // Per-stream polling-method overrides. Each select returns null
     // (= inherit) or one of "rest_api"/"snmp"/"winrm"/"ssh"/"icmp".
     var polling = _polarisReadPollingFourStream("f-");
+    // Each field only when its select was drawn: a container's modal omits
+    // the Hardware Sensors / LLDP / Storage tabs, and a missing select reads
+    // as null — which would wipe a stored value nobody was shown.
     if (document.getElementById("f-responseTimePolling")) {
-      data.responseTimePolling = polling.responseTimePolling;
-      data.cpuMemoryPolling    = polling.cpuMemoryPolling;
-      data.temperaturePolling  = polling.temperaturePolling;
-      data.interfacesPolling   = polling.interfacesPolling;
-      data.lldpPolling         = polling.lldpPolling;
-      data.storagePolling      = polling.storagePolling;
+      [["responseTimePolling", "f-responseTimePolling"], ["cpuMemoryPolling", "f-cpuMemoryPolling"],
+       ["temperaturePolling", "f-temperaturePolling"], ["interfacesPolling", "f-interfacesPolling"],
+       ["lldpPolling", "f-lldpPolling"], ["storagePolling", "f-storagePolling"]].forEach(function (p) {
+        if (document.getElementById(p[1])) data[p[0]] = polling[p[0]];
+      });
     }
     // HTTP-check path override. Sent whenever the input exists — including when
     // it is hidden and blank, which is how switching AWAY from the http method
@@ -3922,7 +3924,12 @@ function assetMonitoringFormHTML(asset, managedAgent) {
     { key: "interfaces",   label: "Interfaces",    html: bodyInterfaces()   },
     { key: "lldp",         label: "LLDP",          html: bodyLldp()         },
     { key: "storage",      label: "Storage",       html: bodyStorage()      },
-  ];
+  ].filter(function (t) {
+    // A container / App has no sensors, disks or LLDP of its own; offering a
+    // method for them would only collect nothing.
+    return !(asset && asset.assetType === "container") ||
+      (t.key !== "temperature" && t.key !== "lldp" && t.key !== "storage");
+  });
 
   // tabbedBodyHTML + wireModalTabs are the shared globals from
   // integrations.js (loaded before assets.js on assets.html). The tab key
@@ -5490,6 +5497,11 @@ async function openViewModal(id, opts) {
       { key: "general", label: "General", html: generalHTML },
       { key: "system",  label: "System",  html: systemHTML },
     ];
+    // A hypervisor's VMs / containers — their own tab, filled by the same
+    // virtualization fetch as the General tab's host section.
+    if (_hostWorkloadsTabEligible(a)) {
+      tabs.push({ key: "workloads", label: _hostWorkloadsTabLabel(a), html: _hostWorkloadsTabHTML(a) });
+    }
     // Wireless tab — every monitored FortiAP, whether or not it currently
     // has clients: the tab now leads with the AP's radios and the SSIDs they
     // broadcast, which are worth reading on an AP nobody is connected to.
@@ -5939,14 +5951,33 @@ function _mountAssetViewAsyncSections(a, dependencies, sources, sightings, manag
     // virtual disks (with datastore + backing array) and guest filesystems;
     // ESXi hosts show cluster/state, mounted datastores, and the VMs
     // currently placed on them. Async-fetched from /assets/:id/virtualization.
+    // A hypervisor's workloads tab and its Storage table's extra columns come
+    // out of the same response.
     var virtMount = document.getElementById("asset-virt-mount-" + a.id);
-    if (virtMount && a.virtualization) {
+    var workloadsMount = document.getElementById("asset-workloads-mount-" + a.id);
+    if (_assetStorageDetails && _assetStorageDetails.assetId !== a.id) _assetStorageDetails = null;
+    if ((virtMount || workloadsMount) && a.virtualization) {
       api.assets.virtualization(a.id).then(function (res) {
-        if (!res || !res.virtualization) return;
-        virtMount.innerHTML = _assetVirtualizationHTML(res);
-        _wireDependencyTreeLinks(virtMount);
-        _wireWorkloadActions(virtMount, a, res);
-      }).catch(function (err) { console.warn("Failed to load virtualization info", err); });
+        if (!res || !res.virtualization) {
+          if (workloadsMount) workloadsMount.innerHTML = '<p class="empty-state">No virtualization data.</p>';
+          return;
+        }
+        if (virtMount) {
+          virtMount.innerHTML = _assetVirtualizationHTML(res);
+          _wireDependencyTreeLinks(virtMount);
+          _wireWorkloadActions(virtMount, a, res);
+        }
+        if (workloadsMount) {
+          workloadsMount.innerHTML = _hostWorkloadsBodyHTML(res);
+          _wireDependencyTreeLinks(workloadsMount);
+        }
+        _setStorageDetailsFromVirtualization(a.id, res);
+        var storageEl = document.getElementById("asset-system-storage");
+        if (storageEl && _storageDetailsFor(a) && _assetSystemSiCache) _renderStorageTable(storageEl, _assetSystemSiCache, a);
+      }).catch(function (err) {
+        console.warn("Failed to load virtualization info", err);
+        if (workloadsMount) workloadsMount.innerHTML = '<p class="empty-state">' + escapeHtml((err && err.message) || "Failed to load") + '</p>';
+      });
     }
     // Mount the Polaris Agent panel into the System tab placeholder + wire
     // its buttons. The wiring helper also starts the install-progress
@@ -7535,6 +7566,7 @@ function assetSystemViewHTML(a) {
     '</div>';
   }
   var splitCharts = _telemetrySplitsCpuMemory(a);
+  var isWorkloadContainer = a.assetType === "container";
   var sessionsRangeBtns = a.assetType === "firewall"
     ? _chartRangeBtnsHTML("asset-sessions-range-btn", [
         { value: "1h",  label: "1h" },
@@ -7610,10 +7642,14 @@ function assetSystemViewHTML(a) {
           '</div>' +
         '</div>'
       : '') +
+    // A container / App has no hardware, disks or LLDP of its own — they are
+    // its host's — so those sections are not drawn at all (their loaders
+    // find no mount and return).
+    (isWorkloadContainer ? '' :
     '<div data-shot-section="sensors" data-shot-label="Hardware Sensors">' +
     sectionHeader("Hardware Sensors", temperatureBadgeFull, false) +
     '<div id="asset-system-temps"><span class="empty-state">Loading…</span></div>' +
-    '</div>' +
+    '</div>') +
     '<div data-shot-section="interfaces" data-shot-label="Interfaces" data-shot-sub="hiddenIfaces">' +
     sectionHeader("Interfaces", interfacesBadgeFull, false) +
     '<div id="asset-system-interfaces"><span class="empty-state">Loading…</span></div>' +
@@ -7630,6 +7666,7 @@ function assetSystemViewHTML(a) {
     // documented way to enable direct switch polling) still read as REST and
     // hid the section, and switching the Storage stream itself to SNMP
     // collected samples into a table with nowhere to render.
+    (isWorkloadContainer ? '' :
     '<div data-shot-section="storage" data-shot-label="Storage">' +
     sectionHeader("Storage", interfacesBadgeFull, false) +
     '<div id="asset-system-storage"><span class="empty-state">Loading…</span></div>' +
@@ -7637,7 +7674,7 @@ function assetSystemViewHTML(a) {
     '<div data-shot-section="lldp" data-shot-label="LLDP Neighbors">' +
     sectionHeader("LLDP Neighbors", lldpBadgeFull, false) +
     '<div id="asset-system-lldp"><span class="empty-state">Loading…</span></div>' +
-    '</div>' +
+    '</div>') +
     // Hidden until the device actually reports FRUs — most hosts publish no
     // entPhysicalTable at all, and an empty "Modules" header on every server
     // would be pure noise.
@@ -9309,6 +9346,104 @@ function _storagePctCell(pct) {
   '</div>';
 }
 
+// A pool's health word as the platform reports it (ZFS ONLINE / DEGRADED /
+// FAULTED…, Unraid's array state STARTED / STOPPED, a disk's DISK_OK…),
+// coloured by whether it reads healthy. Unknown words stay neutral.
+function _storageHealthCell(h) {
+  var s = String(h).toUpperCase();
+  var good = /^(ONLINE|HEALTHY|STARTED|DISK_OK|OK|PASSED)$/.test(s);
+  var bad = /(FAULT|UNAVAIL|REMOVED|OFFLINE|DEGRADED|FAIL|INVALID|DSBL|WRONG|STOPPED)/.test(s);
+  var color = good ? "var(--color-success,#46a758)" : bad ? "var(--color-danger,#e5484d)" : "var(--color-text-secondary)";
+  return '<span style="color:' + color + '">' + escapeHtml(h) + '</span>';
+}
+
+// ─── Pool layout (Unraid / TrueNAS) ─────────────────────────────────────────
+// Under the Storage table: each pool's device groups (ZFS vdevs by role,
+// Unraid's parity + data disks, a pool's members) and each disk's health,
+// errors, size and temperature, plus the last scrub / parity check. One
+// collapsible block per pool, open when something in it is unhealthy — a
+// healthy 12-disk NAS should not push the rest of the tab down.
+// Inventory, not a time series: it is as fresh as the last discovery run.
+
+function _poolMemberUnhealthy(m) {
+  var errs = (m.readErrors || 0) + (m.writeErrors || 0) + (m.checksumErrors || 0) + (m.errors || 0);
+  var h = String(m.health || "").toUpperCase();
+  return errs > 0 || (h !== "" && !/^(ONLINE|DISK_OK|AVAIL|INUSE)$/.test(h)) ||
+    (m.smart && !/^(OK|PASSED|UNKNOWN)$/i.test(m.smart));
+}
+
+function _poolScanText(scan) {
+  if (!scan) return "";
+  var kind = scan.kind === "parity-check" ? "Parity check" : scan.kind === "resilver" ? "Resilver" : scan.kind === "scrub" ? "Scrub" : (scan.kind || "Scan");
+  var when = scan.at ? " " + (scan.state === "running" ? "started " : "") + timeAgo(scan.at) : "";
+  var state = scan.state === "running"
+    ? "running" + (scan.percent != null ? " (" + Number(scan.percent).toFixed(1) + "%)" : "")
+    : (scan.state || "—");
+  var errs = scan.errors != null ? ", " + scan.errors + " error" + (scan.errors === 1 ? "" : "s") : "";
+  return kind + ": " + state + when + errs;
+}
+
+function _poolLayoutsHTML(rows, details) {
+  var pools = rows
+    .map(function (s) { return { name: s.mountPath, d: details[s.mountPath] }; })
+    .filter(function (p) { return p.d && Array.isArray(p.d.groups) && p.d.groups.length > 0; });
+  if (pools.length === 0) return "";
+  var dash = '<span style="color:var(--color-text-tertiary)">—</span>';
+  var ROLE = { data: "Data", parity: "Parity", log: "Log", cache: "Cache", spare: "Spare", special: "Special", dedup: "Dedup" };
+  return '<div data-shot-section="poolLayout" data-shot-label="Pool Devices" style="margin-top:0.75rem">' +
+    '<h5 style="margin:0 0 0.4rem;font-size:0.85rem">Pool devices <span style="font-weight:400;font-size:0.75rem;color:var(--color-text-tertiary)">— as of the last discovery run</span></h5>' +
+    pools.map(function (p) {
+      var d = p.d;
+      var anyBad = d.groups.some(function (g) { return g.members.some(_poolMemberUnhealthy); }) ||
+        (d.health && !/^(ONLINE|STARTED|DISK_OK)$/i.test(d.health));
+      var showSplit = d.groups.some(function (g) { return g.members.some(function (m) { return m.readErrors != null || m.writeErrors != null || m.checksumErrors != null; }); });
+      var hasSmart = d.groups.some(function (g) { return g.members.some(function (m) { return !!m.smart; }); });
+      var hasFs = d.groups.some(function (g) { return g.members.some(function (m) { return !!m.filesystem; }); });
+      var head =
+        '<summary style="cursor:pointer;padding:0.35rem 0;font-size:0.84rem">' +
+          '<strong class="mono">' + escapeHtml(p.name) + '</strong>' +
+          (d.health ? ' · ' + _storageHealthCell(d.health) : '') +
+          (d.type ? ' · <span style="color:var(--color-text-secondary)">' + escapeHtml(d.type) + '</span>' : '') +
+          (d.scan ? ' · <span style="color:var(--color-text-secondary)">' + escapeHtml(_poolScanText(d.scan)) + '</span>' : '') +
+        '</summary>' +
+        (d.healthDetail ? '<p class="hint" style="margin:0 0 0.4rem;color:var(--color-warning)">' + escapeHtml(d.healthDetail) + '</p>' : '');
+      var th = '<th>Group</th><th>Device</th><th>Health</th>' +
+        (showSplit ? '<th title="Read / write / checksum errors">Errors (R/W/C)</th>' : '<th>Errors</th>') +
+        (hasSmart ? '<th>SMART</th>' : '') +
+        (hasFs ? '<th>Filesystem</th>' : '') +
+        '<th>Size</th><th>Temp</th><th>Model / Serial</th>';
+      var body = d.groups.map(function (g) {
+        var gLabel = (ROLE[g.role] || g.role) + (g.layout ? " · " + g.layout : "") + (g.name ? ' <span class="mono" style="color:var(--color-text-tertiary)">' + escapeHtml(g.name) + '</span>' : "");
+        return g.members.map(function (m, i) {
+          var errs = showSplit
+            ? [m.readErrors, m.writeErrors, m.checksumErrors].map(function (x) { return x == null ? "—" : String(x); }).join(" / ")
+            : (m.errors != null ? String(m.errors) : "—");
+          var errBad = (m.readErrors || 0) + (m.writeErrors || 0) + (m.checksumErrors || 0) + (m.errors || 0) > 0;
+          var temp = m.temperatureC != null
+            ? escapeHtml(window.PolarisTempUnit ? (Math.round(window.PolarisTempUnit.convertReading(m.temperatureC, "°C") * 10) / 10) + " " + window.PolarisTempUnit.displayUnit("°C") : m.temperatureC + " °C")
+            : dash;
+          var ident = [m.model, m.serial].filter(Boolean).map(escapeHtml).join(' <span style="color:var(--color-text-tertiary)">·</span> ');
+          return '<tr>' +
+            '<td>' + (i === 0 ? gLabel + (g.health && g.members.length > 1 ? " " + _storageHealthCell(g.health) : "") : "") + '</td>' +
+            '<td class="mono">' + escapeHtml(m.name) + (m.device && m.device !== m.name ? ' <span style="color:var(--color-text-tertiary)">' + escapeHtml(m.device) + '</span>' : '') +
+              (m.mediaType ? ' <span class="badge" style="font-size:0.68rem">' + escapeHtml(m.mediaType) + '</span>' : '') + '</td>' +
+            '<td>' + (m.health ? _storageHealthCell(m.health) : dash) + '</td>' +
+            '<td' + (errBad ? ' style="color:var(--color-danger,#e5484d);font-weight:600"' : '') + '>' + escapeHtml(errs) + '</td>' +
+            (hasSmart ? '<td>' + (m.smart ? _storageHealthCell(m.smart) : dash) + '</td>' : '') +
+            (hasFs ? '<td>' + (m.filesystem ? escapeHtml(m.filesystem) : dash) + '</td>' : '') +
+            '<td>' + (m.sizeBytes != null ? _fmtBytes(m.sizeBytes) : dash) + '</td>' +
+            '<td>' + temp + '</td>' +
+            '<td style="font-size:0.78rem">' + (ident || dash) + '</td>' +
+          '</tr>';
+        }).join("");
+      }).join("");
+      return '<details' + (anyBad ? ' open' : '') + ' style="margin-bottom:0.4rem">' + head +
+        '<div class="table-wrapper"><table class="data-table" style="font-size:0.8rem"><thead><tr>' + th + '</tr></thead><tbody>' + body + '</tbody></table></div>' +
+      '</details>';
+    }).join("") +
+  '</div>';
+}
+
 function _renderStorageTable(container, si, asset) {
   if (!container) return;
   var rows = (si && si.storage) || [];
@@ -9338,6 +9473,19 @@ function _renderStorageTable(container, si, asset) {
   }
   var monitored = new Set(((si && si.monitoredStorage) || (asset && asset.monitoredStorage) || []));
   var canEdit = canManageAssets();
+  // A hypervisor's volumes carry facts the storage stream does not (datastore
+  // type / backing / provisioned, pool kind / health). Each column is drawn
+  // only when some row has a value for it.
+  var details = _storageDetailsFor(asset) || {};
+  var extraCols = [
+    { id: "type",        label: "Type",        cell: function (d) { return d.type ? escapeHtml(d.type) : null; } },
+    { id: "health",      label: "Health",      cell: function (d) { return d.health ? _storageHealthCell(d.health) : null; } },
+    { id: "backing",     label: "Backing",     cell: function (d) { return d.backing ? escapeHtml(d.backing) : null; } },
+    { id: "provisioned", label: "Provisioned", cell: function (d) { return d.provisionedBytes != null ? _fmtBytes(d.provisionedBytes) : null; } },
+  ].filter(function (c) {
+    return rows.some(function (s) { var d = details[s.mountPath]; return d && c.cell(d) != null; });
+  });
+  var dash = '<span style="color:var(--color-text-tertiary)">—</span>';
   var body = rows.map(function (s) {
     var pct = (s.totalBytes && s.usedBytes != null && s.totalBytes > 0) ? ((s.usedBytes / s.totalBytes) * 100) : null;
     var checked = monitored.has(s.mountPath) ? ' checked' : '';
@@ -9345,10 +9493,13 @@ function _renderStorageTable(container, si, asset) {
     var checkbox =
       '<input type="checkbox" class="asset-storage-toggle" data-mount="' + escapeHtml(s.mountPath) + '"' + checked + disabled +
       ' title="Poll this mountpoint every minute (response-time cadence)">';
-    var nameCell = '<a href="#" class="asset-storage-link" data-mount="' + escapeHtml(s.mountPath) + '" style="color:var(--color-accent);text-decoration:none">' + escapeHtml(s.mountPath) + '</a>';
+    var d = details[s.mountPath] || null;
+    var nameCell = '<a href="#" class="asset-storage-link" data-mount="' + escapeHtml(s.mountPath) + '" style="color:var(--color-accent);text-decoration:none">' + escapeHtml(s.mountPath) + '</a>' +
+      (d && d.accessible === false ? ' <span style="color:var(--color-danger,#ef5350);font-size:0.8em">(inaccessible)</span>' : '');
     return '<tr>' +
       '<td style="text-align:center;width:1%">' + checkbox + '</td>' +
       '<td class="mono">' + nameCell + '</td>' +
+      extraCols.map(function (c) { var v = d ? c.cell(d) : null; return '<td>' + (v != null ? v : dash) + '</td>'; }).join("") +
       '<td>' + (s.usedBytes  != null ? _fmtBytes(s.usedBytes)  : '—') + '</td>' +
       '<td>' + (s.totalBytes != null ? _fmtBytes(s.totalBytes) : '—') + '</td>' +
       '<td>' + _storagePctCell(pct) + '</td>' +
@@ -9361,10 +9512,12 @@ function _renderStorageTable(container, si, asset) {
         '<input type="checkbox" id="storage-poll-all" title="Select / de-select all volumes for fast-cadence polling"' + (canEdit ? '' : ' disabled') + '>' +
       '</th>' +
       '<th data-col-id="mount" data-col-required="true">Mount</th>' +
+      extraCols.map(function (c) { return '<th data-col-id="' + c.id + '">' + c.label + '</th>'; }).join("") +
       '<th data-col-id="used">Used</th>' +
       '<th data-col-id="total">Total</th>' +
       '<th data-col-id="usedPct">Used %</th>' +
-    '</tr></thead><tbody>' + body + '</tbody></table></div>';
+    '</tr></thead><tbody>' + body + '</tbody></table></div>' +
+    _poolLayoutsHTML(rows, details);
   if (typeof applyTableLayout === "function") {
     applyTableLayout(container.querySelector("table"), _assetTableTypeKey("asset-storage", asset), {
       onScreenshot: function (t) { _screenshotTableEl(t, "Storage"); },
@@ -11000,6 +11153,19 @@ function _wlUpdateBadge(updateAvailable) {
   return "";
 }
 
+// What the network mode means for how Polaris can reach the container.
+// Only drawn when it has no address of its own (unraidService.containerOwnIp
+// decides that; `v.ip` is the result).
+function _wlNetworkHint(v) {
+  if (v.ip) return "";
+  var m = String(v.networkMode || "").toLowerCase();
+  var why = m === "host" ? "shares its host's network stack and address"
+    : m.indexOf("container:") === 0 ? "shares another container's network"
+    : v.platform === "truenas" ? "has no address of its own that TrueNAS publishes"
+    : "is NATed behind its host's address";
+  return ' <span style="color:var(--color-text-tertiary);font-size:0.85em">— ' + why + '</span>';
+}
+
 function _assetWorkloadHTML(res) {
   var v = res.virtualization || {};
   var isTn = v.platform === "truenas";
@@ -11017,36 +11183,9 @@ function _assetWorkloadHTML(res) {
         (v.memTotalBytes != null ? '<div class="detail-row"><span class="detail-label">Memory</span><span class="detail-value">' + _fmtBytes(v.memTotalBytes) + '</span></div>' : '') +
         '<div class="detail-row"><span class="detail-label">Workloads</span><span class="detail-value">' + (v.vmCount || 0) + ' VM(s), ' + (v.containerCount || 0) + (isTn ? ' App(s)' : ' container(s)') + '</span></div>' +
       '</div>';
-    var pools = Array.isArray(v.pools) ? v.pools : [];
-    var poolHtml = pools.length === 0 ? "" :
-      '<div style="margin-top:0.75rem;overflow-x:auto"><table style="' + tableStyle + '">' +
-        '<thead><tr><th style="' + thStyle + '">Pool</th><th style="' + thStyle + '">Kind</th><th style="' + thStyle + '">Health</th><th style="' + thStyle + '">Capacity</th><th style="' + thStyle + '">Used</th><th style="' + thStyle + '">Usage</th></tr></thead><tbody>' +
-        pools.map(function (p) {
-          return '<tr>' +
-            '<td style="' + tdStyle + '">' + escapeHtml(p.name) + '</td>' +
-            '<td style="' + tdStyle + '">' + escapeHtml(p.kind || "—") + '</td>' +
-            '<td style="' + tdStyle + '">' + escapeHtml(p.health || "—") + '</td>' +
-            '<td style="' + tdStyle + '">' + _fmtBytes(p.totalBytes) + '</td>' +
-            '<td style="' + tdStyle + '">' + _fmtBytes(p.usedBytes) + '</td>' +
-            '<td style="' + tdStyle + '"><div style="display:flex;align-items:center;gap:6px">' + _vcUsageBar(p.usedBytes, p.totalBytes) + '</div></td>' +
-          '</tr>';
-        }).join("") +
-      '</tbody></table></div>';
-    var wls = res.workloads || [];
-    var wlHtml = wls.length === 0 ? "" :
-      '<div style="margin-top:0.75rem;overflow-x:auto"><table style="' + tableStyle + '">' +
-        '<thead><tr><th style="' + thStyle + '">Workload</th><th style="' + thStyle + '">Kind</th><th style="' + thStyle + '">State</th><th style="' + thStyle + '">Monitor</th></tr></thead><tbody>' +
-        wls.map(function (w) {
-          var kind = w.role === "vm" ? "VM" : (isTn ? "App" : "Container");
-          return '<tr>' +
-            '<td style="' + tdStyle + '"><a href="#" class="dep-tree-link" data-asset-id="' + escapeHtml(w.id) + '">' + escapeHtml(w.hostname || w.id) + '</a>' + _wlUpdateBadge(w.updateAvailable) + '</td>' +
-            '<td style="' + tdStyle + '">' + kind + '</td>' +
-            '<td style="' + tdStyle + '">' + _wlStateBadge(w.state) + '</td>' +
-            '<td style="' + tdStyle + '">' + (w.monitored ? escapeHtml(w.monitorStatus || "—") : '<span style="color:var(--color-text-tertiary)">not monitored</span>') + '</td>' +
-          '</tr>';
-        }).join("") +
-      '</tbody></table></div>';
-    return header + rows + poolHtml + wlHtml;
+    // Pools are on the System tab's Storage table (kind and health as extra
+    // columns), and the workloads on their own tab (_hostWorkloadsTabHTML).
+    return header + rows;
   }
 
   // VM or container / App
@@ -11064,6 +11203,7 @@ function _assetWorkloadHTML(res) {
       (isCtr && v.version ? '<div class="detail-row"><span class="detail-label">Version</span><span class="detail-value">' + escapeHtml(v.version) + (v.latestVersion && v.latestVersion !== v.version ? ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(latest ' + escapeHtml(v.latestVersion) + ')</span>' : '') + '</span></div>' : '') +
       (isCtr ? '<div class="detail-row"><span class="detail-label">Updates</span><span class="detail-value" data-wl-update>' + (v.updateAvailable === true ? _wlUpdateBadge(true) : v.updateAvailable === false ? 'Up to date' : '<span style="color:var(--color-text-tertiary)">Not checked</span>') + '</span></div>' : '') +
       (isCtr && isTn && v.memberCount != null ? '<div class="detail-row"><span class="detail-label">Containers</span><span class="detail-value">' + escapeHtml(String(v.memberCount)) + '</span></div>' : '') +
+      (isCtr && v.networkMode ? '<div class="detail-row"><span class="detail-label">Network</span><span class="detail-value"><span class="mono">' + escapeHtml(v.networkMode) + '</span>' + _wlNetworkHint(v) + '</span></div>' : '') +
       (ports.length > 0 ? '<div class="detail-row"><span class="detail-label">Ports</span><span class="detail-value mono">' + escapeHtml(ports.join(", ")) + '</span></div>' : '') +
       (!isCtr && v.cpuCount != null ? '<div class="detail-row"><span class="detail-label">vCPUs</span><span class="detail-value">' + escapeHtml(String(v.cpuCount)) + '</span></div>' : '') +
       (!isCtr && v.memoryBytes != null ? '<div class="detail-row"><span class="detail-label">Memory</span><span class="detail-value">' + _fmtBytes(v.memoryBytes) + '</span></div>' : '') +
@@ -11271,48 +11411,121 @@ function _assetVirtualizationHTML(res) {
       '</tbody></table></div>';
     }
 
-    var dsRows = res.datastores || [];
-    var dsHtml = "";
-    if (dsRows.length > 0) {
-      dsHtml = '<div style="margin-top:0.75rem;overflow-x:auto"><table style="' + tableStyle + '">' +
-        '<thead><tr><th style="' + thStyle + '">Datastore</th><th style="' + thStyle + '">Type</th><th style="' + thStyle + '">Capacity</th><th style="' + thStyle + '">Free</th><th style="' + thStyle + '">Provisioned</th><th style="' + thStyle + '">Backing</th><th style="' + thStyle + '">Usage</th></tr></thead><tbody>' +
-        dsRows.map(function (d) {
-          var cap = d.capacityBytes != null ? Number(d.capacityBytes) : null;
-          var free = d.freeBytes != null ? Number(d.freeBytes) : null;
-          var prov = d.provisionedBytes != null ? Number(d.provisionedBytes) : null;
-          var used = (cap != null && free != null) ? cap - free : null;
-          return '<tr>' +
-            '<td style="' + tdStyle + '">' + escapeHtml(d.name) + (d.accessible === false ? ' <span style="color:var(--color-danger,#ef5350);font-size:0.8em">(inaccessible)</span>' : '') + '</td>' +
-            '<td style="' + tdStyle + '">' + escapeHtml(d.dsType || "—") + '</td>' +
-            '<td style="' + tdStyle + '">' + _fmtBytes(cap) + '</td>' +
-            '<td style="' + tdStyle + '">' + _fmtBytes(free) + '</td>' +
-            '<td style="' + tdStyle + '">' + (prov != null ? _fmtBytes(prov) : "—") + '</td>' +
-            '<td style="' + tdStyle + '">' + escapeHtml(d.backingLabel || "—") + '</td>' +
-            '<td style="' + tdStyle + '"><div style="display:flex;align-items:center;gap:6px">' + _vcUsageBar(used, cap) + '</div></td>' +
-          '</tr>';
-        }).join("") +
-      '</tbody></table></div>';
-    }
-
-    var vms = res.vms || [];
-    var vmsHtml = "";
-    if (vms.length > 0) {
-      vmsHtml = '<div style="margin-top:0.75rem;overflow-x:auto"><table style="' + tableStyle + '">' +
-        '<thead><tr><th style="' + thStyle + '">Virtual Machine</th><th style="' + thStyle + '">Power</th><th style="' + thStyle + '">Monitor</th></tr></thead><tbody>' +
-        vms.map(function (vm) {
-          return '<tr>' +
-            '<td style="' + tdStyle + '"><a href="#" class="dep-tree-link" data-asset-id="' + escapeHtml(vm.id) + '">' + escapeHtml(vm.hostname || vm.id) + '</a></td>' +
-            '<td style="' + tdStyle + '">' + _vcPowerBadge(vm.powerState) + '</td>' +
-            '<td style="' + tdStyle + '">' + (vm.monitored ? escapeHtml(vm.monitorStatus || "—") : '<span style="color:var(--color-text-tertiary)">not monitored</span>') + '</td>' +
-          '</tr>';
-        }).join("") +
-      '</tbody></table></div>';
-    }
-
-    return header + rowsHost + vswHtml + dsHtml + vmsHtml;
+    // Datastores are on the System tab's Storage table (with their type,
+    // backing and provisioned figures as extra columns — _storageDetailsFor),
+    // and the VMs on this host on their own tab (_hostWorkloadsTabHTML).
+    return header + rowsHost + vswHtml;
   }
 
   return "";
+}
+
+// ─── Hypervisor: the workloads tab ──────────────────────────────────────────
+// A hypervisor host — an ESXi host from vCenter, an Unraid or TrueNAS SCALE
+// box — lists what runs on it on a tab of its own rather than at the foot of
+// the General tab, where a host with forty VMs pushed everything else off it.
+// Filled from the same GET /assets/:id/virtualization the General tab reads.
+
+function _hostWorkloadsTabEligible(a) {
+  var v = a && a.virtualization;
+  return !!(v && v.role === "host");
+}
+
+function _hostWorkloadsTabLabel(a) {
+  var v = (a && a.virtualization) || {};
+  if (v.platform === "truenas") return "VMs & Apps";
+  if (v.platform === "unraid") return "VMs & Containers";
+  return "Virtual Machines";
+}
+
+function _hostWorkloadsTabHTML(a) {
+  return '<div data-shot-section="workloads" data-shot-label="' + escapeHtml(_hostWorkloadsTabLabel(a)) + '">' +
+    '<div id="asset-workloads-mount-' + escapeHtml(a.id) + '"><p class="empty-state">Loading…</p></div></div>';
+}
+
+function _hostWorkloadsBodyHTML(res) {
+  var v = (res && res.virtualization) || {};
+  var tableStyle = 'width:100%;border-collapse:collapse;font-size:0.83rem';
+  var thStyle = 'text-align:left;padding:4px 8px;color:var(--color-text-tertiary);font-weight:500;border-bottom:1px solid var(--color-border)';
+  var tdStyle = 'padding:4px 8px;border-bottom:1px solid var(--color-border)';
+  var monitorCell = function (w) {
+    return w.monitored ? escapeHtml(w.monitorStatus || "—") : '<span style="color:var(--color-text-tertiary)">not monitored</span>';
+  };
+  var link = function (w) {
+    return '<a href="#" class="dep-tree-link" data-asset-id="' + escapeHtml(w.id) + '">' + escapeHtml(w.hostname || w.id) + '</a>';
+  };
+
+  if (v.platform === "unraid" || v.platform === "truenas") {
+    var isTn = v.platform === "truenas";
+    var wls = res.workloads || [];
+    if (wls.length === 0) return '<p class="empty-state">No VMs or ' + (isTn ? "Apps" : "containers") + ' on this host.</p>';
+    return '<div style="overflow-x:auto"><table style="' + tableStyle + '">' +
+      '<thead><tr><th style="' + thStyle + '">Workload</th><th style="' + thStyle + '">Kind</th><th style="' + thStyle + '">State</th><th style="' + thStyle + '">Network</th><th style="' + thStyle + '">Monitor</th></tr></thead><tbody>' +
+      wls.map(function (w) {
+        var kind = w.role === "vm" ? "VM" : (isTn ? "App" : "Container");
+        return '<tr>' +
+          '<td style="' + tdStyle + '">' + link(w) + _wlUpdateBadge(w.updateAvailable) + '</td>' +
+          '<td style="' + tdStyle + '">' + kind + '</td>' +
+          '<td style="' + tdStyle + '">' + _wlStateBadge(w.state) + '</td>' +
+          '<td style="' + tdStyle + '">' + (w.networkMode ? '<span class="mono">' + escapeHtml(w.networkMode) + '</span>' : '<span style="color:var(--color-text-tertiary)">—</span>') + '</td>' +
+          '<td style="' + tdStyle + '">' + monitorCell(w) + '</td>' +
+        '</tr>';
+      }).join("") +
+      '</tbody></table></div>';
+  }
+
+  var vms = res.vms || [];
+  if (vms.length === 0) return '<p class="empty-state">No virtual machines on this host.</p>';
+  return '<div style="overflow-x:auto"><table style="' + tableStyle + '">' +
+    '<thead><tr><th style="' + thStyle + '">Virtual Machine</th><th style="' + thStyle + '">Power</th><th style="' + thStyle + '">Monitor</th></tr></thead><tbody>' +
+    vms.map(function (vm) {
+      return '<tr>' +
+        '<td style="' + tdStyle + '">' + link(vm) + '</td>' +
+        '<td style="' + tdStyle + '">' + _vcPowerBadge(vm.powerState) + '</td>' +
+        '<td style="' + tdStyle + '">' + monitorCell(vm) + '</td>' +
+      '</tr>';
+    }).join("") +
+    '</tbody></table></div>';
+}
+
+// Per-volume facts the storage stream does not carry — a vCenter datastore's
+// type, backing array and provisioned size, an Unraid / TrueNAS pool's kind and
+// health — keyed by the name the Storage table's rows use as their mount path.
+// Set when GET /assets/:id/virtualization lands; the Storage table re-renders
+// then (it may have drawn first).
+var _assetStorageDetails = null; // { assetId, byName: { [name]: { type, health, backing, provisionedBytes, accessible } } }
+
+function _setStorageDetailsFromVirtualization(assetId, res) {
+  var v = (res && res.virtualization) || {};
+  var byName = {};
+  if (v.role === "host" && (v.platform === "unraid" || v.platform === "truenas")) {
+    (Array.isArray(v.pools) ? v.pools : []).forEach(function (p) {
+      if (!p || !p.name) return;
+      var fs = p.filesystem ? String(p.filesystem).replace(/^unraid-array/, "Unraid array") : null;
+      byName[p.name] = {
+        type: fs || p.kind || null,
+        health: p.health || null,
+        healthDetail: p.healthDetail || null,
+        scan: p.scan || null,
+        groups: Array.isArray(p.groups) ? p.groups : null,
+      };
+    });
+  } else if (v.role === "host") {
+    (res.datastores || []).forEach(function (d) {
+      if (!d || !d.name) return;
+      byName[d.name] = {
+        type: d.dsType || null,
+        backing: d.backingLabel || null,
+        provisionedBytes: d.provisionedBytes != null ? Number(d.provisionedBytes) : null,
+        accessible: d.accessible,
+      };
+    });
+  }
+  _assetStorageDetails = Object.keys(byName).length > 0 ? { assetId: assetId, byName: byName } : null;
+}
+
+function _storageDetailsFor(asset) {
+  return asset && _assetStorageDetails && _assetStorageDetails.assetId === asset.id ? _assetStorageDetails.byName : null;
 }
 
 function _fmtSpeed(bps) {
@@ -12482,6 +12695,20 @@ var _MEM_BANDS_VSPHERE = [
   { key: "swapped",    label: "Host-swapped", color: "#9c6ade" },
   { key: "compressed", label: "Compressed", color: "#4d96d9" },
 ];
+// A TrueNAS host fills the agent's columns in TrueNAS's own words — what its
+// dashboard calls Services and ZFS Cache (the ARC). Same keys and colours, so
+// a chip toggled on one host stays toggled on the next; the ARC is
+// reclaimable like page cache, so it ships off for the same reason.
+var _MEM_BANDS_TRUENAS = _MEM_BANDS_AGENT.map(function (b) {
+  var label = b.key === "processes" ? "Services" : b.key === "cache" ? "ZFS Cache" : b.label;
+  return { key: b.key, label: label, color: b.color };
+});
+
+function _memAgentBandsFor(asset) {
+  var v = asset && asset.virtualization;
+  return v && v.platform === "truenas" && v.role === "host" ? _MEM_BANDS_TRUENAS : _MEM_BANDS_AGENT;
+}
+
 var _MEM_SWAP_COLOR  = "#9c6ade";
 var _MEM_TOTAL_COLOR = "rgba(127,127,127,0.55)";
 
@@ -12623,7 +12850,7 @@ function _renderMemoryChart(container, data, asset, si) {
   // land in one range) resolves to vSphere's, since its rows are the ones
   // carrying bands the other table has no slot for.
   var isVsphere = rows.some(function (r) { return r.b.kind === "vsphere"; });
-  var bandTable = isVsphere ? _MEM_BANDS_VSPHERE : _MEM_BANDS_AGENT;
+  var bandTable = isVsphere ? _MEM_BANDS_VSPHERE : _memAgentBandsFor(asset);
   // Two lists, and the difference matters everywhere below. `reported` is
   // what the source measured — the legend offers a chip for each, and the
   // tooltip names every one of them, because a number the host actually
@@ -13986,14 +14213,21 @@ async function _loadMonitorHistoryFor(assetId, selection, callOpts) {
   }
   var panelBody = silent ? document.getElementById("asset-panel-body") : null;
   var savedScroll = panelBody ? panelBody.scrollTop : 0;
+  // A container with no address of its own answers on its host's: the only
+  // latency there is to chart is the host's, so the chart shows that, and
+  // says so.
+  var current = _currentAssetForRefresh && _currentAssetForRefresh.id === assetId ? _currentAssetForRefresh : null;
+  var proxyHost = _responseTimeHostFor(current);
+  var historyId = proxyHost ? proxyHost.id : assetId;
+  _renderResponseTimeSourceNote(chart, proxyHost, current);
   try {
-    var data = await api.assets.monitorHistory(assetId, opts);
+    var data = await api.assets.monitorHistory(historyId, opts);
     // Fetch transitions in parallel — failures are non-fatal (chart still
     // renders without markers). Scoped to the chart's window when available
     // so we don't pull every asset.updated event Polaris has ever seen.
     var transitions = [];
     try {
-      transitions = await _fetchPollingTransitions(assetId, data && data.since, data && data.until);
+      transitions = await _fetchPollingTransitions(historyId, data && data.since, data && data.until);
     } catch (_) { /* defensive */ }
     _renderMonitorChart(chart, data, transitions);
     _updateMonitorStaleBanner(assetId, data, opts);
@@ -14030,6 +14264,40 @@ async function _loadMonitorHistoryFor(assetId, selection, callOpts) {
   var asset = _currentAssetForRefresh;
   var ms = _refreshIntervalMs(asset && asset.monitorIntervalSec, settings.intervalSeconds, 60);
   _scheduleAssetMonitorRefresh(assetId, ms);
+}
+
+/**
+ * The host whose response time stands in for this asset's: an Unraid
+ * container / TrueNAS App that has no address of its own (host or bridge
+ * networking — it answers on its host's address). Null for everything else,
+ * including a container an operator gave an address by hand.
+ */
+function _responseTimeHostFor(asset) {
+  var v = asset && asset.virtualization;
+  if (!v || v.role !== "container" || !v.hostAssetId) return null;
+  if (v.platform !== "unraid" && v.platform !== "truenas") return null;
+  if (asset.ipAddress) return null;
+  return { id: v.hostAssetId, name: v.hostName || null, networkMode: v.networkMode || null };
+}
+
+function _renderResponseTimeSourceNote(chart, proxyHost, asset) {
+  var id = "asset-monitor-source-note";
+  var note = document.getElementById(id);
+  if (!proxyHost) { if (note) note.remove(); return; }
+  if (!note) {
+    note = document.createElement("p");
+    note.id = id;
+    note.className = "hint";
+    note.style.cssText = "margin:0 0 0.5rem;padding:0.45rem 0.65rem;background:var(--color-bg-tertiary);border-radius:var(--radius-sm);color:var(--color-text-secondary)";
+    chart.parentNode.insertBefore(note, chart);
+  }
+  var what = asset && asset.virtualization && asset.virtualization.platform === "truenas" ? "App" : "container";
+  var mode = proxyHost.networkMode ? " (network: " + escapeHtml(proxyHost.networkMode) + ")" : "";
+  note.innerHTML = "This chart is the host's response time — " +
+    '<a href="#" class="dep-tree-link" data-asset-id="' + escapeHtml(proxyHost.id) + '">' + escapeHtml(proxyHost.name || "the host") + '</a>. ' +
+    "This " + what + mode + " has no address of its own, so it answers on its host's; " +
+    "whether it is up is read from the host's API and shown in its monitor status, not in this chart.";
+  _wireDependencyTreeLinks(note);
 }
 
 function _currentMonitorSelection() {

@@ -3780,6 +3780,7 @@ router.get("/:id/virtualization", requirePermission("assets", "read"), async (re
               role: cv.role ?? null,
               state: cv.state ?? null,
               image: cv.image ?? null,
+              networkMode: cv.networkMode ?? null,
               updateAvailable: cv.updateAvailable ?? null,
               monitorStatus: c.monitorStatus,
               monitored: c.monitored,

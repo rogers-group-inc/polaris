@@ -216,6 +216,9 @@ export async function collectTelemetryWorkload(assetId: string): Promise<Collect
         memUsedBytes: h.memUsedBytes,
         memTotalBytes: h.memTotalBytes ?? reading.snap.inventory.host.memTotalBytes,
         cpuCorePcts: h.perCorePct && h.perCorePct.length > 0 ? h.perCorePct.map((p) => clampPct(p) ?? 0) : null,
+        // The agent's band set, when the platform splits memory (TrueNAS:
+        // ARC as cached). Buffers are not reported, so that band stays null.
+        ...(h.memCachedBytes != null ? { memCachedBytes: h.memCachedBytes, memFreeBytes: h.memFreeBytes ?? null } : {}),
       },
     };
   }
@@ -238,8 +241,10 @@ export async function collectTelemetryWorkload(assetId: string): Promise<Collect
 
 function clampPct(v: number | null | undefined): number | null {
   if (v === null || v === undefined || !Number.isFinite(v)) return null;
-  // docker stats reports a multi-core container above 100 %; the chart is a
-  // share of the box, so normalize to one machine's worth.
+  // A guard, not the normalization: each platform already reports a share of
+  // the host (unraidService divides docker's per-core figure by the thread
+  // count). Only a reading taken mid-update, or a host that did not report
+  // its thread count, can land outside 0-100.
   return Math.min(100, Math.max(0, v));
 }
 
@@ -248,8 +253,12 @@ function clampPct(v: number | null | undefined): number | null {
 export function buildWorkloadSystemInfo(reading: WorkloadReading): SystemInfoSample {
   const interfaces: InterfaceSample[] = [];
   const storage: StorageSample[] = [];
-  if (reading.kind !== "host") return { interfaces, storage };
-  for (const i of reading.snap.host.interfaces) {
+  // A container / App: its own network's traffic, when it has a network of its
+  // own. No storage — a container's disk is its host's pools.
+  const rows = reading.kind === "host"
+    ? reading.snap.host.interfaces
+    : reading.kind === "container" ? reading.usage?.interfaces ?? [] : [];
+  for (const i of rows) {
     interfaces.push({
       ifName: i.name,
       operStatus: i.operUp === null ? null : i.operUp ? "up" : "down",
@@ -260,6 +269,7 @@ export function buildWorkloadSystemInfo(reading: WorkloadReading): SystemInfoSam
       outErrors: i.txErrors,
     });
   }
+  if (reading.kind !== "host") return { interfaces, storage };
   // A host's storage is its pools: the Unraid array + cache pools, the TrueNAS
   // ZFS pools. One row per pool, keyed by pool name.
   for (const p of reading.snap.inventory.host.pools) {
@@ -275,8 +285,14 @@ export async function collectSystemInfoWorkload(
 ): Promise<CollectionResult<SystemInfoSample>> {
   const reading = await readWorkloadAsset(assetId);
   if (reading.kind === "absent" || reading.kind === "unreachable") return { supported: true, error: reading.error };
-  // VMs and containers publish no interfaces or storage of their own here.
-  if (reading.kind !== "host") return { supported: false };
+  // VMs publish nothing here. A container publishes its network traffic (no
+  // storage); one stopped, or on its host's network stack, simply has no rows.
+  if (reading.kind === "vm") return { supported: false };
+  // Running but missing from this tick's stats window: no answer, rather than
+  // an empty one that would read as "it has no interfaces".
+  if (reading.kind === "container" && reading.container.state === "running" && !reading.usage) {
+    return { supported: true, error: "No usage reported for this workload this tick" };
+  }
   const data = buildWorkloadSystemInfo(reading);
   const method = reading.platform;
   if (effective.interfacesPolling !== method) data.interfaces = [];

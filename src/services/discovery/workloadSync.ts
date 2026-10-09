@@ -74,6 +74,70 @@ export interface WorkloadPool {
   usedBytes: number | null;
   /** The platform's own word ("ONLINE", "DEGRADED", "STARTED", …), or null. */
   health: string | null;
+  /**
+   * The rest is the pool's LAYOUT, in a vocabulary no one filesystem owns, so
+   * a ZFS vdev tree, Unraid's parity array (XFS / btrfs / ZFS data disks
+   * behind dedicated parity) and a btrfs pool all fit it. Absent when the
+   * platform did not publish it — never an empty list standing in for "no
+   * disks".
+   */
+  /** "zfs" / "btrfs" / "xfs" / "unraid-array" …, when known. */
+  filesystem?: string | null;
+  /** The platform's longer explanation of a non-healthy state. */
+  healthDetail?: string | null;
+  /** The last (or running) integrity pass — a ZFS scrub / resilver, an Unraid parity check. */
+  scan?: WorkloadPoolScan | null;
+  /** Device groups: ZFS vdevs by role, Unraid's parity + data sets, a btrfs pool's members. */
+  groups?: WorkloadPoolGroup[];
+}
+
+export interface WorkloadPoolScan {
+  /** "scrub" / "resilver" / "parity-check". */
+  kind: string | null;
+  /** "finished" / "running" / "canceled" / "paused" / the platform's word. */
+  state: string | null;
+  /** ISO time it finished (or started, while running). */
+  at: string | null;
+  /** 0-100 while running. */
+  percent: number | null;
+  /** Errors the pass found (ZFS: repaired / unrecoverable; Unraid: sync errors). */
+  errors: number | null;
+}
+
+export interface WorkloadPoolGroup {
+  /** What the group does: data / parity / log / cache / spare / special / dedup. */
+  role: string;
+  /** Its redundancy: "mirror" / "raidz1" / "raidz2" / "raidz3" / "draid…" / "stripe", or null (Unraid's array). */
+  layout: string | null;
+  /** The platform's name for the group (a ZFS vdev's "raidz1-0"), when it has one. */
+  name: string | null;
+  health: string | null;
+  members: WorkloadPoolMember[];
+}
+
+export interface WorkloadPoolMember {
+  /** The slot / device name an operator recognizes ("disk3", "sda"). */
+  name: string;
+  /** The block device ("sdc", "nvme0n1"), when distinct from the name. */
+  device: string | null;
+  serial: string | null;
+  model: string | null;
+  /** The platform's word: ZFS ONLINE / DEGRADED / FAULTED…, Unraid DISK_OK / DISK_DSBL…. */
+  health: string | null;
+  sizeBytes: number | null;
+  /** ZFS's three counters; null where the platform keeps one total instead. */
+  readErrors: number | null;
+  writeErrors: number | null;
+  checksumErrors: number | null;
+  /** A single error total (Unraid), when the platform does not split them. */
+  errors: number | null;
+  temperatureC: number | null;
+  /** The member's own filesystem when it has one (an Unraid array disk: xfs / btrfs / zfs). */
+  filesystem: string | null;
+  /** "HDD" / "SSD" / "NVMe", when known. */
+  mediaType: string | null;
+  /** SMART overall verdict as the platform reports it ("OK" / "UNKNOWN" / "FAILED"), when it does. */
+  smart: string | null;
 }
 
 export interface WorkloadDisk {
@@ -128,6 +192,12 @@ export interface WorkloadContainer {
   rawState: string | null;
   /** Its own address (macvlan / ipvlan / br0) — null when it shares the host's. */
   ip: string | null;
+  /**
+   * The network it is attached to, as the platform names it: Unraid's Docker
+   * network mode (`host`, `bridge`, `br0`, a user network, `container:<x>`);
+   * a TrueNAS App's Docker network names, comma-joined. Null when unreported.
+   */
+  networkMode: string | null;
   /** true / false when the platform answered, null when it could not say. */
   updateAvailable: boolean | null;
   /** App / image version and the one an update would bring (TrueNAS). */
@@ -156,11 +226,28 @@ export interface WorkloadDiscoveryResult {
 
 /** Live usage for one workload (or the host), as one monitor tick reads it. */
 export interface WorkloadUsage {
+  /**
+   * A share of the WHOLE host, 0-100 — never docker's per-core figure (where
+   * 100 % is one core): each platform normalizes before it lands here.
+   */
   cpuPct: number | null;
   /** Per-core load, host only. */
   perCorePct?: number[] | null;
   memUsedBytes: number | null;
   memTotalBytes: number | null;
+  /**
+   * A host's reclaimable cache (TrueNAS: the ZFS ARC) and its free memory,
+   * when the platform splits them out; used + cached + free = total. Absent
+   * = memUsedBytes is the only figure.
+   */
+  memCachedBytes?: number | null;
+  memFreeBytes?: number | null;
+  /**
+   * A container's / App's network traffic as CUMULATIVE byte counters, one row
+   * per network. Absent for a workload that shares the host's network stack
+   * (its traffic is the host's, and docker reports zero for it).
+   */
+  interfaces?: WorkloadInterfaceReading[];
 }
 
 export interface WorkloadInterfaceReading {
@@ -267,6 +354,24 @@ export function buildWorkloadDependencyEdges(
     .map((assetId) => ({ assetId, parentAssetId: hostAssetId }));
 }
 
+/**
+ * The addresses a container that now reports NONE of its own (host / bridge
+ * networking) must not keep: its host's address, and the address this
+ * platform last reported for it (it moved off br0 / macvlan). Anything else —
+ * an address an operator typed — is theirs, and stays.
+ */
+export function staleContainerIps(
+  hostIp: string | null,
+  priorSources: ReadonlyArray<{ sourceKind: string; observed: Record<string, unknown> | null }> | undefined,
+  containerKind: string,
+): string[] {
+  const out = new Set<string>();
+  if (hostIp) out.add(hostIp);
+  const prior = priorSources?.find((s) => s.sourceKind === containerKind)?.observed?.ip;
+  if (typeof prior === "string" && prior.trim() !== "") out.add(prior.trim());
+  return [...out];
+}
+
 // ─── Host address ─────────────────────────────────────────────────────────────
 
 export interface WorkloadHostAddress {
@@ -359,6 +464,7 @@ function containerObserved(
     state: c.state,
     rawState: c.rawState,
     ip: c.ip,
+    networkMode: c.networkMode,
     updateAvailable: c.updateAvailable,
     version: c.version,
     latestVersion: c.latestVersion,
@@ -513,6 +619,8 @@ export async function syncWorkloadDevices(
     macs: string[];
     /** The name the operator reached the host by; fills a blank dnsName only. */
     dnsName?: string | null;
+    /** Addresses that, if the asset still holds one, are cleared (see staleContainerIps). */
+    staleIps?: string[];
     collisionFields: Record<string, unknown>;
   }): Promise<string | null> => {
     const { role, externalId, displayName, observed, virtualization, present, macs } = args;
@@ -584,6 +692,9 @@ export async function syncWorkloadDevices(
         // A host first synced before its name was resolved carries the name in
         // ipAddress; clear it when this pass could not resolve a real address.
         else if (args.dnsName && existing.ipAddress && !isValidIpAddress(existing.ipAddress)) updateData.ipAddress = null;
+        // A container that moved onto the host's network stack keeps no
+        // address of its own; leaving the old one would keep ICMP aimed at it.
+        else if (existing.ipAddress && args.staleIps?.includes(existing.ipAddress)) updateData.ipAddress = null;
         if (args.dnsName && !existing.dnsName) updateData.dnsName = args.dnsName;
         // Retype only from the unclassified default; a directory-typed asset
         // keeps its class (the vCenter rule).
@@ -798,9 +909,13 @@ export async function syncWorkloadDevices(
         memberCount: c.memberCount,
         ports: c.ports,
         autostart: c.autostart,
+        networkMode: c.networkMode,
+        // Its own reachable address, or null when it answers on the host's.
+        ip: c.ip,
       },
       present: c.state === "running",
       macs: [],
+      staleIps: c.ip === null ? staleContainerIps(h.ip, prior ? sourcesByAssetId.get(prior.id) : undefined, kinds.container) : [],
       collisionFields: { ipAddress: c.ip, os: c.image },
     });
     if (id) childAssetIds.push(id);

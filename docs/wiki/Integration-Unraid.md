@@ -148,7 +148,7 @@ is the source default for this integration's assets. It covers:
 |---|---|---|---|
 | **Response Time** | ICMP by default | when it has no IP | when it has no IP of its own |
 | **CPU / Memory** | yes | **no** (see below) | yes |
-| **Interfaces** | yes | — | — |
+| **Interfaces** | yes | — | its own network's traffic (none on host networking) |
 | **Storage** | yes: the array and cache pools | — | — |
 | **Hardware Sensors** | yes: disk temperatures | — | — |
 | **LLDP** | — | — | — |
@@ -161,16 +161,29 @@ small one.
 
 Response time **defaults to ICMP** for every asset that has an address of its
 own: the host, a VM whose IP another source (an agent, Active Directory) has
-filled in, and a container on its own network (br0 / macvlan). Those get a real
-ping latency.
+filled in, and a container on a LAN network (`br0`, `eth0`, `bond0`, `wg0`, or
+a VLAN of one, such as `br0.20`). Those get a real ping latency.
 
-A workload with **no address of its own** — a container on the default bridge,
-or a VM, since Unraid does not publish guest IPs — cannot be pinged, so its
-response time stays on the **Unraid** method: up and down is **Unraid's own
-running state** (running is up, stopped is down; a state in transition is
-skipped with no verdict), and it is charted at **0 ms**, because a state read
-has no latency to report. You can switch any asset to the other method on its
-Monitoring tab.
+A workload with **no address of its own** cannot be pinged. That covers:
+
+- a container on **host** networking, which shares the server's address;
+- a container on the default **bridge**, or on a **custom bridge network you
+  created**, which sits behind the server's address. The 172.x address Docker
+  gives it cannot be reached from Polaris. Polaris uses it only when Unraid
+  lists that address among the container's LAN ports;
+- a VM, since Unraid does not publish guest IPs.
+
+Its response time therefore stays on the **Unraid** method: up and down is
+**Unraid's own running state** (running is up, stopped is down; a state in
+transition is skipped with no verdict), and it is charted at **0 ms**, because
+a state read has no latency to report. On the asset page, a container's
+**Response Time** chart shows the **host's** response time instead, with a note
+saying so, since that is the only latency there is for it. You can switch any
+asset to the other method on its Monitoring tab.
+
+If a container moves from its own address onto host or bridge networking,
+the next discovery run **clears the address it no longer has**. ICMP then stops
+pinging the old address. An address you typed on the asset yourself is kept.
 
 If the host's API cannot be reached while the host is on the **Unraid** method,
 **the host is reported down and its VMs and containers are skipped** rather
@@ -182,9 +195,24 @@ per container.
 
 ### Container CPU and memory
 
-Per-container CPU and memory come from the API's `dockerContainerStats`
-subscription, sampled over a **short WebSocket window (4 seconds by default)**
-on each pass.
+Per-container CPU, memory and network traffic come from the API's
+`dockerContainerStats` subscription, sampled over a **short WebSocket window
+(4 seconds by default)** on each pass.
+
+**Container CPU is a share of the whole server**, the same figure Unraid's own
+Docker page shows. Docker counts 100% per core, so a container busy on two
+threads would read 200%. Polaris divides that by the server's thread count; a
+container using two threads on a 32-thread server reads about 6%. Pinning a
+container to specific cores does not change this.
+
+A container's **Interfaces** table on the System tab shows one row for the
+network it is on, with its traffic since the container started. A container on
+**host** networking has no row, because its traffic is the server's own; read
+it on the host. Unraid reports container traffic rounded to three significant
+figures, so the rate chart of a busy, long-running container moves in steps.
+
+A container has no **Hardware Sensors**, **Storage** or **LLDP** of its own, so
+those sections are not shown on it.
 
 ### VMs have up/down only
 
@@ -201,15 +229,33 @@ The asset's **General** tab has a section titled **Unraid**.
 
 On the **host**:
 
-- platform and version, CPU threads, memory, and workload counts;
-- a **Pools** table: name, kind, health, capacity, used, and a usage bar;
-- a **Workloads** table: each VM and container (linked to its own asset), its
-  kind, state, an update badge, and its monitor status.
+- platform and version, CPU threads, memory, and workload counts.
+
+The host's **VMs & Containers** tab lists each VM and container (linked to its
+own asset), its kind, state, network, an update badge, and its monitor status.
+
+The host's pools are on the **System** tab's **Storage** table, with each
+pool's type and health beside its usage. Below the table, **Pool devices** has
+one block per pool. A block opens by itself when something in it is unhealthy.
+
+- **The array:** its parity disks and data disks, and each data disk's own
+  filesystem (XFS, btrfs or ZFS).
+- **Every pool:** each disk's status, error count, SMART verdict, size,
+  temperature, model and serial.
+- **The last parity check:** its result and how many errors it found.
+
+These details are as of the **last discovery run**, not the last poll. Unraid
+publishes no ZFS vdev layout, so a ZFS pool on Unraid lists its disks without
+grouping them into mirrors or RAIDZ sets. Pool details need a current Unraid
+API. An older API that lacks a field loses only these details; discovery still
+runs.
 
 On a **VM or container**:
 
 - a link to its host, and its state;
 - its image (containers);
+- its **Network** (containers): the Docker network it is on, and when it has no
+  address of its own, why;
 - **Updates**: an *Update available* badge, *Up to date*, or *Not checked*;
 - its ports and whether it starts automatically.
 
@@ -294,3 +340,4 @@ common reads.
 | A container that was removed was not decommissioned | check the run's Events for a skipped or refused sweep (Docker service stopped, or too many workloads lost in one read) |
 | A new container shows up as a Conflict | an unlinked asset already has that name. Resolve it in Events → Conflicts |
 | Container CPU is missing or flat | the stats window is short (4 s). Verify on your host that the API's container stats are populated |
+| A container is reported down although it is running | it may have an address Polaris cannot reach. Check its **Network** row: a container on host or bridge networking is checked through Unraid, not pinged. One whose address you typed yourself keeps ICMP until you change its Response Time method |
