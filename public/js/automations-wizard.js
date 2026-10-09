@@ -2262,14 +2262,98 @@ async function openAutomationWizard(existing, opts) {
     });
   }
 
-  /** The clickable token chips. Insert into whichever .tpl-field was focused
-   *  last (wireTokenPalette tracks it), so one palette serves several fields. */
-  function tokenChipsHtml() {
-    var vars = s.templateVariables || [];
-    if (!vars.length) return "";
-    return vars.map(function (v) {
-      return '<button type="button" class="btn btn-sm btn-secondary tpl-token" data-token="' + escapeHtml(v.token) + '" title="' + escapeHtml(tokenChipTitle(v.token, v.description)) + '" style="margin:2px 4px 2px 0;font-family:var(--font-mono);font-size:0.72rem;padding:1px 6px">' + escapeHtml(v.token) + '</button>';
+  // ── Variable list ──────────────────────────────────────────────────────
+  // Every template field's vocabulary as a searchable list: grouped by what a
+  // token is ABOUT (templateSections), each row its readable name, the token,
+  // what it means, and what it says for the example device. Tokens the trigger
+  // can never fill (the example's `applicable`, from the server's
+  // applicableTemplateTokens) fold into a "Not used by this trigger" section
+  // rather than vanishing — an operator writing a template to reuse across
+  // automations may still want one. A click inserts into whichever .tpl-field
+  // was focused last (wireTokenPalette tracks it), so one list serves several
+  // fields.
+  var SENT_ON_NOTE = {
+    delivery: "Filled in when the email is sent",
+    escalation: "Only on escalation emails",
+    reminder: "Only on reminders",
+    update: "Only when a grouped alert gains a component",
+  };
+  /** What a token says for the example device, or why the example can't say. */
+  function tokenExampleText(v) {
+    if (v.sentOn) return { text: SENT_ON_NOTE[v.sentOn] || "Filled in later", muted: true };
+    var ex = _awExample;
+    if (!ex) return { text: "", muted: true };
+    var name = v.token.replace(/^\{|\}$/g, "");
+    if (!Object.prototype.hasOwnProperty.call(ex.values || {}, name)) return { text: "Filled in when the alert is sent", muted: true };
+    if (ex.values[name] === "") return { text: "(blank for this example)", muted: true };
+    return { text: ex.values[name], muted: false };
+  }
+  function tokenRowHtml(v) {
+    var ex = tokenExampleText(v);
+    var hay = (v.label + " " + v.token + " " + v.description).toLowerCase();
+    return '<button type="button" class="tpl-token tpl-var-row" data-token="' + escapeHtml(v.token) + '" data-hay="' + escapeHtml(hay) + '" title="' + escapeHtml(v.description) + '">' +
+      '<span class="tpl-var-name"><span class="tpl-var-label">' + escapeHtml(v.label) + '</span><code class="tpl-var-token">' + escapeHtml(v.token) + '</code></span>' +
+      '<span class="tpl-var-desc">' + escapeHtml(v.description) + '</span>' +
+      '<span class="tpl-var-example' + (ex.muted ? " is-muted" : "") + '">' + escapeHtml(ex.text) + '</span>' +
+    '</button>';
+  }
+  function tokenSectionsHtml(vars) {
+    var sections = s.templateSections || [];
+    var known = {};
+    var html = sections.map(function (sec) {
+      known[sec.key] = true;
+      var rows = vars.filter(function (v) { return v.section === sec.key; });
+      if (!rows.length) return "";
+      return '<div class="tpl-var-section"><div class="tpl-var-section-title">' + escapeHtml(sec.label) + '</div>' + rows.map(tokenRowHtml).join("") + '</div>';
     }).join("");
+    // A pre-upgrade server serves no sections: one plain list, never nothing.
+    var rest = vars.filter(function (v) { return !known[v.section]; });
+    if (rest.length) html += '<div class="tpl-var-section">' + rest.map(tokenRowHtml).join("") + '</div>';
+    return html;
+  }
+  /** The list body — re-rendered in place when the example (and with it the
+   *  applicable set and the per-row examples) changes. */
+  function tokenListInnerHtml() {
+    var vars = s.templateVariables || [];
+    var applicable = _awExample && Array.isArray(_awExample.applicable) ? _awExample.applicable : null;
+    var on = applicable ? vars.filter(function (v) { return applicable.indexOf(v.token) !== -1; }) : vars;
+    var off = applicable ? vars.filter(function (v) { return applicable.indexOf(v.token) === -1; }) : [];
+    var who = _awExample && _awExample.asset ? (_awExample.asset.hostname || "the example device") : "";
+    return '<div class="tpl-var-head"><span>Variable</span><span>What it is</span><span>' + (who ? "For " + escapeHtml(who) : "Example") + '</span></div>' +
+      tokenSectionsHtml(on) +
+      (off.length
+        ? '<details class="tpl-var-unused"><summary>Not used by this trigger (' + off.length + ')</summary>' + tokenSectionsHtml(off) + '</details>'
+        : "") +
+      '<p class="tpl-var-empty" hidden>No variable matches.</p>';
+  }
+  function tokenListHtml() {
+    if (!(s.templateVariables || []).length) return "";
+    return '<div class="tpl-vars">' +
+      '<input type="search" class="tpl-var-search" placeholder="Search variables…" aria-label="Search variables">' +
+      '<div class="tpl-var-list">' + tokenListInnerHtml() + '</div>' +
+    '</div>';
+  }
+  /** Hide the rows a search doesn't match, and any section left empty. */
+  function filterTokenList(box) {
+    var input = box.querySelector(".tpl-var-search");
+    var q = input ? input.value.trim().toLowerCase() : "";
+    var any = false;
+    box.querySelectorAll(".tpl-var-row").forEach(function (row) {
+      var hit = !q || row.getAttribute("data-hay").indexOf(q) !== -1;
+      row.hidden = !hit;
+      if (hit) any = true;
+    });
+    box.querySelectorAll(".tpl-var-section").forEach(function (sec) {
+      sec.hidden = !sec.querySelector(".tpl-var-row:not([hidden])");
+    });
+    var unused = box.querySelector(".tpl-var-unused");
+    if (unused) {
+      unused.hidden = !unused.querySelector(".tpl-var-row:not([hidden])");
+      // A search that only matches unused variables opens the fold to show them.
+      if (q && !unused.hidden) unused.open = true;
+    }
+    var empty = box.querySelector(".tpl-var-empty");
+    if (empty) empty.hidden = any;
   }
   // ── In-app Alert example ───────────────────────────────────────────────
   // The last /message-example answer: which of the draft's devices the example
@@ -2280,24 +2364,23 @@ async function openAutomationWizard(existing, opts) {
   var _awExampleAssetId = null;
   var _awExampleTimer = null;
   var _awExampleSeq = 0;
-  /** The chip tooltip: the token's description, then what it is for the example device. */
-  function tokenChipTitle(token, description) {
-    var ex = _awExample;
-    if (!ex) return description || "";
-    var name = token.replace(/^\{|\}$/g, "");
-    var who = ex.asset ? (ex.asset.hostname || "the example device") : "this example";
-    var line;
-    if (!Object.prototype.hasOwnProperty.call(ex.values || {}, name)) line = "Filled in when the alert is sent";
-    else if (ex.values[name] === "") line = "(blank)";
-    else line = ex.values[name];
-    return (description || "") + "\n\nFor " + who + ": " + line;
-  }
-  function refreshTokenChipTitles() {
-    var byToken = {};
-    (s.templateVariables || []).forEach(function (v) { byToken[v.token] = v.description; });
-    document.querySelectorAll(".tpl-token").forEach(function (chip) {
-      var tok = chip.getAttribute("data-token");
-      chip.setAttribute("title", tokenChipTitle(tok, byToken[tok]));
+  /** Redraw every open variable list from the latest example — the examples,
+   *  and which tokens apply, follow the device and the draft. Keeps where the
+   *  operator was: scroll position, the unused fold, the search. */
+  function refreshTokenLists() {
+    var html = tokenListInnerHtml();
+    document.querySelectorAll(".tpl-vars").forEach(function (box) {
+      var list = box.querySelector(".tpl-var-list");
+      if (!list || list._tplHtml === html) return;
+      var top = list.scrollTop;
+      var unused = list.querySelector(".tpl-var-unused");
+      var wasOpen = !!(unused && unused.open);
+      list.innerHTML = html;
+      list._tplHtml = html;
+      var again = list.querySelector(".tpl-var-unused");
+      if (again && wasOpen) again.open = true;
+      filterTokenList(box);
+      list.scrollTop = top;
     });
   }
   function scheduleMessageExample(delay) {
@@ -2361,7 +2444,7 @@ async function openAutomationWizard(existing, opts) {
     _awExampleAssetId = ex.asset ? ex.asset.id : null;
     box = document.getElementById("aw-msg-example");
     box.innerHTML = messageExampleHtml(ex);
-    refreshTokenChipTitles();
+    refreshTokenLists();
     var sel = box.querySelector("#aw-msg-example-asset");
     if (sel) sel.addEventListener("change", function () { _awExampleAssetId = sel.value; scheduleMessageExample(0); });
     var shuffle = box.querySelector("#aw-msg-example-shuffle");
@@ -2374,9 +2457,9 @@ async function openAutomationWizard(existing, opts) {
   }
 
   function tokenPaletteHtml(id) {
-    var chips = tokenChipsHtml();
-    if (!chips) return "";
-    return '<details id="' + id + '" style="margin:2px 0 6px"><summary style="font-size:0.78rem;cursor:pointer;color:var(--color-text-tertiary)">Insert variable…</summary><div style="margin-top:4px">' + chips + '</div></details>';
+    var list = tokenListHtml();
+    if (!list) return "";
+    return '<details id="' + id + '" class="tpl-palette"><summary>Insert variable…</summary>' + list + '</details>';
   }
   function scriptById(id) { return (_awScripts || []).find(function (x) { return x.id === id; }); }
 
@@ -6120,8 +6203,8 @@ async function openAutomationWizard(existing, opts) {
         // "how many alerts exist" cannot have a different answer per tier.
         groupByAssetHtml() +
         // One of the selected devices, picked at random, rendered through the
-        // server's own message path (/message-example) — hover a variable chip
-        // to see what it is for this device.
+        // server's own message path (/message-example) — the variable list
+        // above shows what each token is for this device.
         '<div id="aw-msg-example" class="aw-msg-example">' + (_awExample ? messageExampleHtml(_awExample) : messageExampleHtml(null, "Loading…")) + '</div>' +
       '</div>';
 
@@ -8144,7 +8227,7 @@ async function openAutomationWizard(existing, opts) {
               // vocabulary of the field being edited, and hiding them behind a
               // second disclosure inside a disclosure is what made them
               // undiscoverable.
-              '<div style="margin:0 0 4px">' + tokenChipsHtml() + '</div>' +
+              '<div style="margin:0 0 4px">' + tokenListHtml() + '</div>' +
               '<textarea class="na-body tpl-field" data-body-mode="text" rows="10" style="width:100%">' + escapeHtml(compValue(comp, "bodyTextTemplate")) + '</textarea>' +
               '<textarea class="na-html tpl-field" data-body-mode="html" rows="14" style="width:100%;display:none;font-family:var(--font-mono);font-size:0.8rem">' + escapeHtml(compValue(comp, "bodyHtmlTemplate")) + '</textarea>' +
             '</div>' +
@@ -9245,21 +9328,41 @@ async function openAutomationWizard(existing, opts) {
       if (el._tplWired) return; el._tplWired = true;
       el.addEventListener("focus", function () { _tplFocus = el; });
     });
-    panel.querySelectorAll(".tpl-token").forEach(function (chip) {
-      if (chip._tplWired) return; chip._tplWired = true;
-      chip.addEventListener("click", function () {
-        var el = _tplFocus;
+    // Delegated per list, not per row: refreshTokenLists redraws the rows every
+    // time the example changes, and the list element itself survives that.
+    panel.querySelectorAll(".tpl-vars").forEach(function (box) {
+      if (box._tplWired) return; box._tplWired = true;
+      var search = box.querySelector(".tpl-var-search");
+      if (search) {
+        search.addEventListener("input", function () { filterTokenList(box); });
+        // Enter in the search must not reach the wizard footer's Next.
+        search.addEventListener("keydown", function (e) { if (e.key === "Enter") e.preventDefault(); });
+      }
+      box.addEventListener("click", function (e) {
+        var row = e.target.closest(".tpl-token");
+        if (!row || !box.contains(row)) return;
+        var el = _tplFocus && document.body.contains(_tplFocus) ? _tplFocus : nextTemplateField(panel, box);
         if (!el) return;
-        var tok = chip.getAttribute("data-token");
-        if (typeof el.setRangeText === "function" && el.selectionStart != null) {
-          el.setRangeText(tok, el.selectionStart, el.selectionEnd, "end");
-        } else {
-          el.value += tok;
-        }
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-        el.focus();
+        insertToken(el, row.getAttribute("data-token"));
       });
     });
+  }
+  /** The field a list sits above — the target before any field has had focus. */
+  function nextTemplateField(panel, box) {
+    var fields = panel.querySelectorAll(".tpl-field");
+    for (var i = 0; i < fields.length; i++) {
+      if (box.compareDocumentPosition(fields[i]) & Node.DOCUMENT_POSITION_FOLLOWING && fields[i].offsetParent !== null) return fields[i];
+    }
+    return null;
+  }
+  function insertToken(el, tok) {
+    if (typeof el.setRangeText === "function" && el.selectionStart != null) {
+      el.setRangeText(tok, el.selectionStart, el.selectionEnd, "end");
+    } else {
+      el.value += tok;
+    }
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.focus();
   }
 
   // ── Navigation ─────────────────────────────────────────────────────────

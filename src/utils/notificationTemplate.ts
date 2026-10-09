@@ -18,12 +18,153 @@
 import { severityCss } from "./severityStyle.js";
 import { assetOpenPath } from "./assetOpenLink.js";
 
+/**
+ * Where the automation wizard's variable list files a token, in the order the
+ * list shows them. Presentation only — rendering never reads it.
+ */
+export const TEMPLATE_VARIABLE_SECTIONS = [
+  { key: "alert", label: "Alert" },
+  { key: "component", label: "Component" },
+  { key: "device", label: "Device" },
+  { key: "charts", label: "Charts & diagnostics" },
+  { key: "interface", label: "Interface" },
+  { key: "event", label: "Audit event" },
+  { key: "dependency", label: "Dependency down" },
+  { key: "time", label: "Time & links" },
+  { key: "rule", label: "Automation" },
+  { key: "escalation", label: "Reminders & escalation" },
+  { key: "email", label: "Email furniture" },
+] as const;
+export type TemplateVariableSection = (typeof TEMPLATE_VARIABLE_SECTIONS)[number]["key"];
+
+/**
+ * Which triggers can give a token a value — answered per trigger by
+ * notificationEngine.applicableTemplateTokens. Absent = every trigger.
+ *   device      there is a device (not a Polaris-host trigger)
+ *   metric      one metric, field or change type (not composite, not event)
+ *   threshold   a threshold or state comparison (asset/host metric, asset state)
+ *   component   the reading is per component (interface, sensor, mount, core…)
+ *   composite   a multiple-conditions trigger
+ *   event       an audit-event or change-detection trigger
+ *   chart       the chart this token draws survives the trigger's scope swaps
+ *   interface   the trigger is about an interface
+ *   processes   a CPU or memory trigger
+ *   dependency  a down automation that alerts while dependency-down (rule 78)
+ */
+export type TemplateVariableScope =
+  | "device" | "metric" | "threshold" | "component" | "composite"
+  | "event" | "chart" | "interface" | "processes" | "dependency";
+
+/**
+ * When a token is filled. Absent = at fire time, so the wizard's example can
+ * show it. The rest are filled later and the example can only describe them:
+ *   delivery    when the email is built (charts, recipients, the ack link)
+ *   escalation  only on an escalation send
+ *   reminder    only on a reminder
+ *   update      only on a grouped alert's [UPDATED] send
+ */
+export type TemplateVariableSentOn = "delivery" | "escalation" | "reminder" | "update";
+
 export interface TemplateVariable {
   token: string;
   label: string;
   description: string;
   group: "notification" | "rule" | "asset" | "escalation";
+  section: TemplateVariableSection;
+  appliesTo?: TemplateVariableScope;
+  sentOn?: TemplateVariableSentOn;
 }
+
+type Placement = Pick<TemplateVariable, "section" | "appliesTo" | "sentOn">;
+
+/** Section / trigger scope / send time per token. Every catalogued token has
+ *  exactly one entry (tests/unit/notificationTemplate.test.ts holds the two
+ *  lists together). */
+const PLACEMENT: Record<string, Placement> = {
+  "{trigger.summary}": { section: "alert" },
+  "{message}": { section: "alert" },
+  "{metric.label}": { section: "alert", appliesTo: "metric" },
+  "{value.display}": { section: "alert", appliesTo: "threshold" },
+  "{threshold.display}": { section: "alert", appliesTo: "threshold" },
+  "{metric}": { section: "alert" },
+  "{value}": { section: "alert" },
+  "{threshold}": { section: "alert", appliesTo: "threshold" },
+  "{conditions}": { section: "alert", appliesTo: "composite" },
+  "{severity}": { section: "alert" },
+  "{severity.upper}": { section: "alert" },
+  "{severity.color}": { section: "alert" },
+  "{alert.change}": { section: "alert", appliesTo: "component", sentOn: "update" },
+  "{dimension}": { section: "component", appliesTo: "component" },
+  "{dimension.label}": { section: "component", appliesTo: "component" },
+  "{dimension.suffix}": { section: "component", appliesTo: "component" },
+  "{dimension.count}": { section: "component", appliesTo: "component" },
+  "{dimension.first}": { section: "component", appliesTo: "component" },
+  "{dimension.list}": { section: "component", appliesTo: "component" },
+  "{asset}": { section: "device" },
+  "{asset.link}": { section: "device", appliesTo: "device" },
+  "{asset.ip}": { section: "device", appliesTo: "device" },
+  "{asset.mac}": { section: "device", appliesTo: "device" },
+  "{asset.type}": { section: "device", appliesTo: "device" },
+  "{asset.status}": { section: "device", appliesTo: "device" },
+  "{asset.location}": { section: "device", appliesTo: "device" },
+  "{asset.description}": { section: "device", appliesTo: "device" },
+  "{asset.manufacturer}": { section: "device", appliesTo: "device" },
+  "{asset.model}": { section: "device", appliesTo: "device" },
+  "{asset.serial}": { section: "device", appliesTo: "device" },
+  "{asset.os}": { section: "device", appliesTo: "device" },
+  "{asset.osVersion}": { section: "device", appliesTo: "device" },
+  "{asset.department}": { section: "device", appliesTo: "device" },
+  "{asset.assignedTo}": { section: "device", appliesTo: "device" },
+  "{asset.tags}": { section: "device", appliesTo: "device" },
+  "{asset.connectedSwitch}": { section: "device", appliesTo: "device" },
+  "{asset.connectedAp}": { section: "device", appliesTo: "device" },
+  "{asset.managedBy}": { section: "device", appliesTo: "device" },
+  "{chart.trigger}": { section: "charts", appliesTo: "chart", sentOn: "delivery" },
+  "{chart.cpu}": { section: "charts", appliesTo: "chart", sentOn: "delivery" },
+  "{chart.memory}": { section: "charts", appliesTo: "chart", sentOn: "delivery" },
+  "{chart.responseTime}": { section: "charts", appliesTo: "chart", sentOn: "delivery" },
+  "{chart.probeLoss}": { section: "charts", appliesTo: "chart", sentOn: "delivery" },
+  "{chart.sensor}": { section: "charts", appliesTo: "chart", sentOn: "delivery" },
+  "{chart.storage}": { section: "charts", appliesTo: "chart", sentOn: "delivery" },
+  "{chart.sdwanLatency}": { section: "charts", appliesTo: "chart", sentOn: "delivery" },
+  "{chart.sdwanJitter}": { section: "charts", appliesTo: "chart", sentOn: "delivery" },
+  "{chart.sdwanLoss}": { section: "charts", appliesTo: "chart", sentOn: "delivery" },
+  "{processes.top}": { section: "charts", appliesTo: "processes", sentOn: "delivery" },
+  "{interface.ip}": { section: "interface", appliesTo: "interface", sentOn: "delivery" },
+  "{interface.lldp}": { section: "interface", appliesTo: "interface", sentOn: "delivery" },
+  "{event.action}": { section: "event", appliesTo: "event" },
+  "{event.message}": { section: "event", appliesTo: "event" },
+  "{event.resource}": { section: "event", appliesTo: "event" },
+  "{event.resourceType}": { section: "event", appliesTo: "event" },
+  "{event.actor}": { section: "event", appliesTo: "event" },
+  "{event.level}": { section: "event", appliesTo: "event" },
+  "{dependency.summary}": { section: "dependency", appliesTo: "dependency" },
+  "{dependency.headline}": { section: "dependency", appliesTo: "dependency" },
+  "{dependency.upstream}": { section: "dependency", appliesTo: "dependency" },
+  "{dependency.rootCause}": { section: "dependency", appliesTo: "dependency" },
+  "{dependency.tag}": { section: "dependency", appliesTo: "dependency" },
+  "{dependency.path}": { section: "dependency", appliesTo: "dependency", sentOn: "delivery" },
+  "{time.local}": { section: "time" },
+  "{time}": { section: "time" },
+  "{time.zone}": { section: "time" },
+  "{link}": { section: "time" },
+  "{ack}": { section: "time", sentOn: "delivery" },
+  "{rule}": { section: "rule" },
+  "{rule.description}": { section: "rule" },
+  "{repeat.policy}": { section: "escalation" },
+  "{escalation.policy}": { section: "escalation" },
+  "{repeat.attempt}": { section: "escalation", sentOn: "reminder" },
+  "{repeat.elapsed}": { section: "escalation", sentOn: "reminder" },
+  "{repeat.quiet}": { section: "escalation", sentOn: "reminder" },
+  "{escalation.tier}": { section: "escalation", sentOn: "escalation" },
+  "{escalation.elapsed}": { section: "escalation", sentOn: "escalation" },
+  "{brand.header}": { section: "email", sentOn: "delivery" },
+  "{email.recipients}": { section: "email", sentOn: "delivery" },
+  "{push.recipients}": { section: "email", sentOn: "delivery" },
+};
+
+/** Exported for the catalogue-coverage test only. */
+export const TEMPLATE_VARIABLE_PLACEMENT: Readonly<Record<string, Placement>> = PLACEMENT;
 
 /**
  * The token catalog — single source of truth, surfaced to the rule-builder UI
@@ -40,22 +181,27 @@ export interface TemplateVariable {
  * precisely because unknown tokens are left literal. (It is one URL per ALERT,
  * not per recipient — see business rule 25.)
  */
-export const TEMPLATE_VARIABLES: TemplateVariable[] = [
+const RAW_TEMPLATE_VARIABLES: Array<Omit<TemplateVariable, keyof Placement>> = [
   { token: "{asset}", label: "Asset", description: "Asset hostname (or id / \"host\")", group: "notification" },
   { token: "{metric}", label: "Metric", description: "Metric / field / event action that triggered", group: "notification" },
   { token: "{value}", label: "Value", description: "Observed value at fire time", group: "notification" },
   { token: "{threshold}", label: "Threshold", description: "Configured threshold / comparison value", group: "notification" },
-  { token: "{dimension}", label: "Dimension", description: "Sub-asset dimension (interface / mount / sensor / tunnel). On an automation that consolidates per device, every affected one — \"port12 (AP-1), port14 and 5 more\"", group: "notification" },
-  { token: "{dimension.label}", label: "Dimension label", description: "What that component is called — \"Interface\", \"Sensor\", \"IPsec tunnel\". Blank when the alert is about the whole device", group: "notification" },
-  { token: "{dimension.suffix}", label: "Dimension suffix", description: "The component with its own separator (\" · port12\"), for appending to a subject line — blank when the alert is about the whole device", group: "notification" },
-  { token: "{dimension.count}", label: "Dimension count", description: "How many components this alert names (1 when it is about a single one)", group: "notification" },
-  { token: "{dimension.first}", label: "Leading dimension", description: "The one component the alert leads with — the worst, and the one its charts are about", group: "notification" },
-  { token: "{dimension.list}", label: "Dimension list", description: "Every affected component, uncapped — for a body rather than a subject line", group: "notification" },
+  { token: "{metric.label}", label: "Metric name", description: "What fired, in the builder's own words — \"CPU utilization\", \"Monitor status\", \"LLDP neighbor appeared\" — where {metric} prints the stored key (cpuPct). Empty on a multiple-conditions or audit-event trigger", group: "notification" },
+  { token: "{value.display}", label: "Value with unit", description: "The observed value rounded for reading, with its unit — \"97 %\", \"760 ms\", \"in ALARM\" for a sensor alarm, \"down\" for a monitor status", group: "notification" },
+  { token: "{threshold.display}", label: "Threshold in words", description: "The comparison the trigger makes, with its unit — \"above 90 %\", \"at or below 5 days\", \"is down\"", group: "notification" },
+  { token: "{dimension}", label: "Component", description: "The part of the device the alert is about — an interface, sensor, storage mount, tunnel, SD-WAN member or path check; on a CPU core trigger, the hot cores with their readings (\"Core 3 (97%), Core 7 (93%)\"). On an automation that consolidates per device, every affected one — \"port12 (AP-1), port14 and 5 more\"", group: "notification" },
+  { token: "{dimension.label}", label: "Component kind", description: "What that component is called — \"Interface\", \"Sensor\", \"IPsec tunnel\". Blank when the alert is about the whole device", group: "notification" },
+  { token: "{dimension.suffix}", label: "Component suffix", description: "The component with its own separator (\" · port12\"), for appending to a subject line — blank when the alert is about the whole device", group: "notification" },
+  { token: "{dimension.count}", label: "Component count", description: "How many components this alert names (1 when it is about a single one)", group: "notification" },
+  { token: "{dimension.first}", label: "Leading component", description: "The one component the alert leads with — the worst, and the one its charts are about", group: "notification" },
+  { token: "{dimension.list}", label: "Component list", description: "Every affected component, uncapped — for a body rather than a subject line", group: "notification" },
   { token: "{conditions}", label: "Conditions", description: "Multi-condition summary, e.g. \"2 of 3 conditions met\" (composite triggers; empty otherwise)", group: "notification" },
   { token: "{message}", label: "Message", description: "The rendered in-app notification message", group: "notification" },
   { token: "{severity}", label: "Severity", description: "Rule severity (e.g. warning)", group: "notification" },
   { token: "{severity.upper}", label: "SEVERITY", description: "Rule severity upper-cased (e.g. WARNING)", group: "notification" },
   { token: "{severity.color}", label: "Severity color", description: "Hex colour for this severity (e.g. #d97706) — for styling an HTML email", group: "notification" },
+  { token: "{chart.trigger}", label: "Chart of what fired", description: "The chart of whichever metric this alert fired on — the CPU chart for a CPU alert, the storage chart for a storage alert, the SD-WAN latency chart for an SD-WAN alert — so the graph the reader opened the email for comes first. A chart it stands in for is not drawn a second time. Renders away when the trigger has no chart of its own", group: "notification" },
+  { token: "{chart.probeLoss}", label: "Packet-loss chart", description: "Packet loss from Polaris's own probes, over the automation's History window when it watches packet loss, otherwise the last hour. Dropped from CPU, memory, storage, SD-WAN, interface-status and path-check alerts, like the other connectivity charts", group: "notification" },
   { token: "{chart.sensor}", label: "Sensor chart", description: "Last hour of the HARDWARE SENSOR this alert fired on, with the device's own alarm periods shaded — inline chart (HTML) or a now/avg/peak line (plain text). Renders away entirely unless the automation triggers on a hardware sensor's value or its alarm", group: "notification" },
   { token: "{chart.sdwanLatency}", label: "SD-WAN latency chart", description: "Last hour of SD-WAN latency on the HEALTH CHECK and WAN member this alert fired on, with the FortiGate's own SLA target as a dashed line and the periods it called the member down shaded. Renders away entirely unless the automation triggers on SD-WAN (a health-check metric, a service rule's status, or its selected member) or on the status of an interface that is an SD-WAN member, where it charts that member", group: "notification" },
   { token: "{chart.sdwanJitter}", label: "SD-WAN jitter chart", description: "Last hour of SD-WAN jitter on the health check and WAN member this alert fired on, against its SLA target. Renders away entirely unless the automation triggers on SD-WAN or on the status of an SD-WAN member interface", group: "notification" },
@@ -120,6 +266,16 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{dependency.path}", label: "Dependency path diagram", description: "Dependency-down alerts: a diagram of the chain the alert blames — the root cause on the left, the alerting device on the right, each device in its Device Map location box (a:/b:/f:/r:/jb: codes; a generic box labelled with its Location when it has none) and the link ports where LLDP knows them. At most four devices: a longer chain keeps two at each end with a \"+N more\" gap. An image in HTML email, one line in plain text. Renders away entirely on every other alert", group: "notification" },
   { token: "{dependency.tag}", label: "Dependency-down tag", description: "\" · DEPENDENCY DOWN\" on a dependency-down alert, with its own separator so a subject line can append it unconditionally; empty on every other alert", group: "notification" },
 ];
+
+/**
+ * The token catalog with each entry's section / scope / send time attached,
+ * in PLACEMENT's order — the order the wizard lists them in, readable tokens
+ * ahead of their raw twins ({metric.label} before {metric}).
+ */
+export const TEMPLATE_VARIABLES: TemplateVariable[] = Object.keys(PLACEMENT).map((token) => ({
+  ...RAW_TEMPLATE_VARIABLES.find((v) => v.token === token)!,
+  ...PLACEMENT[token]!,
+}));
 
 /**
  * Business rule 78 — who silenced a dependency-suppressed device, as the
@@ -268,6 +424,10 @@ export interface TemplateContextParts {
   metric?: string;
   value?: string;
   threshold?: string;
+  /** "CPU utilization" / "97 %" / "above 90 %" — utils/triggerSummary.triggerTokenParts. */
+  metricLabel?: string;
+  valueDisplay?: string;
+  thresholdDisplay?: string;
   dimension?: string;
   /** GROUPED ALERTS (business rule 75). On an alert that names several
    *  components, `{dimension}` is the capped list, so these three are the ways
@@ -487,6 +647,9 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     "metric": str(parts.metric),
     "value": str(parts.value),
     "threshold": str(parts.threshold),
+    "metric.label": str(parts.metricLabel),
+    "value.display": str(parts.valueDisplay),
+    "threshold.display": str(parts.thresholdDisplay),
     "dimension": str(parts.dimension),
     "dimension.count": str(parts.dimensionCount),
     "dimension.first": str(parts.dimensionFirst),
