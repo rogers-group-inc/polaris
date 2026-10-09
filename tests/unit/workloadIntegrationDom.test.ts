@@ -131,3 +131,77 @@ describe("General tab round trip", () => {
     expect(cfg.port).toBeUndefined();
   });
 });
+
+describe("Proxmox VE", () => {
+  it("routes to its own form and reader, and is a tabbed, Query-API workload type", () => {
+    const s = scope;
+    expect(s._productForType("proxmox")).toBe("Proxmox VE");
+    const html = s._formHTMLForType("proxmox", {});
+    expect(html).toContain('id="f-apiTokenId"');
+    expect(html).toContain('id="f-fallbackHosts"');
+    expect(html).not.toContain('id="f-useTls"');
+    expect(s._NON_FORTINET_TABBED).toContain("proxmox");
+    expect(s._isWorkloadType("proxmox")).toBe(true);
+  });
+
+  it("walks the operator through a read-only PVEAuditor token", () => {
+    const html = scope.proxmoxFormHTML({});
+    expect(html).toContain("PVEAuditor");
+    expect(html).toContain("Privilege Separation");
+    expect(html).toContain("pveum user token add polaris@pve monitor --privsep 0");
+  });
+
+  it("requires node address, token ID and secret — and drops only the secret on the edit flow", () => {
+    expect(scope._integrationRequires("proxmox", "create")).toEqual([["f-host", "node address"], ["f-apiTokenId", "API token ID"], ["f-apiToken", "API token secret"]]);
+    expect(scope._integrationRequires("proxmox", "edit")).toEqual([["f-host", "node address"], ["f-apiTokenId", "API token ID"]]);
+  });
+
+  it("mirrors the polling matrix — the Proxmox method, never on temperature", () => {
+    const s = scope;
+    expect(s._POLLING_COMPAT.proxmox).toContain("proxmox");
+    expect(s._POLLING_COMPAT.proxmox).not.toContain("truenas");
+    expect(s._POLLING_COMPAT.activedirectory).toContain("proxmox");
+    expect(s._polarisSourceLabel("proxmox")).toBe("Proxmox VE");
+    expect(s._polarisSourceDefaultPolling("proxmox", "storage")).toBe("proxmox");
+    expect(s._polarisSourceDefaultPolling("proxmox", "temperature")).toBeNull();
+    expect(s._streamAllowedMethods("proxmox", "temperature")).not.toContain("proxmox");
+    expect(s._streamAllowedMethods("proxmox", "interfaces")).toContain("proxmox");
+  });
+
+  it("renders Nodes / VMs / Containers with the reduced card", () => {
+    const m = scope.monitorSettingsFormHTML({}, { integrationId: null, integrationType: "proxmox", integrationName: "" });
+    expect(m).toContain("Nodes");
+    expect(m).toMatch(/id="f-mon-wlhost-addAsMonitored" checked/);
+    expect(m).not.toContain('id="f-mon-wlhost-deploy-');
+  });
+
+  it("carries every field through the form and back", () => {
+    const s = scope;
+    s.document.body.innerHTML = s.proxmoxFormHTML({
+      name: "Cluster", host: "pve1.lan", port: 8006, fallbackHosts: ["pve2.lan", "pve3.lan"], verifyTls: false,
+      apiTokenId: "polaris@pve!monitor", vmExclude: ["tmpl-*"], containerInclude: ["web*"],
+    });
+    (s.document.getElementById("f-apiToken") as any).value = "s3cret";
+    expect(s.getProxmoxFormConfig()).toEqual({
+      host: "pve1.lan", port: 8006, fallbackHosts: ["pve2.lan", "pve3.lan"], verifyTls: false,
+      apiTokenId: "polaris@pve!monitor", apiToken: "s3cret",
+      vmInclude: [], vmExclude: ["tmpl-*"], containerInclude: ["web*"], containerExclude: [],
+      verboseLogging: false,
+    });
+  });
+
+  it("never renders a stored secret; the edit flow keeps the token ID and fallbacks and drops a blank secret", () => {
+    const s = scope;
+    const spec = s._intgEditFormSpec(
+      { type: "proxmox", name: "Cluster", enabled: true, autoDiscover: true, pollInterval: 1 },
+      { host: "pve1.lan", fallbackHosts: ["pve2.lan"], apiTokenId: "polaris@pve!monitor", apiToken: "SECRET-SHOULD-NOT-RENDER" },
+    );
+    expect(spec.body).not.toContain("SECRET-SHOULD-NOT-RENDER");
+    s.document.body.innerHTML = spec.body;
+    const cfg = spec.formGetter();
+    expect(cfg.apiToken).toBeUndefined();
+    expect(cfg.apiTokenId).toBe("polaris@pve!monitor");
+    expect(cfg.fallbackHosts).toEqual(["pve2.lan"]);
+    expect(cfg.port).toBe(8006);
+  });
+});

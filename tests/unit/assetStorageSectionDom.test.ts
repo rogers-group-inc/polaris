@@ -58,7 +58,7 @@ function varSrc(name: string): string {
 
 const FN_NAMES = [
   "_storageStreamDelivers", "_renderStorageTable", "_storageDetailsFor", "_storageHealthCell", "_setStorageDetailsFromVirtualization",
-  "_poolLayoutsHTML", "_poolMemberUnhealthy", "_poolScanText",
+  "_poolLayoutsHTML", "_poolMemberUnhealthy", "_poolScanText", "_isWorkloadPlatform",
 ];
 const SRC = varSrc("_STORAGE_DELIVERING_METHODS") + "\n" +
   varSrc("_assetStorageDetails") + "\n" +
