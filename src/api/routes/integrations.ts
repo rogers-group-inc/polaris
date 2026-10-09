@@ -1026,14 +1026,38 @@ const ProxmoxConfigSchema = z.object({
   });
 });
 
-// Local AI Assistant (model server) for the AI assistant (business rule 95). OpenAI-compatible
+// AI Assistant (model server) for the AI assistant (business rule 95). OpenAI-compatible
 // chat completions — Ollama, LM Studio, vLLM, llama.cpp, LocalAI, Open WebUI.
 // No discovery, no monitoring, no assets: it is read by the assistant routes
 // only. The host guard is the llm variant (rule 95(g)): `allowLoopback` lifts
 // the block for loopback ONLY, because a local model so often listens on the
 // Polaris host itself. roleId / roleName / tokenId are stamped by the server
 // at create time and are not accepted from the client.
-const LlmConfigSchema = z.object({
+//
+// provider "azure" (rule 95(j)) is Azure AI Foundry: `host` may arrive as the
+// pasted endpoint URL, which normalizeLlmProviderInput splits into host /
+// port / useHttps / basePath BEFORE the shape check (so the host guard sees
+// a hostname); `model` is the deployment name; the key rides `apiToken` and
+// the service principal's secret `clientSecret` — both sealed at rest and
+// masked on read like every other integration secret.
+function normalizeLlmProviderInput(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const cfg = { ...(raw as Record<string, unknown>) };
+  if (cfg.provider !== "azure" || typeof cfg.host !== "string") return cfg;
+  if (cfg.host.includes("://") || cfg.host.includes("/")) {
+    const parsed = llm.parseAzureEndpoint(cfg.host);
+    if (parsed) Object.assign(cfg, parsed);
+  } else {
+    // A bare hostname: Azure is HTTPS on 443 unless the stored row says otherwise.
+    if (cfg.port === undefined) cfg.port = 443;
+    if (cfg.useHttps === undefined) cfg.useHttps = true;
+    if (cfg.basePath === undefined) cfg.basePath = "";
+  }
+  return cfg;
+}
+
+const LlmConfigSchema = z.preprocess(normalizeLlmProviderInput, z.object({
+  provider:  z.enum(["openai", "azure"]).optional().default("openai"),
   host:      z.string().trim().min(1, "Host is required"),
   port:      z.number().int().min(1).max(65535).optional().default(11434),
   useHttps:  z.boolean().optional().default(false),
@@ -1058,6 +1082,17 @@ const LlmConfigSchema = z.object({
   systemPromptExtra: z.string().max(4000).optional().default(""),
   allowLoopback:    z.boolean().optional().default(false),
   verboseLogging:   z.boolean().optional().default(false),
+  // Azure AI Foundry only (provider "azure"); ignored for an OpenAI-compatible server.
+  // "anthropic" = a Claude deployment on the Messages API, through the official Foundry SDK.
+  azureApiShape:    z.enum(["v1", "deployments", "anthropic"]).optional().default("v1"),
+  azureApiVersion:  z.string().trim().max(40).optional().default(llm.AZURE_DEFAULTS.apiVersion),
+  azureAuth:        z.enum(["apiKey", "entra"]).optional().default("apiKey"),
+  tenantId:         z.string().trim().max(100).optional().default(""),
+  clientId:         z.string().trim().max(100).optional().default(""),
+  clientSecret:     z.string().max(2048).optional().default(""),
+  // Blank = the API shape's own audience (llmService.azureScope).
+  azureScope:       z.string().trim().max(300).optional().default(""),
+  omitTemperature:  z.boolean().optional().default(false),
 }).superRefine((cfg, ctx) => {
   if (cfg.host && isBlockedLlmHost(cfg.host, cfg.allowLoopback)) {
     ctx.addIssue({
@@ -1068,7 +1103,23 @@ const LlmConfigSchema = z.object({
         : `Host "${cfg.host.trim()}" is in a blocked range (link-local / metadata / multicast) and cannot be used as an LLM server.`,
     });
   }
-});
+  if (cfg.provider !== "azure") return;
+  const need = (ok: boolean, path: string, message: string) => {
+    if (!ok) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
+  };
+  need(!!cfg.model, "model", "Deployment name is required for Azure AI Foundry");
+  if (cfg.azureAuth === "entra") {
+    need(!!cfg.tenantId, "tenantId", "Tenant ID is required for Entra ID authentication");
+    need(!!cfg.clientId, "clientId", "Client ID is required for Entra ID authentication");
+    need(!!cfg.clientSecret, "clientSecret", "Client secret is required for Entra ID authentication");
+    need(!cfg.azureScope || /^https:\/\/\S+$/.test(cfg.azureScope), "azureScope", "Token scope must be blank (the default) or an https:// URI, e.g. https://cognitiveservices.azure.com/.default");
+  } else {
+    need(!!cfg.apiToken, "apiToken", "API key is required for Azure AI Foundry key authentication");
+  }
+  if (cfg.azureApiShape === "deployments") {
+    need(llm.AZURE_API_VERSION_RE.test(cfg.azureApiVersion), "azureApiVersion", "API version must look like 2024-10-21 (or 2025-04-01-preview)");
+  }
+}));
 
 // Generic API ("build your own") — business rule 100. An operator-described
 // REST feed mapped record by record onto assets through JSON paths
@@ -1611,7 +1662,11 @@ router.put("/:id", async (req, res, next) => {
         for (const k of LLM_SERVER_KEYS) if (currentConfig[k] !== undefined) newConfig[k] = currentConfig[k];
         // A tool-calling verdict describes one model on one server; pointing
         // the integration elsewhere makes it stale until the next check.
-        const moved = ["host", "port", "basePath", "useHttps", "model"].some((k) => newConfig[k] !== currentConfig[k]);
+        // A row saved before Azure support has no provider / shape: absent
+        // means the default, so its first plain save is not a "move".
+        const asStored: Record<string, unknown> = { provider: "openai", azureApiShape: "v1" };
+        const moved = ["provider", "host", "port", "basePath", "useHttps", "model", "azureApiShape"]
+          .some((k) => (newConfig[k] ?? asStored[k]) !== (currentConfig[k] ?? asStored[k]));
         if (moved) delete newConfig.toolCheck;
         data.autoDiscover = false;
       }
@@ -2561,9 +2616,12 @@ router.post("/llm/probe-tools", async (req, res, next) => {
     const body = ProbeToolsSchema.parse(req.body);
     const raw: Record<string, unknown> = { ...body.config };
     for (const k of LLM_SERVER_KEYS) delete raw[k];
-    if (body.id && (!raw.apiToken || isMaskedSecretSentinel(raw.apiToken))) {
+    const blank = (v: unknown) => !v || isMaskedSecretSentinel(v);
+    if (body.id && (blank(raw.apiToken) || blank(raw.clientSecret))) {
       const stored = await prisma.integration.findFirst({ where: { id: body.id, type: "llm" }, select: { config: true } });
-      raw.apiToken = (stored?.config as Record<string, unknown> | undefined)?.apiToken ?? "";
+      const storedCfg = (stored?.config as Record<string, unknown> | undefined) ?? {};
+      if (blank(raw.apiToken)) raw.apiToken = storedCfg.apiToken ?? "";
+      if (blank(raw.clientSecret)) raw.clientSecret = storedCfg.clientSecret ?? "";
     }
     const parsed = LlmConfigSchema.safeParse(raw);
     if (!parsed.success) throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "));
@@ -2594,7 +2652,7 @@ router.post("/:id/llm/regenerate-token", requirePermission("apiTokens", "write")
   try {
     const integration = await prisma.integration.findUnique({ where: { id: req.params.id as string } });
     if (!integration) throw new AppError(404, "Integration not found");
-    if (integration.type !== "llm") throw new AppError(400, "Only Local AI Assistant integrations carry a provisioned API token");
+    if (integration.type !== "llm") throw new AppError(400, "Only AI Assistant integrations carry a provisioned API token");
     const config = integration.config as Record<string, unknown>;
     const out = await regenerateLlmToken(
       { id: integration.id, name: integration.name, config },
@@ -2661,6 +2719,17 @@ function restoreGenericApiSecrets(cfg: Record<string, unknown>, stored: Record<s
 // POST /api/v1/integrations/test — test without saving (for the create form)
 router.post("/test", async (req, res, next) => {
   try {
+    // An Azure llm config REQUIRES its key / client secret (rule 95(j)), and
+    // the Edit form sends them blank to mean "keep the stored one" — so for
+    // llm the stored secrets are restored before the shape check, not after.
+    if (req.body?.type === "llm" && typeof req.body?.id === "string" && req.body.config && typeof req.body.config === "object") {
+      const stored = await prisma.integration.findFirst({ where: { id: req.body.id, type: "llm" }, select: { config: true } });
+      const storedCfg = (stored?.config as Record<string, unknown> | undefined) ?? {};
+      const cfg = req.body.config as Record<string, unknown>;
+      for (const k of ["apiToken", "clientSecret"] as const) {
+        if ((!cfg[k] || isMaskedSecretSentinel(cfg[k])) && storedCfg[k]) cfg[k] = storedCfg[k];
+      }
+    }
     const input = CreateIntegrationSchema.parse(req.body);
     let result: { ok: boolean; message: string; version?: string };
 
@@ -2699,8 +2768,12 @@ router.post("/test", async (req, res, next) => {
           cfg.apiToken = stored.apiToken;
         }
         // The llm API key is optional, so only restore when one is stored.
+        // The Azure Foundry service principal's secret (rule 95(j)) likewise.
         if (input.type === "llm" && needsRestore(cfg.apiToken) && stored.apiToken) {
           cfg.apiToken = stored.apiToken;
+        }
+        if (input.type === "llm" && needsRestore(cfg.clientSecret) && stored.clientSecret) {
+          cfg.clientSecret = stored.clientSecret;
         }
         if (input.type === GENERIC_API_TYPE && existing.type === GENERIC_API_TYPE) {
           restoreGenericApiSecrets(cfg, stored);

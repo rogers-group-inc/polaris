@@ -2,7 +2,7 @@
  * tests/unit/llmToolCheck.test.ts
  *
  * checkLlmToolCalling (business rule 95) — the check the integration form
- * runs after every save of a Local AI Assistant:
+ * runs after every save of an AI Assistant:
  *   - it asks the model the integration will really chat with (the configured
  *     one as the server names it, or the default pick for a blank Model);
  *   - it stamps { model, result, at } on config.toolCheck WITHOUT clobbering
@@ -62,6 +62,18 @@ describe("checkLlmToolCalling", () => {
     const out = await checkLlmToolCalling("i1", "dana");
     expect(out.model).toBe("qwen2.5:7b");
     expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ level: "info" }));
+  });
+
+  it("Azure AI Foundry: probes the deployment directly, never listing models (rule 95(j))", async () => {
+    h.findUnique.mockResolvedValueOnce(row({ provider: "azure", host: "res.openai.azure.com", model: "gpt-4o-prod" }))
+      .mockResolvedValueOnce({ config: { provider: "azure", host: "res.openai.azure.com", model: "gpt-4o-prod" } });
+    h.probeToolCalling.mockResolvedValueOnce("yes");
+    const out = await checkLlmToolCalling("i1", "dana");
+    expect(out.model).toBe("gpt-4o-prod");
+    expect(h.listModels).not.toHaveBeenCalled();
+    h.findUnique.mockResolvedValueOnce(row({ provider: "azure", host: "res.openai.azure.com", model: "" }));
+    await expect(checkLlmToolCalling("i1", "dana")).rejects.toMatchObject({ httpStatus: 409 });
+    expect(h.listModels).not.toHaveBeenCalled();
   });
 
   it("refuses a missing integration, another type, and a server with no chat model", async () => {

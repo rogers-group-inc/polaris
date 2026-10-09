@@ -11,6 +11,16 @@
  * works against a self-signed lab server without pulling in undici — the same
  * transport choice as vcenterService / fortigateService.
  *
+ * Providers (rule 95(j)): `provider` absent or "openai" is everything above.
+ * "azure" is Azure AI Foundry's Azure OpenAI deployments — the same chat
+ * dialect on a different path (`/openai/v1/chat/completions`, or the legacy
+ * `/openai/deployments/<name>/chat/completions?api-version=…`), authenticated
+ * by an `api-key` header or an Entra ID client-credentials bearer token, with
+ * `model` holding the DEPLOYMENT name. Foundry cannot list deployments, so
+ * listModels refuses and testConnection sends one tiny chat round instead.
+ * Every provider difference lives in this file; the chat orchestrator only
+ * ever sees chatCompletionRound.
+ *
  * Streaming: the upstream SSE body is parsed incrementally. Text deltas are
  * handed to `onText` as they arrive; tool-call deltas (which arrive in
  * fragments — the function name in one chunk, the JSON arguments spread over
@@ -21,10 +31,35 @@
 
 import http from "node:http";
 import https from "node:https";
+import { createHash } from "node:crypto";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
+import { buildClientCredentialsTokenRequest } from "../utils/entraClientCredentials.js";
+import Anthropic from "@anthropic-ai/sdk";
+import AnthropicFoundry from "@anthropic-ai/foundry-sdk";
+
+export type LlmProvider = "openai" | "azure";
 
 export interface LlmConfig {
+  /** Absent = "openai" (any OpenAI-compatible server) — every row made before Azure support. */
+  provider?: LlmProvider;
+  /**
+   * Azure: "v1" (`/openai/v1/…`, no api-version) or the legacy "deployments" path — both Azure OpenAI
+   * GPT deployments on chat completions — or "anthropic": a Claude deployment, spoken to through
+   * Anthropic's official Foundry SDK on the Messages API (`/anthropic/v1/messages`).
+   */
+  azureApiShape?: "v1" | "deployments" | "anthropic";
+  /** Azure "deployments" shape only, e.g. "2024-10-21". */
+  azureApiVersion?: string;
+  /** Azure: an `api-key` header (the key lives in apiToken) or an Entra ID service principal. */
+  azureAuth?: "apiKey" | "entra";
+  tenantId?: string;
+  clientId?: string;
+  clientSecret?: string;
+  /** Entra token scope; blank = AZURE_DEFAULTS.scope. */
+  azureScope?: string;
+  /** Never send `temperature` — reasoning deployments (o-series, gpt-5) refuse it. */
+  omitTemperature?: boolean;
   host: string;
   port?: number;
   useHttps?: boolean;
@@ -79,7 +114,12 @@ export interface ChatToolCall {
 
 export type ChatMessage =
   | { role: "system" | "user"; content: string }
-  | { role: "assistant"; content: string | null; tool_calls?: ChatToolCall[] }
+  /**
+   * `raw`: the provider's own content for this turn (CompletionRound.raw), replayed VERBATIM
+   * to the same provider. Claude needs its thinking blocks sent back unchanged with the
+   * tool_use blocks they preceded; nothing else reads it.
+   */
+  | { role: "assistant"; content: string | null; tool_calls?: ChatToolCall[]; raw?: unknown }
   | { role: "tool"; tool_call_id: string; content: string };
 
 export interface ChatToolDef {
@@ -91,6 +131,24 @@ export interface CompletionRound {
   content: string;
   toolCalls: ChatToolCall[];
   finishReason: string | null;
+  /** Provider-native content to replay on the next round's assistant message (see ChatMessage.raw). */
+  raw?: unknown;
+}
+
+export const AZURE_DEFAULTS = {
+  apiShape: "v1",
+  /** Latest GA dated version for the legacy deployments path. */
+  apiVersion: "2024-10-21",
+  scope: "https://cognitiveservices.azure.com/.default",
+  /** The Entra audience of a Claude deployment (the Messages API on `services.ai.azure.com`). */
+  anthropicScope: "https://ai.azure.com/.default",
+} as const;
+
+/** The api-version form Azure accepts: a date, optionally "-preview". */
+export const AZURE_API_VERSION_RE = /^\d{4}-\d{2}-\d{2}(-preview)?$/;
+
+export function isAzureProvider(config: Pick<LlmConfig, "provider">): boolean {
+  return config.provider === "azure";
 }
 
 /** Normalize the operator-entered path prefix: leading slash, no trailing slash. */
@@ -101,11 +159,169 @@ export function normalizeBasePath(p: string | undefined): string {
   return withLead.replace(/\/+$/, "");
 }
 
+/**
+ * The path prefix requests are built under. For an OpenAI-compatible server it
+ * is the API path ("/v1" when unset). For Azure it is empty unless the
+ * endpoint sits behind a gateway that adds one — never a default "/v1",
+ * because Azure's own paths already start at "/openai".
+ */
+function basePrefix(config: LlmConfig): string {
+  return isAzureProvider(config) ? normalizeBasePath(config.basePath ?? "") : normalizeBasePath(config.basePath);
+}
+
+/**
+ * Azure's chat-completions path for the configured API shape. The deployment
+ * name rides `model`; on the legacy shape it is a path segment, so it is
+ * encoded. Exported for tests.
+ */
+export function azureChatPath(config: LlmConfig): string {
+  const prefix = basePrefix(config);
+  if ((config.azureApiShape ?? AZURE_DEFAULTS.apiShape) === "deployments") {
+    const version = (config.azureApiVersion ?? "").trim() || AZURE_DEFAULTS.apiVersion;
+    return `${prefix}/openai/deployments/${encodeURIComponent((config.model ?? "").trim())}/chat/completions?api-version=${encodeURIComponent(version)}`;
+  }
+  return `${prefix}/openai/v1/chat/completions`;
+}
+
+/** The full request path for chat completions, per provider. Exported for tests. */
+export function chatCompletionsPath(config: LlmConfig): string {
+  return isAzureProvider(config) ? azureChatPath(config) : `${basePrefix(config)}/chat/completions`;
+}
+
+/**
+ * Split a pasted Azure endpoint ("https://res.openai.azure.com/",
+ * "https://res.services.ai.azure.com/openai/v1", "res.openai.azure.com") into
+ * the host / port / scheme / prefix the transport uses. Anything from
+ * "/openai" on is dropped — Polaris builds that part per API shape. Returns
+ * null for text that is not a host or URL. Exported for tests and the route.
+ */
+export function parseAzureEndpoint(input: string): { host: string; port: number; useHttps: boolean; basePath: string } | null {
+  const raw = (input ?? "").trim();
+  if (!raw) return null;
+  let url: URL;
+  try {
+    url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (!url.hostname) return null;
+  const useHttps = url.protocol === "https:";
+  const port = url.port ? Number(url.port) : useHttps ? 443 : 80;
+  let path = url.pathname.replace(/\/+$/, "");
+  const cut = path.search(/\/(openai|anthropic)(\/|$)/i);
+  if (cut !== -1) path = path.slice(0, cut);
+  // URL keeps IPv6 literals bracketed; the transport wants the bare address.
+  const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
+  return { host, port, useHttps, basePath: path };
+}
+
+/**
+ * The authentication headers for one request: a Bearer API key for an
+ * OpenAI-compatible server (only when one is set), `api-key` for an Azure
+ * key, or the Entra access token as a Bearer. Exported for tests.
+ */
+export function llmAuthHeaders(config: LlmConfig, entraToken?: string): Record<string, string> {
+  if (isAzureProvider(config)) {
+    if ((config.azureAuth ?? "apiKey") === "entra") {
+      return entraToken ? { Authorization: `Bearer ${entraToken}` } : {};
+    }
+    return config.apiToken ? { "api-key": config.apiToken } : {};
+  }
+  return config.apiToken ? { Authorization: `Bearer ${config.apiToken}` } : {};
+}
+
+// ─── Entra ID token (Azure, azureAuth "entra") ───────────────────────────────
+//
+// Client credentials against login.microsoftonline.com, the request shape
+// shared with entraIdService / azureArcService. Cached per tenant | client |
+// scope | sha256(secret) — a rotated secret is a new key, so a token minted
+// with the old one is never reused — and refreshed 5 minutes before expiry.
+// Concurrent turns share one in-flight fetch. A failure is never cached. The
+// token and the secret are never logged.
+
+const ENTRA_REFRESH_MARGIN_MS = 5 * 60_000;
+const entraTokenCache = new Map<string, { token: string; expiresAt: number }>();
+const entraInFlight = new Map<string, Promise<string>>();
+
+function entraCacheKey(config: LlmConfig): string {
+  const secretHash = createHash("sha256").update(config.clientSecret ?? "").digest("hex");
+  return [config.tenantId ?? "", config.clientId ?? "", azureScope(config), secretHash].join("|");
+}
+
+/** The Entra scope: the operator's, else the default for the API shape. Exported for tests. */
+export function azureScope(config: LlmConfig): string {
+  return (config.azureScope ?? "").trim()
+    || (config.azureApiShape === "anthropic" ? AZURE_DEFAULTS.anthropicScope : AZURE_DEFAULTS.scope);
+}
+
+/** An Entra access token for the Azure data plane, from cache when fresh. Exported for tests. */
+export async function getAzureEntraToken(config: LlmConfig): Promise<string> {
+  if (!config.tenantId || !config.clientId || !config.clientSecret) {
+    throw new AppError(400, "Entra ID authentication needs a tenant ID, client ID and client secret");
+  }
+  const key = entraCacheKey(config);
+  const cached = entraTokenCache.get(key);
+  if (cached && cached.expiresAt - ENTRA_REFRESH_MARGIN_MS > Date.now()) return cached.token;
+  const pending = entraInFlight.get(key);
+  if (pending) return pending;
+  const p = fetchEntraToken(config)
+    .then(({ token, expiresInSec }) => {
+      entraTokenCache.set(key, { token, expiresAt: Date.now() + expiresInSec * 1000 });
+      return token;
+    })
+    .finally(() => entraInFlight.delete(key));
+  entraInFlight.set(key, p);
+  return p;
+}
+
+async function fetchEntraToken(config: LlmConfig): Promise<{ token: string; expiresInSec: number }> {
+  const { url, body } = buildClientCredentialsTokenRequest({
+    tenantId: config.tenantId!,
+    clientId: config.clientId!,
+    clientSecret: config.clientSecret!,
+    scope: azureScope(config),
+  });
+  let res: Response;
+  try {
+    res = await globalThis.fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (err: any) {
+    throw new AppError(502, `Could not reach Entra ID (login.microsoftonline.com) for a token: ${err?.message || err}`);
+  }
+  const text = await res.text();
+  let parsed: any = null;
+  try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+  if (!res.ok) {
+    // error_description carries the AADSTS code and reason; never the secret.
+    const why = parsed?.error_description ? String(parsed.error_description).split(/\r?\n/)[0]
+      : parsed?.error ? String(parsed.error) : `HTTP ${res.status}`;
+    throw new AppError(502, `Entra ID refused the token request (HTTP ${res.status}): ${why.slice(0, 300)}`);
+  }
+  if (!parsed?.access_token) throw new AppError(502, "Entra ID token response had no access_token");
+  const expiresInSec = Number(parsed.expires_in) > 0 ? Number(parsed.expires_in) : 3600;
+  return { token: String(parsed.access_token), expiresInSec };
+}
+
+function invalidateEntraToken(config: LlmConfig): void {
+  entraTokenCache.delete(entraCacheKey(config));
+}
+
+/** Test hook. */
+export function _clearEntraTokenCache(): void {
+  entraTokenCache.clear();
+  entraInFlight.clear();
+}
+
 /** Human-readable endpoint for messages and the integration card. */
 export function describeEndpoint(config: LlmConfig): string {
   const scheme = config.useHttps ? "https" : "http";
   const port = config.port ?? LLM_DEFAULTS.port;
-  return `${scheme}://${config.host}:${port}${normalizeBasePath(config.basePath)}`;
+  return `${scheme}://${config.host}:${port}${basePrefix(config)}`;
 }
 
 interface RawResponse {
@@ -114,14 +330,15 @@ interface RawResponse {
   stream: http.IncomingMessage;
 }
 
-function openRequest(
+/** `path` is the FULL request path (prefix included) — see chatCompletionsPath. */
+async function openRequest(
   config: LlmConfig,
   method: "GET" | "POST",
   path: string,
   body: unknown,
   signal: AbortSignal | undefined,
 ): Promise<RawResponse> {
-  if (!config.host) return Promise.reject(new AppError(400, "LLM host is required"));
+  if (!config.host) throw new AppError(400, "LLM host is required");
   const mod = config.useHttps ? https : http;
   const payload = body === undefined ? undefined : JSON.stringify(body);
   const headers: Record<string, string> = { Accept: "application/json, text/event-stream" };
@@ -129,7 +346,8 @@ function openRequest(
     headers["Content-Type"] = "application/json";
     headers["Content-Length"] = String(Buffer.byteLength(payload));
   }
-  if (config.apiToken) headers.Authorization = `Bearer ${config.apiToken}`;
+  const entraToken = isAzureProvider(config) && config.azureAuth === "entra" ? await getAzureEntraToken(config) : undefined;
+  Object.assign(headers, llmAuthHeaders(config, entraToken));
   const timeout = config.requestTimeoutMs ?? LLM_DEFAULTS.requestTimeoutMs;
 
   return new Promise((resolve, reject) => {
@@ -138,7 +356,7 @@ function openRequest(
         host: config.host,
         port: config.port ?? LLM_DEFAULTS.port,
         method,
-        path: normalizeBasePath(config.basePath) + path,
+        path,
         headers,
         signal,
         ...(config.useHttps ? { rejectUnauthorized: config.verifySsl !== false } : {}),
@@ -171,13 +389,43 @@ async function readAll(stream: http.IncomingMessage, cap = 2_000_000): Promise<s
   return out;
 }
 
-function upstreamError(status: number, body: string): AppError {
-  let detail = body.trim();
+function upstreamDetail(body: string): string {
+  let detail: unknown = body.trim();
   try {
     const j = JSON.parse(body);
     detail = j?.error?.message ?? j?.error ?? j?.message ?? detail;
   } catch { /* plain-text body */ }
-  if (typeof detail !== "string") detail = JSON.stringify(detail);
+  return typeof detail === "string" ? detail : JSON.stringify(detail);
+}
+
+/** How messages name an Azure API shape: "v1 API", "deployments API 2024-10-21", "Claude Messages API". */
+function apiShapeLabel(config: LlmConfig): string {
+  const shape = config.azureApiShape ?? AZURE_DEFAULTS.apiShape;
+  if (shape === "anthropic") return "Claude Messages API";
+  if (shape === "deployments") return `deployments API ${(config.azureApiVersion ?? "").trim() || AZURE_DEFAULTS.apiVersion}`;
+  return "v1 API";
+}
+
+/** Exported for tests. */
+export function upstreamError(status: number, body: string, config?: LlmConfig): AppError {
+  const detail = upstreamDetail(body);
+  if (config && isAzureProvider(config)) {
+    const entra = config.azureAuth === "entra";
+    if (status === 401) {
+      return new AppError(502, entra
+        ? `Azure AI Foundry refused the Entra ID token (HTTP 401) — check the tenant ID and that the token scope is ${azureScope(config)}`
+        : "Azure AI Foundry refused the API key (HTTP 401) — copy Key 1 or Key 2 from the resource's Keys and Endpoint page");
+    }
+    if (status === 403) {
+      return new AppError(502, entra
+        ? "Azure AI Foundry refused the app registration (HTTP 403) — grant its service principal the Cognitive Services OpenAI User role on the resource"
+        : `Azure AI Foundry refused the request (HTTP 403): ${detail.slice(0, 300)}`);
+    }
+    if (status === 404) {
+      return new AppError(502, `Deployment "${(config.model ?? "").trim()}" was not found at ${describeEndpoint(config)} (HTTP 404) — Model must be the DEPLOYMENT name, and the resource must support the ${apiShapeLabel(config)}`);
+    }
+    return new AppError(502, `Azure AI Foundry error (HTTP ${status}): ${detail.slice(0, 300)}`);
+  }
   if (status === 401 || status === 403) {
     return new AppError(502, `The LLM server refused the API key (HTTP ${status})`);
   }
@@ -242,6 +490,7 @@ async function getJson(config: LlmConfig, method: "GET" | "POST", path: string, 
  * Ollama server (or one too old to report capabilities). Exported for tests.
  */
 export async function ollamaCapabilities(config: LlmConfig, ids: string[]): Promise<Map<string, string[]> | null> {
+  if (isAzureProvider(config)) return null;
   const base = normalizeBasePath(config.basePath);
   if (base !== "/v1" && base !== "") return null;
   const native: LlmConfig = { ...config, basePath: "", requestTimeoutMs: 10_000 };
@@ -274,7 +523,10 @@ export async function ollamaCapabilities(config: LlmConfig, ids: string[]): Prom
  */
 export async function listModels(config: LlmConfig): Promise<LlmModelInfo[]> {
   if (!config.host) throw new AppError(400, "Host is required");
-  const res = await openRequest({ ...config, requestTimeoutMs: Math.min(config.requestTimeoutMs ?? 15_000, 15_000) }, "GET", "/models", undefined, undefined);
+  if (isAzureProvider(config)) {
+    throw new AppError(400, "Azure AI Foundry cannot list deployments — enter the deployment name as Model");
+  }
+  const res = await openRequest({ ...config, requestTimeoutMs: Math.min(config.requestTimeoutMs ?? 15_000, 15_000) }, "GET", `${basePrefix(config)}/models`, undefined, undefined);
   const body = await readAll(res.stream);
   if (res.status < 200 || res.status >= 300) throw upstreamError(res.status, body);
   const ids = parseModelIds(body);
@@ -380,6 +632,7 @@ export async function testConnection(config: LlmConfig): Promise<LlmTestResult> 
 
 async function testConnectionInner(config: LlmConfig): Promise<LlmTestResult> {
   if (!config.host) return { ok: false, message: "Host is required" };
+  if (isAzureProvider(config)) return testAzureConnection(config);
   let models: LlmModelInfo[];
   try {
     models = await listModels(config);
@@ -411,6 +664,40 @@ async function testConnectionInner(config: LlmConfig): Promise<LlmTestResult> {
   return { ok: true, message: `Connected — "${hit}" is available and ${note} (${n} model(s) on the server)`, models, model: hit };
 }
 
+/**
+ * Azure Test Connection: Foundry has no deployment list, so the only proof
+ * that the endpoint, the credential AND the deployment are right is one tiny
+ * chat round (no tools). Its failures already name the auth mode — an AADSTS
+ * reason from the token request, or upstreamError's 401 / 403 / 404 wording.
+ */
+async function testAzureConnection(config: LlmConfig): Promise<LlmTestResult> {
+  const deployment = (config.model ?? "").trim();
+  if (!deployment) return { ok: false, message: "Model (the deployment name) is required for Azure AI Foundry", model: null };
+  const how = config.azureAuth === "entra" ? "Entra ID app" : "API key";
+  const shape = apiShapeLabel(config);
+  try {
+    await chatCompletionRound(
+      config,
+      [
+        { role: "system", content: "You are a connectivity check. Reply with the single word OK." },
+        { role: "user", content: "ping" },
+      ],
+      [],
+      { signal: AbortSignal.timeout(Math.min(config.requestTimeoutMs ?? LLM_DEFAULTS.requestTimeoutMs, 90_000)) },
+    );
+  } catch (err: any) {
+    if (err?.name === "AbortError" || err?.name === "TimeoutError") {
+      return { ok: false, message: `Deployment "${deployment}" did not answer within 90 s`, model: null };
+    }
+    return { ok: false, message: err instanceof AppError ? err.message : err?.message || "Unknown error", model: null };
+  }
+  return {
+    ok: true,
+    message: `Connected — Azure AI Foundry deployment "${deployment}" answered (${shape}, ${how}). Tool calling not verified — use Check tool calling`,
+    model: deployment,
+  };
+}
+
 /** The models a test of this config would offer, as a plain list for the form. */
 export async function describeModels(config: LlmConfig): Promise<{ models: LlmModelInfo[]; defaultModel: string | null }> {
   const models = await listModels(config);
@@ -430,6 +717,7 @@ const RESOLVE_TTL_MS = 5 * 60_000;
 export async function resolveChatModel(integrationId: string, config: LlmConfig): Promise<string> {
   const configured = (config.model ?? "").trim();
   if (configured) return configured;
+  if (isAzureProvider(config)) throw new AppError(409, "Set Model on the integration to the Azure deployment name");
   const hit = resolvedModelCache.get(integrationId);
   if (hit && Date.now() - hit.at < RESOLVE_TTL_MS) return hit.model;
   const pick = pickDefaultModel(await listModels(config));
@@ -553,6 +841,206 @@ export function applyStreamChunk(
   return text;
 }
 
+// ─── Claude on Azure AI Foundry (azureApiShape "anthropic") ──────────────────
+//
+// Claude deployments speak Anthropic's Messages API, not chat completions, so
+// this shape goes through Anthropic's official Foundry SDK rather than the
+// hand-rolled transport above. The orchestrator still sees ONE dialect: the
+// OpenAI-shaped history is translated here (toAnthropicRequest) and the
+// answer translated back into a CompletionRound. Auth reuses the Entra token
+// cache above (scope https://ai.azure.com/.default) or the key in apiToken.
+// Every credential is passed explicitly, never left to the SDK's
+// ANTHROPIC_FOUNDRY_* environment fallbacks, so a stray variable on the host
+// can never change who Polaris authenticates as.
+
+/** Output ceiling per round. Required by the Messages API; only what is generated is billed. */
+export const ANTHROPIC_MAX_TOKENS = 64_000;
+
+export function isAnthropicShape(config: LlmConfig): boolean {
+  return isAzureProvider(config) && config.azureApiShape === "anthropic";
+}
+
+/** The SDK's base URL for a Claude deployment: `<scheme>://<host>[:port]<prefix>/anthropic/`. Exported for tests. */
+export function anthropicBaseUrl(config: LlmConfig): string {
+  const useHttps = config.useHttps !== false;
+  const host = config.host.includes(":") ? `[${config.host}]` : config.host;
+  const port = config.port && config.port !== (useHttps ? 443 : 80) ? `:${config.port}` : "";
+  return `${useHttps ? "https" : "http"}://${host}${port}${basePrefix(config)}/anthropic/`;
+}
+
+type AnthropicBlock = Record<string, unknown>;
+type AnthropicTurn = { role: "user" | "assistant"; content: string | AnthropicBlock[] };
+
+/**
+ * Translate the orchestrator's OpenAI-shaped messages into a Messages API
+ * request. Leading system messages become `system`; a later one (Polaris's
+ * mid-turn notes) rides as a text block on the user turn it follows, which
+ * every Claude model accepts. Tool results are grouped into ONE user turn
+ * right after the assistant turn that asked for them. An assistant turn
+ * carrying `raw` is replayed verbatim (thinking blocks included). Exported
+ * for tests.
+ */
+export function toAnthropicRequest(messages: ChatMessage[], tools: ChatToolDef[]): {
+  system: string;
+  messages: AnthropicTurn[];
+  tools: AnthropicBlock[];
+} {
+  const system: string[] = [];
+  const out: AnthropicTurn[] = [];
+  let started = false;
+  const userBlocks = (): AnthropicBlock[] => {
+    const last = out[out.length - 1];
+    if (last && last.role === "user") {
+      if (typeof last.content === "string") last.content = [{ type: "text", text: last.content }];
+      return last.content as AnthropicBlock[];
+    }
+    const turn: AnthropicTurn = { role: "user", content: [] };
+    out.push(turn);
+    return turn.content as AnthropicBlock[];
+  };
+  for (const m of messages) {
+    if (m.role === "system") {
+      if (!started) system.push(m.content);
+      else userBlocks().push({ type: "text", text: m.content });
+      continue;
+    }
+    started = true;
+    if (m.role === "user") {
+      userBlocks().push({ type: "text", text: m.content });
+    } else if (m.role === "tool") {
+      userBlocks().push({ type: "tool_result", tool_use_id: m.tool_call_id, content: m.content });
+    } else if (m.role !== "assistant") {
+      continue;
+    } else if (Array.isArray(m.raw)) {
+      out.push({ role: "assistant", content: m.raw as AnthropicBlock[] });
+    } else {
+      const blocks: AnthropicBlock[] = [];
+      if (m.content) blocks.push({ type: "text", text: m.content });
+      for (const tc of m.tool_calls ?? []) {
+        let input: unknown = {};
+        try { input = JSON.parse(tc.function.arguments || "{}"); } catch { input = {}; }
+        blocks.push({ type: "tool_use", id: tc.id, name: tc.function.name, input: input && typeof input === "object" ? input : {} });
+      }
+      if (blocks.length) out.push({ role: "assistant", content: blocks });
+    }
+  }
+  // A single text block reads more simply as a string.
+  for (const t of out) {
+    if (Array.isArray(t.content) && t.content.length === 1 && t.content[0].type === "text") t.content = String(t.content[0].text);
+  }
+  return {
+    system: system.join("\n\n"),
+    messages: out,
+    tools: tools.map((t) => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters })),
+  };
+}
+
+function anthropicClient(config: LlmConfig): AnthropicFoundry {
+  const entra = config.azureAuth === "entra";
+  // `null`, not undefined: undefined would fall through to the SDK's env-var defaults.
+  return new AnthropicFoundry({
+    baseURL: anthropicBaseUrl(config),
+    resource: null as unknown as undefined,
+    apiKey: (entra ? null : config.apiToken || null) as unknown as undefined,
+    ...(entra ? { azureADTokenProvider: () => getAzureEntraToken(config) } : {}),
+    timeout: config.requestTimeoutMs ?? LLM_DEFAULTS.requestTimeoutMs,
+    maxRetries: 2,
+  });
+}
+
+/** Map an SDK failure onto the same AppErrors (and the same wording) as the other shapes. */
+function anthropicError(err: unknown, config: LlmConfig, signal: AbortSignal | undefined): Error {
+  if (signal?.aborted || err instanceof Anthropic.APIUserAbortError) {
+    return Object.assign(new Error("aborted"), { name: "AbortError" });
+  }
+  if (err instanceof AppError) return err;
+  if (err instanceof Anthropic.APIError && typeof err.status === "number") {
+    if (err.status === 401 && config.azureAuth === "entra") invalidateEntraToken(config);
+    const detail = (err.error as { error?: { message?: string } } | undefined)?.error?.message ?? err.message;
+    return upstreamError(err.status, JSON.stringify({ error: { message: detail } }), config);
+  }
+  const cause = (err as { cause?: unknown })?.cause;
+  if (cause instanceof AppError) return cause; // an Entra token failure, surfaced through the SDK
+  return new AppError(502, `Could not reach Azure AI Foundry at ${describeEndpoint(config)}: ${(err as Error)?.message || err}`);
+}
+
+async function anthropicRound(
+  config: LlmConfig,
+  messages: ChatMessage[],
+  tools: ChatToolDef[],
+  opts: { signal?: AbortSignal; onText?: (text: string) => void; onReasoning?: (totalChars: number) => void },
+): Promise<CompletionRound> {
+  const req = toAnthropicRequest(messages, tools);
+  const params: Record<string, unknown> = {
+    model: config.model,
+    max_tokens: ANTHROPIC_MAX_TOKENS,
+    messages: req.messages,
+  };
+  // No `temperature`: current Claude models refuse non-default sampling.
+  // No `thinking`: the model's adaptive default.
+  if (req.system) params.system = req.system;
+  if (req.tools.length) {
+    params.tools = req.tools;
+    params.tool_choice = { type: "auto" };
+  }
+  const idleMs = config.requestTimeoutMs ?? LLM_DEFAULTS.requestTimeoutMs;
+  let idle: NodeJS.Timeout | undefined;
+  let stalled = false;
+  let stream: ReturnType<AnthropicFoundry["messages"]["stream"]> | undefined;
+  try {
+    stream = anthropicClient(config).messages.stream(params as never, { signal: opts.signal });
+    // The SDK's own timeout ends at the response headers; a body that stalls
+    // mid-answer is caught here, the same idle rule as the other transport.
+    const arm = () => {
+      clearTimeout(idle);
+      idle = setTimeout(() => { stalled = true; stream?.abort(); }, idleMs);
+    };
+    arm();
+    let reasoning = 0;
+    for await (const ev of stream as AsyncIterable<{ type: string; delta?: { type?: string; text?: string; thinking?: string } }>) {
+      arm();
+      if (ev.type !== "content_block_delta" || !ev.delta) continue;
+      if (ev.delta.type === "text_delta" && ev.delta.text) opts.onText?.(ev.delta.text);
+      else if (ev.delta.type === "thinking_delta" && ev.delta.thinking) {
+        reasoning += ev.delta.thinking.length;
+        opts.onReasoning?.(reasoning);
+      }
+    }
+    const final = await stream.finalMessage();
+    clearTimeout(idle);
+    const blocks = final.content as unknown as AnthropicBlock[];
+    const text = blocks.filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("");
+    if (final.stop_reason === "refusal" && !text) {
+      throw new AppError(502, "The model declined to answer this request (refusal)");
+    }
+    const toolCalls: ChatToolCall[] = blocks
+      .filter((b) => b.type === "tool_use")
+      .map((b) => ({ id: String(b.id), type: "function" as const, function: { name: String(b.name), arguments: JSON.stringify(b.input ?? {}) } }));
+    const finishReason = final.stop_reason === "tool_use" ? "tool_calls"
+      : final.stop_reason === "end_turn" ? "stop"
+      : final.stop_reason === "max_tokens" ? "length"
+      : final.stop_reason ?? null;
+    return { content: text, toolCalls, finishReason, raw: blocks };
+  } catch (err) {
+    clearTimeout(idle);
+    if (stalled && !opts.signal?.aborted) {
+      throw new AppError(504, `LLM server did not respond within ${Math.round(idleMs / 1000)}s`);
+    }
+    throw anthropicError(err, config, opts.signal);
+  }
+}
+
+// Azure deployments that answered 400 to `temperature`, by host + path + deployment.
+const refusesTemperature = new Set<string>();
+function temperatureKey(config: LlmConfig): string {
+  return `${config.host}|${basePrefix(config)}|${(config.model ?? "").trim()}`;
+}
+
+/** Test hook. */
+export function _clearTemperatureRefusals(): void {
+  refusesTemperature.clear();
+}
+
 /**
  * One chat-completions round. Streams text through `onText`; returns the
  * full text plus any tool calls the model asked for.
@@ -563,19 +1051,36 @@ export async function chatCompletionRound(
   tools: ChatToolDef[],
   opts: { signal?: AbortSignal; onText?: (text: string) => void; onReasoning?: (totalChars: number) => void } = {},
 ): Promise<CompletionRound> {
+  if (isAnthropicShape(config)) return anthropicRound(config, messages, tools, opts);
+  const azure = isAzureProvider(config);
   const body: Record<string, unknown> = {
     model: config.model,
     messages,
     stream: true,
-    temperature: config.temperature ?? LLM_DEFAULTS.temperature,
   };
+  if (!(azure && (config.omitTemperature || refusesTemperature.has(temperatureKey(config))))) {
+    body.temperature = config.temperature ?? LLM_DEFAULTS.temperature;
+  }
   if (tools.length) {
     body.tools = tools;
     body.tool_choice = "auto";
   }
-  const res = await openRequest(config, "POST", "/chat/completions", body, opts.signal);
+  let res = await openRequest(config, "POST", chatCompletionsPath(config), body, opts.signal);
+  if (azure && res.status === 400 && body.temperature !== undefined) {
+    // A reasoning deployment (o-series, gpt-5…) answers 400 naming
+    // `temperature`. Retry once without it, and remember the refusal for
+    // this deployment so later rounds do not pay the extra request.
+    const errBody = await readAll(res.stream);
+    if (!/temperature/i.test(errBody)) throw upstreamError(res.status, errBody, config);
+    refusesTemperature.add(temperatureKey(config));
+    delete body.temperature;
+    res = await openRequest(config, "POST", chatCompletionsPath(config), body, opts.signal);
+  }
   if (res.status < 200 || res.status >= 300) {
-    throw upstreamError(res.status, await readAll(res.stream));
+    // A stale cached Entra token (revoked, or minted before a role change)
+    // must not be reused for the next request.
+    if (azure && config.azureAuth === "entra" && res.status === 401) invalidateEntraToken(config);
+    throw upstreamError(res.status, await readAll(res.stream), config);
   }
 
   const round = { content: "", toolCalls: new Map<number, ChatToolCall>(), finishReason: null as string | null, reasoningChars: 0 };
@@ -627,7 +1132,7 @@ async function readRound(
           if (config.verboseLogging) logger.debug({ data: data.slice(0, 200) }, "llm: unparseable SSE chunk skipped");
           continue;
         }
-        if (parsed?.error) throw upstreamError(500, JSON.stringify(parsed));
+        if (parsed?.error) throw upstreamError(500, JSON.stringify(parsed), config);
         const before = round.reasoningChars;
         const text = applyStreamChunk(round, parsed);
         if (text) opts.onText?.(text);

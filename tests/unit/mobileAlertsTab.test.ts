@@ -296,4 +296,24 @@ describe("mobile navbar", () => {
     expect(g.PolarisTabs.navTabFor("map")).toBe("more");
     expect(g.PolarisTabs.navTabFor("assets")).toBe("assets");
   });
+
+  it("Chat takes the Networks slot only when switched on, and Networks then lives under More", () => {
+    g.PolarisAlertsTab = { spec: { title: "Alerts" } };
+    g.PolarisChatTab = { spec: { title: "Chat" } };
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    new Function(TABS_SRC)();
+    const T = g.PolarisTabs;
+    // Off by default: the bar is unchanged, and #chat still resolves (to explain itself) without a slot.
+    expect(T.chatInBar()).toBe(false);
+    expect(T.byId("chat")).toBeTruthy();
+    expect(T.navTabFor("chat")).toBe("");
+    expect(T.setChatInBar(true)).toBe(true);
+    expect(T.list.map((t: any) => t.id)).toEqual(["search", "alerts", "assets", "chat", "more"]);
+    expect(T.byId("networks")).toBeTruthy();
+    expect(T.navTabFor("networks")).toBe("more");
+    expect(T.setChatInBar(true)).toBe(false);
+    expect(T.setChatInBar(false)).toBe(true);
+    expect(T.list.map((t: any) => t.id)).toEqual(["search", "alerts", "assets", "networks", "more"]);
+    expect(T.navTabFor("networks")).toBe("networks");
+  });
 });

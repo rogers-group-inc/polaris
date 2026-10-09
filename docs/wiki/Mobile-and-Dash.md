@@ -16,8 +16,14 @@ phone — the link is one address for everyone, and Polaris picks the phone app
 or the desktop page when it is opened. Add `?desktop=1` to that link to force
 the desktop page.
 
-The tab bar is **Search · Alerts · Assets · Networks · More**. The More tab
-holds the rest, top to bottom: the **Device Map** (sites and topology) and
+The tab bar is **Search · Alerts · Assets · Networks · More** — or, when your
+role includes the [AI Assistant](AI-Assistant) and an AI Assistant integration
+is enabled, **Search · Alerts · Assets · Chat · More**, with **Networks** moved
+to the top of More. **Chat** is the same assistant as the desktop's chat
+button: the same saved conversations, lookups made with your own permissions,
+reports to download as CSV or Markdown, **History** and **New** in its top bar,
+and the same fresh chat after 30 minutes without activity (`/resume` goes back).
+The More tab holds the rest, top to bottom: the **Device Map** (sites and topology) and
 **Blocks**; **Events** (the audit log, last 7 days); the **Notification
 preference**; **Add to Home Screen** when the app is not installed yet; the
 **theme strip** (tap to move through the day, as the desktop's theme band

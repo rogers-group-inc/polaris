@@ -2863,7 +2863,7 @@ function renderIntegrationFailedStatus() {
     if (t === "truenas") return "TrueNAS SCALE";
     if (t === "proxmox") return "Proxmox VE";
     if (t === "genericapi") return "Generic API";
-    if (t === "llm") return "Local AI Assistant";
+    if (t === "llm") return "AI Assistant";
     return t || "";
   }
   container.innerHTML =

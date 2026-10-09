@@ -2,7 +2,7 @@
 
 A chat assistant in the bottom-right corner of every page, backed by a language
 model **you run** — Ollama, LM Studio, vLLM, the llama.cpp server, LocalAI or
-Open WebUI. Ask it about your devices, alerts, networks and events, have it build
+Open WebUI — or an **Azure AI Foundry** GPT deployment. Ask it about your devices, alerts, networks and events, have it build
 a report you can download, ask it to help correlate an outage, or ask how
 something in Polaris works.
 
@@ -15,12 +15,13 @@ something in Polaris works.
 
 ## Turning it on
 
-1. **Integrations → + Add Integration → Local AI Assistant.**
+1. **Integrations → + Add Integration → AI Assistant.**
 2. Fill in the model server:
 
 | Field | |
 |---|---|
 | Assistant name | what people see in the chat window — its title, the button's tooltip and the greeting (blank = "Assistant"). The model is told to answer to it |
+| Provider | **Local / OpenAI-compatible** (the default) for a server you run, or **Azure AI Foundry** — see [Azure AI Foundry](#azure-ai-foundry) below for that form |
 | Host / IP, Port | where the model server listens — Ollama's default port is `11434` |
 | API path | `/v1` for Ollama, LM Studio, vLLM and llama.cpp; `/api` for Open WebUI |
 | Use HTTPS / Verify TLS | for a server behind TLS; untick Verify for a self-signed lab certificate |
@@ -47,12 +48,33 @@ Polaris asks the model it will actually use (the one you picked, or the Auto
 choice) to call a dummy tool, then shows the result in a notification and on
 the card's **Tool Calling** row: **✓ Verified**, **✗ Not supported — chat
 only, no lookups**, or **Could not tell**, with the model's name and when it
-was checked. Changing the host, port, API path or model clears the result
-until the next save checks again.
+was checked. Changing the provider, host, port, API path or model clears the
+result until the next save checks again.
+
+### Azure AI Foundry
+
+Choose **Azure AI Foundry** as the Provider to use a **GPT** deployment from an
+Azure OpenAI or Foundry resource, or a **Claude** deployment (Claude Haiku,
+Sonnet or Opus from the Foundry model catalog). The form then shows:
+
+| Field | |
+|---|---|
+| Endpoint | the resource's endpoint from its **Keys and Endpoint** page, e.g. `https://my-resource.openai.azure.com` (a `…services.ai.azure.com` endpoint works too). For Claude, paste the deployment's **Target URI**. Paste it whole — anything from `/openai` or `/anthropic` on is ignored |
+| API shape | for GPT, **v1** (the default — `/openai/v1`, no API version needed) or **Deployments** for the older dated path, which also asks for an **API version** such as `2024-10-21`. For a Claude deployment choose **Claude (Anthropic Messages API)** |
+| Authentication | **API key** — Key 1 or Key 2 from Keys and Endpoint — or **Entra ID app**: the app registration's Tenant ID, Client ID and Client secret. Give the app's service principal the **Cognitive Services OpenAI User** role on the resource (for Claude, **Foundry User** or **Cognitive Services User**). Keys and secrets are stored encrypted. **Token scope** is advanced; leave it blank for the default (`https://cognitiveservices.azure.com/.default` for GPT, `https://ai.azure.com/.default` for Claude) |
+| Deployment name | the name **you gave the deployment** in Foundry, not the model's name. Foundry cannot list deployments, so there is no Load models button |
+| Omit temperature | GPT only: tick for reasoning models (o-series, gpt-5), which refuse it. If you forget, Polaris retries once without it. Claude never gets a temperature, so the box is hidden |
+
+**Test Connection** sends one short chat message to the deployment, the only way
+to prove the endpoint, the credential and the deployment name are all right. The
+background connection check repeats that every 10 minutes while the integration
+is enabled, so it costs a few tokens per check. Everything else — lookups as the
+person asking, read-only, the role and token it creates — is the same as for a
+local server.
 
 ### What creating it also does
 
-Creating a Local AI Assistant integration also creates, for the **model server's own
+Creating an AI Assistant integration also creates, for the **model server's own
 use**:
 
 - a **read-only role** named `llm-<integration name>` — it reads inventory,
@@ -66,15 +88,19 @@ server, a script — see [REST API](API)). The chat in Polaris does **not** use
 this token. Use **Regenerate Token** on the integration card if it leaks;
 deleting the integration deletes the token and the role.
 
-Because it creates a role and a token, adding a Local AI Assistant integration needs
+Because it creates a role and a token, adding an AI Assistant integration needs
 **Read-Write on Roles and on API Tokens** as well as on Integrations.
 
 ### Who sees the button
 
 Anyone whose role has **AI Assistant** at Read (every built-in role does, the
-read-only role included) — once at least one Local AI Assistant integration is enabled.
+read-only role included) — once at least one AI Assistant integration is enabled.
 To hide it from a role, set **AI Assistant** to None under
 [Users → Roles](Users-Roles-and-Permissions).
+
+The same people get a **Chat** tab in the [phone app](Mobile-and-Dash), in the
+slot Networks otherwise takes (Networks moves to More). It opens the same
+conversations as the desktop.
 
 ---
 
@@ -137,6 +163,7 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 |---|---|
 | `/clear` | Clear this conversation and start over in the same thread |
 | `/new` | Start a new conversation (this one stays in history) |
+| `/resume` | Reopen the conversation set aside after 30 minutes without activity |
 | `/history` | Open your past conversations |
 | `/retry` | Ask for the last answer again |
 | `/report <what>` | Build a downloadable report, e.g. `/report switches down in the last 24h` |
@@ -144,7 +171,7 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 | `/export [md\|pdf]` | Download this conversation, reports included |
 | `/rename <title>` | Rename this conversation |
 | `/delete` | Delete this conversation permanently |
-| `/model [name]` | Show the model in use, or switch to another Local AI Assistant integration |
+| `/model [name]` | Show the model in use, or switch to another AI Assistant integration |
 | `/memory` | See and edit what the assistant remembers about you |
 | `/remember <text>` | Save something about you for future conversations, e.g. `/remember I look after the Nashville sites` |
 | `/help` | List these commands |
@@ -155,6 +182,11 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 
 - Conversations are **saved** and reopen where you left off. The history button
   (or `/history`) lists them; rename or delete from there.
+- After **30 minutes without activity** (no question, answer or opened
+  conversation in this browser) the window starts a **fresh chat** the next
+  time it loads or opens, or within a minute on a page left open. Nothing is
+  deleted: `/resume` reopens the conversation it set aside, and it is still in
+  History.
 - They are **private to you** — no other user, administrators included, can
   read them.
 - A conversation untouched for **90 days** is deleted automatically. Change
@@ -216,7 +248,7 @@ See [rule 95](Business-Rules#rule-95).
 
 | Symptom | Likely cause |
 |---|---|
-| No button | no **enabled** Local AI Assistant integration, or your role has AI Assistant set to None |
+| No button | no **enabled** AI Assistant integration, or your role has AI Assistant set to None |
 | "Connected, but model … is not on the server" | the model was removed from the server — pick another with **Load models**, or set it to Auto |
 | Loopback refused | tick **Allow loopback**, or use the host's LAN address |
 | It chats but never looks anything up | the model does not support tool calling — the card's **Tool Calling** row says ✗; choose one that does |
@@ -225,5 +257,11 @@ See [rule 95](Business-Rules#rule-95).
 | Answers arrive all at once instead of streaming | a proxy or load balancer in front of Polaris buffers responses; the answer still arrives |
 | "Not permitted" in an answer | your role cannot read that area — the assistant is telling you, not failing |
 | "Help is not available on this install" | the `docs/wiki` folder is missing from this install |
+| Azure: "refused the API key (HTTP 401)" | the key is wrong or was regenerated — paste Key 1 or Key 2 again |
+| Azure: "Entra ID refused the token request … AADSTS…" | the tenant ID, client ID or secret is wrong, or the secret expired; the AADSTS code says which |
+| Azure: "refused the app registration (HTTP 403)" | the app has no data-plane access — grant its service principal **Cognitive Services OpenAI User** on the resource (role assignments can take a few minutes to apply) |
+| Azure: "Deployment … was not found (HTTP 404)" | **Deployment name** holds the model name instead of the deployment's name, or the resource does not support the chosen API shape — try **Deployments** |
+| Azure: "Unsupported parameter: 'temperature'" | a reasoning model; tick **Omit temperature** |
+| Azure Claude: refused or not found right after the deployment was created | check **API shape** is **Claude (Anthropic Messages API)** and Deployment name matches the deployment exactly |
 
 Rule: [95](Business-Rules#rule-95).

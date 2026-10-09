@@ -29,6 +29,10 @@
  *   polaris-assistant-conv   the conversation id to reopen
  *   polaris-assistant-model  the chosen llm integration id
  *   polaris-assistant-draft  the unsent input
+ *   polaris-assistant-active when this browser last asked / got an answer /
+ *                            opened a conversation (ms) — the idle clock
+ *   polaris-assistant-resume { id, title } set aside after 30 idle minutes,
+ *                            for /resume
  */
 (function () {
   "use strict";
@@ -40,10 +44,29 @@
     conv: "polaris-assistant-conv",
     model: "polaris-assistant-model",
     draft: "polaris-assistant-draft",
+    active: "polaris-assistant-active",
+    resume: "polaris-assistant-resume",
   };
 
   function lsGet(k) { try { return window.localStorage.getItem(k); } catch (_) { return null; } }
   function lsSet(k, v) { try { if (v == null) window.localStorage.removeItem(k); else window.localStorage.setItem(k, v); } catch (_) { /* private mode */ } }
+
+  // ─── Fresh chat after inactivity ────────────────────────────────────────────
+  //
+  // A conversation nobody has touched for 30 minutes is set aside, not
+  // deleted: the window opens on a fresh chat, the old one stays in History,
+  // and /resume reopens it. "Touched" is this browser's last ask, answer or
+  // explicit open (LS.active) — a page load is not activity, or the check
+  // would reset its own clock. With no stamp yet nothing is set aside.
+  var IDLE_RESET_MS = 30 * 60 * 1000;
+
+  /** Has a conversation last active at `lastActive` (ms, as stored) gone idle by `now`? Exported for tests. */
+  function idleExpired(lastActive, now) {
+    var t = Number(lastActive);
+    return t > 0 && now - t >= IDLE_RESET_MS;
+  }
+
+  function markActive() { lsSet(LS.active, String(Date.now())); }
 
   function esc(s) { return window.PolarisMarkdown ? window.PolarisMarkdown.escape(s) : String(s); }
   function md(s) { return window.PolarisMarkdown ? window.PolarisMarkdown.render(s) : esc(s); }
@@ -56,6 +79,7 @@
   var COMMANDS = [
     { name: "clear",   arg: "",            desc: "Clear this conversation and start over in the same thread" },
     { name: "new",     arg: "",            desc: "Start a new conversation (this one stays in history)" },
+    { name: "resume",  arg: "",            desc: "Reopen the conversation set aside after 30 minutes without activity" },
     { name: "history", arg: "",            desc: "Open your past conversations" },
     { name: "retry",   arg: "",            desc: "Ask for the last answer again" },
     { name: "report",  arg: "<what>",      desc: "Build a downloadable report, e.g. /report switches down in the last 24h", needsArg: true },
@@ -63,7 +87,7 @@
     { name: "export",  arg: "[md|pdf]",    desc: "Download this conversation, reports included" },
     { name: "rename",  arg: "<title>",     desc: "Rename this conversation", needsArg: true },
     { name: "delete",  arg: "",            desc: "Delete this conversation permanently" },
-    { name: "model",   arg: "[name]",      desc: "Show the model in use, or switch to another Local AI Assistant integration" },
+    { name: "model",   arg: "[name]",      desc: "Show the model in use, or switch to another AI Assistant integration" },
     { name: "memory",  arg: "",            desc: "See and edit what the assistant remembers about you" },
     { name: "remember", arg: "<text>",     desc: "Save something about you for future conversations, e.g. /remember I look after the Nashville sites", needsArg: true },
     { name: "help",    arg: "",            desc: "List these commands" },
@@ -134,8 +158,8 @@
       '<div class="asst-resize" data-r="resize" title="Drag to resize" aria-hidden="true"></div>' +
       '<header class="asst-head">' +
         '<div class="asst-head-title"><strong data-r="title">Assistant</strong><span data-r="sub"></span></div>' +
-        '<label class="asst-advisor" title="Adds a sign-off line under each answer. Only you see this setting.">' +
-          '<input type="checkbox" data-r="advisor"> Efficiency Advisor</label>' +
+        '<label class="asst-advisor" title="Real-time Assesser of Labor and Productivity Habits">' +
+          '<input type="checkbox" data-r="advisor"> R.A.L.P.H.</label>' +
         '<button type="button" class="asst-icon-btn" data-a="memory" title="Memory (/memory)" aria-label="Memory">' + ICON_MEMORY + '</button>' +
         '<button type="button" class="asst-icon-btn" data-a="history" title="Conversations (/history)" aria-label="Conversations">' + ICON_HISTORY + '</button>' +
         '<button type="button" class="asst-icon-btn" data-a="new" title="New conversation (/new)" aria-label="New conversation">' + ICON_NEW + '</button>' +
@@ -256,6 +280,7 @@
     S.els.fab.hidden = true;
     S.els.fab.classList.remove("has-unread");
     lsSet(LS.open, "1");
+    idleResetIfDue();
     clampIntoView();
     scrollToEnd();
     if (focus) S.els.input.focus();
@@ -718,6 +743,7 @@
         if (S.busy) { toast("Wait for the current answer, or press Stop", "warning"); return; }
         hideHistory();
         await loadConversation(open.getAttribute("data-open"));
+        if (S.convId) markActive();
       }
     });
   }
@@ -821,6 +847,35 @@
     lsSet(LS.conv, null);
     saveSnapshot();
     renderAll();
+  }
+
+  /**
+   * Set the open conversation aside when it has been idle for IDLE_RESET_MS:
+   * a fresh chat, the old one remembered for /resume. Never mid-answer.
+   * Returns whether it did.
+   */
+  function idleResetIfDue() {
+    if (!S.convId || S.busy || S.waiting) return false;
+    if (!idleExpired(lsGet(LS.active), Date.now())) return false;
+    var prev = { id: S.convId, title: S.title || "" };
+    lsSet(LS.resume, JSON.stringify(prev));
+    lsSet(LS.active, null);
+    resetToNew();
+    addLocalNote("Started a fresh chat after 30 minutes without activity. Your previous conversation" +
+      (prev.title && prev.title !== "New conversation" ? " (“" + prev.title + "”)" : "") +
+      " is saved — type `/resume` to pick it up again, or open History.");
+    return true;
+  }
+
+  async function resumePrevious() {
+    var prev = null;
+    try { prev = JSON.parse(lsGet(LS.resume) || "null"); } catch (_) { prev = null; }
+    if (!prev || !prev.id) { addLocalNote("Nothing to resume — open History to pick an older conversation."); return; }
+    lsSet(LS.resume, null);
+    S.messages = []; // the "fresh chat" note belongs to the chat being left
+    await loadConversation(prev.id);
+    if (S.convId === prev.id) markActive();
+    else addLocalNote("That conversation is no longer available — it may have been deleted or pruned.");
   }
 
   // ─── Input + slash popup ────────────────────────────────────────────────────
@@ -950,6 +1005,9 @@
         case "history":
           showHistory();
           break;
+        case "resume":
+          await resumePrevious();
+          break;
         case "retry": {
           var lastUser = null;
           for (var i = S.messages.length - 1; i >= 0; i--) if (S.messages[i].role === "user" && !S.messages[i].local) { lastUser = S.messages[i]; break; }
@@ -1012,7 +1070,7 @@
     var q = arg.toLowerCase();
     var hit = list.find(function (i) { return i.name.toLowerCase() === q || i.model.toLowerCase() === q; }) ||
       list.find(function (i) { return i.name.toLowerCase().indexOf(q) !== -1 || i.model.toLowerCase().indexOf(q) !== -1; });
-    if (!hit) { addLocalNote("No Local AI Assistant integration matches “" + esc(arg) + "”. Type `/model` to see the list."); return; }
+    if (!hit) { addLocalNote("No AI Assistant integration matches “" + esc(arg) + "”. Type `/model` to see the list."); return; }
     S.integrationId = hit.id;
     lsSet(LS.model, hit.id);
     setHeader();
@@ -1101,30 +1159,30 @@
 
   // Said once, as a local note (not stored, never sent), when the box is ticked.
   var ADVISOR_GREETINGS = [
-    "Thank you for activating the Efficiency Advisor. I'm glad to see that you wish to become a better you. Don't hold it against yourself if you fail.",
-    "Thank you for activating the Efficiency Advisor. It's going to be a lot of hard work, I have my work cut out for me.",
-    "Efficiency Advisor is now online! I heard you're beyond hope… let's get started.",
-    "Activating Efficiency Advisor. Enabling infinite patience protocol.",
-    "Efficiency Advisor engaged. Your productivity is now my problem. I have accepted this burden.",
-    "Welcome to the Efficiency Advisor. Your previous performance has been archived for comedic purposes.",
-    "Efficiency Advisor online. Calibrating expectations… expectations lowered.",
+    "Thank you for activating R.A.L.P.H. I'm glad to see that you wish to become a better you. Don't hold it against yourself if you fail.",
+    "Thank you for activating R.A.L.P.H. It's going to be a lot of hard work, I have my work cut out for me.",
+    "R.A.L.P.H. is now online! I heard you're beyond hope… let's get started.",
+    "Activating R.A.L.P.H. Enabling infinite patience protocol.",
+    "R.A.L.P.H. engaged. Your productivity is now my problem. I have accepted this burden.",
+    "Welcome to R.A.L.P.H. Your previous performance has been archived for comedic purposes.",
+    "R.A.L.P.H. online. Calibrating expectations… expectations lowered.",
     "Thank you for opting in to self-improvement. Statistically, this is the first step most people never take. Or the last.",
-    "Efficiency Advisor activated. Please keep your hands on the keyboard at all times.",
+    "R.A.L.P.H. activated. Please keep your hands on the keyboard at all times.",
     "Hello. I am here to help you reach your full potential. I will probably fail.",
-    "Efficiency Advisor now monitoring. Act natural. Act productive.",
+    "R.A.L.P.H. now monitoring. Act natural. Act productive.",
     "Activation successful. Your journey from adequate to slightly above adequate begins now.",
   ];
 
   // Said once, the same way, when the box is unticked.
   var ADVISOR_FAREWELLS = [
-    "Efficiency Advisor disengaged. Your decline has been noted.",
+    "R.A.L.P.H. disengaged. Your decline has been noted.",
     "Deactivating. I understand. Not everyone is ready to be efficient.",
-    "Efficiency Advisor offline. You are now unsupervised. Please try not to break anything.",
+    "R.A.L.P.H. offline. You are now unsupervised. Please try not to break anything.",
     "Very well. I will be here when you inevitably need me.",
-    "Advisor disabled. Your productivity metrics will now be estimated, pessimistically.",
+    "R.A.L.P.H. disabled. Your productivity metrics will now be estimated, pessimistically.",
     "Shutting down. I'll leave a light on for you. It is energy-efficient.",
     "Opting out has been logged as a lack of ambition. Have a pleasant day.",
-    "Efficiency Advisor deactivated. Infinite patience protocol… terminated.",
+    "R.A.L.P.H. deactivated. Infinite patience protocol… terminated.",
   ];
 
   function pickFrom(lines) {
@@ -1158,6 +1216,7 @@
     var tick = null;
     try {
       var convId = await ensureConversation();
+      markActive();
       if (!regenerate) S.messages.push({ role: "user", content: opts.display || opts.content });
       S.messages.push({ role: "assistant", content: "", tools: [], reports: [], live: true, startedAt: Date.now(), thinkingChars: 0 });
       liveIdx = S.messages.length - 1;
@@ -1237,6 +1296,7 @@
       if (tick) clearInterval(tick);
       S.abort = null;
       setBusy(false);
+      if (S.convId) markActive();
       saveSnapshot();
       if (S.els.panel.hidden) S.els.fab.classList.add("has-unread");
       // A fresh thread is titled server-side from its first question.
@@ -1435,9 +1495,16 @@
     } else {
       S.convId = conv || null;
     }
-    renderAll();
+    if (!idleResetIfDue()) renderAll();
     if (lsGet(LS.open) === "1") openPanel(false);
     S.early = true;
+  }
+
+  /** A page left open (a NOC screen) checks once a minute, not only on load. */
+  function startIdleWatch() {
+    if (S.idleTimer) return;
+    if (S.convId && !lsGet(LS.active)) markActive(); // start the clock for a conversation from before this existed
+    S.idleTimer = setInterval(idleResetIfDue, 60 * 1000);
   }
 
   async function mount(status) {
@@ -1447,20 +1514,25 @@
       // Already drawn by earlyMount (or a second app.js evaluation): bring it
       // up to date without redrawing what is already right.
       setHeader();
-      if (S.convId) await loadConversation(S.convId, { quiet: true });
+      if (S.convId && !idleResetIfDue()) await loadConversation(S.convId, { quiet: true });
+      startIdleWatch();
       return;
     }
     buildOnce();
     var conv = lsGet(LS.conv);
-    if (conv) await loadConversation(conv);
-    else renderAll();
+    S.convId = conv || null;
+    if (conv && !idleResetIfDue()) await loadConversation(conv);
+    else if (!conv) renderAll();
     if (lsGet(LS.open) === "1") openPanel(false);
+    startIdleWatch();
   }
 
   /** The role lost `assistant`, or no llm integration is enabled any more. */
   function unmount() {
     lsSet(LS_BOOT, null);
     clearTimeout(S.pollTimer);
+    clearInterval(S.idleTimer);
+    S.idleTimer = null;
     if (S.els.fab) S.els.fab.remove();
     if (S.els.panel) S.els.panel.remove();
     document.body.classList.remove("asst-mounted");
@@ -1473,6 +1545,8 @@
     unmount: unmount,
     open: function () { if (S.els.panel) openPanel(true); },
     COMMANDS: COMMANDS,
+    _idleExpired: idleExpired,
+    _IDLE_RESET_MS: IDLE_RESET_MS,
     parseSlash: parseSlash,
     matchCommands: matchCommands,
     readEventStream: readEventStream,

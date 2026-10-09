@@ -31,8 +31,8 @@ discovery at `write`.
 | **Proxmox VE** | Proxmox VE REST API (9.x), read-only | cluster nodes, VMs, LXC containers | [Proxmox VE](Integration-Proxmox) |
 | **Generic API** | any REST API returning JSON, mapped field by field | assets | [Generic API](Integration-Generic-API) |
 
-Plus one integration that discovers nothing: **Local AI Assistant** — the model server
-behind the [AI assistant](AI-Assistant). It has no Discover button, no
+Plus one integration that discovers nothing: **AI Assistant** — the model server
+behind the [AI assistant](AI-Assistant), either one you run or an Azure AI Foundry deployment. It has no Discover button, no
 auto-discovery and no Monitoring tab.
 
 The page has a second tab, **Polaris Agents** — the
@@ -59,7 +59,7 @@ The modal is tabbed, and the tab set depends on the type:
 | Azure Arc | General → Monitoring → Script Publishing |
 | Windows Server, vCenter, Unraid, TrueNAS SCALE, Proxmox VE | General → Monitoring |
 | Generic API | General → Records & Mapping → Preview (no Monitoring tab — its assets are monitored one by one, like manually added ones) |
-| Local AI Assistant | one untabbed form — Model Server, then Assistant Behaviour ([AI assistant](AI-Assistant)) |
+| AI Assistant | one untabbed form — Model Server, then Assistant Behaviour ([AI assistant](AI-Assistant)) |
 
 Outside the Fortinet pair, the connection settings **and** the filters live on
 the General tab. **The FortiManager and standalone FortiGate layouts are

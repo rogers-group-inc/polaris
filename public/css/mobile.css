@@ -2696,3 +2696,65 @@ html:active-view-transition-type(polaris-theme)::view-transition-new(polaris-the
 @media (prefers-reduced-motion: reduce) {
   .icon-btn.spinning svg { animation: none; }
 }
+
+/* ─── Chat tab (the AI assistant, public/js/mobile/chat-tab.js) ─────────────
+   The log scrolls in .app-body like any list; the composer is sticky at the
+   bottom of the scroller, lifted by --navbar-h so it rests on the glass navbar
+   instead of under it (canon-mobile.md: anything near the bottom clears the
+   bar). It wears the sheet glass, so the log reads through it. */
+.chat { display: flex; flex-direction: column; min-height: 100%; }
+.chat-log { flex: 1 1 auto; padding: 12px 12px 8px; display: flex; flex-direction: column; gap: 10px; }
+.chat-msg { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
+.chat-msg.user { align-items: flex-end; }
+.chat-msg.assistant { align-items: flex-start; }
+.chat-bubble {
+  max-width: 88%; padding: 10px 14px; border-radius: 18px; overflow-wrap: anywhere;
+  font-size: 15px; line-height: 1.45; color: var(--md-on-surface);
+  background: var(--rail-glass-bg); box-shadow: var(--shadow-card);
+}
+.chat-msg.user .chat-bubble { background: var(--md-primary-container); color: var(--md-on-primary-container); border-bottom-right-radius: 6px; }
+.chat-msg.assistant .chat-bubble { border-bottom-left-radius: 6px; }
+.chat-bubble.local { border: 1px dashed var(--md-outline); box-shadow: none; background: transparent; }
+.chat-bubble p { margin: 0 0 8px; }
+.chat-bubble p:last-child { margin-bottom: 0; }
+.chat-bubble table { border-collapse: collapse; font-size: 13px; display: block; overflow-x: auto; max-width: 100%; }
+.chat-bubble th, .chat-bubble td { border: 1px solid var(--md-outline-variant); padding: 4px 6px; text-align: left; white-space: nowrap; }
+.chat-bubble pre { overflow-x: auto; font-size: 12px; }
+.chat-bubble a { color: var(--md-primary); }
+.chat-thinking { color: var(--md-on-surface-variant); font-style: italic; }
+.chat-chips { display: flex; flex-wrap: wrap; gap: 6px; max-width: 88%; }
+.chat-chip {
+  font-size: 12px; padding: 3px 10px; border-radius: 999px;
+  background: var(--md-secondary-container); color: var(--md-on-secondary-container);
+}
+.chat-chip.running { opacity: .7; }
+.chat-chip.failed { background: var(--md-error-container); color: var(--md-on-error-container); }
+.chat-aside { max-width: 88%; font-size: 13px; font-style: italic; color: var(--md-on-surface-variant); padding: 0 4px; }
+.chat-error { max-width: 88%; font-size: 13px; color: var(--md-error); padding: 0 4px; }
+.chat-report {
+  max-width: 88%; width: 100%; padding: 12px 14px; border-radius: 16px;
+  background: var(--rail-glass-bg); box-shadow: var(--shadow-card);
+}
+.chat-report-title { font-weight: 600; font-size: 15px; }
+.chat-report-meta { font-size: 13px; color: var(--md-on-surface-variant); margin: 2px 0 10px; }
+.chat-report-actions { display: flex; gap: 8px; }
+.chat-composer {
+  position: sticky; bottom: var(--navbar-h); z-index: 5;
+  display: flex; align-items: flex-end; gap: 8px; padding: 8px 12px 10px;
+  background: var(--panel-glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  border-top: 1px solid var(--md-outline-variant);
+}
+.chat-composer textarea {
+  flex: 1 1 auto; resize: none; min-height: 40px; max-height: 140px; padding: 9px 14px;
+  border-radius: 20px; border: 1px solid var(--md-outline); background: var(--md-surface);
+  color: var(--md-on-surface); font: inherit; font-size: 16px; line-height: 1.35;
+}
+.chat-composer textarea:focus { outline: 2px solid var(--md-primary); outline-offset: -1px; }
+.chat-send {
+  flex: 0 0 auto; width: 44px; height: 44px; border-radius: 50%; border: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--md-primary); color: var(--md-on-primary);
+  -webkit-tap-highlight-color: transparent;
+}
+.chat-send svg { width: 22px; height: 22px; fill: currentColor; }
+.chat-send:active { filter: brightness(.92); }

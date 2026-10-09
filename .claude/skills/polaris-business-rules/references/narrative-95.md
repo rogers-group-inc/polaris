@@ -141,9 +141,92 @@ conversations, which hold more, are not encrypted either; a nightly model pass t
 memory from conversations — it would write from text the user did not just type, which is the
 injection path this clause exists to close.
 
+### (j) A provider is a transport, not a policy
+
+2026-10-09. The owner runs Qwen locally and wants Azure AI Foundry in production, where the
+organisation routes all inference through Foundry. The choice was a Provider field on the
+existing `llm` integration, not a new integration type. A new type would have needed its own
+copy of the role and token provisioning, the conversation store and the assistant routes, and
+every guarantee in (a)–(i) would then have to be kept true in two places. With a field, Foundry
+changes only how a request is ADDRESSED and AUTHENTICATED: the path (`/openai/v1/...`, or the
+dated deployments path), the `api-key` header or an Entra ID client-credentials bearer, and the
+fact that Foundry cannot list deployments. That last one is why Test Connection sends one
+tiny chat round instead of reading a model list. All of it lives in `llmService.ts`, so the
+chat orchestrator, the tool layer and the memory feature never learn which provider answered.
+Rows made before this have no `provider` and read as `openai`. Nothing about them changes, and
+their first plain save does not count as a "move" that drops the tool-calling verdict.
+
+Secrets went where the existing ones already go. The key reuses `apiToken`, and the service
+principal's secret `clientSecret`. Both are in `SECRET_CONFIG_KEYS`, so they are sealed at rest
+and masked on read with no new code. The Edit form sends both blank to mean "keep", so the
+test routes restore them from the stored row BEFORE the shape check, which requires them for
+Azure. The Entra token is cached under a hash of the secret, so a rotated secret never reuses
+a token minted with the old one.
+
+Reasoning deployments (o-series, gpt-5) refuse `temperature`. Polaris offers an "Omit
+temperature" box, and also retries once without the parameter when Azure answers 400 naming
+it, so a missed tick costs one request, not an outage. Rejected: the Responses API (a
+different dialect for no gain here) and a `max_completion_tokens` setting (deferred until
+someone needs it).
+
+Later the same day the owner chose Claude Haiku 5.5 on Foundry. Claude deployments do not
+speak chat completions: they serve Anthropic's Messages API at `/anthropic/v1/messages`, with
+`x-api-key` or an Entra token for `https://ai.azure.com/.default`. So that is a third API shape,
+`anthropic`. The owner chose Anthropic's official SDK (`@anthropic-ai/foundry-sdk`) over another
+hand-rolled transport. The SDK is the supported path, it tracks the event-stream format as
+Anthropic changes it, and it handles retries. The cost is two npm dependencies.
+
+Three things the SDK does not decide, kept in `llmService.ts`:
+- **credentials:** every one is passed explicitly, because the SDK otherwise falls back to
+  `ANTHROPIC_FOUNDRY_*` environment variables, and a variable left on a host would silently
+  change who Polaris authenticates as;
+- **idle timeout:** the SDK's timeout ends when the response headers arrive, so Polaris keeps
+  its own idle watchdog on the stream;
+- **thinking replay:** Claude's thinking blocks must go back unchanged with the tool calls they
+  preceded, so a round's raw blocks ride the next round's assistant message.
+
+No `temperature` is ever sent to Claude, because current Claude models refuse non-default
+sampling.
+
+### (k) On a hosted model, the Efficiency Advisor is the model's own voice
+
+2026-10-09, the same day as (j). With Azure AI Foundry in place, the owner asked for a fuller
+personality than canned quotes. The model in mind was a hosted Claude (Haiku 5.5, 1M-token
+window). The owner decided:
+- **local model server:** the code-picked lines of (h), unchanged;
+- **Azure AI Foundry:** the model speaks in character;
+- **both:** nothing unless the person ticked Efficiency Advisor.
+
+(h) is not overturned. What failed in (h) was a 7B model holding a persona and the task at the
+same time. The decision is that a hosted model can do both, so the voice is chosen by provider,
+not by a per-model guess (`advisorVoice`). The two voices never mix: on Azure no canned
+preface or sign-off is shown, because a scripted line beside a model already in character
+reads as two people talking.
+
+What Polaris still decides in code:
+- **when the voice is absent:** a question `asksAboutOutage` matches gets no persona at all;
+- **when it stops:** a lookup `lookupShowsOutage` matches appends `PERSONA_SUSPENDED` as a
+  system message after that round's tool results, so the rest of the turn is plain;
+- **what stays true:** the persona text repeats the rules that kept (h) safe — facts come only
+  from lookups, the answer comes first, at most two in-character sentences — and every
+  code-side guard (report rows from the database, tables held after a report, link checking)
+  is unchanged.
+
+The in-character answer is the model's own text, so it is stored in `content` and sent back as
+history. On a hosted model that is accepted. It was the copying trap of (h) only for a model
+too small to keep its instructions over its history. The persona quotes three owner-approved
+lines as samples and tells the model not to reuse them; the persona wording itself needs the
+owner's review, like any line in `SIGN_OFFS`. Like (h), it is kept out of the operator wiki
+and the README.
+
+The same day the owner named the character **R.A.L.P.H.** — the Real-time Assesser of Labor and
+Productivity Habits. Users see the name on the checkbox (with the full name in its hover
+title), in the greeting and farewell lines, and from the hosted model, which gives the full
+name only when asked. "Efficiency Advisor" remains the internal name.
+
 ### What is deliberately not here
 
-The assistant is desktop-only for now (not the phone SPA or the Dash wallboard), takes no action
-on the operator's behalf, and speaks one dialect — OpenAI-compatible chat completions — rather
-than per-vendor clients. Help answers come from a keyword index over `docs/wiki/` shipped with
+The assistant is not on the Dash wallboard (the phone app gained a Chat tab on 2026-10-09, shown only where the assistant is usable), takes no action
+on the operator's behalf, and speaks one dialect — OpenAI-compatible chat completions, which
+Azure AI Foundry's GPT deployments also speak (95(j)) — rather than per-vendor clients. Help answers come from a keyword index over `docs/wiki/` shipped with
 the build (the Docker image copies it), not from embeddings.

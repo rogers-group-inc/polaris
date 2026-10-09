@@ -1568,7 +1568,7 @@ user accounts, roles, sign-in settings, automation scripts or server settings.
 A report it builds is a database extract: Polaris runs the query itself (up to
 5,000 rows), so the rows you download were never written by the model. Your
 conversations are visible only to you — administrators included — and are
-deleted after 90 days without activity. Creating a Local AI Assistant integration needs
+deleted after 90 days without activity. Creating an AI Assistant integration needs
 Read-Write on Roles and on API Tokens, because it also creates a read-only role
 and an API token for the model server's own use; the chat itself never uses that
 token. "Allow loopback" lets the model server be on the Polaris host itself, and
@@ -1580,6 +1580,12 @@ something it looked up — and removes a note only when you ask. Addresses,
 links, passwords, keys and tokens are refused whoever tries to save them. Your
 notes are visible only to you, capped at 25, and the event log records that
 they changed, never what they say.
+
+The model server may also be an **Azure AI Foundry** deployment (95(j)). Every
+promise above holds the same way on it: lookups still run as you, it is still
+read-only, and a report's rows still come from the database. It is optional and
+off unless an administrator adds it. Its API key or Entra ID client secret is
+stored encrypted, and is never shown again or written to a log.
 
 See [AI Assistant](AI-Assistant).
 

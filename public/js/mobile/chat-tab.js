@@ -1,0 +1,431 @@
+// public/js/mobile/chat-tab.js — the AI assistant on the phone (business rule 95).
+//
+// The same assistant as the desktop's floating window, as a navbar tab: the
+// same saved conversations (owner-only, server side), the same streamed ask
+// (POST /assistant/conversations/:id/messages, read as server-sent events by
+// PolarisAssistant.readEventStream), the same report downloads, and the same
+// 30-minute "fresh chat, /resume to go back" rule, sharing the desktop's
+// localStorage keys so a phone browser that also opens the desktop page sees
+// one current conversation, not two.
+//
+// What the phone leaves out: the slash-command popup (only /new and /resume
+// are understood here; the History and New buttons cover the rest), PDF
+// export, the model picker, and the Efficiency Advisor checkbox and its
+// client-side loading lines (the advisor is still honoured — its lines come
+// from the server). Lookups always run as the signed-in user (rule 95(a)).
+//
+// Everything a model wrote is rendered through PolarisMarkdown, which escapes
+// first; everything else goes through escapeHtml.
+
+(function () {
+  var LS = {
+    conv: "polaris-assistant-conv",
+    active: "polaris-assistant-active",
+    resume: "polaris-assistant-resume",
+  };
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+  function lsSet(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (_) { /* private mode */ } }
+
+  var S = {
+    status: null,       // GET /assistant/status, once per page load
+    convId: null,
+    title: "",
+    messages: [],       // { role, content, toolsUsed|tools, reports, preface, signOff, error, live, local }
+    busy: false,
+    abort: null,
+    pollTimer: null,
+    body: null,         // the .app-body this tab last rendered into
+  };
+
+  function A() { return window.PolarisAssistant || {}; }
+  function md(s) { return window.PolarisMarkdown ? PolarisMarkdown.render(s) : escapeHtml(s); }
+  function snack(msg, opts) { if (window.PolarisTabs) PolarisTabs.showSnackbar(msg, opts); }
+  function markActive() { lsSet(LS.active, String(Date.now())); }
+  function onThisTab() { return S.body && document.body.contains(S.body) && document.getElementById("chat-log"); }
+
+  // ─── Rendering ─────────────────────────────────────────────────────────
+  function chipHTML(t) {
+    var cls = t.status === "running" ? " running" : t.ok === false ? " failed" : "";
+    return '<span class="chat-chip' + cls + '">' + escapeHtml(t.label || t.name) + '</span>';
+  }
+
+  function reportHTML(r, ri, mi) {
+    return ''
+      + '<div class="chat-report">'
+      + '  <div class="chat-report-title">' + escapeHtml(r.title || "Report") + '</div>'
+      + '  <div class="chat-report-meta">' + (r.rowCount | 0) + ' row' + (r.rowCount === 1 ? '' : 's') + (r.truncated ? ' · capped' : '') + '</div>'
+      + '  <div class="chat-report-actions">'
+      + '    <button class="btn-tonal" data-dl="csv" data-m="' + mi + '" data-i="' + ri + '">CSV</button>'
+      + '    <button class="btn-tonal" data-dl="md" data-m="' + mi + '" data-i="' + ri + '">Markdown</button>'
+      + '  </div>'
+      + '</div>';
+  }
+
+  function messageHTML(m, i) {
+    if (m.local) return '<div class="chat-msg assistant"><div class="chat-bubble local">' + md(m.content) + '</div></div>';
+    if (m.role === "user") return '<div class="chat-msg user"><div class="chat-bubble">' + escapeHtml(m.content) + '</div></div>';
+    var text = m.content ? md(m.content)
+      : m.waiting ? '<span class="chat-thinking">Still answering your last question…</span>'
+      : (m.live && !m.error ? '<span class="chat-thinking">Thinking…</span>' : "");
+    var chips = (m.tools || m.toolsUsed || []).map(chipHTML).join("") + (m.stopped ? '<span class="chat-chip failed">stopped</span>' : "");
+    return '<div class="chat-msg assistant" data-idx="' + i + '">'
+      + (m.preface ? '<div class="chat-aside">' + escapeHtml(m.preface) + '</div>' : "")
+      + (text ? '<div class="chat-bubble">' + text + '</div>' : "")
+      + (chips ? '<div class="chat-chips">' + chips + '</div>' : "")
+      + (m.reports || []).map(function (r, ri) { return reportHTML(r, ri, i); }).join("")
+      + (m.signOff ? '<div class="chat-aside">' + escapeHtml(m.signOff) + '</div>' : "")
+      + (m.error ? '<div class="chat-error">' + escapeHtml(m.error) + '</div>' : "")
+      + '</div>';
+  }
+
+  function emptyHTML() {
+    var name = (S.status && S.status.integrations && S.status.integrations[0] && S.status.integrations[0].displayName) || "the assistant";
+    return ''
+      + '<div class="empty-state" style="padding-top:32px;">'
+      + '  <div class="icon"><svg viewBox="0 0 24 24"><use href="#i-chat"/></svg></div>'
+      + '  <div class="ttl">Ask ' + escapeHtml(name) + '</div>'
+      + '  <div class="desc">Devices, alerts, networks and events — looked up with your own permissions. It only reads; it never changes anything.</div>'
+      + '</div>';
+  }
+
+  function scrollToEnd() { if (S.body) S.body.scrollTop = S.body.scrollHeight; }
+
+  function renderLog() {
+    var log = document.getElementById("chat-log");
+    if (!log) return;
+    log.innerHTML = S.messages.length ? S.messages.map(messageHTML).join("") : emptyHTML();
+    var btn = document.getElementById("chat-send");
+    if (btn) {
+      btn.setAttribute("aria-label", S.busy ? "Stop" : "Send");
+      btn.innerHTML = '<svg viewBox="0 0 24 24"><use href="' + (S.busy ? "#i-stop" : "#i-send") + '"/></svg>';
+    }
+    var title = document.getElementById("chat-title");
+    if (title) title.textContent = S.title && S.title !== "New conversation" ? S.title : headerName();
+    scrollToEnd();
+  }
+
+  function headerName() {
+    var i = S.status && S.status.integrations && S.status.integrations[0];
+    return (i && i.displayName) || "Assistant";
+  }
+
+  function addLocalNote(text) {
+    S.messages.push({ role: "assistant", content: text, local: true });
+    if (onThisTab()) renderLog();
+  }
+
+  // ─── Conversations ─────────────────────────────────────────────────────
+  function fromServer(c) {
+    return (c.messages || []).map(function (m) {
+      return { role: m.role, content: m.content, toolsUsed: m.toolsUsed || [], stopped: m.stopped, preface: m.preface || null, signOff: m.signOff || null, reports: m.reports || [] };
+    });
+  }
+
+  function resetToNew() {
+    S.convId = null; S.title = ""; S.messages = [];
+    lsSet(LS.conv, null);
+  }
+
+  /** The desktop's 30-minute rule (assistant.js → idleResetIfDue), same keys. */
+  function idleResetIfDue() {
+    if (!S.convId || S.busy) return false;
+    var expired = A()._idleExpired ? A()._idleExpired(lsGet(LS.active), Date.now()) : false;
+    if (!expired) return false;
+    lsSet(LS.resume, JSON.stringify({ id: S.convId, title: S.title || "" }));
+    lsSet(LS.active, null);
+    resetToNew();
+    addLocalNote("Started a fresh chat after 30 minutes without activity. Your previous conversation is saved — type `/resume` to pick it up again, or open History.");
+    return true;
+  }
+
+  function loadConversation(id) {
+    clearTimeout(S.pollTimer);
+    return api.assistant.getConversation(id).then(function (c) {
+      S.convId = c.id;
+      S.title = c.title || "";
+      lsSet(LS.conv, c.id);
+      S.messages = fromServer(c);
+      if (c.pending) {
+        // A turn started elsewhere (or before a reload) is still running server side.
+        S.messages.push({ role: "assistant", content: "", live: true, waiting: true });
+        S.pollTimer = setTimeout(function () { if (S.convId === id && !S.busy) loadConversation(id); }, 2000);
+      }
+      if (onThisTab()) renderLog();
+    }).catch(function () {
+      // Pruned, deleted elsewhere, or never ours: start fresh quietly.
+      resetToNew();
+      if (onThisTab()) renderLog();
+    });
+  }
+
+  function resumePrevious() {
+    var prev = null;
+    try { prev = JSON.parse(lsGet(LS.resume) || "null"); } catch (_) { prev = null; }
+    if (!prev || !prev.id) { addLocalNote("Nothing to resume — open History to pick an older conversation."); return; }
+    lsSet(LS.resume, null);
+    S.messages = [];
+    loadConversation(prev.id).then(function () { if (S.convId === prev.id) markActive(); });
+  }
+
+  // ─── Asking ────────────────────────────────────────────────────────────
+  function ensureConversation() {
+    if (S.convId) return Promise.resolve(S.convId);
+    return api.assistant.createConversation().then(function (c) {
+      S.convId = c.id; S.title = c.title || "";
+      lsSet(LS.conv, c.id);
+      return c.id;
+    });
+  }
+
+  async function ask(content) {
+    if (S.busy) return;
+    S.busy = true;
+    var m = null;
+    try {
+      var convId = await ensureConversation();
+      markActive();
+      S.messages.push({ role: "user", content: content });
+      m = { role: "assistant", content: "", tools: [], reports: [], live: true };
+      S.messages.push(m);
+      renderLog();
+      S.abort = new AbortController();
+      var res = await fetch("/api/v1/assistant/conversations/" + encodeURIComponent(convId) + "/messages", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: _csrfHeaders({ "Content-Type": "application/json", Accept: "text/event-stream" }),
+        body: JSON.stringify({ content: content }),
+        signal: S.abort.signal,
+      });
+      if (!res.ok || !res.body) {
+        var msg = "The assistant could not answer (HTTP " + res.status + ")";
+        try { var j = await res.json(); msg = j.error || j.message || msg; } catch (_) { /* not JSON */ }
+        throw new Error(msg);
+      }
+      var pending = false;
+      var schedule = function () { if (!pending) { pending = true; setTimeout(function () { pending = false; if (onThisTab()) renderLog(); }, 60); } };
+      await A().readEventStream(res.body, function (ev, data) {
+        if (ev === "token") { m.content += data.text || ""; schedule(); }
+        else if (ev === "retract") { m.content = m.content.slice(0, Math.max(0, data.from | 0)); schedule(); }
+        else if (ev === "tool") {
+          var cur = null;
+          for (var k = m.tools.length - 1; k >= 0; k--) if (m.tools[k].name === data.name && m.tools[k].status === "running") { cur = m.tools[k]; break; }
+          if (data.status === "running" || !cur) m.tools.push({ name: data.name, label: data.label, status: data.status, ok: data.ok });
+          else { cur.status = "done"; cur.ok = data.ok; }
+          schedule();
+        }
+        else if (ev === "report") { m.reports.push(data); schedule(); }
+        else if (ev === "preface") { m.preface = data.text || null; schedule(); }
+        else if (ev === "signoff") { m.signOff = data.text || null; schedule(); }
+        else if (ev === "done") { m.stopped = !!data.stopped; }
+        else if (ev === "error") { m.error = data.message || "The assistant failed"; }
+      });
+    } catch (err) {
+      if (m) {
+        if (err && err.name === "AbortError") m.stopped = true;
+        else m.error = (err && err.message) || "The assistant failed";
+      } else {
+        snack((err && err.message) || "The assistant failed", { error: true });
+      }
+    } finally {
+      if (m) m.live = false;
+      S.busy = false;
+      S.abort = null;
+      if (S.convId) markActive();
+      if (onThisTab()) renderLog();
+      if (S.title === "" || S.title === "New conversation") refreshTitle();
+    }
+  }
+
+  function refreshTitle() {
+    if (!S.convId) return;
+    api.assistant.listConversations().then(function (r) {
+      var me = (r.conversations || []).find(function (c) { return c.id === S.convId; });
+      if (me) { S.title = me.title; if (onThisTab()) renderLog(); }
+    }).catch(function () { /* cosmetic */ });
+  }
+
+  function stop() {
+    if (!S.convId) { if (S.abort) S.abort.abort(); return; }
+    api.assistant.stopTurn(S.convId).catch(function () { if (S.abort) S.abort.abort(); });
+  }
+
+  function submit() {
+    var input = document.getElementById("chat-input");
+    if (!input) return;
+    var text = input.value.trim();
+    if (!text) return;
+    var slash = A().parseSlash ? A().parseSlash(text) : null;
+    if (slash) {
+      input.value = "";
+      if (slash.name === "new") { resetToNew(); renderLog(); }
+      else if (slash.name === "resume") resumePrevious();
+      else addLocalNote("`/" + escapeHtml(slash.name) + "` is only available on the desktop. Here, use **New** and **History** above, or `/resume`.");
+      return;
+    }
+    input.value = "";
+    autosize(input);
+    ask(text);
+  }
+
+  function autosize(el) {
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 140) + "px";
+  }
+
+  // ─── Downloads ─────────────────────────────────────────────────────────
+  function fileStem(title) {
+    var d = new Date();
+    var stamp = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    return (String(title || "polaris-report").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "polaris-report") + "-" + stamp;
+  }
+  function save(text, filename, type) {
+    var url = URL.createObjectURL(new Blob([text], { type: type }));
+    var a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+  function download(r, kind) {
+    if (kind === "md" && A()._reportToMarkdown) { save(A()._reportToMarkdown(r), fileStem(r.title) + ".md", "text/markdown;charset=utf-8"); return; }
+    var cols = r.columns || [];
+    var safe = A()._csvSafe || function (v) { return v == null ? "" : String(v); };
+    var cell = function (v) { var s = safe(v); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    var lines = [cols.map(function (c) { return cell(c.label); }).join(",")]
+      .concat((r.rows || []).map(function (row) { return cols.map(function (c) { return cell(row[c.key]); }).join(","); }));
+    save("﻿" + lines.join("\r\n"), fileStem(r.title) + ".csv", "text/csv;charset=utf-8");
+  }
+
+  // ─── History sheet (canon: mobile bottom sheet, openSiteSheet shape) ──
+  function closeHistory() {
+    var s = document.getElementById("chat-history-sheet"); if (s) s.remove();
+    var sc = document.getElementById("chat-history-sheet-scrim"); if (sc) sc.remove();
+  }
+  function openHistory() {
+    closeHistory();
+    var scrim = document.createElement("div");
+    scrim.className = "scrim"; scrim.id = "chat-history-sheet-scrim";
+    var sheet = document.createElement("div");
+    sheet.className = "sheet"; sheet.id = "chat-history-sheet";
+    sheet.innerHTML = ''
+      + '<div class="sheet-handle"></div>'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;padding:0 16px 8px;">'
+      + '  <div class="sheet-title">Conversations</div>'
+      + '  <button class="icon-btn" id="chat-history-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
+      + '</div>'
+      + '<div id="chat-history-list"><div class="loading-screen" style="padding:32px 0;"><div class="spinner"></div></div></div>';
+    document.body.appendChild(scrim);
+    document.body.appendChild(sheet);
+    scrim.addEventListener("click", closeHistory);
+    document.getElementById("chat-history-sheet-close").addEventListener("click", closeHistory);
+    if (window.PolarisTabs && PolarisTabs.attachSwipeToDismiss) PolarisTabs.attachSwipeToDismiss(sheet, closeHistory);
+    api.assistant.listConversations().then(function (r) {
+      var list = document.getElementById("chat-history-list");
+      if (!list) return;
+      var convs = r.conversations || [];
+      if (!convs.length) { list.innerHTML = '<div class="empty-state" style="padding:24px 0;"><div class="desc">No saved conversations yet.</div></div>'; return; }
+      list.innerHTML = convs.map(function (c, i) {
+        return '<button class="list-item two-line" data-open="' + escapeHtml(c.id) + '">'
+          + '<span class="leading"><svg viewBox="0 0 24 24"><use href="#i-chat"/></svg></span>'
+          + '<div class="content"><div class="headline">' + escapeHtml(c.title || "New conversation") + '</div>'
+          + '<div class="supporting">' + escapeHtml(timeAgo(c.updatedAt)) + ' · ' + (c.messageCount | 0) + ' message' + (c.messageCount === 1 ? '' : 's') + '</div></div>'
+          + '</button>' + (i < convs.length - 1 ? '<div class="list-divider"></div>' : '');
+      }).join("");
+      list.querySelectorAll("[data-open]").forEach(function (row) {
+        row.addEventListener("click", function () {
+          if (S.busy) { snack("Wait for the current answer, or press Stop"); return; }
+          closeHistory();
+          loadConversation(row.getAttribute("data-open")).then(function () { if (S.convId) markActive(); });
+        });
+      });
+    }).catch(function (err) {
+      var list = document.getElementById("chat-history-list");
+      if (list) list.innerHTML = '<div class="empty-state" style="padding:24px 0;"><div class="desc">' + escapeHtml((err && err.message) || "Couldn’t load") + '</div></div>';
+    });
+  }
+
+  // ─── Tab spec ──────────────────────────────────────────────────────────
+  function unavailableHTML(why) {
+    return ''
+      + '<div class="empty-state" style="padding-top:48px;">'
+      + '  <div class="icon"><svg viewBox="0 0 24 24"><use href="#i-chat"/></svg></div>'
+      + '  <div class="ttl">The assistant isn’t available</div>'
+      + '  <div class="desc">' + escapeHtml(why) + '</div>'
+      + '</div>';
+  }
+
+  function wire(body) {
+    var form = document.getElementById("chat-form");
+    var input = document.getElementById("chat-input");
+    form.addEventListener("submit", function (e) { e.preventDefault(); if (S.busy) stop(); else submit(); });
+    input.addEventListener("input", function () { autosize(input); });
+    input.addEventListener("keydown", function (e) {
+      // A hardware keyboard: Enter sends, Shift+Enter is a new line. The
+      // on-screen keyboard's return key keeps inserting a new line.
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229 && matchMedia("(hover: hover)").matches) {
+        e.preventDefault(); submit();
+      }
+    });
+    body.querySelector("#chat-log").addEventListener("click", function (e) {
+      var d = e.target.closest("[data-dl]");
+      if (!d) return;
+      var msg = S.messages[+d.getAttribute("data-m")];
+      var rep = msg && msg.reports ? msg.reports[+d.getAttribute("data-i")] : null;
+      if (rep) download(rep, d.getAttribute("data-dl"));
+    });
+    var hist = document.getElementById("chat-history-btn");
+    if (hist) hist.addEventListener("click", openHistory);
+    var fresh = document.getElementById("chat-new-btn");
+    if (fresh) fresh.addEventListener("click", function () {
+      if (S.busy) { snack("Wait for the current answer, or press Stop"); return; }
+      resetToNew(); renderLog(); input.focus();
+    });
+  }
+
+  var Chat = {
+    title: "Chat",
+    icon: "#i-chat",
+    renderTopbar: function () {
+      return ''
+        + '<div class="m3-topbar">'
+        + '  <div class="leading"></div>'
+        + '  <div class="title" id="chat-title">' + escapeHtml(headerName()) + '</div>'
+        + '  <div class="trailing">'
+        + '    <button class="icon-btn" id="chat-history-btn" aria-label="Conversations"><svg viewBox="0 0 24 24"><use href="#i-history"/></svg></button>'
+        + '    <button class="icon-btn" id="chat-new-btn" aria-label="New conversation"><svg viewBox="0 0 24 24"><use href="#i-add"/></svg></button>'
+        + '  </div>'
+        + '</div>';
+    },
+    render: function (body) {
+      S.body = body;
+      closeHistory();
+      body.innerHTML = '<div class="loading-screen" style="padding:48px 0;"><div class="spinner"></div></div>';
+      var statusP = S.status ? Promise.resolve(S.status) : api.assistant.status().then(function (s) { S.status = s; return s; });
+      return statusP.then(function (s) {
+        if (S.body !== body) return;
+        if (!s || !s.enabled) { body.innerHTML = unavailableHTML("No AI Assistant integration is enabled on this Polaris."); return; }
+        body.innerHTML = ''
+          + '<div class="chat">'
+          + '  <div class="chat-log" id="chat-log"></div>'
+          + '  <form class="chat-composer" id="chat-form">'
+          + '    <textarea id="chat-input" rows="1" placeholder="Ask about devices, alerts, networks…" autocomplete="off" enterkeyhint="send"></textarea>'
+          + '    <button class="chat-send" id="chat-send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24"><use href="#i-send"/></svg></button>'
+          + '  </form>'
+          + '</div>';
+        wire(body);
+        if (!S.convId) S.convId = lsGet(LS.conv) || null;
+        if (S.convId && !S.busy && !idleResetIfDue()) {
+          if (!S.messages.length) return loadConversation(S.convId);
+        }
+        renderLog();
+      }).catch(function (err) {
+        if (S.body !== body) return;
+        // A role without `assistant` gets 403 here.
+        body.innerHTML = unavailableHTML(err && err.status === 403
+          ? "Your role does not include the AI Assistant."
+          : ((err && err.message) || "Could not reach the assistant."));
+      });
+    },
+  };
+
+  window.PolarisChatTab = { spec: Chat };
+})();

@@ -266,7 +266,7 @@ router.post("/conversations/:id/messages", askLimiter, async (req: Request, res:
     const id = convId(req);
     const body = AskSchema.parse(req.body ?? {});
     const integration = await resolveAssistantIntegration(body.integrationId);
-    if (!integration) throw new AppError(409, "No Local AI Assistant integration is enabled. Add one under Integrations.");
+    if (!integration) throw new AppError(409, "No AI Assistant integration is enabled. Add one under Integrations.");
 
     // One turn per conversation at a time. A client disconnect (the user
     // changed page) does NOT abort it — see registerTurn; Stop is explicit.
