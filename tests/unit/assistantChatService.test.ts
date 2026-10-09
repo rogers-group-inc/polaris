@@ -41,7 +41,9 @@ vi.mock("../../src/services/llmService.js", async () => ({
   LLM_DEFAULTS: { maxToolRounds: 6, maxRowsPerTool: 200, contextMessages: 20, contextWindow: 8192 },
 }));
 vi.mock("../../src/services/assistantToolService.js", () => ({
-  assistantToolDefs: () => [{ type: "function", function: { name: "list_assets", description: "", parameters: {} } }],
+  // The real tool NAMES (the round-0 steering filters by name); the shapes do not matter here.
+  assistantToolDefs: () => ["search_help", "search", "fleet_summary", "list_assets", "get_asset", "list_alerts", "list_events", "list_networks", "list_reservations", "create_report"]
+    .map((name) => ({ type: "function", function: { name, description: "", parameters: {} } })),
   runAssistantTool: h.runAssistantTool,
   toolLabel: (n: string) => `did ${n}`,
 }));
@@ -151,7 +153,7 @@ describe("streamAssistantTurn", () => {
   it("streams a plain answer and saves it", async () => {
     h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], tools: any[], o: any) => {
       expect(msgs[0].role).toBe("system");
-      expect(tools).toHaveLength(1);
+      expect(tools.length).toBeGreaterThan(1); // every tool: "what is down?" matches no playbook
       o.onText("Nothing ");
       o.onText("is down.");
       return { content: "Nothing is down.", toolCalls: [], finishReason: "stop" };
@@ -453,6 +455,53 @@ describe("report intent", () => {
     expect(reportTitleFromQuestion("give me a report on the network utilizations")).toBe("Network utilizations");
     expect(reportTitleFromQuestion("Create a downloadable report: switches down in the last 24h")).toBe("Switches down in the last 24h");
     expect(reportTitleFromQuestion("report")).toBe("Report");
+  });
+});
+
+describe("playbooks steer round 0", () => {
+  it("a correlation question gets the playbook's tools on round 0 and its procedure as a second system message", async () => {
+    h.beginTurn.mockResolvedValueOnce({ question: "why did NSH-FW01 go down last night?" });
+    let round0Tools: string[] = [];
+    let round0Msgs: any[] = [];
+    h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], tools: any[], o: any) => {
+      round0Tools = tools.map((t) => t.function.name);
+      round0Msgs = [...msgs];
+      o.onText("Checking.");
+      return { content: "Checking.", toolCalls: [], finishReason: "stop" };
+    });
+    await run().p;
+    expect(round0Tools.sort()).toEqual(["get_asset", "list_alerts", "search"]);
+    expect(round0Msgs[0].role).toBe("system");
+    expect(round0Msgs[1]).toMatchObject({ role: "system" });
+    expect(round0Msgs[1].content).toMatch(/^Playbook — outage correlation/);
+    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ details: expect.objectContaining({ playbook: "correlate" }) }));
+  });
+
+  it("every tool is back from round 1", async () => {
+    h.beginTurn.mockResolvedValueOnce({ question: "what changed overnight?" });
+    let round1Tools: string[] = [];
+    h.chatCompletionRound
+      .mockImplementationOnce(async () => ({ content: "", toolCalls: [{ id: "t1", type: "function", function: { name: "list_events", arguments: "{}" } }], finishReason: "tool_calls" }))
+      .mockImplementationOnce(async (_c: any, _m: any, tools: any[], o: any) => { round1Tools = tools.map((t) => t.function.name); o.onText("Two things."); return { content: "Two things.", toolCalls: [], finishReason: "stop" }; });
+    h.runAssistantTool.mockResolvedValueOnce({ ok: true, data: { total: 2, rows: [] } });
+    await run().p;
+    expect(round1Tools).toContain("create_report");
+    expect(round1Tools).toContain("search_help");
+  });
+
+  it("a report request and a how-to keep priority over a playbook", async () => {
+    for (const [question, only] of [["give me a report on what changed overnight", "create_report"], ["how do I check the health of a device?", "search_help"]] as const) {
+      h.beginTurn.mockResolvedValueOnce({ question });
+      let round0Tools: string[] = [];
+      h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], tools: any[], o: any) => {
+        round0Tools = tools.map((t) => t.function.name);
+        expect(msgs.filter((m) => m.role === "system")).toHaveLength(1);
+        o.onText("Done.");
+        return { content: "Done.", toolCalls: [], finishReason: "stop" };
+      });
+      await run().p;
+      expect(round0Tools).toEqual([only]);
+    }
   });
 });
 

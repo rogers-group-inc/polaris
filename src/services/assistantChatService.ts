@@ -59,6 +59,7 @@ import {
 import { WIKI_BASE_URL, wikiPageNames } from "./helpIndexService.js";
 import { FUNCTION_KEYS, normalizePermissions, isAdminEquivalentPermissions } from "../api/middleware/permissions.js";
 import { getEffectiveTagScopes } from "./regionScopeService.js";
+import { pickPlaybook } from "./assistantPlaybookService.js";
 import {
   getMemoryEnabled,
   listMemory,
@@ -559,7 +560,16 @@ export async function streamAssistantTurn(input: {
       .filter(Boolean).join("\n") || null,
     memory: memoryTurn ? memoryPromptBlock(memoryTurn.entries, input.username) : undefined,
   });
-  const turns = fitHistory(estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools)), allTurns, budget.promptTokens);
+  // A playbook (assistantPlaybookService) steers a multi-step question: its
+  // procedure rides as a second leading system message for this turn and its
+  // tools are the only ones offered on round 0. A report request or a how-to
+  // keeps priority (they steer round 0 themselves, below).
+  const playbook = !asksForReport(question) && !asksHowTo(question) ? pickPlaybook(question) : null;
+  const turns = fitHistory(
+    estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools)) + (playbook ? estimateTokens(playbook.guidance) : 0),
+    allTurns,
+    budget.promptTokens,
+  );
   const recentLines = voice === "canned" ? await recentAdvisorLines(input.conversationId) : null;
   // One canned line per turn, leading (at the first lookup) or closing (under
   // the answer) — a coin flip, so neither becomes a formula. A turn that runs
@@ -570,8 +580,10 @@ export async function streamAssistantTurn(input: {
   let prefaceOffered = false;
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
+    ...(playbook ? [{ role: "system" as const, content: playbook.guidance }] : []),
     ...turns,
   ];
+  const playbookTools = playbook ? tools.filter((t) => playbook.firstRoundTools.includes(t.function.name)) : [];
   const wantsReport = asksForReport(question);
   const reportOnlyTools = tools.filter((t) => t.function.name === "create_report");
   const wantsHowTo = !wantsReport && asksHowTo(question);
@@ -634,6 +646,7 @@ export async function streamAssistantTurn(input: {
       const roundTools = lastRound ? []
         : round === 0 && wantsReport ? reportOnlyTools
         : round === 0 && wantsHowTo ? helpOnlyTools
+        : round === 0 && playbookTools.length ? playbookTools
         : tools;
       compactToolResults(messages, budget.promptTokens);
       roundReasoning = 0;
@@ -775,7 +788,7 @@ export async function streamAssistantTurn(input: {
     message: failure
       ? `Assistant turn failed for ${input.username ?? "a user"}: ${failure}`
       : `Assistant answered ${input.username ?? "a user"}${toolsUsed.length ? ` using ${Array.from(new Set(toolsUsed.map((t) => t.name))).join(", ")}` : ""}${stopped ? " (stopped)" : ""}`,
-    details: { tools: toolsUsed.map((t) => t.name), reports: reports.length, stopped },
+    details: { tools: toolsUsed.map((t) => t.name), reports: reports.length, stopped, ...(playbook ? { playbook: playbook.id } : {}) },
   });
 
   if (failure) emit("error", { message: failure, messageId });

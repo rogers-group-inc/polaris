@@ -1,8 +1,8 @@
 # Services — the AI assistant and the `llm` integration
 
-The floating chat assistant (business rule 95) and the integration type that backs it. Eight
+The floating chat assistant (business rule 95) and the integration type that backs it. Nine
 services: the transport to the model server, the tool layer that answers its lookups, the
-turn orchestrator, the conversation store, the per-user memory, the help index over
+turn orchestrator, its playbooks, the conversation store, the per-user memory, the help index over
 `docs/wiki/`, and the role + API token an llm integration provisions. Route: `src/api/routes/assistant.ts`
 (`/api/v1/assistant`, `assistant` read, session-only); integration CRUD stays in
 `src/api/routes/integrations.ts`. Frontend: `public/js/assistant.js`,
@@ -187,6 +187,27 @@ turn orchestrator, the conversation store, the per-user memory, the help index o
 - A new tool that returns rows should get a `TOOL_TOPICS` noun, or `{topic}` lines never fire after it.
 - A tool whose result names a down state under a new key needs `lookupShowsOutage` widened, or a quip lands under an outage.
 - **Deliberately undocumented for operators (owner's call, 2026-10-07):** the Efficiency Advisor is an easter egg. Do NOT add it to `README.md` or to any `docs/wiki/` page, and `/polaris-docs-sync` should not route it there — this entry, rule 95(h) and the domain-model notes are its only documentation.
+
+---
+
+## services/assistantPlaybookService.ts
+
+**What it owns:** The assistant's playbooks (2026-10-09): procedures for the multi-step NOC questions the tool layer cannot encode — `correlate` (why did X go down: device → alerts in the window, with and without the device filter → events → the upstream parent → timeline, then the cause only if the data supports it), `changed` (what changed since: events by kind, alerts opened/cleared, assets whose state moved, headline counts first), `health` (is X ok: get_asset, 24 h of alerts and events, a one-line verdict first) and `capacity` (networks ≥ 80 % fullest first, then addresses held by devices not seen in a month). `pickPlaybook(question)` matches by regex, first match wins. Each playbook supplies `guidance` (the numbered procedure, ending with "keep what the data shows apart from what you infer") and `firstRoundTools`.
+
+**Public API:** AssistantPlaybook, PLAYBOOKS, pickPlaybook.
+
+**Cross-service deps:** none (pure).
+
+**Used by:**
+- src/services/assistantChatService.ts → streamAssistantTurn — the guidance rides as a SECOND leading system message for the turn (a Claude deployment folds it into `system`; an OpenAI server sees two system messages) and `firstRoundTools` are the only tools offered on round 0, every tool again from round 1 — the same steering `asksForReport` / `asksHowTo` do, which keep priority. The audit Event carries `details.playbook`.
+
+**Invariants:**
+- A playbook changes the ORDER of lookups, never what a lookup may see — every tool still runs as the caller (rule 95(a)).
+- Every tool a playbook names exists (`tests/unit/assistantPlaybookService.test.ts` checks the first-round set and the procedure text against `assistantToolDefs()`).
+
+**When changing this:**
+- A new playbook needs a matcher that does not catch a how-to ("how do I correlate…" is a help question first) or a report request, and a chat-service test that its tools land on round 0 (`assistantChatService.test.ts → playbooks steer round 0`).
+- The guidance is prompt text: keep it a numbered procedure with tool names and argument names the tools really take (`hours`, `since`/`until`, `sortBy`, `minUtilizationPercent`, `notSeenForHours`).
 
 ---
 

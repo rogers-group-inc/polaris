@@ -248,6 +248,15 @@ named thing up first and open with whether it exists, or say how to search and o
 for them; and the persona may tease the person but never invent a fact about their situation —
 "before adding a duplicate" was a premise nothing had looked up.
 
+The same day the owner asked whether Claude on Foundry should get Agent Skills. Not the
+sandboxed kind: they need code execution (unsupported on Foundry deployments hosted on Azure,
+and a capability (b) deliberately withholds), and the one thing they would buy — document
+generation — Polaris already does from database rows in the browser. What the tools could not
+encode was PROCEDURE, so the answer was playbooks (`assistantPlaybookService`): four
+intent-matched procedures — outage correlation, what changed, device health, capacity — each a
+second leading system message for the turn plus the tools offered on round 0. They change the
+order of lookups, never what a lookup may see.
+
 What stays true: the persona text repeats the rules that kept (h) safe — facts come only
   from lookups, every step and figure stays exact and complete — and every code-side guard
   (report rows from the database, tables held after a report, link checking) is unchanged.

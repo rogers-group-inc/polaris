@@ -138,6 +138,12 @@ context. Some things to try:
 - *How do I set up a maintenance window that repeats monthly?*
 - *How many devices are down in my region?*
 
+Four kinds of question follow a set procedure, so the answer is built the same way
+every time: **why did a device go down** (the device, then alerts and events around
+the time it changed, then the device it hangs off), **what changed** since a time,
+**is a device healthy**, and **which networks are filling up**. Each answer keeps what
+the data shows apart from what the assistant infers.
+
 It knows **your role and access**, and the **regions and tags assigned to you**
 (from your role, your account and your sign-in groups) — so "my region" means
 your regions, and "how do I…" answers say whether your role can do it. That
