@@ -301,3 +301,23 @@ describe("mobile Chat tab — composer growth and the on-screen keyboard", () =>
     expect(body.scrollTop).toBe(300);
   });
 });
+
+describe("asset links in a phone answer", () => {
+  it("open the phone's own asset screen instead of the desktop page", async () => {
+    const { spec, body } = setup({ enabled: true, integrations: [{ id: "i1", name: "Foundry" }] });
+    g.PolarisRouter = { go: vi.fn() };
+    g.api.assistant.getConversation = vi.fn(async (id: string) => ({ id, title: "Lookup", messages: [
+      { role: "user", content: "look up 153.66.102.165" },
+      { role: "assistant", content: "[DAYTONCON-61F-1](/assets.html#view=asset:44444444-4444-4444-8444-444444444444) held it." },
+    ] }));
+    localStorage.setItem("polaris-assistant-conv", "c-1");
+    localStorage.setItem("polaris-assistant-active", String(Date.now() - 60 * 1000));
+    await spec.render(body, {});
+    const a = body.querySelector('a[href^="/assets.html#view=asset:"]') as HTMLAnchorElement;
+    expect(a).toBeTruthy();
+    const ev = new MouseEvent("click", { bubbles: true, cancelable: true });
+    a.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    expect(g.PolarisRouter.go).toHaveBeenCalledWith("asset/44444444-4444-4444-8444-444444444444");
+  });
+});

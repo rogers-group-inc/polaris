@@ -1,8 +1,8 @@
 # Services — the AI assistant and the `llm` integration
 
-The floating chat assistant (business rule 95) and the integration type that backs it. Eight
+The floating chat assistant (business rule 95) and the integration type that backs it. Nine
 services: the transport to the model server, the tool layer that answers its lookups, the
-turn orchestrator, the conversation store, the per-user memory, the help index over
+turn orchestrator, its playbooks, the conversation store, the per-user memory, the help index over
 `docs/wiki/`, and the role + API token an llm integration provisions. Route: `src/api/routes/assistant.ts`
 (`/api/v1/assistant`, `assistant` read, session-only); integration CRUD stays in
 `src/api/routes/integrations.ts`. Frontend: `public/js/assistant.js`,
@@ -64,6 +64,7 @@ turn orchestrator, the conversation store, the per-user memory, the help index o
 - `runAssistantTool` never throws: unknown tool, bad JSON, Zod failures and query errors come back as `{ ok: false, data: { error } }` so the model can recover.
 - A role without the key gets "Not permitted" and NO query runs (pinned by `tests/unit/assistantToolService.test.ts`).
 - `list_reservations` does NOT use `reservationService.listReservations` — that include carries the subnet integration's config (secrets) for the push UI.
+- `search` says WHY an asset hit matched an address query (2026-10-09): `matchedOn: "ipAddress"` for a current primary IP, `matchedOn: "ipHistory"` + `heldThisAddress` (ip, source, first/last seen from `AssetIpHistory`) for a WAN / secondary / former address — a live answer had dismissed a FortiGate that held 153.66.102.165 as a text coincidence. `get_asset` returns `ipHistory` (30 newest, by lastSeen) for the same reason.
 - `list_assets` subnet filtering narrows in SQL to rows with an IP, then matches with `utils/cidr` (IP math lives only there).
 - Decommissioned assets and deprecated (retired) networks are left OUT by default (owner's call, 2026-10-09): `list_assets` adds `status: { not: "decommissioned" }` unless a `status` filter is given, `list_networks` `status: { not: "deprecated" }` likewise, and `fleet_summary` counts no decommissioned asset. `search` and `get_asset` still find them — naming a device is asking for it. The system prompt says the same.
 - `list_assets` `region` / `myRegions` match the region's asset tags through `regionTagVariants`: each name (any case, with or without `region:`) resolves case-insensitively against the Tag registry under both the `region:<name>` and the bare form, plus the literal forms (`utils/tagNormalize.REGION_TAG_PREFIX`) — the same tags alert scoping snapshots. Exact matching once reported a real Middle Tennessee device absent (2026-10-09), which is also why the system prompt now tells the model to check itself (region filter, then tag / location / search / list_alerts) before concluding something is absent, and to believe the person over one empty lookup; `myRegions` reads the caller's ASSIGNED regions (`getEffectiveTagScopes`, admins included) and refuses — without querying — when none is assigned, rather than answering for the whole install.
@@ -104,7 +105,7 @@ turn orchestrator, the conversation store, the per-user memory, the help index o
 - The model's reasoning text never leaves llmService; only its length reaches the client.
 - The audit Event carries tool names, report count and stopped — the conversation text is the owner's data (rule 95(d)).
 - **First-round steering** (2026-10-07, qwen2.5:7b): a message that plainly asks for a report (`asksForReport`) is offered ONLY `create_report` on round 0, and one that asks how to use / configure Polaris (`asksHowTo`, deliberately narrow — "how many…" is not) ONLY `search_help`. A report request that still ends without a report is turned into one from the model's last list lookup, same filters (`reportTitleFromQuestion`).
-- **Links are checked** (`sanitizeAnswerLinks`, after the turn): only `WIKI_BASE_URL/<page>` for a page `helpIndexService.wikiPageNames()` knows, or a same-origin path. Anything else keeps its text and loses the link (a model invented `docs.polaris.example.com/subnets/add-subnet`); a changed answer is re-sent whole via `retract {from:0}` + `token`.
+- **Links are checked** (`sanitizeAnswerLinks`, after the turn): only `WIKI_BASE_URL/<page>` for a page `helpIndexService.wikiPageNames()` knows, or a same-origin path — and an asset-details link (`/assets.html#view=asset:<id>`, which the prompt asks for on every named asset) only for an id a lookup RETURNED THIS TURN (`seenIds`, every uuid in the tool results), so a guessed or remembered id loses its link. The desktop's document-level deep-link handler in `app.js` opens the slide-over; the phone's Chat tab intercepts the same href into `#asset/<id>`. Anything else keeps its text and loses the link (a model invented `docs.polaris.example.com/subnets/add-subnet`); a changed answer is re-sent whole via `retract {from:0}` + `token`.
 - **Turns outlive the page** (`registerTurn` / `releaseTurn` / `isTurnRunning` / `stopTurn`): the route does not abort on disconnect; Stop is `POST /conversations/:id/stop`; the next page sees `pending`.
 - **Text after a report is HELD, then table-stripped** (`stripMarkdownTables`). The model only ever sees a report's row COUNT, so a table it types afterwards is invented — seen live 2026-10-07 (qwen2.5:7b re-typed a "report" of networks that do not exist beside the real card). Rounds after the first `create_report` are buffered instead of streamed, tables removed, and an all-table reply becomes `REPORT_READY_TEXT`. This is rule 95(c) enforced in code, not left to the prompt.
 
@@ -187,6 +188,27 @@ turn orchestrator, the conversation store, the per-user memory, the help index o
 - A new tool that returns rows should get a `TOOL_TOPICS` noun, or `{topic}` lines never fire after it.
 - A tool whose result names a down state under a new key needs `lookupShowsOutage` widened, or a quip lands under an outage.
 - **Deliberately undocumented for operators (owner's call, 2026-10-07):** the Efficiency Advisor is an easter egg. Do NOT add it to `README.md` or to any `docs/wiki/` page, and `/polaris-docs-sync` should not route it there — this entry, rule 95(h) and the domain-model notes are its only documentation.
+
+---
+
+## services/assistantPlaybookService.ts
+
+**What it owns:** The assistant's playbooks (2026-10-09): procedures for the multi-step NOC questions the tool layer cannot encode — `correlate` (why did X go down: device → alerts in the window, with and without the device filter → events → the upstream parent → timeline, then the cause only if the data supports it), `changed` (what changed since: events by kind, alerts opened/cleared, assets whose state moved, headline counts first), `health` (is X ok: get_asset, 24 h of alerts and events, a one-line verdict first) and `capacity` (networks ≥ 80 % fullest first, then addresses held by devices not seen in a month), plus `address` (an IPv4 literal with a lookup verb — matched LAST so "why is X down" / "is X ok" keep theirs: search the address and read `matchedOn`, get_asset for ipHistory, list_reservations, then who holds it now / held it before and when). `pickPlaybook(question)` matches by regex, first match wins. Each playbook supplies `guidance` (the numbered procedure, ending with "keep what the data shows apart from what you infer") and `firstRoundTools`.
+
+**Public API:** AssistantPlaybook, PLAYBOOKS, pickPlaybook.
+
+**Cross-service deps:** none (pure).
+
+**Used by:**
+- src/services/assistantChatService.ts → streamAssistantTurn — the guidance rides as a SECOND leading system message for the turn (a Claude deployment folds it into `system`; an OpenAI server sees two system messages) and `firstRoundTools` are the only tools offered on round 0 — plus `remember` / `forget` whenever memory is on, because rule 95(i)'s grounding refusal only runs when the model can reach `remember` at all (the integration test's poison question "what is the status of the branch switch?" matched the `health` playbook and the memory tools vanished with it, 2026-10-09) — every tool again from round 1. The same steering `asksForReport` / `asksHowTo` do, which keep priority. The audit Event carries `details.playbook`.
+
+**Invariants:**
+- A playbook changes the ORDER of lookups, never what a lookup may see — every tool still runs as the caller (rule 95(a)).
+- Every tool a playbook names exists (`tests/unit/assistantPlaybookService.test.ts` checks the first-round set and the procedure text against `assistantToolDefs()`).
+
+**When changing this:**
+- A new playbook needs a matcher that does not catch a how-to ("how do I correlate…" is a help question first) or a report request, and a chat-service test that its tools land on round 0 (`assistantChatService.test.ts → playbooks steer round 0`).
+- The guidance is prompt text: keep it a numbered procedure with tool names and argument names the tools really take (`hours`, `since`/`until`, `sortBy`, `minUtilizationPercent`, `notSeenForHours`).
 
 ---
 

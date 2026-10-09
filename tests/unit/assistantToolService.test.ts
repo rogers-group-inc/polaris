@@ -19,6 +19,7 @@ const h = vi.hoisted(() => ({
     reservation: { findMany: vi.fn(), count: vi.fn() },
     subnet: { findMany: vi.fn(), count: vi.fn() },
     tag: { findMany: vi.fn(async () => [] as Array<{ name: string }>) },
+    assetIpHistory: { findMany: vi.fn(async () => [] as Array<Record<string, unknown>>) },
   },
   listNotifications: vi.fn(),
   searchAll: vi.fn(),
@@ -223,5 +224,43 @@ describe("decommissioned assets and retired networks stay out unless asked for",
     for (const call of h.prisma.asset.groupBy.mock.calls.filter((c: any[]) => c[0].by[0] !== "monitorStatus")) {
       expect(call[0].where).toEqual({ status: { not: "decommissioned" } });
     }
+  });
+});
+
+describe("an address a device HELD is a hit, and says so (seen live 2026-10-09)", () => {
+  const req = reqWith({ assets: "read", subnets: "read", alerts: "read", events: "read" });
+
+  it("search marks an asset hit matchedOn ipHistory with when it held the address, and ipAddress for a primary-IP hit", async () => {
+    h.searchAll.mockResolvedValue({ assets: [
+      { id: "a1", hostname: "DAYTONCON-61F-1", ipAddress: "10.255.250.178" },
+      { id: "a2", hostname: "other", ipAddress: "153.66.102.165" },
+    ], subnets: [] });
+    h.prisma.assetIpHistory.findMany.mockResolvedValueOnce([
+      { assetId: "a1", ip: "153.66.102.165", source: "monitor-system-info", firstSeen: new Date("2026-06-10T00:00:00Z"), lastSeen: new Date("2026-09-04T00:00:00Z") },
+    ]);
+    const r = await runAssistantTool("search", '{"query":"153.66.102.165"}', { req, maxRows: 25 });
+    const assets = (r.data as any).assets;
+    expect(assets[0]).toMatchObject({ hostname: "DAYTONCON-61F-1", matchedOn: "ipHistory", heldThisAddress: { ip: "153.66.102.165", source: "monitor-system-info", lastSeen: "2026-09-04T00:00:00.000Z" } });
+    expect(assets[1]).toMatchObject({ hostname: "other", matchedOn: "ipAddress" });
+    expect(h.prisma.assetIpHistory.findMany.mock.calls[0][0].where).toEqual({ ip: "153.66.102.165", assetId: { in: ["a1", "a2"] } });
+  });
+
+  it("a non-address query is left alone", async () => {
+    h.searchAll.mockResolvedValue({ assets: [{ id: "a1", hostname: "sw-1", ipAddress: "10.0.0.1" }] });
+    const r = await runAssistantTool("search", '{"query":"sw-1"}', { req, maxRows: 25 });
+    expect((r.data as any).assets[0]).not.toHaveProperty("matchedOn");
+    expect(h.prisma.assetIpHistory.findMany).not.toHaveBeenCalled();
+  });
+
+  it("get_asset returns the device's IP history, newest last-seen first", async () => {
+    h.prisma.asset.findFirst.mockResolvedValueOnce({
+      id: "a1", hostname: "DAYTONCON-61F-1", ipAddress: "10.255.250.178", tags: [],
+      discoveredByIntegration: null,
+      ipHistory: [{ ip: "153.66.102.165", source: "monitor-system-info", firstSeen: new Date("2026-06-10T00:00:00Z"), lastSeen: new Date("2026-09-04T00:00:00Z") }],
+    });
+    h.listNotifications.mockResolvedValueOnce({ notifications: [], total: 0 });
+    const r = await runAssistantTool("get_asset", '{"hostname":"DAYTONCON-61F-1"}', { req, maxRows: 25 });
+    expect((r.data as any).ipHistory).toEqual([{ ip: "153.66.102.165", source: "monitor-system-info", firstSeen: "2026-06-10T00:00:00.000Z", lastSeen: "2026-09-04T00:00:00.000Z" }]);
+    expect(h.prisma.asset.findFirst.mock.calls[0][0].select.ipHistory).toMatchObject({ orderBy: { lastSeen: "desc" }, take: 30 });
   });
 });

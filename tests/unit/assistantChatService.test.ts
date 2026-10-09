@@ -41,7 +41,9 @@ vi.mock("../../src/services/llmService.js", async () => ({
   LLM_DEFAULTS: { maxToolRounds: 6, maxRowsPerTool: 200, contextMessages: 20, contextWindow: 8192 },
 }));
 vi.mock("../../src/services/assistantToolService.js", () => ({
-  assistantToolDefs: () => [{ type: "function", function: { name: "list_assets", description: "", parameters: {} } }],
+  // The real tool NAMES (the round-0 steering filters by name); the shapes do not matter here.
+  assistantToolDefs: () => ["search_help", "search", "fleet_summary", "list_assets", "get_asset", "list_alerts", "list_events", "list_networks", "list_reservations", "create_report"]
+    .map((name) => ({ type: "function", function: { name, description: "", parameters: {} } })),
   runAssistantTool: h.runAssistantTool,
   toolLabel: (n: string) => `did ${n}`,
 }));
@@ -151,7 +153,7 @@ describe("streamAssistantTurn", () => {
   it("streams a plain answer and saves it", async () => {
     h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], tools: any[], o: any) => {
       expect(msgs[0].role).toBe("system");
-      expect(tools).toHaveLength(1);
+      expect(tools.length).toBeGreaterThan(1); // every tool: "what is down?" matches no playbook
       o.onText("Nothing ");
       o.onText("is down.");
       return { content: "Nothing is down.", toolCalls: [], finishReason: "stop" };
@@ -456,6 +458,66 @@ describe("report intent", () => {
   });
 });
 
+describe("playbooks steer round 0", () => {
+  it("a correlation question gets the playbook's tools on round 0 and its procedure as a second system message", async () => {
+    h.beginTurn.mockResolvedValueOnce({ question: "why did NSH-FW01 go down last night?" });
+    let round0Tools: string[] = [];
+    let round0Msgs: any[] = [];
+    h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], tools: any[], o: any) => {
+      round0Tools = tools.map((t) => t.function.name);
+      round0Msgs = [...msgs];
+      o.onText("Checking.");
+      return { content: "Checking.", toolCalls: [], finishReason: "stop" };
+    });
+    await run().p;
+    expect(round0Tools.sort()).toEqual(["get_asset", "list_alerts", "search"]);
+    expect(round0Msgs[0].role).toBe("system");
+    expect(round0Msgs[1]).toMatchObject({ role: "system" });
+    expect(round0Msgs[1].content).toMatch(/^Playbook — outage correlation/);
+    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ details: expect.objectContaining({ playbook: "correlate" }) }));
+  });
+
+  it("a playbook never hides the memory tools (rule 95(i) needs `remember` reachable to refuse it)", async () => {
+    h.getMemoryEnabled.mockResolvedValueOnce(true);
+    h.beginTurn.mockResolvedValueOnce({ question: "what is the status of the branch switch?" });
+    let round0Tools: string[] = [];
+    h.chatCompletionRound.mockImplementationOnce(async (_c: any, _m: any, tools: any[], o: any) => {
+      round0Tools = tools.map((t) => t.function.name);
+      o.onText("Up.");
+      return { content: "Up.", toolCalls: [], finishReason: "stop" };
+    });
+    await run().p;
+    expect(round0Tools.sort()).toEqual(["forget", "get_asset", "list_alerts", "remember", "search"]);
+  });
+
+  it("every tool is back from round 1", async () => {
+    h.beginTurn.mockResolvedValueOnce({ question: "what changed overnight?" });
+    let round1Tools: string[] = [];
+    h.chatCompletionRound
+      .mockImplementationOnce(async () => ({ content: "", toolCalls: [{ id: "t1", type: "function", function: { name: "list_events", arguments: "{}" } }], finishReason: "tool_calls" }))
+      .mockImplementationOnce(async (_c: any, _m: any, tools: any[], o: any) => { round1Tools = tools.map((t) => t.function.name); o.onText("Two things."); return { content: "Two things.", toolCalls: [], finishReason: "stop" }; });
+    h.runAssistantTool.mockResolvedValueOnce({ ok: true, data: { total: 2, rows: [] } });
+    await run().p;
+    expect(round1Tools).toContain("create_report");
+    expect(round1Tools).toContain("search_help");
+  });
+
+  it("a report request and a how-to keep priority over a playbook", async () => {
+    for (const [question, only] of [["give me a report on what changed overnight", "create_report"], ["how do I check the health of a device?", "search_help"]] as const) {
+      h.beginTurn.mockResolvedValueOnce({ question });
+      let round0Tools: string[] = [];
+      h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], tools: any[], o: any) => {
+        round0Tools = tools.map((t) => t.function.name);
+        expect(msgs.filter((m) => m.role === "system")).toHaveLength(1);
+        o.onText("Done.");
+        return { content: "Done.", toolCalls: [], finishReason: "stop" };
+      });
+      await run().p;
+      expect(round0Tools).toEqual([only]);
+    }
+  });
+});
+
 describe("help questions and links", () => {
   it("recognizes how-to questions but not data questions", () => {
     expect(asksHowTo("how do i add a new ip block?")).toBe(true);
@@ -740,5 +802,37 @@ describe("scopePromptBlock — \"my region\" means something", () => {
   it("says to ask when no region is assigned, and is absent without a scope", () => {
     expect(scopePromptBlock({ regions: [], tags: [] })).toMatch(/No region is assigned/);
     expect(scopePromptBlock(null)).toBeNull();
+  });
+});
+
+describe("asset links in an answer", () => {
+  const pages = new Set<string>();
+  it("keeps an asset link whose id a lookup returned this turn, and strips one that did not", () => {
+    const ids = new Set(["11111111-1111-4111-8111-111111111111"]);
+    const ok = "[sw-1](/assets.html#view=asset:11111111-1111-4111-8111-111111111111)";
+    const bad = "[sw-9](/assets.html#view=asset:99999999-9999-4999-8999-999999999999)";
+    expect(sanitizeAnswerLinks(`${ok} and ${bad}`, pages, ids)).toBe(`${ok} and sw-9`);
+    expect(sanitizeAnswerLinks(`${bad}`, pages, new Set())).toBe("sw-9");
+    // Other same-origin paths are untouched.
+    expect(sanitizeAnswerLinks("[Assets](/assets.html)", pages, ids)).toBe("[Assets](/assets.html)");
+  });
+
+  it("the prompt asks for the link and for honouring an IP-history hit", () => {
+    const p = buildSystemPrompt({});
+    expect(p).toContain("[hostname](/assets.html#view=asset:ID)");
+    expect(p).toMatch(/never a guessed or\s+remembered id/);
+    expect(p).toMatch(/Never dismiss such a hit as a text match/);
+  });
+
+  it("a turn strips an asset link the lookups never returned and keeps one they did", async () => {
+    h.beginTurn.mockResolvedValueOnce({ question: "which switches are down?" });
+    const seen = "22222222-2222-4222-8222-222222222222";
+    const answer = `[sw-2](/assets.html#view=asset:${seen}) and [sw-x](/assets.html#view=asset:33333333-3333-4333-8333-333333333333) are down.`;
+    h.chatCompletionRound
+      .mockImplementationOnce(async () => ({ content: "", toolCalls: [{ id: "t1", type: "function", function: { name: "list_assets", arguments: "{}" } }], finishReason: "tool_calls" }))
+      .mockImplementationOnce(async (_c: any, _m: any, _t: any, o: any) => { o.onText(answer); return { content: answer, toolCalls: [], finishReason: "stop" }; });
+    h.runAssistantTool.mockResolvedValueOnce({ ok: true, data: { total: 1, rows: [{ id: seen, hostname: "sw-2" }] } });
+    await run().p;
+    expect(h.finishTurn.mock.calls[0][1].content).toBe(`[sw-2](/assets.html#view=asset:${seen}) and sw-x are down.`);
   });
 });

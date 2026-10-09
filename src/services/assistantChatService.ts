@@ -59,6 +59,7 @@ import {
 import { WIKI_BASE_URL, wikiPageNames } from "./helpIndexService.js";
 import { FUNCTION_KEYS, normalizePermissions, isAdminEquivalentPermissions } from "../api/middleware/permissions.js";
 import { getEffectiveTagScopes } from "./regionScopeService.js";
+import { pickPlaybook } from "./assistantPlaybookService.js";
 import {
   getMemoryEnabled,
   listMemory,
@@ -285,6 +286,13 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
       "comes back empty for something the person named, try the other ways it could be recorded (region, tag, " +
       "location, search, list_alerts) before answering, and say what you tried. If the person says it exists, " +
       "believe them over one empty lookup and keep looking.",
+    "- A device may have HELD an address it no longer shows as its IP (a WAN, secondary or former address). " +
+      "search marks such a hit matchedOn: \"ipHistory\" with heldThisAddress, and get_asset returns ipHistory. " +
+      "That device IS the answer for that address: say it held it, from which source and when it was last seen " +
+      "there. Never dismiss such a hit as a text match.",
+    "- When you name an asset that a lookup returned, link the name to its details as " +
+      "[hostname](/assets.html#view=asset:ID) using the id field from that lookup — never a guessed or " +
+      "remembered id. Only assets are linked this way.",
     "- Leave decommissioned assets and deprecated (retired) networks out of answers and reports unless the person " +
       "asks about them — the lookups already omit them unless their status is asked for.",
     "- Never mention your tools or their names (list_assets, create_report, …) to the user — say what you looked " +
@@ -322,9 +330,13 @@ export function asksHowTo(text: string): boolean {
  * an invented docs site, a guessed wiki page — keeps its text and loses the
  * link; a bare URL of that kind is dropped. Exported for tests.
  */
-export function sanitizeAnswerLinks(text: string, wikiPages: ReadonlySet<string>): string {
+export function sanitizeAnswerLinks(text: string, wikiPages: ReadonlySet<string>, assetIds?: ReadonlySet<string>): string {
   const allowed = (url: string): boolean => {
     const u = url.trim();
+    // An asset-details link may only name an id a lookup returned THIS turn:
+    // a model cannot be allowed to link a guessed or remembered id.
+    const asset = /^\/assets\.html#view=asset:([^&\s)]+)/.exec(u);
+    if (asset && assetIds) return assetIds.has(decodeURIComponent(asset[1]));
     if (/^\/(?!\/)/.test(u)) return true;
     if (!u.startsWith(WIKI_BASE_URL + "/")) return false;
     const page = decodeURIComponent(u.slice(WIKI_BASE_URL.length + 1).split(/[#?]/)[0]);
@@ -559,7 +571,16 @@ export async function streamAssistantTurn(input: {
       .filter(Boolean).join("\n") || null,
     memory: memoryTurn ? memoryPromptBlock(memoryTurn.entries, input.username) : undefined,
   });
-  const turns = fitHistory(estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools)), allTurns, budget.promptTokens);
+  // A playbook (assistantPlaybookService) steers a multi-step question: its
+  // procedure rides as a second leading system message for this turn and its
+  // tools are the only ones offered on round 0. A report request or a how-to
+  // keeps priority (they steer round 0 themselves, below).
+  const playbook = !asksForReport(question) && !asksHowTo(question) ? pickPlaybook(question) : null;
+  const turns = fitHistory(
+    estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools)) + (playbook ? estimateTokens(playbook.guidance) : 0),
+    allTurns,
+    budget.promptTokens,
+  );
   const recentLines = voice === "canned" ? await recentAdvisorLines(input.conversationId) : null;
   // One canned line per turn, leading (at the first lookup) or closing (under
   // the answer) — a coin flip, so neither becomes a formula. A turn that runs
@@ -570,13 +591,22 @@ export async function streamAssistantTurn(input: {
   let prefaceOffered = false;
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
+    ...(playbook ? [{ role: "system" as const, content: playbook.guidance }] : []),
     ...turns,
   ];
+  // A playbook narrows round 0 to its lookups, but never hides the memory tools: a user who says
+  // "remember X, and what is the status of Y?" is still asking for a write, and the grounding
+  // check (rule 95(i)) only runs when the model can reach `remember` at all.
+  const playbookTools = playbook
+    ? tools.filter((t) => playbook.firstRoundTools.includes(t.function.name) || MEMORY_TOOL_NAMES.has(t.function.name))
+    : [];
   const wantsReport = asksForReport(question);
   const reportOnlyTools = tools.filter((t) => t.function.name === "create_report");
   const wantsHowTo = !wantsReport && asksHowTo(question);
   const helpOnlyTools = tools.filter((t) => t.function.name === "search_help");
   let lastListCall: { name: string; args: string } | null = null;
+  // Every uuid a lookup returned this turn — the only ids an asset link may name.
+  const seenIds = new Set<string>();
   const toolNames = tools.map((t) => t.function.name);
   const maxRounds = Math.min(Math.max(config.maxToolRounds ?? LLM_DEFAULTS.maxToolRounds, 1), 12);
   const maxRows = Math.min(Math.max(config.maxRowsPerTool ?? LLM_DEFAULTS.maxRowsPerTool, 10), 1000);
@@ -634,6 +664,7 @@ export async function streamAssistantTurn(input: {
       const roundTools = lastRound ? []
         : round === 0 && wantsReport ? reportOnlyTools
         : round === 0 && wantsHowTo ? helpOnlyTools
+        : round === 0 && playbookTools.length ? playbookTools
         : tools;
       compactToolResults(messages, budget.promptTokens);
       roundReasoning = 0;
@@ -697,6 +728,7 @@ export async function streamAssistantTurn(input: {
         toolsUsed.push({ name, label: toolLabel(name), ok: result.ok });
         emit("tool", { name, label: toolLabel(name), status: "done", ok: result.ok });
         const content = clipJson(result.data, budget.toolResultChars);
+        for (const m of content.matchAll(/"id":"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/g)) seenIds.add(m[1]);
         messages.push({ role: "tool", tool_call_id: tc.id, content });
         if (result.ok && REPORT_SOURCES.has(name)) lastListCall = { name, args: tc.function.arguments };
         noteLookup(signals, name, result, content);
@@ -729,7 +761,7 @@ export async function streamAssistantTurn(input: {
   // Links may only go to a real help page or inside Polaris (sanitizeAnswerLinks).
   // The answer streamed as written, so a changed answer is replaced whole.
   if (answer) {
-    const clean = sanitizeAnswerLinks(answer, await wikiPageNames());
+    const clean = sanitizeAnswerLinks(answer, await wikiPageNames(), seenIds);
     if (clean !== answer) {
       answer = clean;
       emit("retract", { from: 0 });
@@ -775,7 +807,7 @@ export async function streamAssistantTurn(input: {
     message: failure
       ? `Assistant turn failed for ${input.username ?? "a user"}: ${failure}`
       : `Assistant answered ${input.username ?? "a user"}${toolsUsed.length ? ` using ${Array.from(new Set(toolsUsed.map((t) => t.name))).join(", ")}` : ""}${stopped ? " (stopped)" : ""}`,
-    details: { tools: toolsUsed.map((t) => t.name), reports: reports.length, stopped },
+    details: { tools: toolsUsed.map((t) => t.name), reports: reports.length, stopped, ...(playbook ? { playbook: playbook.id } : {}) },
   });
 
   if (failure) emit("error", { message: failure, messageId });
