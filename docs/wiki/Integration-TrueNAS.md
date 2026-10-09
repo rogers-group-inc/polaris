@@ -185,9 +185,7 @@ already divides by the server's core count, and Polaris does not divide again.
 **The host's memory is split the way the TrueNAS dashboard splits it**:
 **Services**, **ZFS Cache** (the ARC) and free. The ZFS cache gives memory back
 when services need it, so it ships switched off in the chart and does not
-count as memory in use. Click its legend chip to show it. Hosts monitored
-before this change charted the ARC as used memory, so their memory figure drops
-after the update.
+count as memory in use. Click its legend chip to show it.
 
 TrueNAS reports interface and App traffic as **rates**, with no running totals
 and no error or drop counts. Polaris adds each rate up into a running total

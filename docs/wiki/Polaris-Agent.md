@@ -15,8 +15,8 @@ asset slide-over.
 actions**. The only queued action it accepts is `run_script` — see
 [Automation scripts](Automation-Scripts#agent).
 
-Process and service start / stop / restart control **was removed**, and full
-root was retired with it.
+There is **no** process or service start / stop / restart control, and no
+full-root tier.
 
 | Platform | Runs as |
 |---|---|
@@ -38,21 +38,20 @@ root was retired with it.
 > comes back unattributed, and **the agent collects zero connection rows while
 > looking perfectly healthy.**
 >
-> An agent installed with the old SYS_PTRACE-only unit stays broken until
-> reinstalled — the unit text is written only at install or reinstall.
+> A unit that holds only `CAP_SYS_PTRACE` stays broken until reinstalled — the
+> unit text is written only at install or reinstall.
 
 The security cost is stated in every warning, and it is real:
 `CAP_DAC_READ_SEARCH` bypasses read permission checks on **all** files, and
 `CAP_SYS_PTRACE` reads any process's memory. Grant it deliberately.
 
 Pick the tier on the per-asset install modal or the bulk Deploy Agent modal
-(confirmation-gated). An **existing** Linux agent changes tier via **Reinstall**;
-a legacy-root agent downgrades on reinstall.
+(confirmation-gated). An **existing** Linux agent changes tier via **Reinstall**.
 
 ### Requested vs verified
 
-`privilegeTier` is only what was *requested at install*. Since agent 0.17.1 the
-Linux agent **reports its actual capability mask on every heartbeat**, and the
+`privilegeTier` is only what was *requested at install*. The Linux agent
+**reports its actual capability mask on every heartbeat**, and the
 installed-agents list renders the Privilege column three ways:
 
 | Rendering | Means |
@@ -194,10 +193,10 @@ states the same **Polaris server address** produces:
 | **set** | `Polaris SSH (TCP 22)` is missing, disabled, not on every profile, or allows a different address; or `OpenSSH-Server-In-TCP` is still enabled |
 | **blank** | `OpenSSH-Server-In-TCP` does not cover the Domain profile. Whether it is enabled is not checked, because the remediation never turns back on a rule you turned off |
 
-Before this check, a machine set up some other way (by hand, or by an older
-script) passed detection and was never remediated. On a domain network that
-meant sshd was listening and nothing could reach it, and the first sign was an
-agent install timing out while waiting for the SSH handshake. Detection and
+So a machine set up some other way (by hand, or by another script) is caught
+and remediated too. Otherwise, on a domain network, sshd would be listening with
+nothing able to reach it, and the first sign would be an agent install timing
+out while waiting for the SSH handshake. Detection and
 remediation are built from the same saved address, so change the address and
 re-publish **both**.
 
@@ -256,12 +255,12 @@ members as raw `S-1-12-1-…` SIDs, or fail outright; the detection script falls
 back to the `WinNT://` provider for exactly that reason, so trust its verdict
 over a bare `Get-LocalGroupMember` that errored.
 
-> Before this check existed, a fleet could report **Detection: Without issues**
-> and **Remediation: Not run** on endpoints where the account had never been
-> created — indistinguishable, in the Intune console, from a healthy one. If you
-> have been running an older generated pair, regenerate both halves from the
-> card: machines in that state will report as needing remediation on their next
-> pass and fix themselves.
+> Without the account check, an endpoint whose account was never created would
+> report **Detection: Without issues** and **Remediation: Not run** —
+> indistinguishable, in the Intune console, from a healthy one. The scripts are
+> generated, not live: regenerate both halves from the card after upgrading
+> Polaris, and machines in that state report as needing remediation on their
+> next pass and fix themselves.
 
 The scripts are **delivery-neutral and fleet-generic** — no machine-specific
 values — so the same body runs under Intune, GPO startup, SCCM, Arc, an RMM or a
@@ -284,7 +283,7 @@ Two vehicles, each opt-in per integration:
 
 ## SSH host-key verification
 
-Opt-in per credential (default **off**; **on** for newly created ones), and it
+Per credential (**on** by default when you create one), and it
 **fails closed** ([rule 21](Business-Rules#rule-21)).
 
 Trust-on-first-use:
@@ -328,8 +327,8 @@ is its trust set**.
 > empty it is skipped and reported. An empty pin set bricks the agent's TLS
 > dialer until a manual reinstall.
 
-`agent.conf` always carries both the new multi-pin key and the legacy
-single-pin key, so a downgrade to an older binary keeps working.
+`agent.conf` always carries both the multi-pin key and a single-pin key, so a
+downgrade to an older binary keeps working.
 
 ---
 
@@ -346,11 +345,6 @@ single-pin key, so a downgrade to an older binary keeps working.
 | eventLog | opt-in, behind a global master switch (PII and volume) |
 | Application Map connections | needs the **`ptrace`** tier on Linux |
 | [Path checks](Path-Monitor) | agent **0.21.0+**; runs only the checks an operator created and pointed at this host. HTTP / HTTPS / TCP / ICMP plus traceroute, **no extra privilege** on any tier |
-
-> **Windows Event Log levels before agent 0.21.1** were stored one step too
-> severe: an Error came in as *critical*, a Warning as *error* and an
-> Information entry as *warning*. From 0.21.1 each keeps its own level.
-> Entries already stored keep the label they arrived with.
 
 The storage and interface collectors run under a 30-second guard, because
 `statfs` and interface ioctls can **block indefinitely** on a hung filesystem or
@@ -376,13 +370,13 @@ holds — those describe the machine as it was when it enrolled.
 The serial comes from the firmware: `/sys/class/dmi/id/product_serial` on
 Linux, the IORegistry on macOS, and the SMBIOS table on Windows.
 
-> **Windows hosts and agent versions before 0.20.1.** Windows publishes no
-> serial number in the registry, and older agents fell back to the system
-> **SKU** — a model code, identical on every unit of that model (a PowerEdge
-> R740 would report `SKU=NotProvided;ModelName=PowerEdge R740`). From 0.20.1
-> the agent reads the firmware table directly and reports the real serial,
-> the same value `Get-CimInstance Win32_BIOS` shows. **Upgrade the agent, and
-> the serial corrects itself on the next check-in.** Two things you may see
+> **Windows needs agent 0.20.1 or later for a real serial.** Windows publishes
+> no serial number in the registry; the agent reads the firmware table directly
+> and reports the same value `Get-CimInstance Win32_BIOS` shows. An agent below
+> 0.20.1 reports the system **SKU** instead — a model code, identical on every
+> unit of that model (a PowerEdge R740 reports
+> `SKU=NotProvided;ModelName=PowerEdge R740`). **Upgrade the agent, and the
+> serial corrects itself on the next check-in.** Two things you may see
 > when it does: a serial that changes on a Windows asset for no other reason,
 > and — where the firmware has no serial to give — one that clears instead,
 > which is deliberate. Both are recorded in Events.
@@ -400,16 +394,15 @@ offset inside the minute — so they never run at the same instant.
 
 That matters more than it sounds. Several collections share a cadence: four
 of them run every five minutes, and on Windows two of those shell out, one to
-`tasklist` and one to PowerShell. **Before agent 0.19.0 they all fired
-together**, which on a small host was a visible CPU spike every five minutes
-— and because the agent measures its own response time by timing a round trip
-to Polaris, the spike landed on that measurement too. Both charts on the
-System tab grew a five-minute sawtooth that was describing the agent rather
-than the host.
+`tasklist` and one to PowerShell. **Fired together**, they make a visible CPU
+spike every five minutes on a small host — and because the agent measures its
+own response time by timing a round trip to Polaris, the spike lands on that
+measurement too. Both charts on the System tab grow a five-minute sawtooth that
+describes the agent rather than the host.
 
 If you are looking at an agent host with that pattern, **check the agent
-version**: an installed agent keeps running its old schedule until it is
-upgraded.
+version**: the stagger needs agent 0.19.0 or later, and an installed agent keeps
+its schedule until it is upgraded.
 
 Each agent also picks a small random offset of its own at startup, so a fleet
 deployed in one batch does not arrive at the server in lockstep.
@@ -427,31 +420,29 @@ its previous sample** — by default the last 60 seconds, whatever
 counters and reports the difference; it does not sample a moment and it does
 not pause to watch.
 
-That matters on small hosts. **Before agent 0.20.0 the reading was a single
-1-second window once a minute**, so it described 1 second in 60 and said
-nothing about the other 59. On a **single-vCPU VM** that was actively
-misleading: if one of the agent's own collections was still running when the
-window opened, it held the only core, and the sample reported ~100% CPU for a
-host that was otherwise idle. The chart was describing the agent, not the
-machine. Spreading the collections across the minute (0.19.0) did not fix it,
-because a collection that starts in its own slot can still be running when
-the window opens 11 seconds later.
+That matters on small hosts. A single short window once a minute would
+describe 1 second in 60 and say nothing about the other 59. On a
+**single-vCPU VM** that is actively misleading: if one of the agent's own
+collections is still running when the window opens, it holds the only core,
+and the sample reports ~100% CPU for a host that is otherwise idle — the chart
+describes the agent, not the machine. Spreading the collections across the
+minute does not prevent that, because a collection that starts in its own slot
+can still be running when a short window opens.
 
-Two things follow from the current behaviour, both worth knowing before you
-read a chart or set a threshold:
+Two things follow, both worth knowing before you read a chart or set a
+threshold:
 
-- **The agent's own overhead can no longer dominate a sample.** It now shows
-  up as what it actually costs — a few percent of the interval — instead of
-  as the entire reading on the ticks where it collided.
+- **The agent's own overhead cannot dominate a sample.** It shows up as what
+  it actually costs — a few percent of the interval — instead of as the entire
+  reading on the ticks where it collides.
 - **The cadence is the smoothing.** A brief spike is averaged across the
   whole interval rather than caught or missed at random, so the chart is
-  flatter than it was before 0.20.0 and **CPU thresholds fire on a sustained
-  average rather than on a lucky sample**. If you want a sharper chart on a
-  particular host, shorten `telemetry_interval_sec`; that shortens the
-  averaging window with it.
+  flatter than a point sample would draw, and **CPU thresholds fire on a sustained average rather than on a
+  lucky sample**. If you want a sharper chart on a particular host, shorten
+  `telemetry_interval_sec`; that shortens the averaging window with it.
 
-Upgrading the agent is what applies this — an installed agent keeps its old
-behaviour until it is upgraded.
+This needs agent 0.20.0 or later. An agent below that takes a single 1-second
+sample once a minute until it is upgraded.
 
 ### Per-core CPU and the memory breakdown
 
@@ -521,7 +512,7 @@ an explicit credentialId on the request
 
 - **An id that no longer resolves counts as absent, not as an error** —
   deleting a credential would otherwise silently strand every agent installed
-  with it, and an install predating the column never had one at all.
+  with it, and some installs have no recorded credential at all.
 - **Only an explicit credential that fails to resolve is an error**: an operator
   who names a credential is told it is wrong rather than quietly connected with
   another.
@@ -534,7 +525,7 @@ an explicit credentialId on the request
 - An operator override is **never** adopted; Polaris does not record a choice it
   did not make.
 - A host the fan-out still cannot upgrade writes an `agent.upgrade_skipped`
-  Event, so the silence that hid this is gone.
+  Event rather than being skipped silently.
 - **A host that monitoring shows as down is skipped, not attempted**, by
   **Upgrade all out-of-date** and by the automatic upgrade after a new build:
   connecting to it would only sit out a timeout while the reachable hosts
@@ -546,7 +537,7 @@ an explicit credentialId on the request
   simply off), and the toast says how many were skipped. A device that is not
   monitored is still attempted.
 
-**Upgrade only.** Install, reinstall and uninstall still require a credential on
+**Upgrade only.** Install, reinstall and uninstall require a credential on
 file; force-remove is the escape hatch.
 
 ### The device goes quiet while it runs
@@ -619,11 +610,11 @@ separate **Unmap everywhere** action does the actual strip.
 | Stuck at "enrolling", host crash-looping | the Linux `agent.conf` ownership trap above — reinstall |
 | Agent connected but the Application Map is empty | the Linux privilege tier. Check the **Privilege** column for "reinstall" — a SYS_PTRACE-only unit collects nothing while looking healthy |
 | TLS handshake fails after a certificate rotation | the pin. Stage the new pin **before** rotating |
-| Samples stop but the heartbeat continues | a hung filesystem or NIC in a collector — the 30 s guard bounds this on current builds |
-| Upgrade silently skips a host | check for `agent.upgrade_skipped` Events; on older builds this was completely silent |
+| Samples stop but the heartbeat continues | a hung filesystem or NIC in a collector — the 30 s guard bounds this |
+| Upgrade skips a host | check for `agent.upgrade_skipped` Events |
 | An ICMP path check fails with `icmp unsupported on this host (ping_group_range)` | Linux only. The agent opens ICMP without privilege, which needs the service's group inside `net.ipv4.ping_group_range`. Modern distributions allow every group; RHEL 8 does not. Fix it on the host: `echo 'net.ipv4.ping_group_range = 0 2147483647' \| sudo tee /etc/sysctl.d/90-polaris-ping.conf && sudo sysctl --system`. HTTP, TCP and traceroute are unaffected |
 | A path check never produces results | the agent version (0.21.0+ runs checks — upgrade it), and whether the host is listed on the check's **Results** view. A host that is not listed does not match the check's Sources |
 | Every traceroute hop after the first shows `*` | the network drops ICMP errors (Time Exceeded) on the way back. The check result itself is unaffected |
 | An agent host is powered off but the asset still reads Up | whether an automation covers it (no automation means **Passive**, [rule 36](Business-Rules#rule-36)); whether the agent is revoked or not yet **active**; and, with a single agent, whether Polaris just restarted. The agent gets a full window from boot ([rule 86](Business-Rules#rule-86)) |
-| A burst of `agent.disconnected` alerts right after an in-app update or restart | older Polaris builds only. When every agent redialed the restarted server at once, one that retried could have its new connection closed by its old one, which raised a disconnect for an agent that was fine. Current builds ignore the old connection. The **reason** at the end of each Event's message tells you which case you have: `socket closed` just after an `agent.connected` is this; `heartbeat timeout` is a server too busy to answer |
+| A burst of `agent.disconnected` alerts right after an in-app update or restart | the **reason** at the end of each Event's message. `heartbeat timeout` is a server too busy to answer while every agent redials it at once. A redialing agent's superseded connection closing does not raise a disconnect — Polaris ignores the old connection once the new one is up |
 | `agent.disconnected` alerts never clear | the counterpart reset — an event automation should clear on `agent.connected`, scoped to the same subject ([rule 32e](Business-Rules#rule-32)) |

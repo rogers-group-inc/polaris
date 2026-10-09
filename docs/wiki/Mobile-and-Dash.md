@@ -125,9 +125,8 @@ backup, and the run history and its log, are on the desktop's Firmware card,
 and the Repository itself is desktop-only. See
 [Assets → Firmware](Assets#firmware).
 
-Networks replaced the old **Reservations** tab: a reservation is now seen and
-changed in its network. An old home-screen shortcut or bookmark to Reservations
-opens Networks.
+A reservation is seen and changed in its network — there is no separate
+reservations tab.
 
 ## Installing it
 

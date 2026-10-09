@@ -68,8 +68,8 @@ Two things to understand about that:
 
 ## The two failure modes
 
-Both produced the same sentence — *"Database backup failed — see the server
-log"* — with the real cause only in the container or service log.
+Each one stops every backup path — manual, scheduled and pre-update — on the
+install it affects.
 
 ### 1. A `pg_dump` older than the server
 
@@ -115,8 +115,7 @@ writes `sslmode=no-verify`, and that is correct — the URL is for the driver.
 
 The two rules are halves of one thing: 47 says the client binary must be able to
 work against the server; 51 says the connection parameters handed to it must be
-in that client's own vocabulary. **Neither is checked by the other**, and both
-failed for months behind the same sentence.
+in that client's own vocabulary. **Neither is checked by the other.**
 
 ---
 
@@ -148,9 +147,8 @@ schedule) and the gzip stream is sealed with AES-256-GCM under a key derived
 from it. **Polaris keeps no copy of a manual backup's password** — lose it and
 the file cannot be restored.
 
-Encrypted backups are versioned by an 8-byte magic header. The format that
-predates the project's rename is **no longer recognised** — an install carrying
-those migrates by dump-and-reinstall, since a plain dump carries cleanly.
+Encrypted backups are versioned by an 8-byte magic header; a file without the
+current header is not recognised.
 
 ---
 

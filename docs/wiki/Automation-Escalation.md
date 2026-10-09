@@ -20,9 +20,8 @@ the rule-level chain — which is exactly the chain the engine resolves for an
 alert sitting at the base severity — and each per-severity section hosts its
 band's own.
 
-It used to sit on every action row, where *"if this stays unhandled, do more"*
-read as *"if this email goes unanswered"* while the one chain actually fired for
-the whole tier.
+On an action row, *"if this stays unhandled, do more"* would read as *"if this
+email goes unanswered"*, while the one chain actually fires for the whole tier.
 
 A stored per-action chain is **hoisted and merged** into its severity's chain
 when you open the automation: tiers concatenate and sort by `afterMin`, and
@@ -58,34 +57,25 @@ One automation, two honest audiences, no duplication.
 
 **"Repeat this action"** at the foot of a notify row: *re-send every N minutes
 (default 15), until* **Acknowledged** or **Cleared only**, *…and give up after N
-hours* (optional; blank means never). (Quiet time used to sit here too; it is the
-automation's own step now — [below](#quiet-time).)
+hours* (optional; blank means never). Quiet time is the automation's own step —
+[below](#quiet-time).
 
 A reminder re-sends **notify actions and nothing else**, which is why it belongs
 to the action ([rule 56](Business-Rules#rule-56)). *"Page the on-call every five
 minutes and leave the nightly digest alone"* is one automation with two honest
 answers, and no per-automation or per-severity cadence can say it.
 
-It is offered on the **firing** lists only — never on reset actions, never on a
-band's resolved actions, and never on an escalation tier (which has its own
+It is offered on the **firing** lists only — never on reset actions, and never
+on an escalation tier (which has its own
 `repeatEveryMin`). A recovery has nothing to chase.
 
 **Presence, not truthiness.** An action declaring `repeat: null` is an *answer*
-("this one does not chase"); an action carrying no key at all is every
-automation authored before this and keeps inheriting the rule-level clock.
-Saving the step migrates the automation forward — but only when you have
-actually opened the step.
+("this one does not chase"); an action carrying no key at all inherits the
+rule-level clock. Saving the step writes an explicit answer onto each action —
+but only when you have actually opened the step.
 
 `stopAfterHours` is wall time from the fire, **quiet time included**. The wizard
 warns about that pairing rather than extending the deadline.
-
-> The re-notify **cooldown** — how often a *new* alert may fire — was retired
-> from the builder ([rule 32](Business-Rules#rule-32)). "Repeat this
-> notification" answers the question operators were actually reaching for it to
-> answer. The column and the engine's checks survive dormant, and a one-shot
-> cleared every stored value fleet-wide after auditing it, because removing the
-> control without clearing the data would have left automations silenced by a
-> number no Polaris surface could show or edit.
 
 ---
 
@@ -130,8 +120,8 @@ severity you tick are four boxes:
 Ticking a severity ticks all four; a ticked box is **held** during the quiet
 period, an unticked one goes out live whatever the hour. Untick a severity to
 let it through entirely — the usual shape is everything but critical, and a new
-global quiet time starts that way. Untick **Alerts** but leave the rest to get
-the old reminder-only quiet time: the first alert and the all-clear still send,
+global quiet time starts that way. Untick **Alerts** but leave the rest to hold
+only the chasing: the first alert and the all-clear still send,
 the chasing waits for the period to end. With no severity holding its first
 alert there is nothing to report, and the summary section disappears.
 

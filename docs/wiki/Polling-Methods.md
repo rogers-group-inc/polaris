@@ -59,9 +59,8 @@ resolution time**; the route layer rejects it at write time with a clear 400.
 | `proxmox` | reads the Proxmox VE cluster's API, not the node's OS or the guest. Shown as *Proxmox* |
 | `disabled` | universally allowed — *do not poll this stream* |
 
-> The **`http`** method was retired in 2026-08. The HTTP check it ran is now a
-> **manufacturer custom widget** ([rule 33](Business-Rules#rule-33)) — see
-> [below](#the-http-check).
+> An **HTTP check** is not a polling method — it is a **manufacturer custom
+> widget** ([rule 33](Business-Rules#rule-33)); see [below](#the-http-check).
 
 ### Which source takes which method
 
@@ -309,10 +308,10 @@ install.
 Not a polling method. A **manufacturer custom widget**, keyed by manufacturer
 plus an optional model pattern ([rule 33](Business-Rules#rule-33)).
 
-The reason is ownership of the *definition*. As a polling method the check had
-to ride an `http`-typed credential, so the row answering "how do I log in to
-this vendor" also carried "which path, expecting what" — and a second path meant
-a second copy of the same password. A check varies by vendor **and model**; a
+The reason is ownership of the *definition*. As a polling method the check would
+ride an `http`-typed credential, so the row answering "how do I log in to this
+vendor" would also carry "which path, expecting what" — and a second path would
+mean a second copy of the same password. A check varies by vendor **and model**; a
 login varies by vendor.
 
 How it behaves:
@@ -332,15 +331,15 @@ How it behaves:
 
 ## FortiManager authentication
 
-FortiManager 7.4.7+ / 7.6.2+ removed `access_token` query-string support.
+FortiManager 7.4.7+ / 7.6.2+ do not accept an `access_token` query string.
 Polaris uses the Bearer `Authorization` header exclusively, and the standalone
 FortiGate integration uses the same pattern.
 
 > **Never call `/sys/logout`.** Polaris authenticates with a predefined REST API
 > Admin api-key, which per Fortinet's own best-practices guide is permanent and
-> shares one session per user. An hourly logout tore that shared session out
-> from under the split-role monitor and discovery processes and caused RPC
-> `-11` "no valid session" churn.
+> shares one session per user. A logout tears that shared session out from
+> under the split-role monitor and discovery processes and causes RPC `-11`
+> "no valid session" churn.
 
 The transport retries transient faults only (5xx / network, ≤ 2 retries,
 exponential backoff, serialised) and fails fast on permanent ones (401, 403,

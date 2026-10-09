@@ -58,9 +58,8 @@ Stored secrets used by monitoring probes, agent deployment and integrations.
 | `http` | manufacturer HTTP-check widgets |
 
 **Ownership applies** ([rule 43c](Business-Rules#rule-43)): at `write` you reach
-only rows you created; `fullwrite` reaches any. A row with no creator — every row
-predating the column, deliberately not backfilled — is **unowned and
-`fullwrite`-only**.
+only rows you created; `fullwrite` reaches any. A row with no creator is
+**unowned and `fullwrite`-only**.
 
 **Testing a stored credential is scoped the same way**, because that path merges
 the row's **real secrets** into the probe: testing a peer's credential is
@@ -72,7 +71,7 @@ picker needs the names.
 
 ### SSH host-key verification
 
-Per credential, default **off** (**on** for newly created ones), and it **fails
+Per credential, **on** by default when you create one, and it **fails
 closed**. See [Polaris Agent](Polaris-Agent#ssh-host-key-verification).
 
 ### Secrets at rest
@@ -120,9 +119,9 @@ no upgrade action. A FortiGate-managed FortiAP usually has its local web UI
 disabled, and an upgrade attempt will report the device as unreachable — that
 is the AP, not the repository.
 
-**FortiGates — read this first.** FortiGate upgrades are new. They have been
-run on two lab FortiGate 61F gates (FortiOS 7.6.7 → 8.0.1, once with an API
-token and once with an admin login), but not yet on older FortiOS builds or
+**FortiGates — read this first.** FortiGate upgrades have been run only on
+two lab FortiGate 61F gates (FortiOS 7.6.7 → 8.0.1, once with an API
+token and once with an admin login), not on older FortiOS builds or
 on any other model; try one on a lab or spare gate before a production one,
 and have console access ready. A gate in an **HA
 cluster is not upgraded** — its Firmware card says so. FortiGate-VM is not
@@ -172,10 +171,9 @@ backup, like the agent binaries; a Docker install keeps them in the state
 volume). An nginx-fronted install needs the shipped config's firmware location
 block, or the upload is rejected at the edge with a 413. An update installs it
 only on an install whose nginx is managed from the **Web Server** tab and has
-not been edited by hand since. That block said `100m` until FortiGate support
-arrived and says `300m` now: an install still carrying `100m` takes switch and
-AP images but refuses a FortiGate image over 100 MB at nginx, and the upload's
-error message says so — re-apply the **Web Server** tab, or change the number
+not been edited by hand since. The block allows `300m`; an install whose
+block carries `100m` takes switch and AP images but refuses a FortiGate image
+over 100 MB at nginx, and the upload's error message says so — re-apply the **Web Server** tab, or change the number
 by hand as below.
 
 **Known problem on systemd installs (the split-role layout):** neither the
@@ -259,8 +257,8 @@ ends *unverified* or *failed*.
 
 **Before the first fleet use, bench-test one switch and one access point on
 hardware you can afford to lose, with a console cable attached.** The upgrade
-procedure was transcribed from a tool whose own author had not yet validated
-it on real devices. A flash that fails partway can leave a device unbootable.
+procedure is transcribed from a tool whose own author has not validated it on
+real devices. A flash that fails partway can leave a device unbootable.
 
 ---
 
@@ -330,7 +328,7 @@ Two things the shipped config does that matter
 
 - It **emits HSTS itself and hides the upstream's copy**. Two
   `Strict-Transport-Security` headers is non-compliant — a user agent processes
-  only the first, so "browsers take the strongest seen" was never true.
+  only the first, not the strongest.
 - `server_tokens off`.
 
 > **A reverse proxy in front of Polaris must not add its own
@@ -414,7 +412,7 @@ set yourself with `ALTER SYSTEM` is honoured.
 Its `timescale_recommended` reason carries **no size gate** — it fires at zero
 bytes, because TimescaleDB's absence is a broken install from the first byte,
 not a problem that begins at a threshold ([rule 52](Business-Rules#rule-52)).
-The old 1 GB threshold now only chooses *watch* vs *warning*.
+A 1 GB threshold chooses only *watch* vs *warning*.
 
 The **Monitoring workload** card lists how much Polaris is polling:
 **Assets** (monitored assets), **Interfaces** (pinned interfaces

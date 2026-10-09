@@ -144,7 +144,7 @@ A debounced preview shows the devices currently matched.
 its filter **discarded** at save. Today that is `host_metric` and a host-kind
 composite — those are about the Polaris server, not about your devices. The
 step's lead line says which case you are in. `event` automations **are** scoped
-since 2026-09 ([rule 46](Business-Rules#rule-46)). A
+([rule 46](Business-Rules#rule-46)). A
 [Path Monitor](Automation-Triggers#path-monitor) automation only ever watches
 devices with the Polaris Agent installed: the filter narrows those, and the
 preview counts only them.
@@ -257,9 +257,9 @@ Three consequences:
   swallowed by a gate about the row that no longer exists.
 - **System-scoped events still fire** — they carry no asset id.
 
-Event and change triggers were the deliberate exception to this and no longer
-are: firing about a device nobody polls made "an automation covers it" and
-"Polaris watches it" two different answers.
+Event and change triggers obey the gate too: firing about a device nobody polls
+would make "an automation covers it" and "Polaris watches it" two different
+answers.
 
 ---
 
@@ -286,7 +286,7 @@ automation. The editor says so.
 > **The code editor's PUT is a full replace.** An absent nullable column becomes
 > null; `enabled`, `severity` and `reset` fall back to **schema defaults** — so
 > deleting `enabled` takes a disabled automation live. The editor renders the
-> complete body, strips the legacy mirror fields, says that removing a key
+> complete body, strips the redundant mirror fields, says that removing a key
 > removes the setting, and confirms a diff with the destructive fields called
 > out.
 

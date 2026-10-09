@@ -95,20 +95,20 @@ into a shell string, on either the server or the agent.
 > `|`, `<`, `>`, `(`, `)` and `^` are operators — so on that path, cmd.exe *is*
 > the shell.
 >
-> Until 2026-09 Polaris handed it a Node-quoted argv, and Node quotes with the
-> C-runtime convention cmd.exe does not implement. An argument of
-> `x" & <command> & rem "` **executed `<command>`**. That was reachable rather
-> than theoretical: `args` is a rendered template over alert context, so a
-> device's own hostname can reach it.
+> Ordinary argv quoting follows the C-runtime convention, which cmd.exe does not
+> implement, so a naively quoted argument of `x" & <command> & rem "` would
+> **execute `<command>`**. That is reachable rather than theoretical: `args` is
+> a rendered template over alert context, so a device's own hostname can reach
+> it.
 >
-> Polaris now `^`-escapes every metacharacter, wraps the command in the extra
-> quote pair `/s` requires, and passes it verbatim so nothing re-quotes it.
+> Polaris therefore `^`-escapes every metacharacter, wraps the command in the
+> extra quote pair `/s` requires, and passes it verbatim so nothing re-quotes it.
 > Arguments containing `"`, `%`, `!` or **any control character** are
 > **refused with an actionable error rather than mangled** — cmd has no in-quote
 > escape for a quote, expands `%` and `!` at parse time, and treats CR / LF /
 > NUL / 0x1A as line or file enders.
 >
-> The Go agent carries the identical fix (agent ≥ 0.17.2). The two move in
+> The Go agent applies the identical escaping (agent ≥ 0.17.2). The two move in
 > lockstep.
 >
 > **If you can express the job in `powershell` instead, do.**
@@ -121,12 +121,12 @@ matching `SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, `DATABASE_URL`, `SESSION`,
 
 **This is not a privilege boundary** — authoring a script already requires an
 RCE-equivalent permission. It exists because **stdout is stored on the run row
-and rendered in the Scripts tab**: before the scrub, a one-line `env` copied
+and rendered in the Scripts tab**: without the scrub, a one-line `env` would copy
 `DATABASE_URL` and `POLARIS_SECRET_KEY` into a displayed, backed-up, unencrypted
 column.
 
 It is a **denylist**, so `PATH`, `HOME`, proxy and locale variables stay
-inherited and existing scripts keep working.
+inherited.
 
 ### Caps and limits
 

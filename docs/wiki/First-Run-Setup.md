@@ -30,16 +30,13 @@ that value. But `pg_dump` and `psql` read `PGSSLMODE`, which is libpq's
 vocabulary, and libpq exits 1 on `no-verify`.
 
 Polaris translates between the two (`no-verify` → `require`, the same posture
-since only `verify-ca` and `verify-full` validate the chain). It did not always,
-and the symptom was that **every backup path failed on every install created
-this way** — manual, scheduled and pre-update — behind the message *"Database
-backup failed — see the server log"*. This is [rule 51](Business-Rules#rule-51).
+since only `verify-ca` and `verify-full` validate the chain). Without that
+translation **every backup path fails on every install created this way** —
+manual, scheduled and pre-update — behind the message *"Database backup failed —
+see the server log"*. This is [rule 51](Business-Rules#rule-51).
 It matters here because a scripted RHEL install never sees it (those dump over a
 unix socket and build no URL at all), so a green scripted install proves nothing
 about a container or remote-database one.
-
-If you are on a build that predates the fix, take a backup by hand after setup
-and confirm it works, rather than discovering it during an upgrade.
 
 ---
 
@@ -107,9 +104,9 @@ Setup is not a blank slate. It creates:
 
 - **Five built-in roles** — `admin`, `readonly`, `networkadmin`, `assetsadmin`,
   `user`. See [Users, roles and permissions](Users-Roles-and-Permissions).
-- **The asset-type registry** — the eight historical built-ins (`server`,
-  `switch`, `router`, `firewall`, `workstation`, `printer`, `access_point`,
-  `other`) plus `hypervisor`, `kubernetes_cluster` and `container` (a Docker
+- **The asset-type registry** — the built-ins `server`, `switch`, `router`,
+  `firewall`, `workstation`, `printer`, `access_point`, `other`,
+  `hypervisor`, `kubernetes_cluster` and `container` (a Docker
   container on Unraid, a TrueNAS SCALE App, or a Proxmox VE LXC container).
 - **Baseline automations**, seeded on the first start of the application —
   down detection, the threshold rules the dashboard widgets mirror (CPU,

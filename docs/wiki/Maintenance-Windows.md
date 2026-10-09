@@ -49,9 +49,7 @@ raise a new alert.
 
 That is deliberate: an alert someone was already tracking — acknowledged,
 escalating, noted — should not be wiped out because a device went into
-maintenance. (Between 2026-08-28 and 2026-09-30 Polaris did clear such alerts
-when a window opened; that was reverted because it reset alerts operators were
-still working.)
+maintenance.
 
 The same applies to devices silenced **behind** a device in maintenance: their
 open alerts are paused too, not cleared. Only a genuine outage upstream — a
@@ -153,11 +151,11 @@ shared verbatim with automation
 **There is no offset.** A window is picked in the *server's* wall clock, and the
 editor asks the server what that is.
 
-This is not pedantry. A browser that prefills a `datetime-local` from its **own**
-clock posts the operator's digits for the server to read as its own — and on a
-UTC-clocked host with a Central operator, *"now → now + 2 hours"* became a window
-that started five hours ago and **had already ended**. The schedule saved
-cleanly and nothing ever entered maintenance.
+This is not pedantry. A browser that prefilled a `datetime-local` from its
+**own** clock would post the operator's digits for the server to read as its own
+— and on a UTC-clocked host with a Central operator, *"now → now + 2 hours"*
+would become a window that started five hours ago and **had already ended**. The
+schedule would save cleanly and nothing would ever enter maintenance.
 
 ---
 
@@ -166,9 +164,6 @@ cleanly and nothing ever entered maintenance.
 The asset edit modal's **Maintenance** tab lists the schedules covering this
 device, and each row carries its two verbs: **remove this asset** from the
 schedule, or **delete the schedule** outright.
-
-Before, acting on one of them meant leaving the asset, opening Assets →
-Maintenance, finding the schedule among all the others and editing its targets.
 
 ### Only the explicit half is removable
 

@@ -35,7 +35,7 @@ so you find out before you have filled in the form.
 
 ## What it is not
 
-- **Not a tenth integration type.** It creates no `Integration` row and no
+- **Not an integration type.** It creates no `Integration` row and no
   integration discovery run.
 - **No `network-scan` source kind.** An adopted asset is created exactly like a
   hand-typed one — a `manual` source row — with its provenance in the asset's
@@ -138,7 +138,6 @@ run** one; ownership decides who may **edit** it.
 | Edit / delete | the owner, with `networkScan:fullwrite` reaching anyone's |
 | An invisible row | answers **404, not 403** |
 | Name | unique per owner |
-| Existing rows at migration | made public; new ones default private |
 | Export | carries **no visibility at all** |
 
 Note that publishing deliberately costs nothing above `write` — unlike saved

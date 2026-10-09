@@ -174,7 +174,7 @@ polygon.
 ### Broadcast toggles (Web Push only)
 
 **Send to All Users** and **Send to All User Regions**, both checked by default
-on a *new* action. A **stored** action reflects what was saved, so an old rule
+on a *new* action. A **stored** action reflects what was saved, so an existing rule
 listing three people cannot silently become fleet-wide on the next edit.
 
 They appear as soon as the action has a Web Push channel. On an action that
@@ -302,12 +302,12 @@ host the CPU figures need agent **0.22.1** or later. Older agents report each
 process's average since it started, which ranks a long-running process that
 has just started spinning near the bottom.
 
-Unlike the interface changes above, dropping the connectivity graphs applies to
+Unlike the interface rules above, dropping the connectivity graphs applies to
 a **customized** email too: a `{chart.responseTime}` or `{chart.probeLoss}` in
 your body renders nothing on a CPU or memory alert. The process list is the
-`{processes.top}` token, which is in the default email. An automation whose
-email you customized before this existed does not have it, so add it where you
-want the list.
+`{processes.top}` token, which is in the default email. A customized email
+shows the list only if its body includes that token, so add it where you want
+the list.
 
 ### Template tokens
 
@@ -403,7 +403,7 @@ The same variable list sits above the body in both view modes.
 > acknowledge page rather than by quietly receiving a different email.
 >
 > A user's own timezone setting (account menu → Timezone) still governs every
-> time *in the Polaris UI*; it no longer changes what an alert email says.
+> time *in the Polaris UI*; it does not change what an alert email says.
 
 > **`{email.recipients}` never names a Bcc** ([rule 60](Business-Rules#rule-60)).
 > A blind copy that appears in a footer every recipient reads has stopped being
@@ -419,11 +419,6 @@ The same variable list sits above the body in both view modes.
 > action in the same dispatch mails its own list, a Cc rider is a reader the To
 > line does not name, and the push half names people the email never reached at
 > all.
->
-> They were alert-wide until September 2026. A footer that named everyone the
-> alert had *ever* reached was read — reasonably — as naming everyone on the
-> message in front of you, so a reminder that arrived after an escalation
-> looked as though it had gone to the escalation's recipients.
 
 ---
 
@@ -482,7 +477,7 @@ What follows from that:
 - **A push Acknowledge action opens the page** rather than acting from the tray.
   That is where the note is typed, and the session is what records who did it.
 - **An alert that is over carries no button at all.** Every all-clear — reset
-  actions, a band's resolved actions, an operator clear — blanks it. It is the
+  actions, an operator clear — blanks it. It is the
   one question the reader cannot answer.
 
 ### Requiring a note
@@ -531,13 +526,9 @@ way, so an accidental un-tick does not destroy typed actions before save.
 
 ### Recovery is announced once
 
-The band-level **Resolved** control was retired. Recovery is announced by the
-rule's **reset actions** — which every automation has, banded or not — and
-running both told people twice.
-
-What the old policy announced is adopted into the reset actions **when they are
-empty** on an automation **with severity levels** (the only kind the old policy
-ever fired on); an operator who already wrote reset actions is left alone.
+Severity bands have no recovery actions of their own. Recovery is announced by
+the rule's **reset actions** — which every automation has, banded or not — so
+people are told once.
 
 ### How the reset list follows your Notify actions
 

@@ -189,7 +189,7 @@ stored as `region:<name>` in a locked registry category.
 rest. Credentials carry an ownership dimension: at `write` you reach only the
 ones you created.
 
-**Function key** — one of 34 permission keys. Each route declares the key it
+**Function key** — one of 35 permission keys. Each route declares the key it
 gates plus a level: `none` / `read` / `write` / `fullwrite`. See
 [Users, roles and permissions](Users-Roles-and-Permissions).
 

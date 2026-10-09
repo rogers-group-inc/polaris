@@ -35,7 +35,7 @@ Intune is enabled.
 
 The app registration needs Graph **application** permissions for device
 read, and admin consent. Directory search and sync need **additional**
-directory-read permissions that device discovery has never required — which is
+directory-read permissions that device discovery does not require — which is
 exactly why they are off by default: without the grant, every keystroke would
 403.
 
@@ -102,7 +102,7 @@ Reads LDAP or LDAPS, hard-filtered to `objectClass=computer`.
 | Host | — | domain controller |
 | Port | **636** | |
 | Use LDAPS | **on** | |
-| Verify TLS | **on** for new integrations | existing rows keep their stored value |
+| Verify TLS | **on** | |
 | Bind DN | — | |
 | Bind password | — | secret |
 | Base DN | — | |
@@ -142,7 +142,7 @@ act on:
 
 - a **Discover Now** run scoped to a single device;
 - a cancelled run, or one that hit the 10,000-object read cap;
-- an **empty** read — zero objects where there used to be a fleet is far more
+- an **empty** read — zero objects where the integration holds a fleet is far more
   often a bind failure, a wrong base DN or a withdrawn Graph consent than a
   genuinely emptied directory;
 - a run where the number of missing devices is implausibly large — more than
@@ -240,7 +240,7 @@ self-healing, not a bug.
 
 A post-sync pass, **on by default**, that establishes `Asset.lastSeen` for
 directory-sourced assets — because a directory timestamp is not network
-presence and no longer writes that field.
+presence and does not write that field.
 
 Cheapest signal first:
 
@@ -328,8 +328,8 @@ Two things to understand before enabling it:
   script that grants fleet-wide administrative SSH, and that is test-pinned.
   A human assigns the policy in Intune after reviewing the script.
 
-The Graph API version is probed (v1.0 then beta), since this endpoint has
-historically been beta-only: a 404 means the wrong version, a 403 means the
+The Graph API version is probed (v1.0 then beta), since this endpoint may be
+available on beta only: a 404 means the wrong version, a 403 means the
 endpoint exists and permission is missing.
 
 **Windows only.** Intune does not manage traditional Windows Server, so the
@@ -356,7 +356,7 @@ deletion.
 | Symptom | Look at |
 |---|---|
 | Every address-book keystroke 403s | directory search is on without the directory-read grant |
-| Windows 11 clients show as Windows 10 | you are on a build predating the build-threshold normalisation, which is **not retroactive** — the fix applies at the next write |
+| Windows 11 clients show as Windows 10 | the build-threshold normalisation applies at write time and is **not retroactive** — the asset is corrected at its next write |
 | A device appears twice, once from AD and once from Entra | the SID match failed. Check `objectSid` / `onPremisesSecurityIdentifier` and look for a hostname-collision conflict |
 | Auto-monitor pinned nothing | the agent had not reported yet at that cycle; check again after the next one |
 | Agentless polling locks out the bind account | the anchors stamp on failure specifically to bound this — confirm the credential, and prefer a dedicated one over the bind DN |

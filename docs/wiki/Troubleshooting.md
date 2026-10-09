@@ -11,7 +11,7 @@ real explanation.
 |---|---|
 | **"Database backup failed — see the server log"** | Two different things hide here. Either `pg_dump` is **older than the server**, or the `sslmode` in `DATABASE_URL` was passed through untranslated. [Backup and restore](Backup-and-Restore#the-two-failure-modes) |
 | Backups work on your RHEL box and fail in a container | Structural. The scripted installs dump over a unix socket and build **no URL at all**, so they never exercise the `sslmode` path |
-| **"Another host holds a fresh active-instance heartbeat"** after an image upgrade | The instance was identified by the container id, which is regenerated on every recreate. [Updates](Updates#another-host-holds-a-fresh-active-instance-heartbeat) |
+| **"Another host holds a fresh active-instance heartbeat"** after an image upgrade | Another instance is using the same database, or the previous one was killed without a clean shutdown and its 90-second claim has not expired. [Updates](Updates#another-host-holds-a-fresh-active-instance-heartbeat) |
 | `npm install` fails on a corporate network | TLS inspection. Read *Networks that inspect TLS* in the install guide **before** installing — it is the one environment problem that can leave an install unable to update |
 | The install came up without TimescaleDB | That is a **broken install from the first byte**, not a tuning gap. [rule 52](Business-Rules#rule-52) |
 | The update-source override appears ignored | The URL contained a disallowed character. The updater keeps the existing origin and **logs an error naming it** |
@@ -27,7 +27,6 @@ real explanation.
 
 | Symptom | Cause |
 |---|---|
-| A 403 on the next save after changing your password | Fixed by carrying the CSRF token across session rotation ([rule 61](Business-Rules#rule-61)). On an older build, reload the page |
 | Login works, then immediately fails, on a site that used to be HTTPS | A `Secure` cookie from the old origin is blocking the new one — browsers silently reject a non-secure `Set-Cookie` where a same-name `Secure` cookie exists, **including its deletion**. Polaris detects this and tells you to clear cookies for the site. That is the only reliable recovery |
 | An admin cannot be demoted | The **last-admin guard**. Promote someone else first |
 | A 403 creating a role or a user | The **no-escalation guard** — you cannot mint admin-equivalence you do not hold ([rule 48](Business-Rules#rule-48)) |
@@ -35,7 +34,7 @@ real explanation.
 | Header SSO does not log anyone in | The connector IP is not allowlisted. An **empty allowlist disables header login, failing closed**. The Test button reports the IP as Polaris sees it |
 | An SSO user landed on `readonly` | No group mapping matched. New users get `readonly` plus a review flag |
 | Azure group mapping matches nothing | Azure AD emits group **object IDs**. Map the GUIDs unless the IdP is configured to emit names |
-| "Too many login attempts" when clicking **Sign in with Microsoft**, before typing anything | Fixed in 0.9. The SAML redirect used to share the password form's budget of 10 attempts per 15 minutes per source address, so a site behind one NAT address could exhaust it and lose SSO as well. SSO sign-in now has its own allowance. On an older build, wait 15 minutes |
+| "Too many login attempts" when clicking **Sign in with Microsoft**, before typing anything | SSO sign-in has its own allowance, separate from the password form's budget of 10 attempts per 15 minutes per source address, so a site behind one NAT address that exhausts the password budget keeps SSO. If the SSO allowance itself is spent, wait for its window to pass |
 
 ### Passkeys
 
@@ -56,20 +55,13 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 | Symptom | Cause |
 |---|---|
 | A device reads **`passive`** | **No down automation covers it**, so Polaris renders no verdict ([rule 36](Business-Rules#rule-36)). Check your down rule's Devices step and [precedence](Automations#precedence--the-single-most-important-behaviour) |
-| A device went `down` when you **disabled** its polling | A build before 2026-08-28: `disabled` fell through to an unknown-method error and was recorded as a miss |
-| Two readings per cycle, misses counted twice | A build before 2026-09-10: batched ICMP chunks re-ran |
-| A device owed hours of answered polls before reading `up` | A build before the bucket ceiling. Recovery now costs **exactly the cap**, however long the outage ran |
-| The chart drew red → **green** → blue → green for one outage | Same vintage — an answered probe below the threshold read `down`, which the chart could not paint |
 | A switch reads `up` but passes no traffic | Check **`fortilinkStatus`** — the gate's view of its own FortiLink session. A dead session still answers every ping ([rule 59](Business-Rules#rule-59)) |
 | A whole site went `down` at once | [Dependency suppression](Dependency-Suppression) should have prevented that. Check whether the children resolve a parent at all — a child resolving **no** parent never suppresses, and fails silently |
-| A subtree came back mid-outage and re-alerted device by device | The `warning` release leak — a parent flapping through `warning` used to release its subtree. Fixed 2026-09-14 ([rule 38a](Business-Rules#rule-38)) |
 | The whole virtual fleet went `down` | vCenter unreachable must produce **skips**, not misses |
-| A "High packet loss" alert lands minutes **after** a recovery | The outage's own failures are excluded from the metric ([rule 29h](Business-Rules#rule-29)). On an older build, lower the rule's `ignoreAtOrAbove` ceiling |
 | The loss chart says *avg 40%* under an alert that fired at 8% | **Correct, and deliberate.** They answer different questions — only the caption's is reconstructible from the picture |
-| A stream is configured and collects nothing, while the tick reports success | **Compatibility vs capability** — the method is meaningful for the source but the collector does not exist. The validators now warn and the dropdowns stop offering it |
+| A stream is configured and collects nothing, while the tick reports success | **Compatibility vs capability** — the method is meaningful for the source but the collector does not exist. The validators warn and the dropdowns do not offer it |
 | Every FortiOS stream reports "API token not configured" | FortiManager **proxy mode with no FortiGate API token**. [Polling methods](Polling-Methods#the-fortimanager-proxy-gotcha) |
-| A per-asset REST credential was selected and nothing changed | On builds before 2026-09 the collector never read it — it persisted, resolved, rendered, and collected nothing forever |
-| One FortiGate answers 401 intermittently, the same token works on every other gate, and nothing shows in the gate's `httpsd` debug | FortiOS 7.6 has locked the Polaris server's IP out of API-key access. Run `diagnose debug application http_authd -1` on the gate: `No api-user found` followed by `Source IP … is locked out for API key access` confirms it. Something on the server is sending a bad or stale key, most often a per-asset REST credential still stored behind an "Inherit" stream (builds before 2026-10 hid it). Open the asset's Monitoring tab, set every stream's Credential to **Source default**, and save ([rule 96](Business-Rules#rule-96)) |
+| One FortiGate answers 401 intermittently, the same token works on every other gate, and nothing shows in the gate's `httpsd` debug | FortiOS 7.6 has locked the Polaris server's IP out of API-key access. Run `diagnose debug application http_authd -1` on the gate: `No api-user found` followed by `Source IP … is locked out for API key access` confirms it. Something on the server is sending a bad or stale key, most often a per-asset REST credential still stored behind an "Inherit" stream. Open the asset's Monitoring tab, set every stream's Credential to **Source default**, and save ([rule 96](Business-Rules#rule-96)) |
 | *"Polaris has paused requests to this FortiGate"* | The gate answered 401, and Polaris is leaving it alone so FortiOS's lockout can expire. The pause doubles on each consecutive 401, up to 30 minutes. Fix the token; the first non-401 answer ends the pause ([rule 96](Business-Rules#rule-96)) |
 | An agentless stream locks out the AD bind account | The anchors stamp **even on failure** precisely to bound this. Prefer a dedicated credential over the bind DN |
 
@@ -90,8 +82,7 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 | No summary email arrived after a quiet period | Nothing was **outstanding** (every held alert recovered) and nothing recurred past the threshold — the Settings modal's recent summaries show an `empty` row. Otherwise look for `quiet_time.summary_unroutable` (no email channel) or `quiet_time.summary_failed` in Events, fix the channel, and click **Resend** on the row under Settings → Global Quiet Times; a send time set on the quiet time delays the summary until then |
 | A held alert never showed a Resolved email | By design: the all-clear of an alert nobody was told about sends nothing. Once a summary has named it, its all-clear is sent |
 | Reminders arrived overnight despite quiet time | A **half-typed day contributes no window**. The step names the day and the overlapping hours |
-| A banded automation announced recovery twice | The band-level Resolved control was retired for exactly this; re-save the automation |
-| A typo in a dimension pattern saved and never matched | The **match cue** beside the field now says so — *"matches none … would never fire"* |
+| A typo in a dimension pattern saved and never matched | The **match cue** beside the field says so — *"matches none … would never fire"* |
 
 ---
 
@@ -110,7 +101,7 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 | Auto-monitor pinned nothing | The agent had not reported at that cycle. Self-healing — check after the next one |
 | Coordinates did not change after enabling `pullSnmpLocation` | `useSnmpLocationCoords` is the **separate** toggle that lets it drive coordinates |
 | RPC `-11` "no valid session" churn | Something called `/sys/logout`, or two processes share one api-key session |
-| After cancelling a run, **Discover** queues and then errors without polling anything | The cancel was not honoured within 2 minutes, so Polaris restarted the discovery process (an `integration.discover.force_exit` Event). The run's queue job is now released on the way out, and any job left behind by a process that died some other way is cleared within a couple of minutes. On an older build that job blocked every run for the integration for up to an hour; wait it out, or ask whoever runs the server to fail it |
+| After cancelling a run, **Discover** queues and then errors without polling anything | The cancel was not honoured within 2 minutes, so Polaris restarted the discovery process (an `integration.discover.force_exit` Event). The run's queue job is released on the way out, and any job left behind by a process that died some other way is cleared within a couple of minutes — retry after that |
 
 ---
 
@@ -121,11 +112,11 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 | Stuck at "enrolling", host crash-looping | The Linux `agent.conf` **ownership** trap. Reinstall. [Polaris Agent](Polaris-Agent#what-the-installer-does) |
 | Agent healthy, Application Map empty | The Linux **privilege tier**. Check the Privilege column for **"reinstall"** — a SYS_PTRACE-only unit collects nothing while looking fine |
 | TLS handshake fails after a certificate rotation | The pin. **Stage the new pin before rotating** |
-| Samples stopped, heartbeat continues | A hung filesystem or NIC in a collector — bounded by a 30-second guard on current builds |
-| An upgrade silently skipped a host | Look for `agent.upgrade_skipped`. On older builds this was completely silent |
+| Samples stopped, heartbeat continues | A hung filesystem or NIC in a collector — bounded by a 30-second guard |
+| An upgrade skipped a host | Look for `agent.upgrade_skipped` |
 | Upgrade all says "skipped (host down)" | Those hosts read **down** in monitoring, so the fan-out did not try them (`agent.upgrade_deferred`). They are picked up by the next fan-out once they are back, or use the host's own **Upgrade** button |
 | `agent.disconnected` alerts never clear | Use the **counterpart Event** reset — `agent.connected`, scoped to the same subject |
-| Onboarding ran clean, but SSH to a **domain-joined** endpoint times out | The firewall **profile**. Windows creates its OpenSSH rule for Private only, so a Domain-profile machine runs sshd nothing can reach. Re-run a current onboarding script — it settles that rule ([rule 76](Business-Rules#rule-76)). Check with `Get-NetFirewallRule -Name OpenSSH-Server-In-* \| Select Name,Enabled,Profile` |
+| Onboarding ran clean, but SSH to a **domain-joined** endpoint times out | The firewall **profile**. Windows creates its OpenSSH rule for Private only, so a Domain-profile machine runs sshd nothing can reach. Re-run the onboarding script — it settles that rule ([rule 76](Business-Rules#rule-76)). Check with `Get-NetFirewallRule -Name OpenSSH-Server-In-* \| Select Name,Enabled,Profile` |
 
 ---
 
@@ -134,8 +125,8 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 | Symptom | Cause |
 |---|---|
 | Every map tile says **"Access blocked"** | A reverse proxy is adding its own **`Referrer-Policy`**. OpenStreetMap blocks referer-less tile requests |
-| A region rename appeared to revoke people's scope | It carries the columns with it now. A **delete** deliberately does not, and writes a warning Event naming who holds a dangling assignment |
-| A tag stayed on thousands of assets under a dead region name | Retired-name sweeping is **not retroactive**. [rule 54](Business-Rules#rule-54) |
+| A region change appeared to revoke people's scope | A **rename** carries the assignments with it. A **delete** deliberately does not, and writes a warning Event naming who holds a dangling assignment |
+| A tag stayed on assets under a dead region name | Only names a rename or delete recorded as retired are swept; a `region:` tag that never matched a region (a typo, a hand-applied tag) is left alone on purpose. Remove it by hand. [rule 54](Business-Rules#rule-54) |
 | A nav entry is missing | Your role lacks the key. A typed URL for the same page bounces — the two gates are kept in lockstep |
 | The Conflict Queue widget looks empty | Without `discoveryConflicts` at Read the list is always empty. Check your role's grant before assuming there are no conflicts |
 
@@ -145,8 +136,8 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 
 | Symptom | Cause |
 |---|---|
-| A filesystem filled up while **Maintenance said "All capacity checks passed"** | The card grades the volumes it can measure, so a volume missing from **Storage volumes** reads as healthy rather than unknown. Fixed as of 2026-09: an unreachable path is now measured from its nearest reachable ancestor instead of being dropped |
-| **Storage volumes lists only the application volume** on a host whose database is on its own filesystem | PGDATA and its parents are mode `0700 postgres` and Polaris runs unprivileged, so it could not measure that filesystem. On an install predating the fix, `chmod o+x` on the PGDATA parent directories restores it — the data directory itself stays `0700` |
+| A filesystem filled up while **Maintenance said "All capacity checks passed"** | The card grades the volumes it can measure, so a volume missing from **Storage volumes** reads as healthy rather than unknown. An unreachable path is measured from its nearest reachable ancestor rather than dropped |
+| **Storage volumes lists only the application volume** on a host whose database is on its own filesystem | PGDATA and its parents are mode `0700 postgres` and Polaris runs unprivileged, so it cannot measure that filesystem. `chmod o+x` on the PGDATA parent directories lets it — the data directory itself stays `0700` |
 | The database volume fills with **`log/`, not data** | PostgreSQL's own server log. `log_rotation_size = 0` means no size cap, and a low `log_min_duration_statement` or `log_autovacuum_min_duration` can produce gigabytes a day. Compare `base/`, `pg_wal/` and `log/` before assuming the database grew |
 
 ---
@@ -165,4 +156,4 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
    from.
 5. **Read the rule.** If the behaviour looks deliberate, it probably is:
    [Business rules](Business-Rules) carries the reason, and most of them exist
-   because the obvious simpler version failed **silently**.
+   because the obvious simpler version fails **silently**.

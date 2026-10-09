@@ -46,7 +46,7 @@ decision the operator did not really make.
 | Ladder | Keys | Why |
 |---|---|---|
 | `none \| read` | `assetsProbe` | A probe dials the device and writes nothing in Polaris, so Read *is* the whole grant |
-| `none \| read \| write` | 20 keys — see the tables below | Full Read-Write was never routed. It means something only where it lifts an ownership filter or reserves a more dangerous act |
+| `none \| read \| write` | 20 keys — see the tables below | No route asks for Full Read-Write on them. It means something only where it lifts an ownership filter or reserves a more dangerous act |
 | `none \| write` | `serverSettingsData` | Nothing on the key is merely viewable. Its reads sit on the System key's floor, and everything it gates changes the database or hands over a copy of it |
 | all four | the 5 ownership keys and 7 named exceptions | Marked in the tables below |
 
@@ -54,13 +54,6 @@ The UI renders a dash instead of a radio for an unsupported cell. Stored values
 **clamp down, never up** — a `fullwrite` on a read-only key means "as much as
 possible", so rounding up would silently grant and resolving to `none` would
 silently revoke.
-
-> **The ladders narrowed sharply on 2026-09-22.** Seventeen keys carried a rung
-> no route or button ever asked for, and one key (`processControl`) had gated
-> nothing at all since process control was removed. Stored matrices were folded
-> onto the surviving top rung, so **no role lost a capability** — a role that
-> held Full Read-Write on, say, MIB Database now holds Read-Write, which is what
-> that grant always did.
 
 ---
 
@@ -90,9 +83,6 @@ the only thing that justifies the rung existing.
 | `assetMonitorSettings` | Full RW | monitor cadence and retention overrides at every tier, plus the auto-decommission thresholds. **Full RW = the outage simulation** |
 | `networkScan` | Full RW | [active-scan Discoveries](Network-Discovery) — **ownership** |
 
-> `processControl` was **removed** on 2026-09-22. Process/service control went
-> away with the Satellite-posture change and the key had gated nothing since.
-
 ### Monitoring configuration
 
 | Key | Top rung | |
@@ -103,12 +93,10 @@ the only thing that justifies the rung existing.
 | `firmware` | RW | the firmware repository for switches, access points and FortiGates. Read = see the Repository tab; Read-Write = upload / delete images, choose the primary and bind device logins (or, for FortiGates, an API token — including the discovering integration's). **Starting an upgrade is not on this key** — it needs Read-Write on **Assets** ([rule 87](Business-Rules#rule-87)) |
 | `deviceIcons` | Read-Write | operator-uploaded topology icons |
 
-> `manufacturerAliases` was **folded into `manufacturerProfiles`** on
-> 2026-09-23. An alias rewrites the manufacturer on every matching asset, and
-> that is what picks the device's profile — so editing aliases always meant
-> editing which profile applies. Each role kept the **lower** of its two old
-> levels; the built-in roles held both at the same level and did not change.
-> See [Rule 43](Business-Rules#rule-43).
+> The manufacturer alias map sits on **`manufacturerProfiles`**, not a key of
+> its own. An alias rewrites the manufacturer on every matching asset, and that
+> is what picks the device's profile — so editing aliases is editing which
+> profile applies. See [Rule 43](Business-Rules#rule-43).
 
 ### Discovery
 
@@ -151,43 +139,26 @@ the only thing that justifies the rung existing.
 | `serverSettingsData` | **Read-Write** (no Read) | backup, restore, **download**, queue mode, security tokens, restart, in-app updates |
 
 > `serverSettingsData` has no Read rung because **downloading a backup is not a
-> read** — the archive is the entire database. It sat at Read until 2026-09-22,
-> one rung below backup and restore, which made "may look at the Data tab" and
-> "may walk off with the database" the same grant. Every other read on that tab
-> rides the System key's floor.
+> read** — the archive is the entire database. A Read rung would make "may look
+> at the Data tab" and "may walk off with the database" the same grant. Every
+> other read on that tab rides the System key's floor.
 
 ### Who may change how people log in
 
-`authentication` was **split out of `serverSettingsSystem` on 2026-09-23**, and
+`authentication` is **its own key, separate from `serverSettingsSystem`**, and
 it is worth knowing why if you maintain custom roles.
 
-The System key had two rungs in use. Read-Write gated exactly twelve routes, all
-of them **identity-provider configuration**; Full Read-Write gated the other
-fifty-four — TLS, HA, tags, DNS, NTP, branding, capacity, the agent fleet. So
-repointing every login in the install at an identity provider of your choosing
-was a *lesser* grant than changing the logo, and the two could not be separated:
-you could not delegate branding without also delegating the login path.
+Identity-provider configuration repoints every login in the install at an
+identity provider of your choosing. That is not a lesser grant than changing
+the logo, and an admin delegating "some server settings" is almost never
+delegating the install's login path. Keeping the two apart lets you hand out
+TLS, HA, tags, DNS, NTP, branding, capacity and the agent fleet
+(`serverSettingsSystem`, which tops out at Read-Write like most keys) without
+handing out the login path. A role can see the sign-in configuration with
+`authentication` Read-Only; repointing it takes `authentication` Read-Write,
+which is a decision rather than a side effect.
 
-Now they are separate keys, and the System key tops out at Read-Write like most
-others.
-
-**What this did to existing roles.** Nobody gained anything:
-
-| Had | Gets | |
-|---|---|---|
-| `serverSettingsSystem` Full RW | `authentication` Read-Write | unchanged — it could already reach all of this |
-| `serverSettingsSystem` Read-Only | `authentication` Read-Only | unchanged |
-| `serverSettingsSystem` **Read-Write** | `authentication` **Read-Only** | **the one change** |
-
-That last row is the point of the split. A role on that rung could edit every
-identity provider, and an admin who granted it was almost certainly delegating
-"some server settings" rather than the install's login path. It keeps sight of
-the configuration and loses the ability to repoint it. **No built-in role is on
-that rung** — only a custom role someone set deliberately. To give it back,
-grant `authentication` Read-Write, which is now a decision rather than a side
-effect.
-
-Two neighbours deliberately stayed put. **IdP group mappings** remain on
+Two neighbours deliberately sit elsewhere. **IdP group mappings** remain on
 `users` Full Read-Write: a mapping decides which *role* an IdP group receives,
 which is granting authority rather than configuring authentication, and it is
 already the documented path to admin outside the last-admin guard. And the
@@ -216,18 +187,6 @@ self-service and an active sweep is IDS-visible.
 Create custom roles with **+ Add Role** in the **Roles** section. A role bound
 to any API token refuses deletion.
 
-### What changed on 2026-09-22
-
-The built-ins had drifted from their own descriptions, and two of them
-dead-ended a workflow. All of these are **grants**; nothing was taken away.
-
-| Role | Change | Why |
-|---|---|---|
-| `readonly`, `user` | `read` on map regions, discovery conflicts, maintenance, automations, manufacturer aliases and device icons | Both were documented as "read on everything a non-admin may read" and sat at `none` on six ordinary reads. The map-regions gap was visible: region pills rendered neutral grey because the colour lookup 403'd |
-| `networkadmin`, `assetsadmin` | the same six, raised only where they were below `readonly` | See the floor rule above |
-| `networkadmin` | `assets`, `deviceMap`, `maintenanceManagement` at write | It could **run** a Discovery but not adopt what answered, because adopting chains `assets: write`. It could edit region polygons but not save a topology layout, and reboot a device through an integration but not schedule the window around it |
-| `assetsadmin` | `credentials` at write (own rows), `integrations` at read | It could switch on SNMP/WinRM/SSH monitoring for an asset but not create the credential that monitoring needs. Its inventory largely comes from integrations it could not see |
-
 ---
 
 ## Two guards that cannot be talked around
@@ -250,8 +209,8 @@ the four places the grant could be minted:
   password you choose**
 - `PUT /users/:id/role` — promoting an existing account into it
 
-Before this, both `users:write` and `roles:write` were a **one-step path to full
-control of the install**, and the shortest one needed no existing account at
+Without it, both `users:write` and `roles:write` would be a **one-step path to
+full control of the install**, and the shortest one needs no existing account at
 all.
 
 > It is **not four-eyes.** A caller who already holds admin-equivalence is
@@ -260,8 +219,8 @@ all.
 >
 > It is the **mirror** of the last-admin guard, and neither replaces the other:
 > that one refuses to **demote** the last admin, this one refuses to **promote**
-> into the tier. The old "you cannot change your own role" checks were never
-> escalation guards — the escalation runs through somebody else's row.
+> into the tier. A "you cannot change your own role" check is not an escalation
+> guard — the escalation runs through somebody else's row.
 
 A request with **no role snapshot resolved counts as not admin**. It fails
 closed.
@@ -287,7 +246,7 @@ Two behaviours that exist because the columns hold **bare names with no foreign
 key**:
 
 - **A region rename carries these columns with it.** A rename that left them
-  behind revoked every scoped operator's region **in silence** — the tag still
+  behind would revoke every scoped operator's region **in silence** — the tag still
   present, matching no region, and every name-resolving consumer quietly reaching
   nobody.
 - **A region delete never strips them.** There is no new name to move an
@@ -304,8 +263,8 @@ role (Full Read-Write on both `users` and `roles`) sees and can acknowledge
 every alert, whatever region tags its user, role or SSO group carry. An admin
 in a regional IdP group picks up that group's tags without anyone meaning to
 narrow them, and the Active Alerts widget and the device's Alerts tab are not
-region-scoped — so a scoped admin used to see an alert there and then be told
-it was "not here any more" by its acknowledge card. Every other role is still
+region-scoped — so a scoped admin would see an alert there and then be told it
+was "not here any more" by its acknowledge card. Every other role is
 narrowed by its regions on the Alerts list and the acknowledge page.
 
 The Users list draws **both** dimensions under the username — regions in their

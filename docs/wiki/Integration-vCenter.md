@@ -11,7 +11,7 @@ too**, through the vCenter server rather than through the guest.
 |---|---|---|
 | Host | — | vCenter address |
 | Port | 443 | |
-| Verify TLS | **on** for new integrations | |
+| Verify TLS | **on** | |
 | Username | — | |
 | Password | — | secret |
 | Auto-Discovery Interval | 12 hours | 1–24 |
@@ -46,9 +46,8 @@ quick-stats, and datastore backing / host-mount information.
 | **ESXi host** | an Asset of type `hypervisor` |
 | **Datastore** | a current-state row, delete-replaced per run, with array-vendor identification from the NAA prefix |
 
-> **VMs are typed `server`, not `virtual_machine`.** The dedicated type was
-> retired in 2026-07; VM identity lives in the asset's virtualization blob and
-> its `vcenter-vm` source row. That matters because the VM-class behaviours —
+> **VMs are typed `server`.** VM identity lives in the asset's virtualization
+> blob and its `vcenter-vm` source row. That matters because the VM-class behaviours —
 > the dependency-layer stamp, the monitored sweep — gate on **ownership**
 > (`discoveredByIntegrationId`), **not on the type**, so vCenter never fights a
 > directory integration over a MAC-matched server it merely enriches.
@@ -67,7 +66,7 @@ vcenter-vm source row by external id (instance UUID, then moref)
 
 ### Guest filesystems are not a discovery fact
 
-Discovery stopped pulling per-VM guest filesystems in 2026-08 — one REST call
+Discovery does not pull per-VM guest filesystems — that would be one REST call
 per VM per run — because the **`vcenter` storage stream samples them every
 system-info pass** instead. They belong in the System tab's Storage table with
 history, pinning and alerting, rather than as a static table on the General tab.
@@ -166,7 +165,7 @@ one row per mounted datastore. That is where they have history, pinning and
 alerting. Each row also shows the datastore's **type**, **backing** array and
 **provisioned** size, and is flagged *(inaccessible)* when vCenter reports it
 so. The **VMs** placed on the host are on a **Virtual Machines** tab of their
-own. Neither appears on the General tab any more. A host that is not monitored
+own. Neither appears on the General tab. A host that is not monitored
 has no System tab content, so its datastores are not shown until monitoring is
 turned on.
 
@@ -188,8 +187,7 @@ See [Dependency suppression](Dependency-Suppression).
 
 ## The disappearance sweep
 
-vCenter was the first integration with a fleet-absence pass, and its rule is
-worth knowing precisely — the AD and Entra sweep is opt-in and judged
+vCenter's fleet-absence rule is worth knowing precisely — the AD and Entra sweep is opt-in and judged
 differently (by which integration *manages* the asset rather than by whether
 anything still claims it), so do not read one as the other. See
 [Integration-Directory](Integration-Directory).
@@ -242,8 +240,8 @@ source row**, not through `discoveredByIntegration` — which is also why the
 | Symptom | Look at |
 |---|---|
 | 401 after a successful login | the account is missing **inventory** permission, not the wrong password |
-| Every VM went `down` at once | that should be a *skip*, not a miss — check whether Polaris can reach vCenter at all, and which build you are on |
+| Every VM went `down` at once | that should be a *skip*, not a miss — check whether Polaris can reach vCenter at all |
 | A VM was decommissioned that still exists | it left the inventory **and** had no other source. Check for a filter change (which should retain it) and for an incomplete read |
 | VMs vanished after editing `vmInclude` | they should not — the pre-filter retention exists for exactly this. Check the run's Events |
-| No storage history on VMs | the `vcenter` storage stream is the source; the old per-VM guest-filesystem pull was removed |
+| No storage history on VMs | the `vcenter` storage stream is the source; discovery does not pull guest filesystems |
 | Datastore capacity looks stale | it is a **delete-replace per run** — check whether the host-snapshot half of the paired fetch failed |

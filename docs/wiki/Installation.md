@@ -32,12 +32,12 @@ map of it, plus the decisions you make before you start.
 | **Java** (only to code-sign agent binaries) | 25 | 25 |
 | **PgBouncer** (optional) | 1.21 | 1.21 |
 
-**Windows Server is not a supported Polaris host.** It was dropped because
-TimescaleDB publishes no Windows installer, and the Windows route was a manual
-copy of DLLs into the PostgreSQL tree — not something to stake a monitoring
-database's retention and restore path on. This does not affect Windows as a
-*monitored* estate: the agent still installs on Windows, WinRM polling is
-unchanged, and the Windows Server DHCP integration still works.
+**Windows Server is not a supported Polaris host.** TimescaleDB publishes no
+Windows installer, and the only Windows route is a manual copy of DLLs into the
+PostgreSQL tree — not something to stake a monitoring database's retention and
+restore path on. This does not affect Windows as a *monitored* estate: the
+agent installs on Windows, WinRM polling works, and the Windows Server DHCP
+integration is supported.
 
 **TimescaleDB is required, not a tuning option** ([rule 52](Business-Rules#rule-52)).
 Every install path provisions it and every install script *errors out* rather
@@ -72,7 +72,7 @@ processes — `web` (HTTP, schedulers, the updater), `monitor` (one or more
 replicas), `discovery`, `dash` (the wallboard) and a one-shot `migrate` —
 coordinated through a job queue in PostgreSQL. The setup scripts and the
 compose file install that layout; there is no single-process production unit
-any more (an old install moves across via `UPGRADING.md`). Read *The split-role
+(`UPGRADING.md` moves a single-process install across). Read *The split-role
 deployment* to understand or customise it, and *Sizing — connections multiply*
 before adding monitor replicas.
 

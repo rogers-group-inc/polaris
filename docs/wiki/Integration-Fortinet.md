@@ -25,7 +25,7 @@ older versions do not support bearer-token authentication.
 | API token | — | secret |
 | ADOM | `root` | |
 | Management interface | — | which interface name to read for a gate's management IP |
-| Verify SSL | **on** for new integrations | existing rows keep their stored value |
+| Verify SSL | **on** | |
 | Enabled / Enable auto-discovery | on | |
 | Auto-Discovery Interval | 12 hours | 1–24 |
 | Verbose logging | off | always last |
@@ -38,16 +38,16 @@ The transport settings are **not** on General. They sit at the top of the
 | **Direct Polling** | **off** (= proxy mode) | see below |
 | Parallel FortiGate Queries | 5 in direct mode | 1–20; proxy mode is always one at a time |
 | FortiGate API user / token | — | used by Direct Polling **and** by any monitoring stream set to REST API, in either mode. One token for the whole fleet; a gate with its own api-user takes a REST API credential on its stream instead |
-| Verify SSL certificate on FortiGates | **on** for new integrations | |
+| Verify SSL certificate on FortiGates | **on** | |
 
 > **Never configure Polaris to call `/sys/logout`.** It authenticates with a
 > predefined REST API Admin api-key, which per Fortinet's own best-practices
-> guide is permanent and **shares one session per user**. An hourly logout tore
-> that shared session out from under the split-role monitor and discovery
-> processes and produced RPC `-11` "no valid session" churn.
+> guide is permanent and **shares one session per user**. A logout tears that
+> shared session out from under the split-role monitor and discovery processes
+> and produces RPC `-11` "no valid session" churn.
 >
-> Also note FortiManager 7.4.7+ / 7.6.2+ removed `access_token` query-string
-> support; Polaris uses the Bearer header exclusively.
+> Also note FortiManager 7.4.7+ / 7.6.2+ does not accept an `access_token`
+> query string; Polaris uses the Bearer header exclusively.
 
 ### Proxy vs direct mode
 
@@ -127,8 +127,7 @@ are additionally mirrored into FMG's database.
 It is switched on **per device class**: FortiGates (the alias and interface
 comments), FortiSwitches (switch and port descriptions) and FortiAPs (the AP
 location field) each have their own toggle, so you can sync switches without
-touching APs. An integration saved before the split keeps its old single
-setting for every class until the Description Sync tab is next saved.
+touching APs.
 
 **FortiAP descriptions through FortiManager: use with caution.** This path is
 not implemented well. AP Manager keeps its own copy of each AP's location, and
@@ -222,8 +221,8 @@ How it works:
   archive, nothing is released, re-pushed or deleted, and the stored serial is
   deliberately not re-pointed while the conflict is pending.
 
-This closes a case that used to be **silent**: a same-name RMA swap matched by
-CIDR, matched the roster, and let the new chassis inherit every reservation row
+Without this check a same-name RMA swap would be **silent**: it matches by
+CIDR, matches the roster, and lets the new chassis inherit every reservation row
 of the old one — `pushStatus: "synced"` and dead device-side pointers included.
 
 A swap that keeps the device name (FortiManager's serial swap) also retires the

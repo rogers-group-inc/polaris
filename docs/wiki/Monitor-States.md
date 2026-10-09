@@ -15,7 +15,7 @@ most consequential pieces of behaviour in Polaris.
 `warning` is labelled **Missed** everywhere an operator reads it — the pill, the
 Status filter, the dependency tree's pips, the automation wizard's condition
 sentence — because the alert severities are also called warning / serious /
-critical, and a pill reading "Warning" looked like an alert had fired. The
+critical, and a pill reading "Warning" would look like an alert had fired. The
 stored value and the API still say `warning`.
 
 ---
@@ -100,23 +100,20 @@ Three consequences:
 
 ### Why the ceiling exists
 
-Both the cap and the always-`recovering`-on-an-answer branch landed in
-2026-09-01, and **both were bugs before that**:
+Both the cap and the always-`recovering`-on-an-answer branch are there to
+prevent a specific failure:
 
-- **Unbounded**, a device dark overnight at a 60-second cadence reached ~480
-  and then owed 480 answered polls — eight hours — before it could read `up`,
+- **Unbounded**, a device dark overnight at a 60-second cadence would reach ~480
+  and then owe 480 answered polls — eight hours — before it could read `up`,
   with its down alert repeating and escalating throughout.
 - **With the answered branch below the threshold test**, a probe that answered
-  while the bucket was still at or above N read `down`. The response-time chart
-  has no way to paint that on an OK point, so it fell through to plain green and
-  an outage drew red → **green** → blue → green: two recoveries where there was
-  one.
+  while the bucket was still at or above N would read `down`. The response-time
+  chart has no way to paint that on an OK point, so it would fall through to
+  plain green and an outage would draw red → **green** → blue → green: two
+  recoveries where there was one.
 
 One lucky packet still cannot clear the alert, because `recovering` is a
 **holding state** — the down alert is held until the device reads `up`.
-
-Pre-ceiling rows self-heal on their next probe of either outcome, and are swept
-once at boot.
 
 ---
 
@@ -129,11 +126,11 @@ that many probes have **answered**.
 So *"down after 3 missed, reset after 5 received"* describes the pill, not just
 the alert.
 
-Since the ceiling landed, the drain itself serves that count: the bucket locks
-at `max(missedPolls, recoveryPolls)` on the verdict miss, so an outage owes
-exactly your number of answers and no more. It was a **floor** before — which
-meant a deep outage out-drained the reset, and the number you wrote down stopped
-applying at exactly the outages it mattered most for.
+The drain itself serves that count: the bucket locks at
+`max(missedPolls, recoveryPolls)` on the verdict miss, so an outage owes exactly
+your number of answers and no more. It is a ceiling rather than a floor, so a
+deep outage cannot out-drain the reset — the number you write down applies to
+exactly the outages it matters most for.
 
 Only an `auto` reset counts. A **custom condition** reset is its own recovery
 authority ([rule 32a](Business-Rules#rule-32)), and layering a poll count under
@@ -231,8 +228,6 @@ outside the visible range clamp rather than widening the axis.
 | Symptom | Look at |
 |---|---|
 | Device reads `passive` | no down automation covers it — check the Devices step of your down rule, and [precedence](Automations#precedence--the-single-most-important-behaviour) |
-| Device went `down` when you disabled its polling | you are on a build before 2026-08-28; `responseTimePolling = disabled` used to record a miss |
-| Two readings per cycle, misses counted twice | you are on a build before 2026-09-10; the probe queue re-ran batched ICMP chunks |
 | Device reads `down` but is reachable from your desk | check which transport it is actually polled over, and whether that credential still works — the pill is about the *configured* transport, not about ICMP |
 | Switch reads `up` but is not passing traffic | check **`fortilinkStatus`** — the gate's view of its own FortiLink session. A dead session still answers every ping |
 | A whole site went `down` at once | check whether its parent gate is dark ([dependency suppression](Dependency-Suppression) should have prevented the storm) |
