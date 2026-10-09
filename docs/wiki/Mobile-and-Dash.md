@@ -22,9 +22,9 @@ is enabled, **Search · Alerts · Assets · Chat · More**, with **Networks** mo
 to the top of More. **Chat** is the same assistant as the desktop's chat
 button: the same saved conversations, lookups made with your own permissions,
 reports to download as CSV or Markdown, **History** and **New** in its top bar,
-and the same fresh chat after 30 minutes without activity (`/resume` goes back).
+and the same fresh chat after the integration's idle time (`/resume` goes back).
 Opening Chat continues the conversation you were just having on the desktop,
-if you used it in the last 30 minutes.
+if you used it within that idle time (30 minutes unless the integration says otherwise).
 The More tab holds the rest, top to bottom: the **Device Map** (sites and topology) and
 **Blocks**; **Events** (the audit log, last 7 days); the **Notification
 preference**; **Add to Home Screen** when the app is not installed yet; the

@@ -28,7 +28,7 @@ Verbatim from ARCHITECTURE.md → API Endpoints. Gate notation: `key:level`.
 
 ### AI Assistant — `assistant` function key (business rule 95; `src/api/routes/assistant.ts`, mounted at `/assistant`)
 > Mount requires `assistant=read`. **Session-only**: every handler calls `sessionUser()`, which answers 403 to a bearer-token caller (a token has no user to own a conversation). Every conversation route is owner-scoped in `assistantConversationService` — a foreign or malformed id answers **404**.
-- `GET    /assistant/status`                     — `{ enabled, integrations: [{ id, name, model }], retentionDays, efficiencyAdvisor, memory }`. Names and models only — never config. The widget mounts only when `enabled`.
+- `GET    /assistant/status`                     — `{ enabled, integrations: [{ id, name, model, displayName, idleResetMinutes }], retentionDays, efficiencyAdvisor, memory }`. Names, models and the idle window only — never config. The widget mounts only when `enabled`.
 - `GET    /assistant/conversations`              — The caller's conversations, newest first, with `messageCount`.
 - `POST   /assistant/conversations`              — Start one (`{ title? }`).
 - `GET    /assistant/conversations/:id`          — Messages (with `toolsUsed`, `stopped`) and report snapshots, plus `pending: true` while a turn is still being answered (possibly one started on the page the user just left).

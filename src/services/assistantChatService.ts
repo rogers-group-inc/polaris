@@ -108,7 +108,10 @@ export async function resolveAssistantIntegration(requestedId?: string): Promise
 }
 
 /** Public list for GET /assistant/status — names and models only, never config. */
-export async function listAssistantIntegrations(): Promise<Array<{ id: string; name: string; model: string; displayName: string }>> {
+/** Default minutes a conversation may sit idle before the chat window sets it aside (0 = never). */
+export const DEFAULT_IDLE_RESET_MINUTES = 30;
+
+export async function listAssistantIntegrations(): Promise<Array<{ id: string; name: string; model: string; displayName: string; idleResetMinutes: number }>> {
   const rows = await prisma.integration.findMany({
     where: { type: "llm", enabled: true },
     orderBy: { createdAt: "asc" },
@@ -122,6 +125,10 @@ export async function listAssistantIntegrations(): Promise<Array<{ id: string; n
       name: r.name,
       model: String(c.model || "auto"),
       displayName: String(c.displayName || "").trim() || "Assistant",
+      // How long the chat window waits before setting an idle conversation
+      // aside and starting fresh (the widget and the phone read it; 0 = never).
+      idleResetMinutes: typeof c.idleResetMinutes === "number" && c.idleResetMinutes >= 0
+        ? c.idleResetMinutes : DEFAULT_IDLE_RESET_MINUTES,
     };
   });
 }

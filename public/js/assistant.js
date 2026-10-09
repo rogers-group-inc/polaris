@@ -53,17 +53,34 @@
 
   // ─── Fresh chat after inactivity ────────────────────────────────────────────
   //
-  // A conversation nobody has touched for 30 minutes is set aside, not
-  // deleted: the window opens on a fresh chat, the old one stays in History,
-  // and /resume reopens it. "Touched" is this browser's last ask, answer or
-  // explicit open (LS.active) — a page load is not activity, or the check
-  // would reset its own clock. With no stamp yet nothing is set aside.
+  // A conversation nobody has touched for the integration's "Start a fresh
+  // chat after" minutes (idleResetMinutes, default 30, 0 = never) is set
+  // aside, not deleted: the window opens on a fresh chat, the old one stays in
+  // History, and /resume reopens it. "Touched" is this browser's last ask,
+  // answer or explicit open (LS.active) — a page load is not activity, or the
+  // check would reset its own clock. With no stamp yet nothing is set aside.
   var IDLE_RESET_MS = 30 * 60 * 1000;
 
-  /** Has a conversation last active at `lastActive` (ms, as stored) gone idle by `now`? Exported for tests. */
-  function idleExpired(lastActive, now) {
+  /** The idle window in ms from the answering integration; 0 = never set a chat aside. */
+  function idleResetMs() {
+    var i = currentIntegration();
+    var m = i && typeof i.idleResetMinutes === "number" ? i.idleResetMinutes : IDLE_RESET_MS / 60000;
+    return Math.max(0, m) * 60000;
+  }
+
+  /** Has a conversation last active at `lastActive` (ms, as stored) gone idle by `now`? `ms` 0 = never. Exported for tests. */
+  function idleExpired(lastActive, now, ms) {
+    var win = ms == null ? IDLE_RESET_MS : ms;
+    if (!win) return false;
     var t = Number(lastActive);
-    return t > 0 && now - t >= IDLE_RESET_MS;
+    return t > 0 && now - t >= win;
+  }
+
+  /** "30 minutes" / "1 hour" / "90 minutes" — for the note that says why the chat is fresh. Exported for tests. */
+  function idleWindowText(ms) {
+    var m = Math.round(ms / 60000);
+    if (m % 60 === 0 && m >= 60) return (m / 60) + (m === 60 ? " hour" : " hours");
+    return m + (m === 1 ? " minute" : " minutes");
   }
 
   function markActive() { lsSet(LS.active, String(Date.now())); }
@@ -314,7 +331,8 @@
       var c = (r && r.conversations || [])[0];
       if (!c || !c.messageCount || c.id === S.convId) return false;
       var at = Date.parse(c.updatedAt);
-      if (!(Date.now() - at >= 0 && Date.now() - at < IDLE_RESET_MS)) return false;
+      var win = idleResetMs() || Infinity; // 0 = never set aside, so any newer conversation is followed
+      if (!(Date.now() - at >= 0 && Date.now() - at < win)) return false;
       if (Number(lsGet(LS.active)) > at) return false;
       S.messages = [];
       await loadConversation(c.id);
@@ -908,12 +926,13 @@
    */
   function idleResetIfDue() {
     if (!S.convId || S.busy || S.waiting) return false;
-    if (!idleExpired(lsGet(LS.active), Date.now())) return false;
+    var win = idleResetMs();
+    if (!idleExpired(lsGet(LS.active), Date.now(), win)) return false;
     var prev = { id: S.convId, title: S.title || "" };
     lsSet(LS.resume, JSON.stringify(prev));
     lsSet(LS.active, null);
     resetToNew();
-    addLocalNote("Started a fresh chat after 30 minutes without activity. Your previous conversation" +
+    addLocalNote("Started a fresh chat after " + idleWindowText(win) + " without activity. Your previous conversation" +
       (prev.title && prev.title !== "New conversation" ? " (“" + prev.title + "”)" : "") +
       " is saved — type `/resume` to pick it up again, or open History.");
     return true;
@@ -1599,6 +1618,7 @@
     COMMANDS: COMMANDS,
     _idleExpired: idleExpired,
     _IDLE_RESET_MS: IDLE_RESET_MS,
+    _idleWindowText: idleWindowText,
     parseSlash: parseSlash,
     matchCommands: matchCommands,
     readEventStream: readEventStream,

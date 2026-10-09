@@ -112,6 +112,21 @@ describe("mobile Chat tab", () => {
     expect(localStorage.getItem("polaris-assistant-resume")).toBeNull();
   });
 
+  it("follows the integration's idle window: 10 minutes sets aside an 11-minute-idle chat; 0 never does", async () => {
+    let t = setup({ enabled: true, integrations: [{ id: "i1", name: "Foundry", idleResetMinutes: 10 }] });
+    localStorage.setItem("polaris-assistant-conv", "c-old");
+    localStorage.setItem("polaris-assistant-active", String(Date.now() - 11 * 60 * 1000));
+    await t.spec.render(t.body, {});
+    expect(g.api.assistant.getConversation).not.toHaveBeenCalled();
+    expect(t.body.textContent).toMatch(/fresh chat after 10 minutes/);
+
+    t = setup({ enabled: true, integrations: [{ id: "i1", name: "Foundry", idleResetMinutes: 0 }] });
+    localStorage.setItem("polaris-assistant-conv", "c-old");
+    localStorage.setItem("polaris-assistant-active", String(Date.now() - 600 * 60 * 1000));
+    await t.spec.render(t.body, {});
+    expect(g.api.assistant.getConversation).toHaveBeenCalledWith("c-old");
+  });
+
   it("reopens a recently active conversation as it was", async () => {
     const { spec, body } = setup({ enabled: true, integrations: [{ id: "i1", name: "Foundry" }] });
     localStorage.setItem("polaris-assistant-conv", "c-old");
