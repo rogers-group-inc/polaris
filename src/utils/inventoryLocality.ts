@@ -63,9 +63,69 @@ export function inventorySwitchAttribution(
  * transports at once.
  */
 export const INVENTORY_QUERY_FORMAT =
-  "mac|ip|hostname|host|os|type|os_version|hardware_vendor|interface" +
+  "mac|ipv4_address|ip|hostname|host|os_name|os|type|os_version|hardware_vendor|detected_interface|interface" +
   "|switch_fortilink|fortiswitch|fortiswitch_id|switch_port|fortiswitch_port_id|fortiswitch_port_name" +
-  "|ap_name|fortiap|user|detected_user|is_online|last_seen";
+  "|ap_name|fortiap|user|detected_user|unauth_user|is_online|last_seen";
+
+/** One parsed `user/device/query` client row — the DiscoveredInventoryDevice shape. */
+export interface ParsedInventoryClient {
+  device: string;
+  macAddress: string;
+  ipAddress: string;
+  hostname: string;
+  os: string;
+  osVersion: string;
+  hardwareVendor: string;
+  interfaceName: string;
+  switchName: string;
+  switchPort: string;
+  apName: string;
+  user: string;
+  isOnline: boolean;
+  lastSeen: string;
+}
+
+const str = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : String(v));
+
+/**
+ * Parse one raw `user/device/query` client row, for both the FMG-proxied and
+ * the standalone-FortiGate collectors. Field names vary by FortiOS build, and
+ * a name this parser doesn't know reads as EMPTY rather than failing — which
+ * is how every row's IP went missing on 7.x (prod 2026-10-10): the build
+ * reports `ipv4_address`, the parser read only `ip`, and with no address the
+ * detected-device claim — business rule 101's strongest — never fired. So each
+ * field takes the 7.x name first and the older one after:
+ *
+ *   address   ipv4_address → ip
+ *   OS        os_name → os → type
+ *   interface detected_interface → interface
+ *   user      user → detected_user → unauth_user
+ *
+ * Returns null for a row with neither MAC nor address, or no `last_seen`.
+ */
+export function parseInventoryClient(client: Record<string, any>, device: string): ParsedInventoryClient | null {
+  const mac = str(client.mac);
+  const ip = str(client.ipv4_address) || str(client.ip);
+  if (!mac && !ip) return null;
+  if (!client.last_seen) return null;
+  const sw = inventorySwitchAttribution(client);
+  return {
+    device,
+    macAddress: mac,
+    ipAddress: ip,
+    hostname: str(client.hostname) || str(client.host),
+    os: str(client.os_name) || str(client.os) || str(client.type),
+    osVersion: str(client.os_version),
+    hardwareVendor: str(client.hardware_vendor),
+    interfaceName: str(client.detected_interface) || str(client.interface),
+    switchName: sw.switchName,
+    switchPort: sw.switchPort,
+    apName: str(client.ap_name) || str(client.fortiap),
+    user: str(client.user) || str(client.detected_user) || str(client.unauth_user),
+    isOnline: !!client.is_online,
+    lastSeen: new Date(Number(client.last_seen) * 1000).toISOString(),
+  };
+}
 
 /** Key shape shared by the index and the predicate: `MAC|device-lower`. */
 function macDeviceKey(mac: string, device: string): string {
