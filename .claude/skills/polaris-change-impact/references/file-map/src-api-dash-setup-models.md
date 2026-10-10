@@ -7,7 +7,7 @@ A slice of the repository tree (`polaris/` is the root; `│` continuation bars 
 ├── src/
 │   ├── index.ts                     # Entry point
 │   ├── config.ts                    # App config / env vars
-│   ├── db.ts                        # Prisma client singleton
+│   ├── db.ts                        # Prisma client singleton (+ extensions: secret-at-rest, manufacturer/OS normalize, enforceOperatorOverrides — hostname pin, blank IP pin, ipOverride, ipCleared, primary-address pin)
 │   ├── utils/imageSize.ts           # pngSize / jpegSize / imageSize — pixel dimensions parsed from the file header (PNG IHDR; the JPEG marker chain walked to the first real SOF, skipping DHT/JPG/DAC inside the same marker range). Needed by brandLogoService to place the accent overlay: preserveAspectRatio can fit an image into a box but can't say what box the image already is. WebP deliberately returns null (resvg can't embed it, so there's no accent path anyway). Never throws.
 │   ├── utils/imageMagic.ts          # detectImageMagic(buf) → ".png" | ".jpg" | ".webp" | null from magic bytes. Extracted from the branding-logo upload route; also used by appIconService to re-sniff on read (never trust the extension, and resvg can't decode an embedded WebP).
 │   ├── utils/publicUrl.ts           # Parse POLARIS_PUBLIC_URL → public-facing port (nginx fronts TLS)

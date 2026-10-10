@@ -1,6 +1,6 @@
 # Business rules
 
-Polaris carries **100 rule numbers**, 1 to 100: 98 rules in force plus rule 80a,
+Polaris carries **102 rule numbers**, 1 to 102: 100 rules in force plus rule 80a,
 with 81 and 88 not in use. Each one records a decision *and* the reasoning
 behind it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
@@ -1687,3 +1687,65 @@ list*. In practice:
   setting works as [rule 70](#rule-70) does for directories. A run that stopped
   part way (a failed page, a page or record limit, a repeated page) or an empty
   read is never treated as deletions.
+
+### Rule 101
+
+**The address a device is using right now beats the address it was handed. An
+online detected device beats every DHCP binding, a reservation the device holds
+beats a leftover lease, and a wired card beats a wireless one.**
+
+A FortiGate can give Polaris several candidate addresses for one device in a
+single discovery run: an unexpired lease on a site it left, a reservation and a
+lease on the same gate, the gate's own detected-device entry, and one of each
+per network card. Polaris ranks every candidate and uses the winner as the
+asset's IP address (the one monitoring probes) and its learned location:
+
+1. **What the gate sees now.** A detected-device entry the gate reports as
+   online wins outright: the FortiGate builds it from traffic it is seeing from
+   that MAC. Next comes a DHCP binding the gate confirms is held, then a
+   detected-device entry for a client that has gone offline, then a
+   reservation nobody is holding.
+2. **Seen within the last hour.** A candidate seen recently beats an older
+   one before anything below is compared, so a laptop that comes off its dock
+   moves to its Wi-Fi address instead of staying on a wired lease it no longer
+   uses.
+3. **Wired over wireless.** Judged from the FortiSwitch port or FortiAP the
+   gate attributes the device to, the lease's SSID, or the adapter type Intune
+   reports for that MAC.
+4. **Reservation over lease.** A reservation is an address someone chose.
+5. **Most recent sighting, then the latest lease expiry.**
+
+A detected-device entry only counts when the gate can show the device is behind
+it (a FortiSwitch or FortiAP attribution, or an ARP entry). A user connecting
+*through* a gate over ZTNA never sets the address. FortiGates, FortiSwitches
+and FortiAPs keep their management IP and are not ranked this way.
+
+### Rule 102
+
+**An address belongs to a network card, a card can have several, and you
+choose which pair the device is monitored on.**
+
+An asset's **Addresses** list shows each MAC with the IP addresses bound to
+it. A FortiGate adds an address there while it reports the binding as current:
+a DHCP lease or reservation the device is holding, the gate's detected-device
+entry for a device that is online, or an ARP entry (which is how a card's
+secondary addresses appear). When the gate stops reporting a binding, the next
+successful read of that gate removes it. Addresses typed in by hand and the
+ones a monitored device reports from its own interface table are never changed
+by discovery.
+
+The **primary** pair is the one monitoring probes. Polaris picks it
+([rule 101](#rule-101)) unless you pin one with **Set as primary**:
+
+- **A pin holds.** Discovery does not change a pinned address. If the device
+  stops answering on it, the asset shows down and the address is flagged
+  *not seen since*.
+- **A pin follows a renumbered card.** If the pinned address has not been seen
+  for a day and that card now has exactly one recent address, the pin moves
+  to it and an event records the move.
+- **One pin at a time.** Pinning a pair replaces an address typed in Edit, and
+  typing an address (or clearing it, or *Revert to discovered IP*) releases
+  the pin. Removing the pinned MAC releases it too.
+- FortiGates, FortiSwitches and FortiAPs are monitored on their management IP
+  and cannot be pinned. Port MACs from a device's interface table are shown
+  collapsed and are never a primary.

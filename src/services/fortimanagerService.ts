@@ -1978,6 +1978,11 @@ async function fmgStepDhcpMonitor(ctx: FmgDeviceCtx): Promise<void> {
         const existingIdx = localDhcpEntries.findIndex((e) => e.ipAddress === leaseIp);
         if (existingIdx >= 0) {
           localDhcpEntries[existingIdx].seenLeased = true;
+          // The CMDB row can't say which medium the client is holding it on;
+          // the live lease can, and the address ranking (business rule 101)
+          // prefers a wired claim over a wireless one.
+          if (lease.access_point) localDhcpEntries[existingIdx].accessPoint ??= lease.access_point;
+          if (lease.ssid) localDhcpEntries[existingIdx].ssid ??= lease.ssid;
           continue;
         }
         if (!leaseIface) {

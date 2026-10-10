@@ -379,3 +379,71 @@ export function statusAllowsMonitoring(status: unknown): boolean {
   if (typeof status !== "string") return true;
   return !(UNMONITORABLE_STATUSES as string[]).includes(status);
 }
+
+/**
+ * How long a pinned primary address may go unreported before the pin is
+ * allowed to FOLLOW its card to a new address (business rule 102).
+ */
+export const PIN_FOLLOW_STALE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Outcome of applying the operator's primary-address pin
+ * (Asset.primaryAddressMac / primaryAddressIp) to a pending Asset write.
+ *
+ *   "none"       — no pin, the write doesn't stage ipAddress, or it touches
+ *                  the pin columns itself (the pin routes — authoritative).
+ *   "reasserted" — the write is rewritten back to the pinned IP. The pin
+ *                  holds even when the card has gone quiet: an asset that
+ *                  stops answering on its pinned address SHOULD show down.
+ *   "followed"   — the pinned IP has not been seen for PIN_FOLLOW_STALE_MS
+ *                  and the pinned card has exactly ONE address seen within
+ *                  that window: a renumber. The pin moves to it in the same
+ *                  write (`primaryAddressIp` is staged too).
+ */
+export type PrimaryAddressPinOutcome =
+  | { action: "none" }
+  | { action: "reasserted"; ip: string }
+  | { action: "followed"; fromIp: string; ip: string };
+
+/**
+ * Apply the primary-address pin. `card` is every address row the asset holds
+ * for the pinned MAC (any source), with its last-seen time. Mutates `data`.
+ */
+export function applyPrimaryAddressPin(
+  data: Record<string, unknown>,
+  pin: { mac: string | null | undefined; ip: string | null | undefined },
+  card: ReadonlyArray<{ ip: string; lastSeen: Date }>,
+  nowMs: number = Date.now(),
+): PrimaryAddressPinOutcome {
+  if (!data || typeof data !== "object") return { action: "none" };
+  if (!("ipAddress" in data)) return { action: "none" };
+  if ("primaryAddressIp" in data || "primaryAddressMac" in data) return { action: "none" };
+  if (!pin.mac || !pin.ip) return { action: "none" };
+
+  const cutoff = nowMs - PIN_FOLLOW_STALE_MS;
+  const pinnedRow = card.find((r) => r.ip === pin.ip);
+  const pinnedStale = !pinnedRow || pinnedRow.lastSeen.getTime() < cutoff;
+  const recentOthers = card.filter((r) => r.ip !== pin.ip && r.lastSeen.getTime() >= cutoff);
+
+  let target = pin.ip;
+  let followed = false;
+  if (pinnedStale && recentOthers.length === 1) {
+    target = recentOthers[0]!.ip;
+    followed = true;
+    data.primaryAddressIp = target;
+  }
+
+  const v = data.ipAddress;
+  if (v !== null && typeof v === "object" && "set" in (v as Record<string, unknown>)) {
+    (v as Record<string, unknown>).set = target;
+  } else {
+    data.ipAddress = target;
+  }
+  const src = data.ipSource;
+  if (src !== null && typeof src === "object" && "set" in (src as Record<string, unknown>)) {
+    (src as Record<string, unknown>).set = "pinned";
+  } else {
+    data.ipSource = "pinned";
+  }
+  return followed ? { action: "followed", fromIp: pin.ip, ip: target } : { action: "reasserted", ip: target };
+}

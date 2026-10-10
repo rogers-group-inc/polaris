@@ -24,7 +24,7 @@
  *     covers clients on the gate's own LAN ports (no managed switch/AP), and
  *     it is deliberately INDEPENDENT evidence: a DHCP lease can't corroborate
  *     an inventory row, because the inventory row's own job (in
- *     `scoreDhcpClaim`) is to corroborate the lease — a stale lease plus the
+ *     `scoreAddressClaim`) is to corroborate the lease — a stale lease plus the
  *     ZTNA entry it left behind must not vouch for each other.
  *
  * Absence of ARP is never negative evidence on its own (the read fails

@@ -1653,6 +1653,7 @@ async function _handleMacDeleteClick(e) {
   // asset comes back on the next discovery run.
   var ok = await showConfirm(
     'Remove ' + what + ' from this asset?\n\n' +
+    'The IP addresses discovery recorded under it are removed too, and a primary address pinned to it is released. ' +
     'If the network reports this address against the asset again, discovery will re-add it.'
   );
   if (!ok) return;
@@ -5804,8 +5805,9 @@ function _assetGeneralTabHTML(a, sources) {
       // that aren't published through one. Mounted directly under the address
       // they qualify: "this device answers on 203.0.113.10, via that gate".
       '<div id="asset-vip-mount-' + escapeHtml(a.id) + '" style="display:contents"></div>' +
-      viewRow("MAC Address", a.macAddress, true, false, true) +
-      macAddressesViewHTML(a.macAddresses, a.id) +
+      // Every MAC with the IPs bound to it, the primary pair starred
+      // (business rule 102) — replaced the separate MAC Address / All MACs rows.
+      addressesViewHTML(a) +
       viewRow("Asset Tag", a.assetTag) +
       viewRow("Serial Number", a.serialNumber, false, false, true) +
       (a.macAddress && !a.manufacturer
@@ -18529,7 +18531,9 @@ function ipViewRow(asset) {
     return '<div class="detail-row"><span class="detail-label">IP Address</span>' +
       '<span class="detail-value mono">' + noIpInner + '</span></div>';
   }
-  var src = asset.ipSource
+  // The pinned pair names its own provenance; "pinned" as a source label
+  // beside the pinned marker would say it twice.
+  var src = asset.ipSource && !asset.primaryAddressIp
     ? '<span style="font-size:0.75rem;color:var(--color-text-tertiary);margin-left:8px">' + escapeHtml(asset.ipSource) + '</span>'
     : '';
   // Operator IP pin marker (Asset.ipOverride) — mirrors the hostname
@@ -18538,8 +18542,279 @@ function ipViewRow(asset) {
   var pin = asset.ipOverride
     ? '<span style="font-size:0.75rem;color:var(--color-warning,#ffc107);margin-left:8px" title="Manually overridden — discovery reporting this address releases the pin; a different address raises a conflict">overridden</span>'
     : '';
-  return '<div class="detail-row"><span class="detail-label">IP Address</span>' +
-    '<span class="detail-value mono">' + ipCellHTML(asset) + src + pin + blankPin + '</span></div>';
+  var primaryPin = primaryAddressPinHTML(asset);
+  // The primary ADDRESS is a pair (business rule 102): the IP monitoring
+  // probes and the card it is on. The asset's other addresses are listed per
+  // MAC in the Addresses row below, so the +N hover the table cell carries
+  // would only repeat them here.
+  var mac = primaryAddressMac(asset);
+  var ipHTML = asset.ipAddress
+    ? '<span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(asset.ipAddress) + '">' + escapeHtml(asset.ipAddress) + '</span>'
+    : ipCellHTML(asset);
+  var onMac = mac
+    ? '<div style="font-size:0.72rem;color:var(--color-text-tertiary);line-height:1.3">on <span class="copy-cell" title="Click to copy" data-copy="' +
+        escapeHtml(mac) + '">' + escapeHtml(mac) + '</span></div>'
+    : '';
+  return '<div class="detail-row"><span class="detail-label">Primary Address</span>' +
+    '<span class="detail-value mono">' + ipHTML + src + pin + blankPin + primaryPin + onMac + '</span></div>';
+}
+
+// ─── Per-MAC address list + the primary-address pin (business rule 102) ─────
+// An asset's addresses are its associatedIps rows, each bound to a MAC — one
+// MAC can carry several (secondary addresses). The primary is the pair whose IP
+// is Asset.ipAddress: the operator's pin when set, otherwise what discovery
+// chose (rule 101).
+
+var _ADDRESS_GROUPS_VISIBLE = 3;
+var _PIN_STALE_MS = 24 * 60 * 60 * 1000; // mirrors PIN_FOLLOW_STALE_MS (src/utils/assetInvariants.ts)
+
+function _assetAddressRows(asset) {
+  return Array.isArray(asset.associatedIps) ? asset.associatedIps : [];
+}
+
+// The MAC the primary IP is on: the pin's, else the address row holding the
+// primary IP, else the identity MAC.
+function primaryAddressMac(asset) {
+  if (asset.primaryAddressMac) return asset.primaryAddressMac;
+  if (!asset.ipAddress) return null;
+  var row = _assetAddressRows(asset).find(function (r) { return r.ip === asset.ipAddress && r.mac; });
+  if (row) return row.mac;
+  return asset.macAddress || null;
+}
+
+// Fortinet infrastructure is monitored on its management IP; the server
+// refuses a pin there, so the browser doesn't offer one.
+function _assetAddressPinnable(asset) {
+  var infra = asset.assetType === "firewall" || asset.assetType === "switch" || asset.assetType === "access_point";
+  return !(infra && asset.fortinetTopology);
+}
+
+function primaryAddressPinHTML(asset) {
+  if (!asset.primaryAddressIp) return '';
+  var who = asset.primaryAddressPinnedBy ? ' by ' + asset.primaryAddressPinnedBy : '';
+  var when = asset.primaryAddressPinnedAt ? ' on ' + formatDate(asset.primaryAddressPinnedAt) : '';
+  var html = '<span style="font-size:0.75rem;color:var(--color-warning,#ffc107);margin-left:8px" title="' +
+    escapeHtml('Pinned to ' + asset.primaryAddressIp + ' on ' + asset.primaryAddressMac + who + when +
+      '. Discovery will not change it; if this card renumbers to a single new address, the pin follows.') +
+    '">pinned</span>';
+  // A pin that has gone quiet is held on purpose (the asset should show down),
+  // so it is surfaced rather than silently moved.
+  var row = _assetAddressRows(asset).find(function (r) { return r.ip === asset.primaryAddressIp && r.mac === asset.primaryAddressMac; });
+  var lastMs = row && row.lastSeen ? Date.parse(row.lastSeen) : NaN;
+  if (!row || (isFinite(lastMs) && Date.now() - lastMs > _PIN_STALE_MS)) {
+    html += '<span style="font-size:0.75rem;color:var(--color-danger,#ef4444);margin-left:8px" title="' +
+      escapeHtml(row ? 'No gate has reported this pinned address since ' + formatDate(row.lastSeen) : 'This pinned address is no longer on the asset\'s address list') +
+      '">&#9888; not seen' + (row ? ' since ' + escapeHtml(formatDate(row.lastSeen)) : '') + '</span>';
+  }
+  if (canManageAssets()) {
+    html += ' <button type="button" class="btn btn-sm btn-secondary primary-address-unpin" style="margin-left:6px;padding:1px 6px;font-size:0.72rem" ' +
+      'data-asset-id="' + escapeHtml(asset.id) + '" title="Release the pin — the address goes back to what discovery reports">Unpin</button>';
+  }
+  return html;
+}
+
+function formatAddressSource(source) {
+  switch (source) {
+    case "device-inventory":    return "Detected device";
+    case "dhcp-lease":          return "DHCP lease";
+    case "dhcp-reservation":    return "DHCP reservation";
+    case "arp":                 return "ARP";
+    case "monitor-system-info": return "Interface";
+    case "manual":              return "Manual";
+    default: return source || "";
+  }
+}
+
+function _addressIpLineHTML(asset, r, isPrimary) {
+  var bits = [];
+  var label = formatAddressSource(r.source);
+  if (label) bits.push(escapeHtml(label));
+  if (r.device) bits.push(escapeHtml(r.device));
+  if (r.interfaceName) bits.push(escapeHtml(r.interfaceName));
+  if (r.medium) bits.push(r.medium === "wired" ? "wired" : r.medium === "wireless" ? "wireless" : escapeHtml(r.medium));
+  if (r.lastSeen) bits.push(formatDate(r.lastSeen));
+  // The middle track is always present (badge, button, or empty) so the
+  // provenance column lines up down the list.
+  var middle = isPrimary
+    ? '<span class="address-primary-badge" title="The address monitoring probes">&#9733; Primary</span>'
+    : (r.mac && canManageAssets() && _assetAddressPinnable(asset)
+      ? '<button type="button" class="btn btn-sm btn-secondary primary-address-set" ' +
+          'data-asset-id="' + escapeHtml(asset.id) + '" data-mac="' + escapeHtml(r.mac) + '" data-ip="' + escapeHtml(r.ip) + '" ' +
+          'title="Monitor this asset on ' + escapeHtml(r.ip) + '">Set as primary</button>'
+      : '<span></span>');
+  var meta = bits.join(' &middot; ');
+  return '<div class="address-ip-line">' +
+    '<code class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(r.ip) + '">' + escapeHtml(r.ip) + '</code>' +
+    middle +
+    // The tooltip carries the whole line; the cell truncates.
+    '<span class="address-meta" title="' + meta.replace(/&middot;/g, '·').replace(/"/g, '&quot;') + '">' + meta + '</span>' +
+  '</div>';
+}
+
+// One MAC and the addresses under it. `m` is the MAC entry (may be a synthetic
+// one for a MAC that only appears on address rows); `ips` its address rows.
+function _addressGroupHTML(asset, m, ips, primaryIp, primaryMac) {
+  var sourceLabel = m.source ? formatMacSource(m.source) : '';
+  var head = '<div class="address-mac-line">' +
+      '<code class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(m.mac) + '">' + escapeHtml(m.mac) + '</code>' +
+      (m.source ? macDeleteButtonHTML(asset.id, m) : '') +
+      '<span class="address-meta">' +
+        (sourceLabel ? escapeHtml(sourceLabel) : '') +
+        (m.lastSeen ? (sourceLabel ? ' &middot; ' : '') + formatDate(m.lastSeen) : '') +
+      '</span>' +
+    '</div>';
+  var lines = ips.map(function (r) {
+    return _addressIpLineHTML(asset, r, r.ip === primaryIp && (!primaryMac || r.mac === primaryMac));
+  }).join('');
+  if (!ips.length) lines = '<div class="address-empty">no address reported</div>';
+  return '<div class="address-group">' + head + lines + '</div>';
+}
+
+function addressesViewHTML(asset) {
+  var macs = Array.isArray(asset.macAddresses) ? asset.macAddresses : [];
+  var rows = _assetAddressRows(asset);
+  if (macs.length === 0 && rows.length === 0) return '';
+
+  var primaryIp = asset.ipAddress || null;
+  var primaryMac = asset.primaryAddressMac || null;
+  var singles = macs.filter(function (m) { return !m.macEnd; });
+  var ranges = macs.filter(function (m) { return !!m.macEnd; });
+
+  // Group address rows by MAC. A row whose MAC is not on the MAC list (an
+  // interface-scrape IP for a port inside a collapsed range) still gets its
+  // own group so no address is hidden.
+  var byMac = {};
+  var noMac = [];
+  rows.forEach(function (r) {
+    if (!r.mac) { noMac.push(r); return; }
+    (byMac[r.mac] = byMac[r.mac] || []).push(r);
+  });
+  var groups = singles.map(function (m) { return { m: m, ips: byMac[m.mac] || [] }; });
+  var listed = {};
+  singles.forEach(function (m) { listed[m.mac] = true; });
+  Object.keys(byMac).forEach(function (mac) {
+    if (!listed[mac]) groups.push({ m: { mac: mac }, ips: byMac[mac] });
+  });
+  // Within a group: the primary first, then freshest.
+  groups.forEach(function (g) {
+    g.ips.sort(function (a, b) {
+      var ap = a.ip === primaryIp ? 1 : 0, bp = b.ip === primaryIp ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return (Date.parse(b.lastSeen || 0) || 0) - (Date.parse(a.lastSeen || 0) || 0);
+    });
+  });
+  // Groups: the one holding the primary first, then those with addresses,
+  // then freshest MAC.
+  groups.sort(function (a, b) {
+    var ap = a.ips.some(function (r) { return r.ip === primaryIp; }) ? 1 : 0;
+    var bp = b.ips.some(function (r) { return r.ip === primaryIp; }) ? 1 : 0;
+    if (ap !== bp) return bp - ap;
+    if (!!a.ips.length !== !!b.ips.length) return b.ips.length ? 1 : -1;
+    return (Date.parse(b.m.lastSeen || 0) || 0) - (Date.parse(a.m.lastSeen || 0) || 0);
+  });
+
+  var shown = groups.slice(0, _ADDRESS_GROUPS_VISIBLE);
+  var hidden = groups.slice(_ADDRESS_GROUPS_VISIBLE);
+  var html = shown.map(function (g) { return _addressGroupHTML(asset, g.m, g.ips, primaryIp, primaryMac); }).join('');
+
+  if (noMac.length) {
+    html += '<div class="address-group">' +
+      '<div class="address-mac-line"><span class="address-meta">No MAC</span></div>' +
+      noMac.map(function (r) { return _addressIpLineHTML(asset, r, r.ip === primaryIp && !primaryMac); }).join('') +
+    '</div>';
+  }
+
+  // Overflow MACs and the collapsed port ranges go behind "+N" hovers —
+  // the same affordance the table cells use.
+  var more = '';
+  if (hidden.length) {
+    var hiddenRows = hidden.map(function (g) {
+      var ipText = g.ips.length ? g.ips.map(function (r) { return escapeHtml(r.ip); }).join(', ') : 'no address';
+      return '<div class="mac-tooltip-row">' +
+        '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(g.m.mac) + '">' + escapeHtml(g.m.mac) + '</span>' +
+        '<span class="mac-tooltip-meta"><span class="mac-tooltip-source">' + ipText +
+          (g.m.source ? ' &middot; ' + escapeHtml(formatMacSource(g.m.source)) : '') + '</span></span>' +
+        (g.m.source ? macDeleteButtonHTML(asset.id, g.m) : '') +
+      '</div>';
+    }).join('');
+    more += '<span class="mac-hover-trigger">' +
+      '<span class="mac-badge-count" style="margin-left:0">+' + hidden.length + ' MAC' + (hidden.length === 1 ? '' : 's') + '</span>' +
+      '<div class="mac-tooltip"><div class="mac-tooltip-header">' + hidden.length + ' more MAC' + (hidden.length === 1 ? '' : 's') + '</div>' + hiddenRows + '</div>' +
+    '</span>';
+  }
+  if (ranges.length) {
+    var total = macEntriesTotal(ranges);
+    var rangeRows = ranges.map(function (m) {
+      return '<div class="mac-tooltip-row">' +
+        '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(macEntryText(m)) + '">' + escapeHtml(macEntryText(m)) + '</span>' +
+        '<span class="mac-tooltip-meta"><span class="mac-tooltip-source">' + macEntryCount(m) + ' MACs &middot; ' +
+          escapeHtml(formatMacSource(m.source)) + (m.lastSeen ? ' &middot; ' + formatDate(m.lastSeen) : '') + '</span></span>' +
+        macDeleteButtonHTML(asset.id, m) +
+      '</div>';
+    }).join('');
+    more += '<span class="mac-hover-trigger">' +
+      '<span class="mac-badge-count" style="margin-left:0" title="Port MACs from the interface table — never a primary address">' + total + ' port MAC' + (total === 1 ? '' : 's') + '</span>' +
+      '<div class="mac-tooltip"><div class="mac-tooltip-header">Port MAC ranges</div>' + rangeRows + '</div>' +
+    '</span>';
+  }
+  if (more) html += '<div class="address-more">' + more + '</div>';
+
+  var ipCount = rows.length;
+  var label = 'Addresses (' + groups.length + ' MAC' + (groups.length === 1 ? '' : 's') + (ipCount ? ', ' + ipCount + ' IP' + (ipCount === 1 ? '' : 's') : '') + ')';
+  // Stacked and spanning both grid columns (styles.css → .address-list-row).
+  return '<div class="detail-row stacked address-list-row"><span class="detail-label">' + label + '</span>' +
+    '<div class="detail-value">' + html + '</div></div>';
+}
+
+async function _handlePrimaryAddressClick(e) {
+  var setBtn = e.target.closest('.primary-address-set');
+  var unpinBtn = setBtn ? null : e.target.closest('.primary-address-unpin');
+  var btn = setBtn || unpinBtn;
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  var assetId = btn.getAttribute('data-asset-id');
+  if (!assetId) return;
+  var ok;
+  if (setBtn) {
+    var mac = setBtn.getAttribute('data-mac');
+    var ip = setBtn.getAttribute('data-ip');
+    ok = await showConfirm(
+      'Monitor this asset on ' + ip + ' (' + mac + ')?\n\n' +
+      'The address is pinned: discovery will not change it, and it replaces any address typed in Edit. ' +
+      'If this card renumbers to a single new address, the pin follows it.'
+    );
+    if (!ok) return;
+    btn.disabled = true;
+    try {
+      await api.assets.pinPrimaryAddress(assetId, mac, ip);
+      showToast('Primary address pinned to ' + ip);
+    } catch (err) {
+      btn.disabled = false;
+      showToast(err.message, 'error');
+      return;
+    }
+  } else {
+    ok = await showConfirm('Release the pinned primary address?\n\nThe address goes back to what discovery reports.');
+    if (!ok) return;
+    btn.disabled = true;
+    try {
+      await api.assets.unpinPrimaryAddress(assetId);
+      showToast('Primary address pin released');
+    } catch (err) {
+      btn.disabled = false;
+      showToast(err.message, 'error');
+      return;
+    }
+  }
+  if (_isCurrentAsset(assetId)) await openViewModal(assetId);
+  if (typeof loadAssets === "function" && document.getElementById("assets-tbody")) loadAssets();
+}
+// Wired at load, not in the Assets page's init: the slide-over opens on any
+// page through PolarisPanels, and assets.js can be evaluated twice.
+if (!window.__polarisPrimaryAddressWired) {
+  window.__polarisPrimaryAddressWired = true;
+  document.addEventListener("click", _handlePrimaryAddressClick);
 }
 
 // ─── Management access (allowaccess) — Open HTTPS / Open SSH + AP warning ──────
@@ -19273,10 +19548,8 @@ function macEntriesTotal(macAddresses) {
   return total;
 }
 
-var _MAC_VIEW_VISIBLE = 3;
-
 // Render one "remove this MAC" button, or '' when the viewer can't. Shared by
-// the visible rows and the "+N" overflow tooltip below so a MAC is no less
+// the visible rows and the "+N" overflow tooltips so a MAC is no less
 // removable for having sorted past the fold. The click is caught by the
 // document-level _handleMacDeleteClick, so nothing here needs wiring.
 function macDeleteButtonHTML(assetId, m) {
@@ -19285,83 +19558,6 @@ function macDeleteButtonHTML(assetId, m) {
     escapeHtml(assetId) + '" data-mac="' + escapeHtml(m.mac) + '"' +
     (m.macEnd ? ' data-mac-end="' + escapeHtml(m.macEnd) + '"' : '') +
     '>&times;</button>';
-}
-
-// `assetId` is what makes the rows removable — it is optional so any caller
-// that only wants the read-only list keeps working.
-function macAddressesViewHTML(macAddresses, assetId) {
-  if (!macAddresses || macAddresses.length === 0) return '';
-  var shown = macAddresses.slice(0, _MAC_VIEW_VISIBLE);
-  var hidden = macAddresses.slice(_MAC_VIEW_VISIBLE);
-
-  var rows = shown.map(function (m) {
-    var sourceLabel = formatMacSource(m.source);
-    var count = macEntryCount(m);
-    // Address on its own line, provenance in small type beneath it, both flush
-    // right. The original goal stands — "every MAC lines up on the same edge,
-    // and a longer description never shoves the address sideways" — but putting
-    // the two SIDE BY SIDE only met it while both fitted, and in this grid the
-    // value column measures ~200px, which is narrower than a single range
-    // entry's text on its own (~261px for "DD:EE:FF:00:00:00 – DD:EE:FF:00:00:2F").
-    //
-    // Competing for that width was the bug: the label could shrink to nothing
-    // (min-width:0) while the address could not shrink at all (flex-shrink:0),
-    // so the label was crushed to 0px and wrapped ONE CHARACTER PER LINE —
-    // measured at 526px tall for a single entry. Stacking removes the
-    // competition rather than re-balancing it, so neither part can squeeze the
-    // other however narrow the panel gets.
-    //
-    // A range is still allowed to wrap (two addresses and a dash legitimately
-    // need two lines here); a single MAC is not — an address broken across
-    // lines is unreadable and can't be copied by eye.
-    var isRange = !!m.macEnd;
-    return '<div style="padding:4px 0;text-align:right">' +
-      '<div style="display:flex;gap:6px;align-items:center;justify-content:flex-end">' +
-        '<code class="copy-cell" style="font-size:0.82rem;text-align:right;' +
-          (isRange ? 'white-space:normal;overflow-wrap:anywhere' : 'white-space:nowrap') +
-          '" title="Click to copy" data-copy="' + escapeHtml(macEntryText(m)) + '">' + escapeHtml(macEntryText(m)) + '</code>' +
-        macDeleteButtonHTML(assetId, m) +
-      '</div>' +
-      '<div style="font-size:0.72rem;color:var(--color-text-tertiary);line-height:1.3">' +
-        (count > 1 ? count + ' MACs &middot; ' : '') +
-        (sourceLabel ? escapeHtml(sourceLabel) : '') +
-        (m.lastSeen ? (sourceLabel ? ' &middot; ' : '') + formatDate(m.lastSeen) : '') +
-      '</div>' +
-    '</div>';
-  }).join("");
-
-  // Overflow MACs collapse into a "+N" badge with a hover tooltip listing the
-  // rest — mirrors the IP address cell (ipCellHTML). Hover wiring is attached
-  // by _wireHoverTriggersIn over the modal body.
-  if (hidden.length > 0) {
-    var tooltipRows = hidden.map(function (m) {
-      var count = macEntryCount(m);
-      var sourceLine = (count > 1 ? count + ' MACs &middot; ' : '') +
-        escapeHtml(formatMacSource(m.source)) +
-        (m.lastSeen ? ' &middot; ' + formatDate(m.lastSeen) : '');
-      return '<div class="mac-tooltip-row">' +
-        '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(macEntryText(m)) + '">' + escapeHtml(macEntryText(m)) + '</span>' +
-        '<span class="mac-tooltip-meta">' +
-          '<span class="mac-tooltip-source">' + sourceLine + '</span>' +
-        '</span>' +
-        macDeleteButtonHTML(assetId, m) +
-      '</div>';
-    }).join("");
-    rows += '<div style="padding:3px 0">' +
-      '<span class="mac-hover-trigger">' +
-        '<span class="mac-badge-count" style="margin-left:0">+' + hidden.length + '</span>' +
-        '<div class="mac-tooltip">' +
-          '<div class="mac-tooltip-header">' + hidden.length + ' more MAC' + (hidden.length === 1 ? '' : 's') + '</div>' +
-          tooltipRows +
-        '</div>' +
-      '</span>' +
-    '</div>';
-  }
-
-  var totalMacs = macEntriesTotal(macAddresses);
-  var label = totalMacs === 1 ? 'MAC History' : 'All MACs (' + totalMacs + ')';
-  return '<div class="detail-row"><span class="detail-label">' + label + '</span>' +
-    '<span class="detail-value">' + rows + '</span></div>';
 }
 
 function associatedUsersViewHTML(users) {

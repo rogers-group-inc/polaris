@@ -22,6 +22,49 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetAddressService.ts
+
+**What it owns:** The DISCOVERY half of an asset's address list (business rule 102) — the `AssetAssociatedIp` rows whose source is one of `DISCOVERED_ADDRESS_SOURCES` (`dhcp-lease` / `dhcp-reservation` / `device-inventory` / `arp`): one row per (asset, IP) with the MAC it is bound to, the reporting gate (`device`) and the medium (`wired` / `wireless` / null). Current-state PER GATE.
+
+**Public API:** `DISCOVERED_ADDRESS_SOURCES`, `DISCOVERED_ROW_MAX_AGE_MS` (30 days), `reconcileDiscoveredAddresses(sightings, scope, now?)` → `{ upserted, pruned }`; pure helpers `collapseSightings` (one row per (asset, ip): strongest source — device-inventory > dhcp-reservation > dhcp-lease > arp — freshest `seenAt`, a known medium beats unknown) and `prunableSourcesFor(device, scope)`; types `AddressSighting`, `AddressReadScope`; test seam `_resetAgeSweepForTests`.
+
+**Cross-service deps:** `prisma` (asset_associated_ips, raw bulk `INSERT … ON CONFLICT`), `utils/dbRetry.retryOnDeadlock`, `utils/chunk.chunkArray`, `utils/dhcpClaimFreshness` (`AddressMedium`).
+
+**Used by:** `discovery/discoveryEngine.ts → syncDhcpSubnets` — ONE call right after Phase 7.5, with sightings gathered in Phase 6 (held DHCP leases / reservations), Phase 7 (online local detected-device rows) and Phase 7.5 (ARP rows), Fortinet infra skipped; scope = `result.dhcpLeasesInventoriedDevices` / `inventoryDevices` / `arpQueriedDevices`. `DISCOVERED_ADDRESS_SOURCES` is also read by `monitoringService → persistAssocIpMirror` (delete scope) and `api/routes/assets.ts` (`DELETE /assets/:id/macs/:mac` drops the MAC's discovered rows).
+
+**Invariants:**
+- Three writers share the table and each owns its own rows: `manual` (never touched here), `monitor-system-info` (never overwritten here — ON CONFLICT keeps its source and only fills a null MAC), discovered (this file). The system-info scrape takes over a discovered row whose IP it reports and otherwise leaves discovered rows alone.
+- Prune is per gate AND per kind, only for reads that SUCCEEDED this run — a gate whose DHCP read failed keeps its lease rows. A binding is kept while ANY of this run's sightings on that gate still reports the (asset, ip).
+- Prune is read-then-delete-by-id (chunks of 1000), never one `NOT (OR …)` predicate per sighting — a busy gate reports thousands of bindings.
+- Upserts are sorted by (assetId, ip) and deadlock-retried (the macAddressService lock-order lesson); 500 rows per statement.
+- The 30-day age sweep (rows of a gate nobody reads any more) runs at most hourly per process.
+- Readers that depend on currency: reservation staleness, LLDP matching, network-scan exclusion, search, IP lookup, the primary-address pin guard — a recycled binding must not linger on the asset that used to hold it.
+
+**When changing this:** scale — at 2000 assets a gate's sightings are one bulk upsert per 500 rows plus one indexed read (`@@index([device])`) and chunked deletes per gate; never add a per-row await. A new discovered kind needs a `DISCOVERED_ADDRESS_SOURCES` entry, a `SOURCE_RANK`, a scope list in `AddressReadScope` (the prune must know when that read succeeded), and review of `persistAssocIpMirror`'s delete scope. Changing the source strings is a data migration (existing rows carry them).
+
+---
+
+## services/primaryAddressService.ts
+
+**What it owns:** The operator-pinned PRIMARY ADDRESS (business rule 102) — `Asset.primaryAddressMac` / `primaryAddressIp` / `primaryAddressPinnedAt` / `primaryAddressPinnedBy`: one (MAC, IP) pair from the asset's `AssetAssociatedIp` rows that the asset is monitored on. The pure enforcement lives in `applyPrimaryAddressPin` (`utils/assetInvariants.ts`), executed inside the `enforceOperatorOverrides` guard in `src/db.ts`; this service sets / clears the pin and audits.
+
+**Public API:** `pinPrimaryAddress({assetId, mac, ip, actor})`, `unpinPrimaryAddress({assetId, actor})` (clears the pin and re-projects `ipAddress` from the `AssetSource` rows), `handlePrimaryAddressFollowed(assetId, fromIp, ip)` (best-effort audit, called fire-and-forget by the db.ts guard), `CLEAR_PRIMARY_ADDRESS_PIN` (the data spread by routes that set another pin).
+
+**Cross-service deps:** `prisma`, `AppError`, `utils/mac.normalizeMacOrNull`, `utils/assetProjection.projectAssetFromSources`, `eventLogService.logEvent`, `ipOverrideService.resolvePendingIpOverrideConflicts`.
+
+**Used by:** `api/routes/assets.ts` (`PUT` / `DELETE /assets/:id/primary-address`; `CLEAR_PRIMARY_ADDRESS_PIN` in `PUT /assets/:id` and `DELETE /assets/:id/macs/:mac`, which inlines the release inside its `$transaction`), `src/db.ts → fireIpOverrideFollowUp` (lazy import, `handlePrimaryAddressFollowed`).
+
+**Invariants:**
+- Refuses with 409 Fortinet infra (`firewall` / `switch` / `access_point` with `fortinetTopology` — monitored on the management IP its own discovery owns) and a (mac, ip) pair absent from the asset's `AssetAssociatedIp` rows.
+- Pinning writes `ipAddress` = the pinned IP with `ipSource="pinned"` and clears `ipOverride` / `ipBlankPinned` / `ipCleared`, closing pending ip-override conflicts. The three operator IP pins are mutually exclusive: `PUT /assets/:id` typing an IP, blanking it, or `ipRevertToDiscovered` each clear this pin.
+- The guard reasserts the pin over any write staging `ipAddress` without touching the `primaryAddress*` columns, even when the card goes quiet. Only exception ("followed"): pinned IP unseen for `PIN_FOLLOW_STALE_MS` (24h) and the pinned MAC has exactly ONE address seen within 24h — the pin moves in the same write.
+- `Asset.macAddress` (the identity MAC) is never moved by a pin.
+- Events: `asset.primary_address.pinned`, `asset.primary_address.unpinned`, `asset.primary_address.followed`.
+
+**When changing this:** the guard's extra read (`AssetAssociatedIp` for (asset, pinned mac)) happens only for a PINNED asset's IP-staging write, so the cost scales with pinned assets, not the fleet — keep it that way. Anything else that writes `ipAddress` as an operator action must spread `CLEAR_PRIMARY_ADDRESS_PIN` or the guard rewrites it back. `projectionDriftService` and discovery Phase 11 re-projection skip `ipAddress` while pinned; a new projection writer needs the same skip.
+
+---
+
 ## services/assetTagListService.ts
 
 **What it owns:** The Assets list's **Tags** column on the server side — the filter (`contains` / `not_contains` / `empty` / `is_not_empty`, matching any single tag by case-insensitive substring) and the sort (alphabetically-first tag, untagged rows last in both directions). `Asset.tags` is a `String[]`, and Prisma can neither substring-match inside a scalar list nor order by one; that gap is the reason this service exists.
@@ -581,7 +624,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Fire-and-forget: any internal error is swallowed via `logger.warn()`; drift detection failures must never break the Asset write.
 - Drift is asymmetric: projection has X ≠ Y on asset → logged; projection has X, asset null → logged; projection null → silent (no comment = no disagreement).
 - Logs to pino with `event: "asset.projection.drift"` (NOT audit Event table); high volume during full sweeps, operators grep app logs.
-- Compared fields: hostname, serialNumber, manufacturer, model, os, osVersion, learnedLocation, ipAddress, latitude, longitude (match `ProjectedAsset` keys). latitude/longitude are SKIPPED when `Asset.coordSource === "manual"`, hostname is SKIPPED when `Asset.hostnameOverride` is set, and ipAddress is SKIPPED when `Asset.ipOverride` is set or the asset is pinned blank (`Asset.ipBlankPinned`) — an operator pin deliberately diverges from the projection (the db.ts guard re-asserts it over discovery writes), so it's not drift (the IP disagreement already surfaces as an ip-override Conflict instead).
+- Compared fields: hostname, serialNumber, manufacturer, model, os, osVersion, learnedLocation, ipAddress, latitude, longitude (match `ProjectedAsset` keys). latitude/longitude are SKIPPED when `Asset.coordSource === "manual"`, hostname is SKIPPED when `Asset.hostnameOverride` is set, and ipAddress is SKIPPED when `Asset.ipOverride` is set, the asset is pinned blank (`Asset.ipBlankPinned`), or a primary address is pinned (`Asset.primaryAddressIp`, business rule 102) — an operator pin deliberately diverges from the projection (the db.ts guard re-asserts it over discovery writes), so it's not drift (the IP disagreement already surfaces as an ip-override Conflict instead).
 - Logs include `assetId, integrationKind, drifts[]` with per-field projected/current/winningSource provenance.
 
 **When changing this:**

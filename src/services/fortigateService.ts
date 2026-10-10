@@ -716,6 +716,11 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
         // CMDB already has this static reservation — mark it as currently
         // leased so the stale job knows the target has been seen online.
         dhcpEntries[existingIdx].seenLeased = true;
+        // The CMDB row can't say which medium the client is holding it on;
+        // the live lease can, and the address ranking (business rule 101)
+        // prefers a wired claim over a wireless one.
+        if (lease.access_point) dhcpEntries[existingIdx].accessPoint ??= lease.access_point;
+        if (lease.ssid) dhcpEntries[existingIdx].ssid ??= lease.ssid;
         continue;
       }
 

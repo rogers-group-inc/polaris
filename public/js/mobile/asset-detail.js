@@ -819,8 +819,22 @@
         row("AP Profile", escapeHtml(apProfile));
       }
     }
-    row("IP", asset.ipAddress ? '<span class="mono">' + escapeHtml(asset.ipAddress) + '</span>' : null);
-    row("MAC", asset.macAddress ? '<span class="mono">' + escapeHtml(asset.macAddress) + '</span>' : null);
+    // The primary ADDRESS is a pair (business rule 102): the IP monitoring
+    // probes and the card it is on — the pin's MAC, else the address row that
+    // holds the IP, else the identity MAC. Mirrors primaryAddressMac() in
+    // assets.js; the desktop lists every other address per MAC.
+    var addrRows = Array.isArray(asset.associatedIps) ? asset.associatedIps : [];
+    var primaryRow = asset.ipAddress
+      ? addrRows.find(function (r) { return r.ip === asset.ipAddress && r.mac; })
+      : null;
+    var primaryMac = asset.primaryAddressMac || (primaryRow && primaryRow.mac) || asset.macAddress || null;
+    row("IP", asset.ipAddress
+      ? '<span class="mono">' + escapeHtml(asset.ipAddress) + '</span>' +
+        (asset.primaryAddressIp ? ' <span class="muted">pinned</span>' : '')
+      : null);
+    row("MAC", primaryMac ? '<span class="mono">' + escapeHtml(primaryMac) + '</span>' : null);
+    var others = addrRows.filter(function (r) { return r.ip !== asset.ipAddress; }).length;
+    if (others > 0) row("Other IPs", String(others));
     row("Hostname", asset.hostname);
     row("DNS name", asset.dnsName);
     row("Serial", asset.serialNumber ? '<span class="mono">' + escapeHtml(asset.serialNumber) + '</span>' : null);

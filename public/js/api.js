@@ -737,6 +737,9 @@ const api = {
     ouiLookup: (id)     => request("POST", `/assets/${id}/oui-lookup`),
     ouiLookupAll: ()    => trackedRequest("OUI Lookup", "POST", "/assets/oui-lookup"),
     removeMac: (id, mac) => request("DELETE", `/assets/${id}/macs/${encodeURIComponent(mac)}`),
+    // Business rule 102 — pin / release the (MAC, IP) pair the asset is monitored on.
+    pinPrimaryAddress: (id, mac, ip) => request("PUT", `/assets/${id}/primary-address`, { mac, ip }),
+    unpinPrimaryAddress: (id) => request("DELETE", `/assets/${id}/primary-address`),
     getIpHistory:         (id)  => request("GET",  `/assets/${id}/ip-history`),
     getHistorySettings:   ()    => request("GET",  "/assets/ip-history-settings"),
     updateHistorySettings:(body) => request("PUT",  "/assets/ip-history-settings", body),

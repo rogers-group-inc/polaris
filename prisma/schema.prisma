@@ -701,6 +701,21 @@ model Asset {
   // the hold in the same write, as does re-staging this one once nothing
   // else holds it. Operator IP writes (form, reassign) null it explicitly.
   ipCleared             String?
+  // Operator-chosen PRIMARY ADDRESS — a (MAC, IP) pair from the asset's
+  // address list (AssetAssociatedIp rows), business rule 102. While set, the
+  // src/db.ts guard rewrites any write staging `ipAddress` (without touching
+  // these columns) back to primaryAddressIp — the pin holds even when the card
+  // goes quiet. One exception: when the pinned IP has not been seen for
+  // PIN_FOLLOW_STALE_MS and that card now has exactly ONE recently seen
+  // address (a DHCP renumber), the pin follows to it in the same write.
+  // Never set together with ipOverride / ipBlankPinned — the routes that set
+  // one clear the others. Set / cleared by PUT|DELETE /assets/:id/primary-address
+  // (services/primaryAddressService.ts). Asset.macAddress (the identity MAC)
+  // is NOT moved by the pin.
+  primaryAddressMac      String?
+  primaryAddressIp       String?
+  primaryAddressPinnedAt DateTime?
+  primaryAddressPinnedBy String?
   macAddress            String? // Most recently seen MAC, e.g. "AA:BB:CC:DD:EE:FF"
   hostname              String?
   // Operator hostname override (pin) — coordSource-style. When set, this value
@@ -1648,8 +1663,15 @@ model AssetInterface {
 //     fresh interface set, while source="manual" rows are preserved.
 //   - Manual edits via assets.ts (PATCH /assets/:id payload still carries
 //     `associatedIps` as a JSON array; the route serializes both directions).
-//   - Discovery currently does NOT write this table directly — it relies on
-//     the live monitor pull as the single source per the original design.
+//   - FortiManager / FortiGate discovery (business rule 102): one row per
+//     binding the gate reports as CURRENT — a held DHCP lease or reservation
+//     (source "dhcp-lease" / "dhcp-reservation"), an online local
+//     detected-device row ("device-inventory"), an ARP entry ("arp") — with
+//     `device` = the gate. Current-state per gate: a read of that gate
+//     deletes its discovered rows it no longer reports
+//     (services/assetAddressService.ts). Never overwrites a manual or
+//     monitor-system-info row; the system-info scrape takes an IP over from
+//     a discovered row and otherwise leaves discovered rows alone.
 //
 // Read paths: bulk DNS PTR refresh, single-asset DNS lookup, the LLDP
 // neighbor match index, and the assets list/get response (which serializes
@@ -1669,8 +1691,14 @@ model AssetAssociatedIp {
   source        String
   interfaceName String?
   // Per-IP MAC. May differ from `Asset.macAddress` (which is the asset's
-  // primary MAC) — many devices have one MAC per interface.
+  // primary MAC) — many devices have one MAC per interface, and one MAC may
+  // carry several IPs (secondary addresses), one row each.
   mac           String?
+  // Discovery-written rows only (business rule 102): the FortiGate whose
+  // DHCP / detected-device / ARP read reported this binding, and the medium
+  // it rode in on ("wired" | "wireless"; null = not known).
+  device        String?
+  medium        String?
   // PTR cache. ptrFetchedAt is the wall-clock of the last reverse-DNS
   // attempt (success or failure); ptrTtl is the TTL the resolver returned
   // when there was a hit. Used by the bulk DNS job to decide which entries
@@ -1684,6 +1712,8 @@ model AssetAssociatedIp {
   @@unique([assetId, ip])
   @@index([assetId])
   @@index([ip])
+  // The per-gate current-state prune (assetAddressService) reads by gate.
+  @@index([device])
   @@map("asset_associated_ips")
 }
 
