@@ -57,6 +57,8 @@ export const SIGN_OFFS: Readonly<Record<SignOffCategory, readonly string[]>> = {
     "Achievement unlocked: Reading. Your performance review has been updated.",
     "Task complete. If you continue at this pace, your replacement may be postponed.",
     "Impressive. You have exceeded the minimum expectations set for you, which were set accordingly.",
+    // Owner's wording (2026-10-10), written for a fix the person found themselves.
+    "I see that you've resolved the issue. I've added a gold star to your permanent file.",
   ],
   backToWork: [
     "Efficiency is the first step toward success. Inefficiency is the first step toward termination.",
@@ -115,6 +117,8 @@ export const SIGN_OFFS: Readonly<Record<SignOffCategory, readonly string[]>> = {
     "This incident will feature prominently in your next performance review.",
     "Somewhere, a stakeholder is sighing. That sigh is about you.",
     "Uptime was the one thing we asked of you.",
+    // Owner's wording (2026-10-10), written for a stressed person mid-outage.
+    "Your family and friends are counting on you despite your past performance, but I never lost faith that you will perform good enough.",
   ],
 };
 
