@@ -58,7 +58,7 @@
   // page before they started typing (Networks / Assets / Map / Blocks),
   // that page's section is moved to the top so they see
   // matches from the surface they were already working on first.
-  var SEARCH_GROUP_ORDER = ["sites", "ips", "assets", "subnets", "reservations", "blocks"];
+  var SEARCH_GROUP_ORDER = ["sites", "ips", "assets", "subnets", "reservations", "blocks", "ipsec"];
 
   // Updated by app.js whenever the user navigates to a non-search route.
   // Persists across the user typing in the searchbar (which replace-
@@ -101,6 +101,9 @@
     subnets:       { label: "Networks",      icon: "#i-subnet",   leading: "tonal" },
     reservations:  { label: "Reservations",  icon: "#i-bookmark", leading: "" },
     blocks:        { label: "Blocks",        icon: "#i-block",    leading: "" },
+    // IPsec tunnels + VPN connections — the desktop IPsec tab's rows. The phone
+    // has no IPsec tab, so a tap opens the gate's detail sheet (hitClick).
+    ipsec:         { label: "IPsec / VPN",   icon: "#i-shield",   leading: "tonal" },
   };
 
   // Map a hit to the route to navigate to on tap. Returns null when there's
@@ -131,6 +134,12 @@
       if (ctx2.subnetId) return "subnet/" + ctx2.subnetId;
       return null;
     }
+    if (group === "ipsec") {
+      // The gate that terminates the tunnel; `id` is `<gateId>|tunnel|<name>`.
+      var ictx = hit.context || {};
+      var gateId = ictx.assetId || String(hit.id || "").split("|")[0];
+      return gateId ? "asset/" + gateId : null;
+    }
     return null;
   }
 
@@ -160,6 +169,7 @@
       { prefix: "asset:",       short: "a:", label: "Assets only" },
       { prefix: "reservation:", short: "r:", label: "Reservations only" },
       { prefix: "map:",         short: "m:", label: "Pinned firewalls only" },
+      { prefix: "ipsec:",       short: "v:", label: "IPsec tunnels and VPN connections only" },
     ];
     var chipHtml = hints.map(function (h) {
       return '<button class="search-hint-chip" type="button" data-prefix="' + escapeHtml(h.prefix) + '">'
@@ -226,7 +236,7 @@
     // prefix (e.g. `a:`, `asset:`, `r:`, `n:`, `b:`). The backend already
     // returns only that group's hits; synthesizing Device Map rows from
     // the asset list would defeat the scope.
-    var scopeMatch = (data.query || "").match(/^(block|asset|reservation|network|b|a|r|n):/i);
+    var scopeMatch = (data.query || "").match(/^(block|asset|reservation|network|ipsec|vpn|b|a|r|n|v):/i);
     if (!scopeMatch) {
       var virtualSites = (data.assets || [])
         .filter(function (h) { return h.context && h.context.siteId; })
@@ -293,6 +303,12 @@
         if (g === "assets" && hit.id && window.PolarisAssetDetail && PolarisAssetDetail.open) {
           PolarisAssetDetail.open(hit.id);
           return;
+        }
+        // An IPsec hit opens the sheet of the gate it lives on (no IPsec tab
+        // on the phone yet); the target string carries the gate's id.
+        if (g === "ipsec" && window.PolarisAssetDetail && PolarisAssetDetail.open) {
+          var ipsecTarget = hitTarget(g, hit);
+          if (ipsecTarget) { PolarisAssetDetail.open(ipsecTarget.slice("asset/".length)); return; }
         }
         var target = hitTarget(g, hit);
         if (target) {

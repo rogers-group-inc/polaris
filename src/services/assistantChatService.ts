@@ -728,7 +728,9 @@ export async function streamAssistantTurn(input: {
         toolsUsed.push({ name, label: toolLabel(name), ok: result.ok });
         emit("tool", { name, label: toolLabel(name), status: "done", ok: result.ok });
         const content = clipJson(result.data, budget.toolResultChars);
-        for (const m of content.matchAll(/"id":"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/g)) seenIds.add(m[1]);
+        // Every asset id a lookup returned this turn — `id` on a row, and the
+        // gate / far end an IPsec search hit names in its context.
+        for (const m of content.matchAll(/"(?:id|assetId|peerAssetId)":"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/g)) seenIds.add(m[1]);
         messages.push({ role: "tool", tool_call_id: tc.id, content });
         if (result.ok && REPORT_SOURCES.has(name)) lastListCall = { name, args: tc.function.arguments };
         noteLookup(signals, name, result, content);

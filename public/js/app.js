@@ -1965,7 +1965,7 @@ function _renderSearchDropdown(results) {
   // non-map scope prefix (`a:`, `r:`, `n:`, `b:` / long forms). The
   // backend already returns only that group's hits; synthesizing map
   // rows from the asset list would defeat the scope.
-  var scopeMatch = (results.query || "").match(/^(block|asset|reservation|network|b|a|r|n):/i);
+  var scopeMatch = (results.query || "").match(/^(block|asset|reservation|network|ipsec|vpn|b|a|r|n|v):/i);
   var endpointMapHits = scopeMatch ? [] : (results.assets || [])
     .filter(function (h) { return h.context && h.context.siteId; })
     .map(function (h) {
@@ -1974,7 +1974,10 @@ function _renderSearchDropdown(results) {
       });
     });
   var allSites = sites.concat(endpointMapHits);
-  var total = results.blocks.length + results.subnets.length + results.reservations.length + results.assets.length + results.ips.length + allSites.length;
+  // IPsec tunnels + VPN connections (the asset IPsec tab's rows); absent from
+  // a response an older server wrote.
+  var ipsecHits = results.ipsec || [];
+  var total = results.blocks.length + results.subnets.length + results.reservations.length + results.assets.length + results.ips.length + allSites.length + ipsecHits.length;
   if (total === 0) {
     dropdown.innerHTML = '<div class="global-search-empty">No matches for "' + escapeHtml(results.query) + '"</div>';
     dropdown.style.display = "block";
@@ -1994,6 +1997,8 @@ function _renderSearchDropdown(results) {
     "passive":     "badge-monitor-passive",
     "dep-down":    "badge-monitor-dep-down",
     "dep-test":    "badge-monitor-dep-test",
+    // An IPsec tunnel with some phase-2 selectors up and some down.
+    "partial":     "badge-monitor-warning",
   };
 
   function section(label, hits) {
@@ -2029,6 +2034,7 @@ function _renderSearchDropdown(results) {
     { key: "reservations", label: "Reservations", hits: results.reservations },
     { key: "assets",       label: "Assets",      hits: results.assets },
     { key: "sites",        label: "Device Map",  hits: allSites },
+    { key: "ipsec",        label: "IPsec / VPN", hits: ipsecHits },
   ];
   var pinned = _searchSectionForCurrentPage();
   if (pinned) {
@@ -2071,6 +2077,7 @@ function _showSearchShortcutHints() {
     { prefix: "reservation:", short: "r:", label: "Search reservations only" },
     { prefix: "map:",         short: "m:", label: "Search pinned firewalls (Device Map) only" },
     { prefix: "tag:",         short: "t:", label: "Search by tag across networks & assets" },
+    { prefix: "ipsec:",       short: "v:", label: "Search IPsec tunnels and VPN connections only" },
   ];
   var rows = hints.map(function (h) {
     return '<div class="gs-hint" data-prefix="' + escapeHtml(h.prefix) + '">' +
@@ -2218,6 +2225,20 @@ function _searchTargetFor(hit) {
       hash: "#view=asset:" + encodeURIComponent(hit.id),
       handler: function () { if (typeof openViewModal === "function") openViewModal(hit.id); },
       open: function () { PolarisPanels.openAsset(hit.id); },
+    };
+  }
+  if (hit.type === "ipsec") {
+    // A tunnel or VPN connection lives on the IPsec tab of the gate that
+    // terminates it — open that gate's slide-over on that tab. `id` is
+    // `<gateId>|tunnel|<name>`; the gate id also rides in context.assetId.
+    var ictx = hit.context || {};
+    var gateId = ictx.assetId || String(hit.id || "").split("|")[0];
+    if (!gateId) return null;
+    return {
+      page: "/assets.html",
+      hash: "#view=asset:" + encodeURIComponent(gateId) + "&tab=ipsec",
+      handler: function () { if (typeof openViewModal === "function") openViewModal(gateId, { tab: "ipsec" }); },
+      open: function () { PolarisPanels.openAsset(gateId, { tab: "ipsec" }); },
     };
   }
   if (hit.type === "block") {

@@ -65,7 +65,7 @@ describe("permission gate", () => {
   it("search asks searchAll only for the groups the role can read", async () => {
     h.searchAll.mockResolvedValue({ assets: [], subnets: [] });
     await runAssistantTool("search", '{"query":"fw1"}', { req: reqWith({ assets: "read" }), maxRows: 50 });
-    expect(h.searchAll).toHaveBeenCalledWith("fw1", { blocks: false, subnets: false, reservations: false, assets: true, sites: false });
+    expect(h.searchAll).toHaveBeenCalledWith("fw1", { blocks: false, subnets: false, reservations: false, assets: true, sites: false, ipsec: true });
   });
 });
 

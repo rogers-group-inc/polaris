@@ -114,7 +114,9 @@ export const PLAYBOOKS: readonly AssistantPlaybook[] = [
       "Playbook — address lookup. Follow these steps in order:",
       "1. search the exact address. Read matchedOn on each asset hit: \"ipAddress\" means it is the device's " +
         "current primary IP; \"ipHistory\" with heldThisAddress means the device held that address (WAN, " +
-        "secondary or former) — it IS a hit, not a text coincidence.",
+        "secondary or former) — it IS a hit, not a text coincidence. An `ipsec` hit means a FortiGate " +
+        "(context.assetId) terminates a tunnel to that address or has a peer / VPN user connected from it — " +
+        "report the gate, the tunnel or connection name, and the far-end device when context.peerAssetId is set.",
       "2. get_asset on each hit (by id) for its ipHistory and current state, so you can say when the address " +
         "was first and last seen on it and what the device's primary IP is now.",
       "3. list_reservations with search set to the address, for a reservation or lease that names it.",

@@ -52,7 +52,8 @@ it appears, so tables and widgets fill in a moment later.
 ### Global search
 
 The search box searches everything at once and groups hits by kind: IPs,
-Blocks, Networks, Reservations, Assets, Device Map sites. Prefixes narrow it:
+Blocks, Networks, Reservations, Assets, Device Map sites, and IPsec / VPN.
+Prefixes narrow it:
 
 | Prefix | Short | Searches |
 |---|---|---|
@@ -62,6 +63,16 @@ Blocks, Networks, Reservations, Assets, Device Map sites. Prefixes narrow it:
 | `reservation:` | `r:` | reservations only |
 | `map:` | `m:` | pinned firewalls (Device Map) only |
 | `tag:` | `t:` | tag substrings across networks **and** assets |
+| `ipsec:` or `vpn:` | `v:` | IPsec tunnels and VPN connections only |
+
+**IPsec / VPN** hits are what a firewall's IPsec tab lists: its tunnels, and the
+ADVPN spokes, dial-up peers and FortiClient / SSL-VPN users connected through
+them. Type a tunnel name, a peer's address, a peer id or a VPN user name. Each
+hit names the firewall the tunnel lives on and, when Polaris knows the device at
+the far end, that device too, with the tunnel's state as a pill. Clicking one
+opens the firewall's IPsec tab. An address that is nobody's primary IP is often
+exactly a tunnel's remote gateway, so an address search shows these beside the
+asset hits.
 
 An asset hit carries a **coloured dot** when it has a live alert, before the
 monitor pill — the alert is the reason to look, the monitor state is the

@@ -25,6 +25,8 @@ router.get("/", async (req, res, next) => {
       reservations: hasPermission(req, "reservations", "read"),
       assets:       hasPermission(req, "assets", "read"),
       sites:        hasPermission(req, "deviceMap", "read"),
+      // IPsec tunnels + VPN connections are the asset IPsec tab's rows.
+      ipsec:        hasPermission(req, "assets", "read"),
     });
     res.json(results);
   } catch (err) {
