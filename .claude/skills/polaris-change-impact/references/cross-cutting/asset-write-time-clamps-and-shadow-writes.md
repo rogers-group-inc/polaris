@@ -3,17 +3,18 @@
 **What it is:** Prisma extension in src/db.ts that automatically normalizes manufacturer, clamps acquiredAt, checks monitoring status, derives asset sources, and records IP history on every Asset create/update/upsert (see "Asset write-time clamps" in CLAUDE.md).
 
 **Writers** (files that mutate or emit this state):
-- `src/db.ts` — Extended client wraps asset.create/update/updateMany/upsert/delete with seven hooks:
+- `src/db.ts` — Extended client wraps asset.create/update/updateMany/upsert/delete with these hooks:
   - normalizeManufacturerInData() runs `Asset.manufacturer` through normalizeManufacturer()
   - normalizeOsInData() corrects `Asset.os` / `Asset.osVersion` for Windows CLIENTS — see cross-cutting/windows-os-name-correction
   - clampMonitoredForStatus() forces monitored=false + resets consecutiveFailures when status ∈ {decommissioned, disabled}
+  - enforceOperatorOverrides() re-asserts operator pins over any write staging the pinned field without touching the pin columns, from ONE row read: `applyHostnameOverride`, then for `ipAddress` `applyIpBlankPin` → `applyIpOverride` → `applyPrimaryAddressPin` → `applyIpCleared` (the primary-address pin is business rule 102 — rewrites to the pinned IP, or follows the pinned MAC to its single recent address; reads `AssetAssociatedIp` for (asset, pinned mac) only for a pinned asset). Follow-ups (conflict raise/close, `asset.primary_address.followed`) run fire-and-forget via fireIpOverrideFollowUp() — see cross-cutting/asset-source-projection
   - recordIpHistory() upserts AssetIpHistory on ipAddress change
   - shadowWriteAssetSources() derives and upserts AssetSource rows when identity fields change
   - fireDnsResolvedReconcile() schedules a fire-and-forget per-asset reconcile of `dns_resolved` reservations (gated on writes that touch ipAddress / status / hostname / dnsName / macAddress)
   - fireDnsResolvedRelease() (delete branch only) releases any owned `dns_resolved` rows before the row is removed
 - `src/utils/manufacturerNormalize.ts` — normalizeManufacturer() pure function (cached alias map, no DB access)
 - `src/utils/osNormalize.ts` — normalizeOsInData() / normalizeWindowsOs() pure functions (no DB access, no row read — see the entry below for why)
-- `src/utils/assetInvariants.ts` — clampAcquiredToLastSeen() logic (not hooked yet; job applies it at startup)
+- `src/utils/assetInvariants.ts` — clampAcquiredToLastSeen() logic (not hooked yet; job applies it at startup); the pure operator-pin appliers enforceOperatorOverrides() calls, including applyPrimaryAddressPin + PIN_FOLLOW_STALE_MS
 - `src/utils/assetSourceDerivation.ts` — deriveAssetSources() pure function producing AssetSource rows from legacy tags
 - `src/jobs/normalizeManufacturers.ts` — One-shot startup: seeds default aliases, loads cache, backfills existing Assets
 - `src/jobs/clampAssetAcquiredAt.ts` — One-shot startup: clamps acquiredAt ≤ lastSeen for pre-existing rows

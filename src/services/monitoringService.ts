@@ -219,6 +219,7 @@ import { buildInfraParentIndex, controllerGateIdOf, type InfraParentCandidate } 
 import { indexLldpHostname, pickLldpHostnameMatch, type LldpHostnameMatchIndex } from "../utils/lldpHostnameMatch.js";
 import { triggerRetryAfterStatusChange } from "./reservationService.js";
 import { recordIpHistoryEntries } from "./assetIpHistoryService.js";
+import { DISCOVERED_ADDRESS_SOURCES } from "./assetAddressService.js";
 import { snmpTicksToSeconds, formatUptimeLong } from "../utils/uptime.js";
 import { pickRestApiCredential, restApiCredentialAuth, type CredentialLike } from "../utils/fortinetRestCredential.js";
 
@@ -9820,10 +9821,21 @@ async function persistAssocIpMirror(
   // writer can win a deadlock against this delete+insert pair (40P01). The
   // op is idempotent (full-replace of the asset's non-manual IPs), so re-run
   // on deadlock instead of crashing the whole system-info scrape.
+  // Discovery's rows (business rule 102, services/assetAddressService) are not
+  // this scrape's to delete — they are current-state per gate and pruned by
+  // their own writer. The scrape takes over an IP both report (the device's
+  // own interface table names it better), and leaves the rest alone.
+  const scrapedIps = monitorAssocEntries.map((e) => e.ip);
   await retryOnDeadlock(() =>
     prisma.$transaction([
       prisma.assetAssociatedIp.deleteMany({
-        where: { assetId, source: { not: "manual" } },
+        where: {
+          assetId,
+          OR: [
+            { source: { notIn: ["manual", ...DISCOVERED_ADDRESS_SOURCES] } },
+            { source: { in: [...DISCOVERED_ADDRESS_SOURCES] }, ip: { in: scrapedIps } },
+          ],
+        },
       }),
       prisma.assetAssociatedIp.createMany({
         data: monitorAssocEntries.map((e) => ({ ...e, assetId })),

@@ -180,6 +180,15 @@ FMG Integration Discovery
 │     │
 │     └─ Upsert AssetSource(sourceKind="fortigate-endpoint", externalId=MAC)
 │
+├─ Per-MAC address list (right after Phase 7.5, business rule 102)
+│   reconcileDiscoveredAddresses(sightings from Phases 6 / 7 / 7.5)
+│     ├─ upsert AssetAssociatedIp, one row per (asset, IP): MAC, device = gate,
+│     │     medium; source dhcp-lease / dhcp-reservation / device-inventory / arp
+│     │     (never overwrites a manual / monitor-system-info row; Fortinet infra skipped)
+│     ├─ per gate whose DHCP / detected-device / ARP read succeeded:
+│     │     delete that gate's discovered rows of those kinds not reported
+│     └─ hourly-throttled sweep: discovered rows unseen for 30 days
+│
 ├─ Auto-Monitor Interfaces apply pass (Phase 2c)
 │   For each per-class block whose autoMonitorInterfaces ≠ null, evaluate
 │   each present block and union the matches into Asset.monitoredInterfaces:

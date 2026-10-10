@@ -75,6 +75,7 @@ export async function detectAndLogDrift(
           hostnameOverride: true,
           ipOverride: true,
           ipBlankPinned: true,
+          primaryAddressIp: true,
           serialNumber: true,
           manufacturer: true,
           model: true,
@@ -117,7 +118,8 @@ export async function detectAndLogDrift(
       // Same for the operator IP pin — while it's set, the divergence is the
       // feature (the guard re-asserts the pin and the disagreement already
       // surfaces as an ip-override Conflict, not a drift log line).
-      if (field === "ipAddress" && (asset.ipOverride || asset.ipBlankPinned)) continue;
+      // Every operator pin owns the address — rule 102 added the primary-address one.
+      if (field === "ipAddress" && (asset.ipOverride || asset.ipBlankPinned || asset.primaryAddressIp)) continue;
       const projVal = projected[field];
       if (projVal === null || projVal === undefined) continue; // No source opinion — skip
       const curVal = (asset as Record<string, unknown>)[field] ?? null;

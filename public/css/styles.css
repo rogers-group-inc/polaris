@@ -4381,6 +4381,60 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   .asset-view-grid { grid-template-columns: 1fr; }
 }
 
+/* ─── Addresses row (asset details General tab, business rule 102) ──────────
+ * Each MAC with the IPs bound to it. Spans both grid columns: in one ~200px
+ * value column every IP line wrapped to four. IP lines are a three-track grid
+ * (address · badge-or-action · provenance) so the addresses line up down the
+ * list and a long provenance truncates instead of shoving the address. */
+.asset-view-grid > .address-list-row { grid-column: 1 / -1; }
+.address-list-row .detail-value { text-align: left; }
+.address-group {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--color-border-light, var(--color-border));
+}
+.address-group:last-child { border-bottom: none; }
+.address-mac-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.address-mac-line code { font-size: 0.82rem; white-space: nowrap; }
+.address-ip-line {
+  display: grid;
+  grid-template-columns: minmax(8.5em, max-content) 7.5em minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 1px 0 1px 16px;
+}
+.address-ip-line code { font-size: 0.8rem; white-space: nowrap; }
+.address-meta {
+  font-size: 0.72rem;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.address-empty { padding-left: 16px; font-size: 0.72rem; color: var(--color-text-tertiary); }
+.address-primary-badge {
+  justify-self: start;
+  font-size: 0.68rem;
+  padding: 0 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+.address-ip-line .primary-address-set {
+  justify-self: start;
+  padding: 0 6px;
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+.address-more { padding-top: 4px; display: flex; gap: 8px; flex-wrap: wrap; }
+
 /* ─── Dependency Tree block (asset details General tab) ──────────────────────
  * Compact vertical tree: parents above the current asset, children below. The
  * current asset is rendered bold and unclickable; everything else is a

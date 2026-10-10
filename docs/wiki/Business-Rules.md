@@ -1,6 +1,6 @@
 # Business rules
 
-Polaris carries **101 rule numbers**, 1 to 101: 99 rules in force plus rule 80a,
+Polaris carries **102 rule numbers**, 1 to 102: 100 rules in force plus rule 80a,
 with 81 and 88 not in use. Each one records a decision *and* the reasoning
 behind it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
@@ -1719,3 +1719,33 @@ A detected-device entry only counts when the gate can show the device is behind
 it (a FortiSwitch or FortiAP attribution, or an ARP entry). A user connecting
 *through* a gate over ZTNA never sets the address. FortiGates, FortiSwitches
 and FortiAPs keep their management IP and are not ranked this way.
+
+### Rule 102
+
+**An address belongs to a network card, a card can have several, and you
+choose which pair the device is monitored on.**
+
+An asset's **Addresses** list shows each MAC with the IP addresses bound to
+it. A FortiGate adds an address there while it reports the binding as current:
+a DHCP lease or reservation the device is holding, the gate's detected-device
+entry for a device that is online, or an ARP entry (which is how a card's
+secondary addresses appear). When the gate stops reporting a binding, the next
+successful read of that gate removes it. Addresses typed in by hand and the
+ones a monitored device reports from its own interface table are never changed
+by discovery.
+
+The **primary** pair is the one monitoring probes. Polaris picks it
+([rule 101](#rule-101)) unless you pin one with **Set as primary**:
+
+- **A pin holds.** Discovery does not change a pinned address. If the device
+  stops answering on it, the asset shows down and the address is flagged
+  *not seen since*.
+- **A pin follows a renumbered card.** If the pinned address has not been seen
+  for a day and that card now has exactly one recent address, the pin moves
+  to it and an event records the move.
+- **One pin at a time.** Pinning a pair replaces an address typed in Edit, and
+  typing an address (or clearing it, or *Revert to discovered IP*) releases
+  the pin. Removing the pinned MAC releases it too.
+- FortiGates, FortiSwitches and FortiAPs are monitored on their management IP
+  and cannot be pinned. Port MACs from a device's interface table are shown
+  collapsed and are never a primary.

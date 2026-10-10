@@ -58,6 +58,7 @@ import {
   applyIpBlankPin,
   applyIpCleared,
   applyIpOverride,
+  applyPrimaryAddressPin,
   stagedIpOf,
   statusAllowsMonitoring,
   UNMONITORABLE_STATUSES,
@@ -363,6 +364,8 @@ interface OperatorOverrideOutcome {
   stagedIpSource: string | null;
   /** Rule 40(j): what the operator-blanked address did to this write. */
   cleared?: IpClearedOutcome;
+  /** Rule 102: the primary-address pin moved to its card's new address. */
+  pinFollowed?: { action: "followed"; fromIp: string; ip: string };
 }
 
 /**
@@ -402,7 +405,10 @@ async function enforceOperatorOverrides(
   try {
     const row = await base.asset.findFirst({
       where: where as any,
-      select: { id: true, hostnameOverride: true, ipOverride: true, ipBlankPinned: true, ipCleared: true },
+      select: {
+        id: true, hostnameOverride: true, ipOverride: true, ipBlankPinned: true, ipCleared: true,
+        primaryAddressMac: true, primaryAddressIp: true,
+      },
     });
     if (guardHostname) applyHostnameOverride(d, row?.hostnameOverride);
     if (guardIp) {
@@ -417,6 +423,19 @@ async function enforceOperatorOverrides(
       if (blank.action !== "none") return { ip: blank, stagedIpSource };
       const ip = applyIpOverride(d, row?.ipOverride);
       if (ip.action !== "none") return { ip, stagedIpSource };
+      // Business rule 102: the operator's primary-address pin. Mutually
+      // exclusive with the two pins above (the routes clear the others), so
+      // order only matters for a row that somehow carries both. The card read
+      // fires only for a pinned asset's IP-staging write — discovery cadence.
+      if (row?.primaryAddressMac && row.primaryAddressIp) {
+        const card = await base.assetAssociatedIp.findMany({
+          where: { assetId: row.id, mac: row.primaryAddressMac },
+          select: { ip: true, lastSeen: true },
+        });
+        const pin = applyPrimaryAddressPin(d, { mac: row.primaryAddressMac, ip: row.primaryAddressIp }, card);
+        if (pin.action === "followed") return { ip, stagedIpSource, pinFollowed: pin };
+        if (pin.action !== "none") return null;
+      }
       // Business rule 40(j): an operator-blanked address. The "is it still
       // contested" read only fires when the write re-stages the blanked
       // address, which for a cleared row is the offline device's stale lease
@@ -453,6 +472,11 @@ function fireIpOverrideFollowUp(outcome: OperatorOverrideOutcome, assetId: strin
   if (!assetId) return;
   void (async () => {
     try {
+      if (outcome.pinFollowed) {
+        const pinSvc = await import("./services/primaryAddressService.js");
+        await pinSvc.handlePrimaryAddressFollowed(assetId, outcome.pinFollowed.fromIp, outcome.pinFollowed.ip);
+        return;
+      }
       const svc = await import("./services/ipOverrideService.js");
       const cleared = outcome.cleared;
       if (cleared && (cleared.action === "filled" || cleared.action === "returned")) {

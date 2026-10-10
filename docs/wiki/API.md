@@ -114,12 +114,24 @@ PUT    /assets/:id                          update + the monitoring surface
 POST   /assets/bulk-monitor                 flip monitoring on many at once
 POST   /assets/bulk-tags                    add / remove / replace tags on many at once
 DELETE /assets/:id
+PUT    /assets/:id/primary-address          pin the (MAC, IP) the device is monitored on
+DELETE /assets/:id/primary-address          release that pin
 GET    /credentials                         stored credentials, secrets masked
 ```
 
 `azure:` tags belong to the Azure Arc integration. `POST /assets`, `PUT
 /assets/:id` and `POST /assets/bulk-tags` ignore any `azure:` tag in the body
 and always keep the ones a device already has.
+
+`PUT /assets/:id/primary-address` takes `{ mac, ip }` — one of the device's own
+addresses, as listed in `associatedIps` on `GET /assets/:id` (each entry names
+its `mac`, the reporting gate `device`, and `medium`). A pair not on that list,
+or a FortiGate / FortiSwitch / FortiAP managed by a Fortinet integration, is a
+`409`. While pinned, discovery does not change `ipAddress`, except to follow a
+renumber: when the pinned IP has gone unseen for 24 hours and the same MAC has
+exactly one recently seen address, the pin moves to it. Typing or clearing the
+IP through `PUT /assets/:id` releases the pin, as does `DELETE`. See
+[rule 102](Business-Rules#rule-102).
 
 ### Onboarding a device over the API
 

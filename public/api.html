@@ -551,6 +551,37 @@
         </div>
 
         <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-put">PUT</span> /assets/:id/primary-address
+            <span class="gate">assets:write</span></div>
+          <p>Pin the address the device is monitored on: <code>{ mac, ip }</code> →
+            <code>{ assetId, mac, ip }</code>. The pair must be one of the device's own addresses
+            &mdash; an entry in <code>associatedIps</code> on <code>GET /assets/:id</code>, each of
+            which names its <code>mac</code>, the gate that reported it (<code>device</code>) and
+            <code>medium</code>. <code>ipAddress</code> becomes the pinned IP and discovery stops
+            changing it; the one exception is a renumber &mdash; when the pinned IP has not been
+            seen for 24 hours and the same MAC now has exactly one recently seen address, the pin
+            moves to it. Pinning replaces an IP typed through <code>PUT /assets/:id</code>, and
+            typing or clearing the IP there, or <code>ipRevertToDiscovered</code>, releases the
+            pin. The device's identity <code>macAddress</code> is not changed.</p>
+          <ul>
+            <li><code>409</code> &mdash; the pair is not on the device's address list (type an
+              address that is not there through <code>PUT /assets/:id</code> instead).</li>
+            <li><code>409</code> &mdash; a FortiGate, FortiSwitch or FortiAP managed by a
+              Fortinet integration; it is monitored on its management IP.</li>
+            <li><code>400</code> &mdash; <code>mac</code> is not a MAC address.</li>
+          </ul>
+          <pre class="curl"><code>curl -X PUT -H "Authorization: Bearer $POLARIS_TOKEN"   -H "Content-Type: application/json"   -d '{"mac":"AA:BB:CC:DD:EE:FF","ip":"10.20.30.4"}'   "<span class="js-base-url">/api/v1</span>/assets/$ASSET_ID/primary-address"</code></pre>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-delete">DELETE</span> /assets/:id/primary-address
+            <span class="gate">assets:write</span></div>
+          <p>Release the pin → <code>{ ipAddress }</code>. The address goes back to what
+            discovery reports (a device no source reports keeps the one it has). A device with no
+            pin is left as it is.</p>
+        </div>
+
+        <div class="endpoint">
           <div class="endpoint-head"><span class="method m-get">GET</span> /credentials
             <span class="gate">credentials:read</span></div>
           <p>List stored monitoring credentials so an integration can resolve the id it needs by

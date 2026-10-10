@@ -152,6 +152,8 @@ import {
 import { triggerDiscovery } from "../../services/discovery/discoveryEngine.js";
 import { resolveDiscoveryScopeForAsset } from "../../services/discovery/assetDiscoveryScope.js";
 import { isRunActive } from "../../services/discoveryRunState.js";
+import { pinPrimaryAddress, unpinPrimaryAddress, CLEAR_PRIMARY_ADDRESS_PIN } from "../../services/primaryAddressService.js";
+import { DISCOVERED_ADDRESS_SOURCES } from "../../services/assetAddressService.js";
 
 const router = Router();
 
@@ -169,6 +171,9 @@ interface AssociatedIpJson {
   source: string;
   interfaceName?: string;
   mac?: string;
+  /** Discovered rows: the gate that reported the binding, and its medium (rule 102). */
+  device?: string;
+  medium?: string;
   ptrName?: string;
   ptrTtl?: number;
   ptrFetchedAt?: string;
@@ -181,6 +186,8 @@ interface AssociatedIpRow {
   source: string;
   interfaceName: string | null;
   mac: string | null;
+  device: string | null;
+  medium: string | null;
   ptrName: string | null;
   ptrTtl: number | null;
   ptrFetchedAt: Date | null;
@@ -194,6 +201,8 @@ function shapeAssociatedIps(rows: AssociatedIpRow[] | null | undefined): Associa
     const out: AssociatedIpJson = { ip: r.ip, source: r.source };
     if (r.interfaceName) out.interfaceName = r.interfaceName;
     if (r.mac)           out.mac           = r.mac;
+    if (r.device)        out.device        = r.device;
+    if (r.medium)        out.medium        = r.medium;
     if (r.ptrName)       out.ptrName       = r.ptrName;
     if (r.ptrTtl != null) out.ptrTtl       = r.ptrTtl;
     if (r.ptrFetchedAt)   out.ptrFetchedAt = r.ptrFetchedAt.toISOString();
@@ -204,7 +213,7 @@ function shapeAssociatedIps(rows: AssociatedIpRow[] | null | undefined): Associa
 }
 
 const ASSOCIATED_IP_SELECT = {
-  ip: true, source: true, interfaceName: true, mac: true,
+  ip: true, source: true, interfaceName: true, mac: true, device: true, medium: true,
   ptrName: true, ptrTtl: true, ptrFetchedAt: true,
   lastSeen: true, firstSeen: true,
 } as const;
@@ -226,6 +235,13 @@ const AssetStatusEnum = z.enum([
 ]);
 
 const macRegex = /^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$/;
+
+// PUT /assets/:id/primary-address — one (MAC, IP) pair from the asset's
+// address list (business rule 102).
+const PrimaryAddressSchema = z.object({
+  mac: z.string().trim().min(1).max(64),
+  ip: z.string().trim().min(1).max(64),
+});
 
 const CreateAssetSchema = z.object({
   ipAddress:     z.string().min(1).optional(),
@@ -4315,6 +4331,9 @@ async function buildAssetUpdatePatch(
     data.ipBlankPinned = false;
     data.ipAddress = projected.ipAddress;
     data.ipSource = projected.ipAddress ? (provenance.ipAddress ?? "discovery") : null;
+    // Revert releases the primary-address pin too (business rule 102) — all
+    // three pins are operator choices this action undoes.
+    Object.assign(data, CLEAR_PRIMARY_ADDRESS_PIN);
     ipOverrideTouched = !!existing.ipOverride || existing.ipBlankPinned;
   } else if (input.ipAddress !== undefined) {
     const trimmed = input.ipAddress.trim();
@@ -4329,6 +4348,7 @@ async function buildAssetUpdatePatch(
       data.ipBlankPinned = true;
       data.ipSource = null;
       data.ipCleared = null; // the pin supersedes any rule 40(j) hold
+      Object.assign(data, CLEAR_PRIMARY_ADDRESS_PIN); // pins are mutually exclusive (rule 102)
       ipOverrideTouched = true;
     } else if (trimmed !== existing.ipAddress) {
       data.ipAddress = trimmed;
@@ -4336,6 +4356,7 @@ async function buildAssetUpdatePatch(
       data.ipBlankPinned = false;
       data.ipSource = "manual";
       data.ipCleared = null; // a typed address ends any rule 40(j) blank hold
+      Object.assign(data, CLEAR_PRIMARY_ADDRESS_PIN); // pins are mutually exclusive (rule 102)
       ipOverrideTouched = true;
     } else {
       delete data.ipAddress;
@@ -5159,13 +5180,23 @@ router.delete("/:id/macs/:mac", requirePermission("assets", "write"), async (req
       primary = selectPrimaryMac(shapeMacRows(allRows.filter((m) => m.mac !== target.mac)));
     }
 
-    const [, updated] = await prisma.$transaction([
+    // The addresses discovery recorded under that MAC go with it (business
+    // rule 102) — like the MAC itself, they come back on the next read if the
+    // gate still reports them. Manual and interface-scrape rows stay. A pin on
+    // the removed MAC is released: the pair it named is no longer on the list.
+    const [, , updated] = await prisma.$transaction([
       prisma.assetMacAddress.deleteMany({
         where: { assetId: id, mac: target.mac },
       }),
+      prisma.assetAssociatedIp.deleteMany({
+        where: { assetId: id, mac: target.mac, source: { in: [...DISCOVERED_ADDRESS_SOURCES] } },
+      }),
       prisma.asset.update({
         where: { id },
-        data: { macAddress: primary },
+        data: {
+          macAddress: primary,
+          ...(existing.primaryAddressMac === target.mac ? CLEAR_PRIMARY_ADDRESS_PIN : {}),
+        },
       }),
     ]);
 
@@ -5179,10 +5210,40 @@ router.delete("/:id/macs/:mac", requirePermission("assets", "write"), async (req
       resourceName: updated.hostname || updated.ipAddress || undefined,
       actor: requestActor(req),
       message: `Removed ${removedLabel} from asset "${updated.hostname || updated.ipAddress || "unknown"}"`,
-      details: { mac: target.mac, macEnd: target.macEnd, source: target.source, primaryAfter: primary },
+      details: {
+        mac: target.mac, macEnd: target.macEnd, source: target.source, primaryAfter: primary,
+        ...(existing.primaryAddressMac === target.mac ? { releasedPrimaryAddressPin: existing.primaryAddressIp } : {}),
+      },
     });
 
     res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/v1/assets/:id/primary-address — pin the (MAC, IP) pair the asset is
+// monitored on, chosen from its address list (business rule 102). Replaces the
+// typed IP override and the blank pin if either is set. assets:write, the same
+// grant as editing the IP in the form.
+router.put("/:id/primary-address", requirePermission("assets", "write"), async (req, res, next) => {
+  try {
+    const input = PrimaryAddressSchema.parse(req.body);
+    const result = await pinPrimaryAddress({
+      assetId: req.params.id as string, mac: input.mac, ip: input.ip, actor: requestActor(req) ?? "unknown",
+    });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/v1/assets/:id/primary-address — release the pin; the address
+// reverts to what discovery reports.
+router.delete("/:id/primary-address", requirePermission("assets", "write"), async (req, res, next) => {
+  try {
+    const result = await unpinPrimaryAddress({ assetId: req.params.id as string, actor: requestActor(req) ?? "unknown" });
+    res.json(result);
   } catch (err) {
     next(err);
   }

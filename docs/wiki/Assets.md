@@ -299,18 +299,47 @@ honest — another gate's ARP row never counts, two MACs at one address is
 `ambiguous` rather than a pick, a stale address claim is skipped, and evidence
 older than 24 hours is not evidence.
 
+#### Addresses and the primary address
+
+**Primary Address** is the address monitoring probes and the network card it
+is on (*on AA:BB:…*). Below it, **Addresses** lists every MAC the device has
+been seen with and, under each one, the IP addresses bound to it: a lease or
+reservation the device is holding, the address a FortiGate sees it using, ARP
+entries (a card's secondary addresses), the interface table of a monitored
+device, and anything typed by hand. Each address names where it came from, the
+gate that reported it, wired or wireless when known, and when it was last seen.
+A FortiGate's addresses for a card leave the list once that gate stops
+reporting them ([rule 102](Business-Rules#rule-102)).
+
+The primary pair carries **★ Primary**. Polaris chooses it from what the gates
+report ([rule 101](Business-Rules#rule-101)); with **Assets** set to *Write* or
+higher, **Set as primary** on any other address pins that pair instead. The pin
+shows as *pinned* with an **Unpin** button, and:
+
+- discovery never changes a pinned address — if the device stops answering on
+  it, the asset shows down and the address is flagged *not seen since*;
+- if that card renumbers to a single new address, the pin follows it after a
+  day (recorded as `asset.primary_address.followed`);
+- pinning replaces an address typed in Edit, and typing or clearing the IP in
+  Edit releases the pin.
+
+FortiGates, FortiSwitches and FortiAPs are monitored on their management IP and
+offer no pin. A device's port MACs from its interface table are collapsed into
+one *N port MACs* entry and are never a primary.
+
 #### Correcting a wrong MAC association
 
-**MAC Address** is the asset's primary MAC; **All MACs** below it is every
-address Polaris has ever seen this device advertise, newest first, each labelled
-with the source that reported it and when. Docks, dongles, randomised Wi-Fi
-addresses and ZTNA-relayed identities all show up here, which is why the list
-occasionally names a MAC that belongs to some *other* device — a shared dock
-moves between laptops, and a merge can bring a neighbour's history with it.
+The MAC list names every address Polaris has seen this device advertise, newest
+first, each labelled with the source that reported it and when. Docks, dongles,
+randomised Wi-Fi addresses and ZTNA-relayed identities all show up here, which
+is why the list occasionally names a MAC that belongs to some *other* device — a
+shared dock moves between laptops, and a merge can bring a neighbour's history
+with it.
 
 With **Assets** set to *Write* or higher (the built-in **assetsadmin** role, and
-admin) each entry carries a **×**. It removes that MAC from this asset and
-promotes the best surviving address to primary — preferring the device's real
+admin) each entry carries a **×**. It removes that MAC and the addresses
+discovery recorded under it from this asset, releases a pin on it, and makes
+the best surviving MAC the asset's identity MAC, preferring the device's real
 NICs, as reported by the Polaris Agent, Intune or vCenter, over anything a gate
 merely *saw*. The same **×** is on the MAC column's hover tooltip on the list,
 but the slide-over is the only place it appears for an asset carrying a single
@@ -1090,6 +1119,10 @@ The IP Address field in the edit form overrides what discovery reports.
 | **type a different address** | it is pinned (*overridden* on the details page). Discovery reporting the same address releases the pin; a different one raises an [IP override conflict](Conflict-Resolution#ip-override-conflicts) |
 | **clear the field** on an asset that has an address | the asset has **no address** and stays that way (*cleared* on the details page). Discovery cannot put one back; an address it reports raises the same conflict, where **Accept** takes it and **Reject** keeps the asset blank |
 | **click Revert to discovered IP** (shown under a pinned or cleared field) | the pin is released and the asset takes whatever discovery reports, on save |
+
+Each of the three also releases a pinned primary address. To monitor a device
+on one of the addresses it already has, use **Set as primary** in its
+[Addresses](#addresses-and-the-primary-address) list instead.
 
 Saving the form while the field is already empty changes nothing, so editing
 another field on an asset with no address never pins it blank.

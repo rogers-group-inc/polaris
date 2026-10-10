@@ -45,6 +45,7 @@ import type { DiscoveryResult, DiscoveryProgressCallback } from "../fortimanager
 import { projectAssetFromSources, ENRICHMENT_SOURCE_KINDS } from "../../utils/assetProjection.js";
 import { classifyDirectoryRows, absenceExceedsGuard } from "../../utils/directoryAbsence.js";
 import { scoreAddressClaim, claimBeats, claimMedium, createDhcpClaimState, type DhcpClaimState } from "../../utils/dhcpClaimFreshness.js";
+import { reconcileDiscoveredAddresses, type AddressSighting } from "../assetAddressService.js";
 import { bareFortinetDeviceName } from "../../utils/assetSourceLocation.js";
 import { readFirewallDeviceName, normalizeNameKey, normalizeSerialKey } from "../../utils/fortinetParentKey.js";
 import { isUsableSerial } from "../../utils/serialNumber.js";
@@ -5832,6 +5833,12 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // `claims` state so it also spans the per-gate syncs of an FMG run.
   const bestGateClaimMsByAsset = claims.bestGateClaimMsByAsset;
 
+  // Every binding a gate reports as CURRENT for an endpoint's MAC — held DHCP
+  // bindings (Phase 6), online local detected-device rows (Phase 7), ARP
+  // entries (Phase 7.5) — collected for the asset's per-MAC address list and
+  // written once after Phase 7.5 (business rule 102, assetAddressService).
+  const addressSightings: AddressSighting[] = [];
+
   // ══════════════════════════════════════════════════════════════════════════════
   // Phase 6 — Associate DHCP MACs with assets & cross-update reservations
   phaseMark("6");
@@ -5945,17 +5952,27 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       const priorMacEntry = Array.isArray(asset.macAddresses)
         ? (asset.macAddresses as MacJsonEntry[]).find((m) => m.mac === normalized)
         : undefined;
+      const entryMedium = claimMedium({
+        wirelessEvidence: !!(entry.accessPoint || entry.ssid) || !!invMedium?.wireless,
+        wiredEvidence: !!invMedium?.wired,
+        macSource: priorMacEntry?.source,
+      });
       const claimScore = scoreAddressClaim({
         kind: entry.type,
         current: !!entry.seenLeased,
         expireTime: entry.expireTime,
         seenMs: macDeviceKey ? invSeenByMacDevice.get(macDeviceKey) : undefined,
-        medium: claimMedium({
-          wirelessEvidence: !!(entry.accessPoint || entry.ssid) || !!invMedium?.wireless,
-          wiredEvidence: !!invMedium?.wired,
-          macSource: priorMacEntry?.source,
-        }),
+        medium: entryMedium,
       }, nowMs);
+      // A binding the gate confirms is held right now goes on the asset's
+      // address list under this MAC (business rule 102). Configuration nobody
+      // holds is not an address the device has.
+      if (entry.seenLeased && entry.device && !isInfraAsset) {
+        addressSightings.push({
+          assetId: asset.id, mac: normalized, ip: entry.ipAddress, source: entry.type,
+          device: entry.device, medium: entryMedium, seenAt: new Date(now),
+        });
+      }
       const incumbentScore = bestAddressClaimByAsset.get(asset.id);
       const winsIpClaim = !incumbentScore || claimBeats(claimScore, incumbentScore);
       if (winsIpClaim) bestAddressClaimByAsset.set(asset.id, claimScore);
@@ -6353,16 +6370,26 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           const priorMacEntry = normalizedMac && Array.isArray(existingAsset.macAddresses)
             ? (existingAsset.macAddresses as MacJsonEntry[]).find((m) => m.mac === normalizedMac)
             : undefined;
+          const invMedium = claimMedium({
+            wirelessEvidence: !!inv.apName,
+            wiredEvidence: !!inv.switchName,
+            macSource: priorMacEntry?.source,
+          });
           const claimScore = scoreAddressClaim({
             kind: "device-inventory",
             current: !!inv.isOnline,
             seenMs: invSeenValid ? invSeenAt.getTime() : 0,
-            medium: claimMedium({
-              wirelessEvidence: !!inv.apName,
-              wiredEvidence: !!inv.switchName,
-              macSource: priorMacEntry?.source,
-            }),
+            medium: invMedium,
           }, invNowMs);
+          // An online row is a binding the gate is seeing right now — it goes
+          // on the address list under its MAC (business rule 102). A
+          // remembered-but-offline row's address is history, not an address.
+          if (inv.isOnline && normalizedMac && inv.device) {
+            addressSightings.push({
+              assetId: existingAsset.id, mac: normalizedMac, ip: inv.ipAddress, source: "device-inventory",
+              device: inv.device, medium: invMedium, seenAt: invSeenAt,
+            });
+          }
           const incumbentScore = bestAddressClaimByAsset.get(existingAsset.id);
           if (!incumbentScore || claimBeats(claimScore, incumbentScore)) {
             bestAddressClaimByAsset.set(existingAsset.id, claimScore);
@@ -6576,6 +6603,14 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           });
           if (newAsset.assetType !== "firewall" && newAsset.assetType !== "switch" && newAsset.assetType !== "access_point") {
             fortigateEndpointAssetIds.add(newAsset.id);
+            if (invIsLocal && inv.isOnline && inv.ipAddress && inv.device) {
+              addressSightings.push({
+                assetId: newAsset.id, mac: normalizedMac, ip: inv.ipAddress, source: "device-inventory",
+                device: inv.device,
+                medium: claimMedium({ wirelessEvidence: !!inv.apName, wiredEvidence: !!inv.switchName }),
+                seenAt: invSeenAt,
+              });
+            }
             if (invIsLocal && inv.device) {
               bestGateClaimMsByAsset.set(newAsset.id, invSeenValid ? invSeenAt.getTime() : 0);
               noteEndpointGate(newAsset.id, inv.device);
@@ -6761,6 +6796,15 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       if (!row.mac || !row.ip) continue;
       const asset = assetIdx.findByMac(row.mac);
       if (!asset) continue;
+      // Every ARP binding is a current address for that MAC — one row each,
+      // which is how a card's SECONDARY addresses reach the asset's address
+      // list (business rule 102). Infra keeps its own interface table.
+      if (row.fortigateDevice && asset.assetType !== "firewall" && asset.assetType !== "switch" && asset.assetType !== "access_point") {
+        addressSightings.push({
+          assetId: asset.id, mac: String(row.mac).toUpperCase().replace(/-/g, ":"), ip: row.ip, source: "arp",
+          device: row.fortigateDevice, seenAt: new Date(now),
+        });
+      }
       if (asset.ipAddress) continue; // conservative: don't overwrite
       queueUpdate(asset.id, { ipAddress: row.ip, ipSource: `${row.fortigateDevice}:arp` });
       asset.ipAddress = row.ip;
@@ -6779,6 +6823,27 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       let okCount = 0;
       for (const r of results) if (r.status === "fulfilled") okCount++;
       syncLog("info", `Enriched ${okCount} asset(s) from FortiSwitch macmap + FortiGate ARP (switch-port + IP)`);
+    }
+  }
+
+  // ── Per-MAC address list (business rule 102) ─────────────────────────────
+  // Current-state per gate: each gate whose read of a kind succeeded has its
+  // discovered rows of that kind replaced by this run's sightings. Runs even
+  // with zero sightings, so a gate that stopped reporting a binding drops it.
+  // Best-effort, like 7.5b below: the run's real work has already landed.
+  {
+    const scope = {
+      dhcpDevices: result.dhcpLeasesInventoriedDevices ?? [],
+      inventoryDevices: result.inventoryDevices ?? [],
+      arpDevices: result.arpQueriedDevices ?? [],
+    };
+    if (addressSightings.length > 0 || scope.dhcpDevices.length || scope.inventoryDevices.length || scope.arpDevices.length) {
+      try {
+        const { upserted, pruned } = await reconcileDiscoveredAddresses(addressSightings, scope, new Date(now));
+        if (upserted || pruned) syncLog("info", `Address list: ${upserted} binding(s) recorded, ${pruned} no longer reported removed`);
+      } catch (err: any) {
+        syncLog("error", `Failed to record per-MAC addresses: ${err.message || "Unknown error"}`);
+      }
     }
   }
 
@@ -7177,6 +7242,11 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         // skipped above and the pin would never self-clear).
         const pinnedIp = (asset as any).ipOverride as string | null | undefined;
         if (pinnedIp && projected.ipAddress === pinnedIp) corrections.ipAddress = pinnedIp;
+        // A primary-address pin (business rule 102) owns the address outright;
+        // re-projecting it would only hand the db.ts guard a write to rewrite.
+        // The Phase 6/7 claim writes still reach the guard, which is what lets
+        // a pin follow a renumbered card.
+        if ((asset as any).primaryAddressIp) delete corrections.ipAddress;
         considerString("serialNumber");
         // lat/long: only meaningful for firewall-typed assets (excluded
         // from this set since infrastructure assets aren't tracked in
