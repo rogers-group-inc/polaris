@@ -29,11 +29,13 @@
  * asset's IPsec tab reads from a current-state table.
  *
  * Child fields relied on: `username` is the peer's IKE identity (its localid —
- * "SPK1-ISP1" — or its address when it sends none), `rgwy` the peer's
- * underlay/public address, `tun_id` its overlay / mode-cfg-assigned address,
- * `creation_time` seconds since the SA came up, `xauth_user` (when present)
- * the authenticated remote-access user. The last is read defensively under
- * a few spellings: the lab has no FortiClient user to confirm it against.
+ * "SPK1-ISP1") or, when it sends none, an ADDRESS (the spoke's public one, or
+ * a NAT'd FortiClient's own LAN address) and then names nothing; `rgwy` the
+ * peer's underlay/public address, `tun_id` its overlay / mode-cfg-assigned
+ * address, `creation_time` seconds since the SA came up. A remote-access
+ * child carries `user` (the authenticated user — confirmed on a prod 7.6 EAP
+ * template), `auth_type` ("eap"), `user_two_factor_auth`, `fct_uid` and
+ * `rport`; the xauth spellings `userOf` also reads are unconfirmed fallbacks.
  */
 
 /**
@@ -167,8 +169,31 @@ function rollupProxyIds(t: Record<string, unknown>) {
   return { proxyCount: proxyArr.length, upCount, downCount, inBytes, outBytes, anyBytes };
 }
 
+/**
+ * The authenticated remote-access user. Confirmed on a prod FortiOS 7.6
+ * EAP dial-up child: the user is in `user` (beside `auth_type: "eap"`,
+ * `user_two_factor_auth`, `fct_uid`) — NOT in `username`, which there holds
+ * the client's own LAN address. The xauth spellings stay as fallbacks for
+ * IKEv1 XAuth, which is unconfirmed.
+ */
 function userOf(t: Record<string, unknown>): string | null {
-  return str(t.xauth_user) || str(t.xauthuser) || str(t.xauth_username) || str(t.eap_user) || null;
+  return str(t.user) || str(t.xauth_user) || str(t.xauthuser) || str(t.xauth_username) || str(t.eap_user) || null;
+}
+
+/** An IPv4 / IPv6 literal — an address, never an IKE identity. */
+function isIpLiteral(s: string): boolean {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(s) || (s.includes(":") && /^[0-9a-f:.]+$/i.test(s));
+}
+
+/**
+ * `username` is the peer's IKE identity (its localid, "SPK1-ISP1") — when it
+ * sends one. When it doesn't, FortiOS puts an ADDRESS there: the peer's
+ * public one (a spoke with no localid, = `rgwy`) or, for a FortiClient
+ * behind NAT, its own LAN address (192.168.x.y). Neither names the peer.
+ */
+function peerIdOf(t: Record<string, unknown>): string | null {
+  const raw = str(t.username);
+  return raw && !isIpLiteral(raw) ? raw : null;
 }
 
 /**
@@ -181,7 +206,10 @@ export function classifyIpsecChild(
   child: Record<string, unknown>,
   parent: Phase1Info | null,
 ): IpsecConnectionKind {
-  if (userOf(child)) return "remote-access";
+  // A child that authenticated a USER is remote access whatever its template
+  // says — the user, or the auth method FortiOS reports beside it.
+  const auth = str(child.auth_type).toLowerCase();
+  if (userOf(child) || auth === "eap" || auth === "xauth") return "remote-access";
   if (parent) {
     if (parent.type === "dynamic") {
       if (parent.remoteAccess) return "remote-access";
@@ -230,13 +258,11 @@ export function parseFortiosIpsec(
       const inB  = pickFiniteNumber(t.incoming_bytes) ?? (r.anyBytes ? r.inBytes : null);
       const outB = pickFiniteNumber(t.outgoing_bytes) ?? (r.anyBytes ? r.outBytes : null);
       const remoteGateway = addr(t.rgwy);
-      const rawPeerId = str(t.username);
       connections.push({
         name,
         kind:          classifyIpsecChild(t, parent),
         parentTunnel:  parentName,
-        // FortiOS echoes the peer's address here when it sent no localid.
-        peerId:        rawPeerId && rawPeerId !== remoteGateway ? rawPeerId : null,
+        peerId:        peerIdOf(t),
         userName:      userOf(t),
         remoteGateway,
         tunnelIp:      addr(t.assigned_ip) ?? addr(t.tun_id),
