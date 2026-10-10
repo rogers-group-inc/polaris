@@ -10,6 +10,8 @@ import { describe, it, expect } from "vitest";
 import {
   SIGN_OFFS,
   LOOKUP_LINES,
+  VOICE_SAMPLES,
+  ADVISOR_PERSONA,
   pickLookupLine,
   asksAboutOutage,
   lookupShowsOutage,
@@ -131,5 +133,38 @@ describe("pickSignOff", () => {
   it("says engineer, never pioneer, and carries no planetfall line", () => {
     const all = Object.values(SIGN_OFFS).flat().concat(LOOKUP_LINES).join("\n");
     expect(all).not.toMatch(/pioneer|planetfall/i);
+  });
+});
+
+describe("VOICE_SAMPLES — the owner's lines reach the model as samples of the voice (2026-10-10)", () => {
+  it("quotes every sign-off and lookup line, labelled by moment, inside ADVISOR_PERSONA", () => {
+    expect(ADVISOR_PERSONA).toContain(VOICE_SAMPLES);
+    const all = Object.values(SIGN_OFFS).flat().concat(LOOKUP_LINES).filter((l) => !l.includes("{topic}"));
+    for (const l of all) expect(VOICE_SAMPLES).toContain(`"${l}"`);
+    expect(VOICE_SAMPLES.match(/"[^"]+"/g)).toHaveLength(all.length);
+    expect(VOICE_SAMPLES).toMatch(/during an outage — the joke is on the person, never the failure: "/);
+    expect(VOICE_SAMPLES).toMatch(/while looking something up: "/);
+  });
+
+  it("gives the model nothing to lift: the SHAPE examples bracket their quips, the lines are called spent, and the no-repeat rule closes the persona", () => {
+    // Haiku 5.5 test 2026-10-10: three of six answers opened with a SHAPE
+    // example or a quoted line word for word. No complete quip may remain
+    // in the SHAPE examples, and the rule must be the LAST bullet.
+    expect(ADVISOR_PERSONA).not.toContain("Asking for my help is the right move; otherwise");
+    expect(ADVISOR_PERSONA).not.toContain("which is a relief to everyone");
+    expect(ADVISOR_PERSONA).toMatch(/\[one line framing the request/);
+    expect(ADVISOR_PERSONA).toMatch(/ALREADY said to this person/);
+    const last = ADVISOR_PERSONA.trim().split("\n").at(-1)!;
+    expect(last).toMatch(/^- Last and most important: never repeat a line/);
+    // Round 2: "spent" made the model timid (4 of 6 answers near-plain), and
+    // "just give me the numbers" was obeyed. Both rules are pinned.
+    expect(last).toMatch(/fresh, not absent/);
+    expect(ADVISOR_PERSONA).toMatch(/"just give me the numbers"/);
+  });
+
+  it("never shows the model a {topic} template, and is deterministic so the cached system prompt stays stable", async () => {
+    expect(VOICE_SAMPLES).not.toContain("{topic}");
+    const again = await import("../../src/services/efficiencyAdvisorService.js");
+    expect(again.VOICE_SAMPLES).toBe(VOICE_SAMPLES);
   });
 });

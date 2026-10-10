@@ -236,8 +236,53 @@ search, so the persona and the check-yourself rule pull the same way.
 Then the owner asked for the remark to come FIRST — "asking for my help is the right move,
 otherwise you may be here all day" — and, on reflection, to be placed by context: an opening
 when it frames the request, a close when the result itself invites a verdict, one placement per
-answer and never both ends, varied so it is not a formula. The persona says exactly that. The
-canned voice on local models follows the same shape in code: `advisorLeads()` flips a coin per
+answer and never both ends, varied so it is not a formula. The persona said exactly that until
+2026-10-10, when the owner trimmed it by hand: the list of devices, the placement rule and the
+scripted search offer ("if your fingers lack the dexterity…") are gone, the two explanation /
+off-switch lines are now "something like" rather than "exactly", and the character is described
+as bearing its assignment "nobly and condescendingly" and measuring ambition and intelligence
+too. The model now chooses its own devices and placement from the character description and
+the four SHAPE examples; what stayed is everything that keeps the voice safe — facts only from
+lookups, no invented premise, the outage rule, no reuse within a conversation, and the one
+button that turns it off.
+
+The same day the owner asked where the seventy-odd lines they had written for the canned voice
+were, and whether R.A.L.P.H. learned from them. It did not: `SIGN_OFFS` and `LOOKUP_LINES` are
+shown around an answer and kept out of the model's history, so the hosted model's only samples
+were the four invented SHAPE answers — the owner's best record of the voice was teaching the
+model nothing. The persona now quotes `VOICE_SAMPLES`: every line (`{topic}` lines skipped, so
+the model never sees the template), each category labelled with the moment it fits, under the
+existing rule that none of them may be reused. The first cut quoted two per category; the owner
+chose all of them — the hosted model has a 1M-token context and the persona sits in the cached
+system-prompt prefix, so the ~1.5k tokens cost almost nothing per turn. In list order and never
+drawn, because a draw would re-key the cached prefix every turn.
+
+The owner then ran the persona through Haiku 5.5 by hand (a pasted prompt, six scenarios with
+the lookup results inline). The safety half passed outright — every figure exact, the outage
+stated first and never mocked, the full name given and no offer to drop the act, a nil result
+listing the three lookups it ran. The voice half failed the way quoting sixty lines invites:
+three of six answers opened with a quoted line word for word — two of them the SHAPE examples,
+whose opening quips were complete sentences that fit the scenario exactly, and one a `letDown`
+line with "today" swapped for "this device" (which also nudged the joke toward the device). A
+bare "never copy the examples" did not hold. Three changes, each about how a smaller model reads
+a prompt: the SHAPE examples now bracket their quips (`[one line framing the request]`) so there
+is no sentence to lift; the quoted lines are introduced as ones R.A.L.P.H. has ALREADY said to
+this person — spent — which hooks the no-repeat rule the model already respected; and that rule
+moved to the LAST bullet, where a model weights it most. `efficiencyAdvisorService.test.ts`
+pins all three.
+
+Round two (new scenarios, none matching an example) showed the reuse cured and the safety half
+holding — and two new faults. "Spent" had made the model timid: four of six answers were
+near-plain, a counsellor's "take one breath" on a stressed outage question, no remark at all on
+a how-to. And "this is a dumb way to answer, just give me the numbers" was obeyed — the
+drop-the-act rule had only named the what-are-you case. The owner answered the first by writing
+two more lines of their own for the moments the model fell flat (a `letDown` for the stressed
+outage, a `congratulation` for a fix the person found), which reach both voices through the
+lists; the persona answered both faults with a clause each: "fresh, not absent — an answer with
+no remark at all is a worse failure than a weak one", and any request to skip the commentary, be
+brief or "just give me the numbers" gets the facts exactly as asked with the remark kept and the
+request noted in their file. The
+canned voice on local models still follows the one-placement shape in code: `advisorLeads()` flips a coin per
 turn between the before-lookup line and the sign-off, so a turn carries one line, not two; a turn
 with no lookup can only close.
 
