@@ -16,9 +16,10 @@ import vm from "node:vm";
 
 let MD: { render: (s: string) => string };
 let A: any;
+let sandbox: any;
 
 beforeAll(() => {
-  const sandbox: any = { window: {}, TextDecoder, TextEncoder };
+  sandbox = { window: {}, TextDecoder, TextEncoder };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   for (const f of ["assistant-markdown.js", "assistant.js"]) {
@@ -27,6 +28,39 @@ beforeAll(() => {
   }
   MD = sandbox.window.PolarisMarkdown;
   A = sandbox.window.PolarisAssistant;
+});
+
+// The page's sticky top bar (z-index 1050) covers the panel (950); a panel
+// whose top went under it lost its title bar and resize grip — the only two
+// handles — and could not be moved or shrunk back.
+describe("panel top limit (clears the sticky top bar)", () => {
+  function withBar(rect: { top: number; bottom: number; height: number } | null, innerHeight = 900) {
+    sandbox.window.innerHeight = innerHeight;
+    sandbox.document = {
+      querySelector: (sel: string) =>
+        sel === ".page-top-sticky" && rect ? { getBoundingClientRect: () => rect } : null,
+    };
+  }
+
+  it("sits 8px below the bar's bottom edge", () => {
+    withBar({ top: 0, bottom: 112, height: 112 });
+    expect(A._topLimit()).toBe(120);
+  });
+
+  it("falls back to 8px on a page with no bar", () => {
+    withBar(null);
+    expect(A._topLimit()).toBe(8);
+  });
+
+  it("ignores a bar that is not laid out", () => {
+    withBar({ top: 0, bottom: 0, height: 0 });
+    expect(A._topLimit()).toBe(8);
+  });
+
+  it("ignores a bar that is not at the top of the window", () => {
+    withBar({ top: 600, bottom: 700, height: 100 });
+    expect(A._topLimit()).toBe(8);
+  });
 });
 
 describe("PolarisMarkdown — escape first", () => {

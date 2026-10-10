@@ -371,12 +371,33 @@
     p.style.bottom = "auto";
   }
 
+  // The highest the panel's top edge may go: below the page's sticky top bar.
+  // That bar (z-index 1050) sits above the panel (950), so a panel reaching
+  // under it loses its title bar and its resize grip — the only two handles —
+  // and can't be moved or shrunk back. The bar is pinned from the first pixel
+  // (page-top-curtain.js), so its rect is stable; pages without one get 8px.
+  function topLimit() {
+    var bar = document.querySelector(".page-top-sticky");
+    var r = bar && bar.getBoundingClientRect();
+    return (r && r.height > 0 && r.top < window.innerHeight / 2) ? Math.max(8, Math.round(r.bottom) + 8) : 8;
+  }
+
   function clampIntoView() {
     var p = S.els.panel;
-    if (p.hidden || p.style.left === "") return;
+    if (p.hidden) return;
+    if (window.matchMedia && window.matchMedia("(max-width: 640px)").matches) return;
+    var minTop = topLimit();
     var r = p.getBoundingClientRect();
+    // Too tall for the room under the bar (a saved size, a smaller window, a
+    // docked panel grown upward): shorten it so its top clears the bar.
+    if (r.top < minTop && p.style.height !== "") {
+      var h = Math.max(MIN_H, r.height - (minTop - r.top));
+      p.style.height = Math.round(h) + "px";
+      r = p.getBoundingClientRect();
+    }
+    if (p.style.left === "") return;
     var left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - r.width - 8));
-    var top = Math.min(Math.max(8, r.top), Math.max(8, window.innerHeight - r.height - 8));
+    var top = Math.min(Math.max(minTop, r.top), Math.max(minTop, window.innerHeight - r.height - 8));
     applyPos(left, top);
   }
 
@@ -387,7 +408,7 @@
       if (e.button !== 0 || e.target.closest("button, label, input")) return;
       if (window.matchMedia && window.matchMedia("(max-width: 640px)").matches) return;
       var r = S.els.panel.getBoundingClientRect();
-      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, h: r.height, id: e.pointerId };
+      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, h: r.height, minTop: topLimit(), id: e.pointerId };
       head.setPointerCapture(e.pointerId);
       S.els.panel.classList.add("is-dragging");
       e.preventDefault();
@@ -395,8 +416,8 @@
     head.addEventListener("pointermove", function (e) {
       if (!drag || e.pointerId !== drag.id) return;
       var left = Math.min(Math.max(8, e.clientX - drag.dx), window.innerWidth - drag.w - 8);
-      var top = Math.min(Math.max(8, e.clientY - drag.dy), window.innerHeight - drag.h - 8);
-      applyPos(Math.max(8, left), Math.max(8, top));
+      var top = Math.min(Math.max(drag.minTop, e.clientY - drag.dy), window.innerHeight - drag.h - 8);
+      applyPos(Math.max(8, left), Math.max(drag.minTop, top));
     });
     function end(e) {
       if (!drag || (e && e.pointerId !== drag.id)) return;
@@ -441,7 +462,7 @@
       if (e.button !== 0) return;
       if (window.matchMedia && window.matchMedia("(max-width: 640px)").matches) return;
       var r = S.els.panel.getBoundingClientRect();
-      rs = { x: e.clientX, y: e.clientY, w: r.width, h: r.height, right: r.right, bottom: r.bottom, id: e.pointerId };
+      rs = { x: e.clientX, y: e.clientY, w: r.width, h: r.height, right: r.right, bottom: r.bottom, minTop: topLimit(), id: e.pointerId };
       grip.setPointerCapture(e.pointerId);
       S.els.panel.classList.add("is-dragging");
       e.preventDefault();
@@ -449,9 +470,10 @@
     });
     grip.addEventListener("pointermove", function (e) {
       if (!rs || e.pointerId !== rs.id) return;
-      // Bounded by the space up and to the left of the held corner.
+      // Bounded by the space up and to the left of the held corner — up only
+      // as far as the sticky top bar, so the grip stays where it can be grabbed.
       var w = Math.min(Math.max(MIN_W, rs.w + (rs.x - e.clientX)), rs.right - 8);
-      var h = Math.min(Math.max(MIN_H, rs.h + (rs.y - e.clientY)), rs.bottom - 8);
+      var h = Math.min(Math.max(MIN_H, rs.h + (rs.y - e.clientY)), rs.bottom - rs.minTop);
       applySize(w, h);
       if (S.els.panel.style.left !== "") applyPos(rs.right - w, rs.bottom - h);
     });
@@ -1619,6 +1641,7 @@
     _idleExpired: idleExpired,
     _IDLE_RESET_MS: IDLE_RESET_MS,
     _idleWindowText: idleWindowText,
+    _topLimit: topLimit,
     parseSlash: parseSlash,
     matchCommands: matchCommands,
     readEventStream: readEventStream,
