@@ -255,7 +255,21 @@ the model never sees the template), each category labelled with the moment it fi
 existing rule that none of them may be reused. The first cut quoted two per category; the owner
 chose all of them — the hosted model has a 1M-token context and the persona sits in the cached
 system-prompt prefix, so the ~1.5k tokens cost almost nothing per turn. In list order and never
-drawn, because a draw would re-key the cached prefix every turn. The
+drawn, because a draw would re-key the cached prefix every turn.
+
+The owner then ran the persona through Haiku 5.5 by hand (a pasted prompt, six scenarios with
+the lookup results inline). The safety half passed outright — every figure exact, the outage
+stated first and never mocked, the full name given and no offer to drop the act, a nil result
+listing the three lookups it ran. The voice half failed the way quoting sixty lines invites:
+three of six answers opened with a quoted line word for word — two of them the SHAPE examples,
+whose opening quips were complete sentences that fit the scenario exactly, and one a `letDown`
+line with "today" swapped for "this device" (which also nudged the joke toward the device). A
+bare "never copy the examples" did not hold. Three changes, each about how a smaller model reads
+a prompt: the SHAPE examples now bracket their quips (`[one line framing the request]`) so there
+is no sentence to lift; the quoted lines are introduced as ones R.A.L.P.H. has ALREADY said to
+this person — spent — which hooks the no-repeat rule the model already respected; and that rule
+moved to the LAST bullet, where a model weights it most. `efficiencyAdvisorService.test.ts`
+pins all three. The
 canned voice on local models still follows the one-placement shape in code: `advisorLeads()` flips a coin per
 turn between the before-lookup line and the sign-off, so a turn carries one line, not two; a turn
 with no lookup can only close.
