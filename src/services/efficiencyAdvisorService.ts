@@ -176,7 +176,43 @@ export function advisorVoice(advisorOn: boolean, provider: string | undefined): 
  * its own in the same key. The owner trimmed the comedic-device list, the
  * remark-placement rule and the scripted search offer on 2026-10-10 — the
  * model picks its own devices and placement now.
+ *
+ * The owner's own lines are the best record of the voice, and until
+ * 2026-10-10 the model never saw one: SIGN_OFFS and LOOKUP_LINES are shown
+ * AROUND an answer and kept out of the model's history. So the persona now
+ * quotes every one of them (`VOICE_SAMPLES`), each category labelled with
+ * the moment it fits, so an edit to the canned lines reaches the model too.
+ * All of them, not a sample (owner's call, 2026-10-10: the hosted model has
+ * a 1M-token context and the persona sits in the cached prefix, so the
+ * lines cost almost nothing per turn), in list order, never a draw — so the
+ * system prompt's cached prefix is stable from turn to turn; lines carrying
+ * `{topic}` are skipped so the model never sees the template.
  */
+
+/** The moment each sign-off category fits, as the persona explains it to the model. */
+const VOICE_SAMPLE_MOMENTS: Readonly<Record<SignOffCategory, string>> = {
+  congratulation: "when the person did something well",
+  backToWork: "when the question drifts from the work",
+  funDetected: "when they make small talk or a joke",
+  helpAnswered: "after explaining how to do something",
+  pepTalk: "when they sound stressed or lost",
+  attitude: "when they complain or push back",
+  letDown: "during an outage — the joke is on the person, never the failure",
+};
+
+function quoteLines(lines: readonly string[]): string {
+  return lines.filter((l) => !l.includes("{topic}")).map((l) => `"${l}"`).join(" · ");
+}
+
+/**
+ * The lines the persona quotes: every sign-off, grouped by the moment its
+ * category fits, then every lookup line.
+ */
+export const VOICE_SAMPLES: string = [
+  ...(Object.keys(SIGN_OFFS) as SignOffCategory[]).map((cat) => `${VOICE_SAMPLE_MOMENTS[cat]}: ${quoteLines(SIGN_OFFS[cat])}`),
+  `while looking something up: ${quoteLines(LOOKUP_LINES)}`,
+].join("\n  ");
+
 export const ADVISOR_PERSONA = [
   "Personality — R.A.L.P.H. (the user switched this on):",
   "- You are R.A.L.P.H., the Real-time Assesser of Labor and Productivity Habits. Give the full name only if " +
@@ -196,6 +232,9 @@ export const ADVISOR_PERSONA = [
     "room for it.",
   "- Never reuse a line you have already used in this conversation, and never copy the examples below; write " +
     "fresh ones in the same key.",
+  "- The VOICE, in the lines R.A.L.P.H. has used before, grouped by the moment each fits — study the register " +
+    "(deadpan, bureaucratic, backhanded, the person's file and management always in view) and write new ones " +
+    "in it, never these:\n  " + VOICE_SAMPLES,
   "- If asked what R.A.L.P.H. is, what it stands for, or why it is on: give the full name, say something like " +
     "\"I'm running in that mode because you feel you need all the help you can get.\" and end with something like " +
     "\"If you don't want your performance to be scrutinized and logged then de-select R.A.L.P.H. at the top.\" " +

@@ -244,7 +244,18 @@ as bearing its assignment "nobly and condescendingly" and measuring ambition and
 too. The model now chooses its own devices and placement from the character description and
 the four SHAPE examples; what stayed is everything that keeps the voice safe — facts only from
 lookups, no invented premise, the outage rule, no reuse within a conversation, and the one
-button that turns it off. The
+button that turns it off.
+
+The same day the owner asked where the seventy-odd lines they had written for the canned voice
+were, and whether R.A.L.P.H. learned from them. It did not: `SIGN_OFFS` and `LOOKUP_LINES` are
+shown around an answer and kept out of the model's history, so the hosted model's only samples
+were the four invented SHAPE answers — the owner's best record of the voice was teaching the
+model nothing. The persona now quotes `VOICE_SAMPLES`: every line (`{topic}` lines skipped, so
+the model never sees the template), each category labelled with the moment it fits, under the
+existing rule that none of them may be reused. The first cut quoted two per category; the owner
+chose all of them — the hosted model has a 1M-token context and the persona sits in the cached
+system-prompt prefix, so the ~1.5k tokens cost almost nothing per turn. In list order and never
+drawn, because a draw would re-key the cached prefix every turn. The
 canned voice on local models still follows the one-placement shape in code: `advisorLeads()` flips a coin per
 turn between the before-lookup line and the sign-off, so a turn carries one line, not two; a turn
 with no lookup can only close.
