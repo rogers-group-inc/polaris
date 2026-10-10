@@ -835,4 +835,19 @@ describe("asset links in an answer", () => {
     await run().p;
     expect(h.finishTurn.mock.calls[0][1].content).toBe(`[sw-2](/assets.html#view=asset:${seen}) and sw-x are down.`);
   });
+
+  it("an IPsec search hit's gate and far end count as seen, so both can be linked", async () => {
+    h.beginTurn.mockResolvedValueOnce({ question: "look up 10.3.1.2" });
+    const gate = "44444444-4444-4444-8444-444444444444";
+    const peer = "55555555-5555-4555-8555-555555555555";
+    const answer = `[HUB1](/assets.html#view=asset:${gate}) has a tunnel to [SPK1](/assets.html#view=asset:${peer}).`;
+    h.chatCompletionRound
+      .mockImplementationOnce(async () => ({ content: "", toolCalls: [{ id: "t1", type: "function", function: { name: "search", arguments: '{"query":"10.3.1.2"}' } }], finishReason: "tool_calls" }))
+      .mockImplementationOnce(async (_c: any, _m: any, _t: any, o: any) => { o.onText(answer); return { content: answer, toolCalls: [], finishReason: "stop" }; });
+    h.runAssistantTool.mockResolvedValueOnce({ ok: true, data: { assets: [], ipsec: [
+      { type: "ipsec", id: `${gate}|tunnel|Overlay-1`, title: "Overlay-1", context: { assetId: gate, peerAssetId: peer, tab: "ipsec" } },
+    ] } });
+    await run().p;
+    expect(h.finishTurn.mock.calls[0][1].content).toBe(answer);
+  });
 });

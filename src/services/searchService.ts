@@ -14,9 +14,14 @@ import { macColonUpperOrNull } from "../utils/mac.js";
 import { MONITOR_STATUS_LABELS } from "../utils/monitorStatus.js";
 import { findAssetIdsByDiscoveredHostname } from "./discoveredHostnameService.js";
 import { activeAlertSummaryByAsset, type AssetActiveAlertSummary } from "./notificationService.js";
+import { resolveIpsToAssets } from "./applicationMapService.js";
 
 export interface SearchHit {
-  type: "block" | "subnet" | "reservation" | "asset" | "ip" | "site";
+  // `ipsec`: a FortiGate's phase-1 tunnel or a peer connected through one
+  // (an ADVPN spoke, a dial-up peer, a FortiClient / SSL-VPN user) — the
+  // IPsec tab's rows. `id` is `<gateAssetId>|<tunnel|conn>|<name>`; the gate
+  // and the matched far end ride in `context` (assetId / peerAssetId).
+  type: "block" | "subnet" | "reservation" | "asset" | "ip" | "site" | "ipsec";
   id: string;
   title: string;       // Primary label (hostname, name, IP, etc.)
   subtitle?: string;   // Secondary label (CIDR, MAC, owner, etc.)
@@ -49,6 +54,14 @@ export interface SearchResults {
    * the same FortiGate twice.
    */
   sites: SearchHit[];
+  /**
+   * IPsec tunnels and VPN connections (the asset IPsec tab's rows) whose
+   * name, remote gateway, peer id, user or overlay address matched. Gated
+   * like the asset they hang off (`assets:read`). Searching an address here
+   * answers "which gate terminates a tunnel to / a peer at this address?" —
+   * a WAN address that is nobody's primary IP is often exactly that.
+   */
+  ipsec: SearchHit[];
 }
 
 const PER_GROUP_LIMIT = 8;
@@ -62,20 +75,20 @@ const SCOPED_LIMIT = 200;
 
 // ─── Input classification ────────────────────────────────────────────────────
 
-type SearchScope = "block" | "asset" | "reservation" | "map" | "network" | "tag";
+type SearchScope = "block" | "asset" | "reservation" | "map" | "network" | "tag" | "ipsec";
 
 // Recognize `block:` / `asset:` / `reservation:` / `map:` / `network:` / `tag:`
-// and their short forms `b:` / `a:` / `r:` / `m:` / `n:` / `t:`. Case-
-// insensitive; trims whitespace after the colon so `asset:  foo` works. The
-// scopes are mutually exclusive with the `entra:` / `ad:` / `fgt:` source-kind
-// prefix consumed inside `stripSourceKindPrefix` — none of those start with the
-// scope letters. `tag` is listed before the bare `t` so `tag:` binds to the
-// tag scope rather than the short form.
+// / `ipsec:` (also `vpn:`) and their short forms `b:` / `a:` / `r:` / `m:` /
+// `n:` / `t:` / `v:`. Case-insensitive; trims whitespace after the colon so
+// `asset:  foo` works. The scopes are mutually exclusive with the `entra:` /
+// `ad:` / `fgt:` source-kind prefix consumed inside `stripSourceKindPrefix` —
+// none of those start with the scope letters. `tag` is listed before the bare
+// `t` so `tag:` binds to the tag scope rather than the short form.
 function parseSearchScope(raw: string): { scope: SearchScope | null; query: string } {
   // No `\s*` before the capture — `\s*(.*)$` backtracks polynomially on
   // long runs of whitespace (CodeQL js/polynomial-redos); the .trim() on
   // the captured rest below handles the post-colon whitespace instead.
-  const m = raw.match(/^(block|asset|reservation|map|network|tag|b|a|r|m|n|t):(.*)$/i);
+  const m = raw.match(/^(block|asset|reservation|map|network|tag|ipsec|vpn|b|a|r|m|n|t|v):(.*)$/i);
   if (!m) return { scope: null, query: raw };
   const prefix = m[1].toLowerCase();
   const rest = m[2].trim();
@@ -85,6 +98,7 @@ function parseSearchScope(raw: string): { scope: SearchScope | null; query: stri
   else if (prefix === "reservation" || prefix === "r") scope = "reservation";
   else if (prefix === "network" || prefix === "n") scope = "network";
   else if (prefix === "tag" || prefix === "t") scope = "tag";
+  else if (prefix === "ipsec" || prefix === "vpn" || prefix === "v") scope = "ipsec";
   else scope = "map";
   return { scope, query: rest };
 }
@@ -164,10 +178,12 @@ export interface SearchAllowed {
   reservations: boolean;
   assets: boolean;
   sites: boolean;
+  /** IPsec tunnels + VPN connections: the IPsec tab's data, so `assets:read`. Optional for older callers (= allowed). */
+  ipsec?: boolean;
 }
 
 const ALLOW_ALL: SearchAllowed = {
-  blocks: true, subnets: true, reservations: true, assets: true, sites: true,
+  blocks: true, subnets: true, reservations: true, assets: true, sites: true, ipsec: true,
 };
 
 export async function searchAll(
@@ -212,8 +228,9 @@ async function runSearch(
   // post-scope-strip form.
   const empty: SearchResults = {
     query: trimmed,
-    blocks: [], subnets: [], reservations: [], assets: [], ips: [], sites: [],
+    blocks: [], subnets: [], reservations: [], assets: [], ips: [], sites: [], ipsec: [],
   };
+  const ipsecAllowed = allowed.ipsec !== false;
 
   const { scope, query: scopedQuery } = parseSearchScope(trimmed);
   // Scoped searches accept any non-empty query (so `block:f` works);
@@ -269,6 +286,10 @@ async function runSearch(
     const assetHits = assetRows.map((a) => decorateAssetHit(a, originBySrcId.get(a.id)));
     return { ...empty, assets: assetHits };
   }
+  if (scope === "ipsec") {
+    if (!ipsecAllowed) return empty;
+    return { ...empty, ipsec: await searchIpsec(terms, SCOPED_LIMIT) };
+  }
   if (scope === "tag") {
     // Tag scope spans every tag-bearing entity (blocks / subnets / assets):
     // each term must match (ILIKE, substring) at least one tag in the row's
@@ -292,13 +313,14 @@ async function runSearch(
   // own group (`sites`) with an independent PER_GROUP_LIMIT budget so
   // they don't get crowded out of `assets` by alphabetically-earlier
   // workstations/switches matching the same site code on large fleets.
-  const [blocks, subnets, reservations, assets, sites, ipHit] = await Promise.all([
+  const [blocks, subnets, reservations, assets, sites, ipHit, ipsec] = await Promise.all([
     allowed.blocks       ? searchBlocks(terms)                          : Promise.resolve([]),
     allowed.subnets      ? searchSubnets(terms, isCidr ? q : null)      : Promise.resolve([]),
     allowed.reservations ? searchReservations(terms, isIp ? q : null)   : Promise.resolve([]),
     allowed.assets       ? searchAssets(terms, mac, PER_GROUP_LIMIT, discovered)          : Promise.resolve([]),
     allowed.sites        ? searchPinnedFirewalls(terms, mac, PER_GROUP_LIMIT, discovered) : Promise.resolve([]),
     isIp && allowed.subnets && allowed.reservations ? resolveIp(q) : Promise.resolve(null),
+    ipsecAllowed         ? searchIpsec(terms, PER_GROUP_LIMIT)          : Promise.resolve([]),
   ]);
 
   const assetsWithoutSites = assets;
@@ -325,6 +347,7 @@ async function runSearch(
     assets: assetHits,
     ips: ipHit ? [ipHit] : [],
     sites: sites.map(siteHit),
+    ipsec,
   };
 }
 
@@ -836,6 +859,197 @@ async function resolveIp(ip: string): Promise<SearchHit | null> {
       subnetName: containing.name,
       ipAddress: ip,
       reservationId: reservation?.id ?? null,
+    },
+  };
+}
+
+// ─── IPsec tunnels + VPN connections ─────────────────────────────────────────
+
+/** The connection kinds utils/fortiosIpsec.ts emits, as the dropdown names them. */
+const IPSEC_KIND_LABEL: Record<string, string> = {
+  "advpn-spoke":    "ADVPN spoke",
+  "advpn-shortcut": "ADVPN shortcut",
+  "dialup-peer":    "Dial-up peer",
+  "remote-access":  "FortiClient user",
+  "ssl-vpn":        "SSL-VPN user",
+};
+
+interface IpsecTunnelSearchRow {
+  assetId: string;
+  hostname: string | null;
+  tunnelName: string;
+  remoteGateway: string | null;
+  parentInterface: string | null;
+  status: string;
+}
+
+/** A dial-up template reports 0.0.0.0 — "any peer" — which names nothing. */
+function usableGateway(ip: string | null | undefined): ip is string {
+  return !!ip && ip !== "0.0.0.0";
+}
+
+/**
+ * The IPsec tab's rows across every gate: phase-1 tunnels (the newest row per
+ * tunnel at or after the gate's last full pass — the pass stamps every tunnel
+ * at exactly `lastSystemInfoAt`, and the fast cadence re-walks the pinned ones
+ * after it) and the connections hanging off them (AssetIpsecConnection,
+ * current-state). Each term must match the tunnel's name or remote gateway,
+ * or a connection's name, parent tunnel, peer id, user, underlay or overlay
+ * address. The gate's own hostname is NOT a searched column: the gate is
+ * already an asset hit, and matching it here would list all of its tunnels
+ * under every search for the gate.
+ *
+ * Fleet scale: the tunnel query is one index range per gate (assetId,
+ * timestamp ≥ anchor) over the 24-hour raw tier, never a scan of the whole
+ * hypertable; the connection table is current-state. The far ends resolve
+ * in ONE resolveIpsToAssets call for the whole hit set.
+ */
+async function searchIpsec(terms: string[], limit = PER_GROUP_LIMIT): Promise<SearchHit[]> {
+  const tunnelWhere = Prisma.join(
+    terms.map((t) => Prisma.sql`(s."tunnelName" ILIKE ${"%" + t + "%"} OR s."remoteGateway" ILIKE ${"%" + t + "%"})`),
+    " AND ",
+  );
+  const [tunnels, conns] = await Promise.all([
+    // `now() AT TIME ZONE 'UTC'` — the sample columns are naive UTC
+    // timestamps (Prisma DateTime); a bare now() would be read in the
+    // session's zone and shift the fallback window by the UTC offset.
+    prisma.$queryRaw<IpsecTunnelSearchRow[]>`
+      SELECT t."assetId", t.hostname, t."tunnelName", t."remoteGateway", t."parentInterface", t.status
+      FROM (
+        SELECT DISTINCT ON (s."assetId", s."tunnelName")
+          s."assetId", a.hostname, s."tunnelName", s."remoteGateway", s."parentInterface", s.status
+        FROM asset_ipsec_tunnel_samples s
+        JOIN assets a ON a.id = s."assetId"
+        WHERE s.timestamp >= COALESCE(a."lastSystemInfoAt", (now() AT TIME ZONE 'UTC') - interval '1 day')
+          AND ${tunnelWhere}
+        ORDER BY s."assetId", s."tunnelName", s.timestamp DESC
+      ) t
+      ORDER BY t.hostname ASC NULLS LAST, t."tunnelName" ASC
+      LIMIT ${limit}
+    `,
+    prisma.assetIpsecConnection.findMany({
+      where: {
+        AND: andOfTerms(terms, (t) => [
+          { name:          { contains: t, mode: "insensitive" as const } },
+          { parentTunnel:  { contains: t, mode: "insensitive" as const } },
+          { peerId:        { contains: t, mode: "insensitive" as const } },
+          { userName:      { contains: t, mode: "insensitive" as const } },
+          { remoteGateway: { contains: t, mode: "insensitive" as const } },
+          { tunnelIp:      { contains: t, mode: "insensitive" as const } },
+        ]),
+      },
+      include: { asset: { select: { id: true, hostname: true } } },
+      take: limit,
+      orderBy: [{ asset: { hostname: "asc" } }, { name: "asc" }],
+    }),
+  ]);
+  if (tunnels.length === 0 && conns.length === 0) return [];
+
+  // One resolution pass for every far-end address in the hit set — the
+  // underlay names the peer DEVICE, the overlay is consulted only when the
+  // underlay does not resolve (the IPsec tab's own rule). A gate's own
+  // resolution is never its peer (a hub reached through its own NAT).
+  const ips = new Set<string>();
+  for (const t of tunnels) if (usableGateway(t.remoteGateway)) ips.add(t.remoteGateway);
+  for (const c of conns) {
+    if (usableGateway(c.remoteGateway)) ips.add(c.remoteGateway);
+    if (usableGateway(c.tunnelIp)) ips.add(c.tunnelIp);
+  }
+  const resolved = ips.size > 0 ? await resolveIpsToAssets([...ips]) : new Map();
+  const peerFor = (gateId: string, ...addrs: Array<string | null>) => {
+    for (const ip of addrs) {
+      const a = usableGateway(ip) ? resolved.get(ip) : undefined;
+      if (a && a.id !== gateId) return { id: a.id as string, hostname: (a.hostname ?? null) as string | null };
+    }
+    return null;
+  };
+
+  const hits: SearchHit[] = [];
+  for (const t of tunnels) {
+    const peer = peerFor(t.assetId, t.remoteGateway);
+    hits.push(ipsecTunnelHit(t, peer));
+  }
+  for (const c of conns) {
+    const peer = peerFor(c.assetId, c.remoteGateway, c.tunnelIp);
+    hits.push(ipsecConnectionHit(c, peer));
+  }
+  return hits.slice(0, limit);
+}
+
+function ipsecStatusPill(status: string): { kind: string; label: string } {
+  if (status === "up")      return { kind: "up",      label: "Up" };
+  if (status === "down")    return { kind: "down",    label: "Down" };
+  if (status === "partial") return { kind: "partial", label: "Partial" };
+  return { kind: "pending", label: status || "Unknown" };
+}
+
+type IpsecPeer = { id: string; hostname: string | null } | null;
+
+function farEnd(remoteGateway: string | null, peer: IpsecPeer): string | null {
+  if (!usableGateway(remoteGateway)) return remoteGateway === "0.0.0.0" ? "dial-up (any peer)" : null;
+  return peer ? `${remoteGateway} → ${peer.hostname || "asset"}` : remoteGateway;
+}
+
+function ipsecTunnelHit(t: IpsecTunnelSearchRow, peer: IpsecPeer): SearchHit {
+  const gate = t.hostname || "FortiGate";
+  return {
+    type: "ipsec",
+    id: `${t.assetId}|tunnel|${t.tunnelName}`,
+    title: t.tunnelName,
+    subtitle: [
+      `tunnel on ${gate}`,
+      farEnd(t.remoteGateway, peer),
+      t.parentInterface ? `via ${t.parentInterface}` : null,
+    ].filter(Boolean).join(" — "),
+    status: ipsecStatusPill(t.status),
+    context: {
+      assetId: t.assetId,
+      hostname: t.hostname,
+      kind: "tunnel",
+      tunnelName: t.tunnelName,
+      remoteGateway: t.remoteGateway,
+      peerAssetId: peer?.id ?? null,
+      peerHostname: peer?.hostname ?? null,
+      tab: "ipsec",
+    },
+  };
+}
+
+function ipsecConnectionHit(
+  c: {
+    assetId: string; name: string; kind: string; parentTunnel: string | null; peerId: string | null;
+    userName: string | null; remoteGateway: string | null; tunnelIp: string | null; status: string;
+    asset: { id: string; hostname: string | null };
+  },
+  peer: IpsecPeer,
+): SearchHit {
+  const gate = c.asset.hostname || "FortiGate";
+  const kind = IPSEC_KIND_LABEL[c.kind] ?? c.kind;
+  return {
+    type: "ipsec",
+    id: `${c.assetId}|conn|${c.name}`,
+    // A remote-access session is about the person; a site-to-site peer about
+    // the far gate — the FortiOS child name alone ("Overlay-1_3") names neither.
+    title: c.userName ? `${c.userName} (${c.name})` : c.peerId ? `${c.name} — ${c.peerId}` : c.name,
+    subtitle: [
+      `${kind} on ${gate}` + (c.parentTunnel ? ` via ${c.parentTunnel}` : ""),
+      farEnd(c.remoteGateway, peer),
+      usableGateway(c.tunnelIp) ? `overlay ${c.tunnelIp}` : null,
+    ].filter(Boolean).join(" — "),
+    status: ipsecStatusPill(c.status),
+    context: {
+      assetId: c.assetId,
+      hostname: c.asset.hostname,
+      kind: c.kind,
+      name: c.name,
+      parentTunnel: c.parentTunnel,
+      userName: c.userName,
+      peerId: c.peerId,
+      remoteGateway: c.remoteGateway,
+      tunnelIp: c.tunnelIp,
+      peerAssetId: peer?.id ?? null,
+      peerHostname: peer?.hostname ?? null,
+      tab: "ipsec",
     },
   };
 }

@@ -168,11 +168,14 @@ const searchTool: ToolDef = {
   name: "search",
   label: "searched Polaris",
   description:
-    "Global search across assets, networks, IP blocks, reservations and sites by name, IP, " +
-    "MAC or hostname. Good first step when the user names a device or address. For an address, each asset hit " +
-    "says why it matched: matchedOn \"ipAddress\" (its current primary IP) or \"ipHistory\" with heldThisAddress " +
-    "(a WAN, secondary or former address the device held, and when it was last seen there) — such a device IS " +
-    "a hit for that address.",
+    "Global search across assets, networks, IP blocks, reservations, sites, and IPsec tunnels / VPN " +
+    "connections by name, IP, MAC, hostname, tunnel name, peer id or VPN user. Good first step when the user " +
+    "names a device, a tunnel, a VPN user or an address. For an address, each asset hit says why it matched: " +
+    "matchedOn \"ipAddress\" (its current primary IP) or \"ipHistory\" with heldThisAddress (a WAN, secondary " +
+    "or former address the device held, and when it was last seen there) — such a device IS a hit for that " +
+    "address. An `ipsec` hit means the address or name is a tunnel's remote gateway, or a peer / user connected " +
+    "through a FortiGate: context.assetId is that gate (link it), context.peerAssetId the far-end device when " +
+    "Polaris knows it.",
   parameters: {
     type: "object",
     properties: { query: { type: "string", description: "Hostname, IP, MAC, CIDR or name fragment" } },
@@ -188,6 +191,7 @@ const searchTool: ToolDef = {
       reservations: hasPermission(req, "reservations", "read"),
       assets:       hasPermission(req, "assets", "read"),
       sites:        hasPermission(req, "deviceMap", "read"),
+      ipsec:        hasPermission(req, "assets", "read"),
     });
     const cap = Math.min(ctx.maxRows, 25);
     const trimmed: Record<string, unknown> = {};

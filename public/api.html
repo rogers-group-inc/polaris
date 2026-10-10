@@ -981,13 +981,13 @@
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-get">GET</span> /search?q=
             <span class="gate">per-group read keys · filter-don't-403</span></div>
-          <p>Global typeahead across six groups. Response:
-            <code>{ query, blocks, subnets, reservations, assets, ips, sites }</code> — every
+          <p>Global typeahead across seven groups. Response:
+            <code>{ query, blocks, subnets, reservations, assets, ips, sites, ipsec }</code> — every
             group always present; groups the role can't read (or that didn't match) are empty
             arrays. Group gates: blocks→<code>ipBlocks</code>, subnets→<code>subnets</code>,
             reservations→<code>reservations</code>, assets→<code>assets</code>,
-            sites→<code>deviceMap</code>; the <code>ips</code> cross-reference needs both
-            <code>subnets</code> and <code>reservations</code> read.</p>
+            sites→<code>deviceMap</code>, ipsec→<code>assets</code>; the <code>ips</code>
+            cross-reference needs both <code>subnets</code> and <code>reservations</code> read.</p>
           <ul>
             <li>Minimum 2 characters (1 when scoped). Terms are AND-combined;
                 <code>"quoted phrases"</code> stay whole; single terms get IP/CIDR/MAC
@@ -995,7 +995,18 @@
             <li>Scope prefixes: <code>block:</code>/<code>b:</code>, <code>network:</code>/<code>n:</code>,
                 <code>asset:</code>/<code>a:</code>, <code>reservation:</code>/<code>r:</code>,
                 <code>map:</code>/<code>m:</code>, <code>tag:</code>/<code>t:</code> (tag spans
-                blocks + networks + assets).</li>
+                blocks + networks + assets), <code>ipsec:</code>/<code>vpn:</code>/<code>v:</code>.</li>
+            <li><code>ipsec</code> hits are a FortiGate's phase-1 tunnels (newest state at or after
+                the gate's last full system-info pass) and the peers / VPN users connected through
+                them, matched on tunnel name, remote gateway, peer id, user name, underlay or overlay
+                address. <code>type</code> is <code>"ipsec"</code>, <code>id</code> is
+                <code>&lt;gateAssetId&gt;|tunnel|&lt;name&gt;</code> or
+                <code>&lt;gateAssetId&gt;|conn|&lt;name&gt;</code>, <code>status</code> is
+                <code>up</code>/<code>down</code>/<code>partial</code>, and <code>context</code>
+                carries <code>assetId</code> (the gate), <code>kind</code>, <code>tunnelName</code> or
+                <code>name</code>, <code>remoteGateway</code>, <code>userName</code>, and
+                <code>peerAssetId</code>/<code>peerHostname</code> when the far end resolves to an
+                asset. The gate's own hostname is not a searched column.</li>
             <li>Caps: 8 hits per group unscoped; 200 for a scoped query. No paging — scope the
                 query instead.</li>
           </ul>

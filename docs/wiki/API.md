@@ -308,8 +308,14 @@ the time of the trace.
 GET    /search?q=
 ```
 
-Supports the same [prefixes](Navigation-and-Account#global-search) the UI does
-(`block:`, `network:`, `asset:`, `reservation:`, `map:`, `tag:`).
+Seven groups in one response — `blocks`, `subnets`, `reservations`, `assets`, `ips`,
+`sites`, `ipsec` — each gated on its own read key and empty when the caller may not
+read it. `ipsec` hits are a firewall's IPsec tunnels and the peers or VPN users
+connected through them (`id` is `<gateAssetId>|tunnel|<name>` or
+`<gateAssetId>|conn|<name>`; `context.assetId` is the gate, `context.peerAssetId`
+the far-end device when known). Supports the same
+[prefixes](Navigation-and-Account#global-search) the UI does
+(`block:`, `network:`, `asset:`, `reservation:`, `map:`, `tag:`, `ipsec:` / `vpn:`).
 
 ### IPAM — blocks
 
