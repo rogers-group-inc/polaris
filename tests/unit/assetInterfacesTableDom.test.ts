@@ -47,6 +47,8 @@ const FN_NAMES = [
   "_distinctVlanOptions",
   "_sizeAssetIfaceTableWrapper",
   "_renderInterfacesTable",
+  "_ipsecTabPointerHTML",
+  "_wireIpsecTabPointer",
   "_buildInterfacesTableDOM",
   "_wireInterfacesTable",
   "_ifaceIpForLookup",
@@ -182,11 +184,12 @@ function checkboxFilter(key: string, value: string, on: boolean): void {
 beforeEach(() => { setup(); render(); });
 
 describe("default (tree) view", () => {
-  it("renders every interface and tunnel — nothing is hidden for lack of traffic", () => {
+  it("renders every interface — nothing is hidden for lack of traffic", () => {
     // The "Show N inactive interfaces" expander is gone: port3 (admin-shut, no
-    // counters) and orphan-tn (dead tunnel) are ordinary visible rows now.
+    // counters) is an ordinary visible row. The IPsec tunnels are not here at
+    // all — they are the IPsec tab's (see the describe at the end).
     expect(names().sort()).toEqual(
-      ["lag1", "orphan-tn", "port1", "port2", "port3", "port9", "to-hq", "vlan50"],
+      ["lag1", "port1", "port2", "port3", "port9", "vlan50"],
     );
     expect(dataRows().every((tr) => tr.getAttribute("style") !== "display:none")).toBe(true);
   });
@@ -194,7 +197,7 @@ describe("default (tree) view", () => {
   it("keeps the nesting and the section headers", () => {
     const n = names();
     expect(n.indexOf("port9")).toBe(n.indexOf("lag1") + 1);   // member under its aggregate
-    expect(sectionLabels()).toHaveLength(3);
+    expect(sectionLabels()).toHaveLength(2);
     expect(sectionLabels()[0]).toMatch(/Interfaces \(4\)/);   // top-level count, not row count
   });
 
@@ -236,7 +239,7 @@ describe("sorting", () => {
 
   it("orders by the numeric counter, with unreported rows last", () => {
     sortBy("in");
-    expect(names().slice(0, 4)).toEqual(["to-hq", "port1", "port9", "lag1"]);
+    expect(names().slice(0, 3)).toEqual(["port1", "port9", "lag1"]);
     sortBy("in");
     expect(names()[0]).toBe("lag1");   // second click reverses
   });
@@ -262,7 +265,7 @@ describe("filtering", () => {
     expect(doc.getElementById("asset-iface-tbody")!.textContent).toMatch(/No interfaces match/);
   });
 
-  it("excludes tunnels from a PoE filter — they report null, not zero", () => {
+  it("matches a PoE status exactly", () => {
     checkboxFilter("poe", "fault", true);
     expect(names()).toEqual(["port2"]);
   });
@@ -316,7 +319,7 @@ describe("re-render safety", () => {
     // no longer display or clear it.
     g.localStorage.setItem(PREFS_KEY, JSON.stringify({ sortKey: null, sortDir: "asc", sfFilters: { "native-vlan": "10" } }));
     render();
-    expect(names()).toHaveLength(8);
+    expect(names()).toHaveLength(6);
     expect(doc.querySelector('th[data-sf-key="native-vlan"] .sf-multi-button')!.textContent).toBe("All");
   });
 
@@ -569,12 +572,12 @@ describe("interface name → interface or network", () => {
   });
 });
 
-// A FortiGate IPsec tunnel arrives twice: as an IPsec-stream tunnel that knows
-// its phase-1 parent, and as a `tunnel`-typed interface row with no ifParent
-// (the CMDB back-fill on REST-polled gates, IF-MIB on SNMP ones). Rendered
-// apart, the interface twin sat top-level under "Other Interfaces" with no
-// tree connector — the tunnel no longer read as a child of its parent port.
-describe("a tunnel listed both as an interface and as an IPsec tunnel", () => {
+// IPsec tunnels are the IPsec tab's: it lists them with their connected peers,
+// their pins and their history. A FortiGate reports each one twice — as an
+// IPsec-stream tunnel and as a `tunnel`-typed interface row (the CMDB back-fill
+// on REST, IF-MIB on SNMP) — and this table carries neither, pinned or not.
+// A tunnel interface with no IPsec twin (GRE / VXLAN / ssl.root) stays.
+describe("IPsec tunnels live on the IPsec tab, not here", () => {
   function renderSi(monitoredInterfaces: string[]): void {
     doc.body.innerHTML = '<div id="ifaces"></div>';
     g._renderInterfacesTable(doc.getElementById("ifaces"), {
@@ -591,21 +594,29 @@ describe("a tunnel listed both as an interface and as an IPsec tunnel", () => {
     }, ASSET);
   }
 
-  it("renders one row, nested under the parent with the tree connector", () => {
+  it("lists neither the tunnel nor its interface twin", () => {
     renderSi([]);
-    expect(names().filter((n) => n === "vpn-hq")).toHaveLength(1);
-    const n = names();
-    expect(n.indexOf("vpn-hq")).toBe(n.indexOf("wan1") + 1);
-    expect(rowFor("vpn-hq").querySelector(".asset-ipsec-link")).not.toBeNull();
-    expect(rowFor("vpn-hq").textContent).toContain("└─");
+    expect(names()).not.toContain("vpn-hq");
+    expect(doc.querySelector(".asset-ipsec-link, .asset-ipsec-toggle")).toBeNull();
   });
 
-  it("carries the interface's configured address on the tunnel row", async () => {
+  it("leaves out a PINNED interface twin too — its pin is shown and cleared on the IPsec tab", () => {
+    renderSi(["vpn-hq"]);
+    expect(names()).not.toContain("vpn-hq");
+  });
+
+  it("points at the IPsec tab, and the link switches to it", () => {
     renderSi([]);
-    expect(rowFor("vpn-hq").textContent).toContain("10.255.0.1");
-    expect(rowFor("vpn-hq").textContent).toContain("203.0.113.7");
-    await typeFilter("ip", "10.255.0.1");
-    expect(names()).toEqual(["vpn-hq"]);
+    const hint = doc.querySelector(".hint")!;
+    expect(hint.textContent).toMatch(/1 IPsec tunnel is on the IPsec tab/);
+    doc.body.insertAdjacentHTML("beforeend",
+      '<div id="asset-view-tabs"><button class="page-tab" data-tab="ipsec"></button></div>');
+    let switched = false;
+    doc.querySelector('#asset-view-tabs .page-tab[data-tab="ipsec"]')!.addEventListener("click", () => { switched = true; });
+    // The pointer was wired at render, before the tab strip existed in this
+    // fixture — the lookup happens at click time, as in the slide-over.
+    click(doc.querySelector(".asset-ipsec-tab-link"));
+    expect(switched).toBe(true);
   });
 
   it("leaves a tunnel interface with no IPsec twin (GRE / VXLAN) where it was", () => {
@@ -614,8 +625,13 @@ describe("a tunnel listed both as an interface and as an IPsec tunnel", () => {
     expect(sectionLabels().some((s) => /Other Interfaces \(1\)/.test(s))).toBe(true);
   });
 
-  it("keeps a pinned tunnel interface visible so the pin can be removed", () => {
-    renderSi(["vpn-hq"]);
-    expect(dataRows().filter((tr) => nameOf(tr) === "vpn-hq")).toHaveLength(2);
+  it("says where the tunnels went when they were all the gate reported", () => {
+    doc.body.innerHTML = '<div id="ifaces"></div>';
+    g._renderInterfacesTable(doc.getElementById("ifaces"), {
+      lastSystemInfoAt: new Date().toISOString(), monitoredInterfaces: [], monitoredIpsecTunnels: [], lldpNeighbors: [],
+      interfaces: [{ ifName: "vpn-hq", ifType: "tunnel", adminStatus: "up" }],
+      ipsecTunnels: [{ tunnelName: "vpn-hq", status: "up" }],
+    }, ASSET);
+    expect(doc.getElementById("ifaces")!.textContent).toMatch(/on the IPsec tab/);
   });
 });

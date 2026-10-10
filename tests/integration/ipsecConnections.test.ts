@@ -155,6 +155,32 @@ d("GET /assets/:id/ipsec", () => {
     expect("pollIntervalSec" in res.body).toBe(true);
   });
 
+  it("carries each tunnel's interface address, both pin states and its far end", async () => {
+    const at = new Date();
+    await prisma.asset.update({
+      where: { id: hubId },
+      data: { lastSystemInfoAt: at, monitoredIpsecTunnels: ["Overlay-1"], monitoredInterfaces: ["H2H-1", "port1"] },
+    });
+    await prisma.assetIpsecTunnelSample.createMany({ data: [
+      { assetId: hubId, timestamp: at, cadence: "slow", tunnelName: "H2H-1", remoteGateway: "10.2.1.2", status: "up" },
+      { assetId: hubId, timestamp: at, cadence: "slow", tunnelName: "Overlay-1", remoteGateway: "0.0.0.0", status: "dynamic" },
+    ] });
+    await prisma.assetInterface.createMany({ data: [
+      { assetId: hubId, ifName: "H2H-1", ifType: "tunnel", ipAddress: "10.10.255.1" },
+      { assetId: hubId, ifName: "Overlay-1", ifType: "tunnel", ipAddress: "0.0.0.0" },
+    ] as any });
+    // H2H-1's remote gateway is a secondary address of the spoke asset.
+    await prisma.assetAssociatedIp.create({ data: { assetId: spokeId, ip: "10.2.1.2", source: "interface" } as any });
+
+    const { agent } = await authedAgent(app);
+    const res = await agent.get(`/api/v1/assets/${hubId}/ipsec`);
+    expect(res.status).toBe(200);
+    const byName = Object.fromEntries(res.body.tunnels.map((t: any) => [t.tunnelName, t]));
+    expect(byName["H2H-1"]).toMatchObject({ overlayIp: "10.10.255.1", pinned: false, interfacePinned: true, matchedAsset: { id: spokeId } });
+    // A dial-up template's 0.0.0.0 is "any peer" — no address, no far end.
+    expect(byName["Overlay-1"]).toMatchObject({ overlayIp: null, pinned: true, interfacePinned: false, matchedAsset: null });
+  });
+
   it("system-info still serves the full-pass tunnel batch, not the pinned fast batch", async () => {
     const full = new Date(Date.now() - 60_000);
     const fast = new Date();
