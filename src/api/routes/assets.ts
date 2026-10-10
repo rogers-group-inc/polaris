@@ -35,6 +35,7 @@ import {
 } from "../../utils/assetInvariants.js";
 import { getIpHistory, getHistorySettings, updateHistorySettings, pruneOldHistory } from "../../services/assetIpHistoryService.js";
 import { getSightingsForAsset, getSightingSettings, updateSightingSettings } from "../../services/assetSightingService.js";
+import { readAssetIpsec, readLatestIpsecTunnels } from "../../services/ipsecConnectionService.js";
 import { getAssetSoftware } from "../../services/softwareInventoryService.js";
 import { getInventoryPresence } from "../../services/serviceInventoryService.js";
 import {
@@ -2537,7 +2538,7 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
     });
     if (!asset) throw new AppError(404, "Asset not found");
 
-    const [latestTelemetry, interfaces, latestStorageMeta, latestHwMeta, latestIpsecMeta, lldpNeighbors, wirelessStations, apRadios, inferredNeighbors] = await Promise.all([
+    const [latestTelemetry, interfaces, latestStorageMeta, latestHwMeta, ipsecTunnels, lldpNeighbors, wirelessStations, apRadios, inferredNeighbors] = await Promise.all([
       prisma.assetTelemetrySample.findFirst({
         where: { assetId: id },
         orderBy: { timestamp: "desc" },
@@ -2559,11 +2560,9 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
         orderBy: { timestamp: "desc" },
         select: { timestamp: true },
       }),
-      prisma.assetIpsecTunnelSample.findFirst({
-        where: { assetId: id },
-        orderBy: { timestamp: "desc" },
-        select: { timestamp: true },
-      }),
+      // The last full pass's tunnel set (see readLatestIpsecTunnels for why
+      // it anchors to lastSystemInfoAt rather than the newest row).
+      readLatestIpsecTunnels(id, asset.lastSystemInfoAt),
       // LLDP neighbors are current-state (one row per neighbor) rather than
       // a time-series, so we just return the entire set on every call. The
       // matched-asset relation lets the UI link from a neighbor row directly
@@ -2634,31 +2633,6 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
           orderBy: [{ sensorClass: "asc" }, { sensorName: "asc" }],
         })
       : [];
-    // Same full-pass anchor as the interfaces query above: the fast cadence
-    // only writes PINNED tunnels, so taking the raw newest timestamp hides
-    // every unpinned tunnel from the System tab within a minute of any fast
-    // walk. Anchor to lastSystemInfoAt (the full pass writes all tunnels at
-    // that exact timestamp), clamped down when it's ahead of the newest
-    // ipsec row (e.g. the last full pass's ipsec collect failed).
-    let ipsecTimestamp = asset.lastSystemInfoAt ?? latestIpsecMeta?.timestamp ?? null;
-    if (ipsecTimestamp && latestIpsecMeta?.timestamp && ipsecTimestamp > latestIpsecMeta.timestamp) {
-      ipsecTimestamp = latestIpsecMeta.timestamp;
-    }
-    let ipsecTunnels = latestIpsecMeta && ipsecTimestamp
-      ? await prisma.assetIpsecTunnelSample.findMany({
-          where: { assetId: id, timestamp: ipsecTimestamp },
-          orderBy: { tunnelName: "asc" },
-        })
-      : [];
-    // The anchor pass may have produced zero ipsec rows (transient collect
-    // failure) while fast walks kept writing — fall back to the newest batch
-    // (pinned subset) rather than rendering an empty tunnel table.
-    if (ipsecTunnels.length === 0 && latestIpsecMeta && ipsecTimestamp?.getTime() !== latestIpsecMeta.timestamp.getTime()) {
-      ipsecTunnels = await prisma.assetIpsecTunnelSample.findMany({
-        where: { assetId: id, timestamp: latestIpsecMeta.timestamp },
-        orderBy: { tunnelName: "asc" },
-      });
-    }
 
     res.json({
       monitored: asset.monitored,
@@ -2727,16 +2701,7 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
         unit:        s.unit,
         alarmStatus: s.alarmStatus,
       })),
-      ipsecTunnels: ipsecTunnels.map((t) => ({
-        timestamp:       t.timestamp,
-        tunnelName:      t.tunnelName,
-        parentInterface: t.parentInterface,
-        remoteGateway:   t.remoteGateway,
-        status:          t.status,
-        incomingBytes:   bigIntToNumber(t.incomingBytes),
-        outgoingBytes:   bigIntToNumber(t.outgoingBytes),
-        proxyIdCount:    t.proxyIdCount,
-      })),
+      ipsecTunnels,
       lldpNeighbors: mergedNeighbors.map((n) => ({
         localIfName:        n.localIfName,
         chassisIdSubtype:   n.chassisIdSubtype,
@@ -3666,6 +3631,24 @@ router.get("/:id/sdwan-rules", requirePermission("assets", "read"), async (req, 
       if (!collectedAt || r.updatedAt > collectedAt) collectedAt = r.updatedAt;
     }
     res.json({ rules: rows, collectedAt, pollIntervalSec });
+  } catch (err) { next(err); }
+});
+
+// GET /assets/:id/ipsec — the IPsec tab: the gate's phase-1 tunnels (last
+// full pass) and who is connected through them — ADVPN spokes on a hub,
+// ADVPN shortcuts on a spoke, dial-up peers, FortiClient users on IPsec and
+// SSL-VPN — each matched to an asset by address where one is known. Carries
+// the ARP tab's freshness pair (`collectedAt` + the system-info cadence that
+// rewrites it). Current-state only: a peer that connected and left between
+// two passes was never seen.
+router.get("/:id/ipsec", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const [result, pollIntervalSec] = await Promise.all([
+      readAssetIpsec(id),
+      resolveCurrentStateIntervalSec(id, { discoveryFallback: false }),
+    ]);
+    res.json({ ...result, pollIntervalSec });
   } catch (err) { next(err); }
 });
 

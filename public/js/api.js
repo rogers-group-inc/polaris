@@ -949,6 +949,7 @@ const api = {
     },
     sdwanRules:           (id) => request("GET", `/assets/${id}/sdwan-rules`),
     mclagPeers:           (id) => request("GET", `/assets/${id}/mclag-peers`),
+    ipsec:                (id) => request("GET", `/assets/${id}/ipsec`),
     // The upstream switch / AP / firewall the General tab names, resolved to
     // asset rows so those values can carry verbs.
     upstream:             (id) => request("GET", `/assets/${id}/upstream`),

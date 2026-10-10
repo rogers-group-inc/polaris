@@ -5441,6 +5441,14 @@ async function openViewModal(id, opts) {
       });
     });
 
+    // IPsec — Fortinet-discovered firewalls. Prefetched like SD-WAN so the
+    // tab only appears on a gate that actually reported tunnels or peers.
+    var ipsecP = assetP.then(function (asset) {
+      var sk = (asset.discoveredByIntegration && asset.discoveredByIntegration.type) || "manual";
+      if (!(asset.assetType === "firewall" && (sk === "fortimanager" || sk === "fortigate"))) return null;
+      return api.assets.ipsec(asset.id).catch(function (err) { console.warn("Failed to load IPsec", err); return null; });
+    });
+
     var wave = await Promise.all([
       assetP,
       // One-shot manual-tier read used as a generic auto-refresh cadence
@@ -5475,6 +5483,7 @@ async function openViewModal(id, opts) {
       // Path checks this host runs — prefetched so the tab is present
       // on first paint or absent, never flashing in and out.
       api.assets.pathChecks(id).catch(function () { return null; }),
+      ipsecP,
       // Whether the Services / Software tabs have anything to show — they
       // are drawn only when something is pulling that information in. A
       // failed read shows both (the behaviour before the gate). Keep this the
@@ -5497,7 +5506,8 @@ async function openViewModal(id, opts) {
     var sdwanMembers = wave[11].members;
     var sdwanMeta    = wave[11].meta || {};
     var pathPayload  = wave[13];
-    var inventoryPresence = wave[14] || { services: true, software: true };
+    var ipsecPayload = wave[14];
+    var inventoryPresence = wave[15] || { services: true, software: true };
 
     _currentAssetForRefresh = a;
     // Name the entry now that the hostname is known, so the tooltips read
@@ -5548,6 +5558,12 @@ async function openViewModal(id, opts) {
     // above so the tab is present + pre-populated on first paint.
     if (sdwanRules.length || sdwanLinks.length || sdwanMembers.length) {
       tabs.push({ key: "sdwan", label: "SD-WAN", html: _assetSdwanTabHTML(a, sdwanRules, sdwanLinks, sdwanMembers, sdwanMeta) });
+    }
+    // IPsec tab — the gate's tunnels and who is connected through them
+    // (ADVPN spokes / shortcuts, dial-up peers, FortiClient users).
+    var showIpsecTab = _ipsecTabEligible(ipsecPayload);
+    if (showIpsecTab) {
+      tabs.push({ key: "ipsec", label: "IPsec", html: _assetIpsecTabHTML(a.id) });
     }
     // Paths tab — agent-run path checks this host runs.
     if (_pathTabEligible(pathPayload)) {
@@ -5721,6 +5737,7 @@ async function openViewModal(id, opts) {
     if (_pathTabEligible(pathPayload)) _wireAssetPathCheckTab(a, pathPayload);
     if (a.assetType === "switch") _wireAssetMacTableTab(a.id);
     if (a.assetType === "firewall") _wireAssetArpTableTab(a.id);
+    if (showIpsecTab) _renderAssetIpsec(a.id, ipsecPayload);
     if (showServicesTab) _wireAssetServicesTab(a);
     if (showSoftwareTab) _wireAssetSoftwareTab(a);
     if (permAtLeast("events", "read")) _wireAssetEventsTab(a.id);
@@ -25475,6 +25492,257 @@ async function _loadAssetArpTable(assetId, range) {
   } catch (err) {
     mount.innerHTML = '<span class="empty-state">Error: ' + escapeHtml(err.message || "failed to load") + '</span>';
   }
+}
+
+// ─── IPsec tab ─────────────────────────────────────────────────────────────
+//
+// A FortiGate's phase-1 tunnels and who is connected through them, from
+// GET /assets/:id/ipsec. The System tab already lists the tunnels (with their
+// charts and pins); what it cannot show is the dynamic children FortiOS hangs
+// under a tunnel — a hub's connected ADVPN spokes, a spoke's on-demand
+// shortcuts, FortiClient users — because those come and go and are never
+// sampled. Two sections:
+//
+//   Tunnels & peers — each phase-1 with its site peers nested beneath it
+//                     (the tree the ARP tab draws, so the elbow reads the same)
+//   Remote access   — FortiClient users on IPsec dial-up and on SSL-VPN, with
+//                     a filter box once there are enough to need one
+//
+// Prefetched in openViewModal's wave, so the tab is present on a gate that
+// reported anything and absent otherwise.
+
+var _IPSEC_KIND_LABELS = {
+  "advpn-spoke":    "ADVPN spoke",
+  "advpn-shortcut": "ADVPN shortcut",
+  "dialup-peer":    "Dial-up peer",
+  "remote-access":  "FortiClient (IPsec)",
+  "ssl-vpn":        "FortiClient (SSL-VPN)",
+};
+
+function _ipsecIsRemoteAccess(c) {
+  return c.kind === "remote-access" || c.kind === "ssl-vpn";
+}
+
+function _ipsecTabEligible(payload) {
+  return !!(payload && ((payload.tunnels && payload.tunnels.length) || (payload.connections && payload.connections.length)));
+}
+
+function _assetIpsecTabHTML(assetId) {
+  return '<div id="asset-ipsec-mount-' + escapeHtml(assetId) + '">' +
+    '<span class="empty-state">Loading…</span></div>';
+}
+
+var _assetIpsecFilter = {};
+
+// "3d 04h" / "5h 12m" / "40m" — how long a connection has been up.
+function _ipsecUptimeLabel(since) {
+  if (!since) return null;
+  var sec = Math.max(0, Math.floor((Date.now() - new Date(since).getTime()) / 1000));
+  if (sec < 3600) return Math.max(1, Math.floor(sec / 60)) + "m";
+  if (sec < 86400) return Math.floor(sec / 3600) + "h " + String(Math.floor((sec % 3600) / 60)).padStart(2, "0") + "m";
+  return Math.floor(sec / 86400) + "d " + String(Math.floor((sec % 86400) / 3600)).padStart(2, "0") + "h";
+}
+
+// The monitor badges, so up / down read the way they do on every asset row.
+// "dynamic" (a dial-up template, working as configured with nobody on it)
+// takes the passive outline rather than a colour that implies a verdict.
+function _ipsecStatusPill(status) {
+  var kind = status === "up" ? "monitored"
+           : status === "down" ? "monitor-down"
+           : status === "dynamic" ? "monitor-passive"
+           : "monitor-warning";
+  return '<span class="badge badge-' + kind + '" style="white-space:nowrap">' + escapeHtml(status || "—") + '</span>';
+}
+
+async function _reloadAssetIpsec(assetId) {
+  try {
+    _renderAssetIpsec(assetId, await api.assets.ipsec(assetId));
+  } catch (err) {
+    var mount = document.getElementById("asset-ipsec-mount-" + assetId);
+    if (mount) mount.innerHTML = '<span class="empty-state">Error: ' + escapeHtml((err && err.message) || "failed to load") + '</span>';
+  }
+}
+
+function _renderAssetIpsec(assetId, data) {
+  var mount = document.getElementById("asset-ipsec-mount-" + assetId);
+  if (!mount) return;
+  var dash = '<span style="color:var(--color-text-secondary)">—</span>';
+  var tunnels = (data && data.tunnels) || [];
+  var connections = (data && data.connections) || [];
+  var sitePeers = connections.filter(function (c) { return !_ipsecIsRemoteAccess(c); });
+  var users = connections.filter(_ipsecIsRemoteAccess);
+  var cadenceSec = (data && typeof data.pollIntervalSec === "number") ? data.pollIntervalSec : null;
+  var filter = _assetIpsecFilter[assetId] || "";
+  var refreshId = "ipsec-refresh-" + assetId;
+  var usersBodyId = "ipsec-users-body-" + assetId;
+
+  function deviceCell(c) {
+    if (c.matchedAsset) {
+      return '<a href="#" class="asset-link" style="white-space:nowrap" data-asset-id="' + escapeHtml(c.matchedAsset.id) + '"' +
+        (c.peerId ? ' title="IKE peer ID: ' + escapeHtml(c.peerId) + '"' : '') + '>' +
+        escapeHtml(c.matchedAsset.hostname || c.matchedAsset.ipAddress || c.matchedAsset.id) + '</a>';
+    }
+    // The IKE identity is the next best name for a site the inventory
+    // doesn't hold — it is what the spoke calls itself.
+    return c.peerId ? '<span class="mono" style="white-space:nowrap" title="IKE peer ID — no known asset at this address">' + escapeHtml(c.peerId) + '</span>' : dash;
+  }
+
+  // 0.0.0.0 is a dial-up template's "any peer" placeholder, not an address.
+  function monoOrDash(v) { return v && v !== "0.0.0.0" ? '<span class="mono" style="white-space:nowrap">' + escapeHtml(v) + '</span>' : dash; }
+  // The row's kind, as a quiet second line under its name — a column of its
+  // own cost the addresses their width in a slide-over.
+  function subLine(text) {
+    return '<div style="font-family:var(--font-sans, inherit);font-size:0.72rem;font-weight:400;color:var(--color-text-secondary);white-space:nowrap">' + text + '</div>';
+  }
+  function uptimeCell(c) {
+    var up = _ipsecUptimeLabel(c.connectedSince);
+    return up ? '<span style="white-space:nowrap" title="' + escapeHtml(new Date(c.connectedSince).toLocaleString()) + '">' + escapeHtml(up) + '</span>' : dash;
+  }
+
+  // ── Tunnels & peers ──
+  // Children are keyed to their template; a child whose template is not in
+  // the tunnel batch (that pass's tunnel read failed) still gets a group.
+  var byParent = {};
+  sitePeers.forEach(function (c) {
+    var k = c.parentTunnel || "";
+    (byParent[k] = byParent[k] || []).push(c);
+  });
+  var tunnelNames = {};
+  tunnels.forEach(function (t) { tunnelNames[t.tunnelName] = true; });
+  var orphanParents = Object.keys(byParent).filter(function (k) { return !tunnelNames[k]; }).sort();
+
+  function tunnelRow(t) {
+    var kids = byParent[t.tunnelName] || [];
+    var kindText = t.status === "dynamic"
+      ? "Dial-up template &middot; " + kids.length + " connected"
+      : "Site-to-site";
+    return '<tr class="ipsec-tunnel">' +
+      '<td class="mono" style="font-weight:600;white-space:nowrap">' + escapeHtml(t.tunnelName) + subLine(kindText) + '</td>' +
+      '<td>' + _ipsecStatusPill(t.status) + '</td>' +
+      '<td>' + monoOrDash(t.remoteGateway) + '</td>' +
+      '<td>' + monoOrDash(t.parentInterface) + '</td>' +
+      '<td>' + dash + '</td>' +
+      '<td>' + dash + '</td>' +
+      '<td class="mono" style="white-space:nowrap">' + _fmtBytes(t.incomingBytes) + '</td>' +
+      '<td class="mono" style="white-space:nowrap">' + _fmtBytes(t.outgoingBytes) + '</td>' +
+    '</tr>';
+  }
+
+  function peerRow(c, isLast) {
+    return '<tr class="ipsec-peer">' +
+      '<td class="mono" style="padding-left:1.4rem;white-space:nowrap">' + _treeElbow(isLast) + escapeHtml(c.name) +
+        '<div style="padding-left:1.55rem">' + subLine(escapeHtml(_IPSEC_KIND_LABELS[c.kind] || c.kind)) + '</div></td>' +
+      '<td>' + _ipsecStatusPill(c.status) + '</td>' +
+      '<td>' + monoOrDash(c.remoteGateway) + '</td>' +
+      '<td>' + monoOrDash(c.tunnelIp) + '</td>' +
+      '<td>' + deviceCell(c) + '</td>' +
+      '<td>' + uptimeCell(c) + '</td>' +
+      '<td class="mono" style="white-space:nowrap">' + _fmtBytes(c.incomingBytes) + '</td>' +
+      '<td class="mono" style="white-space:nowrap">' + _fmtBytes(c.outgoingBytes) + '</td>' +
+    '</tr>';
+  }
+
+  function kidsHTML(kids) {
+    return kids.map(function (c, i) { return peerRow(c, i === kids.length - 1); }).join("");
+  }
+
+  var siteRowsHTML =
+    tunnels.map(function (t) { return tunnelRow(t) + kidsHTML(byParent[t.tunnelName] || []); }).join("") +
+    orphanParents.map(function (k) {
+      return '<tr class="ipsec-tunnel"><td class="mono" style="font-weight:600" colspan="8">' +
+        escapeHtml(k || "(no tunnel reported)") + '</td></tr>' + kidsHTML(byParent[k]);
+    }).join("");
+
+  var sitesHTML = (tunnels.length || sitePeers.length)
+    ? '<div class="table-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
+        '<th>Tunnel / peer</th><th>Status</th><th>Remote gateway</th>' +
+        '<th title="Tunnels: the interface it rides. Peers: the overlay or assigned address inside the tunnel">Via / tunnel IP</th>' +
+        '<th style="white-space:nowrap">Device</th><th>Up</th><th>In</th><th>Out</th>' +
+      '</tr></thead><tbody>' + siteRowsHTML + '</tbody></table></div>'
+    : '<span class="empty-state">No IPsec tunnels reported.</span>';
+
+  // ── Remote access ──
+  function userMatches(c) {
+    if (!filter) return true;
+    return [c.userName || "", c.remoteGateway || "", c.tunnelIp || "", c.parentTunnel || "", c.peerId || ""]
+      .join(" ").toLowerCase().indexOf(filter) !== -1;
+  }
+
+  function usersTableHTML() {
+    var shown = users.filter(userMatches);
+    if (shown.length === 0) return '<div class="empty-state">No users match that filter.</div>';
+    shown.sort(function (x, y) { return (x.userName || "").localeCompare(y.userName || "", undefined, { sensitivity: "base" }); });
+    return '<div class="table-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
+        '<th>User</th><th>Type</th><th>Tunnel</th><th>Remote address</th><th>Assigned IP</th>' +
+        '<th>Up</th><th>In</th><th>Out</th>' +
+      '</tr></thead><tbody>' +
+      shown.map(function (c) {
+        var who = c.userName || c.peerId;
+        return '<tr>' +
+          '<td>' + (who ? escapeHtml(who) : dash) + '</td>' +
+          '<td>' + escapeHtml(_IPSEC_KIND_LABELS[c.kind] || c.kind) + '</td>' +
+          '<td>' + monoOrDash(c.parentTunnel) + '</td>' +
+          '<td>' + monoOrDash(c.remoteGateway) + '</td>' +
+          '<td>' + monoOrDash(c.tunnelIp) + '</td>' +
+          '<td>' + uptimeCell(c) + '</td>' +
+          '<td class="mono" style="white-space:nowrap">' + _fmtBytes(c.incomingBytes) + '</td>' +
+          '<td class="mono" style="white-space:nowrap">' + _fmtBytes(c.outgoingBytes) + '</td>' +
+        '</tr>';
+      }).join("") +
+      '</tbody></table></div>';
+  }
+
+  var counts = tunnels.length + ' tunnel' + (tunnels.length === 1 ? "" : "s") +
+    ' · ' + sitePeers.length + ' site peer' + (sitePeers.length === 1 ? "" : "s") +
+    ' · ' + users.length + ' remote user' + (users.length === 1 ? "" : "s");
+
+  mount.innerHTML =
+    _currentStateStripHTML({
+      title: "IPsec",
+      suffixHTML: '<span style="font-weight:400;color:var(--color-text-secondary)">(' + escapeHtml(counts) + ')</span>',
+      chipHTML: _cadenceChipHTML(cadenceSec, "How often this gate's tunnels and connected peers are re-read"),
+      lastAt: (data && data.collectedAt) || null,
+      cadenceSec: cadenceSec,
+      neverText: "never read",
+      refreshId: refreshId,
+      refreshTitle: "Re-read this gate's tunnels and connected peers from the device now",
+    }) +
+    // Same reason the ARP tab carries one: the table is a snapshot, and an
+    // absent shortcut or user reads as a claim the data cannot support.
+    '<div class="empty-state" style="margin:0 0 0.6rem;padding:6px 9px;border-radius:4px;' +
+      'background:var(--color-bg-primary);border:1px solid var(--color-border);font-size:0.78rem;' +
+      'line-height:1.5;text-align:left">' +
+      'Each read is a snapshot of who is connected at that moment. ADVPN shortcuts form on demand and ' +
+      'tear down when idle, and remote users come and go — <strong>a peer missing here may simply not ' +
+      'have been connected when the gate was last read.</strong>' +
+    '</div>' +
+    '<h4 style="margin:0.4rem 0 0.4rem">Tunnels &amp; peers</h4>' +
+    sitesHTML +
+    '<div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin:1.1rem 0 0.4rem">' +
+      '<h4 style="margin:0">Remote access</h4>' +
+      (users.length > 5
+        ? '<input type="text" id="ipsec-users-filter-' + escapeHtml(assetId) + '" class="form-input" ' +
+            'placeholder="Filter by user, address or tunnel" ' +
+            'style="max-width:20rem;font-size:0.82rem;flex:1 1 12rem" value="' + escapeHtml(filter) + '">'
+        : '') +
+    '</div>' +
+    '<div id="' + usersBodyId + '">' +
+      (users.length
+        ? usersTableHTML()
+        : '<span class="empty-state">No FortiClient users connected at the last read.</span>') +
+    '</div>';
+
+  var box = document.getElementById("ipsec-users-filter-" + assetId);
+  if (box) {
+    box.addEventListener("input", debounce(function () {
+      filter = box.value.trim().toLowerCase();
+      _assetIpsecFilter[assetId] = filter;
+      var body = document.getElementById(usersBodyId);
+      if (body) body.innerHTML = usersTableHTML();
+    }, 150));
+  }
+  _wireAssetPivotLinks(mount);
+  _wireCurrentStateRefresh(refreshId, assetId, function () { return _reloadAssetIpsec(assetId); });
 }
 
 // ─── Asset slide-over → Paths tab ───────────────────────────────────

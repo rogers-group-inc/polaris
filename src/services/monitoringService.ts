@@ -181,6 +181,8 @@ import { buildArpNeighbors, arpNeighborsFromFortiosRest, type ArpNeighborEntry }
 import { persistAssetArpNeighbors } from "./arpTableService.js";
 import { decodePortList, derivePortVlans, isVlanId, type PortVlanConfig, type VlanMembership } from "../utils/portVlans.js";
 import { matchTrunkPeer, parseTrunkPortMap, trunkMemberMap, type TrunkPortEntry } from "../utils/fortiswitchTrunkMap.js";
+import { parseFortiosIpsec, parseFortiosSslVpn, type IpsecTunnelSample, type IpsecConnectionSample } from "../utils/fortiosIpsec.js";
+import { persistIpsecConnections } from "./ipsecConnectionService.js";
 import { joinStateRows } from "../utils/stateProbes.js";
 import { enqueueProbePatch, getPendingProbePatch } from "./probePatchBuffer.js";
 import { recoveryPollsFor, resolveDownDetection } from "./downDetectionService.js";
@@ -2025,11 +2027,12 @@ async function collectIpsecOnlyFortinetSafe(
   integration: { type: string; config: Record<string, unknown> },
   timeoutMs?: number,
   credential?: CredentialLike | null,
-): Promise<IpsecTunnelSample[] | undefined> {
+  opts: { includeSslVpn?: boolean } = {},
+): Promise<FortiIpsecCollection | undefined> {
   try {
     const fg = buildFortinetConfig(host, integration, credential);
     if ("error" in fg) return undefined;
-    return await collectIpsecTunnelsFortinet(fg, timeoutMs);
+    return await collectIpsecFortinet(fg, timeoutMs, opts);
   } catch {
     return undefined;
   }
@@ -4682,25 +4685,9 @@ export interface HardwareSensorSample {
   alarmStatus: string | null;
 }
 
-/**
- * One row per FortiOS phase-1 IPsec tunnel. `status` rolls phase-2 selectors up
- * to "up" / "down" / "partial". Bytes are summed across every phase-2 selector
- * under this phase-1 and are cumulative — FortiOS resets when phase-1 renegotiates.
- *
- * Dial-up server templates (CMDB `type: "dynamic"`) report status `"dynamic"`
- * regardless of phase-2 state — these are templates that accept connections
- * from dynamic peers, so a "down" rollup at scrape time is misleading.
- */
-export interface IpsecTunnelSample {
-  tunnelName:      string;
-  /** Parent interface from `config vpn ipsec phase1-interface`; null when the CMDB lookup fails or the phase-1 isn't found. */
-  parentInterface: string | null;
-  remoteGateway:   string | null;
-  status:          "up" | "down" | "partial" | "dynamic";
-  incomingBytes:   number | null;
-  outgoingBytes:   number | null;
-  proxyIdCount:    number | null;
-}
+// IpsecTunnelSample / IpsecConnectionSample live with their parser in
+// utils/fortiosIpsec.ts; re-exported here for the existing importers.
+export type { IpsecTunnelSample, IpsecConnectionSample };
 
 /**
  * One SD-WAN Performance SLA health-check reading for a single WAN member.
@@ -4831,6 +4818,16 @@ export interface SystemInfoSample {
    */
   trunkMembers?: TrunkPortEntry[];
   ipsecTunnels?: IpsecTunnelSample[];
+  /**
+   * Who is connected through this gate's IPsec / SSL-VPN: ADVPN spokes and
+   * shortcuts, dial-up peers, FortiClient users. Per source, the
+   * undefined/[] contract: `ipsecConnections` undefined = the IPsec monitor
+   * read failed or did not run (stored IPsec rows stay), `[]` = read, nobody
+   * connected (wipe). `sslVpnSessions` the same for the SSL-VPN half, which
+   * is a separate read that fails on its own. Full pass only.
+   */
+  ipsecConnections?: IpsecConnectionSample[];
+  sslVpnSessions?:   IpsecConnectionSample[];
   // SD-WAN (perfSla / sdwanRules) is not part of this sample any more — it has
   // its own cadence and runner (runSdwanFor).
   /**
@@ -5294,7 +5291,8 @@ export async function collectFastFiltered(assetId: string): Promise<CollectionRe
         // See the matching guard + rationale in collectSystemInfo.
         if (!isManagedSwitchOrAp && wantedTunnels.length > 0) {
           const ipsec = await collectIpsecOnlyFortinetSafe(targetIp, integration as any, sysInfoTimeout, pickRestApiCredential(asset.interfacesCredential, asset.monitorCredential));
-          if (ipsec !== undefined) full.ipsecTunnels = ipsec;
+          // Tunnels only: the connection rows are the full pass's to write.
+          if (ipsec !== undefined) full.ipsecTunnels = ipsec.tunnels;
         }
       }
     } else {
@@ -5743,9 +5741,17 @@ export async function collectSystemInfo(assetId: string): Promise<CollectionResu
           // guard the REST telemetry / system-info / fast-filtered paths already use.
           if (!isManagedSwitchOrAp) {
             const endIpsec = startPhase("systeminfo.snmp.ipsec_overlay_rest");
-            const ipsec = await collectIpsecOnlyFortinetSafe(targetIp, integration as any, sysInfoTimeout, pickRestApiCredential(asset.interfacesCredential, asset.monitorCredential));
-            endIpsec({ tunnels: ipsec?.length ?? null });
-            if (ipsec !== undefined) data.ipsecTunnels = ipsec;
+            const ipsec = await collectIpsecOnlyFortinetSafe(
+              targetIp, integration as any, sysInfoTimeout,
+              pickRestApiCredential(asset.interfacesCredential, asset.monitorCredential),
+              { includeSslVpn: asset.assetType === "firewall" },
+            );
+            endIpsec({ tunnels: ipsec?.tunnels.length ?? null, connections: ipsec?.connections?.length ?? null });
+            if (ipsec !== undefined) {
+              data.ipsecTunnels     = ipsec.tunnels;
+              data.ipsecConnections = ipsec.connections;
+              data.sslVpnSessions   = ipsec.sslVpnSessions;
+            }
           }
           await overlayFortiswitchCmdbOntoSnmp(asset, integration, data, sysInfoTimeout);
           await overlayFortiapStationSignals(asset, integration, data, sysInfoTimeout);
@@ -5761,6 +5767,8 @@ export async function collectSystemInfo(assetId: string): Promise<CollectionResu
           // interface scrape's 10-minute default.
           // Firewall-class only, matching where the SNMP branch gates it.
           includeArp:   asset.assetType === "firewall",
+          // Remote-access users only exist on a gate.
+          includeSslVpn: asset.assetType === "firewall",
           timeoutMs:    sysInfoTimeout,
         }, pickRestApiCredential(asset.interfacesCredential, asset.monitorCredential));
         endRest({ interfaces: data.interfaces.length, ipsec: data.ipsecTunnels?.length ?? null, lldp: data.lldpNeighbors?.length ?? null });
@@ -6258,7 +6266,7 @@ export function backfillFortiCmdbOnlyTunnels(
 async function collectSystemInfoFortinet(
   host: string,
   integration: { type: string; config: Record<string, unknown> },
-  opts: { includeIpsec?: boolean; includeLldp?: boolean; includeArp?: boolean; timeoutMs?: number } = {},
+  opts: { includeIpsec?: boolean; includeLldp?: boolean; includeArp?: boolean; includeSslVpn?: boolean; timeoutMs?: number } = {},
   credential?: CredentialLike | null,
 ): Promise<SystemInfoSample> {
   const fg = buildFortinetConfig(host, integration, credential);
@@ -6292,11 +6300,14 @@ async function collectSystemInfoFortinet(
   const ipsecPromise = opts.includeIpsec
     ? (() => {
         const endIpsec = startPhase("systeminfo.rest.ipsec");
-        return collectIpsecTunnelsFortinet(fg, timeoutMs)
-          .catch(() => [] as IpsecTunnelSample[])
-          .then((tunnels) => { endIpsec({ tunnels: tunnels.length }); return tunnels; });
+        // A failed read keeps the old contract for tunnels ([] — no samples
+        // this pass) but leaves the connection halves undefined, so the
+        // IPsec tab keeps its last answer instead of blanking.
+        return collectIpsecFortinet(fg, timeoutMs, { includeSslVpn: opts.includeSslVpn })
+          .catch((): FortiIpsecCollection => ({ tunnels: [], connections: undefined, sslVpnSessions: undefined }))
+          .then((r) => { endIpsec({ tunnels: r.tunnels.length, connections: r.connections?.length ?? null }); return r; });
       })()
-    : Promise.resolve<IpsecTunnelSample[] | undefined>(undefined);
+    : Promise.resolve<FortiIpsecCollection | undefined>(undefined);
   const lldpPromise = opts.includeLldp !== false
     ? (() => {
         const endLldp = startPhase("systeminfo.rest.lldp");
@@ -6319,7 +6330,7 @@ async function collectSystemInfoFortinet(
       })()
     : Promise.resolve<ArpNeighborEntry[] | undefined>(undefined);
 
-  const [cmdbRes, monitorOutcome, ipsecTunnels, lldpNeighbors, arpNeighbors] = await Promise.all([
+  const [cmdbRes, monitorOutcome, ipsec, lldpNeighbors, arpNeighbors] = await Promise.all([
     cmdbInterfacePromise,
     monitorInterfacePromise,
     ipsecPromise,
@@ -6361,7 +6372,11 @@ async function collectSystemInfoFortinet(
   // this when the operator routed LLDP to SNMP; the caller overlays the
   // SNMP result onto the returned sample.
   return {
-    interfaces, storage: [], ipsecTunnels, lldpNeighbors,
+    interfaces, storage: [],
+    ipsecTunnels:     ipsec?.tunnels,
+    ipsecConnections: ipsec?.connections,
+    sslVpnSessions:   ipsec?.sslVpnSessions,
+    lldpNeighbors,
     lldpSource: opts.includeLldp !== false ? "fortios" : undefined,
     arpNeighbors,
     fortilinkInterfaces,
@@ -6501,132 +6516,55 @@ async function fetchFortilinkInterfaceSet(fg: FortiGateConfig, timeoutMs?: numbe
 }
 
 /**
- * FortiOS exposes IPsec tunnels at /api/v2/monitor/vpn/ipsec. Each entry has
- * a `proxyid` array of phase-2 selectors with their own status + byte
- * counters; we roll them up into a single row per phase-1 tunnel for the
- * System tab. Older firmwares 404 this endpoint — caller swallows the failure.
+ * FortiOS exposes IPsec at /api/v2/monitor/vpn/ipsec: one entry per phase-1
+ * the IKE daemon is servicing plus one per dynamic CHILD (a hub's connected
+ * ADVPN spokes / dial-up peers / FortiClient users, a spoke's ADVPN
+ * shortcuts — each carries `parent`). utils/fortiosIpsec.ts → parseFortiosIpsec
+ * splits the two: phase-1 rows roll up into `tunnels` (the sample stream, the
+ * System tab, pins — children are never pinnable, they come and go with
+ * peers and traffic) and children become `connections` (the current-state
+ * table behind the asset's IPsec tab). Older firmwares 404 the endpoint —
+ * the caller swallows the failure.
  *
- * ADVPN shortcut tunnels (dynamic spoke-to-spoke SAs created on demand) are
- * filtered out: they idle in and out as traffic flows, polluting the table
- * with ephemeral rows that aren't pinnable for fast polling. FortiOS marks
- * them with a non-empty `parent` field pointing back at the configured
- * template tunnel; the template itself has no `parent`.
+ * The CMDB phase1-interface read supplies each tunnel's parent interface,
+ * the dial-up `type`, and the ADVPN / xauth / EAP flags that classify a
+ * child. It is best-effort (a token without cmdb scope leaves those null)
+ * and runs in parallel with the monitor read. CMDB-only synthesis (configured
+ * phase-1 tunnels missing from the monitor answer get a "down" / "dynamic"
+ * row) only runs when the monitor call succeeded — a monitor failure rejects
+ * this function, which the caller treats as "no ipsec data", not "every
+ * tunnel down".
  *
- * CMDB-only synthesis: /monitor/vpn/ipsec only lists tunnels the IKE daemon
- * is actively servicing — a tunnel whose parent interface is down with no IP
- * (IKE can't even bind) drops out of the monitor response entirely, even
- * though it's still configured. Any phase1-interface CMDB entry missing from
- * the monitor results is appended as a synthetic row (status "down", or
- * "dynamic" for dial-up templates; parentInterface + remote-gw from CMDB; no
- * byte counters) so configured-but-dead tunnels keep producing samples — the
- * System tab nests them under their (down) parent instead of silently
- * dropping them, and the auto-monitor dead-parent exclusion sees a current
- * parentInterface. Only runs when the monitor call succeeded (a monitor
- * failure rejects this function before synthesis — the caller treats that as
- * "no ipsec data", not "every tunnel down").
+ * `includeSslVpn` adds the SSL-VPN session list (/api/v2/monitor/vpn/ssl) as
+ * a third parallel read with its own failure: `sslVpnSessions` is undefined
+ * when it was not asked for or did not answer, so a gate whose token lacks
+ * that scope keeps whatever SSL rows it had rather than wiping them.
  */
-async function collectIpsecTunnelsFortinet(fg: FortiGateConfig, timeoutMs?: number): Promise<IpsecTunnelSample[]> {
-  // Build a tunnel→{interface,type} map up front from the CMDB so each sample
-  // can carry the parent interface (the FortiOS CLI `set interface` value
-  // under `config vpn ipsec phase1-interface`) and the phase-1 type. The
-  // System tab uses parentInterface to nest tunnel rows under their parent in
-  // the Interfaces table; type lets dial-up server templates report status
-  // "dynamic" instead of rolling phase-2 selectors up to "down" when no
-  // client happens to be connected at scrape time. Best-effort: tokens
-  // without cmdb scope just leave both null on every row.
-  // CMDB phase1 + monitor /vpn/ipsec are independent on the wire — fire them
-  // in parallel and merge below. CMDB failure (token without cmdb scope) is
-  // non-fatal and just leaves phase1Map empty so parentInterface / type are
-  // null on every row, matching the prior behavior.
-  const [cmdbResult, res] = await Promise.all([
+interface FortiIpsecCollection {
+  tunnels:        IpsecTunnelSample[];
+  connections:    IpsecConnectionSample[] | undefined;
+  sslVpnSessions: IpsecConnectionSample[] | undefined;
+}
+
+async function collectIpsecFortinet(
+  fg: FortiGateConfig,
+  timeoutMs?: number,
+  opts: { includeSslVpn?: boolean } = {},
+): Promise<FortiIpsecCollection> {
+  const [cmdbResult, res, sslRes] = await Promise.all([
     fgRequest<any>(fg, "GET", "/api/v2/cmdb/vpn.ipsec/phase1-interface", { query: { vdom: "root" }, timeoutMs })
       .catch(() => null as any),
     fgRequest<any>(fg, "GET", "/api/v2/monitor/vpn/ipsec", { query: { scope: "vdom" }, timeoutMs }),
+    opts.includeSslVpn
+      ? fgRequest<any>(fg, "GET", "/api/v2/monitor/vpn/ssl", { timeoutMs }).catch(() => undefined)
+      : Promise.resolve(undefined),
   ]);
-
-  const phase1Map = new Map<string, { iface: string | null; type: string | null; remoteGw: string | null }>();
-  if (cmdbResult) {
-    const cmdbArr = Array.isArray(cmdbResult?.results) ? cmdbResult.results : (Array.isArray(cmdbResult) ? cmdbResult : []);
-    for (const p of cmdbArr) {
-      if (!p || typeof p !== "object") continue;
-      const name  = typeof (p as any).name      === "string" ? (p as any).name.trim()      : "";
-      const iface = typeof (p as any).interface === "string" ? (p as any).interface.trim() : "";
-      const type  = typeof (p as any).type      === "string" ? (p as any).type.trim().toLowerCase() : "";
-      // Static peers carry the configured gateway in `remote-gw`; dial-up
-      // templates report the 0.0.0.0 placeholder → null.
-      const rawGw = typeof (p as any)["remote-gw"] === "string" ? (p as any)["remote-gw"].trim() : "";
-      const remoteGw = rawGw && rawGw !== "0.0.0.0" ? rawGw : null;
-      if (name) phase1Map.set(name, { iface: iface || null, type: type || null, remoteGw });
-    }
-  }
-  const arr = Array.isArray(res?.results) ? res.results : (Array.isArray(res) ? res : []);
-  const out: IpsecTunnelSample[] = [];
-  for (const t of arr) {
-    if (!t || typeof t !== "object") continue;
-    const name = String((t as any).name || "").trim();
-    if (!name) continue;
-    const parent = (t as any).parent;
-    if (typeof parent === "string" && parent.trim()) continue;
-    const proxyArr = Array.isArray((t as any).proxyid) ? (t as any).proxyid : [];
-    let upCount = 0;
-    let downCount = 0;
-    let inBytes = 0;
-    let outBytes = 0;
-    let anyBytes = false;
-    for (const p of proxyArr) {
-      if (!p || typeof p !== "object") continue;
-      const s = String((p as any).status || "").toLowerCase();
-      if (s === "up") upCount++; else downCount++;
-      const ib = pickFiniteNumber((p as any).incoming_bytes);
-      const ob = pickFiniteNumber((p as any).outgoing_bytes);
-      if (ib != null) { inBytes  += ib; anyBytes = true; }
-      if (ob != null) { outBytes += ob; anyBytes = true; }
-    }
-    const phase1 = phase1Map.get(name) ?? null;
-    let status: "up" | "down" | "partial" | "dynamic";
-    if (phase1?.type === "dynamic") {
-      // Dial-up server template — accepts connections from dynamic peers, so
-      // "up/down" against a single rollup is misleading. Phase-2 children of
-      // active sessions appear as separate entries with `parent` set and are
-      // already filtered out above.
-      status = "dynamic";
-    } else if (proxyArr.length === 0) {
-      // No phase-2 selectors reported — fall back to the phase-1 connect_count
-      // (>0 = up). Some FortiOS releases omit `proxyid` entirely on dial-up
-      // tunnels with no active children.
-      const cc = pickFiniteNumber((t as any).connect_count);
-      status = cc != null && cc > 0 ? "up" : "down";
-    } else if (downCount === 0) status = "up";
-    else if (upCount === 0)     status = "down";
-    else                        status = "partial";
-    const rgwy = (t as any).rgwy ?? (t as any).tun_id ?? null;
-    out.push({
-      tunnelName:      name,
-      parentInterface: phase1?.iface ?? null,
-      remoteGateway:   typeof rgwy === "string" && rgwy ? rgwy : null,
-      status,
-      incomingBytes:   anyBytes ? inBytes  : null,
-      outgoingBytes:   anyBytes ? outBytes : null,
-      proxyIdCount:    proxyArr.length || null,
-    });
-  }
-  // CMDB-only synthesis (see header): configured phase-1 tunnels the IKE
-  // daemon dropped from the monitor response (dead parent link) still get a
-  // row so they don't vanish from samples while configured.
-  const seenNames = new Set(out.map((t) => t.tunnelName));
-  for (const [name, p1] of phase1Map) {
-    if (seenNames.has(name)) continue;
-    out.push({
-      tunnelName:      name,
-      parentInterface: p1.iface,
-      remoteGateway:   p1.remoteGw,
-      status:          p1.type === "dynamic" ? "dynamic" : "down",
-      incomingBytes:   null,
-      outgoingBytes:   null,
-      proxyIdCount:    null,
-    });
-  }
-  return out;
+  const { tunnels, connections } = parseFortiosIpsec(cmdbResult, res);
+  return {
+    tunnels,
+    connections,
+    sslVpnSessions: sslRes === undefined || sslRes === null ? undefined : parseFortiosSslVpn(sslRes),
+  };
 }
 
 /** Normalize a FortiOS SD-WAN member liveness value to "up"/"down". FortiOS
@@ -6657,7 +6595,7 @@ function normalizeSdwanState(v: unknown): "up" | "down" {
  * inferred "selected" is only the top healthy member — the UI shows `mode` so
  * the operator has context.
  *
- * Each sub-fetch degrades independently, like collectIpsecTunnelsFortinet's
+ * Each sub-fetch degrades independently, like collectIpsecFortinet's
  * CMDB-optional handling. A failed health-check read yields no SLA samples. A
  * failed CMDB read yields `sdwanRules: undefined` — "not read", so the caller
  * leaves the stored rules alone — rather than [], which would full-replace
@@ -10254,6 +10192,18 @@ export async function recordSystemInfoResult(assetId: string, result: Collection
   }
   persistStorageSampleStream(assetId, d.storage, pinned, now);
   persistIpsecTunnelSampleStream(assetId, d.ipsecTunnels, pinned, now);
+  // Who is connected through the gate's IPsec / SSL-VPN (the IPsec tab).
+  // CURRENT-STATE, full pass only — recordFastFilteredResult never sees
+  // these. Each half is replaced only when its own read answered (see
+  // SystemInfoSample.ipsecConnections), so an SSL-VPN read the token can't
+  // make does not wipe the IPsec peers or vice versa.
+  if (Array.isArray(d.ipsecConnections) || Array.isArray(d.sslVpnSessions)) {
+    const stopWrite = startSampleWriteTimer("asset_ipsec_connections");
+    const endConn = startPhase("systeminfo.persist.ipsec_connections");
+    const written = await persistIpsecConnections(assetId, { ipsec: d.ipsecConnections, sslVpn: d.sslVpnSessions }, now);
+    endConn({ connections: written });
+    stopWrite();
+  }
   // SD-WAN SLA samples + rules are written by runSdwanFor on their own cadence.
 
   await persistAssocIpMirror(assetId, d.interfaces, pinned, now);

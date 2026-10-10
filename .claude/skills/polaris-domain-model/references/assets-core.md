@@ -229,9 +229,10 @@ Asset
   -- /api/v2/monitor/vpn/ipsec endpoint can be slow on busy gateways and is
   -- normally skipped on the fast cadence; pinning a tunnel here issues a
   -- targeted scrape that filters down to just the requested phase-1.
-  -- ADVPN dynamic shortcut tunnels are filtered out of discovery (the
-  -- collector skips any tunnel with a non-empty `parent` field) so they
-  -- don't pollute the table or this pinning surface.
+  -- Dynamic children (any monitor entry with a non-empty `parent`: ADVPN
+  -- spokes on a hub, shortcuts on a spoke, FortiClient users) never become
+  -- tunnels, so they never reach this pinning surface; they are stored as
+  -- AssetIpsecConnection rows for the IPsec tab instead.
   monitoredIpsecTunnels String[]   @default([])
   -- All three pin arrays gate ALERTING as well as cadence: an automation
   -- produces readings only for pinned interfaces / mounts / tunnels
