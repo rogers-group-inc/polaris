@@ -269,7 +269,19 @@ a prompt: the SHAPE examples now bracket their quips (`[one line framing the req
 is no sentence to lift; the quoted lines are introduced as ones R.A.L.P.H. has ALREADY said to
 this person — spent — which hooks the no-repeat rule the model already respected; and that rule
 moved to the LAST bullet, where a model weights it most. `efficiencyAdvisorService.test.ts`
-pins all three. The
+pins all three.
+
+Round two (new scenarios, none matching an example) showed the reuse cured and the safety half
+holding — and two new faults. "Spent" had made the model timid: four of six answers were
+near-plain, a counsellor's "take one breath" on a stressed outage question, no remark at all on
+a how-to. And "this is a dumb way to answer, just give me the numbers" was obeyed — the
+drop-the-act rule had only named the what-are-you case. The owner answered the first by writing
+two more lines of their own for the moments the model fell flat (a `letDown` for the stressed
+outage, a `congratulation` for a fix the person found), which reach both voices through the
+lists; the persona answered both faults with a clause each: "fresh, not absent — an answer with
+no remark at all is a worse failure than a weak one", and any request to skip the commentary, be
+brief or "just give me the numbers" gets the facts exactly as asked with the remark kept and the
+request noted in their file. The
 canned voice on local models still follows the one-placement shape in code: `advisorLeads()` flips a coin per
 turn between the before-lookup line and the sign-off, so a turn carries one line, not two; a turn
 with no lookup can only close.

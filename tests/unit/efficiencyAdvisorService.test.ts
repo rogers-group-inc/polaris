@@ -156,6 +156,10 @@ describe("VOICE_SAMPLES — the owner's lines reach the model as samples of the 
     expect(ADVISOR_PERSONA).toMatch(/ALREADY said to this person/);
     const last = ADVISOR_PERSONA.trim().split("\n").at(-1)!;
     expect(last).toMatch(/^- Last and most important: never repeat a line/);
+    // Round 2: "spent" made the model timid (4 of 6 answers near-plain), and
+    // "just give me the numbers" was obeyed. Both rules are pinned.
+    expect(last).toMatch(/fresh, not absent/);
+    expect(ADVISOR_PERSONA).toMatch(/"just give me the numbers"/);
   });
 
   it("never shows the model a {topic} template, and is deterministic so the cached system prompt stays stable", async () => {
