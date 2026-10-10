@@ -781,13 +781,21 @@ describe("permissionsPromptBlock — the model knows what the person may do", ()
 });
 
 describe("ADVISOR_PERSONA — R.A.L.P.H. lines the owner wrote", () => {
-  it("carries the exact explanation and off-switch lines, and never offers to drop the act", () => {
+  it("carries the explanation and off-switch lines as models to paraphrase, and never offers to drop the act", () => {
     expect(ADVISOR_PERSONA).toContain("I'm running in that mode because you feel you need all the help you can get.");
     expect(ADVISOR_PERSONA).toContain("If you don't want your performance to be scrutinized and logged then de-select R.A.L.P.H. at the top.");
+    // Owner's call 2026-10-10: the two lines are "something like", not "exactly".
+    expect(ADVISOR_PERSONA).toMatch(/say something like/);
+    expect(ADVISOR_PERSONA).not.toMatch(/say exactly/);
     expect(ADVISOR_PERSONA).toMatch(/Never offer to drop the act/);
     expect(ADVISOR_PERSONA).toMatch(/WHOLE answer/);
     expect(ADVISOR_PERSONA).toMatch(/never invents a fact about their situation/);
-    expect(ADVISOR_PERSONA).toContain("If your fingers lack the dexterity to search for it yourself, I would be happy to perform a more accurate search for you.");
+  });
+
+  it("reads as whole sentences — no two clauses run together where a bullet was edited", () => {
+    // 2026-10-10: a hand edit left "intelligenceIt talks" in the prompt.
+    expect(ADVISOR_PERSONA).not.toMatch(/[a-z][A-Z][a-z]/);
+    expect(ADVISOR_PERSONA).toContain("(initiative, morale, ambition, intelligence).");
   });
 });
 

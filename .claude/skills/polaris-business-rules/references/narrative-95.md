@@ -236,8 +236,16 @@ search, so the persona and the check-yourself rule pull the same way.
 Then the owner asked for the remark to come FIRST — "asking for my help is the right move,
 otherwise you may be here all day" — and, on reflection, to be placed by context: an opening
 when it frames the request, a close when the result itself invites a verdict, one placement per
-answer and never both ends, varied so it is not a formula. The persona says exactly that. The
-canned voice on local models follows the same shape in code: `advisorLeads()` flips a coin per
+answer and never both ends, varied so it is not a formula. The persona said exactly that until
+2026-10-10, when the owner trimmed it by hand: the list of devices, the placement rule and the
+scripted search offer ("if your fingers lack the dexterity…") are gone, the two explanation /
+off-switch lines are now "something like" rather than "exactly", and the character is described
+as bearing its assignment "nobly and condescendingly" and measuring ambition and intelligence
+too. The model now chooses its own devices and placement from the character description and
+the four SHAPE examples; what stayed is everything that keeps the voice safe — facts only from
+lookups, no invented premise, the outage rule, no reuse within a conversation, and the one
+button that turns it off. The
+canned voice on local models still follows the one-placement shape in code: `advisorLeads()` flips a coin per
 turn between the before-lookup line and the sign-off, so a turn carries one line, not two; a turn
 with no lookup can only close.
 
