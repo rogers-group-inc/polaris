@@ -44,7 +44,7 @@ import { ENTRA_ASSET_TAG_PREFIX, AD_ASSET_TAG_PREFIX, AD_GUID_TAG_PREFIX, SID_TA
 import type { DiscoveryResult, DiscoveryProgressCallback } from "../fortimanagerService.js";
 import { projectAssetFromSources, ENRICHMENT_SOURCE_KINDS } from "../../utils/assetProjection.js";
 import { classifyDirectoryRows, absenceExceedsGuard } from "../../utils/directoryAbsence.js";
-import { scoreDhcpClaim, claimBeats, createDhcpClaimState, type DhcpClaimState } from "../../utils/dhcpClaimFreshness.js";
+import { scoreAddressClaim, claimBeats, claimMedium, createDhcpClaimState, type DhcpClaimState } from "../../utils/dhcpClaimFreshness.js";
 import { bareFortinetDeviceName } from "../../utils/assetSourceLocation.js";
 import { readFirewallDeviceName, normalizeNameKey, normalizeSerialKey } from "../../utils/fortinetParentKey.js";
 import { isUsableSerial } from "../../utils/serialNumber.js";
@@ -5872,6 +5872,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     // evidence here is deliberately switch/AP/ARP, never the lease itself,
     // because this map's whole job is to corroborate leases.
     const invSeenByMacDevice = new Map<string, number>();
+    // The same rows' FortiSwitch / FortiAP attribution — which medium a DHCP
+    // entry for (mac, gate) rode in on when the lease row itself doesn't say.
+    const invMediumByMacDevice = new Map<string, { wired: boolean; wireless: boolean }>();
     for (const d of result.deviceInventory || []) {
       if (!d.macAddress || !d.device) continue;
       if (!inventorySightingIsLocal(d, arpMacDeviceIndex)) continue;
@@ -5881,17 +5884,24 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       const key = `${mac}|${d.device}`;
       const prev = invSeenByMacDevice.get(key);
       if (prev === undefined || at > prev) invSeenByMacDevice.set(key, at);
+      const medium = invMediumByMacDevice.get(key) ?? { wired: false, wireless: false };
+      if (d.switchName) medium.wired = true;
+      if (d.apName) medium.wireless = true;
+      invMediumByMacDevice.set(key, medium);
     }
 
-    // Best standing DHCP claim per asset. An asset sighted by several gates
+    // Best standing address claim per asset. An asset claimed several times
     // this run (unexpired lease on the site it left + fresh lease where it
-    // moved, or a config-only static reservation beside a live lease) must
-    // take ipAddress / ipSource / learnedLocation — and the fortigate-endpoint
-    // source blob's gate — from the FRESHEST sighting, not from whichever
-    // entry iterates last. See utils/dhcpClaimFreshness.ts for the ranking.
-    // Run-scoped, so the gates of an FMG run — which each get their own call
-    // to this function — compete in one set rather than one set apiece.
-    const bestIpClaimByAsset = claims.bestIpClaimByAsset;
+    // moved, a static reservation beside a leftover lease, one claim per
+    // network card) must take ipAddress / ipSource / learnedLocation — and the
+    // fortigate-endpoint source blob's gate — from the BEST claim, not from
+    // whichever entry iterates last. Business rule 101; the ranking is in
+    // utils/dhcpClaimFreshness.ts. Run-scoped, so the gates of an FMG run —
+    // which each get their own call to this function — compete in one set
+    // rather than one set apiece, and shared with Phase 7 so an online
+    // detected-device row outranks every DHCP binding.
+    const bestAddressClaimByAsset = claims.bestAddressClaimByAsset;
+    const nowMs = Date.parse(now);
 
     for (const entry of result.dhcpEntries) {
       if (!entry.macAddress || !entry.ipAddress) continue;
@@ -5930,17 +5940,25 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       // seen so far this run. Only the winner stages ipAddress / ipSource /
       // learnedLocation and names the fortigate-endpoint blob's gate — a
       // losing entry still contributes its sighting, MAC row, and presence.
-      const claimScore = scoreDhcpClaim({
-        type: entry.type,
-        seenLeased: entry.seenLeased,
+      const macDeviceKey = entry.device ? `${normalized}|${entry.device}` : null;
+      const invMedium = macDeviceKey ? invMediumByMacDevice.get(macDeviceKey) : undefined;
+      const priorMacEntry = Array.isArray(asset.macAddresses)
+        ? (asset.macAddresses as MacJsonEntry[]).find((m) => m.mac === normalized)
+        : undefined;
+      const claimScore = scoreAddressClaim({
+        kind: entry.type,
+        current: !!entry.seenLeased,
         expireTime: entry.expireTime,
-        inventorySeenMs: entry.device
-          ? invSeenByMacDevice.get(`${normalized}|${entry.device}`)
-          : undefined,
-      });
-      const incumbentScore = bestIpClaimByAsset.get(asset.id);
+        seenMs: macDeviceKey ? invSeenByMacDevice.get(macDeviceKey) : undefined,
+        medium: claimMedium({
+          wirelessEvidence: !!(entry.accessPoint || entry.ssid) || !!invMedium?.wireless,
+          wiredEvidence: !!invMedium?.wired,
+          macSource: priorMacEntry?.source,
+        }),
+      }, nowMs);
+      const incumbentScore = bestAddressClaimByAsset.get(asset.id);
       const winsIpClaim = !incumbentScore || claimBeats(claimScore, incumbentScore);
-      if (winsIpClaim) bestIpClaimByAsset.set(asset.id, claimScore);
+      if (winsIpClaim) bestAddressClaimByAsset.set(asset.id, claimScore);
 
       if (entry.device) {
         sightingRows.push({
@@ -6239,13 +6257,15 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       if (r.hostname && r.ipAddress) resHostnameToIp.set(r.hostname.toLowerCase(), r.ipAddress);
     }
 
-    // Freshest inventory claim per asset for the ipAddress write below — the
-    // Phase 6 rule applied to inventory-only MACs: several gates can report
-    // the same client (the site it left keeps a remembered-but-offline row),
-    // and without ranking the LAST row iterated wrote the IP. The gate whose
-    // per-client last_seen is freshest speaks for the address. Run-scoped for
-    // the same reason as the Phase 6 map above.
-    const bestInvIpSeenByAsset = claims.bestInvIpSeenByAsset;
+    // The address ladder Phase 6 already ranked its DHCP claims on (business
+    // rule 101). A detected-device row competes on the SAME ladder, so an
+    // online row — FortiOS built it from traffic it is seeing from that MAC
+    // right now — outranks a leftover lease or a reservation for another card,
+    // while a remembered-but-offline row still loses to a binding the device
+    // is holding. Several gates can report one client (the site it left keeps
+    // a remembered row), and the ladder's freshness keys settle those too.
+    const bestAddressClaimByAsset = claims.bestAddressClaimByAsset;
+    const invNowMs = Date.parse(now);
 
     // Deferred I/O for the update path (see the note at the write site).
     // deviceInventory is every DHCP client across every gate — routinely the
@@ -6321,16 +6341,31 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         updateData.statusChangedAt = new Date(now);
         updateData.statusChangedBy = integrationLabel;
       }
-        if (!handledByDhcp && inv.ipAddress && invIsLocal) {
+        // Fortinet infrastructure takes its address from its own discovery
+        // loop (the mgmt IP), never from a client-side sighting — the Phase 6
+        // DHCP path skips it for the same reason.
+        if (inv.ipAddress && invIsLocal && !invIsFortinetInfra) {
           // Record the claim even when the value already matches — otherwise a
           // fresh row that agrees with the asset stakes no claim and a stale
-          // gate's differing row iterated later would still take the address.
-          // Local rows only: a ZTNA entry relays the client's IP from wherever
-          // it really is, and must not write it as this gate's sighting.
-          const invClaimMs = invSeenValid ? invSeenAt.getTime() : 0;
-          const bestClaimMs = bestInvIpSeenByAsset.get(existingAsset.id);
-          if (bestClaimMs === undefined || invClaimMs > bestClaimMs) {
-            bestInvIpSeenByAsset.set(existingAsset.id, invClaimMs);
+          // claim iterated later would still take the address. Local rows
+          // only: a ZTNA entry relays the client's IP from wherever it really
+          // is, and must not write it as this gate's sighting.
+          const priorMacEntry = normalizedMac && Array.isArray(existingAsset.macAddresses)
+            ? (existingAsset.macAddresses as MacJsonEntry[]).find((m) => m.mac === normalizedMac)
+            : undefined;
+          const claimScore = scoreAddressClaim({
+            kind: "device-inventory",
+            current: !!inv.isOnline,
+            seenMs: invSeenValid ? invSeenAt.getTime() : 0,
+            medium: claimMedium({
+              wirelessEvidence: !!inv.apName,
+              wiredEvidence: !!inv.switchName,
+              macSource: priorMacEntry?.source,
+            }),
+          }, invNowMs);
+          const incumbentScore = bestAddressClaimByAsset.get(existingAsset.id);
+          if (!incumbentScore || claimBeats(claimScore, incumbentScore)) {
+            bestAddressClaimByAsset.set(existingAsset.id, claimScore);
             // A pinned asset's ipAddress already equals its ipOverride, so an
             // agreeing sighting must still be staged — the db.ts guard only
             // releases the pin when a write carries the matching IP.
@@ -6339,7 +6374,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
               ((existingAsset as any).ipOverride && (existingAsset as any).ipOverride === inv.ipAddress)
             ) {
               updateData.ipAddress = inv.ipAddress;
+              updateData.ipSource = inv.device || integrationType;
             }
+            if (inv.device) updateData.learnedLocation = inv.device;
           }
         }
         // Fortinet infrastructure (firewall/switch/AP) gets os/osVersion from
