@@ -46,6 +46,12 @@ A reservation the device is holding is an address somebody chose on purpose; a l
 
 The FortiOS DHCP monitor returns the reservation's live lease with `access_point` / `ssid`, but both collectors (`fortimanagerService.ts`, `fortigateService.ts`) merge it into the CMDB reservation row and kept only `seenLeased`. They now copy the AP / SSID onto the reservation when they are absent, so a reservation held over Wi-Fi ranks as wireless. FortiManager and standalone FortiGate get the same change.
 
+### The parser — the same incident, the same evening
+
+The ladder shipped and the HMI still showed the leftover lease. The detected-device claim had never fired at all: both collectors read the row's address from `client.ip` and requested `ip` in `format=`, but the FortiOS 7.x build in prod names the field `ipv4_address` (and `os_name`, `detected_interface`, `unauth_user` for the OS, interface and user). A field name the parser doesn't know reads as empty, so every detected-device row reached discovery with no address — silently, since a row without an IP is legal. The tests for the ladder fed parsed rows straight into `syncDhcpSubnets`, so they could not see it.
+
+`utils/inventoryLocality.ts → parseInventoryClient` is now the one parse for both collectors, taking the 7.x name first and the older one after, and `INVENTORY_QUERY_FORMAT` requests both spellings. `tests/unit/inventoryLocality.test.ts` pins it against the 7.x row shape. A new detected-device field goes through that function, never into one collector's loop.
+
 ### What did not change
 
 - `handledByDhcp` still decides whether Phase 7 bumps the MAC row (Phase 6 already did); it no longer touches the address.

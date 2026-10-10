@@ -28,7 +28,7 @@ import { normalizeMacOrNull, normalizeMacsDistinct } from "../utils/mac.js";
 import { parseRangeFirstIp, isValidIpv4 } from "../utils/cidr.js";
 import { readSystemStatus, readHaPeers } from "../utils/fortiosEnvelope.js";
 import { parseFortiapMonitorRow, FORTIAP_MONITOR_FORMAT } from "../utils/fortiapMonitorRow.js";
-import { inventorySwitchAttribution, INVENTORY_QUERY_FORMAT } from "../utils/inventoryLocality.js";
+import { parseInventoryClient, INVENTORY_QUERY_FORMAT } from "../utils/inventoryLocality.js";
 import type {
   DiscoveredSubnet,
   DiscoveredDevice,
@@ -840,28 +840,11 @@ async function fgtChainInventory(ctx: FgtChainCtx): Promise<void> {
     let inventoryCount = 0;
     if (Array.isArray(results)) {
       for (const client of results) {
-        const mac = client.mac || "";
-        const ip = client.ip || "";
-        if (!mac && !ip) continue;
-        if (!client.last_seen) continue;
-
-        const switchAttr = inventorySwitchAttribution(client);
-        deviceInventory.push({
-          device: deviceName,
-          macAddress: mac,
-          ipAddress: ip,
-          hostname: client.hostname || client.host || "",
-          os: client.os || client.type || "",
-          osVersion: client.os_version || "",
-          hardwareVendor: client.hardware_vendor || "",
-          interfaceName: client.interface || "",
-          switchName: switchAttr.switchName,
-          switchPort: switchAttr.switchPort,
-          apName: client.ap_name || client.fortiap || "",
-          user: client.user || client.detected_user || "",
-          isOnline: !!client.is_online,
-          lastSeen: new Date(client.last_seen * 1000).toISOString(),
-        });
+        // Shared parse (utils/inventoryLocality) — identical to the
+        // FMG-proxied path, field-name fallbacks included.
+        const parsed = parseInventoryClient(client, deviceName);
+        if (!parsed) continue;
+        deviceInventory.push(parsed);
         inventoryCount++;
       }
     }
