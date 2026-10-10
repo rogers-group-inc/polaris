@@ -111,7 +111,9 @@ Click the round button in the bottom-right corner. The chat window opens:
 
 - **Move** it by dragging the title bar; **resize** it from the top-left
   corner. **Double-click** the title bar to send it back to the corner, or the
-  top-left corner to restore the default size.
+  top-left corner to restore the default size. Its top edge stops just below
+  the page's top bar, so the title bar and the corner are always in reach; a
+  window too tall for the space is shortened to fit.
 - It stays put when you change page, and an answer that is still being written
   carries on — the next page shows *Still answering…* and then the answer.
   **Stop** is the only thing that stops it.
