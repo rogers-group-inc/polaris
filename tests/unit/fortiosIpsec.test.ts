@@ -89,6 +89,42 @@ describe("parseFortiosIpsec — ADVPN spoke", () => {
   });
 });
 
+describe("an EAP FortiClient user (field shape from a prod 7.6 gate; values synthetic)", () => {
+  const RA_CMDB = { results: [{ name: "IPsecRA_VPN", type: "dynamic", interface: "wan1", eap: "disable", xauthtype: "disable" }] };
+  const child = {
+    name: "IPsecRA_VPN_0", parent: "IPsecRA_VPN", type: "dialup", "wizard-type": "custom",
+    proxyid: [{ status: "up", p2name: "IPsecRA_VPN", incoming_bytes: 52, outgoing_bytes: 84 }],
+    connection_count: 1, creation_time: 13712,
+    username: "192.168.50.10",            // the client's own LAN address behind NAT
+    user: "jdoe@example.com", auth_type: "eap", user_two_factor_auth: false, fct_uid: "0000AAAA",
+    incoming_bytes: 8200, outgoing_bytes: 6900,
+    rgwy: "203.0.113.7", tun_id: "10.255.8.1", rport: 59447, dialup_index: 0,
+  };
+
+  it("reads the user from `user`, not `username`", () => {
+    const [c] = parseFortiosIpsec(RA_CMDB, { results: [child] }).connections;
+    expect(c).toMatchObject({
+      kind: "remote-access", userName: "jdoe@example.com", peerId: null,
+      remoteGateway: "203.0.113.7", tunnelIp: "10.255.8.1", uptimeSec: 13712,
+      incomingBytes: 8200, outgoingBytes: 6900,
+    });
+  });
+
+  it("is remote access by its auth_type even with the user missing and EAP not visible in the CMDB", () => {
+    const { user: _u, ...noUser } = child;
+    const [c] = parseFortiosIpsec(RA_CMDB, { results: [noUser] }).connections;
+    expect(c.kind).toBe("remote-access");
+    expect(c.userName).toBeNull();
+  });
+
+  it("never treats an address in `username` as an identity", () => {
+    const [c] = parseFortiosIpsec(HUB_CMDB, { results: [
+      { name: "Overlay-1_5", parent: "Overlay-1", proxyid: [], username: "2001:db8::5", rgwy: "198.51.100.1" },
+    ] }).connections;
+    expect(c.peerId).toBeNull();
+  });
+});
+
 describe("remote-access classification", () => {
   it("a child carrying an xauth user is remote-access whatever the template says", () => {
     const { connections } = parseFortiosIpsec(HUB_CMDB, { results: [

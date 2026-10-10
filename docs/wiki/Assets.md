@@ -358,7 +358,8 @@ its node, state, vCPUs and memory (VMs), network and autostart.
 ### System
 
 Live telemetry and history: response time, CPU, memory, temperature,
-interfaces, storage, IPsec tunnels.
+interfaces, storage. A FortiGate's IPsec tunnels are on the
+[IPsec](#ipsec-fortigate-firewalls) tab.
 
 At the top sits the **Status** row — the pill, **Discover Now**, and on a
 monitored firewall, switch or access point **Simulate Down…** for
@@ -384,19 +385,16 @@ response time at **0 ms**: its up/down is the platform's state read, which has
 no latency ([Polling methods](Polling-Methods#the-unraid-and-truenas-methods),
 [the `proxmox` method](Polling-Methods#the-proxmox-method)).
 
-**FortiGate tunnel interfaces are listed from the configuration.** On a
-FortiGate polled over the REST API, IPsec interfaces (site-to-site, dial-up,
-ADVPN hub and spoke overlays) and GRE / VXLAN tunnels appear in the Interfaces
-table with their configured address, and that address is tied to the
-firewall like any other interface IP. FortiOS reports no link state or
-counters for them there, so the status and traffic columns stay empty. An
-IPsec interface is shown as a single row nested under the physical interface
-it runs over, marked with the tree line and an **IPsec** badge. That row
-carries the tunnel's real up/down state, its remote gateway, its traffic and,
-under the name, the tunnel interface's configured address. If you pinned the
-tunnel interface itself for polling, it also keeps its own row so you can
-unpin it. GRE and VXLAN tunnels have no IPsec state and stay under **Other
-Interfaces**.
+**IPsec tunnels are on the IPsec tab, not in the Interfaces table.** A
+FortiGate's IPsec tunnels (site-to-site, dial-up, ADVPN hub and spoke
+overlays) are listed, pinned and charted on the
+[IPsec](#ipsec-fortigate-firewalls) tab, and a line above the Interfaces table
+says how many there are and links to it. Their configured addresses are still
+tied to the firewall like any other interface IP. GRE and VXLAN tunnels have
+no IPsec state: on a FortiGate polled over the REST API they appear under
+**Other Interfaces** with their configured address, and since FortiOS reports
+no link state or counters for them there, the status and traffic columns stay
+empty.
 
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
@@ -883,8 +881,10 @@ when the gate was last read.
 
 **Tunnels & peers** lists every configured phase-1 tunnel — site-to-site
 tunnels and dial-up templates — with its status, remote gateway, the interface
-it rides and its byte counters. Under each tunnel, marked with the tree line,
-are the peers connected through it:
+it rides (with the tunnel interface's own address under it) and its byte
+counters. A site-to-site tunnel's **Device** column links to the gate at its
+far end when Polaris knows an asset at that remote gateway. Under each tunnel,
+marked with the tree line, are the peers connected through it:
 
 - On an **ADVPN hub**, each spoke dialled into the hub's template, shown as
   **ADVPN spoke**. A dial-up template's status reads **dynamic** (it is
@@ -898,16 +898,32 @@ are the peers connected through it:
 Each peer row carries its **remote gateway** (the peer's public / underlay
 address), its **tunnel IP** (its overlay or assigned address), how long it
 has been **up**, and its traffic. The **Device** column links to the peer's
-own asset when Polaris knows an asset at either address; otherwise it shows
-the IKE identity the peer presented, which is usually its own name.
+own asset when Polaris knows an asset at either address — the remote gateway
+is tried first, then the tunnel IP, against each asset's primary address and
+the interface addresses Polaris has recorded for it. Otherwise it shows the
+IKE identity the peer presented, which is usually its own name. A peer behind
+NAT links only when its public address is one Polaris has recorded on that
+asset.
+
+**Every column sorts and filters**, as in the other asset tables, and your
+sort and filters are remembered. With a sort or a filter active the tree
+flattens, and each peer's second line names the tunnel it is connected
+through. The **Tunnel / peer** filter matches a row's name, its kind (*ADVPN
+spoke*, *Site-to-site*…), the tunnel a peer hangs off and the peer's IKE
+identity.
+
+**Pinning and history.** The **1m** checkbox on a tunnel row polls that
+tunnel every minute and keeps its history — what an IPsec tunnel automation
+reads. It is also checked when the tunnel's *interface* is pinned; clearing
+it stops both. Peers are not pinnable: they come and go with traffic. Click a
+tunnel's name for its status and throughput charts.
 
 **Remote access** lists FortiClient users: those on an IPsec dial-up tunnel
 (one using XAuth or EAP, or built by the FortiClient wizard) and, on firmware
 that still offers it, those on SSL-VPN. Each row shows the user, the
 connection type, the tunnel, the address they connected from, the address
 they were assigned, how long they have been connected, and their traffic.
-Once there are more than a handful, a filter box searches by user, address or
-tunnel.
+It sorts and filters the same way.
 
 The tab works the same for a gate managed through FortiManager and a
 standalone FortiGate integration. It needs the gate to be monitored with

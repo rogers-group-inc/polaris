@@ -183,27 +183,79 @@ export interface IpsecConnectionRow {
   matchedAsset:   { id: string; hostname: string | null; ipAddress: string | null; assetType: string } | null;
 }
 
-/** The IPsec tab payload, minus the cadence (the route resolves that). */
+/** A tunnel row as the IPsec tab draws it: the sample plus its interface twin's facts and its pins. */
+export interface IpsecTabTunnelRow extends IpsecTunnelRow {
+  /** The tunnel INTERFACE's configured (overlay) address — FortiOS names the phase-1 and its interface alike. */
+  overlayIp:       string | null;
+  /** Pinned in Asset.monitoredIpsecTunnels (SA status + bytes every minute; IPsec tunnel automations). */
+  pinned:          boolean;
+  /** The interface twin is pinned in Asset.monitoredInterfaces (interface status + octets every minute). */
+  interfacePinned: boolean;
+  /** A site-to-site tunnel's far end, matched by its remote gateway; null for a dial-up template. */
+  matchedAsset:    { id: string; hostname: string | null; ipAddress: string | null; assetType: string } | null;
+}
+
+/**
+ * The IPsec tab payload, minus the cadence (the route resolves that).
+ *
+ * The tab is the ONLY place an IPsec tunnel is listed, pinned or opened for
+ * its history: the System tab's Interfaces table leaves out every IPsec
+ * tunnel and its `tunnel`-typed interface twin. So the tunnel rows carry what
+ * that table used to show for them — the twin's overlay address, and both pin
+ * states (an interface twin pinned in `monitoredInterfaces` would otherwise
+ * be polled with nothing anywhere saying so).
+ */
 export async function readAssetIpsec(assetId: string): Promise<{
-  tunnels: IpsecTunnelRow[];
+  tunnels: IpsecTabTunnelRow[];
   connections: IpsecConnectionRow[];
   collectedAt: Date | null;
 }> {
-  const asset = await prisma.asset.findUnique({ where: { id: assetId }, select: { lastSystemInfoAt: true } });
-  const [tunnels, rows] = await Promise.all([
+  const asset = await prisma.asset.findUnique({
+    where: { id: assetId },
+    select: { lastSystemInfoAt: true, monitoredIpsecTunnels: true, monitoredInterfaces: true },
+  });
+  const [tunnelSamples, rows] = await Promise.all([
     readLatestIpsecTunnels(assetId, asset?.lastSystemInfoAt ?? null),
     prisma.assetIpsecConnection.findMany({
       where: { assetId },
       orderBy: [{ parentTunnel: "asc" }, { name: "asc" }],
     }),
   ]);
+  const twins = tunnelSamples.length > 0
+    ? await prisma.assetInterface.findMany({
+        where: { assetId, ifName: { in: tunnelSamples.map((t) => t.tunnelName) } },
+        select: { ifName: true, ipAddress: true },
+      })
+    : [];
+  const overlayByName = new Map(twins.map((t) => [t.ifName, t.ipAddress]));
+  const pinnedTunnels = new Set(asset?.monitoredIpsecTunnels ?? []);
+  const pinnedIfaces  = new Set(asset?.monitoredInterfaces ?? []);
 
+  // One resolution pass for every address on the tab: each peer's underlay +
+  // overlay, and each site-to-site tunnel's remote gateway (a dial-up
+  // template reports 0.0.0.0 — "any peer" — and is never resolved).
+  const usable = (ip: string | null | undefined): ip is string => !!ip && ip !== "0.0.0.0";
   const ips = new Set<string>();
   for (const r of rows) {
-    if (r.remoteGateway) ips.add(r.remoteGateway);
-    if (r.tunnelIp) ips.add(r.tunnelIp);
+    if (usable(r.remoteGateway)) ips.add(r.remoteGateway);
+    if (usable(r.tunnelIp)) ips.add(r.tunnelIp);
   }
+  for (const t of tunnelSamples) if (usable(t.remoteGateway)) ips.add(t.remoteGateway);
   const resolved = ips.size > 0 ? await resolveIpsToAssets([...ips]) : new Map();
+  const lite = (a: { id: string; hostname: string | null; ipAddress: string | null; assetType: string } | undefined) =>
+    a ? { id: a.id, hostname: a.hostname, ipAddress: a.ipAddress, assetType: a.assetType } : null;
+
+  const tunnels: IpsecTabTunnelRow[] = tunnelSamples.map((t) => {
+    const ip = overlayByName.get(t.tunnelName);
+    const far = usable(t.remoteGateway) ? resolved.get(t.remoteGateway) : undefined;
+    return {
+      ...t,
+      overlayIp:       usable(ip) ? ip : null,
+      pinned:          pinnedTunnels.has(t.tunnelName),
+      interfacePinned: pinnedIfaces.has(t.tunnelName),
+      matchedAsset:    far && far.id !== assetId ? lite(far) : null,
+    };
+  });
 
   let collectedAt: Date | null = null;
   const connections: IpsecConnectionRow[] = rows.map((r) => {

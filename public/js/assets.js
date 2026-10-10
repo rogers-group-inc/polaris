@@ -5737,7 +5737,7 @@ async function openViewModal(id, opts) {
     if (_pathTabEligible(pathPayload)) _wireAssetPathCheckTab(a, pathPayload);
     if (a.assetType === "switch") _wireAssetMacTableTab(a.id);
     if (a.assetType === "firewall") _wireAssetArpTableTab(a.id);
-    if (showIpsecTab) _renderAssetIpsec(a.id, ipsecPayload);
+    if (showIpsecTab) _renderAssetIpsec(a.id, ipsecPayload, a);
     if (showServicesTab) _wireAssetServicesTab(a);
     if (showSoftwareTab) _wireAssetSoftwareTab(a);
     if (permAtLeast("events", "read")) _wireAssetEventsTab(a.id);
@@ -8375,25 +8375,54 @@ function _treeElbow(isLast) {
 
 function _renderInterfacesTable(container, si, asset) {
   if (!container) return;
-  var rows = (si && si.interfaces) || [];
-  var tunnelsAll = (si && si.ipsecTunnels) || [];
-  var lldpAll = (si && si.lldpNeighbors) || [];
-  if (rows.length === 0 && tunnelsAll.length === 0) {
-    container.innerHTML = '<p class="empty-state">No interface data yet — system info is collected every ~10 minutes after monitoring is enabled.</p>';
+  // IPsec tunnels are the IPsec tab's, not this table's: that tab lists them
+  // with the peers connected through each, their pins and their history. A
+  // FortiGate reports every IPsec tunnel twice — as an IPsec-stream tunnel and
+  // as a `tunnel`-typed interface row of the same name (the CMDB back-fill on
+  // REST, IF-MIB on SNMP) — so both are left out here, pinned or not (the
+  // IPsec tab shows and clears the twin's interface pin). A tunnel interface
+  // with no IPsec twin — GRE, VXLAN, ssl.root — is not on that tab and stays.
+  var ipsecNames = new Set(((si && si.ipsecTunnels) || []).map(function (tn) { return tn.tunnelName; }));
+  var rows = ((si && si.interfaces) || []).filter(function (r) {
+    return !(r.ifType === "tunnel" && ipsecNames.has(r.ifName));
+  });
+  if (rows.length === 0) {
+    container.innerHTML = ipsecNames.size > 0
+      ? '<p class="empty-state">' + _ipsecTabPointerHTML(ipsecNames.size) + '</p>'
+      : '<p class="empty-state">No interface data yet — system info is collected every ~10 minutes after monitoring is enabled.</p>';
+    _wireIpsecTabPointer(container);
     return;
   }
-  var state = _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll);
+  var state = _buildInterfacesTableDOM(container, si, asset, rows, ipsecNames.size);
   _wireInterfacesTable(container, si, asset, rows, state);
+  _wireIpsecTabPointer(container);
+}
+
+// "4 IPsec tunnels are on the IPsec tab" — the line that replaces them here,
+// so an operator who knows them from this table finds where they went.
+function _ipsecTabPointerHTML(count) {
+  return count + ' IPsec tunnel' + (count === 1 ? ' is' : 's are') + ' on the ' +
+    '<a href="#" class="asset-ipsec-tab-link" style="color:var(--color-accent)">IPsec tab</a>, ' +
+    'with the peers connected through ' + (count === 1 ? 'it' : 'them') + ', ' + (count === 1 ? 'its' : 'their') + ' pins and history.';
+}
+
+function _wireIpsecTabPointer(container) {
+  container.querySelectorAll(".asset-ipsec-tab-link").forEach(function (a) {
+    a.addEventListener("click", function (e) {
+      e.preventDefault();
+      var tab = document.querySelector('#asset-view-tabs .page-tab[data-tab="ipsec"]');
+      if (tab) tab.click();
+    });
+  });
 }
 
 // Build + inject the table DOM. Returns the state the wiring phase needs:
 // the pin sets (mutated there as toggles save), edit rights, and the
 // inactive-row count (drives the show-inactive toggle label).
-function _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll) {
+function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   var lldpAll = (si && si.lldpNeighbors) || [];
   var staleBanner = _staleBannerHTML(asset && asset.id, asset, "systemInfo", si && si.lastSystemInfoAt);
   var monitored        = new Set(((si && si.monitoredInterfaces)   || (asset && asset.monitoredInterfaces)   || []));
-  var monitoredTunnels = new Set(((si && si.monitoredIpsecTunnels) || (asset && asset.monitoredIpsecTunnels) || []));
   var canEdit = canManageAssets();
   // VLAN columns appear only when at least one row in this table actually
   // carries port-VLAN data (managed FortiSwitches overlaid from the parent
@@ -8446,11 +8475,15 @@ function _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll) {
     return "";
   }
 
+  // The monitor badges (`.status-pill` has no rule in styles.css and rendered
+  // as bare text). An admin-shut port is deliberate, not a fault — outline.
   function statusCell(i) {
     var statusLabel = statusLabelOf(i);
     if (!statusLabel) return "—";
-    var statusKind = (statusLabel === "up") ? "active" : "decommissioned";
-    return '<span class="status-pill status-pill-' + statusKind + '">' + escapeHtml(statusLabel) + '</span>';
+    var kind = statusLabel === "up" ? "monitored"
+             : statusLabel === "admin shut" ? "monitor-passive"
+             : "monitor-down";
+    return '<span class="badge badge-' + kind + '" style="white-space:nowrap">' + escapeHtml(statusLabel) + '</span>';
   }
 
   function typeBadge(iface, isChild) {
@@ -8624,79 +8657,6 @@ function _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll) {
     "</td></tr>";
   }
 
-  // IPsec tunnel row, rendered inline with the interfaces table. depth=0 →
-  // top-level (orphan/unbound), depth=1 → nested under a top-level interface,
-  // depth=2 → nested under a VLAN/aggregate child. `collapseGroupName`, when
-  // set, ties the row to a top-level parent's expand/collapse toggle.
-  function tunnelOverlayIp(tn) {
-    var iface = tunnelIfaceByName[tn.tunnelName];
-    return (iface && iface.ipAddress) || "";
-  }
-
-  function buildTunnelRow(tn, opts) {
-    opts = opts || {};
-    var depth = opts.depth || 0;
-    var pad = depth > 0 ? "padding-left:" + (1.4 * depth) + "rem;" : "";
-    var bullet = depth > 0 ? _treeElbow(opts.lastChild) : "";
-    var checked  = monitoredTunnels.has(tn.tunnelName) ? " checked" : "";
-    var disabled = canEdit ? "" : " disabled";
-    var checkbox =
-      '<input type="checkbox" class="asset-ipsec-toggle" data-name="' + escapeHtml(tn.tunnelName) + '"' + checked + disabled +
-      ' title="Poll this tunnel every minute (response-time cadence)">';
-    var p2title = tn.proxyIdCount != null ? (tn.proxyIdCount + " phase-2 selector(s)") : "IPsec phase-1 tunnel";
-    var ipsecBadge =
-      '<span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#f59e0b18;color:#f59e0b;border:1px solid #f59e0b30;margin-left:5px;white-space:nowrap" title="' +
-        escapeHtml(p2title) + '">IPsec</span>';
-    // The folded tunnel interface's configured (overlay) address — the IP
-    // column already holds the remote gateway, so it rides under the name.
-    var overlayIp = tunnelOverlayIp(tn);
-    var overlaySub = overlayIp
-      ? '<span style="display:block;font-size:0.7rem;opacity:0.6;font-weight:normal" title="Tunnel interface address">' + escapeHtml(overlayIp) + '</span>'
-      : '';
-    var nameCell =
-      '<td class="mono" style="' + pad + '" title="' + escapeHtml(tn.tunnelName) + '">' + bullet +
-        '<a href="#" class="asset-ipsec-link" data-name="' + escapeHtml(tn.tunnelName) + '" style="color:var(--color-accent);text-decoration:none">' +
-          escapeHtml(tn.tunnelName) +
-        '</a>' + ipsecBadge +
-        overlaySub +
-      "</td>";
-    // "dynamic" = FortiOS phase1-interface type "dynamic" (dial-up server
-    // template). Render as a neutral storage-style pill — not red, since the
-    // tunnel is working as configured even when no client is connected.
-    var pillKind = tn.status === "up" ? "active"
-                 : tn.status === "down" ? "decommissioned"
-                 : tn.status === "dynamic" ? "storage"
-                 : "maintenance";
-    var statusPill = '<span class="status-pill status-pill-' + pillKind + '">' + escapeHtml(tn.status) + "</span>";
-    // Mirrors buildRow: a nested tunnel rides its top-level parent's collapse
-    // toggle, and ships hidden when that parent is currently collapsed.
-    var rowAttr = "";
-    if (opts.collapseGroupName) {
-      rowAttr = ' class="iface-child" data-parent="' + escapeHtml(opts.collapseGroupName) + '"';
-      if (collapsed.has(opts.collapseGroupName)) rowAttr += ' style="display:none"';
-    }
-    // VLAN columns (when present) sit between MAC and In. IPsec tunnels
-    // don't carry per-port VLAN config, so emit empty placeholders so the
-    // column count stays consistent across every row in the table.
-    var vlanPlaceholders = showVlanCols ? '<td class="mono">—</td><td class="mono">—</td>' : "";
-    var poePlaceholder = showPoeCol ? '<td class="mono">—</td>' : "";
-    return "<tr" + rowAttr + ">" +
-      '<td style="text-align:center;width:1%">' + checkbox + "</td>" +
-      nameCell +
-      "<td>" + statusPill + "</td>" +
-      "<td>—</td>" +
-      '<td class="mono">' + escapeHtml(tn.remoteGateway || "—") + "</td>" +
-      "<td>—</td>" +
-      '<td class="mono">—</td>' +
-      vlanPlaceholders +
-      poePlaceholder +
-      "<td>" + (tn.incomingBytes != null ? _fmtBytes(tn.incomingBytes) : "—") + "</td>" +
-      "<td>" + (tn.outgoingBytes != null ? _fmtBytes(tn.outgoingBytes) : "—") + "</td>" +
-      "<td>—</td>" +
-      "<td>—</td>" +
-    "</tr>";
-  }
-
   // ── build tree ─────────────────────────────────────────────────────────────
   // childMap: parentIfName -> sorted [child interfaces]  (members first, VLANs after)
   //
@@ -8707,24 +8667,11 @@ function _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll) {
   // carries. Nesting them anyway rendered them nowhere at all — neither as
   // top-level rows nor under a parent cluster that never got built — so the
   // ports vanished from the System tab at exactly the moment the trunk went
-  // down. Same treatment orphanTunnels already gets below.
+  // down.
   //
-  // A FortiGate IPsec tunnel can arrive TWICE: as an IPsec-stream tunnel (which
-  // knows its phase-1 parent and nests under it) and as a `tunnel`-typed
-  // interface row — the CMDB back-fill on REST-polled gates, IF-MIB on SNMP
-  // ones. The interface row has no ifParent (the underlay is not a containment
-  // parent), so it rendered top-level under "Other Interfaces" with no tree
-  // connector, beside its own nested twin. Fold it into the tunnel row instead:
-  // the tunnel row keeps the SA status, the throughput and the parent, and
-  // carries the interface's configured address. An interface row that is
-  // itself pinned stays separate, so its pin can still be seen and removed.
-  var tunnelNames = new Set(tunnelsAll.map(function (tn) { return tn.tunnelName; }));
-  var tunnelIfaceByName = {};
-  var treeRows = rows.filter(function (r) {
-    if (r.ifType !== "tunnel" || !tunnelNames.has(r.ifName) || monitored.has(r.ifName)) return true;
-    tunnelIfaceByName[r.ifName] = r;
-    return false;
-  });
+  // IPsec tunnels and their interface twins were taken out by the caller
+  // (_renderInterfacesTable): they are the IPsec tab's.
+  var treeRows = rows;
   var ifaceNameSet = new Set(treeRows.map(function (r) { return r.ifName; }));
   var childMap = {};
   treeRows.forEach(function (r) {
@@ -8741,57 +8688,15 @@ function _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll) {
     });
   });
 
-  // tunnelMap: parentInterface -> sorted [tunnels]; orphanTunnels covers
-  // tunnels with no parentInterface OR whose parent isn't in the interface
-  // list (CMDB scope mismatch, filtered-out interface, etc.).
-  var tunnelMap = {};
-  var orphanTunnels = [];
-  tunnelsAll.forEach(function (tn) {
-    if (tn.parentInterface && ifaceNameSet.has(tn.parentInterface)) {
-      if (!tunnelMap[tn.parentInterface]) tunnelMap[tn.parentInterface] = [];
-      tunnelMap[tn.parentInterface].push(tn);
-    } else {
-      orphanTunnels.push(tn);
-    }
-  });
-  function _byTunnelName(a, b) {
-    return String(a.tunnelName).localeCompare(String(b.tunnelName), undefined, { numeric: true, sensitivity: "base" });
-  }
-  Object.keys(tunnelMap).forEach(function (k) { tunnelMap[k].sort(_byTunnelName); });
-  orphanTunnels.sort(_byTunnelName);
-
-  // Push an interface plus its VLAN/aggregate children plus any IPsec tunnels
-  // nested at either level onto `entries`, in reading order. Nested tunnel rows
-  // reuse the iface-child class and the top-level's data-parent so they
-  // collapse together with the existing toggle handler.
+  // Push an interface plus its VLAN/aggregate children onto `entries`, in
+  // reading order.
   function pushCluster(entries, group, iface) {
     var kids = childMap[iface.ifName] || [];
-    var directTunnels = tunnelMap[iface.ifName] || [];
-    var nestedTunnelsCount = directTunnels.length;
-    kids.forEach(function (child) {
-      nestedTunnelsCount += (tunnelMap[child.ifName] || []).length;
-    });
-    var hasNested = kids.length > 0 || nestedTunnelsCount > 0;
     var collapseGroup = iface.ifName;
-    entries.push(_ifaceEntry(iface, group, { isParent: hasNested }));
+    entries.push(_ifaceEntry(iface, group, { isParent: kids.length > 0 }));
     kids.forEach(function (child, ci) {
-      // `lastChild` decides elbow vs tee. A member is last only when nothing
-      // else follows it inside this cluster — no later member, no tunnel of
-      // its own, and no tunnel hanging off the parent below it.
-      var childTunnels = tunnelMap[child.ifName] || [];
-      var lastChild = ci === kids.length - 1 && childTunnels.length === 0 && directTunnels.length === 0;
-      entries.push(_ifaceEntry(child, group, { isChild: true, parentName: collapseGroup, lastChild: lastChild }));
-      childTunnels.forEach(function (tn, ti) {
-        entries.push(_tunnelEntry(tn, group, {
-          collapseGroupName: collapseGroup, depth: 2,
-          lastChild: ti === childTunnels.length - 1,
-        }));
-      });
-    });
-    directTunnels.forEach(function (tn, ti) {
-      entries.push(_tunnelEntry(tn, group, {
-        collapseGroupName: collapseGroup, depth: 1,
-        lastChild: ti === directTunnels.length - 1,
+      entries.push(_ifaceEntry(child, group, {
+        isChild: true, parentName: collapseGroup, lastChild: ci === kids.length - 1,
       }));
     });
   }
@@ -8853,31 +8758,6 @@ function _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll) {
       neighbor: neighborText(iface.ifName),
     };
   }
-  // A tunnel occupies the same columns as an interface but reports far fewer of
-  // them (see buildTunnelRow's placeholders). Every field it can't answer is
-  // null/"" so it sorts and filters as ABSENT rather than as zero — a tunnel
-  // must not turn up under "PoE: fault" or sort as the slowest link.
-  function _tunnelEntry(tn, group, tree) {
-    return {
-      kind: "tunnel", raw: tn, group: group, tree: tree,
-      ifname: [tn.tunnelName],
-      status: tn.status || "",
-      speed: null,
-      // The IP column's value for a tunnel row, plus the folded interface's
-      // overlay address so filtering on it still finds the tunnel.
-      ip: [tn.remoteGateway, tunnelOverlayIp(tn)].filter(Boolean),
-      addressing: "",
-      mac: "",
-      "native-vlan": null,
-      "tagged-vlans": [],
-      poe: "",
-      "in": tn.incomingBytes != null ? Number(tn.incomingBytes) : null,
-      out: tn.outgoingBytes != null ? Number(tn.outgoingBytes) : null,
-      errors: null,
-      neighbor: "",
-    };
-  }
-
   // Top-level: no ifParent set, or a parent that isn't in this list (see the
   // childMap note — a down FortiLink trunk's members land here).
   var topLevel = treeRows.filter(function (r) {
@@ -8903,16 +8783,13 @@ function _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll) {
   });
 
   // ── entries, in tree order ─────────────────────────────────────────────────
-  var GROUP_LABELS = { iface: "Interfaces", other: "Other Interfaces", orphan: "IPsec Tunnels (unbound)" };
+  var GROUP_LABELS = { iface: "Interfaces", other: "Other Interfaces" };
   // Section counts stay TOP-LEVEL counts (what they always were): "Interfaces
-  // (24)" means 24 ports, not 24 rows including their members and tunnels.
-  var groupCounts = { iface: ifaceGroup.length, other: otherGroup.length, orphan: orphanTunnels.length };
+  // (24)" means 24 ports, not 24 rows including their members.
+  var groupCounts = { iface: ifaceGroup.length, other: otherGroup.length };
   var entries = [];
   ifaceGroup.forEach(function (iface) { pushCluster(entries, "iface", iface); });
   otherGroup.forEach(function (iface) { pushCluster(entries, "other", iface); });
-  // Tunnels with no resolvable parent interface (CMDB unreachable, parent
-  // filtered out, etc.) get their own section so they're not lost.
-  orphanTunnels.forEach(function (tn) { entries.push(_tunnelEntry(tn, "orphan", { depth: 0 })); });
 
   // ── render ─────────────────────────────────────────────────────────────────
   // Two modes. Default: the nested tree with its section headers, exactly as
@@ -8929,14 +8806,12 @@ function _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll) {
         out += sectionRow(GROUP_LABELS[e.group], groupCounts[e.group]);
         lastGroup = e.group;
       }
-      out += (e.kind === "tunnel") ? buildTunnelRow(e.raw, e.tree) : buildRow(e.raw, e.tree);
+      out += buildRow(e.raw, e.tree);
     });
     return out;
   }
   function renderFlatBody(list) {
-    return list.map(function (e) {
-      return (e.kind === "tunnel") ? buildTunnelRow(e.raw, { depth: 0 }) : buildRow(e.raw, { flat: true });
-    }).join("");
+    return list.map(function (e) { return buildRow(e.raw, { flat: true }); }).join("");
   }
   var sf = null;
   var afterRender = [];   // hooks the wiring phase adds (select-all resync)
@@ -8971,10 +8846,11 @@ function _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll) {
     ? '<th data-col-id="poe" data-sf-key="poe" data-sf-options="" title="Power over Ethernet: detection status and the negotiated power CLASS (a budget bracket, e.g. class3 = up to 12.95 W at the powered device). POWER-ETHERNET-MIB defines no per-port wattage, so no draw is shown. SNMP only.">PoE</th>'
     : "";
   container.innerHTML = staleBanner +
-    '<p class="hint" style="margin:0 0 0.4rem 0;font-size:0.76rem">The <strong>Poll&nbsp;1m</strong> column selects interfaces for fast-cadence polling and <strong>history</strong>. Every interface below shows its current state; only selected ones record history you can chart or alert on throughput. A member port is pinned through the aggregate it belongs to.</p>' +
+    '<p class="hint" style="margin:0 0 0.4rem 0;font-size:0.76rem">The <strong>Poll&nbsp;1m</strong> column selects interfaces for fast-cadence polling and <strong>history</strong>. Every interface below shows its current state; only selected ones record history you can chart or alert on throughput. A member port is pinned through the aggregate it belongs to.' +
+      (ipsecCount > 0 ? ' ' + _ipsecTabPointerHTML(ipsecCount) : '') + '</p>' +
     '<div class="table-wrapper table-wrapper-panel-sticky" id="asset-iface-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
       '<th title="Pin this interface for fast-cadence polling + history. Unselected interfaces still show current state here, but record no history to chart." style="width:32px" data-col-id="poll" data-col-required="true">' +
-        '<input type="checkbox" id="iface-poll-all" title="Select / de-select every listed interface and tunnel for fast-cadence polling — member ports are pinned through their aggregate (rows hidden by a filter keep their current setting)"' + (canEdit ? '' : ' disabled') + '>' +
+        '<input type="checkbox" id="iface-poll-all" title="Select / de-select every listed interface for fast-cadence polling — member ports are pinned through their aggregate (rows hidden by a filter keep their current setting)"' + (canEdit ? '' : ' disabled') + '>' +
       '</th>' +
       '<th data-col-id="ifname" data-col-required="true" data-sf-key="ifname" data-sf-type="string">Interface</th>' +
       '<th data-col-id="status" data-sf-key="status" data-sf-options="">Status</th>' +
@@ -9053,7 +8929,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, tunnelsAll) {
   }
   _sizeAssetIfaceTableWrapper();
   return {
-    monitored: monitored, monitoredTunnels: monitoredTunnels, canEdit: canEdit,
+    monitored: monitored, canEdit: canEdit,
     collapsed: collapsed, afterRender: afterRender,
   };
 }
@@ -9121,18 +8997,17 @@ function _distinctSorted(values) {
 }
 
 // Wire the built table: select-all + per-row pin toggles (PUTs), the
-// expand/collapse tree, and the interface / tunnel / LLDP-neighbor drill-down
-// links.
+// expand/collapse tree, and the interface / LLDP-neighbor drill-down links.
+// (IPsec tunnels — their pins and their history — are the IPsec tab's.)
 //
 // Every row-level handler is DELEGATED off the tbody rather than bound per
 // element: a sort or filter rewrites the tbody wholesale, so per-row listeners
-// would be dropped on the operator's first keystroke. `state.monitored` /
-// `state.monitoredTunnels` are mutated IN PLACE for the same reason — the row
-// builder closes over those Sets to decide which boxes render checked, so
-// rebinding a local would leave a re-render showing stale pins.
+// would be dropped on the operator's first keystroke. `state.monitored` is
+// mutated IN PLACE for the same reason — the row builder closes over that Set
+// to decide which boxes render checked, so rebinding a local would leave a
+// re-render showing stale pins.
 function _wireInterfacesTable(container, si, asset, rows, state) {
   var monitored        = state.monitored;
-  var monitoredTunnels = state.monitoredTunnels;
   var canEdit          = state.canEdit;
   var collapsed        = state.collapsed;
   var assetId          = asset && asset.id;
@@ -9143,12 +9018,12 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
   }
 
   // Header select-all checkbox — mirrors the aggregate state of every Poll 1m
-  // checkbox currently in the table (interfaces AND nested IPsec tunnels,
-  // collapsed rows included): checked = all pinned, indeterminate = some.
+  // checkbox currently in the table (collapsed rows included): checked = all
+  // pinned, indeterminate = some.
   var ifaceAllCb = container.querySelector("#iface-poll-all");
   function syncIfaceAllCb() {
     if (!ifaceAllCb) return;
-    var boxes = container.querySelectorAll(".asset-iface-toggle, .asset-ipsec-toggle");
+    var boxes = container.querySelectorAll(".asset-iface-toggle");
     var on = 0;
     boxes.forEach(function (b) { if (b.checked) on++; });
     ifaceAllCb.checked = boxes.length > 0 && on === boxes.length;
@@ -9160,7 +9035,6 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
     ifaceAllCb.addEventListener("change", async function () {
       var on = ifaceAllCb.checked;
       var ifaceBoxes  = container.querySelectorAll(".asset-iface-toggle");
-      var tunnelBoxes = container.querySelectorAll(".asset-ipsec-toggle");
       // Select-all covers the LISTED rows and leaves everything else pinned as
       // it was — with a filter active the operator can't see the rest, and
       // silently un-pinning an interface they aren't looking at would stop its
@@ -9171,26 +9045,14 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
         var n = b.getAttribute("data-ifname");
         if (on) nextIf.add(n); else nextIf.delete(n);
       });
-      var nextTn = new Set(monitoredTunnels);
-      tunnelBoxes.forEach(function (b) {
-        var n = b.getAttribute("data-name");
-        if (on) nextTn.add(n); else nextTn.delete(n);
-      });
       var patch = { monitoredInterfaces: Array.from(nextIf) };
-      if (tunnelBoxes.length > 0) patch.monitoredIpsecTunnels = Array.from(nextTn);
       ifaceAllCb.disabled = true;
       try {
         await api.assets.update(asset.id, patch);
         replaceSet(monitored, nextIf);
         if (si)    si.monitoredInterfaces    = Array.from(nextIf);
         if (asset) asset.monitoredInterfaces = Array.from(nextIf);
-        if (tunnelBoxes.length > 0) {
-          replaceSet(monitoredTunnels, nextTn);
-          if (si)    si.monitoredIpsecTunnels    = Array.from(nextTn);
-          if (asset) asset.monitoredIpsecTunnels = Array.from(nextTn);
-        }
         ifaceBoxes.forEach(function (b) { b.checked = on; });
-        tunnelBoxes.forEach(function (b) { b.checked = on; });
         showToast(on ? "Fast-polling every listed interface" : "Stopped fast-polling the listed interfaces");
       } catch (err) {
         showToast(err.message || "Failed to update", "error");
@@ -9203,32 +9065,21 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
 
   if (!tbody) return;
 
-  // Poll 1m checkboxes — interface rows write monitoredInterfaces, nested
-  // tunnel rows write monitoredIpsecTunnels. One delegated handler for both.
+  // Poll 1m checkboxes — interface rows write monitoredInterfaces.
   tbody.addEventListener("change", async function (e) {
     var cb = e.target;
-    if (!cb || !cb.classList) return;
-    var isIface = cb.classList.contains("asset-iface-toggle");
-    var isTunnel = cb.classList.contains("asset-ipsec-toggle");
-    if (!isIface && !isTunnel) return;
+    if (!cb || !cb.classList || !cb.classList.contains("asset-iface-toggle")) return;
     if (!canEdit || !asset) return;
-    var name = cb.getAttribute(isIface ? "data-ifname" : "data-name");
-    var set = isIface ? monitored : monitoredTunnels;
-    var next = new Set(set);
+    var name = cb.getAttribute("data-ifname");
+    var next = new Set(monitored);
     if (cb.checked) next.add(name); else next.delete(name);
-    var patch = {};
-    patch[isIface ? "monitoredInterfaces" : "monitoredIpsecTunnels"] = Array.from(next);
+    var patch = { monitoredInterfaces: Array.from(next) };
     cb.disabled = true;
     try {
       await api.assets.update(asset.id, patch);
-      replaceSet(set, next);
-      if (isIface) {
-        if (si) si.monitoredInterfaces = Array.from(next);
-        if (asset) asset.monitoredInterfaces = Array.from(next);
-      } else {
-        if (si) si.monitoredIpsecTunnels = Array.from(next);
-        if (asset) asset.monitoredIpsecTunnels = Array.from(next);
-      }
+      replaceSet(monitored, next);
+      if (si) si.monitoredInterfaces = Array.from(next);
+      if (asset) asset.monitoredInterfaces = Array.from(next);
       showToast(cb.checked ? ("Polling " + name + " every minute") : ("Stopped fast-polling " + name));
     } catch (err) {
       cb.checked = !cb.checked;
@@ -9243,8 +9094,8 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
     var t = e.target;
     if (!t || !t.closest) return;
 
-    // Expand / collapse an aggregate (or a physical port carrying VLANs /
-    // tunnels). Only present in the default tree view — a sorted or filtered
+    // Expand / collapse an aggregate (or a physical port carrying VLANs).
+    // Only present in the default tree view — a sorted or filtered
     // table renders flat, so there's nothing to collapse.
     var tog = t.closest(".iface-expand-toggle");
     if (tog) {
@@ -9273,14 +9124,6 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
       var ifn = ifLink.getAttribute("data-ifname");
       var row = rows.find(function (r) { return r.ifName === ifn; }) || null;
       _openInterfaceOrNetwork(asset, ifn, row, ifLink);
-      return;
-    }
-
-    // Tunnel name click — opens the per-tunnel history panel.
-    var tnLink = t.closest(".asset-ipsec-link");
-    if (tnLink) {
-      e.preventDefault();
-      openIpsecTunnelDetailPanel(asset, tnLink.getAttribute("data-name"));
       return;
     }
 
@@ -25497,16 +25340,21 @@ async function _loadAssetArpTable(assetId, range) {
 // ─── IPsec tab ─────────────────────────────────────────────────────────────
 //
 // A FortiGate's phase-1 tunnels and who is connected through them, from
-// GET /assets/:id/ipsec. The System tab already lists the tunnels (with their
-// charts and pins); what it cannot show is the dynamic children FortiOS hangs
-// under a tunnel — a hub's connected ADVPN spokes, a spoke's on-demand
-// shortcuts, FortiClient users — because those come and go and are never
-// sampled. Two sections:
+// GET /assets/:id/ipsec. This tab is the ONE home of an IPsec tunnel: the
+// System tab's Interfaces table leaves every IPsec tunnel (and its
+// `tunnel`-typed interface twin) out and points here, so the Poll 1m pin and
+// the per-tunnel history panel live on this tab too. Two sections:
 //
-//   Tunnels & peers — each phase-1 with its site peers nested beneath it
-//                     (the tree the ARP tab draws, so the elbow reads the same)
-//   Remote access   — FortiClient users on IPsec dial-up and on SSL-VPN, with
-//                     a filter box once there are enough to need one
+//   Tunnels & peers — each phase-1 with its site peers (a hub's ADVPN spokes,
+//                     a spoke's shortcuts, dial-up sites) nested beneath it,
+//                     the elbow the ARP and Interfaces tables draw
+//   Remote access   — FortiClient users on IPsec dial-up and on SSL-VPN
+//
+// Both tables sort + filter through TableSF, the control every list table
+// carries, with the per-user state persisted. The tunnel table is the
+// Interfaces table's two-mode render: the nested tree by default, flat the
+// moment a sort or a filter is active (a peer's position then no longer says
+// which tunnel it hangs off, so its second line does).
 //
 // Prefetched in openViewModal's wave, so the tab is present on a gate that
 // reported anything and absent otherwise.
@@ -25532,7 +25380,9 @@ function _assetIpsecTabHTML(assetId) {
     '<span class="empty-state">Loading…</span></div>';
 }
 
-var _assetIpsecFilter = {};
+// The asset each mounted tab renders for — Refresh re-renders from a fresh
+// payload and the tunnel link opens the history panel against it.
+var _assetIpsecAsset = {};
 
 // "3d 04h" / "5h 12m" / "40m" — how long a connection has been up.
 function _ipsecUptimeLabel(since) {
@@ -25556,26 +25406,81 @@ function _ipsecStatusPill(status) {
 
 async function _reloadAssetIpsec(assetId) {
   try {
-    _renderAssetIpsec(assetId, await api.assets.ipsec(assetId));
+    _renderAssetIpsec(assetId, await api.assets.ipsec(assetId), _assetIpsecAsset[assetId]);
   } catch (err) {
     var mount = document.getElementById("asset-ipsec-mount-" + assetId);
     if (mount) mount.innerHTML = '<span class="empty-state">Error: ' + escapeHtml((err && err.message) || "failed to load") + '</span>';
   }
 }
 
-function _renderAssetIpsec(assetId, data) {
+/**
+ * Pin / unpin a tunnel for the per-minute cadence. A tunnel can be pinned two
+ * ways: as an IPsec tunnel (`monitoredIpsecTunnels` — SA status + bytes, what
+ * an IPsec automation reads) and through its interface twin
+ * (`monitoredInterfaces`). The box is checked when either holds; checking it
+ * adds the IPsec pin, clearing it removes BOTH — the twin is no longer listed
+ * anywhere else, so a pin left on it would keep polling with nothing on
+ * screen saying so. Reads the asset fresh before the PUT: the two arrays are
+ * replaced wholesale, and the System tab can have changed interface pins
+ * since this payload loaded.
+ */
+async function _setIpsecTunnelPin(assetId, tunnelName, on) {
+  var cur = await api.assets.get(assetId);
+  var tunnels = new Set(cur.monitoredIpsecTunnels || []);
+  var ifaces  = new Set(cur.monitoredInterfaces || []);
+  var patch = {};
+  if (on) {
+    tunnels.add(tunnelName);
+    patch.monitoredIpsecTunnels = Array.from(tunnels);
+  } else {
+    tunnels.delete(tunnelName);
+    patch.monitoredIpsecTunnels = Array.from(tunnels);
+    if (ifaces.has(tunnelName)) {
+      ifaces.delete(tunnelName);
+      patch.monitoredInterfaces = Array.from(ifaces);
+    }
+  }
+  await api.assets.update(assetId, patch);
+  var a = _assetIpsecAsset[assetId];
+  if (a) {
+    a.monitoredIpsecTunnels = patch.monitoredIpsecTunnels;
+    if (patch.monitoredInterfaces) a.monitoredInterfaces = patch.monitoredInterfaces;
+  }
+}
+
+function _renderAssetIpsec(assetId, data, asset) {
   var mount = document.getElementById("asset-ipsec-mount-" + assetId);
   if (!mount) return;
+  if (asset) _assetIpsecAsset[assetId] = asset;
+  asset = _assetIpsecAsset[assetId] || { id: assetId };
   var dash = '<span style="color:var(--color-text-secondary)">—</span>';
   var tunnels = (data && data.tunnels) || [];
   var connections = (data && data.connections) || [];
   var sitePeers = connections.filter(function (c) { return !_ipsecIsRemoteAccess(c); });
   var users = connections.filter(_ipsecIsRemoteAccess);
   var cadenceSec = (data && typeof data.pollIntervalSec === "number") ? data.pollIntervalSec : null;
-  var filter = _assetIpsecFilter[assetId] || "";
+  var canEdit = typeof canManageAssets === "function" && canManageAssets();
   var refreshId = "ipsec-refresh-" + assetId;
-  var usersBodyId = "ipsec-users-body-" + assetId;
+  var tunTbodyId = "ipsec-tunnels-tbody-" + assetId;
+  var userTbodyId = "ipsec-users-tbody-" + assetId;
+  var TUN_COLS = 9;
+  var USER_COLS = 8;
 
+  function monoOrDash(v) { return v && v !== "0.0.0.0" ? '<span class="mono" style="white-space:nowrap">' + escapeHtml(v) + '</span>' : dash; }
+  function bytesCell(n) { return '<td class="mono" style="white-space:nowrap">' + _fmtBytes(n) + '</td>'; }
+  function uptimeSec(c) { return c.connectedSince ? Math.max(0, (Date.now() - new Date(c.connectedSince).getTime()) / 1000) : null; }
+  function uptimeCell(c) {
+    var up = _ipsecUptimeLabel(c.connectedSince);
+    return up ? '<span style="white-space:nowrap" title="' + escapeHtml(new Date(c.connectedSince).toLocaleString()) + '">' + escapeHtml(up) + '</span>' : dash;
+  }
+  // The row's kind, as a quiet second line under its name — a column of its
+  // own cost the addresses their width in a slide-over.
+  function subLine(text) {
+    return '<div style="font-family:var(--font-sans, inherit);font-size:0.72rem;font-weight:400;color:var(--color-text-secondary);white-space:nowrap">' + text + '</div>';
+  }
+  function deviceText(c) {
+    return c.matchedAsset ? (c.matchedAsset.hostname || c.matchedAsset.ipAddress || "") : (c.peerId || "");
+  }
   function deviceCell(c) {
     if (c.matchedAsset) {
       return '<a href="#" class="asset-link" style="white-space:nowrap" data-asset-id="' + escapeHtml(c.matchedAsset.id) + '"' +
@@ -25587,21 +25492,9 @@ function _renderAssetIpsec(assetId, data) {
     return c.peerId ? '<span class="mono" style="white-space:nowrap" title="IKE peer ID — no known asset at this address">' + escapeHtml(c.peerId) + '</span>' : dash;
   }
 
-  // 0.0.0.0 is a dial-up template's "any peer" placeholder, not an address.
-  function monoOrDash(v) { return v && v !== "0.0.0.0" ? '<span class="mono" style="white-space:nowrap">' + escapeHtml(v) + '</span>' : dash; }
-  // The row's kind, as a quiet second line under its name — a column of its
-  // own cost the addresses their width in a slide-over.
-  function subLine(text) {
-    return '<div style="font-family:var(--font-sans, inherit);font-size:0.72rem;font-weight:400;color:var(--color-text-secondary);white-space:nowrap">' + text + '</div>';
-  }
-  function uptimeCell(c) {
-    var up = _ipsecUptimeLabel(c.connectedSince);
-    return up ? '<span style="white-space:nowrap" title="' + escapeHtml(new Date(c.connectedSince).toLocaleString()) + '">' + escapeHtml(up) + '</span>' : dash;
-  }
-
-  // ── Tunnels & peers ──
-  // Children are keyed to their template; a child whose template is not in
-  // the tunnel batch (that pass's tunnel read failed) still gets a group.
+  // ── Tunnels & peers: row model ──
+  // Children keyed to their template; a child whose template is not in the
+  // tunnel batch (that pass's tunnel read failed) still gets a group.
   var byParent = {};
   sitePeers.forEach(function (c) {
     var k = c.parentTunnel || "";
@@ -25611,90 +25504,166 @@ function _renderAssetIpsec(assetId, data) {
   tunnels.forEach(function (t) { tunnelNames[t.tunnelName] = true; });
   var orphanParents = Object.keys(byParent).filter(function (k) { return !tunnelNames[k]; }).sort();
 
-  function tunnelRow(t) {
+  function tunnelKind(t) { return t.status === "dynamic" ? "Dial-up template" : "Site-to-site"; }
+
+  // Field names double as the columns' data-sf-key. `name` is an ARRAY so one
+  // box finds a row by its name, its kind, the peer's IKE id or the parent
+  // tunnel (TableSF joins array values for matching and sorting).
+  function tunnelEntry(t) {
     var kids = byParent[t.tunnelName] || [];
+    return {
+      kind: "tunnel", raw: t, kids: kids.length,
+      name: [t.tunnelName, tunnelKind(t)],
+      status: t.status || "",
+      gw: t.remoteGateway && t.remoteGateway !== "0.0.0.0" ? t.remoteGateway : "",
+      via: [t.parentInterface, t.overlayIp].filter(Boolean),
+      device: t.matchedAsset ? (t.matchedAsset.hostname || t.matchedAsset.ipAddress || "") : "",
+      up: null,
+      "in": t.incomingBytes, out: t.outgoingBytes,
+    };
+  }
+  function peerEntry(c, isLast) {
+    return {
+      kind: "peer", raw: c, isLast: isLast,
+      name: [c.name, _IPSEC_KIND_LABELS[c.kind] || c.kind, c.parentTunnel || "", c.peerId || ""],
+      status: c.status || "",
+      gw: c.remoteGateway || "",
+      via: c.tunnelIp || "",
+      device: deviceText(c),
+      up: uptimeSec(c),
+      "in": c.incomingBytes, out: c.outgoingBytes,
+    };
+  }
+  var tunEntries = [];
+  function pushKids(list) { list.forEach(function (c, i) { tunEntries.push(peerEntry(c, i === list.length - 1)); }); }
+  tunnels.forEach(function (t) { tunEntries.push(tunnelEntry(t)); pushKids(byParent[t.tunnelName] || []); });
+  orphanParents.forEach(function (k) {
+    tunEntries.push({ kind: "group", name: [k || "(no tunnel reported)"] });
+    pushKids(byParent[k]);
+  });
+
+  function pinCell(t) {
+    var on = !!(t.pinned || t.interfacePinned);
+    var title = t.interfacePinned && !t.pinned
+      ? "The tunnel's interface is polled every minute. Clear to stop it."
+      : t.interfacePinned
+        ? "Polled every minute, as an IPsec tunnel and through its interface. Clear to stop both."
+        : "Poll this tunnel every minute and keep its history (what an IPsec tunnel automation reads)";
+    return '<td style="text-align:center;width:1%"><input type="checkbox" class="asset-ipsec-pin" data-name="' + escapeHtml(t.tunnelName) + '"' +
+      (on ? " checked" : "") + (canEdit ? "" : " disabled") + ' title="' + escapeHtml(title) + '"></td>';
+  }
+
+  function tunnelRowHTML(e) {
+    var t = e.raw;
     var kindText = t.status === "dynamic"
-      ? "Dial-up template &middot; " + kids.length + " connected"
+      ? "Dial-up template &middot; " + e.kids + " connected"
       : "Site-to-site";
+    var via = t.overlayIp
+      ? monoOrDash(t.parentInterface) + '<div class="mono" style="font-size:0.72rem;color:var(--color-text-secondary);white-space:nowrap" title="Tunnel interface address">' + escapeHtml(t.overlayIp) + '</div>'
+      : monoOrDash(t.parentInterface);
     return '<tr class="ipsec-tunnel">' +
-      '<td class="mono" style="font-weight:600;white-space:nowrap">' + escapeHtml(t.tunnelName) + subLine(kindText) + '</td>' +
+      pinCell(t) +
+      '<td class="mono" style="font-weight:600;white-space:nowrap">' +
+        '<a href="#" class="asset-ipsec-link" data-name="' + escapeHtml(t.tunnelName) + '" style="color:var(--color-accent);text-decoration:none" title="Open this tunnel\'s status and throughput history">' +
+          escapeHtml(t.tunnelName) + '</a>' + subLine(kindText) + '</td>' +
       '<td>' + _ipsecStatusPill(t.status) + '</td>' +
       '<td>' + monoOrDash(t.remoteGateway) + '</td>' +
-      '<td>' + monoOrDash(t.parentInterface) + '</td>' +
+      '<td>' + via + '</td>' +
+      // A site-to-site tunnel's far end, matched by its remote gateway.
+      '<td>' + deviceCell({ matchedAsset: t.matchedAsset, peerId: null }) + '</td>' +
       '<td>' + dash + '</td>' +
-      '<td>' + dash + '</td>' +
-      '<td class="mono" style="white-space:nowrap">' + _fmtBytes(t.incomingBytes) + '</td>' +
-      '<td class="mono" style="white-space:nowrap">' + _fmtBytes(t.outgoingBytes) + '</td>' +
+      bytesCell(t.incomingBytes) + bytesCell(t.outgoingBytes) +
     '</tr>';
   }
 
-  function peerRow(c, isLast) {
+  function peerRowHTML(e, flat) {
+    var c = e.raw;
+    var kind = escapeHtml(_IPSEC_KIND_LABELS[c.kind] || c.kind);
+    // Flat (sorted / filtered): no parent row above it, so the second line
+    // names the tunnel it hangs off.
+    var nameCell = flat
+      ? '<td class="mono" style="white-space:nowrap">' + escapeHtml(c.name) +
+          subLine(kind + (c.parentTunnel ? ' &middot; via ' + escapeHtml(c.parentTunnel) : '')) + '</td>'
+      : '<td class="mono" style="padding-left:1.4rem;white-space:nowrap">' + _treeElbow(e.isLast) + escapeHtml(c.name) +
+          '<div style="padding-left:1.55rem">' + subLine(kind) + '</div></td>';
     return '<tr class="ipsec-peer">' +
-      '<td class="mono" style="padding-left:1.4rem;white-space:nowrap">' + _treeElbow(isLast) + escapeHtml(c.name) +
-        '<div style="padding-left:1.55rem">' + subLine(escapeHtml(_IPSEC_KIND_LABELS[c.kind] || c.kind)) + '</div></td>' +
+      '<td style="width:1%" title="Peers come and go with traffic — pin the tunnel they hang off"></td>' +
+      nameCell +
       '<td>' + _ipsecStatusPill(c.status) + '</td>' +
       '<td>' + monoOrDash(c.remoteGateway) + '</td>' +
       '<td>' + monoOrDash(c.tunnelIp) + '</td>' +
       '<td>' + deviceCell(c) + '</td>' +
       '<td>' + uptimeCell(c) + '</td>' +
-      '<td class="mono" style="white-space:nowrap">' + _fmtBytes(c.incomingBytes) + '</td>' +
-      '<td class="mono" style="white-space:nowrap">' + _fmtBytes(c.outgoingBytes) + '</td>' +
+      bytesCell(c.incomingBytes) + bytesCell(c.outgoingBytes) +
     '</tr>';
   }
 
-  function kidsHTML(kids) {
-    return kids.map(function (c, i) { return peerRow(c, i === kids.length - 1); }).join("");
+  function groupRowHTML(e) {
+    return '<tr class="ipsec-tunnel"><td></td><td class="mono" style="font-weight:600" colspan="' + (TUN_COLS - 1) + '">' +
+      escapeHtml(e.name[0]) + subLine("tunnel not in the last read") + '</td></tr>';
   }
 
-  var siteRowsHTML =
-    tunnels.map(function (t) { return tunnelRow(t) + kidsHTML(byParent[t.tunnelName] || []); }).join("") +
-    orphanParents.map(function (k) {
-      return '<tr class="ipsec-tunnel"><td class="mono" style="font-weight:600" colspan="8">' +
-        escapeHtml(k || "(no tunnel reported)") + '</td></tr>' + kidsHTML(byParent[k]);
-    }).join("");
+  // ── Remote access: row model ──
+  var userEntries = users.map(function (c) {
+    return {
+      raw: c,
+      user: [c.userName || c.peerId || ""],
+      type: _IPSEC_KIND_LABELS[c.kind] || c.kind,
+      tunnel: c.parentTunnel || "",
+      gw: c.remoteGateway || "",
+      assigned: c.tunnelIp || "",
+      up: uptimeSec(c),
+      "in": c.incomingBytes, out: c.outgoingBytes,
+    };
+  }).sort(function (x, y) {
+    return String(x.user[0]).localeCompare(String(y.user[0]), undefined, { sensitivity: "base" });
+  });
 
-  var sitesHTML = (tunnels.length || sitePeers.length)
-    ? '<div class="table-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
-        '<th>Tunnel / peer</th><th>Status</th><th>Remote gateway</th>' +
-        '<th title="Tunnels: the interface it rides. Peers: the overlay or assigned address inside the tunnel">Via / tunnel IP</th>' +
-        '<th style="white-space:nowrap">Device</th><th>Up</th><th>In</th><th>Out</th>' +
-      '</tr></thead><tbody>' + siteRowsHTML + '</tbody></table></div>'
-    : '<span class="empty-state">No IPsec tunnels reported.</span>';
-
-  // ── Remote access ──
-  function userMatches(c) {
-    if (!filter) return true;
-    return [c.userName || "", c.remoteGateway || "", c.tunnelIp || "", c.parentTunnel || "", c.peerId || ""]
-      .join(" ").toLowerCase().indexOf(filter) !== -1;
+  function userRowHTML(e) {
+    var c = e.raw;
+    var who = c.userName || c.peerId;
+    return '<tr>' +
+      '<td>' + (who ? escapeHtml(who) : dash) + '</td>' +
+      '<td style="white-space:nowrap">' + escapeHtml(e.type) + '</td>' +
+      '<td>' + monoOrDash(c.parentTunnel) + '</td>' +
+      '<td>' + monoOrDash(c.remoteGateway) + '</td>' +
+      '<td>' + monoOrDash(c.tunnelIp) + '</td>' +
+      '<td>' + uptimeCell(c) + '</td>' +
+      bytesCell(c.incomingBytes) + bytesCell(c.outgoingBytes) +
+    '</tr>';
   }
 
-  function usersTableHTML() {
-    var shown = users.filter(userMatches);
-    if (shown.length === 0) return '<div class="empty-state">No users match that filter.</div>';
-    shown.sort(function (x, y) { return (x.userName || "").localeCompare(y.userName || "", undefined, { sensitivity: "base" }); });
-    return '<div class="table-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
-        '<th>User</th><th>Type</th><th>Tunnel</th><th>Remote address</th><th>Assigned IP</th>' +
-        '<th>Up</th><th>In</th><th>Out</th>' +
-      '</tr></thead><tbody>' +
-      shown.map(function (c) {
-        var who = c.userName || c.peerId;
-        return '<tr>' +
-          '<td>' + (who ? escapeHtml(who) : dash) + '</td>' +
-          '<td>' + escapeHtml(_IPSEC_KIND_LABELS[c.kind] || c.kind) + '</td>' +
-          '<td>' + monoOrDash(c.parentTunnel) + '</td>' +
-          '<td>' + monoOrDash(c.remoteGateway) + '</td>' +
-          '<td>' + monoOrDash(c.tunnelIp) + '</td>' +
-          '<td>' + uptimeCell(c) + '</td>' +
-          '<td class="mono" style="white-space:nowrap">' + _fmtBytes(c.incomingBytes) + '</td>' +
-          '<td class="mono" style="white-space:nowrap">' + _fmtBytes(c.outgoingBytes) + '</td>' +
-        '</tr>';
-      }).join("") +
-      '</tbody></table></div>';
-  }
-
+  // ── shell ──
   var counts = tunnels.length + ' tunnel' + (tunnels.length === 1 ? "" : "s") +
     ' · ' + sitePeers.length + ' site peer' + (sitePeers.length === 1 ? "" : "s") +
     ' · ' + users.length + ' remote user' + (users.length === 1 ? "" : "s");
+
+  var tunTable = tunEntries.length
+    ? '<div class="table-wrapper"><table class="data-table" id="ipsec-tunnels-table-' + escapeHtml(assetId) + '" style="font-size:0.82rem"><thead><tr>' +
+        '<th style="width:1%;white-space:nowrap" data-col-id="poll" data-col-required="true" title="Poll 1m — fast-cadence polling + history for the tunnel">1m</th>' +
+        '<th data-col-id="name" data-col-required="true" data-sf-key="name" data-sf-type="string">Tunnel / peer</th>' +
+        '<th data-col-id="status" data-sf-key="status" data-sf-options="">Status</th>' +
+        '<th data-col-id="gw" data-sf-key="gw" data-sf-type="ip">Remote gateway</th>' +
+        '<th data-col-id="via" data-sf-key="via" data-sf-type="string" title="Tunnels: the interface it rides, and its own address. Peers: the overlay or assigned address inside the tunnel">Via / tunnel IP</th>' +
+        '<th data-col-id="device" data-sf-key="device" data-sf-type="string" style="white-space:nowrap">Device</th>' +
+        '<th data-col-id="up" data-sf-key="up" data-sf-type="number" data-sf-nofilter>Up</th>' +
+        '<th data-col-id="in" data-sf-key="in" data-sf-type="number" data-sf-nofilter>In</th>' +
+        '<th data-col-id="out" data-sf-key="out" data-sf-type="number" data-sf-nofilter>Out</th>' +
+      '</tr></thead><tbody id="' + tunTbodyId + '"></tbody></table></div>'
+    : '<span class="empty-state">No IPsec tunnels reported.</span>';
+
+  var userTable = users.length
+    ? '<div class="table-wrapper"><table class="data-table" id="ipsec-users-table-' + escapeHtml(assetId) + '" style="font-size:0.82rem"><thead><tr>' +
+        '<th data-col-id="user" data-col-required="true" data-sf-key="user" data-sf-type="string">User</th>' +
+        '<th data-col-id="type" data-sf-key="type" data-sf-options="">Type</th>' +
+        '<th data-col-id="tunnel" data-sf-key="tunnel" data-sf-options="">Tunnel</th>' +
+        '<th data-col-id="gw" data-sf-key="gw" data-sf-type="ip">Remote address</th>' +
+        '<th data-col-id="assigned" data-sf-key="assigned" data-sf-type="ip">Assigned IP</th>' +
+        '<th data-col-id="up" data-sf-key="up" data-sf-type="number" data-sf-nofilter>Up</th>' +
+        '<th data-col-id="in" data-sf-key="in" data-sf-type="number" data-sf-nofilter>In</th>' +
+        '<th data-col-id="out" data-sf-key="out" data-sf-type="number" data-sf-nofilter>Out</th>' +
+      '</tr></thead><tbody id="' + userTbodyId + '"></tbody></table></div>'
+    : '<span class="empty-state">No FortiClient users connected at the last read.</span>';
 
   mount.innerHTML =
     _currentStateStripHTML({
@@ -25714,34 +25683,112 @@ function _renderAssetIpsec(assetId, data) {
       'line-height:1.5;text-align:left">' +
       'Each read is a snapshot of who is connected at that moment. ADVPN shortcuts form on demand and ' +
       'tear down when idle, and remote users come and go — <strong>a peer missing here may simply not ' +
-      'have been connected when the gate was last read.</strong>' +
+      'have been connected when the gate was last read.</strong> <strong>Poll&nbsp;1m</strong> polls a ' +
+      'tunnel every minute and keeps its history; click a tunnel for its charts.' +
     '</div>' +
     '<h4 style="margin:0.4rem 0 0.4rem">Tunnels &amp; peers</h4>' +
-    sitesHTML +
-    '<div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin:1.1rem 0 0.4rem">' +
-      '<h4 style="margin:0">Remote access</h4>' +
-      (users.length > 5
-        ? '<input type="text" id="ipsec-users-filter-' + escapeHtml(assetId) + '" class="form-input" ' +
-            'placeholder="Filter by user, address or tunnel" ' +
-            'style="max-width:20rem;font-size:0.82rem;flex:1 1 12rem" value="' + escapeHtml(filter) + '">'
-        : '') +
-    '</div>' +
-    '<div id="' + usersBodyId + '">' +
-      (users.length
-        ? usersTableHTML()
-        : '<span class="empty-state">No FortiClient users connected at the last read.</span>') +
-    '</div>';
+    tunTable +
+    '<h4 style="margin:1.1rem 0 0.4rem">Remote access</h4>' +
+    userTable;
 
-  var box = document.getElementById("ipsec-users-filter-" + assetId);
-  if (box) {
-    box.addEventListener("input", debounce(function () {
-      filter = box.value.trim().toLowerCase();
-      _assetIpsecFilter[assetId] = filter;
-      var body = document.getElementById(usersBodyId);
-      if (body) body.innerHTML = usersTableHTML();
-    }, 150));
+  // ── tunnel table: TableSF + two-mode render ──
+  var tunSf = null;
+  function renderTunnels() {
+    var tbody = document.getElementById(tunTbodyId);
+    if (!tbody) return;
+    var st = tunSf ? tunSf.getPrefs() : null;
+    var active = !!(st && (st.sortKey || Object.keys(st.sfFilters || {}).length > 0));
+    if (!active) {
+      tbody.innerHTML = tunEntries.map(function (e) {
+        return e.kind === "tunnel" ? tunnelRowHTML(e) : e.kind === "group" ? groupRowHTML(e) : peerRowHTML(e, false);
+      }).join("");
+      return;
+    }
+    var list = tunSf.apply(tunEntries.filter(function (e) { return e.kind !== "group"; }));
+    tbody.innerHTML = list.length === 0
+      ? '<tr><td colspan="' + TUN_COLS + '" class="empty-state">No tunnels or peers match the current filters.</td></tr>'
+      : list.map(function (e) { return e.kind === "tunnel" ? tunnelRowHTML(e) : peerRowHTML(e, true); }).join("");
   }
-  _wireAssetPivotLinks(mount);
+  var userSf = null;
+  function renderUsers() {
+    var tbody = document.getElementById(userTbodyId);
+    if (!tbody) return;
+    var list = userSf ? userSf.apply(userEntries) : userEntries;
+    tbody.innerHTML = list.length === 0
+      ? '<tr><td colspan="' + USER_COLS + '" class="empty-state">No users match the current filters.</td></tr>'
+      : list.map(userRowHTML).join("");
+  }
+
+  // Sort + filter persist per user (one key per table, not per gate — what an
+  // operator sorts a tunnel table by is a habit, not a fact about one hub),
+  // and are restored minus filters on columns that are not there.
+  function setupSf(tbodyId, prefsKey, entries, optionKeys, render) {
+    if (typeof TableSF === "undefined" || !document.getElementById(tbodyId)) return null;
+    var sf = new TableSF(tbodyId, function () {
+      if (typeof PolarisPrefs !== "undefined") PolarisPrefs.save(prefsKey, currentUsername, sf.getPrefs());
+      render();
+    });
+    optionKeys.forEach(function (k) {
+      sf.setColumnOptions(k, _distinctSorted(entries.map(function (e) { return e[k]; })));
+    });
+    var saved = typeof PolarisPrefs !== "undefined" ? PolarisPrefs.load(prefsKey, currentUsername) : null;
+    if (saved) sf.applyState({ sortKey: saved.sortKey, sortDir: saved.sortDir, sfFilters: saved.sfFilters || {} });
+    return sf;
+  }
+  tunSf = setupSf(tunTbodyId, "asset-ipsec-tunnels", tunEntries.filter(function (e) { return e.kind !== "group"; }), ["status"], renderTunnels);
+  userSf = setupSf(userTbodyId, "asset-ipsec-users", userEntries, ["type", "tunnel"], renderUsers);
+  renderTunnels();
+  renderUsers();
+  if (typeof applyTableLayout === "function") {
+    var tt = document.getElementById("ipsec-tunnels-table-" + assetId);
+    if (tt) applyTableLayout(tt, "asset-ipsec-tunnels", { onScreenshot: function (t) { _screenshotTableEl(t, "IPsec tunnels", { hiddenNoun: "row" }); } });
+    var ut = document.getElementById("ipsec-users-table-" + assetId);
+    if (ut) applyTableLayout(ut, "asset-ipsec-users", { onScreenshot: function (t) { _screenshotTableEl(t, "Remote access", { hiddenNoun: "user" }); } });
+  }
+
+  // ── wiring — delegated, since a sort or filter rewrites the tbody ──
+  var tunBody = document.getElementById(tunTbodyId);
+  if (tunBody) {
+    tunBody.addEventListener("click", function (ev) {
+      var t = ev.target;
+      if (!t || !t.closest) return;
+      var link = t.closest(".asset-ipsec-link");
+      if (link) {
+        ev.preventDefault();
+        openIpsecTunnelDetailPanel(asset, link.getAttribute("data-name"));
+        return;
+      }
+      // The peer's asset — delegated rather than _wireAssetPivotLinks'
+      // per-element binding, which a re-render would drop.
+      var pivot = t.closest(".asset-link");
+      if (pivot) {
+        ev.preventDefault();
+        var id = pivot.getAttribute("data-asset-id");
+        if (id) openViewModal(id);
+      }
+    });
+    tunBody.addEventListener("change", async function (ev) {
+      var cb = ev.target;
+      if (!cb || !cb.classList || !cb.classList.contains("asset-ipsec-pin") || !canEdit) return;
+      var name = cb.getAttribute("data-name");
+      var on = cb.checked;
+      cb.disabled = true;
+      try {
+        await _setIpsecTunnelPin(assetId, name, on);
+        tunnels.forEach(function (t) {
+          if (t.tunnelName !== name) return;
+          t.pinned = on;
+          if (!on) t.interfacePinned = false;
+        });
+        showToast(on ? ("Polling " + name + " every minute") : ("Stopped fast-polling " + name));
+      } catch (err) {
+        cb.checked = !on;
+        showToast((err && err.message) || "Failed to update", "error");
+      } finally {
+        cb.disabled = false;
+      }
+    });
+  }
   _wireCurrentStateRefresh(refreshId, assetId, function () { return _reloadAssetIpsec(assetId); });
 }
 
