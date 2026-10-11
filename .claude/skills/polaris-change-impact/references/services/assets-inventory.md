@@ -48,7 +48,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The operator-pinned PRIMARY ADDRESS (business rule 102) — `Asset.primaryAddressMac` / `primaryAddressIp` / `primaryAddressPinnedAt` / `primaryAddressPinnedBy`: one (MAC, IP) pair from the asset's `AssetAssociatedIp` rows that the asset is monitored on. The pure enforcement lives in `applyPrimaryAddressPin` (`utils/assetInvariants.ts`), executed inside the `enforceOperatorOverrides` guard in `src/db.ts`; this service sets / clears the pin and audits.
 
-**Public API:** `pinPrimaryAddress({assetId, mac, ip, actor})`, `unpinPrimaryAddress({assetId, actor})` (clears the pin and re-projects `ipAddress` from the `AssetSource` rows), `handlePrimaryAddressFollowed(assetId, fromIp, ip)` (best-effort audit, called fire-and-forget by the db.ts guard), `CLEAR_PRIMARY_ADDRESS_PIN` (the data spread by routes that set another pin).
+**Public API:** `pinPrimaryAddress({assetId, mac, ip, actor})`, `unpinPrimaryAddress({assetId, actor})` (clears the pin and re-projects `ipAddress` from the `AssetSource` rows), `releaseConfirmedPins(now?)` (business rule 103(a): releases every pin whose address's discovery confidence reaches 50 and beats every other address — run by `jobs/releaseConfirmedPins.ts`; reads `addressConfidenceService.buildAddressConfidence`, keeps the address, conditional `updateMany`, `asset.primary_address.released` Event), `handlePrimaryAddressFollowed(assetId, fromIp, ip)` (best-effort audit, called fire-and-forget by the db.ts guard), `CLEAR_PRIMARY_ADDRESS_PIN` (the data spread by routes that set another pin).
 
 **Cross-service deps:** `prisma`, `AppError`, `utils/mac.normalizeMacOrNull`, `utils/assetProjection.projectAssetFromSources`, `eventLogService.logEvent`, `ipOverrideService.resolvePendingIpOverrideConflicts`.
 
@@ -62,6 +62,26 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Events: `asset.primary_address.pinned`, `asset.primary_address.unpinned`, `asset.primary_address.followed`.
 
 **When changing this:** the guard's extra read (`AssetAssociatedIp` for (asset, pinned mac)) happens only for a PINNED asset's IP-staging write, so the cost scales with pinned assets, not the fleet — keep it that way. Anything else that writes `ipAddress` as an operator action must spread `CLEAR_PRIMARY_ADDRESS_PIN` or the guard rewrites it back. `projectionDriftService` and discovery Phase 11 re-projection skip `ipAddress` while pinned; a new projection writer needs the same skip.
+
+---
+
+## services/addressConfidenceService.ts
+
+**What it owns:** The ADDRESS CONFIDENCE score (business rule 103) — a 0–100 figure for each address on an asset, computed on read and never stored. This file gathers the evidence; the pure scoring (`EVIDENCE_KINDS` weight / half-life table, `scoreAddress`, bands, penalty factors, `pollingRunStart`, `pollingHoursFor`) is `utils/addressConfidence.ts`. Evidence per address: its `AssetAssociatedIp` row (interface / detected-online / held reservation / held lease / ARP; a `manual` row = operator), an active `dhcp_reservation` Reservation whose MAC is one of the asset's (configured always + held decaying from `lastSeenLeased`), the `AssetSource` kinds that carry an address (`vcenter-vm` guestIp, `arc` ipAddresses, `generic-api` ip), the polling run (`Asset.ipConfirmedFor` / `ipConfirmedSince`), and the operator (pinned primary or `ipOverride`). Penalties: alive-elsewhere (primary down while a `device-inventory` row for another IP was seen within 1h) and claimed-elsewhere (another network-present asset's `ipAddress` is this IP, seen more recently than this IP's best evidence).
+
+**Public API:** `buildAddressConfidence(assetIds, {now?, extraIps?})` → `AddressConfidenceMap` (assetId → Map<ip, ConfidenceResult>); `checkAddressConfidence(assetId, ip, {probe?})` → `AddressCheckResult` `{ip, evidenceScore, evidenceBand, score, band, parts, penalties, warn, warnBelow, probe: {answered, error} | null}` (400 invalid IP, 404 unknown asset); `confidenceToJson(map)`; `ADDRESS_CHECK_PROBE_TIMEOUT_MS` (2000).
+
+**Cross-service deps:** `prisma` (assets, asset_associated_ips, asset_mac_addresses, reservations, asset_sources — read only), `AppError`, `utils/cidr.isValidIpAddress`, `utils/icmpPing.pingHost` (the optional single echo), `utils/mac.normalizeMacOrNull`, `utils/assetInvariants.UNMONITORABLE_STATUSES`, `utils/addressConfidence`.
+
+**Used by:** `api/routes/assets.ts` — `GET /assets/:id` (`addressConfidence: {[ip]: ConfidenceResult}`, full breakdown), the list enrichment behind `GET /assets` (compact `{score, band}` per address), `POST /assets/:id/address-check`. The polling-run columns it reads are written by `monitoringService → recordProbeResult` (through `probePatchBuffer`) via `pollingRunStart`.
+
+**Invariants:**
+- Read only and informational: nothing here writes, alerts, gates an automation or refuses a pin / `PUT`. The browser asks before applying a candidate below `CONFIDENCE_WARN_BELOW` (50); the server never blocks.
+- Only the strongest piece of each evidence kind counts; `score` includes the operator kind, `evidenceScore` excludes it (the check endpoint judges a candidate on `evidenceScore`, so an operator's own pin cannot vouch for itself).
+- Batched: one call for N assets is a fixed handful of queries regardless of N — never per asset or per address.
+- Polling credit only while the run's `ipConfirmedFor` equals the current `ipAddress` and the asset is not down; agent-reported successes never start a run.
+
+**When changing this:** scale — the list page calls it for every row on the page, so a new evidence source must join the existing batched reads (one `IN` query), never a per-asset await. A new evidence kind needs an `EVIDENCE_KINDS` row (weight + half-life + the `label` the hover breakdown in `public/js/assets.js → _confidenceBreakdownHTML` prints), a gather step here, and a unit case in `tests/unit/addressConfidence.test.ts`. Changing the bands or the warn line changes the chip colours and the warn-before-apply prompt together.
 
 ---
 

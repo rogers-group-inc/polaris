@@ -386,6 +386,19 @@
           <p>One device — the full asset record at the top level (not wrapped), including
             monitoring state, discovered attributes, associated IPs and MAC addresses.
             <code>404</code> when absent.</p>
+          <p><code>addressConfidence</code> scores every address on the device, keyed by IP:
+            <code>{ "10.20.30.4": { score, evidenceScore, band, evidenceBand, parts, penalties } }</code>.
+            <code>score</code> is 0–100 and includes an operator's pin or typed address;
+            <code>evidenceScore</code> is the network evidence alone. <code>band</code> is
+            <code>high</code> (80 and up), <code>medium</code> (50), <code>low</code> (20) or
+            <code>very-low</code>. Each entry in <code>parts</code> is one kind of evidence &mdash;
+            <code>{ kind, label, device, seenAt, hours, value }</code>: the device's own interface
+            table, a gate seeing it online, a held DHCP reservation or lease, an ARP entry, a
+            vCenter guest IP, an Azure Arc profile, a Generic API feed, or how long Polaris's own
+            polling has answered on it &mdash; and each entry in <code>penalties</code> is
+            <code>{ kind, factor, detail }</code>. The score is informational: nothing alerts or
+            decides on it. The list (<code>GET /assets</code>) carries the compact form,
+            <code>{ score, band }</code> per address.</p>
         </div>
 
         <div class="endpoint">
@@ -579,6 +592,27 @@
           <p>Release the pin → <code>{ ipAddress }</code>. The address goes back to what
             discovery reports (a device no source reports keeps the one it has). A device with no
             pin is left as it is.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /assets/:id/address-check
+            <span class="gate">assets:write</span></div>
+          <p>Score an address before pinning it or typing it in: <code>{ ip, probe? }</code> →
+            <code>{ ip, evidenceScore, evidenceBand, score, band, parts, penalties, warn, warnBelow, probe }</code>.
+            The fields are those of <code>addressConfidence</code> on <code>GET /assets/:id</code>;
+            an address the device has never been seen on scores 0. <code>warn</code> is true when
+            <code>evidenceScore</code> is below <code>warnBelow</code> (50). With
+            <code>probe: true</code> the server sends the address one ping (2-second timeout) and
+            <code>probe</code> is <code>{ answered, error }</code>, otherwise <code>null</code>
+            &mdash; a reply shows something answers there, not that it is this device, so it is
+            reported beside the score rather than counted in it. Only a check: nothing is written,
+            and <code>PUT /assets/:id</code> and <code>PUT /assets/:id/primary-address</code> never
+            refuse a low score.</p>
+          <ul>
+            <li><code>400</code> &mdash; <code>ip</code> is not an IP address.</li>
+            <li><code>404</code> &mdash; no such device.</li>
+          </ul>
+          <pre class="curl"><code>curl -X POST -H "Authorization: Bearer $POLARIS_TOKEN"   -H "Content-Type: application/json"   -d '{"ip":"10.20.30.4","probe":true}'   "<span class="js-base-url">/api/v1</span>/assets/$ASSET_ID/address-check"</code></pre>
         </div>
 
         <div class="endpoint">

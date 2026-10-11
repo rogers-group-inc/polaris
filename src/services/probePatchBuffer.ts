@@ -102,6 +102,12 @@ export interface ProbePatch {
    *  (the flush COALESCEs to preserve the prior value rather than nulling it). */
   lastSeen?: Date;
   lastSeenSource?: string;
+  /** Set TOGETHER, only on the success that starts a new polling run for an
+   *  address (a different IP, or back from down/unknown); undefined preserves
+   *  the prior run. The address-confidence score's polling evidence —
+   *  Asset.ipConfirmedFor / ipConfirmedSince, business rule 103. */
+  ipConfirmedFor?: string;
+  ipConfirmedSince?: Date;
 }
 
 // Module-level buffer. One in-flight patch per asset; new patches collapse
@@ -168,6 +174,11 @@ export function enqueueProbePatch(assetId: string, patch: ProbePatch): void {
       // window must not erase the success's presence stamp.
       lastSeen: patch.lastSeen ?? existing.lastSeen,
       lastSeenSource: patch.lastSeenSource ?? existing.lastSeenSource,
+      // The run start travels as a pair: a later probe that didn't restart the
+      // run must not erase the start an earlier one in this window recorded.
+      ...(patch.ipConfirmedFor !== undefined
+        ? { ipConfirmedFor: patch.ipConfirmedFor, ipConfirmedSince: patch.ipConfirmedSince }
+        : { ipConfirmedFor: existing.ipConfirmedFor, ipConfirmedSince: existing.ipConfirmedSince }),
     });
   } else {
     buffer.set(assetId, patch);
@@ -230,7 +241,8 @@ async function writeBatch(rows: ReadonlyArray<readonly [string, ProbePatch]>): P
       `($${p++}::text, $${p++}::text, $${p++}::timestamp, ` +
       `$${p++}::int, $${p++}::int, $${p++}::int, $${p++}::timestamp, ` +
       `$${p++}::int, $${p++}::timestamp, $${p++}::timestamp, $${p++}::text, ` +
-      `$${p++}::timestamp, $${p++}::boolean, $${p++}::timestamp)`,
+      `$${p++}::timestamp, $${p++}::boolean, $${p++}::timestamp, ` +
+      `$${p++}::text, $${p++}::timestamp)`,
     );
     params.push(
       id,
@@ -249,6 +261,8 @@ async function writeBatch(rows: ReadonlyArray<readonly [string, ProbePatch]>): P
       patch.recoveryStartedAt ? patch.recoveryStartedAt.toISOString() : null,
       patch.awaitingRecoveryConfirm ?? null,
       patch.lastDescrAt ? patch.lastDescrAt.toISOString() : null,
+      patch.ipConfirmedFor ?? null,
+      patch.ipConfirmedSince ? patch.ipConfirmedSince.toISOString() : null,
     );
   }
   const sql =
@@ -269,9 +283,11 @@ async function writeBatch(rows: ReadonlyArray<readonly [string, ProbePatch]>): P
     `"lastSeenSource"         = COALESCE(v.last_seen_source, t."lastSeenSource"), ` +
     `"recoveryStartedAt"      = COALESCE(v.recovery_started_at, t."recoveryStartedAt"), ` +
     `"awaitingRecoveryConfirm" = COALESCE(v.awaiting_recovery_confirm, t."awaitingRecoveryConfirm"), ` +
-    `"lastDescrAt"            = COALESCE(v.last_descr_at, t."lastDescrAt") ` +
+    `"lastDescrAt"            = COALESCE(v.last_descr_at, t."lastDescrAt"), ` +
+    `"ipConfirmedFor"         = COALESCE(v.ip_confirmed_for, t."ipConfirmedFor"), ` +
+    `"ipConfirmedSince"       = COALESCE(v.ip_confirmed_since, t."ipConfirmedSince") ` +
     `FROM (VALUES ${tuples.join(", ")}) ` +
-    `AS v(id, status, last_monitor_at, rt, cf, cs, changed_at, uptime_sec, reboot_at, last_seen, last_seen_source, recovery_started_at, awaiting_recovery_confirm, last_descr_at) ` +
+    `AS v(id, status, last_monitor_at, rt, cf, cs, changed_at, uptime_sec, reboot_at, last_seen, last_seen_source, recovery_started_at, awaiting_recovery_confirm, last_descr_at, ip_confirmed_for, ip_confirmed_since) ` +
     `WHERE t."id" = v.id`;
   await prisma.$executeRawUnsafe(sql, ...params);
 }

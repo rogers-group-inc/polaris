@@ -1274,6 +1274,10 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // recording one IP. Scheduler role only: one grouped scan for the
       // fleet, not one per monitor replica.
       "./jobs/detectDuplicateIpAssets.js",
+      // Pin-release sweep (business rule 103(a)): drops a primary-address pin
+      // the network now backs on its own. Scheduler role only — one pass over
+      // the fleet's (few) pins.
+      "./jobs/releaseConfirmedPins.js",
       // Serial sweep (business rule 83) — raises/closes the
       // `serial-two-controllers` flavour (one managed device on two
       // FortiGates' rosters) and the `duplicate-serial` flavour (one serial on
