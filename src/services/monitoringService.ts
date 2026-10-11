@@ -24,6 +24,7 @@
  */
 
 import { chunkArray } from "../utils/chunk.js";
+import { normalizeMacOrNull } from "../utils/mac.js";
 import { performance } from "node:perf_hooks";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -11593,7 +11594,10 @@ function buildMonitorAssocIpEntries(
       ip:            i.ipAddress,
       source:        "monitor-system-info",
       interfaceName: i.ifName,
-      mac:           i.macAddress ?? null,
+      // Colon-uppercase like every other address/MAC row: the asset panel
+      // groups addresses under the MAC list by exact string, and REST / agent
+      // / WinRM collectors report lowercase or dashed MACs.
+      mac:           normalizeMacOrNull(i.macAddress),
       lastSeen:      now,
       firstSeen:     now,
     });

@@ -18572,6 +18572,14 @@ function _assetAddressRows(asset) {
   return Array.isArray(asset.associatedIps) ? asset.associatedIps : [];
 }
 
+// Colon-uppercase, the MAC list's spelling. Interface-scrape rows written
+// before the server normalized them can carry lowercase or dashed MACs, and an
+// exact-string match split one card into two groups — the copy without the
+// remove button looked like a MAC that would not go away.
+function _addressMacKey(mac) {
+  return String(mac || '').toUpperCase().replace(/-/g, ':');
+}
+
 // The MAC the primary IP is on: the pin's, else the address row holding the
 // primary IP, else the identity MAC.
 function primaryAddressMac(asset) {
@@ -18654,17 +18662,20 @@ function _addressIpLineHTML(asset, r, isPrimary) {
 // One MAC and the addresses under it. `m` is the MAC entry (may be a synthetic
 // one for a MAC that only appears on address rows); `ips` its address rows.
 function _addressGroupHTML(asset, m, ips, primaryIp, primaryMac) {
-  var sourceLabel = m.source ? formatMacSource(m.source) : '';
+  var sourceLabel = m.source ? formatMacSource(m.source)
+    : m.addressOnly ? 'Not on MAC list' : '';
   var head = '<div class="address-mac-line">' +
       '<code class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(m.mac) + '">' + escapeHtml(m.mac) + '</code>' +
       (m.source ? macDeleteButtonHTML(asset.id, m) : '') +
-      '<span class="address-meta">' +
+      '<span class="address-meta"' +
+        (m.addressOnly ? ' title="Only the addresses below name this MAC — they come from the device\'s own interface table or were entered by hand, so there is no MAC entry to remove"' : '') +
+      '>' +
         (sourceLabel ? escapeHtml(sourceLabel) : '') +
         (m.lastSeen ? (sourceLabel ? ' &middot; ' : '') + formatDate(m.lastSeen) : '') +
       '</span>' +
     '</div>';
   var lines = ips.map(function (r) {
-    return _addressIpLineHTML(asset, r, r.ip === primaryIp && (!primaryMac || r.mac === primaryMac));
+    return _addressIpLineHTML(asset, r, r.ip === primaryIp && (!primaryMac || _addressMacKey(r.mac) === _addressMacKey(primaryMac)));
   }).join('');
   if (!ips.length) lines = '<div class="address-empty">no address reported</div>';
   return '<div class="address-group">' + head + lines + '</div>';
@@ -18687,13 +18698,18 @@ function addressesViewHTML(asset) {
   var noMac = [];
   rows.forEach(function (r) {
     if (!r.mac) { noMac.push(r); return; }
-    (byMac[r.mac] = byMac[r.mac] || []).push(r);
+    var key = _addressMacKey(r.mac);
+    (byMac[key] = byMac[key] || []).push(r);
   });
-  var groups = singles.map(function (m) { return { m: m, ips: byMac[m.mac] || [] }; });
+  var groups = singles.map(function (m) { return { m: m, ips: byMac[_addressMacKey(m.mac)] || [] }; });
   var listed = {};
-  singles.forEach(function (m) { listed[m.mac] = true; });
+  singles.forEach(function (m) { listed[_addressMacKey(m.mac)] = true; });
+  // A MAC only address rows carry (an interface-scrape port inside a collapsed
+  // range, or a MAC removed from the list whose interface / manual addresses
+  // stay) has no MAC row to remove, so it gets no ×; `addressOnly` labels it
+  // so the missing button reads as deliberate rather than broken.
   Object.keys(byMac).forEach(function (mac) {
-    if (!listed[mac]) groups.push({ m: { mac: mac }, ips: byMac[mac] });
+    if (!listed[mac]) groups.push({ m: { mac: mac, addressOnly: true }, ips: byMac[mac] });
   });
   // Within a group: the primary first, then freshest.
   groups.forEach(function (g) {
