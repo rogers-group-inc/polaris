@@ -86,6 +86,13 @@ const stored = {
     { name: "", method: "GET", path: "/api/owners/{{owner.id}}", body: "", fieldMap: { assignedTo: "email" } },
   ],
   detailConcurrency: 6,
+  networkQueries: [
+    { name: "Prefixes", kind: "subnets", method: "GET", path: "/api/ipam/prefixes", body: "", recordsPath: "results", paginate: true, map: { cidr: "prefix", name: "description", vlan: "vlan.vid" } },
+    { name: "Leases", kind: "leases", method: "POST", path: "/api/dhcp/leases", body: '{"active":true}', recordsPath: "", paginate: false, map: { ipAddress: "ip", macAddress: "mac", expiresAt: "ends" } },
+  ],
+  releaseMissingAddresses: true,
+  deprecateMissingSubnets: false,
+  readDevices: true,
   monitorQueries: [
     {
       name: "Status", stream: "responseTime", scope: "fleet", method: "GET", path: "/api/status", body: "",
@@ -154,7 +161,7 @@ describe("registries", () => {
 
   it("has its own four tabs — General, Records & Mapping, Monitoring (monitor queries), Preview — never the shared Monitoring tab", () => {
     const { tabs } = mount(stored);
-    expect(tabs.map((t: any) => t.key)).toEqual(["general", "mapping", "monitoring", "preview"]);
+    expect(tabs.map((t: any) => t.key)).toEqual(["general", "mapping", "monitoring", "network", "preview"]);
     // The shared tab's class-stream form is not what renders here.
     expect(tabs.find((t: any) => t.key === "monitoring").html).toContain('id="f-gaMonitors"');
   });
@@ -302,7 +309,7 @@ describe("JSON tab", () => {
   const json = () => JSON.parse((scope.document.getElementById("f-gaJson") as any).value);
 
   it("is a fourth tab only when the portability module is loaded", () => {
-    expect(mount(stored).tabs.map((t: any) => t.key)).toEqual(["general", "mapping", "monitoring", "preview", "json"]);
+    expect(mount(stored).tabs.map((t: any) => t.key)).toEqual(["general", "mapping", "monitoring", "network", "preview", "json"]);
   });
 
   it("shows the form as a shareable file: no secret, no connection details, credential header blanked", () => {
@@ -496,5 +503,67 @@ describe("the genericapi polling method in the pickers", () => {
     expect(allowed("vcenter", "interfaces")).not.toContain("genericapi");
     expect(allowed("fortigate", "responseTime")).not.toContain("genericapi");
     expect(scope._POLLING_LABELS.genericapi).toBe("Generic API");
+  });
+});
+
+describe("Network tab — network queries (rule 100(j))", () => {
+  const blocks = () => [...scope.document.querySelectorAll("[data-ga-network]")] as any[];
+
+  it("Add appends a blank block (not saved until filled), Remove deletes one, the cap is ten", () => {
+    mount(stored);
+    expect(blocks()).toHaveLength(2);
+    scope.document.getElementById("f-gaNetworkAdd").click();
+    expect(scope.getGenericApiFormConfig().networkQueries).toHaveLength(2);
+    blocks()[0].querySelector(".ga-net-remove").click();
+    expect(scope.getGenericApiFormConfig().networkQueries.map((q: any) => q.name)).toEqual(["Leases"]);
+    for (let i = 0; i < 12; i++) scope.document.getElementById("f-gaNetworkAdd").click();
+    expect(blocks()).toHaveLength(10);
+  });
+
+  it("names a field line the kind cannot read, and follows the kind picker", () => {
+    mount(stored);
+    const b = blocks()[0];
+    const ta = b.querySelector(".ga-net-map");
+    ta.value = "cidr = prefix\nipAddress = ip";
+    ta.dispatchEvent(new scope.Event("input", { bubbles: true }));
+    expect(b.querySelector(".ga-net-map-hint").textContent).toContain("Not read: ipAddress = ip");
+    expect(scope.getGenericApiFormConfig().networkQueries[0].map).toEqual({ cidr: "prefix" });
+    const kind = b.querySelector(".ga-net-kind");
+    kind.value = "assignments";
+    kind.dispatchEvent(new scope.Event("change", { bubbles: true }));
+    expect(b.querySelector(".ga-net-map-hint").textContent).toContain("Not read: cidr = prefix");
+    expect(b.querySelector(".ga-net-body-wrap").style.display).toBe("none");
+    expect(blocks()[1].querySelector(".ga-net-body-wrap").style.display).toBe("");
+  });
+
+  it("carries the sweep switches and the device-read switch", () => {
+    mount({ ...stored, releaseMissingAddresses: false, deprecateMissingSubnets: true, readDevices: false });
+    const cfg = scope.getGenericApiFormConfig();
+    expect([cfg.releaseMissingAddresses, cfg.deprecateMissingSubnets, cfg.readDevices]).toEqual([false, true, false]);
+    // A config saved before the switches existed reads as the defaults.
+    const { releaseMissingAddresses, deprecateMissingSubnets, readDevices, ...old } = stored as any;
+    void releaseMissingAddresses; void deprecateMissingSubnets; void readDevices;
+    mount(old);
+    const d = scope.getGenericApiFormConfig();
+    expect([d.releaseMissingAddresses, d.deprecateMissingSubnets, d.readDevices]).toEqual([true, false, true]);
+  });
+
+  it("Preview shows each network query's first page as IPAM would read it", async () => {
+    mount(stored);
+    scope.api.integrations.genericApiPreview = async () => ({
+      ok: true, message: "", warnings: [], rows: [], sampleRecord: null,
+      network: [
+        { name: "Prefixes", kind: "subnets", ok: true, message: "first page: 2 record(s), 1 mapped", sampleRecord: { prefix: "<b>10.0.0.0/24</b>" },
+          rows: [{ index: 0, outcome: { ok: true, value: { cidr: "10.0.0.0/24", name: "Core", vlan: 10, purpose: null } } }, { index: 1, outcome: { ok: false, reason: "2001:db8::/64 is IPv6 — only IPv4 networks are read" } }] },
+        { name: "Leases", kind: "leases", ok: false, message: "HTTP 500", sampleRecord: null, rows: [] },
+      ],
+    });
+    await scope._runGenericApiPreview("i1");
+    const html = scope.document.getElementById("f-gaPreviewResult").innerHTML;
+    expect(html).toContain("Network query “Prefixes”");
+    expect(html).toContain("10.0.0.0/24");
+    expect(html).toContain("&lt;b&gt;10.0.0.0/24&lt;/b&gt;");
+    expect(html).toContain("is IPv6");
+    expect(html).toContain("HTTP 500");
   });
 });

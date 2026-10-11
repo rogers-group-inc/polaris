@@ -60,6 +60,7 @@
     fortimanager:      "FortiManager",
     fortigate:         "a FortiGate",
     dns_resolved:      "a DNS-resolved record",
+    external:          "an external IPAM assignment",
   };
 
   function reservationText(r) {

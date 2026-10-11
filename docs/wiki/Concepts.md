@@ -101,6 +101,7 @@ row:
 | `fortiswitch` / `fortinap` | a managed Fortinet device holds it | depends on its DHCP binding |
 | `fortimanager` / `fortigate` | discovered through that integration | yes |
 | `dns_resolved` | auto-created because an asset's IP fell in a known network | **no** — defers to everything |
+| `external` | allocated in another IPAM, read by a [Generic API](Integration-Generic-API#network-tab) integration | yes |
 
 **DHCP binding** — *how* the gate hands the address out: `null`, `"lease"` or
 `"reservation"`. This is deliberately a **separate fact from source type**

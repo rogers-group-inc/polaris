@@ -6122,6 +6122,8 @@ function genericApiMappingHTML(defaults) {
     '</div>';
   }).join("");
   return infoBox('Paths are written against <strong style="color:var(--color-text-primary)">one record</strong>: <code>name</code>, <code>os.version</code>, <code>nics[0].mac</code>, <code>nics[*].mac</code> (every NIC), <code>[\'serial number\']</code> (a key with a space). The <strong style="color:var(--color-text-primary)">Preview</strong> tab shows a real record to copy them from.') +
+    checkboxRow("f-gaReadDevices", "Read devices (assets) from this API", d.readDevices !== false) +
+    '<p class="hint">Turn off for an API that only holds address space — an external IPAM read on the Network tab. The request on General, the records and the mapping below are then not used.</p>' +
     sectionHeading("Records") +
     '<div class="form-group"><label>Records path</label><input type="text" id="f-gaRecordsPath" value="' + escapeHtml(d.recordsPath || "") + '" placeholder="e.g. data.devices — blank when the response IS the list"><p class="hint">Where the list of devices sits in each response.</p></div>' +
     '<div class="form-group"><label>Pagination</label>' + _genericSelect("f-gaPageMode", mode, [
@@ -6485,6 +6487,124 @@ function genericApiMonitoringHTML(defaults) {
     '<p class="hint" style="margin-top:0.75rem"><strong>One for every asset</strong> costs one request per poll for the whole fleet (cached for 30 seconds and shared by every asset and stream on it) — use it whenever the API can list everything at once. <strong>One per asset</strong> costs one request per asset per poll, at most the Records &amp; Mapping tab’s <em>Requests at once</em> in flight. Temperatures and custom widgets are read on the CPU / memory schedule, so they need a CPU / memory method on the asset.</p>';
 }
 
+// ─── Generic API network queries (rule 100(j)) ─────────────────────────────────
+//
+// The Network tab: address space read into IPAM — subnets, DHCP leases, DHCP
+// reservations, and addresses allocated in another IPAM. Repeated blocks with
+// no ids, the monitor-query shape: _gaReadNetworkQueries walks
+// [data-ga-network], one delegated listener set on #f-gaNetworks.
+
+/** Kind → [label, the map keys it takes (mirrors GENERIC_API_NETWORK_FIELDS), a placeholder map]. */
+var _GA_NETWORK_KINDS = {
+  subnets:      ["Subnets",           ["cidr", "network", "prefixLength", "netmask", "name", "vlan", "purpose"], "cidr = prefix\nname = description\nvlan = vlan.id"],
+  leases:       ["DHCP leases",       ["ipAddress", "macAddress", "hostname", "expiresAt"], "ipAddress = ip\nmacAddress = mac\nhostname = client_name\nexpiresAt = ends"],
+  reservations: ["DHCP reservations", ["ipAddress", "macAddress", "hostname"], "ipAddress = ip\nmacAddress = mac\nhostname = name"],
+  assignments:  ["IP assignments",    ["ipAddress", "hostname", "macAddress", "owner", "notes"], "ipAddress = address\nhostname = dns_name\nowner = tenant.name\nnotes = description"],
+};
+var _GA_NETWORK_KIND_ORDER = ["subnets", "leases", "reservations", "assignments"];
+
+function _gaNetworkQueryHTML(q) {
+  q = q || {};
+  var kind = _GA_NETWORK_KINDS[q.kind] ? q.kind : "subnets";
+  var method = q.method === "POST" ? "POST" : "GET";
+  var map = q.map || {};
+  var mapLines = Object.keys(map).filter(function (k) { return map[k]; }).map(function (k) { return k + " = " + map[k]; }).join("\n");
+  var opt = function (v, label, cur) { return '<option value="' + v + '"' + (v === cur ? " selected" : "") + '>' + escapeHtml(label) + '</option>'; };
+  return '<div data-ga-network style="border:1px solid var(--color-border);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-bottom:0.6rem">' +
+    '<div style="display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:end">' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><label>Name</label><input type="text" class="ga-net-name" value="' + escapeHtml(q.name || "") + '" placeholder="e.g. Prefixes"></div>' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><label>Reads</label><select class="ga-net-kind" data-ga-value="' + kind + '">' +
+        _GA_NETWORK_KIND_ORDER.map(function (k) { return opt(k, _GA_NETWORK_KINDS[k][0], kind); }).join("") + '</select></div>' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><button type="button" class="btn btn-secondary btn-sm ga-net-remove" title="Remove this network query">Remove</button></div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:auto 1fr;gap:8px">' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><label>Method</label><select class="ga-net-method" data-ga-value="' + method + '">' + opt("GET", "GET", method) + opt("POST", "POST", method) + '</select></div>' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><label>Path</label><input type="text" class="ga-net-path" value="' + escapeHtml(q.path || "") + '" placeholder="/api/ipam/prefixes"></div>' +
+    '</div>' +
+    '<div class="form-group ga-net-body-wrap" style="margin-bottom:0.5rem' + (method === "POST" ? "" : ";display:none") + '"><label>Request body (JSON)</label><textarea class="ga-net-body" rows="2">' + escapeHtml(q.body || "") + '</textarea></div>' +
+    '<div class="form-group" style="margin-bottom:0.5rem"><label>Records path</label><input type="text" class="ga-net-records" value="' + escapeHtml(q.recordsPath || "") + '" placeholder="e.g. results — blank when the response is the list"></div>' +
+    _gaCheckbox("ga-net-paginate", "Page through it like the inventory request", q.paginate === true) +
+    '<div class="form-group" style="margin-bottom:0"><label>Fields</label><textarea class="ga-net-map" rows="3" placeholder="' + escapeHtml("One per line: field = path\n" + _GA_NETWORK_KINDS[kind][2]) + '">' + escapeHtml(mapLines) + '</textarea>' +
+      '<p class="hint ga-net-map-hint"></p></div>' +
+  '</div>';
+}
+
+/** "field = path" lines for one kind → { map, unknown[] }. */
+function _gaParseNetworkMap(kind, text) {
+  var keys = (_GA_NETWORK_KINDS[kind] || _GA_NETWORK_KINDS.subnets)[1];
+  var map = {};
+  var unknown = [];
+  String(text || "").split(/\r?\n/).forEach(function (line) {
+    var s = line.trim();
+    if (!s) return;
+    var i = s.indexOf("=");
+    var key = i > 0 ? s.slice(0, i).trim() : s;
+    var path = i > 0 ? s.slice(i + 1).trim() : "";
+    if (keys.indexOf(key) === -1 || !path) { unknown.push(s); return; }
+    map[key] = path;
+  });
+  return { map: map, unknown: unknown };
+}
+
+function _gaReadNetworkQueries() {
+  var out = [];
+  document.querySelectorAll("[data-ga-network]").forEach(function (block) {
+    var v = function (sel) { var el = block.querySelector(sel); return el ? String(el.value || "").trim() : ""; };
+    var kind = v(".ga-net-kind") || "subnets";
+    var path = v(".ga-net-path");
+    var mapText = v(".ga-net-map");
+    if (!path && !v(".ga-net-name") && !mapText) return;   // an untouched blank block
+    var pg = block.querySelector(".ga-net-paginate");
+    out.push({
+      name: v(".ga-net-name"),
+      kind: kind,
+      method: v(".ga-net-method") || "GET",
+      path: path,
+      body: v(".ga-net-body"),
+      recordsPath: v(".ga-net-records"),
+      paginate: !!(pg && pg.checked),
+      map: _gaParseNetworkMap(kind, mapText).map,
+    });
+  });
+  return out;
+}
+
+function _gaSyncNetworkBlock(block) {
+  var kindEl = block.querySelector(".ga-net-kind");
+  var kind = (kindEl && kindEl.value) || "subnets";
+  var spec = _GA_NETWORK_KINDS[kind] || _GA_NETWORK_KINDS.subnets;
+  var methodEl = block.querySelector(".ga-net-method");
+  var bodyWrap = block.querySelector(".ga-net-body-wrap");
+  if (bodyWrap) bodyWrap.style.display = methodEl && methodEl.value === "POST" ? "" : "none";
+  var ta = block.querySelector(".ga-net-map");
+  if (ta) ta.placeholder = "One per line: field = path\n" + spec[2];
+  var hint = block.querySelector(".ga-net-map-hint");
+  if (hint && ta) {
+    var unknown = _gaParseNetworkMap(kind, ta.value).unknown;
+    var fields = spec[1].join(", ");
+    var req = kind === "subnets" ? " Map <code>cidr</code>, or <code>network</code> with <code>prefixLength</code> or <code>netmask</code>." : " <code>ipAddress</code> is required.";
+    hint.innerHTML = unknown.length
+      ? '<span style="color:var(--color-warning)">Not read: ' + escapeHtml(unknown.join(" · ")) + '</span> — each line is <code>field = path</code>, with a field from: ' + escapeHtml(fields)
+      : "Fields: " + escapeHtml(fields) + "." + req;
+  }
+}
+
+function genericApiNetworkHTML(defaults) {
+  var d = defaults || {};
+  return infoBox('Read <strong style="color:var(--color-text-primary)">address space</strong> from this API into IPAM: subnets, DHCP leases, DHCP reservations, and addresses allocated in another IPAM. Each query is read once per discovery run.') +
+    calloutHTML("note", "What a feed can and cannot do to IPAM",
+      'A subnet is created only inside an existing block, and never over an overlapping, excluded or retired network. A subnet another integration owns is never taken over, and nothing is written into it. A manual reservation is never overwritten — a difference becomes a conflict to review. Nothing is ever pushed to a device. Addresses are IPv4.') +
+    '<div id="f-gaNetworks">' + (d.networkQueries || []).map(_gaNetworkQueryHTML).join("") + '</div>' +
+    '<button type="button" class="btn btn-secondary btn-sm" id="f-gaNetworkAdd">Add network query</button>' +
+    formDivider() +
+    sectionHeading("When something leaves the feed") +
+    checkboxRow("f-gaReleaseMissing", "Release a DHCP reservation or IP assignment the feed stops listing", d.releaseMissingAddresses !== false) +
+    '<p class="hint">Only after a complete read, and never when most of them vanish at once. Leases are never released this way — they expire.</p>' +
+    checkboxRow("f-gaDeprecateSubnets", "Deprecate a subnet the feed stops listing", d.deprecateMissingSubnets === true) +
+    '<p class="hint">Off by default. Only subnets this integration owns, only after a complete read, never when most vanish at once.</p>' +
+    '<p class="hint" style="margin-top:0.75rem">Addresses are written only into subnets this integration owns. When it reads no subnets of its own, the unowned subnet an address falls in is claimed (its name and purpose kept).</p>';
+}
+
 function genericApiJsonHTML() {
   return '<p class="hint">The settings on the other tabs as JSON — to read at a glance, keep as a backup, or share a mapping for a product with anyone else running Polaris. <strong>Tokens, passwords and client secrets are never included</strong>, nor the value of an extra header whose name looks like it holds a credential.</p>' +
     checkboxRow("f-gaJsonConnection", "Include host, port, username, client ID and token URL", false) +
@@ -6560,6 +6680,10 @@ function getGenericApiFormConfig() {
     fieldMap: fieldMap,
     detailQueries: _gaReadDetailQueries(),
     monitorQueries: _gaReadMonitorQueries(),
+    networkQueries: _gaReadNetworkQueries(),
+    releaseMissingAddresses: (document.getElementById("f-gaReleaseMissing") || { checked: true }).checked,
+    deprecateMissingSubnets: (document.getElementById("f-gaDeprecateSubnets") || { checked: false }).checked,
+    readDevices: (document.getElementById("f-gaReadDevices") || { checked: true }).checked,
     detailConcurrency: _gaInt("f-gaDetailConcurrency", 4),
     identityField: _gaVal("f-gaIdentity") || "id",
     assetTypeDefault: _gaVal("f-gaTypeDefault") || "other",
@@ -6626,6 +6750,15 @@ function _gaFillForm(cfg) {
     details.querySelectorAll("select[data-ga-value]").forEach(function (sel) { sel.value = sel.getAttribute("data-ga-value"); });
   }
   set("f-gaDetailConcurrency", cfg.detailConcurrency || 4);
+  var networks = document.getElementById("f-gaNetworks");
+  if (networks) {
+    networks.innerHTML = (cfg.networkQueries || []).map(_gaNetworkQueryHTML).join("");
+    networks.querySelectorAll("select[data-ga-value]").forEach(function (sel) { sel.value = sel.getAttribute("data-ga-value"); });
+    networks.querySelectorAll("[data-ga-network]").forEach(_gaSyncNetworkBlock);
+  }
+  check("f-gaReleaseMissing", cfg.releaseMissingAddresses !== false);
+  check("f-gaDeprecateSubnets", cfg.deprecateMissingSubnets === true);
+  check("f-gaReadDevices", cfg.readDevices !== false);
   var monitors = document.getElementById("f-gaMonitors");
   if (monitors) {
     monitors.innerHTML = (cfg.monitorQueries || []).map(_gaMonitorQueryHTML).join("");
@@ -6817,7 +6950,24 @@ function _renderGenericApiPreview(result) {
       '<div style="overflow:auto"><table class="data-table" style="font-size:0.8rem"><thead><tr><th>#</th><th>Identity</th>' +
         cols.map(function (c) { return '<th>' + labels[c] + '</th>'; }).join("") + '</tr></thead><tbody>' + rows + '</tbody></table></div>'
     : "";
-  box.innerHTML = warnings + sample + (sample && table ? formDivider() : "") + table;
+  // Network queries (rule 100(j)): each query's first page as IPAM would read it.
+  var network = (result.network || []).map(function (n) {
+    var isSubnet = n.kind === "subnets";
+    var head = isSubnet ? ["CIDR", "Name", "VLAN", "Purpose"] : ["Address", "MAC", "Hostname", n.kind === "leases" ? "Expires" : (n.kind === "assignments" ? "Owner" : "")];
+    var body = (n.rows || []).map(function (r) {
+      if (!r.outcome.ok) return '<tr><td>' + (r.index + 1) + '</td><td colspan="4" style="color:var(--color-warning)">Skipped — ' + escapeHtml(r.outcome.reason) + '</td></tr>';
+      var v = r.outcome.value;
+      var cells = isSubnet ? [v.cidr, v.name, v.vlan, v.purpose] : [v.ipAddress, v.macAddress, v.hostname, n.kind === "leases" ? (v.expiresAt ? String(v.expiresAt).slice(0, 16).replace("T", " ") : "") : (n.kind === "assignments" ? v.owner : "")];
+      return '<tr><td>' + (r.index + 1) + '</td>' + cells.map(function (c) {
+        return '<td>' + (c != null && c !== "" ? escapeHtml(String(c)) : '<span style="color:var(--color-text-tertiary)">—</span>') + '</td>';
+      }).join("") + '</tr>';
+    }).join("");
+    return sectionHeading("Network query “" + n.name + "”") +
+      '<p class="hint" style="color:' + (n.ok ? "var(--color-success)" : "var(--color-warning)") + '">' + escapeHtml(n.message) + '</p>' +
+      (n.sampleRecord ? '<pre class="mono" style="max-height:160px;overflow:auto;font-size:0.78rem;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:0.6rem;white-space:pre-wrap;word-break:break-all">' + escapeHtml(JSON.stringify(n.sampleRecord, null, 2).slice(0, 4000)) + '</pre>' : "") +
+      (body ? '<div style="overflow:auto"><table class="data-table" style="font-size:0.8rem"><thead><tr><th>#</th>' + head.map(function (h) { return '<th>' + escapeHtml(h) + '</th>'; }).join("") + '</tr></thead><tbody>' + body + '</tbody></table></div>' : "");
+  }).join("");
+  box.innerHTML = warnings + sample + (sample && table ? formDivider() : "") + table + (network ? formDivider() + network : "");
 }
 
 async function _runGenericApiPreview(id) {
@@ -6914,6 +7064,36 @@ function _wireGenericApiForm(id) {
         added.querySelectorAll("select[data-ga-value]").forEach(function (sel) { sel.value = sel.getAttribute("data-ga-value"); });
         _gaSyncMonitorBlock(added);
         var input = added.querySelector(".ga-mon-name");
+        if (input) input.focus();
+      }
+    });
+  }
+  // Network queries — the same delegated-listener shape.
+  var networks = document.getElementById("f-gaNetworks");
+  if (networks) {
+    networks.querySelectorAll("select[data-ga-value]").forEach(function (sel) { sel.value = sel.getAttribute("data-ga-value"); });
+    networks.addEventListener("click", function (e) {
+      var rm = e.target.closest && e.target.closest(".ga-net-remove");
+      if (rm) { var block = rm.closest("[data-ga-network]"); if (block) block.remove(); }
+    });
+    var resyncNet = function (e) {
+      var block = e.target.closest && e.target.closest("[data-ga-network]");
+      if (block) _gaSyncNetworkBlock(block);
+    };
+    networks.addEventListener("change", resyncNet);
+    networks.addEventListener("input", resyncNet);
+    networks.querySelectorAll("[data-ga-network]").forEach(_gaSyncNetworkBlock);
+  }
+  var addNet = document.getElementById("f-gaNetworkAdd");
+  if (addNet && networks) {
+    addNet.addEventListener("click", function () {
+      if (networks.querySelectorAll("[data-ga-network]").length >= 10) { showToast("At most 10 network queries", "error"); return; }
+      networks.insertAdjacentHTML("beforeend", _gaNetworkQueryHTML({}));
+      var added = networks.lastElementChild;
+      if (added) {
+        added.querySelectorAll("select[data-ga-value]").forEach(function (sel) { sel.value = sel.getAttribute("data-ga-value"); });
+        _gaSyncNetworkBlock(added);
+        var input = added.querySelector(".ga-net-name");
         if (input) input.focus();
       }
     });
@@ -7228,6 +7408,7 @@ function _integrationTabs(ctx) {
       { key: "general", label: "General", html: ctx.generalHtml },
       { key: "mapping", label: "Records & Mapping", html: genericApiMappingHTML(Object.assign({}, defaults, config)) },
       { key: "monitoring", label: "Monitoring", html: genericApiMonitoringHTML(Object.assign({}, defaults, config)) },
+      { key: "network", label: "Network", html: genericApiNetworkHTML(Object.assign({}, defaults, config)) },
       { key: "preview", label: "Preview", html: genericApiPreviewHTML() },
     ];
     // The JSON tab needs genericapi-portability.js (loaded by integrations.html);

@@ -1076,7 +1076,7 @@ function getAlertsFormData() {
     var map = {
       vip: "VIP", dhcp_reservation: "DHCP Reservation", dhcp_lease: "DHCP Lease",
       interface_ip: "Interface IP", fortiswitch: "FortiSwitch", fortinap: "FortiAP",
-      fortimanager: "FortiManager", manual: "Manual",
+      fortimanager: "FortiManager", manual: "Manual", external: "External IPAM",
     };
     return map[sourceType] || sourceType || "Unknown";
   }

@@ -132,6 +132,13 @@ Bulk allocation packs into an **anchor** (default /24 when not stated) and is
 all-or-nothing in one transaction. A single `subnet.bulk-allocated` audit Event
 is written after the transaction commits, not one per network.
 
+Integrations create networks too: FortiManager and FortiGate DHCP scopes,
+Windows DHCP scopes, and the network queries of a
+[Generic API](Integration-Generic-API#network-tab) integration. They follow the
+same rules: a network lands only inside an existing block, never over an
+overlapping, excluded or retired one. A Generic API integration never takes over
+a network another integration discovered, and never writes addresses into one.
+
 ### Moving a network to another block
 
 **Move to block…** in the row menu re-parents a network onto a different block.
@@ -238,7 +245,7 @@ depending on what is there:
 | `dns_resolved` | takeover — it defers to everything |
 | `fortiswitch` / `fortinap` **with `dhcpBinding: "lease"`** | takeover |
 | `vip` | **takeover** — the VIP is kept, see below ([rule 77](Business-Rules#rule-77)) |
-| `manual`, `dhcp_reservation`, `interface_ip` | **409** — authoritative |
+| `manual`, `dhcp_reservation`, `interface_ip`, `external` | **409** — authoritative |
 | infra rows not backed by a lease | 409 |
 
 A takeover is a plain **create** gated on your `reservations:write`, not a

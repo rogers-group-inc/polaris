@@ -382,6 +382,13 @@ function _ipAllocationPresentation(r, active, ctx) {
   if (active && (r.sourceType === "dhcp_reservation" || r.owner === "dhcp-reservation")) {
     return { dotClass: "ip-dot-dhcp-reservation", label: "DHCP Reservation", short: "Reserved", tooltip: "", urgent: false };
   }
+  if (active && r.sourceType === "external") {
+    return {
+      dotClass: "ip-dot-dhcp-reservation", label: "External IPAM", short: "External",
+      tooltip: "Allocated in another IPAM and read by a Generic API integration. Released when that system stops listing it.",
+      urgent: false,
+    };
+  }
   if (active && (r.sourceType === "dhcp_lease" || r.owner === "dhcp-lease")) {
     return { dotClass: "ip-dot-dhcp-lease", label: "DHCP Lease", short: "Leased", tooltip: "", urgent: false };
   }

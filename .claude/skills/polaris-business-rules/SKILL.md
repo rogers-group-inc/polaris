@@ -45,7 +45,7 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 
 | You are about to… | Read |
 |---|---|
-| touch subnets, blocks, reservations, CIDR math, DHCP leases | rules 1–7 and 11; 20a, 23, 26, 41, 42, 69, 77 |
+| touch subnets, blocks, reservations, CIDR math, DHCP leases | rules 1–7 and 11; 20a, 23, 26, 41, 42, 69, 77; 100(j) for a Generic API feed writing IPAM |
 | touch what the IP panel's Status column SAYS about an address, a FortiGate VIP or virtual server, `vipInfo`, or whether an address can be reserved at all | 23 first (the two-facts split), then 77 (the third fact and the composed pill) |
 | touch Asset status, `monitored`, `lastSeen`, `acquiredAt` | 9, 10; 12, 16, 36, 37 |
 | touch probes, `monitorStatus`, the failure bucket, packet loss, dependency suppression | 29, 30, 36, 38, 55, 59, 66, 67, 78, 86, 90, 91 — the state machine itself is `polaris-change-impact` → cross-cutting/five-state-monitor-machine.md |

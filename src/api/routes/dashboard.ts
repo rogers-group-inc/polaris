@@ -53,6 +53,7 @@ const RESERVATION_SOURCE_TYPES = new Set([
   "fortinap",
   "fortimanager",
   "fortigate",
+  "external",
   "dns_resolved",
 ]);
 

@@ -40,6 +40,10 @@ enum ReservationSourceType {
   fortimanager
   fortigate
   dns_resolved
+  // An address allocated in ANOTHER IPAM, read by a Generic API network
+  // query (business rule 100(j)). Deliberate (rule 40), never pushed, never
+  // supersedable by a create — released when the feed stops listing it.
+  external
 }
 
 enum ConflictStatus {

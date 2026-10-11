@@ -1709,6 +1709,13 @@ list*. In practice:
   monitored. When the API cannot be reached, a probe is skipped rather than
   failed, so one outage never marks a fleet down. An asset the API answers for
   without listing it is down.
+- **It can be a network source, below every other.** Network queries write
+  subnets, leases, reservations and external IP assignments into IPAM. A network
+  is created only inside a block and never over an overlapping, excluded or
+  retired one. A network another integration discovered is never taken over or
+  written into. A manual reservation is never overwritten: a difference is a
+  conflict. Reservations and assignments the feed drops are released only after
+  a complete read; leases simply expire. Nothing is pushed to a device.
 
 ### Rule 101
 
