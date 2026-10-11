@@ -567,6 +567,12 @@ The registry holds every tag, its category and colour, and optionally a
 **device filter that auto-assigns it**. A preview reports the match count, a
 sample, and the `+add` / `-remove` delta against the tag's current assignments.
 
+Every install starts with five tags in the **Priority** category, one per alert
+severity and coloured to match it: **Notice**, **Informational**, **Warning**,
+**Serious** and **Critical**. They are ordinary manual tags, so you can rename,
+recolour or delete them, or give them a device filter. A tag you already had
+under one of those names is left exactly as it was, whatever its category.
+
 Two locked behaviours:
 
 - Writes **refuse the Device-Map-owned "Map Regions" category** — those rows
