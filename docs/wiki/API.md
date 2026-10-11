@@ -133,18 +133,24 @@ or a FortiGate / FortiSwitch / FortiAP managed by a Fortinet integration, is a
 `409`. While pinned, discovery does not change `ipAddress`, except to follow a
 renumber: when the pinned IP has gone unseen for 24 hours and the same MAC has
 exactly one recently seen address, the pin moves to it. Typing or clearing the
-IP through `PUT /assets/:id` releases the pin, as does `DELETE`. See
-[rule 102](Business-Rules#rule-102).
+IP through `PUT /assets/:id` releases the pin, as does `DELETE`, which moves the
+device to the address on its own list with the highest `evidenceScore` (network
+evidence including polling, no operator weight; a tie keeps the current
+address). Only when the list is empty does `DELETE` fall back to what discovery
+reports. See [rule 102](Business-Rules#rule-102) and
+[rule 103](Business-Rules#rule-103).
 
 `GET /assets/:id` carries `addressConfidence`, a score for every address on
-the device keyed by IP: `{ score, evidenceScore, band, evidenceBand, parts,
-penalties }`. `score` runs 0–100 and counts an operator's pin or typed address;
-`evidenceScore` is the network evidence alone. `band` is `high` (80 and up),
+the device keyed by IP: `{ score, evidenceScore, discoveryScore, band,
+evidenceBand, parts, penalties }`. `score` runs 0–100 and counts an operator's
+pin or typed address; `evidenceScore` is the network evidence alone;
+`discoveryScore` (0–100) is discovery's evidence alone — no operator, no
+polling — and is what the automatic pin release compares. `band` is `high` (80 and up),
 `medium` (50), `low` (20) or `very-low`. Each `parts` entry is one kind of
 evidence (`{ kind, label, device, seenAt, hours, value }`) and each `penalties`
 entry is `{ kind, factor, detail }`. The list returns the compact form,
-`{ score, band }` per address. The score is informational: nothing alerts or
-decides on it.
+`{ score, band }` per address. Nothing alerts on the score; it only picks the
+address an unpinned device moves to and when a pin is released.
 
 `POST /assets/:id/address-check` (`assets:write`) takes `{ ip, probe? }` and
 returns the same fields for that address plus `warn` (true when

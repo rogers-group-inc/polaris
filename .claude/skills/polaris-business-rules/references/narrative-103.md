@@ -7,6 +7,7 @@ Each rule records the decision *and the incident or constraint that forced it*. 
 
 - [Rule 103](#rule-103) — How sure Polaris is of an address is a score the evidence earns, the operator's choice counts but cannot vouch for itself, and the score only informs
 - [Rule 103(a)](#rule-103a) — a pin the network comes to back is released
+- [Rule 103(b)](#rule-103b) — unpinning moves to the best-backed listed address
 
 <a id="rule-103"></a>
 
@@ -87,3 +88,21 @@ What it does not settle: after release, rule 101's ladder decides again, and the
 ### Tuning
 
 The weights and half-lives are reasoned, not fitted. They live in one table (`EVIDENCE_KINDS`) so they can be tuned against what operators see; change them there, together with this table and the wiki's.
+
+<a id="rule-103b"></a>
+
+### 103(b), and the evidence gaps found the same day
+
+The owner tried it on prod within hours, and three reports came back:
+
+1. **"I unpinned a 92 and it went to a lower one."** Unpin re-projected the address from the AssetSource blobs, through rule 101's ladder and the projection's source order — a different decision system from the score the operator had just been reading. A 92 is also mostly the operator's own weight plus polling credit, so the comparison on screen was not like for like.
+2. **"I removed every other MAC and unpinned, and it chose an address that wasn't in the list."** The same re-projection: a removed MAC takes its address rows with it (rule 79 / 102), but a source blob — the FortiGate endpoint record, vCenter, Arc — keeps the IP from its last sync until that integration runs again.
+3. **"Switches score high, access points all show 0, and this AP has a polling history and the FortiManager source shows this IP."** The score read only three source kinds. Discovery keeps Fortinet infrastructure off the address list on purpose (its address is the management IP), so a switch scored only because its own SNMP interface table fills the list; an AP has no interface table and had no evidence at all. And the polling run only began at the first success after the update, so months of answers counted for nothing.
+
+The fixes:
+
+- **103(b): unpin chooses from the list, by the score.** `unpinPrimaryAddress` moves to the listed address with the highest `evidenceScore` — no operator weight (the pin is being removed), polling included (the address monitoring has relied on keeps that credit). Ties keep the current address. The projection decides only when the list is empty, which is exactly when there is nothing on screen to contradict it. This is a partial unification: discovery's next pass still writes rule 101's winner, so where the ladder and the score disagree the asset can still move. Making one system decide both — the score choosing the unpinned primary, with hysteresis so two close addresses don't trade places — was proposed and left for the owner to decide with real numbers in hand.
+- **Every address-carrying source counts.** `SOURCE_ADDRESS_KINDS` mirrors the projection's IP rules: a source the projection would use to SET the address is evidence for it. The three Fortinet infra kinds count as `controller` (0.90, 24 h) — the controller's roster naming the IP it reaches the device on; the hypervisor workloads as `hypervisor` (0.80, 6 h); vCenter hosts join vCenter VMs; the FortiGate endpoint record counts modestly (0.50, 12 h), since it is derived from the same claims as the address rows and mostly matters for an address the list no longer carries.
+- **Polling is seeded from history.** `seedPollingRuns` sets an empty run's start to the latest of: the oldest retained probe sample (credit is never claimed for time with no record), the last failed probe in a 30-day lookback, and when the address became the asset's (`AssetIpHistory.firstSeen`). One statement at startup, idempotent, reaching only rows still without a run.
+
+Alongside, not part of the rule: the MAC list's × did nothing when the asset panel was opened from global search on another page, because its click handler was registered inside the Assets page's own init, which returns early elsewhere. It is now wired at load like the pin buttons (`tests/unit/assetPanelClickWiring.test.ts`).

@@ -387,17 +387,21 @@
             monitoring state, discovered attributes, associated IPs and MAC addresses.
             <code>404</code> when absent.</p>
           <p><code>addressConfidence</code> scores every address on the device, keyed by IP:
-            <code>{ "10.20.30.4": { score, evidenceScore, band, evidenceBand, parts, penalties } }</code>.
+            <code>{ "10.20.30.4": { score, evidenceScore, discoveryScore, band, evidenceBand, parts, penalties } }</code>.
             <code>score</code> is 0–100 and includes an operator's pin or typed address;
-            <code>evidenceScore</code> is the network evidence alone. <code>band</code> is
+            <code>evidenceScore</code> is the network evidence alone; <code>discoveryScore</code>
+            (0–100) is discovery's evidence alone &mdash; no operator, no polling &mdash; and is
+            what the automatic pin release compares. <code>band</code> is
             <code>high</code> (80 and up), <code>medium</code> (50), <code>low</code> (20) or
             <code>very-low</code>. Each entry in <code>parts</code> is one kind of evidence &mdash;
             <code>{ kind, label, device, seenAt, hours, value }</code>: the device's own interface
-            table, a gate seeing it online, a held DHCP reservation or lease, an ARP entry, a
-            vCenter guest IP, an Azure Arc profile, a Generic API feed, or how long Polaris's own
+            table, a gate seeing it online, a held DHCP reservation or lease, an ARP entry, the
+            management IP a FortiGate, FortiSwitch or FortiAP record names, a vCenter guest or host
+            IP, a Proxmox, Unraid or TrueNAS host, VM or container record, an Azure Arc profile, a
+            FortiGate endpoint record, a Generic API feed, or how long Polaris's own
             polling has answered on it &mdash; and each entry in <code>penalties</code> is
-            <code>{ kind, factor, detail }</code>. The score is informational: nothing alerts or
-            decides on it. The list (<code>GET /assets</code>) carries the compact form,
+            <code>{ kind, factor, detail }</code>. Nothing alerts on the score; it only picks
+            the address an unpinned device moves to and when a pin is released. The list (<code>GET /assets</code>) carries the compact form,
             <code>{ score, band }</code> per address.</p>
         </div>
 
@@ -591,9 +595,12 @@
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-delete">DELETE</span> /assets/:id/primary-address
             <span class="gate">assets:write</span></div>
-          <p>Release the pin → <code>{ ipAddress }</code>. The address goes back to what
-            discovery reports (a device no source reports keeps the one it has). A device with no
-            pin is left as it is.</p>
+          <p>Release the pin → <code>{ ipAddress }</code>. The device moves to the address on
+            its own list (<code>associatedIps</code>) with the highest <code>evidenceScore</code>
+            &mdash; network evidence including polling, no operator weight; a tie keeps the current
+            address. Only when the list is empty does the address go back to what discovery
+            reports (a device no source reports keeps the one it has). A device with no pin is
+            left as it is.</p>
         </div>
 
         <div class="endpoint">

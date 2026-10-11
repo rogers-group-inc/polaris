@@ -53,6 +53,31 @@ const ROW_SOURCE_KIND: Record<string, EvidenceKind> = {
 
 const ALIVE_ELSEWHERE_WINDOW_MS = 60 * 60 * 1000;
 
+type Observed = Record<string, unknown>;
+const field = (name: string) => (o: Observed, ip: string) => o[name] === ip;
+
+/**
+ * Every AssetSource kind whose observed blob carries an address, the field it
+ * carries it in, and the evidence kind it counts as. The same fields
+ * utils/assetProjection.ts → IP_ADDRESS_RULES projects from — a source the
+ * projection would use to SET the address is evidence for it. Missing the
+ * three Fortinet infra kinds left every FortiAP at 0 (prod 2026-10-11): an AP
+ * has no interface table, and discovery keeps infra off the address list.
+ */
+const SOURCE_ADDRESS_KINDS = new Map<string, { kind: EvidenceKind; carries: (o: Observed, ip: string) => boolean }>([
+  ["fortigate-firewall", { kind: "controller", carries: field("mgmtIp") }],
+  ["fortiswitch", { kind: "controller", carries: field("mgmtIp") }],
+  ["fortiap", { kind: "controller", carries: field("mgmtIp") }],
+  ["vcenter-vm", { kind: "vcenter", carries: field("guestIp") }],
+  ["vcenter-host", { kind: "vcenter", carries: field("resolvedIp") }],
+  ...(["unraid-host", "truenas-host", "proxmox-node", "unraid-vm", "truenas-vm", "proxmox-qemu",
+       "unraid-container", "truenas-app", "proxmox-lxc"] as const)
+    .map((k) => [k, { kind: "hypervisor" as EvidenceKind, carries: field("ip") }] as const),
+  ["arc", { kind: "arc", carries: (o, ip) => Array.isArray(o.ipAddresses) && (o.ipAddresses as unknown[]).includes(ip) }],
+  ["fortigate-endpoint", { kind: "endpoint-sighting", carries: field("ipAddress") }],
+  ["generic-api", { kind: "generic-api", carries: field("ip") }],
+]);
+
 export type AddressConfidenceMap = Map<string, Map<string, ConfidenceResult>>;
 
 interface AssetEvidenceRow {
@@ -114,7 +139,7 @@ export async function buildAddressConfidence(
       select: { ipAddress: true, macAddress: true, lastSeenLeased: true, subnet: { select: { fortigateDevice: true } } },
     }),
     prisma.assetSource.findMany({
-      where: { assetId: { in: [...assetIds] }, sourceKind: { in: ["vcenter-vm", "arc", "generic-api"] }, inferred: false },
+      where: { assetId: { in: [...assetIds] }, sourceKind: { in: [...SOURCE_ADDRESS_KINDS.keys()] }, inferred: false },
       select: { assetId: true, sourceKind: true, observed: true, lastSeen: true },
     }),
     prisma.asset.findMany({
@@ -174,15 +199,9 @@ export async function buildAddressConfidence(
       }
       for (const s of sourcesByAsset.get(a.id) ?? []) {
         const o = (s.observed ?? {}) as Record<string, unknown>;
-        const carries =
-          s.sourceKind === "vcenter-vm" ? o.guestIp === ip
-          : s.sourceKind === "arc" ? Array.isArray(o.ipAddresses) && (o.ipAddresses as unknown[]).includes(ip)
-          : o.ip === ip;
-        if (!carries) continue;
-        evidence.push({
-          kind: s.sourceKind === "vcenter-vm" ? "vcenter" : s.sourceKind === "arc" ? "arc" : "generic-api",
-          seenAt: s.lastSeen,
-        });
+        const spec = SOURCE_ADDRESS_KINDS.get(s.sourceKind);
+        if (!spec || !spec.carries(o, ip)) continue;
+        evidence.push({ kind: spec.kind, seenAt: s.lastSeen });
       }
       const hours = pollingHoursFor(ip, a, nowMs);
       if (hours > 0) evidence.push({ kind: "polling", hours });
@@ -270,6 +289,61 @@ export async function checkAddressConfidence(
     warnBelow: CONFIDENCE_WARN_BELOW,
     probe: probe ? { answered: probe.success, error: probe.success ? null : (probe.error ?? null) } : null,
   };
+}
+
+/** How far back the seed looks for the last failed probe. */
+export const POLLING_SEED_LOOKBACK_DAYS = 30;
+
+/**
+ * Seed the polling run (Asset.ipConfirmedFor / ipConfirmedSince) for monitored
+ * assets that have none, from the probe history already on disk — otherwise
+ * every device that had answered for months started at zero polling credit
+ * the day rule 103 shipped (prod 2026-10-11).
+ *
+ * The run is taken to start at the LATEST of: when the current address became
+ * the asset's (AssetIpHistory.firstSeen), the last failed probe in the
+ * lookback, and the oldest probe sample in the lookback (credit is never
+ * claimed for time with no record). Only assets that are monitored, not down,
+ * have an address and at least one successful sample qualify. Idempotent: a
+ * row with a run is never touched, so the probe path's own runs stand.
+ *
+ * One statement. The two sample aggregates are per-asset lookups on the
+ * (assetId, timestamp) index, bounded to the lookback, and the statement only
+ * reaches rows whose run is still empty — after the first boot, only assets
+ * that have never answered.
+ */
+export async function seedPollingRuns(): Promise<number> {
+  return prisma.$executeRawUnsafe(`
+    WITH bounds AS (
+      SELECT (now() AT TIME ZONE 'UTC') - interval '${POLLING_SEED_LOOKBACK_DAYS} days' AS since
+    ),
+    cand AS (
+      SELECT a.id, a."ipAddress",
+        (SELECT max(s."timestamp") FROM "asset_monitor_samples" s, bounds b
+          WHERE s."assetId" = a.id AND s.success = false AND s."timestamp" >= b.since) AS last_fail,
+        (SELECT min(s."timestamp") FROM "asset_monitor_samples" s, bounds b
+          WHERE s."assetId" = a.id AND s."timestamp" >= b.since) AS first_sample,
+        (SELECT h."firstSeen" FROM "asset_ip_history" h
+          WHERE h."assetId" = a.id AND h.ip = a."ipAddress") AS ip_first_seen
+      FROM "assets" a
+      WHERE a.monitored = true
+        AND a."ipAddress" IS NOT NULL
+        AND a."ipConfirmedSince" IS NULL
+        AND a."monitorStatus" IS DISTINCT FROM 'down'
+        AND EXISTS (SELECT 1 FROM "asset_monitor_samples" s, bounds b
+                     WHERE s."assetId" = a.id AND s.success = true AND s."timestamp" >= b.since)
+    )
+    UPDATE "assets" t
+       SET "ipConfirmedFor" = cand."ipAddress",
+           "ipConfirmedSince" = GREATEST(
+             cand.first_sample,
+             COALESCE(cand.last_fail, '-infinity'::timestamp),
+             COALESCE(cand.ip_first_seen, '-infinity'::timestamp)
+           )
+      FROM cand
+     WHERE t.id = cand.id
+       AND cand.first_sample IS NOT NULL
+  `);
 }
 
 /** One asset's scores as a plain object keyed by IP — the API shape. */

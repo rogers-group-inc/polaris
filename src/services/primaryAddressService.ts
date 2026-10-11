@@ -120,32 +120,50 @@ export async function pinPrimaryAddress(input: {
 export async function unpinPrimaryAddress(input: { assetId: string; actor: string }): Promise<{ ipAddress: string | null }> {
   const asset = await prisma.asset.findUnique({
     where: { id: input.assetId },
-    select: { id: true, hostname: true, ipAddress: true, primaryAddressMac: true, primaryAddressIp: true },
+    select: {
+      id: true, hostname: true, ipAddress: true, primaryAddressMac: true, primaryAddressIp: true,
+      associatedIpRows: { select: { ip: true, device: true } },
+    },
   });
   if (!asset) throw new AppError(404, "Asset not found");
   if (!asset.primaryAddressMac) return { ipAddress: asset.ipAddress };
 
-  const sources = await prisma.assetSource.findMany({
-    where: { assetId: asset.id },
-    select: { sourceKind: true, inferred: true, observed: true, lastSeen: true },
-  });
-  const { projected, provenance } = projectAssetFromSources(
-    sources.map((s) => ({
-      sourceKind: s.sourceKind,
-      inferred: s.inferred,
-      observed: s.observed as Record<string, unknown> | null,
-      lastSeen: s.lastSeen,
-    })),
-  );
-  // No source with an opinion (a manually created asset) keeps the address it
-  // has rather than blanking it.
-  const nextIp = projected.ipAddress ?? asset.ipAddress;
+  // The address list decides (business rule 103(b)): the listed address with
+  // the highest network-evidence score — the score the operator saw on the
+  // chips, minus their own pin. Re-projecting from the AssetSource blobs
+  // instead could land on an address that is not on the list at all: a source
+  // keeps the IP from its last sync after the operator removed that MAC and
+  // its addresses (prod 2026-10-11).
+  const pick = await bestListedAddress(asset.id, asset.associatedIpRows.map((r) => r.ip), asset.ipAddress);
+  let nextIp: string | null;
+  let nextSource: string | null;
+  if (pick) {
+    nextIp = pick.ip;
+    nextSource = asset.associatedIpRows.find((r) => r.ip === pick.ip)?.device || "discovery";
+  } else {
+    // An empty list (nothing discovered, nothing typed) falls back to the
+    // projection; no source with an opinion keeps the address it has.
+    const sources = await prisma.assetSource.findMany({
+      where: { assetId: asset.id },
+      select: { sourceKind: true, inferred: true, observed: true, lastSeen: true },
+    });
+    const { projected, provenance } = projectAssetFromSources(
+      sources.map((s) => ({
+        sourceKind: s.sourceKind,
+        inferred: s.inferred,
+        observed: s.observed as Record<string, unknown> | null,
+        lastSeen: s.lastSeen,
+      })),
+    );
+    nextIp = projected.ipAddress ?? asset.ipAddress;
+    nextSource = projected.ipAddress ? (provenance.ipAddress ?? "discovery") : (nextIp ? "manual" : null);
+  }
   await prisma.asset.update({
     where: { id: asset.id },
     data: {
       ...CLEAR_PRIMARY_ADDRESS_PIN,
       ipAddress: nextIp,
-      ipSource: projected.ipAddress ? (provenance.ipAddress ?? "discovery") : (nextIp ? "manual" : null),
+      ipSource: nextSource,
     },
   });
   logEvent({
@@ -155,9 +173,36 @@ export async function unpinPrimaryAddress(input: { assetId: string; actor: strin
     resourceName: asset.hostname || asset.primaryAddressIp || asset.id,
     actor: input.actor,
     message: `Primary address pin on "${asset.hostname || asset.id}" released (was ${asset.primaryAddressIp} on ${asset.primaryAddressMac})`,
-    details: { mac: asset.primaryAddressMac, ipAddress: asset.primaryAddressIp, nextIp },
+    details: {
+      mac: asset.primaryAddressMac, ipAddress: asset.primaryAddressIp, nextIp,
+      ...(pick ? { chosenBy: "address-confidence", evidenceScore: pick.evidenceScore } : { chosenBy: "projection" }),
+    },
   });
   return { ipAddress: nextIp };
+}
+
+/**
+ * The listed address with the highest network-evidence score (no operator
+ * weight; polling counts — the address monitoring has relied on keeps that
+ * credit). Ties keep the current address, then the lowest IP string, so a
+ * re-run picks the same one. Null when the list is empty.
+ */
+async function bestListedAddress(
+  assetId: string,
+  listed: string[],
+  current: string | null,
+): Promise<{ ip: string; evidenceScore: number } | null> {
+  const candidates = [...new Set(listed)];
+  if (candidates.length === 0) return null;
+  const scores = (await buildAddressConfidence([assetId])).get(assetId);
+  let best: { ip: string; evidenceScore: number } | null = null;
+  for (const ip of candidates.sort()) {
+    const s = scores?.get(ip)?.evidenceScore ?? 0;
+    if (!best || s > best.evidenceScore || (s === best.evidenceScore && ip === current)) {
+      best = { ip, evidenceScore: s };
+    }
+  }
+  return best;
 }
 
 /** Pinned assets scored per batch by the release sweep. */

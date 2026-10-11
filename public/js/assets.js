@@ -767,9 +767,9 @@ document.addEventListener("DOMContentLoaded", async function () {
   // Frozen header + pagination: the wrapper carries .table-wrapper-sticky and
   // is viewport-bounded by the shared sizeStickyTableWrappers() in app.js
   // (hooked into renderPageControls / clearPageControls + window resize).
-  // MAC tooltips are promoted to <body>, so delegate on document so the
-  // delete button works regardless of where the tooltip lives.
-  document.addEventListener("click", _handleMacDeleteClick);
+  // (The MAC-remove click handler is wired at load, below
+  // _handleMacDeleteClick — not here, because this init never runs when the
+  // asset panel opens on another page through global search.)
   document.getElementById("assets-bulk-delete-btn").addEventListener("click", bulkDeleteAssets);
   var bEdit = document.getElementById("assets-bulk-edit-btn");
   if (bEdit) bEdit.addEventListener("click", bulkEditSelectedAsset);
@@ -1673,11 +1673,21 @@ async function _handleMacDeleteClick(e) {
         if (tabBtn) tabBtn.click();
       }
     }
-    loadAssets();
+    // Only the Assets page has a table to refresh.
+    if (document.getElementById("assets-tbody")) loadAssets();
   } catch (err) {
     btn.disabled = false;
     showToast(err.message, 'error');
   }
+}
+// Wired at load, not in the Assets page's init: that init returns early on
+// every other page, but the asset panel opens on any page through global
+// search (PolarisPanels), and its × was drawn with nothing listening. MAC
+// tooltips are promoted to <body>, hence document-level delegation. Guarded
+// because assets.js can be evaluated twice.
+if (!window.__polarisMacDeleteWired) {
+  window.__polarisMacDeleteWired = true;
+  document.addEventListener("click", _handleMacDeleteClick);
 }
 
 // Render the list-controls row: page navigation, the "Show N" page-size
@@ -18626,7 +18636,7 @@ function primaryAddressPinHTML(asset) {
   }
   if (canManageAssets()) {
     html += ' <button type="button" class="btn btn-sm btn-secondary primary-address-unpin" style="margin-left:6px;padding:1px 6px;font-size:0.72rem" ' +
-      'data-asset-id="' + escapeHtml(asset.id) + '" title="Release the pin — the address goes back to what discovery reports">Unpin</button>';
+      'data-asset-id="' + escapeHtml(asset.id) + '" title="Release the pin — the asset moves to its best-backed listed address">Unpin</button>';
   }
   return html;
 }
@@ -18944,7 +18954,7 @@ async function _handlePrimaryAddressClick(e) {
       return;
     }
   } else {
-    ok = await showConfirm('Release the pinned primary address?\n\nThe address goes back to what discovery reports.');
+    ok = await showConfirm('Release the pinned primary address?\n\nThe asset moves to the listed address with the highest confidence; discovery manages it from then on.');
     if (!ok) return;
     btn.disabled = true;
     try {
