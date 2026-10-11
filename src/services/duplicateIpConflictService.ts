@@ -166,6 +166,9 @@ export const DELIBERATE_RESERVATION_SOURCE_TYPES = [
   "dhcp_reservation",
   "interface_ip",
   "vip",
+  // An allocation made in another IPAM (rule 100(j)) is as deliberate as a
+  // reservation made here.
+  "external",
 ];
 
 /** Safety cap on the duplicate scan's result set (rows, not groups). */

@@ -27,7 +27,7 @@ import http from "node:http";
 import https from "node:https";
 import { AppError } from "../utils/errors.js";
 import { assertOutboundHostAllowed } from "../utils/netGuard.js";
-import { isValidIpAddress } from "../utils/cidr.js";
+import { isValidIpAddress, normalizeCidr } from "../utils/cidr.js";
 import { normalizeMacsDistinct } from "../utils/mac.js";
 import { usableSerialOrNull } from "../utils/serialNumber.js";
 import {
@@ -220,6 +220,50 @@ export const GENERIC_API_MONITOR_LIMITS = {
   defaultAssetConcurrency: 4,
 } as const;
 
+// ─── Network queries (rule 100(j)) ─────────────────────────────────────────────
+//
+// A network query reads address space out of the feed into IPAM: subnets,
+// DHCP leases, DHCP reservations, or addresses allocated in another IPAM
+// ("assignments"). Each is one request (paged like the inventory when
+// `paginate`) whose records each map to one subnet or one address. Written by
+// services/discovery/genericApiNetworkSync.ts, which owns what a feed may and
+// may not do to IPAM.
+
+export const GENERIC_API_NETWORK_KINDS = ["subnets", "leases", "reservations", "assignments"] as const;
+export type GenericApiNetworkKind = (typeof GENERIC_API_NETWORK_KINDS)[number];
+
+/** The keys each kind's `map` may name, and the groups of which one is required. */
+export const GENERIC_API_NETWORK_FIELDS: Record<GenericApiNetworkKind, { keys: readonly string[]; required: readonly string[][] }> = {
+  subnets:      { keys: ["cidr", "network", "prefixLength", "netmask", "name", "vlan", "purpose"], required: [["cidr", "network"]] },
+  leases:       { keys: ["ipAddress", "macAddress", "hostname", "expiresAt"], required: [["ipAddress"]] },
+  reservations: { keys: ["ipAddress", "macAddress", "hostname"], required: [["ipAddress"]] },
+  assignments:  { keys: ["ipAddress", "hostname", "macAddress", "owner", "notes"], required: [["ipAddress"]] },
+};
+
+/** The Reservation.sourceType each address kind is written as. */
+export const GENERIC_API_ADDRESS_SOURCE_TYPE = {
+  leases: "dhcp_lease",
+  reservations: "dhcp_reservation",
+  assignments: "external",
+} as const;
+
+export interface GenericApiNetworkQuery {
+  name?: string;
+  kind: GenericApiNetworkKind;
+  path: string;
+  method?: "GET" | "POST";
+  body?: string;
+  recordsPath?: string;
+  paginate?: boolean;
+  map?: Record<string, string>;
+}
+
+export const GENERIC_API_NETWORK_LIMITS = {
+  maxQueries: 10,
+  /** A lease the feed gives no expiry for lives this long past the run that saw it, at least. */
+  defaultLeaseHours: 24,
+} as const;
+
 export interface GenericApiConfig {
   host: string;
   port?: number;
@@ -254,6 +298,14 @@ export interface GenericApiConfig {
   monitorQueries?: GenericApiMonitorQuery[];
   /** Integration-tier monitor settings — `syncGenericApiMonitorDefaults` keeps its polling keys in step with the queries. */
   monitorSettings?: Record<string, unknown>;
+  /** Address space read into IPAM (rule 100(j)). */
+  networkQueries?: GenericApiNetworkQuery[];
+  /** Deprecate a subnet this feed owns once a complete read no longer lists it (off by default). */
+  deprecateMissingSubnets?: boolean;
+  /** Release a reservation / assignment this feed wrote once a complete read no longer lists it (on by default). */
+  releaseMissingAddresses?: boolean;
+  /** Off: a network-only feed — no device sync, no identity mapping (rule 100(j)). */
+  readDevices?: boolean;
   identityField?: GenericApiIdentityField;
   /** The asset type for a record whose mapped type is blank or unknown. */
   assetTypeDefault?: string;
@@ -390,6 +442,50 @@ export function findInvalidPath(config: Pick<GenericApiConfig, "recordsPath" | "
  * path and has no placeholders, and that widget names are unique per
  * integration (a widget's samples are keyed by its name).
  */
+/**
+ * The first problem with the network queries, or null: a safe path with no
+ * placeholders (a network query answers for the whole feed), map keys the
+ * kind takes, the required ones present, every path parsing.
+ */
+export function findInvalidNetworkQuery(config: Pick<GenericApiConfig, "networkQueries">): string | null {
+  const checkPath = (label: string, p: string | undefined): string | null => {
+    if (!p || !p.trim()) return null;
+    try { parseJsonPath(p); return null; } catch (err) {
+      return `${label}: ${err instanceof JsonPathError ? err.message : String(err)}`;
+    }
+  };
+  const queries = config.networkQueries ?? [];
+  for (let i = 0; i < queries.length; i++) {
+    const q = queries[i];
+    const label = `Network query ${i + 1}${q.name?.trim() ? ` ("${q.name.trim()}")` : ""}`;
+    if (!(GENERIC_API_NETWORK_KINDS as readonly string[]).includes(q.kind)) return `${label}: unknown kind "${q.kind}"`;
+    if (!(q.path ?? "").trim() || !isSafeRequestPath(q.path)) return `${label}: the path must start with a single "/"`;
+    for (const [where, tpl] of [["path", q.path], ["body", q.body]] as const) {
+      const ph = detailPlaceholders(tpl);
+      if (ph === null || ph.length > 0) return `${label}: a network query reads the whole feed at once, so its ${where} cannot hold {{…}} placeholders`;
+    }
+    const recBad = checkPath(`${label} records path`, q.recordsPath);
+    if (recBad) return recBad;
+    const spec = GENERIC_API_NETWORK_FIELDS[q.kind];
+    const map = q.map ?? {};
+    for (const [k, p] of Object.entries(map)) {
+      if (!p || !String(p).trim()) continue;
+      if (!spec.keys.includes(k)) return `${label}: "${k}" is not a ${q.kind} field (${spec.keys.join(", ")})`;
+      const bad = checkPath(`${label} ${k} path`, p);
+      if (bad) return bad;
+    }
+    for (const oneOf of spec.required) {
+      if (!oneOf.some((k) => (map[k] ?? "").trim())) {
+        return `${label}: map ${oneOf.length === 1 ? `"${oneOf[0]}"` : `one of ${oneOf.map((k) => `"${k}"`).join(" / ")}`} for ${q.kind}`;
+      }
+    }
+    if (q.kind === "subnets" && !(map.cidr ?? "").trim() && !(map.prefixLength ?? "").trim() && !(map.netmask ?? "").trim()) {
+      return `${label}: a network address needs "prefixLength" or "netmask" beside it (or map "cidr")`;
+    }
+  }
+  return null;
+}
+
 export function findInvalidMonitorQuery(config: Pick<GenericApiConfig, "monitorQueries">): string | null {
   const checkPath = (label: string, p: string | undefined): string | null => {
     if (!p || !p.trim()) return null;
@@ -1319,9 +1415,26 @@ export interface GenericApiTestResult {
  */
 export async function testConnection(config: GenericApiConfig): Promise<GenericApiTestResult> {
   try {
-    const bad = findInvalidPath(config);
+    const bad = findInvalidPath(config) ?? findInvalidNetworkQuery(config);
     if (bad) return { ok: false, message: bad };
     const headers = await buildRequestHeaders(config);
+    const device = config.readDevices === false ? null : await testDeviceRead(config, headers);
+    if (device && !device.ok) return device;
+    // Network queries (rule 100(j)): each must answer and map on its first page.
+    const net = await previewGenericApiNetwork(config, headers, 1);
+    const failed = net.find((n) => !n.ok);
+    if (failed) return { ok: false, message: `${device ? `${device.message}; but n` : "N"}etwork query "${failed.name}" — ${failed.message}` };
+    const netNote = net.length ? `${net.length} network quer${net.length === 1 ? "y" : "ies"} answered` : "";
+    if (!device) return { ok: true, message: `Connected — ${netNote || "no network queries"}` };
+    return { ok: true, message: `${device.message}${netNote ? `; ${netNote}` : ""}` };
+  } catch (err: any) {
+    return { ok: false, message: err?.message || "Connection failed" };
+  }
+}
+
+/** The device half of Test Connection: one page, mapped, and the detail queries for the first record. */
+async function testDeviceRead(config: GenericApiConfig, headers: Record<string, string>): Promise<GenericApiTestResult> {
+  {
     const fetched = await fetchGenericApiRecords(config, { maxPagesOverride: 1, headers });
     if (fetched.records.length === 0) {
       return {
@@ -1344,9 +1457,51 @@ export async function testConnection(config: GenericApiConfig): Promise<GenericA
       detailNote = `; ${queryCount} detail quer${queryCount === 1 ? "y" : "ies"} answered for the first record`;
     }
     return { ok: true, message: `Connected — first page: ${fetched.records.length} record(s), ${mappable.length} mapped${detailNote}` };
-  } catch (err: any) {
-    return { ok: false, message: err?.message || "Connection failed" };
   }
+}
+
+export interface GenericApiNetworkPreview {
+  name: string;
+  kind: GenericApiNetworkKind;
+  ok: boolean;
+  message: string;
+  sampleRecord: Record<string, unknown> | null;
+  rows: Array<{ index: number; outcome: { ok: true; value: GenericApiMappedSubnet | GenericApiMappedAddress } | { ok: false; reason: string } }>;
+}
+
+/** Each network query's first page, mapped — the Preview tab's network half and Test Connection's. */
+export async function previewGenericApiNetwork(
+  config: GenericApiConfig,
+  headers: Record<string, string>,
+  limit = 10,
+): Promise<GenericApiNetworkPreview[]> {
+  const out: GenericApiNetworkPreview[] = [];
+  for (const q of (config.networkQueries ?? []).slice(0, GENERIC_API_NETWORK_LIMITS.maxQueries)) {
+    const name = q.name?.trim() || q.kind;
+    try {
+      const fetched = await fetchGenericApiRecords({
+        ...config, path: q.path, method: q.method ?? "GET", body: q.body ?? "", recordsPath: q.recordsPath ?? "",
+        pagination: q.paginate ? config.pagination : { mode: "none" },
+      }, { maxPagesOverride: 1, headers });
+      const rows = fetched.records.slice(0, Math.max(1, Math.min(limit, 50))).map((rec, index) => ({
+        index,
+        outcome: q.kind === "subnets" ? mapNetworkSubnet(rec, q) : mapNetworkAddress(rec, q),
+      }));
+      const mapped = fetched.records.filter((rec) => (q.kind === "subnets" ? mapNetworkSubnet(rec, q) : mapNetworkAddress(rec, q)).ok).length;
+      const ok = fetched.records.length > 0 && mapped > 0;
+      out.push({
+        name, kind: q.kind, ok, rows, sampleRecord: fetched.records[0] ?? null,
+        message: fetched.records.length === 0
+          ? `the records path ${q.recordsPath ? `"${q.recordsPath}"` : "(the response root)"} found no records on the first page`
+          : mapped === 0
+            ? `read ${fetched.records.length} record(s), but none mapped: ${(rows[0]?.outcome as { reason?: string })?.reason ?? ""}`
+            : `first page: ${fetched.records.length} record(s), ${mapped} mapped`,
+      });
+    } catch (err: any) {
+      out.push({ name, kind: q.kind, ok: false, message: err?.message || "Request failed", sampleRecord: null, rows: [] });
+    }
+  }
+  return out;
 }
 
 export interface GenericApiPreview {
@@ -1360,15 +1515,26 @@ export interface GenericApiPreview {
   rows: Array<{ index: number; outcome: GenericApiMapOutcome; filteredOut: boolean; detailFailures: string[] }>;
   recordsOnFirstPage: number;
   warnings: string[];
+  /** Each network query's first page, mapped (rule 100(j)). */
+  network: GenericApiNetworkPreview[];
 }
 
 /** First page only — the Preview tab's answer to "what would discovery write?". */
 export async function previewGenericApi(config: GenericApiConfig, limit = 10): Promise<GenericApiPreview> {
-  const empty = { sampleRecord: null, sampleDetails: [], rows: [], recordsOnFirstPage: 0, warnings: [] };
-  const bad = findInvalidPath(config);
+  const empty = { sampleRecord: null, sampleDetails: [], rows: [], recordsOnFirstPage: 0, warnings: [], network: [] };
+  const bad = findInvalidPath(config) ?? findInvalidNetworkQuery(config);
   if (bad) return { ok: false, message: bad, ...empty };
   try {
     const headers = await buildRequestHeaders(config);
+    if (config.readDevices === false) {
+      const network = await previewGenericApiNetwork(config, headers, limit);
+      return {
+        ...empty,
+        ok: network.length > 0 && network.every((n) => n.ok),
+        message: "Devices are not read from this API — network queries only",
+        network,
+      };
+    }
     const fetched = await fetchGenericApiRecords(config, { maxPagesOverride: 1, headers });
     const include = (config.deviceInclude ?? []).filter((s) => s.trim());
     const exclude = (config.deviceExclude ?? []).filter((s) => s.trim());
@@ -1396,8 +1562,173 @@ export async function previewGenericApi(config: GenericApiConfig, limit = 10): P
       rows,
       recordsOnFirstPage: fetched.records.length,
       warnings: [...fetched.warnings, ...details.warnings],
+      network: await previewGenericApiNetwork(config, headers, limit),
     };
   } catch (err: any) {
     return { ok: false, message: err?.message || "Request failed", ...empty };
   }
+}
+
+// ─── Network discovery (rule 100(j)) ─────────────────────────────────────────
+
+export interface GenericApiMappedSubnet {
+  /** Normalized IPv4 CIDR (host bits zeroed, rule 5). */
+  cidr: string;
+  name: string | null;
+  vlan: number | null;
+  purpose: string | null;
+}
+
+export interface GenericApiMappedAddress {
+  ipAddress: string;
+  /** Colon-upper; the all-zero MAC is no MAC (rule 97). */
+  macAddress: string | null;
+  hostname: string | null;
+  /** leases: ISO expiry when the feed gives one. */
+  expiresAt: string | null;
+  owner: string | null;
+  notes: string | null;
+}
+
+/**
+ * One record → one IPv4 subnet, or why not. A CIDR may be mapped whole
+ * ("10.1.0.0/24") or as a network beside a prefix length or a dotted netmask.
+ * IPv6 is refused by name: IPAM's address math (utils/cidr.ts, netmask) is
+ * IPv4, and a v6 network written half-supported would mis-place every
+ * address in it.
+ */
+export function mapNetworkSubnet(
+  rec: Record<string, unknown>,
+  q: GenericApiNetworkQuery,
+): { ok: true; value: GenericApiMappedSubnet } | { ok: false; reason: string } {
+  const m = q.map ?? {};
+  let raw = readJsonPathString(rec, m.cidr);
+  if (!raw) {
+    const net = readJsonPathString(rec, m.network);
+    const len = readJsonPathString(rec, m.prefixLength) ?? readJsonPathString(rec, m.netmask);
+    if (!net || !len) return { ok: false, reason: `no network at "${m.cidr || m.network}"` };
+    raw = `${net.trim()}/${len.trim().replace(/^\//, "")}`;
+  }
+  const s = raw.trim();
+  if (s.includes(":")) return { ok: false, reason: `${s} is IPv6 — only IPv4 networks are read` };
+  let cidr: string;
+  try {
+    if (!/^\d{1,3}(\.\d{1,3}){3}\/(\d{1,2}|\d{1,3}(\.\d{1,3}){3})$/.test(s)) throw new Error("not a CIDR");
+    cidr = normalizeCidr(s);
+  } catch {
+    return { ok: false, reason: `"${s}" is not an IPv4 network` };
+  }
+  const vlanRaw = readJsonPathString(rec, m.vlan);
+  const vlanNum = vlanRaw !== null ? Number.parseInt(vlanRaw, 10) : NaN;
+  return {
+    ok: true,
+    value: {
+      cidr,
+      name: readJsonPathString(rec, m.name)?.slice(0, 200) ?? null,
+      vlan: Number.isInteger(vlanNum) && vlanNum >= 1 && vlanNum <= 4094 ? vlanNum : null,
+      purpose: readJsonPathString(rec, m.purpose)?.slice(0, 500) ?? null,
+    },
+  };
+}
+
+/** One record → one IPv4 address with what the kind carries, or why not. */
+export function mapNetworkAddress(
+  rec: Record<string, unknown>,
+  q: GenericApiNetworkQuery,
+): { ok: true; value: GenericApiMappedAddress } | { ok: false; reason: string } {
+  const m = q.map ?? {};
+  const rawIp = readJsonPathString(rec, m.ipAddress);
+  if (!rawIp) return { ok: false, reason: `no address at "${m.ipAddress}"` };
+  const ip = rawIp.split("/")[0].trim();
+  if (ip.includes(":")) return { ok: false, reason: `${ip} is IPv6 — only IPv4 addresses are read` };
+  if (!isValidIpAddress(ip)) return { ok: false, reason: `"${rawIp}" is not an IPv4 address` };
+  const mac = normalizeMacsDistinct(readJsonPathStrings(rec, m.macAddress))[0] ?? null;
+  return {
+    ok: true,
+    value: {
+      ipAddress: ip,
+      macAddress: mac,
+      hostname: readJsonPathString(rec, m.hostname)?.slice(0, 255) ?? null,
+      expiresAt: q.kind === "leases" ? parseLooseDate(readJsonPathString(rec, m.expiresAt)) : null,
+      owner: q.kind === "assignments" ? (readJsonPathString(rec, m.owner)?.slice(0, 255) ?? null) : null,
+      notes: q.kind === "assignments" ? (readJsonPathString(rec, m.notes)?.slice(0, 2000) ?? null) : null,
+    },
+  };
+}
+
+export interface GenericApiNetworkQueryResult {
+  index: number;
+  query: GenericApiNetworkQuery;
+  subnets: GenericApiMappedSubnet[];
+  addresses: GenericApiMappedAddress[];
+  /** False when the read stopped early, or failed — the sweeps never act on it. */
+  complete: boolean;
+  rawCount: number;
+  unmapped: number;
+  unmappedReasons: string[];
+  warnings: string[];
+  /** Set when the query could not be read at all. */
+  error: string | null;
+}
+
+/**
+ * Read every network query. One query failing costs that query (marked
+ * incomplete with its error) and never the others, nor the asset sync that
+ * already ran.
+ */
+export async function discoverGenericApiNetwork(
+  config: GenericApiConfig,
+  signal?: AbortSignal,
+  onProgress?: ProgressFn,
+): Promise<GenericApiNetworkQueryResult[]> {
+  const queries = (config.networkQueries ?? []).slice(0, GENERIC_API_NETWORK_LIMITS.maxQueries);
+  if (queries.length === 0) return [];
+  let headers: Record<string, string>;
+  try {
+    headers = await buildRequestHeaders(config, signal);
+  } catch (err) {
+    const error = (err as Error)?.message || "Could not authenticate";
+    return queries.map((query, index) => emptyNetworkResult(index, query, error));
+  }
+  const out: GenericApiNetworkQueryResult[] = [];
+  for (let index = 0; index < queries.length; index++) {
+    const query = queries[index];
+    if (signal?.aborted) { out.push(emptyNetworkResult(index, query, "The run was cancelled")); continue; }
+    const readCfg: GenericApiConfig = {
+      ...config,
+      path: query.path,
+      method: query.method ?? "GET",
+      body: query.body ?? "",
+      recordsPath: query.recordsPath ?? "",
+      pagination: query.paginate ? config.pagination : { mode: "none" },
+    };
+    try {
+      const fetched = await fetchGenericApiRecords(readCfg, { signal, headers });
+      const r = emptyNetworkResult(index, query, null);
+      r.complete = fetched.complete;
+      r.rawCount = fetched.records.length;
+      r.warnings = fetched.warnings;
+      for (const [i, rec] of fetched.records.entries()) {
+        const mapped = query.kind === "subnets" ? mapNetworkSubnet(rec, query) : mapNetworkAddress(rec, query);
+        if (!mapped.ok) {
+          r.unmapped++;
+          if (r.unmappedReasons.length < 5) r.unmappedReasons.push(`record ${i + 1}: ${mapped.reason}`);
+          continue;
+        }
+        if (query.kind === "subnets") r.subnets.push(mapped.value as GenericApiMappedSubnet);
+        else r.addresses.push(mapped.value as GenericApiMappedAddress);
+      }
+      onProgress?.("discover.network", "info", `${query.name || query.kind}: ${r.rawCount} record(s), ${r.unmapped} unmapped${r.complete ? "" : " — not read to the end"}`);
+      out.push(r);
+    } catch (err) {
+      const error = (err as Error)?.message || "The network query failed";
+      onProgress?.("discover.network", "error", `${query.name || query.kind}: ${error}`);
+      out.push(emptyNetworkResult(index, query, error));
+    }
+  }
+  return out;
+}
+
+function emptyNetworkResult(index: number, query: GenericApiNetworkQuery, error: string | null): GenericApiNetworkQueryResult {
+  return { index, query, subnets: [], addresses: [], complete: error === null, rawCount: 0, unmapped: 0, unmappedReasons: [], warnings: [], error };
 }

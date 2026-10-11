@@ -1177,6 +1177,18 @@ const GenericApiMonitorQuerySchema = z.object({
   useByDefault: z.boolean().optional().default(true),
 });
 
+const GenericApiNetworkQuerySchema = z.object({
+  name:        z.string().trim().max(100).optional().default(""),
+  kind:        z.enum(genericApi.GENERIC_API_NETWORK_KINDS),
+  path:        z.string().trim().min(1, "A network query needs a path").max(2000)
+    .refine((p) => genericApi.isSafeRequestPath(p), "A network query path must start with a single \"/\" (it may not name another host)"),
+  method:      z.enum(["GET", "POST"]).optional().default("GET"),
+  body:        z.string().max(20_000).optional().default(""),
+  recordsPath: z.string().trim().max(512).optional().default(""),
+  paginate:    z.boolean().optional().default(false),
+  map:         z.record(z.string().trim().max(512)).optional().default({}),
+});
+
 const GenericApiConfigSchema = z.object({
   host:      z.string().trim().min(1, "Host is required").max(255)
     .refine((h) => !/[\/\s]/.test(h), "Host is a name or an address only — put the path in Request path"),
@@ -1233,6 +1245,17 @@ const GenericApiConfigSchema = z.object({
   // integration/:id and by syncGenericApiMonitorDefaults). Carried through
   // unchanged — without it every save of the dialog would delete the tier.
   monitorSettings: z.record(z.unknown()).optional(),
+  // Address space read into IPAM (rule 100(j)). No `pushReservations` key, on
+  // purpose: a feed never writes to a device, and releaseReservation reads
+  // that key without checking the integration type.
+  networkQueries: z.array(GenericApiNetworkQuerySchema)
+    .max(genericApi.GENERIC_API_NETWORK_LIMITS.maxQueries, `At most ${genericApi.GENERIC_API_NETWORK_LIMITS.maxQueries} network queries`)
+    .optional().default([]),
+  deprecateMissingSubnets: z.boolean().optional().default(false),
+  releaseMissingAddresses: z.boolean().optional().default(true),
+  // Off: a network-only feed (an external IPAM) — no device sync, no identity
+  // mapping required.
+  readDevices: z.boolean().optional().default(true),
   identityField:       z.enum(["id", "serialNumber", "macAddress", "hostname"]).optional().default("id"),
   assetTypeDefault:    z.string().trim().max(32).optional().default("other"),
   assetTypeMap:        z.record(z.string().trim().max(32))
@@ -1268,13 +1291,22 @@ const GenericApiConfigSchema = z.object({
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["body"], message: "Request body is not valid JSON" });
     }
   }
-  if (!cfg.fieldMap[cfg.identityField]?.trim()) {
+  if (cfg.readDevices !== false && !cfg.fieldMap[cfg.identityField]?.trim()) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["fieldMap", cfg.identityField],
       message: `Map a path for the identity field (${cfg.identityField}) — it is what keeps one record on one asset`,
     });
   }
+  if (cfg.readDevices === false && cfg.networkQueries.length === 0 && cfg.monitorQueries.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["readDevices"],
+      message: "An integration that reads no devices needs at least one network query",
+    });
+  }
+  const badNetwork = genericApi.findInvalidNetworkQuery(cfg as genericApi.GenericApiConfig);
+  if (badNetwork) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["networkQueries"], message: badNetwork });
 });
 
 /** Server-stamped llm config keys a client may never set or overwrite. */

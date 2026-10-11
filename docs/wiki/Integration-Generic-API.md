@@ -25,6 +25,7 @@ many as you need, one per feed.
 | Merge a record into an asset another integration already found, on MAC or serial | Override a field a first-party source (Active Directory, vCenter, an agent…) reports |
 | Optionally decommission an asset whose record leaves the feed | Treat a record as proof the device is on the network |
 | Feed monitoring (up / down, CPU, interfaces, storage, temperatures, LLDP) and custom widgets from monitor queries | Decide which assets are monitored — a query only supplies the values |
+| Read subnets, DHCP leases, DHCP reservations and external IP assignments into IPAM | Push anything to a device, or take over a network another integration discovered |
 
 A record is an **inventory entry**, not evidence the device is online. Polaris
 never sets **Last Seen** from the feed. After each discovery a presence check
@@ -225,6 +226,57 @@ API, the credentials are refused, the integration is disabled, or a read stops
 part way. One API outage never marks every device down. An asset the API
 answers for without listing it (or a per-asset request that answers 404) is
 **down**.
+
+---
+
+## Network tab
+
+Network queries read **address space** from the API into [IPAM](IPAM). Each
+query is one request (tick **Page through it like the inventory request** to
+page it) and reads one kind of record:
+
+| Reads | Fields you map | Written as |
+|---|---|---|
+| Subnets | `cidr`, or `network` with `prefixLength` or `netmask`; `name`, `vlan`, `purpose` | a network |
+| DHCP leases | `ipAddress` (required), `macAddress`, `hostname`, `expiresAt` | `dhcp_lease` |
+| DHCP reservations | `ipAddress` (required), `macAddress`, `hostname` | `dhcp_reservation` |
+| IP assignments | `ipAddress` (required), `hostname`, `macAddress`, `owner`, `notes` | `external` — an address allocated in another IPAM |
+
+Fields are written one per line, `field = path`. Addresses and networks are
+**IPv4**; an IPv6 record is skipped and named in Preview.
+
+### What it writes, and what it leaves alone
+
+- **Networks** are created only inside an existing [block](IPAM#ip-blocks),
+  and never over an overlapping, [excluded](IPAM#exclusions) or retired
+  network. A network you created by hand is claimed: its name and purpose stay
+  yours. A network another integration discovered is never taken over, and
+  nothing is written into it.
+- **Addresses** are written only into networks this integration owns. If the
+  integration reads no networks of its own, the network an address falls in is
+  claimed for it. If it does read networks, addresses outside them are skipped.
+- A **manual reservation** is never overwritten. When the feed disagrees about
+  its hostname, owner or notes, a [conflict](Conflict-Resolution) is raised for
+  you to accept or reject. A VIP, an interface address or a managed switch or
+  AP's row is left alone.
+- A lease the feed gives no expiry for expires a day after the run that saw it
+  (two discovery intervals if that is longer). Leases are never released
+  early — they expire.
+- Nothing is ever pushed to a device.
+
+### When something leaves the feed
+
+| Setting | Default | Does |
+|---|---|---|
+| Release a DHCP reservation or IP assignment the feed stops listing | on | Releases it after a complete read, never when most of them vanish at once |
+| Deprecate a subnet the feed stops listing | off | Deprecates a network this integration owns, after a complete read, never when most vanish at once |
+
+### An API that only holds address space
+
+Untick **Read devices (assets) from this API** on Records & Mapping for an
+external IPAM such as phpIPAM or NetBox. The device request and mapping are
+then not used, and the integration needs at least one network query.
+**Test Connection** and **Preview** read each network query's first page.
 
 ---
 

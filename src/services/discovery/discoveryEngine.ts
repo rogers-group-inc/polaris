@@ -30,6 +30,7 @@ import { isWorkloadPlatform } from "../../utils/workloadSources.js";
 import * as genericApi from "../genericApiService.js";
 import { syncGenericApiDevices } from "./genericApiSync.js";
 import { GENERIC_API_TYPE } from "../../utils/genericApiSource.js";
+import { syncGenericApiNetwork } from "./genericApiNetworkSync.js";
 import * as azureArc from "../azureArcService.js";
 import * as llm from "../llmService.js";
 import { ipInCidr, normalizeCidr, cidrContains, cidrOverlaps } from "../../utils/cidr.js";
@@ -642,10 +643,17 @@ export async function triggerDiscovery(
     }
     // Generic API: the mapping is what makes a record an asset, so a run with
     // nothing mapped for the identity would read the feed and write nothing.
+    // A network-only feed (readDevices off, rule 100(j)) needs a network or
+    // monitor query instead — otherwise the run reads nothing at all.
     if (integration.type === GENERIC_API_TYPE) {
-      const fm = (config.fieldMap ?? {}) as Record<string, unknown>;
-      const idField = (config.identityField as string | undefined) ?? "id";
-      if (!fm[idField]) throw new AppError(400, `Integration has no path mapped for its identity field (${idField})`);
+      if (config.readDevices === false) {
+        const nq = Array.isArray(config.networkQueries) ? config.networkQueries.length : 0;
+        if (nq === 0) throw new AppError(400, "Integration reads no devices and has no network queries — there is nothing to discover");
+      } else {
+        const fm = (config.fieldMap ?? {}) as Record<string, unknown>;
+        const idField = (config.identityField as string | undefined) ?? "id";
+        if (!fm[idField]) throw new AppError(400, `Integration has no path mapped for its identity field (${idField})`);
+      }
     }
   }
 
@@ -957,15 +965,30 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
       // is one read. A first page that fails throws and the run errors; a
       // later page that fails yields an INCOMPLETE read, which the sync's
       // missing-record sweep refuses to act on.
-      const result = await genericApi.discoverGenericApi(config as any, ac.signal, onProgress);
-      if (!ac.signal.aborted) {
-        onProgress("discover.inventory", "info",
-          `${result.rawCount} record(s) over ${result.pages} page(s)${result.complete ? "" : " — the feed was not read to the end"}`);
-        const r = await syncGenericApiDevices(integrationId, integrationName, config, result, actor);
-        syncTotals.created.push(...r.created);
-        syncTotals.updated.push(...r.updated);
-        syncTotals.skipped.push(...r.skipped);
-        syncTotals.decommissionedAssets.push(...r.decommissioned);
+      if (config.readDevices !== false) {
+        const result = await genericApi.discoverGenericApi(config as any, ac.signal, onProgress);
+        if (!ac.signal.aborted) {
+          onProgress("discover.inventory", "info",
+            `${result.rawCount} record(s) over ${result.pages} page(s)${result.complete ? "" : " — the feed was not read to the end"}`);
+          const r = await syncGenericApiDevices(integrationId, integrationName, config, result, actor);
+          syncTotals.created.push(...r.created);
+          syncTotals.updated.push(...r.updated);
+          syncTotals.skipped.push(...r.skipped);
+          syncTotals.decommissionedAssets.push(...r.decommissioned);
+        }
+      }
+      // Network queries (rule 100(j)): subnets, leases, reservations and
+      // external assignments into IPAM. After the device sync, so a lease's
+      // asset already exists; a failure here costs only the network half.
+      if (!ac.signal.aborted && Array.isArray(config.networkQueries) && config.networkQueries.length > 0) {
+        const net = await genericApi.discoverGenericApiNetwork(config as any, ac.signal, onProgress);
+        if (!ac.signal.aborted) {
+          const n = await syncGenericApiNetwork(integrationId, integrationName, config, net, { actor, pollIntervalHours: integration.pollInterval });
+          syncTotals.created.push(...n.subnetsCreated.map((c) => `subnet ${c}`));
+          syncTotals.updated.push(...n.subnetsClaimed.map((c) => `subnet ${c}`), ...n.subnetsUpdated.map((c) => `subnet ${c}`));
+          syncTotals.deprecated.push(...n.subnetsDeprecated);
+          syncTotals.skipped.push(...n.skipped);
+        }
       }
     } else if (integration.type === "azurearc") {
       // Azure Arc discovery produces assets only — Arc-enabled machines. No
@@ -1407,7 +1430,7 @@ async function runWorkstationServerAgentAutoDeploy(
 
 // ─── Conflict detection helper ────────────────────────────────────────────────
 
-interface ProposedReservationData {
+export interface ProposedReservationData {
   hostname?: string | null;
   owner?: string | null;
   projectRef?: string | null;
@@ -1449,7 +1472,7 @@ export function computeConflictFields(
   });
 }
 
-async function upsertConflict(
+export async function upsertConflict(
   reservationId: string,
   integrationId: string,
   proposed: ProposedReservationData,
@@ -1489,7 +1512,7 @@ async function upsertConflict(
   // reservations — 120-160 SELECTs per cycle just to find "no, nothing
   // pending, and yes the operator already resolved this within 30 days."
   // Collapsing to one findMany halves the round-trip count.
-  const MERGE_TYPES = new Set(["vip", "dhcp_reservation", "dhcp_lease"]);
+  const MERGE_TYPES = new Set(["vip", "dhcp_reservation", "dhcp_lease", "external"]);
   const wantsMergeGuard = MERGE_TYPES.has(proposed.sourceType);
   const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const orClauses: Array<Record<string, unknown>> = [
@@ -1498,7 +1521,7 @@ async function upsertConflict(
   if (wantsMergeGuard) {
     orClauses.push({
       status: { in: ["accepted", "rejected"] },
-      proposedSourceType: { in: ["vip", "dhcp_reservation", "dhcp_lease"] },
+      proposedSourceType: { in: ["vip", "dhcp_reservation", "dhcp_lease", "external"] },
       resolvedAt: { gte: cutoff },
     });
   }

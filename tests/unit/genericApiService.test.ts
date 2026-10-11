@@ -8,9 +8,13 @@ import {
   fetchDetailsForRecord,
   fetchGenericApiDetails,
   fetchGenericApiRecords,
+  discoverGenericApiNetwork,
   fetchJsonDocument,
   fillDetailTemplate,
   findInvalidMonitorQuery,
+  findInvalidNetworkQuery,
+  mapNetworkAddress,
+  mapNetworkSubnet,
   findInvalidPath,
   genericApiWidgetId,
   genericApiWidgetSlug,
@@ -672,5 +676,113 @@ describe("fetchJsonDocument", () => {
     fakeTransport(() => ({ json: {} }));
     expect(await fetchJsonDocument({ ...base, host: "169.254.169.254" }, { path: "/x" }, {})).toMatchObject({ ok: false, notFound: false });
     expect(await fetchJsonDocument(base, { path: "/x", method: "POST", body: "{nope" }, {})).toMatchObject({ ok: false, error: /not valid JSON/ });
+  });
+});
+
+// ─── Network queries (rule 100(j)) ───────────────────────────────────────────
+
+describe("mapNetworkSubnet", () => {
+  const q = (map: Record<string, string>) => ({ kind: "subnets", path: "/p", map }) as any;
+
+  it("reads a whole CIDR, or a network beside a prefix length or a dotted netmask, normalizing host bits", () => {
+    expect(mapNetworkSubnet({ p: "10.1.2.77/24", n: "Core", v: "12", d: "Servers" }, q({ cidr: "p", name: "n", vlan: "v", purpose: "d" })))
+      .toEqual({ ok: true, value: { cidr: "10.1.2.0/24", name: "Core", vlan: 12, purpose: "Servers" } });
+    expect(mapNetworkSubnet({ net: "192.168.5.0", len: 23 }, q({ network: "net", prefixLength: "len" }))).toMatchObject({ ok: true, value: { cidr: "192.168.4.0/23" } });
+    expect(mapNetworkSubnet({ net: "172.16.8.0", mask: "255.255.252.0" }, q({ network: "net", netmask: "mask" }))).toMatchObject({ ok: true, value: { cidr: "172.16.8.0/22" } });
+  });
+
+  it("refuses IPv6 by name, garbage, a missing network; drops an out-of-range VLAN", () => {
+    expect(mapNetworkSubnet({ p: "2001:db8::/64" }, q({ cidr: "p" }))).toMatchObject({ ok: false, reason: /IPv6/ });
+    expect(mapNetworkSubnet({ p: "not a network" }, q({ cidr: "p" }))).toMatchObject({ ok: false, reason: /not an IPv4 network/ });
+    expect(mapNetworkSubnet({}, q({ cidr: "p" }))).toMatchObject({ ok: false, reason: /no network/ });
+    expect(mapNetworkSubnet({ p: "10.0.0.0/8", v: 5000 }, q({ cidr: "p", vlan: "v" }))).toMatchObject({ ok: true, value: { vlan: null } });
+  });
+});
+
+describe("mapNetworkAddress", () => {
+  it("reads the address and what its kind carries; the zero MAC is no MAC", () => {
+    const lease = { kind: "leases", path: "/l", map: { ipAddress: "ip", macAddress: "mac", hostname: "h", expiresAt: "e" } } as any;
+    expect(mapNetworkAddress({ ip: "10.0.0.9/24", mac: "aa-bb-cc-00-00-01", h: "cam", e: 1803859200 }, lease)).toEqual({ ok: true, value: {
+      ipAddress: "10.0.0.9", macAddress: "AA:BB:CC:00:00:01", hostname: "cam", expiresAt: "2027-03-01T00:00:00.000Z", owner: null, notes: null,
+    } });
+    expect(mapNetworkAddress({ ip: "10.0.0.9", mac: "00:00:00:00:00:00" }, lease)).toMatchObject({ ok: true, value: { macAddress: null } });
+    const assign = { kind: "assignments", path: "/a", map: { ipAddress: "ip", owner: "o", notes: "n" } } as any;
+    expect(mapNetworkAddress({ ip: "10.0.0.10", o: "Ops", n: "printer" }, assign)).toMatchObject({ ok: true, value: { owner: "Ops", notes: "printer", expiresAt: null } });
+  });
+
+  it("refuses IPv6, a non-address and a missing one", () => {
+    const q = { kind: "reservations", path: "/r", map: { ipAddress: "ip" } } as any;
+    expect(mapNetworkAddress({ ip: "fe80::1" }, q)).toMatchObject({ ok: false, reason: /IPv6/ });
+    expect(mapNetworkAddress({ ip: "host-1" }, q)).toMatchObject({ ok: false, reason: /not an IPv4 address/ });
+    expect(mapNetworkAddress({}, q)).toMatchObject({ ok: false, reason: /no address/ });
+  });
+});
+
+describe("findInvalidNetworkQuery", () => {
+  const cfg = (over: Record<string, unknown>) => ({ networkQueries: [{ kind: "subnets", path: "/p", map: { cidr: "prefix" }, ...over }] }) as any;
+
+  it("accepts a well-formed query and an empty list", () => {
+    expect(findInvalidNetworkQuery(cfg({}))).toBeNull();
+    expect(findInvalidNetworkQuery({ networkQueries: [] })).toBeNull();
+  });
+
+  it("refuses what would read wrong or reach another host", () => {
+    expect(findInvalidNetworkQuery(cfg({ path: "//evil.example/p" }))).toMatch(/single "\/"/);
+    expect(findInvalidNetworkQuery(cfg({ path: "/p/{{id}}" }))).toMatch(/cannot hold/);
+    expect(findInvalidNetworkQuery(cfg({ map: { ipAddress: "ip" } }))).toMatch(/not a subnets field/);
+    expect(findInvalidNetworkQuery(cfg({ map: { name: "n" } }))).toMatch(/one of "cidr" \/ "network"/);
+    expect(findInvalidNetworkQuery(cfg({ map: { network: "n" } }))).toMatch(/prefixLength" or "netmask"/);
+    expect(findInvalidNetworkQuery(cfg({ kind: "leases", map: { hostname: "h" } }))).toMatch(/map "ipAddress"/);
+    expect(findInvalidNetworkQuery(cfg({ map: { cidr: "a[" } }))).toMatch(/cidr path/);
+  });
+});
+
+describe("discoverGenericApiNetwork / Test / Preview", () => {
+  const netCfg: GenericApiConfig = {
+    ...base,
+    readDevices: false,
+    networkQueries: [
+      { name: "Prefixes", kind: "subnets", path: "/api/prefixes", recordsPath: "results", map: { cidr: "prefix" } },
+      { name: "Leases", kind: "leases", path: "/api/leases", map: { ipAddress: "ip" } },
+    ],
+  };
+
+  it("reads each query, maps every record, counts what did not map", async () => {
+    fakeTransport((url) => (url.pathname === "/api/prefixes"
+      ? { json: { results: [{ prefix: "10.0.0.0/24" }, { prefix: "2001:db8::/64" }] } }
+      : { json: [{ ip: "10.0.0.5" }] }));
+    const r = await discoverGenericApiNetwork(netCfg);
+    expect(r.map((x) => [x.query.kind, x.subnets.length, x.addresses.length, x.unmapped, x.complete])).toEqual([
+      ["subnets", 1, 0, 1, true],
+      ["leases", 0, 1, 0, true],
+    ]);
+    expect(r[0].unmappedReasons[0]).toMatch(/IPv6/);
+  });
+
+  it("one query failing costs only that query, marked incomplete with its error", async () => {
+    fakeTransport((url) => (url.pathname === "/api/prefixes" ? { status: 500, text: "boom" } : { json: [{ ip: "10.0.0.5" }] }));
+    const r = await discoverGenericApiNetwork(netCfg);
+    expect(r[0]).toMatchObject({ complete: false, error: expect.stringMatching(/HTTP 500/) });
+    expect(r[1]).toMatchObject({ complete: true, error: null });
+  });
+
+  it("Test Connection on a network-only feed tests the network queries, and says which failed", async () => {
+    const seen = fakeTransport((url) => (url.pathname === "/api/prefixes" ? { json: { results: [{ prefix: "10.0.0.0/24" }] } } : { json: [] }));
+    const t = await testConnection(netCfg);
+    expect(t.ok).toBe(false);
+    expect(t.message).toMatch(/Network query "Leases" — the records path .* found no records/);
+    // No device request on a network-only feed.
+    expect(seen.some((s) => s.url.endsWith("/api/devices"))).toBe(false);
+    fakeTransport(() => ({ json: { results: [{ prefix: "10.0.0.0/24" }] } }));
+    const ok = await testConnection({ ...netCfg, networkQueries: [netCfg.networkQueries![0]] });
+    expect(ok).toEqual({ ok: true, message: "Connected — 1 network query answered" });
+  });
+
+  it("Preview carries each network query's first page, and skips the device read on a network-only feed", async () => {
+    fakeTransport((url) => (url.pathname === "/api/prefixes" ? { json: { results: [{ prefix: "10.9.0.0/16" }] } } : { json: [{ ip: "10.9.0.1" }] }));
+    const p = await previewGenericApi(netCfg);
+    expect(p.ok).toBe(true);
+    expect(p.rows).toEqual([]);
+    expect(p.network.map((n) => [n.name, n.ok, n.rows[0]?.outcome.ok])).toEqual([["Prefixes", true, true], ["Leases", true, true]]);
   });
 });
