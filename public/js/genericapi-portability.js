@@ -52,8 +52,12 @@
   var SECRET_KEYS = ["apiToken", "password", "clientSecret"];
   /** Where the install's systems live and who it logs in as. */
   var CONNECTION_KEYS = ["host", "port", "username", "clientId", "tokenUrl"];
-  /** This install's own troubleshooting state. */
-  var LOCAL_KEYS = ["verboseLogging", "verboseLoggingEnabledAt"];
+  /**
+   * This install's own state: its troubleshooting switch, and its tier-3
+   * monitor settings (cadences tuned for this install; the importer's own are
+   * re-derived from the monitor queries on save).
+   */
+  var LOCAL_KEYS = ["verboseLogging", "verboseLoggingEnabledAt", "monitorSettings"];
   /** An extra header whose name matches carries a credential: its value is dropped. */
   var CREDENTIAL_HEADER_RE = /(auth|token|key|secret|password|passwd|cookie|session|signature|credential)/i;
 

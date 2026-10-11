@@ -40,6 +40,7 @@ import { getBaselines } from "../../services/discoveryDurationService.js";
 import { requestCancel, listActiveRuns } from "../../services/discoveryRunState.js";
 import { releaseDnsResolvedAt } from "../../services/dnsResolvedReservationService.js";
 import { invalidateMonitorSettingsCache } from "../../services/monitoringService.js";
+import { getManualMonitorSettings } from "../../services/monitorSettingsService.js";
 import * as autoMonitor from "../../services/autoMonitorInterfacesService.js";
 import * as autoMonitorStorage from "../../services/autoMonitorStorageService.js";
 import {
@@ -1146,6 +1147,36 @@ const GenericApiFieldMapSchema = z.object(
     Record<genericApi.GenericApiField, typeof GenericApiPathSchema>,
 );
 
+const GenericApiWidgetSchema = z.object({
+  name:      z.string().trim().min(1, "A widget needs a name").max(64),
+  type:      z.enum(["gauge", "line", "state"]),
+  path:      z.string().trim().min(1, "A widget needs a path").max(512),
+  unit:      z.string().trim().max(16).optional(),
+  min:       z.number().finite().optional(),
+  max:       z.number().finite().optional(),
+  warningAt: z.number().finite().optional(),
+  stateMap:  z.record(z.unknown()).optional(),
+});
+
+const GenericApiMonitorQuerySchema = z.object({
+  name:        z.string().trim().max(100).optional().default(""),
+  stream:      z.enum(genericApi.GENERIC_API_MONITOR_STREAMS),
+  scope:       z.enum(["fleet", "asset"]).optional().default("fleet"),
+  path:        z.string().trim().min(1, "A monitor query needs a path").max(2000)
+    .refine((p) => genericApi.isSafeRequestPath(p), "A monitor query path must start with a single \"/\" (it may not name another host)"),
+  method:      z.enum(["GET", "POST"]).optional().default("GET"),
+  body:        z.string().max(20_000).optional().default(""),
+  recordsPath: z.string().trim().max(512).optional().default(""),
+  matchPath:   z.string().trim().max(512).optional().default(""),
+  paginate:    z.boolean().optional().default(false),
+  itemsPath:   z.string().trim().max(512).optional().default(""),
+  map:         z.record(z.string().trim().max(512)).optional().default({}),
+  upValues:    z.array(z.string().trim().min(1).max(64)).max(20).optional().default([]),
+  byteUnit:    z.enum(["B", "KB", "MB", "GB", "TB"]).optional().default("B"),
+  widgets:     z.array(GenericApiWidgetSchema).optional().default([]),
+  useByDefault: z.boolean().optional().default(true),
+});
+
 const GenericApiConfigSchema = z.object({
   host:      z.string().trim().min(1, "Host is required").max(255)
     .refine((h) => !/[\/\s]/.test(h), "Host is a name or an address only — put the path in Request path"),
@@ -1192,6 +1223,16 @@ const GenericApiConfigSchema = z.object({
   })).max(genericApi.GENERIC_API_LIMITS.maxDetailQueries, `At most ${genericApi.GENERIC_API_LIMITS.maxDetailQueries} detail queries`).optional().default([]),
   detailConcurrency: z.number().int().min(1).max(genericApi.GENERIC_API_LIMITS.maxDetailConcurrency).optional()
     .default(genericApi.GENERIC_API_LIMITS.defaultDetailConcurrency),
+  // Requests that feed the monitor streams and custom widgets through the
+  // `genericapi` polling method (rule 100(i)). Shapes here; what each stream
+  // may map, the paths and the widget names are findInvalidMonitorQuery's.
+  monitorQueries: z.array(GenericApiMonitorQuerySchema)
+    .max(genericApi.GENERIC_API_MONITOR_LIMITS.maxQueries, `At most ${genericApi.GENERIC_API_MONITOR_LIMITS.maxQueries} monitor queries`)
+    .optional().default([]),
+  // The integration-tier monitor settings (written by PUT /monitor-settings/
+  // integration/:id and by syncGenericApiMonitorDefaults). Carried through
+  // unchanged — without it every save of the dialog would delete the tier.
+  monitorSettings: z.record(z.unknown()).optional(),
   identityField:       z.enum(["id", "serialNumber", "macAddress", "hostname"]).optional().default("id"),
   assetTypeDefault:    z.string().trim().max(32).optional().default("other"),
   assetTypeMap:        z.record(z.string().trim().max(32))
@@ -1211,6 +1252,8 @@ const GenericApiConfigSchema = z.object({
   refineConfigHost(cfg, ctx);
   const badPath = genericApi.findInvalidPath(cfg as genericApi.GenericApiConfig);
   if (badPath) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["fieldMap"], message: badPath });
+  const badMonitor = genericApi.findInvalidMonitorQuery(cfg as genericApi.GenericApiConfig);
+  if (badMonitor) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["monitorQueries"], message: badMonitor });
   if (cfg.authType === "oauth2") {
     let tokenHost: string | null = null;
     try { tokenHost = new URL(cfg.tokenUrl).hostname; } catch { /* reported below */ }
@@ -1550,6 +1593,7 @@ router.post("/", async (req, res, next) => {
     if (createConfig.verboseLogging === true) {
       createConfig.verboseLoggingEnabledAt = new Date().toISOString();
     }
+    if (input.type === GENERIC_API_TYPE) await applyGenericApiMonitorDefaults(createConfig);
     let integration = await prisma.integration.create({
       data: {
         type: input.type,
@@ -1691,6 +1735,7 @@ router.put("/:id", async (req, res, next) => {
         if (!parsed.success) throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "));
         for (const k of Object.keys(newConfig)) delete newConfig[k];
         Object.assign(newConfig, parsed.data, verboseLoggingEnabledAt ? { verboseLoggingEnabledAt } : {});
+        await applyGenericApiMonitorDefaults(newConfig);
       }
       // SSRF guard — the update path validates config as a loose record, so the
       // per-type schema's host refinement (refineConfigHost) doesn't run here.
@@ -2715,6 +2760,22 @@ router.post("/generic-api/preview", async (req, res, next) => {
     next(err);
   }
 });
+
+/**
+ * Keep a Generic API integration's tier-3 polling methods in step with its
+ * monitor queries (rule 100(i), syncGenericApiMonitorDefaults): a stream a
+ * query feeds "by default" resolves to `genericapi` for this feed's assets; a
+ * stream whose query went away falls back to the tier below. The first time
+ * there is anything to store, the tier is seeded from the manual tier — what
+ * every other integration's Monitoring tab starts from — so turning on one
+ * stream does not reset every cadence to the hard floor.
+ */
+async function applyGenericApiMonitorDefaults(cfg: Record<string, unknown>): Promise<void> {
+  const stored = cfg.monitorSettings as Record<string, unknown> | undefined;
+  const seed = stored ? null : ((await getManualMonitorSettings()) as Record<string, unknown> | null);
+  const next = genericApi.syncGenericApiMonitorDefaults(stored, (cfg.monitorQueries ?? []) as genericApi.GenericApiMonitorQuery[], seed);
+  if (next) cfg.monitorSettings = next;
+}
 
 /**
  * A Generic API edit form leaves a stored secret blank ("leave blank to keep

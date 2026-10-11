@@ -41,7 +41,7 @@ describe("compatibility matrix — locked values per asset source", () => {
     // "vcenter" is allowed on the directory sources because a VM those
     // integrations discovered FIRST can be vCenter-merged; the vcenter-vm
     // AssetSource requirement is enforced at save/collect time.
-    expect(compatibleMethodsFor("activedirectory")).toEqual(["winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox"]);
+    expect(compatibleMethodsFor("activedirectory")).toEqual(["winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"]);
     expect(isPollingMethodCompatible("activedirectory", "rest_api")).toBe(false);
     expect(isPollingMethodCompatible("activedirectory", "snmp")).toBe(false);
     expect(isPollingMethodCompatible("activedirectory", "winrm")).toBe(true);
@@ -73,7 +73,7 @@ describe("compatibility matrix — locked values per asset source", () => {
     // Locked as an exact ordered array: a source kind missing from
     // COMPATIBILITY silently resolves to "manual" (the most permissive
     // matrix), which would offer REST API and SNMP on a Windows host.
-    expect(compatibleMethodsFor("azurearc")).toEqual(["winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox"]);
+    expect(compatibleMethodsFor("azurearc")).toEqual(["winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"]);
     expect(isPollingMethodCompatible("azurearc", "rest_api")).toBe(false);
     expect(isPollingMethodCompatible("azurearc", "snmp")).toBe(false);
     expect(isPollingMethodCompatible("azurearc", "winrm")).toBe(true);
@@ -107,13 +107,31 @@ describe("compatibility matrix — locked values per asset source", () => {
     expect(assetSourceKindFromIntegrationType("proxmox")).toBe("proxmox");
   });
   // A Generic API record can be any device, so every transport an operator can
-  // hold a credential for — and nothing that reads a specific integration.
-  it("Generic API: the credential-backed transports, no integration-specific method, no FortiOS REST", () => {
-    expect(compatibleMethodsFor("genericapi")).toEqual(["snmp", "winrm", "ssh", "icmp", "disabled", "agent"]);
+  // hold a credential for, plus its own monitor queries ("genericapi", rule
+  // 100(i)) — and nothing that reads ANOTHER specific integration.
+  it("Generic API: the credential-backed transports and its own method, no other integration's, no FortiOS REST", () => {
+    expect(compatibleMethodsFor("genericapi")).toEqual(["snmp", "winrm", "ssh", "icmp", "disabled", "agent", "genericapi"]);
     for (const m of ["rest_api", "vcenter", "fortimanager", "unraid", "truenas", "proxmox"] as const) {
       expect(isPollingMethodCompatible("genericapi", m), m).toBe(false);
     }
     expect(assetSourceKindFromIntegrationType("genericapi")).toBe("genericapi");
+  });
+  it("the genericapi method rides the directory sources and manual (a feed record merged onto their asset), never another integration's source", () => {
+    for (const src of ["activedirectory", "entraid", "windowsserver", "azurearc", "manual", "genericapi"] as const) {
+      expect(isPollingMethodCompatible(src, "genericapi"), src).toBe(true);
+    }
+    for (const src of ["fortimanager", "fortigate", "vcenter", "unraid", "truenas", "proxmox"] as const) {
+      expect(isPollingMethodCompatible(src, "genericapi"), src).toBe(false);
+    }
+  });
+  it("the genericapi method serves every stream a monitor query can map, and not processes or the event log", () => {
+    for (const st of ["responseTime", "cpuMemory", "interfaces", "storage", "temperature", "lldp"] as const) {
+      expect(isMethodValidForStream(st, "genericapi"), st).toBe(true);
+    }
+    expect(isMethodValidForStream("processes", "genericapi")).toBe(false);
+    expect(isMethodValidForStream("eventLog", "genericapi")).toBe(false);
+    expect(pollingMethodLabel("genericapi")).toBe("Generic API");
+    expect(credentialTypeForPollingMethod("genericapi")).toBeNull();
   });
   it("Fortinet appliance sources never get the vcenter method (their telemetry rides FortiOS REST)", () => {
     expect(isPollingMethodCompatible("fortimanager", "vcenter")).toBe(false);
@@ -124,7 +142,7 @@ describe("compatibility matrix — locked values per asset source", () => {
   // one integration's device roster, and an orphan asset has no integration to
   // read, so it is the one method manual does NOT get.
   it("Manual: every method except the ones that need a specific integration", () => {
-    expect(compatibleMethodsFor("manual")).toEqual(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox"]);
+    expect(compatibleMethodsFor("manual")).toEqual(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"]);
     allPollingMethods().forEach((m) => {
       expect(isPollingMethodCompatible("manual", m), m).toBe(m !== "fortimanager");
     });

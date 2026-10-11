@@ -86,6 +86,33 @@ const stored = {
     { name: "", method: "GET", path: "/api/owners/{{owner.id}}", body: "", fieldMap: { assignedTo: "email" } },
   ],
   detailConcurrency: 6,
+  monitorQueries: [
+    {
+      name: "Status", stream: "responseTime", scope: "fleet", method: "GET", path: "/api/status", body: "",
+      recordsPath: "items", matchPath: "serial", paginate: true, itemsPath: "",
+      map: { up: "state", latencyMs: "rtt" }, upValues: ["online", "ok"], byteUnit: "B", widgets: [], useByDefault: true,
+    },
+    {
+      name: "Ports", stream: "interfaces", scope: "asset", method: "GET", path: "/api/devices/{{identity}}/ports", body: "",
+      recordsPath: "", matchPath: "", paginate: false, itemsPath: "ports",
+      map: { name: "id", operStatus: "link", inOctets: "rx" }, upValues: [], byteUnit: "B", widgets: [], useByDefault: false,
+    },
+    {
+      name: "Disks", stream: "storage", scope: "fleet", method: "POST", path: "/api/disks", body: '{"all":true}',
+      recordsPath: "", matchPath: "device", paginate: false, itemsPath: "volumes",
+      map: { mountPath: "label", total: "size", used: "used" }, upValues: [], byteUnit: "GB", widgets: [], useByDefault: true,
+    },
+    {
+      name: "Supplies", stream: "widgets", scope: "asset", method: "GET", path: "/api/devices/{{identity}}", body: "",
+      recordsPath: "", matchPath: "", paginate: false, itemsPath: "",
+      map: {}, upValues: [], byteUnit: "B", useByDefault: true,
+      widgets: [
+        { name: "Toner", type: "gauge", path: "supplies.toner", unit: "%", min: 0, max: 100, warningAt: 15 },
+        { name: "Pages", type: "line", path: "counters.pages" },
+        { name: "Door", type: "state", path: "door", stateMap: { mode: "notEquals", values: ["closed"], trueLabel: "Alarm", falseLabel: "OK", trueIsProblem: true } },
+      ],
+    },
+  ],
   identityField: "serialNumber",
   assetTypeDefault: "printer",
   assetTypeMap: { "Network Camera": "other", "Core Switch": "switch" },
@@ -125,9 +152,11 @@ describe("registries", () => {
     expect(scope._integrationRequires("genericapi", "create")).toEqual([["f-host", "host"]]);
   });
 
-  it("has three tabs — General, Records & Mapping, Preview — and no Monitoring", () => {
+  it("has its own four tabs — General, Records & Mapping, Monitoring (monitor queries), Preview — never the shared Monitoring tab", () => {
     const { tabs } = mount(stored);
-    expect(tabs.map((t: any) => t.key)).toEqual(["general", "mapping", "preview"]);
+    expect(tabs.map((t: any) => t.key)).toEqual(["general", "mapping", "monitoring", "preview"]);
+    // The shared tab's class-stream form is not what renders here.
+    expect(tabs.find((t: any) => t.key === "monitoring").html).toContain('id="f-gaMonitors"');
   });
 
   it("is offered by the type picker", () => {
@@ -273,7 +302,7 @@ describe("JSON tab", () => {
   const json = () => JSON.parse((scope.document.getElementById("f-gaJson") as any).value);
 
   it("is a fourth tab only when the portability module is loaded", () => {
-    expect(mount(stored).tabs.map((t: any) => t.key)).toEqual(["general", "mapping", "preview", "json"]);
+    expect(mount(stored).tabs.map((t: any) => t.key)).toEqual(["general", "mapping", "monitoring", "preview", "json"]);
   });
 
   it("shows the form as a shareable file: no secret, no connection details, credential header blanked", () => {
@@ -379,5 +408,93 @@ describe("JSON tab", () => {
     expect(downloads).toHaveLength(1);
     expect(downloads[0].filename).toBe("CMDB.genericapi.json");
     expect(downloads[0].obj.config).not.toHaveProperty("apiToken");
+  });
+
+  it("never exports the install's own tier-3 monitor settings", () => {
+    mount({ ...stored, monitorSettings: { intervalSeconds: 30, responseTimePolling: "genericapi" } });
+    expect(json().config).not.toHaveProperty("monitorSettings");
+    expect(json().config.monitorQueries).toHaveLength(4);
+  });
+});
+
+describe("Monitoring tab — monitor queries", () => {
+  const blocks = () => [...scope.document.querySelectorAll("[data-ga-monitor]")] as any[];
+  const shown = (block: any, sel: string) => block.querySelector(sel).style.display !== "none";
+
+  it("shows each block only the fields its stream, scope and method use", () => {
+    mount(stored);
+    const [status, ports, disks, supplies] = blocks();
+    expect(shown(status, ".ga-mon-fleet")).toBe(true);
+    expect(shown(status, ".ga-mon-up-wrap")).toBe(true);
+    expect(shown(status, ".ga-mon-items-wrap")).toBe(false);
+    expect(shown(ports, ".ga-mon-fleet")).toBe(false);
+    expect(shown(ports, ".ga-mon-asset-hint")).toBe(true);
+    expect(shown(ports, ".ga-mon-items-wrap")).toBe(true);
+    expect(shown(disks, ".ga-mon-body-wrap")).toBe(true);
+    expect(shown(disks, ".ga-mon-unit-wrap")).toBe(true);
+    expect(shown(supplies, ".ga-mon-widgets-wrap")).toBe(true);
+    expect(shown(supplies, ".ga-mon-map-wrap")).toBe(false);
+    expect(shown(supplies, ".ga-mon-default-wrap")).toBe(false);
+
+    const stream = status.querySelector(".ga-mon-stream");
+    stream.value = "lldp";
+    stream.dispatchEvent(new scope.Event("change", { bubbles: true }));
+    expect(shown(status, ".ga-mon-up-wrap")).toBe(false);
+    expect(shown(status, ".ga-mon-items-wrap")).toBe(true);
+    expect(status.querySelector(".ga-mon-map-hint").textContent).toContain("localIfName");
+  });
+
+  it("Add appends a blank block (not saved until filled), Remove deletes one, and the cap is ten", () => {
+    mount(stored);
+    scope.document.getElementById("f-gaMonitorAdd").click();
+    expect(blocks()).toHaveLength(5);
+    expect(scope.getGenericApiFormConfig().monitorQueries).toHaveLength(4);
+    blocks()[0].querySelector(".ga-mon-remove").click();
+    expect(scope.getGenericApiFormConfig().monitorQueries.map((q: any) => q.name)).toEqual(["Ports", "Disks", "Supplies"]);
+    for (let i = 0; i < 12; i++) scope.document.getElementById("f-gaMonitorAdd").click();
+    expect(blocks()).toHaveLength(10);
+  });
+
+  it("names a field line or a widget line it cannot read instead of dropping it silently", () => {
+    mount(stored);
+    const status = blocks()[0];
+    const ta = status.querySelector(".ga-mon-map");
+    ta.value = "up = state\ncpuPct = cpu";
+    ta.dispatchEvent(new scope.Event("input", { bubbles: true }));
+    expect(status.querySelector(".ga-mon-map-hint").textContent).toContain("Not read: cpuPct = cpu");
+    expect(scope.getGenericApiFormConfig().monitorQueries[0].map).toEqual({ up: "state" });
+
+    const supplies = blocks()[3];
+    const wt = supplies.querySelector(".ga-mon-widgets");
+    wt.value = "Toner | gauge | toner\nBroken line\nLevel | gauge | lvl | % | low";
+    wt.dispatchEvent(new scope.Event("input", { bubbles: true }));
+    const hint = supplies.querySelector(".ga-mon-widgets-hint").textContent;
+    expect(hint).toContain("Broken line");
+    expect(hint).toContain("Level | gauge | lvl | % | low");
+    expect(scope.getGenericApiFormConfig().monitorQueries[3].widgets).toEqual([{ name: "Toner", type: "gauge", path: "toner" }]);
+  });
+
+  it("parses a state widget's OK values into a notEquals StateMap, and formats it back the same way", () => {
+    const parsed = scope._gaParseWidgetLines("Door | state | door | closed, locked\nAlarm bit | state | alarm");
+    expect(parsed.widgets).toEqual([
+      { name: "Door", type: "state", path: "door", stateMap: { mode: "notEquals", values: ["closed", "locked"], trueLabel: "Alarm", falseLabel: "OK", trueIsProblem: true } },
+      { name: "Alarm bit", type: "state", path: "alarm", stateMap: { mode: "nonzero", values: [], trueLabel: "Alarm", falseLabel: "OK", trueIsProblem: true } },
+    ]);
+    expect(scope._gaFormatWidgetLines(parsed.widgets)).toBe("Door | state | door | closed, locked\nAlarm bit | state | alarm");
+  });
+});
+
+describe("the genericapi polling method in the pickers", () => {
+  it("is offered on its own source, the directory sources and manual — for every mappable stream, never processes", () => {
+    const allowed = (src: string, stream: string) => scope._streamAllowedMethods(src, stream, null);
+    for (const st of ["responseTime", "telemetry", "interfaces", "storage", "temperature", "lldp"]) {
+      expect(allowed("genericapi", st), st).toContain("genericapi");
+    }
+    expect(allowed("genericapi", "processes")).not.toContain("genericapi");
+    expect(allowed("activedirectory", "interfaces")).toContain("genericapi");
+    expect(allowed("manual", "storage")).toContain("genericapi");
+    expect(allowed("vcenter", "interfaces")).not.toContain("genericapi");
+    expect(allowed("fortigate", "responseTime")).not.toContain("genericapi");
+    expect(scope._POLLING_LABELS.genericapi).toBe("Generic API");
   });
 });

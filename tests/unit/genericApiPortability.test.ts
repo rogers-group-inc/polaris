@@ -120,6 +120,14 @@ describe("export", () => {
     expect(keys.indexOf("needs")).toBeLessThan(keys.indexOf("config"));
   });
 
+  it("leaves out the install's own tier-3 monitor settings, keeps the monitor queries", () => {
+    const cfg = { ...stored(), monitorSettings: { intervalSeconds: 30 }, monitorQueries: [{ stream: "responseTime", scope: "fleet", path: "/s" }] };
+    const file = P.buildExportFile(cfg, {});
+    expect(file.config).not.toHaveProperty("monitorSettings");
+    expect(file.config.monitorQueries).toEqual(cfg.monitorQueries);
+    expect(P.parseImportFile(JSON.stringify({ polarisGenericApi: 1, config: cfg })).config).not.toHaveProperty("monitorSettings");
+  });
+
   it("does not modify the configuration it was given", () => {
     const cfg = stored();
     P.buildExportFile(cfg, {});

@@ -22,6 +22,7 @@ var _POLLING_LABELS = {
   unraid:   "Unraid",
   truenas:  "TrueNAS",
   proxmox:  "Proxmox",
+  genericapi: "Generic API",
 };
 
 // "agent" is intentionally NOT in any of these arrays — the Polaris Agent
@@ -45,18 +46,20 @@ var _POLLING_COMPAT = {
   // source and nowhere else — nothing else has a FortiManager to ask.
   fortimanager:    ["rest_api", "snmp", "ssh", "icmp", "disabled", "fortimanager"],
   fortigate:       ["rest_api", "snmp", "ssh", "icmp", "disabled"],
-  activedirectory: ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas", "proxmox"],
-  entraid:         ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas", "proxmox"],
-  windowsserver:   ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas", "proxmox"],
-  azurearc:        ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas", "proxmox"],
+  activedirectory: ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas", "proxmox", "genericapi"],
+  entraid:         ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas", "proxmox", "genericapi"],
+  windowsserver:   ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas", "proxmox", "genericapi"],
+  azurearc:        ["icmp", "winrm", "ssh", "disabled", "vcenter", "unraid", "truenas", "proxmox", "genericapi"],
   vcenter:         ["icmp", "snmp", "winrm", "ssh", "disabled", "vcenter"],
   // vCenter's shape with the integration's own method (pollingCompatibility.ts).
   unraid:          ["icmp", "snmp", "winrm", "ssh", "disabled", "unraid"],
   truenas:         ["icmp", "snmp", "winrm", "ssh", "disabled", "truenas"],
   proxmox:         ["icmp", "snmp", "winrm", "ssh", "disabled", "proxmox"],
-  // A Generic API record can be any device (pollingCompatibility.ts).
-  genericapi:      ["icmp", "snmp", "winrm", "ssh", "disabled"],
-  manual:          ["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "vcenter", "unraid", "truenas", "proxmox"],
+  // A Generic API record can be any device (pollingCompatibility.ts); its own
+  // "genericapi" method reads the integration's monitor queries (rule 100(i)),
+  // and rides the directory sources + manual for the merged-asset reason.
+  genericapi:      ["icmp", "snmp", "winrm", "ssh", "disabled", "genericapi"],
+  manual:          ["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "vcenter", "unraid", "truenas", "proxmox", "genericapi"],
 };
 
 // Per-stream method restriction — mirrors STREAM_METHODS in
@@ -88,6 +91,10 @@ var _WORKLOAD_STREAMS = ["responseTime", "cpuMemory", "telemetry", "interfaces",
 // "proxmox" serves the same minus temperature — mirrors PROXMOX_STREAMS: the
 // Proxmox VE API publishes no sensor readings.
 var _PROXMOX_STREAMS = ["responseTime", "cpuMemory", "telemetry", "interfaces", "storage"];
+
+// Streams the "genericapi" method can serve — mirrors GENERICAPI_STREAMS in
+// src/utils/pollingCompatibility.ts: every stream a monitor query can map.
+var _GENERICAPI_STREAMS = ["responseTime", "cpuMemory", "telemetry", "interfaces", "storage", "temperature", "lldp"];
 
 function _isWorkloadType(t) { return t === "unraid" || t === "truenas" || t === "proxmox"; }
 
@@ -193,6 +200,7 @@ function _collectorExists(source, stream, klass) {
   return function (method) {
     if (method === "disabled" || method === "vcenter" || method === "fortimanager") return true;
     if (_isWorkloadType(method)) return true;
+    if (method === "genericapi") return true;
     if (method === "icmp")  return stream === "responseTime";
     // The agent walks no LLDP neighbours.
     if (method === "agent") return stream !== "lldp";
@@ -249,6 +257,9 @@ function _streamAllowedMethods(source, stream, klass) {
   }
   if (_PROXMOX_STREAMS.indexOf(stream) === -1) {
     allowed = allowed.filter(function (m) { return m !== "proxmox"; });
+  }
+  if (_GENERICAPI_STREAMS.indexOf(stream) === -1) {
+    allowed = allowed.filter(function (m) { return m !== "genericapi"; });
   }
   // Finally: drop anything with no collector behind it. Offering a method that
   // silently gathers nothing is how a stream gets configured into permanent
@@ -5979,14 +5990,16 @@ function getVcenterFormConfig() {
 
 // ─── Generic API ("build your own", business rule 100) ─────────────────────────
 //
-// Four tabs, all in the DOM at once so getGenericApiFormConfig() reads the
+// Five tabs, all in the DOM at once so getGenericApiFormConfig() reads the
 // whole form in one pass: General (connection + authentication), Records &
 // Mapping (where the list is, how to page it, which path fills which asset
-// field, and the per-record detail queries), Preview (the first page, mapped —
-// POST /integrations/generic-api/preview) and JSON (the form as a portable
-// file: view, copy, export, import — genericapi-portability.js). Inventory
-// only: no Monitoring tab, the discovered assets are monitored per asset like
-// a manually added one.
+// field, and the per-record detail queries), Monitoring (monitor queries for
+// the "genericapi" polling method — NOT the shared monitorSettingsFormHTML tab:
+// the type has no class to monitor by, rule 100(b), so the integration tier is
+// derived from the queries instead), Preview (the first page, mapped — POST
+// /integrations/generic-api/preview) and JSON (the form as a portable file:
+// view, copy, export, import — genericapi-portability.js). Which assets are
+// monitored stays the operator's choice per asset.
 
 /** The asset fields a record can map onto, in form order — mirrors GENERIC_API_FIELDS (services/genericApiService.ts). */
 var _GENERIC_API_FIELDS = [
@@ -6250,6 +6263,228 @@ function _gaCheckDetailMap(block) {
   }
 }
 
+// ─── Generic API monitor queries (rule 100(i)) ─────────────────────────────────
+//
+// The Monitoring tab: requests that feed the monitor streams and custom widgets
+// through the "genericapi" polling method (services/genericApiMonitorService.ts).
+// Repeated blocks with no ids, like the detail queries — _gaReadMonitorQueries
+// walks [data-ga-monitor], and one delegated listener set on #f-gaMonitors
+// serves blocks added later or rebuilt by a JSON import.
+
+/** Stream → [label, the map keys it takes (mirrors GENERIC_API_MONITOR_FIELDS), a list stream?]. */
+var _GA_MONITOR_STREAMS = {
+  responseTime: ["Response time (up / down)", ["up", "latencyMs", "uptimeSec"], false],
+  cpuMemory:    ["CPU / memory",              ["cpuPct", "memPct", "memUsed", "memTotal", "memFree"], false],
+  interfaces:   ["Interfaces",                ["name", "operStatus", "adminStatus", "speedBps", "speedMbps", "inOctets", "outOctets", "inErrors", "outErrors", "macAddress", "ipAddress", "description", "alias"], true],
+  storage:      ["Storage",                   ["mountPath", "total", "used", "free"], true],
+  temperature:  ["Temperature",               ["name", "celsius"], true],
+  lldp:         ["LLDP neighbors",            ["localIfName", "chassisId", "portId", "portDescription", "systemName", "systemDescription", "managementIp"], true],
+  widgets:      ["Custom widgets",            [], false],
+};
+var _GA_MONITOR_STREAM_ORDER = ["responseTime", "cpuMemory", "interfaces", "storage", "temperature", "lldp", "widgets"];
+
+/** A placeholder map per stream — what a typical feed looks like. */
+var _GA_MONITOR_MAP_EXAMPLES = {
+  responseTime: "up = status\nlatencyMs = latency_ms",
+  cpuMemory:    "cpuPct = cpu.percent\nmemUsed = memory.used\nmemTotal = memory.total",
+  interfaces:   "name = name\noperStatus = link\ninOctets = rx_bytes\noutOctets = tx_bytes\nspeedMbps = speed",
+  storage:      "mountPath = name\ntotal = size\nused = used",
+  temperature:  "name = sensor\ncelsius = value",
+  lldp:         "localIfName = local_port\nsystemName = neighbor.name\nportId = neighbor.port\nchassisId = neighbor.chassis",
+  widgets:      "",
+};
+
+var _GA_WIDGET_FORMAT_HINT = 'gauge / line: <code>name | type | path | unit | min | max | warn at</code> (the last four optional). state: <code>name | state | path | values that mean OK</code> — anything else shows as an alarm.';
+
+function _gaMonitorQueryHTML(q) {
+  q = q || {};
+  var stream = _GA_MONITOR_STREAMS[q.stream] ? q.stream : "responseTime";
+  var scope = q.scope === "asset" ? "asset" : "fleet";
+  var method = q.method === "POST" ? "POST" : "GET";
+  var unit = q.byteUnit || "B";
+  var map = q.map || {};
+  var mapLines = Object.keys(map).filter(function (k) { return map[k]; }).map(function (k) { return k + " = " + map[k]; }).join("\n");
+  var opt = function (v, label, cur) { return '<option value="' + v + '"' + (v === cur ? " selected" : "") + '>' + escapeHtml(label) + '</option>'; };
+  return '<div data-ga-monitor style="border:1px solid var(--color-border);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-bottom:0.6rem">' +
+    '<div style="display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:end">' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><label>Name</label><input type="text" class="ga-mon-name" value="' + escapeHtml(q.name || "") + '" placeholder="e.g. Device status"></div>' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><label>Feeds</label><select class="ga-mon-stream" data-ga-value="' + stream + '">' +
+        _GA_MONITOR_STREAM_ORDER.map(function (k) { return opt(k, _GA_MONITOR_STREAMS[k][0], stream); }).join("") + '</select></div>' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><label>Request</label><select class="ga-mon-scope" data-ga-value="' + scope + '">' +
+        opt("fleet", "One for every asset", scope) + opt("asset", "One per asset", scope) + '</select></div>' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><button type="button" class="btn btn-secondary btn-sm ga-mon-remove" title="Remove this monitor query">Remove</button></div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:auto 1fr;gap:8px">' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><label>Method</label><select class="ga-mon-method" data-ga-value="' + method + '">' + opt("GET", "GET", method) + opt("POST", "POST", method) + '</select></div>' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><label>Path</label><input type="text" class="ga-mon-path" value="' + escapeHtml(q.path || "") + '" placeholder="' + (scope === "asset" ? "/api/devices/{{identity}}/metrics" : "/api/metrics") + '"></div>' +
+    '</div>' +
+    '<div class="form-group ga-mon-body-wrap" style="margin-bottom:0.5rem' + (method === "POST" ? "" : ";display:none") + '"><label>Request body (JSON)</label><textarea class="ga-mon-body" rows="2">' + escapeHtml(q.body || "") + '</textarea></div>' +
+    '<p class="hint ga-mon-asset-hint" style="margin-top:0' + (scope === "asset" ? "" : ";display:none") + '">Placeholders come from the asset’s record as discovery last mapped it: <code>{{identity}}</code>, <code>{{hostname}}</code>, <code>{{ip}}</code>, <code>{{serial}}</code>, <code>{{mac}}</code>. One request per asset per poll.</p>' +
+    '<div class="ga-mon-fleet" style="display:' + (scope === "fleet" ? "grid" : "none") + ';grid-template-columns:1fr 1fr;gap:8px">' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><label>Records path</label><input type="text" class="ga-mon-records" value="' + escapeHtml(q.recordsPath || "") + '" placeholder="e.g. data — blank when the response is the list"></div>' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><label>Identity path *</label><input type="text" class="ga-mon-match" value="' + escapeHtml(q.matchPath || "") + '" placeholder="e.g. device_id"><p class="hint">The value that matches the record’s identity on the Records &amp; Mapping tab.</p></div>' +
+    '</div>' +
+    '<div class="ga-mon-fleet-page" style="display:' + (scope === "fleet" ? "block" : "none") + '">' + _gaCheckbox("ga-mon-paginate", "Page through it like the inventory request", q.paginate === true) + '</div>' +
+    '<div class="form-group ga-mon-items-wrap" style="margin-bottom:0.5rem' + (_GA_MONITOR_STREAMS[stream][2] ? "" : ";display:none") + '"><label>Rows path</label><input type="text" class="ga-mon-items" value="' + escapeHtml(q.itemsPath || "") + '" placeholder="e.g. interfaces — blank when the asset’s document is the list"></div>' +
+    '<div class="form-group ga-mon-map-wrap" style="margin-bottom:0.5rem' + (stream === "widgets" ? ";display:none" : "") + '"><label>Fields</label><textarea class="ga-mon-map" rows="3" placeholder="' + escapeHtml("One per line: field = path\n" + _GA_MONITOR_MAP_EXAMPLES[stream]) + '">' + escapeHtml(mapLines) + '</textarea>' +
+      '<p class="hint ga-mon-map-hint"></p></div>' +
+    '<div class="form-group ga-mon-up-wrap" style="margin-bottom:0.5rem' + (stream === "responseTime" ? "" : ";display:none") + '"><label>Values that mean up</label><input type="text" class="ga-mon-up" value="' + escapeHtml((q.upValues || []).join(", ")) + '" placeholder="Blank: true, up, online, ok, running, 1, yes, active, healthy, connected, available"></div>' +
+    '<div class="form-group ga-mon-unit-wrap" style="margin-bottom:0.5rem' + (stream === "cpuMemory" || stream === "storage" ? "" : ";display:none") + '"><label>Sizes are in</label><select class="ga-mon-unit" data-ga-value="' + escapeHtml(unit) + '">' +
+      ["B", "KB", "MB", "GB", "TB"].map(function (u) { return opt(u, u === "B" ? "bytes" : u + " (1024-based)", unit); }).join("") + '</select></div>' +
+    '<div class="form-group ga-mon-widgets-wrap" style="margin-bottom:0.5rem' + (stream === "widgets" ? "" : ";display:none") + '"><label>Widgets</label><textarea class="ga-mon-widgets" rows="3" placeholder="One per line: name | gauge, line or state | path | …&#10;Battery | gauge | battery.pct | % | 0 | 100 | 20&#10;Toner | line | supplies.toner&#10;Door | state | door.status | closed, locked">' + escapeHtml(_gaFormatWidgetLines(q.widgets || [])) + '</textarea>' +
+      '<p class="hint ga-mon-widgets-hint">' + _GA_WIDGET_FORMAT_HINT + '</p></div>' +
+    '<div class="ga-mon-default-wrap"' + (stream === "widgets" ? ' style="display:none"' : "") + '>' + _gaCheckbox("ga-mon-default", "Use for this feed’s assets — the integration’s default polling method for this stream", q.useByDefault !== false) + '</div>' +
+  '</div>';
+}
+
+/** A checkbox inside a repeated block — a class, never an id. */
+function _gaCheckbox(cls, label, checked) {
+  return '<label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;margin:0 0 0.5rem 0;cursor:pointer"><input type="checkbox" class="' + cls + '" style="width:auto"' + (checked ? " checked" : "") + '>' + escapeHtml(label) + '</label>';
+}
+
+/** Widgets → "name | type | path | …" lines (the inverse of _gaParseWidgetLines). */
+function _gaFormatWidgetLines(widgets) {
+  return (widgets || []).map(function (w) {
+    if (w.type === "state") {
+      var ok = (w.stateMap && w.stateMap.mode === "notEquals" && Array.isArray(w.stateMap.values)) ? w.stateMap.values : [];
+      return [w.name, "state", w.path].concat(ok.length ? [ok.join(", ")] : []).join(" | ");
+    }
+    var cols = [w.name, w.type, w.path, w.unit || "", w.min != null ? String(w.min) : "", w.max != null ? String(w.max) : "", w.warningAt != null ? String(w.warningAt) : ""];
+    while (cols.length > 3 && cols[cols.length - 1] === "") cols.pop();
+    return cols.join(" | ");
+  }).join("\n");
+}
+
+/**
+ * "name | type | path | …" lines → { widgets, bad[] }. A state widget's OK
+ * values become a notEquals StateMap (utils/stateProbes.ts): any other value is
+ * the alarm side. With no OK values the state is the plain "non-zero is an
+ * alarm" reading.
+ */
+function _gaParseWidgetLines(text) {
+  var widgets = [];
+  var bad = [];
+  String(text || "").split(/\r?\n/).forEach(function (line) {
+    var s = line.trim();
+    if (!s) return;
+    var c = s.split("|").map(function (x) { return x.trim(); });
+    var type = (c[1] || "").toLowerCase();
+    if (!c[0] || !c[2] || ["gauge", "line", "state"].indexOf(type) === -1) { bad.push(s); return; }
+    var w = { name: c[0], type: type, path: c[2] };
+    if (type === "state") {
+      var ok = (c[3] || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean);
+      w.stateMap = ok.length
+        ? { mode: "notEquals", values: ok, trueLabel: "Alarm", falseLabel: "OK", trueIsProblem: true }
+        : { mode: "nonzero", values: [], trueLabel: "Alarm", falseLabel: "OK", trueIsProblem: true };
+    } else {
+      var num = function (v) { if (v === undefined || v === "") return undefined; var n = Number(v); return isFinite(n) ? n : NaN; };
+      if (c[3]) w.unit = c[3];
+      var mn = num(c[4]), mx = num(c[5]), wa = num(c[6]);
+      if ([mn, mx, wa].some(function (n) { return n !== undefined && isNaN(n); })) { bad.push(s); return; }
+      if (mn !== undefined) w.min = mn;
+      if (mx !== undefined) w.max = mx;
+      if (wa !== undefined) w.warningAt = wa;
+    }
+    widgets.push(w);
+  });
+  return { widgets: widgets, bad: bad };
+}
+
+/** "field = path" lines for one stream → { map, unknown[] }. */
+function _gaParseMonitorMap(stream, text) {
+  var keys = (_GA_MONITOR_STREAMS[stream] || _GA_MONITOR_STREAMS.widgets)[1];
+  var map = {};
+  var unknown = [];
+  String(text || "").split(/\r?\n/).forEach(function (line) {
+    var s = line.trim();
+    if (!s) return;
+    var i = s.indexOf("=");
+    var key = i > 0 ? s.slice(0, i).trim() : s;
+    var path = i > 0 ? s.slice(i + 1).trim() : "";
+    if (keys.indexOf(key) === -1 || !path) { unknown.push(s); return; }
+    map[key] = path;
+  });
+  return { map: map, unknown: unknown };
+}
+
+function _gaReadMonitorQueries() {
+  var out = [];
+  document.querySelectorAll("[data-ga-monitor]").forEach(function (block) {
+    var v = function (sel) { var el = block.querySelector(sel); return el ? String(el.value || "").trim() : ""; };
+    var on = function (sel) { var el = block.querySelector(sel); return !!(el && el.checked); };
+    var stream = v(".ga-mon-stream") || "responseTime";
+    var path = v(".ga-mon-path");
+    var mapText = v(".ga-mon-map");
+    var widgetText = v(".ga-mon-widgets");
+    if (!path && !v(".ga-mon-name") && !mapText && !widgetText) return;   // an untouched blank block
+    out.push({
+      name: v(".ga-mon-name"),
+      stream: stream,
+      scope: v(".ga-mon-scope") === "asset" ? "asset" : "fleet",
+      method: v(".ga-mon-method") || "GET",
+      path: path,
+      body: v(".ga-mon-body"),
+      recordsPath: v(".ga-mon-records"),
+      matchPath: v(".ga-mon-match"),
+      paginate: on(".ga-mon-paginate"),
+      itemsPath: v(".ga-mon-items"),
+      map: stream === "widgets" ? {} : _gaParseMonitorMap(stream, mapText).map,
+      upValues: v(".ga-mon-up").split(",").map(function (x) { return x.trim(); }).filter(Boolean),
+      byteUnit: v(".ga-mon-unit") || "B",
+      widgets: stream === "widgets" ? _gaParseWidgetLines(widgetText).widgets : [],
+      useByDefault: on(".ga-mon-default"),
+    });
+  });
+  return out;
+}
+
+/** Show the fields a block's stream / scope / method uses, and name the lines it cannot read. */
+function _gaSyncMonitorBlock(block) {
+  var v = function (sel) { var el = block.querySelector(sel); return el ? el.value : ""; };
+  var show = function (sel, on, how) { var el = block.querySelector(sel); if (el) el.style.display = on ? (how || "") : "none"; };
+  var stream = v(".ga-mon-stream") || "responseTime";
+  var spec = _GA_MONITOR_STREAMS[stream] || _GA_MONITOR_STREAMS.responseTime;
+  var fleet = v(".ga-mon-scope") !== "asset";
+  show(".ga-mon-body-wrap", v(".ga-mon-method") === "POST");
+  show(".ga-mon-fleet", fleet, "grid");
+  show(".ga-mon-fleet-page", fleet, "block");
+  show(".ga-mon-asset-hint", !fleet);
+  show(".ga-mon-items-wrap", spec[2]);
+  show(".ga-mon-map-wrap", stream !== "widgets");
+  show(".ga-mon-up-wrap", stream === "responseTime");
+  show(".ga-mon-unit-wrap", stream === "cpuMemory" || stream === "storage");
+  show(".ga-mon-widgets-wrap", stream === "widgets");
+  show(".ga-mon-default-wrap", stream !== "widgets");
+  var mapTa = block.querySelector(".ga-mon-map");
+  if (mapTa) mapTa.placeholder = "One per line: field = path\n" + (_GA_MONITOR_MAP_EXAMPLES[stream] || "");
+  var pathEl = block.querySelector(".ga-mon-path");
+  if (pathEl) pathEl.placeholder = fleet ? "/api/metrics" : "/api/devices/{{identity}}/metrics";
+  var hint = block.querySelector(".ga-mon-map-hint");
+  if (hint && mapTa) {
+    var unknown = _gaParseMonitorMap(stream, mapTa.value).unknown;
+    var fields = spec[1].join(", ");
+    hint.innerHTML = unknown.length
+      ? '<span style="color:var(--color-warning)">Not read: ' + escapeHtml(unknown.join(" · ")) + '</span> — each line is <code>field = path</code>, with a field from: ' + escapeHtml(fields)
+      : "Fields: " + escapeHtml(fields) + (spec[2] ? " — read from each row." : ".");
+  }
+  var wHint = block.querySelector(".ga-mon-widgets-hint");
+  var wTa = block.querySelector(".ga-mon-widgets");
+  if (wHint && wTa) {
+    var badW = _gaParseWidgetLines(wTa.value).bad;
+    wHint.innerHTML = (badW.length ? '<span style="color:var(--color-warning)">Not read: ' + escapeHtml(badW.join(" · ")) + '</span> — ' : "") + _GA_WIDGET_FORMAT_HINT;
+  }
+}
+
+function genericApiMonitoringHTML(defaults) {
+  var d = defaults || {};
+  return infoBox('Feed Polaris’s <strong style="color:var(--color-text-primary)">monitoring</strong> from this API: up / down, CPU and memory, interfaces, storage, temperatures, LLDP neighbors, and custom widgets on the asset page. Each query reads values for the assets this integration discovered, through the <strong style="color:var(--color-text-primary)">Generic API</strong> polling method.') +
+    calloutHTML("note", "What a query decides",
+      'A query never turns monitoring on: you still choose which assets are monitored. With <em>Use for this feed’s assets</em> ticked, the stream’s default polling method for this integration’s assets becomes Generic API; you can still pick another method per asset. If the API cannot be reached, a response-time probe is skipped rather than marking every asset down; an asset the API answers for without listing it is down.') +
+    '<div id="f-gaMonitors">' + (d.monitorQueries || []).map(_gaMonitorQueryHTML).join("") + '</div>' +
+    '<button type="button" class="btn btn-secondary btn-sm" id="f-gaMonitorAdd">Add monitor query</button>' +
+    '<p class="hint" style="margin-top:0.75rem"><strong>One for every asset</strong> costs one request per poll for the whole fleet (cached for 30 seconds and shared by every asset and stream on it) — use it whenever the API can list everything at once. <strong>One per asset</strong> costs one request per asset per poll, at most the Records &amp; Mapping tab’s <em>Requests at once</em> in flight. Temperatures and custom widgets are read on the CPU / memory schedule, so they need a CPU / memory method on the asset.</p>';
+}
+
 function genericApiJsonHTML() {
   return '<p class="hint">The settings on the other tabs as JSON — to read at a glance, keep as a backup, or share a mapping for a product with anyone else running Polaris. <strong>Tokens, passwords and client secrets are never included</strong>, nor the value of an extra header whose name looks like it holds a credential.</p>' +
     checkboxRow("f-gaJsonConnection", "Include host, port, username, client ID and token URL", false) +
@@ -6324,6 +6559,7 @@ function getGenericApiFormConfig() {
     recordsPath: _gaVal("f-gaRecordsPath"),
     fieldMap: fieldMap,
     detailQueries: _gaReadDetailQueries(),
+    monitorQueries: _gaReadMonitorQueries(),
     detailConcurrency: _gaInt("f-gaDetailConcurrency", 4),
     identityField: _gaVal("f-gaIdentity") || "id",
     assetTypeDefault: _gaVal("f-gaTypeDefault") || "other",
@@ -6390,6 +6626,12 @@ function _gaFillForm(cfg) {
     details.querySelectorAll("select[data-ga-value]").forEach(function (sel) { sel.value = sel.getAttribute("data-ga-value"); });
   }
   set("f-gaDetailConcurrency", cfg.detailConcurrency || 4);
+  var monitors = document.getElementById("f-gaMonitors");
+  if (monitors) {
+    monitors.innerHTML = (cfg.monitorQueries || []).map(_gaMonitorQueryHTML).join("");
+    monitors.querySelectorAll("select[data-ga-value]").forEach(function (sel) { sel.value = sel.getAttribute("data-ga-value"); });
+    monitors.querySelectorAll("[data-ga-monitor]").forEach(_gaSyncMonitorBlock);
+  }
   setSel("f-gaIdentity", cfg.identityField || "id");
   setSel("f-gaTypeDefault", cfg.assetTypeDefault || "other");
   set("f-gaManufacturer", cfg.manufacturerDefault || "");
@@ -6644,6 +6886,36 @@ function _wireGenericApiForm(id) {
       details.insertAdjacentHTML("beforeend", _gaDetailQueryHTML({}));
       var input = details.lastElementChild && details.lastElementChild.querySelector(".ga-detail-path");
       if (input) input.focus();
+    });
+  }
+  // Monitor queries — the same delegated-listener shape as the detail queries.
+  var monitors = document.getElementById("f-gaMonitors");
+  if (monitors) {
+    monitors.querySelectorAll("select[data-ga-value]").forEach(function (sel) { sel.value = sel.getAttribute("data-ga-value"); });
+    monitors.addEventListener("click", function (e) {
+      var rm = e.target.closest && e.target.closest(".ga-mon-remove");
+      if (rm) { var block = rm.closest("[data-ga-monitor]"); if (block) block.remove(); }
+    });
+    var resync = function (e) {
+      var block = e.target.closest && e.target.closest("[data-ga-monitor]");
+      if (block) _gaSyncMonitorBlock(block);
+    };
+    monitors.addEventListener("change", resync);
+    monitors.addEventListener("input", resync);
+    monitors.querySelectorAll("[data-ga-monitor]").forEach(_gaSyncMonitorBlock);
+  }
+  var addMon = document.getElementById("f-gaMonitorAdd");
+  if (addMon && monitors) {
+    addMon.addEventListener("click", function () {
+      if (monitors.querySelectorAll("[data-ga-monitor]").length >= 10) { showToast("At most 10 monitor queries", "error"); return; }
+      monitors.insertAdjacentHTML("beforeend", _gaMonitorQueryHTML({}));
+      var added = monitors.lastElementChild;
+      if (added) {
+        added.querySelectorAll("select[data-ga-value]").forEach(function (sel) { sel.value = sel.getAttribute("data-ga-value"); });
+        _gaSyncMonitorBlock(added);
+        var input = added.querySelector(".ga-mon-name");
+        if (input) input.focus();
+      }
     });
   }
   _wireGenericApiJsonTab();
@@ -6955,6 +7227,7 @@ function _integrationTabs(ctx) {
     var gaTabs = [
       { key: "general", label: "General", html: ctx.generalHtml },
       { key: "mapping", label: "Records & Mapping", html: genericApiMappingHTML(Object.assign({}, defaults, config)) },
+      { key: "monitoring", label: "Monitoring", html: genericApiMonitoringHTML(Object.assign({}, defaults, config)) },
       { key: "preview", label: "Preview", html: genericApiPreviewHTML() },
     ];
     // The JSON tab needs genericapi-portability.js (loaded by integrations.html);

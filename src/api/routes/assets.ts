@@ -296,7 +296,7 @@ const CreateAssetSchema = z.object({
 // apply to the asset's source. Includes "disabled" (universally allowed
 // opt-out) and "agent" (Polaris Agent; allowed on AD/Entra/WinServer/Manual
 // sources, ignored on fortimanager/fortigate).
-const PollingMethodEnum = z.enum(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas", "proxmox"]);
+const PollingMethodEnum = z.enum(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas", "proxmox", "genericapi"]);
 
 const UpdateAssetSchema = CreateAssetSchema.partial().extend({
   // Unlike create (min(1)), update accepts "" — blanking the IP Address field
@@ -3161,29 +3161,26 @@ router.get("/:id/custom-widgets", requirePermission("assets", "read"), async (re
     // The DB-backed profile cache is keyed by canonical manufacturer.
     const { getProfileFor } = await import("../../services/manufacturerProfileService.js");
     const profile = getProfileFor(asset.manufacturer);
-    if (!profile || profile.widgets.length === 0) {
-      return res.json({
-        manufacturer:    asset.manufacturer,
-        profileId:       profile?.id ?? null,
-        polling:         asset.customWidgetPolling ?? null,
-        lastCustomWidgetAt: asset.lastCustomWidgetAt,
-        widgets:         [],
-      });
-    }
 
     // Apply per-model gating. Empty modelPattern = applies to every asset
     // under the manufacturer; non-empty regex must match Asset.model.
     const modelStr = asset.model ?? "";
-    const applicableWidgets = profile.widgets.filter((w) => {
+    const profileWidgets = (profile?.widgets ?? []).filter((w) => {
       if (!w.modelPattern) return true;
       try { return new RegExp(w.modelPattern, "i").test(modelStr); }
       catch { return false; }
     });
+    // Widgets the asset's Generic API integrations define for it (rule
+    // 100(i)) ride the same tab, after the manufacturer's, each carrying a
+    // `source` so the card can say where its value comes from.
+    const { genericApiWidgetDefsForAsset } = await import("../../services/genericApiMonitorService.js");
+    const genericWidgets = await genericApiWidgetDefsForAsset(id);
+    const applicableWidgets: Array<(typeof profileWidgets)[number] | (typeof genericWidgets)[number]> = [...profileWidgets, ...genericWidgets];
 
     if (applicableWidgets.length === 0) {
       return res.json({
         manufacturer:    asset.manufacturer,
-        profileId:       profile.id,
+        profileId:       profile?.id ?? null,
         polling:         asset.customWidgetPolling ?? null,
         lastCustomWidgetAt: asset.lastCustomWidgetAt,
         widgets:         [],
@@ -3245,7 +3242,7 @@ router.get("/:id/custom-widgets", requirePermission("assets", "read"), async (re
 
     return res.json({
       manufacturer:    asset.manufacturer,
-      profileId:       profile.id,
+      profileId:       profile?.id ?? null,
       polling:         asset.customWidgetPolling ?? null,
       lastCustomWidgetAt: asset.lastCustomWidgetAt,
       widgets: applicableWidgets.map((w) => {
@@ -3269,6 +3266,7 @@ router.get("/:id/custom-widgets", requirePermission("assets", "read"), async (re
           stateMap:       w.stateMap,
           labelSymbol:    w.labelSymbol,
           stateRows:      w.widgetType === "state" ? (latestState.get(w.id) ?? []) : undefined,
+          source:         "source" in w ? w.source : { kind: "manufacturer" },
         };
       }),
     });
@@ -4203,6 +4201,22 @@ async function validateAssetUpdate(id: string, existing: ExistingAssetForUpdate,
         });
         if (!wlSource) {
           throw new AppError(400, `${label} polling requires this asset to be discovered by a ${label} integration (no ${label} source on file)`);
+        }
+      }
+      // "genericapi": the integration's own monitor queries answer for the
+      // asset (rule 100(i)), so it needs a Generic API record to resolve the
+      // integration through, and a stream a query can map.
+      if (value === "genericapi") {
+        const stream = name.replace(/Polling$/, "") as Stream;
+        if (!isMethodValidForStream(stream, value)) {
+          throw new AppError(400, `Generic API polling does not apply to the ${stream} stream (field: ${name})`);
+        }
+        const gaSource = await prisma.assetSource.findFirst({
+          where: { assetId: id, sourceKind: "generic-api" },
+          select: { id: true },
+        });
+        if (!gaSource) {
+          throw new AppError(400, "Generic API polling requires this asset to be listed by a Generic API integration (no Generic API record on file)");
         }
       }
       // "fortimanager" reads FMG's own device roster — reachability and nothing
