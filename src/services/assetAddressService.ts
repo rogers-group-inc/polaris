@@ -22,12 +22,21 @@
  * search and IP lookup all read this table. A gate that is never read again
  * (removed from FortiManager) leaves rows behind; DISCOVERED_ROW_MAX_AGE_MS
  * sweeps those.
+ *
+ * Between gate reads, IPAM is the fresher record of a DHCP binding: an
+ * operator who releases or re-assigns an address there changes `Reservation`,
+ * and nothing in that path reaches this table. `reconcileAddressesWithIpam`
+ * closes the gap for ONE asset when its details are opened (business rule
+ * 102(a)).
  */
 
 import { prisma } from "../db.js";
 import { retryOnDeadlock } from "../utils/dbRetry.js";
 import { chunkArray } from "../utils/chunk.js";
+import { mostSpecificContaining } from "../utils/cidr.js";
+import { normalizeMacOrNull } from "../utils/mac.js";
 import type { AddressMedium } from "../utils/dhcpClaimFreshness.js";
+import { logEvent } from "./eventLogService.js";
 
 export const DISCOVERED_ADDRESS_SOURCES = ["dhcp-lease", "dhcp-reservation", "device-inventory", "arp"] as const;
 export type DiscoveredAddressSource = (typeof DISCOVERED_ADDRESS_SOURCES)[number];
@@ -173,6 +182,135 @@ export async function reconcileDiscoveredAddresses(
   }
 
   return { upserted, pruned };
+}
+
+// ─── IPAM cross-check (business rule 102(a)) ────────────────────────────────
+
+/** The discovered sources IPAM can vouch for — a DHCP binding is a reservation row there. */
+const IPAM_CHECKED_SOURCES = ["dhcp-lease", "dhcp-reservation"] as const;
+
+export type IpamAddressVerdict =
+  | { action: "keep" }
+  | { action: "remove"; reason: string }
+  | { action: "relabel"; source: "dhcp-lease" | "dhcp-reservation" };
+
+/**
+ * What IPAM says about one discovered DHCP address row. Pure.
+ *
+ * `covered` is whether IPAM holds a subnet on the row's gate that contains the
+ * IP — without one IPAM has no opinion and the row stands (an excluded range,
+ * a scope never imported). `reservation` is the ACTIVE reservation at that IP
+ * in that subnet, or null. A different MAC on it means the address is now
+ * someone else's; no reservation means it was released. An operator-owned row
+ * keeps the address whatever its sourceType, so only a DHCP-sourced or synced
+ * pushed row re-labels the binding kind.
+ */
+export function judgeDhcpAddressAgainstIpam(
+  row: { mac: string | null; source: string },
+  covered: boolean,
+  reservation: { macAddress: string | null; sourceType: string; pushStatus: string | null } | null,
+): IpamAddressVerdict {
+  if (!covered) return { action: "keep" };
+  if (!reservation) return { action: "remove", reason: "no active IPAM entry at this address" };
+  const resMac = normalizeMacOrNull(reservation.macAddress);
+  const rowMac = normalizeMacOrNull(row.mac);
+  if (resMac && rowMac && resMac !== rowMac) {
+    return { action: "remove", reason: `IPAM assigns this address to ${resMac}` };
+  }
+  const kind =
+    reservation.sourceType === "dhcp_lease" ? "dhcp-lease"
+    : reservation.sourceType === "dhcp_reservation" ? "dhcp-reservation"
+    : reservation.pushStatus === "synced" ? "dhcp-reservation"
+    : null;
+  if (kind && kind !== row.source) return { action: "relabel", source: kind };
+  return { action: "keep" };
+}
+
+export interface IpamAddressCheckResult {
+  removed: Array<{ ip: string; mac: string | null; device: string | null; reason: string }>;
+  relabelled: number;
+}
+
+/**
+ * Bring ONE asset's discovered DHCP address rows in line with IPAM. Called
+ * when the asset's details are read, so an IPAM release or re-assignment shows
+ * on the asset without waiting for the next gate read. Writes only on a
+ * difference. Scoped per gate (`row.device` = `Subnet.fortigateDevice`)
+ * because RFC1918 space repeats behind different gates. ARP and
+ * detected-device rows are not DHCP bindings and are left alone, as are
+ * manual and interface-scrape rows.
+ */
+export async function reconcileAddressesWithIpam(
+  assetId: string,
+  actor?: string,
+): Promise<IpamAddressCheckResult> {
+  const result: IpamAddressCheckResult = { removed: [], relabelled: 0 };
+  const rows = await prisma.assetAssociatedIp.findMany({
+    where: { assetId, source: { in: [...IPAM_CHECKED_SOURCES] } },
+    select: { id: true, ip: true, mac: true, source: true, device: true },
+  });
+  const devices = [...new Set(rows.map((r) => r.device).filter((d): d is string => !!d))];
+  if (devices.length === 0) return result;
+
+  const subnets = await prisma.subnet.findMany({
+    where: { fortigateDevice: { in: devices } },
+    select: { id: true, cidr: true, fortigateDevice: true },
+  });
+  const subnetFor = new Map<string, { id: string; cidr: string }>();
+  for (const r of rows) {
+    if (!r.device) continue;
+    const s = mostSpecificContaining(subnets.filter((x) => x.fortigateDevice === r.device), `${r.ip}/32`);
+    if (s) subnetFor.set(r.id, s);
+  }
+  const subnetIds = [...new Set([...subnetFor.values()].map((s) => s.id))];
+  const reservations = subnetIds.length
+    ? await prisma.reservation.findMany({
+        where: { subnetId: { in: subnetIds }, status: "active", ipAddress: { in: rows.map((r) => r.ip) } },
+        select: { subnetId: true, ipAddress: true, macAddress: true, sourceType: true, pushStatus: true },
+      })
+    : [];
+  const resByKey = new Map(reservations.map((r) => [`${r.subnetId}|${r.ipAddress}`, r]));
+
+  const removeIds: string[] = [];
+  const relabels: Array<{ id: string; source: string }> = [];
+  for (const r of rows) {
+    const subnet = subnetFor.get(r.id);
+    const verdict = judgeDhcpAddressAgainstIpam(
+      r, !!subnet, subnet ? resByKey.get(`${subnet.id}|${r.ip}`) ?? null : null,
+    );
+    if (verdict.action === "remove") {
+      removeIds.push(r.id);
+      result.removed.push({ ip: r.ip, mac: r.mac, device: r.device, reason: verdict.reason });
+    } else if (verdict.action === "relabel") {
+      relabels.push({ id: r.id, source: verdict.source });
+    }
+  }
+  if (removeIds.length === 0 && relabels.length === 0) return result;
+
+  await retryOnDeadlock(() =>
+    prisma.$transaction([
+      prisma.assetAssociatedIp.deleteMany({ where: { id: { in: removeIds } } }),
+      ...relabels.map((u) => prisma.assetAssociatedIp.update({ where: { id: u.id }, data: { source: u.source } })),
+    ]),
+  );
+  result.relabelled = relabels.length;
+
+  if (result.removed.length > 0) {
+    const asset = await prisma.asset.findUnique({ where: { id: assetId }, select: { hostname: true, ipAddress: true } });
+    const name = asset?.hostname || asset?.ipAddress || assetId;
+    await logEvent({
+      action: "asset.addresses_ipam_reconciled",
+      resourceType: "asset",
+      resourceId: assetId,
+      resourceName: name,
+      actor,
+      message:
+        `Removed ${result.removed.length} DHCP address${result.removed.length === 1 ? "" : "es"} from asset "${name}" ` +
+        `that IPAM no longer records: ${result.removed.map((x) => x.ip).join(", ")}`,
+      details: { removed: result.removed, relabelled: result.relabelled },
+    });
+  }
+  return result;
 }
 
 /** Test seam: forget the last age sweep so the next call runs one. */

@@ -570,7 +570,9 @@
             <code>{ assetId, mac, ip }</code>. The pair must be one of the device's own addresses
             &mdash; an entry in <code>associatedIps</code> on <code>GET /assets/:id</code>, each of
             which names its <code>mac</code>, the gate that reported it (<code>device</code>) and
-            <code>medium</code>. <code>ipAddress</code> becomes the pinned IP and discovery stops
+            <code>medium</code>. Reading <code>GET /assets/:id</code> first checks the device's DHCP
+            lease and reservation entries against IPAM: one IPAM has released, or holds for a
+            different MAC, is dropped from the list. <code>ipAddress</code> becomes the pinned IP and discovery stops
             changing it; the one exception is a renumber &mdash; when the pinned IP has not been
             seen for 24 hours and the same MAC now has exactly one recently seen address, the pin
             moves to it. Pinning replaces an IP typed through <code>PUT /assets/:id</code>, and

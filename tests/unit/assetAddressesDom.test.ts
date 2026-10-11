@@ -30,7 +30,7 @@ function varLine(name: string): string {
 }
 
 const FNS = [
-  "_assetAddressRows", "primaryAddressMac", "_assetAddressPinnable", "primaryAddressPinHTML",
+  "_assetAddressRows", "_addressMacKey", "primaryAddressMac", "_assetAddressPinnable", "primaryAddressPinHTML",
   "formatAddressSource", "formatMacSource", "_addressIpLineHTML", "_addressGroupHTML", "addressesViewHTML",
   "macDeleteButtonHTML", "macEntryText", "macEntryCount", "macEntriesTotal", "ipViewRow", "ipCellHTML",
   "_confAge", "_confHours", "_addressConfidence", "_confidenceBreakdownHTML", "addressConfidenceChipHTML",
@@ -159,6 +159,31 @@ describe("Addresses row", () => {
     expect(el.textContent).toContain("no address reported");
     expect(el.textContent).toContain("No MAC");
     expect(el.textContent).toContain("10.0.0.9");
+  });
+
+  it("groups an interface row under its MAC whatever the MAC's case or separator", () => {
+    const el = render(g.addressesViewHTML(hmi({
+      associatedIps: [
+        { ip: "172.23.25.235", mac: ETH, source: "device-inventory", device: "ARCHMAT-101F-1", lastSeen: now },
+        { ip: "169.254.1.7", mac: ETH.toLowerCase().replace(/:/g, "-"), source: "monitor-system-info", interfaceName: "Ethernet", lastSeen: now },
+      ],
+    })));
+    const groups = [...el.querySelectorAll(".address-group")];
+    const ethGroups = groups.filter((gr) => (gr.textContent || "").toUpperCase().includes(ETH));
+    expect(ethGroups).toHaveLength(1);
+    expect(ethGroups[0].textContent).toContain("169.254.1.7");
+    expect(ethGroups[0].querySelector(".mac-tooltip-delete")).not.toBeNull();
+    expect(el.textContent).not.toContain("Not on MAC list");
+  });
+
+  it("labels a MAC only address rows carry, which has no remove button", () => {
+    const LOOSE = "00:11:22:33:44:55";
+    const el = render(g.addressesViewHTML(hmi({
+      associatedIps: [{ ip: "10.9.9.9", mac: LOOSE, source: "monitor-system-info", interfaceName: "port9", lastSeen: now }],
+    })));
+    const group = [...el.querySelectorAll(".address-group")].find((gr) => (gr.textContent || "").includes(LOOSE))!;
+    expect(group.textContent).toContain("Not on MAC list");
+    expect(group.querySelector(".mac-tooltip-delete")).toBeNull();
   });
 
   it("renders nothing for an asset with no MACs and no addresses", () => {

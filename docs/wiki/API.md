@@ -126,7 +126,9 @@ and always keep the ones a device already has.
 
 `PUT /assets/:id/primary-address` takes `{ mac, ip }` — one of the device's own
 addresses, as listed in `associatedIps` on `GET /assets/:id` (each entry names
-its `mac`, the reporting gate `device`, and `medium`). A pair not on that list,
+its `mac`, the reporting gate `device`, and `medium`). Reading `GET /assets/:id`
+first checks the device's DHCP lease and reservation entries against IPAM, and
+drops one IPAM has released or holds for a different MAC. A pair not on that list,
 or a FortiGate / FortiSwitch / FortiAP managed by a Fortinet integration, is a
 `409`. While pinned, discovery does not change `ipAddress`, except to follow a
 renumber: when the pinned IP has gone unseen for 24 hours and the same MAC has
