@@ -54,6 +54,12 @@ d("Generic API integration — create / edit validation", () => {
       ["blocked token URL", { authType: "oauth2", tokenUrl: "http://127.0.0.1/token" }, /blocked range/],
       ["injecting header", { headers: [{ name: "X-A", value: "a\r\nHost: evil" }] }, /line breaks/],
       ["bad POST body", { method: "POST", body: "{nope" }, /not valid JSON/],
+      ["detail path naming another host", { detailQueries: [{ path: "//evil.example/{{id}}" }] }, /single/],
+      ["detail placeholder left open", { detailQueries: [{ path: "/d/{{id" }] }, /no matching/],
+      ["detail placeholder that does not parse", { detailQueries: [{ path: "/d/{{a[}}" }] }, /placeholder/],
+      ["detail query mapping the id", { detailQueries: [{ path: "/d/{{id}}", fieldMap: { id: "x" } }] }, /main query only/],
+      ["six detail queries", { detailQueries: Array.from({ length: 6 }, () => ({ path: "/d/{{id}}" })) }, /At most 5/],
+      ["detail concurrency out of range", { detailConcurrency: 64 }, /16/],
     ];
     for (const [label, over, msg] of cases) {
       const r = await agent.post("/api/v1/integrations").set("X-CSRF-Token", csrf).send(body(over));
@@ -91,6 +97,26 @@ d("Generic API integration — create / edit validation", () => {
     const after = (await prisma.integration.findUnique({ where: { id } }))!.config as Record<string, any>;
     expect(after.fieldMap.id).toBe("id");
     expect(after.host).toBe("inventory.example.com");
+  });
+
+  it("stores detail queries and every mappable field, and drops a field the service does not know", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const created = await agent.post("/api/v1/integrations").set("X-CSRF-Token", csrf).send({
+      type: "genericapi",
+      name: `${NAME} details`,
+      config: config({
+        fieldMap: { id: "id", hostname: "name", warrantyExpiry: "warranty.end", tags: "labels[*]", latitude: "geo.lat", longitude: "geo.lng", notAField: "x" },
+        detailQueries: [{ name: "HW", method: "POST", path: "/api/devices/{{id}}/hw", body: '{"id": "{{id}}"}', fieldMap: { serialNumber: "hw.serial", assignedTo: "owner" } }],
+        detailConcurrency: 8,
+      }),
+    });
+    expect(created.status).toBe(201);
+    const stored = (await prisma.integration.findUnique({ where: { id: created.body.id } }))!.config as Record<string, any>;
+    expect(stored.fieldMap).toEqual({ id: "id", hostname: "name", warrantyExpiry: "warranty.end", tags: "labels[*]", latitude: "geo.lat", longitude: "geo.lng" });
+    expect(stored.detailQueries).toEqual([
+      { name: "HW", method: "POST", path: "/api/devices/{{id}}/hw", body: '{"id": "{{id}}"}', fieldMap: { serialNumber: "hw.serial", assignedTo: "owner" } },
+    ]);
+    expect(stored.detailConcurrency).toBe(8);
   });
 });
 

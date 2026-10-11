@@ -20,6 +20,10 @@
  *     FortiGate DHCP sighting for name / vendor / model / OS, below it for
  *     the IP. On an asset a first-party source also holds, the feed fills
  *     gaps and never overrides.
+ *   - The columns no other source projects (department, owner, PO, dates,
+ *     description, asset tag) are written directly, under the same rank:
+ *     a blank is filled, and a value changes only while it is still the one
+ *     the feed wrote last run (genericApiFeedFieldUpdates).
  *
  * Matching (rule 91 — a hostname is not an identity):
  *   own source row → MAC → unique hardware serial (indexUniqueBy, rule 84) →
@@ -94,7 +98,93 @@ export function genericApiObserved(
     rawAssetType: r.rawAssetType,
     assetType: r.assetType,
     location: r.location,
+    assetTag: r.assetTag,
+    department: r.department,
+    assignedTo: r.assignedTo,
+    description: r.description,
+    tags: r.tags,
+    acquiredAt: r.acquiredAt,
+    warrantyExpiry: r.warrantyExpiry,
+    purchaseOrder: r.purchaseOrder,
+    latitude: r.latitude,
+    longitude: r.longitude,
   };
+}
+
+/**
+ * The asset columns a feed writes directly — no other source projects them,
+ * so the projection has nothing to rank. The rule that keeps the feed below
+ * everyone else instead (rule 100(c)): it fills a BLANK column, and it may
+ * change a value only while that value is still the one the feed itself
+ * wrote last run (its prior observed blob). Once an operator or another
+ * integration writes the column, the values differ and the feed stops
+ * touching it. A feed never clears a column.
+ */
+export const GENERIC_API_FEED_FIELDS = [
+  "department", "assignedTo", "purchaseOrder", "description", "assetTag", "acquiredAt", "warrantyExpiry",
+] as const;
+type FeedField = (typeof GENERIC_API_FEED_FIELDS)[number];
+const FEED_DATE_FIELDS: ReadonlySet<FeedField> = new Set(["acquiredAt", "warrantyExpiry"]);
+
+function feedComparable(field: FeedField, v: unknown): string | null {
+  if (v === null || v === undefined || v === "") return null;
+  if (FEED_DATE_FIELDS.has(field)) {
+    const d = v instanceof Date ? v : new Date(String(v));
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  return String(v);
+}
+
+export interface FeedFieldContext {
+  integrationId: string;
+  /** asset id holding each asset tag — a tag is unique across assets. */
+  assetIdByTag: ReadonlyMap<string, string>;
+}
+
+/**
+ * The direct-write columns for one asset. `asset` is its current row (or {}
+ * for a create), `prior` this integration's previous observed blob for the
+ * record (null on first sight), `next` this run's. Returns the update and the
+ * reasons any column was held back, for the sync log.
+ */
+export function genericApiFeedFieldUpdates(
+  asset: Record<string, unknown>,
+  prior: Record<string, unknown> | null,
+  next: Record<string, unknown>,
+  ctx: FeedFieldContext,
+): { data: Record<string, unknown>; held: string[] } {
+  const data: Record<string, unknown> = {};
+  const held: string[] = [];
+  const ownedElsewhere = typeof asset.discoveredByIntegrationId === "string" && asset.discoveredByIntegrationId !== ctx.integrationId;
+  for (const field of GENERIC_API_FEED_FIELDS) {
+    const nv = feedComparable(field, next[field]);
+    if (nv === null) continue;
+    const cur = feedComparable(field, asset[field]);
+    if (cur === nv) continue;
+    const pv = feedComparable(field, prior?.[field]);
+    if (cur !== null && cur !== pv) continue;
+    // A description another integration's device carries can be pushed back
+    // to that device by description sync (rule 14) — not the feed's to set.
+    if (field === "description" && ownedElsewhere) continue;
+    if (field === "assetTag") {
+      const holder = ctx.assetIdByTag.get(nv);
+      if (holder && holder !== asset.id) { held.push(`asset tag "${nv}" is already on another asset`); continue; }
+    }
+    data[field] = FEED_DATE_FIELDS.has(field) ? new Date(nv) : nv;
+  }
+  return { data, held };
+}
+
+/**
+ * The asset's tags after this run: every tag kept except the ones the feed
+ * listed last run and no longer lists, plus this run's feed tags. Tags carry
+ * no author, so a tag an operator ALSO set goes when the feed drops it.
+ */
+export function mergeGenericFeedTags(existing: string[], prior: string[], next: string[]): string[] {
+  const dropped = new Set(prior.filter((t) => !next.includes(t)));
+  const out = existing.filter((t) => !dropped.has(t));
+  for (const t of next) if (!out.includes(t)) out.push(t);
+  return out;
 }
 
 /**
@@ -176,11 +266,16 @@ export async function syncGenericApiDevices(
       tags: true, discoveredByIntegrationId: true, dnsName: true, ipAddress: true,
       os: true, osVersion: true, serialNumber: true, manufacturer: true, model: true,
       learnedLocation: true, notes: true, assignedTo: true, macAddress: true,
+      department: true, description: true, purchaseOrder: true, warrantyExpiry: true, assetTag: true,
+      coordSource: true, latitude: true, longitude: true,
       macAddressRows: { select: MAC_ROW_SELECT },
     },
   });
   const allAssets = allAssetsWithRows.map((a: any) => ({ ...a, macAddresses: shapeMacRows(a.macAddressRows) }));
   const assetById = new Map<string, any>(allAssets.map((a: any) => [a.id, a]));
+  const assetIdByTag = new Map<string, string>();
+  for (const a of allAssets) if (a.assetTag) assetIdByTag.set(a.assetTag, a.id);
+  const feedCtx: FeedFieldContext = { integrationId, assetIdByTag };
 
   const allSources = await prisma.assetSource.findMany({
     select: { assetId: true, sourceKind: true, externalId: true, integrationId: true, inferred: true, observed: true, lastSeen: true },
@@ -230,10 +325,13 @@ export async function syncGenericApiDevices(
   };
 
   const freshTags = [GENERIC_API_TYPE, "auto-discovered"];
-  const mergeTags = (existing: any): string[] => {
+  const mergeTags = (existing: any, priorFeedTags: string[], feedTags: string[]): string[] => {
     const preserved = ((existing?.tags as string[]) || []).filter((t) => !isGenericManagedTag(t));
-    return [...preserved, ...freshTags.filter((t) => !preserved.includes(t))];
+    const withFeed = mergeGenericFeedTags(preserved, priorFeedTags, feedTags.filter((t) => !isGenericManagedTag(t)));
+    return [...withFeed, ...freshTags.filter((t) => !withFeed.includes(t))];
   };
+  const obsTags = (o: Record<string, unknown> | null | undefined): string[] =>
+    Array.isArray(o?.tags) ? (o!.tags as unknown[]).filter((t): t is string => typeof t === "string") : [];
 
   const mergeMacs = (existingMacs: any[], macs: string[]): { primary: string | null; merged: any[] } => {
     const merged = Array.isArray(existingMacs) ? existingMacs.map((m) => ({ ...m })) : [];
@@ -296,6 +394,8 @@ export async function syncGenericApiDevices(
     // ── Update ──────────────────────────────────────────────────────────────
     if (existing) {
       try {
+        const prior = (sourcesByAssetId.get(existing.id) ?? [])
+          .find((s) => s.sourceKind === KIND && s.externalId === externalId)?.observed ?? null;
         await upsertSource(existing.id, externalId, observed);
         const before = snapshotMaterialAssetFields(existing);
         const { projected } = projectAssetFromSources(sourcesByAssetId.get(existing.id) ?? []);
@@ -321,7 +421,17 @@ export async function syncGenericApiDevices(
           mergedMacs = merged as MacJsonEntry[];
           if (primary) updateData.macAddress = primary;
         }
-        updateData.tags = mergeTags(existing);
+        // Operator-typed coordinates (coordSource "manual") are never moved.
+        if (existing.coordSource !== "manual" && typeof projected.latitude === "number" && typeof projected.longitude === "number"
+          && (projected.latitude !== existing.latitude || projected.longitude !== existing.longitude)) {
+          updateData.latitude = projected.latitude;
+          updateData.longitude = projected.longitude;
+        }
+        const feed = genericApiFeedFieldUpdates(existing, prior, observed, feedCtx);
+        Object.assign(updateData, feed.data);
+        for (const why of feed.held) syncLog("warning", `"${displayName}": ${why} — left unchanged.`);
+        if (typeof feed.data.assetTag === "string") assetIdByTag.set(feed.data.assetTag, existing.id);
+        updateData.tags = mergeTags(existing, obsTags(prior), r.tags);
         clampAcquiredToLastSeen(updateData, existing);
         await prisma.asset.update({ where: { id: existing.id }, data: updateData });
         logDiscoveryAssetUpdated(before, updateData, existing.id, displayName, { integrationName, integrationId, sourceKind: KIND, actor });
@@ -384,15 +494,20 @@ export async function syncGenericApiDevices(
         manufacturer: projected.manufacturer,
         model: projected.model,
         learnedLocation: projected.learnedLocation ?? null,
+        ...(typeof projected.latitude === "number" && typeof projected.longitude === "number"
+          ? { latitude: projected.latitude, longitude: projected.longitude } : {}),
         assetType,
         status: "active",
         statusChangedAt: now,
         statusChangedBy: integrationName,
         // The only discovery-authored notes content (rule 15) — once, at creation.
         notes: `Auto-discovered from ${GENERIC_API_LABEL} integration "${integrationName}"`,
-        tags: freshTags,
+        tags: mergeTags({ tags: [] }, [], r.tags),
         discoveredByIntegrationId: integrationId,
       };
+      const feed = genericApiFeedFieldUpdates({ discoveredByIntegrationId: integrationId }, null, observed, feedCtx);
+      Object.assign(createData, feed.data);
+      for (const why of feed.held) syncLog("warning", `"${displayName}": ${why} — left blank.`);
       clampAcquiredToLastSeen(createData);
       const newAsset = await prisma.asset.create({ data: createData as any });
       try {
@@ -403,6 +518,7 @@ export async function syncGenericApiDevices(
       logDiscoveryAssetCreated(newAsset.id, displayName, { integrationName, integrationId, sourceKind: KIND, actor });
       assetById.set(newAsset.id, newAsset);
       assetByExternalId.set(externalId, newAsset);
+      if (newAsset.assetTag) assetIdByTag.set(newAsset.assetTag, newAsset.id);
       ownIdentityByAssetId.set(newAsset.id, r.identity);
       for (const mac of r.macs) {
         const k = normalizeMacKey(mac);
@@ -487,6 +603,7 @@ export async function syncGenericApiDevices(
   if (result.unmapped > 0) notes.push(`${result.unmapped} record(s) had no usable identity${result.unmappedReasons.length ? ` (${result.unmappedReasons.join("; ")})` : ""}`);
   if (result.duplicates > 0) notes.push(`${result.duplicates} duplicate identit${result.duplicates === 1 ? "y" : "ies"} ignored`);
   if (result.filtered > 0) notes.push(`${result.filtered} filtered out`);
+  if (result.detailRequests > 0) notes.push(`${result.detailRequests} detail request(s)`);
   if (result.warnings.length > 0) notes.push(...result.warnings);
   syncLog(
     notes.length > 0 && (!result.complete || result.unmapped > 0) ? "warning" : "info",

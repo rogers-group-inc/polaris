@@ -1139,6 +1139,13 @@ const GenericApiHeaderSchema = z.object({
 
 const GenericApiPathSchema = z.string().trim().max(512).optional();
 
+// One optional path per mappable asset field (GENERIC_API_FIELDS), so a field
+// added to the service is accepted here without a second list to keep in step.
+const GenericApiFieldMapSchema = z.object(
+  Object.fromEntries(genericApi.GENERIC_API_FIELDS.map((f) => [f, GenericApiPathSchema])) as
+    Record<genericApi.GenericApiField, typeof GenericApiPathSchema>,
+);
+
 const GenericApiConfigSchema = z.object({
   host:      z.string().trim().min(1, "Host is required").max(255)
     .refine((h) => !/[\/\s]/.test(h), "Host is a name or an address only — put the path in Request path"),
@@ -1171,19 +1178,20 @@ const GenericApiConfigSchema = z.object({
     maxPages:    z.number().int().min(1).max(1000).optional().default(100),
   }).optional().default({ mode: "none" }),
   recordsPath: z.string().trim().max(512).optional().default(""),
-  fieldMap: z.object({
-    id:           GenericApiPathSchema,
-    hostname:     GenericApiPathSchema,
-    ipAddress:    GenericApiPathSchema,
-    macAddress:   GenericApiPathSchema,
-    serialNumber: GenericApiPathSchema,
-    manufacturer: GenericApiPathSchema,
-    model:        GenericApiPathSchema,
-    os:           GenericApiPathSchema,
-    osVersion:    GenericApiPathSchema,
-    assetType:    GenericApiPathSchema,
-    location:     GenericApiPathSchema,
-  }).optional().default({}),
+  fieldMap: GenericApiFieldMapSchema.optional().default({}),
+  // Per-record follow-up requests. Each path is a template whose {{…}}
+  // placeholders are JSON paths into the main record; findInvalidPath (the
+  // superRefine below) checks the template and every path.
+  detailQueries: z.array(z.object({
+    name:     z.string().trim().max(100).optional().default(""),
+    path:     z.string().trim().min(1, "A detail query needs a path").max(2000)
+      .refine((p) => genericApi.isSafeRequestPath(p), "A detail query path must start with a single \"/\" (it may not name another host)"),
+    method:   z.enum(["GET", "POST"]).optional().default("GET"),
+    body:     z.string().max(20_000).optional().default(""),
+    fieldMap: GenericApiFieldMapSchema.optional().default({}),
+  })).max(genericApi.GENERIC_API_LIMITS.maxDetailQueries, `At most ${genericApi.GENERIC_API_LIMITS.maxDetailQueries} detail queries`).optional().default([]),
+  detailConcurrency: z.number().int().min(1).max(genericApi.GENERIC_API_LIMITS.maxDetailConcurrency).optional()
+    .default(genericApi.GENERIC_API_LIMITS.defaultDetailConcurrency),
   identityField:       z.enum(["id", "serialNumber", "macAddress", "hostname"]).optional().default("id"),
   assetTypeDefault:    z.string().trim().max(32).optional().default("other"),
   assetTypeMap:        z.record(z.string().trim().max(32))

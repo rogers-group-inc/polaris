@@ -1687,6 +1687,21 @@ list*. In practice:
   setting works as [rule 70](#rule-70) does for directories. A run that stopped
   part way (a failed page, a page or record limit, a repeated page) or an empty
   read is never treated as deletions.
+- **Detail queries add fields, never records.** A per-record detail request
+  runs after the list has settled which records exist. One that fails costs
+  that record the fields it would have filled. It never costs the record its
+  asset, and never makes the read incomplete. Values placed into its path are
+  URL-encoded, so a record cannot steer the request to another path or host.
+- **It changes only what it wrote.** Department, assigned to, purchase order,
+  description, asset tag and the acquired and warranty dates are filled when
+  blank. The feed changes them only while they still hold the value it wrote
+  last time, so your edit, or another integration's, is never overwritten. It
+  never clears one, never writes a description onto a device another
+  integration owns, and leaves off an asset tag another asset already has.
+- **A shared configuration carries no secret.** The JSON export leaves out the
+  token, password, client secret and any credential-looking header value, and
+  leaves out the host and account unless you ask for them. An import never
+  fills a secret, whatever the file says.
 
 ### Rule 101
 

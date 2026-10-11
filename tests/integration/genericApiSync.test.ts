@@ -11,7 +11,12 @@
  *   5. the missing-record sweep is opt-in, refuses an incomplete or empty
  *      read and a mass removal, and keeps a FILTERED-OUT record's asset;
  *   6. an asset another integration owns loses only this feed's row;
- *   7. an unknown mapped asset type falls back to the default, then "other".
+ *   7. an unknown mapped asset type falls back to the default, then "other";
+ *   8. the directly-written columns (department, owner, PO, dates,
+ *      description, asset tag) and tags: filled when blank, changed only
+ *      while they still hold what the feed wrote, never over an operator's
+ *      edit; an asset tag another asset holds is left off; typed
+ *      coordinates are never moved.
  *
  * Skips cleanly when DATABASE_URL isn't reachable (tests/integration/_helpers).
  */
@@ -66,6 +71,16 @@ const rec = (id: string, over: Partial<GenericApiMappedRecord> = {}): GenericApi
   rawAssetType: null,
   assetType: null,
   location: null,
+  assetTag: null,
+  department: null,
+  assignedTo: null,
+  description: null,
+  tags: [],
+  acquiredAt: null,
+  warrantyExpiry: null,
+  purchaseOrder: null,
+  latitude: null,
+  longitude: null,
   ...over,
 });
 
@@ -80,6 +95,8 @@ function result(records: GenericApiMappedRecord[], over: Partial<GenericApiDisco
     unmappedReasons: [],
     duplicates: 0,
     filtered: 0,
+    detailRequests: 0,
+    detailFailures: 0,
     warnings: [],
     ...over,
   };
@@ -126,8 +143,9 @@ d("syncGenericApiDevices", () => {
     const bySerial = await prisma.asset.create({ data: { hostname: `${PREFIX}known-serial`, assetType: "other", status: "active", serialNumber: "SRV-GSYNC-0001" } });
 
     const r = await syncGenericApiDevices(integrationId, NAME, { assetTypeDefault: "switch" }, result([
-      rec("a", { hostname: "renamed-a", macs: ["ac:cc:8e:00:00:09"], os: "From the feed", model: "M1" }),
-      rec("b", { hostname: "renamed-b", serialNumber: "SRV-GSYNC-0001" }),
+      // Prefixed so cleanup() finds them once the projection renames the assets.
+      rec("a", { hostname: `${PREFIX}renamed-a`, macs: ["ac:cc:8e:00:00:09"], os: "From the feed", model: "M1" }),
+      rec("b", { hostname: `${PREFIX}renamed-b`, serialNumber: "SRV-GSYNC-0001" }),
     ]));
     expect(r.created).toEqual([]);
     expect(r.updated).toHaveLength(2);
@@ -198,5 +216,78 @@ d("syncGenericApiDevices", () => {
     expect(r.decommissioned).toEqual([]);
     expect((await byName("o1"))?.status).toBe("active");
     expect(await prisma.assetSource.count({ where: { integrationId, assetId: o1!.id } })).toBe(0);
+  });
+});
+
+d("syncGenericApiDevices — the directly-written columns", () => {
+  const owned = (suffix: string) => prisma.asset.findFirst({
+    where: { hostname: `${PREFIX}${suffix}` },
+    select: {
+      id: true, department: true, assignedTo: true, purchaseOrder: true, description: true, assetTag: true,
+      acquiredAt: true, warrantyExpiry: true, tags: true, latitude: true, longitude: true, coordSource: true,
+    },
+  });
+  const full = (over: Partial<GenericApiMappedRecord> = {}) => rec("f1", {
+    department: "Ops", assignedTo: "a@example.com", purchaseOrder: "PO-1", description: "Lobby camera",
+    assetTag: `${PREFIX}TAG-1`, acquiredAt: "2024-02-03T00:00:00.000Z", warrantyExpiry: "2027-03-01T00:00:00.000Z",
+    tags: ["east", "lobby"], latitude: 36.16, longitude: -86.78, ...over,
+  });
+
+  it("writes every mapped column on create, and follows the feed while nobody else has touched them", async () => {
+    await syncGenericApiDevices(integrationId, NAME, {}, result([full()]));
+    const a = await owned("f1");
+    expect(a).toMatchObject({
+      department: "Ops", assignedTo: "a@example.com", purchaseOrder: "PO-1", description: "Lobby camera",
+      assetTag: `${PREFIX}TAG-1`, latitude: 36.16, longitude: -86.78,
+    });
+    expect(a?.acquiredAt?.toISOString()).toBe("2024-02-03T00:00:00.000Z");
+    expect(a?.warrantyExpiry?.toISOString()).toBe("2027-03-01T00:00:00.000Z");
+    expect(a?.tags).toEqual(expect.arrayContaining(["east", "lobby", "genericapi", "auto-discovered"]));
+
+    await syncGenericApiDevices(integrationId, NAME, {}, result([full({ department: "NOC", warrantyExpiry: "2028-03-01T00:00:00.000Z", tags: ["east"] })]));
+    const b = await owned("f1");
+    expect(b?.department).toBe("NOC");
+    expect(b?.warrantyExpiry?.toISOString()).toBe("2028-03-01T00:00:00.000Z");
+    expect(b?.tags).not.toContain("lobby");
+    expect(b?.tags).toContain("east");
+  });
+
+  it("never overwrites an operator's edit, never clears, and keeps an operator's tag", async () => {
+    await syncGenericApiDevices(integrationId, NAME, {}, result([full()]));
+    const a = await owned("f1");
+    await prisma.asset.update({
+      where: { id: a!.id },
+      data: { department: "Facilities", tags: [...(a!.tags as string[]), "critical"], latitude: 40.1, longitude: -75.2, coordSource: "manual" },
+    });
+
+    await syncGenericApiDevices(integrationId, NAME, {}, result([full({ department: "NOC", assignedTo: null, latitude: 36.2, longitude: -86.7 })]));
+    const b = await owned("f1");
+    expect(b?.department).toBe("Facilities");
+    expect(b?.assignedTo).toBe("a@example.com");
+    expect(b?.tags).toContain("critical");
+    expect([b?.latitude, b?.longitude, b?.coordSource]).toEqual([40.1, -75.2, "manual"]);
+  });
+
+  it("leaves off an asset tag another asset already carries", async () => {
+    await prisma.asset.create({ data: { hostname: `${PREFIX}holder`, assetType: "other", status: "active", assetTag: `${PREFIX}TAG-1` } });
+    const r = await syncGenericApiDevices(integrationId, NAME, {}, result([full()]));
+    expect(r.created).toEqual([`${PREFIX}f1`]);
+    const a = await owned("f1");
+    expect(a?.assetTag).toBeNull();
+    expect(a?.department).toBe("Ops");
+  });
+
+  it("does not write a description onto an asset another integration owns", async () => {
+    const other = await prisma.integration.create({ data: { type: "activedirectory", name: OTHER, config: {}, enabled: true } });
+    const adOwned = await prisma.asset.create({
+      data: { hostname: `${PREFIX}ad-owned`, assetType: "server", status: "active", macAddress: "AC:CC:8E:00:00:77", discoveredByIntegrationId: other.id },
+    });
+    const r = await syncGenericApiDevices(integrationId, NAME, {}, result([rec("x1", { macs: ["AC:CC:8E:00:00:77"], description: "From the feed", department: "Ops" })]));
+    expect(r.created).toEqual([]);
+    // By id: with no hostname source of its own the asset takes the feed's name.
+    const a = await prisma.asset.findUnique({ where: { id: adOwned.id }, select: { description: true, department: true, discoveredByIntegrationId: true } });
+    expect(a?.description).toBeNull();
+    expect(a?.department).toBe("Ops");
+    expect(a?.discoveredByIntegrationId).toBe(other.id);
   });
 });
