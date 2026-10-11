@@ -309,7 +309,15 @@ entries (a card's secondary addresses), the interface table of a monitored
 device, and anything typed by hand. Each address names where it came from, the
 gate that reported it, wired or wireless when known, and when it was last seen.
 A FortiGate's addresses for a card leave the list once that gate stops
-reporting them ([rule 102](Business-Rules#rule-102)).
+reporting them ([rule 102](Business-Rules#rule-102)). Opening the details also
+checks the DHCP leases and reservations against IPAM: an address IPAM has
+released, or now gives to a different MAC, is removed from the list, and a
+lease IPAM records as a reservation is shown as one. Addresses IPAM has no
+subnet for are left as they are.
+
+A MAC labelled *Not on MAC list* appears only because addresses name it — an
+interface of a monitored device, or an address typed by hand — so it has no
+**×**.
 
 The primary pair carries **★ Primary**. Polaris chooses it from what the gates
 report ([rule 101](Business-Rules#rule-101)); with **Assets** set to *Write* or

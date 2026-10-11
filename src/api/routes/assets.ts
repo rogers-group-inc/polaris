@@ -153,7 +153,7 @@ import { triggerDiscovery } from "../../services/discovery/discoveryEngine.js";
 import { resolveDiscoveryScopeForAsset } from "../../services/discovery/assetDiscoveryScope.js";
 import { isRunActive } from "../../services/discoveryRunState.js";
 import { pinPrimaryAddress, unpinPrimaryAddress, CLEAR_PRIMARY_ADDRESS_PIN } from "../../services/primaryAddressService.js";
-import { DISCOVERED_ADDRESS_SOURCES } from "../../services/assetAddressService.js";
+import { DISCOVERED_ADDRESS_SOURCES, reconcileAddressesWithIpam } from "../../services/assetAddressService.js";
 
 const router = Router();
 
@@ -1626,6 +1626,15 @@ router.get("/ip-check", requirePermission("assets", "read"), async (req, res, ne
 
 router.get("/:id", requirePermission("assets", "read"), async (req, res, next) => {
   try {
+    // Opening the details re-checks the asset's DHCP addresses against IPAM
+    // (business rule 102(a)) so an IPAM release or re-assignment shows here
+    // without waiting for the next gate read. A read grant is enough: it only
+    // drops or re-labels rows discovery itself wrote. Never fails the read.
+    try {
+      await reconcileAddressesWithIpam(req.params.id as string, requestActor(req));
+    } catch (err) {
+      logger.warn({ err, assetId: req.params.id }, "IPAM address cross-check failed; serving stored addresses");
+    }
     const asset = await prisma.asset.findUnique({
       where: { id: req.params.id as string },
       include: {

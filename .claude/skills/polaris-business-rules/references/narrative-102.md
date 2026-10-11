@@ -47,6 +47,19 @@ A DHCP card that renumbers would otherwise leave the pin on an address nobody ho
 
 `Asset.macAddress` stays the identity MAC `selectPrimaryMac` chooses. It keys the `fortigate-endpoint` AssetSource row and every MAC-based match; moving it with a pin would reopen the identity churn the hardware anchoring exists to stop. The panel's Primary Address row shows the pair the IP is on (the pin's MAC, else the address row holding the IP, else the identity MAC), which is what the operator asked to see.
 
+### (a) IPAM is checked when the details open (2026-10-11)
+
+The owner released and edited reservations in IPAM, opened the asset, and the Addresses list still showed the old bindings. Nothing in the reservation write paths (`reservationService`, the IP panel) reaches `AssetAssociatedIp`; only the next successful read of the gate prunes it, so between discovery runs IPAM and the asset disagree, and IPAM is the one the operator just corrected.
+
+The owner was offered a live gate read on open and declined it: "you don't have to discover from the gate, but check it against ipam." So `GET /assets/:id` runs `assetAddressService → reconcileAddressesWithIpam` for that one asset before it reads the row. For each `dhcp-lease` / `dhcp-reservation` row it finds the narrowest IPAM subnet ON THE ROW'S GATE (`Subnet.fortigateDevice` = the row's `device`; RFC1918 space repeats behind gates) that contains the IP, and the active reservation at that IP there:
+
+- no covering subnet → keep (an excluded range or an unimported scope is not a release);
+- no active reservation → remove;
+- an active reservation with a different MAC → remove (the address is someone else's now);
+- otherwise re-label the kind from the reservation (`dhcp_lease` / `dhcp_reservation`, or a synced pushed manual row as a reservation).
+
+Removals write one `asset.addresses_ipam_reconciled` Event. A read grant is enough: the check only drops or re-labels rows discovery wrote, the same rows the next gate read would settle. It never adds a row from IPAM — a reservation nobody holds is configuration, not an address (see Rejected), and adding one would flap against the next gate read. It does not touch ARP, detected-device, interface-scrape or manual rows, `Asset.ipAddress`, or a pin (a pinned pair whose row is removed shows the panel's "no longer on the list" warning, as for any quiet pin). A failure is logged and the stored list served. Order is safe against a run in flight: Phase 5 writes reservations before the address reconcile after Phase 7.5.
+
 ### Rejected
 
 - **Per-MAC IP columns on `AssetMacAddress`.** One IP per card — wrong as soon as a card has a secondary address.

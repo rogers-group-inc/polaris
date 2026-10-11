@@ -1734,6 +1734,13 @@ successful read of that gate removes it. Addresses typed in by hand and the
 ones a monitored device reports from its own interface table are never changed
 by discovery.
 
+Between gate reads, IPAM is the fresher record. Opening an asset's details
+checks its DHCP lease and reservation addresses against IPAM's subnet for that
+gate: one IPAM has released, or holds for a different MAC, is removed (an
+`asset.addresses_ipam_reconciled` event names it), and a lease IPAM records as
+a reservation is relabelled. Where IPAM has no subnet covering the address,
+nothing changes.
+
 The **primary** pair is the one monitoring probes. Polaris picks it
 ([rule 101](#rule-101)) unless you pin one with **Set as primary**:
 
