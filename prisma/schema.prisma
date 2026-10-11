@@ -716,6 +716,16 @@ model Asset {
   primaryAddressIp       String?
   primaryAddressPinnedAt DateTime?
   primaryAddressPinnedBy String?
+  // Polling evidence for the address-confidence score (business rule 103):
+  // the IP Polaris's own probes have been answering on, and since when. Set
+  // together by recordProbeResult on a successful probe Polaris SENT (never an
+  // agent-reported sample) when the probed IP differs from ipConfirmedFor or
+  // the device is coming back from down/unknown — so the run restarts on an
+  // IP change and after every outage. Never cleared: the score reads no
+  // polling credit while monitorStatus is down, or when ipConfirmedFor is not
+  // the current ipAddress.
+  ipConfirmedFor         String?
+  ipConfirmedSince       DateTime?
   macAddress            String? // Most recently seen MAC, e.g. "AA:BB:CC:DD:EE:FF"
   hostname              String?
   // Operator hostname override (pin) — coordSource-style. When set, this value

@@ -3241,8 +3241,11 @@ function ipCellHTML(asset) {
     }
     return '-';
   }
+  // Rule 103: the list carries { score, band } per address — a plain chip
+  // whose title names it (the IP's own +N hover can't hold a nested one).
   if (ips.length === 0) {
-    return '<span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(primary) + '">' + escapeHtml(primary) + '</span>';
+    return '<span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(primary) + '">' + escapeHtml(primary) + '</span>' +
+      addressConfidenceChipHTML(asset, primary, { plain: true });
   }
 
   var displayIp = primary || ips[0].ip;
@@ -3250,10 +3253,12 @@ function ipCellHTML(asset) {
     var metaBits = [];
     if (entry.ptrName) metaBits.push('<span class="mac-tooltip-subnet">' + escapeHtml(entry.ptrName) + '</span>');
     if (entry.interfaceName) metaBits.push('<span class="mac-tooltip-subnet">' + escapeHtml(entry.interfaceName) + '</span>');
-    var sourceLine = (entry.source ? escapeHtml(entry.source) : '') +
+    var sourceLine = (entry.source ? escapeHtml(formatAddressSource(entry.source)) : '') +
+      (entry.device ? ' &middot; ' + escapeHtml(entry.device) : '') +
       (entry.lastSeen ? ' &middot; ' + formatDate(entry.lastSeen) : '');
     return '<div class="mac-tooltip-row">' +
       '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(entry.ip) + '">' + escapeHtml(entry.ip) + '</span>' +
+      addressConfidenceChipHTML(asset, entry.ip, { plain: true }) +
       '<span class="mac-tooltip-meta">' +
         metaBits.join('') +
         '<span class="mac-tooltip-source">' + sourceLine + '</span>' +
@@ -3263,6 +3268,7 @@ function ipCellHTML(asset) {
 
   return '<span class="mac-hover-trigger">' +
     '<span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(displayIp) + '">' + escapeHtml(displayIp) + '</span>' +
+    addressConfidenceChipHTML(asset, displayIp, { plain: true }) +
     '<span class="mac-badge-count">+' + ips.length + '</span>' +
     '<div class="mac-tooltip">' +
       '<div class="mac-tooltip-header">Associated IPs</div>' +
@@ -4932,6 +4938,9 @@ async function openEditModal(id, opts) {
           ? await _preflightDuplicateIp(formData.ipAddress, id, formData)
           : { proceed: true, mergeWith: null };
         if (!pre.proceed) return;
+        // Rule 103: a typed address is scored (and pinged from the server)
+        // before it is pinned; below the warn line the operator is asked.
+        if (ipChanged && !(await _confirmAddressConfidence(id, formData.ipAddress.trim(), { probe: true }))) return;
         var updated = await api.assets.update(id, formData);
         var maintApplied = false;
         if (maint.requested) {
@@ -18549,7 +18558,8 @@ function ipViewRow(asset) {
   // would only repeat them here.
   var mac = primaryAddressMac(asset);
   var ipHTML = asset.ipAddress
-    ? '<span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(asset.ipAddress) + '">' + escapeHtml(asset.ipAddress) + '</span>'
+    ? '<span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(asset.ipAddress) + '">' + escapeHtml(asset.ipAddress) + '</span>' +
+      addressConfidenceChipHTML(asset, asset.ipAddress)
     : ipCellHTML(asset);
   var onMac = mac
     ? '<div style="font-size:0.72rem;color:var(--color-text-tertiary);line-height:1.3">on <span class="copy-cell" title="Click to copy" data-copy="' +
@@ -18633,6 +18643,117 @@ function formatAddressSource(source) {
   }
 }
 
+// ─── Address confidence (business rule 103) ────────────────────────────────
+// The server scores every address (src/utils/addressConfidence.ts) and ships
+// it on the asset as `addressConfidence[ip]`: the detail endpoint with the
+// breakdown (parts / penalties), the list endpoint as { score, band } only.
+// Informational — nothing here decides anything except whether to ask first.
+
+var _CONF_BAND_LABEL = { "high": "high", "medium": "medium", "low": "low", "very-low": "very low" };
+
+function _confAge(iso) {
+  var ms = Date.now() - Date.parse(iso || "");
+  if (!isFinite(ms)) return "";
+  if (ms < 90 * 1000) return "just now";
+  var min = Math.round(ms / 60000);
+  if (min < 90) return min + " min ago";
+  var h = Math.round(min / 60);
+  if (h < 48) return h + " h ago";
+  return Math.round(h / 24) + " d ago";
+}
+
+function _confHours(h) {
+  if (!(h > 0)) return "";
+  if (h < 1) return Math.max(1, Math.round(h * 60)) + " min";
+  if (h < 48) return (Math.round(h * 10) / 10) + " h";
+  var d = Math.floor(h / 24);
+  return d + " d " + Math.round(h - d * 24) + " h";
+}
+
+function _addressConfidence(asset, ip) {
+  var m = asset && asset.addressConfidence;
+  return m && ip && m[ip] ? m[ip] : null;
+}
+
+// The breakdown as tooltip rows — what each piece of evidence contributed.
+function _confidenceBreakdownHTML(c) {
+  var rows = (c.parts || []).map(function (p) {
+    var bits = [escapeHtml(p.label)];
+    if (p.device) bits.push(escapeHtml(p.device));
+    if (p.kind === "polling" && p.hours != null) bits.push(_confHours(p.hours));
+    else if (p.seenAt) bits.push(_confAge(p.seenAt));
+    return '<div class="mac-tooltip-row"><span class="mac-tooltip-meta"><span class="mac-tooltip-source">' +
+      bits.join(' &middot; ') + '</span></span><span class="mono" style="margin-left:auto">' +
+      Number(p.value).toFixed(2) + '</span></div>';
+  }).join('');
+  (c.penalties || []).forEach(function (p) {
+    rows += '<div class="mac-tooltip-row addr-conf-penalty">&#9888; ' + escapeHtml(p.detail) +
+      ' <span class="mono" style="margin-left:auto">&times;' + p.factor + '</span></div>';
+  });
+  if (c.parts && c.evidenceScore != null && c.evidenceScore !== c.score) {
+    rows += '<div class="mac-tooltip-row"><span class="mac-tooltip-source">Network evidence alone: ' + c.evidenceScore + '</span></div>';
+  }
+  if (!c.parts) {
+    rows += '<div class="mac-tooltip-row"><span class="mac-tooltip-source">Open the asset for what the score is made of</span></div>';
+  }
+  return rows;
+}
+
+// A score chip that opens the breakdown on hover (detail panel), or a plain
+// chip whose title names the score (inside another tooltip, where hovers
+// can't nest).
+function addressConfidenceChipHTML(asset, ip, opts) {
+  var c = _addressConfidence(asset, ip);
+  if (!c) return '';
+  var band = c.band || "very-low";
+  var label = 'Confidence ' + c.score + ' (' + (_CONF_BAND_LABEL[band] || band) + ')';
+  var chip = '<span class="addr-conf addr-conf-' + escapeHtml(band) + '"' +
+    (opts && opts.plain ? ' title="' + escapeHtml(label) + '"' : '') + '>' + c.score + '</span>';
+  if (opts && opts.plain) return chip;
+  return '<span class="mac-hover-trigger addr-conf-trigger">' + chip +
+    '<div class="mac-tooltip"><div class="mac-tooltip-header">' + escapeHtml(ip) + ' — ' + escapeHtml(label) + '</div>' +
+    _confidenceBreakdownHTML(c) + '</div></span>';
+}
+
+/**
+ * Before applying a pin or a typed address: score the candidate and, below the
+ * warn line, ask — naming the evidence (or its absence) and, for a typed
+ * address, whether it answered a ping just now. Resolves true to go ahead. A
+ * failed check never blocks the write: it is advice, not a gate.
+ */
+async function _confirmAddressConfidence(assetId, ip, opts) {
+  var probe = !!(opts && opts.probe);
+  var check = opts && opts.check;
+  if (!check) {
+    try {
+      check = await api.assets.addressCheck(assetId, ip, probe);
+    } catch (err) {
+      return true;
+    }
+  }
+  if (!check || !check.warn) return true;
+  var lines = [];
+  lines.push(ip + ' has ' + (_CONF_BAND_LABEL[check.evidenceBand] || check.evidenceBand) +
+    ' confidence (' + check.evidenceScore + ', below ' + check.warnBelow + ').');
+  if (!check.parts || !check.parts.length) {
+    lines.push('Polaris has never seen this address on this device.');
+  } else {
+    lines.push('What Polaris has: ' + check.parts.map(function (p) {
+      var where = p.device ? ' on ' + p.device : '';
+      var when = p.kind === "polling" ? ' for ' + _confHours(p.hours) : (p.seenAt ? ', ' + _confAge(p.seenAt) : '');
+      return p.label + where + when;
+    }).join('; ') + '.');
+  }
+  (check.penalties || []).forEach(function (p) { lines.push(p.detail + '.'); });
+  if (check.probe) {
+    lines.push(check.probe.answered
+      ? 'It answered a ping from this server just now (that shows something is there, not that it is this device).'
+      : 'It did not answer a ping from this server' + (check.probe.error ? ' (' + check.probe.error + ')' : '') + '.');
+  }
+  lines.push('', 'Use it anyway?');
+  return showConfirm(lines.join('\n'));
+}
+
 function _addressIpLineHTML(asset, r, isPrimary) {
   var bits = [];
   var label = formatAddressSource(r.source);
@@ -18652,7 +18773,8 @@ function _addressIpLineHTML(asset, r, isPrimary) {
       : '<span></span>');
   var meta = bits.join(' &middot; ');
   return '<div class="address-ip-line">' +
-    '<code class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(r.ip) + '">' + escapeHtml(r.ip) + '</code>' +
+    '<span class="address-ip-cell"><code class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(r.ip) + '">' + escapeHtml(r.ip) + '</code>' +
+      addressConfidenceChipHTML(asset, r.ip) + '</span>' +
     middle +
     // The tooltip carries the whole line; the cell truncates.
     '<span class="address-meta" title="' + meta.replace(/&middot;/g, '·').replace(/"/g, '&quot;') + '">' + meta + '</span>' +
@@ -18795,11 +18917,22 @@ async function _handlePrimaryAddressClick(e) {
   if (setBtn) {
     var mac = setBtn.getAttribute('data-mac');
     var ip = setBtn.getAttribute('data-ip');
-    ok = await showConfirm(
-      'Monitor this asset on ' + ip + ' (' + mac + ')?\n\n' +
-      'The address is pinned: discovery will not change it, and it replaces any address typed in Edit. ' +
-      'If this card renumbers to a single new address, the pin follows it.'
-    );
+    // Rule 103: a low-confidence pair asks first, naming its evidence. Above
+    // the line, the ordinary confirm.
+    btn.disabled = true;
+    var confident;
+    try {
+      var check = await api.assets.addressCheck(assetId, ip, false).catch(function () { return null; });
+      confident = !check || !check.warn;
+      ok = confident
+        ? await showConfirm(
+            'Monitor this asset on ' + ip + ' (' + mac + ')?\n\n' +
+            'The address is pinned: discovery will not change it, and it replaces any address typed in Edit. ' +
+            'If this card renumbers to a single new address, the pin follows it.')
+        : await _confirmAddressConfidence(assetId, ip, { check: check });
+    } finally {
+      btn.disabled = false;
+    }
     if (!ok) return;
     btn.disabled = true;
     try {

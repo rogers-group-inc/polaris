@@ -1,6 +1,6 @@
 # Business rules
 
-Polaris carries **102 rule numbers**, 1 to 102: 100 rules in force plus rule 80a,
+Polaris carries **103 rule numbers**, 1 to 103: 101 rules in force plus rule 80a,
 with 81 and 88 not in use. Each one records a decision *and* the reasoning
 behind it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
@@ -1756,3 +1756,53 @@ The **primary** pair is the one monitoring probes. Polaris picks it
 - FortiGates, FortiSwitches and FortiAPs are monitored on their management IP
   and cannot be pinned. Port MACs from a device's interface table are shown
   collapsed and are never a primary.
+
+### Rule 103
+
+**Every address carries a confidence score earned from the evidence. Your own
+choice counts toward it but cannot vouch for itself, and the score only
+informs.**
+
+Each address an asset has is scored 0–100 from the evidence for it. Every
+piece of evidence counts by how reliable its source is and how recently it was
+seen, and independent sources that agree add up without ever passing 100:
+
+| Evidence | Weight | Fades by half every |
+|---|---|---|
+| The device's own interface table | 0.95 | day |
+| A FortiGate sees the device online at it | 0.90 | 2 hours |
+| vCenter's guest IP | 0.85 | 6 hours |
+| A DHCP reservation the device is holding | 0.85 | 12 hours |
+| A DHCP lease the device is holding | 0.70 | 12 hours |
+| Azure Arc's network profile | 0.70 | day |
+| An ARP entry | 0.60 | hour |
+| A Generic API feed | 0.40 | day |
+| A FortiGate remembers the device at it, offline | 0.30 | day |
+| A DHCP reservation exists for the device's MAC | 0.20 | never |
+| Polaris has polled it successfully as the primary | up to 0.95 | grows with time |
+| You pinned or typed it | 0.80 | never |
+
+Polling counts only for the address being monitored, and only while the device
+is not down: about 0.6 after a day of clean polling, over 0.9 after three. Two
+things count *against* an address: the device is down on it while a FortiGate
+sees it online at another address (× 0.3), or another device that is present on
+the network holds it more recently (× 0.5). A device that is simply down costs
+its address nothing.
+
+**Bands:** 80 and over high, 50–79 medium, 20–49 low, under 20 very low.
+
+Before **Set as primary** or a typed IP address is applied, Polaris scores it
+on the network's evidence alone, without your choice. Below **50** it asks
+first, saying what it has seen of the address. A typed address is also pinged
+once from the Polaris server, and the answer is shown. A reply proves that
+something answers at the address, not that it is this device.
+
+The score never alerts, never chooses the primary address
+([rule 101](#rule-101)) and never refuses a change. It does one thing on its
+own: **it releases a pin once the network backs it**. Every 15 minutes, a
+pinned address is compared with the asset's other addresses on the evidence
+the network reports. The comparison leaves out your pin and Polaris's own
+polling, because only the address being monitored is ever polled. When the
+pinned address reaches 50 and beats every other address, the pin is released:
+the address stays, and discovery manages it again. An event records the
+release with both scores.

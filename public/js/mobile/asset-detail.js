@@ -828,9 +828,12 @@
       ? addrRows.find(function (r) { return r.ip === asset.ipAddress && r.mac; })
       : null;
     var primaryMac = asset.primaryAddressMac || (primaryRow && primaryRow.mac) || asset.macAddress || null;
+    // Rule 103's confidence for the primary, as the desktop chip shows it.
+    var primaryConf = asset.addressConfidence && asset.ipAddress ? asset.addressConfidence[asset.ipAddress] : null;
     row("IP", asset.ipAddress
       ? '<span class="mono">' + escapeHtml(asset.ipAddress) + '</span>' +
-        (asset.primaryAddressIp ? ' <span class="muted">pinned</span>' : '')
+        (asset.primaryAddressIp ? ' <span class="muted">pinned</span>' : '') +
+        (primaryConf ? ' <span class="muted">· confidence ' + primaryConf.score + '</span>' : '')
       : null);
     row("MAC", primaryMac ? '<span class="mono">' + escapeHtml(primaryMac) + '</span>' : null);
     var others = addrRows.filter(function (r) { return r.ip !== asset.ipAddress; }).length;

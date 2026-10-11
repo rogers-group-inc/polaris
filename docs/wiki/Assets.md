@@ -329,11 +329,32 @@ shows as *pinned* with an **Unpin** button, and:
 - if that card renumbers to a single new address, the pin follows it after a
   day (recorded as `asset.primary_address.followed`);
 - pinning replaces an address typed in Edit, and typing or clearing the IP in
-  Edit releases the pin.
+  Edit releases the pin;
+- once the network backs the pinned address better than any other (its
+  [confidence](#address-confidence) from discovery alone reaches 50 and beats
+  the rest), the pin is released and discovery manages the address again,
+  recorded as `asset.primary_address.released`.
 
 FortiGates, FortiSwitches and FortiAPs are monitored on their management IP and
 offer no pin. A device's port MACs from its interface table are collapsed into
 one *N port MACs* entry and are never a primary.
+
+#### Address confidence
+
+Every address carries a **confidence score** from 0 to 100, shown as a small
+chip beside it. The chip is green for high (80 and over), grey for medium,
+amber for low (20–49) and red for very low. Hover the chip in the asset panel to
+see what the score is made of: each source that reports the address, how
+recently, how long Polaris has polled it successfully as the primary, and
+anything counting against it. On the asset list, the IP address and each
+address in its hover carry the same chip, and hovering the chip shows the
+score.
+
+Before **Set as primary**, and before saving a changed IP address in Edit,
+Polaris checks the address. If the evidence alone scores under **50**, it asks
+first and says what it has seen. A typed address is also pinged once from the
+Polaris server. You can always go ahead. The weights and the rest of the
+scoring are in [rule 103](Business-Rules#rule-103).
 
 #### Correcting a wrong MAC association
 

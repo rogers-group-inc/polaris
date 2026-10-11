@@ -116,6 +116,7 @@ POST   /assets/bulk-tags                    add / remove / replace tags on many 
 DELETE /assets/:id
 PUT    /assets/:id/primary-address          pin the (MAC, IP) the device is monitored on
 DELETE /assets/:id/primary-address          release that pin
+POST   /assets/:id/address-check            score an address before pinning or typing it
 GET    /credentials                         stored credentials, secrets masked
 ```
 
@@ -134,6 +135,24 @@ renumber: when the pinned IP has gone unseen for 24 hours and the same MAC has
 exactly one recently seen address, the pin moves to it. Typing or clearing the
 IP through `PUT /assets/:id` releases the pin, as does `DELETE`. See
 [rule 102](Business-Rules#rule-102).
+
+`GET /assets/:id` carries `addressConfidence`, a score for every address on
+the device keyed by IP: `{ score, evidenceScore, band, evidenceBand, parts,
+penalties }`. `score` runs 0–100 and counts an operator's pin or typed address;
+`evidenceScore` is the network evidence alone. `band` is `high` (80 and up),
+`medium` (50), `low` (20) or `very-low`. Each `parts` entry is one kind of
+evidence (`{ kind, label, device, seenAt, hours, value }`) and each `penalties`
+entry is `{ kind, factor, detail }`. The list returns the compact form,
+`{ score, band }` per address. The score is informational: nothing alerts or
+decides on it.
+
+`POST /assets/:id/address-check` (`assets:write`) takes `{ ip, probe? }` and
+returns the same fields for that address plus `warn` (true when
+`evidenceScore` is below `warnBelow`, 50) and `probe` — `{ answered, error }`
+from one ping sent by the server when `probe` is true, else `null`. An address
+the device has never been seen on scores 0. Nothing is written, and the pin and
+`PUT /assets/:id` never refuse a low score. An invalid IP is a `400`, an
+unknown device a `404`. See [rule 103](Business-Rules#rule-103).
 
 ### Onboarding a device over the API
 

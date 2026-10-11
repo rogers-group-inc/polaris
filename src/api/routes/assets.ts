@@ -154,6 +154,7 @@ import { resolveDiscoveryScopeForAsset } from "../../services/discovery/assetDis
 import { isRunActive } from "../../services/discoveryRunState.js";
 import { pinPrimaryAddress, unpinPrimaryAddress, CLEAR_PRIMARY_ADDRESS_PIN } from "../../services/primaryAddressService.js";
 import { DISCOVERED_ADDRESS_SOURCES, reconcileAddressesWithIpam } from "../../services/assetAddressService.js";
+import { buildAddressConfidence, confidenceToJson, checkAddressConfidence } from "../../services/addressConfidenceService.js";
 
 const router = Router();
 
@@ -241,6 +242,13 @@ const macRegex = /^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$/;
 const PrimaryAddressSchema = z.object({
   mac: z.string().trim().min(1).max(64),
   ip: z.string().trim().min(1).max(64),
+});
+
+// POST /assets/:id/address-check — a candidate address to score before it is
+// pinned or typed in (business rule 103).
+const AddressCheckSchema = z.object({
+  ip: z.string().trim().min(1).max(64),
+  probe: z.boolean().optional(),
 });
 
 const CreateAssetSchema = z.object({
@@ -1075,11 +1083,20 @@ async function enrichAssetList(
   // hottest list endpoint. `activeAlert` is the Name column's alert indicator
   // (worst live alert per device; ONE query for the whole page, see
   // activeAlertSummaryByAsset).
-  const [discoveredHostnames, alertSummaries, ipCtx] = await Promise.all([
+  // `addressConfidence` (business rule 103) — the list carries only score and
+  // band per address; the full breakdown is the detail endpoint's, so a large
+  // page doesn't ship every address's evidence list.
+  const [discoveredHostnames, alertSummaries, ipCtx, confidence] = await Promise.all([
     overriddenIds.length ? getDiscoveredHostnames(overriddenIds) : Promise.resolve(new Map<string, string | null>()),
     activeAlertSummaryByAsset(assets.map((a) => a.id as string)),
     buildIpContexts(assets.map((a) => a.ipAddress).filter(Boolean) as string[]),
+    buildAddressConfidence(assets.map((a) => a.id as string)),
   ]);
+  const compactConfidence = (id: string): Record<string, { score: number; band: string }> => {
+    const out: Record<string, { score: number; band: string }> = {};
+    for (const [ip, r] of confidence.get(id) ?? []) out[ip] = { score: r.score, band: r.band };
+    return out;
+  };
 
   return Promise.all(assets.map(async ({
     associatedIpRows, macAddressRows, fortinetTopology, managementAccess,
@@ -1097,6 +1114,7 @@ async function enrichAssetList(
     ha: shapeHaInfo(fortinetTopology),
     managementAccess: shapeManagementAccess(managementAccess),
     activeAlert: alertSummaries.get(a.id as string) ?? null,
+    addressConfidence: compactConfidence(a.id as string),
     monitoringMethods: await computeMonitoringMethods({
       monitored: a.monitored as boolean | undefined,
       assetType: a.assetType,
@@ -1697,8 +1715,11 @@ router.get("/:id", requirePermission("assets", "read"), async (req, res, next) =
     const hostnameDiscovered = asset.hostnameOverride
       ? await getDiscoveredHostname(asset.id)
       : null;
+    // Business rule 103 — every address's confidence with its breakdown.
+    const addressConfidence = confidenceToJson((await buildAddressConfidence([asset.id])).get(asset.id));
     const safeAsset = {
       ...assetRest,
+      addressConfidence,
       associatedIps: shapeAssociatedIps(associatedIpRows),
       macAddresses:  shapeMacRows(macAddressRows),
       hostnameDiscovered,
@@ -5242,6 +5263,21 @@ router.put("/:id/primary-address", requirePermission("assets", "write"), async (
       assetId: req.params.id as string, mac: input.mac, ip: input.ip, actor: requestActor(req) ?? "unknown",
     });
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/assets/:id/address-check — the confidence check the browser
+// runs before a pin or a typed IP is applied (business rule 103): the
+// candidate's evidence-only score, whether it is below the warn line, and —
+// when `probe` is set — whether it answers one ping from this server. Only a
+// check: nothing is written, and the pin / PUT endpoints never refuse on it.
+// assets:write, the grant of the writes it precedes (and it sends a ping).
+router.post("/:id/address-check", requirePermission("assets", "write"), async (req, res, next) => {
+  try {
+    const input = AddressCheckSchema.parse(req.body);
+    res.json(await checkAddressConfidence(req.params.id as string, input.ip, { probe: input.probe }));
   } catch (err) {
     next(err);
   }

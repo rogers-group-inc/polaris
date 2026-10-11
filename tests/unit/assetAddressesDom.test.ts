@@ -33,6 +33,7 @@ const FNS = [
   "_assetAddressRows", "_addressMacKey", "primaryAddressMac", "_assetAddressPinnable", "primaryAddressPinHTML",
   "formatAddressSource", "formatMacSource", "_addressIpLineHTML", "_addressGroupHTML", "addressesViewHTML",
   "macDeleteButtonHTML", "macEntryText", "macEntryCount", "macEntriesTotal", "ipViewRow", "ipCellHTML",
+  "_confAge", "_confHours", "_addressConfidence", "_confidenceBreakdownHTML", "addressConfidenceChipHTML",
 ];
 
 let canManage = true;
@@ -44,7 +45,7 @@ beforeAll(() => {
   g.assetHaInfo = () => null;
   // eslint-disable-next-line no-eval
   (0, eval)(
-    [varLine("_ADDRESS_GROUPS_VISIBLE"), varLine("_PIN_STALE_MS"), ...FNS.map(fnSrc)].join("\n") +
+    [varLine("_ADDRESS_GROUPS_VISIBLE"), varLine("_PIN_STALE_MS"), varLine("_CONF_BAND_LABEL"), ...FNS.map(fnSrc)].join("\n") +
       "\n" + FNS.map((n) => `globalThis.${n} = ${n};`).join("\n"),
   );
 });
@@ -187,5 +188,55 @@ describe("Addresses row", () => {
 
   it("renders nothing for an asset with no MACs and no addresses", () => {
     expect(g.addressesViewHTML({ id: "x", macAddresses: [], associatedIps: [] })).toBe("");
+  });
+});
+
+describe("address confidence chips (business rule 103)", () => {
+  const detail = {
+    "172.23.25.235": {
+      score: 99, evidenceScore: 99, band: "high", evidenceBand: "high",
+      parts: [
+        { kind: "polling", label: "Polled OK as primary", device: null, seenAt: null, hours: 76, value: 0.91 },
+        { kind: "detected-online", label: "Detected online", device: "ARCHMAT-101F-1", seenAt: now, hours: null, value: 0.9 },
+      ],
+      penalties: [],
+    },
+    "172.23.6.23": {
+      score: 21, evidenceScore: 21, band: "low", evidenceBand: "low",
+      parts: [{ kind: "lease-held", label: "DHCP lease held", device: "ARCHMAT-101F-1", seenAt: now, hours: null, value: 0.7 }],
+      penalties: [{ kind: "alive-elsewhere", factor: 0.3, detail: "Down here, but ARCHMAT-101F-1 sees it online at 172.23.25.235" }],
+    },
+  };
+
+  it("puts a banded chip beside each scored address, with the breakdown in its hover", () => {
+    const el = render(g.addressesViewHTML(hmi({ addressConfidence: detail })));
+    const chips = [...el.querySelectorAll(".addr-conf")];
+    expect(chips.map((c) => c.textContent)).toEqual(expect.arrayContaining(["99", "21"]));
+    const high = chips.find((c) => c.textContent === "99")!;
+    expect(high.classList.contains("addr-conf-high")).toBe(true);
+    const tip = high.closest(".addr-conf-trigger")!.querySelector(".mac-tooltip")!;
+    expect(tip.textContent).toContain("Confidence 99 (high)");
+    expect(tip.textContent).toContain("Polled OK as primary");
+    expect(tip.textContent).toContain("3 d 4 h");
+    const low = chips.find((c) => c.textContent === "21")!;
+    expect(low.closest(".addr-conf-trigger")!.textContent).toContain("sees it online at 172.23.25.235");
+  });
+
+  it("the Primary Address row carries the primary's chip", () => {
+    const el = render(g.ipViewRow(hmi({ addressConfidence: detail })));
+    expect(el.querySelector(".addr-conf")!.textContent).toBe("99");
+  });
+
+  it("the list cell shows plain chips titled with the score (no nested hover)", () => {
+    const el = render(g.ipCellHTML(hmi({ addressConfidence: { "172.23.25.235": { score: 99, band: "high" }, "172.23.6.23": { score: 70, band: "medium" } } })));
+    const chips = [...el.querySelectorAll(".addr-conf")];
+    expect(chips.length).toBeGreaterThanOrEqual(2);
+    expect(el.querySelector(".addr-conf-trigger")).toBeNull();
+    expect(chips[0]!.getAttribute("title")).toBe("Confidence 99 (high)");
+  });
+
+  it("an address with no score gets no chip", () => {
+    const el = render(g.addressesViewHTML(hmi({ addressConfidence: {} })));
+    expect(el.querySelector(".addr-conf")).toBeNull();
   });
 });

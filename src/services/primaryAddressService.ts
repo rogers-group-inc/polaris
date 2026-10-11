@@ -28,6 +28,8 @@ import { normalizeMacOrNull } from "../utils/mac.js";
 import { projectAssetFromSources } from "../utils/assetProjection.js";
 import { logEvent } from "./eventLogService.js";
 import { resolvePendingIpOverrideConflicts } from "./ipOverrideService.js";
+import { buildAddressConfidence } from "./addressConfidenceService.js";
+import { pinReleaseVerdict } from "../utils/addressConfidence.js";
 
 const INFRA_TYPES = new Set(["firewall", "switch", "access_point"]);
 
@@ -156,6 +158,57 @@ export async function unpinPrimaryAddress(input: { assetId: string; actor: strin
     details: { mac: asset.primaryAddressMac, ipAddress: asset.primaryAddressIp, nextIp },
   });
   return { ipAddress: nextIp };
+}
+
+/** Pinned assets scored per batch by the release sweep. */
+const RELEASE_BATCH = 200;
+
+/**
+ * Business rule 103(a): release every pin the network has come to back on its
+ * own — the pinned address's discovery score (no operator weight, no polling)
+ * reaches the warn line and beats every other address the asset has. The
+ * address stays where it is; only the pin goes, so discovery owns it again.
+ * Pinned assets are few, so this reads them all and scores them in batches.
+ */
+export async function releaseConfirmedPins(now: Date = new Date()): Promise<{ checked: number; released: number }> {
+  const pinned = await prisma.asset.findMany({
+    where: { primaryAddressIp: { not: null }, primaryAddressMac: { not: null } },
+    select: { id: true, hostname: true, primaryAddressIp: true, primaryAddressMac: true },
+  });
+  let released = 0;
+  for (let i = 0; i < pinned.length; i += RELEASE_BATCH) {
+    const batch = pinned.slice(i, i + RELEASE_BATCH);
+    const scores = await buildAddressConfidence(batch.map((a) => a.id), { now });
+    for (const a of batch) {
+      const perIp = scores.get(a.id);
+      if (!perIp || !a.primaryAddressIp) continue;
+      const verdict = pinReleaseVerdict(a.primaryAddressIp, perIp);
+      if (!verdict.release) continue;
+      // Conditional on the pin still being the one we scored: an operator
+      // re-pinning between the read and this write keeps their new pin.
+      const strongest = perIp.get(a.primaryAddressIp)?.parts.find((p) => p.kind !== "operator" && p.kind !== "polling");
+      const res = await prisma.asset.updateMany({
+        where: { id: a.id, primaryAddressIp: a.primaryAddressIp, primaryAddressMac: a.primaryAddressMac },
+        data: { ...CLEAR_PRIMARY_ADDRESS_PIN, ipSource: strongest?.device || "discovery" },
+      });
+      if (res.count === 0) continue;
+      released++;
+      logEvent({
+        action: "asset.primary_address.released",
+        resourceType: "asset",
+        resourceId: a.id,
+        resourceName: a.hostname || a.primaryAddressIp,
+        actor: "system",
+        message: `Primary address pin on "${a.hostname || a.id}" released — the network now backs ${a.primaryAddressIp} on its own ` +
+          `(confidence ${verdict.pinnedScore}${verdict.bestOther ? `, next best ${verdict.bestOther.ip} at ${verdict.bestOther.score}` : ""})`,
+        details: {
+          ipAddress: a.primaryAddressIp, mac: a.primaryAddressMac,
+          discoveryScore: verdict.pinnedScore, bestOther: verdict.bestOther,
+        },
+      });
+    }
+  }
+  return { checked: pinned.length, released };
 }
 
 /**

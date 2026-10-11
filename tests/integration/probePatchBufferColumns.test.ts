@@ -60,6 +60,8 @@ describe("probe patch buffer — every column lands where the SQL says", () => {
       lastSeenSource: "probe",
       recoveryStartedAt: t(4000),
       lastDescrAt: t(5000),
+      ipConfirmedFor: "10.9.8.7",
+      ipConfirmedSince: t(6000),
     };
     enqueueProbePatch(id, patch);
     await flushProbePatchBuffer();
@@ -71,7 +73,7 @@ describe("probe patch buffer — every column lands where the SQL says", () => {
         consecutiveFailures: true, consecutiveSuccesses: true,
         monitorStatusChangedAt: true, lastUptimeSec: true, lastRebootAt: true,
         lastSeen: true, lastSeenSource: true, recoveryStartedAt: true,
-        lastDescrAt: true,
+        lastDescrAt: true, ipConfirmedFor: true, ipConfirmedSince: true,
       },
     });
 
@@ -88,6 +90,9 @@ describe("probe patch buffer — every column lands where the SQL says", () => {
     expect(row.lastSeen?.toISOString()).toBe(t(3000).toISOString());
     expect(row.recoveryStartedAt?.toISOString()).toBe(t(4000).toISOString());
     expect(row.lastDescrAt?.toISOString()).toBe(t(5000).toISOString());
+    // Rule 103's polling evidence — the 15th and 16th values.
+    expect(row.ipConfirmedFor).toBe("10.9.8.7");
+    expect(row.ipConfirmedSince?.toISOString()).toBe(t(6000).toISOString());
   });
 
   it("preserves prior stamps a sparse patch omits", async () => {
@@ -109,6 +114,8 @@ describe("probe patch buffer — every column lands where the SQL says", () => {
       lastSeenSource: "probe",
       recoveryStartedAt: first,
       lastDescrAt: first,
+      ipConfirmedFor: "10.9.8.7",
+      ipConfirmedSince: first,
     });
     await flushProbePatchBuffer();
 
@@ -127,8 +134,12 @@ describe("probe patch buffer — every column lands where the SQL says", () => {
       select: {
         lastMonitorAt: true, lastResponseTimeMs: true, lastRebootAt: true,
         recoveryStartedAt: true, lastDescrAt: true, lastSeen: true,
+        ipConfirmedFor: true, ipConfirmedSince: true,
       },
     });
+    // A probe that didn't restart the polling run keeps the run's start.
+    expect(row.ipConfirmedFor).toBe("10.9.8.7");
+    expect(row.ipConfirmedSince?.toISOString()).toBe(first.toISOString());
     expect(row.lastResponseTimeMs).toBe(11);
     expect(row.lastMonitorAt?.toISOString()).toBe(later.toISOString());
     expect(row.lastRebootAt?.toISOString()).toBe(first.toISOString());

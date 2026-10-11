@@ -90,6 +90,7 @@ import {
 } from "../utils/lossSweep.js";
 import { burstPing, pingTargets, detectFping } from "../utils/burstPing.js";
 import { stampsRecoveryAnchor } from "../utils/probeLossAnchor.js";
+import { pollingRunStart } from "../utils/addressConfidence.js";
 import {
   fortiosBool,
   parseFortiosMemberList,
@@ -312,6 +313,10 @@ export interface AssetMonitorSnapshot {
   cpuMemoryTimeoutMs?: number | null;
   temperatureTimeoutMs?: number | null;
   systemInfoTimeoutMs?: number | null;
+  /** The address probed, and the polling run on it (business rule 103). */
+  ipAddress?: string | null;
+  ipConfirmedFor?: string | null;
+  ipConfirmedSince?: Date | null;
 }
 
 // ─── Monitor settings hierarchy ─────────────────────────────────────────────
@@ -11661,6 +11666,9 @@ export async function recordProbeResult(
       systemInfoIntervalSec: true,
       probeTimeoutMs: true,
       dependencySuppressed: true,
+      ipAddress: true,
+      ipConfirmedFor: true,
+      ipConfirmedSince: true,
     },
   });
   if (!loaded) return;
@@ -11680,6 +11688,11 @@ export async function recordProbeResult(
         monitorStatus:        pending.monitorStatus,
         consecutiveFailures:  pending.consecutiveFailures,
         consecutiveSuccesses: pending.consecutiveSuccesses,
+        // A run started earlier in this window must not be restarted by the
+        // next probe reading the stale row (rule 103).
+        ...(pending.ipConfirmedFor !== undefined
+          ? { ipConfirmedFor: pending.ipConfirmedFor, ipConfirmedSince: pending.ipConfirmedSince ?? null }
+          : {}),
       }
     : loaded;
 
@@ -11900,6 +11913,8 @@ export async function recordProbeResult(
     // flush COALESCE freezes lastSeen at the last successful poll.
     lastSeen: result.success ? now : undefined,
     lastSeenSource: result.success ? "probe" : undefined,
+    // Rule 103's polling evidence: a new run starts on this address.
+    ...pollingRunStart(asset, result.success, previousStatus, !!opts?.fromAgent || effective.responseTimePolling === "agent", now),
   });
 
   // Reboot is an edge-triggered audit event, like monitor.status_changed.
@@ -12106,6 +12121,7 @@ export async function runProbeBatchFor(items: ProbeBatchItem[], labels: WorkItem
         temperatureIntervalSec: true, systemInfoIntervalSec: true, probeTimeoutMs: true,
         dependencySuppressed: true, cpuMemoryTimeoutMs: true, temperatureTimeoutMs: true,
         systemInfoTimeoutMs: true, lastMonitorAt: true,
+        ipAddress: true, ipConfirmedFor: true, ipConfirmedSince: true,
       },
     });
     const byId = new Map(snapshots.map((a) => [a.id, a as AssetMonitorSnapshot]));
