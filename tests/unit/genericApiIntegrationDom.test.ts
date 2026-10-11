@@ -19,11 +19,13 @@ vi.mock("../../src/db.js", () => ({ prisma: {} }));
 const g = globalThis as Record<string, unknown>;
 const SRC = readFileSync(resolve(__dirname, "../../public/js/integrations.js"), "utf8");
 const DOWN_AFTER_SRC = readFileSync(resolve(__dirname, "../../public/js/monitor-down-after.js"), "utf8");
+const PORTABILITY_SRC = readFileSync(resolve(__dirname, "../../public/js/genericapi-portability.js"), "utf8");
 
 let scope: Record<string, any>;
 let previewCalls: any[] = [];
 
-function boot(): Record<string, any> {
+/** `withPortability` loads genericapi-portability.js first, as integrations.html does. */
+function boot(withPortability = false): Record<string, any> {
   const win = new Window();
   g.window = win;
   g.document = win.document;
@@ -38,8 +40,10 @@ function boot(): Record<string, any> {
     function val(id){ var el = document.getElementById(id); return el ? el.value.trim() : ""; }
     var api = { integrations: {}, credentials: {}, monitorSettings: {} };
     var permAtLeast = function(){ return true; };
+    var __downloads = [];
+    function downloadJson(obj, filename){ __downloads.push({ obj: obj, filename: filename }); }
   `;
-  (win as any).eval(APP_SHELL_STUBS + "\n" + stubs + "\n" + DOWN_AFTER_SRC + "\n" + SRC + "\n;window.__scope = this;");
+  (win as any).eval(APP_SHELL_STUBS + "\n" + stubs + "\n" + (withPortability ? PORTABILITY_SRC + "\n" : "") + DOWN_AFTER_SRC + "\n" + SRC + "\n;window.__scope = this;");
   return win as unknown as Record<string, any>;
 }
 
@@ -73,7 +77,15 @@ const stored = {
   scope: "",
   pagination: { mode: "cursor", pageParam: "", sizeParam: "", pageSize: 100, startPage: 1, cursorPath: "meta.next", cursorParam: "after", maxPages: 40 },
   recordsPath: "data.devices",
-  fieldMap: { id: "uuid", hostname: "name", ipAddress: "ips", macAddress: "nics[*].mac", serialNumber: "serial", model: "model", assetType: "kind", location: "site.name" },
+  fieldMap: {
+    id: "uuid", hostname: "name", ipAddress: "ips", macAddress: "nics[*].mac", serialNumber: "serial", model: "model", assetType: "kind", location: "site.name",
+    department: "owner.dept", tags: "labels[*]", warrantyExpiry: "warranty.end", latitude: "geo.lat", longitude: "geo.lng",
+  },
+  detailQueries: [
+    { name: "Hardware", method: "POST", path: "/api/devices/{{uuid}}/hw", body: '{"id":"{{uuid}}"}', fieldMap: { serialNumber: "hw.serial", assetTag: "hw.tag" } },
+    { name: "", method: "GET", path: "/api/owners/{{owner.id}}", body: "", fieldMap: { assignedTo: "email" } },
+  ],
+  detailConcurrency: 6,
   identityField: "serialNumber",
   assetTypeDefault: "printer",
   assetTypeMap: { "Network Camera": "other", "Core Switch": "switch" },
@@ -180,5 +192,192 @@ describe("Preview", () => {
     expect(html).toContain("other (Network Camera)");
     expect(html).toContain("Skipped — no usable serialNumber");
     expect(html).toContain("Stopped at the page limit");
+  });
+
+  it("shows each detail query's response, flags a row whose detail failed, and grows a column only when a row has the field", async () => {
+    mount(stored);
+    scope.api.integrations.genericApiPreview = async () => ({
+      ok: true, message: "", warnings: [],
+      sampleRecord: { uuid: "a" },
+      sampleDetails: [
+        { name: "Hardware", path: "/api/devices/a/hw", ok: true, response: { hw: { serial: "<i>SN</i>" } }, error: null },
+        { name: "Owner", path: null, ok: false, response: null, error: "the record has no usable value at {{owner.id}}" },
+      ],
+      rows: [
+        { index: 0, outcome: { ok: true, record: { identity: "a", hostname: "cam", tags: ["east", "lobby"], warrantyExpiry: "2027-03-01T00:00:00.000Z" } }, filteredOut: false, detailFailures: ["Owner: boom"] },
+      ],
+    });
+    await scope._runGenericApiPreview("i1");
+    const html = scope.document.getElementById("f-gaPreviewResult").innerHTML;
+    expect(html).toContain("Detail query “Hardware” — /api/devices/a/hw");
+    expect(html).toContain("&lt;i&gt;SN&lt;/i&gt;");
+    expect(html).toContain("no usable value at {{owner.id}}");
+    expect(html).toContain("(detail query failed)");
+    expect(html).toContain("east, lobby");
+    expect(html).toContain("2027-03-01");
+    expect(html).not.toContain("<th>Department</th>");
+  });
+});
+
+describe("detail queries", () => {
+  const blocks = () => [...scope.document.querySelectorAll("[data-ga-detail]")] as any[];
+
+  it("Add appends an empty block, Remove deletes one, and an untouched blank block is not saved", () => {
+    mount(stored);
+    expect(blocks()).toHaveLength(2);
+    scope.document.getElementById("f-gaDetailAdd").click();
+    expect(blocks()).toHaveLength(3);
+    // The new block is blank, so the reader leaves it out.
+    expect(scope.getGenericApiFormConfig().detailQueries).toHaveLength(2);
+    blocks()[0].querySelector(".ga-detail-remove").click();
+    expect(blocks()).toHaveLength(2);
+    expect(scope.getGenericApiFormConfig().detailQueries.map((q: any) => q.path)).toEqual(["/api/owners/{{owner.id}}"]);
+  });
+
+  it("stops at five blocks", () => {
+    mount(stored);
+    for (let i = 0; i < 6; i++) scope.document.getElementById("f-gaDetailAdd").click();
+    expect(blocks()).toHaveLength(5);
+  });
+
+  it("the method picker shows the body only for POST", () => {
+    mount(stored);
+    const [post, get] = blocks();
+    expect(post.querySelector(".ga-detail-body-wrap").style.display).toBe("");
+    expect(get.querySelector(".ga-detail-body-wrap").style.display).toBe("none");
+    const sel = get.querySelector(".ga-detail-method");
+    sel.value = "POST";
+    sel.dispatchEvent(new scope.Event("change", { bubbles: true }));
+    expect(get.querySelector(".ga-detail-body-wrap").style.display).toBe("");
+  });
+
+  it("names a map line it cannot read instead of dropping it silently", () => {
+    mount(stored);
+    const ta = blocks()[1].querySelector(".ga-detail-map");
+    ta.value = "assignedTo = email\nhostnme = name\nid = uuid";
+    ta.dispatchEvent(new scope.Event("input", { bubbles: true }));
+    const hint = blocks()[1].querySelector(".ga-detail-map-hint").textContent;
+    expect(hint).toContain("hostnme = name");
+    // The record ID comes from the list query only.
+    expect(hint).toContain("id = uuid");
+    expect(scope.getGenericApiFormConfig().detailQueries[1].fieldMap).toEqual({ assignedTo: "email" });
+  });
+});
+
+describe("JSON tab", () => {
+  beforeEach(() => {
+    scope = boot(true);
+    scope.api.integrations.genericApiPreview = async () => ({ ok: true, rows: [], warnings: [] });
+  });
+
+  const json = () => JSON.parse((scope.document.getElementById("f-gaJson") as any).value);
+
+  it("is a fourth tab only when the portability module is loaded", () => {
+    expect(mount(stored).tabs.map((t: any) => t.key)).toEqual(["general", "mapping", "preview", "json"]);
+  });
+
+  it("shows the form as a shareable file: no secret, no connection details, credential header blanked", () => {
+    mount({ ...stored, username: "svc-polaris", headers: [{ name: "X-Tenant", value: "east" }, { name: "X-Api-Key", value: "k-123" }] });
+    const file = json();
+    expect(file.polarisGenericApi).toBe(1);
+    expect(file.name).toBe("CMDB");
+    expect(file.config).not.toHaveProperty("apiToken");
+    expect(file.config).not.toHaveProperty("host");
+    expect(file.config).not.toHaveProperty("port");
+    expect(file.config).not.toHaveProperty("username");
+    expect(file.config).not.toHaveProperty("verboseLogging");
+    expect(file.config.headers).toEqual([{ name: "X-Tenant", value: "east" }, { name: "X-Api-Key", value: "" }]);
+    expect(file.needs).toEqual(expect.arrayContaining(["token", "host", "port", "username", "header:X-Api-Key"]));
+    expect(file.config.detailQueries).toHaveLength(2);
+    expect(JSON.stringify(file)).not.toContain("k-123");
+  });
+
+  it("includes the connection details when asked", () => {
+    mount(stored);
+    const box = scope.document.getElementById("f-gaJsonConnection") as any;
+    box.checked = true;
+    box.dispatchEvent(new scope.Event("change"));
+    expect(json().config.host).toBe("cmdb.example.com");
+    expect(json().config.port).toBe(8443);
+  });
+
+  it("an exported file applied to a blank Add form reproduces the configuration", () => {
+    mount(stored);
+    const box = scope.document.getElementById("f-gaJsonConnection") as any;
+    box.checked = true;
+    box.dispatchEvent(new scope.Event("change"));
+    const text = (scope.document.getElementById("f-gaJson") as any).value;
+
+    // A fresh Add dialog.
+    const generalHtml = scope._formHTMLForType("genericapi", { useHttps: true, verifySsl: true });
+    const tabs = scope._integrationTabs({ type: "genericapi", mode: "create", id: null, config: {}, defaults: {}, generalHtml });
+    scope.document.body.innerHTML = tabs.map((t: any) => `<div data-key="${t.key}">${t.html}</div>`).join("");
+    scope._wireGenericApiForm(null);
+    expect(scope._gaApplyJson(text, "x.genericapi.json")).toBe(true);
+
+    expect((scope.document.getElementById("f-name") as any).value).toBe("CMDB");
+    const out = scope.getGenericApiFormConfig();
+    const { apiToken, password, clientSecret, verboseLogging, ...rest } = stored;
+    void apiToken; void password; void clientSecret; void verboseLogging;
+    const { verboseLogging: _v, apiToken: _t, password: _p, clientSecret: _c, ...outRest } = out;
+    void _v; void _t; void _p; void _c;
+    expect(outRest).toEqual(rest);
+    expect(scope.document.getElementById("f-gaJsonStatus").textContent).toContain("the token / key");
+  });
+
+  it("a file carrying a secret never puts it in the form", () => {
+    mount(stored);
+    const text = JSON.stringify({ polarisGenericApi: 1, config: { ...stored, apiToken: "smuggled", password: "pw", clientSecret: "cs" } });
+    expect(scope._gaApplyJson(text, "")).toBe(true);
+    for (const id of ["f-apiToken", "f-password", "f-clientSecret"]) expect((scope.document.getElementById(id) as any).value).toBe("");
+    expect(scope.document.body.innerHTML).not.toContain("smuggled");
+  });
+
+  it("a file without connection details keeps the host the form already has", () => {
+    mount(stored);
+    expect(scope._gaApplyJson(JSON.stringify({ polarisGenericApi: 1, config: { path: "/v3/things", recordsPath: "items" } }), "")).toBe(true);
+    expect((scope.document.getElementById("f-host") as any).value).toBe("cmdb.example.com");
+    expect((scope.document.getElementById("f-gaPath") as any).value).toBe("/v3/things");
+    // Everything else follows the file: the detail queries it does not list are gone.
+    expect(scope.getGenericApiFormConfig().detailQueries).toEqual([]);
+  });
+
+  it("bad JSON is reported on the tab and changes nothing", () => {
+    mount(stored);
+    expect(scope._gaApplyJson("{ nope", "")).toBe(false);
+    expect(scope.document.getElementById("f-gaJsonStatus").textContent).toMatch(/valid JSON/);
+    expect((scope.document.getElementById("f-gaPath") as any).value).toBe("/api/v2/devices?status=active");
+  });
+
+  it("opening the tab refreshes from the form, but never over JSON the operator is editing", () => {
+    const tab = () => scope.document.querySelector('.page-tab[data-tab="json"]') as any;
+    const spec = scope._intgEditFormSpec({ type: "genericapi", name: "CMDB", enabled: true, autoDiscover: true, pollInterval: 6 }, stored);
+    const tabs = scope._integrationTabs({ type: "genericapi", mode: "edit", id: "i1", config: stored, defaults: spec.defaults, generalHtml: spec.body });
+    scope.document.body.innerHTML = '<button class="page-tab" data-tab="json"></button>' + tabs.map((t: any) => `<div>${t.html}</div>`).join("");
+    scope._wireGenericApiForm("i1");
+    const ta = scope.document.getElementById("f-gaJson") as any;
+    const path = scope.document.getElementById("f-gaPath") as any;
+    path.value = "/changed";
+    tab().click();
+    expect(json().config.path).toBe("/changed");
+    ta.value = '{"edited": true}';
+    ta.dispatchEvent(new scope.Event("input"));
+    path.value = "/changed-again";
+    tab().click();
+    expect(ta.value).toBe('{"edited": true}');
+  });
+
+  it("Export downloads the file under the integration's name, re-stripped", () => {
+    mount(stored);
+    const ta = scope.document.getElementById("f-gaJson") as any;
+    const file = json();
+    file.config.apiToken = "typed-in-editor";
+    ta.value = JSON.stringify(file);
+    ta.dispatchEvent(new scope.Event("input"));
+    scope.document.getElementById("f-gaJsonExport").click();
+    const downloads = scope.eval("__downloads");
+    expect(downloads).toHaveLength(1);
+    expect(downloads[0].filename).toBe("CMDB.genericapi.json");
+    expect(downloads[0].obj.config).not.toHaveProperty("apiToken");
   });
 });

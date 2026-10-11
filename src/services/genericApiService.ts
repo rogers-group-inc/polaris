@@ -38,6 +38,8 @@ import {
   selectRecords,
 } from "../utils/jsonPath.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
+import { isValidGeoCoord } from "../utils/geo.js";
+import { mapWithConcurrency } from "../utils/concurrency.js";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -58,8 +60,42 @@ export const GENERIC_API_FIELDS = [
   "osVersion",
   "assetType",
   "location",
+  "assetTag",
+  "department",
+  "assignedTo",
+  "description",
+  "tags",
+  "acquiredAt",
+  "warrantyExpiry",
+  "purchaseOrder",
+  "latitude",
+  "longitude",
 ] as const;
 export type GenericApiField = (typeof GENERIC_API_FIELDS)[number];
+
+/**
+ * The fields a detail query can fill — every field but the record id. The
+ * identity (and so presence, duplicates and the sweep) is settled by the
+ * MAIN query alone, before any detail request is made: a detail request that
+ * fails can cost a record some fields, never its asset.
+ */
+export const GENERIC_API_DETAIL_FIELDS = GENERIC_API_FIELDS.filter((f) => f !== "id");
+
+/**
+ * A second request made once per record, its path built from that record
+ * ("/api/devices/{{uuid}}/hardware" — each `{{…}}` is a JSON path into the main
+ * record, URL-encoded into the path). Same host, auth and headers as the
+ * main request. Its paths are written against the detail RESPONSE. A field
+ * mapped here wins over the same field from the main query (and a later
+ * detail query over an earlier one) whenever it yields a value.
+ */
+export interface GenericApiDetailQuery {
+  name?: string;
+  path: string;
+  method?: "GET" | "POST";
+  body?: string;
+  fieldMap?: Partial<Record<GenericApiField, string>>;
+}
 
 export interface GenericApiPagination {
   mode: GenericApiPaginationMode;
@@ -108,6 +144,10 @@ export interface GenericApiConfig {
   /** Where the record list sits in a response ("data.devices", "$[*]"). */
   recordsPath?: string;
   fieldMap?: Partial<Record<GenericApiField, string>>;
+  /** Per-record follow-up requests (see GenericApiDetailQuery). */
+  detailQueries?: GenericApiDetailQuery[];
+  /** Detail requests in flight at once. */
+  detailConcurrency?: number;
   identityField?: GenericApiIdentityField;
   /** The asset type for a record whose mapped type is blank or unknown. */
   assetTypeDefault?: string;
@@ -133,6 +173,11 @@ export const GENERIC_API_LIMITS = {
   maxMaxRecords: 50_000,
   defaultTimeoutMs: 30_000,
   defaultPageSize: 100,
+  maxDetailQueries: 5,
+  defaultDetailConcurrency: 4,
+  maxDetailConcurrency: 16,
+  /** Detail requests in one run, across every record and query. */
+  maxDetailRequests: 20_000,
 } as const;
 
 // ─── Normalized output ───────────────────────────────────────────────────────
@@ -156,6 +201,25 @@ export interface GenericApiMappedRecord {
   /** The mapped Polaris type, or null to let the sync apply the default. */
   assetType: string | null;
   location: string | null;
+  assetTag: string | null;
+  department: string | null;
+  assignedTo: string | null;
+  description: string | null;
+  /** Every tag the path reaches, de-duplicated. */
+  tags: string[];
+  /** ISO timestamps, parsed from an ISO string or epoch seconds / milliseconds. */
+  acquiredAt: string | null;
+  warrantyExpiry: string | null;
+  purchaseOrder: string | null;
+  /** Kept only as a valid pair (isValidGeoCoord), else both null. */
+  latitude: number | null;
+  longitude: number | null;
+}
+
+/** One detail response and the paths read against it. */
+export interface GenericApiDetailLayer {
+  doc: unknown;
+  fieldMap: Partial<Record<GenericApiField, string>>;
 }
 
 export type GenericApiMapOutcome =
@@ -183,7 +247,7 @@ type ProgressFn = (step: string, level: "info" | "error", message: string) => vo
 // ─── Validation (shared by the route schema and the service) ──────────────────
 
 /** Paths the config carries, each checked to parse. Returns the first problem, or null. */
-export function findInvalidPath(config: Pick<GenericApiConfig, "recordsPath" | "fieldMap" | "pagination">): string | null {
+export function findInvalidPath(config: Pick<GenericApiConfig, "recordsPath" | "fieldMap" | "pagination" | "detailQueries">): string | null {
   const check = (label: string, p: string | undefined): string | null => {
     if (!p || !p.trim()) return null;
     try { parseJsonPath(p); return null; } catch (err) {
@@ -195,8 +259,46 @@ export function findInvalidPath(config: Pick<GenericApiConfig, "recordsPath" | "
     check("Cursor path", config.pagination?.cursorPath),
     ...GENERIC_API_FIELDS.map((f) => check(`${f} path`, config.fieldMap?.[f])),
   ];
+  (config.detailQueries ?? []).forEach((q, i) => {
+    const label = `Detail query ${i + 1}${q.name?.trim() ? ` ("${q.name.trim()}")` : ""}`;
+    if (!isSafeRequestPath(q.path) || !(q.path ?? "").trim()) {
+      problems.push(`${label}: the path must start with a single "/"`);
+    }
+    for (const [where, tpl] of [["path", q.path], ["body", q.body]] as const) {
+      const placeholders = detailPlaceholders(tpl);
+      if (placeholders === null) problems.push(`${label}: a "{{" in the ${where} has no matching "}}"`);
+      for (const p of placeholders ?? []) problems.push(check(`${label} placeholder {{${p}}}`, p));
+    }
+    if (q.fieldMap && "id" in q.fieldMap && q.fieldMap.id) {
+      problems.push(`${label}: the record id comes from the main query only`);
+    }
+    for (const f of GENERIC_API_DETAIL_FIELDS) problems.push(check(`${label} ${f} path`, q.fieldMap?.[f]));
+  });
   return problems.find((p) => p !== null) ?? null;
 }
+
+/**
+ * The `{{json.path}}` placeholders in a detail path or body, in order; null
+ * when a "{{" has no "}}" (it would otherwise be sent literally). Double
+ * braces, so a JSON body's own braces are never mistaken for one.
+ */
+export function detailPlaceholders(template: string | undefined): string[] | null {
+  const s = template ?? "";
+  const out: string[] = [];
+  let i = 0;
+  for (;;) {
+    const open = s.indexOf("{{", i);
+    if (open === -1) return out;
+    const end = s.indexOf("}}", open + 2);
+    if (end === -1) return null;
+    const inner = s.slice(open + 2, end).trim();
+    if (!inner || inner.includes("{{")) return null;
+    out.push(inner);
+    i = end + 2;
+  }
+}
+
+const PLACEHOLDER_RE = /\{\{([^{}]+?)\}\}/g;
 
 /** The request path must be origin-relative: it may never name another host. */
 export function isSafeRequestPath(p: string | undefined): boolean {
@@ -238,17 +340,35 @@ export function passesDeviceFilter(name: string | null, include: string[], exclu
  * Map one record. Returns why a record was dropped instead of silently
  * skipping it, so the Preview can say "row 4: no value at id".
  */
-export function mapGenericRecord(raw: Record<string, unknown>, config: GenericApiConfig): GenericApiMapOutcome {
+export function mapGenericRecord(
+  raw: Record<string, unknown>,
+  config: GenericApiConfig,
+  details: GenericApiDetailLayer[] = [],
+): GenericApiMapOutcome {
   const fm = config.fieldMap ?? {};
-  const read = (f: GenericApiField): string | null => readJsonPathString(raw, fm[f]);
+  // Most specific first: the last detail query, then earlier ones, then the
+  // main record. The identity is read from the main record only.
+  const layers: GenericApiDetailLayer[] = [...details].reverse().concat({ doc: raw, fieldMap: fm });
+  const read = (f: GenericApiField): string | null => {
+    for (const l of layers) {
+      const v = readJsonPathString(l.doc, l.fieldMap[f]);
+      if (v !== null) return v;
+    }
+    return null;
+  };
+  const readAll = (f: GenericApiField): string[] => {
+    const out: string[] = [];
+    for (const l of layers) for (const v of readJsonPathStrings(l.doc, l.fieldMap[f])) if (!out.includes(v)) out.push(v);
+    return out;
+  };
 
-  const ipCandidates = readJsonPathStrings(raw, fm.ipAddress);
+  const ipCandidates = readAll("ipAddress");
   // Only an ADDRESS is an address: "10.0.0.5/24" is trimmed to its host, a
   // name or a URL is ignored rather than written into Asset.ipAddress.
   const ipAddress = ipCandidates
     .map((s) => s.split("/")[0].trim())
     .find((s) => isValidIpAddress(s)) ?? null;
-  const macs = normalizeMacsDistinct(readJsonPathStrings(raw, fm.macAddress));
+  const macs = normalizeMacsDistinct(readAll("macAddress"));
   const serialNumber = usableSerialOrNull(read("serialNumber"));
   const hostname = read("hostname");
 
@@ -261,11 +381,12 @@ export function mapGenericRecord(raw: Record<string, unknown>, config: GenericAp
   }
 
   const identityField = config.identityField ?? "id";
+  const mainOnly = (f: GenericApiField): string | null => readJsonPathString(raw, fm[f]);
   const identitySource =
-    identityField === "id" ? read("id")
-    : identityField === "serialNumber" ? serialNumber
-    : identityField === "macAddress" ? (macs[0] ?? null)
-    : hostname;
+    identityField === "id" ? mainOnly("id")
+    : identityField === "serialNumber" ? usableSerialOrNull(mainOnly("serialNumber"))
+    : identityField === "macAddress" ? (normalizeMacsDistinct(readJsonPathStrings(raw, fm.macAddress))[0] ?? null)
+    : mainOnly("hostname");
   const identity = identityKeyFor(identityField, identitySource);
   if (!identity) {
     const path = fm[identityField];
@@ -292,8 +413,46 @@ export function mapGenericRecord(raw: Record<string, unknown>, config: GenericAp
       rawAssetType,
       assetType,
       location: read("location"),
+      assetTag: read("assetTag"),
+      department: read("department"),
+      assignedTo: read("assignedTo"),
+      description: read("description"),
+      tags: readAll("tags").map((t) => t.slice(0, 64)).slice(0, 50),
+      acquiredAt: parseLooseDate(read("acquiredAt")),
+      warrantyExpiry: parseLooseDate(read("warrantyExpiry")),
+      purchaseOrder: read("purchaseOrder"),
+      ...readCoordPair(read("latitude"), read("longitude")),
     },
   };
+}
+
+/**
+ * A date a feed sent, as an ISO timestamp: an ISO / RFC 2822 string, or a
+ * number of epoch seconds or milliseconds (told apart by size). Null for
+ * anything that does not land between 1970 and 2200 — a feed's "0" or
+ * "9999-12-31" placeholder is not a date anyone meant.
+ */
+export function parseLooseDate(v: string | null): string | null {
+  if (!v) return null;
+  const s = v.trim();
+  let ms: number;
+  if (/^-?\d+(\.\d+)?$/.test(s)) {
+    const n = Number(s);
+    ms = Math.abs(n) >= 1e11 ? n : n * 1000;
+  } else {
+    ms = Date.parse(s);
+  }
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const d = new Date(ms);
+  const year = d.getUTCFullYear();
+  if (year < 1971 || year > 2200) return null;
+  return d.toISOString();
+}
+
+function readCoordPair(lat: string | null, lng: string | null): { latitude: number | null; longitude: number | null } {
+  const la = lat === null ? NaN : Number(lat);
+  const lo = lng === null ? NaN : Number(lng);
+  return isValidGeoCoord(la, lo) ? { latitude: la, longitude: lo } : { latitude: null, longitude: null };
 }
 
 // ─── Transport ───────────────────────────────────────────────────────────────
@@ -311,10 +470,10 @@ export function endpointOrigin(config: GenericApiConfig): string {
 }
 
 /** The first page's URL: origin + path, with the query-string credential when that is the auth type. */
-export function buildRequestUrl(config: GenericApiConfig): URL {
+export function buildRequestUrl(config: GenericApiConfig, pathOverride?: string): URL {
   if (!config.host?.trim()) throw new AppError(400, "Host is required");
   assertOutboundHostAllowed(config.host);
-  const path = (config.path ?? "").trim() || "/";
+  const path = ((pathOverride ?? config.path) ?? "").trim() || "/";
   if (!isSafeRequestPath(path)) throw new AppError(400, `Request path "${path}" must start with a single "/"`);
   const url = new URL(path, endpointOrigin(config) + "/");
   if (url.origin !== new URL(endpointOrigin(config)).origin) {
@@ -473,6 +632,12 @@ export function buildAuthHeaders(config: GenericApiConfig, oauthToken?: string |
   return out;
 }
 
+/** The run's request headers: the OAuth token (when that is the auth type) fetched once, then buildAuthHeaders. */
+export async function buildRequestHeaders(config: GenericApiConfig, signal?: AbortSignal): Promise<Record<string, string>> {
+  const oauthToken = config.authType === "oauth2" ? await fetchOauthToken(config, signal) : null;
+  return buildAuthHeaders(config, oauthToken);
+}
+
 /** A page/offset/cursor parameter applied to a copy of the base URL. */
 function withParams(base: URL, params: Record<string, string | number | undefined>): URL {
   const u = new URL(base.toString());
@@ -512,7 +677,14 @@ export function resolveSameOriginUrl(next: string, current: URL, config: Generic
  */
 export async function fetchGenericApiRecords(
   config: GenericApiConfig,
-  opts: { signal?: AbortSignal; onProgress?: ProgressFn; maxPagesOverride?: number; maxRecordsOverride?: number } = {},
+  opts: {
+    signal?: AbortSignal;
+    onProgress?: ProgressFn;
+    maxPagesOverride?: number;
+    maxRecordsOverride?: number;
+    /** Headers already built for this run (buildRequestHeaders) — one OAuth token per run. */
+    headers?: Record<string, string>;
+  } = {},
 ): Promise<GenericApiFetchResult> {
   const pg: GenericApiPagination = config.pagination ?? { mode: "none" };
   const mode = pg.mode ?? "none";
@@ -538,8 +710,7 @@ export async function fetchGenericApiRecords(
   }
 
   const base = buildRequestUrl(config);
-  const oauthToken = config.authType === "oauth2" ? await fetchOauthToken(config, opts.signal) : null;
-  const headers = buildAuthHeaders(config, oauthToken);
+  const headers = opts.headers ?? await buildRequestHeaders(config, opts.signal);
   const pageSize = pg.pageSize ?? GENERIC_API_LIMITS.defaultPageSize;
   const startPage = pg.startPage ?? 1;
 
@@ -652,7 +823,158 @@ export async function fetchGenericApiRecords(
   return { records, pages, complete, warnings, skippedNonObjects };
 }
 
+// ─── Detail queries ──────────────────────────────────────────────────────────
+
+/**
+ * A `{{json.path}}` template filled from the main record. In a PATH each value
+ * is URL-encoded, so it can never add a segment, a query parameter or a host;
+ * a value of "." or ".." is refused because the URL parser would resolve it
+ * into a different path on the host. In a JSON BODY each value is
+ * string-escaped. A placeholder with no value fails the query for that record.
+ */
+export function fillDetailTemplate(
+  template: string,
+  raw: Record<string, unknown>,
+  target: "path" | "body",
+): { ok: true; value: string } | { ok: false; reason: string } {
+  if (detailPlaceholders(template) === null) return { ok: false, reason: "a \"{{\" has no matching \"}}\"" };
+  const missing: string[] = [];
+  const value = template.replace(PLACEHOLDER_RE, (_m, inner: string) => {
+    const p = inner.trim();
+    const v = readJsonPathString(raw, p);
+    if (v === null || (target === "path" && (v === "." || v === ".."))) {
+      missing.push(p);
+      return "";
+    }
+    return target === "path" ? encodeURIComponent(v) : JSON.stringify(v).slice(1, -1);
+  });
+  if (missing.length > 0) return { ok: false, reason: `the record has no usable value at {{${missing[0]}}}` };
+  return { ok: true, value };
+}
+
+export interface GenericApiDetailFetch {
+  /** One layer per detail query that answered, in query order. */
+  layers: GenericApiDetailLayer[];
+  /** "query name: why", one per query that did not answer. */
+  failures: string[];
+  requests: number;
+  /** Preview only: each query's request path and response. */
+  responses?: Array<{ name: string; path: string | null; ok: boolean; response: unknown; error: string | null }>;
+}
+
+function detailQueryName(q: GenericApiDetailQuery, i: number): string {
+  return q.name?.trim() || `Detail query ${i + 1}`;
+}
+
+/** Every detail query for one record, in order. Never throws for a failed query. */
+export async function fetchDetailsForRecord(
+  raw: Record<string, unknown>,
+  config: GenericApiConfig,
+  headers: Record<string, string>,
+  opts: { signal?: AbortSignal; keepResponses?: boolean } = {},
+): Promise<GenericApiDetailFetch> {
+  const out: GenericApiDetailFetch = { layers: [], failures: [], requests: 0, ...(opts.keepResponses ? { responses: [] } : {}) };
+  const queries = (config.detailQueries ?? []).slice(0, GENERIC_API_LIMITS.maxDetailQueries);
+  const timeoutMs = config.requestTimeoutMs ?? GENERIC_API_LIMITS.defaultTimeoutMs;
+  for (let i = 0; i < queries.length; i++) {
+    const q = queries[i];
+    const name = detailQueryName(q, i);
+    let path: string | null = null;
+    try {
+      if (opts.signal?.aborted) throw new AppError(499, "The run was cancelled");
+      const filled = fillDetailTemplate(q.path ?? "", raw, "path");
+      if (!filled.ok) throw new AppError(400, filled.reason);
+      path = filled.value;
+      const method = q.method === "POST" ? "POST" : "GET";
+      let body: string | undefined;
+      if (method === "POST") {
+        const b = fillDetailTemplate((q.body ?? "").trim() || "{}", raw, "body");
+        if (!b.ok) throw new AppError(400, b.reason);
+        try { JSON.parse(b.value); } catch { throw new AppError(400, "the request body is not valid JSON once the record's values are filled in"); }
+        body = b.value;
+      }
+      const reqHeaders = { ...headers };
+      if (method === "POST") reqHeaders["Content-Type"] = "application/json";
+      else delete reqHeaders["Content-Type"];
+      const url = buildRequestUrl(config, path);
+      out.requests++;
+      const res = await send(url, { method, headers: reqHeaders, body, verifySsl: config.verifySsl !== false, timeoutMs, signal: opts.signal });
+      if (res.status < 200 || res.status >= 300) throw describeHttpFailure(res.status, res.text, name);
+      if (res.json === undefined) throw new AppError(502, `${name} did not answer with JSON`);
+      out.layers.push({ doc: res.json, fieldMap: q.fieldMap ?? {} });
+      out.responses?.push({ name, path, ok: true, response: res.json, error: null });
+    } catch (err) {
+      const msg = (err as Error)?.message || String(err);
+      out.failures.push(`${name}: ${msg}`);
+      out.responses?.push({ name, path, ok: false, response: null, error: msg });
+    }
+  }
+  return out;
+}
+
+export interface GenericApiDetailRun {
+  /** Aligned with the input records; an empty fetch for a record past the cap. */
+  perRecord: GenericApiDetailFetch[];
+  requests: number;
+  /** Records at least one detail query failed for. */
+  recordsWithFailures: number;
+  failureSamples: string[];
+  warnings: string[];
+}
+
+/**
+ * Detail queries across a run's records, `detailConcurrency` in flight. The
+ * request cap is split across the queries; records past it keep their
+ * main-query fields and the run says so. A failed detail request costs that
+ * record the fields it would have filled — never the record, and never the
+ * read's completeness, which is the main query's alone.
+ */
+export async function fetchGenericApiDetails(
+  records: Record<string, unknown>[],
+  config: GenericApiConfig,
+  headers: Record<string, string>,
+  opts: { signal?: AbortSignal; onProgress?: ProgressFn; keepResponses?: boolean } = {},
+): Promise<GenericApiDetailRun> {
+  const queryCount = Math.min((config.detailQueries ?? []).length, GENERIC_API_LIMITS.maxDetailQueries);
+  const empty = (): GenericApiDetailFetch => ({ layers: [], failures: [], requests: 0 });
+  if (queryCount === 0 || records.length === 0) {
+    return { perRecord: records.map(empty), requests: 0, recordsWithFailures: 0, failureSamples: [], warnings: [] };
+  }
+  const limit = Math.max(1, Math.min(config.detailConcurrency ?? GENERIC_API_LIMITS.defaultDetailConcurrency, GENERIC_API_LIMITS.maxDetailConcurrency));
+  const maxRecords = Math.floor(GENERIC_API_LIMITS.maxDetailRequests / queryCount);
+  const eligible = records.slice(0, maxRecords);
+  const warnings: string[] = [];
+  if (records.length > eligible.length) {
+    warnings.push(`Detail queries ran for the first ${eligible.length} record(s) only (at most ${GENERIC_API_LIMITS.maxDetailRequests} detail requests per run); the rest kept their main-query fields`);
+  }
+  opts.onProgress?.("discover.details", "info", `Detail queries: ${eligible.length} record(s) × ${queryCount} quer${queryCount === 1 ? "y" : "ies"}, ${limit} at a time`);
+  let done = 0;
+  const fetched = await mapWithConcurrency(eligible, limit, async (raw) => {
+    if (opts.signal?.aborted) return empty();
+    const r = await fetchDetailsForRecord(raw, config, headers, { signal: opts.signal, keepResponses: opts.keepResponses });
+    done++;
+    if (done % 250 === 0) opts.onProgress?.("discover.details", "info", `Detail queries: ${done} of ${eligible.length} record(s)`);
+    return r;
+  });
+  if (opts.signal?.aborted) warnings.push("The run was cancelled during the detail queries; records not reached kept their main-query fields");
+  const perRecord = records.map((_, i) => fetched[i] ?? empty());
+  const failureSamples: string[] = [];
+  let recordsWithFailures = 0;
+  let requests = 0;
+  perRecord.forEach((d, i) => {
+    requests += d.requests;
+    if (d.failures.length === 0) return;
+    recordsWithFailures++;
+    if (failureSamples.length < 5) failureSamples.push(`record ${i + 1}: ${d.failures[0]}`);
+  });
+  if (recordsWithFailures > 0) {
+    warnings.push(`Detail queries failed for ${recordsWithFailures} record(s) — those records kept their main-query fields (${failureSamples.join("; ")})`);
+  }
+  return { perRecord, requests, recordsWithFailures, failureSamples, warnings };
+}
+
 // ─── Discovery, test, preview ────────────────────────────────────────────────
+
 
 export interface GenericApiDiscoveryResult {
   /** Records that mapped and passed the device filter. */
@@ -668,6 +990,9 @@ export interface GenericApiDiscoveryResult {
   /** Identities seen twice — the second is dropped (one record, one asset). */
   duplicates: number;
   filtered: number;
+  /** Detail requests made this run, and the records any of them failed for. */
+  detailRequests: number;
+  detailFailures: number;
   warnings: string[];
 }
 
@@ -676,15 +1001,19 @@ export async function discoverGenericApi(
   signal?: AbortSignal,
   onProgress?: ProgressFn,
 ): Promise<GenericApiDiscoveryResult> {
-  const fetched = await fetchGenericApiRecords(config, { signal, onProgress });
+  const headers = await buildRequestHeaders(config, signal);
+  const fetched = await fetchGenericApiRecords(config, { signal, onProgress, headers });
   const include = (config.deviceInclude ?? []).filter((s) => s.trim());
   const exclude = (config.deviceExclude ?? []).filter((s) => s.trim());
-  const records: GenericApiMappedRecord[] = [];
   const present = new Set<string>();
   const unmappedReasons: string[] = [];
   let unmapped = 0;
   let duplicates = 0;
   let filtered = 0;
+
+  // Pass 1 — the identity, from the main record alone. Presence, duplicates
+  // and the sweep's identity set are settled here, before any detail request.
+  const kept: Record<string, unknown>[] = [];
   fetched.records.forEach((raw, i) => {
     const outcome = mapGenericRecord(raw, config);
     if (!outcome.ok) {
@@ -692,11 +1021,19 @@ export async function discoverGenericApi(
       if (unmappedReasons.length < 5) unmappedReasons.push(`record ${i + 1}: ${outcome.reason}`);
       return;
     }
-    const r = outcome.record;
-    if (present.has(r.identity)) { duplicates++; return; }
-    present.add(r.identity);
-    if (!passesDeviceFilter(r.hostname, include, exclude)) { filtered++; return; }
-    records.push(r);
+    if (present.has(outcome.record.identity)) { duplicates++; return; }
+    present.add(outcome.record.identity);
+    kept.push(raw);
+  });
+
+  // Pass 2 — detail queries for the records that survived, then the full map.
+  const details = await fetchGenericApiDetails(kept, config, headers, { signal, onProgress });
+  const records: GenericApiMappedRecord[] = [];
+  kept.forEach((raw, i) => {
+    const outcome = mapGenericRecord(raw, config, details.perRecord[i]?.layers ?? []);
+    if (!outcome.ok) return; // cannot happen: the identity is read from the main record only
+    if (!passesDeviceFilter(outcome.record.hostname, include, exclude)) { filtered++; return; }
+    records.push(outcome.record);
   });
   return {
     records,
@@ -708,7 +1045,9 @@ export async function discoverGenericApi(
     unmappedReasons,
     duplicates,
     filtered,
-    warnings: fetched.warnings,
+    detailRequests: details.requests,
+    detailFailures: details.recordsWithFailures,
+    warnings: [...fetched.warnings, ...details.warnings],
   };
 }
 
@@ -717,24 +1056,38 @@ export interface GenericApiTestResult {
   message: string;
 }
 
-/** One page, mapped. Succeeds only when the records path finds records and at least one maps. */
+/**
+ * One page, mapped, plus the detail queries for the first record that maps.
+ * Succeeds only when the records path finds records, at least one maps, and
+ * every detail query answers for that record.
+ */
 export async function testConnection(config: GenericApiConfig): Promise<GenericApiTestResult> {
   try {
     const bad = findInvalidPath(config);
     if (bad) return { ok: false, message: bad };
-    const fetched = await fetchGenericApiRecords(config, { maxPagesOverride: 1 });
+    const headers = await buildRequestHeaders(config);
+    const fetched = await fetchGenericApiRecords(config, { maxPagesOverride: 1, headers });
     if (fetched.records.length === 0) {
       return {
         ok: false,
         message: `Connected, but the records path ${config.recordsPath ? `"${config.recordsPath}"` : "(the response root)"} found no records on the first page`,
       };
     }
-    const mapped = fetched.records.filter((r) => mapGenericRecord(r, config).ok).length;
-    if (mapped === 0) {
+    const mappable = fetched.records.filter((r) => mapGenericRecord(r, config).ok);
+    if (mappable.length === 0) {
       const first = mapGenericRecord(fetched.records[0], config);
       return { ok: false, message: `Connected and read ${fetched.records.length} record(s), but none mapped: ${first.ok ? "" : first.reason}` };
     }
-    return { ok: true, message: `Connected — first page: ${fetched.records.length} record(s), ${mapped} mapped` };
+    let detailNote = "";
+    const queryCount = (config.detailQueries ?? []).length;
+    if (queryCount > 0) {
+      const d = await fetchDetailsForRecord(mappable[0], config, headers);
+      if (d.failures.length > 0) {
+        return { ok: false, message: `Connected and mapped the first page, but a detail query failed for the first record — ${d.failures[0]}` };
+      }
+      detailNote = `; ${queryCount} detail quer${queryCount === 1 ? "y" : "ies"} answered for the first record`;
+    }
+    return { ok: true, message: `Connected — first page: ${fetched.records.length} record(s), ${mappable.length} mapped${detailNote}` };
   } catch (err: any) {
     return { ok: false, message: err?.message || "Connection failed" };
   }
@@ -745,37 +1098,50 @@ export interface GenericApiPreview {
   message: string;
   /** The first raw record, so the operator can write paths against it. */
   sampleRecord: Record<string, unknown> | null;
+  /** Each detail query's request and response for the first mapped record — paths are written against these. */
+  sampleDetails: NonNullable<GenericApiDetailFetch["responses"]>;
   /** Up to `limit` records as they would be written (or why not). */
-  rows: Array<{ index: number; outcome: GenericApiMapOutcome; filteredOut: boolean }>;
+  rows: Array<{ index: number; outcome: GenericApiMapOutcome; filteredOut: boolean; detailFailures: string[] }>;
   recordsOnFirstPage: number;
   warnings: string[];
 }
 
 /** First page only — the Preview tab's answer to "what would discovery write?". */
 export async function previewGenericApi(config: GenericApiConfig, limit = 10): Promise<GenericApiPreview> {
+  const empty = { sampleRecord: null, sampleDetails: [], rows: [], recordsOnFirstPage: 0, warnings: [] };
   const bad = findInvalidPath(config);
-  if (bad) return { ok: false, message: bad, sampleRecord: null, rows: [], recordsOnFirstPage: 0, warnings: [] };
+  if (bad) return { ok: false, message: bad, ...empty };
   try {
-    const fetched = await fetchGenericApiRecords(config, { maxPagesOverride: 1 });
+    const headers = await buildRequestHeaders(config);
+    const fetched = await fetchGenericApiRecords(config, { maxPagesOverride: 1, headers });
     const include = (config.deviceInclude ?? []).filter((s) => s.trim());
     const exclude = (config.deviceExclude ?? []).filter((s) => s.trim());
-    const rows = fetched.records.slice(0, Math.max(1, Math.min(limit, 50))).map((raw, index) => {
-      const outcome = mapGenericRecord(raw, config);
+    const shown = fetched.records.slice(0, Math.max(1, Math.min(limit, 50)));
+    // Detail queries only for rows whose identity maps — discovery would not
+    // make them for the others either.
+    const mappable = shown.map((raw) => mapGenericRecord(raw, config).ok);
+    const details = await fetchGenericApiDetails(shown.filter((_, i) => mappable[i]), config, headers, { keepResponses: true });
+    let cursor = 0;
+    const rows = shown.map((raw, index) => {
+      const d = mappable[index] ? details.perRecord[cursor++] : undefined;
+      const outcome = mapGenericRecord(raw, config, d?.layers ?? []);
       const filteredOut = outcome.ok && !passesDeviceFilter(outcome.record.hostname, include, exclude);
-      return { index, outcome, filteredOut };
+      return { index, outcome, filteredOut, detailFailures: d?.failures ?? [] };
     });
     const mapped = rows.filter((r) => r.outcome.ok).length;
     return {
       ok: fetched.records.length > 0 && mapped > 0,
       message: fetched.records.length === 0
         ? "Connected, but the records path found no records on the first page"
-        : `First page: ${fetched.records.length} record(s); showing ${rows.length}, ${mapped} mapped`,
+        : `First page: ${fetched.records.length} record(s); showing ${rows.length}, ${mapped} mapped` +
+          (details.requests > 0 ? `; ${details.requests} detail request(s)` : ""),
       sampleRecord: fetched.records[0] ?? null,
+      sampleDetails: details.perRecord[0]?.responses ?? [],
       rows,
       recordsOnFirstPage: fetched.records.length,
-      warnings: fetched.warnings,
+      warnings: [...fetched.warnings, ...details.warnings],
     };
   } catch (err: any) {
-    return { ok: false, message: err?.message || "Request failed", sampleRecord: null, rows: [], recordsOnFirstPage: 0, warnings: [] };
+    return { ok: false, message: err?.message || "Request failed", ...empty };
   }
 }

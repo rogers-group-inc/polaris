@@ -7,7 +7,9 @@ or an internal inventory service.
 
 You describe the request and then say which field in each record means what.
 Polaris keeps no knowledge of the product on the other end. The **Preview** tab
-shows what discovery would write before you save anything.
+shows what discovery would write before you save anything. The **JSON** tab
+exports the whole configuration as a file and imports one, so a mapping written
+for a product can be shared with anyone else who runs it.
 
 Add it from **Integrations → + Add Integration → Generic API**. You can add as
 many as you need, one per feed.
@@ -106,9 +108,44 @@ empty. **Max pages** and **Max records** cap a run.
 | Serial number | Placeholders such as "Default string" are ignored ([rule 84](Business-Rules#rule-84)). |
 | Asset type | The source's own word. Translate it under **Translate asset types** (`Network Camera = other`). A word Polaris already knows (`server`, `printer`…) is used as-is. Anything else gets the **Default asset type**. |
 | Location | Shown in the Location column when nothing closer to a place has a value ([rule 22](Business-Rules#rule-22)). |
+| Latitude, Longitude | Used only as a valid pair. A FortiGate's own coordinates win, and coordinates you typed on the asset are never moved. |
+| Asset tag | Unique across assets: a tag another asset already carries is left off, and the run log says so. |
+| Department, Assigned to, Purchase order, Description | Taken as written. A description is not written on a device another integration owns. |
+| Acquired, Warranty expiry | An ISO date (`2027-03-01`) or epoch seconds or milliseconds. |
+| Tags | Every value the path reaches becomes a tag (`labels[*]`). |
 
 **Default manufacturer** fills in a vendor for feeds that only list one
 (an Axis camera server, an HP printer portal).
+
+### Detail queries
+
+Some APIs list devices briefly (an id and a name) and keep the rest behind a
+per-device URL. A **detail query** is a second request made **once for each
+record**, to fill fields the list does not carry.
+
+| Field | |
+|---|---|
+| **Name** | A label for the run log and Preview, e.g. *Hardware*. |
+| **Method** | `GET`, or `POST` with a JSON body. |
+| **Path** | The request path, with `{{path}}` where a value from the record goes: `/api/devices/{{id}}/hardware`. The path inside the braces is read from the **list** record, using the same path syntax as the mapping. |
+| **Request body** | `POST` only. Placeholders work here too: `{"deviceId": "{{id}}"}`. |
+| **Fields from this response** | One per line, `field = path`, with the path written against the **detail response**: `serialNumber = hardware.serial`. Any field except Record ID. A line Polaris cannot read is named under the box. |
+
+You can add up to five. Each runs on the same host with the same
+authentication as the main request.
+
+- A field a detail query maps **wins** over the same field from the list, and a
+  later query wins over an earlier one, whenever it has a value. An empty value
+  falls through to the list.
+- **Identity always comes from the list.** A record keeps its asset even when
+  its detail request fails. It simply keeps the fields the list gave it, and the
+  run log counts the failures.
+- The device filter runs after the detail queries, so you can filter on a
+  hostname only a detail query supplies.
+- Each detail query costs one request per record per discovery run (2,000
+  records and two queries is 4,000 requests). **Requests at once** (default 4,
+  at most 16) sets how many are in flight. A run makes at most 20,000 detail
+  requests. Records past that keep their list fields.
 
 ### Filters
 
@@ -130,15 +167,49 @@ Include or exclude records by their mapped hostname, one pattern per line
 ## Preview tab
 
 Click **Run preview** to read the first page with the settings on the other
-two tabs, saved or not. It shows:
+tabs, saved or not. It shows:
 
 - the first record, exactly as the API sent it;
+- each detail query's request and response for that record, so you can copy
+  detail paths from it;
 - the first ten records as discovery would write them, with any skipped record
   and the reason (for example *no usable id at "id"*). A record your filter
-  would drop is dimmed.
+  would drop is dimmed, and a record whose detail query failed is marked.
 
 Nothing is stored. **Test Connection** runs the same read and passes only when
-at least one record on the first page maps.
+at least one record on the first page maps and every detail query answers for
+the first one.
+
+---
+
+## JSON tab
+
+The configuration on the other tabs, as JSON. Use it to read the whole setup
+at a glance, keep a backup, or share a mapping for a product.
+
+| Button | |
+|---|---|
+| **Refresh from form** | Rebuilds the JSON from the other tabs. Opening the tab does this too, unless you are editing the JSON. |
+| **Copy** | Copies the JSON. |
+| **Export file** | Downloads it as `<name>.genericapi.json`. |
+| **Import file…** | Reads a `.genericapi.json` file and fills the form from it. |
+| **Apply to form** | Fills the form from the JSON in the box, for a file you pasted or edited. |
+
+The file **never contains the token, password or client secret**, nor the value
+of an extra header whose name suggests a credential (`Authorization`, anything
+with *key*, *token*, *secret*, *cookie* or *session*). The header's name stays,
+with an empty value.
+
+**Include host, port, username, client ID and token URL** is off by default.
+Off, the file says nothing about where your systems are or which account
+Polaris uses, so it is safe to post publicly. Turn it on to move a
+configuration between your own installs.
+
+Importing only fills the form. Nothing is saved until you click Save, and the
+same checks as typing the values in apply. A file without connection details
+keeps the host already in the form. The status line lists what is still to fill
+in, typically the secret and any blanked header. Secrets in a file are never
+imported, even when someone has added them by hand.
 
 ---
 
@@ -161,6 +232,14 @@ On an asset that another source also reports, the feed **fills gaps only**. It
 never changes an asset type someone already set (it only retypes `other`), and
 it never takes an asset away from the integration that owns it.
 
+Department, assigned to, purchase order, description, asset tag and the two
+dates follow one rule. The feed fills them when the asset has none, and keeps
+them current only while the asset still holds the value the feed itself wrote.
+Once you, or another integration, change one, the feed leaves it alone. A value
+that disappears from the feed is never cleared from the asset. Tags the feed
+stops listing are removed. Tags you added are kept, unless the feed once
+listed the same tag and has since dropped it.
+
 ### When a read is incomplete
 
 A run that fails on its **first** page writes nothing. A run that stops part way
@@ -173,6 +252,9 @@ decommissions nothing. A run stops part way when:
   chose);
 - a next-page link points at a different host.
 
+A failed detail query does not make a read incomplete. Completeness is decided
+by the list alone.
+
 The Events page records each run with its record and page counts, plus any
 records skipped for a missing identity.
 
@@ -184,6 +266,9 @@ records skipped for a missing identity.
   for the API and the OAuth token URL alike.
 - It never follows a redirect, and never follows a next-page link to another
   host.
+- A value placed into a detail query's path is URL-encoded, so a record cannot
+  add path segments, query parameters or a host. A value of `.` or `..` is
+  refused.
 - A single response over 25 MB is refused.
 
 ---
@@ -197,4 +282,7 @@ records skipped for a missing identity.
 | *answered with a redirect* | Point the integration at the final URL. HTTP to HTTPS redirects are common. |
 | *refused the credentials (HTTP 401/403)* | Wrong token or key, wrong header name, or the account lacks read access. |
 | *returned the same page twice* | The API ignores the page parameter you chose. Try another pagination mode, or None. |
+| *the record has no usable value at {{…}}* | A detail query's placeholder path finds nothing in the list record. Check it against the first record in Preview. |
+| *Detail queries failed for N record(s)* | Those records kept their list fields. The message names the first few. A 404 usually means the placeholder fills in the wrong id. |
+| A field a detail query maps stays blank | Check the path against the detail response in Preview. It is written against that response, not the list record. |
 | Assets created but never Last Seen | They have no IP Polaris can ping, and nothing else reports them. Map an IP, or monitor them another way. |

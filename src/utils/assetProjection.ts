@@ -726,6 +726,12 @@ const LATITUDE_RULES: FieldRule[] = [
     const lng = obsNumber(o, "longitude");
     return isValidGeoCoord(lat, lng) ? lat : null;
   }},
+  // A Generic API feed's mapped pair (rule 100(c)): below every FortiGate tier.
+  { sourceKind: "generic-api", pick: (o) => {
+    const lat = obsNumber(o, "latitude");
+    const lng = obsNumber(o, "longitude");
+    return isValidGeoCoord(lat, lng) ? lat : null;
+  }},
 ];
 
 const LONGITUDE_RULES: FieldRule[] = [
@@ -740,6 +746,11 @@ const LONGITUDE_RULES: FieldRule[] = [
     return isValidGeoCoord(lat, lng) ? lng : null;
   }},
   { sourceKind: "fortigate-firewall", pick: (o) => {
+    const lat = obsNumber(o, "latitude");
+    const lng = obsNumber(o, "longitude");
+    return isValidGeoCoord(lat, lng) ? lng : null;
+  }},
+  { sourceKind: "generic-api", pick: (o) => {
     const lat = obsNumber(o, "latitude");
     const lng = obsNumber(o, "longitude");
     return isValidGeoCoord(lat, lng) ? lng : null;

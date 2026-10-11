@@ -3,9 +3,14 @@ import {
   _setRequestImplForTests,
   buildAuthHeaders,
   buildRequestUrl,
+  detailPlaceholders,
   discoverGenericApi,
+  fetchDetailsForRecord,
+  fetchGenericApiDetails,
   fetchGenericApiRecords,
+  fillDetailTemplate,
   findInvalidPath,
+  parseLooseDate,
   identityKeyFor,
   isSafeRequestPath,
   mapGenericRecord,
@@ -332,5 +337,250 @@ describe("testConnection / previewGenericApi", () => {
     expect(p.ok).toBe(false);
     expect(p.message).toMatch(/Records path/);
     expect(seen).toHaveLength(0);
+  });
+});
+
+// ─── The fields past Location ────────────────────────────────────────────────
+
+describe("mapGenericRecord — ownership, lifecycle, tags, coordinates", () => {
+  const cfg: GenericApiConfig = {
+    ...base,
+    fieldMap: {
+      ...base.fieldMap,
+      assetTag: "tag", department: "owner.dept", assignedTo: "owner.email", description: "notes",
+      tags: "labels[*]", purchaseOrder: "po", acquiredAt: "bought", warrantyExpiry: "warranty.end",
+      latitude: "geo.lat", longitude: "geo.lng",
+    },
+  };
+
+  it("maps each one, parsing dates and keeping the coordinates only as a valid pair", () => {
+    const out = mapGenericRecord({
+      id: 1, tag: "ACME-1", owner: { dept: "Ops", email: "a@example.com" }, notes: "Lobby camera",
+      labels: ["east", "lobby", "east"], po: 4471, bought: "2024-02-03", warranty: { end: 1803859200 },
+      geo: { lat: "36.16", lng: -86.78 },
+    }, cfg);
+    expect(out.ok && out.record).toMatchObject({
+      assetTag: "ACME-1", department: "Ops", assignedTo: "a@example.com", description: "Lobby camera",
+      tags: ["east", "lobby"], purchaseOrder: "4471",
+      acquiredAt: "2024-02-03T00:00:00.000Z", warrantyExpiry: "2027-03-01T00:00:00.000Z",
+      latitude: 36.16, longitude: -86.78,
+    });
+    const half = mapGenericRecord({ id: 1, geo: { lat: 36.16 } }, cfg);
+    expect(half.ok && [half.record.latitude, half.record.longitude]).toEqual([null, null]);
+    const zero = mapGenericRecord({ id: 1, geo: { lat: 0, lng: 0 } }, cfg);
+    expect(zero.ok && zero.record.latitude).toBeNull();
+  });
+});
+
+describe("parseLooseDate", () => {
+  it("reads ISO strings and epoch seconds or milliseconds, and refuses placeholders", () => {
+    expect(parseLooseDate("2025-06-30T12:00:00Z")).toBe("2025-06-30T12:00:00.000Z");
+    expect(parseLooseDate("1751284800")).toBe("2025-06-30T12:00:00.000Z");
+    expect(parseLooseDate("1751284800000")).toBe("2025-06-30T12:00:00.000Z");
+    expect(parseLooseDate("0")).toBeNull();
+    expect(parseLooseDate("9999-12-31")).toBeNull();
+    expect(parseLooseDate("soon")).toBeNull();
+    expect(parseLooseDate(null)).toBeNull();
+  });
+});
+
+// ─── Detail queries ──────────────────────────────────────────────────────────
+
+describe("detail query templates", () => {
+  it("finds {{…}} placeholders and refuses an unclosed one, leaving JSON braces alone", () => {
+    expect(detailPlaceholders("/api/devices/{{id}}/hw?x={{ meta.site }}")).toEqual(["id", "meta.site"]);
+    expect(detailPlaceholders('{"id": "{{uuid}}", "deep": {"a": 1}}')).toEqual(["uuid"]);
+    expect(detailPlaceholders("/api/{{id")).toBeNull();
+    expect(detailPlaceholders("/api/{{}}")).toBeNull();
+    expect(detailPlaceholders("/plain")).toEqual([]);
+  });
+
+  it("URL-encodes a value into a path so it cannot add a segment, a query or a host", () => {
+    const raw = { id: "a/b?c=d#e", host: "//evil.example" };
+    expect(fillDetailTemplate("/api/devices/{{id}}", raw, "path")).toEqual({ ok: true, value: "/api/devices/a%2Fb%3Fc%3Dd%23e" });
+    expect(fillDetailTemplate("/api/{{host}}", raw, "path")).toEqual({ ok: true, value: "/api/%2F%2Fevil.example" });
+  });
+
+  it("refuses a dot segment and a missing value", () => {
+    expect(fillDetailTemplate("/api/devices/{{id}}/x", { id: ".." }, "path").ok).toBe(false);
+    expect(fillDetailTemplate("/api/devices/{{id}}/x", { id: "." }, "path").ok).toBe(false);
+    const missing = fillDetailTemplate("/api/devices/{{nope}}", { id: 1 }, "path");
+    expect(missing).toEqual({ ok: false, reason: "the record has no usable value at {{nope}}" });
+  });
+
+  it("string-escapes a value into a JSON body", () => {
+    const out = fillDetailTemplate('{"name": "{{name}}"}', { name: 'say "hi"\n' }, "body");
+    expect(out.ok && JSON.parse(out.value)).toEqual({ name: 'say "hi"' });
+  });
+});
+
+describe("findInvalidPath — detail queries", () => {
+  it("checks the path, its placeholders, each mapped path, and refuses an id mapping", () => {
+    expect(findInvalidPath({ ...base, detailQueries: [{ path: "/d/{{id}}", fieldMap: { model: "hw.model" } }] })).toBeNull();
+    expect(findInvalidPath({ ...base, detailQueries: [{ path: "//evil.example/x" }] })).toMatch(/single "\/"/);
+    expect(findInvalidPath({ ...base, detailQueries: [{ path: "/d/{{id" }] })).toMatch(/no matching/);
+    expect(findInvalidPath({ ...base, detailQueries: [{ path: "/d/{{a[}}" }] })).toMatch(/placeholder/);
+    expect(findInvalidPath({ ...base, detailQueries: [{ path: "/d", fieldMap: { model: "hw[" } }] })).toMatch(/model path/);
+    expect(findInvalidPath({ ...base, detailQueries: [{ name: "HW", path: "/d", fieldMap: { id: "x" } }] })).toMatch(/"HW".*main query only/);
+  });
+});
+
+describe("mapGenericRecord — detail layers", () => {
+  it("a detail field wins over the main record's, the later query over the earlier, and the identity stays the main record's", () => {
+    const cfg: GenericApiConfig = { ...base, identityField: "serialNumber" };
+    const out = mapGenericRecord(
+      { id: 7, name: "list-name", serial: "MAINSERIAL1", nics: [{ mac: "aa:bb:cc:00:00:01" }] },
+      cfg,
+      [
+        { doc: { hw: { serial: "DETAILSERIAL", model: "M1" }, mac: "aa:bb:cc:00:00:02" }, fieldMap: { serialNumber: "hw.serial", model: "hw.model", macAddress: "mac" } },
+        { doc: { model: "M2", hostname: "" }, fieldMap: { model: "model", hostname: "hostname" } },
+      ],
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.record.identity).toBe("MAINSERIAL1");
+    expect(out.record.serialNumber).toBe("DETAILSERIAL");
+    expect(out.record.model).toBe("M2");
+    // An empty value in a detail response falls through to the main record.
+    expect(out.record.hostname).toBe("list-name");
+    // MACs from every layer are kept.
+    expect(out.record.macs).toEqual(["AA:BB:CC:00:00:02", "AA:BB:CC:00:00:01"]);
+  });
+});
+
+describe("fetchDetailsForRecord / fetchGenericApiDetails", () => {
+  const cfg: GenericApiConfig = {
+    ...base,
+    authType: "bearer",
+    apiToken: "tok",
+    detailQueries: [
+      { name: "HW", path: "/api/devices/{{id}}/hw", fieldMap: { model: "model" } },
+      { name: "Owner", path: "/api/owners/search", method: "POST", body: '{"device": "{{id}}"}', fieldMap: { assignedTo: "email" } },
+    ],
+  };
+
+  it("sends each query to the endpoint's origin with the run's auth, and POSTs the filled body", async () => {
+    const seen = fakeTransport((url) => ({ json: url.pathname.endsWith("/hw") ? { model: "X1" } : { email: "o@example.com" } }));
+    const d = await fetchDetailsForRecord({ id: "dev 1" }, cfg, { Authorization: "Bearer tok" });
+    expect(d.failures).toEqual([]);
+    expect(d.requests).toBe(2);
+    expect(seen.map((s) => s.url)).toEqual([
+      "https://inventory.example.com/api/devices/dev%201/hw",
+      "https://inventory.example.com/api/owners/search",
+    ]);
+    expect(seen[0].opts.headers.Authorization).toBe("Bearer tok");
+    expect(seen[0].opts.method).toBe("GET");
+    expect(seen[0].opts.headers["Content-Type"]).toBeUndefined();
+    expect(seen[1].opts.method).toBe("POST");
+    expect(seen[1].opts.headers["Content-Type"]).toBe("application/json");
+    expect(JSON.parse(seen[1].opts.body!)).toEqual({ device: "dev 1" });
+    const out = mapGenericRecord({ id: "dev 1" }, cfg, d.layers);
+    expect(out.ok && [out.record.model, out.record.assignedTo]).toEqual(["X1", "o@example.com"]);
+  });
+
+  it("a failed query costs only its own fields and says why", async () => {
+    fakeTransport((url) => (url.pathname.endsWith("/hw") ? { status: 404, text: "not found" } : { json: { email: "o@example.com" } }));
+    const d = await fetchDetailsForRecord({ id: 1 }, cfg, {});
+    expect(d.layers).toHaveLength(1);
+    expect(d.failures[0]).toMatch(/^HW: HW answered HTTP 404/);
+  });
+
+  it("a redirect is reported, never followed", async () => {
+    const seen = fakeTransport(() => ({ status: 302, headers: { location: "https://elsewhere.example/" } }));
+    const d = await fetchDetailsForRecord({ id: 1 }, { ...cfg, detailQueries: [cfg.detailQueries![0]] }, {});
+    expect(d.failures[0]).toMatch(/redirect/);
+    expect(seen).toHaveLength(1);
+  });
+
+  it("runs across records with the concurrency limit and counts the records that failed", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    _setRequestImplForTests(async (url) => {
+      inFlight++; peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      const fail = url.pathname.includes("/3/");
+      return { status: fail ? 500 : 200, headers: {}, text: "", json: fail ? null : { model: "m" } };
+    });
+    const records = Array.from({ length: 10 }, (_, i) => ({ id: i }));
+    const run = await fetchGenericApiDetails(records, { ...cfg, detailQueries: [cfg.detailQueries![0]], detailConcurrency: 3 }, {});
+    expect(peak).toBeLessThanOrEqual(3);
+    expect(run.requests).toBe(10);
+    expect(run.recordsWithFailures).toBe(1);
+    expect(run.perRecord).toHaveLength(10);
+    expect(run.warnings[0]).toMatch(/failed for 1 record/);
+  });
+
+  it("makes no request when there are no detail queries", async () => {
+    const seen = fakeTransport(() => ({ json: {} }));
+    const run = await fetchGenericApiDetails([{ id: 1 }], base, {});
+    expect(run.requests).toBe(0);
+    expect(seen).toHaveLength(0);
+  });
+});
+
+describe("discoverGenericApi — detail queries", () => {
+  const cfg: GenericApiConfig = { ...base, detailQueries: [{ path: "/api/devices/{{id}}", fieldMap: { hostname: "name", model: "model" } }] };
+
+  it("settles presence from the list, so a failed detail never drops a record or an identity", async () => {
+    fakeTransport((url) => {
+      if (url.pathname === "/api/devices") return { json: { data: [{ id: 1 }, { id: 2 }, { id: 2 }] } };
+      if (url.pathname === "/api/devices/1") return { json: { name: "from-detail", model: "M" } };
+      return { status: 500, text: "boom" };
+    });
+    const r = await discoverGenericApi(cfg);
+    expect(r.presentIdentities).toEqual(["1", "2"]);
+    expect(r.duplicates).toBe(1);
+    expect(r.records.map((x) => [x.identity, x.hostname])).toEqual([["1", "from-detail"], ["2", null]]);
+    // Detail requests are made once per surviving record, never for the duplicate.
+    expect(r.detailRequests).toBe(2);
+    expect(r.detailFailures).toBe(1);
+    expect(r.complete).toBe(true);
+  });
+
+  it("filters on a hostname a detail query supplied", async () => {
+    fakeTransport((url) => (url.pathname === "/api/devices"
+      ? { json: { data: [{ id: 1 }, { id: 2 }] } }
+      : { json: { name: url.pathname.endsWith("/1") ? "cam-1" : "printer-2" } }));
+    const r = await discoverGenericApi({ ...cfg, deviceInclude: ["cam-*"] });
+    expect(r.records.map((x) => x.hostname)).toEqual(["cam-1"]);
+    expect(r.filtered).toBe(1);
+  });
+
+  it("fetches one OAuth token for the list and every detail request", async () => {
+    const seen = fakeTransport((url) => (url.pathname === "/token"
+      ? { json: { access_token: "t1" } }
+      : url.pathname === "/api/devices" ? { json: { data: [{ id: 1 }, { id: 2 }] } } : { json: {} }));
+    await discoverGenericApi({ ...cfg, authType: "oauth2", tokenUrl: "https://inventory.example.com/token", clientId: "c", clientSecret: "s" });
+    expect(seen.filter((s) => s.url.endsWith("/token"))).toHaveLength(1);
+    expect(seen.filter((s) => !s.url.endsWith("/token")).every((s) => s.opts.headers.Authorization === "Bearer t1")).toBe(true);
+  });
+});
+
+describe("testConnection / previewGenericApi — detail queries", () => {
+  const cfg: GenericApiConfig = { ...base, detailQueries: [{ name: "HW", path: "/api/devices/{{id}}", fieldMap: { model: "model" } }] };
+
+  it("Test fails when a detail query fails for the first record, and says which", async () => {
+    fakeTransport((url) => (url.pathname === "/api/devices" ? { json: { data: [{ id: 1 }] } } : { status: 403 }));
+    const t = await testConnection(cfg);
+    expect(t.ok).toBe(false);
+    expect(t.message).toMatch(/detail query failed.*HW: HW refused the credentials/);
+  });
+
+  it("Test reports the detail queries answering", async () => {
+    fakeTransport((url) => (url.pathname === "/api/devices" ? { json: { data: [{ id: 1 }] } } : { json: { model: "M" } }));
+    expect((await testConnection(cfg)).message).toMatch(/1 detail query answered/);
+  });
+
+  it("Preview returns each detail response for the first mapped record and the per-row failures", async () => {
+    fakeTransport((url) => {
+      if (url.pathname === "/api/devices") return { json: { data: [{ name: "no id" }, { id: 1 }, { id: 2 }] } };
+      if (url.pathname === "/api/devices/1") return { json: { model: "M1" } };
+      return { status: 500, text: "boom" };
+    });
+    const p = await previewGenericApi(cfg, 10);
+    expect(p.sampleDetails).toEqual([{ name: "HW", path: "/api/devices/1", ok: true, response: { model: "M1" }, error: null }]);
+    expect(p.rows.map((r) => r.outcome.ok && r.outcome.record.model)).toEqual([false, "M1", null]);
+    expect(p.rows[2].detailFailures[0]).toMatch(/^HW: HW answered HTTP 500/);
   });
 });

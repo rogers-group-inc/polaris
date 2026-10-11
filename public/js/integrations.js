@@ -5979,12 +5979,14 @@ function getVcenterFormConfig() {
 
 // ─── Generic API ("build your own", business rule 100) ─────────────────────────
 //
-// Three tabs, all in the DOM at once so getGenericApiFormConfig() reads the
+// Four tabs, all in the DOM at once so getGenericApiFormConfig() reads the
 // whole form in one pass: General (connection + authentication), Records &
 // Mapping (where the list is, how to page it, which path fills which asset
-// field) and Preview (the first page, mapped — POST
-// /integrations/generic-api/preview). Inventory only: no Monitoring tab, the
-// discovered assets are monitored per asset like a manually added one.
+// field, and the per-record detail queries), Preview (the first page, mapped —
+// POST /integrations/generic-api/preview) and JSON (the form as a portable
+// file: view, copy, export, import — genericapi-portability.js). Inventory
+// only: no Monitoring tab, the discovered assets are monitored per asset like
+// a manually added one.
 
 /** The asset fields a record can map onto, in form order — mirrors GENERIC_API_FIELDS (services/genericApiService.ts). */
 var _GENERIC_API_FIELDS = [
@@ -5999,7 +6001,20 @@ var _GENERIC_API_FIELDS = [
   ["osVersion",    "OS version",       "os.version",       ""],
   ["assetType",    "Asset type",       "type",             "The source's own word — translate it below"],
   ["location",     "Location",         "site.name",        "Shown in the Location column when nothing closer to a place has one"],
+  ["latitude",     "Latitude",         "geo.lat",          "Used only as a valid pair with longitude; never moves coordinates typed on the asset"],
+  ["longitude",    "Longitude",        "geo.lng",          ""],
+  ["assetTag",     "Asset tag",        "asset_tag",        "Unique across assets — a tag another asset already has is left off"],
+  ["department",   "Department",       "owner.department", ""],
+  ["assignedTo",   "Assigned to",      "owner.email",      ""],
+  ["description",  "Description",      "description",      "Not written on a device another integration owns"],
+  ["tags",         "Tags",             "tags[*]",          "Every value the path reaches becomes a tag"],
+  ["purchaseOrder","Purchase order",   "po_number",        ""],
+  ["acquiredAt",   "Acquired",         "purchase_date",    "An ISO date, or epoch seconds / milliseconds"],
+  ["warrantyExpiry","Warranty expiry", "warranty.end",     ""],
 ];
+
+/** The fields after Location fill blanks, and change only what the feed itself wrote. */
+var _GENERIC_API_FEED_FIELD_NOTE = "Asset tag, department, assigned to, description, purchase order and the dates are filled when the asset has none, and updated only while the asset still holds the value this feed wrote — an edit by you or another integration is never overwritten.";
 
 var _GENERIC_API_ASSET_TYPES = ["server", "workstation", "switch", "router", "firewall", "access_point", "printer", "hypervisor", "container", "other"];
 
@@ -6119,6 +6134,17 @@ function genericApiMappingHTML(defaults) {
       ["id", "Record ID"], ["serialNumber", "Serial number"], ["macAddress", "MAC address"], ["hostname", "Hostname"],
     ]) + '<p class="hint">Must be mapped below and stable between runs. A hostname is the weakest choice — it changes and repeats.</p></div>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' + fieldRows + '</div>' +
+    '<p class="hint">' + escapeHtml(_GENERIC_API_FEED_FIELD_NOTE) + '</p>' +
+    formDivider() +
+    sectionHeading("Detail queries") +
+    '<p class="hint">A second request made <strong>once per record</strong>, for an API that lists devices briefly and keeps the detail (hardware, owner, warranty…) behind a per-device URL. Write <code>{{path}}</code> where a value from the record goes — <code>/api/devices/{{id}}/hardware</code> — and map fields against the detail response. A field mapped here wins over the same field above when it has a value. The record ID always comes from the list above.</p>' +
+    '<div id="f-gaDetails">' + (d.detailQueries || []).map(_gaDetailQueryHTML).join("") + '</div>' +
+    '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
+      '<button type="button" class="btn btn-secondary btn-sm" id="f-gaDetailAdd">Add detail query</button>' +
+      '<label for="f-gaDetailConcurrency" style="margin:0;font-size:0.85rem;color:var(--color-text-secondary)">Requests at once</label>' +
+      '<input type="number" id="f-gaDetailConcurrency" value="' + (d.detailConcurrency || 4) + '" min="1" max="16" style="width:70px">' +
+    '</div>' +
+    '<p class="hint">Each detail query costs one request per record per discovery run (at most 20,000 a run). A failed detail request costs that record only the fields it would have filled.</p>' +
     formDivider() +
     sectionHeading("Asset type & manufacturer") +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
@@ -6157,6 +6183,89 @@ function genericApiPreviewHTML() {
     '<div id="f-gaPreviewResult"></div>';
 }
 
+/** The fields a detail query may map — every field but the record ID (GENERIC_API_DETAIL_FIELDS). */
+var _GENERIC_API_DETAIL_FIELDS = _GENERIC_API_FIELDS.map(function (f) { return f[0]; }).filter(function (k) { return k !== "id"; });
+
+/**
+ * One detail query's editor. Repeated blocks, so nothing in it carries an id —
+ * _gaReadDetailQueries walks [data-ga-detail] instead. The field map is a
+ * "field = path" textarea rather than twenty inputs per query.
+ */
+function _gaDetailQueryHTML(q) {
+  q = q || {};
+  var method = q.method === "POST" ? "POST" : "GET";
+  var fm = q.fieldMap || {};
+  var mapLines = Object.keys(fm).filter(function (k) { return fm[k]; }).map(function (k) { return k + " = " + fm[k]; }).join("\n");
+  return '<div data-ga-detail style="border:1px solid var(--color-border);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-bottom:0.6rem">' +
+    '<div style="display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:end">' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><label>Name</label><input type="text" class="ga-detail-name" value="' + escapeHtml(q.name || "") + '" placeholder="e.g. Hardware"></div>' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><label>Method</label><select class="ga-detail-method" data-ga-value="' + method + '"><option value="GET"' + (method === "GET" ? " selected" : "") + '>GET</option><option value="POST"' + (method === "POST" ? " selected" : "") + '>POST</option></select></div>' +
+      '<div class="form-group" style="margin-bottom:0.5rem"><button type="button" class="btn btn-secondary btn-sm ga-detail-remove" title="Remove this detail query">Remove</button></div>' +
+    '</div>' +
+    '<div class="form-group" style="margin-bottom:0.5rem"><label>Path</label><input type="text" class="ga-detail-path" value="' + escapeHtml(q.path || "") + '" placeholder="/api/devices/{{id}}/hardware"></div>' +
+    '<div class="form-group ga-detail-body-wrap" style="margin-bottom:0.5rem' + (method === "POST" ? "" : ";display:none") + '"><label>Request body (JSON)</label><textarea class="ga-detail-body" rows="2" placeholder="{&quot;deviceId&quot;: &quot;{{id}}&quot;}">' + escapeHtml(q.body || "") + '</textarea></div>' +
+    '<div class="form-group" style="margin-bottom:0"><label>Fields from this response</label><textarea class="ga-detail-map" rows="3" placeholder="One per line: field = path&#10;serialNumber = hardware.serial&#10;warrantyExpiry = warranty.ends">' + escapeHtml(mapLines) + '</textarea>' +
+      '<p class="hint ga-detail-map-hint">Fields: ' + escapeHtml(_GENERIC_API_DETAIL_FIELDS.join(", ")) + '</p></div>' +
+  '</div>';
+}
+
+/** "field = path" lines → { fieldMap, unknown[] }. */
+function _gaParseDetailMap(text) {
+  var fieldMap = {};
+  var unknown = [];
+  String(text || "").split(/\r?\n/).forEach(function (line) {
+    var s = line.trim();
+    if (!s) return;
+    var i = s.indexOf("=");
+    var key = i > 0 ? s.slice(0, i).trim() : s;
+    var path = i > 0 ? s.slice(i + 1).trim() : "";
+    if (_GENERIC_API_DETAIL_FIELDS.indexOf(key) === -1 || !path) { unknown.push(s); return; }
+    fieldMap[key] = path;
+  });
+  return { fieldMap: fieldMap, unknown: unknown };
+}
+
+function _gaReadDetailQueries() {
+  var out = [];
+  document.querySelectorAll("[data-ga-detail]").forEach(function (block) {
+    var q = function (sel) { var el = block.querySelector(sel); return el ? String(el.value || "").trim() : ""; };
+    var path = q(".ga-detail-path");
+    var map = _gaParseDetailMap(q(".ga-detail-map")).fieldMap;
+    if (!path && Object.keys(map).length === 0 && !q(".ga-detail-name")) return;   // an untouched blank block
+    out.push({ name: q(".ga-detail-name"), method: q(".ga-detail-method") || "GET", path: path, body: q(".ga-detail-body"), fieldMap: map });
+  });
+  return out;
+}
+
+/** The unknown-field hint under a detail block's map, refreshed as the operator types. */
+function _gaCheckDetailMap(block) {
+  var hint = block.querySelector(".ga-detail-map-hint");
+  var ta = block.querySelector(".ga-detail-map");
+  if (!hint || !ta) return;
+  var unknown = _gaParseDetailMap(ta.value).unknown;
+  if (unknown.length) {
+    hint.innerHTML = '<span style="color:var(--color-warning)">Not read: ' + escapeHtml(unknown.join(" · ")) + '</span> — each line is <code>field = path</code>, with a field from: ' + escapeHtml(_GENERIC_API_DETAIL_FIELDS.join(", "));
+  } else {
+    hint.textContent = "Fields: " + _GENERIC_API_DETAIL_FIELDS.join(", ");
+  }
+}
+
+function genericApiJsonHTML() {
+  return '<p class="hint">The settings on the other tabs as JSON — to read at a glance, keep as a backup, or share a mapping for a product with anyone else running Polaris. <strong>Tokens, passwords and client secrets are never included</strong>, nor the value of an extra header whose name looks like it holds a credential.</p>' +
+    checkboxRow("f-gaJsonConnection", "Include host, port, username, client ID and token URL", false) +
+    '<p class="hint">Leave this off to share publicly — those say where your systems are and who Polaris logs in as. Turn it on to move a configuration between your own installs.</p>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:0.5rem 0">' +
+      '<button type="button" class="btn btn-secondary btn-sm" id="f-gaJsonRefresh" title="Rebuild the JSON from the other tabs">Refresh from form</button>' +
+      '<button type="button" class="btn btn-secondary btn-sm" id="f-gaJsonCopy">Copy</button>' +
+      '<button type="button" class="btn btn-secondary btn-sm" id="f-gaJsonExport">Export file</button>' +
+      '<button type="button" class="btn btn-secondary btn-sm" id="f-gaJsonImport">Import file…</button>' +
+      '<button type="button" class="btn btn-primary btn-sm" id="f-gaJsonApply" title="Fill the other tabs from the JSON below">Apply to form</button>' +
+      '<input type="file" id="f-gaJsonFile" accept=".json,application/json" style="display:none">' +
+    '</div>' +
+    '<textarea id="f-gaJson" class="mono" rows="18" spellcheck="false" style="width:100%;font-size:0.78rem;white-space:pre"></textarea>' +
+    '<p id="f-gaJsonStatus" class="hint" style="margin-top:0.4rem"></p>';
+}
+
 function _gaVal(id) {
   var el = document.getElementById(id);
   return el ? String(el.value || "").trim() : "";
@@ -6168,10 +6277,12 @@ function _gaInt(id, fallback) {
 }
 
 function getGenericApiFormConfig() {
+  // A header with no value is dropped rather than sent empty — an imported
+  // file leaves a credential header's value blank for the operator to fill.
   var headers = linesToArray("f-gaHeaders").map(function (line) {
     var i = line.indexOf(":");
     return i > 0 ? { name: line.slice(0, i).trim(), value: line.slice(i + 1).trim() } : null;
-  }).filter(Boolean);
+  }).filter(function (h) { return h && h.value; });
   var typeMap = {};
   linesToArray("f-gaTypeMap").forEach(function (line) {
     var i = line.indexOf("=");
@@ -6212,6 +6323,8 @@ function getGenericApiFormConfig() {
     },
     recordsPath: _gaVal("f-gaRecordsPath"),
     fieldMap: fieldMap,
+    detailQueries: _gaReadDetailQueries(),
+    detailConcurrency: _gaInt("f-gaDetailConcurrency", 4),
     identityField: _gaVal("f-gaIdentity") || "id",
     assetTypeDefault: _gaVal("f-gaTypeDefault") || "other",
     assetTypeMap: typeMap,
@@ -6227,6 +6340,170 @@ function getGenericApiFormConfig() {
   var port = _gaVal("f-port");
   if (port) cfg.port = parseInt(port, 10);
   return cfg;
+}
+
+/**
+ * Fill the General and Records & Mapping tabs from a configuration — the
+ * inverse of getGenericApiFormConfig, used by the JSON tab's Apply / Import.
+ * Secrets are never written (the portability module strips them; the stored
+ * ones stay behind their "leave blank to keep" fields). A connection detail
+ * the configuration does not carry (a shared file leaves them out) keeps
+ * whatever the form already holds; everything else is replaced, so the form
+ * ends up saying exactly what the JSON says.
+ */
+function _gaFillForm(cfg) {
+  cfg = cfg || {};
+  var set = function (id, v) { var el = document.getElementById(id); if (el) el.value = v == null ? "" : String(v); };
+  var setSel = function (id, v) { var el = document.getElementById(id); if (el) { el.value = String(v); el.setAttribute("data-ga-value", String(v)); } };
+  var check = function (id, on) { var el = document.getElementById(id); if (el) el.checked = !!on; };
+  var has = function (k) { return cfg[k] !== undefined && cfg[k] !== null && cfg[k] !== ""; };
+  if (has("host")) { set("f-host", cfg.host); set("f-port", cfg.port || ""); }
+  else if (has("port")) set("f-port", cfg.port);
+  if (has("username")) set("f-gaUsername", cfg.username);
+  if (has("clientId")) set("f-gaClientId", cfg.clientId);
+  if (has("tokenUrl")) set("f-gaTokenUrl", cfg.tokenUrl);
+  check("f-useHttps", cfg.useHttps !== false);
+  check("f-verifySsl", cfg.verifySsl !== false);
+  setSel("f-gaMethod", cfg.method === "POST" ? "POST" : "GET");
+  set("f-gaPath", cfg.path || "/");
+  set("f-gaBody", cfg.body || "");
+  set("f-gaHeaders", (cfg.headers || []).map(function (h) { return h.name + ": " + (h.value || ""); }).join("\n"));
+  setSel("f-gaAuthType", cfg.authType || "none");
+  set("f-gaAuthHeaderName", cfg.authHeaderName || "X-API-Key");
+  set("f-gaAuthQueryParam", cfg.authQueryParam || "api_key");
+  set("f-gaScope", cfg.scope || "");
+  var pg = cfg.pagination || {};
+  setSel("f-gaPageMode", pg.mode || "none");
+  set("f-gaPageParam", pg.pageParam || "");
+  set("f-gaSizeParam", pg.sizeParam || "");
+  set("f-gaPageSize", pg.pageSize || 100);
+  setSel("f-gaStartPage", String(pg.startPage != null ? pg.startPage : 1));
+  set("f-gaCursorPath", pg.cursorPath || "");
+  set("f-gaCursorParam", pg.cursorParam || "");
+  set("f-gaMaxPages", pg.maxPages || 100);
+  set("f-gaRecordsPath", cfg.recordsPath || "");
+  var fm = cfg.fieldMap || {};
+  _GENERIC_API_FIELDS.forEach(function (f) { set("f-gaMap-" + f[0], fm[f[0]] || ""); });
+  var details = document.getElementById("f-gaDetails");
+  if (details) {
+    details.innerHTML = (cfg.detailQueries || []).map(_gaDetailQueryHTML).join("");
+    details.querySelectorAll("select[data-ga-value]").forEach(function (sel) { sel.value = sel.getAttribute("data-ga-value"); });
+  }
+  set("f-gaDetailConcurrency", cfg.detailConcurrency || 4);
+  setSel("f-gaIdentity", cfg.identityField || "id");
+  setSel("f-gaTypeDefault", cfg.assetTypeDefault || "other");
+  set("f-gaManufacturer", cfg.manufacturerDefault || "");
+  var tm = cfg.assetTypeMap || {};
+  set("f-gaTypeMap", Object.keys(tm).map(function (k) { return k + " = " + tm[k]; }).join("\n"));
+  var include = cfg.deviceInclude || [];
+  var devMode = include.length > 0 ? "include" : "exclude";
+  set("f-deviceMode", devMode);
+  set("f-deviceNames", (devMode === "include" ? include : (cfg.deviceExclude || [])).join("\n"));
+  check("f-gaDecommission", cfg.decommissionMissing === true);
+  check("f-verifyPresence", cfg.verifyPresence !== false);
+  set("f-gaMaxRecords", cfg.maxRecords || 10000);
+  set("f-gaTimeoutSec", Math.round((cfg.requestTimeoutMs || 30000) / 1000));
+  _gaSyncVisibility();
+}
+
+/** The JSON tab's text: the form as a portable file (or the bare form when the module is absent). */
+function _gaJsonFromForm() {
+  var P = window.PolarisGenericApiPortability;
+  var cfg = getGenericApiFormConfig();
+  var conn = document.getElementById("f-gaJsonConnection");
+  var file = P
+    ? P.buildExportFile(cfg, { name: val("f-name"), includeConnection: !!(conn && conn.checked) })
+    : cfg;
+  return file;
+}
+
+function _gaJsonStatus(msg, tone) {
+  var el = document.getElementById("f-gaJsonStatus");
+  if (!el) return;
+  el.textContent = msg || "";
+  el.style.color = tone === "error" ? "var(--color-danger)" : tone === "warning" ? "var(--color-warning)" : tone === "success" ? "var(--color-success)" : "";
+}
+
+function _gaRefreshJson() {
+  var ta = document.getElementById("f-gaJson");
+  if (!ta) return;
+  ta.value = JSON.stringify(_gaJsonFromForm(), null, 2);
+  ta.removeAttribute("data-dirty");
+  _gaJsonStatus("");
+}
+
+/**
+ * Apply JSON text (pasted, edited, or read from a file) to the form. Errors
+ * stay on the JSON tab; nothing is saved until the operator saves the dialog.
+ */
+function _gaApplyJson(text, filename) {
+  var P = window.PolarisGenericApiPortability;
+  if (!P) return false;
+  var parsed;
+  try { parsed = P.parseImportFile(text, filename); }
+  catch (err) { _gaJsonStatus((err && err.message) || "That JSON could not be read.", "error"); return false; }
+  _gaFillForm(parsed.config);
+  var nameEl = document.getElementById("f-name");
+  if (nameEl && !nameEl.value.trim() && parsed.name) nameEl.value = parsed.name;
+  _gaRefreshJson();
+  var needs = (parsed.needs || []).map(function (n) {
+    return n === "token" ? "the token / key" : n === "password" ? "the password" : n === "clientSecret" ? "the client secret"
+      : n.indexOf("header:") === 0 ? "the " + n.slice(7) + " header's value" : n === "tokenUrl" ? "the token URL" : n === "clientId" ? "the client ID" : "the " + n;
+  });
+  var msg = "Applied to the form — check each tab, then save." + (needs.length ? " Still to fill in on General: " + needs.join(", ") + "." : "");
+  if (parsed.problems && parsed.problems.length) msg += " " + parsed.problems.join(" ");
+  _gaJsonStatus(msg, parsed.problems && parsed.problems.length ? "warning" : "success");
+  return true;
+}
+
+function _wireGenericApiJsonTab() {
+  var P = window.PolarisGenericApiPortability;
+  var ta = document.getElementById("f-gaJson");
+  if (!ta) return;
+  ta.addEventListener("input", function () { ta.setAttribute("data-dirty", "1"); });
+  // Opening the tab shows the form as it is now — unless the operator has
+  // been editing the JSON, which a tab switch must not throw away.
+  document.querySelectorAll('.page-tab[data-tab="json"]').forEach(function (btn) {
+    btn.addEventListener("click", function () { if (!ta.hasAttribute("data-dirty")) _gaRefreshJson(); });
+  });
+  var on = function (id, fn) { var el = document.getElementById(id); if (el) el.addEventListener("click", fn); };
+  on("f-gaJsonRefresh", _gaRefreshJson);
+  var conn = document.getElementById("f-gaJsonConnection");
+  if (conn) conn.addEventListener("change", _gaRefreshJson);
+  on("f-gaJsonApply", function () { _gaApplyJson(ta.value, ""); });
+  on("f-gaJsonCopy", function () {
+    copyTextToClipboard(ta.value).then(function (ok) { showToast(ok !== false ? "JSON copied" : "Copy failed", ok !== false ? "success" : "error"); });
+  });
+  on("f-gaJsonExport", function () {
+    if (ta.hasAttribute("data-dirty")) {
+      // Export what the operator sees: their edited JSON, once it parses.
+      try { JSON.parse(ta.value); } catch (_) { _gaJsonStatus("The JSON below isn't valid — fix it or Refresh from form before exporting.", "error"); return; }
+    } else {
+      _gaRefreshJson();
+    }
+    var file = JSON.parse(ta.value);
+    if (P && file && file.config) {
+      // An edited file is re-stripped too: the export rule is the code's, not the editor's.
+      var conn2 = document.getElementById("f-gaJsonConnection");
+      file.config = P.stripConfig(file.config, { includeConnection: !!(conn2 && conn2.checked) }).config;
+    }
+    downloadJson(file, P ? P.filenameForExport(val("f-name") || file.name) : "generic-api.json");
+  });
+  var fileInput = document.getElementById("f-gaJsonFile");
+  on("f-gaJsonImport", function () { if (fileInput) fileInput.click(); });
+  if (fileInput) {
+    fileInput.addEventListener("change", function () {
+      var f = fileInput.files && fileInput.files[0];
+      fileInput.value = "";
+      if (!f) return;
+      if (P && f.size > P.MAX_IMPORT_BYTES) { _gaJsonStatus("That file is too large to be a Generic API configuration.", "error"); return; }
+      f.text().then(function (text) {
+        ta.value = text;
+        _gaApplyJson(text, f.name);
+      }).catch(function () { _gaJsonStatus("That file could not be read.", "error"); });
+    });
+  }
+  _gaRefreshJson();
 }
 
 /** Show the fields that belong to the chosen auth type / pagination mode / method. */
@@ -6248,15 +6525,31 @@ function _renderGenericApiPreview(result) {
   if (!box) return;
   var cols = ["hostname", "ipAddress", "serialNumber", "manufacturer", "model", "assetType", "location"];
   var labels = { hostname: "Hostname", ipAddress: "IP", serialNumber: "Serial", manufacturer: "Manufacturer", model: "Model", assetType: "Type", location: "Location" };
+  // The other mapped fields join the table only when some row carries one,
+  // so a feed that maps none of them keeps the table narrow.
+  var extra = [["assetTag", "Asset tag"], ["department", "Department"], ["assignedTo", "Assigned to"], ["description", "Description"],
+    ["tags", "Tags"], ["purchaseOrder", "PO"], ["acquiredAt", "Acquired"], ["warrantyExpiry", "Warranty"], ["latitude", "Lat"], ["longitude", "Lng"]];
+  extra.forEach(function (e) {
+    var any = (result.rows || []).some(function (r) {
+      var v = r.outcome.ok ? r.outcome.record[e[0]] : null;
+      return Array.isArray(v) ? v.length > 0 : v != null && v !== "";
+    });
+    if (any) { cols.push(e[0]); labels[e[0]] = e[1]; }
+  });
   var rows = (result.rows || []).map(function (r) {
     if (!r.outcome.ok) {
       return '<tr><td>' + (r.index + 1) + '</td><td colspan="' + (cols.length + 1) + '" style="color:var(--color-warning)">Skipped — ' + escapeHtml(r.outcome.reason) + '</td></tr>';
     }
     var rec = r.outcome.record;
+    var detailFail = (r.detailFailures || []).length
+      ? ' <span style="color:var(--color-warning)" title="' + escapeHtml(r.detailFailures.join("\n")) + '">(detail query failed)</span>'
+      : "";
     return '<tr' + (r.filteredOut ? ' style="opacity:0.55" title="Filtered out by the device filter"' : '') + '><td>' + (r.index + 1) + '</td>' +
-      '<td class="mono">' + escapeHtml(rec.identity) + '</td>' +
+      '<td class="mono">' + escapeHtml(rec.identity) + detailFail + '</td>' +
       cols.map(function (c) {
         var v = rec[c];
+        if (Array.isArray(v)) v = v.join(", ");
+        if ((c === "acquiredAt" || c === "warrantyExpiry") && v) v = String(v).slice(0, 10);
         if (c === "assetType" && rec.rawAssetType && rec.rawAssetType.toLowerCase() !== v) v = (v || "—") + " (" + rec.rawAssetType + ")";
         return '<td>' + (v ? escapeHtml(String(v)) : '<span style="color:var(--color-text-tertiary)">—</span>') + '</td>';
       }).join("") + '</tr>';
@@ -6269,6 +6562,14 @@ function _renderGenericApiPreview(result) {
       '<pre class="mono" style="max-height:220px;overflow:auto;font-size:0.78rem;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:0.6rem;white-space:pre-wrap;word-break:break-all">' +
         escapeHtml(JSON.stringify(result.sampleRecord, null, 2).slice(0, 8000)) + '</pre>'
     : "";
+  // Each detail query's answer for the first record — the document its paths are written against.
+  sample += (result.sampleDetails || []).map(function (d) {
+    return sectionHeading("Detail query “" + d.name + "”" + (d.path ? " — " + d.path : "")) +
+      (d.ok
+        ? '<pre class="mono" style="max-height:220px;overflow:auto;font-size:0.78rem;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:0.6rem;white-space:pre-wrap;word-break:break-all">' +
+            escapeHtml(JSON.stringify(d.response, null, 2).slice(0, 8000)) + '</pre>'
+        : '<p class="hint" style="color:var(--color-warning)">' + escapeHtml(d.error || "Failed") + '</p>');
+  }).join("");
   var table = rows
     ? sectionHeading("As discovery would write them") +
       '<div style="overflow:auto"><table class="data-table" style="font-size:0.8rem"><thead><tr><th>#</th><th>Identity</th>' +
@@ -6314,6 +6615,38 @@ function _wireGenericApiForm(id) {
   _gaSyncVisibility();
   var btn = document.getElementById("f-gaPreviewBtn");
   if (btn) btn.addEventListener("click", function () { _runGenericApiPreview(id); });
+  // Detail queries: one delegated listener set on the container, so blocks
+  // added later (Add, or a JSON import rebuilding the list) need no wiring.
+  var details = document.getElementById("f-gaDetails");
+  if (details) {
+    details.querySelectorAll("select[data-ga-value]").forEach(function (sel) { sel.value = sel.getAttribute("data-ga-value"); });
+    details.addEventListener("click", function (e) {
+      var rm = e.target.closest && e.target.closest(".ga-detail-remove");
+      if (rm) { var block = rm.closest("[data-ga-detail]"); if (block) block.remove(); }
+    });
+    details.addEventListener("change", function (e) {
+      if (!e.target.classList || !e.target.classList.contains("ga-detail-method")) return;
+      var block = e.target.closest("[data-ga-detail]");
+      var wrap = block && block.querySelector(".ga-detail-body-wrap");
+      if (wrap) wrap.style.display = e.target.value === "POST" ? "" : "none";
+    });
+    details.addEventListener("input", function (e) {
+      if (!e.target.classList || !e.target.classList.contains("ga-detail-map")) return;
+      var block = e.target.closest("[data-ga-detail]");
+      if (block) _gaCheckDetailMap(block);
+    });
+    details.querySelectorAll("[data-ga-detail]").forEach(_gaCheckDetailMap);
+  }
+  var add = document.getElementById("f-gaDetailAdd");
+  if (add && details) {
+    add.addEventListener("click", function () {
+      if (details.querySelectorAll("[data-ga-detail]").length >= 5) { showToast("At most 5 detail queries", "error"); return; }
+      details.insertAdjacentHTML("beforeend", _gaDetailQueryHTML({}));
+      var input = details.lastElementChild && details.lastElementChild.querySelector(".ga-detail-path");
+      if (input) input.focus();
+    });
+  }
+  _wireGenericApiJsonTab();
 }
 
 function showTypePicker() {
@@ -6619,11 +6952,15 @@ function _integrationTabs(ctx) {
   }
 
   if (type === "genericapi") {
-    return [
+    var gaTabs = [
       { key: "general", label: "General", html: ctx.generalHtml },
       { key: "mapping", label: "Records & Mapping", html: genericApiMappingHTML(Object.assign({}, defaults, config)) },
       { key: "preview", label: "Preview", html: genericApiPreviewHTML() },
     ];
+    // The JSON tab needs genericapi-portability.js (loaded by integrations.html);
+    // a page without it simply has no JSON tab.
+    if (window.PolarisGenericApiPortability) gaTabs.push({ key: "json", label: "JSON", html: genericApiJsonHTML() });
+    return gaTabs;
   }
 
   if (_NON_FORTINET_TABBED.indexOf(type) === -1) return null;   // flat form only

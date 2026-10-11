@@ -74,6 +74,7 @@ Vanilla JavaScript SPA served from `/public/`. **No build step** — plain ES mo
 | `public/js/automations-settings.js` | `PolarisAutomationSettings` | the Automations page's Settings modal (`tabbedBodyHTML` / `wireModalTabs`) — one tab, Global Quiet Times: the schedule list, the New / Edit / toggle / Delete verbs, recent summaries |
 | `public/js/automations-wizard.js` | `openAutomationWizard` | the 6-step automation wizard; loads on every page that loads `assets.js` |
 | `public/js/automations-portability.js` | `PolarisAutomationPortability` | automation export / import / view code |
+| `public/js/genericapi-portability.js` | `PolarisGenericApiPortability` | Generic API configuration export / import (the dialog's JSON tab) — secrets never out or in, connection details opt-in |
 | `public/js/automations-wizard.js` | `PolarisAutomationSentences` | trigger/reset prose — one phrasing for the list AND the editor |
 | `public/js/alert-ack-view.js` | `PolarisAlertAckView` | the presentation of ONE alert about to be acknowledged — shared by `/alert-ack.html` and the in-app modal so the two cards cannot drift |
 | `public/js/alert-ack-modal.js` | `PolarisAlertAckModal` | that card in a modal: the in-app acknowledge dialog, opened from the Down Assets widget's row menu |

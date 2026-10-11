@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  genericApiFeedFieldUpdates,
   genericApiObserved,
   genericApiSweepBlockedReason,
+  mergeGenericFeedTags,
   resolveGenericAssetType,
 } from "../../src/services/discovery/genericApiSync.js";
 import { projectAssetFromSources } from "../../src/utils/assetProjection.js";
@@ -27,6 +29,16 @@ const record: GenericApiMappedRecord = {
   rawAssetType: "Network Camera",
   assetType: "camera",
   location: "HQ / Lobby",
+  assetTag: null,
+  department: null,
+  assignedTo: null,
+  description: null,
+  tags: [],
+  acquiredAt: null,
+  warrantyExpiry: null,
+  purchaseOrder: null,
+  latitude: null,
+  longitude: null,
 };
 const observed = genericApiObserved(record, "id", new Date("2026-10-09T00:00:00Z"));
 
@@ -122,5 +134,74 @@ describe("shadow-write and post-hoc filter", () => {
     const intg = { type: "genericapi", config: { deviceExclude: ["lab-*"] } };
     expect(assetMatchesIntegrationFilter({ hostname: "lab-cam", learnedLocation: null }, intg).included).toBe(false);
     expect(assetMatchesIntegrationFilter({ hostname: "cam-1", learnedLocation: null }, intg).included).toBe(true);
+  });
+});
+
+describe("genericApiFeedFieldUpdates — the feed changes only what it wrote", () => {
+  const ctx = { integrationId: "g1", assetIdByTag: new Map<string, string>() };
+
+  it("fills a blank column", () => {
+    const { data } = genericApiFeedFieldUpdates({ id: "a1" }, null, { department: "Ops", warrantyExpiry: "2027-03-01T00:00:00.000Z" }, ctx);
+    expect(data.department).toBe("Ops");
+    expect(data.warrantyExpiry).toEqual(new Date("2027-03-01T00:00:00.000Z"));
+  });
+
+  it("changes a value that is still the one it wrote last run", () => {
+    const { data } = genericApiFeedFieldUpdates({ id: "a1", department: "Ops" }, { department: "Ops" }, { department: "NOC" }, ctx);
+    expect(data.department).toBe("NOC");
+  });
+
+  it("never overwrites a value an operator or another source wrote", () => {
+    // The asset says "Facilities", the feed last wrote "Ops": someone changed it.
+    const { data } = genericApiFeedFieldUpdates({ id: "a1", department: "Facilities" }, { department: "Ops" }, { department: "NOC" }, ctx);
+    expect(data).toEqual({});
+    // First sight with a value already there: not the feed's to replace.
+    expect(genericApiFeedFieldUpdates({ id: "a1", assignedTo: "x@example.com" }, null, { assignedTo: "y@example.com" }, ctx).data).toEqual({});
+  });
+
+  it("never clears a column", () => {
+    expect(genericApiFeedFieldUpdates({ id: "a1", department: "Ops" }, { department: "Ops" }, { department: null }, ctx).data).toEqual({});
+  });
+
+  it("compares dates as instants, so a stored Date equal to the feed's string is no change", () => {
+    const asset = { id: "a1", acquiredAt: new Date("2024-02-03T00:00:00.000Z") };
+    expect(genericApiFeedFieldUpdates(asset, null, { acquiredAt: "2024-02-03T00:00:00.000Z" }, ctx).data).toEqual({});
+  });
+
+  it("does not write a description on a device another integration owns (description sync could push it)", () => {
+    expect(genericApiFeedFieldUpdates({ id: "a1", discoveredByIntegrationId: "fmg" }, null, { description: "Lobby" }, ctx).data).toEqual({});
+    expect(genericApiFeedFieldUpdates({ id: "a1", discoveredByIntegrationId: "g1" }, null, { description: "Lobby" }, ctx).data).toEqual({ description: "Lobby" });
+  });
+
+  it("holds back an asset tag another asset already carries, and says so", () => {
+    const tags = { integrationId: "g1", assetIdByTag: new Map([["ACME-1", "other-asset"], ["ACME-2", "a1"]]) };
+    const held = genericApiFeedFieldUpdates({ id: "a1" }, null, { assetTag: "ACME-1" }, tags);
+    expect(held.data).toEqual({});
+    expect(held.held[0]).toMatch(/ACME-1.*another asset/);
+    expect(genericApiFeedFieldUpdates({ id: "a1", assetTag: null }, null, { assetTag: "ACME-2" }, tags).data).toEqual({ assetTag: "ACME-2" });
+  });
+});
+
+describe("mergeGenericFeedTags", () => {
+  it("adds the feed's tags, drops the ones it stopped listing, and keeps everyone else's", () => {
+    expect(mergeGenericFeedTags(["critical", "east", "old"], ["east", "old"], ["east", "lobby"])).toEqual(["critical", "east", "lobby"]);
+    expect(mergeGenericFeedTags([], [], ["a", "a"])).toEqual(["a"]);
+  });
+});
+
+describe("the observed blob and the projection — coordinates", () => {
+  it("projects the feed's pair when nothing better has one", () => {
+    const observed = genericApiObserved({ ...record, latitude: 36.16, longitude: -86.78 }, "id", new Date("2026-10-11T00:00:00Z"));
+    const { projected } = projectAssetFromSources([{ sourceKind: "generic-api", inferred: false, observed }]);
+    expect([projected.latitude, projected.longitude]).toEqual([36.16, -86.78]);
+  });
+
+  it("ranks below a FortiGate's coordinates", () => {
+    const observed = genericApiObserved({ ...record, latitude: 36.16, longitude: -86.78 }, "id", new Date());
+    const { projected } = projectAssetFromSources([
+      { sourceKind: "generic-api", inferred: false, observed },
+      { sourceKind: "fortigate-firewall", inferred: false, observed: { latitude: 40.1, longitude: -75.2 } },
+    ]);
+    expect([projected.latitude, projected.longitude]).toEqual([40.1, -75.2]);
   });
 });
