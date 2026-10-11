@@ -200,7 +200,6 @@ async function main() {
     { name: "Datacenter",     category: "Location",    color: "#6366f1" },
     { name: "Cloud",          category: "Location",    color: "#0ea5e9" },
     { name: "Remote Site",    category: "Location",    color: "#84cc16" },
-    { name: "Critical",       category: "Priority",    color: "#dc2626" },
     { name: "Internal",       category: "Scope",       color: "#64748b" },
     { name: "DMZ",            category: "Scope",       color: "#e11d48" },
     { name: "Guest",          category: "Scope",       color: "#78716c" },
