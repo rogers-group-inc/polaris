@@ -216,6 +216,13 @@ import {
   collectTelemetryWorkload,
   probeWorkload,
 } from "./workloadMonitorService.js";
+import {
+  collectGenericApiWidgetSamples,
+  collectHardwareSensorsGenericApi,
+  collectSystemInfoGenericApi,
+  collectTelemetryGenericApi,
+  probeGenericApi,
+} from "./genericApiMonitorService.js";
 import { propagateAfterStatusChange } from "./dependencyTreeService.js";
 import { buildInfraParentIndex, controllerGateIdOf, type InfraParentCandidate } from "../utils/fortinetParentKey.js";
 import { indexLldpHostname, pickLldpHostnameMatch, type LldpHostnameMatchIndex } from "../utils/lldpHostnameMatch.js";
@@ -2255,6 +2262,11 @@ export async function probeAsset(
     // asset, so no asset IP is needed (services/workloadMonitorService.ts).
     if (isWorkloadPollingMethod(polling)) {
       return await probeWorkload(assetId, dispatchStart);
+    }
+    // Generic API: the integration's own response-time query answers for the
+    // asset (rule 100(i)) — no asset IP needed, the workload posture.
+    if (polling === "genericapi") {
+      return await probeGenericApi(assetId);
     }
 
     // AD-discovered Windows hosts often have no IP yet (only dnsName/hostname),
@@ -4845,7 +4857,7 @@ export interface SystemInfoSample {
    */
   lldpNeighbors?: LldpNeighborSample[];
   /** Which transport produced lldpNeighbors. Stamped onto each persisted row for diagnostics. */
-  lldpSource?:    "fortios" | "snmp";
+  lldpSource?:    "fortios" | "snmp" | "genericapi";
   /**
    * Wireless stations connected to a FortiAP, observed during this
    * scrape. Same undefined/[] semantics as lldpNeighbors. Only populated
@@ -4969,6 +4981,9 @@ export async function collectTelemetry(assetId: string, preloaded?: TelemetryAss
   if (isWorkloadPollingMethod(polling)) {
     return await collectTelemetryWorkload(assetId);
   }
+  if (polling === "genericapi") {
+    return await collectTelemetryGenericApi(assetId);
+  }
 
   // FQDN fallback for credentialed methods that resolve hostnames natively.
   const targetIp =
@@ -5089,6 +5104,9 @@ export async function collectHardwareSensors(assetId: string, preloaded?: Teleme
   // Unraid / TrueNAS: the host's disk temperatures, from the cached snapshot.
   if (isWorkloadPollingMethod(polling)) {
     return await collectHardwareSensorsWorkload(assetId);
+  }
+  if (polling === "genericapi") {
+    return await collectHardwareSensorsGenericApi(assetId);
   }
 
   const targetIp =
@@ -5235,6 +5253,9 @@ export async function collectFastFiltered(assetId: string): Promise<CollectionRe
   // Unraid / TrueNAS: the pinned subset of the same cached snapshot.
   if (isWorkloadPollingMethod(polling)) {
     return await collectSystemInfoWorkload(assetId, effective, { interfaces: wantedIfaces, storage: wantedStorage });
+  }
+  if (polling === "genericapi" || effective.storagePolling === "genericapi") {
+    return await collectSystemInfoGenericApi(assetId, effective, { interfaces: wantedIfaces, storage: wantedStorage });
   }
 
   const targetIp =
@@ -5669,6 +5690,11 @@ export async function collectSystemInfo(assetId: string): Promise<CollectionResu
   }
   if (isWorkloadPollingMethod(interfacesPolling) || isWorkloadPollingMethod(effective.storagePolling)) {
     return await collectSystemInfoWorkload(assetId, effective);
+  }
+  // Generic API: each of interfaces / storage / LLDP from its own monitor
+  // query, for whichever of them resolves to the method (rule 100(i)).
+  if (interfacesPolling === "genericapi" || effective.storagePolling === "genericapi" || lldpPolling === "genericapi") {
+    return await collectSystemInfoGenericApi(assetId, effective);
   }
 
   const targetIp =
@@ -12341,14 +12367,13 @@ export async function runTelemetryFor(assetId: string, labels: WorkItemLabels): 
 /** Per-probe row cap — see the truncation warning in the state branch below. */
 const MAX_STATE_ROWS_PER_PROBE = 500;
 
-async function collectAndRecordCustomWidgets(assetId: string, preloaded?: TelemetryAssetRow): Promise<void> {
-  const asset = preloaded !== undefined ? preloaded : await loadTelemetryAsset(assetId);
-  if (!asset || !asset.monitored || !asset.manufacturer) return;
+async function collectManufacturerWidgetSamples(assetId: string, asset: NonNullable<TelemetryAssetRow>): Promise<WidgetSampleSet> {
+  if (!asset.manufacturer) return NO_WIDGET_SAMPLES;
 
   // Same function as the static top-of-file import (aliased there as
   // getDbManufacturerProfile) — no dynamic import on the telemetry hot path.
   const profile = getDbManufacturerProfile(asset.manufacturer);
-  if (!profile || profile.widgets.length === 0) return;
+  if (!profile || profile.widgets.length === 0) return NO_WIDGET_SAMPLES;
 
   // Per-model gating mirrors the read-endpoint filter.
   const modelStr = asset.model ?? "";
@@ -12357,7 +12382,7 @@ async function collectAndRecordCustomWidgets(assetId: string, preloaded?: Teleme
     try { return new RegExp(w.modelPattern, "i").test(modelStr); }
     catch { return false; }
   });
-  if (widgets.length === 0) return;
+  if (widgets.length === 0) return NO_WIDGET_SAMPLES;
 
   // Two transports now live in this pass. An "http" widget names a request
   // rather than an OID, so it neither needs an SNMP credential nor obeys the
@@ -12389,8 +12414,8 @@ async function collectAndRecordCustomWidgets(assetId: string, preloaded?: Teleme
   // and any vhost routing are keyed on it.
   const host = asset.ipAddress;
   const httpHost = asset.ipAddress || asset.dnsName || asset.hostname;
-  if (!host && !httpHost) return;
-  if (!snmpEnabled && httpWidgets.length === 0) return;
+  if (!host && !httpHost) return NO_WIDGET_SAMPLES;
+  if (!snmpEnabled && httpWidgets.length === 0) return NO_WIDGET_SAMPLES;
 
   // Credential resolution mirrors the telemetry path: per-stream asset
   // credential wins, then the asset's generic monitor credential, then
@@ -12408,7 +12433,7 @@ async function collectAndRecordCustomWidgets(assetId: string, preloaded?: Teleme
   // A missing SNMP credential no longer aborts the whole pass — it only means
   // the SNMP half has nothing to authenticate with.
   const runSnmp = snmpEnabled && !!snmpCfg && !!host && snmpWidgets.length > 0;
-  if (!runSnmp && httpWidgets.length === 0) return;
+  if (!runSnmp && httpWidgets.length === 0) return NO_WIDGET_SAMPLES;
 
   await ensureRegistryLoaded();
   const scope = { manufacturer: asset.manufacturer, model: asset.model };
@@ -12580,6 +12605,37 @@ async function collectAndRecordCustomWidgets(assetId: string, preloaded?: Teleme
     }));
   }
 
+  return { samples, stateRows };
+}
+
+/** One pass's widget readings: scalar / table samples, and state rows. */
+interface WidgetSampleSet {
+  samples: Array<{ widgetId: string; kind: "scalar" | "table"; value: any }>;
+  stateRows: Array<{ probeId: string; rowKey: string; rowLabel: string; value: number; rawValue: string | null }>;
+}
+const NO_WIDGET_SAMPLES: WidgetSampleSet = { samples: [], stateRows: [] };
+
+/**
+ * The custom-widget pass on the telemetry cadence: the manufacturer-profile
+ * widgets (SNMP walks, HTTP checks) and the widgets a Generic API integration
+ * defines for the assets it lists (rule 100(i)), read side by side and
+ * written in one transaction. Either half failing costs only its own samples.
+ */
+async function collectAndRecordCustomWidgets(assetId: string, preloaded?: TelemetryAssetRow): Promise<void> {
+  const asset = preloaded !== undefined ? preloaded : await loadTelemetryAsset(assetId);
+  if (!asset || !asset.monitored) return;
+  const [mfr, generic] = await Promise.all([
+    collectManufacturerWidgetSamples(assetId, asset).catch((err) => {
+      logger.debug({ err, assetId }, "Manufacturer widget pass failed");
+      return NO_WIDGET_SAMPLES;
+    }),
+    collectGenericApiWidgetSamples(assetId).catch((err) => {
+      logger.debug({ err, assetId }, "Generic API widget pass failed");
+      return NO_WIDGET_SAMPLES;
+    }),
+  ]);
+  const samples = [...mfr.samples, ...generic.samples];
+  const stateRows = [...mfr.stateRows, ...generic.stateRows];
   if (samples.length === 0 && stateRows.length === 0) return;
   try {
     await prisma.$transaction([

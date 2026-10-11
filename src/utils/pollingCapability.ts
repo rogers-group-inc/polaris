@@ -125,6 +125,11 @@ export function collectorCapability(
   // PROXMOX_STREAMS-scoped); a stream a class cannot answer (a container's
   // temperature) comes back empty.
   if (method === "unraid" || method === "truenas" || method === "proxmox") return OK;
+  // Generic API reads the integration's monitor queries (GENERICAPI_STREAMS-
+  // scoped). A stream with no query answers "supported: false" and collects
+  // nothing — a configuration gap the probe and the collectors report, not a
+  // missing collector.
+  if (method === "genericapi") return OK;
 
   if (method === "icmp") {
     return stream === "responseTime"

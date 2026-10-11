@@ -3042,6 +3042,7 @@ var _MONITORED_VIA_LABELS = {
   unraid:   "Unraid",
   truenas:  "TrueNAS",
   proxmox:  "Proxmox",
+  genericapi: "Generic API",
 };
 
 // "Monitored Via" cell — renders how the asset is actually monitored from the
@@ -3837,7 +3838,7 @@ function assetMonitoringFormHTML(asset, managedAgent) {
   // the Polaris Agent's own per-asset bearer (issued at install time) is
   // implicit and never picked from the credential store.
   function streamPollingBlock(streamName, pollingId, credSelectId, mibSelectId, currentPoll, currentCredId, currentMibId, autoMibName) {
-    var needsCred = currentPoll && currentPoll !== "icmp" && currentPoll !== "disabled" && currentPoll !== "agent";
+    var needsCred = currentPoll && currentPoll !== "icmp" && currentPoll !== "disabled" && currentPoll !== "agent" && currentPoll !== "genericapi";
     var isSnmp    = currentPoll === "snmp";
     var credDisplay = needsCred ? "flex" : "none";
     var mibDisplay  = isSnmp   ? "flex" : "none";
@@ -5414,8 +5415,10 @@ async function openViewModal(id, opts) {
     // Custom MIB widgets — manufacturer-scoped (no manufacturer means no
     // ManufacturerProfile and therefore no widgets). Prefetched so the tab is
     // present + pre-populated on first paint and never flashes-then-vanishes.
+    // A Generic API integration can define widgets for the assets it lists
+    // (rule 100(i)); the sync tags every such asset `genericapi`.
     var customWidgetsP = assetP.then(function (asset) {
-      if (!asset.manufacturer) return null;
+      if (!asset.manufacturer && (asset.tags || []).indexOf("genericapi") === -1) return null;
       return api.assets.customWidgets(asset.id).catch(function (err) { console.warn("Failed to load custom widgets", err); return null; });
     });
 
@@ -5662,7 +5665,10 @@ async function openViewModal(id, opts) {
     // no custom widgets. Mirrors the SD-WAN tab's prefetch-then-conditional
     // pattern.
     if (customWidgetPayload && customWidgetPayload.widgets && customWidgetPayload.widgets.length) {
-      tabs.push({ key: "customMib", label: "Custom MIB", html: _customMibTabHTML(customWidgetPayload) });
+      // "Custom MIB" while every widget is a manufacturer's; "Widgets" once a
+      // Generic API integration contributes one (its values are not MIB reads).
+      var anyFeedWidget = customWidgetPayload.widgets.some(function (w) { return w.source && w.source.kind === "genericapi"; });
+      tabs.push({ key: "customMib", label: anyFeedWidget ? "Widgets" : "Custom MIB", html: _customMibTabHTML(customWidgetPayload) });
     }
     // SNMP Walk tab — `assetsProbe=read`, mirrors the backend gate (that key
     // is read-only by nature since 2026-09-04, business rule 43; it was
@@ -8110,7 +8116,7 @@ function _resolvedStreamPolling(asset, stream) {
 // the vendor disk-scalar pair as fallback, ssh reads `df`, winrm reads
 // Get-Volume) and the heavy system-info pass (the same SNMP walk, the agent's
 // own push, or the vCenter warm cache's guest filesystems / host datastores).
-var _STORAGE_DELIVERING_METHODS = ["snmp", "ssh", "winrm", "agent", "vcenter", "unraid", "truenas", "proxmox"];
+var _STORAGE_DELIVERING_METHODS = ["snmp", "ssh", "winrm", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"];
 
 // Interfaces-stream methods that deliver ANY heavy-cadence system data, and so
 // gate the System tab as a whole. `vcenter` belongs here since the 2026-08
@@ -8119,7 +8125,7 @@ var _STORAGE_DELIVERING_METHODS = ["snmp", "ssh", "winrm", "agent", "vcenter", "
 // table like any other inventory (see the Virtualization section's own note).
 // It was missing, so a vCenter-monitored asset was told to switch to a
 // transport it doesn't use in order to see data it was already collecting.
-var _SYSTEM_TAB_IFACE_METHODS = ["rest_api", "snmp", "agent", "vcenter", "unraid", "truenas", "proxmox"];
+var _SYSTEM_TAB_IFACE_METHODS = ["rest_api", "snmp", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"];
 
 function _storageStreamDelivers(asset) {
   if (!asset) return false;
@@ -10173,8 +10179,26 @@ function _renderWirelessStationsCard(container, si, asset) {
 // the server has; it refreshes on the next collector cycle.
 
 function _customMibTabHTML(payload) {
-  var hint = 'Widgets from <b>' + escapeHtml(payload.manufacturer || "this manufacturer") + '</b> ' +
-    '— defined at Server Settings → Identification → Manufacturer Profiles.';
+  var feeds = [];
+  var anyMfr = false;
+  payload.widgets.forEach(function (w) {
+    if (w.source && w.source.kind === "genericapi") {
+      if (feeds.indexOf(w.source.integrationName) === -1) feeds.push(w.source.integrationName);
+    } else {
+      anyMfr = true;
+    }
+  });
+  var parts = [];
+  if (anyMfr) {
+    parts.push('Widgets from <b>' + escapeHtml(payload.manufacturer || "this manufacturer") + '</b> ' +
+      '— defined at Server Settings → Identification → Manufacturer Profiles.');
+  }
+  if (feeds.length) {
+    parts.push('Widgets from the Generic API integration' + (feeds.length > 1 ? 's ' : ' ') +
+      feeds.map(function (n) { return '<b>' + escapeHtml(n) + '</b>'; }).join(", ") +
+      ' — defined on its Monitoring tab.');
+  }
+  var hint = parts.join(" ");
   if (payload.polling === "disabled") {
     hint += ' <span style="color:var(--color-warning)">Polling is disabled for this asset; data may be stale.</span>';
   } else if (!payload.lastCustomWidgetAt) {
@@ -13251,6 +13275,7 @@ function _probeMethodLabel(a) {
     case "unraid":       return "Unraid";
     case "truenas":      return "TrueNAS";
     case "proxmox":      return "Proxmox";
+    case "genericapi":   return "Generic API";
     case "agent":        return "Polaris Agent";
     default:             return polling;
   }

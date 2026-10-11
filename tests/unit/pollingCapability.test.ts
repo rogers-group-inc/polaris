@@ -121,6 +121,12 @@ describe("collectorCapability — the methods that are fully wired", () => {
     expect(collectorExists("fortimanager", "responseTime", "fortimanager")).toBe(true);
   });
 
+  it("genericapi is implemented for every stream a monitor query can map (rule 100(i))", () => {
+    for (const s of ["responseTime", "cpuMemory", "interfaces", "storage", "temperature", "lldp"] as Stream[]) {
+      expect(collectorExists("genericapi", s, "genericapi"), s).toBe(true);
+    }
+  });
+
   // "disabled" means don't poll — always honoured, never a gap.
   it("disabled is always implemented", () => {
     for (const s of ["responseTime", ...HEAVY, "processes", "eventLog"] as Stream[]) {

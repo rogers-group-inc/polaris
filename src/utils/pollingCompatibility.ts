@@ -30,8 +30,10 @@
  *                                                                 with an address — see below)
  *   TrueNAS SCALE     → ICMP, SNMP, WinRM, SSH, Agent, TrueNAS   (same, with "truenas")
  *   Proxmox VE        → ICMP, SNMP, WinRM, SSH, Agent, Proxmox   (same, with "proxmox"; no temperature stream)
- *   Generic API       → ICMP, SNMP, WinRM, SSH, Agent            (a record can be any device; ICMP response time
- *                                                                 is the only default)
+ *   Generic API       → ICMP, SNMP, WinRM, SSH, Agent,           (a record can be any device; "genericapi" reads
+ *                       Generic API                               the integration's own monitor queries and is
+ *                                                                 the integration-tier default only for a stream
+ *                                                                 a query is set to feed — rule 100(i))
  *   Manual            → any                                       (operator-chosen)
  *
  * ── The retired "http" method (2026-08) ──────────────────────────────────────
@@ -129,7 +131,7 @@
  * "Polling-method compatibility matrix".
  */
 
-export type PollingMethod = "rest_api" | "snmp" | "winrm" | "ssh" | "icmp" | "disabled" | "agent" | "vcenter" | "fortimanager" | "unraid" | "truenas" | "proxmox";
+export type PollingMethod = "rest_api" | "snmp" | "winrm" | "ssh" | "icmp" | "disabled" | "agent" | "vcenter" | "fortimanager" | "unraid" | "truenas" | "proxmox" | "genericapi";
 
 /** Streams resolved independently by the four-tier monitor settings hierarchy. */
 export type Stream =
@@ -155,7 +157,7 @@ export type AssetSourceKind =
   | "genericapi"
   | "manual";
 
-const ALL_METHODS: ReadonlyArray<PollingMethod> = ["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas", "proxmox"];
+const ALL_METHODS: ReadonlyArray<PollingMethod> = ["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas", "proxmox", "genericapi"];
 
 // Each entry is the full set of valid methods for that source. A `Set` is
 // O(1) lookup which matters for the resolver running in the hot monitor
@@ -172,15 +174,15 @@ const COMPATIBILITY: Readonly<Record<AssetSourceKind, ReadonlySet<PollingMethod>
   // "vcenter" on the directory sources covers VMs those integrations
   // discovered FIRST that a vCenter sync merged into — see header note.
   // "unraid" / "truenas" / "proxmox" ride along for the same merged-VM reason.
-  activedirectory: new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox"]),
-  entraid:         new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox"]),
-  windowsserver:   new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox"]),
+  activedirectory: new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"]),
+  entraid:         new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"]),
+  windowsserver:   new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"]),
   // Arc-enabled machines are ordinary Windows/Linux hosts, so they take the
   // same set as the directory sources. "vcenter" is included for the same
   // reason it is there — an Arc machine can also be a vCenter-merged VM, and
   // in fact the Arc↔vCenter vmUuid cross-link makes that MORE likely, not
   // less. No rest_api (no shared host API) and no snmp.
-  azurearc:        new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox"]),
+  azurearc:        new Set<PollingMethod>(["icmp", "winrm", "ssh", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"]),
   // Union across the two vCenter classes: VMs are guest OSes (icmp / winrm /
   // ssh / agent like the directory sources), ESXi hosts answer snmp/ssh, and
   // "vcenter" delivers the hypervisor-view cpuMemory stream for VMs.
@@ -193,17 +195,20 @@ const COMPATIBILITY: Readonly<Record<AssetSourceKind, ReadonlySet<PollingMethod>
   proxmox:         new Set<PollingMethod>(["icmp", "snmp", "winrm", "ssh", "disabled", "agent", "proxmox"]),
   // Generic API: a record can be ANY kind of device (a printer, a camera, a
   // server), so every transport an operator can hold a credential for is
-  // allowed. Not rest_api (that is FortiOS REST), and none of the methods that
-  // read a specific integration (vcenter / fortimanager / unraid / truenas / proxmox) —
-  // the feed is not that integration.
-  genericapi:      new Set<PollingMethod>(["icmp", "snmp", "winrm", "ssh", "disabled", "agent"]),
+  // allowed, plus "genericapi" — the integration's own monitor queries. Not
+  // rest_api (that is FortiOS REST), and none of the methods that read another
+  // specific integration (vcenter / fortimanager / unraid / truenas / proxmox).
+  // "genericapi" also rides on the directory sources and manual, for the
+  // merged-asset reason: the feed claims only an unowned asset, so a record it
+  // matched onto an AD / Entra / manual asset keeps that asset's source kind.
+  genericapi:      new Set<PollingMethod>(["icmp", "snmp", "winrm", "ssh", "disabled", "agent", "genericapi"]),
   // Spelled out rather than `ALL_METHODS`. Manual is the most permissive set
   // by design (the operator picks the credential), but "most permissive" is not
   // "everything that exists": `fortimanager` reads a specific integration's
   // device roster, and an orphan asset has no integration to read. Writing the
   // list out means a future method has to be added here deliberately instead of
   // being inherited by accident.
-  manual:          new Set<PollingMethod>(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox"]),
+  manual:          new Set<PollingMethod>(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"]),
 };
 
 /**
@@ -313,6 +318,16 @@ export const WORKLOAD_STREAMS: ReadonlySet<Stream> = new Set<Stream>([
  */
 export const PROXMOX_STREAMS: ReadonlySet<Stream> = VCENTER_STREAMS;
 
+/**
+ * Streams the "genericapi" method can serve — every one a monitor query can
+ * map (services/genericApiMonitorService.ts). LLDP too: the neighbors land in
+ * the same AssetLldpNeighbor rows SNMP and FortiOS write (source "genericapi").
+ * Processes and the event log are not mappable from a feed.
+ */
+export const GENERICAPI_STREAMS: ReadonlySet<Stream> = new Set<Stream>([
+  "responseTime", "cpuMemory", "interfaces", "storage", "temperature", "lldp",
+]);
+
 /** True for the workload-integration polling methods (Unraid, TrueNAS SCALE, Proxmox VE). */
 export function isWorkloadPollingMethod(m: string | null | undefined): m is "unraid" | "truenas" | "proxmox" {
   return m === "unraid" || m === "truenas" || m === "proxmox";
@@ -323,6 +338,7 @@ export function isMethodValidForStream(stream: Stream, method: PollingMethod): b
   if (method === "fortimanager") return FORTIMANAGER_STREAMS.has(stream);
   if (method === "proxmox") return PROXMOX_STREAMS.has(stream);
   if (method === "unraid" || method === "truenas") return WORKLOAD_STREAMS.has(stream);
+  if (method === "genericapi") return GENERICAPI_STREAMS.has(stream);
   const allowed = STREAM_METHODS[stream];
   return allowed ? allowed.has(method) : true;
 }
@@ -384,6 +400,7 @@ export function pollingMethodLabel(method: PollingMethod): string {
     case "unraid":   return "Unraid";
     case "truenas":  return "TrueNAS";
     case "proxmox":  return "Proxmox";
+    case "genericapi": return "Generic API";
   }
 }
 
@@ -419,6 +436,7 @@ export function credentialTypeForPollingMethod(
     case "unraid":
     case "truenas":
     case "proxmox":
+    case "genericapi":
       return null;
   }
 }

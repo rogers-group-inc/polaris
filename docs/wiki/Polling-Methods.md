@@ -56,6 +56,7 @@ resolution time**; the route layer rejects it at write time with a clear 400.
 | `unraid` | reads the Unraid host's API, not the VM or container |
 | `truenas` | reads the TrueNAS SCALE host's API, not the VM or App |
 | `proxmox` | reads the Proxmox VE cluster's API, not the node's OS or the guest. Shown as *Proxmox* |
+| `genericapi` | reads the monitor queries you wrote on a Generic API integration, not the device. Shown as *Generic API* |
 | `disabled` | universally allowed — *do not poll this stream* |
 
 > An **HTTP check** is configured as a **manufacturer custom widget**
@@ -70,16 +71,17 @@ everywhere):
 |---|---|
 | **FortiManager** | `icmp`, `snmp`, `ssh`, `rest_api`, `fortimanager` |
 | **FortiGate** | `icmp`, `snmp`, `ssh`, `rest_api` |
-| **AD / Entra / Windows Server / Azure Arc** | `icmp`, `winrm`, `ssh`, `agent`, `vcenter`, `unraid`, `truenas`, `proxmox` |
+| **AD / Entra / Windows Server / Azure Arc** | `icmp`, `winrm`, `ssh`, `agent`, `vcenter`, `unraid`, `truenas`, `proxmox`, `genericapi` |
 | **vCenter** | `icmp`, `snmp`, `winrm`, `ssh`, `agent`, `vcenter` |
 | **Unraid** | `icmp`, `snmp`, `winrm`, `ssh`, `agent`, `unraid` |
 | **TrueNAS SCALE** | `icmp`, `snmp`, `winrm`, `ssh`, `agent`, `truenas` |
 | **Proxmox VE** | `icmp`, `snmp`, `winrm`, `ssh`, `agent`, `proxmox` |
+| **Generic API** | `icmp`, `snmp`, `winrm`, `ssh`, `agent`, `genericapi` |
 | **Manual** | everything except `fortimanager` |
 
-`vcenter`, `unraid`, `truenas` and `proxmox` appear on the directory sources
-because a VM that Active Directory or Entra found first can later be merged with
-its vCenter, NAS or Proxmox record. A workload method is never offered on
+`vcenter`, `unraid`, `truenas`, `proxmox` and `genericapi` appear on the
+directory sources because a device that Active Directory or Entra found first
+can later be merged with its vCenter, NAS, Proxmox or Generic API record. A workload method is never offered on
 another workload platform's assets. Within a source, each stream narrows the list further: ICMP is
 response-time only, and a method with no collector for that stream is not
 offered (see [compatibility vs capability](Monitoring#compatibility-vs-capability)).
@@ -96,6 +98,7 @@ offered (see [compatibility vs capability](Monitoring#compatibility-vs-capabilit
 | **Unraid** | `icmp`; `unraid` for an asset with no IP | `unraid` | `unraid` (host) | `unraid` (host) | — | `unraid` (host) |
 | **TrueNAS SCALE** | `icmp`; `truenas` for an asset with no IP | `truenas` | `truenas` (host) | `truenas` (host) | — | `truenas` (host) |
 | **Proxmox VE** | `icmp`; `proxmox` for an asset with no IP | `proxmox` | — | `proxmox` | — | `proxmox` (node) |
+| **Generic API** | `icmp` | — | — | — | — | — |
 
 `—` means *not delivered* until you pick a method. **processes** and
 **eventLog** default to `disabled` on every source — they are opt-in — except
@@ -263,6 +266,32 @@ peers report **offline probes down**, and its guests are then
 [dependency-suppressed](Dependency-Suppression). If no configured address
 answers, nodes on the method fail and guests on it are skipped. See
 [Proxmox VE](Integration-Proxmox).
+
+---
+
+## The `genericapi` method
+
+Reads the values a **Generic API integration's monitor queries** return for the
+assets it discovered — up / down, CPU and memory, interfaces, storage,
+temperatures and LLDP neighbors. You write the queries on the integration's
+**Monitoring** tab; see [Generic API](Integration-Generic-API#monitoring-tab).
+
+It is not a source default. A monitor query left on **Use for this feed's
+assets** makes `genericapi` the integration's default for its stream, the same
+as choosing it on another integration's Monitoring tab. You can still pick
+another method per asset.
+
+| What happens | Response-time probe |
+|---|---|
+| the API lists the asset with an *up* value | up, charted at the latency the API reports (or 0 ms) |
+| the API lists the asset with any other value | down |
+| a complete read does not list the asset, or a per-asset request answers 404 | down |
+| the API cannot be reached, refuses the credentials, or a read stops part way | **skipped** — one API outage never marks a fleet down |
+| the integration has no query for the stream | down, with the reason |
+
+Interfaces, storage and LLDP ride the system-info pass. Temperatures ride the
+CPU / memory schedule, as every sensor reading does, so they need a CPU / memory
+method on the asset.
 
 ---
 

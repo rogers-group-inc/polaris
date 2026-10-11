@@ -1702,6 +1702,13 @@ list*. In practice:
   token, password, client secret and any credential-looking header value, and
   leaves out the host and account unless you ask for them. An import never
   fills a secret, whatever the file says.
+- **It can feed monitoring, never decide it.** Monitor queries supply up /
+  down, CPU, interfaces, storage, temperatures, LLDP and custom widgets through
+  the Generic API polling method. A query can make that method the default for
+  its stream on this integration's assets. It never decides which assets are
+  monitored. When the API cannot be reached, a probe is skipped rather than
+  failed, so one outage never marks a fleet down. An asset the API answers for
+  without listing it is down.
 
 ### Rule 101
 

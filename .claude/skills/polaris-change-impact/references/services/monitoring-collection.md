@@ -277,6 +277,30 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/genericApiMonitorService.ts
+
+**What it owns:** The `genericapi` polling method (business rule 100(i)) — response time, CPU/memory, interfaces, storage, temperature and LLDP — plus custom widgets, for an asset a Generic API integration lists, read from that integration's `monitorQueries` (GenericApiMonitorQuery in genericApiService). Every read yields one DOCUMENT per asset: a **fleet** query is one request (paged with the integration's pagination when `paginate`) warm-cached for `FLEET_TTL_MS` (30 s) and shared by every asset and stream on it, each record joined to an asset by `matchPath` normalized with `identityKeyFor(identityField)`; an **asset** query fills its `{{path}}` template from the asset's `generic-api` AssetSource observed blob (`assetTemplateContext`: the blob + `mac`), cached `ASSET_TTL_MS` (30 s) so one query's streams share a request per pass, at most `detailConcurrency` in flight per integration (`withSlot`). `readGenericApiAsset(assetId, stream)` resolves through the asset's `generic-api` source rows (first integration with a query for the stream) into `doc | absent | unreachable | none`. The builders (`buildProbeResult`, `buildTelemetry`, `buildInterfaces`, `buildStorage`, `buildTemperatures`, `buildLldpNeighbors`, `buildWidgetSamples`) map a document onto the monitoring shapes.
+
+**Public API:** probeGenericApi, collectTelemetryGenericApi, collectHardwareSensorsGenericApi, collectSystemInfoGenericApi (optional `pinned` subset = the fast cadence; LLDP never on it), collectGenericApiWidgetSamples, genericApiWidgetDefsForAsset, readGenericApiAsset, invalidateGenericApiMonitorCache, assetTemplateContext, the pure builders + readNumber / normalizeOperStatus, GENERIC_API_POLLING_METHOD, FLEET_TTL_MS, ASSET_TTL_MS, GenericApiMonitorReading, GenericApiWidgetRow, GenericApiWidgetSamples.
+
+**Cross-service deps:** genericApiService (`buildRequestHeaders`, `fetchGenericApiRecords`, `fetchJsonDocument`, `fillDetailTemplate`, `identityKeyFor`, `genericApiWidgetId`); utils jsonPath, stateProbes, genericApiSource, cidr, mac, ttlCache; types from monitoringService (type-only — no runtime cycle).
+
+**Used by:** src/services/monitoringService.ts — `probeAsset`, `collectTelemetry`, `collectHardwareSensors`, `collectSystemInfo`, `collectFastFiltered` dispatch on `polling === "genericapi"` before their IP guards; `collectAndRecordCustomWidgets` runs `collectGenericApiWidgetSamples` beside `collectManufacturerWidgetSamples` and persists both in one transaction. src/api/routes/assets.ts — `GET /assets/:id/custom-widgets` appends `genericApiWidgetDefsForAsset`.
+
+**Invariants:**
+- The reading model is the workload one: `unreachable` (API down, credentials refused, integration disabled, a fleet read that stopped early) SKIPS the probe — one inventory outage never downs a fleet; `absent` (a complete fleet read without the record, a per-asset 404 / 410, a placeholder the record cannot fill) FAILS it; `none` (no query for the stream, or no Generic API record) fails the probe with the reason and makes every collector `{supported:false}`.
+- The probe's `responseTimeMs` is the latency the SOURCE reports for the device (`map.latencyMs`), else 0 — never the round trip to the inventory server.
+- A value that is not at its path is no reading, never a zero; a list stream's rows need their key field (interfaces `name`, storage `mountPath`, temperature `name` + `celsius`, LLDP `localIfName` + one of chassis / port / system name).
+- System info gates each stream on its OWN resolved method; a stream that could not be read contributes an empty list (persisters read it as "not collected") and LLDP stays `undefined` (no wipe). LLDP rows are written with `lldpSource: "genericapi"`.
+- Caches are keyed by a hash of the query and the request it makes (`queryHash`), and the header cache by a credential fingerprint (5 min) — the integration is edited on the web role and read on the monitor role, which cannot be told to invalidate. One OAuth token per integration per 5 minutes, never one per request.
+- Widgets need no polling method (the HTTP-check widget's posture): defining them on the integration is the choice. They ride the telemetry cadence, so a widget or temperature query needs a CPU/memory method on the asset. Widget ids are `ga:<integrationId>:<slug(name)>` — renaming a widget starts a new series.
+
+**When changing this:**
+- A new stream for the method = `GENERIC_API_MONITOR_STREAMS` + `GENERIC_API_MONITOR_FIELDS` + `GENERIC_API_STREAM_POLLING_KEY` (genericApiService), `GENERICAPI_STREAMS` (pollingCompatibility.ts), a builder + collector here, the dispatch branch in monitoringService, and the browser mirrors (`_GA_MONITOR_STREAMS`, `_GENERICAPI_STREAMS`).
+- Scale: a fleet query is one request per 30 s per query whatever the fleet size; a per-asset query is one request per asset per stream run (capped by `detailConcurrency`, shared across the query's streams by the 30 s cache, sized for 2000+ assets × several queries).
+
+---
+
 ## services/workloadActionService.ts
 
 **What it owns:** Business rule 94 — operator actions on a VM or container / App discovered by an Unraid or TrueNAS SCALE integration (Proxmox VE is READ-ONLY — `platformHasActions(platform)` is true for `unraid` / `truenas` only; its integration authenticates with a PVEAuditor token): `runWorkloadAction` (start / stop / restart / update), `getWorkloadStatus` (live state + the verbs it allows, for the asset card), `checkWorkloadUpdates` (asks the host to re-check, then returns a fresh status and stamps `virtualization.updateAvailable`).

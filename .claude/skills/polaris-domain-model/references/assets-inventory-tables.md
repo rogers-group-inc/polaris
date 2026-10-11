@@ -76,7 +76,7 @@ AssetLldpNeighbor               -- Current-state LLDP neighbor table per (asset,
   managementIp      String?
   capabilities      String[]
   matchedAssetId    UUID? FK → Asset (set null on delete) -- resolved at persist time; powers the topology graph
-  source            String          -- "fortios" | "snmp" | "managed-ap"
+  source            String          -- "fortios" | "snmp" | "managed-ap" | "genericapi" (a Generic API monitor query, rule 100(i))
   firstSeen         DateTime
   lastSeen          DateTime
   @@unique([assetId, localIfName, chassisId, portId])

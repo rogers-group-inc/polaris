@@ -40,6 +40,7 @@ import {
 import { matchesWildcard } from "../utils/integrationFilter.js";
 import { isValidGeoCoord } from "../utils/geo.js";
 import { mapWithConcurrency } from "../utils/concurrency.js";
+import { validateStateMap } from "../utils/stateProbes.js";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -118,6 +119,107 @@ export interface GenericApiHeader {
   value: string;
 }
 
+// ─── Monitor queries (rule 100(i)) ─────────────────────────────────────────────
+//
+// A monitor query feeds ONE monitor stream (or a set of custom widgets) for the
+// assets this integration discovered, read by the `genericapi` polling method
+// (services/genericApiMonitorService.ts). Two scopes:
+//   fleet — one request (paged like the inventory when `paginate`) answers for
+//           every asset; each record is joined to an asset by `matchPath`,
+//           normalized like the integration's identity field.
+//   asset — one request per asset, its path / body a `{{path}}` template read
+//           from the asset's own record as the inventory last mapped it
+//           (`identity`, `hostname`, `ip`, `serial`, `mac`, …).
+// Either way the result is one DOCUMENT per asset, and `map` / `itemsPath` /
+// `widgets` read the stream's values out of it.
+
+export const GENERIC_API_MONITOR_STREAMS = [
+  "responseTime", "cpuMemory", "interfaces", "storage", "temperature", "lldp", "widgets",
+] as const;
+export type GenericApiMonitorStream = (typeof GENERIC_API_MONITOR_STREAMS)[number];
+
+/** The keys each stream's `map` may name, and the ones it must. */
+export const GENERIC_API_MONITOR_FIELDS: Record<GenericApiMonitorStream, { keys: readonly string[]; required: readonly string[][] }> = {
+  responseTime: { keys: ["up", "latencyMs", "uptimeSec"], required: [["up"]] },
+  cpuMemory:    { keys: ["cpuPct", "memPct", "memUsed", "memTotal", "memFree"], required: [["cpuPct", "memPct", "memUsed"]] },
+  interfaces:   {
+    keys: ["name", "operStatus", "adminStatus", "speedBps", "speedMbps", "inOctets", "outOctets", "inErrors", "outErrors", "macAddress", "ipAddress", "description", "alias"],
+    required: [["name"]],
+  },
+  storage:      { keys: ["mountPath", "total", "used", "free"], required: [["mountPath"], ["total"]] },
+  temperature:  { keys: ["name", "celsius"], required: [["name"], ["celsius"]] },
+  lldp:         {
+    keys: ["localIfName", "chassisId", "portId", "portDescription", "systemName", "systemDescription", "managementIp"],
+    required: [["localIfName"], ["chassisId", "portId", "systemName"]],
+  },
+  widgets:      { keys: [], required: [] },
+};
+
+/** Streams whose document holds a LIST of rows (`itemsPath`). */
+export const GENERIC_API_LIST_STREAMS: ReadonlySet<GenericApiMonitorStream> = new Set(["interfaces", "storage", "temperature", "lldp"]);
+
+/** The integration-tier polling key each stream's default lives under (widgets have none). */
+export const GENERIC_API_STREAM_POLLING_KEY: Partial<Record<GenericApiMonitorStream, string>> = {
+  responseTime: "responseTimePolling",
+  cpuMemory:    "cpuMemoryPolling",
+  interfaces:   "interfacesPolling",
+  storage:      "storagePolling",
+  temperature:  "temperaturePolling",
+  lldp:         "lldpPolling",
+};
+
+export type GenericApiByteUnit = "B" | "KB" | "MB" | "GB" | "TB";
+export const GENERIC_API_BYTE_UNITS: Record<GenericApiByteUnit, number> = {
+  B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4,
+};
+
+export interface GenericApiWidgetDef {
+  name: string;
+  type: "gauge" | "line" | "state";
+  /** Path into the asset's document. */
+  path: string;
+  unit?: string;
+  min?: number;
+  max?: number;
+  warningAt?: number;
+  /** state only — utils/stateProbes.ts StateMap (mode, values, labels, polarity). */
+  stateMap?: unknown;
+}
+
+export interface GenericApiMonitorQuery {
+  name?: string;
+  stream: GenericApiMonitorStream;
+  scope: "fleet" | "asset";
+  path: string;
+  method?: "GET" | "POST";
+  body?: string;
+  /** fleet: where the records sit in the response. */
+  recordsPath?: string;
+  /** fleet: the path in each record that holds the asset's identity. */
+  matchPath?: string;
+  /** fleet: page through the response with the integration's pagination settings. */
+  paginate?: boolean;
+  /** list streams: where the rows sit in the asset's document (blank = the document is the list). */
+  itemsPath?: string;
+  /** stream key → path, against the document (or each row of a list stream). */
+  map?: Record<string, string>;
+  /** responseTime: the `up` values that mean up (case-insensitive). Blank = a common set. */
+  upValues?: string[];
+  /** cpuMemory / storage: the unit the byte figures are in. */
+  byteUnit?: GenericApiByteUnit;
+  /** widgets: the widgets this query feeds. */
+  widgets?: GenericApiWidgetDef[];
+  /** Set this stream's integration-tier polling method to `genericapi` (default true). */
+  useByDefault?: boolean;
+}
+
+export const GENERIC_API_MONITOR_LIMITS = {
+  maxQueries: 10,
+  maxWidgetsPerQuery: 20,
+  /** Per-asset requests in flight per integration. */
+  defaultAssetConcurrency: 4,
+} as const;
+
 export interface GenericApiConfig {
   host: string;
   port?: number;
@@ -148,6 +250,10 @@ export interface GenericApiConfig {
   detailQueries?: GenericApiDetailQuery[];
   /** Detail requests in flight at once. */
   detailConcurrency?: number;
+  /** Requests that feed the monitor streams and custom widgets (rule 100(i)). */
+  monitorQueries?: GenericApiMonitorQuery[];
+  /** Integration-tier monitor settings — `syncGenericApiMonitorDefaults` keeps its polling keys in step with the queries. */
+  monitorSettings?: Record<string, unknown>;
   identityField?: GenericApiIdentityField;
   /** The asset type for a record whose mapped type is blank or unknown. */
   assetTypeDefault?: string;
@@ -275,6 +381,118 @@ export function findInvalidPath(config: Pick<GenericApiConfig, "recordsPath" | "
     for (const f of GENERIC_API_DETAIL_FIELDS) problems.push(check(`${label} ${f} path`, q.fieldMap?.[f]));
   });
   return problems.find((p) => p !== null) ?? null;
+}
+
+/**
+ * The first problem with the monitor queries, or null. The route schema
+ * checks shapes; this checks what only the service knows: which map keys a
+ * stream takes, that every path parses, that a fleet query names its match
+ * path and has no placeholders, and that widget names are unique per
+ * integration (a widget's samples are keyed by its name).
+ */
+export function findInvalidMonitorQuery(config: Pick<GenericApiConfig, "monitorQueries">): string | null {
+  const checkPath = (label: string, p: string | undefined): string | null => {
+    if (!p || !p.trim()) return null;
+    try { parseJsonPath(p); return null; } catch (err) {
+      return `${label}: ${err instanceof JsonPathError ? err.message : String(err)}`;
+    }
+  };
+  const widgetNames = new Set<string>();
+  const queries = config.monitorQueries ?? [];
+  for (let i = 0; i < queries.length; i++) {
+    const q = queries[i];
+    const label = `Monitor query ${i + 1}${q.name?.trim() ? ` ("${q.name.trim()}")` : ""}`;
+    if (!(GENERIC_API_MONITOR_STREAMS as readonly string[]).includes(q.stream)) return `${label}: unknown stream "${q.stream}"`;
+    if (!(q.path ?? "").trim() || !isSafeRequestPath(q.path)) return `${label}: the path must start with a single "/"`;
+    for (const [where, tpl] of [["path", q.path], ["body", q.body]] as const) {
+      const ph = detailPlaceholders(tpl);
+      if (ph === null) return `${label}: a "{{" in the ${where} has no matching "}}"`;
+      if (q.scope === "fleet" && ph.length > 0) {
+        return `${label}: a fleet query answers for every asset at once, so its ${where} cannot hold {{…}} placeholders — use the per-asset scope`;
+      }
+      for (const p of ph) { const bad = checkPath(`${label} placeholder {{${p}}}`, p); if (bad) return bad; }
+    }
+    if (q.scope === "fleet") {
+      if (!q.matchPath?.trim()) return `${label}: a fleet query needs the path that holds each record's identity`;
+      const bad = checkPath(`${label} match path`, q.matchPath) ?? checkPath(`${label} records path`, q.recordsPath);
+      if (bad) return bad;
+    }
+    const itemsBad = checkPath(`${label} items path`, q.itemsPath);
+    if (itemsBad) return itemsBad;
+    const spec = GENERIC_API_MONITOR_FIELDS[q.stream];
+    const map = q.map ?? {};
+    for (const [k, p] of Object.entries(map)) {
+      if (!p || !String(p).trim()) continue;
+      if (!spec.keys.includes(k)) return `${label}: "${k}" is not a ${q.stream} field (${spec.keys.join(", ")})`;
+      const bad = checkPath(`${label} ${k} path`, p);
+      if (bad) return bad;
+    }
+    for (const oneOf of spec.required) {
+      if (!oneOf.some((k) => (map[k] ?? "").trim())) {
+        return `${label}: map ${oneOf.length === 1 ? `"${oneOf[0]}"` : `one of ${oneOf.map((k) => `"${k}"`).join(" / ")}`} for the ${q.stream} stream`;
+      }
+    }
+    if (q.stream === "widgets") {
+      const widgets = q.widgets ?? [];
+      if (widgets.length === 0) return `${label}: a widgets query needs at least one widget`;
+      if (widgets.length > GENERIC_API_MONITOR_LIMITS.maxWidgetsPerQuery) return `${label}: at most ${GENERIC_API_MONITOR_LIMITS.maxWidgetsPerQuery} widgets per query`;
+      for (const w of widgets) {
+        const name = (w.name ?? "").trim();
+        if (!name) return `${label}: every widget needs a name`;
+        const key = genericApiWidgetSlug(name);
+        if (widgetNames.has(key)) return `${label}: two widgets are named "${name}" — names must be unique on an integration`;
+        widgetNames.add(key);
+        if (!(w.path ?? "").trim()) return `${label}: widget "${name}" needs a path`;
+        const bad = checkPath(`${label} widget "${name}" path`, w.path);
+        if (bad) return bad;
+        if (w.type === "state") {
+          const stateBad = validateStateMap(w.stateMap ?? {});
+          if (stateBad) return `${label}: widget "${name}": ${stateBad}`;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** A widget's stable key on its integration — samples are keyed by it, so renaming a widget starts a new series. */
+export function genericApiWidgetSlug(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "widget";
+}
+
+/** `AssetCustomWidgetSample.widgetId` / `AssetStateSample.probeId` for a Generic API widget. */
+export function genericApiWidgetId(integrationId: string, name: string): string {
+  return `ga:${integrationId}:${genericApiWidgetSlug(name)}`;
+}
+
+/**
+ * The integration-tier settings after a save: each stream a query feeds with
+ * `useByDefault` (the default) gets `genericapi` as its polling method, and a
+ * stream left on `genericapi` with no query any more is cleared back to the
+ * tier below. Every other key — an interval, another method the operator set
+ * through the monitor-settings API — is kept. `seed` is what to start from
+ * when nothing is stored yet (the manual tier, as every other integration's
+ * Monitoring tab does), so a first default does not reset the cadences.
+ * Returns undefined when there is nothing to store.
+ */
+export function syncGenericApiMonitorDefaults(
+  stored: Record<string, unknown> | undefined,
+  queries: GenericApiMonitorQuery[],
+  seed: Record<string, unknown> | null,
+): Record<string, unknown> | undefined {
+  const wanted = new Set<string>();
+  for (const q of queries) {
+    const key = GENERIC_API_STREAM_POLLING_KEY[q.stream];
+    if (key && q.useByDefault !== false) wanted.add(key);
+  }
+  if (!stored && wanted.size === 0) return undefined;
+  const out: Record<string, unknown> = { ...(stored ?? seed ?? {}) };
+  for (const key of Object.values(GENERIC_API_STREAM_POLLING_KEY)) {
+    if (!key) continue;
+    if (wanted.has(key)) out[key] = "genericapi";
+    else if (out[key] === "genericapi") delete out[key];
+  }
+  return out;
 }
 
 /**
@@ -910,6 +1128,44 @@ export async function fetchDetailsForRecord(
     }
   }
   return out;
+}
+
+/**
+ * One request on the endpoint's origin, returning its JSON or why not —
+ * never throwing. `notFound` is a 404 / 410: the source answered that this
+ * thing does not exist, which a monitor reads as a finding, where any other
+ * failure means Polaris could not ask.
+ */
+export async function fetchJsonDocument(
+  config: GenericApiConfig,
+  req: { path: string; method?: "GET" | "POST"; body?: string },
+  headers: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<{ ok: true; doc: unknown } | { ok: false; notFound: boolean; error: string }> {
+  try {
+    const method = req.method === "POST" ? "POST" : "GET";
+    let body: string | undefined;
+    if (method === "POST") {
+      body = (req.body ?? "").trim() || "{}";
+      try { JSON.parse(body); } catch { return { ok: false, notFound: false, error: "the request body is not valid JSON" }; }
+    }
+    const reqHeaders = { ...headers };
+    if (method === "POST") reqHeaders["Content-Type"] = "application/json";
+    else delete reqHeaders["Content-Type"];
+    const url = buildRequestUrl(config, req.path);
+    const res = await send(url, {
+      method, headers: reqHeaders, body,
+      verifySsl: config.verifySsl !== false,
+      timeoutMs: config.requestTimeoutMs ?? GENERIC_API_LIMITS.defaultTimeoutMs,
+      signal,
+    });
+    if (res.status === 404 || res.status === 410) return { ok: false, notFound: true, error: `${url.origin} answered HTTP ${res.status} (not found)` };
+    if (res.status < 200 || res.status >= 300) return { ok: false, notFound: false, error: describeHttpFailure(res.status, res.text, url.origin).message };
+    if (res.json === undefined) return { ok: false, notFound: false, error: `${url.origin} did not answer with JSON` };
+    return { ok: true, doc: res.json };
+  } catch (err) {
+    return { ok: false, notFound: false, error: (err as Error)?.message || String(err) };
+  }
 }
 
 export interface GenericApiDetailRun {

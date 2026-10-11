@@ -8,8 +8,13 @@ import {
   fetchDetailsForRecord,
   fetchGenericApiDetails,
   fetchGenericApiRecords,
+  fetchJsonDocument,
   fillDetailTemplate,
+  findInvalidMonitorQuery,
   findInvalidPath,
+  genericApiWidgetId,
+  genericApiWidgetSlug,
+  syncGenericApiMonitorDefaults,
   parseLooseDate,
   identityKeyFor,
   isSafeRequestPath,
@@ -582,5 +587,90 @@ describe("testConnection / previewGenericApi — detail queries", () => {
     expect(p.sampleDetails).toEqual([{ name: "HW", path: "/api/devices/1", ok: true, response: { model: "M1" }, error: null }]);
     expect(p.rows.map((r) => r.outcome.ok && r.outcome.record.model)).toEqual([false, "M1", null]);
     expect(p.rows[2].detailFailures[0]).toMatch(/^HW: HW answered HTTP 500/);
+  });
+});
+
+// ─── Monitor queries (rule 100(i)) ───────────────────────────────────────────
+
+describe("findInvalidMonitorQuery", () => {
+  const ok = (over: Record<string, unknown>) => ({ monitorQueries: [{ stream: "responseTime", scope: "fleet", path: "/s", matchPath: "id", map: { up: "state" }, ...over }] }) as any;
+
+  it("accepts a well-formed query of each scope", () => {
+    expect(findInvalidMonitorQuery(ok({}))).toBeNull();
+    expect(findInvalidMonitorQuery(ok({ scope: "asset", path: "/d/{{identity}}", matchPath: "" }))).toBeNull();
+    expect(findInvalidMonitorQuery({ monitorQueries: [] })).toBeNull();
+  });
+
+  it("refuses what would read wrong or reach another host", () => {
+    expect(findInvalidMonitorQuery(ok({ path: "//evil.example/x" }))).toMatch(/single "\/"/);
+    expect(findInvalidMonitorQuery(ok({ path: "/s/{{id}}" }))).toMatch(/fleet query .* cannot hold/);
+    expect(findInvalidMonitorQuery(ok({ matchPath: "" }))).toMatch(/needs the path that holds each record's identity/);
+    expect(findInvalidMonitorQuery(ok({ map: { up: "s[" } }))).toMatch(/up path/);
+    expect(findInvalidMonitorQuery(ok({ map: { cpuPct: "cpu" } }))).toMatch(/not a responseTime field/);
+    expect(findInvalidMonitorQuery(ok({ map: {} }))).toMatch(/map "up"/);
+    expect(findInvalidMonitorQuery(ok({ stream: "storage", map: { mountPath: "m" } }))).toMatch(/map "total"/);
+    expect(findInvalidMonitorQuery(ok({ stream: "cpuMemory", map: { memTotal: "t" } }))).toMatch(/one of "cpuPct" \/ "memPct" \/ "memUsed"/);
+    expect(findInvalidMonitorQuery(ok({ scope: "asset", path: "/d/{{a[}}", matchPath: "" }))).toMatch(/placeholder/);
+  });
+
+  it("checks widgets: at least one, a path each, a valid StateMap, and names unique across the integration", () => {
+    const w = (widgets: unknown[]) => ({ monitorQueries: [{ stream: "widgets", scope: "asset", path: "/d/{{identity}}", widgets }] }) as any;
+    expect(findInvalidMonitorQuery(w([{ name: "Toner", type: "gauge", path: "t" }]))).toBeNull();
+    expect(findInvalidMonitorQuery(w([]))).toMatch(/at least one widget/);
+    expect(findInvalidMonitorQuery(w([{ name: "T", type: "gauge", path: "" }]))).toMatch(/needs a path/);
+    expect(findInvalidMonitorQuery(w([{ name: "D", type: "state", path: "d", stateMap: { mode: "sometimes" } }]))).toMatch(/widget "D"/);
+    expect(findInvalidMonitorQuery({ monitorQueries: [
+      { stream: "widgets", scope: "asset", path: "/a/{{identity}}", widgets: [{ name: "Toner", type: "gauge", path: "t" }] },
+      { stream: "widgets", scope: "asset", path: "/b/{{identity}}", widgets: [{ name: "toner ", type: "line", path: "t" }] },
+    ] } as any)).toMatch(/two widgets are named/);
+  });
+});
+
+describe("genericApiWidgetId", () => {
+  it("keys a widget by its integration and a slug of its name", () => {
+    expect(genericApiWidgetSlug("  Toner Level (%) ")).toBe("toner-level");
+    expect(genericApiWidgetSlug("!!!")).toBe("widget");
+    expect(genericApiWidgetId("int1", "Toner Level")).toBe("ga:int1:toner-level");
+  });
+});
+
+describe("syncGenericApiMonitorDefaults", () => {
+  const rt = { stream: "responseTime", scope: "fleet", path: "/s" } as any;
+  const cpu = { stream: "cpuMemory", scope: "fleet", path: "/s", useByDefault: false } as any;
+  const widgets = { stream: "widgets", scope: "fleet", path: "/s" } as any;
+
+  it("stores nothing when nothing is stored and no query asks to be the default", () => {
+    expect(syncGenericApiMonitorDefaults(undefined, [cpu, widgets], { intervalSeconds: 60 })).toBeUndefined();
+  });
+
+  it("seeds from the manual tier the first time, then sets each defaulted stream", () => {
+    expect(syncGenericApiMonitorDefaults(undefined, [rt, cpu], { intervalSeconds: 45, cpuMemoryPolling: "snmp" }))
+      .toEqual({ intervalSeconds: 45, cpuMemoryPolling: "snmp", responseTimePolling: "genericapi" });
+  });
+
+  it("keeps every other key, and clears a stream left on genericapi whose query is gone", () => {
+    const stored = { intervalSeconds: 30, interfacesPolling: "genericapi", storagePolling: "snmp" };
+    expect(syncGenericApiMonitorDefaults(stored, [rt], null))
+      .toEqual({ intervalSeconds: 30, storagePolling: "snmp", responseTimePolling: "genericapi" });
+  });
+});
+
+describe("fetchJsonDocument", () => {
+  it("returns the document, or why not — a 404 is 'not found', anything else is 'could not ask'", async () => {
+    const seen = fakeTransport((url) => {
+      if (url.pathname === "/ok") return { json: { a: 1 } };
+      if (url.pathname === "/gone") return { status: 404 };
+      return { status: 500, text: "boom" };
+    });
+    expect(await fetchJsonDocument(base, { path: "/ok" }, { Authorization: "Bearer t" })).toEqual({ ok: true, doc: { a: 1 } });
+    expect(await fetchJsonDocument(base, { path: "/gone" }, {})).toMatchObject({ ok: false, notFound: true });
+    expect(await fetchJsonDocument(base, { path: "/err" }, {})).toMatchObject({ ok: false, notFound: false, error: expect.stringMatching(/HTTP 500/) });
+    expect(seen[0].opts.headers.Authorization).toBe("Bearer t");
+  });
+
+  it("never throws: a blocked host or a bad body comes back as a failure", async () => {
+    fakeTransport(() => ({ json: {} }));
+    expect(await fetchJsonDocument({ ...base, host: "169.254.169.254" }, { path: "/x" }, {})).toMatchObject({ ok: false, notFound: false });
+    expect(await fetchJsonDocument(base, { path: "/x", method: "POST", body: "{nope" }, {})).toMatchObject({ ok: false, error: /not valid JSON/ });
   });
 });

@@ -24,6 +24,7 @@ many as you need, one per feed.
 | Create and update one asset per record | Monitor the assets for you — you choose which to monitor, as with a manually added asset |
 | Merge a record into an asset another integration already found, on MAC or serial | Override a field a first-party source (Active Directory, vCenter, an agent…) reports |
 | Optionally decommission an asset whose record leaves the feed | Treat a record as proof the device is on the network |
+| Feed monitoring (up / down, CPU, interfaces, storage, temperatures, LLDP) and custom widgets from monitor queries | Decide which assets are monitored — a query only supplies the values |
 
 A record is an **inventory entry**, not evidence the device is online. Polaris
 never sets **Last Seen** from the feed. After each discovery a presence check
@@ -164,6 +165,69 @@ Include or exclude records by their mapped hostname, one pattern per line
 
 ---
 
+## Monitoring tab
+
+Monitor queries feed Polaris's monitoring from the same API, through the
+[`genericapi` polling method](Polling-Methods#the-genericapi-method). Each
+query feeds **one** of:
+
+| Feeds | Fields you map |
+|---|---|
+| Response time (up / down) | `up` (required), `latencyMs`, `uptimeSec`; **Values that mean up** (blank: true, up, online, ok, running, 1, yes, active, healthy, connected, available) |
+| CPU / memory | `cpuPct`, `memPct`, `memUsed`, `memTotal`, `memFree` (at least one of the first three); **Sizes are in** bytes, KB, MB, GB or TB |
+| Interfaces | per row: `name` (required), `operStatus`, `adminStatus`, `speedBps` or `speedMbps`, `inOctets`, `outOctets`, `inErrors`, `outErrors`, `macAddress`, `ipAddress`, `description`, `alias` |
+| Storage | per row: `mountPath` and `total` (required), `used` or `free` |
+| Temperature | per row: `name` and `celsius` |
+| LLDP neighbors | per row: `localIfName`, plus one of `chassisId`, `portId`, `systemName`; also `portDescription`, `systemDescription`, `managementIp` |
+| Custom widgets | widgets instead of fields (below) |
+
+Fields are written one per line, `field = path`, using the same path syntax as
+the mapping. For the list streams, **Rows path** says where the rows are and
+each field is read from every row. A line Polaris cannot read is named under
+the box.
+
+### One request for every asset, or one per asset
+
+| Request | How it works | Cost |
+|---|---|---|
+| **One for every asset** | One request returns every device. **Identity path** is the value in each record that matches the identity the Records & Mapping tab maps. Tick **Page through it like the inventory request** to use the same pagination. | One request per poll for the whole fleet, cached for 30 seconds and shared by every asset and stream that reads it |
+| **One per asset** | The path is a template filled from each asset's record: `/api/devices/{{identity}}/metrics`. The placeholders are `{{identity}}`, `{{hostname}}`, `{{ip}}`, `{{serial}}` and `{{mac}}`, as discovery last mapped them. | One request per asset per poll. At most the Records & Mapping tab's **Requests at once** run together, and one query's streams share a request |
+
+Use **one for every asset** whenever the API can list everything at once. At
+2,000 devices it is the difference between one request and 2,000.
+
+### Use for this feed's assets
+
+Ticked (the default), the query's stream uses the Generic API method for every
+asset this integration discovered, unless you pick another method on the asset.
+Removing the query puts the stream back to what it was. A query never turns
+monitoring on: you still choose which assets are monitored.
+
+### Custom widgets
+
+A **Custom widgets** query defines widgets, one per line:
+
+| Type | Line | Shows |
+|---|---|---|
+| `gauge` | `Battery \| gauge \| battery.pct \| % \| 0 \| 100 \| 20` (unit, min, max and warn-at optional) | the latest value on a dial |
+| `line` | `Pages \| line \| counters.pages` | its last 60 readings as a line |
+| `state` | `Door \| state \| door.status \| closed, locked` | OK while the value is one of those listed, otherwise Alarm |
+
+The widgets appear on the asset page's **Widgets** tab, beside any widgets the
+asset's [manufacturer profile](Server-Settings) defines. They need no polling
+method of their own. They are read on the CPU / memory schedule, so the asset
+needs a CPU / memory method.
+
+### When the API does not answer
+
+A response-time probe is **skipped**, not failed, when Polaris cannot reach the
+API, the credentials are refused, the integration is disabled, or a read stops
+part way. One API outage never marks every device down. An asset the API
+answers for without listing it (or a per-asset request that answers 404) is
+**down**.
+
+---
+
 ## Preview tab
 
 Click **Run preview** to read the first page with the settings on the other
@@ -285,4 +349,7 @@ records skipped for a missing identity.
 | *the record has no usable value at {{…}}* | A detail query's placeholder path finds nothing in the list record. Check it against the first record in Preview. |
 | *Detail queries failed for N record(s)* | Those records kept their list fields. The message names the first few. A 404 usually means the placeholder fills in the wrong id. |
 | A field a detail query maps stays blank | Check the path against the detail response in Preview. It is written against that response, not the list record. |
+| *This asset's Generic API integration has no … monitor query* | The asset's stream is on the Generic API method but no query feeds it. Add one on the Monitoring tab, or pick another method. |
+| A temperature or widget query never reports | Both are read on the CPU / memory schedule. Give the asset a CPU / memory method. |
+| Probes show *skipped* | Polaris could not read the API. Check Test Connection, and that a fleet query's paging reaches the last page. |
 | Assets created but never Last Seen | They have no IP Polaris can ping, and nothing else reports them. Map an IP, or monitor them another way. |
