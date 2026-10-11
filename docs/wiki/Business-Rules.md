@@ -1771,6 +1771,9 @@ seen, and independent sources that agree add up without ever passing 100:
 |---|---|---|
 | The device's own interface table | 0.95 | day |
 | A FortiGate sees the device online at it | 0.90 | 2 hours |
+| The FortiManager / FortiGate record for a FortiGate, FortiSwitch or FortiAP names it as the management IP | 0.90 | day |
+| A Proxmox, Unraid or TrueNAS record for the host, VM or container | 0.80 | 6 hours |
+| The FortiGate's endpoint record for the device | 0.50 | 12 hours |
 | vCenter's guest IP | 0.85 | 6 hours |
 | A DHCP reservation the device is holding | 0.85 | 12 hours |
 | A DHCP lease the device is holding | 0.70 | 12 hours |
@@ -1783,7 +1786,10 @@ seen, and independent sources that agree add up without ever passing 100:
 | You pinned or typed it | 0.80 | never |
 
 Polling counts only for the address being monitored, and only while the device
-is not down: about 0.6 after a day of clean polling, over 0.9 after three. Two
+is not down: about 0.6 after a day of clean polling, over 0.9 after three. The
+clock starts at the later of the last failed probe and when the address became
+the device's, read from the probe history Polaris already holds (up to 30
+days back). Two
 things count *against* an address: the device is down on it while a FortiGate
 sees it online at another address (× 0.3), or another device that is present on
 the network holds it more recently (× 0.5). A device that is simply down costs
@@ -1806,3 +1812,8 @@ polling, because only the address being monitored is ever polled. When the
 pinned address reaches 50 and beats every other address, the pin is released:
 the address stays, and discovery manages it again. An event records the
 release with both scores.
+
+**Unpinning** moves the device to the address on its Addresses list with the
+highest score on the network's evidence. Only when the list is empty does
+Polaris fall back to what the integrations last reported. Discovery manages
+the address from then on, so a later discovery run can still move it.

@@ -333,7 +333,10 @@ shows as *pinned* with an **Unpin** button, and:
 - once the network backs the pinned address better than any other (its
   [confidence](#address-confidence) from discovery alone reaches 50 and beats
   the rest), the pin is released and discovery manages the address again,
-  recorded as `asset.primary_address.released`.
+  recorded as `asset.primary_address.released`;
+- **Unpin** moves the device to the listed address with the highest
+  confidence on the network's evidence, never to an address that is not on
+  the list (unless the list is empty).
 
 FortiGates, FortiSwitches and FortiAPs are monitored on their management IP and
 offer no pin. A device's port MACs from its interface table are collapsed into

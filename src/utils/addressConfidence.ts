@@ -30,6 +30,9 @@
 export type EvidenceKind =
   | "interface"          // the device's own interface table (system-info scrape)
   | "detected-online"    // FortiGate detected device, online, local
+  | "controller"         // a FortiGate / FortiSwitch / FortiAP record's management IP
+  | "hypervisor"         // a Proxmox / Unraid / TrueNAS host, VM or container address
+  | "endpoint-sighting"  // the FortiGate endpoint record's address
   | "vcenter"            // VMware Tools guest IP
   | "reservation-held"   // DHCP reservation the device is holding
   | "lease-held"         // DHCP lease the device is holding
@@ -55,6 +58,14 @@ const H = 60 * 60 * 1000;
 export const EVIDENCE_KINDS: Record<EvidenceKind, KindSpec> = {
   "interface":          { weight: 0.95, halfLifeMs: 24 * H, label: "Device's own interface table" },
   "detected-online":    { weight: 0.90, halfLifeMs: 2 * H,  label: "Detected online" },
+  // The controller's own roster names the management IP it reaches the device
+  // on — the only network evidence a FortiAP has (no interface table, and
+  // discovery keeps infra off the address list). Refreshed each discovery run.
+  "controller":         { weight: 0.90, halfLifeMs: 24 * H, label: "Managed-device record" },
+  "hypervisor":         { weight: 0.80, halfLifeMs: 6 * H,  label: "Hypervisor record" },
+  // Derived from the same claims as the address rows, so modest: it mostly
+  // matters for an address the list no longer carries.
+  "endpoint-sighting":  { weight: 0.50, halfLifeMs: 12 * H, label: "FortiGate endpoint record" },
   "vcenter":            { weight: 0.85, halfLifeMs: 6 * H,  label: "vCenter guest IP" },
   "reservation-held":   { weight: 0.85, halfLifeMs: 12 * H, label: "DHCP reservation held" },
   "lease-held":         { weight: 0.70, halfLifeMs: 12 * H, label: "DHCP lease held" },

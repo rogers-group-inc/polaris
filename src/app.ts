@@ -1190,6 +1190,10 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       "./jobs/mergeFortiswitchEndpointGhosts.js",
       "./jobs/backfillDependencyTree.js",
       "./jobs/backfillMonitorStatusChangedAt.js",
+      // Rule 103: polling credit from existing probe history, so devices that
+      // answered for months don't start at zero. Not marker-guarded — it only
+      // touches assets whose run is still empty. See its header.
+      "./jobs/seedAddressPollingRuns.js",
       "./jobs/backfillInterfaceInventory.js",
       "./jobs/rasterizeStoredSvgIcons.js",
       "./jobs/clampAssetAcquiredAt.js",

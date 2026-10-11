@@ -5283,8 +5283,9 @@ router.post("/:id/address-check", requirePermission("assets", "write"), async (r
   }
 });
 
-// DELETE /api/v1/assets/:id/primary-address — release the pin; the address
-// reverts to what discovery reports.
+// DELETE /api/v1/assets/:id/primary-address — release the pin; the asset moves
+// to the listed address with the highest evidence score (business rule
+// 103(b)), or to the projection only when the list is empty.
 router.delete("/:id/primary-address", requirePermission("assets", "write"), async (req, res, next) => {
   try {
     const result = await unpinPrimaryAddress({ assetId: req.params.id as string, actor: requestActor(req) ?? "unknown" });

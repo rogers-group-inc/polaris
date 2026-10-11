@@ -14,7 +14,8 @@ import { prisma } from "../../src/db.js";
 import { hashPassword } from "../../src/utils/password.js";
 import { FUNCTION_KEYS } from "../../src/api/middleware/permissions.js";
 import { dbDescribe, dbReachable, ensureTestUser } from "./_helpers.js";
-import { buildAddressConfidence, checkAddressConfidence } from "../../src/services/addressConfidenceService.js";
+import { buildAddressConfidence, checkAddressConfidence, seedPollingRuns } from "../../src/services/addressConfidenceService.js";
+import { unpinPrimaryAddress } from "../../src/services/primaryAddressService.js";
 import { recordProbeResult } from "../../src/services/monitoringService.js";
 import { flushProbePatchBuffer } from "../../src/services/probePatchBuffer.js";
 import { releaseConfirmedPins } from "../../src/services/primaryAddressService.js";
@@ -240,6 +241,57 @@ d("a pin the network comes to back is released (business rule 103(a))", () => {
     await prisma.reservation.deleteMany({ where: { ipAddress: IP_PRIMARY } });
     expect((await releaseConfirmedPins()).released).toBe(0);
     expect((await readPin()).primaryAddressIp).toBe(IP_ARP);
+  });
+});
+
+d("infra and history evidence (business rule 103, 2026-10-11)", () => {
+  it("a FortiAP with no address rows scores from its controller record's management IP", async () => {
+    const ap = await prisma.asset.create({
+      data: {
+        hostname: PFX + "-ap", assetType: "access_point", status: "active", ipAddress: "10.93.128.12",
+        sources: { create: [{ sourceKind: "fortiap", externalId: PFX + "-AP-SERIAL", observed: { mgmtIp: "10.93.128.12" }, lastSeen: new Date() }] },
+      } as any,
+    });
+    const r = (await buildAddressConfidence([ap.id])).get(ap.id)!.get("10.93.128.12")!;
+    expect(r.parts.map((p) => p.kind)).toContain("controller");
+    expect(r.score).toBe(90);
+  });
+
+  it("seeds the polling run from probe history: since the later of the last failure and the address's first sighting", async () => {
+    const now = Date.now();
+    await prisma.asset.update({ where: { id: assetId }, data: { ipConfirmedFor: null, ipConfirmedSince: null } });
+    const lastFail = new Date(now - 5 * 86_400_000);
+    await prisma.assetMonitorSample.createMany({ data: [
+      { assetId, timestamp: new Date(now - 9 * 86_400_000), success: true, responseTimeMs: 3 },
+      { assetId, timestamp: lastFail, success: false, responseTimeMs: null },
+      { assetId, timestamp: new Date(now - 60_000), success: true, responseTimeMs: 3 },
+    ] as any });
+    await prisma.assetIpHistory.upsert({
+      where: { assetId_ip: { assetId, ip: IP_PRIMARY } },
+      create: { assetId, ip: IP_PRIMARY, source: GATE, firstSeen: new Date(now - 20 * 86_400_000), lastSeen: new Date() },
+      update: { firstSeen: new Date(now - 20 * 86_400_000) },
+    });
+    expect(await seedPollingRuns()).toBeGreaterThanOrEqual(1);
+    const a = await prisma.asset.findUniqueOrThrow({ where: { id: assetId }, select: { ipConfirmedFor: true, ipConfirmedSince: true } });
+    expect(a.ipConfirmedFor).toBe(IP_PRIMARY);
+    expect(a.ipConfirmedSince?.toISOString()).toBe(lastFail.toISOString());
+    // Idempotent: a row with a run is left alone.
+    await prisma.assetMonitorSample.create({ data: { assetId, timestamp: new Date(now - 30_000), success: false } as any });
+    await seedPollingRuns();
+    const again = await prisma.asset.findUniqueOrThrow({ where: { id: assetId }, select: { ipConfirmedSince: true } });
+    expect(again.ipConfirmedSince?.toISOString()).toBe(lastFail.toISOString());
+  });
+
+  it("unpinning moves to the listed address with the highest evidence, never to an address off the list", async () => {
+    // A FortiGate endpoint record still carries an address the list no longer has.
+    await prisma.assetSource.create({
+      data: { assetId, sourceKind: "fortigate-endpoint", externalId: ETH, observed: { ipAddress: "10.93.200.200" }, lastSeen: new Date() } as any,
+    });
+    await prisma.asset.update({ where: { id: assetId }, data: { primaryAddressMac: WIFI, primaryAddressIp: IP_LEASE, ipAddress: IP_LEASE } });
+    const r = await unpinPrimaryAddress({ assetId, actor: "tester" });
+    expect(r.ipAddress).toBe(IP_PRIMARY);
+    const a = await prisma.asset.findUniqueOrThrow({ where: { id: assetId }, select: { ipAddress: true, ipSource: true, primaryAddressIp: true } });
+    expect(a).toMatchObject({ ipAddress: IP_PRIMARY, ipSource: GATE, primaryAddressIp: null });
   });
 });
 
