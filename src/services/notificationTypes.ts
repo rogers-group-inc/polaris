@@ -37,6 +37,20 @@ import { serverClockInfo } from "../utils/maintenanceRecurrence.js";
 export const SEVERITIES = ["notice", "informational", "warning", "serious", "critical"] as const;
 // Audit-Event levels (logEvent), used only by the event-trigger minLevel filter.
 export const EVENT_LEVELS = ["info", "warning", "error"] as const;
+
+/**
+ * The asset Event the delivery drain writes for every alert email it sends
+ * (notificationDeliveryService.emailSentEventsFor). Business rule 106: the
+ * event tail never lets it fire or reset an automation — an event automation
+ * matching `*` or `notification.*` with an email action would otherwise raise
+ * itself once per email it sent, forever.
+ */
+export const ALERT_EMAIL_SENT_ACTION = "notification.email_sent";
+
+/** Pure — rule 106's guard, shared by the event tail and its test. */
+export function eventFeedsAutomations(action: string): boolean {
+  return action !== ALERT_EMAIL_SENT_ACTION;
+}
 export const CLEAR_BEHAVIORS = ["manual", "auto", "timed"] as const;
 export const COMPARATORS = [">", ">=", "<", "<=", "==", "!="] as const;
 export const AGGREGATIONS = ["latest", "avg", "median", "min", "max"] as const;

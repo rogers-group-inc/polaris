@@ -37,8 +37,8 @@ import {
   type PushRecipientBlock,
 } from "./alertPushRecipientsService.js";
 import { markEmailAsTest, pruneEmptyChartSection, pruneEmptyTextLines } from "../utils/alertEmailTemplate.js";
-import { logEvent } from "./eventLogService.js";
-import { type ChannelType, probeLossWindowSecFromTrigger } from "./notificationTypes.js";
+import { logEvent, logEventsBatch, type LogEventInput } from "./eventLogService.js";
+import { type ChannelType, probeLossWindowSecFromTrigger, ALERT_EMAIL_SENT_ACTION } from "./notificationTypes.js";
 import { sendSmtpEmail, sendM365Email, type EmailMessage } from "./notificationChannels/emailChannel.js";
 import { sendWebhook } from "./notificationChannels/webhookChannel.js";
 import { sendPushbullet } from "./notificationChannels/pushbulletChannel.js";
@@ -56,7 +56,7 @@ interface ChannelInfo {
   config: Record<string, unknown>;
 }
 
-interface DeliveryRow {
+export interface DeliveryRow {
   id: string;
   channelId: string | null;
   transport: string;
@@ -91,6 +91,9 @@ interface DeliveryRow {
      *  blames: what the email's dependency-path diagram draws. */
     dependencyDown: boolean;
     dependencyBlame: unknown;
+    /** The automation that raised it — named on the asset's "email sent"
+     *  Event. Null for a rule-less alert or a deleted rule. */
+    rule?: { name: string } | null;
   };
 }
 
@@ -760,6 +763,68 @@ async function enqueuePushFallbacks(terminal: DeliveryRow[]): Promise<number> {
   return created.length;
 }
 
+/**
+ * The asset Events for alert emails that were just SENT — one per delivery
+ * row, naming the automation and who the message went to.
+ *
+ * Only an alert about an asset gets one (there is no Events tab to put a
+ * capacity warning's email on), and never a test fire: a test is about an
+ * invented device (business rule 65). Filed like every other alert Event —
+ * resourceType=notification, resourceId=the alert, details.assetId=the device
+ * — which is what puts it on the asset-details Events tab beside the fire and
+ * the clear.
+ *
+ * Bcc addresses are COUNTED, never named: the Events tab is read by anyone who
+ * can read the asset, and a blind recipient listed there is unblinded to all
+ * of them — the same reason rule 60 keeps Bcc out of the email's own footer.
+ *
+ * Pure — exported for the tests.
+ */
+export function emailSentEventsFor(sent: DeliveryRow[]): LogEventInput[] {
+  const events: LogEventInput[] = [];
+  for (const d of sent) {
+    const n = d.notification;
+    if (d.transport !== "email" || !n.assetId || n.testRun) continue;
+    const meta = (d.meta && typeof d.meta === "object" ? d.meta : {}) as Record<string, unknown>;
+    // A composed row carries its recipients in meta; a legacy row is one
+    // address, in `target`.
+    const to = meta.composed === true ? asStringArray(meta.to) : [d.target].filter(Boolean);
+    const cc = meta.composed === true ? asStringArray(meta.cc) : [];
+    const bccCount = meta.composed === true ? asStringArray(meta.bcc).length : 0;
+    const allClear = meta.allClear === true;
+    const pushFallback = meta.pushFallback === true;
+    const ruleName = n.rule?.name ?? null;
+    events.push({
+      // Never a trigger or a reset (business rule 106) — see ALERT_EMAIL_SENT_ACTION.
+      action: ALERT_EMAIL_SENT_ACTION,
+      resourceType: "notification",
+      resourceId: n.id,
+      resourceName: ruleName ?? n.assetHostname ?? undefined,
+      actor: "system:notification-delivery",
+      level: "info",
+      message:
+        `${allClear ? "All-clear email" : "Alert email"}` +
+        `${ruleName ? ` from automation "${ruleName}"` : ""} sent to ${to.join(", ") || "(no To recipients)"}` +
+        `${cc.length ? `; Cc ${cc.join(", ")}` : ""}` +
+        `${bccCount ? ` (+${bccCount} Bcc)` : ""}` +
+        `${pushFallback ? " — web push could not reach the recipient, so it was emailed instead" : ""}`,
+      details: {
+        assetId: n.assetId,
+        ruleId: n.ruleId,
+        deliveryId: d.id,
+        channelId: d.channelId,
+        to,
+        cc,
+        bccCount,
+        subject: typeof meta.subject === "string" && meta.subject ? meta.subject : titleFor(n),
+        ...(allClear ? { allClear: true } : {}),
+        ...(pushFallback ? { pushFallback: true } : {}),
+      },
+    });
+  }
+  return events;
+}
+
 /** One drain pass. Returns counts. */
 /**
  * @param opts.notificationId Drain only ONE alert's rows. The wizard's test
@@ -791,7 +856,7 @@ export async function drainPendingDeliveries(
       // ruleId feeds the loss chart's window: the automation's own History is
       // what the chart should span (resolved lazily, only when a loss chart is
       // actually in the body).
-      notification: { select: { id: true, message: true, severity: true, assetId: true, assetHostname: true, dimension: true, metric: true, ruleId: true, triggeredAt: true, testRun: true, members: true, dependencyDown: true, dependencyBlame: true } },
+      notification: { select: { id: true, message: true, severity: true, assetId: true, assetHostname: true, dimension: true, metric: true, ruleId: true, triggeredAt: true, testRun: true, members: true, dependencyDown: true, dependencyBlame: true, rule: { select: { name: true } } } },
     },
   })) as DeliveryRow[];
 
@@ -861,6 +926,14 @@ export async function drainPendingDeliveries(
     logger.warn({ err }, "push-to-email fallback failed");
     return 0;
   });
+
+  // One Event per email that actually left, filed against the asset the alert
+  // is about, so the device's Events tab says who was told and when. AFTER
+  // the status writes, like the fallback pass: a row only counts once it reads
+  // `sent`. One batched insert per drain (≤ BATCH_SIZE rows); logEventsBatch
+  // swallows its own failures, so this never costs the drain its summary Event.
+  const sentSet = new Set(sentIds);
+  await logEventsBatch(emailSentEventsFor(rows.filter((r) => sentSet.has(r.id))));
 
   if (failed.length > 0 || sentIds.length > 0) {
     await logEvent({

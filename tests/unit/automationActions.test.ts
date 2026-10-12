@@ -41,7 +41,11 @@ vi.mock("../../src/db.js", () => ({
 }));
 
 const logEventMock = vi.fn(async () => {});
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: (...a: unknown[]) => logEventMock(...a) }));
+const logEventsBatchMock = vi.fn(async (rows: unknown[]) => rows.length);
+vi.mock("../../src/services/eventLogService.js", () => ({
+  logEvent: (...a: unknown[]) => logEventMock(...a),
+  logEventsBatch: (rows: unknown[]) => logEventsBatchMock(rows),
+}));
 
 const expandDeliveriesMock = vi.fn(async () => 1);
 vi.mock("../../src/services/notificationRecipientService.js", async (importOriginal) => {
@@ -51,8 +55,8 @@ vi.mock("../../src/services/notificationRecipientService.js", async (importOrigi
 
 import { executeActions } from "../../src/services/automationActionService.js";
 import { sendApiCall } from "../../src/services/notificationChannels/apiCallChannel.js";
-import { drainPendingDeliveries } from "../../src/services/notificationDeliveryService.js";
-import type { AutomationAction } from "../../src/services/notificationTypes.js";
+import { drainPendingDeliveries, emailSentEventsFor, type DeliveryRow } from "../../src/services/notificationDeliveryService.js";
+import { eventFeedsAutomations, type AutomationAction } from "../../src/services/notificationTypes.js";
 
 beforeEach(() => {
   created.length = 0;
@@ -61,6 +65,7 @@ beforeEach(() => {
   channelRows = [];
   expandDeliveriesMock.mockClear();
   logEventMock.mockClear();
+  logEventsBatchMock.mockClear();
   vi.unstubAllGlobals();
 });
 
@@ -273,5 +278,76 @@ describe("drainPendingDeliveries permanent-fail semantics", () => {
     await drainPendingDeliveries();
     const upd = deliveryUpdates.find((u) => u.kind === "update")!.args.data;
     expect(upd.status).toBe("failed"); // attempts 2 + 1 = MAX_ATTEMPTS
+  });
+
+  it("a failed email writes no asset email Event", async () => {
+    deliveryRows.push({ id: "d-mail", channelId: "gone", transport: "email", target: "a@example.com", meta: {}, attempts: 0, notification: { ...notification, assetId: "a1" } });
+    await drainPendingDeliveries();
+    const batches = logEventsBatchMock.mock.calls.map((c) => c[0] as unknown[]);
+    expect(batches.flat()).toHaveLength(0);
+  });
+});
+
+describe("emailSentEventsFor — the asset Event for a sent alert email", () => {
+  const base = {
+    id: "n1", message: "m", severity: "warning", assetId: "a1", assetHostname: "sw-core-1",
+    dimension: null, metric: null, ruleId: "r1", triggeredAt: new Date(), testRun: false,
+    members: null, dependencyDown: false, dependencyBlame: null, rule: { name: "Core CPU" },
+  };
+  const row = (over: Partial<DeliveryRow> & { notification?: Partial<DeliveryRow["notification"]> } = {}): DeliveryRow => ({
+    id: "d1", channelId: "c1", transport: "email", target: "ops@example.com, noc@example.com", attempts: 0,
+    meta: { composed: true, to: ["ops@example.com", "noc@example.com"], cc: ["mgr@example.com"], bcc: ["audit@example.com", "x@example.com"], subject: "[WARNING] sw-core-1" },
+    ...over,
+    notification: { ...base, ...(over.notification ?? {}) },
+  } as DeliveryRow);
+
+  it("files against the asset, names the automation and the To/Cc recipients", () => {
+    const [e] = emailSentEventsFor([row()]);
+    expect(e).toMatchObject({
+      action: "notification.email_sent",
+      resourceType: "notification",
+      resourceId: "n1",
+      resourceName: "Core CPU",
+      level: "info",
+      details: { assetId: "a1", ruleId: "r1", deliveryId: "d1", to: ["ops@example.com", "noc@example.com"], cc: ["mgr@example.com"], bccCount: 2, subject: "[WARNING] sw-core-1" },
+    });
+    expect(e!.message).toBe('Alert email from automation "Core CPU" sent to ops@example.com, noc@example.com; Cc mgr@example.com (+2 Bcc)');
+  });
+
+  it("never names a Bcc address — not in the message, not in details", () => {
+    const [e] = emailSentEventsFor([row()]);
+    expect(JSON.stringify(e)).not.toContain("audit@example.com");
+    expect(JSON.stringify(e)).not.toContain("x@example.com");
+  });
+
+  it("skips non-email rows, assetless alerts and test fires", () => {
+    expect(emailSentEventsFor([
+      row({ transport: "web_push" }),
+      row({ notification: { assetId: null } }),
+      row({ notification: { testRun: true } }),
+    ])).toEqual([]);
+  });
+
+  it("a legacy single-address row names its target; all-clear and push fallback say so", () => {
+    const [legacy] = emailSentEventsFor([row({ target: "a@example.com", meta: {} })]);
+    expect(legacy!.details).toMatchObject({ to: ["a@example.com"], cc: [], bccCount: 0 });
+    const [clear] = emailSentEventsFor([row({ meta: { composed: true, to: ["a@example.com"], allClear: true, pushFallback: true } })]);
+    expect(clear!.message).toMatch(/^All-clear email/);
+    expect(clear!.message).toContain("web push could not reach");
+    expect(clear!.details).toMatchObject({ allClear: true, pushFallback: true });
+  });
+
+  it("business rule 106: the email Event can never fire or reset an automation", () => {
+    const [e] = emailSentEventsFor([row()]);
+    expect(eventFeedsAutomations(e!.action)).toBe(false);
+    // Every other alert lifecycle Event still feeds the event tail.
+    expect(eventFeedsAutomations("notification.triggered")).toBe(true);
+    expect(eventFeedsAutomations("asset.updated")).toBe(true);
+  });
+
+  it("falls back to the hostname when the automation is gone", () => {
+    const [e] = emailSentEventsFor([row({ notification: { rule: null } })]);
+    expect(e!.resourceName).toBe("sw-core-1");
+    expect(e!.message).toMatch(/^Alert email sent to /);
   });
 });

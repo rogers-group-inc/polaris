@@ -125,6 +125,7 @@ import {
   memberIpPasses,
   type DeliveryOwner,
   type ShadowIndex as ShadowIndexOf,
+  eventFeedsAutomations,
 } from "./notificationTypes.js";
 import { scopeMatchesAsset, type ScopeAsset } from "./notificationRuleService.js";
 // Business rule 78 — who silenced a dependency-suppressed device, for the
@@ -5590,6 +5591,10 @@ async function runEventTail(rules: DbRule[]): Promise<void> {
     }
   }
   for (const ev of events) {
+    // Business rule 106: the record that an alert email went out is never a
+    // trigger or a reset. Skipped before BOTH matcher sets; the cursor still
+    // advances past it with the rest of the batch.
+    if (!eventFeedsAutomations(ev.action)) continue;
     // Which rules this same event FIRED — a rule whose trigger and reset globs
     // both match one event (`agent.*` on both sides) would otherwise clear the
     // alert it just raised, in the same tick, forever.
