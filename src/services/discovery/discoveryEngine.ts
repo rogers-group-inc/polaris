@@ -51,6 +51,7 @@ import { reconcileDiscoveredAddresses, type AddressSighting } from "../assetAddr
 import { bareFortinetDeviceName } from "../../utils/assetSourceLocation.js";
 import { readFirewallDeviceName, normalizeNameKey, normalizeSerialKey } from "../../utils/fortinetParentKey.js";
 import { isUsableSerial } from "../../utils/serialNumber.js";
+import { hostnameCollisionRefusal, type HostnameCollisionSide } from "../../utils/hostnameCollisionGuard.js";
 import { refreshProjectionPriority } from "../assetSourcePriorityService.js";
 import { refreshCache as refreshAssetTypeCache } from "../assetTypeService.js";
 import { normalizeManufacturer } from "../../utils/manufacturerNormalize.js";
@@ -747,6 +748,14 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
     await refreshAssetTypeCache();
   } catch (err) {
     logger.warn({ err: (err as Error)?.message }, "asset type rule refresh failed; using cached matching rules");
+  }
+
+  // Rule 91(a): clear review cards the hostname-collision guard now refuses.
+  // Best-effort — a failed sweep leaves the cards for the operator, never the run.
+  try {
+    await dismissRefusedHostnameConflicts(integrationId);
+  } catch (err) {
+    logger.warn({ err: (err as Error)?.message, integrationId }, "refused hostname-conflict sweep failed");
   }
 
   const runStartedAt = Date.now();
@@ -7701,18 +7710,29 @@ export function indexHostname(map: Map<string, any>, hostname: string, asset: an
 // Look up `hostname` in a map populated via indexHostname. Returns the matched
 // asset and how the match was made: "exact" (full hostnames are equal) or
 // "netbios" (matched only after truncating one side to 15 chars).
-export function lookupHostname(map: Map<string, any>, hostname: string): { asset: any; via: "exact" | "netbios" } | null {
+//
+// `incoming` is what the discovered record says about itself (type, serial).
+// When given, a match the record contradicts — differing usable serials, or
+// network infrastructure against an endpoint — is no match at all (business
+// rule 91(a), utils/hostnameCollisionGuard.ts): the caller carries on as if
+// nothing shared the name, so no Conflict is raised and no duplicate is offered.
+export function lookupHostname(
+  map: Map<string, any>,
+  hostname: string,
+  incoming?: HostnameCollisionSide,
+): { asset: any; via: "exact" | "netbios" } | null {
   const lower = hostname.toLowerCase();
+  let hit: { asset: any; via: "exact" | "netbios" } | null = null;
   const direct = map.get(lower);
   if (direct) {
     const storedLower = (direct.hostname || "").toLowerCase();
-    return { asset: direct, via: storedLower === lower ? "exact" : "netbios" };
-  }
-  if (lower.length >= NETBIOS_LIMIT) {
+    hit = { asset: direct, via: storedLower === lower ? "exact" : "netbios" };
+  } else if (lower.length >= NETBIOS_LIMIT) {
     const truncated = map.get(lower.slice(0, NETBIOS_LIMIT));
-    if (truncated) return { asset: truncated, via: "netbios" };
+    if (truncated) hit = { asset: truncated, via: "netbios" };
   }
-  return null;
+  if (hit && incoming && hostnameCollisionRefusal(incoming, hit.asset)) return null;
+  return hit;
 }
 
 // Write (or update-to-accepted) a tombstone Conflict so upsertAssetConflict's
@@ -7813,6 +7833,54 @@ export async function upsertAssetConflict(args: {
       },
     });
   }
+}
+
+// Rule 91(a) catch-up: dismiss this integration's pending hostname-collision
+// Conflicts whose two sides the guard now refuses (differing serials, or
+// infrastructure against an endpoint). Raised before the guard existed, they
+// would otherwise sit in the queue calling a switch and a laptop "duplicate
+// assets" forever, since a refused lookup never touches them again. Marked
+// rejected by "system" — the same decision an operator's Reject records — so
+// the history shows why the card went away. Once per run, over the pending
+// rows only (a handful), so cost is flat at any fleet size.
+export async function dismissRefusedHostnameConflicts(integrationId: string): Promise<number> {
+  const pending = await prisma.conflict.findMany({
+    where: { entityType: "asset", status: "pending", integrationId, conflictFields: { has: "hostname" }, assetId: { not: null } },
+    select: {
+      id: true, assetId: true, proposedDeviceId: true, proposedAssetFields: true,
+      asset: { select: { hostname: true, assetType: true, serialNumber: true } },
+    },
+  });
+  const refused: { id: string; assetId: string; hostname: string | null; proposedHostname: string | null; reason: string }[] = [];
+  for (const c of pending) {
+    const proposed = (c.proposedAssetFields ?? {}) as Record<string, any>;
+    const reason = proposed.collisionReason;
+    if (reason && reason !== "untagged-collision" && reason !== "duplicate-registration") continue;
+    if (!c.asset || !c.assetId) continue;
+    const why = hostnameCollisionRefusal(
+      { assetType: proposed.assetType ?? null, serialNumber: proposed.serialNumber ?? null },
+      c.asset,
+    );
+    if (why) refused.push({ id: c.id, assetId: c.assetId, hostname: c.asset.hostname, proposedHostname: proposed.hostname ?? null, reason: why });
+  }
+  if (refused.length === 0) return 0;
+  const now = new Date();
+  await prisma.conflict.updateMany({
+    where: { id: { in: refused.map((r) => r.id) }, status: "pending" },
+    data: { status: "rejected", resolvedBy: "system", resolvedAt: now },
+  });
+  for (const r of refused) {
+    logEvent({
+      action: "conflict.rejected",
+      resourceType: "asset",
+      resourceId: r.assetId,
+      resourceName: r.hostname ?? undefined,
+      actor: "system",
+      message: `Dismissed hostname-collision review between "${r.proposedHostname ?? "?"}" and asset "${r.hostname ?? r.assetId}" — ${r.reason === "serial" ? "their serial numbers differ" : "one is network infrastructure and the other is not"}, so a shared name does not make them one device (rule 91(a)).`,
+      details: { conflictId: r.id, reason: r.reason },
+    });
+  }
+  return refused.length;
 }
 
 function sidTag(sid: string): string {
@@ -8578,7 +8646,7 @@ export async function syncArcDevices(
     if (!existing) {
       const candidates = [fqdn, short].filter((h): h is string => !!h);
       for (const cand of candidates) {
-        const dupHit = lookupHostname(assetByHostnameArcTagged, cand);
+        const dupHit = lookupHostname(assetByHostnameArcTagged, cand, { assetType, serialNumber: m.serialNumber });
         if (dupHit) {
           // Another Arc machine already owns this hostname. An ARM resource
           // id is stable for the resource's lifetime, so unlike Entra (where
@@ -8595,7 +8663,7 @@ export async function syncArcDevices(
           raisedConflict = true;
           break;
         }
-        const hit = lookupHostname(assetByHostnameNoArc, cand);
+        const hit = lookupHostname(assetByHostnameNoArc, cand, { assetType, serialNumber: m.serialNumber });
         if (hit) {
           await upsertAssetConflict({
             collisionAssetId: hit.asset.id,
@@ -9321,6 +9389,9 @@ export async function syncEntraDevices(
     // Build the proposed-fields snapshot once; used both in the existing-asset
     // sibling checks below AND in the no-existing-match collision checks further
     // down. Defined here so both branches share the same closure.
+    // What this device says about itself, for the rule 91(a) guard on every
+    // hostname lookup below.
+    const collisionSelf: HostnameCollisionSide = { assetType: existing?.assetType ?? assetType, serialNumber: dev.serialNumber || null };
     const buildProposed = (
       collisionReason: "untagged-collision" | "duplicate-registration",
       matchedVia: "exact" | "netbios",
@@ -9452,7 +9523,7 @@ export async function syncEntraDevices(
       // sibling remains. upsertAssetConflict skips pairs that were already
       // resolved so admin decisions are preserved across runs.
       if (dev.displayName) {
-        const untaggedSibling = lookupHostname(assetByHostnameNoTag, dev.displayName);
+        const untaggedSibling = lookupHostname(assetByHostnameNoTag, dev.displayName, collisionSelf);
         if (untaggedSibling && untaggedSibling.asset.id !== existing.id) {
           try {
             await upsertAssetConflict({
@@ -9471,7 +9542,7 @@ export async function syncEntraDevices(
             syncLog("error", `Failed to queue sibling hostname-collision conflict for "${dev.displayName}": ${err.message || "Unknown error"}`);
           }
         }
-        const dupEntraSibling = lookupHostname(assetByHostnameEntraTagged, dev.displayName);
+        const dupEntraSibling = lookupHostname(assetByHostnameEntraTagged, dev.displayName, collisionSelf);
         if (dupEntraSibling && dupEntraSibling.asset.id !== existing.id) {
           // Auto-resolve by lastSeen: newer activity wins. Phase 4d/4e:
           // sibling's prior Entra deviceId now comes from the
@@ -9516,7 +9587,7 @@ export async function syncEntraDevices(
     // (buildProposed is declared above the if(existing) block — shared closure)
 
     if (dev.displayName) {
-      const untagged = lookupHostname(assetByHostnameNoTag, dev.displayName);
+      const untagged = lookupHostname(assetByHostnameNoTag, dev.displayName, collisionSelf);
       if (untagged) {
         try {
           await upsertAssetConflict({
@@ -9534,7 +9605,7 @@ export async function syncEntraDevices(
         continue;
       }
 
-      const dupEntra = lookupHostname(assetByHostnameEntraTagged, dev.displayName);
+      const dupEntra = lookupHostname(assetByHostnameEntraTagged, dev.displayName, collisionSelf);
       if (dupEntra) {
         // Auto-resolve by lastSeen: newer activity wins. Phase 4d/4e:
         // existing Entra deviceId now comes from entraDeviceIdByAssetId
@@ -10262,7 +10333,7 @@ export async function syncActiveDirectoryDevices(
         matchedVia,
       });
 
-      const untagged = lookupHostname(assetByHostnameNoTag, displayName);
+      const untagged = lookupHostname(assetByHostnameNoTag, displayName, { assetType });
       if (untagged) {
         try {
           await upsertAssetConflict({
@@ -10280,7 +10351,7 @@ export async function syncActiveDirectoryDevices(
         continue;
       }
 
-      const dupAd = lookupHostname(assetByHostnameAdTagged, displayName);
+      const dupAd = lookupHostname(assetByHostnameAdTagged, displayName, { assetType });
       if (dupAd) {
         try {
           await upsertAssetConflict({
@@ -10648,7 +10719,7 @@ export async function syncVcenterDevices(
       // the operator (an ESXi host may already exist as a manually-created
       // or directory-discovered server).
       if (host.name) {
-        const collision = lookupHostname(assetByHostnameNoVcenter, host.name);
+        const collision = lookupHostname(assetByHostnameNoVcenter, host.name, { assetType: "hypervisor" });
         if (collision) {
           try {
             await upsertAssetConflict({
@@ -10765,7 +10836,7 @@ export async function syncVcenterDevices(
     // VM pass below (an ESXi host may also live on as a manually-created or
     // directory-discovered server asset). See the VM-pass comment.
     {
-      const sibling = host.name ? lookupHostname(assetByHostnameNoVcenter, host.name) : null;
+      const sibling = host.name ? lookupHostname(assetByHostnameNoVcenter, host.name, { assetType: "hypervisor" }) : null;
       if (sibling && sibling.asset.id !== existing.id && !assetIdsWithVcenterSource.has(sibling.asset.id)) {
         try {
           await upsertAssetConflict({
@@ -10949,7 +11020,7 @@ export async function syncVcenterDevices(
       // `bothAssetsExist` tells resolution not to create anything on reject.
       {
         const siblingName = vm.guestHostname || vm.name;
-        const sibling = siblingName ? lookupHostname(assetByHostnameNoVcenter, siblingName) : null;
+        const sibling = siblingName ? lookupHostname(assetByHostnameNoVcenter, siblingName, { assetType: "server" }) : null;
         if (sibling && sibling.asset.id !== existing.id && !assetIdsWithVcenterSource.has(sibling.asset.id)) {
           try {
             await upsertAssetConflict({
@@ -10985,7 +11056,7 @@ export async function syncVcenterDevices(
     // Hostname collision with a non-vcenter asset → pending Conflict.
     const collisionName = vm.guestHostname || vm.name;
     if (collisionName) {
-      const collision = lookupHostname(assetByHostnameNoVcenter, collisionName);
+      const collision = lookupHostname(assetByHostnameNoVcenter, collisionName, { assetType: "server" });
       if (collision) {
         try {
           await upsertAssetConflict({

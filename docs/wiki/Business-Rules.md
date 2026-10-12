@@ -1449,6 +1449,16 @@ device, Polaris places nothing rather than guessing. The device then hangs off
 the FortiGate that saw it, so it is still at the right site. A name that is
 unique never needs any of this.
 
+**91(a)** The same holds when discovery compares a new record with the assets
+already in Polaris. A shared name, including one that matches only on the first
+15 characters (the Windows NetBIOS limit), is not offered as a duplicate when the
+two records disagree about what they are. That is the case when both have serial
+numbers and those numbers differ, or when one is a switch, router, firewall or
+access point and the other is a computer, server, printer, virtual-machine host
+or container. Each record then keeps its own asset. Review cards already waiting
+in the Conflicts queue for such a pair are rejected by the system on that
+integration's next discovery run, and an event on the asset records why.
+
 Two switches with different serial numbers are never merged for sharing a
 hostname. In the dependency tree, rows that share a name show their serial
 number (or address) beside it, so you can tell them apart before you click.
