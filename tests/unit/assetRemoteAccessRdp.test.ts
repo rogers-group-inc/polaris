@@ -65,7 +65,7 @@ beforeEach(() => {
   g.copyTextToClipboard = vi.fn(async () => true);
   localStorage.clear();
 
-  for (const fn of ["_assetMgmtAccess", "_managementAccessButtonsHTML", "_rdpFileBody", "_rdpAction", "_rdpUser", "_rdpUri", "_doRdpLaunch"]) {
+  for (const fn of ["_assetMgmtAccess", "_managementAccessButtonsHTML", "_rdpFileBody", "_rdpAction", "_rdpUser", "_rdpUri", "_connectHostOk", "_connectUserOk", "_connectRefused", "_doRdpLaunch"]) {
     // eslint-disable-next-line no-eval
     (0, eval)(fnSrc(fn));
   }
@@ -176,6 +176,44 @@ describe("_rdpAction / _doRdpLaunch", () => {
     expect(g.copyTextToClipboard).toHaveBeenCalledWith("mstsc /v:10.0.0.9");
   });
 
+  // Scan finding F257 / rule 105: the address went into the .rdp body and the
+  // pasted command unchecked, so a line break added lines to the file and a `;`
+  // added a command to a line the operator pasted into a shell.
+  it.each([
+    "10.0.0.9\r\nenable credssp support:i:0",
+    "10.0.0.9\nusername:s:x",
+    "10.0.0.9; rm -rf ~",
+    "10.0.0.9 && calc",
+    "host name",
+    "$(id)",
+    "`id`",
+    "",
+  ])("launches nothing for the address %j", (host) => {
+    for (const action of ["copy", "file", "uri"]) {
+      g.showToast.mockClear();
+      g.copyTextToClipboard.mockClear();
+      doRdpLaunch(host, action);
+      expect(g.copyTextToClipboard).not.toHaveBeenCalled();
+      expect(g.showToast).toHaveBeenCalledWith(expect.stringContaining("cannot be used"), "error");
+    }
+  });
+
+  it("launches nothing when the default user carries a line break", () => {
+    localStorage.setItem("polaris-rdp-user", "CORP\\x\r\nalternate shell:s:cmd.exe");
+    doRdpLaunch("10.0.0.9", "copy");
+    expect(g.copyTextToClipboard).not.toHaveBeenCalled();
+    expect(g.showToast).toHaveBeenCalledWith(expect.stringContaining("username"), "error");
+  });
+
+  it("still accepts every ordinary address form", () => {
+    for (const host of ["10.0.0.9", "fd00::5", "fe80::1%eth0", "[fd00::5]", "app-01.corp.example.com"]) {
+      expect(g._connectHostOk(host)).toBe(true);
+    }
+    for (const user of ["", "admin", "CORP\\jdoe", "jdoe@example.com", "svc_polaris-1"]) {
+      expect(g._connectUserOk(user)).toBe(true);
+    }
+  });
+
   it("builds Microsoft's RDP URI, folding in the default user", () => {
     // The URI half is pure (`_rdpUri`) precisely so it can be asserted without
     // navigating the test DOM to an unknown scheme.
@@ -183,5 +221,35 @@ describe("_rdpAction / _doRdpLaunch", () => {
     expect(rdpUri("10.0.0.9", "CORP\\dmoore")).toBe(
       "rdp://full%20address=s:10.0.0.9:3389&username=s:CORP%5Cdmoore",
     );
+  });
+});
+
+describe("_doSshLaunch: the same refusal on the SSH side (scan finding F257)", () => {
+  beforeEach(() => {
+    for (const fn of ["_sshPref", "_sshUser", "_sshTarget", "_doSshLaunch"]) {
+      // eslint-disable-next-line no-eval
+      (0, eval)(fnSrc(fn));
+    }
+  });
+
+  it.each(["10.0.0.9; rm -rf ~", "10.0.0.9\nid", "10.0.0.9 -oProxyCommand=id", "$(id)"])(
+    "copies and launches nothing for the address %j",
+    (host) => {
+      g._doSshLaunch(host, "copy");
+      expect(g.copyTextToClipboard).not.toHaveBeenCalled();
+      expect(g.showToast).toHaveBeenCalledWith(expect.stringContaining("cannot be used"), "error");
+    },
+  );
+
+  it("refuses a default user that would add words to the pasted command", () => {
+    localStorage.setItem("polaris-ssh-user", "root -oProxyCommand=id");
+    g._doSshLaunch("10.0.0.9", "copy");
+    expect(g.copyTextToClipboard).not.toHaveBeenCalled();
+  });
+
+  it("copies an ordinary command", () => {
+    localStorage.setItem("polaris-ssh-user", "jdoe");
+    g._doSshLaunch("10.0.0.9", "copy");
+    expect(g.copyTextToClipboard).toHaveBeenCalledWith("ssh jdoe@10.0.0.9");
   });
 });

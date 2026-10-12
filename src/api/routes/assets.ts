@@ -252,8 +252,20 @@ const AddressCheckSchema = z.object({
   probe: z.boolean().optional(),
 });
 
+// An asset's address is later put into a generated .rdp file, an ssh:// link and
+// a copy-and-paste `ssh` / `mstsc` command line (public/js/assets.js), so it may
+// hold only what an IPv4 / IPv6 address or a hostname can: letters, digits and
+// . _ : % [ ] -. No whitespace or control character, and no shell or RDP-file
+// metacharacter. (A line break in it added lines to the .rdp file — scan
+// finding F257; rule 105.)
+const ASSET_ADDRESS_RE = /^[A-Za-z0-9._:%\[\]-]+$/;
+const AssetAddressSchema = z
+  .string()
+  .max(255)
+  .regex(ASSET_ADDRESS_RE, "ipAddress may contain only letters, digits and . _ : % [ ] -");
+
 const CreateAssetSchema = z.object({
-  ipAddress:     z.string().min(1).optional(),
+  ipAddress:     AssetAddressSchema.min(1).optional(),
   // The all-zero MAC is "no MAC", never an address: it parses to null, so a
   // create stores none and an update clears the field (which is also how an
   // asset still carrying a zero from before this check sheds it the next
@@ -305,7 +317,7 @@ const UpdateAssetSchema = CreateAssetSchema.partial().extend({
   // discovery can no longer fill it. `ipRevertToDiscovered: true` is the
   // other way out of a pin — release it and take the discovery-projected
   // address (it wins over `ipAddress` in the same body).
-  ipAddress:             z.string().optional(),
+  ipAddress:             AssetAddressSchema.or(z.literal("")).optional(),
   ipRevertToDiscovered:  z.literal(true).optional(),
   monitored:             z.boolean().optional(),
   monitorCredentialId:          z.string().uuid().nullable().optional(),

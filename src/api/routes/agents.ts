@@ -222,7 +222,7 @@ const InterfaceSampleSchema = z.object({
   adminStatus:   z.string().max(32).nullable().optional(),
   operStatus:    z.string().max(32).nullable().optional(),
   speedBps:      z.number().int().nullable().optional(),
-  ipAddress:     z.string().max(64).nullable().optional(),
+  ipAddress:     z.string().max(64).regex(/^[A-Za-z0-9._:%\[\]-]+$/, "ipAddress may contain only letters, digits and . _ : % [ ] -").nullable().optional(),
   macAddress:    z.string().max(64).nullable().optional(),
   inOctets:      z.number().int().nullable().optional(),
   outOctets:     z.number().int().nullable().optional(),
