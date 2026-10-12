@@ -56,6 +56,7 @@ import { haRouter, haEnrollRouter } from "./routes/ha.js";
 import rolesRouter from "./routes/roles.js";
 import groupMappingsRouter from "./routes/groupMappings.js";
 import { requireAuth, attachApiToken } from "./middleware/auth.js";
+import { revalidateSessionUser } from "./middleware/sessionRevalidate.js";
 import { requirePermission } from "./middleware/permissions.js";
 
 export const router = Router();
@@ -63,6 +64,9 @@ export const router = Router();
 // Resolve any presented bearer token before any auth gate runs. Sets
 // req.apiToken when valid; never enforces on its own.
 router.use(attachApiToken);
+// A session is only as good as the account behind it: once a minute per session,
+// confirm the user still exists and still holds the role the session carries.
+router.use(revalidateSessionUser);
 
 // Auth routes are public (login, logout, session check)
 router.use("/auth", authRouter);

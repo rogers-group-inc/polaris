@@ -1996,3 +1996,25 @@ it has been checked, and is checked again where it is used.**
   Open RDP and Open SSH refuse to start from anything else.
 - **An API call's body** that is JSON has every substituted value escaped for
   JSON; any other body is sent as written.
+
+### Rule 108
+
+**A way into the install is checked against the account and the host behind it,
+not a spelling, a cookie that has outlived its owner, or a code already used.**
+
+- **The first-run wizard asks for a setup token** before it will touch the host. It
+  is printed where Polaris started (the journal, or `docker logs`), saved in the
+  state directory as `.setup-token`, and deleted when setup finishes.
+- **Login and API-docs source restrictions** hold however the path is spelled, and
+  `/metrics` answers only its exact lowercase spelling.
+- **Wrong second-factor codes keep counting** when the password is typed again.
+- **A TOTP code works once.** Using it again within its window is refused.
+- **Deleting a user, changing their role, or resetting their password, two-factor
+  method or passkeys signs them out everywhere.** A session is also re-checked
+  against the account about once a minute.
+- **Registering a passkey asks for your current password.**
+- **Your own password, two-factor and passkey routes need a signed-in session**; an
+  API token cannot reach them.
+- **Discovery conflicts** are decided on your current role, not the one you signed
+  in with.
+- **A SAML sign-in response works once.**

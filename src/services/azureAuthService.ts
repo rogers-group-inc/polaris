@@ -7,6 +7,8 @@
  */
 
 import { SAML, type SamlConfig, type Profile, ValidateInResponseTo } from "@node-saml/node-saml";
+import { createHash } from "node:crypto";
+import { claimSamlAssertion } from "../utils/samlReplayCache.js";
 import { createSettingStore } from "./settingsStore.js";
 import { provisionExternalUser } from "./ssoProvisioning.js";
 import { AppError } from "../utils/errors.js";
@@ -113,7 +115,13 @@ async function getSamlClient(): Promise<SAML> {
     wantAssertionsSigned: true,
     wantAuthnResponseSigned: settings.wantResponseSigned,
     disableRequestedAuthnContext: true,
-    validateInResponseTo: ValidateInResponseTo.never,
+    // Bind a response to the request that asked for it WHEN it says it answers
+    // one (the default in-memory cache remembers the request IDs this client
+    // issued). "never" accepted any validly signed response from anywhere.
+    // Unsolicited, IdP-initiated responses carry no InResponseTo and stay
+    // allowed — Azure "My Apps" launches are exactly that; claimSamlAssertion
+    // below is what stops one of them being presented twice. Rule 108.
+    validateInResponseTo: ValidateInResponseTo.ifPresent,
   };
 
   _samlClient = new SAML(config);
@@ -131,6 +139,18 @@ export async function validateSamlResponse(body: Record<string, string>): Promis
   const client = await getSamlClient();
   const { profile } = await client.validatePostResponseAsync(body);
   if (!profile) throw new AppError(401, "SAML assertion validation failed — no profile returned");
+  // One assertion signs one person in, once (scan finding F242).
+  // Every SAML assertion carries a required ID; fall back to a hash of its XML in
+  // the unlikely event the library did not surface it, so a missing field cannot
+  // switch the replay check off (or lock everyone out).
+  const assertionId =
+    profile.ID ??
+    (typeof profile.getAssertionXml === "function"
+      ? createHash("sha256").update(profile.getAssertionXml()).digest("hex")
+      : undefined);
+  if (!claimSamlAssertion(assertionId)) {
+    throw new AppError(401, "This SAML response has already been used. Start the sign-in again.");
+  }
   return profile;
 }
 

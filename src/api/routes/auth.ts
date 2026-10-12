@@ -9,12 +9,14 @@ import { hashPassword, verifyPassword, passwordPolicySchema } from "../../utils/
 import { isLocked, lockoutRemaining, recordFailure, clearLockout } from "../../utils/loginLockout.js";
 import * as mfaPending from "../../utils/mfaPending.js";
 import {
-  verifyCode as verifyTotpCode,
+  verifyCodeStep as verifyTotpCodeStep,
   consumeBackupCode,
   generateSecret as generateTotpSecret,
   generateBackupCodes,
   buildEnrollment,
 } from "../../services/totpService.js";
+import { claimTotpStep } from "../../services/totpStepService.js";
+import { revokeUserSessions } from "../../services/sessionRevocationService.js";
 // User.totpSecret is a scalar column, so it sits OUTSIDE the JSON-blob
 // seal-on-write/open-on-read extension in db.ts — sealing is explicit at the
 // four sites below. openValue passes an unsealed value straight through, which
@@ -22,7 +24,7 @@ import {
 // backfillSecretEncryption converts them.
 import { sealValue, openValue } from "../../utils/secretBox.js";
 import { AppError } from "../../utils/errors.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireSessionUser } from "../middleware/auth.js";
 import { requirePermission, snapshotFromRole } from "../middleware/permissions.js";
 import {
   isAzureSsoConfiguredAsync,
@@ -251,9 +253,13 @@ router.post("/login", async (req, res, next) => {
       throw new AppError(401, "Invalid username or password");
     }
 
-    // Good password — clear the failure counter now; if TOTP fails later,
-    // recordFailure() on the /login/totp path will start the counter fresh.
-    clearLockout(username);
+    // Good password. The failure counter is NOT cleared here: an account with a
+    // second factor still owes one, and wrong codes count against this same
+    // counter. Clearing it on the password step let anyone who knew the password
+    // submit four wrong codes, repeat the password to reset the count, and guess
+    // codes indefinitely (scan finding F192; business rule 108). It is cleared
+    // below only when no second factor is owed, and by each second-factor step
+    // when it succeeds.
 
     // Re-hash on successful login if stored params are weaker than current target.
     // First-login flip: stamp needsRoleReview here (password step) for BOTH
@@ -286,6 +292,7 @@ router.post("/login", async (req, res, next) => {
     // alternative to the password, not an addition to it, so a password login
     // stays single-step.
     const secondFactors = await resolveSecondFactors(user);
+    if (!secondFactors.totp && !secondFactors.passkey) clearLockout(username);
 
     // If a second factor is owed, don't issue the session yet — hand the
     // caller an opaque pending token instead and wait for the second step
@@ -426,7 +433,10 @@ router.post("/login/totp", async (req, res, next) => {
         remainingBackupCodes = remaining;
       }
     } else {
-      verified = verifyTotpCode(openValue(user.totpSecret), code);
+      // A code is accepted ONCE: the step it belongs to is recorded, and a
+      // second submission of it (or of an earlier step) counts as a failure.
+      const step = verifyTotpCodeStep(openValue(user.totpSecret), code);
+      verified = step !== null && (await claimTotpStep(user.id, step));
     }
 
     if (!verified) {
@@ -1352,19 +1362,7 @@ async function rotateSessionKeepingIdentity(req: Request): Promise<void> {
  * password change that has already been committed.
  */
 async function revokeOtherSessions(userId: string, keepSid: string): Promise<number> {
-  try {
-    const rows = await prisma.$queryRaw<{ sid: string; sess: unknown }[]>`
-      SELECT sid, sess FROM session WHERE expire > NOW()
-    `;
-    const doomed = rows
-      .filter((r) => r.sid !== keepSid && (r.sess as { userId?: unknown } | null)?.userId === userId)
-      .map((r) => r.sid);
-    if (!doomed.length) return 0;
-    await prisma.$executeRaw`DELETE FROM session WHERE sid = ANY(${doomed}::text[])`;
-    return doomed.length;
-  } catch {
-    return 0;
-  }
+  return revokeUserSessions(userId, keepSid);
 }
 
 // PUT /api/v1/auth/password — a local user changing their OWN password.
@@ -1376,7 +1374,7 @@ async function revokeOtherSessions(userId: string, keepSid: string): Promise<num
 // gated on nothing but being logged in — /users.html is `users`-gated, so
 // before this route an ordinary local user had no way to change their own
 // password at all.
-router.put("/password", requireAuth, passwordChangeLimiter, async (req, res, next) => {
+router.put("/password", requireSessionUser, passwordChangeLimiter, async (req, res, next) => {
   try {
     const { currentPassword, newPassword } = ChangePasswordSchema.parse(req.body);
     const userId = req.session.userId!;
@@ -1427,7 +1425,7 @@ const TotpConfirmSchema = z.object({ code: z.string().min(1) });
 const TotpDisableSchema = z.object({ code: z.string().min(1), isBackupCode: z.boolean().optional() });
 
 // POST /api/v1/auth/totp/enroll — start enrollment for the current user
-router.post("/totp/enroll", requireAuth, async (req, res, next) => {
+router.post("/totp/enroll", requireSessionUser, async (req, res, next) => {
   try {
     const userId = req.session.userId!;
     const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -1445,7 +1443,7 @@ router.post("/totp/enroll", requireAuth, async (req, res, next) => {
 
     const secret = generateTotpSecret();
     const { otpauthUri, qrSvg } = await buildEnrollment(secret, user.username);
-    await prisma.user.update({ where: { id: userId }, data: { totpSecret: sealValue(secret) } });
+    await prisma.user.update({ where: { id: userId }, data: { totpSecret: sealValue(secret), totpLastStep: null } });
 
     res.json({ secret, otpauthUri, qrSvg });
   } catch (err) {
@@ -1455,7 +1453,7 @@ router.post("/totp/enroll", requireAuth, async (req, res, next) => {
 
 // POST /api/v1/auth/totp/confirm — finalize enrollment by proving the user
 // configured their authenticator correctly (verify first 6-digit code)
-router.post("/totp/confirm", requireAuth, totpCodeLimiter, async (req, res, next) => {
+router.post("/totp/confirm", requireSessionUser, totpCodeLimiter, async (req, res, next) => {
   try {
     const { code } = TotpConfirmSchema.parse(req.body);
     const userId = req.session.userId!;
@@ -1466,14 +1464,17 @@ router.post("/totp/confirm", requireAuth, totpCodeLimiter, async (req, res, next
     if (user.totpEnabledAt) {
       throw new AppError(409, "Two-factor auth is already enabled.");
     }
-    if (!verifyTotpCode(openValue(user.totpSecret), code)) {
+    const confirmStep = verifyTotpCodeStep(openValue(user.totpSecret), code);
+    if (confirmStep === null) {
       throw new AppError(401, "Invalid code. Try again with a fresh value from your authenticator app.");
     }
 
     const { plaintext, hashes } = await generateBackupCodes();
     await prisma.user.update({
       where: { id: userId },
-      data: { totpEnabledAt: new Date(), totpBackupCodes: hashes },
+      // The confirming code is the first one used: record its step so it cannot
+      // be replayed at the next login.
+      data: { totpEnabledAt: new Date(), totpBackupCodes: hashes, totpLastStep: confirmStep },
     });
 
     // Mark the current session mfa-verified so the user doesn't have to
@@ -1497,7 +1498,7 @@ router.post("/totp/confirm", requireAuth, totpCodeLimiter, async (req, res, next
 
 // DELETE /api/v1/auth/totp — self-disable. Requires a valid current TOTP or
 // backup code so a stolen session can't silently drop MFA.
-router.delete("/totp", requireAuth, totpCodeLimiter, async (req, res, next) => {
+router.delete("/totp", requireSessionUser, totpCodeLimiter, async (req, res, next) => {
   try {
     const { code, isBackupCode } = TotpDisableSchema.parse(req.body);
     const userId = req.session.userId!;
@@ -1512,13 +1513,14 @@ router.delete("/totp", requireAuth, totpCodeLimiter, async (req, res, next) => {
       const remaining = await consumeBackupCode(user.totpBackupCodes, code);
       verified = remaining !== null;
     } else {
-      verified = verifyTotpCode(openValue(user.totpSecret), code);
+      const step = verifyTotpCodeStep(openValue(user.totpSecret), code);
+      verified = step !== null && (await claimTotpStep(user.id, step));
     }
     if (!verified) throw new AppError(401, "Invalid code.");
 
     await prisma.user.update({
       where: { id: userId },
-      data: { totpSecret: null, totpEnabledAt: null, totpBackupCodes: [] },
+      data: { totpSecret: null, totpEnabledAt: null, totpBackupCodes: [], totpLastStep: null },
     });
 
     logEvent({
@@ -1537,7 +1539,7 @@ router.delete("/totp", requireAuth, totpCodeLimiter, async (req, res, next) => {
 });
 
 // GET /api/v1/auth/totp/status — current user's enrollment state
-router.get("/totp/status", requireAuth, async (req, res, next) => {
+router.get("/totp/status", requireSessionUser, async (req, res, next) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.session.userId! },
@@ -1565,7 +1567,7 @@ router.get("/totp/status", requireAuth, async (req, res, next) => {
 // get wrong: the worst a crafted id can do is 404.
 
 // GET /api/v1/auth/passkeys — this account's credentials + what the install allows
-router.get("/passkeys", requireAuth, async (req, res, next) => {
+router.get("/passkeys", requireSessionUser, async (req, res, next) => {
   try {
     const [passkeys, availability, user] = await Promise.all([
       listPasskeys(req.session.userId!),
@@ -1579,14 +1581,47 @@ router.get("/passkeys", requireAuth, async (req, res, next) => {
 });
 
 // POST /api/v1/auth/passkeys/register/options
-router.post("/passkeys/register/options", requireAuth, passkeyCeremonyLimiter, async (req, res, next) => {
+//
+// STEP-UP: the caller must supply their CURRENT PASSWORD. Everywhere else a
+// stolen session is treated as a threat — a password change needs the old one,
+// disabling TOTP needs a code — but registering a passkey needed nothing, so
+// anyone holding a session could register their own authenticator and keep a
+// passwordless, second-factor-skipping way back in after the session was gone
+// (scan finding F244; business rule 108). The ceremony token this route mints
+// is what /passkeys/register redeems, so proving the password here covers both.
+const PasskeyRegisterOptionsSchema = z.object({ currentPassword: z.string().min(1).max(1024) });
+
+router.post("/passkeys/register/options", requireSessionUser, passkeyCeremonyLimiter, async (req, res, next) => {
   try {
+    const { currentPassword } = PasskeyRegisterOptionsSchema.parse(req.body ?? {});
     const user = await prisma.user.findUnique({
       where: { id: req.session.userId! },
-      select: { id: true, username: true, displayName: true, authProvider: true },
+      select: { id: true, username: true, displayName: true, authProvider: true, passwordHash: true },
     });
     if (!user) throw new AppError(404, "User not found");
-    res.json(await startPasskeyRegistration(user, req));
+    // A wrong password here counts against the same per-account failure budget
+    // as a wrong password at login, so this cannot be used to grind the
+    // password of an account whose session you hold.
+    if (isLocked(user.username).locked) {
+      throw new AppError(423, "Account temporarily locked due to too many failed attempts.");
+    }
+    const { valid } = await verifyPassword(currentPassword, user.passwordHash);
+    if (!valid) {
+      recordFailure(user.username);
+      await logEvent({
+        action: "auth.passkey.step_up_failed",
+        level: "warning",
+        resourceType: "user",
+        resourceId: user.id,
+        resourceName: user.username,
+        actor: user.username,
+        message: `Wrong password while registering a passkey for ${user.username}`,
+        details: { ip: req.ip },
+      });
+      throw new AppError(401, "Current password is incorrect");
+    }
+    const { passwordHash: _unused, ...startUser } = user;
+    res.json(await startPasskeyRegistration(startUser, req));
   } catch (err) {
     next(err);
   }
@@ -1599,7 +1634,7 @@ const PasskeyRegisterSchema = z.object({
 });
 
 // POST /api/v1/auth/passkeys/register
-router.post("/passkeys/register", requireAuth, passkeyCeremonyLimiter, async (req, res, next) => {
+router.post("/passkeys/register", requireSessionUser, passkeyCeremonyLimiter, async (req, res, next) => {
   try {
     const { token, name, response } = PasskeyRegisterSchema.parse(req.body);
     const user = await prisma.user.findUnique({
@@ -1631,7 +1666,7 @@ router.post("/passkeys/register", requireAuth, passkeyCeremonyLimiter, async (re
 });
 
 // PATCH /api/v1/auth/passkeys/:id — rename
-router.patch("/passkeys/:id", requireAuth, async (req, res, next) => {
+router.patch("/passkeys/:id", requireSessionUser, async (req, res, next) => {
   try {
     const { name } = z.object({ name: z.string().min(1).max(80) }).parse(req.body);
     res.json(await renamePasskey(req.session.userId!, req.params.id as string, name));
@@ -1641,7 +1676,7 @@ router.patch("/passkeys/:id", requireAuth, async (req, res, next) => {
 });
 
 // DELETE /api/v1/auth/passkeys/:id
-router.delete("/passkeys/:id", requireAuth, async (req, res, next) => {
+router.delete("/passkeys/:id", requireSessionUser, async (req, res, next) => {
   try {
     const name = await deletePasskey(req.session.userId!, req.params.id as string);
     await logEvent({

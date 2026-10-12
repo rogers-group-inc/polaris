@@ -29,6 +29,20 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction) {
 }
 
 /**
+ * Self-service routes act on "the signed-in user": their password, their second
+ * factor, their passkeys. `requireAuth` also admits a bearer-token caller, who
+ * has no session and so no `userId`; on those routes `req.session.userId` is
+ * then undefined, and a Prisma `where: { userId: undefined }` means "no filter"
+ * — a token holder could delete or rename ANY user's passkey by its id (scan
+ * finding F229; business rule 108). These routes therefore need a real
+ * signed-in user, not merely an authenticated caller.
+ */
+export function requireSessionUser(req: Request, _res: Response, next: NextFunction) {
+  if (req.session?.userId) return next();
+  next(new AppError(401, "This needs a signed-in user session, not an API token"));
+}
+
+/**
  * Display identity for audit Events: the session username when present,
  * otherwise `api:<token name>` for bearer-token callers. Returns undefined
  * for unauthenticated callers (logEvent stores a null actor). Use this in

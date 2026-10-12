@@ -244,7 +244,17 @@ const SUMMARY_SELECT = {
   transports: true,
 } as const;
 
+/**
+ * A falsy userId must never reach a Prisma `where`: `{ userId: undefined }` means
+ * "no filter", which turns a lookup "scoped to the caller" into a lookup of any
+ * row by id (scan finding F229).
+ */
+function assertUserId(userId: unknown): asserts userId is string {
+  if (typeof userId !== "string" || userId === "") throw new AppError(401, "A signed-in user is required");
+}
+
 export async function listPasskeys(userId: string): Promise<PasskeySummary[]> {
+  assertUserId(userId);
   return prisma.userPasskey.findMany({
     where: { userId },
     select: SUMMARY_SELECT,
@@ -266,6 +276,7 @@ export async function countPasskeysByUser(userIds: string[]): Promise<Map<string
 }
 
 export async function renamePasskey(userId: string, id: string, name: string): Promise<PasskeySummary> {
+  assertUserId(userId);
   const trimmed = name.trim();
   if (!trimmed) throw new AppError(400, "Passkey name is required");
   // Scoped by userId, not just id: the route is self-service, so "your own" is
@@ -288,6 +299,7 @@ export async function renamePasskey(userId: string, id: string, name: string): P
  * admin role could.
  */
 export async function deletePasskey(userId: string, id: string): Promise<string> {
+  assertUserId(userId);
   const existing = await prisma.userPasskey.findFirst({ where: { id, userId }, select: { id: true, name: true } });
   if (!existing) throw new AppError(404, "Passkey not found");
   await prisma.userPasskey.delete({ where: { id } });
