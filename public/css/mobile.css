@@ -1269,6 +1269,143 @@ input, select, textarea { font-family: inherit; }
   text-overflow: ellipsis;
   color: var(--md-on-surface);
 }
+/* The name is the edit menu's trigger (mobile/asset-edit.js): a bare button
+   that takes the name's flex slot, with a small caret saying it opens. */
+.asset-sheet-name-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 48px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+}
+.asset-sheet-name-btn .asset-sheet-name { flex: 0 1 auto; }
+.asset-sheet-name-btn .caret {
+  flex: 0 0 20px;
+  width: 20px; height: 20px;
+  fill: var(--md-on-surface-variant);
+}
+.asset-sheet-name-btn:disabled .caret,
+.asset-sheet.peek .asset-sheet-name-btn .caret { visibility: hidden; }
+
+/* ─── Asset edit menu + sheets (mobile/asset-edit.js) ─────────────────── */
+.ae-sheet [hidden] { display: none !important; }
+.ae-head { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; }
+.ae-head-text { flex: 1 1 auto; min-width: 0; }
+.ae-head .sheet-title { margin: 0; }
+.ae-sub {
+  color: var(--md-on-surface-variant);
+  font-size: 14px;
+  margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ae-menu { margin: 0 -24px; }
+.ae-menu-item { cursor: pointer; }
+.ae-menu-item:disabled { opacity: .55; cursor: default; }
+.ae-section {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  color: var(--md-on-surface-variant);
+  margin: 20px 0 12px;
+}
+.ae-section-sub { margin-top: 4px; }
+.ae-hint {
+  color: var(--md-on-surface-variant);
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: .25px;
+  margin: 0 0 12px;
+}
+.ae-hint-tight { margin-top: -8px; }
+.ae-warn { color: var(--md-warning); }
+.ae-error {
+  background: var(--md-error-container);
+  color: var(--md-on-error-container);
+  border-radius: var(--shape-xs);
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.ae-static { color: var(--md-on-surface-variant); }
+/* Labels sit ABOVE the field on these sheets rather than notched into its
+   border: the notch paints --md-surface behind the text, which reads as a
+   solid box on a frosted sheet (white on the daylight pair). */
+.ae-sheet .tf-outlined .lbl {
+  position: static;
+  display: block;
+  background: transparent;
+  padding: 0 0 6px 4px;
+}
+.ae-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; }
+/* A date input's intrinsic width outran a half-width column at 390px. */
+.ae-sheet .tf-outlined .field { min-width: 0; max-width: 100%; }
+.ae-inline-btn { height: auto; font-size: 13px; padding: 2px 4px; margin-left: -4px; }
+.ae-sheet .btn-sm { height: 32px; padding: 0 14px; font-size: 13px; }
+.ae-check {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  font-size: 16px;
+  color: var(--md-on-surface);
+}
+.ae-check input { width: 20px; height: 20px; flex: 0 0 20px; accent-color: var(--md-primary); }
+.ae-tag-cat {
+  font-size: 12px;
+  color: var(--md-on-surface-variant);
+  margin: 8px 0 0;
+}
+.ae-tag-row { padding: 8px 0; }
+.ae-tag { position: relative; cursor: pointer; }
+.ae-tag input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.ae-streams { padding: 0 0 16px; }
+.ae-agent { padding: 12px 16px; margin: 4px 0 16px; }
+.ae-agent-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.ae-pill {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--md-surface-cont-highest);
+  color: var(--md-on-surface-variant);
+}
+.ae-pill.ok { color: var(--md-success); }
+.ae-maint-row { margin: 0 -16px; }
+.ae-maint-sched {
+  border-top: 1px solid var(--md-outline-variant);
+  padding: 12px 0;
+}
+.ae-maint-sched .ae-hint { margin: 4px 0 0; }
+.ae-maint-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.ae-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+/* The Save row rides the bottom of the scrolling sheet so it is reachable
+   from anywhere in a long form. */
+.ae-footer {
+  position: sticky;
+  bottom: -24px;
+  z-index: 1;
+  margin: 16px -24px -24px;
+  padding: 12px 24px calc(12px + env(safe-area-inset-bottom, 0px));
+  /* Opaque: the form scrolls UNDER this row. The sheet's glass mix let field
+     text read straight through the buttons, and a backdrop blur here does
+     nothing — the sheet's own backdrop-filter makes it the backdrop root. */
+  background: var(--md-surface);
+  border-top: 1px solid var(--md-outline-variant);
+}
+.ae-confirm-body {
+  margin: 0 0 8px;
+  color: var(--md-on-surface-variant);
+  font-size: 14px;
+  line-height: 20px;
+  white-space: pre-line;
+}
 
 /* ─── Login layout ────────────────────────────────────────────────────── */
 .login-shell {

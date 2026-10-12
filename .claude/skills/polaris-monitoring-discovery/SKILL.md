@@ -43,7 +43,7 @@ onto Assets, Subnets and Reservations.
 - **Sample tables are TimescaleDB hypertables with no FK to Asset** — never row-DELETE/UPDATE where a compressed chunk may hold the row; prune via `drop_chunks`.
 - **Resolve a FortiSwitch/FortiAP's parent through `utils/fortinetParentKey.ts`**, never by matching `controllerFortigate` to a hostname.
 - **FortiManager ↔ standalone FortiGate parity**: a feature added to one integration ships on the other unless structurally FMG-only.
-- **Implementing a collector flips `utils/pollingCapability.ts` and its `_collectorExists` mirror in `public/js/integrations.js` in the same commit.**
+- **Implementing a collector flips `utils/pollingCapability.ts` and its `_collectorExists` mirror in `public/js/polling-methods.js` in the same commit.**
 - **Scale-check at 100 and 2000 monitored assets**: no `for…of { await prisma… }` in a tick; batch with `$transaction` / `updateMany` / `Promise.all`; tight `select`s on hot loops.
 - **Adding a job or a metric**: name the job in the file map and the jobs table, define the metric in `src/metrics.ts` + `observability.md` + the Grafana dashboard JSON (`/polaris-docs-sync` has the checklist).
 

@@ -52,7 +52,7 @@ the pre-skills task list verbatim. The short form:
 | env var | `.env.example`, `polaris-deploy/references/env-vars.md`, `docs/INSTALL.md`, `deploy/setup-*` |
 | `polaris_*` metric | `src/metrics.ts`, `polaris-monitoring-discovery/references/observability.md`, `cross-cutting/observability-metrics.md`, `docs/grafana/*.json` + README |
 | agent code / sample stream | `agent/VERSION`; `polaris-agent/references/cross-cutting-polaris-agent.md`; `SamplesBodySchema` |
-| polling method / collector | `utils/pollingCapability.ts` + `_collectorExists` in `public/js/integrations.js`; `polling-methods-streams.md`; `cross-cutting/polling-method-resolver.md` |
+| polling method / collector | `utils/pollingCapability.ts` + `_collectorExists` in `public/js/polling-methods.js`; `polling-methods-streams.md`; `cross-cutting/polling-method-resolver.md` |
 | integration type | `cross-cutting/integration-type-onboarding.md` checklist; `discovery-*.md`; `routes-overview.md`; the modal in `polaris-ui-canon` |
 | UI pattern or shared module | `polaris-ui-canon/references/canon-*.md`, the pages/modules tables in its SKILL.md; `design/POLARIS-UI-GUIDE.md` is never edited (drop-in zone) |
 | business rule | `polaris-business-rules` — `npm run rules:next` for the number; a ~150-word invariant appended to `invariants-30-43.md`, a new `narrative-N.md` (one file per rule), an index row in its SKILL.md; cite the number from code and the pinning test. `check:docs` (`rule-anchors`) fails when the three layers disagree |

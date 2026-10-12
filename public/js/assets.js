@@ -3801,26 +3801,9 @@ function assetMonitoringFormHTML(asset, managedAgent) {
   var ifMibId   = (asset && asset.interfacesMibId)    || "";
   var lldpMibId = (asset && asset.lldpMibId)          || "";
 
-  // Auto MIB names for the "Automatic" option label — vendor-aware for CPU/memory.
-  var _mfr = ((asset && asset.manufacturer) || "").toLowerCase();
-  var _autoTelMib = "HOST-RESOURCES-MIB";
-  if (/fortinet/.test(_mfr))          _autoTelMib = "FORTINET-FORTIGATE-MIB";
-  else if (/cisco/.test(_mfr))        _autoTelMib = "CISCO-PROCESS-MIB";
-  else if (/juniper/.test(_mfr))      _autoTelMib = "JUNIPER-MIB";
-  else if (/mikrotik/.test(_mfr))     _autoTelMib = "MIKROTIK-MIB";
-  else if (/hp|aruba|hewlett/.test(_mfr)) _autoTelMib = "HP-ICF-OID-MIB";
-  else if (/dell/.test(_mfr))         _autoTelMib = "DELL-MIB";
-  // Temperature MIB default — ENTITY-SENSOR-MIB across the board; Fortinet's
-  // fgHwSensorTable lives in FORTINET-FORTIGATE-MIB (the collector tries it
-  // before falling back to ENTITY-SENSOR-MIB).
-  var _autoTempMib = /fortinet/.test(_mfr) ? "FORTINET-FORTIGATE-MIB" : "ENTITY-SENSOR-MIB";
-  var _autoMibNames = {
-    responseTime: "SNMPv2-MIB",
-    telemetry:    _autoTelMib,
-    temperature:  _autoTempMib,
-    interfaces:   "IF-MIB",
-    lldp:         "LLDP-MIB",
-  };
+  // Auto MIB names for the "Automatic" option label — vendor-aware for
+  // CPU/memory and temperature (polling-methods.js, shared with the phone).
+  var _autoMibNames = _autoMibNamesForAsset(asset);
 
   // Per-stream subtab body: polling-method dropdown (with credential + MIB
   // sub-rows beneath that show/hide based on selected method), then a per-
@@ -4344,47 +4327,12 @@ function _wireMaintenanceScheduleActions(asset, infoEl) {
   });
 }
 
-// Map polling method → which credential type it needs (null = no credential).
-function _credTypeForPolling(method) {
-  if (method === "snmp")     return "snmp";
-  if (method === "winrm")    return "winrm";
-  if (method === "ssh")      return "ssh";
-  if (method === "rest_api") return "restapi";
-  return null;
-}
-
-// Options for a per-stream credential picker: "Source default" first (value=""),
-// then credentials matching credType. When credType is null, just the default.
-//
-// A STORED credential is always an option, whatever credType is. The picker
-// must show what the asset row holds: a stored id with no matching option made
-// the select fall back to "Source default", so the operator read "nothing set"
-// while the dispatchers kept sending that credential (a stale per-asset REST
-// token behind an "Inherit" stream locked the server out of a FortiGate's API
-// for hours). The extra option names the credential and says when its type
-// doesn't fit the method, so the mismatch is visible instead of silent.
+// Options for a per-stream credential picker over the cached credential list.
+// The rules (a STORED credential is always an option, named, whatever the
+// method's type) live in _credentialOptionsHTML in polling-methods.js, shared
+// with the phone's Monitoring sheet; _credTypeForPolling lives there too.
 function _credentialOptionsForStream(selectedId, credType) {
-  var opts = '<option value="">— Source default —</option>';
-  var listed = false;
-  if (credType) {
-    _credentialCache.list.forEach(function (c) {
-      if (c.type !== credType) return;
-      if (selectedId === c.id) listed = true;
-      opts += '<option value="' + escapeHtml(c.id) + '"' +
-        (selectedId === c.id ? " selected" : "") + '>' +
-        escapeHtml(c.name) +
-        '</option>';
-    });
-  }
-  if (selectedId && !listed) {
-    var stored = null;
-    _credentialCache.list.forEach(function (c) { if (c.id === selectedId) stored = c; });
-    var label = stored
-      ? stored.name + " (" + stored.type + (credType ? ", not used by this method" : "") + ")"
-      : "Stored credential (not visible to you)";
-    opts += '<option value="' + escapeHtml(selectedId) + '" selected>' + escapeHtml(label) + '</option>';
-  }
-  return opts;
+  return _credentialOptionsHTML(_credentialCache.list, selectedId, credType);
 }
 
 async function _wireMonitorEditTab(asset) {

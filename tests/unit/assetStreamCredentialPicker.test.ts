@@ -27,14 +27,18 @@ import { resolve } from "node:path";
 const g = globalThis as Record<string, any>;
 const assetsSrc = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8");
 const assetsLines = assetsSrc.split(/\r?\n/);
+// The option rules moved to polling-methods.js (_credentialOptionsHTML) so the
+// phone's Monitoring sheet draws the same picker; assets.js delegates to it.
+const pollingSrc = readFileSync(resolve(__dirname, "../../public/js/polling-methods.js"), "utf8");
+const pollingLines = pollingSrc.split(/\r?\n/);
 
-/** Slice a top-level `function NAME(...) {` … `}` block out of assets.js. */
-function fnSrc(name: string): string {
-  const start = assetsLines.findIndex((l) => l.startsWith(`function ${name}(`));
-  if (start < 0) throw new Error(`assets.js: function ${name} not found`);
-  const end = assetsLines.findIndex((l, i) => i > start && l === "}");
-  if (end < 0) throw new Error(`assets.js: no end of function ${name}`);
-  return assetsLines.slice(start, end + 1).join("\n");
+/** Slice a top-level `function NAME(...) {` … `}` block out of a file's lines. */
+function fnSrc(name: string, lines: string[] = assetsLines): string {
+  const start = lines.findIndex((l) => l.startsWith(`function ${name}(`));
+  if (start < 0) throw new Error(`function ${name} not found`);
+  const end = lines.findIndex((l, i) => i > start && l === "}");
+  if (end < 0) throw new Error(`no end of function ${name}`);
+  return lines.slice(start, end + 1).join("\n");
 }
 
 let optionsFor: (selectedId: string, credType: string | null) => string;
@@ -50,10 +54,12 @@ beforeAll(() => {
       { id: "c-rest", name: "Fleet REST", type: "restapi" },
     ],
   };
+  // The desktop entry point, wired to the shared builder exactly as the page
+  // wires it — so this suite still proves what assets.js renders.
   optionsFor = new Function(
     "escapeHtml",
     "_credentialCache",
-    `${fnSrc("_credentialOptionsForStream")}\nreturn _credentialOptionsForStream;`,
+    `${fnSrc("_credentialOptionsHTML", pollingLines)}\n${fnSrc("_credentialOptionsForStream")}\nreturn _credentialOptionsForStream;`,
   )(g.escapeHtml, g._credentialCache);
 });
 
