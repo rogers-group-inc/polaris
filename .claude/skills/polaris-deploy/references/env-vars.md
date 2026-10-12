@@ -189,6 +189,10 @@ TIMESCALE_COMPRESS_AFTER_DAYS=7
 # Persistent-state dir. When set, .env / .setup-complete / data/backups /
 # public/uploads all live under this dir (Docker pins to /app/state).
 POLARIS_STATE_DIR=
+# Absolute path to the jsign jar (.jar) used to sign Windows agent binaries; unset =
+# tools/jsign.jar under the app or state dir, then /opt/polaris/tools/jsign.jar.
+# Env-only on purpose: the jar is run with `java -jar` (rule 105).
+POLARIS_JSIGN_JAR=
 
 # Git repository the in-app updater fetches/pulls from. When SET, it's applied
 # to the `origin` remote before every update check/apply (ensureUpdateRemote in

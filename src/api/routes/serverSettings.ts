@@ -2834,7 +2834,6 @@ const SigningConfigSchema = z.object({
   keystorePassword: z.string().max(500).optional(),
   alias:            z.string().trim().max(200).optional(),
   tsaUrl:           z.string().trim().max(300).optional(),
-  jsignJarPath:     z.string().trim().max(500).optional(),
 });
 
 /**

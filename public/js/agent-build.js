@@ -779,7 +779,13 @@
         inputRow("agent-signing-password", "Keystore password",    cfg.keystorePassword, cfg.keystorePasswordSet ? "unchanged" : "keystore password", "password") +
         inputRow("agent-signing-alias",    "Key alias",            cfg.alias,        "optional — only for a multi-entry keystore") +
         inputRow("agent-signing-tsa",      "Timestamp URL",        cfg.tsaUrl,       "http://timestamp.digicert.com") +
-        inputRow("agent-signing-jar",      "jsign jar path",       cfg.jsignJarPath, avail.jarPath || "auto-detect (tools/jsign.jar)") +
+        // The jsign jar is not set here: it is code run as the service user, so
+        // its location is fixed at install time (tools/jsign.jar) or by the
+        // POLARIS_JSIGN_JAR environment variable. Business rule 105.
+        '<div style="color:var(--color-text-secondary);font-size:0.8rem;margin-top:0.4rem">' +
+          'jsign jar: ' + (avail.jarPath ? '<code>' + escapeHtml(avail.jarPath) + '</code>' : 'not found') +
+          ' — fixed at <code>tools/jsign.jar</code>, or set <code>POLARIS_JSIGN_JAR</code> on the server.' +
+        '</div>' +
         // Upload path: the alternative to placing the .pfx over SSH, and the
         // one that matters on renewal. The file and its password go up
         // together and are validated BEFORE replacing whatever is installed,
@@ -822,7 +828,6 @@
             keystorePassword: document.getElementById("agent-signing-password").value || "",
             alias:            (document.getElementById("agent-signing-alias").value || "").trim(),
             tsaUrl:           (document.getElementById("agent-signing-tsa").value || "").trim(),
-            jsignJarPath:     (document.getElementById("agent-signing-jar").value || "").trim(),
           };
           saveBtn.disabled = true;
           api.serverSettings.agentSigningSet(body).then(function () {
