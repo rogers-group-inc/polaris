@@ -237,13 +237,18 @@
   --md-success:                 #1f7a3a;
   --md-warning:                 #b86e00;
 
-  /* Daylight re-tone of the two severity colours with no token to alias:
-     the dark values are picked to carry on a near-black surface and go
-     illegible on white. The three aliases above need no restatement —
-     --md-primary / --md-warning / --md-error are already redefined in this
-     block, and a var() alias resolves against the element it lands on. */
-  --md-sev-notice:              #5b6675;
-  --md-sev-serious:             #b35c00;
+  /* Daylight severity palette — the SAME four values as the desktop's
+     daylight --color-sev-* block (styles.css), so a severity looks alike on
+     both screens. The info / warning aliases are NOT kept here: the daylight
+     primary is the theme's terracotta and --md-warning (#b86e00) sat a few
+     degrees from serious, so Informational, Warning and Serious read as three
+     oranges. Critical is pinned too (the desktop's reason: a theme red that
+     leans orange sits beside serious). */
+  --md-sev-notice:              #475569;
+  --md-sev-info:                #0277bd;
+  --md-sev-warning:             #8a6d00;
+  --md-sev-serious:             #c75000;
+  --md-sev-critical:            #b91c1c;
 
   --user-pin-stroke:            #1f2937;
 

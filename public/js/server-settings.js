@@ -1981,7 +1981,82 @@ function renderPlatformLifecycleCard(lifecycle) {
   "</div>";
 }
 
-function renderCapacityCard(capacity, dbInfo, pgTuning) {
+// ─── Capacity alert hold (business rule 105) ───────────────────────────────
+// The card grades capacity live, but the alert is recorded by the 10-minute
+// capacityWatch job only once a change has held for the operator's hold. This
+// row says what the alerting side last recorded, any change it is waiting out,
+// and lets the operator set the hold — so an alert beside a card that reads
+// Healthy has an explanation on the same screen.
+var CAPACITY_ALERT_HOLD_CHOICES = [0, 10, 20, 30, 60, 120, 240];
+
+function _capacityHoldLabel(min) {
+  if (min === 0) return "Alert on the first reading";
+  if (min >= 60 && min % 60 === 0) return (min / 60) + (min === 60 ? " hour" : " hours");
+  return min + " minutes";
+}
+
+function renderCapacityAlertHoldHtml(t) {
+  if (!t) return "";
+  var choices = CAPACITY_ALERT_HOLD_CHOICES.slice();
+  if (choices.indexOf(t.holdMinutes) === -1) {
+    choices.push(t.holdMinutes);
+    choices.sort(function (a, b) { return a - b; });
+  }
+  var options = choices.map(function (m) {
+    return '<option value="' + m + '"' + (m === t.holdMinutes ? " selected" : "") + '>' +
+      escapeHtml(_capacityHoldLabel(m)) + '</option>';
+  }).join("");
+
+  var status = "";
+  if (t.pending) {
+    var sinceMs = new Date(t.pending.since).getTime();
+    var heldMin = Math.max(0, Math.round((Date.now() - sinceMs) / 60000));
+    var dueIso = new Date(sinceMs + t.holdMinutes * 60000).toISOString();
+    status = 'Waiting out a change to <strong>' + escapeHtml(_capacitySeverityLabel(t.pending.severity)) +
+      '</strong>: seen for ' + heldMin + ' of ' + t.holdMinutes + ' min. It is recorded (and alerts) at the first check after ' +
+      escapeHtml(formatLocalTime(dueIso)) + ' if every check until then still agrees; one check back at ' +
+      escapeHtml(_capacitySeverityLabel(t.recorded ? t.recorded.severity : "ok")) + ' discards it.';
+  } else if (t.recorded) {
+    status = 'Alerting last recorded <strong>' + escapeHtml(_capacitySeverityLabel(t.recorded.severity)) +
+      '</strong> at ' + escapeHtml(formatLocalTime(t.recorded.recordedAt)) + '.';
+  }
+
+  return '<div class="capacity-alert-hold" style="margin:0.75rem 0;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
+    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+      '<label for="capacity-alert-hold" style="font-size:0.85rem;font-weight:600;margin:0">Alert after a change holds for</label>' +
+      '<select id="capacity-alert-hold" style="max-width:220px">' + options + '</select>' +
+    '</div>' +
+    '<p class="hint" style="margin:0.35rem 0 0">Capacity is checked every ' + (t.intervalMinutes || 10) +
+      ' minutes. A severity change — up or down — becomes a <code>capacity.severity_changed</code> / ' +
+      '<code>capacity.severity_recovered</code> event only after every check for this long agrees, so a ' +
+      'short-lived spike never alerts. This card shows the live reading, so it can differ from what has been recorded.</p>' +
+    (status ? '<p class="hint" id="capacity-alert-hold-status" style="margin:0.35rem 0 0">' + status + '</p>' : '') +
+  '</div>';
+}
+
+function initCapacityAlertHold() {
+  var sel = document.getElementById("capacity-alert-hold");
+  if (!sel) return;
+  var prev = sel.value;
+  sel.addEventListener("change", async function () {
+    var minutes = parseInt(sel.value, 10);
+    sel.disabled = true;
+    try {
+      await api.serverSettings.setCapacityAlertHold(minutes);
+      prev = sel.value;
+      showToast(minutes === 0
+        ? "Capacity changes now alert on the first reading"
+        : "Capacity changes must now hold for " + _capacityHoldLabel(minutes) + " before alerting", "success");
+    } catch (err) {
+      sel.value = prev;
+      showToast("Could not save the alert hold: " + (err && err.message ? err.message : "unknown error"), "error");
+    } finally {
+      sel.disabled = false;
+    }
+  });
+}
+
+function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
   if (!capacity) {
     // Capacity grading unavailable (e.g. statfs not supported) — still render
     // the engine + pool stats under a plain Database header so operators
@@ -2261,6 +2336,7 @@ function renderCapacityCard(capacity, dbInfo, pgTuning) {
       '<span class="' + pillClass + '">' + _capacitySeverityLabel(severity) + '</span>' +
     '</div>' +
     reasonsHtml +
+    renderCapacityAlertHoldHtml(capacityTransition) +
     '<div class="capacity-grid">' + hostHtml + dbHtml + enginePoolHtml + workHtml + '</div>' +
     '<p class="hint" style="margin-top:0.75rem;font-size:0.78rem">Last computed ' + escapeHtml(formatLocalTime(capacity.computedAt)) + '</p>' +
   '</div>';
@@ -2544,6 +2620,7 @@ async function loadDatabaseInfo() {
     var advisor = advisorResp && advisorResp.advisor ? advisorResp.advisor : null;
     var capacity = advisorResp && advisorResp.capacity ? advisorResp.capacity : null;
     var pgTuning = advisorResp && advisorResp.pgTuning ? advisorResp.pgTuning : null;
+    var capacityTransition = advisorResp && advisorResp.capacityTransition ? advisorResp.capacityTransition : null;
     var dbConnectionMode = advisorResp && advisorResp.dbConnectionMode ? advisorResp.dbConnectionMode : "direct";
     _advisorInContainer = !!(advisorResp && advisorResp.runtimeIsContainer);
     _dbLoaded = true;
@@ -2604,7 +2681,7 @@ async function loadDatabaseInfo() {
       // Updates then share one row as half-width cards; the advisor renders
       // nothing when it has no recommendations, in which case Updates keeps
       // the full width rather than leaving half a row empty.
-      renderCapacityCard(capacity, db, pgTuning) +
+      renderCapacityCard(capacity, db, pgTuning, capacityTransition) +
       (advisorHtml
         ? '<div class="settings-cards-row">' + advisorHtml + updateCardHtml + '</div>'
         : updateCardHtml) +
@@ -2740,6 +2817,7 @@ async function loadDatabaseInfo() {
     loadBackupSchedule();
     initUpdateControls();
     initCapacityActions();
+    initCapacityAlertHold();
     initCapacityAdvisorActions();
   } catch (err) {
     container.innerHTML = '<div class="settings-card"><p class="empty-state">Error: ' + escapeHtml(err.message) + '</p></div>';
@@ -4810,7 +4888,8 @@ function renderIdentificationTab() {
       } else {
         html += '<div class="tag-chip-list">';
         tags.forEach(function (t) {
-          var colorStyle = t.color ? ' style="background:' + escapeHtml(t.color) + '22;border-color:' + escapeHtml(t.color) + ';color:' + escapeHtml(t.color) + '"' : '';
+          var chipColor = tagColorCss(t.color);
+          var colorStyle = chipColor ? ' style="background:' + tagColorTint(t.color, 13) + ';border-color:' + chipColor + ';color:' + chipColor + '"' : '';
           // Either filter shape counts — a tag written before the condition-tree
           // cutover still auto-assigns through the folded-forward flat blob.
           var managed = !!(t.assetCondition || (t.criteria && t.criteria.rules && t.criteria.rules.length));
@@ -6967,6 +7046,57 @@ function _wireTagFilterBuilder(tagId, builder) {
   _refreshTagFilterPreview(tagId, builder);
 }
 
+// The Color field of the Add / Edit Tag dialogs: a custom hex, or a severity
+// reference ("severity:warning") that paints with the severity's theme token on
+// every theme (tagColorCss in app.js). One builder for both dialogs — a stored
+// reference fed to <input type="color"> would read back as #000000 and the next
+// save would overwrite it.
+function _tagColorFieldHTML(color) {
+  var sev = tagColorSeverity(color);
+  var hex = sev ? randomTagColor() : (tagColorCss(color) || randomTagColor());
+  var opts = '<option value=""' + (sev ? '' : ' selected') + '>Custom color</option>' +
+    TAG_SEVERITY_ORDER.map(function (s) {
+      return '<option value="' + s + '"' + (s === sev ? ' selected' : '') + '>Severity: ' + s.charAt(0).toUpperCase() + s.slice(1) + '</option>';
+    }).join('');
+  return '<div class="form-group"><label>Color</label>' +
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+      '<select id="f-tag-color-source" style="width:auto">' + opts + '</select>' +
+      '<input type="color" id="f-tag-color" value="' + escapeHtml(hex) + '" style="width:40px;height:32px;padding:2px;border:1px solid var(--color-border);border-radius:4px;background:transparent;cursor:pointer">' +
+      '<button type="button" id="f-tag-color-random" title="Random color" aria-label="Random color" style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:1px solid var(--color-border);border-radius:4px;background:transparent;color:var(--color-text-secondary);cursor:pointer">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10"/><path d="M20.49 15a9 9 0 01-14.85 3.36L1 14"/></svg>' +
+      '</button>' +
+      '<span id="f-tag-color-swatch" style="display:none;width:32px;height:32px;border-radius:4px;border:1px solid var(--color-border)"></span>' +
+      '<span id="f-tag-color-hex" style="font-family:var(--font-mono);font-size:0.82rem;color:var(--color-text-secondary)"></span>' +
+    '</div>' +
+    '<p class="hint">A severity color matches that severity\'s pills and chart bands on every theme.</p>' +
+  '</div>';
+}
+
+/** Wires the field built by _tagColorFieldHTML; returns a getter for the value to save. */
+function _wireTagColorField() {
+  var source = document.getElementById("f-tag-color-source");
+  var colorInput = document.getElementById("f-tag-color");
+  var randomBtn = document.getElementById("f-tag-color-random");
+  var swatch = document.getElementById("f-tag-color-swatch");
+  var hexLabel = document.getElementById("f-tag-color-hex");
+  function sync() {
+    var sev = source.value;
+    colorInput.style.display = sev ? "none" : "";
+    randomBtn.style.display = sev ? "none" : "inline-flex";
+    swatch.style.display = sev ? "inline-block" : "none";
+    if (sev) swatch.style.background = TAG_SEVERITY_COLORS[sev];
+    hexLabel.textContent = sev ? "follows the theme" : colorInput.value;
+  }
+  source.addEventListener("change", sync);
+  colorInput.addEventListener("input", sync);
+  randomBtn.addEventListener("click", function () {
+    colorInput.value = randomTagColor();
+    sync();
+  });
+  sync();
+  return function () { return source.value ? "severity:" + source.value : colorInput.value; };
+}
+
 async function openAddTagModal() {
   // The device-filter vocabulary has to be in hand BEFORE the body is assembled:
   // the builder renders its field/operator selects from it.
@@ -7018,15 +7148,7 @@ async function openAddTagModal() {
       '</div>' +
       '<p class="hint">Group related tags together. e.g. Environment, Function, Location</p>' +
     '</div>' +
-    '<div class="form-group"><label>Color</label>' +
-      '<div style="display:flex;gap:8px;align-items:center">' +
-        '<input type="color" id="f-tag-color" value="' + randomTagColor() + '" style="width:40px;height:32px;padding:2px;border:1px solid var(--color-border);border-radius:4px;background:transparent;cursor:pointer">' +
-        '<button type="button" id="f-tag-color-random" title="Random color" aria-label="Random color" style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:1px solid var(--color-border);border-radius:4px;background:transparent;color:var(--color-text-secondary);cursor:pointer">' +
-          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10"/><path d="M20.49 15a9 9 0 01-14.85 3.36L1 14"/></svg>' +
-        '</button>' +
-        '<span id="f-tag-color-hex" style="font-family:var(--font-mono);font-size:0.82rem;color:var(--color-text-secondary)"></span>' +
-      '</div>' +
-    '</div>' +
+    _tagColorFieldHTML(null) +
     _tagFilterSectionHTML(null, condBuilder, schema);
 
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
@@ -7046,19 +7168,7 @@ async function openAddTagModal() {
     }
   });
 
-  // Update hex preview
-  var colorInput = document.getElementById("f-tag-color");
-  var hexLabel = document.getElementById("f-tag-color-hex");
-  colorInput.addEventListener("input", function () {
-    hexLabel.textContent = colorInput.value;
-  });
-  hexLabel.textContent = colorInput.value;
-
-  var randomBtn = document.getElementById("f-tag-color-random");
-  if (randomBtn) randomBtn.addEventListener("click", function () {
-    colorInput.value = randomTagColor();
-    hexLabel.textContent = colorInput.value;
-  });
+  var tagColorValue = _wireTagColorField();
 
   document.getElementById("btn-save-tag").addEventListener("click", async function () {
     var btn = this;
@@ -7080,7 +7190,7 @@ async function openAddTagModal() {
       await api.serverSettings.createTag(Object.assign({
         name: name,
         category: category,
-        color: colorInput.value,
+        color: tagColorValue(),
       }, _collectTagFilter(condBuilder)));
       closeModal();
       showToast('Tag "' + name + '" created');
@@ -7151,15 +7261,7 @@ async function openEditTagModal(id) {
         '<input type="text" id="f-tag-category-new" placeholder="Category name" style="flex:1;display:none">' +
       '</div>' +
     '</div>' +
-    '<div class="form-group"><label>Color</label>' +
-      '<div style="display:flex;gap:8px;align-items:center">' +
-        '<input type="color" id="f-tag-color" value="' + escapeHtml(tag.color || "#4fc3f7") + '" style="width:40px;height:32px;padding:2px;border:1px solid var(--color-border);border-radius:4px;background:transparent;cursor:pointer">' +
-        '<button type="button" id="f-tag-color-random" title="Random color" aria-label="Random color" style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:1px solid var(--color-border);border-radius:4px;background:transparent;color:var(--color-text-secondary);cursor:pointer">' +
-          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10"/><path d="M20.49 15a9 9 0 01-14.85 3.36L1 14"/></svg>' +
-        '</button>' +
-        '<span id="f-tag-color-hex" style="font-family:var(--font-mono);font-size:0.82rem;color:var(--color-text-secondary)">' + escapeHtml(tag.color || "#4fc3f7") + '</span>' +
-      '</div>' +
-    '</div>' +
+    _tagColorFieldHTML(tag.color || "#4fc3f7") +
     _tagFilterSectionHTML(tag, condBuilder, schema);
 
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
@@ -7178,18 +7280,7 @@ async function openEditTagModal(id) {
     }
   });
 
-  var colorInput = document.getElementById("f-tag-color");
-  var hexLabel = document.getElementById("f-tag-color-hex");
-  colorInput.addEventListener("input", function () {
-    hexLabel.textContent = colorInput.value;
-  });
-  hexLabel.textContent = colorInput.value;
-
-  var randomBtn = document.getElementById("f-tag-color-random");
-  if (randomBtn) randomBtn.addEventListener("click", function () {
-    colorInput.value = randomTagColor();
-    hexLabel.textContent = colorInput.value;
-  });
+  var tagColorValue = _wireTagColorField();
 
   document.getElementById("btn-save-tag").addEventListener("click", async function () {
     var btn = this;
@@ -7211,7 +7302,7 @@ async function openEditTagModal(id) {
       await api.serverSettings.updateTag(id, Object.assign({
         name: name,
         category: category,
-        color: colorInput.value,
+        color: tagColorValue(),
       }, _collectTagFilter(condBuilder, stuckFields)));
       closeModal();
       showToast('Tag "' + name + '" updated');

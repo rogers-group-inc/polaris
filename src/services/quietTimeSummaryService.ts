@@ -32,7 +32,17 @@
  * and Cc, a web-push row's account (reached by its email; a push preference
  * is deliberately ignored, there is no summary push). Chat rows reach no
  * person. Deduplicated by lower-cased address. A reader with no address on
- * their account is skipped with one warning Event.
+ * their account is skipped with one warning Event. Every covered alert's held
+ * rows are read, and each recipient keeps the alerts it was a target of
+ * (`alertIds`).
+ *
+ * What each reader sees (`detailsForRecipient`): ONLY the outstanding and
+ * recurring rows for their own alerts. One source can span many automations
+ * with different audiences — a global quiet time covers every automation that
+ * does not opt out — and on 2026-10-12 a whole-source summary mailed an
+ * infrastructure list devices it was never paged about. A reader whose own
+ * alerts all recovered gets the all-quiet copy (with `summaryAlways`) or no
+ * email at all.
  *
  * Through which channel: the policy's `summaryChannelId`, else the first
  * email channel among the held rows' own channels, else the first enabled
@@ -112,6 +122,14 @@ export interface SummaryRecipient {
   status: "pending" | "sent" | "failed";
   attempts: number;
   error?: string;
+  /** The covered alerts this reader was a target of (their held rows). Their
+   *  copy lists only these. Absent = the whole summary: an all-quiet row built
+   *  from static recipients, or a row written before per-reader filtering. */
+  alertIds?: string[];
+  /** The zone their copy was rendered in and when it went — kept so the
+   *  Settings view can show the email exactly as it was sent. */
+  zone?: string;
+  sentAt?: string;
 }
 
 interface SummaryDetails {
@@ -197,6 +215,7 @@ export function buildSummaryDetails(
         count: sorted.length,
         times: sorted.map((a) => a.triggeredAt.toISOString()),
         stillActive: sorted.some((a) => !a.cleared),
+        notificationIds: sorted.map((a) => a.id),
       });
     }
   }
@@ -217,27 +236,64 @@ export function buildSummaryDetails(
   return { outstanding, recurring, recurrenceThreshold };
 }
 
-/** Addresses (lower-cased, deduped) + push accounts from a set of held rows. Pure. */
+/** Which alerts each address / push account was a target of. */
+export interface RecipientAlertMap {
+  byAddress: Record<string, string[]>;
+  byUser: Record<string, string[]>;
+}
+
+/**
+ * Addresses (lower-cased, deduped) + push accounts from a set of held rows,
+ * and — when the rows carry their `notificationId` — which alerts each one
+ * was a target of. Pure.
+ */
 export function recipientsFromHeldRows(
-  rows: Array<{ transport: string; target: string; meta: unknown }>,
-): { addresses: string[]; userIds: string[] } {
-  const addresses = new Set<string>();
-  const userIds = new Set<string>();
+  rows: Array<{ transport: string; target: string; meta: unknown; notificationId?: string }>,
+): { addresses: string[]; userIds: string[]; alerts: RecipientAlertMap } {
+  const byAddress = new Map<string, Set<string>>();
+  const byUser = new Map<string, Set<string>>();
+  const note = (m: Map<string, Set<string>>, key: string, id: string | undefined) => {
+    const s = m.get(key) ?? new Set<string>();
+    if (id) s.add(id);
+    m.set(key, s);
+  };
   for (const r of rows) {
     const meta = (r.meta && typeof r.meta === "object" ? r.meta : {}) as Record<string, unknown>;
     if (r.transport === "email") {
       for (const a of r.target.split(",")) {
         const t = a.trim().toLowerCase();
-        if (t) addresses.add(t);
+        if (t) note(byAddress, t, r.notificationId);
       }
       for (const a of Array.isArray(meta.cc) ? meta.cc : []) {
-        if (typeof a === "string" && a.trim()) addresses.add(a.trim().toLowerCase());
+        if (typeof a === "string" && a.trim()) note(byAddress, a.trim().toLowerCase(), r.notificationId);
       }
     } else if (r.transport === "web_push") {
-      if (typeof meta.userId === "string" && meta.userId) userIds.add(meta.userId);
+      if (typeof meta.userId === "string" && meta.userId) note(byUser, meta.userId, r.notificationId);
     }
   }
-  return { addresses: Array.from(addresses), userIds: Array.from(userIds) };
+  const plain = (m: Map<string, Set<string>>) => Object.fromEntries(Array.from(m, ([k, s]) => [k, Array.from(s)]));
+  return {
+    addresses: Array.from(byAddress.keys()),
+    userIds: Array.from(byUser.keys()),
+    alerts: { byAddress: plain(byAddress), byUser: plain(byUser) },
+  };
+}
+
+/**
+ * One reader's copy of a summary: only the outstanding rows and recurring
+ * rows for alerts they were a target of. A reader whose alerts all recovered
+ * gets the all-quiet copy, counting their own. A recipient with no `alertIds`
+ * gets the summary whole (see `SummaryRecipient.alertIds`). Pure.
+ */
+export function detailsForRecipient(details: SummaryDetails, recipient: Pick<SummaryRecipient, "alertIds">): SummaryDetails {
+  if (!Array.isArray(recipient.alertIds)) return details;
+  const mine = new Set(recipient.alertIds);
+  const outstanding = (details.outstanding ?? []).filter((o) => mine.has(o.notificationId));
+  const recurring = (details.recurring ?? []).filter((r) => (r.notificationIds ?? []).some((id) => mine.has(id)));
+  if (outstanding.length === 0 && recurring.length === 0) {
+    return { outstanding: [], recurring: [], recurrenceThreshold: details.recurrenceThreshold, allQuiet: true, heldCount: mine.size };
+  }
+  return { outstanding, recurring, recurrenceThreshold: details.recurrenceThreshold };
 }
 
 interface EmailChannelRow { id: string; type: string; enabled: boolean; config: unknown }
@@ -336,16 +392,24 @@ export async function createDueSummaries(now: Date = new Date()): Promise<number
       details.allQuiet = true;
       details.heldCount = covered.length;
     }
-    if (allQuiet && !(config && quietSummaryAlways(config))) {
+    const always = !!(config && quietSummaryAlways(config));
+    if (allQuiet && !always) {
       status = "empty";
     } else {
+      // Every covered alert's held rows, so each reader's copy can be cut to
+      // the alerts that would have reached THEM (detailsForRecipient): a
+      // global quiet time spans many automations with different audiences,
+      // and one reader must never be mailed another team's devices.
       const heldRows = await prisma.notificationDelivery.findMany({
-        where: { notificationId: { in: allQuiet ? covered.map((c) => c.id) : listedIds }, status: "held" },
-        select: { transport: true, target: true, meta: true, channelId: true },
+        where: { notificationId: { in: covered.map((c) => c.id) }, status: "held" },
+        select: { notificationId: true, transport: true, target: true, meta: true, channelId: true },
       });
-      const { addresses, userIds } = recipientsFromHeldRows(heldRows);
+      const { addresses, userIds, alerts } = recipientsFromHeldRows(heldRows);
       channel = await resolveSummaryChannel(config?.summaryChannelId, heldRows.map((r) => r.channelId));
-      recipients = await resolveRecipients(addresses, userIds, name);
+      recipients = await resolveRecipients(addresses, userIds, name, alerts);
+      // A reader whose own alerts all recovered gets the all-quiet copy only
+      // when the policy sends one; otherwise they are not mailed at all.
+      if (!always) recipients = recipients.filter((r) => !detailsForRecipient(details, r).allQuiet);
       if (!channel) {
         status = "unroutable";
         await logEvent({
@@ -586,8 +650,10 @@ async function staticRecipientsOfRules(rules: RuleRecipientRow[]): Promise<{ add
 }
 
 /** Addresses → recipients with their account (for the zone), plus push
- *  accounts reached by their email. Skips an account with no address, once. */
-async function resolveRecipients(addresses: string[], userIds: string[], sourceName: string): Promise<SummaryRecipient[]> {
+ *  accounts reached by their email. Skips an account with no address, once.
+ *  With `alerts`, each recipient carries the alerts it was a target of — by
+ *  address and by push account, merged when both name the same person. */
+async function resolveRecipients(addresses: string[], userIds: string[], sourceName: string, alerts?: RecipientAlertMap): Promise<SummaryRecipient[]> {
   const users = (addresses.length > 0 || userIds.length > 0)
     ? await prisma.user.findMany({
         where: {
@@ -612,6 +678,12 @@ async function resolveRecipients(addresses: string[], userIds: string[], sourceN
     if (existing) existing.userId = u.id;
     else if (userIds.includes(u.id)) byAddress.set(addr, { address: addr, userId: u.id, status: "pending", attempts: 0 });
   }
+  if (alerts) {
+    for (const r of byAddress.values()) {
+      const ids = new Set([...(alerts.byAddress[r.address] ?? []), ...(r.userId ? alerts.byUser[r.userId] ?? [] : [])]);
+      r.alertIds = Array.from(ids);
+    }
+  }
   if (noEmail.length > 0) {
     await logEvent({
       action: "quiet_time.summary_recipient_skipped",
@@ -626,6 +698,78 @@ async function resolveRecipients(addresses: string[], userIds: string[], sourceN
 }
 
 // ─── SEND ────────────────────────────────────────────────────────────────────
+
+interface SummaryRowFacts { sourceName: string; sourceKind: string; coveredFrom: Date; coveredTo: Date }
+
+/** One reader's email: their filtered copy, in their zone, with the letterhead.
+ *  The drain sends it; `renderSentSummaryEmail` shows it again. */
+async function renderRecipientCopy(row: SummaryRowFacts, details: SummaryDetails, r: SummaryRecipient, zone: string, now: Date) {
+  const mine = detailsForRecipient(details, r);
+  const rendered = renderQuietSummaryEmail({
+    sourceName: row.sourceName,
+    sourceKind: row.sourceKind as QuietSourceKind,
+    coveredFrom: row.coveredFrom,
+    coveredTo: row.coveredTo,
+    zone,
+    outstanding: mine.outstanding ?? [],
+    recurring: mine.recurring ?? [],
+    recurrenceThreshold: mine.recurrenceThreshold ?? null,
+    allQuiet: mine.allQuiet === true,
+    heldCount: mine.heldCount ?? 0,
+    now,
+  });
+  return applyBrandLetterhead({ to: [r.address], subject: rendered.subject, text: rendered.text, html: rendered.html });
+}
+
+function readDetails(raw: unknown): SummaryDetails {
+  return (raw && typeof raw === "object" ? raw : { outstanding: [], recurring: [], recurrenceThreshold: null }) as unknown as SummaryDetails;
+}
+
+/**
+ * The email one recipient of a summary got (or will get), rebuilt from the
+ * row: their filtered copy, in the zone it was rendered in, as of the moment
+ * it went. For the Settings → recent summaries → Recipients view. The inline
+ * logo is turned into a data URI so the browser can draw it. Re-rendered with
+ * today's template and letterhead — the facts are the stored ones.
+ */
+export async function renderSentSummaryEmail(id: string, address: string) {
+  const row = await prisma.quietTimeSummary.findUnique({
+    where: { id },
+    select: { id: true, sourceKind: true, sourceName: true, coveredFrom: true, coveredTo: true, details: true, recipients: true, createdAt: true, sentAt: true },
+  });
+  if (!row) throw new AppError(404, "Quiet-time summary not found");
+  const recipients = (Array.isArray(row.recipients) ? row.recipients : []) as unknown as SummaryRecipient[];
+  const want = address.trim().toLowerCase();
+  const r = recipients.find((x) => x.address === want);
+  if (!r) throw new AppError(404, "That address is not a recipient of this summary");
+  let zone = r.zone;
+  if (!zone && r.userId) {
+    const u = await prisma.user.findUnique({ where: { id: r.userId }, select: { timezone: true, detectedTimezone: true } });
+    if (u) zone = resolveTimeZone(u.timezone, u.detectedTimezone);
+  }
+  zone ||= serverTimeZone();
+  const when = r.sentAt ? new Date(r.sentAt) : (row.sentAt ?? row.createdAt);
+  const details = readDetails(row.details);
+  const msg = await renderRecipientCopy(row, details, r, zone, when);
+  let html = msg.html ?? "";
+  for (const a of (msg as { attachments?: Array<{ cid: string; contentType: string; content: Buffer }> }).attachments ?? []) {
+    html = html.split(`cid:${a.cid}`).join(`data:${a.contentType};base64,${Buffer.from(a.content).toString("base64")}`);
+  }
+  const mine = detailsForRecipient(details, r);
+  return {
+    address: r.address,
+    status: r.status,
+    zone,
+    sentAt: r.status === "sent" ? when.toISOString() : null,
+    /** False on a row written before per-reader filtering: everyone got it whole. */
+    filtered: Array.isArray(r.alertIds),
+    listedCount: (mine.outstanding ?? []).length,
+    recurringCount: (mine.recurring ?? []).length,
+    subject: msg.subject,
+    text: msg.text,
+    html,
+  };
+}
 
 export async function drainPendingSummaries(now: Date = new Date()): Promise<{ sent: number; failed: number }> {
   const rows = await prisma.quietTimeSummary.findMany({
@@ -659,29 +803,18 @@ export async function drainPendingSummaries(now: Date = new Date()): Promise<{ s
       const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, timezone: true, detectedTimezone: true } });
       for (const u of users) zones.set(u.id, resolveTimeZone(u.timezone, u.detectedTimezone));
     }
-    const details = (row.details && typeof row.details === "object" ? row.details : { outstanding: [], recurring: [], recurrenceThreshold: null }) as unknown as SummaryDetails;
+    const details = readDetails(row.details);
 
     for (const chunk of chunkArray(todo, SEND_CONCURRENCY)) {
       await Promise.all(chunk.map(async (r) => {
         r.attempts += 1;
         try {
           const zone = (r.userId && zones.get(r.userId)) || serverTimeZone();
-          const rendered = renderQuietSummaryEmail({
-            sourceName: row.sourceName,
-            sourceKind: row.sourceKind as QuietSourceKind,
-            coveredFrom: row.coveredFrom,
-            coveredTo: row.coveredTo,
-            zone,
-            outstanding: details.outstanding ?? [],
-            recurring: details.recurring ?? [],
-            recurrenceThreshold: details.recurrenceThreshold ?? null,
-            allQuiet: details.allQuiet === true,
-            heldCount: details.heldCount ?? 0,
-            now,
-          });
-          const msg = await applyBrandLetterhead({ to: [r.address], subject: rendered.subject, text: rendered.text, html: rendered.html });
+          const msg = await renderRecipientCopy(row, details, r, zone, now);
           await sendEmailThroughChannel({ type: channel.type, config: channel.config as Record<string, unknown> }, msg);
           r.status = "sent";
+          r.zone = zone;
+          r.sentAt = now.toISOString();
           delete r.error;
           sent++;
         } catch (err) {

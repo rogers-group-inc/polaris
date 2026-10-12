@@ -48,6 +48,7 @@ import { isPgbossInstalled, getBootTimeMode, getQueueMode } from "./queueService
 import { dbIsLocal, getDeploymentContext } from "../utils/deploymentContext.js";
 import { BACKUP_DIR, STATE_DIR } from "../utils/paths.js";
 import { logger } from "../utils/logger.js";
+import { AppError } from "../utils/errors.js";
 import { getDirectDatabaseUrl, isPgbouncerMode } from "../utils/dbConnections.js";
 import { logEvent } from "./eventLogService.js";
 import { detectFping } from "../utils/burstPing.js";
@@ -2316,11 +2317,33 @@ export async function getCapacitySnapshotWithAdvisor(
 // severity actually changes. The Event flows out through eventArchiveService
 // to syslog/SFTP, so a flip into red on a busy night reaches the on-call
 // channel even when the UI has already stopped responding (DB on the floor).
-// The route handler and a periodic job both call this; concurrent calls are
-// idempotent because we re-read the stored value inside the same flow and
-// no-op when it already matches the new severity.
+//
+// Business rule 105: ONE evaluator, and a change must HOLD. Only the
+// capacityWatch job calls recordCapacityTransition — the page-load routes
+// grade capacity with different inputs (no pg_settings read, no advisor gaps),
+// and when they also wrote here, a page load and the next job tick disagreed
+// and each wrote a transition the other undid. And a change becomes an Event
+// only once every reading for `capacity.alertHold` minutes has disagreed with
+// the recorded severity; one reading that agrees again throws the pending
+// change away. A dead-tuple ratio that crosses 20% and autovacuums back within
+// ten minutes is not something to page about.
 
 const SEVERITY_SETTING_KEY = "capacity.lastSeverity";
+const ALERT_HOLD_SETTING_KEY = "capacity.alertHold";
+
+/** Default hold: three job ticks after the first reading (four readings in all). */
+export const CAPACITY_ALERT_HOLD_DEFAULT_MINUTES = 30;
+/** Upper bound the PUT route accepts — a day. Longer stops being a hold and starts being a mute. */
+export const CAPACITY_ALERT_HOLD_MAX_MINUTES = 1440;
+/** The capacityWatch tick. Exported so the job and the stale-pending gap share one number. */
+export const CAPACITY_WATCH_INTERVAL_MS = 10 * 60 * 1000;
+/**
+ * A pending change whose last reading is older than this is abandoned and
+ * restarted: the evaluator was not watching in between (Polaris was stopped,
+ * the job failed), so nobody can say the condition held across the gap.
+ * Two and a half ticks tolerates one failed tick plus scheduling drift.
+ */
+const PENDING_STALE_GAP_MS = CAPACITY_WATCH_INTERVAL_MS * 2.5;
 
 /**
  * The two audit actions a capacity transition can write — the same shape as
@@ -2331,9 +2354,19 @@ const SEVERITY_SETTING_KEY = "capacity.lastSeverity";
 export const CAPACITY_CHANGED_ACTION = "capacity.severity_changed";
 export const CAPACITY_RECOVERED_ACTION = "capacity.severity_recovered";
 
+/** A severity change the evaluator has seen but not yet held long enough to record. */
+export interface PendingSeverity {
+  severity: Severity;
+  /** First reading of the run of disagreeing readings — what the hold is measured from. */
+  since: string;
+  /** Most recent disagreeing reading. */
+  lastAt: string;
+}
+
 interface StoredSeverity {
   severity: Severity;
   recordedAt: string;
+  pending?: PendingSeverity;
 }
 
 async function readStoredSeverity(): Promise<StoredSeverity | null> {
@@ -2343,19 +2376,62 @@ async function readStoredSeverity(): Promise<StoredSeverity | null> {
   if (!v || !v.severity) return null;
   // Back-compat: pre-rename rows store "red"/"amber"; normalize on read so
   // the transition compare against the fresh severity uses the same vocab.
+  const p = v.pending;
   return {
     severity: normalizeSeverity(v.severity),
     recordedAt: v.recordedAt ?? new Date(0).toISOString(),
+    pending: p && p.severity && p.since && p.lastAt
+      ? { severity: normalizeSeverity(p.severity), since: p.since, lastAt: p.lastAt }
+      : undefined,
   };
 }
 
-async function writeStoredSeverity(severity: Severity): Promise<void> {
-  const value: StoredSeverity = { severity, recordedAt: new Date().toISOString() };
+async function writeStoredSeverity(value: StoredSeverity): Promise<void> {
   await prisma.setting.upsert({
     where: { key: SEVERITY_SETTING_KEY },
     update: { value: value as any },
     create: { key: SEVERITY_SETTING_KEY, value: value as any },
   });
+}
+
+/** Minutes a severity change must hold before it is recorded; 0 records on the first reading. */
+export async function getCapacityAlertHoldMinutes(): Promise<number> {
+  const row = await prisma.setting.findUnique({ where: { key: ALERT_HOLD_SETTING_KEY } });
+  const m = (row?.value as { minutes?: unknown } | null)?.minutes;
+  return typeof m === "number" && Number.isInteger(m) && m >= 0 && m <= CAPACITY_ALERT_HOLD_MAX_MINUTES
+    ? m
+    : CAPACITY_ALERT_HOLD_DEFAULT_MINUTES;
+}
+
+export async function setCapacityAlertHoldMinutes(minutes: number): Promise<void> {
+  if (!Number.isInteger(minutes) || minutes < 0 || minutes > CAPACITY_ALERT_HOLD_MAX_MINUTES) {
+    throw new AppError(400, `minutes must be a whole number from 0 to ${CAPACITY_ALERT_HOLD_MAX_MINUTES}`);
+  }
+  await prisma.setting.upsert({
+    where: { key: ALERT_HOLD_SETTING_KEY },
+    update: { value: { minutes } },
+    create: { key: ALERT_HOLD_SETTING_KEY, value: { minutes } },
+  });
+}
+
+/**
+ * What the alerting side has recorded, the change it is waiting out (if any),
+ * and the hold — for the Maintenance tab, which grades capacity live and can
+ * otherwise read OK beside an alert that is still open.
+ */
+export async function getCapacityTransitionState(): Promise<{
+  recorded: { severity: Severity; recordedAt: string } | null;
+  pending: PendingSeverity | null;
+  holdMinutes: number;
+  intervalMinutes: number;
+}> {
+  const [stored, holdMinutes] = await Promise.all([readStoredSeverity(), getCapacityAlertHoldMinutes()]);
+  return {
+    recorded: stored ? { severity: stored.severity, recordedAt: stored.recordedAt } : null,
+    pending: stored?.pending ?? null,
+    holdMinutes,
+    intervalMinutes: CAPACITY_WATCH_INTERVAL_MS / 60_000,
+  };
 }
 
 function severityRank(s: Severity): number {
@@ -2370,13 +2446,26 @@ function pickHeadlineReason(reasons: CapacityReason[]): CapacityReason | null {
   return ranked[0];
 }
 
+function formatHeld(ms: number): string {
+  const min = Math.round(ms / 60_000);
+  return min >= 120 && min % 60 === 0 ? `${min / 60} h` : `${min} min`;
+}
+
 /**
- * Compare current snapshot severity against the last-stored severity and emit
- * one Event if they differ. Best-effort — failures are logged at debug level
- * and never thrown so a transient DB hiccup doesn't break the snapshot fetch.
+ * Compare current snapshot severity against the last-recorded severity and
+ * emit one Event once a change has HELD for the configured minutes (rule 105).
+ * Best-effort — failures are logged at debug level and never thrown so a
+ * transient DB hiccup doesn't break the capacity job.
  *
  * Maps severity to Event level: red → "error", amber/watch → "warning",
  * ok → "info" (recovery).
+ *
+ * The hold is symmetric: a recovery waits it out too, so a host flapping at a
+ * threshold cannot clear and re-raise its alert on alternate readings. The
+ * very first reading (no recorded severity) is a baseline, not a change, and
+ * is recorded at once. Readings that disagree with the recorded severity need
+ * not agree with EACH OTHER — a warning reading followed by a critical one is
+ * one run, and the severity written when the hold matures is the latest.
  *
  * TWO ACTIONS, not one. A return to `ok` writes `capacity.severity_recovered`;
  * every other transition (escalation, and a partial recovery that lands on a
@@ -2389,10 +2478,42 @@ function pickHeadlineReason(reasons: CapacityReason[]): CapacityReason | null {
  * comment predicted. A partial recovery deliberately does NOT clear: capacity
  * dropping critical → warning is still capacity to answer for.
  */
-export async function recordCapacityTransition(snap: CapacitySnapshot): Promise<void> {
+export async function recordCapacityTransition(
+  snap: CapacitySnapshot,
+  now: Date = new Date(),
+): Promise<void> {
   try {
     const prior = await readStoredSeverity();
-    if (prior && prior.severity === snap.severity) return;
+
+    if (prior && prior.severity === snap.severity) {
+      // Agrees with what was recorded. A pending change that did not hold is
+      // dropped — that is the blip the hold exists to swallow.
+      if (prior.pending) {
+        logger.debug(
+          { pending: prior.pending, recorded: prior.severity },
+          "capacityService: pending severity change did not hold; discarded",
+        );
+        await writeStoredSeverity({ severity: prior.severity, recordedAt: prior.recordedAt });
+      }
+      return;
+    }
+
+    let heldMs = 0;
+    if (prior) {
+      const holdMs = (await getCapacityAlertHoldMinutes()) * 60_000;
+      const pending = prior.pending;
+      const continuing = pending && now.getTime() - new Date(pending.lastAt).getTime() <= PENDING_STALE_GAP_MS;
+      const since = continuing ? pending.since : now.toISOString();
+      heldMs = now.getTime() - new Date(since).getTime();
+      if (heldMs < holdMs) {
+        await writeStoredSeverity({
+          severity: prior.severity,
+          recordedAt: prior.recordedAt,
+          pending: { severity: snap.severity, since, lastAt: now.toISOString() },
+        });
+        return;
+      }
+    }
 
     const level = snap.severity === "critical"
       ? "error"
@@ -2412,13 +2533,14 @@ export async function recordCapacityTransition(snap: CapacitySnapshot): Promise<
     const recovered = direction === "recovered" && snap.severity === "ok";
 
     const headline = pickHeadlineReason(snap.reasons);
+    const heldText = heldMs > 0 ? ` (held ${formatHeld(heldMs)})` : "";
     const message = !prior
       ? `Capacity baseline established at ${snap.severity}.`
       : direction === "escalated"
-        ? `Capacity ${prior.severity} → ${snap.severity}${headline ? `: ${headline.message}` : "."}`
+        ? `Capacity ${prior.severity} → ${snap.severity}${heldText}${headline ? `: ${headline.message}` : "."}`
         : recovered
-          ? `Capacity is back to OK (was ${prior.severity}).`
-          : `Capacity ${prior.severity} → ${snap.severity} (recovered).`;
+          ? `Capacity is back to OK (was ${prior.severity})${heldText}.`
+          : `Capacity ${prior.severity} → ${snap.severity} (recovered)${heldText}.`;
 
     // Routed through logEvent so Setting.eventRetention.minLevel applies
     // uniformly across the codebase — an operator who muted info events
@@ -2435,6 +2557,7 @@ export async function recordCapacityTransition(snap: CapacitySnapshot): Promise<
         from: prior?.severity ?? null,
         to: snap.severity,
         direction,
+        heldSec: Math.round(heldMs / 1000),
         reasons: snap.reasons,
         volumes: snap.appHost.volumes.map((v) => ({
           paths: v.paths,
@@ -2448,7 +2571,7 @@ export async function recordCapacityTransition(snap: CapacitySnapshot): Promise<
       },
     });
 
-    await writeStoredSeverity(snap.severity);
+    await writeStoredSeverity({ severity: snap.severity, recordedAt: now.toISOString() });
   } catch (err: any) {
     logger.debug({ err: err?.message }, "capacityService: recordCapacityTransition failed");
   }

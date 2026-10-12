@@ -1214,6 +1214,8 @@ const api = {
     summaries: (limit) => request("GET", "/automations/quiet-times/summaries" + (limit ? `?limit=${encodeURIComponent(limit)}` : "")),
     /** One summary in full: covered alerts, what was listed, every recipient. */
     summary:   (id)    => request("GET", `/automations/quiet-times/summaries/${id}`),
+    /** The email one recipient of a summary got — their own filtered copy. */
+    summaryEmail: (id, address) => request("GET", `/automations/quiet-times/summaries/${id}/email?address=${encodeURIComponent(address)}`),
     /** Send a failed summary again to every recipient not yet reached. */
     resendSummary: (id) => request("POST", `/automations/quiet-times/summaries/${id}/resend`, {}),
     create:    (body)  => request("POST", "/automations/quiet-times", body),
@@ -1585,6 +1587,7 @@ const api = {
     getQueueMode: () => request("GET", "/server-settings/queue-mode"),
     setQueueMode: (mode) => request("POST", "/server-settings/queue-mode", { mode: mode }),
     getCapacityAdvisor: () => request("GET", "/server-settings/capacity-advisor"),
+    setCapacityAlertHold: (minutes) => request("PUT", "/server-settings/capacity-alert-hold", { minutes: minutes }),
     getPlatformLifecycle: (refresh) => request("GET", "/server-settings/platform-lifecycle" + (refresh ? "?refresh=1" : "")),
     stageCapacityAdvisor: (keys) => request("POST", "/server-settings/capacity-advisor/stage", { keys: keys }),
     getSampleRetention: () => request("GET", "/server-settings/sample-retention"),

@@ -120,6 +120,26 @@ Settings tab, which re-queues only the recipients it never reached. That verb ex
 the very first summary on the dev stack failed every attempt on a mistyped channel host, seconds
 before the host was corrected, and there was no way to send it.
 
+**Each reader is told only about their own alerts.** The first version decided the
+summary's contents once per SOURCE and mailed that one list to the union of every listed
+alert's audience. A source is a whole global quiet time, which covers every automation that
+does not opt out, so on 2026-10-12 an infrastructure distribution group received a summary
+naming devices from automations that had never paged it. The operator: *"i want filtered
+results that only pertain to that recipient."* The held rows already said who each alert was
+for, so the create step reads them for EVERY covered alert and keeps the answer per recipient
+(`SummaryRecipient.alertIds`, by address and by push account). The drain renders each copy
+through `detailsForRecipient`: outstanding rows whose alert is theirs, and recurring rows with
+any member that is theirs (a recurring row now carries `notificationIds`). A reader whose
+own alerts all recovered gets the all-quiet copy that counts their own alerts, or no email
+when `summaryAlways` is off. The row's `details` stays the whole night: it is the record of
+what the source held. The all-quiet row built from static recipients carries no `alertIds`
+and lists nothing, so it is unaffected. A row written before this change has no `alertIds`
+and renders whole, which is what it actually sent. Each sent copy also records `zone` and
+`sentAt`, so the Recipients view's **View email**
+(`GET /automations/quiet-times/summaries/:id/email?address=`,
+`renderSentSummaryEmail`) re-renders exactly that reader's copy from the stored facts, with
+today's template and letterhead.
+
 **Due is "the stretch ended, the send time arrived, and it is not quiet again".** A window
 ending 06:00 with a 07:30 send time summarises at 07:30; a second window that opened at 07:00
 folds those alerts into ITS summary rather than mailing mid-silence. The send time is refused

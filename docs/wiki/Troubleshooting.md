@@ -138,6 +138,7 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 |---|---|
 | A filesystem filled up while **Maintenance said "All capacity checks passed"** | The card grades the volumes it can measure, so a volume missing from **Storage volumes** reads as healthy rather than unknown. An unreachable path is measured from its nearest reachable ancestor rather than dropped |
 | **Storage volumes lists only the application volume** on a host whose database is on its own filesystem | PGDATA and its parents are mode `0700 postgres` and Polaris runs unprivileged, so it cannot measure that filesystem. `chmod o+x` on the PGDATA parent directories lets it — the data directory itself stays `0700` |
+| A **capacity alert is open while the Database card reads Healthy**, or the card shows a problem that has not alerted | The card shows the live grade; alerting records a change only after it holds for the **alert hold** (30 minutes by default), in either direction. The line under **Alert after a change holds for** on the Database card names what alerting last recorded, or the change it is waiting out and when it is recorded. See [Server-Settings](Server-Settings#capacity-advisor) and [rule 105](Business-Rules#rule-105) |
 | The database volume fills with **`log/`, not data** | PostgreSQL's own server log. `log_rotation_size = 0` means no size cap, and a low `log_min_duration_statement` or `log_autovacuum_min_duration` can produce gigabytes a day. Compare `base/`, `pg_wal/` and `log/` before assuming the database grew |
 
 ---

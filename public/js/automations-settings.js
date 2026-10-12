@@ -205,7 +205,7 @@
       // this modal): which alerts the summary stamped, what the email said,
       // and who it went to with each address's outcome.
       "<td>" + detailBtn(r.id, "covered", (r.notificationIds || []).length + " alert" + ((r.notificationIds || []).length === 1 ? "" : "s"), "Every alert this summary covered") + "</td>" +
-      "<td>" + detailBtn(r.id, "listed", r.listedCount + " outstanding" + (r.recurringCount ? ", " + r.recurringCount + " recurring" : ""), "What the email listed") + "</td>" +
+      "<td>" + detailBtn(r.id, "listed", r.listedCount + " outstanding" + (r.recurringCount ? ", " + r.recurringCount + " recurring" : ""), "What the summary listed, across all recipients") + "</td>" +
       "<td>" + (recips.length ? detailBtn(r.id, "recipients", sent + "/" + recips.length, "Who it went to, and whether it arrived") : "—") + "</td>" +
       '<td><span class="badge ' + statusCls + '"' + (firstErr ? ' title="' + escapeHtml(firstErr) + '"' : "") + '>' + escapeHtml(r.status) + "</span></td>" +
       '<td style="text-align:right;white-space:nowrap">' +
@@ -267,7 +267,7 @@
       var held = d.summary && d.summary.details && d.summary.details.heldCount;
       return '<p class="hint">The email listed nothing: ' + (held ? held + " alert" + (held === 1 ? "" : "s") + " fired and recovered during the quiet period" : "no alerts were held") + ". It was sent as the all-quiet summary.</p>";
     }
-    var html = "";
+    var html = '<p class="hint" style="margin:0 0 8px">Everything listed across all recipients. Each recipient\'s email names only the alerts that would have reached them — open <strong>Recipients</strong> to see each one.</p>';
     if (out.length) {
       html += '<h4 style="margin:0 0 6px;font-size:0.85rem">Still outstanding (' + out.length + ")</h4>" +
         '<table style="width:100%;border-collapse:collapse;margin-bottom:14px"><thead><tr><th ' + TH + '>Severity</th><th ' + TH + '>Device</th><th ' + TH + '>What</th><th ' + TH + '>Since</th></tr></thead><tbody>' +
@@ -291,18 +291,60 @@
     return html;
   }
 
-  /** The Recipients view: every address with its outcome. */
+  /** The Recipients view: every address with what ITS copy listed, its
+   *  outcome, and the email itself (each reader sees only their own alerts). */
   function recipientsHtml(d) {
     var recips = (d.summary && Array.isArray(d.summary.recipients)) ? d.summary.recipients : [];
     if (!recips.length) return '<p class="hint">This summary had no recipients.</p>';
-    return '<table style="width:100%;border-collapse:collapse"><thead><tr><th ' + TH + '>Address</th><th ' + TH + '>Status</th><th ' + TH + '>Attempts</th><th ' + TH + '>Error</th></tr></thead><tbody>' +
+    var legacy = recips.some(function (r) { return r.filtered === false; }) && (d.covered || []).length > 0;
+    return (legacy
+      ? '<p class="hint" style="margin:0 0 8px">This summary predates per-recipient filtering: every recipient was sent the whole summary.</p>'
+      : "") +
+      '<table style="width:100%;border-collapse:collapse"><thead><tr><th ' + TH + '>Address</th><th ' + TH + '>Their email listed</th><th ' + TH + '>Status</th><th ' + TH + '>Attempts</th><th ' + TH + '>Error</th><th ' + TH + '></th></tr></thead><tbody>' +
       recips.map(function (r) {
         var cls = r.status === "sent" ? "badge-active" : r.status === "pending" ? "badge-warning" : "badge-deprecated";
+        var listed = (r.listedCount || 0) + " outstanding" + (r.recurringCount ? ", " + r.recurringCount + " recurring" : "");
+        if (!r.listedCount && !r.recurringCount) listed = "all quiet";
         return "<tr><td " + TD + ">" + escapeHtml(r.address) + (r.userId ? ' <span style="font-size:0.78rem;color:var(--color-text-tertiary)">(account)</span>' : "") + "</td>" +
+          "<td " + TD + ">" + escapeHtml(listed) + "</td>" +
           "<td " + TD + '><span class="badge ' + cls + '">' + escapeHtml(r.status) + "</span></td>" +
           "<td " + TD + ">" + escapeHtml(String(r.attempts == null ? "—" : r.attempts)) + "</td>" +
-          "<td " + TD + ">" + (r.error ? escapeHtml(r.error) : "—") + "</td></tr>";
+          "<td " + TD + ">" + (r.error ? escapeHtml(r.error) : "—") + "</td>" +
+          "<td " + TD + ' style="text-align:right;white-space:nowrap"><button type="button" class="btn btn-sm" data-qt-email="' + escapeHtml(r.address) + '" title="' +
+            (r.status === "sent" ? "The email this recipient was sent" : "The email this recipient will be sent") + '">View email</button></td></tr>';
       }).join("") + "</tbody></table>";
+  }
+
+  /** One recipient's email, drawn in a shadow root so its styles stay its own. */
+  async function openRecipientEmail(id, address) {
+    var e;
+    try {
+      e = await api.quietTimes.summaryEmail(id, address);
+    } catch (err) {
+      showToast((err && err.message) || "Could not load the email", "error");
+      return;
+    }
+    if (typeof buildOverlay !== "function") { showToast("The dialog helper did not load", "error"); return; }
+    var meta = '<div style="font-size:0.85rem;margin:0 0 10px;display:grid;grid-template-columns:auto 1fr;gap:2px 12px">' +
+      '<span style="color:var(--color-text-tertiary)">To</span><span>' + escapeHtml(e.address) + "</span>" +
+      '<span style="color:var(--color-text-tertiary)">Subject</span><span>' + escapeHtml(e.subject || "") + "</span>" +
+      '<span style="color:var(--color-text-tertiary)">' + (e.sentAt ? "Sent" : "Status") + "</span><span>" +
+        (e.sentAt ? escapeHtml(fmtAt(e.sentAt)) : escapeHtml(e.status || "")) +
+        ' <span style="color:var(--color-text-tertiary)">· times shown in ' + escapeHtml(e.zone || "") + "</span></span>" +
+      "</div>" +
+      (e.filtered ? "" : '<p class="hint" style="margin:0 0 8px">Sent before per-recipient filtering — this is the whole summary, as every recipient got it.</p>') +
+      '<div id="qt-email-body" style="border:1px solid var(--color-border);border-radius:6px;background:#fff;color:#111;max-height:65vh;overflow:auto"></div>';
+    var layer = buildOverlay(1400, "Summary email", meta, '<button type="button" class="btn btn-secondary" id="qt-email-close">Close</button>', null, true);
+    var host = layer.dialog.querySelector("#qt-email-body");
+    if (host) {
+      // The body is the server's own render (every value escaped there); the
+      // shadow root keeps its email-client styles from leaking into the page.
+      var root = host.attachShadow ? host.attachShadow({ mode: "open" }) : host;
+      if (e.html) root.innerHTML = e.html;
+      else root.textContent = e.text || "";
+    }
+    var closeBtn = layer.dialog.querySelector("#qt-email-close");
+    if (closeBtn) closeBtn.addEventListener("click", layer.close);
   }
 
   /** Open one of the three lists over the Settings modal. */
@@ -316,14 +358,17 @@
     }
     var s = d.summary || {};
     var range = fmtAt(s.coveredFrom) + " → " + fmtAt(s.coveredTo);
-    var titles = { covered: "Alerts covered", listed: "What the email listed", recipients: "Recipients" };
+    var titles = { covered: "Alerts covered", listed: "What the summary listed", recipients: "Recipients" };
     var body = '<p style="margin:0 0 10px;font-size:0.85rem;color:var(--color-text-secondary)">' + escapeHtml(s.sourceName || "") +
       ' <span style="color:var(--color-text-tertiary)">(' + (s.sourceKind === "global" ? "global quiet time" : "automation quiet time") + ") · " + escapeHtml(range) + "</span></p>" +
       (kind === "covered" ? coveredHtml(d) : kind === "listed" ? listedHtml(d) : recipientsHtml(d));
     if (typeof buildOverlay !== "function") { showToast("The dialog helper did not load", "error"); return; }
-    var layer = buildOverlay(1300, titles[kind] || "Summary", body, '<button type="button" class="btn btn-secondary" id="qt-detail-close">Close</button>', null, kind !== "recipients");
+    var layer = buildOverlay(1300, titles[kind] || "Summary", body, '<button type="button" class="btn btn-secondary" id="qt-detail-close">Close</button>', null, true);
     var closeBtn = layer.dialog.querySelector("#qt-detail-close");
     if (closeBtn) closeBtn.addEventListener("click", layer.close);
+    layer.dialog.querySelectorAll("[data-qt-email]").forEach(function (el) {
+      el.addEventListener("click", function () { openRecipientEmail(id, el.getAttribute("data-qt-email")); });
+    });
   }
 
   function openWizard(row) {
