@@ -192,6 +192,20 @@ router.get("/resource-types", requirePermission("events", "read"), async (_req, 
   }
 });
 
+// The archive settings reach ssh / sftp / scp, so the body is parsed here
+// (types and sizes, unknown keys dropped) and the service then checks the
+// CONTENT of host / username / paths. See eventArchiveService.assertSafeArchiveSettings.
+const ArchiveSettingsSchema = z.object({
+  enabled:    z.boolean().optional(),
+  protocol:   z.enum(["sftp", "scp"]).optional(),
+  host:       z.string().max(253).optional(),
+  port:       z.coerce.number().int().min(1).max(65535).optional(),
+  username:   z.string().max(64).optional(),
+  password:   z.string().max(512).optional(),
+  keyPath:    z.string().max(1024).optional(),
+  remotePath: z.string().max(1024).optional(),
+});
+
 // GET /api/v1/events/archive-settings — get archive export settings
 // Reveals SSH host/username/path; admin-only even with password masked.
 router.get("/archive-settings", requirePermission("events", "write"), async (_req, res, next) => {
@@ -209,7 +223,7 @@ router.get("/archive-settings", requirePermission("events", "write"), async (_re
 // PUT /api/v1/events/archive-settings — update archive export settings
 router.put("/archive-settings", requirePermission("events", "write"), async (req, res, next) => {
   try {
-    const body = req.body;
+    const body = ArchiveSettingsSchema.parse(req.body ?? {});
     // Don't overwrite password if placeholder was sent back
     if (isMaskedSecret(body.password)) delete body.password;
     const updated = await updateArchiveSettings(body);
@@ -224,12 +238,12 @@ router.put("/archive-settings", requirePermission("events", "write"), async (req
 // POST /api/v1/events/archive-test — test SFTP/SCP connection
 router.post("/archive-test", requirePermission("events", "write"), async (req, res, next) => {
   try {
-    const settings = req.body;
-    // If password is placeholder, fetch the real one
-    if (isMaskedSecret(settings.password)) {
-      const current = await getArchiveSettings();
-      settings.password = current.password;
-    }
+    const parsed = ArchiveSettingsSchema.parse(req.body ?? {});
+    const current = await getArchiveSettings();
+    // The test runs against what the form holds, over the stored values for
+    // anything it leaves out. If password is placeholder, use the real one.
+    const settings = { ...current, ...parsed };
+    if (isMaskedSecret(parsed.password)) settings.password = current.password;
     const result = await testConnection(settings);
     res.json(result);
   } catch (err) {

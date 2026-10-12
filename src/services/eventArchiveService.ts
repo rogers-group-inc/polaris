@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { AppError } from "../utils/errors.js";
+import { isIP } from "node:net";
 
 // Spawn a child process with an explicit argv — no shell — and resolve with
 // its stdout/stderr. Rejects on non-zero exit or timeout.
@@ -66,6 +67,55 @@ function assertSafeSftpPath(p: string, label: string): void {
   }
 }
 
+// ─── Validation ─────────────────────────────────────────────────────────
+//
+// host, username, port and keyPath are handed to ssh / sftp / scp as arguments,
+// and ssh reads a leading `-` as an OPTION: a username of
+// `-oProxyCommand=<command>` runs that command through a shell as the Polaris
+// service account (scan finding F162). They are validated when saved and again
+// before every use — a value stored before this check existed must not reach a
+// command line either — and every destination is also preceded by `--`.
+
+const ARCHIVE_HOST_RE = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
+const ARCHIVE_USER_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
+// C0 controls and DEL: nothing in a path, host or user may carry them.
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
+/**
+ * Refuse any archive setting that could change what ssh / sftp / scp does.
+ * Empty host / username are allowed (unconfigured); callers that need a target
+ * check for them separately.
+ */
+export function assertSafeArchiveSettings(s: Partial<ArchiveSettings>): void {
+  if (s.protocol !== undefined && s.protocol !== "sftp" && s.protocol !== "scp") {
+    throw new AppError(400, 'protocol must be "sftp" or "scp"');
+  }
+  if (s.host) {
+    if (!(ARCHIVE_HOST_RE.test(s.host) || isIP(s.host) === 6)) {
+      throw new AppError(400, "host must be a hostname or an IP address");
+    }
+  }
+  if (s.username) {
+    if (!ARCHIVE_USER_RE.test(s.username)) {
+      throw new AppError(
+        400,
+        "username may contain only letters, digits, dot, underscore and hyphen, and may not start with a hyphen",
+      );
+    }
+  }
+  if (s.port !== undefined && (!Number.isInteger(s.port) || s.port < 1 || s.port > 65535)) {
+    throw new AppError(400, "port must be a whole number from 1 to 65535");
+  }
+  if (s.remotePath !== undefined && (typeof s.remotePath !== "string" || CONTROL_CHARS.test(s.remotePath))) {
+    throw new AppError(400, "remotePath may not contain control characters");
+  }
+  if (s.keyPath) {
+    if (typeof s.keyPath !== "string" || CONTROL_CHARS.test(s.keyPath) || s.keyPath.startsWith("-")) {
+      throw new AppError(400, "keyPath must be a file path");
+    }
+  }
+}
+
 export interface ArchiveSettings {
   enabled: boolean;
   protocol: "sftp" | "scp";
@@ -101,6 +151,7 @@ export async function updateArchiveSettings(
 ): Promise<ArchiveSettings> {
   const current = await getArchiveSettings();
   const merged: ArchiveSettings = { ...current, ...settings };
+  assertSafeArchiveSettings(merged);
 
   await prisma.setting.upsert({
     where: { key: SETTINGS_KEY },
@@ -120,6 +171,11 @@ export async function testConnection(
   if (!settings.host || !settings.username) {
     return { ok: false, message: "Host and username are required" };
   }
+  try {
+    assertSafeArchiveSettings(settings);
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
 
   const target = `${settings.username}@${settings.host}`;
   const keyOpts = sshCommonOptions(settings.keyPath);
@@ -128,13 +184,13 @@ export async function testConnection(
     if (settings.protocol === "sftp") {
       await runCommand(
         "sftp",
-        [...keyOpts, `-oPort=${settings.port}`, "-b", "-", target],
+        [...keyOpts, `-oPort=${settings.port}`, "-b", "-", "--", target],
         { timeoutMs: 15_000, stdin: "bye\n" },
       );
     } else {
       await runCommand(
         "ssh",
-        [...keyOpts, "-p", String(settings.port), target, "exit 0"],
+        [...keyOpts, "-p", String(settings.port), "--", target, "exit 0"],
         { timeoutMs: 15_000 },
       );
     }
@@ -154,6 +210,9 @@ export async function archiveAndExport(cutoff: Date): Promise<number> {
   if (!settings.enabled || !settings.host || !settings.username) {
     return 0;
   }
+  // Stored settings are checked again here: a value saved before validation
+  // existed must not reach a command line.
+  assertSafeArchiveSettings(settings);
 
   const events = await prisma.event.findMany({
     where: { timestamp: { lt: cutoff } },
@@ -180,7 +239,7 @@ export async function archiveAndExport(cutoff: Date): Promise<number> {
       assertSafeSftpPath(remoteDest, "remote archive path");
       await runCommand(
         "sftp",
-        [...keyOpts, `-oPort=${settings.port}`, "-b", "-", target],
+        [...keyOpts, `-oPort=${settings.port}`, "-b", "-", "--", target],
         {
           timeoutMs: 60_000,
           stdin: `put "${localPath}" "${remoteDest}"\nbye\n`,
@@ -189,7 +248,7 @@ export async function archiveAndExport(cutoff: Date): Promise<number> {
     } else {
       await runCommand(
         "scp",
-        [...keyOpts, "-P", String(settings.port), localPath, `${target}:${remoteDest}`],
+        [...keyOpts, "-P", String(settings.port), "--", localPath, `${target}:${remoteDest}`],
         { timeoutMs: 60_000 },
       );
     }
