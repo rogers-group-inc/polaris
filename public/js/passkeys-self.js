@@ -155,7 +155,14 @@
   async function addPasskey(btn, opts) {
     btn.disabled = true;
     try {
-      var start = await api.auth.passkeyRegisterOptions();
+      // Registering a passkey adds a way into the account that skips the
+      // password, so it asks for the password first (business rule 108).
+      var currentPassword = await showPrompt(
+        "Registering a passkey adds a new way to sign in to this account, so confirm it is you.",
+        { title: "Confirm your password", label: "Current password", okLabel: "Continue", required: true, password: true },
+      );
+      if (currentPassword === null) return;
+      var start = await api.auth.passkeyRegisterOptions(currentPassword);
       var attestation;
       try {
         attestation = await PolarisWebAuthn.create(start.options);

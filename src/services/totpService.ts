@@ -51,11 +51,23 @@ export async function buildEnrollment(secret: string, username: string): Promise
  * user's device — standard tolerance for TOTP.
  */
 export function verifyCode(secret: string, code: string): boolean {
+  return verifyCodeStep(secret, code) !== null;
+}
+
+/**
+ * Like verifyCode, but returns the 30-second time step the code belongs to (the
+ * current step plus the drift that matched), or null when it matches none.
+ * Callers record the step with `claimTotpStep` and refuse a step already used —
+ * `verifyCode` alone is stateless, so a code stayed valid for ~90 seconds after
+ * it had logged someone in (RFC 6238 section 5.2; rule 108).
+ */
+export function verifyCodeStep(secret: string, code: string, nowMs: number = Date.now()): number | null {
   const cleaned = code.replace(/\s/g, "");
-  if (!/^\d{6}$/.test(cleaned)) return false;
+  if (!/^\d{6}$/.test(cleaned)) return null;
   const totp = buildTotp(secret, "verify"); // label doesn't affect verification
-  const delta = totp.validate({ token: cleaned, window: 1 });
-  return delta !== null;
+  const delta = totp.validate({ token: cleaned, window: 1, timestamp: nowMs });
+  if (delta === null) return null;
+  return Math.floor(nowMs / 1000 / 30) + delta;
 }
 
 /**

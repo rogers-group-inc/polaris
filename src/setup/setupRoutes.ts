@@ -17,6 +17,7 @@ import { ENV_FILE, STATE_DIR } from "../utils/paths.js";
 import { makeRateLimiter } from "../api/middleware/rateLimits.js";
 import { PG_DATA_DIR_CANDIDATES, pickFirstExistingPath, probeDiskFree } from "../utils/startupDiskCheck.js";
 import { generateSecretKey } from "../utils/secretBox.js";
+import { discardSetupToken, requireSetupToken } from "./setupToken.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -32,12 +33,20 @@ const setupActionLimiter = makeRateLimiter({
   message: "Too many setup attempts. Please wait 15 minutes and try again.",
 });
 
+// These values are written into `.env` and the DATABASE_URL, so none of them may
+// carry a line break or anything that changes where the URL points. A newline in
+// the session secret added a line to `.env` (an extra variable such as
+// NODE_OPTIONS) — scan finding F178, business rule 108.
+const HOST_RE = /^[A-Za-z0-9._:\[\]-]+$/;
+const DB_NAME_RE = /^[A-Za-z0-9_$-]+$/;
+const SECRET_RE = /^[^\s\u0000-\u001f\u007f]+$/;
+
 const DbConfigSchema = z.object({
-  host: z.string().min(1),
+  host: z.string().min(1).max(253).regex(HOST_RE, "host may contain only letters, digits and . _ : [ ] -"),
   port: z.coerce.number().int().min(1).max(65535).default(5432),
   username: z.string().min(1),
   password: z.string(),
-  database: z.string().min(1),
+  database: z.string().min(1).max(63).regex(DB_NAME_RE, "database may contain only letters, digits, _ $ and -"),
   ssl: z.boolean().default(false),
   sslAllowSelfSigned: z.boolean().default(false),
 });
@@ -72,7 +81,7 @@ const FinalizeSchema = z.object({
   }),
   app: z.object({
     port: z.coerce.number().int().min(1).max(65535).default(3000),
-    sessionSecret: z.string().min(16),
+    sessionSecret: z.string().min(16).max(512).regex(SECRET_RE, "sessionSecret may not contain whitespace or control characters"),
   }),
 });
 
@@ -94,7 +103,16 @@ function buildConnectionString(db: DbConfig): string {
 
 // GET /api/setup/status
 router.get("/status", (_req, res) => {
-  res.json({ needsSetup: true });
+  // `tokenRequired` lets the page ask for the setup token before the operator
+  // fills in a form that would be refused. Nothing else about the host is said.
+  res.json({ needsSetup: true, tokenRequired: true });
+});
+
+// POST /api/setup/verify-token — lets the page check what the operator typed
+// before they spend time on the form. Rate limited like the other actions: the
+// token is the only thing between the network and this host.
+router.post("/verify-token", setupActionLimiter, requireSetupToken, (_req, res) => {
+  res.json({ ok: true });
 });
 
 // POST /api/setup/preflight — runs after the operator picks a DB host but
@@ -151,7 +169,7 @@ async function statfsForPreflight(role: PreflightVolume["role"], path: string, r
 }
 
 
-router.post("/preflight", async (req, res) => {
+router.post("/preflight", setupActionLimiter, requireSetupToken, async (req, res) => {
   try {
     const { dbHost } = PreflightSchema.parse(req.body || {});
 
@@ -232,12 +250,12 @@ router.post("/preflight", async (req, res) => {
 });
 
 // POST /api/setup/generate-secret
-router.post("/generate-secret", (_req, res) => {
+router.post("/generate-secret", setupActionLimiter, requireSetupToken, (_req, res) => {
   res.json({ secret: randomBytes(32).toString("hex") });
 });
 
 // POST /api/setup/test-connection
-router.post("/test-connection", setupActionLimiter, async (req, res) => {
+router.post("/test-connection", setupActionLimiter, requireSetupToken, async (req, res) => {
   try {
     const db = DbConfigSchema.parse(req.body);
 
@@ -281,7 +299,7 @@ router.post("/test-connection", setupActionLimiter, async (req, res) => {
 });
 
 // POST /api/setup/finalize
-router.post("/finalize", setupActionLimiter, async (req, res) => {
+router.post("/finalize", setupActionLimiter, requireSetupToken, async (req, res) => {
   try {
     const { db, admin, app } = FinalizeSchema.parse(req.body);
 
@@ -502,6 +520,8 @@ router.post("/finalize", setupActionLimiter, async (req, res) => {
     // Write the setup-complete marker so future boots refuse to show the
     // wizard even if .env is deleted or DATABASE_URL is cleared.
     markSetupComplete();
+    // The wizard is finished: the token has done its job and must not outlive it.
+    discardSetupToken();
 
     // Return healthToken so the wizard's post-finalize poll loop can send
     // it as a Bearer header — without it, /health on the restarted app would

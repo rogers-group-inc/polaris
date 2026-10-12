@@ -68,6 +68,7 @@ import { startMetricsOnlyServer } from "./utils/metricsServer.js";
 import { recordDbConnectionMode, setDbPoolRoleCapacity } from "./metrics.js";
 import { startFmgActivityHeartbeat } from "./services/fmgActivityService.js";
 import { rememberLoginTarget } from "./utils/loginRedirect.js";
+import { canonicalRoutePath } from "./utils/routePath.js";
 import { isPhoneUserAgent, resolveAssetOpenTarget } from "./utils/assetOpenLink.js";
 
 // Fail-fast environment validation runs BEFORE any listener binds, before
@@ -512,8 +513,12 @@ const LOGIN_CREDENTIAL_PATHS = new Set([
   "/api/v1/auth/passkeys/login/options",
 ]);
 app.use(async (req, res, next) => {
-  const isLoginPage = req.path === "/login.html";
-  const isCredentialPost = req.method === "POST" && LOGIN_CREDENTIAL_PATHS.has(req.path);
+  // Compared in canonical form: the router below is case-insensitive and ignores
+  // a trailing slash, so `POST /api/v1/auth/LOGIN/` reaches the login handler and
+  // an exact-string lookup on req.path would have skipped this gate (F166).
+  const routePath = canonicalRoutePath(req.path);
+  const isLoginPage = routePath === "/login.html";
+  const isCredentialPost = req.method === "POST" && LOGIN_CREDENTIAL_PATHS.has(routePath);
   if (!isLoginPage && !isCredentialPost) return next();
 
   if (await isLoginSourceAllowed(req.ip ?? "")) return next();
@@ -552,9 +557,11 @@ app.use(async (req, res, next) => {
 // authoritative on every install type (dev and Docker included).
 // This is an unmounted app.use, so req.path is the full path — /api/v1/*
 // never matches the exact-path Set.
-const API_DOCS_PATHS = new Set(["/api", "/api/", "/api.html"]);
+const API_DOCS_PATHS = new Set(["/api", "/api.html"]);
 app.use(async (req, _res, next) => {
-  if (!API_DOCS_PATHS.has(req.path)) return next();
+  // Canonical form, for the same reason as the login gate above: `/API` and
+  // `/api.HTML` are routed to the docs page too.
+  if (!API_DOCS_PATHS.has(canonicalRoutePath(req.path))) return next();
   if (await isApiDocsSourceAllowed(req.ip ?? "")) return next();
   try {
     req.socket?.destroy();
@@ -970,6 +977,18 @@ app.get("/health/ready", async (req, res) => {
 // by default, gated by METRICS_TOKEN when set. Exports default Node.js
 // process / event-loop metrics plus Polaris-specific monitor / probe
 // histograms and counters defined in src/metrics.ts.
+// Only the exact path `/metrics` is metrics. The router is case-insensitive and
+// ignores a trailing slash, but the shipped nginx allow-list is
+// `location = /metrics` — an exact, case-sensitive match — so `/Metrics` or
+// `/metrics/` skipped the allow-list, fell through to `location /`, and (with no
+// METRICS_TOKEN set) returned the registry to anyone (F234). Any other spelling
+// is answered as an unknown path, here, wherever the request came from.
+app.use((req, res, next) => {
+  if (req.path !== "/metrics" && /^\/metrics\/*$/i.test(req.path)) {
+    return res.status(404).json({ error: "Not found" });
+  }
+  next();
+});
 app.get("/metrics", async (req, res) => {
   if (!bearerOk(req, process.env.METRICS_TOKEN)) {
     return res.status(401).json({ error: "Unauthorized" });

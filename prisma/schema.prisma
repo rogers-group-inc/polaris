@@ -3694,6 +3694,10 @@ model User {
   totpSecret      String?   @map("totp_secret")
   totpEnabledAt   DateTime? @map("totp_enabled_at")
   totpBackupCodes String[]  @default([]) @map("totp_backup_codes")
+  // The last 30-second time step a TOTP code was accepted for. A code whose
+  // step is <= this is a replay and is refused (RFC 6238 section 5.2; rule 108).
+  // Null until the first accepted code; reset whenever the secret changes.
+  totpLastStep    Int?      @map("totp_last_step")
 
   // How this account prefers to be alerted. "email" (the default — every
   // account has an address long before it has a push subscription), "push", or

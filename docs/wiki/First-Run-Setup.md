@@ -10,6 +10,25 @@ setup completes, the main application takes over and the wizard is gone.
 
 ---
 
+## The setup token
+
+Before it will test a connection or create anything, the wizard asks for a **setup
+token**. It exists because the wizard runs before any account does, so there is
+nobody to sign in: the token proves you can read the host's console, not just that
+you can reach its port ([rule 108](Business-Rules#rule-108)).
+
+- Polaris prints it when the wizard starts. On a service install it is in the
+  journal (`journalctl -u polaris-web`); in a container it is in `docker logs`.
+- It is also saved as `.setup-token` in the state directory, readable only by the
+  service account, and is deleted when setup finishes.
+- Set `POLARIS_SETUP_TOKEN` (16 or more letters, digits, `-` or `_`) to choose it
+  yourself for an unattended install.
+
+Paste it into the field at the top of step 1. Without it every wizard action is
+refused with *A setup token is required*.
+
+---
+
 ## Step 1 — Database
 
 | Field | Default | Notes |

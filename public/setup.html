@@ -210,6 +210,11 @@
       <!-- Step 1: Database -->
       <div class="step-panel visible" id="step-1">
         <h3>Database Configuration</h3>
+        <div class="form-group" id="setup-token-row" style="display:none;margin-bottom:1rem">
+          <label for="setup-token">Setup token</label>
+          <input type="text" id="setup-token" autocomplete="off" spellcheck="false" placeholder="shown in the console where Polaris started">
+          <div class="hint">It proves you can read this host's console, and it is the only thing between the network and this form. Find it in the journal or <code>docker logs</code>, or in <code>.setup-token</code> in the state directory.</div>
+        </div>
         <p class="hint" style="margin-bottom:1rem">Enter the connection details for your PostgreSQL database server.</p>
         <div class="form-row-2">
           <div class="form-group">

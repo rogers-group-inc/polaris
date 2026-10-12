@@ -21,7 +21,8 @@ A slice of the repository tree (`polaris/` is the root; `│` continuation bars 
 │   ├── api/
 │   │   ├── router.ts                # Express router aggregator + auth guards
 │   │   ├── middleware/
-│   │   │   ├── auth.ts              # Session auth + RBAC middleware
+│   │   │   ├── auth.ts              # Session auth + RBAC middleware; `requireSessionUser` (self-service /auth routes need a user session, not a token — rule 108)
+│   │   │   ├── sessionRevalidate.ts # `revalidateSessionUser`: once a minute per session, confirm the user row exists and carries the session's role (missing user ends the session, changed role is adopted, DB error fails open); mounted on the API router after `attachApiToken`. Rule 108; tests/unit/sessionHardening.test.ts
 │   │   │   ├── csrf.ts              # Synchronizer-token CSRF protection (`polaris_csrf` cookie + `X-CSRF-Token` header). `EXEMPT_PATH_PREFIXES` entries are matched on a whole path SEGMENT by `isExemptPath()`, never with a bare `startsWith` — under prefix matching the `/api/v1/ha/enroll` entry also exempted `/api/v1/ha/enrollments/:id/approve`, the route that releases the HA bundle. The invariant and the incident are in `polaris-api-rbac` → auth-rbac.md
 │   │   │   ├── rateLimits.ts        # Shared per-route rate limiters (TOTP code attempts, the SSO login kick-offs — OIDC and SAML alike, admin maintenance/backup, agent bearer router + binary downloads, the address-book directory search, and `credentialTestLimiter` on `POST /credentials/test` — a device login with a caller-supplied secret, so an unlimited one is a password-guessing oracle, and `assetLinkLimiter` on app.ts's signed-out-reachable `GET /assets/:id` alert-email landing route). The login limiter predates this file and stays in `src/app.ts`, mounted as a path PREFIX — so a route file can carry no limiter and still be limited, which is how `/auth/azure/login` sat on the password budget unnoticed until 2026-09-16.
 │   │   │   └── errorHandler.ts      # Global error handler
@@ -80,7 +81,8 @@ A slice of the repository tree (`polaris/` is the root; `│` continuation bars 
 │   ├── (services/ and jobs/ — see src-services-*.md and src-jobs.md)
 │   ├── setup/
 │   │   ├── setupRoutes.ts           # First-run setup wizard routes
-│   │   ├── setupServer.ts           # Setup server initialization
+│   │   ├── setupServer.ts           # Setup server initialization; generates the one-time setup token before the listener opens and prints it in the banner
+│   │   ├── setupToken.ts            # One-time setup token (business rule 108): `loadOrCreateSetupToken` (`POLARIS_SETUP_TOKEN`, else `<state>/.setup-token`, else random 0600), `requireSetupToken` (X-Setup-Token, constant-time, fails CLOSED when none is loaded), `discardSetupToken` on finalize. Guards /preflight, /generate-secret, /test-connection, /finalize and /verify-token. Pinned by tests/unit/setupToken.test.ts
 │   │   └── detectSetup.ts           # Resolves setup state: configured / needs-setup / locked
 │   ├── models/
 │   │   └── types.ts                 # Shared TypeScript interfaces

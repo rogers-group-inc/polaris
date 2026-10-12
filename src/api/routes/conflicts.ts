@@ -25,7 +25,7 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import { AppError } from "../../utils/errors.js";
 import { requireAuth, requestActor } from "../middleware/auth.js";
-import { hasPermission } from "../middleware/permissions.js";
+import { hasPermission, ensureRoleSnapshot } from "../middleware/permissions.js";
 import {
   listConflicts,
   countPendingConflicts,
@@ -61,6 +61,21 @@ const ChassisSwapSchema = z.object({
 
 const router = Router();
 router.use(requireAuth);
+// `hasPermission` is synchronous and reads the snapshot already on the request;
+// it is only valid after something has refreshed it. Nothing on this router did,
+// so a session read the role matrix it was issued with and a role edit never
+// reached a caller who used only these routes (scan finding F239; business rule
+// 108), and a bearer-token caller resolved no role at all and was always denied.
+// The handlers keep their filter-don't-403 behaviour; they now decide on a
+// current snapshot.
+router.use(async (req, _res, next) => {
+  try {
+    await ensureRoleSnapshot(req);
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 function visibleEntityTypes(req: Request): ConflictEntityType[] {
   if (!hasPermission(req, "discoveryConflicts", "read")) return [];

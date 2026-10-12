@@ -4609,7 +4609,8 @@ function showChoice(message, opts) {
  * action with no visible reason why.
  *
  * opts: { title, label, placeholder, value, okLabel, danger, required,
- *         requiredMessage, multiline, maxLength, help }
+ *         requiredMessage, multiline, maxLength, help,
+ *         password (masked input, value not trimmed) }
  */
 function showPrompt(message, opts) {
   opts = opts || {};
@@ -4622,7 +4623,9 @@ function showPrompt(message, opts) {
     var title = opts.title || "Enter a value";
     var field = opts.multiline
       ? '<textarea id="prompt-input" rows="3" style="width:100%;resize:vertical"></textarea>'
-      : '<input type="text" id="prompt-input" style="width:100%">';
+      : (opts.password
+        ? '<input type="password" id="prompt-input" autocomplete="current-password" style="width:100%">'
+        : '<input type="text" id="prompt-input" style="width:100%">');
     overlay.innerHTML =
       '<div class="modal" role="dialog" aria-modal="true" tabindex="-1">' +
         '<div class="modal-header"><h3></h3></div>' +
@@ -4683,7 +4686,8 @@ function showPrompt(message, opts) {
 
     var errEl = overlay.querySelector(".prompt-error");
     function submit() {
-      var v = input.value.trim();
+      // A password is taken exactly as typed: trimming it would change it.
+      var v = opts.password ? input.value : input.value.trim();
       if (opts.required && !v) {
         // Don't resolve — an empty required field is a correction, not a cancel.
         // Say so: a red border alone reads as a button that did nothing, which

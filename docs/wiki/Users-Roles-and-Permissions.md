@@ -304,6 +304,29 @@ including behind a proxy **but only when `TRUST_PROXY` is set** so
 `X-Forwarded-Proto` is believed. A plain-HTTP lab install is a supported shape,
 so nothing may hard-require a `Secure` cookie.
 
+### Second factor, sessions and sign-in
+
+([rule 108](Business-Rules#rule-108))
+
+- **Wrong second-factor codes keep counting.** Typing the password again does not
+  reset the account's failure count, so five wrong codes lock the account whatever
+  is typed in between. A completed sign-in resets it.
+- **A TOTP code works once.** The 30-second step it belongs to is recorded, and a
+  second use within its window is refused, as RFC 6238 requires.
+- **Account changes sign the user out.** Deleting a user, changing their role, or
+  resetting their password, two-factor method or passkeys ends every session they
+  hold; changing your own does not end the one you are using. A session is also
+  checked against its account about once a minute, so a deleted or re-roled account
+  does not keep its old access until the cookie expires.
+- **Registering a passkey asks for your current password**, because a passkey is a
+  way in that skips the password. A wrong password counts toward the same lockout
+  as a wrong password at sign-in.
+- **Your own password, two-factor and passkey routes need a signed-in session.** An
+  API token cannot use them.
+- **Azure SAML** ties a response to its request when it names one, and refuses a
+  sign-in response that has already been used. Sign-in started from the Azure My
+  Apps portal is still accepted.
+
 ### Entra App Proxy header SSO
 
 For installs published through Entra Application Proxy with pre-authentication.
@@ -354,6 +377,9 @@ JSON API.
 
 The GET returns `callerIp` as Polaris resolves it, precisely because this is only
 as true as that value.
+
+The restriction holds however the path is typed: `/API/V1/AUTH/LOGIN/` is the same
+route and is gated the same way.
 
 ### Password policy
 

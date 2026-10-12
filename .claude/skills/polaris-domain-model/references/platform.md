@@ -151,6 +151,7 @@ User
   totpSecret      String?       -- Base32 TOTP secret (null = not enrolled)
   totpEnabledAt   DateTime?     -- Null = not enabled; set on first valid confirm code
   totpBackupCodes String[]      -- argon2id-hashed single-use recovery codes
+  totpLastStep    Int?          -- last 30-second TOTP step accepted; a step <= this is a replay (rule 108); null until first use, reset when the secret changes
   assistantEfficiencyAdvisor Boolean @default(false) -- (`assistant_efficiency_advisor`) the AI chat window's "Efficiency Advisor" checkbox (rule 95(h)); on the USER so it follows them across browsers; set via PUT /assistant/preferences
   assistantMemory Boolean @default(true) -- (`assistant_memory`) the chat window's "Remember things" switch (rule 95(i)): off withholds the memory block AND the remember/forget tools, without deleting entries; set via PUT /assistant/preferences
   passkeys        UserPasskey[] -- Registered WebAuthn credentials (local accounts only; cascade delete)

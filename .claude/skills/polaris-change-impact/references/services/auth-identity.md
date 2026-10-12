@@ -505,3 +505,23 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Coverage: `tests/unit/passkeyService.test.ts` (mode gates, ceremony guards, the failure posture), `tests/unit/webauthnRp.test.ts`, `tests/unit/webauthnChallenge.test.ts`, `tests/unit/webauthnBrowser.test.ts`, `tests/integration/passkeyRoutes.test.ts` (the gates, the CSRF boundary, the source-IP gate). A completed ceremony is NOT covered end to end — verifying an assertion needs an authenticator holding a private key, and a fixture signed against a fixed challenge would only pin the fixture.
 
 ---
+
+## services/totpStepService.ts
+
+**What it owns:** One-time use of a TOTP code. `claimTotpStep(userId, step)` records the 30-second step a code belonged to with a single conditional UPDATE (`totpLastStep` null or below `step`), so two concurrent submissions of one code cannot both win. A separate file from `totpService`, which stays pure (no Prisma).
+
+**Public API:** `claimTotpStep`
+
+**Used by:** `routes/auth.ts` — `POST /login/totp` (a replay counts as a failed attempt against the lockout) and `DELETE /totp`; `POST /totp/confirm` stores the confirming step directly in its update. `User.totpLastStep` is reset to null by `POST /totp/enroll`, self-disable and the admin reset in `routes/users.ts`.
+
+**Invariants:** rule 108(d). Pinned by `tests/integration/totpReplay.test.ts` and `tests/unit/totpStep.test.ts`.
+
+## services/sessionRevocationService.ts
+
+**What it owns:** Ending a user's live sessions. `revokeUserSessions(userId, keepSid?)` is one `DELETE FROM session WHERE (sess::jsonb)->>'userId' = $1 AND sid <> $2` — set-based, so it does not read every live session into memory — and is best effort: it logs and returns 0 rather than failing the act that triggered it. The session table belongs to connect-pg-simple, not to Prisma.
+
+**Public API:** `revokeUserSessions`
+
+**Used by:** `routes/users.ts` (`endSessionsOf`, after a delete, a role change, an admin password reset, a TOTP reset and a passkey revoke; the actor's own session is kept when they act on themselves) and `routes/auth.ts` (`revokeOtherSessions` for a self-service password change). The backstop for everything that does not go through those routes is `middleware/sessionRevalidate.ts`.
+
+**Invariants:** rule 108(e). Pinned by `tests/integration/sessionRevocation.test.ts` and `tests/unit/sessionHardening.test.ts`.

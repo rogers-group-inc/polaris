@@ -150,7 +150,8 @@ looks for the tracer once per process, so restart after installing it.
 
 ## After the install
 
-1. Browse to the host. The [first-run setup wizard](First-Run-Setup) runs.
+1. Browse to the host. The [first-run setup wizard](First-Run-Setup) runs; it asks for
+   the [setup token](First-Run-Setup#the-setup-token) Polaris printed when it started.
 2. Create the first admin account.
 3. Add your first [integration](Integrations), or start entering
    [address space](IPAM) by hand.

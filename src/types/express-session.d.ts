@@ -27,6 +27,7 @@ declare module "express-session" {
     lastActivity: number;     // Timestamp for inactivity tracking
     mfaVerified: boolean;     // True when the session has cleared TOTP (local accounts only)
     csrfToken: string;        // Synchronizer token for state-changing requests
+    checkedAt: number;        // Last time the user row was re-checked against this session (sessionRevalidate.ts)
   }
 }
 

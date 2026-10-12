@@ -26,6 +26,7 @@ import {
   isAdminEquivalentRole,
 } from "../../services/roleService.js";
 import { requirePermission, assertNoPrivilegeEscalation } from "../middleware/permissions.js";
+import { revokeUserSessions } from "../../services/sessionRevocationService.js";
 import { normalizeTags } from "../../utils/tagNormalize.js";
 import * as mfaPending from "../../utils/mfaPending.js";
 import { logEvent } from "./events.js";
@@ -176,6 +177,17 @@ function assertMayActOnAccount(
   assertNoPrivilegeEscalation(req, user.role.permissions, `the account "${user.username}"`);
 }
 
+/**
+ * End the target's live sessions after an act that should cut them off: a
+ * deleted account, a new role, a reset password, second factor or passkeys. A
+ * session otherwise outlives all of those (scan finding F188). When an
+ * administrator acts on their OWN account the session they are using is kept.
+ */
+async function endSessionsOf(req: Request, targetUserId: string): Promise<void> {
+  const keep = req.session?.userId === targetUserId ? req.sessionID : undefined;
+  await revokeUserSessions(targetUserId, keep);
+}
+
 // POST /api/v1/users
 router.post("/", requirePermission("users", "write"), async (req, res, next) => {
   try {
@@ -239,6 +251,8 @@ router.put("/:id/password", requirePermission("users", "write"), async (req, res
     // A pending TOTP challenge was minted against the OLD password — a
     // successful password step must not survive the reset.
     mfaPending.revokeForUser(id);
+    // ...and neither must a session opened with the old one.
+    await endSessionsOf(req, id);
     logEvent({
       action: "user.password_reset",
       level: "warning",
@@ -294,6 +308,9 @@ router.put("/:id/role", requirePermission("users", "write"), async (req, res, ne
       data: { roleId: role.id, needsRoleReview: false },
       select: USER_LIST_SELECT,
     });
+    // The account's sessions carry the OLD role's snapshot. End them so the
+    // new role (up or down) applies from the next sign-in (scan finding F188).
+    await endSessionsOf(req, id);
     logEvent({
       action: "user.role_changed",
       resourceType: "user",
@@ -361,8 +378,9 @@ router.delete("/:id/totp", requirePermission("users", "write"), async (req, res,
 
     await prisma.user.update({
       where: { id },
-      data: { totpSecret: null, totpEnabledAt: null, totpBackupCodes: [] },
+      data: { totpSecret: null, totpEnabledAt: null, totpBackupCodes: [], totpLastStep: null },
     });
+    await endSessionsOf(req, id);
     logEvent({
       action: "user.totp_reset",
       level: "warning",
@@ -408,6 +426,7 @@ router.delete("/:id/passkeys", requirePermission("users", "write"), async (req, 
     // A half-finished login holding a passkey second factor must not survive
     // the credential it was going to use.
     mfaPending.revokeForUser(id);
+    await endSessionsOf(req, id);
     logEvent({
       action: "user.passkeys_revoked",
       level: "warning",
@@ -454,6 +473,7 @@ router.delete("/:id", requirePermission("users", "write"), async (req, res, next
     await prisma.savedDashboard.deleteMany({ where: { ownerId: id, visibility: "private" } });
 
     await prisma.user.delete({ where: { id } });
+    await endSessionsOf(req, id);
     logEvent({
       action: "user.deleted",
       resourceType: "user",
