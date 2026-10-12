@@ -1909,3 +1909,27 @@ credential selected on it, because choosing a credential is the act that says
 "send this secret to this address". Until one is selected the asset reports
 *No WinRM credential selected* (or SSH). Assets whose address and name came
 from discovery are unaffected.
+
+### Rule 105
+
+**Text you type reaches a command, a script or a generated connection only after
+it has been checked, and is checked again where it is used.**
+
+- **Archive Export** accepts a host that is a hostname or IP address, a username
+  of letters, digits, `.`, `_` and `-` (not starting with a hyphen), and a port
+  from 1 to 65535. Anything else is refused when saved, when tested and before
+  each export.
+- **The agent server URL** must be a plain `http://` or `https://` address: a
+  host, an optional port and an optional path of letters, digits and `. _ ~ - /`.
+  A stored value that fails is ignored with a warning and the derived URL is used.
+- **The onboarding scripts** accept the Polaris server address only as an IPv4
+  address or a CIDR range on a single line.
+- **The jsign jar** is not a setting. Polaris looks for `tools/jsign.jar`, or for
+  the file named by `POLARIS_JSIGN_JAR`.
+- **A process's log path** must be an absolute local path with no network share,
+  no device path and no `..`, and setting one needs **Assets** Full Read-Write.
+  Read-Write can still change the log source and clear the path.
+- **An asset's address** may hold only letters, digits and `. _ : % [ ] -`, and
+  Open RDP and Open SSH refuse to start from anything else.
+- **An API call's body** that is JSON has every substituted value escaped for
+  JSON; any other body is sent as written.
