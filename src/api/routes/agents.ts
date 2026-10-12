@@ -27,6 +27,7 @@ import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { resolve as resolvePath, basename } from "node:path";
 import { prisma } from "../../db.js";
+import { isSafeLogPathGlob } from "../../utils/logPathGlob.js";
 import { AppError } from "../../utils/errors.js";
 import { AGENT_BIN_DIR } from "../../utils/paths.js";
 import { requireAgentBearer } from "../middleware/auth.js";
@@ -967,7 +968,9 @@ agentsRouter.get("/config", async (req, res, next) => {
         return {
           name,
           logSource:   c?.logSource ?? "auto",
-          logPathGlob: c?.logPathGlob ?? null,
+          // A glob stored before the shape check existed is withheld rather than
+          // delivered: the agent would read it as a privileged user. Rule 105.
+          logPathGlob: c?.logPathGlob && isSafeLogPathGlob(c.logPathGlob) ? c.logPathGlob : null,
         };
       });
     }

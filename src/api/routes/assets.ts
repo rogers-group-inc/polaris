@@ -10,6 +10,7 @@ import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
 import { mapWithConcurrency } from "../../utils/concurrency.js";
 import { requirePermission, hasPermission } from "../middleware/permissions.js";
+import { logPathGlobProblem } from "../../utils/logPathGlob.js";
 import {
   checkIpForIncomingClaim,
   reconcileDuplicateIpForAddresses,
@@ -4018,6 +4019,34 @@ router.put("/:id/processes/:name/config", requirePermission("assets", "write"), 
     const id = req.params.id as string;
     const name = String(req.params.name);
     const body = ProcessConfigSchema.parse(req.body);
+
+    // The glob is "read this file on the agent's host" (the agent runs as
+    // LocalSystem / root), so it is checked twice. SHAPE: an absolute local
+    // path, never a UNC / device path or a `..` walk. AUTHORITY: setting or
+    // changing one needs assets=fullwrite — the grant that already means "may
+    // deploy and drive agents" (rule 43) — while an `assets:write` caller can
+    // still edit the log source and notes, or clear the glob. Rule 105.
+    const newGlob = body.logPathGlob ?? null;
+    if (newGlob !== null) {
+      const existing = await prisma.assetProcessConfig.findUnique({
+        where: { assetId_name: { assetId: id, name } },
+        select: { logPathGlob: true },
+      });
+      // Only a CHANGE is judged: resaving the log source with the glob as it
+      // already stands must keep working (a legacy value is withheld from
+      // agents anyway — see GET /agents/config).
+      if ((existing?.logPathGlob ?? null) !== newGlob) {
+        const problem = logPathGlobProblem(newGlob);
+        if (problem) throw new AppError(400, problem);
+        if (!hasPermission(req, "assets", "fullwrite")) {
+          throw new AppError(
+            403,
+            "Setting a log path needs Assets Full Read-Write: the agent reads that path as a privileged user.",
+          );
+        }
+      }
+    }
+
     const updated = await prisma.assetProcessConfig.upsert({
       where:  { assetId_name: { assetId: id, name } },
       update: { logSource: body.logSource, logPathGlob: body.logPathGlob ?? null, notes: body.notes ?? null, updatedBy: requestActor(req) ?? null },

@@ -22633,7 +22633,7 @@ async function openProcessDetailPanel(asset, name, cfg, procRow, isPinned) {
             '</select>' +
           '</label>' +
           '<label style="flex:1;min-width:220px;font-size:0.78rem;color:var(--color-text-secondary)">Log path / wildcard' +
-            '<input type="text" id="proc-log-glob" value="' + escapeHtml(glob) + '" placeholder="/var/log/' + escapeHtml(name) + '/*.log" style="display:block;width:100%;box-sizing:border-box;margin-top:2px"' + (canEdit ? "" : " disabled") + '>' +
+            '<input type="text" id="proc-log-glob" value="' + escapeHtml(glob) + '" placeholder="/var/log/' + escapeHtml(name) + '/*.log" style="display:block;width:100%;box-sizing:border-box;margin-top:2px"' + (canEdit && canDeployAgent() ? "" : " disabled title=\"Setting a log path needs Assets Full Read-Write: the agent reads that path as a privileged user.\"") + '>' +
           '</label>' +
           (canEdit ? '<button class="btn btn-sm btn-primary" id="btn-proc-log-config-save">Save</button>' : '') +
         '</div>' +
