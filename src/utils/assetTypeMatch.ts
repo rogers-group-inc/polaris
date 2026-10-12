@@ -65,6 +65,8 @@
  *    labels and the card's own prose say it.
  */
 
+import { clampRegexSubject, findUnsafeRegexConstruct } from "./regexSafety.js";
+
 /** Facts a source can offer the resolver. Every field is optional. */
 export interface AssetTypeFacts {
   os?: string | null;
@@ -257,12 +259,21 @@ export const MATCH_MAX_LEAVES = MAX_LEAVES;
  * turn one typo into a failed discovery for the whole fleet.
  */
 export function validateRegex(pattern: string): string | null {
+  let re: RegExp;
   try {
-    new RegExp(pattern, "i");
-    return null;
+    re = new RegExp(pattern, "i");
   } catch (err) {
     return `Invalid regular expression: ${(err as Error).message}`;
   }
+  // A JavaScript regex cannot be interrupted, and this one is also run by the
+  // match-preview endpoint, which needs only `assets:read`. The one shape that
+  // goes exponential is refused here, while whoever typed it is still looking.
+  // See utils/regexSafety.ts.
+  const unsafe = findUnsafeRegexConstruct(re.source);
+  if (unsafe) {
+    return `This pattern may never finish on some inputs: \`${unsafe}\` repeats a group that already repeats. Rewrite it so only one of the two repeats.`;
+  }
+  return null;
 }
 
 /** Resolve a stored operator spelling to a current one, or null. */
@@ -490,8 +501,13 @@ export function clauseMatches(clause: MatchClause, facts: AssetTypeFacts): boole
       // Validated at write time; a stored pattern that still fails to compile
       // (hand-edited row, restored backup) is treated as no-match rather than
       // being allowed to throw into the discovery loop.
+      // A pattern stored before the write-time guard existed can still be a
+      // catastrophic one, and the subject is device-supplied, so both ends are
+      // bounded here too: an unsafe stored pattern is a no-match, and nothing
+      // is run against more than MAX_REGEX_SUBJECT characters.
       try {
-        hit = new RegExp(clause.value, "i").test(text);
+        const re = new RegExp(clause.value, "i");
+        hit = findUnsafeRegexConstruct(re.source) ? false : re.test(clampRegexSubject(text));
       } catch {
         hit = false;
       }

@@ -67,7 +67,7 @@ export function renderNginxConfig(input: RenderInput, templateOverride?: string)
     SERVER_NAME: input.serverName,
     POLARIS_PORT: String(input.polarisPort),
     DASH_PORT: String(input.dashPort),
-    SSL_PROTOCOLS_LIST: input.config.tlsProtocols.join(" "),
+    SSL_PROTOCOLS_LIST: renderSslProtocols(input.config),
     QUIC_LISTENER: renderQuicListener(input.config),
     SSL_EARLY_DATA: renderSslEarlyData(input.config),
     HSTS_HEADER: renderHstsHeader(input.config),
@@ -82,6 +82,19 @@ export function renderNginxConfig(input: RenderInput, templateOverride?: string)
 
   const sha256 = createHash("sha256").update(contents).digest("hex");
   return { contents, sha256 };
+}
+
+// Defence in depth behind validateProxyConfig: this value lands unquoted in
+// `ssl_protocols ...;`, so a stored config that predates that check (or a
+// caller that skipped it) must still never put anything but the two protocol
+// names into the file nginx will be told to load.
+function renderSslProtocols(cfg: ProxyConfig): string {
+  for (const proto of cfg.tlsProtocols as unknown[]) {
+    if (proto !== "TLSv1.2" && proto !== "TLSv1.3") {
+      throw new Error("Refusing to render nginx config: tlsProtocols contains an unsupported value");
+    }
+  }
+  return cfg.tlsProtocols.join(" ");
 }
 
 function renderQuicListener(cfg: ProxyConfig): string {

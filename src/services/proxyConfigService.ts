@@ -145,8 +145,24 @@ function validateProxyConfig(cfg: ProxyConfig): void {
   if (cfg.hsts.maxAgeSeconds < 0 || !Number.isInteger(cfg.hsts.maxAgeSeconds)) {
     throw new AppError(400, `hsts.maxAgeSeconds must be a non-negative integer (got ${cfg.hsts.maxAgeSeconds})`);
   }
+  // The protocols are written into `ssl_protocols` unquoted, so each element is
+  // checked against the allowlist HERE, not just counted. `saveProxyConfig`
+  // merges the request body without going through `parseProxyConfig`, so a
+  // string such as "TLSv1.3; include /etc/..." would otherwise reach the nginx
+  // template intact. Anything that is not exactly TLSv1.2 or TLSv1.3 is refused.
+  if (!Array.isArray(cfg.tlsProtocols)) {
+    throw new AppError(400, "tlsProtocols must be an array");
+  }
+  for (const proto of cfg.tlsProtocols as unknown[]) {
+    if (proto !== "TLSv1.2" && proto !== "TLSv1.3") {
+      throw new AppError(400, "tlsProtocols may only contain TLSv1.2 and TLSv1.3");
+    }
+  }
   if (cfg.tlsProtocols.length === 0) {
     throw new AppError(400, "tlsProtocols must include at least one of TLSv1.2, TLSv1.3");
+  }
+  if (!Array.isArray(cfg.prometheusAllowIps)) {
+    throw new AppError(400, "prometheusAllowIps must be an array of IP addresses");
   }
   if (cfg.http3Enabled && !cfg.tlsProtocols.includes("TLSv1.3")) {
     throw new AppError(400, "tlsProtocols must include TLSv1.3 when HTTP/3 is enabled (QUIC mandates TLS 1.3)");

@@ -268,6 +268,8 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **Public API:** `renderNginxConfig`, `RenderInput`
 
+**Injection guard:** `tlsProtocols` lands unquoted in `ssl_protocols`, so `renderSslProtocols` refuses (throws) anything but `TLSv1.2` / `TLSv1.3` — defence in depth behind `proxyConfigService`'s validation. Pinned by `tests/unit/proxyConfigTlsInjection.test.ts`.
+
 **Cross-service deps:** none (reads the on-disk template at runtime; the `apiDocsAllow` input is COMPUTED BY CALLERS via `apiDocsAccessService.deriveApiDocsNginxAllow` so the renderer stays I/O-free and deterministic).
 
 **Used by:** `src/services/nginxApplyService.ts` (apply + drift status), `src/services/updateService.ts` (restart-time re-render), `tests/unit/nginxRenderer.test.ts`.
@@ -424,6 +426,8 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 **What it owns:** Persistence + validation of the operator-settable `proxyConfig` (single Setting row) with a short-TTL in-process cache — httpsPort, TLS protocols, HTTP/3 toggle, HSTS, Prometheus allow-list, and `managedMode`.
 
 **Public API:** `getProxyConfig`, `proxyConfigRowExists`, `saveProxyConfig`, `invalidateProxyConfigCache`
+
+**Validation trap:** `saveProxyConfig` merges the request body WITHOUT `parseProxyConfig`'s allowlist, so `validateProxyConfig` must check every `tlsProtocols` element itself (and that `tlsProtocols` / `prometheusAllowIps` are arrays). A count-only check let a string such as `TLSv1.3; include …` reach the nginx template.
 
 **Cross-service deps:** none (prisma, proxyConfig types, AppError).
 
