@@ -22,7 +22,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `Get-NetAdapter.LinkSpeed` is a **display string** ("1 Gbps"), not a number — always through `parseWindowsLinkSpeed`. A virtual or unplugged NIC reports no negotiated rate; leave `speedBps` null rather than 0, which renders as a broken link.
 
 **When changing this:**
-- Adding a stream here means flipping its entry in `src/utils/pollingCapability.ts` AND the `_collectorExists` mirror in `public/js/integrations.js` in the same commit, or the UI keeps hiding a method that now works.
+- Adding a stream here means flipping its entry in `src/utils/pollingCapability.ts` AND the `_collectorExists` mirror in `public/js/polling-methods.js` in the same commit, or the UI keeps hiding a method that now works.
 - It also means checking the queue gates: `canTelemetry` (lockstep pair in `monitoringService.computeDueWork` + `jobs/monitorAssets.ts`) and `runStorageFor`'s method test each dropped these transports before enqueueing until the collector existed.
 - Temperature and LLDP are deliberately absent: Linux hwmon is readable but `MSAcpi_ThermalZoneTemperature` is unimplemented on most real Windows hardware, and there is no shell equivalent for LLDP at all. Shipping either on one OS only would be worse than the current honest gap.
 

@@ -3562,6 +3562,7 @@ var _PANEL_SCRIPT_BUNDLES = {
     "/js/vendor/html-to-image.min.js",
     "/js/table-sf.js",
     "/js/favorites.js",
+    "/js/polling-methods.js",
     "/js/integrations.js",
     "/js/temp-unit.js",
     "/js/chart-severity.js",

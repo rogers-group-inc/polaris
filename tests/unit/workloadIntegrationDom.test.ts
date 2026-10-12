@@ -17,6 +17,9 @@ vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 const g = globalThis as Record<string, unknown>;
 const SRC = readFileSync(resolve(__dirname, "../../public/js/integrations.js"), "utf8");
+// The polling vocabulary (_POLLING_COMPAT, _streamAllowedMethods, the dropdown)
+// moved to polling-methods.js, which every page loads before integrations.js.
+const POLLING_SRC = readFileSync(resolve(__dirname, "../../public/js/polling-methods.js"), "utf8");
 const DOWN_AFTER_SRC = readFileSync(resolve(__dirname, "../../public/js/monitor-down-after.js"), "utf8");
 
 let scope: Record<string, any>;
@@ -37,7 +40,7 @@ function boot(): Record<string, any> {
     var api = { integrations: {}, credentials: {}, monitorSettings: {} };
     var permAtLeast = function(){ return true; };
   `;
-  (win as any).eval(APP_SHELL_STUBS + "\n" + stubs + "\n" + DOWN_AFTER_SRC + "\n" + SRC + "\n;window.__scope = this;");
+  (win as any).eval(APP_SHELL_STUBS + "\n" + stubs + "\n" + DOWN_AFTER_SRC + "\n" + POLLING_SRC + "\n" + SRC + "\n;window.__scope = this;");
   return win as unknown as Record<string, any>;
 }
 

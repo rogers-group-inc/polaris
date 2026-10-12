@@ -18,6 +18,9 @@ vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 const g = globalThis as Record<string, unknown>;
 const SRC = readFileSync(resolve(__dirname, "../../public/js/integrations.js"), "utf8");
+// The polling vocabulary (_POLLING_COMPAT, _streamAllowedMethods, the dropdown)
+// moved to polling-methods.js, which every page loads before integrations.js.
+const POLLING_SRC = readFileSync(resolve(__dirname, "../../public/js/polling-methods.js"), "utf8");
 const DOWN_AFTER_SRC = readFileSync(resolve(__dirname, "../../public/js/monitor-down-after.js"), "utf8");
 const PORTABILITY_SRC = readFileSync(resolve(__dirname, "../../public/js/genericapi-portability.js"), "utf8");
 
@@ -43,7 +46,7 @@ function boot(withPortability = false): Record<string, any> {
     var __downloads = [];
     function downloadJson(obj, filename){ __downloads.push({ obj: obj, filename: filename }); }
   `;
-  (win as any).eval(APP_SHELL_STUBS + "\n" + stubs + "\n" + (withPortability ? PORTABILITY_SRC + "\n" : "") + DOWN_AFTER_SRC + "\n" + SRC + "\n;window.__scope = this;");
+  (win as any).eval(APP_SHELL_STUBS + "\n" + stubs + "\n" + (withPortability ? PORTABILITY_SRC + "\n" : "") + DOWN_AFTER_SRC + "\n" + POLLING_SRC + "\n" + SRC + "\n;window.__scope = this;");
   return win as unknown as Record<string, any>;
 }
 
