@@ -13,7 +13,7 @@
  * `roles=fullwrite`) is refused with 409.
  */
 
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
@@ -159,6 +159,23 @@ async function getOnlineUserIds(): Promise<Set<string>> {
   }
 }
 
+/**
+ * Business rule 48, applied to the TARGET of an account action.
+ *
+ * `users:write` is a rung below admin-equivalent (users=fullwrite AND
+ * roles=fullwrite). Resetting someone's password, removing their second
+ * factors, deleting them or changing their role are each a way to BECOME
+ * that account, so they are refused on an admin-equivalent account unless the
+ * caller is admin-equivalent too. Accounts on any lesser role stay in reach of
+ * `users:write` — that is the delegation this key exists for.
+ */
+function assertMayActOnAccount(
+  req: Request,
+  user: { username: string; role: { permissions: unknown } },
+): void {
+  assertNoPrivilegeEscalation(req, user.role.permissions, `the account "${user.username}"`);
+}
+
 // POST /api/v1/users
 router.post("/", requirePermission("users", "write"), async (req, res, next) => {
   try {
@@ -207,9 +224,10 @@ router.put("/:id/password", requirePermission("users", "write"), async (req, res
   try {
     const id = req.params.id as string;
     const { password } = ResetPasswordSchema.parse(req.body);
-    const user = await prisma.user.findUnique({ where: { id } });
+    const user = await prisma.user.findUnique({ where: { id }, include: { role: true } });
     if (!user) throw new AppError(404, "User not found");
     if (user.authProvider !== "local") throw new AppError(400, "Cannot reset password for SSO/LDAP accounts — credentials are managed by the identity provider.");
+    assertMayActOnAccount(req, user);
     await assertPasswordMeetsPolicy(password);
 
     const passwordHash = await hashPassword(password);
@@ -257,6 +275,10 @@ router.put("/:id/role", requirePermission("users", "write"), async (req, res, ne
     // you editing your OWN row. Promoting somebody else into an
     // admin-equivalent role is the same escalation by one extra step.
     assertNoPrivilegeEscalation(req, role.permissions, `the role "${role.name}"`);
+
+    // ...and the mirror image: an account that is ALREADY admin-equivalent is not
+    // demoted (or re-roled) by someone who is not.
+    assertMayActOnAccount(req, user);
 
     // lastAdminEquivalent invariant: refuse to move the last admin-equiv
     // user into a non-admin-equiv role.
@@ -330,8 +352,9 @@ router.put("/:id/regions", requirePermission("users", "write"), async (req, res,
 router.delete("/:id/totp", requirePermission("users", "write"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
-    const user = await prisma.user.findUnique({ where: { id } });
+    const user = await prisma.user.findUnique({ where: { id }, include: { role: true } });
     if (!user) throw new AppError(404, "User not found");
+    assertMayActOnAccount(req, user);
     if (!user.totpEnabledAt && !user.totpSecret) {
       throw new AppError(400, "Two-factor auth is not configured for this user.");
     }
@@ -375,8 +398,9 @@ router.get("/:id/passkeys", requirePermission("users", "read"), async (req, res,
 router.delete("/:id/passkeys", requirePermission("users", "write"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
-    const user = await prisma.user.findUnique({ where: { id }, select: { username: true } });
+    const user = await prisma.user.findUnique({ where: { id }, select: { username: true, role: true } });
     if (!user) throw new AppError(404, "User not found");
+    assertMayActOnAccount(req, user);
 
     const removed = await deleteAllPasskeys(id);
     if (removed === 0) throw new AppError(400, "This user has no passkeys registered.");
@@ -410,6 +434,7 @@ router.delete("/:id", requirePermission("users", "write"), async (req, res, next
     if (req.session?.userId === user.id) {
       throw new AppError(400, "You cannot delete your own account");
     }
+    assertMayActOnAccount(req, user);
 
     // lastAdminEquivalent invariant
     if (await isAdminEquivalentRole(user.roleId)) {

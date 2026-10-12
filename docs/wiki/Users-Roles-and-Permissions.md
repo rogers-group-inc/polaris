@@ -209,6 +209,13 @@ the four places the grant could be minted:
   password you choose**
 - `PUT /users/:id/role` — promoting an existing account into it
 
+The same bar applies to **acting on** an account that is already
+admin-equivalent. Resetting its password, removing its two-factor method or its
+passkeys, deleting it, or moving it to another role is refused **403** unless
+you are admin-equivalent too, because each of those is a way to become that
+administrator. Accounts on any lesser role stay within **Users** Read-Write, so
+a help-desk role can still reset their passwords.
+
 Without it, both `users:write` and `roles:write` would be a **one-step path to
 full control of the install**, and the shortest one needs no existing account at
 all.
@@ -420,7 +427,7 @@ grants, filter-don't-403 surfaces included.
   immediately; an expired or revoked token gets the same `401` as no token.
 - A token granting quarantine at `write` or above **must** name the
   integrations it is scoped to.
-- Binding a token to an admin-equivalent role logs a **warning Event**.
+- Binding a token to an admin-equivalent role needs you to be admin-equivalent yourself: **API Tokens** Read-Write alone is refused **403**. When an administrator does it, a **warning Event** is logged.
 - **Trusted hosts** (optional) limit the source addresses a token is accepted
   from. Set them at creation or change them later with **Edit Hosts** on the
   token's row; the token value stays the same and the change applies to the

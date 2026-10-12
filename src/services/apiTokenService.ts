@@ -73,6 +73,15 @@ export interface CreateTokenInput {
   trustedHosts?: string[];
   expiresAt?: Date | null;
   createdBy: string;
+  /**
+   * Called with the resolved role before anything is written. An HTTP caller
+   * passes the privilege-escalation check here (business rule 48): the token
+   * acts with its role's whole permission matrix, so binding one to a role the
+   * caller does not hold is minting authority they were never given. Optional
+   * only because the one internal caller (the AI Assistant's provisioning)
+   * applies its own check against the role it builds itself.
+   */
+  authorizeRole?: (role: { id: string; name: string; permissions: unknown }) => void;
 }
 
 const QUARANTINE_INTEGRATION_TYPES = new Set(["fortimanager", "fortigate"]);
@@ -166,6 +175,7 @@ export async function createToken(input: CreateTokenInput): Promise<CreateTokenR
 
   const role = await prisma.role.findUnique({ where: { id: input.roleId } });
   if (!role) throw new AppError(400, `Role ${input.roleId} not found`);
+  input.authorizeRole?.(role);
   const perms = normalizePermissions(role.permissions);
 
   const existing = await prisma.apiToken.findUnique({ where: { name: input.name.trim() } });
