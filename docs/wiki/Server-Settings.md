@@ -567,11 +567,19 @@ The registry holds every tag, its category and colour, and optionally a
 **device filter that auto-assigns it**. A preview reports the match count, a
 sample, and the `+add` / `-remove` delta against the tag's current assignments.
 
+A tag's colour is either a **custom colour** or a **severity colour**
+(*Severity: Notice* … *Severity: Critical* in the Color field). A severity
+colour follows the theme: the tag is drawn in the same colour as that
+severity's chart bands, on whichever theme you are using. Through the API,
+`color` is a hex (`#rrggbb` or `#rgb`) or `severity:<level>`
+(`severity:warning`); anything else is refused.
+
 Every install starts with five tags in the **Priority** category, one per alert
-severity and coloured to match it: **Notice**, **Informational**, **Warning**,
-**Serious** and **Critical**. They are ordinary manual tags, so you can rename,
-recolour or delete them, or give them a device filter. A tag you already had
-under one of those names is left exactly as it was, whatever its category.
+severity and given that severity's colour: **Notice**, **Informational**,
+**Warning**, **Serious** and **Critical**. They are ordinary manual tags, so you
+can rename, recolour or delete them, or give them a device filter. A tag you
+already had under one of those names is left exactly as it was, whatever its
+category.
 
 Two locked behaviours:
 
