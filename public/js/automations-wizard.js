@@ -3086,6 +3086,19 @@ async function openAutomationWizard(existing, opts) {
       return '<select class="tgl-value" style="width:130px">' +
         optLabeled(meta.values, v, function (x) { return stateEnumValueLabel(field, x); }) + '</select>';
     }
+    if (field === "tag") {
+      // Pick from the tags that exist (asset tags + registry tags), not a blank
+      // box. A stored value that is no longer in either list stays selectable.
+      var seen = {}, names = [];
+      (_ruleTagList || []).concat(((_awScopeOptions && _awScopeOptions.tagCatalog) || []).map(function (c) { return c && c.name; }))
+        .concat(v ? [v] : []).forEach(function (n) {
+          var k = String(n || "").toLowerCase();
+          if (k && !seen[k]) { seen[k] = 1; names.push(String(n)); }
+        });
+      names.sort(function (a, b) { return a.toLowerCase() < b.toLowerCase() ? -1 : 1; });
+      return '<select class="tgl-value" style="width:180px"><option value="">Select a tag…</option>' +
+        names.map(function (n) { return '<option value="' + escapeHtml(n) + '"' + (n.toLowerCase() === v.toLowerCase() ? " selected" : "") + '>' + escapeHtml(n) + '</option>'; }).join("") + '</select>';
+    }
     if (meta && meta.kind === "number") return '<input type="number" class="tgl-value" value="' + escapeHtml(v) + '" style="width:110px" placeholder="e.g. 3">';
     // "e.g. up / down" is the right hint for a status field and a lie on one
     // whose values are addresses, so a field may name its own (fieldMeta.placeholder).
