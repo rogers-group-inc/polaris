@@ -109,7 +109,22 @@
         case "models":         return (opts.models || []).map(function (m) { return { value: m, label: m }; });
         case "interfaceNames": return (opts.interfaceNames || []).map(function (n) { return { value: n, label: n }; });
         case "ssids":          return (opts.ssids || []).map(function (n) { return { value: n, label: n }; });
-        case "tags":           return tagList.map(function (t) { return { value: t, label: t }; });
+        case "tags": {
+          // Tags already on assets, plus the registry (Priority, etc.) — a
+          // registry tag no asset carries yet is still a valid thing to match.
+          var seen = {}, out = [];
+          (opts.tagCatalog || []).forEach(function (t) {
+            var k = String(t.name).toLowerCase();
+            if (seen[k]) return;
+            seen[k] = 1;
+            out.push({ value: t.name, label: t.category && t.category !== "General" ? t.name + " — " + t.category : t.name });
+          });
+          tagList.forEach(function (t) {
+            var k = String(t).toLowerCase();
+            if (!seen[k]) { seen[k] = 1; out.push({ value: t, label: t }); }
+          });
+          return out;
+        }
         case "subnets":        return (opts.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr }; });
         case "ipBlocks":       return (opts.ipBlocks || []).map(function (b) { return { value: b.cidr, label: b.name + " — " + b.cidr }; });
         default: return [];
