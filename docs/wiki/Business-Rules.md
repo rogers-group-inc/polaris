@@ -1924,3 +1924,26 @@ Set the hold on the **Database** card: **Alert after a change holds for**, from
 *Alert on the first reading* up to four hours (the API accepts up to a day).
 Because the card shows the live grade, it also shows what the alerting side
 last recorded and any change it is currently waiting out.
+
+### Rule 106
+
+**Every alert email that goes out is recorded on its device, and that record
+never raises an automation.**
+
+When an automation's email is delivered, Polaris writes a
+`notification.email_sent` event on the device the alert is about. It names the
+automation, the To and Cc recipients, and the subject, and it says when the
+email was an all-clear or was sent because web push could not reach someone.
+It appears on the device's **Events** tab beside the alert's fire and clear.
+
+- **Only emails that were actually sent.** A send that fails or is still
+  retrying writes nothing.
+- **Bcc recipients are counted, never named** ("+2 Bcc"), because anyone who
+  can read the device can read its events — the same reason as
+  [rule 60](Business-Rules#rule-60).
+- **Alerts with no device and test sends write none.** A capacity warning has
+  no device tab to put it on, and a test is about an invented device
+  ([rule 65](Business-Rules#rule-65)).
+- **It never fires or clears an automation.** An event-triggered automation
+  whose pattern is `*` or `notification.*` ignores it; otherwise an automation
+  that emails would trigger itself with every email it sent.

@@ -97,7 +97,7 @@ vi.mock("../../src/services/notificationChannels/emailChannel.js", () => ({
   sendM365Email: vi.fn(async () => {}),
 }));
 
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}) }));
+vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}), logEventsBatch: vi.fn(async () => 0) }));
 
 import { drainPendingDeliveries } from "../../src/services/notificationDeliveryService.js";
 

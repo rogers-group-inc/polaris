@@ -46,7 +46,9 @@ discovery and change events, **and its alerts** — an automation firing
 (`notification.triggered`), escalating, gaining or losing a port, and clearing
 (`notification.auto_cleared`). Those alert rows show **Resource**
 `notification` with the automation's name beside it. A device whose alert keeps
-firing and clearing shows each round there.
+firing and clearing shows each round there. Every alert **email** that goes out
+adds a `notification.email_sent` row naming the automation and its To and Cc
+recipients (Bcc is only counted) — see [rule 106](Business-Rules#rule-106).
 
 An automation only writes its *fired* event when it has a **Create an Event** action;
 the clear is written regardless. Acknowledging or clearing alerts by hand is one
@@ -148,6 +150,10 @@ that matches more than 20 enabled checks.
 action. It is present on every automation by default, and event- and
 change-triggered automations are carved out — one that wrote an Event would feed
 its own trigger.
+
+`notification.email_sent` records each alert email that was delivered, on the
+device it is about. It never triggers or clears an automation, even one whose
+pattern is `*` or `notification.*`.
 
 `notification.superseded` records an alert cleared by a carve-out, a
 device-down supersession (any metric or device-state alert on a device that went
