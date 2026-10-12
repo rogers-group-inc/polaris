@@ -1301,7 +1301,7 @@ function renderCAList() {
         '</div>' +
       '</div>' +
       '<div class="cert-actions">' +
-        '<button class="btn btn-sm btn-danger" onclick="deleteCA(\'' + cert.id + '\', \'' + escapeHtml(cert.name) + '\')">Remove</button>' +
+        '<button class="btn btn-sm btn-danger" onclick="deleteCA(' + jsArg(cert.id) + ', ' + jsArg(cert.name) + ')">Remove</button>' +
       '</div>' +
     '</li>';
   }).join("");
@@ -8713,10 +8713,10 @@ function renderApiTokensTab(tokens, roles, quarantineIntegrations, apiBaseUrl, d
             ? '<span class="badge badge-decommissioned">Expired</span>'
             : '<span class="badge badge-active">Active</span>';
         var actions = t.revokedAt
-          ? '<button class="btn btn-sm btn-danger" onclick="deleteApiToken(\'' + t.id + '\',\'' + escapeHtml(t.name) + '\')">Delete</button>'
-          : '<button class="btn btn-sm btn-secondary" onclick="editApiTokenTrustedHosts(\'' + t.id + '\')">Edit Hosts</button>' +
-            '<button class="btn btn-sm btn-secondary" onclick="revokeApiToken(\'' + t.id + '\',\'' + escapeHtml(t.name) + '\')">Revoke</button>' +
-            '<button class="btn btn-sm btn-danger" onclick="deleteApiToken(\'' + t.id + '\',\'' + escapeHtml(t.name) + '\')">Delete</button>';
+          ? '<button class="btn btn-sm btn-danger" onclick="deleteApiToken(' + jsArg(t.id) + ',' + jsArg(t.name) + ')">Delete</button>'
+          : '<button class="btn btn-sm btn-secondary" onclick="editApiTokenTrustedHosts(' + jsArg(t.id) + ')">Edit Hosts</button>' +
+            '<button class="btn btn-sm btn-secondary" onclick="revokeApiToken(' + jsArg(t.id) + ',' + jsArg(t.name) + ')">Revoke</button>' +
+            '<button class="btn btn-sm btn-danger" onclick="deleteApiToken(' + jsArg(t.id) + ',' + jsArg(t.name) + ')">Delete</button>';
         var tokenRole = roleById[t.roleId];
         var roleHtml = '<span class="badge badge-type">' + escapeHtml(t.roleName || "—") + '</span>' +
           (tokenRole && tokenRole.adminEquivalent

@@ -27,6 +27,28 @@ function escapeHtml(s) {
 }
 if (typeof window !== "undefined") window.escapeHtml = escapeHtml;
 
+/**
+ * A value as a JavaScript argument inside a DOUBLE-quoted inline handler
+ * attribute: `onclick="fn(' + jsArg(name) + ')"`.
+ *
+ * `escapeHtml` is the wrong tool for a value that sits inside a JS string literal
+ * in a handler. It turns `'` into `&#39;`, which the HTML parser decodes back to
+ * `'` BEFORE the handler is compiled, so `x');alert(1);('` closes the string and
+ * runs script (scan findings F167, F176, F177, F197, F235, F238; business rule
+ * 109). jsArg encodes the value as a complete JSON string literal — quotes,
+ * backslashes, newlines and U+2028 / U+2029 escaped — and only then escapes it for
+ * HTML, so the attribute value survives the parser and the literal survives the
+ * compiler. It supplies its OWN surrounding quotes, so never wrap it in quotes of
+ * your own.
+ */
+function jsArg(v) {
+  var lit = JSON.stringify(String(v == null ? "" : v))
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+  return escapeHtml(lit);
+}
+if (typeof window !== "undefined") window.jsArg = jsArg;
+
 // Shared YYYY-MM-DD formatter for the mobile SPA (asset sheet "Acquired",
 // reservations "Expires" + edit-form value). Local-time — a date the operator
 // set should render as the day they meant regardless of the browser TZ; a
@@ -240,10 +262,26 @@ function downloadJson(obj, filename) {
   URL.revokeObjectURL(url);
 }
 
+// A spreadsheet reads a cell starting with = + - @ (or a tab / CR) as a FORMULA,
+// and the cells in these exports include device-reported text: DHCP client names,
+// VM names, SNMP sysName / sysLocation, and the unauthenticated username in a
+// failed-login Event (scan findings F241, F258; business rule 109). Such a cell is
+// prefixed with a single quote so it is read as text. A plain number such as
+// -12.5 is left alone — a number cannot be a formula, and prefixing it would turn
+// a numeric column into text.
+var _CSV_FORMULA_START = /^[=+\-@\t\r]/;
+var _CSV_PLAIN_NUMBER = /^[-+]?\d+(\.\d+)?([eE][-+]?\d+)?$/;
+
+function _csvCellText(c) {
+  var s = String(c == null ? "" : c);
+  if (_CSV_FORMULA_START.test(s) && !_CSV_PLAIN_NUMBER.test(s)) s = "'" + s;
+  return s;
+}
+
 function _csvRow(cells) {
   return cells.map(function (c) {
-    var s = String(c == null ? "" : c);
-    if (s.indexOf(",") !== -1 || s.indexOf('"') !== -1 || s.indexOf("\n") !== -1) {
+    var s = _csvCellText(c);
+    if (s.indexOf(",") !== -1 || s.indexOf('"') !== -1 || s.indexOf("\n") !== -1 || s.indexOf("\r") !== -1) {
       return '"' + s.replace(/"/g, '""') + '"';
     }
     return s;

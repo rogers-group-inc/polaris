@@ -6,6 +6,7 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
+import { hasNoControlChars } from "../../utils/safeText.js";
 import { purgeDirectoryContacts } from "../../services/directorySyncService.js";
 import { bumpDirectoryCache } from "../../services/directorySearchService.js";
 import { requirePermission, hasPermission } from "../middleware/permissions.js";
@@ -1312,10 +1313,19 @@ const GenericApiConfigSchema = z.object({
 /** Server-stamped llm config keys a client may never set or overwrite. */
 const LLM_SERVER_KEYS = ["roleId", "roleName", "tokenId", "toolCheck"] as const;
 
+// An integration's name is shown in the Integrations list, in handlers and in audit
+// Events. It may hold anything a person would type EXCEPT control characters
+// (scan finding F176; business rule 109) — the page encodes it for its context, and
+// this keeps a line break or separator out of the places that cannot.
+const IntegrationNameSchema = z
+  .string()
+  .min(1, "Name is required")
+  .refine(hasNoControlChars, "Name may not contain control characters");
+
 const CreateIntegrationSchema = z.discriminatedUnion("type", [
   z.object({
     type:         z.literal("fortimanager"),
-    name:         z.string().min(1, "Name is required"),
+    name:         IntegrationNameSchema,
     config:       FortiManagerConfigSchema,
     enabled:      z.boolean().optional().default(true),
     autoDiscover: z.boolean().optional().default(true),
@@ -1323,7 +1333,7 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type:         z.literal("fortigate"),
-    name:         z.string().min(1, "Name is required"),
+    name:         IntegrationNameSchema,
     config:       FortiGateConfigSchema,
     enabled:      z.boolean().optional().default(true),
     autoDiscover: z.boolean().optional().default(true),
@@ -1331,7 +1341,7 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type:         z.literal("windowsserver"),
-    name:         z.string().min(1, "Name is required"),
+    name:         IntegrationNameSchema,
     config:       WindowsServerConfigSchema,
     enabled:      z.boolean().optional().default(true),
     autoDiscover: z.boolean().optional().default(true),
@@ -1339,7 +1349,7 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type:         z.literal("entraid"),
-    name:         z.string().min(1, "Name is required"),
+    name:         IntegrationNameSchema,
     config:       EntraIdConfigSchema,
     enabled:      z.boolean().optional().default(true),
     autoDiscover: z.boolean().optional().default(true),
@@ -1347,7 +1357,7 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type:         z.literal("activedirectory"),
-    name:         z.string().min(1, "Name is required"),
+    name:         IntegrationNameSchema,
     config:       ActiveDirectoryConfigSchema,
     enabled:      z.boolean().optional().default(true),
     autoDiscover: z.boolean().optional().default(true),
@@ -1355,7 +1365,7 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type:         z.literal("vcenter"),
-    name:         z.string().min(1, "Name is required"),
+    name:         IntegrationNameSchema,
     config:       VcenterConfigSchema,
     enabled:      z.boolean().optional().default(true),
     autoDiscover: z.boolean().optional().default(true),
@@ -1363,7 +1373,7 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type:         z.literal("azurearc"),
-    name:         z.string().min(1, "Name is required"),
+    name:         IntegrationNameSchema,
     config:       AzureArcConfigSchema,
     enabled:      z.boolean().optional().default(true),
     autoDiscover: z.boolean().optional().default(true),
@@ -1373,7 +1383,7 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
   // discover hourly by default (state between runs is the monitor's job).
   z.object({
     type:         z.literal("unraid"),
-    name:         z.string().min(1, "Name is required"),
+    name:         IntegrationNameSchema,
     config:       WorkloadConfigSchema,
     enabled:      z.boolean().optional().default(true),
     autoDiscover: z.boolean().optional().default(true),
@@ -1381,7 +1391,7 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type:         z.literal("truenas"),
-    name:         z.string().min(1, "Name is required"),
+    name:         IntegrationNameSchema,
     config:       WorkloadConfigSchema,
     enabled:      z.boolean().optional().default(true),
     autoDiscover: z.boolean().optional().default(true),
@@ -1389,7 +1399,7 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type:         z.literal("proxmox"),
-    name:         z.string().min(1, "Name is required"),
+    name:         IntegrationNameSchema,
     config:       ProxmoxConfigSchema,
     enabled:      z.boolean().optional().default(true),
     autoDiscover: z.boolean().optional().default(true),
@@ -1397,7 +1407,7 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type:         z.literal("genericapi"),
-    name:         z.string().min(1, "Name is required"),
+    name:         IntegrationNameSchema,
     config:       GenericApiConfigSchema,
     enabled:      z.boolean().optional().default(true),
     autoDiscover: z.boolean().optional().default(true),
@@ -1405,7 +1415,7 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type:         z.literal("llm"),
-    name:         z.string().min(1, "Name is required"),
+    name:         IntegrationNameSchema,
     config:       LlmConfigSchema,
     enabled:      z.boolean().optional().default(true),
     // Nothing to discover — forced false at create regardless of input.

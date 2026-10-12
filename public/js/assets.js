@@ -1938,7 +1938,7 @@ function _viewLeaseActionHTML(a) {
   var ctx = a.ipContext;
   if (!ctx || !ctx.subnetId) return '';
   var title = 'View this IP in ' + (ctx.subnetCidr || 'its network');
-  return '<button class="btn btn-sm btn-secondary" onclick="viewAssetLease(\'' + a.id + '\')" title="' + escapeHtml(title) + '">View Lease</button>';
+  return '<button class="btn btn-sm btn-secondary" onclick="viewAssetLease(' + jsArg(a.id) + ')" title="' + escapeHtml(title) + '">View Lease</button>';
 }
 
 function viewAssetLease(id) {
@@ -5819,7 +5819,7 @@ function _assetGeneralTabHTML(a, sources) {
       _managementAccessNoticeHTML(a) +
       '<div class="asset-view-grid">' +
       (a.ipAddress && !a.hostname
-        ? '<div class="detail-row"><span class="detail-label">Hostname</span><span class="detail-value">- <button class="btn btn-sm btn-secondary" onclick="singleDnsLookup(\'' + a.id + '\')" title="Reverse DNS lookup (PTR record)">PTR Lookup</button></span></div>'
+        ? '<div class="detail-row"><span class="detail-label">Hostname</span><span class="detail-value">- <button class="btn btn-sm btn-secondary" onclick="singleDnsLookup(' + jsArg(a.id) + ')" title="Reverse DNS lookup (PTR record)">PTR Lookup</button></span></div>'
         : (a.hostnameOverride
           ? '<div class="detail-row"><span class="detail-label">Hostname</span><span class="detail-value"><span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(a.hostname || "") + '">' + escapeHtml(a.hostname || "-") + '</span><span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#6b728018;color:#9ca3af;border:1px solid #6b728030;margin-left:6px" title="Hostname manually overridden — discovery will not change it. Clear the Hostname field in Edit to resume the discovered value.">overridden</span>' + hostnameOriginalLineHTML(a) + '</span></div>'
           : viewRow("Hostname", a.hostname, false, false, true))) +
@@ -5836,7 +5836,7 @@ function _assetGeneralTabHTML(a, sources) {
       viewRow("Asset Tag", a.assetTag) +
       viewRow("Serial Number", a.serialNumber, false, false, true) +
       (a.macAddress && !a.manufacturer
-        ? '<div class="detail-row"><span class="detail-label">Manufacturer</span><span class="detail-value">- <button class="btn btn-sm btn-secondary" onclick="singleOuiLookup(\'' + a.id + '\')" title="OUI manufacturer lookup from MAC address">OUI Lookup</button></span></div>'
+        ? '<div class="detail-row"><span class="detail-label">Manufacturer</span><span class="detail-value">- <button class="btn btn-sm btn-secondary" onclick="singleOuiLookup(' + jsArg(a.id) + ')" title="OUI manufacturer lookup from MAC address">OUI Lookup</button></span></div>'
         : viewRow("Manufacturer", a.manufacturer)) +
       viewRow("Model", a.model) +
       viewRow("Type", ASSET_TYPE_LABELS[a.assetType] || a.assetType) +
@@ -13821,9 +13821,9 @@ function assetMonitoringViewHTML(a) {
   var depTestActiveNow = a.dependencyTestUntil && new Date(a.dependencyTestUntil).getTime() > Date.now();
   if (canSimulateDependencyDown() && a.monitored && isInfraType) {
     if (depTestActiveNow) {
-      depTestBtn = '<button class="btn btn-sm btn-secondary" onclick="clearDependencyTestNow(\'' + escapeHtml(a.id) + '\')" style="margin-left:6px" title="Stop the simulation immediately and let children resume">Clear Dep. Test</button>';
+      depTestBtn = '<button class="btn btn-sm btn-secondary" onclick="clearDependencyTestNow(' + jsArg(a.id) + ')" style="margin-left:6px" title="Stop the simulation immediately and let children resume">Clear Dep. Test</button>';
     } else {
-      depTestBtn = '<button class="btn btn-sm btn-secondary" onclick="startDependencyTestPrompt(\'' + escapeHtml(a.id) + '\')" style="margin-left:6px" title="Admin-only: simulate this device going down to see how children react. Real probes keep running.">Simulate Down…</button>';
+      depTestBtn = '<button class="btn btn-sm btn-secondary" onclick="startDependencyTestPrompt(' + jsArg(a.id) + ')" style="margin-left:6px" title="Admin-only: simulate this device going down to see how children react. Real probes keep running.">Simulate Down…</button>';
     }
   }
   var rangeBtns =
@@ -18570,7 +18570,7 @@ function ipViewRow(asset) {
         '<span class="detail-value mono">-' + blankPin + '</span></div>';
     }
     var noIpInner = asset.hostname
-      ? '- <button class="btn btn-sm btn-secondary" onclick="singleForwardLookup(\'' + asset.id + '\')" title="Forward DNS lookup (A/AAAA record)">IP Lookup</button>'
+      ? '- <button class="btn btn-sm btn-secondary" onclick="singleForwardLookup(' + jsArg(asset.id) + ')" title="Forward DNS lookup (A/AAAA record)">IP Lookup</button>'
       : '-';
     return '<div class="detail-row"><span class="detail-label">IP Address</span>' +
       '<span class="detail-value mono">' + noIpInner + '</span></div>';
@@ -19432,7 +19432,7 @@ function lastSeenRowHTML(a) {
       if (ctx && ctx.subnetId) {
         var title = "View this IP in " + (ctx.subnetCidr || "its network");
         valueInner += ' · via <a href="#" class="last-seen-source-link" ' +
-          'onclick="viewAssetLease(\'' + a.id + '\');return false;" ' +
+          'onclick="viewAssetLease(' + jsArg(a.id) + ');return false;" ' +
           'title="' + escapeHtml(title) + '">' + escapeHtml(srcLabel) + '</a>';
       } else {
         valueInner += " · via " + escapeHtml(srcLabel);
@@ -19678,8 +19678,10 @@ function haTopologyHTML(asset) {
   var peerHTML = '-';
   if (peerSerial) {
     var serialEsc = escapeHtml(peerSerial);
-    peerHTML = '<a href="#" onclick="event.preventDefault(); window.openAssetBySerial && window.openAssetBySerial(\'' +
-      serialEsc + '\'); return false" class="mono" title="Open peer asset">' + serialEsc + '</a>';
+    // The serial is device-reported. In the handler it goes through jsArg, not
+    // escapeHtml: the entity for ' is decoded before the handler compiles.
+    peerHTML = '<a href="#" onclick="event.preventDefault(); window.openAssetBySerial && window.openAssetBySerial(' +
+      jsArg(peerSerial) + '); return false" class="mono" title="Open peer asset">' + serialEsc + '</a>';
   }
   // Roster-reported member health (fortinetTopology.haMemberStatus, stamped
   // each discovery cycle from FMG ha_slave[].status / FortiOS ha-peer
@@ -24048,7 +24050,7 @@ function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory) {
   // still be merged with a discovered duplicate).
   var mergeToolbar = isAdmin()
     ? '<div style="display:flex;justify-content:flex-end;margin-bottom:0.75rem">' +
-        '<button class="btn btn-sm btn-secondary" onclick="openAssetMergeFromAssetsPage(\'' + assetId + '\')" ' +
+        '<button class="btn btn-sm btn-secondary" onclick="openAssetMergeFromAssetsPage(' + jsArg(assetId) + ')" ' +
         'title="Merge a duplicate asset into this one (combines discovery sources; the inverse of Split)">Merge asset...</button>' +
       '</div>'
     : '';
@@ -24091,7 +24093,7 @@ function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory) {
     }
     var splitButton = "";
     if (canSplit && s.sourceKind !== "manual") {
-      splitButton = '<button class="btn btn-sm btn-secondary" onclick="splitAssetSource(\'' + assetId + '\', \'' + s.id + '\', \'' + escapeHtml(label).replace(/'/g, "&#39;") + '\')" title="Detach this source onto a new asset (recovery action for bad merges)">Split</button>';
+      splitButton = '<button class="btn btn-sm btn-secondary" onclick="splitAssetSource(' + jsArg(assetId) + ', ' + jsArg(s.id) + ', ' + jsArg(label) + ')" title="Detach this source onto a new asset (recovery action for bad merges)">Split</button>';
     }
     var headerRight = (badges.length || splitButton)
       ? '<div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center">' + badges.join("") + splitButton + '</div>'

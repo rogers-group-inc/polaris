@@ -12,6 +12,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { AppError } from "../../utils/errors.js";
+import { hasNoControlChars } from "../../utils/safeText.js";
 import {
   createToken,
   deleteToken,
@@ -28,7 +29,7 @@ import { getPublicApiBaseUrl } from "../../utils/publicUrl.js";
 const router = Router();
 
 const CreateTokenSchema = z.object({
-  name: z.string().min(1).max(80),
+  name: z.string().min(1).max(80).refine(hasNoControlChars, "Name may not contain control characters"),
   roleId: z.string().min(1),
   integrationIds: z.array(z.string().uuid()).optional(),
   // Bare IPs / CIDRs the token is accepted from; omitted or empty = any

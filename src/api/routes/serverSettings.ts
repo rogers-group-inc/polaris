@@ -101,6 +101,7 @@ import { getServerCertFingerprint, getServerCertHostnames, getServerCertExpiry }
 import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
 import { normalizeAgentServerUrl } from "../../utils/agentServerUrl.js";
+import { stripControlChars } from "../../utils/safeText.js";
 import { runtimeIsContainer } from "../../utils/deploymentContext.js";
 import { hasActiveDiscoveries } from "../../services/discovery/discoveryEngine.js";
 import { logger } from "../../utils/logger.js";
@@ -944,7 +945,10 @@ router.post("/certificates", requirePermission("serverSettingsSystem", "write"),
     }
     const pem = bufferToPem(req.file.buffer, req.file.originalname);
     validatePem(pem, req.file.originalname);
-    const record = await addCertificate(category as any, req.file.originalname, pem);
+    // The filename is the record's display name and is chosen by the uploader, so
+    // control characters come out of it (scan finding F167; business rule 109).
+    const certName = stripControlChars(req.file.originalname) || "certificate";
+    const record = await addCertificate(category as any, certName, pem);
     res.status(201).json({ ...record, pem: undefined });
   } catch (err) {
     next(err);
