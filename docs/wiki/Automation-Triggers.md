@@ -219,7 +219,12 @@ A field rather than a number.
 `dependencySuppressed` · `quarantined` · `fortilinkStatus` · `firmwareVsPrimary` ·
 `tag`.
 
-`tag` is **Asset tag**: type a tag name and choose *is* or *is not*. *Is* is true
+`tag` is **Asset tag**: pick a tag from the list (every tag on a device plus every
+tag in the registry, so you can build a rule for a tag no device carries yet) and
+choose *is* or *is not*. On the Devices step the same tag box suggests
+`category:name` entries such as `priority:Critical` and `region:<name>`; the rule
+stores the tag name itself (`Critical`; a region keeps its `region:` prefix) and
+you can still type any name. *Is* is true
 of a device carrying that tag, *is not* of one that does not. The match is the
 whole tag, ignoring case. It is a fact about the device, so it keeps reading
 while the device is down. Combine it with another condition to limit a rule to,
