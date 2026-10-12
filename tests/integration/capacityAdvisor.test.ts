@@ -127,6 +127,60 @@ d("POST /api/v1/server-settings/capacity-advisor/stage", () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
+// Business rule 105: the page grades for display only; the capacityWatch job
+// is the one evaluator, and the hold is operator-set.
+
+d("capacity alert hold (business rule 105)", () => {
+  it("GET /capacity-advisor reports the transition state and never writes it", async () => {
+    // A recorded severity no live grade will match, so a route that still
+    // recorded transitions would overwrite it or start a pending change.
+    const planted = { severity: "critical", recordedAt: "2026-01-01T00:00:00.000Z" };
+    await prisma.setting.upsert({
+      where: { key: "capacity.lastSeverity" },
+      update: { value: planted },
+      create: { key: "capacity.lastSeverity", value: planted },
+    });
+    const { agent } = await authedAgent(app);
+    const advisor = await agent.get("/api/v1/server-settings/capacity-advisor");
+    expect(advisor.status).toBe(200);
+    expect(advisor.body.capacityTransition).toMatchObject({
+      recorded: { severity: "critical" },
+      pending: null,
+      intervalMinutes: 10,
+    });
+    expect(typeof advisor.body.capacityTransition.holdMinutes).toBe("number");
+    const tuning = await agent.get("/api/v1/server-settings/pg-tuning");
+    expect(tuning.status).toBe(200);
+    const row = await prisma.setting.findUnique({ where: { key: "capacity.lastSeverity" } });
+    expect(row?.value).toEqual(planted);
+    await prisma.setting.delete({ where: { key: "capacity.lastSeverity" } });
+  });
+
+  it("PUT /capacity-alert-hold validates, saves, and writes an audit Event", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    for (const bad of [{}, { minutes: -1 }, { minutes: 1.5 }, { minutes: 1441 }, { minutes: 10, extra: 1 }]) {
+      const res = await agent
+        .put("/api/v1/server-settings/capacity-alert-hold")
+        .set("X-CSRF-Token", csrf)
+        .send(bad);
+      expect(res.status).toBe(400);
+    }
+    const ok = await agent
+      .put("/api/v1/server-settings/capacity-alert-hold")
+      .set("X-CSRF-Token", csrf)
+      .send({ minutes: 20 });
+    expect(ok.status).toBe(200);
+    expect(ok.body.holdMinutes).toBe(20);
+    const ev = await prisma.event.findFirst({
+      where: { action: "capacity.alert_hold_updated" },
+      orderBy: { timestamp: "desc" },
+    });
+    expect(ev?.details).toMatchObject({ to: 20 });
+    await prisma.setting.deleteMany({ where: { key: "capacity.alertHold" } });
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
 // Regression: capacityService no longer emits the legacy pgboss_* reasons.
 
 d("capacity reasons no longer carry pgboss_* codes", () => {
