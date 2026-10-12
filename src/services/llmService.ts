@@ -35,6 +35,7 @@ import { createHash } from "node:crypto";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { buildClientCredentialsTokenRequest } from "../utils/entraClientCredentials.js";
+import { guardedLookup, isBlockedLlmHost } from "../utils/netGuard.js";
 import Anthropic from "@anthropic-ai/sdk";
 import AnthropicFoundry from "@anthropic-ai/foundry-sdk";
 
@@ -339,6 +340,11 @@ async function openRequest(
   signal: AbortSignal | undefined,
 ): Promise<RawResponse> {
   if (!config.host) throw new AppError(400, "LLM host is required");
+  // Judged again here, not only at save: a stored host may predate the guard, and a
+  // name is judged by what it resolves to on the connection itself (rule 110).
+  if (isBlockedLlmHost(config.host, !!config.allowLoopback)) {
+    throw new AppError(400, `LLM host "${config.host}" is in a blocked range (link-local / metadata / multicast / loopback)`);
+  }
   const mod = config.useHttps ? https : http;
   const payload = body === undefined ? undefined : JSON.stringify(body);
   const headers: Record<string, string> = { Accept: "application/json, text/event-stream" };
@@ -359,6 +365,7 @@ async function openRequest(
         path,
         headers,
         signal,
+        lookup: guardedLookup({ allowLoopback: !!config.allowLoopback }),
         ...(config.useHttps ? { rejectUnauthorized: config.verifySsl !== false } : {}),
       },
       (res) => resolve({

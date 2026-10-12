@@ -13,6 +13,7 @@
 
 import webpush from "web-push";
 import { AppError } from "../../utils/errors.js";
+import { resolveAllowedHost } from "../../utils/netGuard.js";
 
 export interface VapidConfig {
   publicKey: string;
@@ -62,6 +63,15 @@ export async function sendWebPush(vapid: VapidConfig, target: WebPushTarget, pay
   // missing subject doesn't hard-fail every send.
   const subject = vapid.subject && /^(mailto:|https:)/.test(vapid.subject) ? vapid.subject : "mailto:polaris@localhost";
   webpush.setVapidDetails(subject, vapid.publicKey, vapid.privateKey);
+  // The endpoint is a URL a signed-in user chose; refuse one that points at this host
+  // or a metadata address, by literal or by what its name resolves to (rule 110).
+  try {
+    await resolveAllowedHost(new URL(target.endpoint).hostname);
+  } catch (err: any) {
+    const e: WebPushError = new Error(`Web push endpoint refused: ${err?.message || "invalid endpoint"}`);
+    e.statusCode = 400;
+    throw e;
+  }
   try {
     await webpush.sendNotification(
       { endpoint: target.endpoint, keys: { p256dh: target.p256dh, auth: target.auth } },

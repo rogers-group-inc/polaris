@@ -12,7 +12,7 @@
  */
 
 import { AppError } from "../../utils/errors.js";
-import { assertOutboundHostAllowed } from "../../utils/netGuard.js";
+import { assertOutboundHostAllowed, resolveAllowedHost } from "../../utils/netGuard.js";
 import { severityHex } from "../../utils/severityStyle.js";
 
 export type WebhookKind = "generic" | "slack" | "teams";
@@ -91,6 +91,7 @@ export async function sendWebhook(rawUrl: string, kind: WebhookKind, payload: We
     throw new AppError(400, `Invalid webhook URL: ${rawUrl}`);
   }
   assertOutboundHostAllowed(host); // throws BLOCKED_HOST for internal/metadata ranges
+  await resolveAllowedHost(host); // ...and for a name that resolves into one (rule 110)
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
@@ -99,6 +100,8 @@ export async function sendWebhook(rawUrl: string, kind: WebhookKind, payload: We
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(formatBody(kind, payload)),
+      // A redirect would carry the POST to a host the guard never saw.
+      redirect: "manual",
       signal: controller.signal,
     });
     if (!res.ok) {

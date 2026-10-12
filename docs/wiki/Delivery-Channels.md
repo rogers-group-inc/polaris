@@ -44,6 +44,9 @@ their test buttons live on this tab rather than in the wizard.
 Security sits **above** Port on purpose: picking a security level fills the
 conventional port in for you.
 
+The host may be on the Polaris machine itself (a local mail relay). Link-local and
+cloud-metadata addresses are refused ([rule 110](Business-Rules#rule-110)).
+
 ## Email — Microsoft 365 (OAuth)
 
 | Field | |

@@ -321,15 +321,20 @@ d("POST /credentials/test — the check is supplied per test, not read off the c
     expect(miss.body.success).toBe(false);
   });
 
-  it("accepts a typed host instead of an asset, for a device not yet onboarded", async () => {
-    const { agent, csrf } = await authedAgent(app);
-    const res = await agent.post("/api/v1/credentials/test").set("X-CSRF-Token", csrf).send({
-      host: "127.0.0.1", type: "http", config: {}, check: { port: srvPort, path: "/" },
-    });
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.host).toBe("127.0.0.1");
-  });
+  it.each(["127.0.0.1", "127.1", "2130706433", "[::ffff:7f00:1]", "169.254.169.254", "localhost"])(
+    "refuses a typed host that is this machine or a metadata address: %s (rule 110)",
+    async (host) => {
+      const { agent, csrf } = await authedAgent(app);
+      const res = await agent.post("/api/v1/credentials/test").set("X-CSRF-Token", csrf).send({
+        host, type: "http", config: {}, check: { port: srvPort, path: "/" },
+      });
+      // A RESULT, not a 4xx, and no request was made — so no body comes back.
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(false);
+      expect(String(res.body.error)).toMatch(/loopback \/ link-local \/ metadata/i);
+      expect(res.body.httpDiagnostics).toBeUndefined();
+    },
+  );
 
   it("refuses a typed host that is really a URL, naming the field that owns the parts", async () => {
     const { agent, csrf } = await authedAgent(app);

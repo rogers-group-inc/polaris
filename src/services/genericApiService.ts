@@ -26,7 +26,7 @@
 import http from "node:http";
 import https from "node:https";
 import { AppError } from "../utils/errors.js";
-import { assertOutboundHostAllowed } from "../utils/netGuard.js";
+import { assertOutboundHostAllowed, guardedLookup } from "../utils/netGuard.js";
 import { isValidIpAddress, normalizeCidr } from "../utils/cidr.js";
 import { normalizeMacsDistinct } from "../utils/mac.js";
 import { usableSerialOrNull } from "../utils/serialNumber.js";
@@ -850,6 +850,8 @@ async function requestJson(url: URL, opts: RequestJsonOptions): Promise<RawJsonR
         method: opts.method,
         headers,
         signal: opts.signal,
+        // A name is judged by what it resolves to, on the connection itself (rule 110).
+        lookup: guardedLookup(),
         ...(url.protocol === "https:" ? { rejectUnauthorized: opts.verifySsl } : {}),
       },
       (res) => {

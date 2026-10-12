@@ -2045,3 +2045,24 @@ not a spelling, a cookie that has outlived its owner, or a code already used.**
 - **Names refuse control characters** (line breaks and the like). Quotes and
   non-English letters are fine.
 - **A reported HA peer serial** is kept only if it is 6 to 32 letters and digits.
+
+### Rule 110
+
+**An outbound host is judged by the address it is, not the text it was typed as.**
+
+- **Every way of writing an address is judged as the address.** `127.1`,
+  `2130706433`, `0x7f000001` and `[::ffff:7f00:1]` are loopback and are refused
+  like `127.0.0.1`. The refused set is unchanged — loopback, link-local (including
+  the cloud metadata address), unspecified and multicast. Private LAN addresses
+  stay reachable.
+- **A name is judged by where it points when Polaris connects.** A name that
+  resolves to a refused address is refused, however it got there.
+- **Webhooks and API calls do not follow redirects.** A redirect answer is a failed
+  delivery.
+- **Loopback is allowed only where it is a normal setup.** The AI assistant's
+  *Allow loopback* box and the SMTP channel (a mail relay on the Polaris host) lift
+  the block for loopback and nothing else.
+- **Credential Test Connection** refuses a typed host that is this machine or a
+  metadata address. Testing against an asset is unchanged.
+- **Web Push endpoints** must be `https` and may not point at this host or a
+  metadata address.

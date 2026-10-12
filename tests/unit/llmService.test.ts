@@ -53,7 +53,7 @@ beforeAll(async () => {
 
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 
-const cfg = (over: Partial<LlmConfig> = {}): LlmConfig => ({ host: "127.0.0.1", port, model: "qwen2.5:7b", basePath: "/v1", ...over });
+const cfg = (over: Partial<LlmConfig> = {}): LlmConfig => ({ host: "127.0.0.1", allowLoopback: true, port, model: "qwen2.5:7b", basePath: "/v1", ...over });
 
 function sse(res: http.ServerResponse, chunks: unknown[], eol = "\n") {
   res.writeHead(200, { "Content-Type": "text/event-stream" });

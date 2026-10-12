@@ -34,6 +34,7 @@ import { AppError } from "../../utils/errors.js";
 import { probeCredentialAgainstHost } from "../../services/monitoringService.js";
 import { isDeviceLoginCredential, type HttpAuthConfig, type HttpProbeDiagnostics } from "../../utils/httpCheck.js";
 import { normalizeProbeTarget } from "../../utils/probeTarget.js";
+import { resolveAllowedHost } from "../../utils/netGuard.js";
 
 const router = Router();
 
@@ -203,6 +204,25 @@ router.post("/test", credentialTestLimiter, requireOwnership("credentials"), asy
         return;
       }
       host = target.host;
+      // A typed target is a host the caller chose freely, and an `http` test hands the
+      // response back — so it may not be this host, a link-local or metadata address, by
+      // literal or by what its name resolves to (rule 110). An asset-targeted test is
+      // aimed at known inventory and is not judged here. Answered as a RESULT, like the
+      // refusal above.
+      if (host) {
+        try {
+          await resolveAllowedHost(host);
+        } catch (err: any) {
+          if (err?.code !== "BLOCKED_HOST") throw err;
+          res.json({
+            success: false,
+            responseTimeMs: 0,
+            error: `${host} is a loopback / link-local / metadata address. Test against the device's routable address, or pick the asset.`,
+            host: null,
+          });
+          return;
+        }
+      }
     }
 
     let config = input.config || {};
