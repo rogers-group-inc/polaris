@@ -13,6 +13,7 @@ import { chunkArray } from "../../utils/chunk.js";
 import { mapSettledWithConcurrency } from "../../utils/concurrency.js";
 import { createTrailingThrottle } from "../../utils/trailingThrottle.js";
 import { prisma } from "../../db.js";
+import { Prisma } from "../../generated/prisma/client.js";
 import { AppError, throwIfAborted } from "../../utils/errors.js";
 import { armDiscoveryCancelWatchdog } from "../discoveryCancelWatchdog.js";
 import * as fortimanager from "../fortimanagerService.js";
@@ -4903,14 +4904,22 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // VIPs whose `vipInfo.device` is in this set are sweep-eligible, so a
   // transient query failure won't wipe operator-edited rows.
   const currentVipKeys = new Set<string>();
+  // The same membership, but naming the VIP: `device|name|subnetId|ip`. The
+  // Phase 5b stamp sweep on non-`vip` rows needs it because an address alone
+  // can't say whether the stamped VIP is still there — WAN externals are
+  // routinely shared by several VIPs (one per port forward), so deleting one
+  // leaves the address in `currentVipKeys` while the stamp names a VIP that's
+  // gone.
+  const currentVipStampKeys = new Set<string>();
   const vipQueriedDevices = new Set<string>(result.vipInventoriedDevices ?? []);
   if (result.vips) {
     for (const vip of result.vips) {
-      const matchExt = findSubnetForIp(vip.extip);
-      if (matchExt) currentVipKeys.add(reservationKey(matchExt.id, vip.extip));
-      for (const ip of [...vip.mappedips, ...vip.realservers]) {
-        const matchMap = findSubnetForIp(ip);
-        if (matchMap) currentVipKeys.add(reservationKey(matchMap.id, ip));
+      for (const ip of [vip.extip, ...vip.mappedips, ...vip.realservers]) {
+        const match = findSubnetForIp(ip);
+        if (!match) continue;
+        const key = reservationKey(match.id, ip);
+        currentVipKeys.add(key);
+        currentVipStampKeys.add(`${vip.device}|${vip.name}|${key}`);
       }
     }
   }
@@ -5739,9 +5748,56 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   for (const s of allSubnets) subnetById.set(s.id, s);
 
   let releasedStaleVips = 0;
+  let clearedStaleVipStamps = 0;
   let releasedStaleDhcpReservations = 0;
   for (const [key, row] of activeResMap.entries()) {
     if (!row || row.status !== "active") continue;
+    // Stale VIP stamp on a row that owns its address on its own account — a
+    // DHCP lease / reservation the VIP arrived on second, or an operator's
+    // claim that inherited the snapshot (business rule 77). Only the VIP fact
+    // goes; the row keeps its status and every operator field, the same
+    // three-way retirement the per-subnet discover applies. Without this
+    // branch nothing ever cleared such a stamp: the `vip` sweep below skips
+    // these rows, and the per-subnet discover refuses a network no
+    // integration discovered — so a claimed address in a hand-built WAN
+    // network reported its deleted VIP forever. Scoped to stamps naming a gate
+    // whose VIP table read this cycle (rule 17's per-device scoping; an
+    // unread table is never "no VIPs", rule 53). Falls through so the
+    // dhcp_reservation sweep still judges the row itself.
+    if (row.sourceType !== "vip" && row.vipInfo) {
+      const stamp = row.vipInfo as any;
+      const dev = (typeof stamp?.device === "string" && stamp.device) || "";
+      const name = (typeof stamp?.name === "string" && stamp.name) || "";
+      if (vipQueriedDevices.has(dev) && !currentVipStampKeys.has(`${dev}|${name}|${key}`)) {
+        try {
+          await prisma.reservation.update({
+            where: { id: row.id },
+            data: { vipInfo: Prisma.DbNull },
+          });
+          row.vipInfo = null;
+          clearedStaleVipStamps++;
+          logEvent({
+            action: "reservation.vip.cleared",
+            resourceType: "reservation",
+            resourceId: row.id,
+            resourceName: row.ipAddress || "",
+            actor,
+            message: `VIP "${name || "(unknown)"}" no longer on ${dev} — cleared from ${row.sourceType.replace("_", " ")} reservation at ${row.ipAddress || "(subnet)"}`,
+            details: {
+              integrationId,
+              integrationName,
+              reservationId: row.id,
+              ipAddress: row.ipAddress,
+              sourceType: row.sourceType,
+              priorVipInfo: stamp,
+              fortigateDevice: dev,
+            },
+          });
+        } catch (err: any) {
+          syncLog("error", `Failed to clear stale VIP stamp on ${row.ipAddress}: ${err.message || "Unknown error"}`);
+        }
+      }
+    }
     if (row.sourceType === "vip") {
       const dev = ((row.vipInfo as any)?.device) || "";
       if (!vipQueriedDevices.has(dev)) continue;
@@ -5834,8 +5890,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       }
     }
   }
-  if (releasedStaleVips > 0 || releasedStaleDhcpReservations > 0) {
-    syncLog("info", `Stale-row sweep: released ${releasedStaleVips} VIP reservation(s), ${releasedStaleDhcpReservations} DHCP reservation(s)`);
+  if (releasedStaleVips > 0 || clearedStaleVipStamps > 0 || releasedStaleDhcpReservations > 0) {
+    syncLog("info", `Stale-row sweep: released ${releasedStaleVips} VIP reservation(s), cleared ${clearedStaleVipStamps} stale VIP stamp(s), released ${releasedStaleDhcpReservations} DHCP reservation(s)`);
   }
 
   // Per-run (MAC, gate) ARP index — the locality half of the device-inventory
