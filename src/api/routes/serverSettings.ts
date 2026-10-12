@@ -101,6 +101,7 @@ import { validateBackupPassword } from "../../utils/backupPassword.js";
 import { getServerCertFingerprint, getServerCertHostnames, getServerCertExpiry } from "../../services/certInfo.js";
 import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
+import { normalizeAgentServerUrl } from "../../utils/agentServerUrl.js";
 import { runtimeIsContainer } from "../../utils/deploymentContext.js";
 import { hasActiveDiscoveries } from "../../services/discovery/discoveryEngine.js";
 import { logger } from "../../utils/logger.js";
@@ -2761,12 +2762,15 @@ router.put("/agents/server-url", requirePermission("serverSettingsSystem", "writ
     if (typeof raw !== "string") {
       return res.status(400).json({ error: "url must be a string" });
     }
-    const trimmed = raw.trim().replace(/\/$/, "");
-    if (!/^https?:\/\//i.test(trimmed)) {
-      return res.status(400).json({ error: "url must start with http:// or https://" });
+    // The URL is written into agent.conf and pasted into the Windows installer
+    // script, so it is held to an allowlist, not just "parses as a URL".
+    // See utils/agentServerUrl.ts.
+    const trimmed = normalizeAgentServerUrl(raw);
+    if (trimmed === null) {
+      return res.status(400).json({
+        error: "url must be a plain http:// or https:// address — a host, an optional port and an optional path of letters, digits and . _ ~ - /, with no spaces, quotes, query or fragment",
+      });
     }
-    try { new URL(trimmed); }
-    catch { return res.status(400).json({ error: "url is not a valid absolute URL" }); }
 
     await prisma.setting.upsert({
       where:  { key: AGENT_SERVER_URL_SETTING_KEY },
