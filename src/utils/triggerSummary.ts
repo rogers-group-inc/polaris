@@ -177,6 +177,12 @@ export function triggerSummary(parts: TriggerSummaryParts): string {
     // from, so the two read alike.
     const label = (trigger.field ? FIELD_META[trigger.field]?.label : null) ?? trigger.field ?? "State";
     const on = parts.dimensionLabel ? ` on ${parts.dimensionLabel}` : "";
+    // A tag reading is the tag when the device carries it and blank when not,
+    // so "Asset tag is prod" would read wrongly for the absent case.
+    if (trigger.field === "tag") {
+      const name = formatValue(trigger.value ?? null) ?? "";
+      return `Asset ${formatValue(parts.value) ? "has" : "does not have"} the tag "${name}"`;
+    }
     // The READING when we have one; the configured value otherwise (a test on
     // a device with nothing reported still reads as a sentence).
     const raw = formatValue(parts.value) ?? formatValue(trigger.value ?? null);

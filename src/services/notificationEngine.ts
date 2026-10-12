@@ -764,7 +764,7 @@ function triggerNeedsAnsweringDevice(trigger: Trigger): boolean {
  *   - the outage itself (`monitorStatus`, `consecutiveFailures`) — that alert
  *     IS the one everything hands to;
  *   - facts Polaris holds about the device rather than reads from it
- *     (`status`, `dependencySuppressed`, `quarantined`, `firmwareVsPrimary`) —
+ *     (`status`, `dependencySuppressed`, `quarantined`, `firmwareVsPrimary`, `tag`) —
  *     an outage changes none of them, and clearing one would only re-fire it,
  *     a fresh alert, when the device came back;
  *   - path checks (`isPathMetric`) — the asset is the vantage point, not the subject,
@@ -772,7 +772,7 @@ function triggerNeedsAnsweringDevice(trigger: Trigger): boolean {
  */
 const DEVICE_DOWN_KEEPS_STATE_FIELDS = new Set<string>([
   "monitorStatus", "consecutiveFailures",
-  "status", "dependencySuppressed", "quarantined", "firmwareVsPrimary",
+  "status", "dependencySuppressed", "quarantined", "firmwareVsPrimary", "tag",
 ]);
 
 function leafHandsOffWhenDeviceDown(leaf: { type: string; metric?: string; field?: string }): boolean {
@@ -1999,6 +1999,21 @@ async function resolveAssetStateReadings(
       return assets
         .filter((a) => a.fortilinkStatus != null)
         .map((a) => ({ ...mk(a, "", "", a.fortilinkStatus), readingAt: a.fortilinkCheckedAt ?? null }));
+    }
+    case "tag": {
+      // The reading is the NAMED tag when the asset carries it and "" when it
+      // does not, so the ordinary comparator answers both forms: `== prod` is
+      // true only of a tagged device, `!= prod` only of an untagged one. Every
+      // asset in scope gets a reading — an untagged device is a real answer
+      // here, not an unknown one. Tags live on the scope row already, so there
+      // is no query at any fleet size. Matched whole and case-insensitively,
+      // the way the scope condition's `tag` field is.
+      const want = String(trigger.value ?? "").trim().toLowerCase();
+      if (!want) return [];
+      return assets.map((a) => {
+        const has = (a.tags ?? []).some((t) => t.toLowerCase() === want);
+        return { ...mk(a, "", "", has ? String(trigger.value).trim() : ""), readingAt: probeAt(a) };
+      });
     }
     case "firmwareVsPrimary": {
       // Business rule 87. Same posture as fortilinkStatus: a device the

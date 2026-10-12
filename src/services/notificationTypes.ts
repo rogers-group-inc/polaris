@@ -650,6 +650,11 @@ export const ASSET_STATE_FIELDS = [
   // version, no primary for its platform. Resolved from one findMany over the
   // image table per evaluation, never one query per asset.
   "firmwareVsPrimary",
+  // Whether the asset carries ONE named tag. The tag is the rule's `value`; the
+  // operator says which way: `== prod` is "is tagged prod", `!= prod` is "is
+  // not tagged prod". A fact Polaris holds about the device (Asset.tags), so it
+  // reads the scope row like `status` does and survives the device going down.
+  "tag",
   "ifOperStatus", "ifAdminStatus", "ifIpAddress", "poeStatus", "ipsecStatus", "sdwanRuleStatus", "sdwanSelectedMember",
   // Whether ONE WAN member of ONE performance-SLA health check is alive, as the
   // FortiGate itself judges it (AssetPerfSlaSample.state, normalized from the
@@ -2578,6 +2583,12 @@ export function triggerSignature(trigger: Trigger): string | null {
     if (trigger.field === "monitorStatus") {
       return `as:monitorStatus:${trigger.operator}${String(trigger.value).toLowerCase()}`;
     }
+    // Like monitorStatus, the compared value is part of what is being watched:
+    // "tagged prod" and "tagged dev" are different things, so two automations on
+    // them must not carve each other out.
+    if (trigger.field === "tag") {
+      return `as:tag:${trigger.operator}${String(trigger.value).toLowerCase()}:${stableDimFilter(trigger.dimensionFilter)}`;
+    }
     return `as:${trigger.field}:${stableDimFilter(trigger.dimensionFilter)}`;
   }
   return null;
@@ -3265,6 +3276,28 @@ function validateMissedPolls(trigger: Trigger | undefined, ctx: z.RefinementCtx)
  * it would save, render and filter nothing — so it is refused rather than kept
  * inert. Checked on the bare trigger and on every leaf of a composite.
  */
+/**
+ * A tag condition names the tag in `value`, so a blank or non-string value would
+ * save and then match nothing (or, negated, every device). Only is / is-not mean
+ * anything about a tag. Checked on the bare trigger and on every composite leaf.
+ */
+function validateTagCondition(trigger: Trigger | undefined, ctx: z.RefinementCtx): void {
+  if (!trigger) return;
+  const leaves: Array<{ type: string; field?: string; operator?: string; value?: unknown }> =
+    trigger.type === "composite" ? (collectTriggerLeaves(trigger) as never) : [trigger as never];
+  const offender = leaves.find((l) => {
+    if (l.type !== "asset_state" || l.field !== "tag") return false;
+    return typeof l.value !== "string" || l.value.trim() === "" || (l.operator !== "==" && l.operator !== "!=");
+  });
+  if (offender) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: trigger.type === "composite" ? ["trigger", "children"] : ["trigger", "value"],
+      message: 'an asset tag condition needs a tag name, and compares it with "is" or "is not"',
+    });
+  }
+}
+
 function validateMemberIpFilter(trigger: Trigger | undefined, ctx: z.RefinementCtx): void {
   if (!trigger) return;
   const leaves: Array<{ type: string; metric?: string; field?: string; dimensionFilter?: { sdwanMemberIp?: string } }> =
@@ -3325,6 +3358,7 @@ function validateRuleV2(
   validateGrouping(v, ctx);
   validateIncludeServer(trigger, reset, ctx);
   validateMemberIpFilter(trigger, ctx);
+  validateTagCondition(trigger, ctx);
   if (reset.mode === "timed" && reset.afterSec == null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reset", "afterSec"], message: "timed reset requires afterSec" });
   }
@@ -4223,7 +4257,7 @@ export const METRIC_META: Record<string, { label: string; unit: string }> = {
 // asks which interface ON THAT ROW, and the answer being two menu levels away
 // under "+ Condition → Component name" is the gap, not the typing. Blank still
 // means every monitored component on every scoped device, for all of them.
-export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" | "number" | "dynamic"; values?: string[]; placeholder?: string; equalityOnly?: boolean; integralDimension?: string }> = {
+export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" | "number" | "text" | "dynamic"; values?: string[]; placeholder?: string; equalityOnly?: boolean; integralDimension?: string }> = {
   // "passive" = no down-detection automation covers the device, so Polaris
   // renders no verdict for it. It is still polled and still charted — the
   // counters keep advancing, they are simply never compared to a threshold.
@@ -4255,6 +4289,10 @@ export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" |
   // The operator's usual rule is `!= current`; `== newer` names the fleet
   // that is AHEAD of the image someone selected as primary.
   firmwareVsPrimary: { label: "Firmware vs Repository primary", kind: "enum", values: ["current", "older", "newer"] },
+  // Free text (tags are operator-typed), matched whole and case-insensitively
+  // like the scope condition's `tag` field. Equality only: "is tagged" / "is
+  // not tagged" are the only questions a tag can answer.
+  tag: { label: "Asset tag", kind: "text", equalityOnly: true, placeholder: "tag name" },
   // The interface is INTEGRAL on all three port-state fields (see the header):
   // the row says which port it is about, and blank keeps meaning "every
   // monitored interface", one alert each — the engine folds per dimension

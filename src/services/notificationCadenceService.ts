@@ -75,6 +75,7 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   dependencySuppressed: "responseTime",
   quarantined: "responseTime",
   status: "responseTime",
+  tag: "responseTime",
   // Telemetry pass (assetTelemetrySample).
   cpuPct: "cpuMemory",
   cpuCorePct: "cpuMemory",
