@@ -58,6 +58,7 @@ vi.mock("../../src/db.js", () => {
         const emails: string[] = where?.OR?.find((o: any) => o.email)?.email?.in ?? [];
         return db.users.filter((u) => ids.includes(u.id) || (u.email && emails.includes(u.email.toLowerCase())));
       }),
+      findUnique: vi.fn(async ({ where }: any) => db.users.find((u) => u.id === where.id) ?? null),
     },
     quietTimeSummary: {
       create: vi.fn(async ({ data }: any) => { const row = { id: `s${db.summaries.length + 1}`, createdAt: new Date(), ...data }; db.summaries.push(row); return { id: row.id }; }),
@@ -128,6 +129,8 @@ import {
   summaryDue,
   buildSummaryDetails,
   recipientsFromHeldRows,
+  detailsForRecipient,
+  renderSentSummaryEmail,
   createDueSummaries,
   drainPendingSummaries,
   runQuietTimeSummaries,
@@ -256,6 +259,42 @@ describe("recipientsFromHeldRows", () => {
     ]);
     expect(r.addresses).toEqual(["a@example.com", "b@example.com", "c@example.com"]);
     expect(r.userIds).toEqual(["u1"]);
+  });
+
+  it("records which alerts each address and push account was a target of", () => {
+    const r = recipientsFromHeldRows([
+      { notificationId: "n1", transport: "email", target: "infra@example.com", meta: { cc: ["Boss@example.com"] } },
+      { notificationId: "n2", transport: "email", target: "apps@example.com, boss@example.com", meta: {} },
+      { notificationId: "n2", transport: "web_push", target: "https://push/1", meta: { userId: "u1" } },
+    ]);
+    expect(r.alerts.byAddress).toEqual({ "infra@example.com": ["n1"], "boss@example.com": ["n1", "n2"], "apps@example.com": ["n2"] });
+    expect(r.alerts.byUser).toEqual({ u1: ["n2"] });
+  });
+});
+
+describe("detailsForRecipient", () => {
+  const details = {
+    outstanding: [
+      { notificationId: "n1", severity: "serious", assetId: "a1", assetHostname: "fw-core", ruleName: "Infra", message: "down", dimension: null, triggeredAt: HELD_AT.toISOString() },
+      { notificationId: "n2", severity: "warning", assetId: "a2", assetHostname: "app-1", ruleName: "Apps", message: "slow", dimension: null, triggeredAt: HELD_AT.toISOString() },
+    ],
+    recurring: [{ assetId: "a3", assetHostname: "sw-9", ruleName: "Apps", dimension: "port1", severity: "warning", count: 3, times: [], stillActive: false, notificationIds: ["n3", "n4", "n5"] }],
+    recurrenceThreshold: 2,
+  };
+
+  it("keeps only the reader's own outstanding and recurring rows", () => {
+    expect(detailsForRecipient(details, { alertIds: ["n1"] })).toMatchObject({ outstanding: [{ notificationId: "n1" }], recurring: [] });
+    const apps = detailsForRecipient(details, { alertIds: ["n2", "n4"] });
+    expect(apps.outstanding.map((o) => o.notificationId)).toEqual(["n2"]);
+    expect(apps.recurring).toHaveLength(1);
+  });
+
+  it("a reader whose alerts all recovered gets the all-quiet copy, counting their own", () => {
+    expect(detailsForRecipient(details, { alertIds: ["n9", "n10"] })).toMatchObject({ allQuiet: true, heldCount: 2, outstanding: [], recurring: [] });
+  });
+
+  it("a recipient with no alert list gets the summary whole (static all-quiet audience, older rows)", () => {
+    expect(detailsForRecipient(details, {})).toBe(details);
   });
 });
 
@@ -508,6 +547,87 @@ describe("drainPendingSummaries", () => {
     expect(db.events.map((e) => e.action)).toContain("quiet_time.summary_resent");
     // Nothing left to resend → refused rather than re-mailing everyone.
     await expect(resendSummary("s1")).rejects.toThrow(/already been reached/);
+  });
+
+  it("one global quiet time over two teams' automations: each reader is mailed ONLY their own devices", async () => {
+    const infra = heldAlert({ ruleId: "r-infra", assetId: "a-fw", assetHostname: "fw-core", message: "fw-core is down", dimension: null, rule: { name: "Infra down" } });
+    const apps = heldAlert({ ruleId: "r-apps", assetId: "a-app", assetHostname: "app-1", message: "app-1 is down", dimension: null, rule: { name: "Apps down" } });
+    const appsGone = heldAlert({ ruleId: "r-apps", assetId: "a-app2", assetHostname: "app-2", message: "app-2 is down", dimension: null, cleared: true, rule: { name: "Apps down" } });
+    db.deliveries.push(
+      { notificationId: infra.id, status: "held", transport: "email", target: "infra@example.com", meta: { cc: ["boss@example.com"] }, channelId: "ch-email" },
+      { notificationId: apps.id, status: "held", transport: "email", target: "apps@example.com, boss@example.com", meta: {}, channelId: "ch-email" },
+      { notificationId: appsGone.id, status: "held", transport: "email", target: "dba@example.com", meta: {}, channelId: "ch-email" },
+    );
+    await createDueSummaries(at(2026, 10, 3, 6, 1));
+    const s = db.summaries[0];
+    expect(s.listedCount).toBe(2); // the source-level row still records the whole night
+    expect(s.recipients.find((r: any) => r.address === "infra@example.com").alertIds).toEqual([infra.id]);
+
+    await drainPendingSummaries(at(2026, 10, 3, 6, 1));
+    const to = (a: string) => db.sent.find((m) => m.to[0] === a);
+    expect(to("infra@example.com").html).toContain("fw-core");
+    expect(to("infra@example.com").html).not.toContain("app-1");
+    expect(to("infra@example.com").subject).toBe("[QUIET TIME SUMMARY] 1 outstanding · Nights");
+    expect(to("apps@example.com").html).toContain("app-1");
+    expect(to("apps@example.com").html).not.toContain("fw-core");
+    // On both teams' lists: both devices.
+    expect(to("boss@example.com").subject).toBe("[QUIET TIME SUMMARY] 2 outstanding · Nights");
+    // Only a recovered alert: the all-quiet copy (summaryAlways is the default), naming nobody else's device.
+    expect(to("dba@example.com").subject).toBe("[QUIET TIME SUMMARY] all quiet · Nights");
+    expect(to("dba@example.com").html).not.toContain("fw-core");
+    expect(to("dba@example.com").html).not.toContain("app-1");
+    // Each sent copy records its zone and time, so it can be shown again.
+    const infraR = db.summaries[0].recipients.find((r: any) => r.address === "infra@example.com");
+    expect(infraR.zone).toBeTruthy();
+    expect(infraR.sentAt).toBe(at(2026, 10, 3, 6, 1).toISOString());
+  });
+
+  it("with the all-quiet email off, a reader whose alerts all recovered is not mailed at all", async () => {
+    db.schedules[0].quiet = { windows: [NIGHTLY], summaryAlways: false };
+    const live = heldAlert();
+    const gone = heldAlert({ cleared: true, dimension: "port13" });
+    db.deliveries.push(
+      { notificationId: live.id, status: "held", transport: "email", target: "oncall@example.com", meta: {}, channelId: "ch-email" },
+      { notificationId: gone.id, status: "held", transport: "email", target: "other@example.com", meta: {}, channelId: "ch-email" },
+    );
+    await createDueSummaries(at(2026, 10, 3, 6, 1));
+    expect(db.summaries[0].recipients.map((r: any) => r.address)).toEqual(["oncall@example.com"]);
+  });
+
+  it("a push-only reader's copy follows their account's alerts", async () => {
+    const mine = heldAlert({ assetHostname: "mine-1", message: "mine-1 is down" });
+    const theirs = heldAlert({ assetHostname: "theirs-1", message: "theirs-1 is down", dimension: "port40" });
+    db.users.push({ id: "u1", email: "phone@example.com", username: "phone", timezone: "auto", detectedTimezone: "America/Chicago" });
+    db.deliveries.push(
+      { notificationId: mine.id, status: "held", transport: "web_push", target: "https://push/1", meta: { userId: "u1" }, channelId: "ch-push" },
+      { notificationId: theirs.id, status: "held", transport: "email", target: "noc@example.com", meta: {}, channelId: "ch-email" },
+    );
+    await createDueSummaries(at(2026, 10, 3, 6, 1));
+    await drainPendingSummaries(at(2026, 10, 3, 6, 1));
+    const phone = db.sent.find((m) => m.to[0] === "phone@example.com");
+    expect(phone.html).toContain("mine-1");
+    expect(phone.html).not.toContain("theirs-1");
+  });
+
+  it("a summary written before per-reader filtering still sends (and shows) the whole thing", async () => {
+    await seedPending();
+    for (const r of db.summaries[0].recipients) delete r.alertIds;
+    await drainPendingSummaries(at(2026, 10, 3, 6, 1));
+    expect(db.sent.every((m) => m.html.includes("port12 is down"))).toBe(true);
+    const e = await renderSentSummaryEmail("s1", "oncall@example.com");
+    expect(e.filtered).toBe(false);
+  });
+
+  it("shows the email one recipient was sent: their copy, their zone, as of the send", async () => {
+    await seedPending();
+    await drainPendingSummaries(at(2026, 10, 3, 6, 1));
+    const e = await renderSentSummaryEmail("s1", "Phone@Example.com");
+    const sent = db.sent.find((m) => m.to[0] === "phone@example.com");
+    expect(e).toMatchObject({ address: "phone@example.com", status: "sent", zone: "Pacific/Honolulu", filtered: true, listedCount: 1 });
+    expect(e.subject).toBe(sent.subject);
+    expect(e.html).toBe(sent.html);
+    await expect(renderSentSummaryEmail("s1", "nobody@example.com")).rejects.toThrow(/not a recipient/);
+    await expect(renderSentSummaryEmail("missing", "phone@example.com")).rejects.toThrow(/not found/);
   });
 
   it("the whole tick creates and sends in one call", async () => {

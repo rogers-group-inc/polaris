@@ -26,6 +26,7 @@ const g = globalThis as Record<string, unknown>;
 let doc: Window["document"];
 let toasts: { msg: string; kind: string }[];
 const posted: Record<string, unknown>[] = [];
+const emailAsked: Array<{ id: string; address: string }> = [];
 const put: { id: string; body: Record<string, unknown> }[] = [];
 let schedules: Record<string, unknown>[] = [];
 let modalCloses = 0;
@@ -72,7 +73,7 @@ beforeAll(() => {
         { id: "s1", sourceKind: "global", sourceName: "Nights", coveredFrom: "2026-10-02T22:00:00Z", coveredTo: "2026-10-03T06:00:00Z", notificationIds: ["n1", "n2"], listedCount: 1, recurringCount: 0, recipients: [{ address: "a@x.com", status: "sent" }], status: "sent", createdAt: "2026-10-03T06:00:00Z", sentAt: "2026-10-03T06:00:05Z" },
       ] }),
       summary: async (id: string) => ({
-        summary: { id, sourceKind: "global", sourceName: "Nights", coveredFrom: "2026-10-02T22:00:00Z", coveredTo: "2026-10-03T06:00:00Z", notificationIds: ["n1", "n2"], listedCount: 1, recurringCount: 0, details: { outstanding: [], recurring: [] }, recipients: [{ address: "a@x.com", status: "sent", attempts: 1 }, { address: "b@x.com", userId: "u2", status: "failed", attempts: 10, error: "smtp down" }], status: "partial-failed" },
+        summary: { id, sourceKind: "global", sourceName: "Nights", coveredFrom: "2026-10-02T22:00:00Z", coveredTo: "2026-10-03T06:00:00Z", notificationIds: ["n1", "n2"], listedCount: 1, recurringCount: 0, details: { outstanding: [], recurring: [] }, recipients: [{ address: "a@x.com", status: "sent", attempts: 1, listedCount: 1, recurringCount: 0, filtered: true }, { address: "b@x.com", userId: "u2", status: "failed", attempts: 10, error: "smtp down", listedCount: 0, recurringCount: 0, filtered: true }], status: "partial-failed" },
         covered: [
           { id: "n1", assetId: "a1", assetHostname: "sw-1", severity: "serious", message: "port12 is down", dimension: "port12", triggeredAt: "2026-10-03T02:00:00Z", cleared: false, acknowledged: false, ruleName: "Port down", listed: true },
           { id: "n2", assetId: "a2", assetHostname: "ap-7", severity: "warning", message: "AP flapping", dimension: null, triggeredAt: "2026-10-03T03:00:00Z", cleared: true, clearedAt: "2026-10-03T03:30:00Z", acknowledged: false, ruleName: "AP flap", listed: false },
@@ -83,6 +84,11 @@ beforeAll(() => {
           recurrenceThreshold: 2,
         },
       }),
+      summaryEmail: async (id: string, address: string) => {
+        emailAsked.push({ id, address });
+        return { address, status: "sent", zone: "America/Chicago", sentAt: "2026-10-03T06:00:05Z", filtered: true, listedCount: 1, recurringCount: 0,
+          subject: "[QUIET TIME SUMMARY] 1 outstanding · Nights", text: "port12 is down", html: '<style>p{color:red}</style><p class="only-mine">port12 is down on sw-1</p>' };
+      },
       create: async (body: Record<string, unknown>) => { posted.push(body); return { id: "new" }; },
       update: async (id: string, body: Record<string, unknown>) => { put.push({ id, body }); return { id }; },
       delete: async () => {},
@@ -183,7 +189,8 @@ describe("the Settings modal", () => {
 
     btn("listed").click();
     await tick(20);
-    expect(overlay().querySelector(".modal-header h3")!.textContent).toBe("What the email listed");
+    expect(overlay().querySelector(".modal-header h3")!.textContent).toBe("What the summary listed");
+    expect(overlay().textContent).toContain("Each recipient's email names only the alerts that would have reached them");
     expect(overlay().textContent).toContain("Still outstanding (1)");
     expect(overlay().textContent).toContain("Recurring (1)");
     expect(overlay().textContent).toContain("fired more than 2 times");
@@ -199,8 +206,27 @@ describe("the Settings modal", () => {
     expect(recipRows[1]!.textContent).toContain("b@x.com");
     expect(recipRows[1]!.textContent).toContain("failed");
     expect(recipRows[1]!.textContent).toContain("smtp down");
+    // What each reader's own copy listed.
+    expect(recipRows[0]!.textContent).toContain("1 outstanding");
+    expect(recipRows[1]!.textContent).toContain("all quiet");
     // The Settings modal underneath is untouched.
     expect(doc.querySelector("#aqs-quiet")!.textContent).toContain("Recent summaries");
+
+    // View email: that reader's email, stacked over the Recipients list, its
+    // styles kept inside a shadow root.
+    emailAsked.length = 0;
+    (recipRows[0]!.querySelector("[data-qt-email]") as unknown as { click: () => void }).click();
+    await tick(20);
+    expect(emailAsked).toEqual([{ id: "s1", address: "a@x.com" }]);
+    expect(overlay().style.zIndex).toBe("1400");
+    expect(overlay().querySelector(".modal-header h3")!.textContent).toBe("Summary email");
+    expect(overlay().textContent).toContain("[QUIET TIME SUMMARY] 1 outstanding · Nights");
+    expect(overlay().textContent).toContain("America/Chicago");
+    const bodyHost = overlay().querySelector("#qt-email-body") as HTMLElement;
+    expect(bodyHost.shadowRoot!.querySelector(".only-mine")!.textContent).toBe("port12 is down on sw-1");
+    expect(doc.querySelector(".only-mine")).toBeNull();
+    (overlay().querySelector("#qt-email-close") as unknown as { click: () => void }).click();
+    await tick(450);
     (overlay().querySelector("#qt-detail-close") as unknown as { click: () => void }).click();
     await tick(450);
   });

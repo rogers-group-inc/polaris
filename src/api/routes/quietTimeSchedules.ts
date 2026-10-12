@@ -29,7 +29,7 @@ import {
   listQuietTimeSummaries,
   getQuietTimeSummary,
 } from "../../services/quietTimeScheduleService.js";
-import { resendSummary } from "../../services/quietTimeSummaryService.js";
+import { resendSummary, renderSentSummaryEmail } from "../../services/quietTimeSummaryService.js";
 import { scopeSchema, SEVERITIES } from "../../services/notificationTypes.js";
 import { quietTimeConfigSchema } from "../../utils/quietTime.js";
 
@@ -57,7 +57,9 @@ const quietScheduleInputSchema = z.object({
   }),
 });
 
-quietTimeSchedulesRouter.get("/", requirePermission("automationManagement", "read"), async (_req, res, next) => {
+const summaryEmailQuerySchema = z.object({ address: z.string().trim().min(1).max(320) });
+
+quietTimeSchedulesRouter.get("/",requirePermission("automationManagement", "read"), async (_req, res, next) => {
   try {
     res.json({ schedules: await listQuietTimeSchedules() });
   } catch (err) { next(err); }
@@ -77,6 +79,15 @@ quietTimeSchedulesRouter.get("/summaries", requirePermission("automationManageme
 quietTimeSchedulesRouter.get("/summaries/:id", requirePermission("automationManagement", "read"), async (req, res, next) => {
   try {
     res.json(await getQuietTimeSummary(req.params.id as string));
+  } catch (err) { next(err); }
+});
+
+/** The email one recipient got — their filtered copy, in their zone — for the
+ *  Recipients view's "View email". */
+quietTimeSchedulesRouter.get("/summaries/:id/email", requirePermission("automationManagement", "read"), async (req, res, next) => {
+  try {
+    const { address } = summaryEmailQuerySchema.parse(req.query);
+    res.json(await renderSentSummaryEmail(req.params.id as string, address));
   } catch (err) { next(err); }
 });
 

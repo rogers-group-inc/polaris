@@ -1214,6 +1214,8 @@ const api = {
     summaries: (limit) => request("GET", "/automations/quiet-times/summaries" + (limit ? `?limit=${encodeURIComponent(limit)}` : "")),
     /** One summary in full: covered alerts, what was listed, every recipient. */
     summary:   (id)    => request("GET", `/automations/quiet-times/summaries/${id}`),
+    /** The email one recipient of a summary got — their own filtered copy. */
+    summaryEmail: (id, address) => request("GET", `/automations/quiet-times/summaries/${id}/email?address=${encodeURIComponent(address)}`),
     /** Send a failed summary again to every recipient not yet reached. */
     resendSummary: (id) => request("POST", `/automations/quiet-times/summaries/${id}/resend`, {}),
     create:    (body)  => request("POST", "/automations/quiet-times", body),

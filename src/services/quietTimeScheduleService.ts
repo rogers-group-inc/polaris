@@ -23,6 +23,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
 import { bumpQuietTimeCache, parseQuietTimeConfig } from "./quietTimeHoldService.js";
+import { detailsForRecipient, type SummaryRecipient } from "./quietTimeSummaryService.js";
 import { quietWindowNow, quietResumesAt, type QuietTimeConfig } from "../utils/quietTime.js";
 import { nextWindow, formatLocalIsoMinute } from "../utils/maintenanceRecurrence.js";
 import type { RuleScope } from "./notificationTypes.js";
@@ -191,8 +192,15 @@ export async function getQuietTimeSummary(id: string) {
     outstanding?: unknown[]; recurring?: unknown[]; recurrenceThreshold?: number | null; allQuiet?: boolean; heldCount?: number;
   };
   const listedIds = new Set((details.outstanding ?? []).map((o) => (o as { notificationId?: string }).notificationId).filter((x): x is string => !!x));
+  // What each reader's own copy listed (rule 92: a reader sees only their alerts).
+  const recipients = (Array.isArray(row.recipients) ? row.recipients : []) as unknown as SummaryRecipient[];
+  const summaryDetails = { outstanding: [], recurring: [], recurrenceThreshold: null, ...details } as Parameters<typeof detailsForRecipient>[0];
+  const withCounts = recipients.map((r) => {
+    const mine = detailsForRecipient(summaryDetails, r);
+    return { ...r, listedCount: mine.outstanding.length, recurringCount: mine.recurring.length, filtered: Array.isArray(r.alertIds) };
+  });
   return {
-    summary: row,
+    summary: { ...row, recipients: withCounts },
     covered: covered.map((n) => ({ ...n, ruleName: n.rule?.name ?? null, rule: undefined, listed: listedIds.has(n.id) })),
     listed: { outstanding: details.outstanding ?? [], recurring: details.recurring ?? [], recurrenceThreshold: details.recurrenceThreshold ?? null },
   };
