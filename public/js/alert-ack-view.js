@@ -29,10 +29,10 @@
    * hex here would survive a theme change and a token rename both. */
   var SEVERITY_VAR = {
     notice: "--color-sev-notice",
-    informational: "--color-accent",
-    warning: "--color-warning",
+    informational: "--color-sev-informational",
+    warning: "--color-sev-warning",
     serious: "--color-sev-serious",
-    critical: "--color-danger",
+    critical: "--color-sev-critical",
   };
 
   function esc(s) {

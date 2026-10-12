@@ -1905,14 +1905,14 @@ async function _performSearch(q) {
 function assetAlertStrobeColor(severity) {
   var token = {
     notice: "--color-sev-notice",
-    informational: "--color-accent",
-    info: "--color-accent",
-    warning: "--color-warning",
+    informational: "--color-sev-informational",
+    info: "--color-sev-informational",
+    warning: "--color-sev-warning",
     serious: "--color-sev-serious",
-    error: "--color-danger",
-    critical: "--color-danger",
+    error: "--color-sev-critical",
+    critical: "--color-sev-critical",
   }[severity];
-  return "var(" + (token || "--color-danger") + ")";
+  return "var(" + (token || "--color-sev-critical") + ")";
 }
 
 /**
@@ -4990,14 +4990,14 @@ function randomTagColor() {
 // A tag's stored color is either a hex or a SEVERITY REFERENCE ("severity:warning").
 // A reference resolves to the same theme token the severity bands paint with
 // (PolarisChartSeverity's SEV_COLOR — keep the two maps in step), so a Priority tag
-// reads exactly as its severity does on every theme. A fixed hex cannot: the bands'
-// warning is #ffd600 on nightfall and #f57f17 on the daylight pair.
+// reads exactly as its severity does on every theme. A fixed hex cannot: the
+// --color-sev-* palette is retuned per theme (styles.css :root + daylight block).
 var TAG_SEVERITY_COLORS = {
   notice: "var(--color-sev-notice)",
-  informational: "var(--color-accent)",
-  warning: "var(--color-warning)",
+  informational: "var(--color-sev-informational)",
+  warning: "var(--color-sev-warning)",
   serious: "var(--color-sev-serious)",
-  critical: "var(--color-danger)",
+  critical: "var(--color-sev-critical)",
 };
 var TAG_SEVERITY_ORDER = ["notice", "informational", "warning", "serious", "critical"];
 

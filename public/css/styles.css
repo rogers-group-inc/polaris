@@ -67,8 +67,20 @@
   --color-danger: #ff1744;
   --color-danger-hover: #d50000;
   --color-deprecated: #757575;
-  --color-sev-serious: #ff8a00;
+  /* THE severity palette — one token per alert severity, read by every surface
+     that paints one in the browser: the chart severity bands (chart-severity.js),
+     the .badge-level-* pills, registry tags with a severity colour (tagColorCss),
+     the active-alert dot, the acknowledge card, widgets and the automations
+     wizard. Never paint a severity with --color-accent / --color-warning
+     directly: on the daylight themes the accent is the theme's amber or rust,
+     and Informational read as a fourth orange. The dark family resolves to the
+     theme's own accent / warning / danger (each theme block retunes those);
+     the daylight block below pins distinct hues. */
   --color-sev-notice: #94a3b8;
+  --color-sev-informational: var(--color-accent);
+  --color-sev-warning: var(--color-warning);
+  --color-sev-serious: #ff8a00;
+  --color-sev-critical: var(--color-danger);
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "Roboto Mono", "Consolas", "Fira Code", monospace;
   --radius-sm: 4px;
@@ -287,8 +299,17 @@
   --color-danger: #c62828;
   --color-danger-hover: #b71c1c;
   --color-deprecated: #757575;
-  --color-sev-serious: #ff8a00;
-  --color-sev-notice: #94a3b8;
+  /* Daylight severity palette: five hues that stay apart on cream AND white,
+     dark enough to read as text — slate, blue, and a warm ladder spaced ~24°
+     apart: red 0° / orange 24° / gold 47°. Critical is pinned rather than left
+     on each theme's danger token because morning's (#b0301d) leans orange and
+     sat beside serious; the theme warning tokens (#d07a00 / #c96a00 / #c05a00)
+     were within a few degrees of serious too. */
+  --color-sev-notice: #475569;
+  --color-sev-informational: #0277bd;
+  --color-sev-warning: #8a6d00;
+  --color-sev-serious: #c75000;
+  --color-sev-critical: #b91c1c;
   --color-hover-tint: rgba(0,0,0,0.05);
   --color-fill-subtle: rgba(0,0,0,0.05);
   --shadow-pill: 0 1px 2px rgba(60,40,10,.22);
@@ -352,12 +373,9 @@
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-storage        { background: rgba(156,39,176,0.10); color: #7b1fa2; border-color: rgba(156,39,176,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-quarantined    { background: rgba(183,28,28,0.12); color: #b71c1c; border-color: rgba(183,28,28,0.35); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-info    { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-warning { background: rgba(245,127,23,0.10); border-color: rgba(245,127,23,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-error   { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-notice        { background: rgba(100,116,139,0.10); border-color: rgba(100,116,139,0.30); color: #475569; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-informational { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-serious       { background: rgba(234,88,12,0.10); border-color: rgba(234,88,12,0.30); color: #c2410c; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-critical      { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
+/* The severity badges (notice … critical, and level-warning) take their daylight
+   colours from the --color-sev-* tokens — no per-theme override here. */
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .integration-type-badge { background: rgba(230,81,0,0.10); color: #e65100; border-color: rgba(230,81,0,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .modal-overlay { background: rgba(0,0,0,.2); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .slideover-overlay { background: rgba(0,0,0,.14); }
@@ -4349,13 +4367,24 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 
 /* Event level badges */
 .badge-level-info    { background: rgba(79,195,247,0.12); color: var(--color-accent); border: 1px solid rgba(79,195,247,0.25); font-size: 0.7rem; letter-spacing: 0.5px; }
-.badge-level-warning { background: rgba(255,214,0,0.12); color: var(--color-warning); border: 1px solid rgba(255,214,0,0.25); font-size: 0.7rem; letter-spacing: 0.5px; }
 .badge-level-error   { background: rgba(255,23,68,0.12); color: var(--color-danger); border: 1px solid rgba(255,23,68,0.25); font-size: 0.7rem; letter-spacing: 0.5px; }
-/* Notification severities (notice < informational < warning < serious < critical). */
-.badge-level-notice        { background: rgba(148,163,184,0.14); color: var(--color-sev-notice); border: 1px solid rgba(148,163,184,0.30); font-size: 0.7rem; letter-spacing: 0.5px; }
-.badge-level-informational { background: rgba(79,195,247,0.12); color: var(--color-accent); border: 1px solid rgba(79,195,247,0.25); font-size: 0.7rem; letter-spacing: 0.5px; }
-.badge-level-serious       { background: rgba(255,138,0,0.14); color: var(--color-sev-serious); border: 1px solid rgba(255,138,0,0.30); font-size: 0.7rem; letter-spacing: 0.5px; }
-.badge-level-critical      { background: rgba(255,23,68,0.12); color: var(--color-danger); border: 1px solid rgba(255,23,68,0.25); font-size: 0.7rem; letter-spacing: 0.5px; }
+/* Notification severities (notice < informational < warning < serious < critical),
+   plus the legacy event level `warning`, which means the same thing. Text, fill
+   and border all derive from the one --color-sev-* token, so a theme retunes a
+   severity in one place and the pill can never be blue-bordered amber text. */
+.badge-level-notice, .badge-level-informational, .badge-level-warning,
+.badge-level-serious, .badge-level-critical {
+  color: var(--sev-c);
+  background: color-mix(in srgb, var(--sev-c) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sev-c) 30%, transparent);
+  font-size: 0.7rem;
+  letter-spacing: 0.5px;
+}
+.badge-level-notice        { --sev-c: var(--color-sev-notice); }
+.badge-level-informational { --sev-c: var(--color-sev-informational); }
+.badge-level-warning       { --sev-c: var(--color-sev-warning); }
+.badge-level-serious       { --sev-c: var(--color-sev-serious); }
+.badge-level-critical      { --sev-c: var(--color-sev-critical); }
 
 .asset-tag-label {
   font-family: var(--font-mono);
@@ -7155,10 +7184,10 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
    Option styling works in desktop Chrome/Firefox; browsers that ignore it
    still get the tinted select text via the sev-* class on the element. */
 .sev-select.sev-notice,        .sev-select option.sev-notice        { color: var(--color-sev-notice); }
-.sev-select.sev-informational, .sev-select option.sev-informational { color: var(--color-accent); }
-.sev-select.sev-warning,       .sev-select option.sev-warning       { color: var(--color-warning); }
+.sev-select.sev-informational, .sev-select option.sev-informational { color: var(--color-sev-informational); }
+.sev-select.sev-warning,       .sev-select option.sev-warning       { color: var(--color-sev-warning); }
 .sev-select.sev-serious,       .sev-select option.sev-serious       { color: var(--color-sev-serious); }
-.sev-select.sev-critical,      .sev-select option.sev-critical      { color: var(--color-danger); }
+.sev-select.sev-critical,      .sev-select option.sev-critical      { color: var(--color-sev-critical); }
 
 /* Condition-builder value combobox: focus/click opens the existing-values
    list for the row's field; typing filters (contains). Replaces <datalist>,

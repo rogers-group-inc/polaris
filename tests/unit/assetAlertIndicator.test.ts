@@ -163,7 +163,7 @@ describe("assetAlertDotHTML", () => {
     const el = dot({ activeAlert: { severity: "warning", count: 1, unacknowledged: 1 } })!;
     expect(el).toBeTruthy();
     expect(el.classList.contains("is-handled")).toBe(false);
-    expect(el.getAttribute("style")).toContain("--strobe-color:var(--color-warning)");
+    expect(el.getAttribute("style")).toContain("--strobe-color:var(--color-sev-warning)");
     expect(el.getAttribute("title")).toBe("1 active warning alert");
   });
 
@@ -191,7 +191,7 @@ describe("assetAlertDotHTML", () => {
   it("still marks the row when the severity is missing or unrecognized", () => {
     const el = dot({ activeAlert: { severity: null, count: 1, unacknowledged: 1 } })!;
     expect(el).toBeTruthy();
-    expect(el.getAttribute("style")).toContain("--strobe-color:var(--color-danger)");
+    expect(el.getAttribute("style")).toContain("--strobe-color:var(--color-sev-critical)");
   });
 });
 
@@ -213,12 +213,12 @@ describe("the two halves agree", () => {
 
   it("uses the vocabulary the .badge-level-* pills already paint", () => {
     expect(g.assetAlertStrobeColor("notice")).toBe("var(--color-sev-notice)");
-    expect(g.assetAlertStrobeColor("informational")).toBe("var(--color-accent)");
-    expect(g.assetAlertStrobeColor("info")).toBe("var(--color-accent)");
-    expect(g.assetAlertStrobeColor("warning")).toBe("var(--color-warning)");
+    expect(g.assetAlertStrobeColor("informational")).toBe("var(--color-sev-informational)");
+    expect(g.assetAlertStrobeColor("info")).toBe("var(--color-sev-informational)");
+    expect(g.assetAlertStrobeColor("warning")).toBe("var(--color-sev-warning)");
     expect(g.assetAlertStrobeColor("serious")).toBe("var(--color-sev-serious)");
-    expect(g.assetAlertStrobeColor("critical")).toBe("var(--color-danger)");
-    expect(g.assetAlertStrobeColor("error")).toBe("var(--color-danger)");
-    expect(g.assetAlertStrobeColor("wat")).toBe("var(--color-danger)");
+    expect(g.assetAlertStrobeColor("critical")).toBe("var(--color-sev-critical)");
+    expect(g.assetAlertStrobeColor("error")).toBe("var(--color-sev-critical)");
+    expect(g.assetAlertStrobeColor("wat")).toBe("var(--color-sev-critical)");
   });
 });

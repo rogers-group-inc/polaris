@@ -39,8 +39,8 @@ beforeAll(() => {
 });
 
 const SERIOUS = "var(--color-sev-serious)";
-const CRITICAL = "var(--color-danger)";
-const WARNING = "var(--color-warning)";
+const CRITICAL = "var(--color-sev-critical)";
+const WARNING = "var(--color-sev-warning)";
 
 /** The operator's automation from the screenshots: serious ≥35, critical ≥40. */
 const HOT: Tier[] = [

@@ -346,13 +346,13 @@ describe("severity-referenced tag colors", () => {
 
   it("resolves each severity to the theme token the severity bands paint with", () => {
     expect(g.tagColorCss("severity:notice")).toBe("var(--color-sev-notice)");
-    expect(g.tagColorCss("severity:informational")).toBe("var(--color-accent)");
-    expect(g.tagColorCss("severity:warning")).toBe("var(--color-warning)");
+    expect(g.tagColorCss("severity:informational")).toBe("var(--color-sev-informational)");
+    expect(g.tagColorCss("severity:warning")).toBe("var(--color-sev-warning)");
     expect(g.tagColorCss("severity:serious")).toBe("var(--color-sev-serious)");
-    expect(g.tagColorCss("severity:critical")).toBe("var(--color-danger)");
+    expect(g.tagColorCss("severity:critical")).toBe("var(--color-sev-critical)");
     expect(g.tagColorCss("#ff8a00")).toBe("#ff8a00");
     expect(g.tagColorCss("severity:urgent")).toBe("");
-    expect(g.tagColorTint("severity:warning", 18)).toBe("color-mix(in srgb, var(--color-warning) 18%, transparent)");
+    expect(g.tagColorTint("severity:warning", 18)).toBe("color-mix(in srgb, var(--color-sev-warning) 18%, transparent)");
   });
 
   it("matches chart-severity.js's SEV_COLOR exactly", () => {
@@ -366,7 +366,7 @@ describe("severity-referenced tag colors", () => {
   it("a user's tag pill paints with the token; a malformed color falls back to grey", () => {
     setCatalog(true, CATALOG.concat(SEV_ROWS));
     const html = userTagPillsHtml({ regionTags: [], otherTags: ["Warning", "Serious", "Bogus"] });
-    expect(html).toContain("color:var(--color-warning)");
+    expect(html).toContain("color:var(--color-sev-warning)");
     expect(html).toContain("color:var(--color-sev-serious)");
     expect(html).not.toContain("url(x)");
     expect(html).toContain("color:#9e9e9e");
@@ -378,7 +378,7 @@ describe("severity-referenced tag colors", () => {
     g.document.body.innerHTML = otherTagsPickerHtml("f-tags", ["Warning"]);
     const pill = g.document.querySelector('.other-tag-pill[data-tag="Warning"]') as any;
     expect(pill.getAttribute("data-color")).toBe("severity:warning");
-    expect(pill.getAttribute("style")).toContain("var(--color-warning)");
+    expect(pill.getAttribute("style")).toContain("var(--color-sev-warning)");
     setCatalog(true, CATALOG);
   });
 });

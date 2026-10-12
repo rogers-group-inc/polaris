@@ -523,7 +523,7 @@ describe("asset Alerts tab — the tab's own strobe", () => {
     // Still marked — an acknowledged alert is still active — but settled.
     expect(tab.classList.contains("alert-strobe")).toBe(true);
     expect(tab.classList.contains("is-handled")).toBe(true);
-    expect(tab.style.getPropertyValue("--strobe-color")).toBe("var(--color-danger)");
+    expect(tab.style.getPropertyValue("--strobe-color")).toBe("var(--color-sev-critical)");
   });
 
   it("clears the marking entirely when the last alert is gone", async () => {

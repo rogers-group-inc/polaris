@@ -6617,7 +6617,7 @@ async function openAutomationWizard(existing, opts) {
     draft.resetActions = adopted;
   }
   // Severity colors (mirror styles.css .sev-select palette) for the accent.
-  var SEV_COLORS = { notice: "var(--color-sev-notice)", informational: "var(--color-accent)", warning: "var(--color-warning)", serious: "var(--color-sev-serious)", critical: "var(--color-danger)" };
+  var SEV_COLORS = { notice: "var(--color-sev-notice)", informational: "var(--color-sev-informational)", warning: "var(--color-sev-warning)", serious: "var(--color-sev-serious)", critical: "var(--color-sev-critical)" };
   function sevColor(sev) { return SEV_COLORS[sev] || "var(--color-accent)"; }
   function sevRankOf(sev) { return (s.severities || []).indexOf(sev); }
   // Paint the step heading + the conditions group border to the base severity.
