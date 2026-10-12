@@ -1,15 +1,15 @@
-# Business rule 105 — full narrative
+# Business rule 107 — full narrative
 
 > Written 2026-10-12 as its own file (one file per rule from 78 on). Rule numbers are a
 > stable citation key — never renumber. 81 is a deliberate gap.
 
 Each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
-- [Rule 105](#rule-105) — Text an operator types reaches a command line, a script or a generated connection only after it has been checked, and is checked again where it is used
+- [Rule 107](#rule-107) — Text an operator types reaches a command line, a script or a generated connection only after it has been checked, and is checked again where it is used
 
-<a id="rule-105"></a>
+<a id="rule-107"></a>
 
-## Rule 105 — Text an operator types reaches a command line, a script or a generated connection only after it has been checked, and is checked again where it is used
+## Rule 107 — Text an operator types reaches a command line, a script or a generated connection only after it has been checked, and is checked again where it is used
 
 ### Where it came from
 

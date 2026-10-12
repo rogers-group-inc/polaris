@@ -113,7 +113,7 @@ export const JSIGN_JAR_CANDIDATES: string[] = [
  * `java -jar`, i.e. it is code run as the Polaris service user on the next
  * build, and a path anyone with `serverSettingsSystem:write` could type — to a
  * file they had uploaded as a "logo" — was a way from that grant to code
- * execution (scan finding F198; business rule 105).
+ * execution (scan finding F198; business rule 107).
  */
 export function jsignJarCandidates(): string[] {
   const fromEnv = process.env.POLARIS_JSIGN_JAR?.trim();

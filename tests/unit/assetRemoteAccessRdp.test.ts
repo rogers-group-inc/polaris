@@ -176,7 +176,7 @@ describe("_rdpAction / _doRdpLaunch", () => {
     expect(g.copyTextToClipboard).toHaveBeenCalledWith("mstsc /v:10.0.0.9");
   });
 
-  // Scan finding F257 / rule 105: the address went into the .rdp body and the
+  // Scan finding F257 / rule 107: the address went into the .rdp body and the
   // pasted command unchecked, so a line break added lines to the file and a `;`
   // added a command to a line the operator pasted into a shell.
   it.each([

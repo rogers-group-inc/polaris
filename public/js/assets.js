@@ -19138,7 +19138,7 @@ function _sshAction() {
 // command line, an .rdp file. A host is an address or hostname; a username is the
 // usual account spellings. Anything else (a line break that would add lines to
 // the .rdp file, a `;` that would add a command to a pasted line) is refused, not
-// stripped — a silently altered target is worse than a refused one. Rule 105.
+// stripped — a silently altered target is worse than a refused one. Rule 107.
 function _connectHostOk(h) { return typeof h === "string" && /^[A-Za-z0-9._:%\[\]-]+$/.test(h); }
 function _connectUserOk(u) { return !u || /^[A-Za-z0-9._@\\-]+$/.test(u); }
 function _connectRefused(what) {

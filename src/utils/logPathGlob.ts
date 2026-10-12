@@ -17,7 +17,7 @@
  *   - AUTHORITY (the route): setting a NEW glob needs `assets=fullwrite`, the
  *     grant that already means "may deploy and drive agents" (business rule 43).
  *
- * Pure. Business rule 105.
+ * Pure. Business rule 107.
  */
 
 export const LOG_PATH_GLOB_MAX = 1024;

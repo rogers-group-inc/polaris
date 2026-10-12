@@ -257,7 +257,7 @@ const AddressCheckSchema = z.object({
 // hold only what an IPv4 / IPv6 address or a hostname can: letters, digits and
 // . _ : % [ ] -. No whitespace or control character, and no shell or RDP-file
 // metacharacter. (A line break in it added lines to the .rdp file — scan
-// finding F257; rule 105.)
+// finding F257; rule 107.)
 const ASSET_ADDRESS_RE = /^[A-Za-z0-9._:%\[\]-]+$/;
 const AssetAddressSchema = z
   .string()
@@ -4037,7 +4037,7 @@ router.put("/:id/processes/:name/config", requirePermission("assets", "write"), 
     // path, never a UNC / device path or a `..` walk. AUTHORITY: setting or
     // changing one needs assets=fullwrite — the grant that already means "may
     // deploy and drive agents" (rule 43) — while an `assets:write` caller can
-    // still edit the log source and notes, or clear the glob. Rule 105.
+    // still edit the log source and notes, or clear the glob. Rule 107.
     const newGlob = body.logPathGlob ?? null;
     if (newGlob !== null) {
       const existing = await prisma.assetProcessConfig.findUnique({

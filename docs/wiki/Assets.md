@@ -757,7 +757,7 @@ A pinned process can also be given a **log path** — a glob such as
 path (no network share, device path or `..`), and **setting** one needs
 **Assets** Full Read-Write, because the agent reads it with the service's
 privileges. Read-Write can still change the log source or clear the path
-([rule 105](Business-Rules#rule-105)).
+([rule 107](Business-Rules#rule-107)).
 
 Click a service's name to open its detail panel. It shows the display name,
 the **description** (Windows), state, **startup type** in the Services

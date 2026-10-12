@@ -180,7 +180,7 @@ build auto-prune + boot-time auto-build are layered on top.
   install one-liners in `docs/INSTALL.md` ("Optional: Code signing").
   The default jar probe paths in `agentSigningService.JSIGN_JAR_CANDIDATES`
   are version-less (`tools/jsign.jar`), so only the download sites move. There
-  is NO Setting-supplied jar path (removed 2026-10-12, rule 105): the jar runs
+  is NO Setting-supplied jar path (removed 2026-10-12, rule 107): the jar runs
   as `java -jar`, so its location is the fixed candidates or the
   `POLARIS_JSIGN_JAR` environment variable (`jsignJarCandidates()`).
 

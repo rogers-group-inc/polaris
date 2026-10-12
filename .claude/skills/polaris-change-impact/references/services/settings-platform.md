@@ -135,7 +135,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/eventArchiveService.ts
 
-**Input rule (business rule 105):** host, username, port, protocol and key path reach ssh / sftp / scp as arguments, so `assertSafeArchiveSettings` checks them in `updateArchiveSettings`, `testConnection` and `archiveAndExport` (a stored value from before the check must not reach an argv either), and every destination follows `--`. The routes parse the body with a Zod schema first (`ArchiveSettingsSchema` in `routes/events.ts`); the content check lives here. Pinned by `tests/unit/eventArchiveInjection.test.ts`.
+**Input rule (business rule 107):** host, username, port, protocol and key path reach ssh / sftp / scp as arguments, so `assertSafeArchiveSettings` checks them in `updateArchiveSettings`, `testConnection` and `archiveAndExport` (a stored value from before the check must not reach an argv either), and every destination follows `--`. The routes parse the body with a Zod schema first (`ArchiveSettingsSchema` in `routes/events.ts`); the content check lives here. Pinned by `tests/unit/eventArchiveInjection.test.ts`.
 
 **What it owns:** All outbound Event flows (syslog/SFTP archival), event retention/prune configuration, and asset auto-decommission settings. Events created anywhere flow through here via job (pruneEvents) + optional real-time forwarders.
 

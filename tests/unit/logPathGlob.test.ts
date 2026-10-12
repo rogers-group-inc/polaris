@@ -3,7 +3,7 @@
  *
  * An asset's log path glob is read by a Polaris Agent running as a privileged
  * user, so what it may name is narrowed to absolute local paths (scan finding
- * F194; business rule 105).
+ * F194; business rule 107).
  */
 
 import { describe, it, expect } from "vitest";

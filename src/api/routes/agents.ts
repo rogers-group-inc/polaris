@@ -969,7 +969,7 @@ agentsRouter.get("/config", async (req, res, next) => {
           name,
           logSource:   c?.logSource ?? "auto",
           // A glob stored before the shape check existed is withheld rather than
-          // delivered: the agent would read it as a privileged user. Rule 105.
+          // delivered: the agent would read it as a privileged user. Rule 107.
           logPathGlob: c?.logPathGlob && isSafeLogPathGlob(c.logPathGlob) ? c.logPathGlob : null,
         };
       });

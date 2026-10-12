@@ -15,7 +15,7 @@
  * agent has no use for them and each is a place for something else to hide.
  *
  * No I/O, so the settings route, the resolver and the script builders can
- * all ask the same question. Business rule 105.
+ * all ask the same question. Business rule 107.
  */
 
 import { AppError } from "./errors.js";

@@ -85,7 +85,7 @@ The integration's Monitoring tab additionally carries a **Discovery Defaults** s
 - `GET    /events`                              *(auth)* — Audit log (filter by level, action, resourceType, resourceName, actor, message — the text columns are case-insensitive substring by default and take an operator-aware `<field>Op` of contains | not_contains | empty | is_not_empty)
 - `GET    /events/resource-types`               *(auth)* — distinct `resourceType` values across the retention window; feeds the full Resource-column filter option set on the Events page
 - `GET    /events/archive-settings`             *(admin)* — reveals SSH host/user/path even with password masked
-- `PUT    /events/archive-settings`             *(admin)* — body parsed by `ArchiveSettingsSchema`; host / username / port / protocol / key path are content-checked (`assertSafeArchiveSettings`, rule 105) and a refusal is a 400 that stores nothing
+- `PUT    /events/archive-settings`             *(admin)* — body parsed by `ArchiveSettingsSchema`; host / username / port / protocol / key path are content-checked (`assertSafeArchiveSettings`, rule 107) and a refusal is a 400 that stores nothing
 - `POST   /events/archive-test`                 *(admin)* — the same checks; a refused value answers `{ ok: false, message }` and no process is spawned
 - `GET    /events/syslog-settings`              *(admin)* — reveals host/port/TLS paths
 - `PUT    /events/syslog-settings`              *(admin)*

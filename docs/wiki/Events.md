@@ -92,7 +92,7 @@ Archive Export and Syslog each have a **Test Connection** button. Archive Export
 refuses a host that is not a hostname or IP address, a username with anything
 beyond letters, digits, `.`, `_` and `-` (and a leading hyphen), and a port outside
 1–65535, because those values are passed to `ssh`, `sftp` and `scp`
-([rule 105](Business-Rules#rule-105)).
+([rule 107](Business-Rules#rule-107)).
 
 > **Anything archived leaves the host.** That is why several rules are careful
 > about what reaches an Event in the first place — most visibly, directory sync

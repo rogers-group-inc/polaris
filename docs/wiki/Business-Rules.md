@@ -1910,7 +1910,7 @@ credential selected on it, because choosing a credential is the act that says
 *No WinRM credential selected* (or SSH). Assets whose address and name came
 from discovery are unaffected.
 
-### Rule 105
+### Rule 107
 
 **Text you type reaches a command, a script or a generated connection only after
 it has been checked, and is checked again where it is used.**

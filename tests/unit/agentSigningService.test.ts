@@ -383,7 +383,7 @@ describe("resolveJsignJar", () => {
     expect(JSIGN_JAR_CANDIDATES[JSIGN_JAR_CANDIDATES.length - 1]).toBe("/opt/polaris/tools/jsign.jar");
   });
 
-  // Business rule 105 / scan finding F198: the jar is run with `java -jar`, so
+  // Business rule 107 / scan finding F198: the jar is run with `java -jar`, so
   // no stored or typed path may choose it.
   it("has no setting-supplied path: a stored jsignJarPath is dropped by the merge", () => {
     const merged = mergeSigningConfig({ jsignJarPath: "/tmp/uploads/evil.jar", enabled: true }, DEFAULT_SIGNING_CONFIG);

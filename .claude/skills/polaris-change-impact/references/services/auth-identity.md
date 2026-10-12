@@ -253,7 +253,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/sshOnboardingScript.ts
 
-**Input rule (business rule 105):** every value written into the generated scripts is one clean line. `assertValidServerIp` refuses control characters and line separators and relies on a strict `isValidCidr` (it used to pass trailing text because netmask parses its mask with `parseInt`); `psLiteral` doubles U+2018 / U+2019 / U+201A / U+201B as well as `'`, and `psLiteral` / `shLiteral` throw on control characters. Pinned by `tests/unit/sshOnboardingScript.test.ts` and `sshOnboardingLinuxInjection.test.ts`.
+**Input rule (business rule 107):** every value written into the generated scripts is one clean line. `assertValidServerIp` refuses control characters and line separators and relies on a strict `isValidCidr` (it used to pass trailing text because netmask parses its mask with `parseInt`); `psLiteral` doubles U+2018 / U+2019 / U+201A / U+201B as well as `'`, and `psLiteral` / `shLiteral` throw on control characters. Pinned by `tests/unit/sshOnboardingScript.test.ts` and `sshOnboardingLinuxInjection.test.ts`.
 
 **What it owns:** Pure generation of the SSH onboarding scripts an operator pushes to their fleet before Polaris can install the agent over SSH — a remediation + detection pair PER PLATFORM (Windows PowerShell, Linux bash) — plus the strict input validators that guard them. No I/O.
 

@@ -571,7 +571,7 @@ nothing else changes — you can download prebuilt binaries instead.
 The **jsign** jar is not a field on the card. Polaris finds it at `tools/jsign.jar`
 under the app or state directory (or `/opt/polaris/tools/jsign.jar`), and a jar
 elsewhere is named with the `POLARIS_JSIGN_JAR` environment variable, because the
-jar is run as code by the service account ([rule 105](Business-Rules#rule-105)).
+jar is run as code by the service account ([rule 107](Business-Rules#rule-107)).
 
 The **server URL** the agents call back to can be overridden under Server Settings
 → Agents. It must be a plain `http://` or `https://` address with an optional

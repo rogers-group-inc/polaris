@@ -781,7 +781,7 @@
         inputRow("agent-signing-tsa",      "Timestamp URL",        cfg.tsaUrl,       "http://timestamp.digicert.com") +
         // The jsign jar is not set here: it is code run as the service user, so
         // its location is fixed at install time (tools/jsign.jar) or by the
-        // POLARIS_JSIGN_JAR environment variable. Business rule 105.
+        // POLARIS_JSIGN_JAR environment variable. Business rule 107.
         '<div style="color:var(--color-text-secondary);font-size:0.8rem;margin-top:0.4rem">' +
           'jsign jar: ' + (avail.jarPath ? '<code>' + escapeHtml(avail.jarPath) + '</code>' : 'not found') +
           ' — fixed at <code>tools/jsign.jar</code>, or set <code>POLARIS_JSIGN_JAR</code> on the server.' +

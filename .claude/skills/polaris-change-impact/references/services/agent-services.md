@@ -252,7 +252,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/agentInstallService.ts
 
-**Input rule (business rule 105):** the server URL is allowlisted by `utils/agentServerUrl.ts`. `inferOwnServerUrl` / `inferOwnServerUrlSync` return only a normalized URL (an invalid stored override, `POLARIS_PUBLIC_URL` or cert-derived value is skipped for the next source, the override with a warning), and each of the five `__SERVER_URL__` replace sites calls `assertScriptSafeServerUrl`, so a Windows installer / upgrader script is never built from a URL that fails the allowlist. `PUT /server-settings/agents/server-url` applies the same check at save.
+**Input rule (business rule 107):** the server URL is allowlisted by `utils/agentServerUrl.ts`. `inferOwnServerUrl` / `inferOwnServerUrlSync` return only a normalized URL (an invalid stored override, `POLARIS_PUBLIC_URL` or cert-derived value is skipped for the next source, the override with a warning), and each of the five `__SERVER_URL__` replace sites calls `assertScriptSafeServerUrl`, so a Windows installer / upgrader script is never built from a URL that fails the allowlist. `PUT /server-settings/agents/server-url` applies the same check at save.
 
 **What it owns:** Fire-and-forget remote install / uninstall / upgrade of the Polaris Agent over SSH (Linux/macOS/Windows) or WinRM (Windows): resolves credentials, mints an enrollment token, uploads the binary + a rendered `agent.conf`, runs platform scripts, and drives the ManagedAgent lifecycle (pending → uploading → enrolling → active | failed).
 
@@ -434,6 +434,6 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `getSigningConfigRaw`, `getSigningConfigMasked`, `updateSigningConfig`, `mergeSigningConfig`, `maskSigningConfig`, `isSigningConfigured`, `resolveJsignJar`, `jsignJarCandidates`, `JSIGN_JAR_CANDIDATES`, `buildJsignArgs`, `signFile`, `recordSigningFailure`, `clearSigningFailure`, `getSigningAlert`.
 
-**Input rule (business rule 105):** the jar is run with `java -jar`, so there is NO Setting-supplied jar path (removed 2026-10-12). `jsignJarCandidates()` is `POLARIS_JSIGN_JAR` (absolute, `.jar`) followed by the fixed install locations; `mergeSigningConfig` drops any incoming or stored `jsignJarPath`, and `getSigningConfigRaw` logs once when it finds one. Pinned by `tests/unit/agentSigningService.test.ts`.
+**Input rule (business rule 107):** the jar is run with `java -jar`, so there is NO Setting-supplied jar path (removed 2026-10-12). `jsignJarCandidates()` is `POLARIS_JSIGN_JAR` (absolute, `.jar`) followed by the fixed install locations; `mergeSigningConfig` drops any incoming or stored `jsignJarPath`, and `getSigningConfigRaw` logs once when it finds one. Pinned by `tests/unit/agentSigningService.test.ts`.
 
 **Used by:** `src/services/agentBuildService.ts` (`signWindowsBinaries`), `src/api/routes/serverSettings.ts` (`/agents/signing`).

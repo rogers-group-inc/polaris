@@ -1,7 +1,7 @@
 /**
  * tests/integration/operatorInputInjection.test.ts
  *
- * Business rule 105 at the HTTP boundary: text an operator types reaches a
+ * Business rule 107 at the HTTP boundary: text an operator types reaches a
  * command line, a generated script or a generated connection only after it has
  * been checked, and the routes that accept it say no.
  *
