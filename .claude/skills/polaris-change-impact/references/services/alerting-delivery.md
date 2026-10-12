@@ -500,3 +500,7 @@ Also note the two storage conventions: user/role/group `regionTags` are stored *
 ## services/notificationChannels/webhookChannel.ts (rule 109)
 
 `formatBody` escapes device-derived text per target: `escapeSlackText` (`&`, `<`, `>` — Slack's own rule, which defuses `<!channel>`, `<@U..>` and `<url|label>`) for Slack's title and message, and `escapeTeamsText` (markdown and HTML characters, plus a list marker at the start of a line) for a Teams card's `title` and `text`. The server-built `<url|View>` link is appended AFTER escaping, the Teams `summary` is plain text, and the generic webhook carries raw values. Pinned by `tests/unit/webhookTextEscaping.test.ts`.
+
+## Outbound host guard on the channels (rule 110)
+
+`webhookChannel.sendWebhook` and `apiCallChannel.sendApiCall` call `assertOutboundHostAllowed` then `await resolveAllowedHost(host)` and send with `redirect: "manual"` (a 3xx is a failed delivery). `emailChannel.sendSmtpEmail` resolves the host with `allowLoopback` (a local relay is normal), then connects to the CHECKED address with the typed name as the TLS `servername`. `webPushChannel.sendWebPush` refuses an endpoint that resolves into a blocked range before `web-push` opens a socket, and `routes/pushSubscriptions.ts` accepts only an `https` endpoint that is not a blocked literal. Pinned by `tests/unit/ssrfOutboundCallers.test.ts`.

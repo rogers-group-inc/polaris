@@ -69,7 +69,7 @@ afterEach(() => {
 
 const azure = (over: Partial<LlmConfig> = {}): LlmConfig => ({
   provider: "azure",
-  host: "127.0.0.1",
+  host: "127.0.0.1", allowLoopback: true,
   port,
   useHttps: false,
   basePath: "",
@@ -248,7 +248,7 @@ describe("chatCompletionRound on Azure", () => {
 
   it("an OpenAI-compatible server is never retried without temperature", async () => {
     handler = (_req, _b, res) => fail(res, 400, "temperature out of range");
-    await expect(chatCompletionRound({ host: "127.0.0.1", port, model: "m" }, [{ role: "user", content: "hi" }], [])).rejects.toThrow(/LLM server error \(HTTP 400\)/);
+    await expect(chatCompletionRound({ host: "127.0.0.1", allowLoopback: true, port, model: "m" }, [{ role: "user", content: "hi" }], [])).rejects.toThrow(/LLM server error \(HTTP 400\)/);
     expect(seen).toHaveLength(1);
   });
 

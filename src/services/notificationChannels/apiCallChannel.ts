@@ -18,7 +18,7 @@
  */
 
 import { AppError } from "../../utils/errors.js";
-import { assertOutboundHostAllowed } from "../../utils/netGuard.js";
+import { assertOutboundHostAllowed, resolveAllowedHost } from "../../utils/netGuard.js";
 
 export interface ApiCallSpec {
   method: string; // GET | POST | PUT | PATCH | DELETE (validated at save)
@@ -39,6 +39,7 @@ export async function sendApiCall(spec: ApiCallSpec): Promise<{ status: number }
     throw new AppError(400, `Invalid api_call URL: ${spec.url}`);
   }
   assertOutboundHostAllowed(host); // throws BLOCKED_HOST for internal/metadata ranges
+  await resolveAllowedHost(host); // ...and for a name that resolves into one (rule 110)
 
   const method = (spec.method || "POST").toUpperCase();
   const timeoutMs = Math.min(Math.max(spec.timeoutSec ?? DEFAULT_TIMEOUT_SEC, 1), MAX_TIMEOUT_SEC) * 1000;
@@ -56,6 +57,8 @@ export async function sendApiCall(spec: ApiCallSpec): Promise<{ status: number }
       method,
       headers,
       ...(hasBody ? { body: spec.body } : {}),
+      // A redirect would carry the request to a host the guard never saw.
+      redirect: "manual",
       signal: controller.signal,
     });
     if (!res.ok) {

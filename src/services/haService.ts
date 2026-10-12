@@ -35,6 +35,7 @@ import { promisify } from "node:util";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { AppError } from "../utils/errors.js";
+import { isBlockedOutboundHost, guardedLookup } from "../utils/netGuard.js";
 import { createSettingStore } from "./settingsStore.js";
 import { getDirectDatabaseUrl, isPgbouncerMode } from "../utils/dbConnections.js";
 import { isProxyMode } from "../utils/proxyMode.js";
@@ -204,6 +205,10 @@ export function detectLocalAddresses(): { address: string; family: string; iface
 /** Round-trip time to a host's SSH port, or null when unreachable. */
 export async function measureRtt(addr: string, port = 22, timeoutMs = 2000): Promise<number | null> {
   if (!addr) return null;
+  // The advisory endpoint takes an address from a read-only caller; it measures the
+  // network to a standby or witness, never to this host or a metadata address (rule 110).
+  if (isBlockedOutboundHost(addr)) return null;
+  const lookup = guardedLookup();
   const attempt = (): Promise<number | null> =>
     new Promise((resolve) => {
       const started = process.hrtime.bigint();
@@ -220,7 +225,7 @@ export async function measureRtt(addr: string, port = 22, timeoutMs = 2000): Pro
       socket.once("timeout", () => finish(null));
       socket.once("error", () => finish(null));
       try {
-        socket.connect(port, addr);
+        socket.connect({ port, host: addr, lookup });
       } catch {
         finish(null);
       }

@@ -17,11 +17,24 @@ import { AppError } from "../../utils/errors.js";
 import { requirePermission } from "../middleware/permissions.js";
 import { getWebPushChannel } from "../../services/notificationChannelService.js";
 import { savePushSubscription, deletePushSubscription } from "../../services/pushSubscriptionService.js";
+import { isBlockedOutboundHost } from "../../utils/netGuard.js";
 
 const router = Router();
 
+// A push endpoint is always an https URL on a push service (FCM, Mozilla, Apple, WNS).
+// It is a caller-chosen URL the server later POSTs to, so one that names this host, a
+// link-local or metadata address is refused (rule 110); a name is judged again at send.
+const PushEndpointSchema = z.string().url().max(2000).refine((u) => {
+  try {
+    const url = new URL(u);
+    return url.protocol === "https:" && !isBlockedOutboundHost(url.hostname);
+  } catch {
+    return false;
+  }
+}, "Push endpoint must be an https URL that is not a loopback / link-local / metadata address");
+
 const subscribeSchema = z.object({
-  endpoint: z.string().url().max(2000),
+  endpoint: PushEndpointSchema,
   keys: z.object({ p256dh: z.string().min(1).max(500), auth: z.string().min(1).max(500) }),
   // Which surface enrolled: decides the push deep link (mobile SPA vs the
   // desktop Automations page). Optional so pre-upgrade clients still work.

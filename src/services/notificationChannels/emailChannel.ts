@@ -11,8 +11,10 @@
  * Throws on failure so the delivery drain records `failed` + retries.
  */
 
+import net from "node:net";
 import nodemailer from "nodemailer";
 import { AppError } from "../../utils/errors.js";
+import { resolveAllowedHost } from "../../utils/netGuard.js";
 
 /**
  * An image referenced from the HTML body as `cid:<cid>` — the last-hour charts
@@ -56,8 +58,18 @@ export interface M365Config {
 
 export async function sendSmtpEmail(cfg: SmtpConfig, msg: EmailMessage): Promise<void> {
   if (!cfg.host) throw new AppError(400, "SMTP channel is missing a host");
+  // Link-local / metadata / multicast are never a mail relay (rule 110). Loopback IS
+  // allowed: a postfix or exim relay on the Polaris host is an ordinary setup.
+  const allowLoopback = { allowLoopback: true };
+  const pinned = await resolveAllowedHost(cfg.host, allowLoopback).catch((err: any) => {
+    if (err?.code === "BLOCKED_HOST") throw new AppError(400, err.message);
+    throw err;
+  });
+  const namedHost = !net.isIP(cfg.host.replace(/^\[|\]$/g, ""));
   const transport = nodemailer.createTransport({
-    host: cfg.host,
+    // Connect to the address that was checked; TLS still verifies the typed name.
+    host: namedHost && pinned ? pinned : cfg.host,
+    ...(namedHost && pinned ? { tls: { servername: cfg.host } } : {}),
     port: Number(cfg.port) || 587,
     secure: cfg.security === "ssl", // 465 implicit TLS; 587 upgrades via STARTTLS
     requireTLS: cfg.security === "starttls",
