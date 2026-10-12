@@ -53,6 +53,9 @@ export interface SummaryRecurringRow {
   /** Every fire time in the window, ISO, ascending. */
   times: string[];
   stillActive: boolean;
+  /** Every alert the row stands for — how a reader's copy is filtered to the
+   *  alerts they were a target of. Absent on summaries written before that. */
+  notificationIds?: string[];
 }
 
 export interface QuietSummaryInput {

@@ -173,7 +173,12 @@ When a quiet period that held everything ends, Polaris emails **everyone the
 held alerts would have reached** — the people on the notify actions, address-book
 contacts, typed addresses, and anyone who would have been pushed (reached by
 their account's email; a push preference is ignored, since there is no summary
-push). **One email per person, in that person's own time zone.** It lists:
+push). **One email per person, in that person's own time zone, about that
+person's own alerts.** A global quiet time can cover automations that page
+different teams, and each person's email lists only the alerts that would have
+reached *them*. Someone on two teams' notify lists sees both teams' alerts.
+Someone whose alerts all recovered gets the all-quiet email (below), or nothing
+if the all-quiet email is turned off. It lists:
 
 - **Still outstanding** — the held alerts that have not recovered or been
   cleared by the time it is sent: severity, device, what, since when, how long.
@@ -219,9 +224,11 @@ The Settings modal lists recent summaries: when, which quiet time, how many
 alerts it covered, how many it listed, and who it reached. **Covered**,
 **Listed** and **Recipients** are clickable: Covered opens every alert the
 summary stamped, as it is now, marking the ones the email named; Listed opens
-what the email said, the outstanding rows and the recurring ones with every
-fire time; Recipients opens who it went to, with each address's sent / failed
-state and the error if there was one. A send that fails is
+everything the quiet period held that was still outstanding or recurring, across
+every recipient; Recipients opens who it went to, with what *their* email listed,
+each address's sent / failed state and the error if there was one. **View email**
+on a recipient shows the email that person was sent: subject, the time zone it
+was written in, and the body as it looked in their inbox. A send that fails is
 retried for about ten minutes; a summary that still did not reach everyone
 shows **Resend**, which sends it again to the recipients it missed (and nobody
 else) once the channel is fixed.
