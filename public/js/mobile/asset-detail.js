@@ -1,7 +1,10 @@
 // public/js/mobile/asset-detail.js — Asset detail slide-up sheet.
 //
 // Header carries camera (screenshot — see screenshotSheet), refresh and
-// close icon buttons.
+// close icon buttons. The asset's NAME is a button: it opens the edit menu
+// (General / Monitoring / Maintenance — the desktop Edit Asset modal's tabs,
+// each as its own sheet; see mobile/asset-edit.js), and a save there
+// re-reads this sheet.
 //
 // Sections (top to bottom):
 //   - Hero with status pill + identity bits (name lives in the sheet header)
@@ -207,6 +210,7 @@
   var PEEK_BAND_PX = 96;
   var _state = "closed";   // "closed" | "expanded" | "peek"
   var _openId = null;      // asset id currently shown — also the loader race guard
+  var _openAsset = null;   // its row, as last painted — what the edit menu opens on
 
   // Build the scrim + sheet once and reuse across opens. Returns the sheet.
   function ensureSheet() {
@@ -224,7 +228,13 @@
       + '<div class="sheet-handle"></div>'
       + '<div class="asset-sheet-header">'
       + '  <span class="dot" id="asset-sheet-dot" style="display:none;"></span>'
-      + '  <div class="asset-sheet-name" id="asset-sheet-name">Asset</div>'
+      // The name is the edit menu's trigger (PolarisAssetEdit in
+      // mobile/asset-edit.js) — one entry per tab of the desktop's Edit Asset
+      // modal. Disabled until the row loads; the text keeps its own id.
+      + '  <button type="button" class="asset-sheet-name-btn" id="asset-sheet-name-btn" aria-haspopup="menu" aria-label="Edit asset" disabled>'
+      + '    <span class="asset-sheet-name" id="asset-sheet-name">Asset</span>'
+      + '    <svg class="caret" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chev-down"/></svg>'
+      + '  </button>'
       + '  <button class="icon-btn" id="asset-sheet-screenshot" aria-label="Screenshot"><svg viewBox="0 0 24 24"><use href="#i-camera"/></svg></button>'
       + '  <button class="icon-btn" id="asset-sheet-refresh" aria-label="Refresh"><svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>'
       + '  <button class="icon-btn" id="asset-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
@@ -250,6 +260,15 @@
     // Tapping the header while peeked re-expands (ignore taps on the buttons).
     sheet.querySelector(".asset-sheet-header").addEventListener("click", function (e) {
       if (_state === "peek" && !e.target.closest("#asset-sheet-close, #asset-sheet-refresh")) expand();
+    });
+    // The name opens the edit menu — only when expanded, so a tap on a peeked
+    // band still just re-expands (the handler above), as the camera does.
+    document.getElementById("asset-sheet-name-btn").addEventListener("click", function () {
+      if (_state !== "expanded" || !_openAsset || !window.PolarisAssetEdit) return;
+      var id = _openAsset.id;
+      PolarisAssetEdit.openMenu(_openAsset, {
+        onSaved: function () { if (_openId === id) reloadSheet(id); },
+      });
     });
     PolarisTabs.attachSwipeToDismiss(sheet, dismiss, {
       // First swipe-down locks to peek; second swipe-down dismisses.
@@ -279,8 +298,11 @@
   }
 
   function setHeader(asset) {
+    _openAsset = asset;
     var nameEl = document.getElementById("asset-sheet-name");
     if (nameEl) nameEl.textContent = asset.hostname || asset.assetTag || "Asset";
+    var nameBtn = document.getElementById("asset-sheet-name-btn");
+    if (nameBtn) nameBtn.disabled = !window.PolarisAssetEdit;
     var dotEl = document.getElementById("asset-sheet-dot");
     if (dotEl) {
       var cls = monitorDotCls(asset);
@@ -326,9 +348,11 @@
 
   function dismiss() {
     _openId = null;
+    _openAsset = null;
     _state = "closed";
     // Tear down any stacked child sheets first so they don't orphan over the
     // backdrop once the asset sheet is gone.
+    if (window.PolarisAssetEdit) PolarisAssetEdit.closeAll();
     closeSdwanSheet();
     closeTableSheet();
     closeInterfaceSheet();
@@ -552,6 +576,12 @@
     sheet.scrollTop = 0;
     var nameEl = document.getElementById("asset-sheet-name");
     if (nameEl) nameEl.textContent = "Asset";
+    // A new asset: no menu until its row loads, and no edit sheet left open
+    // on the previous one.
+    _openAsset = null;
+    var nameBtn = document.getElementById("asset-sheet-name-btn");
+    if (nameBtn) nameBtn.disabled = true;
+    if (window.PolarisAssetEdit) PolarisAssetEdit.closeAll();
     var dotEl = document.getElementById("asset-sheet-dot");
     if (dotEl) { dotEl.className = "dot"; dotEl.style.display = "none"; }
     var refreshBtn = document.getElementById("asset-sheet-refresh");
