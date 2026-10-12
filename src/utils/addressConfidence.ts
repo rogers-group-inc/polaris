@@ -40,6 +40,7 @@ export type EvidenceKind =
   | "arp"                // FortiGate ARP entry
   | "generic-api"        // operator-described REST feed (rule 100)
   | "detected-offline"   // detected device the gate remembers but isn't seeing
+  | "detected-ambiguous" // detected online, but ARP shows the card with several addresses
   | "reservation-configured" // a DHCP reservation exists for this MAC (held or not)
   | "recorded"           // an older / unknown recorded source
   | "polling"            // Polaris's own probes answering on it as primary
@@ -57,7 +58,11 @@ const H = 60 * 60 * 1000;
 /** The weight table. Tuned by reasoning, not by data — revisit with real drift. */
 export const EVIDENCE_KINDS: Record<EvidenceKind, KindSpec> = {
   "interface":          { weight: 0.95, halfLifeMs: 24 * H, label: "Device's own interface table" },
-  "detected-online":    { weight: 0.90, halfLifeMs: 2 * H,  label: "Detected online" },
+  // Half-lives of the two FortiGate observations are sized to discovery, not
+  // to the protocol: their rows are refreshed only when the gate is read and
+  // deleted when it stops reporting them, so a short half-life measured the
+  // time since the last discovery run, not staleness.
+  "detected-online":    { weight: 0.70, halfLifeMs: 6 * H,  label: "Detected online" },
   // The controller's own roster names the management IP it reaches the device
   // on — the only network evidence a FortiAP has (no interface table, and
   // discovery keeps infra off the address list). Refreshed each discovery run.
@@ -65,15 +70,19 @@ export const EVIDENCE_KINDS: Record<EvidenceKind, KindSpec> = {
   "hypervisor":         { weight: 0.80, halfLifeMs: 6 * H,  label: "Hypervisor record" },
   // Derived from the same claims as the address rows, so modest: it mostly
   // matters for an address the list no longer carries.
-  "endpoint-sighting":  { weight: 0.50, halfLifeMs: 12 * H, label: "FortiGate endpoint record" },
+  "endpoint-sighting":  { weight: 0.40, halfLifeMs: 12 * H, label: "FortiGate endpoint record" },
   "vcenter":            { weight: 0.85, halfLifeMs: 6 * H,  label: "vCenter guest IP" },
-  "reservation-held":   { weight: 0.85, halfLifeMs: 12 * H, label: "DHCP reservation held" },
+  "reservation-held":   { weight: 0.90, halfLifeMs: 12 * H, label: "DHCP reservation held" },
   "lease-held":         { weight: 0.70, halfLifeMs: 12 * H, label: "DHCP lease held" },
   "arc":                { weight: 0.70, halfLifeMs: 24 * H, label: "Azure Arc network profile" },
-  "arp":                { weight: 0.60, halfLifeMs: 1 * H,  label: "ARP entry" },
+  "arp":                { weight: 0.60, halfLifeMs: 4 * H,  label: "ARP entry" },
   "generic-api":        { weight: 0.40, halfLifeMs: 24 * H, label: "API feed" },
   "detected-offline":   { weight: 0.30, halfLifeMs: 24 * H, label: "Detected, offline" },
-  "reservation-configured": { weight: 0.20, halfLifeMs: null,   label: "DHCP reservation configured" },
+  // A card with secondary addresses: the detected-device row names whichever
+  // source address the gate last saw traffic from — proof the card has it, not
+  // that it is the primary. Low, so ARP and DHCP decide among the addresses.
+  "detected-ambiguous": { weight: 0.20, halfLifeMs: 6 * H,  label: "Detected (card has several addresses)" },
+  "reservation-configured": { weight: 0.40, halfLifeMs: null,   label: "DHCP reservation configured" },
   "recorded":           { weight: 0.30, halfLifeMs: 7 * 24 * H, label: "Recorded" },
   "polling":            { weight: 0.95, halfLifeMs: null,   label: "Polled OK as primary" },
   "operator":           { weight: 0.80, halfLifeMs: null,   label: "Chosen by an operator" },
@@ -102,7 +111,7 @@ export interface Evidence {
   hours?: number;
 }
 
-export type PenaltyKind = "alive-elsewhere" | "claimed-elsewhere";
+export type PenaltyKind = "alive-elsewhere" | "claimed-elsewhere" | "arp-elsewhere";
 
 export interface Penalty {
   kind: PenaltyKind;
@@ -114,6 +123,11 @@ export interface Penalty {
 export const ALIVE_ELSEWHERE_FACTOR = 0.3;
 /** Another network-present device holds a fresher claim on this address. */
 export const CLAIMED_ELSEWHERE_FACTOR = 0.5;
+/**
+ * A detected-device (or endpoint-record) address the gate's ARP table
+ * contradicts: ARP has that MAC on another address and not on this one.
+ */
+export const ARP_ELSEWHERE_FACTOR = 0.5;
 
 export interface ConfidencePart {
   kind: EvidenceKind;
@@ -143,6 +157,8 @@ export interface ConfidenceResult {
   evidenceBand: ConfidenceBand;
   parts: ConfidencePart[];
   penalties: Penalty[];
+  /** True while polling is answering on the address: its evidence is not aged. */
+  sustained: boolean;
 }
 
 export function confidenceBand(score: number): ConfidenceBand {
@@ -159,9 +175,14 @@ export function freshness(kind: EvidenceKind, seenAt: Date | null | undefined, n
   return Math.pow(0.5, age / half);
 }
 
-function partValue(e: Evidence, nowMs: number): number {
+/**
+ * One piece's contribution. `sustained` holds freshness at 1: while Polaris's
+ * own polls are answering on the address, the device is demonstrably there, so
+ * the age of a source's last report says nothing against it.
+ */
+function partValue(e: Evidence, nowMs: number, sustained: boolean): number {
   if (e.kind === "polling") return pollingWeight(e.hours ?? 0);
-  return EVIDENCE_KINDS[e.kind].weight * freshness(e.kind, e.seenAt, nowMs);
+  return EVIDENCE_KINDS[e.kind].weight * (sustained ? 1 : freshness(e.kind, e.seenAt, nowMs));
 }
 
 /**
@@ -173,12 +194,18 @@ export function scoreAddress(
   penalties: readonly Penalty[],
   nowMs: number,
 ): ConfidenceResult {
-  const bestByKind = new Map<EvidenceKind, { e: Evidence; v: number }>();
+  // Polling is working on this address → its evidence does not age (the score
+  // and the evidence score). The DISCOVERY score keeps ordinary decay: it is
+  // the one number addresses are compared on for the pin release, and only the
+  // primary is ever polled — sustaining it there would hold the pinned address
+  // at full strength while every rival faded.
+  const sustained = evidence.some((e) => e.kind === "polling" && (e.hours ?? 0) > 0);
+  const bestByKind = new Map<EvidenceKind, { e: Evidence; v: number; decayed: number }>();
   for (const e of evidence) {
-    const v = partValue(e, nowMs);
+    const v = partValue(e, nowMs, sustained);
     if (v <= 0) continue;
     const prev = bestByKind.get(e.kind);
-    if (!prev || v > prev.v) bestByKind.set(e.kind, { e, v });
+    if (!prev || v > prev.v) bestByKind.set(e.kind, { e, v, decayed: partValue(e, nowMs, false) });
   }
   const parts: ConfidencePart[] = [...bestByKind.values()]
     .sort((a, b) => b.v - a.v)
@@ -194,7 +221,7 @@ export function scoreAddress(
   const combine = (vals: number[]) => 1 - vals.reduce((acc, v) => acc * (1 - v), 1);
   const factor = penalties.reduce((acc, p) => acc * p.factor, 1);
   const networkVals = [...bestByKind.entries()].filter(([k]) => k !== "operator").map(([, x]) => x.v);
-  const discoveryVals = [...bestByKind.entries()].filter(([k]) => k !== "operator" && k !== "polling").map(([, x]) => x.v);
+  const discoveryVals = [...bestByKind.entries()].filter(([k]) => k !== "operator" && k !== "polling").map(([, x]) => x.decayed);
   const allVals = [...bestByKind.values()].map((x) => x.v);
   const evidenceScore = Math.round(100 * combine(networkVals) * factor);
   const discoveryScore = Math.round(100 * combine(discoveryVals) * factor);
@@ -207,6 +234,7 @@ export function scoreAddress(
     evidenceBand: confidenceBand(evidenceScore),
     parts,
     penalties: [...penalties],
+    sustained,
   };
 }
 

@@ -203,7 +203,7 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 98 | An SD-WAN condition may be narrowed to the members whose CURRENT address passes a comparison, and a member whose address cannot be read is kept | invariants-30-43 | narrative-98 |
 | 99 | Polaris never restarts its own container: in a container it asks the operator to | invariants-30-43 | narrative-99 |
 | 100 | A feed an operator describes is an inventory claim: it never vouches for presence or decides monitoring, never outranks a first-party source, and never reaches past its own host | invariants-30-43 | narrative-100 |
-| 101 | The address a device is using right now outranks the address it was handed: an online detected-device row beats every DHCP binding, a held reservation beats a leftover lease, and a wired card beats a wireless one | invariants-30-43 | narrative-101 |
+| 101 | An address is ranked by how directly it is known: a reservation the device holds, then what the gate sees online, then a held lease, then ARP — and a detection the gate's ARP contradicts decides nothing | invariants-30-43 | narrative-101 |
 | 102 | An address belongs to a card, a card may carry several, and the operator picks the pair a device is monitored on (the per-MAC address list, the primary-address pin and how it follows a renumbered card) | invariants-30-43 | narrative-102 |
 | 103 | How sure Polaris is of an address is a score the evidence earns, the operator's choice counts but cannot vouch for itself, and the score only informs — except to release a pin the network comes to back, 103(a) (the address-confidence weights, polling credit, penalties, the warn-before-apply check and the pin-release sweep) | invariants-30-43 | narrative-103 |
 

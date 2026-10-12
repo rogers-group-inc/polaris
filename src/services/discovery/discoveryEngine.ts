@@ -141,6 +141,9 @@ import {
 } from "../../utils/macAddresses.js";
 import {
   buildArpMacDeviceIndex,
+  buildArpIpsByMacDevice,
+  arpContradicts,
+  arpMultiHomed,
   inventorySightingIsLocal,
 } from "../../utils/inventoryLocality.js";
 import { reconcileMacAddresses } from "../macAddressService.js";
@@ -5845,6 +5848,10 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // entry only on positive local evidence: FortiSwitch/FortiAP attribution on
   // the row itself, or this ARP binding on the same gate.
   const arpMacDeviceIndex = buildArpMacDeviceIndex(result.arpTable);
+  // Which addresses each gate's ARP table binds each MAC to — what lets a
+  // detected-device row be CONTRADICTED (business rule 101): the gate has the
+  // MAC, on a different address.
+  const arpIpsByMacDevice = buildArpIpsByMacDevice(result.arpTable);
 
   // Freshness (ms epoch) of the sighting that currently names each asset's
   // fortigate-endpoint gate this run — shared between the Phase 6 DHCP path
@@ -6398,9 +6405,18 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
             wiredEvidence: !!inv.switchName,
             macSource: priorMacEntry?.source,
           });
+          const invUntrusted =
+            arpContradicts(arpIpsByMacDevice, normalizedMac, inv.device, inv.ipAddress) ||
+            arpMultiHomed(arpIpsByMacDevice, normalizedMac, inv.device);
           const claimScore = scoreAddressClaim({
             kind: "device-inventory",
             current: !!inv.isOnline,
+            // The same gate's ARP table has this MAC on another address and
+            // not on this one — or on SEVERAL addresses, in which case the row
+            // only says which one the gate last saw traffic from. Either way
+            // the row drops below any current binding, and Phase 7.5's ARP
+            // claims decide.
+            contradicted: invUntrusted,
             seenMs: invSeenValid ? invSeenAt.getTime() : 0,
             medium: invMedium,
           }, invNowMs);
@@ -6419,14 +6435,21 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
             // A pinned asset's ipAddress already equals its ipOverride, so an
             // agreeing sighting must still be staged — the db.ts guard only
             // releases the pin when a write carries the matching IP.
+            //
+            // An UNTRUSTED row may fill a blank address but never moves an
+            // asset off the one it has: it stakes its (low) claim, and Phase
+            // 7.5's ARP claims decide from the standing address.
+            const mayMove = !invUntrusted || !existingAsset.ipAddress;
             if (
-              inv.ipAddress !== existingAsset.ipAddress ||
-              ((existingAsset as any).ipOverride && (existingAsset as any).ipOverride === inv.ipAddress)
+              mayMove && (
+                inv.ipAddress !== existingAsset.ipAddress ||
+                ((existingAsset as any).ipOverride && (existingAsset as any).ipOverride === inv.ipAddress)
+              )
             ) {
               updateData.ipAddress = inv.ipAddress;
               updateData.ipSource = inv.device || integrationType;
             }
-            if (inv.device) updateData.learnedLocation = inv.device;
+            if (mayMove && inv.device) updateData.learnedLocation = inv.device;
           }
         }
         // Fortinet infrastructure (firewall/switch/AP) gets os/osVersion from
@@ -6814,7 +6837,68 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       }
     }
 
-    // ARP enrichment — fill empty ipAddress only.
+    // ARP — fills an empty ipAddress, and stakes a CLAIM on the shared address
+    // ladder (business rule 101): the gate currently resolves this address to
+    // the MAC. A card with secondary addresses has several ARP rows, and they
+    // tie — so:
+    //   • the row for the asset's CURRENT address stakes its claim first, and
+    //     a sibling must strictly beat it. Equal ARP claims therefore leave the
+    //     asset where it is; the one thing that lifts a sibling is a DHCP
+    //     reservation configured for that MAC at that address (`reserved`) —
+    //     the address somebody chose for the card;
+    //   • ARP only overrules an address THIS RUN's DHCP / detected-device
+    //     claims decided (an incumbent on the ladder before this pass). An
+    //     address that came from elsewhere — vCenter, Arc, an operator — has
+    //     no ladder claim and is not ARP's to take.
+    const reservedIpsByMac = new Map<string, Set<string>>();
+    for (const e of result.dhcpEntries || []) {
+      if (e.type !== "dhcp-reservation" || !e.macAddress || !e.ipAddress) continue;
+      const m = e.macAddress.toUpperCase().replace(/-/g, ":");
+      const set = reservedIpsByMac.get(m) ?? new Set<string>();
+      set.add(e.ipAddress);
+      reservedIpsByMac.set(m, set);
+    }
+    const arpRowsByAsset = new Map<string, Array<{ mac: string; ip: string; device: string }>>();
+    for (const row of result.arpTable || []) {
+      if (!row.mac || !row.ip || !row.fortigateDevice) continue;
+      const a = assetIdx.findByMac(row.mac);
+      if (!a || a.assetType === "firewall" || a.assetType === "switch" || a.assetType === "access_point") continue;
+      const list = arpRowsByAsset.get(a.id) ?? [];
+      list.push({ mac: String(row.mac).toUpperCase().replace(/-/g, ":"), ip: row.ip, device: row.fortigateDevice });
+      arpRowsByAsset.set(a.id, list);
+    }
+    const arpNowMs = Date.parse(now);
+    for (const [arpAssetId, arpRows] of arpRowsByAsset) {
+      const asset = assetIdx.findById(arpAssetId);
+      if (!asset || !asset.ipAddress) continue;
+      const hadLadderClaim = claims.bestAddressClaimByAsset.has(arpAssetId);
+      const standing = asset.ipAddress;
+      const ordered = [...arpRows].sort((x, y) => Number(y.ip === standing) - Number(x.ip === standing));
+      for (const row of ordered) {
+        const arpMacEntry = Array.isArray(asset.macAddresses)
+          ? (asset.macAddresses as MacJsonEntry[]).find((m) => m.mac === row.mac)
+          : undefined;
+        const arpScore = scoreAddressClaim({
+          kind: "arp", current: true, seenMs: arpNowMs,
+          medium: claimMedium({ macSource: arpMacEntry?.source }),
+          reserved: !!reservedIpsByMac.get(row.mac)?.has(row.ip),
+        }, arpNowMs);
+        const incumbent = claims.bestAddressClaimByAsset.get(arpAssetId);
+        if (row.ip === asset.ipAddress) {
+          // ARP confirms the standing address — recorded so a weaker claim
+          // iterated later can't take it.
+          if (!incumbent || claimBeats(arpScore, incumbent)) claims.bestAddressClaimByAsset.set(arpAssetId, arpScore);
+        } else if (hadLadderClaim && incumbent && claimBeats(arpScore, incumbent)) {
+          claims.bestAddressClaimByAsset.set(arpAssetId, arpScore);
+          queueUpdate(arpAssetId, { ipAddress: row.ip, ipSource: `${row.device}:arp`, learnedLocation: row.device });
+          asset.ipAddress = row.ip;
+          asset.learnedLocation = row.device;
+          assetIdx.reindex(asset);
+          fortigateEndpointAssetIds.add(arpAssetId);
+          noteEndpointGate(arpAssetId, row.device);
+        }
+      }
+    }
     for (const row of result.arpTable || []) {
       if (!row.mac || !row.ip) continue;
       const asset = assetIdx.findByMac(row.mac);

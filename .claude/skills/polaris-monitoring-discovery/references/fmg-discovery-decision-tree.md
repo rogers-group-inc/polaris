@@ -175,8 +175,21 @@ FMG Integration Discovery
 │     │
 │     ├─ Stamp Asset.lastSeenSwitch = "<switchId>/<portName>"
 │     │
-│     ├─ If asset has no IP, fill from ARP table on same FortiGate
-│     │     (conservative: never overwrite an existing IP — IP recycling churn)
+│     ├─ ARP table, per asset (business rule 101; infra skipped):
+│     │     - each ARP row is a CLAIM on the address ladder (tier 2: below a
+│     │       held DHCP binding and a trusted online detected-device row,
+│     │       above an offline / untrusted one)
+│     │     - the row for the asset's current address stakes first; a sibling
+│     │       must strictly beat it — only a DHCP reservation configured for
+│     │       that MAC at that IP lifts one of a card's several addresses
+│     │     - overrules only an address this run's DHCP / detected-device
+│     │       claims decided; never one from vCenter / Arc / an operator
+│     │     - a move writes ipSource "<gate>:arp"
+│     │     - asset has no IP → fill from the ARP table
+│     │     (Phase 7 already used the same table: a detected-device row the
+│     │      gate's ARP contradicts, or whose MAC ARP shows with several
+│     │      addresses, is untrusted — it may fill a blank address, never
+│     │      move an asset off the one it has)
 │     │
 │     └─ Upsert AssetSource(sourceKind="fortigate-endpoint", externalId=MAC)
 │

@@ -78,6 +78,27 @@ describe("applyPrimaryAddressPin", () => {
     expect(out.action).toBe("followed");
   });
 
+  it("stamps the contest when a writer wanted a different address, and only then", () => {
+    // Rule 103(a): the automatic release reads this — a pin discovery is still
+    // trying to move is never released.
+    const contested: Record<string, unknown> = { ipAddress: "10.0.0.9" };
+    applyPrimaryAddressPin(contested, pin, [{ ip: "10.0.0.5", lastSeen: fresh }], NOW);
+    expect((contested.primaryAddressContestedAt as Date).getTime()).toBe(NOW);
+
+    const agreeing: Record<string, unknown> = { ipAddress: "10.0.0.5" };
+    applyPrimaryAddressPin(agreeing, pin, [{ ip: "10.0.0.5", lastSeen: fresh }], NOW);
+    expect("primaryAddressContestedAt" in agreeing).toBe(false);
+
+    const cleared: Record<string, unknown> = { ipAddress: null };
+    applyPrimaryAddressPin(cleared, pin, [], NOW);
+    expect("primaryAddressContestedAt" in cleared).toBe(false);
+
+    // A follow is the pin moving with its card, not a contest.
+    const followed: Record<string, unknown> = { ipAddress: "10.0.0.9" };
+    applyPrimaryAddressPin(followed, pin, [{ ip: "10.0.0.5", lastSeen: stale }, { ip: "10.0.0.77", lastSeen: fresh }], NOW);
+    expect("primaryAddressContestedAt" in followed).toBe(false);
+  });
+
   it("is a no-op without a pin, without a staged address, or on the pin routes' own writes", () => {
     expect(applyPrimaryAddressPin({ ipAddress: "1.2.3.4" }, { mac: null, ip: null }, [], NOW).action).toBe("none");
     expect(applyPrimaryAddressPin({ hostname: "x" }, pin, [], NOW).action).toBe("none");

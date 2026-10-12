@@ -18725,6 +18725,9 @@ function _confidenceBreakdownHTML(c) {
     rows += '<div class="mac-tooltip-row addr-conf-penalty">&#9888; ' + escapeHtml(p.detail) +
       ' <span class="mono" style="margin-left:auto">&times;' + p.factor + '</span></div>';
   });
+  if (c.sustained) {
+    rows += '<div class="mac-tooltip-row"><span class="mac-tooltip-source">Polling is answering here, so this evidence is not aged</span></div>';
+  }
   if (c.parts && c.evidenceScore != null && c.evidenceScore !== c.score) {
     rows += '<div class="mac-tooltip-row"><span class="mac-tooltip-source">Network evidence alone: ' + c.evidenceScore + '</span></div>';
   }

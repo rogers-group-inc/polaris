@@ -8,6 +8,7 @@ Each rule records the decision *and the incident or constraint that forced it*. 
 - [Rule 103](#rule-103) — How sure Polaris is of an address is a score the evidence earns, the operator's choice counts but cannot vouch for itself, and the score only informs
 - [Rule 103(a)](#rule-103a) — a pin the network comes to back is released
 - [Rule 103(b)](#rule-103b) — unpinning moves to the best-backed listed address
+- [Rule 103(a) amended, (c), (d)](#rule-103c) — the contested pin, ARP as evidence, evidence that does not age while polling answers
 
 <a id="rule-103"></a>
 
@@ -106,3 +107,19 @@ The fixes:
 - **Polling is seeded from history.** `seedPollingRuns` sets an empty run's start to the latest of: the oldest retained probe sample (credit is never claimed for time with no record), the last failed probe in a 30-day lookback, and when the address became the asset's (`AssetIpHistory.firstSeen`). One statement at startup, idempotent, reaching only rows still without a run.
 
 Alongside, not part of the rule: the MAC list's × did nothing when the asset panel was opened from global search on another page, because its click handler was registered inside the Assets page's own init, which returns early elsewhere. It is now wired at load like the pin buttons (`tests/unit/assetPanelClickWiring.test.ts`).
+
+<a id="rule-103c"></a>
+
+### 103(a) amended, 103(c) and 103(d) — the contested pin, ARP, and evidence that does not age (2026-10-12)
+
+**The contested pin.** The owner pinned a static device to its real address; "after a couple of discoveries the pin I set was removed and it changed back to what the FortiGate is reporting." The release rule had done exactly what it said: the pinned address's discovery score (ARP, 60) reached 50 and beat the other address's (a detected-device row, halved to 45), so the pin was released — and rule 101's ladder, which did not look at ARP at all, put the asset straight back on the detected address. The scores agreeing with the pin is not the same as discovery agreeing with it.
+
+So the release now needs both. Whenever a write tries to move a pinned asset to a different address, the `db.ts` guard already puts the pin back; it now also stamps `Asset.primaryAddressContestedAt`. `releaseConfirmedPins` skips any pin contested inside `PIN_CONTEST_WINDOW_MS` (three days — longer than any sane discovery interval, so "no contest in the window" means discovery has run and agreed, not that it has not run). A pin that is the only thing holding the address where the operator put it is never released, whatever the scores say. This is the positive form of the typed override's rule, which releases when discovery reports the same address.
+
+**The weights.** The owner: "we need to lower the weight of FortiGate/FortiManager. I would almost argue that a DHCP reservation should be scored higher than FortiGate discovery because a reservation requires human review." Detection went from 0.90 to 0.70, a held reservation from 0.85 to 0.90, a configured reservation from 0.20 to 0.40, and the FortiGate endpoint record from 0.50 to 0.40. The managed-device record's management IP stayed at 0.90: that is the controller's roster of what it manages, not an inference from traffic. Rule 101's ladder moved the same way. (The weight table near the top of this file shows the values as first shipped; `EVIDENCE_KINDS` is current.)
+
+**103(c) — ARP.** ARP counted only when it was the source naming an address's row, because the address list keeps one source per address. The score now reads the gates' own ARP tables (`AssetArpEntry`, refreshed on the monitoring cadence for a monitored gate) by MAC: an ARP piece for any address a gate resolves to one of the asset's MACs; an `arp-elsewhere` penalty (× 0.5) on an address that rests on detection while a gate has that MAC bound to a different address; and detection counted as `detected-ambiguous` (0.20) when ARP shows the card with several addresses — the owner's "we can't trust the device report" for a card with secondary IPs. As on the ladder, a missing ARP entry is never held against an address.
+
+**103(d) — evidence does not age while polling answers.** The owner: "freshness shouldn't halve as long as polling works." If Polaris's own probes are answering on an address, the device is demonstrably there, and the age of a gate's last report says nothing against it; a half-life there was measuring the time since the last discovery run. So an address with a live polling run has its evidence held at full weight (`sustained`) in `score` and `evidenceScore`. `discoveryScore` keeps ordinary decay: it is the number addresses are compared on for the pin release, only the primary is ever polled, and sustaining it there would hold the pinned address at full strength while every rival faded — the self-confirming pin again.
+
+The two FortiGate half-lives were also lengthened (detection 2 h → 6 h, ARP 1 h → 4 h). Their rows are refreshed only when a gate is read and deleted when it stops reporting them, so a short half-life had been punishing a long discovery interval rather than a stale observation.

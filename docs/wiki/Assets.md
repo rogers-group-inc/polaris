@@ -333,7 +333,9 @@ shows as *pinned* with an **Unpin** button, and:
 - once the network backs the pinned address better than any other (its
   [confidence](#address-confidence) from discovery alone reaches 50 and beats
   the rest), the pin is released and discovery manages the address again,
-  recorded as `asset.primary_address.released`;
+  recorded as `asset.primary_address.released`. This never happens while
+  discovery is still reporting a different address for the device: the pin
+  stays until three days pass without discovery trying to change it;
 - **Unpin** moves the device to the listed address with the highest
   confidence on the network's evidence, never to an address that is not on
   the list (unless the list is empty).

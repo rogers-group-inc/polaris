@@ -16,6 +16,7 @@ import { FUNCTION_KEYS } from "../../src/api/middleware/permissions.js";
 import { dbDescribe, dbReachable, ensureTestUser } from "./_helpers.js";
 import { buildAddressConfidence, checkAddressConfidence, seedPollingRuns } from "../../src/services/addressConfidenceService.js";
 import { unpinPrimaryAddress } from "../../src/services/primaryAddressService.js";
+import { PIN_CONTEST_WINDOW_MS } from "../../src/utils/assetInvariants.js";
 import { recordProbeResult } from "../../src/services/monitoringService.js";
 import { flushProbePatchBuffer } from "../../src/services/probePatchBuffer.js";
 import { releaseConfirmedPins } from "../../src/services/primaryAddressService.js";
@@ -126,10 +127,10 @@ d("address confidence evidence (business rule 103)", () => {
       ["detected-online", "polling", "reservation-configured", "reservation-held"].sort());
   });
 
-  it("a held lease alone is medium; a 3-hour-old ARP entry alone is very low", async () => {
+  it("a held lease alone is medium; a 3-hour-old ARP entry alone is low", async () => {
     const s = await scores();
     expect(s.get(IP_LEASE)!.score).toBe(70);
-    expect(s.get(IP_ARP)!.band).toBe("very-low");
+    expect(s.get(IP_ARP)!.band).toBe("low"); // 0.6 × 0.5^(3/4) ≈ 36
   });
 
   it("a reservation for ANOTHER device's MAC is not evidence for this one", async () => {
@@ -165,7 +166,7 @@ d("address confidence evidence (business rule 103)", () => {
     const r = (await scores()).get(IP_ARP)!;
     expect(r.parts.some((p) => p.kind === "operator")).toBe(true);
     expect(r.score).toBeGreaterThanOrEqual(80);
-    expect(r.evidenceScore).toBeLessThan(20);
+    expect(r.evidenceScore).toBeLessThan(50);
   });
 
   it("the check scores an address never seen on the device as 0, and warns", async () => {
@@ -205,6 +206,9 @@ d("address confidence API (business rule 103)", () => {
     expect(r.status).toBe(200);
     expect(r.body.warn).toBe(true);
     expect(r.body.probe).toHaveProperty("answered");
+    // The same fields GET /assets/:id carries per address.
+    expect(r.body.discoveryScore).toBe(0);
+    expect(r.body.sustained).toBe(false);
   }, 20_000);
 });
 
@@ -241,6 +245,89 @@ d("a pin the network comes to back is released (business rule 103(a))", () => {
     await prisma.reservation.deleteMany({ where: { ipAddress: IP_PRIMARY } });
     expect((await releaseConfirmedPins()).released).toBe(0);
     expect((await readPin()).primaryAddressIp).toBe(IP_ARP);
+  });
+});
+
+d("ARP evidence, secondary addresses and contested pins (business rule 103, 2026-10-12)", () => {
+  /** A gate asset holding ARP entries for the HMI's Ethernet MAC. */
+  async function gateArp(ips: string[], seen = new Date()) {
+    const gate = await prisma.asset.create({
+      data: { hostname: PFX + "-gw", assetType: "firewall", status: "active" },
+    });
+    await prisma.assetArpEntry.createMany({
+      data: ips.map((ip) => ({ assetId: gate.id, ipAddress: ip, macAddress: ETH, ifName: "internal", lastSeen: seen, firstSeen: seen })),
+    });
+  }
+  /** An unpolled static device the gate DETECTED at one address. */
+  async function detectedOnly(ip: string) {
+    await prisma.reservation.deleteMany({ where: { ipAddress: IP_PRIMARY } });
+    await prisma.assetAssociatedIp.deleteMany({ where: { assetId } });
+    await prisma.assetAssociatedIp.create({
+      data: { assetId, ip, mac: ETH, source: "device-inventory", device: GATE, medium: "wired", lastSeen: new Date(), firstSeen: new Date() },
+    });
+    await prisma.asset.update({ where: { id: assetId }, data: { ipAddress: ip, monitored: false, ipConfirmedFor: null, ipConfirmedSince: null } });
+  }
+
+  it("the gate's ARP table corroborates an address whatever source names its row", async () => {
+    await detectedOnly(IP_PRIMARY);
+    expect((await scores()).get(IP_PRIMARY)!.score).toBe(70);
+    await gateArp([IP_PRIMARY]);
+    const r = (await scores()).get(IP_PRIMARY)!;
+    expect(r.parts.map((p) => p.kind).sort()).toEqual(["arp", "detected-online"]);
+    expect(r.parts.find((p) => p.kind === "arp")!.device).toBe(PFX + "-gw");
+    expect(r.score).toBe(88); // 1 − 0.3 × 0.4
+  });
+
+  it("a detected address ARP contradicts is halved, and the address ARP resolves out-scores it", async () => {
+    // The prod shape: detected at one address, the gate's ARP has the MAC at another.
+    await detectedOnly(IP_LEASE);
+    await gateArp([IP_PRIMARY]);
+    const s = (await buildAddressConfidence([assetId], { extraIps: new Map([[assetId, [IP_PRIMARY]]]) })).get(assetId)!;
+    const detected = s.get(IP_LEASE)!;
+    expect(detected.penalties.map((p) => p.kind)).toEqual(["arp-elsewhere"]);
+    expect(detected.penalties[0]!.detail).toContain(IP_PRIMARY);
+    expect(detected.score).toBe(35);
+    expect(s.get(IP_PRIMARY)!.score).toBe(60);
+  });
+
+  it("a card ARP shows with several addresses: what the gate detected counts as ambiguous", async () => {
+    await detectedOnly(IP_LEASE);
+    await gateArp([IP_LEASE, IP_PRIMARY]);
+    const r = (await scores()).get(IP_LEASE)!;
+    expect(r.parts.map((p) => p.kind).sort()).toEqual(["arp", "detected-ambiguous"]);
+    expect(r.score).toBe(68); // 1 − 0.8 × 0.4 — ARP carries it, not the detection
+  });
+
+  it("evidence does not age while polling answers on the address", async () => {
+    const old = new Date(Date.now() - 18 * 3_600_000);
+    await prisma.assetAssociatedIp.updateMany({ where: { assetId, ip: IP_PRIMARY }, data: { lastSeen: old } });
+    await prisma.reservation.updateMany({ where: { ipAddress: IP_PRIMARY }, data: { lastSeenLeased: old } });
+    const polled = (await scores()).get(IP_PRIMARY)!;
+    expect(polled.sustained).toBe(true);
+    expect(polled.parts.find((p) => p.kind === "detected-online")!.value).toBe(0.7);
+    // The same evidence, unpolled, has faded.
+    await prisma.asset.update({ where: { id: assetId }, data: { monitored: false } });
+    const unpolled = (await scores()).get(IP_PRIMARY)!;
+    expect(unpolled.sustained).toBe(false);
+    expect(unpolled.parts.find((p) => p.kind === "detected-online")!.value).toBeLessThan(0.1);
+  });
+
+  it("the guard stamps a contest when a write tries to move a pinned asset, and the release then holds", async () => {
+    // Pin the address the network backs best — releasable on the scores alone.
+    await prisma.asset.update({ where: { id: assetId }, data: { primaryAddressMac: ETH, primaryAddressIp: IP_PRIMARY, ipAddress: IP_PRIMARY } });
+    // Discovery tries to move it (as rule 101's ladder did in prod).
+    await prisma.asset.update({ where: { id: assetId }, data: { ipAddress: IP_LEASE, ipSource: GATE } });
+    const a = await prisma.asset.findUniqueOrThrow({ where: { id: assetId }, select: { ipAddress: true, primaryAddressContestedAt: true } });
+    expect(a.ipAddress).toBe(IP_PRIMARY);
+    expect(a.primaryAddressContestedAt).not.toBeNull();
+
+    expect((await releaseConfirmedPins()).released).toBe(0);
+    // Once discovery has stopped contesting for the whole window, it may go.
+    await prisma.asset.update({
+      where: { id: assetId },
+      data: { primaryAddressContestedAt: new Date(Date.now() - PIN_CONTEST_WINDOW_MS - 60_000) },
+    });
+    expect((await releaseConfirmedPins()).released).toBe(1);
   });
 });
 

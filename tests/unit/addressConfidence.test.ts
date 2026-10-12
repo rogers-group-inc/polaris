@@ -17,6 +17,7 @@ import {
   CONFIDENCE_WARN_BELOW,
   ALIVE_ELSEWHERE_FACTOR,
   CLAIMED_ELSEWHERE_FACTOR,
+  ARP_ELSEWHERE_FACTOR,
   type Evidence,
 } from "../../src/utils/addressConfidence.js";
 
@@ -27,8 +28,8 @@ const H = 3_600_000;
 describe("freshness", () => {
   it("halves at each half-life and never decays a kind without one", () => {
     expect(freshness("arp", ago(0), NOW)).toBe(1);
-    expect(freshness("arp", ago(H), NOW)).toBeCloseTo(0.5, 5);
-    expect(freshness("arp", ago(2 * H), NOW)).toBeCloseTo(0.25, 5);
+    expect(freshness("arp", ago(4 * H), NOW)).toBeCloseTo(0.5, 5);
+    expect(freshness("arp", ago(8 * H), NOW)).toBeCloseTo(0.25, 5);
     expect(freshness("reservation-configured", ago(1000 * H), NOW)).toBe(1);
     expect(freshness("detected-online", null, NOW)).toBe(1);
   });
@@ -55,14 +56,60 @@ describe("scoreAddress", () => {
     expect(r.score).toBeGreaterThanOrEqual(99);
     expect(r.score).toBeLessThanOrEqual(100);
     expect(r.band).toBe("high");
-    expect(r.parts.map((p) => p.kind)).toEqual(["polling", "detected-online", "reservation-held"]);
+    // A held reservation (0.90) now outweighs what the gate detected (0.70).
+    expect(r.parts.map((p) => p.kind)).toEqual(["polling", "reservation-held", "detected-online"]);
+  });
+
+  it("a reservation outweighs FortiGate detection — a person chose it", () => {
+    const held = scoreAddress([{ kind: "reservation-held", seenAt: ago(0) }], [], NOW).score;
+    const detected = scoreAddress([{ kind: "detected-online", seenAt: ago(0) }], [], NOW).score;
+    const configured = scoreAddress([{ kind: "reservation-configured" }], [], NOW).score;
+    expect(held).toBe(90);
+    expect(detected).toBe(70);
+    expect(configured).toBe(40);
+    expect(held).toBeGreaterThan(detected);
+    // A static device on its reserved address: reservation configured + ARP
+    // beats an unconfirmed detection elsewhere.
+    const reservedInArp = scoreAddress([{ kind: "reservation-configured" }, { kind: "arp", seenAt: ago(0) }], [], NOW).score;
+    expect(reservedInArp).toBe(76); // 1 − 0.6 × 0.4
+    expect(reservedInArp).toBeGreaterThan(detected);
+  });
+
+  it("while polling answers on an address its evidence does not age — except in the discovery score", () => {
+    const aged: Evidence[] = [{ kind: "detected-online", seenAt: ago(18 * H) }, { kind: "arp", seenAt: ago(12 * H) }];
+    const unpolled = scoreAddress(aged, [], NOW);
+    const polled = scoreAddress([...aged, { kind: "polling", hours: 0.5 }], [], NOW);
+    expect(unpolled.sustained).toBe(false);
+    expect(polled.sustained).toBe(true);
+    // Unpolled: 0.7×0.125 and 0.6×0.125 → about 16. Polled: both at full weight.
+    expect(unpolled.score).toBeLessThan(20);
+    expect(polled.evidenceScore).toBeGreaterThanOrEqual(88); // 1 − 0.3 × 0.4 × (1 − polling)
+    // The number pins are compared on still ages, so a monitored address
+    // can't hold its evidence fresh while its rivals fade.
+    expect(polled.discoveryScore).toBe(unpolled.discoveryScore);
+  });
+
+  it("a card with several addresses: what the gate detected counts as ambiguous, not as the address", () => {
+    expect(scoreAddress([{ kind: "detected-ambiguous", seenAt: ago(0) }], [], NOW).score).toBe(20);
   });
 
   it("a single held lease is medium; a single ARP entry is medium-low and fades fast", () => {
     expect(scoreAddress([{ kind: "lease-held", seenAt: ago(0) }], [], NOW).score).toBe(70);
     expect(scoreAddress([{ kind: "arp", seenAt: ago(0) }], [], NOW).score).toBe(60);
-    // 0.6 × 0.5³ = 0.075 — three half-lives on, ARP alone is near nothing.
-    expect(scoreAddress([{ kind: "arp", seenAt: ago(3 * H) }], [], NOW).score).toBeLessThan(10);
+    // 0.6 × 0.5³ = 0.075 — three half-lives (12 h) on, ARP alone is near nothing.
+    expect(scoreAddress([{ kind: "arp", seenAt: ago(12 * H) }], [], NOW).score).toBeLessThan(10);
+  });
+
+  it("ARP corroborates whatever else reports the address, and the ARP contradiction halves a detected one", () => {
+    const detected: Evidence = { kind: "detected-online", seenAt: ago(0) };
+    const alone = scoreAddress([detected], [], NOW);
+    const withArp = scoreAddress([detected, { kind: "arp", seenAt: ago(0) }], [], NOW);
+    expect(alone.score).toBe(70);
+    expect(withArp.score).toBe(88); // 1 − 0.3 × 0.4
+    const contradicted = scoreAddress([detected], [{ kind: "arp-elsewhere", factor: ARP_ELSEWHERE_FACTOR, detail: "x" }], NOW);
+    expect(contradicted.score).toBe(35);
+    // The address ARP does resolve now out-scores the one it contradicts.
+    expect(scoreAddress([{ kind: "arp", seenAt: ago(0) }], [], NOW).score).toBeGreaterThan(contradicted.score);
   });
 
   it("an address nothing reports scores 0, and is under the warn line", () => {

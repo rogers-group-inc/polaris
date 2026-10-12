@@ -142,13 +142,20 @@ reports. See [rule 102](Business-Rules#rule-102) and
 
 `GET /assets/:id` carries `addressConfidence`, a score for every address on
 the device keyed by IP: `{ score, evidenceScore, discoveryScore, band,
-evidenceBand, parts, penalties }`. `score` runs 0–100 and counts an operator's
+evidenceBand, parts, penalties, sustained }`. `score` runs 0–100 and counts an operator's
 pin or typed address; `evidenceScore` is the network evidence alone;
 `discoveryScore` (0–100) is discovery's evidence alone — no operator, no
 polling — and is what the automatic pin release compares. `band` is `high` (80 and up),
 `medium` (50), `low` (20) or `very-low`. Each `parts` entry is one kind of
-evidence (`{ kind, label, device, seenAt, hours, value }`) and each `penalties`
-entry is `{ kind, factor, detail }`. The list returns the compact form,
+evidence (`{ kind, label, device, seenAt, hours, value }`); a gate's sighting
+has the kind `detected-ambiguous`, and counts for far less, when that gate's ARP
+table shows the network card with several addresses. Each `penalties` entry is
+`{ kind, factor, detail }`, a multiplier on the score: `alive-elsewhere`,
+`claimed-elsewhere`, or `arp-elsewhere` — the address rests on what a gate
+detected, no ARP entry backs it, and a gate's ARP table has that MAC at a
+different address. `sustained` is true while Polaris's own polling is answering
+on the address: its evidence is then not aged in `score` and `evidenceScore`,
+while `discoveryScore` still ages it. The list returns the compact form,
 `{ score, band }` per address. Nothing alerts on the score; it only picks the
 address an unpinned device moves to and when a pin is released.
 

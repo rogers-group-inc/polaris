@@ -720,6 +720,12 @@ model Asset {
   primaryAddressIp       String?
   primaryAddressPinnedAt DateTime?
   primaryAddressPinnedBy String?
+  // The last time a write tried to move a pinned asset to a DIFFERENT address
+  // and the db.ts guard put the pin back — i.e. discovery still disagrees with
+  // the pin. The automatic release (rule 103(a)) refuses while this is within
+  // PIN_CONTEST_WINDOW_MS: releasing then would hand the address straight
+  // back to the choice the operator overrode. Nulled when a pin is set.
+  primaryAddressContestedAt DateTime?
   // Polling evidence for the address-confidence score (business rule 103):
   // the IP Polaris's own probes have been answering on, and since when. Set
   // together by recordProbeResult on a successful probe Polaris SENT (never an
