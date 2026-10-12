@@ -12,13 +12,25 @@
  *
  * The score is a lexicographic vector, most decisive first:
  *   1. tier — how directly the claim says "this address, right now":
- *        3  a detected-device row that is online. FortiOS builds it from the
+ *        5  a DHCP RESERVATION the gate's DHCP monitor confirms the device is
+ *           holding right now. Above detection: a reservation is an address a
+ *           person chose for that card and the device is using, where a
+ *           detected-device row is the gate's inference from traffic.
+ *        4  a detected-device row that is online. FortiOS builds it from the
  *           traffic it is seeing from that MAC, so it is the current address,
- *           not the one that was handed out.
- *        2  a DHCP binding the gate's DHCP monitor confirms is held right now
- *           (`seenLeased` — every live lease, and a reservation whose target
- *           is holding it).
- *        1  a detected-device row that is remembered but offline.
+ *           not the one that was handed out — which is why it still beats a
+ *           lease.
+ *        3  a DHCP LEASE the monitor confirms is held right now (`seenLeased`).
+ *        2  an ARP binding: the gate currently resolves this address to the
+ *           MAC. Below a held DHCP binding because ARP also lists a card's
+ *           SECONDARY addresses, which must not take the primary from the
+ *           lease the device is holding.
+ *        1  a detected-device row that is remembered but offline — or one the
+ *           same gate's ARP table CONTRADICTS (`contradicted`): the gate has
+ *           that MAC bound to a different address and not to this one, so the
+ *           row's address is something the device said once, not where the
+ *           gate reaches it (prod 2026-10-11: a static device kept being put
+ *           back on a detected-device address its gate could not resolve).
  *        0  configuration nobody is holding: a static reservation whose target
  *           is not online.
  *   2. recent — the claim's own evidence time falls inside RECENT_CLAIM_MS of
@@ -42,12 +54,24 @@
 export type AddressMedium = "wired" | "wireless" | "unknown";
 
 export interface AddressClaimEvidence {
-  kind: "device-inventory" | "dhcp-reservation" | "dhcp-lease";
+  kind: "device-inventory" | "dhcp-reservation" | "dhcp-lease" | "arp";
   /**
    * Detected-device row: `is_online`. DHCP entry: `seenLeased` (the DHCP
-   * monitor confirms the binding is held right now).
+   * monitor confirms the binding is held right now). ARP: always current —
+   * the row exists only while the gate holds the binding.
    */
   current?: boolean;
+  /**
+   * Detected-device row only: the same gate's ARP table (read this run) has
+   * this MAC on a different address and not on this one.
+   */
+  contradicted?: boolean;
+  /**
+   * ARP only: the gate has a DHCP reservation configured for this MAC at this
+   * address (held or not). Among a card's several ARP addresses it marks the
+   * one somebody chose — it sets the same key 4 a held reservation does.
+   */
+  reserved?: boolean;
   medium?: AddressMedium;
   /** Evidence time, ms epoch — see the header's key 5. */
   seenMs?: number;
@@ -63,15 +87,26 @@ export const RECENT_CLAIM_MS = 60 * 60 * 1000;
 const MEDIUM_RANK: Record<AddressMedium, number> = { wired: 2, unknown: 1, wireless: 0 };
 
 export function scoreAddressClaim(e: AddressClaimEvidence, nowMs: number): AddressClaimScore {
-  const isInventory = e.kind === "device-inventory";
-  const tier = isInventory ? (e.current ? 3 : 1) : (e.current ? 2 : 0);
   const seenMs = Number.isFinite(e.seenMs) ? (e.seenMs as number) : 0;
   const recent = seenMs > 0 && nowMs - seenMs <= RECENT_CLAIM_MS ? 1 : 0;
+  // A held reservation tops the ladder only while nothing says it is stale.
+  // The DHCP monitor keeps calling it held until the lease time runs out, so
+  // an undocked laptop's wired reservation would otherwise outrank the Wi-Fi
+  // card the gate is seeing right now. When the gate's own detected-device
+  // data last saw that card more than RECENT_CLAIM_MS ago, the reservation
+  // ranks as a lease; with no such data at all it keeps the top tier.
+  const reservationStale = seenMs > 0 && !recent;
+  const tier =
+    e.kind === "device-inventory" ? (e.current && !e.contradicted ? 4 : 1)
+    : e.kind === "arp" ? 2
+    : !e.current ? 0
+    : e.kind === "dhcp-reservation" && !reservationStale ? 5
+    : 3;
   return [
     tier,
     recent,
     MEDIUM_RANK[e.medium ?? "unknown"],
-    e.kind === "dhcp-reservation" ? 1 : 0,
+    e.kind === "dhcp-reservation" || (e.kind === "arp" && e.reserved) ? 1 : 0,
     seenMs,
     e.kind === "dhcp-lease" && Number.isFinite(e.expireTime) ? (e.expireTime as number) : 0,
   ];

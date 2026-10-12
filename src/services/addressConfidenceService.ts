@@ -37,6 +37,7 @@ import {
   CONFIDENCE_WARN_BELOW,
   ALIVE_ELSEWHERE_FACTOR,
   CLAIMED_ELSEWHERE_FACTOR,
+  ARP_ELSEWHERE_FACTOR,
   type Evidence,
   type EvidenceKind,
   type Penalty,
@@ -52,6 +53,10 @@ const ROW_SOURCE_KIND: Record<string, EvidenceKind> = {
 };
 
 const ALIVE_ELSEWHERE_WINDOW_MS = 60 * 60 * 1000;
+/** ARP entries older than this are not read at all. */
+const ARP_EVIDENCE_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** How fresh an ARP binding elsewhere must be to count AGAINST an address. */
+const ARP_CONTRADICT_WINDOW_MS = 4 * 60 * 60 * 1000;
 
 type Observed = Record<string, unknown>;
 const field = (name: string) => (o: Observed, ip: string) => o[name] === ip;
@@ -133,7 +138,19 @@ export async function buildAddressConfidence(
   if (allIps.size === 0) return out;
   const ipList = [...allIps];
 
-  const [reservations, sources, otherClaims] = await Promise.all([
+  // Every MAC each asset is known by — the key into the gates' ARP tables.
+  const macsByAsset = new Map<string, Set<string>>();
+  const allMacs = new Set<string>();
+  for (const a of assets) {
+    const macs = new Set<string>();
+    for (const m of a.macAddressRows) { const n = normalizeMacOrNull(m.mac); if (n) macs.add(n); }
+    const am = normalizeMacOrNull(a.macAddress); if (am) macs.add(am);
+    for (const r of a.associatedIpRows) { const n = normalizeMacOrNull(r.mac); if (n) macs.add(n); }
+    macsByAsset.set(a.id, macs);
+    for (const m of macs) allMacs.add(m);
+  }
+
+  const [reservations, sources, otherClaims, arpEntries] = await Promise.all([
     prisma.reservation.findMany({
       where: { ipAddress: { in: ipList }, status: "active", sourceType: "dhcp_reservation" },
       select: { ipAddress: true, macAddress: true, lastSeenLeased: true, subnet: { select: { fortigateDevice: true } } },
@@ -150,7 +167,27 @@ export async function buildAddressConfidence(
       },
       select: { id: true, hostname: true, ipAddress: true, lastSeen: true },
     }),
+    // The gates' own ARP tables (AssetArpEntry — refreshed on the monitoring
+    // cadence for a monitored gate, every discovery run otherwise), by MAC.
+    // ARP is evidence for ANY address it binds one of the asset's MACs to,
+    // whatever source names that address's row, and evidence AGAINST a
+    // detected-device address it binds the MAC away from.
+    allMacs.size
+      ? prisma.assetArpEntry.findMany({
+          where: { macAddress: { in: [...allMacs] }, lastSeen: { gte: new Date(nowMs - ARP_EVIDENCE_WINDOW_MS) } },
+          select: { ipAddress: true, macAddress: true, lastSeen: true, asset: { select: { hostname: true } } },
+        })
+      : Promise.resolve([] as Array<{ ipAddress: string; macAddress: string; lastSeen: Date; asset: { hostname: string | null } }>),
   ]);
+
+  const arpByMac = new Map<string, typeof arpEntries>();
+  for (const e of arpEntries) {
+    const mac = normalizeMacOrNull(e.macAddress);
+    if (!mac) continue;
+    const list = arpByMac.get(mac) ?? [];
+    list.push(e);
+    arpByMac.set(mac, list);
+  }
 
   const reservationsByIp = new Map<string, typeof reservations>();
   for (const r of reservations) {
@@ -174,9 +211,8 @@ export async function buildAddressConfidence(
   }
 
   for (const a of assets) {
-    const macs = new Set<string>();
-    for (const m of a.macAddressRows) { const n = normalizeMacOrNull(m.mac); if (n) macs.add(n); }
-    const am = normalizeMacOrNull(a.macAddress); if (am) macs.add(am);
+    const macs = macsByAsset.get(a.id) ?? new Set<string>();
+    const arpForAsset = [...macs].flatMap((m) => (arpByMac.get(m) ?? []).map((e) => ({ ...e, mac: m })));
 
     // A gate seeing this asset online at some address right now.
     const onlineElsewhere = a.associatedIpRows.filter((r) =>
@@ -203,6 +239,9 @@ export async function buildAddressConfidence(
         if (!spec || !spec.carries(o, ip)) continue;
         evidence.push({ kind: spec.kind, seenAt: s.lastSeen });
       }
+      for (const e of arpForAsset) {
+        if (e.ipAddress === ip) evidence.push({ kind: "arp", seenAt: e.lastSeen, device: e.asset?.hostname ?? null });
+      }
       const hours = pollingHoursFor(ip, a, nowMs);
       if (hours > 0) evidence.push({ kind: "polling", hours });
       if ((a.primaryAddressIp && a.primaryAddressIp === ip) || (a.ipOverride && a.ipOverride === ip)) {
@@ -217,6 +256,40 @@ export async function buildAddressConfidence(
             kind: "alive-elsewhere",
             factor: ALIVE_ELSEWHERE_FACTOR,
             detail: `Down here, but ${elsewhere.device ?? "a FortiGate"} sees it online at ${elsewhere.ip}`,
+          });
+        }
+      }
+      // ARP contradiction: this address rests on what a gate DETECTED, no gate
+      // resolves it to the device, and a gate currently has the same MAC bound
+      // to a different address. Absence alone is never held against it (ARP
+      // entries age out in a minute or two) — only the MAC being elsewhere.
+      const detected = evidence.some((e) => e.kind === "detected-online" || e.kind === "endpoint-sighting");
+      const rowMacs = new Set(
+        a.associatedIpRows.filter((r) => r.ip === ip).map((r) => normalizeMacOrNull(r.mac)).filter((m): m is string => !!m),
+      );
+      // A card ARP currently shows with SEVERAL addresses: what the gate
+      // detected only says which of them it last saw traffic from, so that
+      // evidence is counted as ambiguous rather than as the device's address.
+      if (detected) {
+        const cardIps = new Set(arpForAsset
+          .filter((e) => (rowMacs.size === 0 || rowMacs.has(e.mac)) && nowMs - e.lastSeen.getTime() <= ARP_CONTRADICT_WINDOW_MS)
+          .map((e) => e.ipAddress));
+        if (cardIps.size > 1) {
+          for (const e of evidence) {
+            if (e.kind === "detected-online" || e.kind === "endpoint-sighting") e.kind = "detected-ambiguous";
+          }
+        }
+      }
+      if (detected && !evidence.some((e) => e.kind === "arp")) {
+        const elsewhereArp = arpForAsset.find((e) =>
+          e.ipAddress !== ip &&
+          (rowMacs.size === 0 || rowMacs.has(e.mac)) &&
+          nowMs - e.lastSeen.getTime() <= ARP_CONTRADICT_WINDOW_MS);
+        if (elsewhereArp) {
+          penalties.push({
+            kind: "arp-elsewhere",
+            factor: ARP_ELSEWHERE_FACTOR,
+            detail: `${elsewhereArp.asset?.hostname ?? "A FortiGate"}'s ARP table has this MAC at ${elsewhereArp.ipAddress}, not here`,
           });
         }
       }

@@ -30,6 +30,7 @@ import { logEvent } from "./eventLogService.js";
 import { resolvePendingIpOverrideConflicts } from "./ipOverrideService.js";
 import { buildAddressConfidence } from "./addressConfidenceService.js";
 import { pinReleaseVerdict } from "../utils/addressConfidence.js";
+import { PIN_CONTEST_WINDOW_MS } from "../utils/assetInvariants.js";
 
 const INFRA_TYPES = new Set(["firewall", "switch", "access_point"]);
 
@@ -39,6 +40,7 @@ export const CLEAR_PRIMARY_ADDRESS_PIN = {
   primaryAddressIp: null,
   primaryAddressPinnedAt: null,
   primaryAddressPinnedBy: null,
+  primaryAddressContestedAt: null,
 } as const;
 
 export interface PinResult {
@@ -87,6 +89,7 @@ export async function pinPrimaryAddress(input: {
       primaryAddressIp: ip,
       primaryAddressPinnedAt: new Date(),
       primaryAddressPinnedBy: input.actor,
+      primaryAddressContestedAt: null,
       ipAddress: ip,
       ipSource: "pinned",
       ipOverride: null,
@@ -217,7 +220,20 @@ const RELEASE_BATCH = 200;
  */
 export async function releaseConfirmedPins(now: Date = new Date()): Promise<{ checked: number; released: number }> {
   const pinned = await prisma.asset.findMany({
-    where: { primaryAddressIp: { not: null }, primaryAddressMac: { not: null } },
+    where: {
+      primaryAddressIp: { not: null },
+      primaryAddressMac: { not: null },
+      // A pin discovery is still trying to move is doing its job: releasing it
+      // would hand the address straight back to the choice the operator
+      // overrode, whatever the scores say (prod 2026-10-11 — a pin released on
+      // ARP evidence, and the next discovery put the asset back on the
+      // detected-device address). No contest inside the window means discovery
+      // has run and agreed.
+      OR: [
+        { primaryAddressContestedAt: null },
+        { primaryAddressContestedAt: { lt: new Date(now.getTime() - PIN_CONTEST_WINDOW_MS) } },
+      ],
+    },
     select: { id: true, hostname: true, primaryAddressIp: true, primaryAddressMac: true },
   });
   let released = 0;

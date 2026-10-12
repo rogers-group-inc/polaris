@@ -1719,30 +1719,53 @@ list*. In practice:
 
 ### Rule 101
 
-**The address a device is using right now beats the address it was handed. An
-online detected device beats every DHCP binding, a reservation the device holds
-beats a leftover lease, and a wired card beats a wireless one.**
+**An address is ranked by how directly it is known: a reservation the device
+holds, then what the gate sees online, then a lease it holds, then ARP. A
+detected address the gate's own ARP table contradicts decides nothing.**
 
 A FortiGate can give Polaris several candidate addresses for one device in a
 single discovery run: an unexpired lease on a site it left, a reservation and a
-lease on the same gate, the gate's own detected-device entry, and one of each
-per network card. Polaris ranks every candidate and uses the winner as the
-asset's IP address (the one monitoring probes) and its learned location:
+lease on the same gate, the gate's own detected-device entry, ARP entries, and
+one of each per network card. Polaris ranks every candidate and uses the winner
+as the asset's IP address (the one monitoring probes) and its learned location:
 
-1. **What the gate sees now.** A detected-device entry the gate reports as
-   online wins outright: the FortiGate builds it from traffic it is seeing from
-   that MAC. Next comes a DHCP binding the gate confirms is held, then a
-   detected-device entry for a client that has gone offline, then a
-   reservation nobody is holding.
+1. **How directly the address is known**, in this order:
+   - a **DHCP reservation the device is holding**. Someone chose that address
+     for that card, and the device is using it;
+   - a **detected-device entry the gate reports as online**, built from traffic
+     the gate is seeing from that MAC;
+   - a **DHCP lease the device is holding**;
+   - an **ARP entry**: the gate currently resolves the address to the MAC;
+   - a detected-device entry for a client that has gone offline, or one that
+     is **untrusted** (see below);
+   - a reservation nobody is holding.
 2. **Seen within the last hour.** A candidate seen recently beats an older
-   one before anything below is compared, so a laptop that comes off its dock
-   moves to its Wi-Fi address instead of staying on a wired lease it no longer
-   uses.
+   one before anything below is compared. A held reservation the gate last saw
+   more than an hour ago ranks as a lease, so a laptop that comes off its dock
+   moves to its Wi-Fi address instead of staying on the wired address it left.
 3. **Wired over wireless.** Judged from the FortiSwitch port or FortiAP the
    gate attributes the device to, the lease's SSID, or the adapter type Intune
    reports for that MAC.
-4. **Reservation over lease.** A reservation is an address someone chose.
+4. **An address with a reservation.** Among a card's ARP addresses, the one a
+   DHCP reservation is configured for wins.
 5. **Most recent sighting, then the latest lease expiry.**
+
+**When a detected-device entry is untrusted.** The gate's detected-device entry
+(and FortiManager's copy of it) reports whichever address it last saw traffic
+from. It is not trusted to choose the address when the same gate's ARP table:
+
+- has that MAC on a **different** address and not on the detected one, or
+- shows that MAC with **several** addresses, as a card with secondary IPs has.
+
+An untrusted entry can fill in an address for an asset that has none. It never
+moves an asset off the address it has. When a card's ARP addresses rank
+equally, the asset stays where it is; pin the address you want
+([rule 102](#rule-102)). A detected address that is simply missing from ARP is
+not counted against it, because ARP entries expire within minutes.
+
+ARP only overrules an address that this discovery run's DHCP or detected-device
+data decided. An address that came from vCenter, Azure Arc or an operator is
+left alone.
 
 A detected-device entry only counts when the gate can show the device is behind
 it (a FortiSwitch or FortiAP attribution, or an ARP entry). A user connecting
@@ -1799,30 +1822,46 @@ seen, and independent sources that agree add up without ever passing 100:
 | Evidence | Weight | Fades by half every |
 |---|---|---|
 | The device's own interface table | 0.95 | day |
-| A FortiGate sees the device online at it | 0.90 | 2 hours |
+| Polaris has polled it successfully as the primary | up to 0.95 | grows with time |
+| A DHCP reservation the device is holding | 0.90 | 12 hours |
 | The FortiManager / FortiGate record for a FortiGate, FortiSwitch or FortiAP names it as the management IP | 0.90 | day |
-| A Proxmox, Unraid or TrueNAS record for the host, VM or container | 0.80 | 6 hours |
-| The FortiGate's endpoint record for the device | 0.50 | 12 hours |
 | vCenter's guest IP | 0.85 | 6 hours |
-| A DHCP reservation the device is holding | 0.85 | 12 hours |
+| You pinned or typed it | 0.80 | never |
+| A Proxmox, Unraid or TrueNAS record for the host, VM or container | 0.80 | 6 hours |
+| A FortiGate (or FortiManager) sees the device online at it | 0.70 | 6 hours |
 | A DHCP lease the device is holding | 0.70 | 12 hours |
 | Azure Arc's network profile | 0.70 | day |
-| An ARP entry | 0.60 | hour |
+| A FortiGate's ARP table resolves it to the device's MAC | 0.60 | 4 hours |
+| A DHCP reservation exists for the device's MAC | 0.40 | never |
+| The FortiGate's endpoint record for the device | 0.40 | 12 hours |
 | A Generic API feed | 0.40 | day |
 | A FortiGate remembers the device at it, offline | 0.30 | day |
-| A DHCP reservation exists for the device's MAC | 0.20 | never |
-| Polaris has polled it successfully as the primary | up to 0.95 | grows with time |
-| You pinned or typed it | 0.80 | never |
+| A FortiGate sees the device at it, but ARP shows that card with several addresses | 0.20 | 6 hours |
+
+A reservation outweighs what a FortiGate detects because a person chose it: a
+detected-device entry is the gate's inference from traffic. A FortiGate's ARP
+table counts for any address it resolves to one of the device's MACs, whichever
+source reported the address.
 
 Polling counts only for the address being monitored, and only while the device
 is not down: about 0.6 after a day of clean polling, over 0.9 after three. The
 clock starts at the later of the last failed probe and when the address became
 the device's, read from the probe history Polaris already holds (up to 30
-days back). Two
-things count *against* an address: the device is down on it while a FortiGate
-sees it online at another address (× 0.3), or another device that is present on
-the network holds it more recently (× 0.5). A device that is simply down costs
-its address nothing.
+days back). **While polling is answering on an address, none of its evidence
+fades**: the device is demonstrably there, so the age of a FortiGate's last
+report is not held against it.
+
+Three things count *against* an address:
+
+- the device is down on it while a FortiGate sees it online at another address
+  (× 0.3);
+- another device that is present on the network holds it more recently
+  (× 0.5);
+- a FortiGate detected the device at it, but a FortiGate's ARP table has that
+  MAC on a different address and not on this one (× 0.5).
+
+A device that is simply down costs its address nothing, and neither does an
+address that is merely missing from ARP.
 
 **Bands:** 80 and over high, 50–79 medium, 20–49 low, under 20 very low.
 
@@ -1841,6 +1880,12 @@ polling, because only the address being monitored is ever polled. When the
 pinned address reaches 50 and beats every other address, the pin is released:
 the address stays, and discovery manages it again. An event records the
 release with both scores.
+
+**A pin is never released while discovery is still trying to change the
+address.** Each time discovery reports a different address for a pinned device,
+Polaris keeps the pin and notes the attempt. The release waits until three
+days have passed with no such attempt, so a pin that is the only thing keeping
+the address where you put it stays in place whatever the scores say.
 
 **Unpinning** moves the device to the address on its Addresses list with the
 highest score on the network's evidence. Only when the list is empty does

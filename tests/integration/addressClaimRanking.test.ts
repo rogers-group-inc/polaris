@@ -181,6 +181,92 @@ d("address claim ranking (business rule 101)", () => {
     expect((await readIp(id))?.ipAddress).toBe(IP_RESERVED);
   });
 
+  it("ARP beats a detected-device address the same gate's ARP table contradicts", async () => {
+    // Prod 2026-10-11: a static device the gate DETECTED at one address (on a
+    // switch port, online) while its ARP table resolved the MAC at another.
+    // Discovery kept putting the asset back on the detected address.
+    const id = await seedHmi(IP_WIFI_LEASE);
+    await run(
+      [],
+      [inv({ macAddress: ETH, ipAddress: IP_WIFI_LEASE, switchName: "SW-EHOUSE" })],
+      [{ fortigateDevice: GATE, ip: IP_RESERVED, mac: ETH, interface: "internal" }],
+    );
+    const after = await readIp(id);
+    expect(after?.ipAddress).toBe(IP_RESERVED);
+    expect(after?.ipSource).toBe(`${GATE}:arp`);
+  });
+
+  it("a card with several ARP addresses: detection is not trusted, and the reserved one is preferred", async () => {
+    // The gate detected the card at a secondary address. Its ARP table shows
+    // the MAC with two addresses, and a reservation is configured (not held —
+    // the device is static) for the other one.
+    const SECONDARY = "10.91.25.250";
+    const id = await seedHmi(SECONDARY);
+    const arp = [
+      { fortigateDevice: GATE, ip: SECONDARY, mac: ETH, interface: "internal" },
+      { fortigateDevice: GATE, ip: IP_RESERVED, mac: ETH, interface: "internal" },
+    ];
+    await run(
+      [dhcp({ macAddress: ETH, ipAddress: IP_RESERVED, type: "dhcp-reservation", seenLeased: false })],
+      [inv({ macAddress: ETH, ipAddress: SECONDARY, switchName: "SW-EHOUSE" })],
+      arp,
+    );
+    expect((await readIp(id))?.ipAddress).toBe(IP_RESERVED);
+  });
+
+  it("a card with several ARP addresses and no reservation stays where it is", async () => {
+    const SECONDARY = "10.91.25.250";
+    const id = await seedHmi(IP_RESERVED);
+    await run(
+      [],
+      [inv({ macAddress: ETH, ipAddress: SECONDARY, switchName: "SW-EHOUSE" })],
+      [
+        { fortigateDevice: GATE, ip: SECONDARY, mac: ETH, interface: "internal" },
+        { fortigateDevice: GATE, ip: IP_RESERVED, mac: ETH, interface: "internal" },
+      ],
+    );
+    // Detection named the secondary; with two ARP addresses it is untrusted,
+    // and the equal ARP claims leave the standing address alone.
+    expect((await readIp(id))?.ipAddress).toBe(IP_RESERVED);
+  });
+
+  it("a held reservation beats an online detected-device row at another address", async () => {
+    const id = await seedHmi(IP_WIFI_LEASE);
+    await run(
+      [dhcp({ macAddress: ETH, ipAddress: IP_RESERVED, type: "dhcp-reservation" })],
+      [inv({ macAddress: ETH, ipAddress: IP_WIFI_LEASE, switchName: "SW-EHOUSE" })],
+    );
+    expect((await readIp(id))?.ipAddress).toBe(IP_RESERVED);
+  });
+
+  it("ARP never takes the address from a lease the device is holding (a secondary address)", async () => {
+    const id = await seedHmi(IP_RESERVED);
+    await run(
+      [dhcp({ macAddress: ETH, ipAddress: IP_RESERVED, expireTime: 2_000_000_000 })],
+      [],
+      [
+        { fortigateDevice: GATE, ip: "10.91.25.250", mac: ETH, interface: "internal" },
+        { fortigateDevice: GATE, ip: IP_RESERVED, mac: ETH, interface: "internal" },
+      ],
+    );
+    expect((await readIp(id))?.ipAddress).toBe(IP_RESERVED);
+    // …nor when the leased address has aged out of ARP and only the secondary is there.
+    await run(
+      [dhcp({ macAddress: ETH, ipAddress: IP_RESERVED, expireTime: 2_000_000_000 })],
+      [],
+      [{ fortigateDevice: GATE, ip: "10.91.25.250", mac: ETH, interface: "internal" }],
+    );
+    expect((await readIp(id))?.ipAddress).toBe(IP_RESERVED);
+  });
+
+  it("ARP does not move an address no DHCP or detected-device claim decided this run", async () => {
+    // The address came from somewhere else (vCenter, Arc, an operator): it has
+    // no claim on the ladder, and is not ARP's to take.
+    const id = await seedHmi(IP_RESERVED);
+    await run([], [], [{ fortigateDevice: GATE, ip: "10.91.25.250", mac: ETH, interface: "internal" }]);
+    expect((await readIp(id))?.ipAddress).toBe(IP_RESERVED);
+  });
+
   it("an ARP binding on the same gate makes a detected-device row local", async () => {
     const id = await seedHmi();
     await run(

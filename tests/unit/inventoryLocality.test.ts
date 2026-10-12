@@ -14,6 +14,9 @@ import {
   inventorySightingIsLocal,
   inventorySwitchAttribution,
   parseInventoryClient,
+  buildArpIpsByMacDevice,
+  arpContradicts,
+  arpMultiHomed,
   INVENTORY_QUERY_FORMAT,
 } from "../../src/utils/inventoryLocality.js";
 
@@ -123,6 +126,45 @@ describe("inventorySwitchAttribution", () => {
  * discovery an empty address for every detected device, so business rule
  * 101's strongest claim never fired.
  */
+describe("arpContradicts", () => {
+  const rows = [
+    { fortigateDevice: "GW-1", mac: "aa-bb-cc-00-00-01", ip: "10.0.0.5" },
+    { fortigateDevice: "GW-1", mac: "AA:BB:CC:00:00:01", ip: "10.0.0.6" },
+    { fortigateDevice: "GW-2", mac: "AA:BB:CC:00:00:01", ip: "10.9.9.9" },
+  ];
+  const index = buildArpIpsByMacDevice(rows);
+
+  it("is true when the gate has the MAC bound, and not to this address", () => {
+    expect(arpContradicts(index, "AA:BB:CC:00:00:01", "GW-1", "192.0.2.15")).toBe(true);
+  });
+
+  it("is false for an address the gate does bind the MAC to — a secondary included", () => {
+    expect(arpContradicts(index, "AA:BB:CC:00:00:01", "GW-1", "10.0.0.5")).toBe(false);
+    expect(arpContradicts(index, "aa-bb-cc-00-00-01", "gw-1", "10.0.0.6")).toBe(false);
+  });
+
+  it("absence is never a contradiction: a MAC the gate's ARP doesn't hold, or a gate with no ARP rows", () => {
+    expect(arpContradicts(index, "AA:BB:CC:00:00:02", "GW-1", "192.0.2.15")).toBe(false);
+    expect(arpContradicts(index, "AA:BB:CC:00:00:01", "GW-3", "192.0.2.15")).toBe(false);
+    expect(arpContradicts(new Map(), "AA:BB:CC:00:00:01", "GW-1", "192.0.2.15")).toBe(false);
+  });
+
+  it("arpMultiHomed: true only when ONE gate binds the MAC to several addresses", () => {
+    // A card with secondary addresses — the detected-device row can't say
+    // which is the primary.
+    expect(arpMultiHomed(index, "AA:BB:CC:00:00:01", "GW-1")).toBe(true);
+    expect(arpMultiHomed(index, "aa-bb-cc-00-00-01", "gw-1")).toBe(true);
+    expect(arpMultiHomed(index, "AA:BB:CC:00:00:01", "GW-2")).toBe(false); // one address there
+    expect(arpMultiHomed(index, "AA:BB:CC:00:00:02", "GW-1")).toBe(false);
+    expect(arpMultiHomed(new Map(), "AA:BB:CC:00:00:01", "GW-1")).toBe(false);
+  });
+
+  it("another gate's binding does not contradict this gate's row", () => {
+    expect(arpContradicts(index, "AA:BB:CC:00:00:01", "GW-2", "10.9.9.9")).toBe(false);
+    expect(arpContradicts(index, "AA:BB:CC:00:00:01", "GW-2", "10.0.0.5")).toBe(true);
+  });
+});
+
 describe("parseInventoryClient", () => {
   const ROW_7X = {
     ipv4_address: "10.40.25.235",

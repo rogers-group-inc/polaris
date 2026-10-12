@@ -24,12 +24,31 @@ const score = (e: AddressClaimEvidence) => scoreAddressClaim(e, NOW);
 const beats = (a: AddressClaimEvidence, b: AddressClaimEvidence) => claimBeats(score(a), score(b));
 
 describe("scoreAddressClaim / claimBeats — the tiers", () => {
-  it("an online detected-device row beats a held lease and a held reservation", () => {
+  it("an online detected-device row beats a held lease", () => {
     // The plant-HMI case: the gate is seeing the device at one address right
     // now, and still holds an unexpired lease for another.
     const online: AddressClaimEvidence = { kind: "device-inventory", current: true, seenMs: NOW };
     expect(beats(online, { kind: "dhcp-lease", current: true, seenMs: NOW, expireTime: 2_000_000_000 })).toBe(true);
-    expect(beats(online, { kind: "dhcp-reservation", current: true, seenMs: NOW, medium: "wired" })).toBe(true);
+  });
+
+  it("a held reservation beats an online detected-device row — a person chose that address", () => {
+    const online: AddressClaimEvidence = { kind: "device-inventory", current: true, seenMs: NOW, medium: "wired" };
+    expect(beats({ kind: "dhcp-reservation", current: true, seenMs: NOW }, online)).toBe(true);
+    // No detected-device data for the card at all is not staleness.
+    expect(beats({ kind: "dhcp-reservation", current: true }, online)).toBe(true);
+    expect(beats(online, { kind: "dhcp-reservation", current: true })).toBe(false);
+  });
+
+  it("a held reservation the gate last saw hours ago ranks as a lease (the undocked laptop)", () => {
+    // The DHCP monitor still calls the wired reservation held, but the gate's
+    // own detected-device data last saw that card three hours ago — and is
+    // seeing the Wi-Fi card now.
+    const staleReservation: AddressClaimEvidence = {
+      kind: "dhcp-reservation", current: true, medium: "wired", seenMs: NOW - 3 * RECENT_CLAIM_MS,
+    };
+    const wifiOnline: AddressClaimEvidence = { kind: "device-inventory", current: true, seenMs: NOW, medium: "wireless" };
+    expect(beats(wifiOnline, staleReservation)).toBe(true);
+    expect(beats(staleReservation, wifiOnline)).toBe(false);
   });
 
   it("a held binding beats a remembered-but-offline detected-device row", () => {
@@ -54,6 +73,40 @@ describe("scoreAddressClaim / claimBeats — the tiers", () => {
   it("a live-held lease beats a config-only static reservation", () => {
     expect(beats({ kind: "dhcp-lease", current: true }, { kind: "dhcp-reservation", current: false })).toBe(true);
     expect(beats({ kind: "dhcp-reservation", current: false }, { kind: "dhcp-lease", current: true })).toBe(false);
+  });
+});
+
+describe("scoreAddressClaim / claimBeats — ARP on the ladder", () => {
+  const arp: AddressClaimEvidence = { kind: "arp", current: true, seenMs: NOW };
+
+  it("an ARP binding beats a detected-device row the gate's ARP table contradicts", () => {
+    // Prod 2026-10-11: a static device, detected at one address, resolved by
+    // the same gate's ARP at another. The address the gate can reach wins.
+    const contradicted: AddressClaimEvidence = {
+      kind: "device-inventory", current: true, contradicted: true, seenMs: NOW, medium: "wired",
+    };
+    expect(beats(arp, contradicted)).toBe(true);
+    expect(beats(contradicted, arp)).toBe(false);
+  });
+
+  it("an online detected-device row ARP does not contradict still beats ARP", () => {
+    expect(beats({ kind: "device-inventory", current: true, seenMs: NOW }, arp)).toBe(true);
+  });
+
+  it("a held DHCP binding beats ARP — ARP also lists secondary addresses", () => {
+    expect(beats({ kind: "dhcp-lease", current: true }, arp)).toBe(true);
+    expect(beats({ kind: "dhcp-reservation", current: true }, arp)).toBe(true);
+  });
+
+  it("ARP beats an offline detected-device row and configuration nobody holds", () => {
+    expect(beats(arp, { kind: "device-inventory", current: false, seenMs: NOW - 86_400_000 })).toBe(true);
+    expect(beats(arp, { kind: "dhcp-reservation", current: false })).toBe(true);
+  });
+
+  it("a contradicted row ranks with an offline one, not below it", () => {
+    const contradicted = score({ kind: "device-inventory", current: true, contradicted: true, seenMs: NOW });
+    const offline = score({ kind: "device-inventory", current: false, seenMs: NOW });
+    expect(contradicted[0]).toBe(offline[0]);
   });
 });
 
@@ -91,11 +144,11 @@ describe("scoreAddressClaim / claimBeats — inside a tier", () => {
     expect(beats({ ...base }, { ...base, medium: "wireless" })).toBe(true); // absent = unknown
   });
 
-  it("wired beats a wireless reservation — the medium outranks the binding type", () => {
+  it("a held reservation beats a wired lease, whatever its own medium — the tier outranks the medium", () => {
     expect(
       beats(
-        { kind: "dhcp-lease", current: true, seenMs: NOW, medium: "wired" },
         { kind: "dhcp-reservation", current: true, seenMs: NOW, medium: "wireless" },
+        { kind: "dhcp-lease", current: true, seenMs: NOW, medium: "wired" },
       ),
     ).toBe(true);
   });

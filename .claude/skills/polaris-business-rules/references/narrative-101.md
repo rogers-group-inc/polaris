@@ -5,11 +5,12 @@
 
 Each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
-- [Rule 101](#rule-101) — The address a device is using right now outranks the address it was handed: an online detected-device row beats every DHCP binding, a held reservation beats a leftover lease, and a wired card beats a wireless one
+- [Rule 101](#rule-101) — An address is ranked by how directly it is known: a reservation the device holds, then what the gate sees online, then a held lease, then ARP — and a detection the gate's ARP contradicts decides nothing
+- [Rule 101(a)](#rule-101a) — ARP on the ladder, untrusted detection, and the reservation above it
 
 <a id="rule-101"></a>
 
-## Rule 101 — The address a device is using right now outranks the address it was handed: an online detected-device row beats every DHCP binding, a held reservation beats a leftover lease, and a wired card beats a wireless one
+## Rule 101 — An address is ranked by how directly it is known: a reservation the device holds, then what the gate sees online, then a held lease, then ARP — and a detection the gate's ARP contradicts decides nothing
 
 ### The incident
 
@@ -63,3 +64,25 @@ The ladder shipped and the HMI still showed the leftover lease. The detected-dev
 - **A detected-device row always wins, online or not.** FortiOS keeps clients that left, and their old address would beat the lease the device is holding today.
 - **Wired before freshness.** The undocked-laptop case above.
 - **Widening `handledByDhcp` across gates.** It also gates the per-gate MAC-row bump, which must keep running per gate. The claim needed its own predicate, and the shared ladder is that predicate.
+
+<a id="rule-101a"></a>
+
+### 101(a) — ARP on the ladder, untrusted detection, and the reservation above it (2026-10-12)
+
+Two days after the ladder shipped, the owner pinned a static device to its real address. The pin was released (rule 103(a), on ARP evidence), and the next discovery moved the asset back to the address the FortiGate's detected-device table reported. Three statements from the owner, each of which changed the ladder:
+
+- **"The ARP table should weigh in."** The ladder had only DHCP entries and detected-device rows on it; ARP did nothing but fill a blank address. A gate resolving an address to a MAC is a current binding, so an ARP row is now a claim (tier 2).
+- **"If a single interface has multiple secondary IP addresses, we can't trust the device report from the FortiGate, and subsequently from FortiManager."** The detected-device row carries whichever source address the gate last saw traffic from. For a card with several addresses that proves the card has that address, not that it is the primary. So a detected-device row is UNTRUSTED when the same gate's ARP table shows the MAC with several addresses (`arpMultiHomed`), and also when ARP has the MAC bound to another address and not to the row's (`arpContradicts`). An untrusted row drops to tier 1, may fill a blank address, and never moves an asset off the address it has.
+- **"A DHCP reservation should be scored higher than FortiGate discovery, because a reservation requires human review."** A held reservation moved above an online detected-device row (tier 5 over 4). A lease stays below detection: the original HMI case — the gate seeing the device at one address while holding a leftover lease for another — still resolves the same way.
+
+Three guards came out of working the cases:
+
+- **Absence is never a contradiction.** FortiOS ages an idle neighbour entry out in a minute or two, so a detected address missing from ARP proves nothing. Only the MAC being bound elsewhere, or to several addresses, counts — and a gate whose ARP read failed has no rows and contradicts nothing.
+- **ARP below a held DHCP binding.** ARP lists a card's secondary addresses too. Ranked level with a lease, a secondary could take the primary from the lease the device is holding.
+- **A stale reservation ranks as a lease.** The DHCP monitor keeps calling a reservation held until its lease time runs out. On top of the ladder unconditionally, an undocked laptop's wired reservation would beat the Wi-Fi card the gate is seeing online. When the gate's own detected-device data last saw that card more than `RECENT_CLAIM_MS` ago the reservation drops to tier 3; with no such data it keeps tier 5.
+
+Among a card's several ARP addresses the claims tie, so the pass works per asset: the row for the standing address stakes its claim first and a sibling must strictly beat it. Equal claims leave the asset where it is — the operator pins the one they want, and that pin is now safe (103(a)). The one thing that lifts a sibling is a DHCP reservation configured for that MAC at that address, held or not: the address somebody chose for the card.
+
+ARP only overrules an address this run's DHCP or detected-device claims decided. An address that came from vCenter, Arc or an operator has no claim on the ladder and is not ARP's to take — without that limit every VM with a secondary address in some gate's ARP table would flap between the two.
+
+The sections above this one describe the ladder as first shipped (detection on top, three tiers); the tier order in the invariant is the current one.

@@ -387,6 +387,14 @@ export function statusAllowsMonitoring(status: unknown): boolean {
 export const PIN_FOLLOW_STALE_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * How long after discovery last tried to move a pinned asset the automatic
+ * pin release stays off (business rule 103(a)). Longer than any sane discovery
+ * interval, so "no contest inside the window" means discovery has run and
+ * agreed, not that it simply hasn't run.
+ */
+export const PIN_CONTEST_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
  * Outcome of applying the operator's primary-address pin
  * (Asset.primaryAddressMac / primaryAddressIp) to a pending Asset write.
  *
@@ -432,6 +440,11 @@ export function applyPrimaryAddressPin(
     followed = true;
     data.primaryAddressIp = target;
   }
+  // The writer wanted a different address: discovery still disagrees with the
+  // pin. Stamped so the automatic release (rule 103(a)) never drops a pin that
+  // is the only thing keeping the address where the operator put it.
+  const staged = stagedIpOf(data);
+  if (!followed && staged && staged !== target) data.primaryAddressContestedAt = new Date(nowMs);
 
   const v = data.ipAddress;
   if (v !== null && typeof v === "object" && "set" in (v as Record<string, unknown>)) {

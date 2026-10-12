@@ -387,7 +387,7 @@
             monitoring state, discovered attributes, associated IPs and MAC addresses.
             <code>404</code> when absent.</p>
           <p><code>addressConfidence</code> scores every address on the device, keyed by IP:
-            <code>{ "10.20.30.4": { score, evidenceScore, discoveryScore, band, evidenceBand, parts, penalties } }</code>.
+            <code>{ "10.20.30.4": { score, evidenceScore, discoveryScore, band, evidenceBand, parts, penalties, sustained } }</code>.
             <code>score</code> is 0–100 and includes an operator's pin or typed address;
             <code>evidenceScore</code> is the network evidence alone; <code>discoveryScore</code>
             (0–100) is discovery's evidence alone &mdash; no operator, no polling &mdash; and is
@@ -395,12 +395,21 @@
             <code>high</code> (80 and up), <code>medium</code> (50), <code>low</code> (20) or
             <code>very-low</code>. Each entry in <code>parts</code> is one kind of evidence &mdash;
             <code>{ kind, label, device, seenAt, hours, value }</code>: the device's own interface
-            table, a gate seeing it online, a held DHCP reservation or lease, an ARP entry, the
+            table, a gate seeing it online (kind <code>detected-ambiguous</code>, and worth far
+            less, when the gate's ARP table shows that network card with several addresses), a
+            held DHCP reservation or lease, a configured reservation, an ARP entry on a gate, the
             management IP a FortiGate, FortiSwitch or FortiAP record names, a vCenter guest or host
             IP, a Proxmox, Unraid or TrueNAS host, VM or container record, an Azure Arc profile, a
             FortiGate endpoint record, a Generic API feed, or how long Polaris's own
             polling has answered on it &mdash; and each entry in <code>penalties</code> is
-            <code>{ kind, factor, detail }</code>. Nothing alerts on the score; it only picks
+            <code>{ kind, factor, detail }</code>, a multiplier applied to the score:
+            <code>alive-elsewhere</code>, <code>claimed-elsewhere</code>, or
+            <code>arp-elsewhere</code> &mdash; the address rests on what a gate detected, no ARP
+            entry backs it, and a gate's ARP table has that MAC at a different address.
+            <code>sustained</code> is true while Polaris's own polling is answering on the
+            address: its evidence is then not aged in <code>score</code> and
+            <code>evidenceScore</code>, while <code>discoveryScore</code> still ages it.
+            Nothing alerts on the score; it only picks
             the address an unpinned device moves to and when a pin is released. The list (<code>GET /assets</code>) carries the compact form,
             <code>{ score, band }</code> per address.</p>
         </div>

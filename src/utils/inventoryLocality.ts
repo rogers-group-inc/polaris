@@ -150,6 +150,61 @@ export function buildArpMacDeviceIndex(
 }
 
 /**
+ * Every address each gate's ARP table binds each MAC to, this cycle:
+ * `MAC|device` → the set of IPs. Feeds `arpContradicts`.
+ */
+export function buildArpIpsByMacDevice(
+  arpRows: ReadonlyArray<{ fortigateDevice?: string | null; mac?: string | null; ip?: string | null }> | null | undefined,
+): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+  for (const row of arpRows || []) {
+    if (!row?.mac || !row.fortigateDevice || !row.ip) continue;
+    const key = macDeviceKey(String(row.mac).toUpperCase().replace(/-/g, ":"), String(row.fortigateDevice));
+    const set = index.get(key) ?? new Set<string>();
+    set.add(String(row.ip));
+    index.set(key, set);
+  }
+  return index;
+}
+
+/**
+ * Does the gate's own ARP table CONTRADICT the claim that `mac` is at `ip`?
+ * True only on positive evidence: the gate has that MAC bound to at least one
+ * address, and `ip` is not among them (business rule 101). A MAC the ARP table
+ * doesn't hold at all contradicts nothing — FortiOS ages an idle neighbour
+ * entry out within a minute or two, so absence is never evidence — which is
+ * also why a gate whose ARP read failed (no rows at all) can't contradict.
+ */
+export function arpContradicts(
+  index: ReadonlyMap<string, ReadonlySet<string>>,
+  mac: string | null | undefined,
+  device: string | null | undefined,
+  ip: string | null | undefined,
+): boolean {
+  if (!mac || !device || !ip) return false;
+  const bound = index.get(macDeviceKey(String(mac).toUpperCase().replace(/-/g, ":"), String(device)));
+  return !!bound && bound.size > 0 && !bound.has(String(ip));
+}
+
+/**
+ * Does the gate's ARP table show this MAC with SEVERAL addresses? A card with
+ * secondary addresses makes the gate's detected-device row untrustworthy for
+ * choosing among them: the row carries whichever source address the gate last
+ * saw traffic from, which says the card has that address, not that it is the
+ * primary (business rule 101; prod 2026-10-11). FortiManager's device report
+ * is the same row relayed, so it inherits the same limit.
+ */
+export function arpMultiHomed(
+  index: ReadonlyMap<string, ReadonlySet<string>>,
+  mac: string | null | undefined,
+  device: string | null | undefined,
+): boolean {
+  if (!mac || !device) return false;
+  const bound = index.get(macDeviceKey(String(mac).toUpperCase().replace(/-/g, ":"), String(device)));
+  return !!bound && bound.size > 1;
+}
+
+/**
  * True when this inventory row carries local evidence for its own gate.
  * `inv.macAddress` may be raw (dash-separated / lowercase) — normalized here
  * so callers can pass the DiscoveredInventoryDevice as-is.
