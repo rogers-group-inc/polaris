@@ -66,7 +66,7 @@ if [ -n "${DATABASE_URL:-}" ]; then
     echo "[entrypoint] role=$ROLE — skipping migrations (web/migrate role owns them)."
   fi
 else
-  echo "[entrypoint] No DATABASE_URL set — first-run setup wizard will start."
+  echo "[entrypoint] No DATABASE_URL set — first-run setup wizard will start. It prints a one-time setup token below (also saved as .setup-token in the state dir); the wizard asks for it first."
 fi
 
 # A dedicated one-shot migrate container exits after migrating (compose gates
