@@ -159,3 +159,37 @@ export function renameTagInList(
   }
   return hit ? out : null;
 }
+
+/**
+ * The severity-reference prefix a registry Tag's `color` may carry instead of a
+ * hex: `severity:warning` paints with that severity's theme token in the browser
+ * (tagColorCss in public/js/app.js), so a Priority tag matches the severity pills
+ * and chart bands on every theme — a single hex cannot, the bands' warning being
+ * #ffd600 on nightfall and #f57f17 on the daylight themes.
+ */
+export const TAG_SEVERITY_COLOR_PREFIX = "severity:";
+
+/** The severities a color reference may name — SEVERITIES in
+ *  src/services/notificationTypes.ts (a util does not import a service; the
+ *  unit test holds the two lists equal). */
+export const TAG_COLOR_SEVERITIES = ["notice", "informational", "warning", "serious", "critical"] as const;
+
+const TAG_HEX_COLOR_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+
+/**
+ * Validate a posted Tag color: `#rgb` / `#rrggbb` (lower-cased) or
+ * `severity:<level>`. Anything else is a 400 — the value lands in style
+ * attributes on several pages, so it is never stored free-form.
+ */
+export function normalizeTagColor(input: unknown): string {
+  const raw = typeof input === "string" ? input.trim() : "";
+  if (TAG_HEX_COLOR_RE.test(raw)) return raw.toLowerCase();
+  if (raw.startsWith(TAG_SEVERITY_COLOR_PREFIX)) {
+    const level = raw.slice(TAG_SEVERITY_COLOR_PREFIX.length);
+    if ((TAG_COLOR_SEVERITIES as readonly string[]).includes(level)) return raw;
+  }
+  throw new AppError(
+    400,
+    `Tag color must be a hex color (#rrggbb) or a severity reference (${TAG_COLOR_SEVERITIES.map((s) => TAG_SEVERITY_COLOR_PREFIX + s).join(", ")})`,
+  );
+}

@@ -4210,6 +4210,9 @@ model Tag {
   id       String @id @default(uuid())
   name     String @unique
   category String @default("General")
+  // A hex, or a severity reference ("severity:warning") the browser paints with
+  // that severity's theme token — the default Priority tags carry one. Writers
+  // go through normalizeTagColor (src/utils/tagNormalize.ts).
   color    String @default("#4fc3f7")
 
   // Optional auto-assignment device filter — the SAME nested AND/OR condition

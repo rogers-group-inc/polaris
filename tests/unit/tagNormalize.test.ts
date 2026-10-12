@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { normalizeTags, unionTags, TAG_MAX_LEN, isAzureTag, withArcOwnedTags } from "../../src/utils/tagNormalize.js";
+import { normalizeTags, unionTags, TAG_MAX_LEN, isAzureTag, withArcOwnedTags, normalizeTagColor, TAG_COLOR_SEVERITIES } from "../../src/utils/tagNormalize.js";
+import { SEVERITIES } from "../../src/services/notificationTypes.js";
 import { AppError } from "../../src/utils/errors.js";
 
 describe("normalizeTags", () => {
@@ -76,5 +77,27 @@ describe("withArcOwnedTags", () => {
 
   it("a create (no existing tags) strips every azure: tag", () => {
     expect(withArcOwnedTags([], ["azure:x", "azurearc"])).toEqual(["azurearc"]);
+  });
+});
+
+describe("normalizeTagColor", () => {
+  it("accepts a hex and lower-cases it", () => {
+    expect(normalizeTagColor("#FF8A00")).toBe("#ff8a00");
+    expect(normalizeTagColor(" #abc ")).toBe("#abc");
+  });
+
+  it("accepts a severity reference for each alert severity", () => {
+    for (const s of SEVERITIES) expect(normalizeTagColor(`severity:${s}`)).toBe(`severity:${s}`);
+  });
+
+  it("names exactly the alert severities", () => {
+    expect([...TAG_COLOR_SEVERITIES]).toEqual([...SEVERITIES]);
+  });
+
+  it("refuses anything else with a 400", () => {
+    for (const bad of ["red", "#12345", "severity:urgent", "severity:", "var(--color-warning)", "#fff;x:y", 7, null]) {
+      expect(() => normalizeTagColor(bad)).toThrow(AppError);
+    }
+    expect(() => normalizeTagColor("red")).toThrow(expect.objectContaining({ httpStatus: 400 }));
   });
 });

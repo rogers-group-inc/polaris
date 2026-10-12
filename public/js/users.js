@@ -263,10 +263,9 @@ function userTagPillsHtml(u) {
     html += regionPillsHtml(regions, function () { return "Per-user region scope"; });
   }
   html += tags.map(function (t) {
-    var hex = tagColorFor(t);
-    var rgb = hexToRgbTriplet(hex);
-    return '<span class="badge" title="Per-user tag scope" style="background:rgba(' + rgb + ',0.18);color:' +
-      escapeHtml(hex) + ';border:1px solid rgba(' + rgb + ',0.45);font-size:0.7rem;padding:0.1rem 0.4rem">' +
+    var color = tagColorFor(t);
+    return '<span class="badge" title="Per-user tag scope" style="background:' + tagColorTint(color, 18) + ';color:' +
+      tagColorCss(color) + ';border:1px solid ' + tagColorTint(color, 45) + ';font-size:0.7rem;padding:0.1rem 0.4rem">' +
       escapeHtml(t) +
     '</span>';
   }).join("");
@@ -2101,9 +2100,11 @@ async function loadTagList() {
   }
 }
 
+// The STORED color — a hex or a severity reference; render it through
+// tagColorCss / tagColorTint (app.js), never as a raw style value.
 function tagColorFor(name) {
   var t = _tagByName[String(name || "").toLowerCase()];
-  return (t && t.color) || "#9e9e9e";
+  return (t && tagColorCss(t.color)) ? t.color : "#9e9e9e";
 }
 
 function tagCategoryFor(name) {
@@ -2126,16 +2127,16 @@ function otherTagChipHtml(t) {
   '</span>';
 }
 
-function _otherTagPillStyle(hex, rgb, isSel) {
+function _otherTagPillStyle(color, isSel) {
+  var css = tagColorCss(color);
   return "cursor:pointer;padding:0.3rem 0.7rem;font-size:0.78rem;font-weight:600;" + (isSel
-    ? "background:rgba(" + rgb + ",0.22);color:" + hex + ";border:1px solid rgba(" + rgb + ",0.55)"
-    : "background:transparent;color:" + hex + ";border:1px solid rgba(" + rgb + ",0.45);opacity:0.75");
+    ? "background:" + tagColorTint(color, 22) + ";color:" + css + ";border:1px solid " + tagColorTint(color, 55)
+    : "background:transparent;color:" + css + ";border:1px solid " + tagColorTint(color, 45) + ";opacity:0.75");
 }
 
 function otherTagPillHtml(name, isSel) {
-  var hex = tagColorFor(name);
-  var rgb = hexToRgbTriplet(hex);
-  return '<button type="button" class="badge other-tag-pill" data-tag="' + escapeHtml(name) + '" data-selected="' + (isSel ? "1" : "0") + '" data-color="' + escapeHtml(hex) + '" data-rgb="' + escapeHtml(rgb) + '" style="' + _otherTagPillStyle(hex, rgb, isSel) + '">' +
+  var color = tagColorFor(name);
+  return '<button type="button" class="badge other-tag-pill" data-tag="' + escapeHtml(name) + '" data-selected="' + (isSel ? "1" : "0") + '" data-color="' + escapeHtml(color) + '" style="' + _otherTagPillStyle(color, isSel) + '">' +
     escapeHtml(name) +
   '</button>';
 }
@@ -2233,7 +2234,7 @@ function otherTagsPickerHtml(idPrefix, selected) {
 
 function _setOtherTagPillSelected(pill, isSel) {
   pill.setAttribute("data-selected", isSel ? "1" : "0");
-  pill.style.cssText = _otherTagPillStyle(pill.getAttribute("data-color"), pill.getAttribute("data-rgb"), isSel);
+  pill.style.cssText = _otherTagPillStyle(pill.getAttribute("data-color"), isSel);
 }
 
 // Select an existing pill by name (case-insensitive), reporting whether one

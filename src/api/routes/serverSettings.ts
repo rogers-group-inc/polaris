@@ -72,7 +72,7 @@ import {
   type TagCriteria,
 } from "../../services/tagAssignmentService.js";
 import { REGION_TAG_CATEGORY } from "../../services/mapRegionService.js";
-import { REGION_TAG_PREFIX, AZURE_TAG_PREFIX, isAzureTag } from "../../utils/tagNormalize.js";
+import { REGION_TAG_PREFIX, AZURE_TAG_PREFIX, isAzureTag, normalizeTagColor } from "../../utils/tagNormalize.js";
 import {
   DEVICE_FILTER_FIELD_OPS,
   scopeConditionMeta,
@@ -639,7 +639,7 @@ router.post("/tags", requirePermission("serverSettingsSystem", "write"), async (
       data: {
         name,
         category,
-        color: req.body.color || randomTagColor(),
+        color: req.body.color ? normalizeTagColor(req.body.color) : randomTagColor(),
         assetCondition: condition ? (condition as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
         criteria: criteria ? (criteria as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
       },
@@ -792,7 +792,7 @@ router.put("/tags/:id", requirePermission("serverSettingsSystem", "write"), asyn
       data: {
         name,
         category,
-        color: req.body.color ?? existing.color,
+        color: req.body.color != null ? normalizeTagColor(req.body.color) : existing.color,
         ...filterWrite,
       },
     });
