@@ -610,7 +610,10 @@ async function readStoredLifecycleState(): Promise<StoredLifecycleState | null> 
  *
  * Called ONLY by the daily job, never by the route. A lifecycle condition is
  * true for months, so re-firing it on every page load would spam the on-call
- * inbox; disk pressure is minutes-volatile and earns the opposite treatment.
+ * inbox. Capacity transitions follow the same shape — one scheduled
+ * evaluator, never a page load — plus a hold, because disk pressure is
+ * minutes-volatile and a single reading over a line is not a page
+ * (business rule 105).
  */
 export async function recordPlatformLifecycleTransition(result: PlatformLifecycleResult): Promise<void> {
   try {

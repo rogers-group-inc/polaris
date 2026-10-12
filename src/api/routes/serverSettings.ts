@@ -8,7 +8,6 @@ import multer from "multer";
 import { z } from "zod";
 import { X509Certificate, createPrivateKey, randomBytes } from "node:crypto";
 import { existsSync, unlinkSync, writeFileSync, mkdirSync, createReadStream, statSync } from "node:fs";
-import { totalmem } from "node:os";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import {
@@ -105,7 +104,13 @@ import { runtimeIsContainer } from "../../utils/deploymentContext.js";
 import { hasActiveDiscoveries } from "../../services/discovery/discoveryEngine.js";
 import { logger } from "../../utils/logger.js";
 import { Prisma } from "../../generated/prisma/client.js";
-import { getCapacitySnapshot, recordCapacityTransition } from "../../services/capacityService.js";
+import {
+  getCapacitySnapshot,
+  getCapacityTransitionState,
+  setCapacityAlertHoldMinutes,
+  CAPACITY_ALERT_HOLD_MAX_MINUTES,
+} from "../../services/capacityService.js";
+import { computePgTuning, pgTuningToAdvisorShape } from "../../services/pgTuningService.js";
 import { getSampleRetention, updateSampleRetention } from "../../services/sampleRetentionService.js";
 import { getAgentEventLogConfig, updateAgentEventLogConfig } from "../../services/osEventLogService.js";
 import {
@@ -1226,200 +1231,17 @@ router.put("/reservation-mac", requirePermission("serverSettingsSystem", "write"
 // matched FIRST for paths starting with /server-settings/mibs.
 
 // ─── PostgreSQL Tuning Check ───────────────────────────────────────────────
-
-const PG_TUNING_THRESHOLDS = {
-  assets: 160,        // 80% of 200
-  subnets: 1600,      // 80% of 2,000
-  reservations: 160000, // 80% of 200,000
-};
-
-function buildPgRecommended(): Record<string, { min: number; unit: string; display: string }> {
-  const ram = totalmem();
-  const MB = 1024 * 1024;
-  const GB = 1024 * MB;
-
-  // Round to clean multiples of 8 so the recommended values sit on the same
-  // boundaries operators are used to seeing in postgresql.conf (8/16/24/32 GB,
-  // 8/16/24 MB). Postgres accepts any MB-resolution value, but recommending
-  // "15 GB" or "46 GB" reads as an arbitrary fraction of host RAM — bumping
-  // those to the nearest 8 GB (16 GB / 48 GB) makes the recommendation
-  // actionable without a "...why that specific number?" pause.
-  const roundToMultipleOf = (b: number, unit: number) => Math.round(b / unit) * unit;
-  const EIGHT_MB = 8 * MB;
-  const EIGHT_GB = 8 * GB;
-
-  // For shared_buffers / effective_cache_size: round to 8 GB on hosts where
-  // the natural value lands ≥4 GB (so it rounds up cleanly), and fall back to
-  // 8 MB rounding on tiny-RAM hosts where 8-GB rounding would collapse to 0.
-  const sharedBuffers = Math.max(
-    128 * MB,
-    roundToMultipleOf(ram * 0.25, EIGHT_GB) || roundToMultipleOf(ram * 0.25, EIGHT_MB),
-  );
-  const effectiveCache = Math.max(
-    256 * MB,
-    roundToMultipleOf(ram * 0.75, EIGHT_GB) || roundToMultipleOf(ram * 0.75, EIGHT_MB),
-  );
-  // work_mem: RAM/128, rounded to nearest 8 MB, capped at 256 MB, min 32 MB.
-  const workMem = Math.max(32 * MB, Math.min(256 * MB, roundToMultipleOf(ram / 128, EIGHT_MB)));
-
-  const fmt = (b: number) =>
-    b >= GB ? (b / GB) + "GB"
-    : (b / MB) + "MB";
-
-  return {
-    shared_buffers:      { min: sharedBuffers,  unit: "bytes", display: fmt(sharedBuffers) },
-    work_mem:            { min: workMem,        unit: "bytes", display: fmt(workMem) },
-    effective_cache_size:{ min: effectiveCache, unit: "bytes", display: fmt(effectiveCache) },
-    random_page_cost:    { min: -1,             unit: "cost",  display: "1.1" },
-  };
-}
-
-function parsePgBytes(val: string): number {
-  const s = val.trim();
-  // PostgreSQL reports in 8kB pages for shared_buffers, or kB/MB/GB suffixes
-  const m = s.match(/^(\d+)\s*(kB|MB|GB|TB)?$/i);
-  if (!m) return parseInt(s, 10) || 0;
-  const n = parseInt(m[1], 10);
-  switch ((m[2] || "").toUpperCase()) {
-    case "KB": return n * 1024;
-    case "MB": return n * 1024 * 1024;
-    case "GB": return n * 1024 * 1024 * 1024;
-    case "TB": return n * 1024 * 1024 * 1024 * 1024;
-    default:   return n; // unit-less = 8kB pages for shared_buffers
-  }
-}
-
-/**
- * Compute the pg-tuning data: per-setting current vs recommended pairs, the
- * pg_settings config-file path, plus the `pgTuningNeeded` flag consumed by
- * capacityService.
- *
- * Extracted into a helper so both `/pg-tuning` and `/capacity-advisor` can
- * reuse it without duplicating the PG_SETTINGS query. Returns null when no
- * threshold is crossed (small install — no tuning advice yet).
- */
-interface PgTuningRow {
-  name: string;
-  current: string;
-  recommended: string;
-  ok: boolean;
-  /** True when the current value was set explicitly via ALTER SYSTEM
-   *  (postgresql.auto.conf). Such a value is a deliberate operator choice, so
-   *  the advisor treats it as OK even when below its heuristic recommendation —
-   *  otherwise an operator who intentionally lowered work_mem (e.g. to stop
-   *  swapping) gets a permanent false "Stage" nag, and staging would write to
-   *  postgresql.conf which auto.conf overrides anyway. */
-  operatorOverride: boolean;
-}
-
-/**
- * True when a pg_settings row's value comes from postgresql.auto.conf — i.e. it
- * was set by ALTER SYSTEM. Postgres reports such values with
- * source='configuration file' and a sourcefile ending in postgresql.auto.conf.
- */
-function isAutoConfOverride(s: { sourcefile: string | null }): boolean {
-  return !!s.sourcefile && /postgresql\.auto\.conf$/.test(s.sourcefile.replace(/\\/g, "/"));
-}
-interface PgTuningResult {
-  settings: PgTuningRow[];
-  pgConfigFile: string | null;
-  pgTuningNeeded: boolean;
-}
-async function computePgTuning(): Promise<PgTuningResult | null> {
-  const [assetCount, subnetCount, reservationCount] = await Promise.all([
-    prisma.asset.count(),
-    prisma.subnet.count(),
-    prisma.reservation.count(),
-  ]);
-
-  const triggered: string[] = [];
-  if (assetCount >= PG_TUNING_THRESHOLDS.assets) triggered.push("assets");
-  if (subnetCount >= PG_TUNING_THRESHOLDS.subnets) triggered.push("subnets");
-  if (reservationCount >= PG_TUNING_THRESHOLDS.reservations) triggered.push("reservations");
-  if (!triggered.length) return null;
-
-  const pgSettings = await prisma.$queryRawUnsafe<{ name: string; setting: string; unit: string | null; sourcefile: string | null }[]>(
-    `SELECT name, setting, unit, sourcefile FROM pg_settings WHERE name IN ('shared_buffers', 'work_mem', 'effective_cache_size', 'random_page_cost', 'config_file')`
-  );
-  const pgConfigFile = pgSettings.find((s) => s.name === "config_file")?.setting || null;
-
-  const PG_RECOMMENDED = buildPgRecommended();
-  const settings: PgTuningRow[] = pgSettings.map((s) => {
-    if (s.name === "config_file") return null;
-    const rec = PG_RECOMMENDED[s.name];
-    if (!rec) return null;
-    // An explicit ALTER SYSTEM override is a deliberate operator choice — never
-    // flag it as needing change, regardless of the heuristic recommendation.
-    const operatorOverride = isAutoConfOverride(s);
-    let currentBytes: number;
-    let ok: boolean;
-    if (s.name === "random_page_cost") {
-      const val = parseFloat(s.setting);
-      ok = operatorOverride || val <= 1.1;
-      return { name: s.name, current: String(val), recommended: rec.display, ok, operatorOverride };
-    }
-    if (s.unit === "8kB") {
-      currentBytes = parseInt(s.setting, 10) * 8192;
-    } else if (s.unit === "kB") {
-      currentBytes = parseInt(s.setting, 10) * 1024;
-    } else {
-      currentBytes = parsePgBytes(s.setting);
-    }
-    ok = operatorOverride || currentBytes >= rec.min;
-    let currentDisplay: string;
-    if (currentBytes >= 1024 * 1024 * 1024) currentDisplay = (currentBytes / (1024 * 1024 * 1024)).toFixed(1).replace(/\.0$/, "") + "GB";
-    else if (currentBytes >= 1024 * 1024) currentDisplay = (currentBytes / (1024 * 1024)).toFixed(0) + "MB";
-    else currentDisplay = (currentBytes / 1024).toFixed(0) + "kB";
-    return { name: s.name, current: currentDisplay, recommended: rec.display, ok, operatorOverride };
-  }).filter((s): s is PgTuningRow => s !== null);
-
-  const allOk = settings.every((s) => s.ok);
-  return { settings, pgConfigFile, pgTuningNeeded: !allOk };
-}
-
-/** Project the pg-tuning rows into the shape the Capacity Advisor consumes. */
-function pgTuningToAdvisorShape(t: PgTuningResult | null): import("../../services/capacityAdvisorService.js").PgTuningExternal {
-  const find = (name: string): PgTuningRow | undefined =>
-    t?.settings.find((s) => s.name === name);
-  const sb = find("shared_buffers");
-  const ec = find("effective_cache_size");
-  const wm = find("work_mem");
-  const rp = find("random_page_cost");
-  const PG_DEFAULTS = buildPgRecommended();
-  return {
-    sharedBuffers: {
-      current: sb?.current ?? null,
-      recommended: sb?.recommended ?? PG_DEFAULTS.shared_buffers.display,
-      changeRequired: sb ? !sb.ok : false,
-      operatorOverride: sb?.operatorOverride ?? false,
-    },
-    effectiveCacheSize: {
-      current: ec?.current ?? null,
-      recommended: ec?.recommended ?? PG_DEFAULTS.effective_cache_size.display,
-      changeRequired: ec ? !ec.ok : false,
-      operatorOverride: ec?.operatorOverride ?? false,
-    },
-    workMem: {
-      current: wm?.current ?? null,
-      recommended: wm?.recommended ?? PG_DEFAULTS.work_mem.display,
-      changeRequired: wm ? !wm.ok : false,
-      operatorOverride: wm?.operatorOverride ?? false,
-    },
-    randomPageCost: {
-      current: rp?.current ?? null,
-      recommended: rp?.recommended ?? PG_DEFAULTS.random_page_cost.display,
-      changeRequired: rp ? !rp.ok : false,
-      operatorOverride: rp?.operatorOverride ?? false,
-    },
-  };
-}
+//
+// Neither this route nor /capacity-advisor records a capacity transition: the
+// capacityWatch job is the one evaluator (business rule 105). A page load is
+// read-only, so it can neither start nor reset the hold a severity change must
+// survive before it becomes an Event.
 
 router.get("/pg-tuning", async (_req, res, next) => {
   try {
     const tuning = await computePgTuning();
     if (!tuning) {
       const capacity = await getCapacitySnapshot({ pgTuningNeeded: false });
-      void recordCapacityTransition(capacity);
       return res.json({ settings: [], pgConfigFile: null, capacity });
     }
 
@@ -1431,11 +1253,6 @@ router.get("/pg-tuning", async (_req, res, next) => {
     const capacity = await getCapacitySnapshot({
       pgTuningNeeded: tuning.pgTuningNeeded,
     });
-
-    // Best-effort transition Event so a flip into watch/amber/red flows out
-    // through eventArchiveService → syslog/SFTP even if no admin loads the
-    // Maintenance tab.
-    void recordCapacityTransition(capacity);
 
     res.json({ settings: tuning.settings, pgConfigFile: tuning.pgConfigFile, capacity });
   } catch (err) {
@@ -1792,11 +1609,14 @@ router.get("/capacity-advisor", async (_req, res, next) => {
       pgTuningNeeded: tuning?.pgTuningNeeded ?? false,
       pgTuning: pgTuningExternal,
     });
-    void recordCapacityTransition(snapshot);
     const { getDbConnectionMode } = await import("../../utils/dbConnections.js");
     res.json({
       advisor,
       capacity: snapshot,
+      // What the alerting side last recorded, plus any change it is waiting
+      // out — so the card can say "warning for 10 of 30 min" instead of
+      // leaving an operator to reconcile an alert with a page that reads OK.
+      capacityTransition: await getCapacityTransitionState(),
       pgTuning: {
         settings: tuning?.settings ?? [],
         pgConfigFile: tuning?.pgConfigFile ?? null,
@@ -1806,6 +1626,34 @@ router.get("/capacity-advisor", async (_req, res, next) => {
       // instruction to restart the container — POST /restart refuses there.
       runtimeIsContainer: runtimeIsContainer(),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// How long a capacity severity change must hold before the capacityWatch job
+// writes it as an Event (business rule 105). 0 = on the first reading.
+const capacityAlertHoldSchema = z
+  .object({ minutes: z.number().int().min(0).max(CAPACITY_ALERT_HOLD_MAX_MINUTES) })
+  .strict();
+
+router.put("/capacity-alert-hold", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
+  try {
+    const { minutes } = capacityAlertHoldSchema.parse(req.body ?? {});
+    const before = (await getCapacityTransitionState()).holdMinutes;
+    await setCapacityAlertHoldMinutes(minutes);
+    await logEvent({
+      level: "info",
+      action: "capacity.alert_hold_updated",
+      resourceType: "setting",
+      resourceName: "capacity.alertHold",
+      actor: req.session?.username,
+      message: minutes === 0
+        ? "Capacity severity changes now alert on the first reading"
+        : `Capacity severity changes must now hold for ${minutes} min before alerting`,
+      details: { from: before, to: minutes },
+    });
+    res.json(await getCapacityTransitionState());
   } catch (err) {
     next(err);
   }
@@ -1822,11 +1670,10 @@ router.get("/capacity-advisor", async (_req, res, next) => {
 // /capacity-advisor. Adding one here would be inconsistent noise.
 //
 // Note what this route does NOT do: it never records a lifecycle transition.
-// /pg-tuning and /capacity-advisor both do, because disk state is
-// minutes-volatile and an admin loading the tab is the freshest signal
-// available. A lifecycle condition is true for months, so letting a page
-// refresh re-fire the Event would let a browser reload spam the on-call inbox.
-// Transitions belong to the daily job alone.
+// A lifecycle condition is true for months, so letting a page refresh re-fire
+// the Event would let a browser reload spam the on-call inbox. Transitions
+// belong to the daily job alone — the same shape capacity transitions have
+// (the capacityWatch job, business rule 105).
 const platformLifecycleQuery = z
   .object({ refresh: z.coerce.boolean().optional() })
   .strict();

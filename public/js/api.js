@@ -1587,6 +1587,7 @@ const api = {
     getQueueMode: () => request("GET", "/server-settings/queue-mode"),
     setQueueMode: (mode) => request("POST", "/server-settings/queue-mode", { mode: mode }),
     getCapacityAdvisor: () => request("GET", "/server-settings/capacity-advisor"),
+    setCapacityAlertHold: (minutes) => request("PUT", "/server-settings/capacity-alert-hold", { minutes: minutes }),
     getPlatformLifecycle: (refresh) => request("GET", "/server-settings/platform-lifecycle" + (refresh ? "?refresh=1" : "")),
     stageCapacityAdvisor: (keys) => request("POST", "/server-settings/capacity-advisor/stage", { keys: keys }),
     getSampleRetention: () => request("GET", "/server-settings/sample-retention"),
