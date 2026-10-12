@@ -413,8 +413,13 @@ needs — both versions, the path, the fix — as the error itself, never behind
 
 ### Rule 48
 **Nobody hands out authority they do not hold.** Admin-equivalence cannot be
-minted by a caller who lacks it, at any of the four sites. Not four-eyes; the
-mirror of the last-admin guard. A request with no role snapshot **fails closed**.
+minted by a caller who lacks it, at any of the four sites. The same bar holds on
+the other side of the act: resetting an administrator's password, removing
+their two-factor methods or passkeys, deleting them or changing their role, and
+creating an API token bound to an admin-equivalent role, all need the caller to
+be admin-equivalent too. Accounts and roles below that tier stay within reach of
+**Users** Read-Write and **API Tokens** Read-Write. Not four-eyes; the mirror of
+the last-admin guard. A request with no role snapshot **fails closed**.
 
 ---
 
@@ -1891,3 +1896,16 @@ the address where you put it stays in place whatever the scores say.
 highest score on the network's evidence. Only when the list is empty does
 Polaris fall back to what the integrations last reported. Discovery manages
 the address from then on, so a later discovery run can still move it.
+
+### Rule 104
+
+**The Active Directory bind account is offered only to a destination discovery
+chose.**
+
+An Active Directory server with no credential of its own is polled over WinRM
+or SSH with the integration's bind account. That fallback stops applying once
+someone has typed an address or a hostname on the asset: it then needs a
+credential selected on it, because choosing a credential is the act that says
+"send this secret to this address". Until one is selected the asset reports
+*No WinRM credential selected* (or SSH). Assets whose address and name came
+from discovery are unaffected.
