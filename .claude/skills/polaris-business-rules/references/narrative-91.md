@@ -139,3 +139,30 @@ to its vCenter host edge — under the switch port its MAC was learned on. A sha
 edge stays OFF the panel rather than on the wrong site's switch. The count is the same rule in
 SQL (`COALESCE(edge.parentAssetId, unique-name switch)`, `split_part` not LIKE), and the search
 result's `switchHostname` is the RESOLVED switch's name.
+
+### 91(a) — a shared name is not a duplicate across kinds or serials (2026-10-12)
+
+The Conflicts queue offered an Entra device `CROSSPLAINS-CSR` and a FortiSwitch named
+`CROSSPLAINS-CSR-DESK` as "Duplicate assets" with an **Apply merge** button. The Entra name is the
+15-char NetBIOS form, so `lookupHostname` matched it against the switch's truncated index key
+(`via: "netbios"`) and the Entra sibling check raised a `bothAssetsExist` card. One click would have
+absorbed a switch into a laptop.
+
+The match cascade trusts hostname as its LAST rung, after source row, SID, MAC and serial — which
+is right only while nothing the two records already say contradicts it. Two things always do:
+two usable serials that differ (the same refusal the duplicate-hostname merge job already makes
+under rule 91), and a network-infrastructure type against a specific endpoint type. Directory,
+vCenter and workload integrations enumerate computers, never switches, so the class split is a
+statement of what those sources can contain, not a guess.
+
+The guard lives in `lookupHostname` (an optional `incoming` argument) rather than in
+`upsertAssetConflict`, because the non-sibling callers `continue` after queueing a card: a refusal
+there would have left the device with no asset at all, every run. Refused at lookup, the caller
+proceeds as if nothing shared the name and creates the record's own asset — exactly what an
+operator's Reject would have done.
+
+Rejected alternatives: requiring MAC/serial corroboration for every NetBIOS match (AD records
+carry neither, and AD-`cn`-vs-Entra-full-name is the case truncation matching exists for);
+refusing on any type difference (workstation vs server is an operator retype, not two devices);
+deleting stale cards (marking them rejected by `system`, with a `conflict.rejected` Event naming
+the reason, leaves the history explaining why the card went away).

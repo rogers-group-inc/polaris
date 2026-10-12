@@ -446,7 +446,7 @@ export async function syncGenericApiDevices(
     }
 
     // ── Hostname collision → Conflict, never an auto-merge ──────────────────
-    const collision = r.hostname ? lookupHostname(assetByHostnameUnclaimed, r.hostname) : null;
+    const collision = r.hostname ? lookupHostname(assetByHostnameUnclaimed, r.hostname, { assetType, serialNumber: r.serialNumber }) : null;
     if (collision) {
       try {
         await upsertAssetConflict({

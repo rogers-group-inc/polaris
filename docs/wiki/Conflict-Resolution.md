@@ -72,6 +72,13 @@ both sides — what was proposed, and what the existing asset looked like when
 the conflict was raised — and **◀ / ▶** between the columns pick the winning
 value per field (the defaults are the plain-Accept behaviour).
 
+A matching name is not raised when the two records contradict each other: both
+carry serial numbers and they differ, or one is a switch, router, firewall or
+access point and the other is a computer, server, printer, virtual-machine host
+or container. The device gets its own asset instead, and any card already
+pending for such a pair is rejected by the system on the next discovery run
+([rule 91(a)](Business-Rules#rule-91)).
+
 | Card | Means | **Apply merge** | **Reject (keep separate)** |
 |---|---|---|---|
 | *Hostname collision* | the existing asset has no link to this source | the existing asset becomes this device's record | a separate asset is created for the device |

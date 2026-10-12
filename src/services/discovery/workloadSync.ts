@@ -766,7 +766,7 @@ export async function syncWorkloadDevices(
       }
       // Sibling collision: this workload has its own asset, and a second,
       // unlinked asset shares its name — offer the merge (bothAssetsExist).
-      const sibling = lookupHostname(assetByHostnameUnclaimed, displayName);
+      const sibling = lookupHostname(assetByHostnameUnclaimed, displayName, { assetType });
       if (sibling && sibling.asset.id !== existing.id && !assetIdsWithPlatformSource.has(sibling.asset.id)) {
         try {
           await upsertAssetConflict({
@@ -785,7 +785,7 @@ export async function syncWorkloadDevices(
     }
 
     // Unlinked asset with the same name → pending Conflict, never an auto-merge.
-    const collision = lookupHostname(assetByHostnameUnclaimed, displayName);
+    const collision = lookupHostname(assetByHostnameUnclaimed, displayName, { assetType });
     if (collision) {
       try {
         await upsertAssetConflict({
