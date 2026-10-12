@@ -206,6 +206,9 @@ d("address confidence API (business rule 103)", () => {
     expect(r.status).toBe(200);
     expect(r.body.warn).toBe(true);
     expect(r.body.probe).toHaveProperty("answered");
+    // The same fields GET /assets/:id carries per address.
+    expect(r.body.discoveryScore).toBe(0);
+    expect(r.body.sustained).toBe(false);
   }, 20_000);
 });
 

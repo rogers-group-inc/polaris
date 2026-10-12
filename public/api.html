@@ -616,7 +616,7 @@
           <div class="endpoint-head"><span class="method m-post">POST</span> /assets/:id/address-check
             <span class="gate">assets:write</span></div>
           <p>Score an address before pinning it or typing it in: <code>{ ip, probe? }</code> →
-            <code>{ ip, evidenceScore, evidenceBand, score, band, parts, penalties, warn, warnBelow, probe }</code>.
+            <code>{ ip, evidenceScore, evidenceBand, score, band, discoveryScore, sustained, parts, penalties, warn, warnBelow, probe }</code>.
             The fields are those of <code>addressConfidence</code> on <code>GET /assets/:id</code>;
             an address the device has never been seen on scores 0. <code>warn</code> is true when
             <code>evidenceScore</code> is below <code>warnBelow</code> (50). With

@@ -316,6 +316,10 @@ export interface AddressCheckResult {
   evidenceBand: string;
   score: number;
   band: string;
+  /** Evidence without the operator's choice or polling, aged — what a pin release compares. */
+  discoveryScore: number;
+  /** True when polling is answering here, so the evidence is not aged. */
+  sustained: boolean;
   parts: ConfidenceResult["parts"];
   penalties: ConfidenceResult["penalties"];
   /** True when evidenceScore is below CONFIDENCE_WARN_BELOW — ask before applying. */
@@ -356,6 +360,8 @@ export async function checkAddressConfidence(
     evidenceBand: r?.evidenceBand ?? "very-low",
     score: r?.score ?? 0,
     band: r?.band ?? "very-low",
+    discoveryScore: r?.discoveryScore ?? 0,
+    sustained: r?.sustained ?? false,
     parts: r?.parts ?? [],
     penalties: r?.penalties ?? [],
     warn: evidenceScore < CONFIDENCE_WARN_BELOW,
