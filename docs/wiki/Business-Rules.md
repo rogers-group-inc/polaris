@@ -2018,3 +2018,20 @@ not a spelling, a cookie that has outlived its owner, or a code already used.**
 - **Discovery conflicts** are decided on your current role, not the one you signed
   in with.
 - **A SAML sign-in response works once.**
+
+### Rule 109
+
+**A value is encoded for the context it lands in, not for the one it came from.**
+
+- **A name that contains a quote cannot run script.** Integration names, API token
+  names, certificate names, ADOMs and device-reported values are encoded for the
+  place they appear, including inside a button's click handler.
+- **Exports are safe to open in a spreadsheet.** A cell beginning with `=`, `+`, `-`
+  or `@` is written with a leading apostrophe so it reads as text. Plain numbers are
+  left alone.
+- **Slack and Teams show device text literally.** `<`, `>`, `&` and markdown in a
+  hostname or event message are escaped, so they cannot mention a channel, add a
+  link or change the formatting.
+- **Names refuse control characters** (line breaks and the like). Quotes and
+  non-English letters are fine.
+- **A reported HA peer serial** is kept only if it is 6 to 32 letters and digits.

@@ -29,10 +29,34 @@ export interface WebhookPayload {
 // Severity → colour moved to utils/severityStyle.ts when the alert email and
 // the public acknowledge page needed the same map.
 
+/**
+ * Slack mrkdwn: `&`, `<` and `>` are the control characters of its markup, and
+ * Slack's own formatting rules say to escape exactly those in text you did not
+ * write. Without it a hostname or event message containing `<!channel>`,
+ * `<@U123>` or `<https://evil|Click here>` becomes a mass mention or a link with
+ * a label of the attacker's choosing (scan finding F248; business rule 109).
+ * The server-built `<url|View>` link is added AFTER escaping and stays literal.
+ */
+export function escapeSlackText(s: string): string {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * Teams MessageCard `text` and `title` render markdown (and a little HTML), so a
+ * device-reported string can inject links, images and emphasis. Backslash-escape
+ * the characters that introduce them, and a list or heading marker at the start
+ * of a line. Backslash escapes render as the literal character.
+ */
+export function escapeTeamsText(s: string): string {
+  return String(s ?? "")
+    .replace(/[\\`*_{}\[\]()#+!|<>~&]/g, (c) => "\\" + c)
+    .replace(/^(\s*)(-|\d+\.)(?=\s)/gm, (_m, lead: string, mark: string) => lead + mark.replace(/(-|\.)/, "\\$1"));
+}
+
 export function formatBody(kind: WebhookKind, p: WebhookPayload): unknown {
   if (kind === "slack") {
     const link = p.url ? ` <${p.url}|View>` : "";
-    return { text: `*${p.title}*\n${p.message}${link}` };
+    return { text: `*${escapeSlackText(p.title)}*\n${escapeSlackText(p.message)}${link}` };
   }
   if (kind === "teams") {
     return {
@@ -40,8 +64,8 @@ export function formatBody(kind: WebhookKind, p: WebhookPayload): unknown {
       "@context": "https://schema.org/extensions",
       themeColor: severityHex(p.severity),
       summary: p.title,
-      title: p.title,
-      text: p.message,
+      title: escapeTeamsText(p.title),
+      text: escapeTeamsText(p.message),
       potentialAction: p.url
         ? [{ "@type": "OpenUri", name: "View in Polaris", targets: [{ os: "default", uri: p.url }] }]
         : undefined,

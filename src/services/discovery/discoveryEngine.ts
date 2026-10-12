@@ -149,6 +149,7 @@ import {
 } from "../../utils/inventoryLocality.js";
 import { reconcileMacAddresses } from "../macAddressService.js";
 import { logger } from "../../utils/logger.js";
+import { deviceSerialOrNull } from "../../utils/safeText.js";
 
 /** Auto-disable window for per-integration verbose debug logging (30 minutes). */
 const VERBOSE_LOGGING_TTL_MS = 30 * 60 * 1000;
@@ -1656,7 +1657,8 @@ function buildFortigateFirewallObservedBlob(
       ? {
           haMode: ha.haMode,
           haRole: ha.haRole,
-          haPeerSerial: ha.haPeerSerial,
+          // Device-reported: stored only when it has the shape of a serial (rule 109).
+          haPeerSerial: deviceSerialOrNull(ha.haPeerSerial) ?? "",
         }
       : {}),
   };

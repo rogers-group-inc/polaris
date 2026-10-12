@@ -220,7 +220,7 @@ async function _mergeRunSearch(thisId, q) {
     if (!list.length) { box.innerHTML = '<div class="empty-state" style="padding:0.75rem;font-size:0.85rem">No other assets match.</div>'; return; }
     box.innerHTML = list.map(function (a) {
       var sub = [a.ipAddress, a.macAddress, a.serialNumber, a.assetType].filter(Boolean).map(escapeHtml).join(" · ");
-      return '<div class="merge-result-row" onclick="selectMergeTarget(\'' + a.id + '\')" ' +
+      return '<div class="merge-result-row" onclick="selectMergeTarget(' + jsArg(a.id) + ')" ' +
         'style="padding:0.45rem 0.6rem;border:1px solid var(--color-border);border-radius:6px;margin-bottom:0.35rem;cursor:pointer">' +
         '<div style="font-weight:600">' + escapeHtml(a.hostname || a.dnsName || a.ipAddress || "(unnamed)") + '</div>' +
         (sub ? '<div style="font-size:0.78rem;color:var(--color-text-secondary)">' + sub + '</div>' : '') +

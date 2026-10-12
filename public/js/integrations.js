@@ -700,7 +700,7 @@ function _discoverBtnHTML(id, name, discovery, disabled) {
     // mirrors the server-side guard on DELETE /:id/discover so non-admins don't
     // see a button that would 403.
     var abortBtn = permAtLeast("integrations", "fullwrite")
-      ? '<button class="query-abort-btn" style="margin-left:2px" onclick="abortIntegrationDiscovery(\'' + id + '\',\'' + escapeHtml(name) + '\')" title="Abort">&#x2715;</button>'
+      ? '<button class="query-abort-btn" style="margin-left:2px" onclick="abortIntegrationDiscovery(' + jsArg(id) + ',' + jsArg(name) + ')" title="Abort">&#x2715;</button>'
       : '';
     return '<span' + title + ' style="display:inline-flex;align-items:center;gap:6px;font-size:0.78rem;padding:0.3rem 0.6rem;border-radius:var(--radius-md);font-weight:500;' + style + '">' +
       '<span class="query-spinner"></span>' +
@@ -708,7 +708,7 @@ function _discoverBtnHTML(id, name, discovery, disabled) {
       abortBtn +
     '</span>';
   }
-  return '<button class="btn btn-sm btn-primary" onclick="runDiscovery(\'' + id + '\')"' +
+  return '<button class="btn btn-sm btn-primary" onclick="runDiscovery(' + jsArg(id) + ')"' +
     (disabled ? ' disabled title="Run a successful test first"' : '') + '>Discover</button>';
 }
 
@@ -951,17 +951,17 @@ async function loadIntegrations() {
             '</div>') +
           '</div>' +
           '<div class="integration-card-actions">' +
-            (intg.type === "fortimanager" ? '<button class="btn btn-sm btn-secondary" onclick="openApiQueryModal(\'' + intg.id + '\', \'' + escapeHtml(config.adom || 'root') + '\', ' + (config.useProxy !== false ? 'true' : 'false') + ')">Query API</button>' : '') +
-            (intg.type === "fortigate" ? '<button class="btn btn-sm btn-secondary" onclick="openFgtApiQueryModal(\'' + intg.id + '\', \'' + escapeHtml(config.vdom || 'root') + '\')">Query API</button>' : '') +
-            (intg.type === "entraid" ? '<button class="btn btn-sm btn-secondary" onclick="openEntraApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
-            (intg.type === "azurearc" ? '<button class="btn btn-sm btn-secondary" onclick="openArcApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
-            (intg.type === "activedirectory" ? '<button class="btn btn-sm btn-secondary" onclick="openAdApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
-            (intg.type === "vcenter" ? '<button class="btn btn-sm btn-secondary" onclick="openVcenterApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
-            (_isWorkloadType(intg.type) ? '<button class="btn btn-sm btn-secondary" onclick="openWorkloadApiQueryModal(\'' + intg.id + '\', \'' + intg.type + '\')">Query API</button>' : '') +
-            (isLlm && config.roleName && permAtLeast("apiTokens", "write") ? '<button class="btn btn-sm btn-secondary" onclick="regenerateLlmToken(\'' + intg.id + '\', this)">Regenerate Token</button>' : '') +
-            '<button class="btn btn-sm btn-secondary" onclick="testConnection(\'' + intg.id + '\', this)">Test Connection</button>' +
-            '<button class="btn btn-sm btn-secondary" onclick="openIntegrationEditModal(\'' + intg.id + '\')">Edit</button>' +
-            '<button class="btn btn-sm btn-danger" onclick="confirmDeleteIntegration(\'' + intg.id + '\', \'' + escapeHtml(intg.name) + '\')">Delete</button>' +
+            (intg.type === "fortimanager" ? '<button class="btn btn-sm btn-secondary" onclick="openApiQueryModal(' + jsArg(intg.id) + ', ' + jsArg(config.adom || 'root') + ', ' + (config.useProxy !== false ? 'true' : 'false') + ')">Query API</button>' : '') +
+            (intg.type === "fortigate" ? '<button class="btn btn-sm btn-secondary" onclick="openFgtApiQueryModal(' + jsArg(intg.id) + ', ' + jsArg(config.vdom || 'root') + ')">Query API</button>' : '') +
+            (intg.type === "entraid" ? '<button class="btn btn-sm btn-secondary" onclick="openEntraApiQueryModal(' + jsArg(intg.id) + ')">Query API</button>' : '') +
+            (intg.type === "azurearc" ? '<button class="btn btn-sm btn-secondary" onclick="openArcApiQueryModal(' + jsArg(intg.id) + ')">Query API</button>' : '') +
+            (intg.type === "activedirectory" ? '<button class="btn btn-sm btn-secondary" onclick="openAdApiQueryModal(' + jsArg(intg.id) + ')">Query API</button>' : '') +
+            (intg.type === "vcenter" ? '<button class="btn btn-sm btn-secondary" onclick="openVcenterApiQueryModal(' + jsArg(intg.id) + ')">Query API</button>' : '') +
+            (_isWorkloadType(intg.type) ? '<button class="btn btn-sm btn-secondary" onclick="openWorkloadApiQueryModal(' + jsArg(intg.id) + ', ' + jsArg(intg.type) + ')">Query API</button>' : '') +
+            (isLlm && config.roleName && permAtLeast("apiTokens", "write") ? '<button class="btn btn-sm btn-secondary" onclick="regenerateLlmToken(' + jsArg(intg.id) + ', this)">Regenerate Token</button>' : '') +
+            '<button class="btn btn-sm btn-secondary" onclick="testConnection(' + jsArg(intg.id) + ', this)">Test Connection</button>' +
+            '<button class="btn btn-sm btn-secondary" onclick="openIntegrationEditModal(' + jsArg(intg.id) + ')">Edit</button>' +
+            '<button class="btn btn-sm btn-danger" onclick="confirmDeleteIntegration(' + jsArg(intg.id) + ', ' + jsArg(intg.name) + ')">Delete</button>' +
           '</div>' +
         '</div>' +
         '<div class="integration-card-details">' +
@@ -1727,7 +1727,7 @@ function descriptionSyncFormHTML(flags, useProxy, type) {
 function _descriptionSyncToggleRow(role, on, label, what) {
   var id = "f-" + DESCRIPTION_SYNC_KEYS[role];
   return '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
-    '<input type="checkbox" id="' + id + '" ' + (on === true ? "checked" : "") + ' style="width:auto" onchange="onSyncDescriptionsToggle(this, \'' + role + '\')">' +
+    '<input type="checkbox" id="' + id + '" ' + (on === true ? "checked" : "") + ' style="width:auto" onchange="onSyncDescriptionsToggle(this, ' + jsArg(role) + ')">' +
     '<label for="' + id + '" style="margin:0">' + escapeHtml(label) +
       ' <span style="color:var(--color-text-tertiary)">&mdash; ' + escapeHtml(what) + '</span></label>' +
   '</div>';
@@ -3657,7 +3657,7 @@ function geographicLocationFormHTML(currentPullSnmpLocation, currentUseSnmpLocat
         '</div>' +
         '<div class="form-group" style="margin:0.75rem 0 0 0">' +
           '<label for="' + idPrefix + 'addressMetavar">Address metavar (optional)</label>' +
-          '<input type="text" id="' + idPrefix + 'addressMetavar" value="' + escapeHtml(addrMeta || "") + '" placeholder="Leave blank to use SNMP sysLocation" oninput="window._geoRecomputePush(\'' + idPrefix + '\')">' +
+          '<input type="text" id="' + idPrefix + 'addressMetavar" value="' + escapeHtml(addrMeta || "") + '" placeholder="Leave blank to use SNMP sysLocation" oninput="window._geoRecomputePush(' + jsArg(idPrefix) + ')">' +
           '<p class="hint" style="margin-bottom:0">When set, Polaris reads this metavar\'s address string from each FortiGate and geocodes it <strong>instead of</strong> the SNMP sysLocation (SNMP is used only as a fallback when this metavar is empty). Use this if you don\'t want to pull sysLocation. Leave blank to rely on SNMP.</p>' +
         '</div>' +
       '</div>';
@@ -3674,14 +3674,14 @@ function geographicLocationFormHTML(currentPullSnmpLocation, currentUseSnmpLocat
     '</p>' +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.4rem">' +
       '<input type="checkbox" id="' + idPrefix + 'pullSnmpLocation" ' + (pull ? "checked" : "") +
-      ' onchange="window._geoRecomputePush(\'' + idPrefix + '\')"' +
+      ' onchange="window._geoRecomputePush(' + jsArg(idPrefix) + ')"' +
       ' style="width:auto">' +
       '<label for="' + idPrefix + 'pullSnmpLocation" style="margin:0">Pull SNMP sysLocation from each FortiGate</label>' +
     '</div>' +
     '<p class="hint" style="margin-bottom:1rem">Each discovery cycle, Polaris fetches <code>sysLocation</code> for every FortiGate via the FortiOS REST API. The value shows on the asset\'s General tab and pre-fills its Location field.</p>' +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.4rem">' +
       '<input type="checkbox" id="' + idPrefix + 'useSnmpLocationCoords" ' + (useCoords ? "checked" : "") + (pull ? "" : " disabled") +
-      ' onchange="window._geoRecomputePush(\'' + idPrefix + '\')"' +
+      ' onchange="window._geoRecomputePush(' + jsArg(idPrefix) + ')"' +
       ' style="width:auto">' +
       '<label for="' + idPrefix + 'useSnmpLocationCoords" style="margin:0' + (pull ? "" : ";opacity:0.5") + '">Use sysLocation for map coordinates</label>' +
     '</div>' +

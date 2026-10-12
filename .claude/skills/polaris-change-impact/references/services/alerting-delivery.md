@@ -496,3 +496,7 @@ Also note the two storage conventions: user/role/group `regionTags` are stored *
 **When changing this:** add a new channel type by extending `CHANNEL_TYPES` + `CHANNEL_TYPE_META` (+ `CHANNEL_TRANSPORT`) in `notificationTypes`, a sender under `notificationChannels/`, and a dispatch arm in `notificationDeliveryService`. Mark secret fields `secret:true` so masking covers them.
 
 ---
+
+## services/notificationChannels/webhookChannel.ts (rule 109)
+
+`formatBody` escapes device-derived text per target: `escapeSlackText` (`&`, `<`, `>` — Slack's own rule, which defuses `<!channel>`, `<@U..>` and `<url|label>`) for Slack's title and message, and `escapeTeamsText` (markdown and HTML characters, plus a list marker at the start of a line) for a Teams card's `title` and `text`. The server-built `<url|View>` link is appended AFTER escaping, the Teams `summary` is plain text, and the generic webhook carries raw values. Pinned by `tests/unit/webhookTextEscaping.test.ts`.

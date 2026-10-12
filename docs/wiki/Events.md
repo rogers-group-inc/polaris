@@ -25,7 +25,9 @@ Gated by `events`.
 Sortable, inline-filterable, resizable, with saved layouts like every other list
 page. **Export** downloads PDF or CSV of the current page, all filtered results,
 or the entire event log; **Refresh** and the **Show** page size sit beside the
-pagination.
+pagination. In a CSV, a cell that begins with `=`, `+`, `-` or `@` (a hostname or
+message that a device chose) is written with a leading apostrophe so a spreadsheet
+reads it as text, not a formula ([rule 109](Business-Rules#rule-109)).
 
 ### Actors
 

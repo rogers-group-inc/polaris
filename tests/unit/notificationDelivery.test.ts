@@ -64,7 +64,8 @@ describe("formatBody", () => {
   it("slack → { text } with a link", () => {
     const body = formatBody("slack", payload) as { text: string };
     expect(body.text).toContain("[ERROR] sw-core-1");
-    expect(body.text).toContain("CPU 95% > 90%");
+    // Slack requires & < > to be escaped in text we did not write (rule 109).
+    expect(body.text).toContain("CPU 95% &gt; 90%");
     expect(body.text).toContain("<https://polaris.example.com/notifications.html|View>");
   });
 

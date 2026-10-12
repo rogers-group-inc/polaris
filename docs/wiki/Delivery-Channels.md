@@ -81,6 +81,11 @@ driven by each user's own [notification preference](Navigation-and-Account#notif
 
 One field each: the **incoming webhook URL**, stored as a secret.
 
+Alert text can include hostnames and event messages that devices report. Slack
+messages have `&`, `<` and `>` escaped, and Teams cards have markdown and HTML
+characters escaped, so that text shows literally and cannot mention a channel, add
+a link or restyle the message ([rule 109](Business-Rules#rule-109)).
+
 ## Pushbullet
 
 One field: the **access token**, stored as a secret.

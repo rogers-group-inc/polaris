@@ -534,7 +534,7 @@ app.use(async (req, res, next) => {
   logEvent({
     action: "auth.login.blocked_source",
     resourceType: "user",
-    resourceName: typeof req.body?.username === "string" ? req.body.username : undefined,
+    resourceName: typeof req.body?.username === "string" ? req.body.username.slice(0, 128) : undefined,
     level: "warning",
     message: "Local login refused — source IP outside the configured login-access scope",
     details: { ip: req.ip, userAgent: req.get("user-agent") || undefined },

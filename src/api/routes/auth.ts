@@ -143,7 +143,10 @@ function stampLoginSession(
 }
 
 const LoginSchema = z.object({
-  username: z.string().min(1, "Username is required"),
+  // Capped because a failed login is an Event whose resourceName is whatever was
+  // typed, by anyone, unauthenticated — and Events are exported to CSV (scan
+  // finding F241; business rule 109). 128 covers a local name and an LDAP UPN.
+  username: z.string().min(1, "Username is required").max(128, "Username is too long"),
   password: z.string().min(1, "Password is required"),
 });
 
