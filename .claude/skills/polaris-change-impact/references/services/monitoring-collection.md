@@ -37,7 +37,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Cross-service deps:** `utils/remoteExec.ts` (withSshClient/sshExec/winrmRunPowershell); `import type` ONLY from monitoringService (AssetProcessInput/ProcessConnectionInput — erased at runtime, so the monitoringService→agentlessProcessService import can't cycle).
 
 **Used by:**
-- `src/services/monitoringService.ts` — `runProcessesFor` (the "processes" monitor cadence) is the only caller; it resolves the credential chain (per-stream → asset default → class override → AD bind) and persists the results (persistAssetProcesses / enqueueProcessSamples / persistProcessConnections).
+- `src/services/monitoringService.ts` — `runProcessesFor` (the "processes" monitor cadence) is the only caller; it resolves the credential chain (per-stream → asset default → class override → AD bind, the last only while no operator has pinned the asset's address or name — rule 104, `utils/adBindFallback.ts`) and persists the results (persistAssetProcesses / enqueueProcessSamples / persistProcessConnections).
 
 **Invariants:**
 - Collection is scoped to the requested names ON-HOST (ss grep patterns / PS `$m -contains` filter) — never full-host collect-then-filter over the wire; that's the feature's whole point.

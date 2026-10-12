@@ -34,7 +34,7 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "../db.js";
 import { logEvent } from "./eventLogService.js";
-import { renderNotificationTemplate,
+import { renderNotificationTemplate, templateIsJson,
   followUpLine,
 } from "../utils/notificationTemplate.js";
 import {
@@ -490,8 +490,11 @@ async function enqueueApiCall(
   ctx: Record<string, string>,
   exec: ActionExecContext,
 ): Promise<void> {
+  // A JSON body gets JSON escaping for every substituted value: the values are
+  // device-reported, and a quote in a hostname must not close the string it sits
+  // in. A body that is not JSON (form-encoded, plain text) renders as before.
   const body = action.bodyTemplate && action.bodyTemplate.trim()
-    ? renderNotificationTemplate(action.bodyTemplate, ctx)
+    ? renderNotificationTemplate(action.bodyTemplate, ctx, { json: templateIsJson(action.bodyTemplate) })
     : undefined;
   await prisma.notificationDelivery.create({
     data: {

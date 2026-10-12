@@ -90,7 +90,11 @@ needs `events:write`.
 | **Syslog** | forward events over **UDP**, **TCP** or **TLS** (CA, client certificate and key paths): host, port, facility, minimum severity, and message format — **RFC 5424** (default) or **RFC 3164** |
 | **Retention** | **Retention Period (days)**, default 7, and **Minimum Event Level to Retain** — *Info* (store everything, the default), *Warning* or *Error*, which drop the lower levels permanently |
 
-Archive Export and Syslog each have a **Test Connection** button.
+Archive Export and Syslog each have a **Test Connection** button. Archive Export
+refuses a host that is not a hostname or IP address, a username with anything
+beyond letters, digits, `.`, `_` and `-` (and a leading hyphen), and a port outside
+1–65535, because those values are passed to `ssh`, `sftp` and `scp`
+([rule 107](Business-Rules#rule-107)).
 
 > **Anything archived leaves the host.** That is why several rules are careful
 > about what reaches an Event in the first place — most visibly, directory sync

@@ -413,8 +413,13 @@ needs — both versions, the path, the fix — as the error itself, never behind
 
 ### Rule 48
 **Nobody hands out authority they do not hold.** Admin-equivalence cannot be
-minted by a caller who lacks it, at any of the four sites. Not four-eyes; the
-mirror of the last-admin guard. A request with no role snapshot **fails closed**.
+minted by a caller who lacks it, at any of the four sites. The same bar holds on
+the other side of the act: resetting an administrator's password, removing
+their two-factor methods or passkeys, deleting them or changing their role, and
+creating an API token bound to an admin-equivalent role, all need the caller to
+be admin-equivalent too. Accounts and roles below that tier stay within reach of
+**Users** Read-Write and **API Tokens** Read-Write. Not four-eyes; the mirror of
+the last-admin guard. A request with no role snapshot **fails closed**.
 
 ---
 
@@ -1899,6 +1904,19 @@ highest score on the network's evidence. Only when the list is empty does
 Polaris fall back to what the integrations last reported. Discovery manages
 the address from then on, so a later discovery run can still move it.
 
+### Rule 104
+
+**The Active Directory bind account is offered only to a destination discovery
+chose.**
+
+An Active Directory server with no credential of its own is polled over WinRM
+or SSH with the integration's bind account. That fallback stops applying once
+someone has typed an address or a hostname on the asset: it then needs a
+credential selected on it, because choosing a credential is the act that says
+"send this secret to this address". Until one is selected the asset reports
+*No WinRM credential selected* (or SSH). Assets whose address and name came
+from discovery are unaffected.
+
 ### Rule 105
 
 **A capacity severity change alerts only once it has held, and only the
@@ -1954,3 +1972,27 @@ It appears on the device's **Events** tab beside the alert's fire and clear.
 - **It never fires or clears an automation.** An event-triggered automation
   whose pattern is `*` or `notification.*` ignores it; otherwise an automation
   that emails would trigger itself with every email it sent.
+
+### Rule 107
+
+**Text you type reaches a command, a script or a generated connection only after
+it has been checked, and is checked again where it is used.**
+
+- **Archive Export** accepts a host that is a hostname or IP address, a username
+  of letters, digits, `.`, `_` and `-` (not starting with a hyphen), and a port
+  from 1 to 65535. Anything else is refused when saved, when tested and before
+  each export.
+- **The agent server URL** must be a plain `http://` or `https://` address: a
+  host, an optional port and an optional path of letters, digits and `. _ ~ - /`.
+  A stored value that fails is ignored with a warning and the derived URL is used.
+- **The onboarding scripts** accept the Polaris server address only as an IPv4
+  address or a CIDR range on a single line.
+- **The jsign jar** is not a setting. Polaris looks for `tools/jsign.jar`, or for
+  the file named by `POLARIS_JSIGN_JAR`.
+- **A process's log path** must be an absolute local path with no network share,
+  no device path and no `..`, and setting one needs **Assets** Full Read-Write.
+  Read-Write can still change the log source and clear the path.
+- **An asset's address** may hold only letters, digits and `. _ : % [ ] -`, and
+  Open RDP and Open SSH refuse to start from anything else.
+- **An API call's body** that is JSON has every substituted value escaped for
+  JSON; any other body is sent as written.

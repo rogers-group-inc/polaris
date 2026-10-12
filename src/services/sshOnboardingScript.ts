@@ -193,10 +193,23 @@ export function assertValidServerIp(ip: string | undefined | null): string {
   const v = String(ip ?? "").trim();
   if (!v) return "";
   // -RemoteAddress accepts a bare address or a CIDR range; allow both.
-  if (!isValidIpv4(v) && !isValidCidr(v)) {
+  // The control-character test is explicit rather than left to the helpers: this
+  // value is written into script text (including a `#` comment line, where a
+  // line break starts a new executable line), so it must be one clean line.
+  if (CONTROL_OR_NONASCII_SPACE.test(v) || (!isValidIpv4(v) && !isValidCidr(v))) {
     throw new AppError(400, "Polaris server address must be an IPv4 address or CIDR range");
   }
   return v;
+}
+
+// C0 controls, DEL, and the Unicode line / paragraph separators and NEL, none
+// of which any value emitted into a generated script may carry.
+const CONTROL_OR_NONASCII_SPACE = /[\u0000-\u001f\u007f\u0085\u2028\u2029]/;
+
+function assertNoControlChars(value: string): void {
+  if (CONTROL_OR_NONASCII_SPACE.test(value)) {
+    throw new AppError(400, "A value written into the onboarding script may not contain control characters");
+  }
 }
 
 /**
@@ -206,7 +219,11 @@ export function assertValidServerIp(ip: string | undefined | null): string {
  * is belt-and-braces so a future regex loosening can't become an injection.
  */
 function psLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
+  assertNoControlChars(value);
+  // PowerShell treats U+2018, U+2019, U+201A and U+201B as single quotes too,
+  // so each is doubled exactly like an ASCII one; escaping only `'` left a
+  // typographic quote free to close the literal.
+  return `'${value.replace(/['\u2018\u2019\u201A\u201B]/g, (q) => q + q)}'`;
 }
 
 // ─── Shared PowerShell fragments ──────────────────────────────────────────
@@ -1071,6 +1088,7 @@ echo "firewall: not modified (no Polaris server address configured)"
 
 /** Shell single-quoted literal; validated input, so the escape is belt-and-braces. */
 function shLiteral(value: string): string {
+  assertNoControlChars(value);
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 

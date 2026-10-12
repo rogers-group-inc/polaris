@@ -13,7 +13,7 @@
  * and timestamp validity, the `java -version` probe, and a live keytool open.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../src/db.js", () => ({
   prisma: {
@@ -41,6 +41,7 @@ import {
   isKeytoolMissing,
   scrubSecrets,
   resolveJsignJar,
+  jsignJarCandidates,
   getSigningConfigRaw,
   updateSigningConfig,
   recordSigningFailure,
@@ -61,7 +62,6 @@ const FULL_CONFIG: AgentSigningConfig = {
   keystorePassword: "super-secret-value",
   alias: "",
   tsaUrl: "http://timestamp.digicert.com",
-  jsignJarPath: "",
 };
 
 beforeEach(() => {
@@ -142,7 +142,7 @@ describe("isSigningConfigured", () => {
   });
 
   it("does NOT require alias or an explicit jar path", () => {
-    expect(isSigningConfigured({ ...FULL_CONFIG, alias: "", jsignJarPath: "" })).toBe(true);
+    expect(isSigningConfigured({ ...FULL_CONFIG, alias: "" })).toBe(true);
   });
 });
 
@@ -372,15 +372,44 @@ describe("scrubSecrets", () => {
 });
 
 describe("resolveJsignJar", () => {
-  it("honors an explicit path without probing the candidates", async () => {
-    // A path that certainly doesn't exist → null, and candidates are NOT consulted.
-    const p = await resolveJsignJar({ jsignJarPath: "Z:/definitely/not/here/jsign.jar" });
-    expect(p).toBeNull();
+  const savedEnv = process.env.POLARIS_JSIGN_JAR;
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env.POLARIS_JSIGN_JAR;
+    else process.env.POLARIS_JSIGN_JAR = savedEnv;
   });
 
   it("exports a non-empty default candidate list ending with the /opt/polaris location", () => {
     expect(JSIGN_JAR_CANDIDATES.length).toBeGreaterThanOrEqual(2);
     expect(JSIGN_JAR_CANDIDATES[JSIGN_JAR_CANDIDATES.length - 1]).toBe("/opt/polaris/tools/jsign.jar");
+  });
+
+  // Business rule 107 / scan finding F198: the jar is run with `java -jar`, so
+  // no stored or typed path may choose it.
+  it("has no setting-supplied path: a stored jsignJarPath is dropped by the merge", () => {
+    const merged = mergeSigningConfig({ jsignJarPath: "/tmp/uploads/evil.jar", enabled: true }, DEFAULT_SIGNING_CONFIG);
+    expect("jsignJarPath" in merged).toBe(false);
+  });
+
+  it("takes POLARIS_JSIGN_JAR first when it is an absolute .jar path", () => {
+    process.env.POLARIS_JSIGN_JAR = "/srv/tools/jsign.jar";
+    expect(jsignJarCandidates()[0]).toBe("/srv/tools/jsign.jar");
+    expect(jsignJarCandidates().slice(1)).toEqual(JSIGN_JAR_CANDIDATES);
+  });
+
+  it.each(["relative/jsign.jar", "/srv/tools/not-a-jar.sh", "/srv/tools/jsign.jar.exe", "-jar"])(
+    "ignores POLARIS_JSIGN_JAR=%s",
+    (value) => {
+      process.env.POLARIS_JSIGN_JAR = value;
+      expect(jsignJarCandidates()).toEqual(JSIGN_JAR_CANDIDATES);
+    },
+  );
+
+  it("finds nothing at a path that does not exist", async () => {
+    process.env.POLARIS_JSIGN_JAR = "/definitely/not/here/jsign.jar";
+    // The env path is tried, does not exist, and the fixed candidates are
+    // probed after it; on a machine without jsign installed that is null.
+    const p = await resolveJsignJar();
+    expect(p === null || JSIGN_JAR_CANDIDATES.includes(p)).toBe(true);
   });
 });
 

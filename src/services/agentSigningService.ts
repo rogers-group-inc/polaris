@@ -57,9 +57,10 @@ import { execFile, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import { stat, access, mkdir, writeFile, rename, unlink, chmod } from "node:fs/promises";
 import { constants as FS } from "node:fs";
-import { resolve as resolvePath } from "node:path";
+import { resolve as resolvePath, isAbsolute } from "node:path";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
+import { logger } from "../utils/logger.js";
 import { STATE_DIR, SIGNING_DIR } from "../utils/paths.js";
 import { SECRET_MASK, isMaskedSecret } from "../utils/secretMask.js";
 import { asObject } from "../utils/object.js";
@@ -102,6 +103,27 @@ export const JSIGN_JAR_CANDIDATES: string[] = [
   "/opt/polaris/tools/jsign.jar",
 ];
 
+/**
+ * The jars resolveJsignJar() will try, in order: `POLARIS_JSIGN_JAR` when set
+ * (an environment variable is operator-installed, like the rest of the host's
+ * unit files, so it is trusted — but it must still be an absolute path to a
+ * `.jar`), then the fixed install locations.
+ *
+ * There is deliberately NO per-request or stored path. The jar is run with
+ * `java -jar`, i.e. it is code run as the Polaris service user on the next
+ * build, and a path anyone with `serverSettingsSystem:write` could type — to a
+ * file they had uploaded as a "logo" — was a way from that grant to code
+ * execution (scan finding F198; business rule 107).
+ */
+export function jsignJarCandidates(): string[] {
+  const fromEnv = process.env.POLARIS_JSIGN_JAR?.trim();
+  if (fromEnv) {
+    if (isAbsolute(fromEnv) && /\.jar$/i.test(fromEnv)) return [fromEnv, ...JSIGN_JAR_CANDIDATES];
+    logger.warn("Ignoring POLARIS_JSIGN_JAR: it must be an absolute path to a .jar file");
+  }
+  return JSIGN_JAR_CANDIDATES;
+}
+
 // ─── Config shape + mask/merge ────────────────────────────────────────
 
 export interface AgentSigningConfig {
@@ -114,8 +136,6 @@ export interface AgentSigningConfig {
   alias: string;
   /** RFC3161 timestamp authority URL. Required — see the header note. */
   tsaUrl: string;
-  /** Explicit jsign jar path; "" = probe JSIGN_JAR_CANDIDATES. */
-  jsignJarPath: string;
 }
 
 export interface MaskedSigningConfig extends Omit<AgentSigningConfig, "keystorePassword"> {
@@ -129,7 +149,6 @@ export const DEFAULT_SIGNING_CONFIG: AgentSigningConfig = {
   keystorePassword: "",
   alias: "",
   tsaUrl: DEFAULT_TSA_URL,
-  jsignJarPath: "",
 };
 
 function str(v: unknown): string {
@@ -165,16 +184,28 @@ export function mergeSigningConfig(
     keystorePassword: secret === "" || isMaskedSecret(secret) ? current.keystorePassword : secret,
     alias: inc.alias !== undefined ? str(inc.alias) : current.alias,
     tsaUrl: tsa === "" ? DEFAULT_TSA_URL : tsa.replace(/\/+$/, ""),
-    jsignJarPath: inc.jsignJarPath !== undefined ? str(inc.jsignJarPath) : current.jsignJarPath,
   };
 }
 
 // ─── Setting persistence ──────────────────────────────────────────────
 
+let warnedStoredJar = false;
+
 export async function getSigningConfigRaw(): Promise<AgentSigningConfig> {
   try {
     const row = await prisma.setting.findUnique({ where: { key: AGENT_SIGNING_SETTING_KEY } });
-    return mergeSigningConfig(asObject(row?.value), DEFAULT_SIGNING_CONFIG);
+    const stored = asObject(row?.value);
+    // A path saved by an older release is ignored, not honoured (see
+    // jsignJarCandidates). Say so once, so an install that relied on it is told
+    // why its jar was not found and where to put it now.
+    if (!warnedStoredJar && str(stored.jsignJarPath)) {
+      warnedStoredJar = true;
+      logger.warn(
+        "A jsign jar path stored in Server Settings is no longer used. Place the jar at tools/jsign.jar " +
+          "or set POLARIS_JSIGN_JAR in the service environment.",
+      );
+    }
+    return mergeSigningConfig(stored, DEFAULT_SIGNING_CONFIG);
   } catch {
     return { ...DEFAULT_SIGNING_CONFIG };
   }
@@ -251,10 +282,9 @@ export async function getSigningAlert(): Promise<{ failure: SigningFailure | nul
 
 // ─── jsign availability + invocation ──────────────────────────────────
 
-/** First existing jar: explicit config path, else the candidate list. */
-export async function resolveJsignJar(cfg: Pick<AgentSigningConfig, "jsignJarPath">): Promise<string | null> {
-  const candidates = cfg.jsignJarPath ? [cfg.jsignJarPath] : JSIGN_JAR_CANDIDATES;
-  for (const p of candidates) {
+/** First existing jar from jsignJarCandidates(). */
+export async function resolveJsignJar(): Promise<string | null> {
+  for (const p of jsignJarCandidates()) {
     try {
       const st = await stat(p);
       if (st.isFile()) return p;
@@ -320,7 +350,7 @@ export async function signingAvailability(cfg?: AgentSigningConfig): Promise<Sig
     javaOk = false;
   }
 
-  const jarPath = (await resolveJsignJar(config)) ?? undefined;
+  const jarPath = (await resolveJsignJar()) ?? undefined;
 
   // Readability, not just existence: the keystore is deliberately 0400 and a
   // wrong owner is the likeliest misconfiguration after a manual copy.
@@ -341,8 +371,7 @@ export async function signingAvailability(cfg?: AgentSigningConfig): Promise<Sig
   else if (!config.tsaUrl) error = "No timestamp authority configured";
   else if (!javaOk) error = `Java runtime not found on PATH (install Java ${JAVA_MINIMUM}+ headless)`;
   else if (!jarPath) {
-    const looked = (config.jsignJarPath ? [config.jsignJarPath] : JSIGN_JAR_CANDIDATES).join(", ");
-    error = `jsign jar not found (looked at: ${looked})`;
+    error = `jsign jar not found (looked at: ${jsignJarCandidates().join(", ")})`;
   } else if (!keystoreOk) {
     error = `Signing keystore not readable at ${config.keystorePath} (check path, owner and mode)`;
   }

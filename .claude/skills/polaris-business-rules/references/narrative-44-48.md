@@ -305,6 +305,14 @@ The caller's level is read from `req.roleSnapshot` first and `req.session.roleSn
 
 It is not a four-eyes rule. An administrator granting administrator is the normal way an install gets its second admin, and blocking it would be a different (and much more disruptive) policy than the one the finding asks for. It also does not touch server-side provisioning: `ssoProvisioning` maps an IdP group onto a role with no human actor in the request to test, and the seed creates the first administrator before anyone exists to be escalated. Both are outside the rule by construction, not by exemption.
 
+### Amended 2026-10-12 — the target side, and API tokens
+
+A whole-repository security scan found the same hole from the other end. Rule 48 stopped a caller *creating* admin-equivalence; it said nothing about acting on an account that already had it. With `users:write` alone, `PUT /users/:id/password` set a known password on an administrator, and `DELETE /users/:id/totp` and `DELETE /users/:id/passkeys` removed the second factors that would have stopped the login that followed. `POST /api-tokens` was the same escalation through a long-lived credential: it took any `roleId` from the body and only logged a warning when the role was admin-equivalent, so `apiTokens:write` minted an administrator's bearer token.
+
+The fix reuses `assertNoPrivilegeEscalation` rather than adding a second predicate. For an account act the permissions checked are the TARGET account's current role (`assertMayActOnAccount`), applied to password reset, TOTP reset, passkey revoke, delete, and `PUT /:id/role` (which already checked the role being assigned; it now also checks the role being left, so a non-admin cannot demote an administrator). For a token the permissions checked are the bound role's, through an `authorizeRole` callback on `createToken` so the check runs after the role is resolved and before anything is written; the assistant's own provisioning does not pass one because it builds the role itself and already applies the guard.
+
+**What it leaves open, on purpose.** The line is admin-equivalence, not "any role above the caller's". A `users:write` holder can still reset the password of an account on a non-admin role that is nonetheless powerful — one holding `automationScripts` write, for example, which is remote code execution on the host. Closing that means comparing the target's whole matrix with the caller's, which would also stop a help desk resetting the password of a more privileged colleague. That is a policy decision, not a bug fix, and it was left as the operator drew it: the boundary is the administrator tier.
+
 <a id="rule-49"></a>
 
 ### Rule 48 — the invariant as stated in full until 2026-09-22

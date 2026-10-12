@@ -135,6 +135,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/eventArchiveService.ts
 
+**Input rule (business rule 107):** host, username, port, protocol and key path reach ssh / sftp / scp as arguments, so `assertSafeArchiveSettings` checks them in `updateArchiveSettings`, `testConnection` and `archiveAndExport` (a stored value from before the check must not reach an argv either), and every destination follows `--`. The routes parse the body with a Zod schema first (`ArchiveSettingsSchema` in `routes/events.ts`); the content check lives here. Pinned by `tests/unit/eventArchiveInjection.test.ts`.
+
 **What it owns:** All outbound Event flows (syslog/SFTP archival), event retention/prune configuration, and asset auto-decommission settings. Events created anywhere flow through here via job (pruneEvents) + optional real-time forwarders.
 
 **Public API:** `getArchiveSettings`, `updateArchiveSettings`, `testConnection`, `archiveAndExport`, `getSyslogSettings`, `updateSyslogSettings`, `testSyslogConnection`, `getRetentionSettings`, `getCachedRetentionSettings`, `updateRetentionSettings`, `getAssetDecommissionSettings`, `updateAssetDecommissionSettings`.
@@ -267,6 +269,8 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 **What it owns:** Renders `proxyConfig` + env-derived values + the API-docs allow posture into a complete nginx server config (from `deploy/nginx/polaris.conf.template`), with a deterministic SHA-256 so the updater and apply service can detect drift.
 
 **Public API:** `renderNginxConfig`, `RenderInput`
+
+**Injection guard:** `tlsProtocols` lands unquoted in `ssl_protocols`, so `renderSslProtocols` refuses (throws) anything but `TLSv1.2` / `TLSv1.3` — defence in depth behind `proxyConfigService`'s validation. Pinned by `tests/unit/proxyConfigTlsInjection.test.ts`.
 
 **Cross-service deps:** none (reads the on-disk template at runtime; the `apiDocsAllow` input is COMPUTED BY CALLERS via `apiDocsAccessService.deriveApiDocsNginxAllow` so the renderer stays I/O-free and deterministic).
 
@@ -424,6 +428,8 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 **What it owns:** Persistence + validation of the operator-settable `proxyConfig` (single Setting row) with a short-TTL in-process cache — httpsPort, TLS protocols, HTTP/3 toggle, HSTS, Prometheus allow-list, and `managedMode`.
 
 **Public API:** `getProxyConfig`, `proxyConfigRowExists`, `saveProxyConfig`, `invalidateProxyConfigCache`
+
+**Validation trap:** `saveProxyConfig` merges the request body WITHOUT `parseProxyConfig`'s allowlist, so `validateProxyConfig` must check every `tlsProtocols` element itself (and that `tlsProtocols` / `prometheusAllowIps` are arrays). A count-only check let a string such as `TLSv1.3; include …` reach the nginx template.
 
 **Cross-service deps:** none (prisma, proxyConfig types, AppError).
 

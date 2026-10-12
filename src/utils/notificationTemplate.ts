@@ -825,7 +825,7 @@ export function isDeferredToken(name: string): boolean {
 export function renderNotificationTemplate(
   template: string,
   ctx: Record<string, string>,
-  opts?: { html?: boolean; unknown?: "keep" | "blank" },
+  opts?: { html?: boolean; unknown?: "keep" | "blank"; json?: boolean },
 ): string {
   return template.replace(TOKEN_RE, (match, name: string) => {
     if (!(name in ctx)) {
@@ -840,8 +840,35 @@ export function renderNotificationTemplate(
       return opts?.unknown === "blank" ? "" : match;
     }
     const v = ctx[name];
+    if (opts?.json) return jsonStringFragment(v);
     return opts?.html ? escapeHtml(v) : v;
   });
+}
+
+/**
+ * A value as it must appear INSIDE a JSON string literal: quotes, backslashes
+ * and control characters escaped, the surrounding quotes left off. A token's
+ * value is device-reported (a hostname, a description, an event message), so
+ * spliced raw into a JSON body it could close the string and add members to the
+ * document (scan finding F227).
+ */
+export function jsonStringFragment(value: unknown): string {
+  return JSON.stringify(String(value ?? "")).slice(1, -1);
+}
+
+/**
+ * Is this template a JSON document once its tokens are filled in? Each token
+ * is replaced by `0` — which is valid both inside a string and as a bare value
+ * — and the result is parsed. A body that is form-encoded or plain text fails
+ * the parse and is rendered as before; only a JSON body gets JSON escaping.
+ */
+export function templateIsJson(template: string): boolean {
+  try {
+    JSON.parse(template.replace(TOKEN_RE, "0"));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Do any of these templates reference an `{asset.*}` detail token? */

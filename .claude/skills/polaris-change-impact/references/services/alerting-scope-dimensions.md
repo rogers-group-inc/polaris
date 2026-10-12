@@ -4,6 +4,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/automationActionService.ts
 
+**Input rule (business rule 107):** `enqueueApiCall` renders the body with `{ json: templateIsJson(bodyTemplate) }`, so a template that is a JSON document gets every substituted token value JSON-escaped (`jsonStringFragment`) — token values are device-reported — while a form-encoded or plain-text body renders exactly as before. Pinned by `tests/unit/automationActions.test.ts` and `notificationTemplate.test.ts`.
+
 **What it owns:** The single fan-out point between a fired alert (Notification row) and its automation's `actions[]`. `executeActions(notificationId, actions, ctx, exec)` dispatches per action type: notify → the existing recipient/delivery pipeline (`expandDeliveries`, passing `scopeRegionTags` + `assetRegionTags` for the two region-recipient flavors) with the ACTION's `emailComposition` falling back to the rule-level one; api_call → one `NotificationDelivery` row (`transport: "api_call"`, `channelId: NULL` by design, request spec + fire-time-rendered body in meta); script → an AutomationScriptRun via `requestScriptRun`.
 
 **Public API:** `executeActions`, `ActionExecContext` ({scopeRegionTags?, assetRegionTags? (the triggering asset's stripped region snapshot — recipientDeviceRegion routing), assetId?, ruleId?, ruleName?, ruleEmailComposition?, escalation? {tier, attempt}, repeat? {attempt, elapsed?, quietResumed?}, actor?}), `actionsCarryBothMethods(actions)`.

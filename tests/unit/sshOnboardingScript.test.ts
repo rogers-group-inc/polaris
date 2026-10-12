@@ -148,6 +148,33 @@ describe("assertValidServerIp", () => {
     expect(() => assertValidServerIp("10.0.0.42'; calc; #")).toThrow();
     expect(() => assertValidServerIp("not-an-ip")).toThrow();
   });
+
+  // The scan's payloads (F173 / F174): `netmask` reads the mask with parseInt,
+  // so anything after the digits used to be dropped before validation, and the
+  // value is written into a `#` comment line where a line break starts code.
+  it.each([
+    "10.0.0.0/24\nStart-Process calc",
+    "10.0.0.0/24\rStart-Process calc",
+    "10.0.0.0/24\u2028Start-Process calc",
+    "10.0.0.0/24\n/bin/touch /tmp/owned",
+    "10.0.0.0/24 ; id",
+    "10.0.0.0/24/16",
+    "::1/64\nid",
+    "fe80::1%eth0/64",
+    "10.0.0.0/24\u2019; calc; #",
+  ])("rejects a value that carries more than the address: %j", (value) => {
+    expect(() => assertValidServerIp(value)).toThrow();
+  });
+
+  it("still accepts an IPv6 CIDR", () => {
+    expect(assertValidServerIp("2001:db8::/32")).toBe("2001:db8::/32");
+  });
+});
+
+describe("generated scripts carry no value that began as a line break", () => {
+  it("never lets a poisoned address reach the Windows script", () => {
+    expect(() => buildWindowsOnboardingScript({ ...BASE, polarisServerIp: "10.0.0.0/24\nStart-Process calc" })).toThrow();
+  });
 });
 
 describe("buildWindowsOnboardingScript", () => {

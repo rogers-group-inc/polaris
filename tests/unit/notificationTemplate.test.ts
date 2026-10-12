@@ -14,6 +14,8 @@ import {
   TEMPLATE_VARIABLE_PLACEMENT,
   buildTemplateContext,
   renderNotificationTemplate,
+  jsonStringFragment,
+  templateIsJson,
   escapeHtml,
   templateNeedsAsset,
   formatElapsed,
@@ -351,5 +353,34 @@ describe("formatLocalTime", () => {
     expect(formatLocalTime(null)).toBe("");
     expect(formatLocalTime(undefined)).toBe("");
     expect(formatLocalTime("")).toBe("");
+  });
+});
+
+describe("JSON rendering (scan finding F227)", () => {
+  it("jsonStringFragment escapes what would close or break a JSON string", () => {
+    expect(jsonStringFragment('a"b')).toBe('a\\"b');
+    expect(jsonStringFragment("a\\b")).toBe("a\\\\b");
+    expect(jsonStringFragment("a\nb")).toBe("a\\nb");
+    expect(jsonStringFragment("\u0001")).toBe("\\u0001");
+    expect(jsonStringFragment(undefined)).toBe("");
+  });
+
+  it("renders every token JSON-escaped in json mode, and leaves other modes alone", () => {
+    const tpl = '{"asset":"{asset}"}';
+    const ctx = { asset: 'x","admin":true,"y":"' };
+    expect(JSON.parse(renderNotificationTemplate(tpl, ctx, { json: true }))).toEqual({ asset: ctx.asset });
+    expect(renderNotificationTemplate(tpl, ctx)).toBe('{"asset":"x","admin":true,"y":""}');
+  });
+
+  it("templateIsJson recognises a JSON body, with a token inside a string or standing as a value", () => {
+    expect(templateIsJson('{"asset":"{asset}","v":{value}}')).toBe(true);
+    expect(templateIsJson('[{"a":"{asset}"}]')).toBe(true);
+    expect(templateIsJson('"{asset}"')).toBe(true);
+  });
+
+  it("templateIsJson is false for form-encoded and plain-text bodies", () => {
+    expect(templateIsJson("asset={asset}&v={value}")).toBe(false);
+    expect(templateIsJson("Alert on {asset}")).toBe(false);
+    expect(templateIsJson("")).toBe(false);
   });
 });

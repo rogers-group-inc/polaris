@@ -752,6 +752,13 @@ Two pin columns:
   log, then new ones as they happen.
 - **Map** — include it on the [Application Map](Application-Map).
 
+A pinned process can also be given a **log path** — a glob such as
+`/var/log/app/*.log` — for agent log collection. It must be an absolute local
+path (no network share, device path or `..`), and **setting** one needs
+**Assets** Full Read-Write, because the agent reads it with the service's
+privileges. Read-Write can still change the log source or clear the path
+([rule 107](Business-Rules#rule-107)).
+
 Click a service's name to open its detail panel. It shows the display name,
 the **description** (Windows), state, **startup type** in the Services
 console's wording (*Automatic (Delayed Start)*, *Manual*, …; the enablement

@@ -126,6 +126,7 @@ import {
 import { maybeEmitChangeEvents, type ChangeItem } from "./notificationChangeEvents.js";
 import { isChangeActionSubscribed } from "./notificationRuleService.js";
 import { logger } from "../utils/logger.js";
+import { adBindFallbackAllowed, adBindFallbackIntegration } from "../utils/adBindFallback.js";
 import { parseFortiapTelemetrySnapshot } from "../utils/fortiapMonitorRow.js";
 import type { ApRadioSample, ApVapSample } from "../utils/fortiapMonitorRow.js";
 import {
@@ -2362,7 +2363,7 @@ export async function probeAsset(
       if (effectiveRTCred?.type === "winrm") {
         return await probeWinRm(targetIp, effectiveRTCred.config as Record<string, unknown>, dispatchStart, timeoutMs);
       }
-      if (isAdSrc && integration) {
+      if (isAdSrc && integration && adBindFallbackAllowed(asset)) {
         const cfg      = (integration.config as Record<string, unknown>) || {};
         const username = String(cfg.bindDn || "");
         const password = String(cfg.bindPassword || "");
@@ -2376,7 +2377,7 @@ export async function probeAsset(
       if (effectiveRTCred?.type === "ssh") {
         return await probeSsh(targetIp, effectiveRTCred.config as Record<string, unknown>, dispatchStart, timeoutMs);
       }
-      if (isAdSrc && integration) {
+      if (isAdSrc && integration && adBindFallbackAllowed(asset)) {
         const cfg      = (integration.config as Record<string, unknown>) || {};
         const username = String(cfg.bindDn || "");
         const password = String(cfg.bindPassword || "");
@@ -5056,7 +5057,7 @@ export async function collectTelemetry(assetId: string, preloaded?: TelemetryAss
         asset.cpuMemoryCredential ?? asset.monitorCredential,
         effective.cpuMemoryCredentialId,
         polling,
-        integration,
+        adBindFallbackIntegration(asset, integration),
       );
       if (!cred) return { supported: true, error: `No ${polling === "ssh" ? "SSH" : "WinRM"} credential selected` };
       const res = polling === "ssh"
@@ -5836,7 +5837,7 @@ export async function collectSystemInfo(assetId: string): Promise<CollectionResu
         asset.interfacesCredential ?? asset.monitorCredential,
         effective.interfacesCredentialId,
         method,
-        integration,
+        adBindFallbackIntegration(asset, integration),
       );
       if (!cred) return { supported: true, error: `No ${method === "ssh" ? "SSH" : "WinRM"} credential selected` };
       const wantStorage = effective.storagePolling === method;
@@ -12903,7 +12904,7 @@ export async function runStorageFor(assetId: string, labels: WorkItemLabels): Pr
         asset.interfacesCredential ?? asset.monitorCredential,
         effective.interfacesCredentialId,
         storagePolling,
-        asset.discoveredByIntegration ?? null,
+        adBindFallbackIntegration(asset, asset.discoveredByIntegration ?? null),
       );
       if (!cred) {
         recordWorkOutcome("storage", "failure", labels);
@@ -13044,7 +13045,7 @@ export async function runEventLogFor(assetId: string, labels: WorkItemLabels): P
       asset.eventLogCredential ?? asset.monitorCredential,
       effective.eventLogCredentialId,
       method,
-      asset.discoveredByIntegration ?? null,
+      adBindFallbackIntegration(asset, asset.discoveredByIntegration ?? null),
     );
     if (!cred) {
       await stampAnchor();
@@ -13271,7 +13272,7 @@ export async function runProcessesFor(assetId: string, labels: WorkItemLabels): 
       const classCred = await loadClassOverrideStreamCredential(effective.processesCredentialId, method);
       if (classCred) credConfig = classCred.config as Record<string, unknown>;
     }
-    if (!credConfig && isAdSrc && integration) {
+    if (!credConfig && isAdSrc && integration && adBindFallbackAllowed(asset)) {
       const cfg = (integration.config as Record<string, unknown>) || {};
       const username = String(cfg.bindDn || "");
       const password = String(cfg.bindPassword || "");

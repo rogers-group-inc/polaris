@@ -164,6 +164,27 @@ describe("executeActions", () => {
     });
   });
 
+  // Scan finding F227: token values are device-reported, and spliced raw into a
+  // JSON body a quote in a hostname closed the string and added members.
+  it("api_call: a JSON body gets JSON-escaped token values, so a hostile hostname cannot add members", async () => {
+    const actions: AutomationAction[] = [
+      { type: "api_call", method: "POST", url: "https://hooks.example.com/x", bodyTemplate: '{"asset":"{asset}","v":{value}}', timeoutSec: 20 },
+    ];
+    await executeActions("n1", actions, { ...CTX, asset: 'x","admin":true,"y":"' }, {});
+    const body = (created[created.length - 1].meta as any).body as string;
+    const parsed = JSON.parse(body);
+    expect(Object.keys(parsed).sort()).toEqual(["asset", "v"]);
+    expect(parsed.asset).toBe('x","admin":true,"y":"');
+  });
+
+  it("api_call: a body that is not JSON is rendered exactly as before", async () => {
+    const actions: AutomationAction[] = [
+      { type: "api_call", method: "POST", url: "https://hooks.example.com/x", bodyTemplate: 'asset={asset}&note=it"s fine', timeoutSec: 20 },
+    ];
+    await executeActions("n1", actions, { ...CTX, asset: 'a"b' }, {});
+    expect(((created[created.length - 1].meta as any).body as string)).toBe('asset=a"b&note=it"s fine');
+  });
+
   it("a failing action logs a warning Event and never blocks later actions", async () => {
     const actions: AutomationAction[] = [
       { type: "script", scriptId: "s1", runOn: "server" }, // stubbed to fail until the registry phase

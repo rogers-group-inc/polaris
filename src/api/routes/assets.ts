@@ -10,6 +10,7 @@ import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
 import { mapWithConcurrency } from "../../utils/concurrency.js";
 import { requirePermission, hasPermission } from "../middleware/permissions.js";
+import { logPathGlobProblem } from "../../utils/logPathGlob.js";
 import {
   checkIpForIncomingClaim,
   reconcileDuplicateIpForAddresses,
@@ -251,8 +252,20 @@ const AddressCheckSchema = z.object({
   probe: z.boolean().optional(),
 });
 
+// An asset's address is later put into a generated .rdp file, an ssh:// link and
+// a copy-and-paste `ssh` / `mstsc` command line (public/js/assets.js), so it may
+// hold only what an IPv4 / IPv6 address or a hostname can: letters, digits and
+// . _ : % [ ] -. No whitespace or control character, and no shell or RDP-file
+// metacharacter. (A line break in it added lines to the .rdp file — scan
+// finding F257; rule 107.)
+const ASSET_ADDRESS_RE = /^[A-Za-z0-9._:%\[\]-]+$/;
+const AssetAddressSchema = z
+  .string()
+  .max(255)
+  .regex(ASSET_ADDRESS_RE, "ipAddress may contain only letters, digits and . _ : % [ ] -");
+
 const CreateAssetSchema = z.object({
-  ipAddress:     z.string().min(1).optional(),
+  ipAddress:     AssetAddressSchema.min(1).optional(),
   // The all-zero MAC is "no MAC", never an address: it parses to null, so a
   // create stores none and an update clears the field (which is also how an
   // asset still carrying a zero from before this check sheds it the next
@@ -304,7 +317,7 @@ const UpdateAssetSchema = CreateAssetSchema.partial().extend({
   // discovery can no longer fill it. `ipRevertToDiscovered: true` is the
   // other way out of a pin — release it and take the discovery-projected
   // address (it wins over `ipAddress` in the same body).
-  ipAddress:             z.string().optional(),
+  ipAddress:             AssetAddressSchema.or(z.literal("")).optional(),
   ipRevertToDiscovered:  z.literal(true).optional(),
   monitored:             z.boolean().optional(),
   monitorCredentialId:          z.string().uuid().nullable().optional(),
@@ -4018,6 +4031,34 @@ router.put("/:id/processes/:name/config", requirePermission("assets", "write"), 
     const id = req.params.id as string;
     const name = String(req.params.name);
     const body = ProcessConfigSchema.parse(req.body);
+
+    // The glob is "read this file on the agent's host" (the agent runs as
+    // LocalSystem / root), so it is checked twice. SHAPE: an absolute local
+    // path, never a UNC / device path or a `..` walk. AUTHORITY: setting or
+    // changing one needs assets=fullwrite — the grant that already means "may
+    // deploy and drive agents" (rule 43) — while an `assets:write` caller can
+    // still edit the log source and notes, or clear the glob. Rule 107.
+    const newGlob = body.logPathGlob ?? null;
+    if (newGlob !== null) {
+      const existing = await prisma.assetProcessConfig.findUnique({
+        where: { assetId_name: { assetId: id, name } },
+        select: { logPathGlob: true },
+      });
+      // Only a CHANGE is judged: resaving the log source with the glob as it
+      // already stands must keep working (a legacy value is withheld from
+      // agents anyway — see GET /agents/config).
+      if ((existing?.logPathGlob ?? null) !== newGlob) {
+        const problem = logPathGlobProblem(newGlob);
+        if (problem) throw new AppError(400, problem);
+        if (!hasPermission(req, "assets", "fullwrite")) {
+          throw new AppError(
+            403,
+            "Setting a log path needs Assets Full Read-Write: the agent reads that path as a privileged user.",
+          );
+        }
+      }
+    }
+
     const updated = await prisma.assetProcessConfig.upsert({
       where:  { assetId_name: { assetId: id, name } },
       update: { logSource: body.logSource, logPathGlob: body.logPathGlob ?? null, notes: body.notes ?? null, updatedBy: requestActor(req) ?? null },

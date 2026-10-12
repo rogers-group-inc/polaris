@@ -35,6 +35,7 @@ import { readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
+import { assertScriptSafeServerUrl, normalizeAgentServerUrl } from "../utils/agentServerUrl.js";
 import { logger } from "../utils/logger.js";
 import { mapWithConcurrency } from "../utils/concurrency.js";
 import { AGENT_BIN_DIR } from "../utils/paths.js";
@@ -1599,34 +1600,22 @@ export const AGENT_SERVER_URL_SETTING_KEY = "agent.serverUrlOverride";
  * port and may differ).
  */
 export async function inferOwnServerUrl(): Promise<string> {
-  // (1) UI override Setting.
+  // (1) UI override Setting. A stored value that fails the allowlist (saved
+  // before the check existed, or written by another route) is skipped with a
+  // warning rather than failing every install: the derived URL is a safe default.
   try {
     const row = await prisma.setting.findUnique({ where: { key: AGENT_SERVER_URL_SETTING_KEY } });
     const v = (row?.value as { url?: string } | null)?.url;
-    if (v && typeof v === "string" && v.trim()) return v.trim().replace(/\/$/, "");
+    if (v && typeof v === "string" && v.trim()) {
+      const ok = normalizeAgentServerUrl(v);
+      if (ok) return ok;
+      logger.warn("Ignoring the stored agent server-URL override: it is not a plain http(s) URL");
+    }
   } catch {
     // Defensive: if the Setting table is unreachable, fall through to
     // the env/cert chain rather than fail the install.
   }
-
-  // (2) Env override.
-  const fromEnv = process.env.POLARIS_PUBLIC_URL;
-  if (fromEnv) return fromEnv.replace(/\/$/, "");
-
-  // (3-5) Cert-driven derivation.
-  const httpsPort = getPublicUrlPort();
-  const hostnames = getServerCertHostnames();
-  if (httpsPort != null && hostnames) {
-    const preferred = hostnames.dnsSans[0] || hostnames.cn || hostnames.ipSans[0] || null;
-    if (preferred) return `https://${preferred}:${httpsPort}`;
-  }
-
-  // (6-7) Legacy fallbacks. The install kickoff route enforces that we
-  // never produce a "https://localhost:<port>" URL for a non-loopback
-  // target, so these branches are safe as a last-resort default.
-  const port = process.env.PORT ?? "3000";
-  const host = process.env.POLARIS_PUBLIC_HOST ?? "localhost";
-  return `https://${host}:${port}`;
+  return inferOwnServerUrlSync();
 }
 
 /**
@@ -1637,17 +1626,21 @@ export async function inferOwnServerUrl(): Promise<string> {
  * next to the operator-facing URL input on the Maintenance card.
  */
 export function inferOwnServerUrlSync(): string {
-  const fromEnv = process.env.POLARIS_PUBLIC_URL;
-  if (fromEnv) return fromEnv.replace(/\/$/, "");
+  // Every candidate is normalized: this string is written into agent.conf and
+  // pasted into installer scripts, so one that fails the allowlist is skipped
+  // for the next source rather than used.
+  const fromEnv = normalizeAgentServerUrl(process.env.POLARIS_PUBLIC_URL);
+  if (fromEnv) return fromEnv;
   const httpsPort = getPublicUrlPort();
   const hostnames = getServerCertHostnames();
   if (httpsPort != null && hostnames) {
     const preferred = hostnames.dnsSans[0] || hostnames.cn || hostnames.ipSans[0] || null;
-    if (preferred) return `https://${preferred}:${httpsPort}`;
+    const fromCert = preferred ? normalizeAgentServerUrl(`https://${preferred}:${httpsPort}`) : null;
+    if (fromCert) return fromCert;
   }
   const port = process.env.PORT ?? "3000";
   const host = process.env.POLARIS_PUBLIC_HOST ?? "localhost";
-  return `https://${host}:${port}`;
+  return normalizeAgentServerUrl(`https://${host}:${port}`) ?? `https://localhost:${port.replace(/\D/g, "") || "3000"}`;
 }
 
 interface AgentManifest {
@@ -1703,7 +1696,7 @@ async function winrmInstall(p: WinRmInstallParams): Promise<void> {
   // strings (PowerShell's single quotes don't expand $vars).
   const confB64 = Buffer.from(p.agentConfBody, "utf8").toString("base64");
   const ps = WINDOWS_INSTALL_PS
-    .replace(/__SERVER_URL__/g,        p.serverUrl)
+    .replace(/__SERVER_URL__/g,        assertScriptSafeServerUrl(p.serverUrl))
     .replace(/__CERT_FINGERPRINT__/g,  p.certFingerprint)
     .replace(/__BINARY_FILENAME__/g,   p.binaryFilename)
     .replace(/__AGENT_CONF_B64__/g,    confB64);
@@ -1791,7 +1784,7 @@ async function sshWindowsInstall(p: SshWindowsInstallParams): Promise<void> {
 
   const confB64 = Buffer.from(p.agentConfBody, "utf8").toString("base64");
   const ps = WINDOWS_INSTALL_PS
-    .replace(/__SERVER_URL__/g,       p.serverUrl)
+    .replace(/__SERVER_URL__/g,       assertScriptSafeServerUrl(p.serverUrl))
     .replace(/__CERT_FINGERPRINT__/g, p.certFingerprint)
     .replace(/__BINARY_FILENAME__/g,  p.binaryFilename)
     .replace(/__AGENT_CONF_B64__/g,   confB64);
@@ -1809,7 +1802,7 @@ async function sshWindowsUpgrade(p: SshWindowsUpgradeParams): Promise<void> {
   if (p.testOverrides?.fakeSshFail) throw new AppError(502, p.testOverrides.fakeSshFail);
 
   const ps = WINDOWS_UPGRADE_PS
-    .replace(/__SERVER_URL__/g,       p.serverUrl)
+    .replace(/__SERVER_URL__/g,       assertScriptSafeServerUrl(p.serverUrl))
     .replace(/__CERT_FINGERPRINT__/g, p.certFingerprint)
     .replace(/__BINARY_FILENAME__/g,  p.binaryFilename);
   await runPowerShellOverSsh(p.host, p.cred, ps, "polaris-agent-upgrade.ps1", 180_000);
@@ -2125,7 +2118,7 @@ async function winrmUpgrade(p: WinRmUpgradeParams): Promise<void> {
 
   const conn = winrmConnectionFromCred(p.host, p.cred);
   const ps = WINDOWS_UPGRADE_PS
-    .replace(/__SERVER_URL__/g,       p.serverUrl)
+    .replace(/__SERVER_URL__/g,       assertScriptSafeServerUrl(p.serverUrl))
     .replace(/__CERT_FINGERPRINT__/g, p.certFingerprint)
     .replace(/__BINARY_FILENAME__/g,  p.binaryFilename);
   const encoded = Buffer.from(ps, "utf16le").toString("base64");

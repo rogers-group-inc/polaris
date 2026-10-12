@@ -27,6 +27,7 @@ import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { resolve as resolvePath, basename } from "node:path";
 import { prisma } from "../../db.js";
+import { isSafeLogPathGlob } from "../../utils/logPathGlob.js";
 import { AppError } from "../../utils/errors.js";
 import { AGENT_BIN_DIR } from "../../utils/paths.js";
 import { requireAgentBearer } from "../middleware/auth.js";
@@ -221,7 +222,7 @@ const InterfaceSampleSchema = z.object({
   adminStatus:   z.string().max(32).nullable().optional(),
   operStatus:    z.string().max(32).nullable().optional(),
   speedBps:      z.number().int().nullable().optional(),
-  ipAddress:     z.string().max(64).nullable().optional(),
+  ipAddress:     z.string().max(64).regex(/^[A-Za-z0-9._:%\[\]-]+$/, "ipAddress may contain only letters, digits and . _ : % [ ] -").nullable().optional(),
   macAddress:    z.string().max(64).nullable().optional(),
   inOctets:      z.number().int().nullable().optional(),
   outOctets:     z.number().int().nullable().optional(),
@@ -967,7 +968,9 @@ agentsRouter.get("/config", async (req, res, next) => {
         return {
           name,
           logSource:   c?.logSource ?? "auto",
-          logPathGlob: c?.logPathGlob ?? null,
+          // A glob stored before the shape check existed is withheld rather than
+          // delivered: the agent would read it as a privileged user. Rule 107.
+          logPathGlob: c?.logPathGlob && isSafeLogPathGlob(c.logPathGlob) ? c.logPathGlob : null,
         };
       });
     }

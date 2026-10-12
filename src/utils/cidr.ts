@@ -4,6 +4,7 @@
  * All IP math lives here. Never do string manipulation on IPs elsewhere.
  */
 
+import { isIP } from "node:net";
 import { Netmask } from "netmask";
 
 export type IpVersion = "v4" | "v6";
@@ -28,17 +29,27 @@ export function detectIpVersion(cidr: string): IpVersion {
 
 /**
  * Return true if the string is a valid CIDR notation.
+ *
+ * The WHOLE string must be the CIDR. `netmask` reads its mask with `parseInt`,
+ * so `10.0.0.0/24<newline>anything` parses as /24 and used to pass; a value
+ * like that, interpolated into a generated script or a command line, is an
+ * injection. The shape is therefore checked first, anchored, with no
+ * whitespace or control characters possible, and only then handed to the
+ * library for the semantic check.
  */
 export function isValidCidr(cidr: string): boolean {
+  if (typeof cidr !== "string") return false;
   try {
-    if (!cidr.includes("/")) return false;
     if (detectIpVersion(cidr) === "v4") {
+      // 1-4 dotted octets, then /<bits> or /<dotted mask> — the forms Netmask
+      // understands. Nothing after the mask.
+      if (!/^\d{1,3}(?:\.\d{1,3}){0,3}\/(?:\d{1,2}|\d{1,3}(?:\.\d{1,3}){3})$/.test(cidr)) return false;
       new Netmask(cidr); // throws on invalid
     } else {
-      const [addr, prefix] = cidr.split("/");
-      if (!addr || !prefix) return false;
-      const prefixNum = parseInt(prefix, 10);
-      if (isNaN(prefixNum) || prefixNum < 0 || prefixNum > 128) return false;
+      const m = /^([0-9A-Fa-f:.]+)\/(\d{1,3})$/.exec(cidr);
+      if (!m) return false;
+      if (isIP(m[1]) !== 6) return false;
+      if (Number(m[2]) > 128) return false;
     }
     return true;
   } catch {

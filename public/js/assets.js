@@ -19134,11 +19134,23 @@ function _sshUser() {
 function _sshAction() {
   return _sshPref("polaris-ssh-action", "polaris.ssh.action") === "copy" ? "copy" : "uri";
 }
+// What may be put into a generated connection: an ssh:// link, a copy-and-paste
+// command line, an .rdp file. A host is an address or hostname; a username is the
+// usual account spellings. Anything else (a line break that would add lines to
+// the .rdp file, a `;` that would add a command to a pasted line) is refused, not
+// stripped — a silently altered target is worse than a refused one. Rule 107.
+function _connectHostOk(h) { return typeof h === "string" && /^[A-Za-z0-9._:%\[\]-]+$/.test(h); }
+function _connectUserOk(u) { return !u || /^[A-Za-z0-9._@\\-]+$/.test(u); }
+function _connectRefused(what) {
+  showToast("That " + what + " contains characters that cannot be used in a connection, so nothing was launched.", "error");
+}
 function _sshTarget(mgmtIp) {
   var user = _sshUser();
   return (user ? user + "@" : "") + mgmtIp;
 }
 function _doSshLaunch(mgmtIp, action) {
+  if (!_connectHostOk(mgmtIp)) { _connectRefused("address"); return; }
+  if (!_connectUserOk(_sshUser())) { _connectRefused("username"); return; }
   var target = _sshTarget(mgmtIp);
   if (action === "copy") {
     var cmd = "ssh " + target;
@@ -19188,6 +19200,8 @@ function _rdpUri(host, user) {
 }
 function _doRdpLaunch(mgmtIp, action) {
   var user = _rdpUser();
+  if (!_connectHostOk(mgmtIp)) { _connectRefused("address"); return; }
+  if (!_connectUserOk(user)) { _connectRefused("username"); return; }
   if (action === "copy") {
     // mstsc takes no username flag, so the user pref is a file/URI-only field.
     var cmd = "mstsc /v:" + mgmtIp;
@@ -22633,7 +22647,7 @@ async function openProcessDetailPanel(asset, name, cfg, procRow, isPinned) {
             '</select>' +
           '</label>' +
           '<label style="flex:1;min-width:220px;font-size:0.78rem;color:var(--color-text-secondary)">Log path / wildcard' +
-            '<input type="text" id="proc-log-glob" value="' + escapeHtml(glob) + '" placeholder="/var/log/' + escapeHtml(name) + '/*.log" style="display:block;width:100%;box-sizing:border-box;margin-top:2px"' + (canEdit ? "" : " disabled") + '>' +
+            '<input type="text" id="proc-log-glob" value="' + escapeHtml(glob) + '" placeholder="/var/log/' + escapeHtml(name) + '/*.log" style="display:block;width:100%;box-sizing:border-box;margin-top:2px"' + (canEdit && canDeployAgent() ? "" : " disabled title=\"Setting a log path needs Assets Full Read-Write: the agent reads that path as a privileged user.\"") + '>' +
           '</label>' +
           (canEdit ? '<button class="btn btn-sm btn-primary" id="btn-proc-log-config-save">Save</button>' : '') +
         '</div>' +
