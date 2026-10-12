@@ -307,6 +307,13 @@ cannot do from Polaris is **edit or release** a VIP row itself, because the
 mapping belongs to the device. An **interface address** is different again and
 stays refused: that address is live on an interface right now.
 
+**Deleting the VIP on the gate clears it here.** On the next discovery, the
+VIP drops off your reservation and off the VIP row of any asset at that address.
+The reservation itself, and everything you typed on it, stays. This works in a
+network you built by hand, such as a WAN, as well as in one discovery found.
+When several VIPs share one external address, deleting one clears only that one.
+A VIP is only cleared once its gate's VIP table has actually been read.
+
 **The Status column reports both facts.** An address that carries a VIP shows
 the VIP first and what is happening to the address second:
 
