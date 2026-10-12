@@ -119,6 +119,12 @@
             seen[k] = 1;
             out.push({ value: t.name, label: t.category && t.category !== "General" ? t.name + " — " + t.category : t.name });
           });
+          // Map regions are excluded from the catalog but ride on assets as
+          // `region:<name>`, so offer them in that form.
+          (opts.regions || []).forEach(function (r) {
+            var v = "region:" + r, k = v.toLowerCase();
+            if (!seen[k]) { seen[k] = 1; out.push({ value: v, label: v + " — Map Region" }); }
+          });
           tagList.forEach(function (t) {
             var k = String(t).toLowerCase();
             if (!seen[k]) { seen[k] = 1; out.push({ value: t, label: t }); }
