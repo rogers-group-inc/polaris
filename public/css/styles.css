@@ -5211,6 +5211,10 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   background: rgba(79,195,247,0.12);
   border: 1px solid rgba(79,195,247,0.3);
   color: var(--color-accent);
+  /* The .badge lift: a tag tint sits a few percent off a daylight ground and
+     dissolves into it without an edge (the severity-referenced Priority tags
+     most of all — a theme token at 13% over cream). */
+  box-shadow: var(--shadow-pill);
 }
 .tag-chip-delete {
   background: none;
@@ -5265,6 +5269,8 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   cursor: pointer;
   border: 1px solid var(--color-border);
   background: var(--color-surface);
+  /* Same lift as .tag-chip / .badge. */
+  box-shadow: var(--shadow-pill);
   transition: background 0.12s, border-color 0.12s;
   user-select: none;
 }
