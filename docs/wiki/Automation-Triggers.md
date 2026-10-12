@@ -194,7 +194,7 @@ This does **not** apply to:
 
 - the asset-down alert itself (`monitorStatus`, `consecutiveFailures`);
 - facts about the device that an outage does not change (`status`,
-  `quarantined`, `firmwareVsPrimary`, `dependencySuppressed`);
+  `quarantined`, `firmwareVsPrimary`, `tag`, `dependencySuppressed`);
 - path checks, which are measured *from* the device rather than *about* it;
 - a multiple-condition automation with any of those in its tree;
 - a device that is `passive`, `unknown` or `recovering`. Only a confirmed
@@ -216,7 +216,15 @@ nothing.
 A field rather than a number.
 
 **Device-wide fields:** `monitorStatus` · `status` · `consecutiveFailures` ·
-`dependencySuppressed` · `quarantined` · `fortilinkStatus` · `firmwareVsPrimary`.
+`dependencySuppressed` · `quarantined` · `fortilinkStatus` · `firmwareVsPrimary` ·
+`tag`.
+
+`tag` is **Asset tag**: type a tag name and choose *is* or *is not*. *Is* is true
+of a device carrying that tag, *is not* of one that does not. The match is the
+whole tag, ignoring case. It is a fact about the device, so it keeps reading
+while the device is down. Combine it with another condition to limit a rule to,
+say, devices tagged `prod`; to limit **which devices an automation covers at
+all**, use a tag condition on the Devices step instead.
 
 **Per-dimension fields:** `ifOperStatus` · `ifAdminStatus` · `ifIpAddress` ·
 `poeStatus` · `ipsecStatus` · `sdwanRuleStatus` · `sdwanSelectedMember` ·
