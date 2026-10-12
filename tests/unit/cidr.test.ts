@@ -43,6 +43,25 @@ describe("normalizeCidr", () => {
 });
 
 describe("isValidCidr", () => {
+  it("requires the whole string to be the CIDR, not just a prefix of it", () => {
+    // netmask parses the mask with parseInt, so these used to be valid.
+    expect(isValidCidr("10.0.0.0/24\nanything")).toBe(false);
+    expect(isValidCidr("10.0.0.0/24 anything")).toBe(false);
+    expect(isValidCidr("10.0.0.0/24/16")).toBe(false);
+    expect(isValidCidr("10.0.0.0/8x")).toBe(false);
+    expect(isValidCidr("2001:db8::/32\nid")).toBe(false);
+    expect(isValidCidr("not:an:address/64")).toBe(false);
+    expect(isValidCidr("2001:db8::/129")).toBe(false);
+  });
+
+  it("still accepts the forms it accepted before", () => {
+    expect(isValidCidr("10.0.0.0/8")).toBe(true);
+    expect(isValidCidr("192.168.1.0/24")).toBe(true);
+    expect(isValidCidr("10.0.0.0/255.255.255.0")).toBe(true);
+    expect(isValidCidr("2001:db8::/32")).toBe(true);
+    expect(isValidCidr("fd00::/8")).toBe(true);
+  });
+
   it("accepts valid IPv4 CIDRs", () => {
     expect(isValidCidr("10.0.0.0/8")).toBe(true);
     expect(isValidCidr("192.168.1.0/24")).toBe(true);
