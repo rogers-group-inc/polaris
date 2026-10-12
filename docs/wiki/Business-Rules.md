@@ -1,7 +1,7 @@
 # Business rules
 
-Polaris carries **103 rule numbers**, 1 to 103: 101 rules in force plus rule 80a,
-with 81 and 88 not in use. Each one records a decision *and* the reasoning
+Polaris carries **105 rule numbers**, 1 to 105: 102 rules in force plus rule 80a,
+with 81, 88 and 104 not in use. Each one records a decision *and* the reasoning
 behind it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
 where the reasons live.
@@ -1891,3 +1891,36 @@ the address where you put it stays in place whatever the scores say.
 highest score on the network's evidence. Only when the list is empty does
 Polaris fall back to what the integrations last reported. Discovery manages
 the address from then on, so a later discovery run can still move it.
+
+### Rule 105
+
+**A capacity severity change alerts only once it has held, and only the
+10-minute capacity check records it.**
+
+Polaris grades its own host (disk, database growth, autovacuum, tuning and the
+other checks on the Maintenance tab's **Database** card) as Healthy, Watch,
+Action recommended or Critical. A change of that grade is written as a
+`capacity.severity_changed` event, or `capacity.severity_recovered` when it
+returns to Healthy. The baseline **Capacity severity escalated** automation
+alerts on the first and clears on the second.
+
+- **Only the scheduled check records a change.** It runs every 10 minutes with
+  every check the Database card shows. Opening the Maintenance tab or any other
+  page only displays the current grade. It never records one.
+- **A change must hold.** A grade that differs from the recorded one starts a
+  pending change. Every check that still differs extends it. A single check
+  back at the recorded grade discards it. Once the pending change has lasted
+  for the **alert hold** (30 minutes by default), the latest grade is recorded
+  and the event is written, saying how long it held. A spike that clears
+  within the hold, such as dead rows waiting for autovacuum, never alerts.
+- **The hold applies both ways.** A return to Healthy waits it out too, so a
+  host hovering at a threshold cannot clear and re-raise its alert check after
+  check.
+- **A gap restarts the hold.** If Polaris was stopped or a check failed, a
+  pending change starts again from the next check rather than counting time
+  nobody observed.
+
+Set the hold on the **Database** card: **Alert after a change holds for**, from
+*Alert on the first reading* up to four hours (the API accepts up to a day).
+Because the card shows the live grade, it also shows what the alerting side
+last recorded and any change it is currently waiting out.
