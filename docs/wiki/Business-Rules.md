@@ -895,6 +895,13 @@ pass. A VIP table it could not read is reported as not read — never as "there
 are no VIPs" — so nothing already recorded is retired on a failed read
 ([rule 53](#rule-53)), and a VIP is only ever retired by the gate that owns it.
 
+**A VIP deleted on the gate leaves your reservation alone.** Integration
+discovery removes the VIP from a reservation you made, or from a DHCP lease or
+reservation, once the gate's VIP table no longer lists a VIP of that name at
+that address. The reservation and its fields stay. This covers networks you
+built by hand, which the per-network **Discover** button does not run on, and
+the same read-or-nothing and owning-gate limits apply.
+
 See [IPAM](IPAM#addresses-that-carry-a-firewall-vip).
 
 ### Rule 78

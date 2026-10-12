@@ -87,6 +87,14 @@ translates for it — and no surface may collapse them.
 - `src/services/discovery/discoveryEngine.ts` (Phase 3c `manual` branch) — stamps rather than
   raises a conflict when the row already names this same VIP, the `reservationBelongsToInfraDevice`
   pattern applied to VIPs.
+- `src/services/discovery/discoveryEngine.ts` (Phase 5b stamp sweep) — clears `vipInfo` from a
+  NON-`vip` row (a `manual` claim that inherited the snapshot, a `dhcp_*` row the VIP arrived on
+  second) when the stamp's gate read its VIP table this cycle and no VIP of that NAME on that gate
+  still covers the address (`currentVipStampKeys`, `device|name|subnetId|ip`). Only the stamp
+  goes; `reservation.vip.cleared`. Matching by name matters on WAN externals that several
+  port-forward VIPs share. This is the only path that retires a stamp in a network no
+  integration discovered — the per-subnet Discover refuses those networks. Pinned by
+  `tests/integration/vipStampSweep.test.ts`.
 
 **Readers:**
 - `src/services/subnetService.ts` (`toReservationDto`) — surfaces `vipInfo` (and the four push
