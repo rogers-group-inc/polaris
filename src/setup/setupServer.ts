@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import helmet from "helmet";
 import setupRoutes from "./setupRoutes.js";
+import { loadOrCreateSetupToken } from "./setupToken.js";
 import { makeRateLimiter } from "../api/middleware/rateLimits.js";
 import { buildHelmetOptions } from "../utils/securityHeaders.js";
 
@@ -67,6 +68,11 @@ export function startSetupServer(): void {
 
   const PORT = 3000;
 
+  // Proof of host access for every wizard route that acts on the host
+  // (setupToken.ts). Generated here, before the listener opens, so there is no
+  // window in which the wizard is reachable without one.
+  const setupToken = loadOrCreateSetupToken();
+
   // The setup wizard is unauthenticated by construction — it exists to create
   // the first account, so there is nobody to authenticate yet — and it hands
   // out a provisioned install to whoever reaches it first. On a host where the
@@ -90,14 +96,20 @@ export function startSetupServer(): void {
     console.log("  │   to configure the application.             │");
     console.log("  │                                             │");
     console.log("  └─────────────────────────────────────────────┘");
+    console.log("");
+    console.log(`  Setup token: \x1b[36m${setupToken.token}\x1b[0m`);
+    console.log("  The wizard asks for it first. It proves you can read this console.");
+    if (setupToken.file) {
+      console.log(`  It is also saved in ${setupToken.file} and deleted when setup finishes.`);
+    }
     // Whoever reaches this wizard first owns the install, so say plainly who
     // can reach it. Not a warning to be silenced — a fact the operator needs
     // while deciding how long to leave a half-provisioned host running.
     if (BIND === "127.0.0.1" || BIND === "localhost" || BIND === "::1") {
       console.log(`  Listening on ${BIND}:${PORT} — local connections only (POLARIS_SETUP_BIND).`);
     } else {
-      console.log(`  Listening on ${BIND}:${PORT} — reachable from the network, and`);
-      console.log("  UNAUTHENTICATED until you finish the wizard. Set POLARIS_SETUP_BIND=127.0.0.1");
+      console.log(`  Listening on ${BIND}:${PORT} — reachable from the network. Everything that acts`);
+      console.log("  on this host needs the setup token above. Set POLARIS_SETUP_BIND=127.0.0.1");
       console.log("  to restrict it to this host and browse over an SSH tunnel instead.");
     }
     console.log("");

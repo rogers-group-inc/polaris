@@ -621,7 +621,7 @@ Options:
   Default `127.0.0.1`. Update later with a drop-in if Prometheus is
   off-host.
 
-Browse to `https://<your-hostname>/` to run the first-run setup wizard.
+Browse to `https://<your-hostname>/` to run the first-run setup wizard. It asks for a one-time **setup token**, printed in the journal (`journalctl -u polaris-web`) and saved as `.setup-token` in the state directory; `POLARIS_SETUP_TOKEN` pre-sets it.
 Self-signed cert in use; replace `/etc/polaris-nginx/{cert,key}.pem` with
 your real cert + `systemctl reload nginx` whenever you're ready.
 
@@ -765,7 +765,7 @@ the split-role units (with a `20-postgres.conf` drop-in pointing at
 Ubuntu/Debian's `postgresql.service` meta-service rather than the versioned
 unit RHEL/PGDG uses — see *The PostgreSQL dependency*),
 opens TCP+UDP/443 in ufw, and starts `polaris.target`. Browse to
-`https://<your-hostname>/` to run the first-run setup wizard.
+`https://<your-hostname>/` to run the first-run setup wizard. It asks for a one-time **setup token**, printed in the journal (`journalctl -u polaris-web`) and saved as `.setup-token` in the state directory; `POLARIS_SETUP_TOKEN` pre-sets it.
 
 The same `--public-url` / `--monitor-replicas` / `--prometheus-ip` flags
 documented above for setup-rhel.sh apply here too.

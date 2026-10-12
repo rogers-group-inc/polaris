@@ -16,8 +16,23 @@ var demoMode = false;
       // Enable Next on step 1 immediately (no connection test required)
       document.getElementById("btn-next-1").disabled = false;
     }
+    // The wizard demands a setup token (proof of host access) for everything it
+    // does to the host. Show the field only when the server says so.
+    if (data.tokenRequired) {
+      var tokenRow = document.getElementById("setup-token-row");
+      if (tokenRow) tokenRow.style.display = "";
+    }
   } catch (_) {}
 })();
+
+// Headers for every wizard call: the setup token travels with each one.
+function setupHeaders(extra) {
+  var h = extra || {};
+  var el = document.getElementById("setup-token");
+  var t = el ? el.value.trim() : "";
+  if (t) h["X-Setup-Token"] = t;
+  return h;
+}
 
 // ─── Step navigation ──────────────────────────────────────────────
 
@@ -82,7 +97,7 @@ document.getElementById("btn-test-conn").addEventListener("click", async functio
     }
     var res = await fetch("/api/setup/test-connection", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: setupHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(db),
     });
     var data = await res.json();
@@ -127,7 +142,7 @@ async function runPreflight(dbHost) {
   try {
     var res = await fetch("/api/setup/preflight", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: setupHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ dbHost: dbHost }),
     });
     var data = await res.json();
@@ -226,7 +241,7 @@ document.getElementById("btn-next-2").addEventListener("click", function () {
 
 async function generateSecret() {
   try {
-    var res = await fetch("/api/setup/generate-secret", { method: "POST" });
+    var res = await fetch("/api/setup/generate-secret", { method: "POST", headers: setupHeaders() });
     var data = await res.json();
     sessionSecret = data.secret;
     document.getElementById("app-secret").value = sessionSecret;
@@ -310,7 +325,7 @@ document.getElementById("btn-finalize").addEventListener("click", async function
     msgEl.textContent = "Configuring database and running migrations...";
     var res = await fetch("/api/setup/finalize", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: setupHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
     });
     var data = await res.json();
