@@ -1905,14 +1905,14 @@ async function _performSearch(q) {
 function assetAlertStrobeColor(severity) {
   var token = {
     notice: "--color-sev-notice",
-    informational: "--color-accent",
-    info: "--color-accent",
-    warning: "--color-warning",
+    informational: "--color-sev-informational",
+    info: "--color-sev-informational",
+    warning: "--color-sev-warning",
     serious: "--color-sev-serious",
-    error: "--color-danger",
-    critical: "--color-danger",
+    error: "--color-sev-critical",
+    critical: "--color-sev-critical",
   }[severity];
-  return "var(" + (token || "--color-danger") + ")";
+  return "var(" + (token || "--color-sev-critical") + ")";
 }
 
 /**
@@ -4987,6 +4987,43 @@ function randomTagColor() {
   return palette[Math.floor(Math.random() * palette.length)];
 }
 
+// A tag's stored color is either a hex or a SEVERITY REFERENCE ("severity:warning").
+// A reference resolves to the same theme token the severity bands paint with
+// (PolarisChartSeverity's SEV_COLOR — keep the two maps in step), so a Priority tag
+// reads exactly as its severity does on every theme. A fixed hex cannot: the
+// --color-sev-* palette is retuned per theme (styles.css :root + daylight block).
+var TAG_SEVERITY_COLORS = {
+  notice: "var(--color-sev-notice)",
+  informational: "var(--color-sev-informational)",
+  warning: "var(--color-sev-warning)",
+  serious: "var(--color-sev-serious)",
+  critical: "var(--color-sev-critical)",
+};
+var TAG_SEVERITY_ORDER = ["notice", "informational", "warning", "serious", "critical"];
+
+/** The severity a stored tag color references, or null for a plain hex. */
+function tagColorSeverity(color) {
+  var m = /^severity:([a-z]+)$/.exec(String(color || ""));
+  return m && TAG_SEVERITY_COLORS[m[1]] ? m[1] : null;
+}
+
+/** A stored tag color as a CSS color — a hex, or the severity's theme token.
+ *  Anything else (a malformed value) comes back empty so no caller writes it
+ *  into a style attribute. */
+function tagColorCss(color) {
+  var sev = tagColorSeverity(color);
+  if (sev) return TAG_SEVERITY_COLORS[sev];
+  return /^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?$/.test(String(color || "")) ? color : "";
+}
+
+/** That color at `pct`% over transparent — the tint every tag chip draws its
+ *  background and border with. color-mix, not a hex alpha suffix, because a
+ *  theme token has no hex to append to. */
+function tagColorTint(color, pct) {
+  var css = tagColorCss(color);
+  return css ? "color-mix(in srgb, " + css + " " + pct + "%, transparent)" : "";
+}
+
 // ─── Tag field (enforced or free-text) ─────────────────────────────────────
 
 // `failed` is the difference between "this install has no tags" and "we could
@@ -5029,11 +5066,12 @@ var REGION_TAG_CATEGORY = "Map Regions";
 // alpha alone (the old 44-vs-11 split) left every chip's full-strength border +
 // text looking equally "on" in a dark theme.
 function _tagChipStyle(color, checked) {
-  if (!color) return '';
-  var c = escapeHtml(color);
+  var c = tagColorCss(color);
+  if (!c) return '';
+  // Alphas as before the severity references: 44 / 11 / 40 / 99 hex → 27 / 7 / 25 / 60 %.
   return checked
-    ? 'background:' + c + '44;border-color:' + c + ';color:' + c
-    : 'background:' + c + '11;border-color:' + c + '40;color:' + c + '99';
+    ? 'background:' + tagColorTint(color, 27) + ';border-color:' + c + ';color:' + c
+    : 'background:' + tagColorTint(color, 7) + ';border-color:' + tagColorTint(color, 25) + ';color:' + tagColorTint(color, 60);
 }
 
 // Creating a registry tag is gated write (the top rung) on serverSettingsSystem; a failed

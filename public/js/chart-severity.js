@@ -20,14 +20,16 @@
   "use strict";
 
   // Mirrors SEVERITIES in src/services/notificationTypes.ts (least → most severe)
-  // and the .sev-select palette in styles.css.
+  // and the .sev-select palette in styles.css. Each severity is its own
+  // --color-sev-* token (styles.css :root + the daylight block), the palette the
+  // .badge-level-* pills and severity-coloured tags read too.
   var SEV_ORDER = ["notice", "informational", "warning", "serious", "critical"];
   var SEV_COLOR = {
     notice: "var(--color-sev-notice)",
-    informational: "var(--color-accent)",
-    warning: "var(--color-warning)",
+    informational: "var(--color-sev-informational)",
+    warning: "var(--color-sev-warning)",
     serious: "var(--color-sev-serious)",
-    critical: "var(--color-danger)",
+    critical: "var(--color-sev-critical)",
   };
   /** Color of a reading no tier claims — the charts' normal line color. */
   var BASE_COLOR = "var(--color-accent)";

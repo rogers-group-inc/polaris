@@ -109,6 +109,13 @@ beforeAll(() => {
     html: (names: string[]) => names.join(""),
   };
 
+  // The real tag-color helpers (tagColorCss / tagColorTint), sliced out of app.js.
+  const appJs = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
+  const from = appJs.indexOf("var TAG_SEVERITY_COLORS");
+  const to = appJs.indexOf("// ─── Tag field", from);
+  expect(from > 0 && to > from, "app.js tag-color helper block moved").toBe(true);
+  (0, eval)(appJs.slice(from, to));
+
   (0, eval)(readFileSync(resolve(__dirname, "../../public/js/users.js"), "utf8"));
   otherTagsPickerHtml = g.otherTagsPickerHtml as typeof otherTagsPickerHtml;
   collectOtherTags = g.collectOtherTags as typeof collectOtherTags;
@@ -330,6 +337,52 @@ describe("_splitUserTagScope", () => {
  * `PolarisRegionPills.html` returns the bare names, so a name present in the
  * output is a pill drawn for it.
  */
+describe("severity-referenced tag colors", () => {
+  const SEV_ROWS: TagRow[] = [
+    { name: "Warning", color: "severity:warning", category: "Priority" },
+    { name: "Serious", color: "severity:serious", category: "Priority" },
+    { name: "Bogus", color: "red;background:url(x)", category: "General" },
+  ];
+
+  it("resolves each severity to the theme token the severity bands paint with", () => {
+    expect(g.tagColorCss("severity:notice")).toBe("var(--color-sev-notice)");
+    expect(g.tagColorCss("severity:informational")).toBe("var(--color-sev-informational)");
+    expect(g.tagColorCss("severity:warning")).toBe("var(--color-sev-warning)");
+    expect(g.tagColorCss("severity:serious")).toBe("var(--color-sev-serious)");
+    expect(g.tagColorCss("severity:critical")).toBe("var(--color-sev-critical)");
+    expect(g.tagColorCss("#ff8a00")).toBe("#ff8a00");
+    expect(g.tagColorCss("severity:urgent")).toBe("");
+    expect(g.tagColorTint("severity:warning", 18)).toBe("color-mix(in srgb, var(--color-sev-warning) 18%, transparent)");
+  });
+
+  it("matches chart-severity.js's SEV_COLOR exactly", () => {
+    const src = readFileSync(resolve(__dirname, "../../public/js/chart-severity.js"), "utf8");
+    for (const s of ["notice", "informational", "warning", "serious", "critical"]) {
+      const m = new RegExp(s + ':\\s*"([^"]+)"').exec(src);
+      expect(m && m[1], s).toBe(g.TAG_SEVERITY_COLORS[s]);
+    }
+  });
+
+  it("a user's tag pill paints with the token; a malformed color falls back to grey", () => {
+    setCatalog(true, CATALOG.concat(SEV_ROWS));
+    const html = userTagPillsHtml({ regionTags: [], otherTags: ["Warning", "Serious", "Bogus"] });
+    expect(html).toContain("color:var(--color-sev-warning)");
+    expect(html).toContain("color:var(--color-sev-serious)");
+    expect(html).not.toContain("url(x)");
+    expect(html).toContain("color:#9e9e9e");
+    setCatalog(true, CATALOG);
+  });
+
+  it("the picker pill keeps the reference through a toggle repaint", () => {
+    setCatalog(true, CATALOG.concat(SEV_ROWS));
+    g.document.body.innerHTML = otherTagsPickerHtml("f-tags", ["Warning"]);
+    const pill = g.document.querySelector('.other-tag-pill[data-tag="Warning"]') as any;
+    expect(pill.getAttribute("data-color")).toBe("severity:warning");
+    expect(pill.getAttribute("style")).toContain("var(--color-sev-warning)");
+    setCatalog(true, CATALOG);
+  });
+});
+
 describe("userTagPillsHtml", () => {
   it("draws BOTH dimensions, not regions alone", () => {
     const html = userTagPillsHtml({ regionTags: ["Ashfield"], otherTags: ["PCI"] });

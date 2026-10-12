@@ -130,14 +130,18 @@ describe("tag picker — region tags are editable", () => {
     const styleOf = (name: string) =>
       (chipInput(name)!.parentElement as unknown as HTMLElement).getAttribute("style") ?? "";
 
+    // Tints are color-mix over transparent (a severity-reference color is a theme
+    // token, with no hex to append an alpha to) — 27 / 7 / 25 / 60 % are the old
+    // 44 / 11 / 40 / 99 hex alphas.
+    const mix = (c: string, pct: number) => "color-mix(in srgb, " + c + " " + pct + "%, transparent)";
     const on = styleOf("region:Ashfield"); // color #4fc3f7
-    expect(on).toContain("background:#4fc3f744");
+    expect(on).toContain("background:" + mix("#4fc3f7", 27));
     expect(on).toContain("border-color:#4fc3f7;");
     expect(on).toContain("color:#4fc3f7");
 
     const off = styleOf("region:Atlanta"); // color #4ade80
-    expect(off).toContain("background:#4ade8011");
-    expect(off).toContain("border-color:#4ade8040");
-    expect(off).toContain("color:#4ade8099");
+    expect(off).toContain("background:" + mix("#4ade80", 7));
+    expect(off).toContain("border-color:" + mix("#4ade80", 25));
+    expect(off).toContain("color:" + mix("#4ade80", 60));
   });
 });

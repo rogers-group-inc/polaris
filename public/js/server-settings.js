@@ -4810,7 +4810,8 @@ function renderIdentificationTab() {
       } else {
         html += '<div class="tag-chip-list">';
         tags.forEach(function (t) {
-          var colorStyle = t.color ? ' style="background:' + escapeHtml(t.color) + '22;border-color:' + escapeHtml(t.color) + ';color:' + escapeHtml(t.color) + '"' : '';
+          var chipColor = tagColorCss(t.color);
+          var colorStyle = chipColor ? ' style="background:' + tagColorTint(t.color, 13) + ';border-color:' + chipColor + ';color:' + chipColor + '"' : '';
           // Either filter shape counts — a tag written before the condition-tree
           // cutover still auto-assigns through the folded-forward flat blob.
           var managed = !!(t.assetCondition || (t.criteria && t.criteria.rules && t.criteria.rules.length));
@@ -6967,6 +6968,57 @@ function _wireTagFilterBuilder(tagId, builder) {
   _refreshTagFilterPreview(tagId, builder);
 }
 
+// The Color field of the Add / Edit Tag dialogs: a custom hex, or a severity
+// reference ("severity:warning") that paints with the severity's theme token on
+// every theme (tagColorCss in app.js). One builder for both dialogs — a stored
+// reference fed to <input type="color"> would read back as #000000 and the next
+// save would overwrite it.
+function _tagColorFieldHTML(color) {
+  var sev = tagColorSeverity(color);
+  var hex = sev ? randomTagColor() : (tagColorCss(color) || randomTagColor());
+  var opts = '<option value=""' + (sev ? '' : ' selected') + '>Custom color</option>' +
+    TAG_SEVERITY_ORDER.map(function (s) {
+      return '<option value="' + s + '"' + (s === sev ? ' selected' : '') + '>Severity: ' + s.charAt(0).toUpperCase() + s.slice(1) + '</option>';
+    }).join('');
+  return '<div class="form-group"><label>Color</label>' +
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+      '<select id="f-tag-color-source" style="width:auto">' + opts + '</select>' +
+      '<input type="color" id="f-tag-color" value="' + escapeHtml(hex) + '" style="width:40px;height:32px;padding:2px;border:1px solid var(--color-border);border-radius:4px;background:transparent;cursor:pointer">' +
+      '<button type="button" id="f-tag-color-random" title="Random color" aria-label="Random color" style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:1px solid var(--color-border);border-radius:4px;background:transparent;color:var(--color-text-secondary);cursor:pointer">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10"/><path d="M20.49 15a9 9 0 01-14.85 3.36L1 14"/></svg>' +
+      '</button>' +
+      '<span id="f-tag-color-swatch" style="display:none;width:32px;height:32px;border-radius:4px;border:1px solid var(--color-border)"></span>' +
+      '<span id="f-tag-color-hex" style="font-family:var(--font-mono);font-size:0.82rem;color:var(--color-text-secondary)"></span>' +
+    '</div>' +
+    '<p class="hint">A severity color matches that severity\'s pills and chart bands on every theme.</p>' +
+  '</div>';
+}
+
+/** Wires the field built by _tagColorFieldHTML; returns a getter for the value to save. */
+function _wireTagColorField() {
+  var source = document.getElementById("f-tag-color-source");
+  var colorInput = document.getElementById("f-tag-color");
+  var randomBtn = document.getElementById("f-tag-color-random");
+  var swatch = document.getElementById("f-tag-color-swatch");
+  var hexLabel = document.getElementById("f-tag-color-hex");
+  function sync() {
+    var sev = source.value;
+    colorInput.style.display = sev ? "none" : "";
+    randomBtn.style.display = sev ? "none" : "inline-flex";
+    swatch.style.display = sev ? "inline-block" : "none";
+    if (sev) swatch.style.background = TAG_SEVERITY_COLORS[sev];
+    hexLabel.textContent = sev ? "follows the theme" : colorInput.value;
+  }
+  source.addEventListener("change", sync);
+  colorInput.addEventListener("input", sync);
+  randomBtn.addEventListener("click", function () {
+    colorInput.value = randomTagColor();
+    sync();
+  });
+  sync();
+  return function () { return source.value ? "severity:" + source.value : colorInput.value; };
+}
+
 async function openAddTagModal() {
   // The device-filter vocabulary has to be in hand BEFORE the body is assembled:
   // the builder renders its field/operator selects from it.
@@ -7018,15 +7070,7 @@ async function openAddTagModal() {
       '</div>' +
       '<p class="hint">Group related tags together. e.g. Environment, Function, Location</p>' +
     '</div>' +
-    '<div class="form-group"><label>Color</label>' +
-      '<div style="display:flex;gap:8px;align-items:center">' +
-        '<input type="color" id="f-tag-color" value="' + randomTagColor() + '" style="width:40px;height:32px;padding:2px;border:1px solid var(--color-border);border-radius:4px;background:transparent;cursor:pointer">' +
-        '<button type="button" id="f-tag-color-random" title="Random color" aria-label="Random color" style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:1px solid var(--color-border);border-radius:4px;background:transparent;color:var(--color-text-secondary);cursor:pointer">' +
-          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10"/><path d="M20.49 15a9 9 0 01-14.85 3.36L1 14"/></svg>' +
-        '</button>' +
-        '<span id="f-tag-color-hex" style="font-family:var(--font-mono);font-size:0.82rem;color:var(--color-text-secondary)"></span>' +
-      '</div>' +
-    '</div>' +
+    _tagColorFieldHTML(null) +
     _tagFilterSectionHTML(null, condBuilder, schema);
 
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
@@ -7046,19 +7090,7 @@ async function openAddTagModal() {
     }
   });
 
-  // Update hex preview
-  var colorInput = document.getElementById("f-tag-color");
-  var hexLabel = document.getElementById("f-tag-color-hex");
-  colorInput.addEventListener("input", function () {
-    hexLabel.textContent = colorInput.value;
-  });
-  hexLabel.textContent = colorInput.value;
-
-  var randomBtn = document.getElementById("f-tag-color-random");
-  if (randomBtn) randomBtn.addEventListener("click", function () {
-    colorInput.value = randomTagColor();
-    hexLabel.textContent = colorInput.value;
-  });
+  var tagColorValue = _wireTagColorField();
 
   document.getElementById("btn-save-tag").addEventListener("click", async function () {
     var btn = this;
@@ -7080,7 +7112,7 @@ async function openAddTagModal() {
       await api.serverSettings.createTag(Object.assign({
         name: name,
         category: category,
-        color: colorInput.value,
+        color: tagColorValue(),
       }, _collectTagFilter(condBuilder)));
       closeModal();
       showToast('Tag "' + name + '" created');
@@ -7151,15 +7183,7 @@ async function openEditTagModal(id) {
         '<input type="text" id="f-tag-category-new" placeholder="Category name" style="flex:1;display:none">' +
       '</div>' +
     '</div>' +
-    '<div class="form-group"><label>Color</label>' +
-      '<div style="display:flex;gap:8px;align-items:center">' +
-        '<input type="color" id="f-tag-color" value="' + escapeHtml(tag.color || "#4fc3f7") + '" style="width:40px;height:32px;padding:2px;border:1px solid var(--color-border);border-radius:4px;background:transparent;cursor:pointer">' +
-        '<button type="button" id="f-tag-color-random" title="Random color" aria-label="Random color" style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:1px solid var(--color-border);border-radius:4px;background:transparent;color:var(--color-text-secondary);cursor:pointer">' +
-          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10"/><path d="M20.49 15a9 9 0 01-14.85 3.36L1 14"/></svg>' +
-        '</button>' +
-        '<span id="f-tag-color-hex" style="font-family:var(--font-mono);font-size:0.82rem;color:var(--color-text-secondary)">' + escapeHtml(tag.color || "#4fc3f7") + '</span>' +
-      '</div>' +
-    '</div>' +
+    _tagColorFieldHTML(tag.color || "#4fc3f7") +
     _tagFilterSectionHTML(tag, condBuilder, schema);
 
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
@@ -7178,18 +7202,7 @@ async function openEditTagModal(id) {
     }
   });
 
-  var colorInput = document.getElementById("f-tag-color");
-  var hexLabel = document.getElementById("f-tag-color-hex");
-  colorInput.addEventListener("input", function () {
-    hexLabel.textContent = colorInput.value;
-  });
-  hexLabel.textContent = colorInput.value;
-
-  var randomBtn = document.getElementById("f-tag-color-random");
-  if (randomBtn) randomBtn.addEventListener("click", function () {
-    colorInput.value = randomTagColor();
-    hexLabel.textContent = colorInput.value;
-  });
+  var tagColorValue = _wireTagColorField();
 
   document.getElementById("btn-save-tag").addEventListener("click", async function () {
     var btn = this;
@@ -7211,7 +7224,7 @@ async function openEditTagModal(id) {
       await api.serverSettings.updateTag(id, Object.assign({
         name: name,
         category: category,
-        color: colorInput.value,
+        color: tagColorValue(),
       }, _collectTagFilter(condBuilder, stuckFields)));
       closeModal();
       showToast('Tag "' + name + '" updated');
