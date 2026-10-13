@@ -10,6 +10,7 @@ import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
 import { mapWithConcurrency } from "../../utils/concurrency.js";
 import { requirePermission, hasPermission, credentialUseActor } from "../middleware/permissions.js";
+import { maskActionHeaders } from "../../utils/actionHeaderMask.js";
 import {
   recordCredentialUse, assetCredentialUses, assetCredentialDestination,
   type AssetCredentialSlots, type CredentialUseVia,
@@ -1904,7 +1905,7 @@ router.get(["/:id/alerts", "/:id/notifications"], requirePermission("assets", "r
   try {
     const asset = await prisma.asset.findUnique({ where: { id: req.params.id as string }, select: { id: true } });
     if (!asset) throw new AppError(404, "Asset not found");
-    res.json(await getAssetNotifications(req.params.id as string));
+    res.json(maskActionHeaders(await getAssetNotifications(req.params.id as string, { fullRules: hasPermission(req, "automationManagement", "read") })));
   } catch (err) {
     next(err);
   }

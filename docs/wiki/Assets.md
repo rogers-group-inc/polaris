@@ -463,6 +463,16 @@ no IPsec state: on a FortiGate polled over the REST API they appear under
 no link state or counters for them there, the status and traffic columns stay
 empty.
 
+**Nested rows: members pin through their aggregate, VLANs pin on their own.**
+The Interfaces table nests an aggregate's member ports and an interface's VLAN
+sub-interfaces under their parent. A member port has no **Poll 1m** box of its
+own, because pinning the aggregate covers the link. Its empty cell names the
+aggregate to pin instead. A member keeps its box when it is already pinned, or
+when its aggregate is missing from the table (a FortiLink trunk that is down).
+A VLAN sub-interface always has its own box: it is a separate segment with its
+own traffic, and pinning the parent does not cover it. The header checkbox
+pins or unpins every listed row that has a box, VLAN sub-interfaces included.
+
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
 When the interface's address sits inside a network Polaris knows, the click

@@ -850,15 +850,19 @@ input, select, textarea { font-family: inherit; }
   box-shadow: var(--shadow-card);
   margin: 6px 16px 12px;
 }
-/* The shell's persistent bar (app.js buildSearchbar). Search has no navbar
-   slot: tapping this bar opens #search over the page, and `.expanded` marks
-   that — the bar widens toward the screen edges while the scope shortcuts
-   below it unfold (.search-expand-in). */
-#m3-searchbar {
-  margin: 8px 16px 4px;
-  transition: margin .22s cubic-bezier(.2,0,0,1);
+/* The shell's search bar (app.js buildSearchbar). Hidden until search is
+   open: each page's top bar carries a magnifier (app.js addTopbarSearch), and
+   tapping it puts `.searching` on .app, which shows the bar. The bar then
+   unrolls leftward from the magnifier's side of the screen, while the scope
+   shortcuts below it unfold (.search-expand-in). Search has no navbar slot. */
+#search-slot { display: none; }
+.app.searching #search-slot { display: block; }
+#m3-searchbar { margin: 8px 8px 4px; }
+.app.searching #m3-searchbar { animation: searchbar-reveal .26s cubic-bezier(.2,0,0,1) both; }
+@keyframes searchbar-reveal {
+  from { clip-path: inset(0 0 0 82% round 28px); opacity: .4; }
+  to   { clip-path: inset(0 0 0 0 round 28px);   opacity: 1; }
 }
-#m3-searchbar.expanded { margin: 8px 8px 4px; }
 .m3-searchbar .icon-btn { width: 40px; height: 40px; }
 .m3-searchbar .input {
   flex: 1 1 auto;
@@ -1265,6 +1269,31 @@ input, select, textarea { font-family: inherit; }
 .asset-sheet.peek .asset-sheet-header { cursor: pointer; }
 .asset-sheet.peek #asset-sheet-refresh { display: none; }
 
+/* The handle + header band stays pinned at the top of the scrolling sheet
+   (asset-detail.js ensureSheet), so the name, screenshot, refresh and close
+   are reachable from the bottom of a long asset. Bled to the sheet's edges
+   (the sheet pads 24px) so content cannot show past its sides.
+   Transparent at rest; once the body scrolls under it (.scrolled, set by the
+   sheet's scroll listener) it fills OPAQUE, like the edit sheets' sticky
+   .ae-footer: a backdrop blur here does nothing, because the sheet's own
+   backdrop-filter makes the sheet the backdrop root, and the sheet's glass
+   mix would let scrolled text read straight through the buttons. Above the
+   body's positioned content (z-index), below the stacked sheets (those are
+   separate fixed elements, so no conflict). */
+.asset-sheet-top {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  margin: 0 -24px;
+  padding: 0 24px;
+  border-radius: var(--shape-xl) var(--shape-xl) 0 0;
+  background: transparent;
+  transition: background-color .15s ease, box-shadow .15s ease;
+}
+.asset-sheet.scrolled .asset-sheet-top {
+  background: var(--md-surface);
+  box-shadow: 0 1px 0 var(--md-outline-variant);
+}
 .asset-sheet-header {
   display: flex;
   align-items: center;
@@ -1565,7 +1594,7 @@ input, select, textarea { font-family: inherit; }
   to   { opacity: 1; transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  #m3-searchbar { transition: none; }
+  .app.searching #m3-searchbar { animation: none; }
   .search-expand-in { animation: none; }
 }
 .search-hint-section-label {
@@ -2786,6 +2815,28 @@ html:active-view-transition-type(polaris-theme)::view-transition-new(polaris-the
   align-items: center;
   gap: 8px;
   padding: 8px 16px 0;
+}
+
+/* A list's controls pinned above its scrolling rows (the Assets tab: view
+   tabs + filter/sort row + type chips) so they stay in reach at the bottom of
+   a long list. Sticky inside .app-body, which is the scroller. Treated like
+   .m3-topbar directly above it: no fill, which would cut a band across the
+   page glow, and a bare blur on ::before, invisible at rest, that smears the
+   cards scrolling under it so they don't fight the chips. No saturate(), for
+   the topbar's reason. */
+.list-sticky-head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.list-sticky-head::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
 }
 
 /* Alerts tab severity breakdown: one tile per severity with something in it,

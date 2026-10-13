@@ -136,7 +136,10 @@
     },
     render: function (body) {
       var p = prefs();
+      // The view tabs, filter/sort row and type chips are one pinned block
+      // (.list-sticky-head) so they stay in reach while the cards scroll.
       body.innerHTML = ''
+        + '<div class="list-sticky-head">'
         + '<div class="view-tabs" id="assets-views" role="tablist" aria-label="Asset views"' + (_state.views ? '' : ' hidden') + '>' + viewTabsHTML() + '</div>'
         + PolarisListControls.toolbarHTML({
             id: "assets",
@@ -147,6 +150,7 @@
             active: p.monitor.length > 0,
           })
         + '<div class="chip-row" id="assets-chips"></div>'
+        + '</div>'
         + '<div id="assets-list-host"></div>';
 
       PolarisListControls.wireToolbar("assets", {

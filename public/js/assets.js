@@ -8576,7 +8576,9 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     // saying so, and no way to switch it off. A member rendered at TOP level
     // (its aggregate is out of the ifTable — a downed FortiLink trunk) keeps
     // its checkbox: during that outage the member port IS the signal.
-    var isMember = !!(opts.isChild || (opts.flat && iface.ifParent));
+    // A VLAN subinterface nests under its parent too, but it is not a member:
+    // it is its own L3 segment with its own counters, so it keeps its box.
+    var isMember = iface.ifType !== "vlan" && !!(opts.isChild || (opts.flat && iface.ifParent));
     var checked  = isPinned ? " checked" : "";
     var disabled = canEdit ? "" : " disabled";
     var checkbox = (isMember && !isPinned)

@@ -65,10 +65,11 @@ beforeAll(async () => {
   adminRoleId = admin.id;
 
   // The attacker the review described: users:write + apiTokens:write and
-  // nothing that makes them admin-equivalent.
+  // nothing that makes them admin-equivalent. assets:read so the "plain" role
+  // below is within its own level (business rule 114(g)).
   managerRoleId = (await createRole({
     name: MANAGER_ROLE,
-    permissions: { users: "write", apiTokens: "write" },
+    permissions: { users: "write", apiTokens: "write", assets: "read" },
   })).id;
   plainRoleId = (await createRole({ name: PLAIN_ROLE, permissions: { assets: "read" } })).id;
   adminLikeRoleId = (await createRole({
@@ -167,7 +168,21 @@ d("apiTokens:write binding a token to a role", () => {
     expect(await prisma.apiToken.findUnique({ where: { name: `${TOKEN_PREFIX}escalated` } })).toBeNull();
   });
 
-  it("can still mint a token bound to a role that is not admin-equivalent", async () => {
+  it("cannot mint a token bound to a role granting more than its own level (rule 114(g))", async () => {
+    const beyond = await createRole({ name: `${PLAIN_ROLE}-beyond`, permissions: { assets: "write" } });
+    try {
+      const res = await request(app)
+        .post("/api/v1/api-tokens")
+        .set(bearer(managerToken))
+        .send({ name: `${TOKEN_PREFIX}beyond`, roleId: beyond.id });
+      expect(res.status).toBe(403);
+      expect(JSON.stringify(res.body)).toMatch(/assets=write/);
+    } finally {
+      await deleteRole(beyond.id).catch(() => {});
+    }
+  });
+
+  it("can still mint a token bound to a role within its own level", async () => {
     const res = await request(app)
       .post("/api/v1/api-tokens")
       .set(bearer(managerToken))

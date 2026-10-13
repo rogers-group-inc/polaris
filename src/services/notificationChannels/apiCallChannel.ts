@@ -11,8 +11,9 @@
  * rules edited around the guard, e.g. restored backups). Throws on a non-2xx
  * response so the delivery drain records `failed` + retries (≤3).
  *
- * SECURITY: headers are operator-typed and stored unmasked — the save-time
- * catalog/docs warn against putting credentials in them. Response bodies are
+ * SECURITY: headers are operator-typed secrets — sealed at rest on the rule,
+ * group and delivery row and masked in API responses (business rule 114(h));
+ * they arrive here already opened by the read pass. Response bodies are
  * never stored; failures keep only the status line (error text capped by the
  * drain).
  */

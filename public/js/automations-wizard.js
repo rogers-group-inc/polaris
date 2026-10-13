@@ -8543,7 +8543,7 @@ async function openAutomationWizard(existing, opts) {
         '</div>' +
         '<div class="form-group" style="margin-bottom:6px"><label style="font-size:0.8rem">Headers</label><div class="ac-headers">' + headerRows + '</div>' +
           '<button type="button" class="btn btn-sm btn-secondary ac-add-header" style="margin-top:4px">+ Header</button>' +
-          '<p class="ac-header-warn" style="display:none;font-size:0.78rem;color:var(--color-warning,#d97706);margin:4px 0 0">Headers are stored unmasked on the automation — never paste API keys, tokens, or credentials.</p>' +
+          '<p class="ac-header-warn" style="display:none;font-size:0.78rem;color:var(--color-text-secondary);margin:4px 0 0">Header values are encrypted and shown masked. A masked value is kept on save only while the URL is unchanged — change the URL and enter it again.</p>' +
         '</div>' +
         '<div class="form-group ac-body-wrap" style="margin-bottom:6px"><label style="font-size:0.8rem">Body template (JSON — tokens like {asset} render at fire time)</label><textarea class="ac-body tpl-field" rows="4" style="width:100%;font-family:var(--font-mono)" placeholder=\'{"asset":"{asset}","value":{value},"severity":"{severity}"}\'>' + escapeHtml(action.bodyTemplate || "") + '</textarea></div>' +
         '<div class="form-group" style="margin-bottom:0"><label style="font-size:0.8rem">Timeout</label> <input type="number" class="ac-timeout" min="1" max="' + (meta.maxTimeoutSec || 60) + '" value="' + (action.timeoutSec || 15) + '" style="width:80px"> sec</div>';

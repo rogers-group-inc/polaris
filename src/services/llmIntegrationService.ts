@@ -39,7 +39,7 @@ import {
   FUNCTION_KEYS,
   keySupportsLevel,
   hasPermission,
-  assertNoPrivilegeEscalation,
+  assertGrantWithinCaller,
   type AccessLevel,
 } from "../api/middleware/permissions.js";
 
@@ -106,9 +106,9 @@ export function assertCanProvision(req: Request): void {
         "which needs Roles Read-Write and API Tokens Read-Write. Ask an administrator.",
     );
   }
-  // The bot role is never admin-equivalent, so this is a no-op today; it is
-  // here so a future change to botPermissions() cannot quietly break rule 48.
-  assertNoPrivilegeEscalation(req, botPermissions(), "the AI Assistant integration's role");
+  // The bot role's token reads on the caller's behalf, so it may not read more
+  // than the caller can (rules 48 / 114(g)).
+  assertGrantWithinCaller(req, botPermissions(), "the AI Assistant integration's role");
 }
 
 export interface ProvisionResult {

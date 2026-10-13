@@ -364,7 +364,7 @@ export async function refreshSubnet(
   const diffUpdates: Array<{ id: string; data: Record<string, unknown> }> = [];
   const toCreate: Array<{
     subnetId: string; ipAddress: string; hostname: string | null; macAddress: string | null;
-    status: "active"; sourceType: "dhcp_reservation" | "dhcp_lease"; lastSeenLeased: Date; createdBy: string;
+    status: "active"; sourceType: "dhcp_reservation" | "dhcp_lease"; lastSeenLeased: Date; createdBy: null;
   }> = [];
 
   // Upsert each fresh entry.
@@ -500,7 +500,11 @@ export async function refreshSubnet(
         status: "active",
         sourceType: f.sourceType,
         lastSeenLeased: new Date(),
-        createdBy: actor || "refresh",
+        // Discovered, not authored: unowned, exactly as the discovery engine
+        // writes the same rows, so editing or releasing one stays a Full RW act
+        // rather than becoming the clicking user's (business rule 114(e)). Who
+        // clicked Refresh is in the audit Event.
+        createdBy: null,
       });
     }
   }

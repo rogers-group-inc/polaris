@@ -23,7 +23,7 @@ import {
   listQuarantineIntegrations,
 } from "../../services/apiTokenService.js";
 import { logEvent } from "./events.js";
-import { requirePermission, assertNoPrivilegeEscalation } from "../middleware/permissions.js";
+import { requirePermission, assertGrantWithinCaller } from "../middleware/permissions.js";
 import { getPublicApiBaseUrl } from "../../utils/publicUrl.js";
 
 const router = Router();
@@ -71,7 +71,7 @@ router.post("/", requirePermission("apiTokens", "write"), async (req, res, next)
       // `roles:write` being a rung below admin. A token bound to an
       // admin-equivalent role is a long-lived admin credential, so only a caller
       // who is admin-equivalent themselves may mint one.
-      authorizeRole: (role) => assertNoPrivilegeEscalation(req, role.permissions, `the role "${role.name}"`),
+      authorizeRole: (role) => assertGrantWithinCaller(req, role.permissions, `the role "${role.name}"`),
     });
     logEvent({
       action: "api_token.created",

@@ -69,9 +69,12 @@ escalation emails" are blank on the first send.
 | Body template | ≤ 10 000 chars, `{token}` vocabulary |
 | Timeout | 1–60 s, default 15 |
 
-> **Headers are stored unmasked by design** — a bearer token you put here is
-> readable in the code editor. It is also why **export drops `api_call` actions
-> entirely**: an exported file is something operators email and commit.
+> **Headers are treated as secrets** ([rule 114](Business-Rules#rule-114)).
+> They are encrypted at rest and shown masked everywhere, including the code
+> editor. Saving keeps a masked header's stored value only while the action's
+> URL is unchanged — change the URL and enter the header again. **Export drops
+> `api_call` actions entirely**: an exported file is something operators email
+> and commit.
 
 ### `script`
 

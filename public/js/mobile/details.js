@@ -113,11 +113,14 @@
   // ─── Map site ──────────────────────────────────────────────────────────
   // Delegates to PolarisMapTab.renderForSite — same map UI as the Map tab,
   // but pre-opens the bottom sheet for the named site so deep-links from
-  // search land where the operator expected. No top app bar (the floating
-  // searchbar plays that role).
+  // search land where the operator expected. Same top bar as the Map tab
+  // (title + the shell's search magnifier).
   var Site = {
     parentTab: "map",
-    renderTopbar: function () { return ""; },
+    renderTopbar: function () {
+      return (window.PolarisMapTab && PolarisMapTab.spec && PolarisMapTab.spec.renderTopbar)
+        ? PolarisMapTab.spec.renderTopbar() : "";
+    },
     render: function (body, ctx) {
       if (!window.PolarisMapTab) {
         body.innerHTML = placeholderBody(

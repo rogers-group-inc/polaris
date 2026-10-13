@@ -2226,7 +2226,7 @@ export async function getCapacitySnapshot(opts: {
     },
   };
 
-  snap.reasons = computeReasons(snap, opts.pgTuningNeeded, opts.advisor, await lifecycleReasonsSafe());
+  snap.reasons = computeReasons(snap, opts.pgTuningNeeded, opts.advisor, [...await lifecycleReasonsSafe(), ...await grantReviewReasonsSafe()]);
   snap.severity = deriveSeverity(snap.reasons);
   return snap;
 }
@@ -2243,6 +2243,31 @@ export async function getCapacitySnapshot(opts: {
  * Fetched here rather than threaded through every caller: getCapacitySnapshot
  * has four call sites today and a fifth would silently miss the reasons.
  */
+/**
+ * Business rule 114(i): a watch-severity reason while any role is flagged for
+ * a grant review (the 2026-10 corrective migration). Never fails the snapshot.
+ */
+async function grantReviewReasonsSafe(): Promise<CapacityReason[]> {
+  try {
+    const { listRolesNeedingGrantReview } = await import("./roleService.js");
+    const names = await listRolesNeedingGrantReview();
+    if (names.length === 0) return [];
+    const shown = names.slice(0, 5).map((n) => `"${n}"`).join(", ") + (names.length > 5 ? ` and ${names.length - 5} more` : "");
+    return [{
+      severity: "watch",
+      code: "role_grant_review",
+      message:
+        `${names.length} role(s) — ${shown} — hold Read-Write on a key whose Read-Write became a stronger grant in the ` +
+        "September 2026 permission update (Server Settings → System or → Data, Automation Scripts, Automations, or Maintenance).",
+      suggestion:
+        "Open each role under Users → Roles, check the access is intended, and save it or choose Mark reviewed. Lower any key the role should not hold.",
+    }];
+  } catch (err) {
+    logger.debug({ err }, "role grant-review reasons unavailable; capacity snapshot continues without them");
+    return [];
+  }
+}
+
 async function lifecycleReasonsSafe(): Promise<CapacityReason[]> {
   try {
     const { getPlatformLifecycle, lifecycleCapacityReasons } = await import(
@@ -2307,7 +2332,7 @@ export async function getCapacitySnapshotWithAdvisor(
   // so the advisor-driven reasons fire without doing a second snapshot pass.
   // The lifecycle result is memoized, so re-fetching it for this second pass
   // costs nothing and keeps the two passes' reason lists identical.
-  snapshot.reasons = computeReasons(snapshot, opts.pgTuningNeeded, gapsForReasons, await lifecycleReasonsSafe());
+  snapshot.reasons = computeReasons(snapshot, opts.pgTuningNeeded, gapsForReasons, [...await lifecycleReasonsSafe(), ...await grantReviewReasonsSafe()]);
   snapshot.severity = deriveSeverity(snapshot.reasons);
   return { snapshot, advisor };
 }

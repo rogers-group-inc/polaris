@@ -233,7 +233,7 @@ contactsRouter.get("/:id", requirePermission("contacts", "read"), async (req, re
 contactsRouter.post("/", requireOwnership("contacts"), async (req, res, next) => {
   try {
     const input = contactInputSchema.parse(req.body);
-    const contact = await createContact(input, requestActor(req) ?? null);
+    const contact = await createContact(input, requestActor(req) ?? null, { mayAdoptDirectory: req.permissionLevel === "fullwrite" });
     res.status(201).json({ contact });
   } catch (err) { next(err); }
 });
