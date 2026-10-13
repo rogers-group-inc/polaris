@@ -391,6 +391,20 @@ it alerts on the way up and stays quiet on the way back down. **Platform
 end-of-life warning** carries the same condition. Open either rule's trigger
 step to see the row, change it, or take it off.
 
+### Capacity alert hold
+
+When the action pattern matches a capacity event (`capacity.severity_changed`,
+`capacity.severity_recovered`, or a pattern such as `capacity.*`), the trigger
+step also shows **Alert after a capacity change holds for**. Capacity is checked
+every 10 minutes, and a severity change becomes an event only after every check
+for this long agrees, so a short spike never alerts. Below it, the step shows
+what was last recorded, or the change currently being waited out.
+
+This is one setting for the whole install, not part of the automation. It decides
+when the event is written at all, so every capacity automation and the Events
+log see the same held event. It saves as soon as you change it, whether or not
+you save the automation. See [rule 105](Business-Rules#rule-105).
+
 To find the field names an action offers, open **Events**, click the event you
 want to alert on and read its details — those keys are what a condition can
 name.

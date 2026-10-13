@@ -1957,10 +1957,18 @@ alerts on the first and clears on the second.
   pending change starts again from the next check rather than counting time
   nobody observed.
 
-Set the hold on the **Database** card: **Alert after a change holds for**, from
-*Alert on the first reading* up to four hours (the API accepts up to a day).
-Because the card shows the live grade, it also shows what the alerting side
-last recorded and any change it is currently waiting out.
+Set the hold in **Automations**: open a capacity automation (the built-in
+**Capacity severity escalated**, or any automation whose event trigger matches
+`capacity.severity_changed`) and go to its trigger step. **Alert after a
+capacity change holds for** runs from *Alert on the first reading* up to four
+hours (the API accepts up to a day). It is one setting for the whole install,
+not a setting of that automation: it decides when the event is written at all,
+so every capacity automation and the Events log see the same held event, and it
+saves as soon as you change it. You need write access to automations.
+
+The **Database** card names the hold and, because it shows the live grade, also
+shows what the alerting side last recorded and any change it is currently
+waiting out.
 
 ### Rule 106
 

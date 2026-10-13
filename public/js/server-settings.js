@@ -1984,29 +1984,17 @@ function renderPlatformLifecycleCard(lifecycle) {
 // ─── Capacity alert hold (business rule 105) ───────────────────────────────
 // The card grades capacity live, but the alert is recorded by the 10-minute
 // capacityWatch job only once a change has held for the operator's hold. This
-// row says what the alerting side last recorded, any change it is waiting out,
-// and lets the operator set the hold — so an alert beside a card that reads
-// Healthy has an explanation on the same screen.
-var CAPACITY_ALERT_HOLD_CHOICES = [0, 10, 20, 30, 60, 120, 240];
-
+// row says what the alerting side last recorded and any change it is waiting
+// out — so an alert beside a card that reads Healthy has an explanation on the
+// same screen. The hold itself is set on the event trigger step of a capacity
+// automation (Automations → the wizard), so the row only names it.
 function _capacityHoldLabel(min) {
-  if (min === 0) return "Alert on the first reading";
   if (min >= 60 && min % 60 === 0) return (min / 60) + (min === 60 ? " hour" : " hours");
   return min + " minutes";
 }
 
 function renderCapacityAlertHoldHtml(t) {
   if (!t) return "";
-  var choices = CAPACITY_ALERT_HOLD_CHOICES.slice();
-  if (choices.indexOf(t.holdMinutes) === -1) {
-    choices.push(t.holdMinutes);
-    choices.sort(function (a, b) { return a - b; });
-  }
-  var options = choices.map(function (m) {
-    return '<option value="' + m + '"' + (m === t.holdMinutes ? " selected" : "") + '>' +
-      escapeHtml(_capacityHoldLabel(m)) + '</option>';
-  }).join("");
-
   var status = "";
   if (t.pending) {
     var sinceMs = new Date(t.pending.since).getTime();
@@ -2022,38 +2010,13 @@ function renderCapacityAlertHoldHtml(t) {
   }
 
   return '<div class="capacity-alert-hold" style="margin:0.75rem 0;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
-    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-      '<label for="capacity-alert-hold" style="font-size:0.85rem;font-weight:600;margin:0">Alert after a change holds for</label>' +
-      '<select id="capacity-alert-hold" style="max-width:220px">' + options + '</select>' +
-    '</div>' +
-    '<p class="hint" style="margin:0.35rem 0 0">Capacity is checked every ' + (t.intervalMinutes || 10) +
-      ' minutes. A severity change — up or down — becomes a <code>capacity.severity_changed</code> / ' +
-      '<code>capacity.severity_recovered</code> event only after every check for this long agrees, so a ' +
-      'short-lived spike never alerts. This card shows the live reading, so it can differ from what has been recorded.</p>' +
+    '<p class="hint" id="capacity-alert-hold-rule" style="margin:0">Capacity alerts fire ' +
+      (t.holdMinutes === 0 ? 'on the <strong>first reading</strong>'
+        : 'after a change holds for <strong>' + escapeHtml(_capacityHoldLabel(t.holdMinutes)) + '</strong>') +
+      '. Change it on the trigger step of a capacity automation in ' +
+      '<a href="/automations.html">Automations</a>. This card shows the live reading, so it can differ from what has been recorded.</p>' +
     (status ? '<p class="hint" id="capacity-alert-hold-status" style="margin:0.35rem 0 0">' + status + '</p>' : '') +
   '</div>';
-}
-
-function initCapacityAlertHold() {
-  var sel = document.getElementById("capacity-alert-hold");
-  if (!sel) return;
-  var prev = sel.value;
-  sel.addEventListener("change", async function () {
-    var minutes = parseInt(sel.value, 10);
-    sel.disabled = true;
-    try {
-      await api.serverSettings.setCapacityAlertHold(minutes);
-      prev = sel.value;
-      showToast(minutes === 0
-        ? "Capacity changes now alert on the first reading"
-        : "Capacity changes must now hold for " + _capacityHoldLabel(minutes) + " before alerting", "success");
-    } catch (err) {
-      sel.value = prev;
-      showToast("Could not save the alert hold: " + (err && err.message ? err.message : "unknown error"), "error");
-    } finally {
-      sel.disabled = false;
-    }
-  });
 }
 
 function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
@@ -2820,7 +2783,6 @@ async function loadDatabaseInfo() {
     loadBackupSchedule();
     initUpdateControls();
     initCapacityActions();
-    initCapacityAlertHold();
     initCapacityAdvisorActions();
   } catch (err) {
     container.innerHTML = '<div class="settings-card"><p class="empty-state">Error: ' + escapeHtml(err.message) + '</p></div>';

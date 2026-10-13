@@ -1253,6 +1253,11 @@ const api = {
     // How many devices deleting/disabling this automation would leave with NO
     // down detection at all — the delete/disable confirmation reads it.
     removalImpact: (id) => request("GET", `/automations/${id}/removal-impact`),
+    // The global capacity alert hold (business rule 105): how long a capacity
+    // severity change must hold before it is written as a capacity.* Event.
+    // GET also returns the recorded severity and any change being waited out.
+    capacityAlertHold: () => request("GET", "/automations/capacity-alert-hold"),
+    setCapacityAlertHold: (minutes) => request("PUT", "/automations/capacity-alert-hold", { minutes: minutes }),
   },
   // Alert groups (business rule 75) — a named set of automations whose alerts
   // about one device fold into one alert, with the group owning delivery.
@@ -1647,7 +1652,6 @@ const api = {
     getQueueMode: () => request("GET", "/server-settings/queue-mode"),
     setQueueMode: (mode) => request("POST", "/server-settings/queue-mode", { mode: mode }),
     getCapacityAdvisor: () => request("GET", "/server-settings/capacity-advisor"),
-    setCapacityAlertHold: (minutes) => request("PUT", "/server-settings/capacity-alert-hold", { minutes: minutes }),
     getPlatformLifecycle: (refresh) => request("GET", "/server-settings/platform-lifecycle" + (refresh ? "?refresh=1" : "")),
     stageCapacityAdvisor: (keys) => request("POST", "/server-settings/capacity-advisor/stage", { keys: keys }),
     getSampleRetention: () => request("GET", "/server-settings/sample-retention"),

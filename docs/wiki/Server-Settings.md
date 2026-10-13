@@ -451,6 +451,12 @@ is actually healthy rather than on a timer. Add a **When it clears** action to
 that automation if you want the all-clear delivered as well — see
 [Automation-Triggers](Automation-Triggers).
 
+A change only counts once it has held for the **alert hold** (30 minutes by
+default, in either direction). The card names the hold and shows what alerting
+last recorded, or the change it is waiting out. The hold is set on the trigger
+step of a capacity automation, not here — see
+[rule 105](Business-Rules#rule-105).
+
 Only the 10-minute capacity check records these Events. A change becomes one
 only after every check for the **alert hold** agrees, in either direction, so a
 short spike never alerts and a host hovering at a threshold cannot clear and
