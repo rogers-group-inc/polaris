@@ -31,6 +31,10 @@
 @property --night-glow-h { syntax: "<length>"; inherits: false; initial-value: 0px; }
 
 :root {
+  /* The logo's north-ray red. The same in every theme (no theme block
+     redefines it): it is the brand, not a palette colour. Paints the duotone
+     shape of the active sidebar icon. */
+  --color-brand-red: #f2154a;
   --color-bg-primary: #151528;
   --color-bg-secondary: #0d0d1a;
   --color-bg-tertiary: #111122;
@@ -1220,6 +1224,11 @@ code {
   opacity: 0.7;
 }
 .sidebar-nav a.active svg { opacity: 1; }
+/* Duotone: on the active entry only, the icon's key shape (class="ac" in
+   app.js → ICONS) takes a translucent brand-red fill under the accent stroke.
+   Inactive entries stay monochrome. */
+.sidebar-nav a.active svg .ac,
+.sidebar-bottom-link.active svg .ac { fill: var(--color-brand-red); fill-opacity: 0.45; }
 .sidebar-bottom-link {
   display: flex;
   align-items: center;
