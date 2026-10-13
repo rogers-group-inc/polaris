@@ -269,3 +269,45 @@ export function monitorStatusFor(
 export function isConfigStatusEdge(previous: string | null, next: MonitorStatus): boolean {
   return previous === "passive" || next === "passive";
 }
+
+/**
+ * Does this transition write a `monitor.status_changed` Event?
+ *
+ * Only the two edges an operator cares about: INTO `down`, and back to `up`
+ * after a down. A single missed poll used to log up → warning → up — one SNMP
+ * reply lost every few minutes filled the Events page with alternating
+ * INFO/WARNING pairs that described no outage at all. Missed polls are still
+ * charted, still feed packet loss and still count toward the automation's
+ * `missedPolls`; they simply are not audit events.
+ *
+ *   "log"       — write the Event now: down → up, and up / unknown → down.
+ *   "if-paired" — the edge leaves `recovering` / `warning`. Both are reachable
+ *                 from a plain missed poll AND from the climb back out of
+ *                 `down`, so the row alone cannot tell whether this →up ends
+ *                 an outage, or whether this →down is a new outage or one miss
+ *                 during the climb back out of the old one. The caller reads
+ *                 the asset's latest status Event and writes this one only when
+ *                 it pairs with it (`statusEventPairs`).
+ *   "skip"      — everything else: same-state polls, →warning, →recovering,
+ *                 →unknown, the first measurement (unknown → up), and the
+ *                 passive configuration edge (`isConfigStatusEdge`).
+ */
+export type StatusEventDecision = "log" | "if-paired" | "skip";
+
+export function statusEventDecision(previous: string | null, next: MonitorStatus): StatusEventDecision {
+  if (previous === next || isConfigStatusEdge(previous, next)) return "skip";
+  if (next !== "up" && next !== "down") return "skip";
+  if (previous === "recovering" || previous === "warning") return "if-paired";
+  if (next === "up") return previous === "down" ? "log" : "skip";
+  return "log";
+}
+
+/**
+ * For an "if-paired" edge: does it alternate with the asset's latest status
+ * Event? An up must follow a down; a down must not follow a down. `lastNext` is
+ * that Event's `details.nextStatus`, or undefined when there is none on record
+ * (pruned, or the asset has only ever missed polls) — which is never a down.
+ */
+export function statusEventPairs(lastNext: unknown, next: "up" | "down"): boolean {
+  return next === "up" ? lastNext === "down" : lastNext !== "down";
+}

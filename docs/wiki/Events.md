@@ -121,7 +121,7 @@ beyond letters, digits, `.`, `_` and `-` (and a leading hyphen), and a port outs
 
 | Action | Means |
 |---|---|
-| `monitor.status_changed` | the pill moved. **Not written for entering or leaving `passive`** — that is a configuration edge, not a state change |
+| `monitor.status_changed` | the device went **Down**, or came back **Up** after being down. A missed poll (the pill reading *Missed*) and the answer after it are not events — they show on the response-time chart and count toward the down automation's missed-poll limit. One miss while a device climbs back out of an outage does not write a second *Down*. Not written for entering or leaving `passive` — that is a configuration edge, not a state change |
 | `monitor.dependency_suppressed` / `_resumed` | a subtree went behind a dark parent, or came back |
 | `monitor.down_detection_absent` | **one-shot** — the fleet has **no down automation at all**, so nothing is being judged |
 | `monitor.interface_up` | a **monitored** (pinned) interface came up. The message names the speed and duplex it negotiated — *Interface port5 (Uplink) on SW-1 came up — 1 Gbps, full duplex* — and says *unknown* for either one the source does not report. Filed on the asset, so its **Events** tab shows it |
