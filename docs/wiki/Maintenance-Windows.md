@@ -79,13 +79,12 @@ applies, because the device is genuinely gone.
 
 ## Creating one
 
-Three tabs:
+Two tabs:
 
 | Tab | |
 |---|---|
 | **Create Schedule** | the form, with a live device-list preview |
-| **Schedules** | the list of what exists |
-| **Calendar** | every schedule's occurrences, as a month grid, a week or day time grid, or a list |
+| **Schedules** | the list of what exists, with a link to the calendar on the Events page |
 
 A schedule selects devices either by a **filter** or by **explicit asset ids**
 (which is what the bulk bar pins), and states a recurrence.
@@ -94,24 +93,28 @@ A schedule selects devices either by a **filter** or by **explicit asset ids**
 bottom-right in the modal footer and show only on the Create Schedule tab; the
 **×** in the header closes the modal.
 
-### The Calendar tab
+### The calendar
+
+Every schedule's occurrences are on the **Calendar** tab of the
+[Events](Events#calendar) page, alongside booked and past reboots and firmware
+upgrades. The **Schedules** tab's link — *See every window — with scheduled
+reboots and firmware upgrades — on the Events calendar* — opens it.
 
 Occurrences are expanded **server-side**, because the recurrence engine works in
 server-local wall clock and a browser in another timezone would paint them on
 the wrong days.
 
-Four views, switched top-right and remembered per browser; **‹ › Today** step
-by the unit the view shows.
-
 | View | What you see |
 |---|---|
-| **Month** | A window **a day or longer** (a change freeze, an ad-hoc "until next month") is drawn **once**, as a bar across the week row, continuing onto the next row with an open edge. A shorter window is a **chip on the day it starts**, labelled with its hours — an overnight 22:00 → 02:00 window is one chip, not one on each night. More than three bars in a week fold behind **+N more windows**. |
-| **Week** / **Day** | Hours down the side, a column per day, each window a block at its hours (an overnight window is a block to midnight and another from it). Windows a day or longer sit in an **all-day** band above the hours. Today's column carries a red "now" line. |
+| **Month** | A window **a day or longer** (a change freeze, an ad-hoc "until next month") is drawn **once**, as a bar across the week row, continuing onto the next row with an open edge. A shorter window is a **chip on the day it starts**, labelled with its hours — an overnight 22:00 → 02:00 window is one chip, not one on each night. More than three bars in a week fold behind **+N more**. |
+| **Week** / **Day** | Hours down the side, a column per day, each window a block at its hours (an overnight window is a block to midnight and another from it). Windows a day or longer sit in an **all-day** band above the hours. Today's column carries a "now" line. |
 | **List** | The same windows as rows — full names, dates, durations — grouped by the day they start, with windows already running when the month opens listed first. |
 
-Clicking a day cell (or an hour in the Week / Day grid) opens the editor
-prefilled with a one-time window there; clicking any window opens its schedule
-for edit. The legend under the grid tells planned, ad-hoc and disabled apart.
+Clicking a window opens this dialog on its schedule for edit. Clicking an empty
+day (or an hour in the Week / Day grid) opens this dialog with a new one-time
+window prefilled there, on the **Create Schedule** tab — that needs
+`maintenanceManagement` Read-Write; without it empty days are not clickable.
+The legend under the calendar tells planned, ad-hoc and disabled windows apart.
 
 ---
 
@@ -205,8 +208,8 @@ went too.
 
 ## Watching what is in maintenance right now
 
-The Maintenance modal's **Schedules** and **Calendar** tabs tell you what is
-planned. To see what is *running*, put the **Active Maintenance** widget on a
+The Maintenance modal's **Schedules** tab and the [Events calendar](Events#calendar)
+tell you what is planned. To see what is *running*, put the **Active Maintenance** widget on a
 dashboard ([Dashboard](Dashboard#the-widget-library)). One row per schedule in
 effect, showing what it holds — device count and the asset types among them —
 and **when its window expires**, in the server's wall clock with a countdown

@@ -6,7 +6,9 @@ script runs.
 
 ![The Events page: a filterable, time-ordered audit log of configuration changes and discovery activity.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/desktop-noon-events.png)
 
-Gated by `events`.
+Gated by `events`. The page has two tabs: **Events** (the log, below) and
+**Calendar** — maintenance windows, reboots and firmware upgrades, booked and past
+(see [Calendar](#calendar)).
 
 ---
 
@@ -56,6 +58,93 @@ An automation only writes its *fired* event when it has a **Create an Event** ac
 the clear is written regardless. Acknowledging or clearing alerts by hand is one
 event for the whole selection, so it appears here on the Events page but not on
 each device's tab.
+
+---
+
+## Calendar
+
+The **Calendar** tab puts every operation Polaris runs on a schedule on one
+calendar, booked and past, so it answers both "what runs tonight?" and "what ran
+last Tuesday?":
+
+| Kind | What appears |
+|---|---|
+| **Maintenance** | every [maintenance window](Maintenance-Windows)'s occurrences, planned and ad-hoc |
+| **Reboots** | every [booked reboot](Assets#reboot) and every reboot that ran, whether started now or from a booking |
+| **Firmware** | every [booked firmware upgrade](Assets#firmware) and every upgrade that ran |
+
+A link ending in `#calendar` (`/events.html#calendar`) opens the page on this
+tab; the Maintenance dialog's **Schedules** tab links here. The **Export** menu
+belongs to the log and is hidden on this tab.
+
+### Views
+
+**Month**, **Week**, **Day** and **List**, with **‹ ›** to step by the view's unit
+and **Today** to come back. Your choice of view is remembered in this browser.
+
+- **Month** — a window a day or longer is one bar across the week; anything
+  shorter is a chip on the day it starts. A busy day folds behind **+N more**.
+- **Week** / **Day** — an hour-by-hour grid, with a line at the current time
+  and items placed at their times; overlapping items sit side by side.
+- **List** — every item grouped by the day it starts, with windows already
+  running when the month opens listed first.
+
+### Reading an item
+
+A booking that has not run yet is drawn as a **point** at its booked time. Once
+it runs it spans from start to finish, so a long firmware flash reads as long.
+A booking that ran is **one** item carrying what happened to its run.
+
+The **left edge** says what kind of item it is; the **fill** says how it went:
+
+| Fill | Status |
+|---|---|
+| dashed outline | booked, not yet run |
+| green | succeeded |
+| red | failed, missed or refused |
+| amber | unverified — the device answered, but nothing proved it rebooted |
+| struck through | cancelled (a disabled maintenance schedule is struck through the same way) |
+
+Hover an item for its device, time, status, who booked or started it — a
+username, or the automation that booked it — and any error. The legend under the
+calendar names each colour.
+
+### Showing and hiding kinds
+
+**Maintenance**, **Reboots** and **Firmware** checkboxes above the calendar
+show or hide each kind; the choice is remembered in this browser. A kind
+appears only when your role can read it on its own page:
+
+| Kind | Also needs |
+|---|---|
+| Maintenance | `maintenanceManagement` Read |
+| Reboots, Firmware | `assets` Read |
+
+A kind your role cannot read is not offered at all, so when a kind's checkbox is
+shown and ticked, no items of that kind means none are scheduled — not that you
+may not see them. With none of the three keys, no checkbox is shown and the
+calendar stays empty.
+
+### Clicking
+
+| Click | Opens |
+|---|---|
+| a maintenance window | the Maintenance dialog on that schedule |
+| a reboot or firmware item | the device's details on its **System** tab. A booking still pending opens the **Reboot…** or firmware dialog to move its time, change who is told, or cancel it (with `assets` Read-Write); a run opens its log |
+| an empty day, or an hour in Week / Day | the Maintenance dialog with a new one-time window prefilled on that day — that hour, or 20:00 (now, for today) — for two hours. Nothing is saved until you name it, choose its devices and click **Save**. Offered only with `maintenanceManagement` Read-Write; without it, empty days are not clickable |
+
+A booking changed or cancelled from the dialog a click opened shows on the
+calendar straight away.
+
+### Times
+
+Every time on the calendar is the **Polaris server's local time** — the clock
+the schedulers run on — whatever time zone your browser is in, so an item is
+always on the day it will actually run. The hint above the calendar says so.
+
+A range holding more than 2000 reboots or 2000 firmware upgrades shows the first
+2000 of each and says **"Too many items to show them all here — some are
+omitted."**; step to a shorter view (Week or Day) to see the rest.
 
 ---
 

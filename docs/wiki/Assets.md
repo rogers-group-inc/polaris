@@ -616,6 +616,11 @@ cancellation is an `asset.reboot_schedule_cancelled` Event on the asset that
 says why; no email is sent for it. A **Reboot now** that fails leaves the
 booking in place.
 
+Every booked and past reboot, across the fleet, is on
+[Events → Calendar](Events#calendar), coloured by how it went; clicking one
+opens this device's **System** tab — a pending booking straight into the
+**Reboot…** dialog to change or cancel it, a reboot that ran into its log.
+
 #### Firmware
 
 Under the agent card, a **switch, access point or firewall** gets a

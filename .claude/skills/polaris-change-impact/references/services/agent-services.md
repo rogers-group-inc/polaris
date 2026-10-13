@@ -42,6 +42,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:**
 - `src/api/routes/firmware.ts` — `firmwareAssetRouter` (`GET /`, `POST /`, `GET /runs`) and `GET /server-settings/firmware/runs/:id`.
 - `src/jobs/failOrphanedFirmwareRuns.ts` — the boot sweep.
+- Reader of its rows, not a caller: `src/services/operationsCalendarService.ts` reads `FirmwareUpgradeRun` by `startedAt` range for the Events page's Calendar tab.
 - `src/services/firmwareScheduleService.ts` — `checkSchedulableUpgrade` at booking, `startFirmwareUpgrade({ scheduleId })` when a booking fires, `FirmwareRunConflictError` to tell "wait" from "refused" (rule 93). The reverse edge is a LAZY import: the runner's `.finally` and `failOrphanedFirmwareRuns` call `notifyScheduledRunFinished` through `notifyScheduledRun`, like `requestRediscover`, because the schedule service imports this one.
 - `public/js/assets.js` — the Firmware card, through the routes (`_startFirmwarePoll` polls the run).
 
@@ -77,6 +78,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:**
 - `src/api/routes/firmware.ts` — `firmwareAssetRouter`: `GET /` folds in `getPendingSchedule` as `schedule`; `GET /schedules`, `GET /schedules/defaults`, `POST /schedules`, `PATCH /schedules/:scheduleId`, `DELETE /schedules/:scheduleId`.
 - `src/jobs/startScheduledFirmwareUpgrades.ts` — `runDueSchedules` every 60 s (web/all role).
+- Reader of its rows, not a caller: `src/services/operationsCalendarService.ts` reads `FirmwareUpgradeSchedule` by `scheduledFor` range for the Events page's Calendar tab — a new booking status needs a colour there (`public/js/ops-calendar.js → statusClass()`).
 - `src/services/firmwareUpgradeService.ts` — `notifyScheduledRunFinished`, lazily, from the runner's `.finally` and from `failOrphanedFirmwareRuns`.
 - `public/js/assets.js` — the Firmware card: the upgrade dialog's "Schedule for later" box, and Change… / Cancel scheduled upgrade, through the routes.
 - `public/js/mobile/asset-detail.js` — the same on the phone's OS row: the confirm sheet's "Schedule for later" box, Change / Cancel.
@@ -108,6 +110,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:**
 - `src/api/routes/reboot.ts` — `GET /`, `POST /`, `GET /runs`, `GET /runs/:runId`.
 - `src/services/rebootScheduleService.ts` — `checkSchedulableReboot` at booking, `startReboot({ scheduleId })` when a booking fires, `RebootRunConflictError` to tell "wait" from "refused".
+- Reader of its rows, not a caller: `src/services/operationsCalendarService.ts` reads `RebootRun` by `startedAt` range for the Events page's Calendar tab — a new run status needs a colour there (`public/js/ops-calendar.js → statusClass()`).
 - `src/jobs/failOrphanedRebootRuns.ts` — the boot sweep.
 - `public/js/assets.js` — the slide-over's Reboot… button and agent card Reboots row, through the routes (`_startRebootPoll` polls the run).
 
@@ -155,7 +158,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `rebootService.{checkSchedulableReboot, startReboot, RebootRunConflictError, recordRebootCredentialUse}`; `firmwareScheduleService.{normalizeRecipients, assertSchedulableTime, LATE_GRACE_MS, CONFLICT_WAIT_MS, MIN_LEAD_MS}` (one copy of the booking rules); `quietTimeSummaryService.resolveSummaryChannel`; `notificationDeliveryService.{applyBrandLetterhead, sendEmailThroughChannel}`; `userTimezoneService.{resolveTimeZone, serverTimeZone}`; `utils/rebootResultEmailTemplate.renderRebootResultEmail`; `eventLogService.logEvent`.
 
-**Used by:** `src/api/routes/reboot.ts` (`GET /schedules`, `GET /schedules/defaults`, `POST /schedules`, `PATCH` / `DELETE /schedules/:scheduleId`; `GET /` folds in the pending booking); `src/jobs/startScheduledReboots.ts` (`runDueRebootSchedules`, 60 s); `src/services/rebootService.ts` (lazy `notifyScheduledRebootFinished` from the runner's `.finally` and the boot sweep); `src/services/automationActionService.ts` (lazy `bookRebootFromAutomation` from the `reboot` action branch, rule 115(c)); `public/js/assets.js` (the reboot modal's schedule box).
+**Used by:** `src/api/routes/reboot.ts` (`GET /schedules`, `GET /schedules/defaults`, `POST /schedules`, `PATCH` / `DELETE /schedules/:scheduleId`; `GET /` folds in the pending booking); `src/jobs/startScheduledReboots.ts` (`runDueRebootSchedules`, 60 s); `src/services/rebootService.ts` (lazy `notifyScheduledRebootFinished` from the runner's `.finally` and the boot sweep); `src/services/automationActionService.ts` (lazy `bookRebootFromAutomation` from the `reboot` action branch, rule 115(c)); `public/js/assets.js` (the reboot modal's schedule box; `_openBookingFromCalendar` opens it in change mode from an Events-calendar click). Reader of its rows, not a caller: `src/services/operationsCalendarService.ts` (`RebootSchedule` by `scheduledFor` range, the Events page's Calendar tab).
 
 **Invariants:**
 - **An automation BOOKS, never sends** (rule 115(c)). `bookRebootFromAutomation` skips — an info `asset.reboot_automation_skipped` Event, not a failure — when a booking is already pending for the asset, or the device rebooted within `minGapHours` (a `RebootRun` not `failed`, or `Asset.lastRebootAt`; the loop guard against a leak that refills memory after every boot). Otherwise it calls `createRebootSchedule` with actor `automation:<rule name>` and `context` `{ automation, ruleId, ruleName, notificationId }`, so every booking gate (opt-in, HA, asset kind) applies and a refusal throws to the caller as an action error; a lost race (409 "already scheduled") is a skip. Then `recordRebootCredentialUse` with `{ username: null, actor, mayUseAny: false }` — always `credential.borrowed` (rule 112). `nextAutomationRebootTime`: `now` = just past `MIN_LEAD_MS`; `at` = the next HH:MM on the server's clock at least `MIN_LEAD_MS` away, stepped by calendar day (`setDate`, never +24 h — the DST trap).
