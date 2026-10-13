@@ -40,3 +40,7 @@ The Event is on the credential (`resourceType: "credential"`, `resourceId` = its
 ### 2026-10-13: a reboot records its credential too
 
 Rule 115 (reboots) landed the same day as this rule, on a branch opened before it merged. A reboot sends a stored credential to a device exactly as a flash does, so it records the same way: `rebootService.recordRebootCredentialUse` writes `credential.used` / `credential.borrowed` with `via: "device.reboot"` and the gate's address as the destination, from `POST /assets/:id/reboot` and when a reboot is booked (`POST /assets/:id/reboot/schedules`). The integration's own token and the agent are not stored credentials and record nothing.
+
+### 112(e) — read-level routes aim only the asset's own credentials (2026-10-13, re-scan F60, F62)
+
+Rule 112 trusts whoever may EDIT an asset to aim any credential at it. Three routes that aim a credential were read-level: the asset's SNMP walk (`assetsProbe:read`, held by the built-in read-only roles) and the two MIB walks (`mibDatabase:read`). They took any credential id, decrypted it and sent its community or v3 keys to the asset — so a read-only user could push any stored SNMP secret to any asset address. Owner decision 2026-10-13 (recommended option, keeping 112's trust-and-audit model rather than credential ownership): a read-level caller may walk with a credential the asset already uses — its slots, its resolved class-override credentials, its integration's monitor credential — and anything else needs `assets:write`. The audit still records every walk.

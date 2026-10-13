@@ -35,3 +35,7 @@ The fourth phase of the follow-up to the 2026-10-11 whole-repository security sc
 
 - **FortiGate / FortiManager / AD / Windows hosts that are DNS names** are judged at save (literals) and not re-resolved at connect. Their transport is `tlsFetch` and the directory clients; handing them a guarded `lookup` is the same change as the one above and is not made here.
 - **`restapi` credential `baseUrl`** is operator-written config on a credential, outside the typed-host path.
+
+### The restapi test's base URL (2026-10-13, re-scan F73)
+
+A restapi credential is aimed at its own `baseUrl`, so the typed-host guard in `POST /credentials/test` never saw where the test went. The route now runs `resolveAllowedHost` on the base URL's host as well, answering a refusal as a test result. The live REST probe used by monitoring is unchanged — it serves assets an editor attached it to — and the connect-time pin is phase 12's (the same class as F58).

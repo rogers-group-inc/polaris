@@ -104,6 +104,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Two-phase: service-account bind locates the user, then a rebind AS the user verifies credentials; optional reverse group search catches groups missing from `memberOf`.
 - Stable user id is objectGUID (hex) or entryUUID, falling back to DN; settings cache has a short TTL and preserves the bindPassword mask on write unless changed.
 
+- **Rule 111(a) (2026-10-13, re-scan F3).** `keptLdapBindPassword(cur, input)` decides the bind password to save: an echoed mask keeps the stored one only while `url` and `tlsVerify` are unchanged, else a 400 asking for it again; anything typed is saved as typed (blank clears). Never restore the stored password anywhere else.
+
 **When changing this:**
 - Keep the empty-password check first, before any network I/O.
 
@@ -123,6 +125,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `state` (CSRF) / `nonce` (replay) / `codeVerifier` (PKCE) live in the PG-backed session between login and callback; the callback is a top-level GET so SameSite=Lax cookies are sent.
 - Callback never honors a caller-supplied return path — always redirects to `/`; `clientSecret` masked on read, preserved-on-unchanged on write.
 - Redirect URI is derived from `POLARIS_PUBLIC_URL` (missing → throws with a clear message); userinfo claims merge into ID-token claims when present.
+
+- **Rule 111(a) (2026-10-13, re-scan F4).** `keptOidcClientSecret(cur, input)`: an echoed mask keeps the stored client secret only while `discoveryUrl` and `clientId` are unchanged — the discovery document names the token endpoint the secret is posted to.
 
 **When changing this:**
 - Never add a caller-supplied return_uri / open-redirect surface to the callback.
@@ -239,6 +243,20 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - A new route that lets a caller choose a stored credential and a destination calls `recordCredentialUse` with a new `CredentialUseVia` (add its label to `VIA_LABEL`).
 - Keep `ASSET_CREDENTIAL_SLOTS` in step with the asset's credential FK columns.
 
+
+## services/assetCredentialScopeService.ts
+
+**Purpose:** business rule 112(e) — which stored credentials an asset already uses, so a read-level route may aim only those at it.
+
+**Public API:** `credentialIdsAttachedToAsset(assetId)` → Set of credential ids (the asset's `ASSET_CREDENTIAL_SLOTS`, the class-override `*CredentialId`s `resolveMonitorSettings` returns, the discovering integration's `config.monitorCredentialId`); `assertCredentialInAssetScope(assetId, credentialId, mayUseAnyCredential)` — 403 unless the credential is in that set or the caller holds `assets:write`.
+
+**Reads:** Asset (credential slots, assetType, ipAddress, discoveredByIntegration type + config), the monitor-settings resolver caches. **Writes:** nothing.
+
+**Callers:** `POST /assets/:id/snmp-walk`, `runMibWalk` (both MIB walk routes). The rule 112 audit (`recordCredentialUse`) still runs after the check.
+
+**When changing this:**
+- A new read-level route that sends a stored credential to an asset MUST call `assertCredentialInAssetScope` with the caller's `assets:write`.
+- A new per-asset credential slot belongs in `ASSET_CREDENTIAL_SLOTS` (credentialUseAuditService), which this reads.
 ## services/sshHostKeyService.ts
 
 **What it owns:** Trust-on-first-use pinning for SSH SERVER host keys — the `SshHostKey` table, the verify/pin decision, the fingerprint + key-type parsers, and the operator list/delete.

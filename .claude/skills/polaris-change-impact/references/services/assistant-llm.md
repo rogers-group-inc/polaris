@@ -251,6 +251,8 @@ turn orchestrator, its playbooks, the conversation store, the per-user memory, t
 - The in-app chat NEVER uses this token — chat lookups run as the chatting user; the token is only for the model host's own direct API calls.
 - `roleId` / `roleName` / `tokenId` / `toolCheck` live in `Integration.config` and are server-stamped (`LLM_SERVER_KEYS` in the route); the PUT path re-attaches them from the stored row. `toolCheck` is DROPPED instead when the PUT moves `provider`, `host`, `port`, `basePath`, `useHttps`, `model` or `azureApiShape` — a verdict describes one model on one server. An absent `provider` / `azureApiShape` (a row saved before Azure support) compares as its default, so a plain save of such a row keeps its verdict.
 
+- **Rule 111(e) (2026-10-13, re-scan F59).** `LLM_REPOINT_KEYS` / `llmRepointKeys(stored, next)` — provider, host, port, basePath, useHttps, allowLoopback, azureApiShape, systemPromptExtra (not the model). `PUT /integrations/:id` on an llm row runs `assertCanProvision(req)` when any changed, and logs the warning `integration.updated` naming them. A key an old row never stored compares only against a known default, so its first plain save is not a move. A new llm config key that decides where traffic goes, or what every assistant is told, belongs in `LLM_REPOINT_KEYS`.
+
 **When changing this:**
 - A new function key: decide whether the bot should read it, and add it to `BOT_EXCLUDED_KEYS` if it exposes secrets, identities or administration.
 - Existing bot roles are NOT updated when a key is added later — they get `none` from `normalizePermissions`; an operator widens them by hand under Users → Roles.
