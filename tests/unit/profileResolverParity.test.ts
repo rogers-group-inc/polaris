@@ -18,6 +18,7 @@
  * fifth kind of difference — any field not listed in DELTAS — fails the run.
  */
 
+import { FORTISWITCH_MODEL_PARSE } from "../../src/utils/fortiswitchModel.js";
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   pickVendorProfileMerged,
@@ -61,7 +62,7 @@ function profile(manufacturer: string, matchPattern: string | null, metrics: Met
 }
 
 // The FortiSwitch model query, exactly as the migration's two INSERTs stamp it.
-const FS_PARSE = { parsePattern: "^(?!v\\d)(.+?)[-\\s]v\\d", parseTemplate: "FortiSwitch $1" };
+const FS_PARSE = { parsePattern: FORTISWITCH_MODEL_PARSE.pattern, parseTemplate: FORTISWITCH_MODEL_PARSE.template };
 
 // Fortinet: FortiOS defaults on the rows, FortiSwitch / FortiAP as model
 // patterns, and beside each of those the device-type sibling the migration

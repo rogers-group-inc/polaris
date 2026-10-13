@@ -12,9 +12,11 @@
  * Pure. Business rule 108.
  */
 
+import { trimTrailing } from "./trimTrailing.js";
+
 /** Lowercase and drop trailing slashes (a lone "/" stays). */
 export function canonicalRoutePath(path: string): string {
   const lower = String(path ?? "").toLowerCase();
-  const trimmed = lower.replace(/\/+$/, "");
+  const trimmed = trimTrailing(lower, "/");
   return trimmed === "" ? "/" : trimmed;
 }

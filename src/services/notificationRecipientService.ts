@@ -21,6 +21,7 @@
  * per-notification.
  */
 
+import { trimTrailing, isWhitespaceChar } from "../utils/trimTrailing.js";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import type { Prisma } from "../generated/prisma/client.js";
@@ -147,7 +148,7 @@ export function buildComposedEmail(comp: EmailComposition, ctx: Record<string, s
   return {
     // A blank token can leave a dangling separator ("host — "); tidy the tail
     // rather than making the subject template conditional.
-    subject: subject.replace(/[\s—\-–:|]+$/u, "").trim(),
+    subject: trimTrailing(subject, (c) => isWhitespaceChar(c) || "—-–:|".includes(c)).trim(),
     text: pruneEmptyTextLines(text),
     // Dead links are pruned again after the per-recipient {ack} fill, since
     // that is when a recipient without a link gets an empty href.

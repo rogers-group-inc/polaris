@@ -19,6 +19,7 @@
  *   - matchPattern must compile.
  */
 
+import { FORTISWITCH_MODEL_PARSE } from "../../src/utils/fortiswitchModel.js";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -121,7 +122,7 @@ describe("aggregate, label, parse", () => {
   it("requires a valid parse on a configured model row, and refuses parse fields elsewhere", async () => {
     h.metricRow = { id: "metric-3", metricKey: "model" };
     const ok = await createOverride("p1", "model", {
-      assetType: "switch", symbol: "fsSysVersion", parsePattern: String.raw`^(?!v\d)(.+?)[-\s]v\d`, parseTemplate: "FortiSwitch $1",
+      assetType: "switch", symbol: "fsSysVersion", parsePattern: FORTISWITCH_MODEL_PARSE.pattern, parseTemplate: "FortiSwitch $1",
     });
     expect(ok.parseTemplate).toBe("FortiSwitch $1");
     await expect(createOverride("p1", "model", { assetType: "switch", symbol: "fsSysVersion" })).rejects.toThrow(/parsePattern is required/);

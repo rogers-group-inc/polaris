@@ -65,7 +65,8 @@
  *    labels and the card's own prose say it.
  */
 
-import { clampRegexSubject, findUnsafeRegexConstruct } from "./regexSafety.js";
+import { clampRegexSubject } from "./regexSafety.js";
+import { safeRegexProblem, tryCompileSafeRegex } from "./safeRegex.js";
 
 /** Facts a source can offer the resolver. Every field is optional. */
 export interface AssetTypeFacts {
@@ -259,21 +260,10 @@ export const MATCH_MAX_LEAVES = MAX_LEAVES;
  * turn one typo into a failed discovery for the whole fleet.
  */
 export function validateRegex(pattern: string): string | null {
-  let re: RegExp;
-  try {
-    re = new RegExp(pattern, "i");
-  } catch (err) {
-    return `Invalid regular expression: ${(err as Error).message}`;
-  }
-  // A JavaScript regex cannot be interrupted, and this one is also run by the
-  // match-preview endpoint, which needs only `assets:read`. The one shape that
-  // goes exponential is refused here, while whoever typed it is still looking.
-  // See utils/regexSafety.ts.
-  const unsafe = findUnsafeRegexConstruct(re.source);
-  if (unsafe) {
-    return `This pattern may never finish on some inputs: \`${unsafe}\` repeats a group that already repeats. Rewrite it so only one of the two repeats.`;
-  }
-  return null;
+  // RE2 (business rule 116): linear whatever the pattern, so the only thing to
+  // refuse is one it cannot compile — also run by the match-preview endpoint,
+  // which needs only `assets:read`.
+  return safeRegexProblem(pattern, { ignoreCase: true });
 }
 
 /** Resolve a stored operator spelling to a current one, or null. */
@@ -505,12 +495,9 @@ export function clauseMatches(clause: MatchClause, facts: AssetTypeFacts): boole
       // catastrophic one, and the subject is device-supplied, so both ends are
       // bounded here too: an unsafe stored pattern is a no-match, and nothing
       // is run against more than MAX_REGEX_SUBJECT characters.
-      try {
-        const re = new RegExp(clause.value, "i");
-        hit = findUnsafeRegexConstruct(re.source) ? false : re.test(clampRegexSubject(text));
-      } catch {
-        hit = false;
-      }
+      // On RE2 (business rule 116): a stored pattern it cannot compile is a
+      // no-match, never a throw into the loop.
+      hit = tryCompileSafeRegex(clause.value, { ignoreCase: true })?.test(clampRegexSubject(text)) ?? false;
       break;
     }
     default: hit = false;

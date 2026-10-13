@@ -11,15 +11,42 @@
  * blank — the deadlock fortinetClassHint.test.ts describes.
  */
 
+import { FORTISWITCH_MODEL_PARSE, LEGACY_FORTISWITCH_MODEL_PATTERN } from "../../src/utils/fortiswitchModel.js";
 import { describe, it, expect } from "vitest";
 import { applyModelParse, validateModelParse, templatePrefix } from "../../src/utils/modelParse.js";
 import { MAX_REGEX_SUBJECT } from "../../src/utils/regexSafety.js";
 
 // The FortiSwitch seed, exactly as the seed job stamps it.
-const FORTISWITCH = {
-  pattern:  String.raw`^(?!v\d)(.+?)[-\s]v\d`,
-  template: "FortiSwitch $1",
-};
+const FORTISWITCH = FORTISWITCH_MODEL_PARSE;
+
+describe("the FortiSwitch seed without lookahead (rule 116)", () => {
+  it("parses exactly like the lookahead pattern it replaced", () => {
+    // The old pattern on the JS engine is the oracle; the new one runs on RE2.
+    const oracle = new RegExp(LEGACY_FORTISWITCH_MODEL_PATTERN, "i");
+    const corpus = [
+      "S548DF-v7.2.5-build0453,230511 (GA)",
+      "FSR-124F-POE-v7.4.8-build0895,250226 (GA)",
+      "FortiSwitchRugged-112D-POE v7.4.8,build0895 (GA)",
+      "v7.2.5-build0453",
+      "V7.2.5 build",
+      "v-v7.0",
+      "vX1-v7.0",
+      "va v7",
+      "S1-v",
+      "plain text",
+      "S108EF v7.2.5",
+    ];
+    for (const s of corpus) {
+      const want = oracle.exec(s)?.[1]?.trim() ?? null;
+      const got = (applyModelParse(s, { pattern: FORTISWITCH_MODEL_PARSE.pattern, template: null }) ?? null);
+      expect(got, s).toBe(want);
+    }
+  });
+
+  it("the legacy lookahead seed itself is refused by the RE2 validator", () => {
+    expect(validateModelParse(LEGACY_FORTISWITCH_MODEL_PATTERN, "FortiSwitch $1")).toMatch(/lookahead or lookbehind/);
+  });
+});
 
 describe("applyModelParse — the FortiSwitch fsSysVersion shape", () => {
   it("strips the firmware suffix and prefixes the family (hyphen separator)", () => {
@@ -84,14 +111,13 @@ describe("validateModelParse", () => {
     expect(validateModelParse("([", null)).toMatch(/valid regex/);
   });
 
-  it("refuses a pattern that could hang the monitor, and says how to fix it", () => {
-    // The operator types this and Polaris runs it per asset per poll against
-    // whatever the device returned; a JS regex cannot be interrupted, so the
-    // refusal has to happen here, at save time. See utils/regexSafety.ts.
-    const err = validateModelParse("^((.+)+)-v", "FortiSwitch $1");
-    expect(err).toMatch(/may never finish/);
-    expect(err).toMatch(/Rewrite it so only one of the two repeats/);
-    expect(validateModelParse("(a*)*", null)).toMatch(/may never finish/);
+  it("accepts a once-catastrophic pattern and runs it in linear time (rule 116)", () => {
+    // Per asset per poll against whatever the device returned — on RE2 no
+    // pattern can hang the monitor, so nested repeats are no longer refused.
+    expect(validateModelParse("^((.+)+)-v", "FortiSwitch $1")).toBeNull();
+    const t = Date.now();
+    expect(applyModelParse("a".repeat(900) + "!", { pattern: "^((a+)+)-v", template: null })).toBeNull();
+    expect(Date.now() - t).toBeLessThan(1000);
   });
 
   it("still accepts the ordinary shapes an operator actually writes", () => {

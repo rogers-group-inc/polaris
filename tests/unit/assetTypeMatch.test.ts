@@ -316,9 +316,9 @@ describe("validation", () => {
     // The whole point of write-time validation: the resolver runs per device
     // per discovery run, so one typo must not be able to reach it.
     expect(validateMatchRules({ clauses: [{ field: "os", op: "regex", value: "([unclosed" }] }))
-      .toMatch(/Invalid regular expression/);
+      .toMatch(/Invalid regex/);
     expect(validateMatchRules({ op: "or", children: [{ field: "os", operator: "notRegex", value: "([unclosed" }] }))
-      .toMatch(/Invalid regular expression/);
+      .toMatch(/Invalid regex/);
   });
 
   it("names the offending condition, by its place in the tree", () => {

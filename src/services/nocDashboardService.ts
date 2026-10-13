@@ -30,6 +30,7 @@
  * parameters are unaffected.
  */
 
+import { compileGlob, type PatternMatcher } from "../utils/wildcard.js";
 import { EXCLUDED_LIFECYCLE_STATUSES } from "../utils/assetInvariants.js";
 import { BUILT_IN_ASSET_TYPES } from "../utils/assetTypes.js";
 import { prisma } from "../db.js";
@@ -247,11 +248,11 @@ const metricRel = (...metrics: string[]): AlertRelevance => ({ kind: "metric", m
 const stateRel = (...fields: string[]): AlertRelevance => ({ kind: "state", fields });
 const eventRel = (...actions: string[]): AlertRelevance => ({ kind: "event", actions });
 
-/** Anchored glob (`*` only) → RegExp, for matching an event trigger's
- *  actionPattern against a concrete action the widget cares about. */
-function globToRegExp(pattern: string): RegExp {
-  const esc = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-  return new RegExp("^" + esc + "$");
+/** Anchored glob (`*` only) for matching an event trigger's actionPattern
+ *  against a concrete action the widget cares about — the linear matcher, not
+ *  a regex (business rule 116). */
+function globToRegExp(pattern: string): PatternMatcher {
+  return compileGlob(pattern, { questionMark: false });
 }
 
 /** Does a rule trigger pertain to a widget's dimension? Walks the trigger,

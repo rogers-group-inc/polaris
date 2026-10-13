@@ -31,6 +31,8 @@
  * any asset's monitorStatus (business rule 85): the server is not an asset.
  */
 
+import { trimTrailing } from "../utils/trimTrailing.js";
+import { compileSafeRegex } from "../utils/safeRegex.js";
 import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import http from "node:http";
@@ -101,9 +103,11 @@ export function pathBodyMatches(body: string, exp: AgentCheckDef["expectBody"]):
   if (!exp || !exp.value) return true;
   switch (exp.mode) {
     case "regex":
-      return new RegExp(exp.value, exp.caseSensitive ? "" : "i").test(body);
+      // RE2, as on the Go agent (business rule 116): the body comes from the
+      // operator-chosen target, so the match must be linear in it.
+      return compileSafeRegex(exp.value, { ignoreCase: !exp.caseSensitive }).test(body);
     case "exact": {
-      const got = body.replace(/[\r\n]+$/, "");
+      const got = trimTrailing(body, "\r\n");
       return exp.caseSensitive ? got === exp.value : got.toLowerCase() === exp.value.toLowerCase();
     }
     default:

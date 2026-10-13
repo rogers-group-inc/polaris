@@ -36,7 +36,7 @@
 
 import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
-import { compileWildcard } from "../utils/wildcard.js";
+import { compileWildcard, type PatternMatcher } from "../utils/wildcard.js";
 import {
   RELATION_CONDITION_FIELDS,
   relationLeafKey,
@@ -130,7 +130,7 @@ async function assetIdsForLeaf(rule: ScopeConditionRule, assetIds: string[]): Pr
   // malformed pattern was refused at save time (makeScopeConditionSchema), so a
   // throw here can only come from a row written before that check existed —
   // match nothing rather than failing the whole preview.
-  let re: RegExp;
+  let re: PatternMatcher;
   // Lower-cased on both sides exactly as compareString does it in the
   // evaluator — compileWildcard produces a case-SENSITIVE regex.
   try { re = compileWildcard(rule.value.toLowerCase()); } catch { return new Set(); }

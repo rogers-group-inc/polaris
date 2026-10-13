@@ -16,6 +16,7 @@
  * Pure apart from the AppError it throws.
  */
 
+import { trimTrailing } from "./trimTrailing.js";
 import { AppError } from "./errors.js";
 import { isMaskedSecret } from "./secretMask.js";
 
@@ -54,7 +55,7 @@ const LIST_KEYS: ReadonlySet<string> = new Set(["fallbackHosts"]);
 
 function normOne(v: unknown): string {
   if (v === null || v === undefined) return "";
-  if (typeof v === "string") return v.trim().toLowerCase().replace(/\.+$/, "").replace(/\/+$/, "");
+  if (typeof v === "string") return trimTrailing(trimTrailing(v.trim().toLowerCase(), "."), "/");
   return String(v);
 }
 

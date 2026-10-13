@@ -23,6 +23,8 @@
  * transitions emit one as well.
  */
 
+import { trimTrailing } from "../utils/trimTrailing.js";
+import { tryCompileSafeRegex } from "../utils/safeRegex.js";
 import { pinnedAgentFor } from "../utils/pinnedTlsAgent.js";
 import { chunkArray } from "../utils/chunk.js";
 import { normalizeMacOrNull } from "../utils/mac.js";
@@ -7418,7 +7420,7 @@ function snmpVarbindToPrintable(vb: { type: number; value: unknown }): string {
     }
     const text = v.toString("utf8");
     // eslint-disable-next-line no-control-regex
-    if (/^[\x09\x0a\x0d\x20-\x7e]*$/.test(text)) return text.replace(/ +$/, "");
+    if (/^[\x09\x0a\x0d\x20-\x7e]*$/.test(text)) return trimTrailing(text, " ");
     return v.toString("hex").match(/.{1,2}/g)?.join(" ").toUpperCase() || "";
   }
   if (typeof v === "bigint") return v.toString();
@@ -12441,8 +12443,8 @@ async function collectManufacturerWidgetSamples(assetId: string, asset: NonNulla
   const modelStr = asset.model ?? "";
   const widgets = profile.widgets.filter((w) => {
     if (!w.modelPattern) return true;
-    try { return new RegExp(w.modelPattern, "i").test(modelStr); }
-    catch { return false; }
+    // RE2 (business rule 116); a pattern RE2 cannot compile matches nothing.
+    return tryCompileSafeRegex(w.modelPattern, { ignoreCase: true })?.test(modelStr) ?? false;
   });
   if (widgets.length === 0) return NO_WIDGET_SAMPLES;
 

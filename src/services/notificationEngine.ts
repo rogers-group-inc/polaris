@@ -22,6 +22,7 @@
  * (the builder's Test button).
  */
 
+import { compileGlob, type PatternMatcher } from "../utils/wildcard.js";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
@@ -5369,9 +5370,15 @@ async function handoffDependencyFlavour(
 
 // ─── Event-tail evaluation ──────────────────────────────────────────────────
 
-export function globToRegExp(glob: string): RegExp {
-  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-  return new RegExp(`^${escaped}$`, "i");
+/**
+ * An event trigger's action pattern as an anchored, case-insensitive matcher —
+ * `*` is the only wildcard. Linear (utils/wildcard.compileGlob), never a regex:
+ * the old `*` → `.*` translation let a stored `****…x` backtrack
+ * combinatorially on every Event.action in the tail (business rule 116). The
+ * name is kept for its callers; the result has `.test` like a RegExp.
+ */
+export function globToRegExp(glob: string): PatternMatcher {
+  return compileGlob(glob, { ignoreCase: true, questionMark: false });
 }
 
 const LEVEL_RANK: Record<string, number> = { info: 0, warning: 1, error: 2 };
@@ -5525,7 +5532,7 @@ async function runEventTail(rules: DbRule[]): Promise<void> {
   // but the filter predicate isn't a type guard) are dropped and TS narrows.
   type CompiledMatcher = {
     rule: DbRule;
-    re: RegExp;
+    re: PatternMatcher;
     trigger: Extract<Trigger, { type: "event" }> | Extract<Trigger, { type: "change" }>;
     /** Does this rule's scope name devices? Precomputed per rule, not per
      *  event: a 1000-event batch would otherwise re-walk the same scope object

@@ -9,11 +9,17 @@
  * avoid a circular import; now both modules consume the same helper.
  */
 
+import { compileSafeRegex } from "../utils/safeRegex.js";
+
 /** One `symbol FROM MODULE` pair out of a module's IMPORTS block. */
 export interface ImportBinding {
   symbol: string;
   module: string;
 }
+
+/** The IMPORTS block and its `… FROM MODULE` segments, on RE2 (business rule 116). */
+export const IMPORTS_BLOCK_RE = compileSafeRegex(String.raw`\bIMPORTS\b([\s\S]*?);`);
+const IMPORT_SEGMENT_RE = compileSafeRegex(String.raw`([\s\S]*?)\bFROM\s+([A-Za-z][\w-]*)`);
 
 /**
  * Read the IMPORTS block as symbol → module pairs, not just module names.
@@ -33,16 +39,16 @@ export interface ImportBinding {
  */
 export function parseImportMap(text: string): ImportBinding[] {
   const stripped = stripComments(text);
-  const block = /\bIMPORTS\b([\s\S]*?);/.exec(stripped);
-  if (!block) return [];
+  // RE2 (business rule 116): uploaded text up to 1 MB, so the whole-file scans
+  // must be linear; the lazy `[\s\S]*?` was quadratic on a backtracking engine.
+  const block = IMPORTS_BLOCK_RE.exec(stripped);
+  if (!block || block[1] === undefined) return [];
   const out: ImportBinding[] = [];
   // Each segment is "<ident>, <ident>, … FROM <MODULE>"; the last segment
   // ends at the `;` the outer regex already stopped on.
-  const segment = /([\s\S]*?)\bFROM\s+([A-Za-z][\w-]*)/g;
-  let m: RegExpExecArray | null;
-  while ((m = segment.exec(block[1]))) {
-    const module = m[2];
-    for (const raw of m[1].split(",")) {
+  for (const m of IMPORT_SEGMENT_RE.execAll(block[1])) {
+    const module = m[2] as string;
+    for (const raw of (m[1] ?? "").split(",")) {
       const symbol = raw.trim();
       if (!symbol || !/^[A-Za-z][\w-]*$/.test(symbol)) continue;
       out.push({ symbol, module });

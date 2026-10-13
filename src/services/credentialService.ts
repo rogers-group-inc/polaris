@@ -22,6 +22,8 @@
  * credential attached, not a credential that authenticates nothing.
  */
 
+import { trimTrailing } from "../utils/trimTrailing.js";
+import { safeRegexProblem } from "../utils/safeRegex.js";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { SECRET_MASK, isMaskedSecret } from "../utils/secretMask.js";
@@ -306,7 +308,7 @@ function validateRestApiConfig(config: Record<string, unknown>): void {
   if (u.protocol !== "http:" && u.protocol !== "https:") {
     throw new AppError(400, "REST API baseUrl must use http:// or https://");
   }
-  config.baseUrl = u.toString().replace(/\/+$/, "");
+  config.baseUrl = trimTrailing(u.toString(), "/");
   if (typeof config.apiToken !== "string" || !config.apiToken) {
     throw new AppError(400, "REST API credential requires an apiToken");
   }
@@ -434,10 +436,10 @@ export function validateHttpCheckDefinition(config: Record<string, unknown>): vo
   }
   const expectBody = typeof config.expectBody === "string" ? config.expectBody : "";
   if (mode === "regex" && expectBody) {
-    try { new RegExp(expectBody); }
-    catch (err: any) {
-      throw new AppError(400, `HTTP check regex is invalid: ${err?.message || "unparseable"}`);
-    }
+    // Must compile on RE2, the engine both the server and the agent run it on
+    // (business rule 116).
+    const problem = safeRegexProblem(expectBody, { ignoreCase: config.caseSensitive !== true });
+    if (problem) throw new AppError(400, `HTTP check regex is invalid: ${problem}`);
   }
   for (const flag of ["caseSensitive", "verifyTls"]) {
     if (config[flag] !== undefined && typeof config[flag] !== "boolean") {

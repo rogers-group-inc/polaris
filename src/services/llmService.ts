@@ -29,6 +29,7 @@
  * handled too: its content is emitted in a single `onText` call.
  */
 
+import { trimTrailing } from "../utils/trimTrailing.js";
 import http from "node:http";
 import https from "node:https";
 import { createHash } from "node:crypto";
@@ -157,7 +158,7 @@ export function normalizeBasePath(p: string | undefined): string {
   const raw = (p ?? LLM_DEFAULTS.basePath).trim();
   if (!raw || raw === "/") return "";
   const withLead = raw.startsWith("/") ? raw : `/${raw}`;
-  return withLead.replace(/\/+$/, "");
+  return trimTrailing(withLead, "/");
 }
 
 /**
@@ -209,7 +210,7 @@ export function parseAzureEndpoint(input: string): { host: string; port: number;
   if (!url.hostname) return null;
   const useHttps = url.protocol === "https:";
   const port = url.port ? Number(url.port) : useHttps ? 443 : 80;
-  let path = url.pathname.replace(/\/+$/, "");
+  let path = trimTrailing(url.pathname, "/");
   const cut = path.search(/\/(openai|anthropic)(\/|$)/i);
   if (cut !== -1) path = path.slice(0, cut);
   // URL keeps IPv6 literals bracketed; the transport wants the bare address.

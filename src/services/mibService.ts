@@ -12,6 +12,8 @@
  * Anything that fails these checks is rejected — this is what gates the
  * upload form against arbitrary text or attempts to smuggle code in.
  */
+import { IMPORTS_BLOCK_RE } from "./mibParserUtils.js";
+import { compileSafeRegex } from "../utils/safeRegex.js";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { refreshRegistry, resolveSymbolsForMib, missingRootsForMib, type MissingRoot } from "./oidRegistry.js";
@@ -63,14 +65,16 @@ export function parseMib(raw: string): ParsedMib {
   // version segments (`SNMPv2-MIB`, `SNMPv2-SMI`, `SNMPv2-TC`), so the
   // body is mixed-case alphanumeric + hyphens — same tolerance the
   // IMPORTS-parser below uses.
-  const headMatch = stripped.match(/([A-Z][A-Za-z0-9-]*)\s+DEFINITIONS(?:\s+[A-Z-]+)*\s*::=\s*BEGIN/);
+  // RE2 (business rule 116): an uploaded file of one long uppercase run made
+  // this quadratic on the JS engine.
+  const headMatch = MODULE_HEADER_RE.exec(stripped);
   if (!headMatch) {
     throw new AppError(
       400,
       "MIB file is missing the `<NAME> DEFINITIONS ::= BEGIN` header — not a valid SMI module",
     );
   }
-  const moduleName = headMatch[1];
+  const moduleName = headMatch[1] as string;
 
   // Module must end with `END` token
   if (!/\bEND\s*$/.test(stripped.trim())) {
@@ -83,15 +87,14 @@ export function parseMib(raw: string): ParsedMib {
   // canonical names (e.g. `SNMPv2-SMI`, `SNMPv2-TC`) carry a lowercase `v`,
   // so the regex tolerates mixed case and underscores.
   const imports: string[] = [];
-  const importsMatch = stripped.match(/\bIMPORTS\b([\s\S]*?);/);
-  if (importsMatch) {
+  const importsMatch = IMPORTS_BLOCK_RE.exec(stripped);
+  if (importsMatch && importsMatch[1] !== undefined) {
     const seen = new Set<string>();
-    const re = /\bFROM\s+([A-Za-z][\w-]*)/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(importsMatch[1]))) {
-      if (!seen.has(m[1])) {
-        seen.add(m[1]);
-        imports.push(m[1]);
+    for (const m of IMPORT_FROM_RE.execAll(importsMatch[1])) {
+      const mod = m[1] as string;
+      if (!seen.has(mod)) {
+        seen.add(mod);
+        imports.push(mod);
       }
     }
   }
@@ -315,12 +318,19 @@ interface RawObjectDecl {
 // Note: this deliberately does NOT match `OBJECT IDENTIFIER` shorthand
 // declarations like `cisco OBJECT IDENTIFIER ::= { enterprises 9 }` —
 // those are caught separately because they have no body clauses.
-const OBJECT_DECL_RE =
-  /\b([a-z][\w-]*)\s+(OBJECT-TYPE|OBJECT-IDENTITY|NOTIFICATION-TYPE|MODULE-IDENTITY)\b([\s\S]*?)::=\s*\{\s*([^{}]+?)\s*\}/g;
+// All whole-file scans run on RE2 (business rule 116): an uploaded MIB is up to
+// 1 MB, and on a backtracking engine the unanchored start plus the lazy
+// `[\s\S]*?` rescanned the rest of the file from every header.
+const OBJECT_DECL_RE = compileSafeRegex(
+  String.raw`\b([a-z][\w-]*)\s+(OBJECT-TYPE|OBJECT-IDENTITY|NOTIFICATION-TYPE|MODULE-IDENTITY)\b([\s\S]*?)::=\s*\{\s*([^{}]+?)\s*\}`,
+);
 
 // Plain `name OBJECT IDENTIFIER ::= { parent N }` shorthand
-const OID_SHORTHAND_RE =
-  /\b([a-z][\w-]*)\s+OBJECT\s+IDENTIFIER\s*::=\s*\{\s*([^{}]+?)\s*\}/g;
+const OID_SHORTHAND_RE = compileSafeRegex(
+  String.raw`\b([a-z][\w-]*)\s+OBJECT\s+IDENTIFIER\s*::=\s*\{\s*([^{}]+?)\s*\}`,
+);
+const MODULE_HEADER_RE = compileSafeRegex(String.raw`([A-Z][A-Za-z0-9-]*)\s+DEFINITIONS(?:\s+[A-Z-]+)*\s*::=\s*BEGIN`);
+const IMPORT_FROM_RE = compileSafeRegex(String.raw`\bFROM\s+([A-Za-z][\w-]*)`);
 
 function tokenizeOidParts(raw: string): string[] {
   return raw.trim().split(/\s+/).filter(Boolean);
@@ -342,13 +352,11 @@ export function parseMibStructured(raw: string): ParsedMibStructured {
 
   // Pass 1 — full OBJECT-TYPE / OBJECT-IDENTITY / NOTIFICATION-TYPE /
   // MODULE-IDENTITY declarations.
-  OBJECT_DECL_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = OBJECT_DECL_RE.exec(stripped))) {
-    const name = m[1];
-    const macro = m[2];
-    const body = m[3];
-    const oidParts = tokenizeOidParts(m[4]);
+  for (const m of OBJECT_DECL_RE.execAll(stripped)) {
+    const name = m[1] as string;
+    const macro = m[2] as string;
+    const body = m[3] ?? "";
+    const oidParts = tokenizeOidParts(m[4] ?? "");
 
     let kind: MibSymbolKind;
     switch (macro) {
@@ -403,11 +411,10 @@ export function parseMibStructured(raw: string): ParsedMibStructured {
   // Pass 2 — `name OBJECT IDENTIFIER ::= { parent N }` shorthand. These
   // never carry SYNTAX/ACCESS/DESCRIPTION clauses but they're real OIDs we
   // want surfaced (they appear as group nodes in the browse tree).
-  OID_SHORTHAND_RE.lastIndex = 0;
-  while ((m = OID_SHORTHAND_RE.exec(stripped))) {
-    const name = m[1];
+  for (const m of OID_SHORTHAND_RE.execAll(stripped)) {
+    const name = m[1] as string;
     if (symbolsByName.has(name)) continue; // already captured by pass 1
-    const oidParts = tokenizeOidParts(m[2]);
+    const oidParts = tokenizeOidParts(m[2] ?? "");
     const parentName = oidParts.length >= 1 && /^[a-z]/.test(oidParts[0]) ? oidParts[0] : null;
     const oidIndex =
       oidParts.length >= 2 && /^\d+$/.test(oidParts[1])

@@ -2226,7 +2226,7 @@ export async function getCapacitySnapshot(opts: {
     },
   };
 
-  snap.reasons = computeReasons(snap, opts.pgTuningNeeded, opts.advisor, [...await lifecycleReasonsSafe(), ...await grantReviewReasonsSafe()]);
+  snap.reasons = computeReasons(snap, opts.pgTuningNeeded, opts.advisor, [...await lifecycleReasonsSafe(), ...await grantReviewReasonsSafe(), ...await unusableRegexReasonsSafe()]);
   snap.severity = deriveSeverity(snap.reasons);
   return snap;
 }
@@ -2264,6 +2264,26 @@ async function grantReviewReasonsSafe(): Promise<CapacityReason[]> {
     }];
   } catch (err) {
     logger.debug({ err }, "role grant-review reasons unavailable; capacity snapshot continues without them");
+    return [];
+  }
+}
+
+/**
+ * Business rule 116: a watch-severity reason while any stored operator regex
+ * cannot run on RE2 (it is skipped). Never fails the snapshot.
+ */
+async function unusableRegexReasonsSafe(): Promise<CapacityReason[]> {
+  try {
+    const { countUnusableStoredPatterns } = await import("./storedRegexAuditService.js");
+    const n = await countUnusableStoredPatterns();
+    if (n === 0) return [];
+    return [{
+      severity: "watch",
+      code: "regex_pattern_unusable",
+      message: `${n} stored pattern(s) use regex features Polaris no longer runs (lookahead, lookbehind or backreferences), so they are skipped.`,
+      suggestion: "The Events page lists each one (action regex.pattern_unusable) with where it lives. Rewrite it without lookaround or backreferences and save it.",
+    }];
+  } catch {
     return [];
   }
 }
@@ -2332,7 +2352,7 @@ export async function getCapacitySnapshotWithAdvisor(
   // so the advisor-driven reasons fire without doing a second snapshot pass.
   // The lifecycle result is memoized, so re-fetching it for this second pass
   // costs nothing and keeps the two passes' reason lists identical.
-  snapshot.reasons = computeReasons(snapshot, opts.pgTuningNeeded, gapsForReasons, [...await lifecycleReasonsSafe(), ...await grantReviewReasonsSafe()]);
+  snapshot.reasons = computeReasons(snapshot, opts.pgTuningNeeded, gapsForReasons, [...await lifecycleReasonsSafe(), ...await grantReviewReasonsSafe(), ...await unusableRegexReasonsSafe()]);
   snapshot.severity = deriveSeverity(snapshot.reasons);
   return { snapshot, advisor };
 }
