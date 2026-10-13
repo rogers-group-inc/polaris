@@ -4411,11 +4411,25 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 }
 
 /* ─── Addresses row (asset details General tab, business rule 102) ──────────
- * Each MAC with the IPs bound to it. Spans both grid columns: in one ~200px
- * value column every IP line wrapped to four. IP lines are a three-track grid
- * (address · badge-or-action · provenance) so the addresses line up down the
- * list and a long provenance truncates instead of shoving the address. */
-.asset-view-grid > .address-list-row { grid-column: 1 / -1; }
+ * Each MAC with the IPs bound to it. The top of the grid is its own two-column
+ * block: Hostname / Primary Address / DNS Name stacked on the left, the
+ * Addresses list on the right, which gets the WHOLE column (label stacked
+ * above) rather than a ~200px value side, where every IP line wrapped to four.
+ * IP lines are a three-track grid (address · badge-or-action · provenance) so
+ * the addresses line up down the list and a long provenance truncates instead
+ * of shoving the address. */
+.asset-view-top {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 24px;
+  align-items: start;
+}
+.asset-view-identity { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.asset-view-top > .address-list-row { min-width: 0; }
+@container (max-width: 520px) {
+  .asset-view-top { grid-template-columns: 1fr; }
+}
 .address-list-row .detail-value { text-align: left; }
 .address-group {
   padding: 4px 0;

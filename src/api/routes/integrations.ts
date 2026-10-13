@@ -9,7 +9,8 @@ import { AppError } from "../../utils/errors.js";
 import { hasNoControlChars } from "../../utils/safeText.js";
 import { purgeDirectoryContacts } from "../../services/directorySyncService.js";
 import { bumpDirectoryCache } from "../../services/directorySearchService.js";
-import { requirePermission, hasPermission } from "../middleware/permissions.js";
+import { requirePermission, hasPermission, credentialUseActor } from "../middleware/permissions.js";
+import { recordCredentialUse, changedCredentialRefs } from "../../services/credentialUseAuditService.js";
 import * as fortimanager from "../../services/fortimanagerService.js";
 import { getFmgActivityForIntegration } from "../../services/fmgActivityService.js";
 import { getIntegrationHealthSummary } from "../../services/integrationHealthService.js";
@@ -1700,6 +1701,7 @@ router.post("/", async (req, res, next) => {
     invalidateMonitorSettingsCache({ integrationId: integration.id });
 
     logEvent({ action: "integration.created", resourceType: "integration", resourceId: integration.id, resourceName: input.name, actor: req.session?.username, message: `Integration "${input.name}" (${input.type}) created` });
+    await auditIntegrationCredentialRefs(req, integration.name, null, integration.config);
 
     const response: Record<string, unknown> = stripSecret(integration);
 
@@ -1913,6 +1915,7 @@ router.put("/:id", async (req, res, next) => {
       where: { id: req.params.id },
       data,
     });
+    await auditIntegrationCredentialRefs(req, updated.name, existing.config, updated.config);
 
     // Editing the Monitoring tab rewrites `config.monitorSettings` (tier-3 of
     // the resolver hierarchy). The resolver memoizes tier-3 lookups per
@@ -2838,6 +2841,19 @@ async function applyGenericApiMonitorDefaults(cfg: Record<string, unknown>): Pro
   const seed = stored ? null : ((await getManualMonitorSettings()) as Record<string, unknown> | null);
   const next = genericApi.syncGenericApiMonitorDefaults(stored, (cfg.monitorQueries ?? []) as genericApi.GenericApiMonitorQuery[], seed);
   if (next) cfg.monitorSettings = next;
+}
+
+/**
+ * Rule 112: a stored credential bound to one of the integration's device
+ * classes is sent to every device of that class. Record each binding the
+ * write added or changed, by the config path that names it. Never throws.
+ */
+async function auditIntegrationCredentialRefs(req: Request, name: string, before: unknown, after: unknown): Promise<void> {
+  const uses = changedCredentialRefs(before, after).map((r) => ({
+    credentialId: r.credentialId,
+    destination: `the devices integration "${name}" monitors (${r.path})`,
+  }));
+  if (uses.length) await recordCredentialUse(credentialUseActor(req), "integration.save", uses);
 }
 
 /** Every write-only secret an integration config can carry (the update path merges all of them). */

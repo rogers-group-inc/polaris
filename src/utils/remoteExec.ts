@@ -64,9 +64,8 @@ export function withSshClient<T>(
     } else {
       opts.password = password;
     }
-    // Opt-in server authentication (SshConfig.verifyHostKey). Absent the flag
-    // this stays the pre-2026-08 behavior: ssh2 with no hostVerifier accepts
-    // ANY host key. See sshHostKeyService for why it's opt-in.
+    // Server authentication (business rule 113): trust-on-first-use host-key
+    // pinning for every credential except one that sets verifyHostKey: false.
     const verifier = buildHostVerifier(host, port, config);
     if (verifier) opts.hostVerifier = verifier;
     try {
@@ -79,7 +78,10 @@ export function withSshClient<T>(
 
 /**
  * Build the ssh2 `hostVerifier` for a credential config, or null when the
- * credential hasn't opted in.
+ * credential explicitly opts OUT (`verifyHostKey: false`). Default ON since
+ * business rule 113 — a credential with no flag (every row created before
+ * 2026-08, the Polaris-managed deployment credentials, the AD bind-password
+ * fallback) is pinned on first use.
  *
  * Shared by withSshClient and monitoringService.probeSsh — the two (and only
  * two) `ssh2.connect` call sites in the tree, which must not drift apart on
@@ -94,7 +96,7 @@ export function buildHostVerifier(
   port: number,
   config: Record<string, unknown>,
 ): ((key: Buffer, cb: (valid: boolean) => void) => void) | null {
-  if (config.verifyHostKey !== true) return null;
+  if (config.verifyHostKey === false) return null;
   return (key: Buffer, cb: (valid: boolean) => void) => {
     import("../services/sshHostKeyService.js")
       .then(({ verifyOrPin }) => verifyOrPin(host, port, key))

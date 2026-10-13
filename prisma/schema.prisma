@@ -6394,9 +6394,9 @@ model HostMetricsSample {
 // client. Host keys are per-HOST but a Credential spans a fleet, so the pins
 // cannot live on Credential.config and need their own table.
 //
-// Opt-in per credential via SshConfig.verifyHostKey, mirroring the WinRM
-// `verifyTls` precedent (2026-06-03 review, H1): default OFF so no existing
-// install breaks, default ON for newly created credentials.
+// Default ON since business rule 113 (2026-10-13): every SSH connection is
+// trust-on-first-use pinned unless its credential sets verifyHostKey: false.
+// It was opt-in per credential before that.
 //
 // Plain table, no Asset FK — a host is often onboarded before it exists as an
 // Asset, and the pin is keyed by the address actually dialed.
@@ -6411,6 +6411,28 @@ model SshHostKey {
 
   @@unique([host, port])
   @@map("ssh_host_keys")
+}
+
+// Business rule 113: trust-on-first-use pin of the TLS certificate a server
+// presented, for the HTTPS connections that carry a secret without verifying
+// a CA chain — WinRM (Basic auth + the agent enrollment token) and the
+// firmware engines (device logins and FortiOS tokens). The first connection
+// to host:port pins the leaf certificate's SHA-256 fingerprint; a later
+// connection presenting a different certificate is refused BEFORE the
+// request carrying the secret is written. A connection that verifies the CA
+// chain (verifyTls: true) is not pinned. Same shape and recovery as
+// SshHostKey: delete the pin to trust a legitimately re-issued certificate.
+model TlsCertPin {
+  id          String   @id @default(uuid())
+  host        String
+  port        Int
+  fingerprint String // leaf certificate SHA-256, colon-separated hex (Node's fingerprint256)
+  subject     String   @default("") // the certificate's subject CN, for display
+  firstSeen   DateTime @default(now())
+  lastSeen    DateTime @default(now())
+
+  @@unique([host, port])
+  @@map("tls_cert_pins")
 }
 
 // A CIDR the operator has declared OUT OF SCOPE for the networks list

@@ -7430,7 +7430,7 @@ function credSummary(c) {
     var auth = hasKey ? "private key" : "password";
     if (hasKey && typeof cfg.passphrase === "string" && cfg.passphrase) auth += " (encrypted)";
     return escapeHtml(cfg.username || "") + " · " + auth +
-      (cfg.verifyHostKey === true ? " · host key verified" : "") +
+      (cfg.verifyHostKey === false ? " · host key NOT verified" : " · host key pinned") +
       (cfg.allowReboot === true ? " · reboots allowed" : "");
   }
   if (c.type === "restapi") {
@@ -7808,11 +7808,11 @@ async function openCredentialModal(id, initialState) {
 
   function renderTypeFields() {
     var t = document.getElementById("f-cred-type").value;
-    // New credentials default to verify-ON (2026-06-03 review, H1; SSH
-    // host-key pinning follows the same shape). Existing credentials keep
-    // their stored config (no verifyTls / verifyHostKey → checkbox unchecked →
-    // current no-verify behavior preserved on save). initialState (Back button)
-    // always wins so in-flight edits survive.
+    // New credentials default to verify-ON (2026-06-03 review, H1). SSH
+    // host-key pinning is ON for every credential unless it stores
+    // verifyHostKey: false (business rule 113), so its box reads checked for
+    // an existing credential with no flag. initialState (Back button) always
+    // wins so in-flight edits survive.
     var cfg = formConfig || (isNew ? { verifyTls: true, verifyHostKey: true } : {});
     var host = document.getElementById("cred-type-fields");
     if (t === "snmp")        host.innerHTML = credSnmpForm(cfg);
@@ -8387,7 +8387,7 @@ function credWinrmForm(cfg) {
         '<input type="checkbox" id="f-winrm-verifytls"' + (cfg.verifyTls === true ? " checked" : "") + '>' +
         '<span>Verify TLS certificate</span>' +
       '</label>' +
-      '<p class="hint" style="color:var(--color-warning,#d98c00)">Applies when Use HTTPS is on. Leave enabled. WinRM sends the username and password as Basic auth, so disabling certificate verification lets a network attacker intercept the connection and capture these credentials. Disable only for a host with a self-signed certificate you cannot replace.</p>' +
+      '<p class="hint">Applies when Use HTTPS is on. WinRM sends the username and password as Basic auth. When checked, the certificate must chain to a trusted CA. When unchecked (a self-signed listener), Polaris pins the certificate it sees on the first connection and refuses to send the password if it ever changes; delete the pin under Pinned server identities when a certificate is legitimately re-issued.</p>' +
     '</div>'
   );
 }
@@ -8413,10 +8413,10 @@ function credSshForm(cfg) {
     '</div>' +
     '<div class="form-group">' +
       '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
-        '<input type="checkbox" id="f-ssh-verifyhostkey"' + (cfg.verifyHostKey === true ? " checked" : "") + '>' +
+        '<input type="checkbox" id="f-ssh-verifyhostkey"' + (cfg.verifyHostKey !== false ? " checked" : "") + '>' +
         '<span>Verify the server\'s host key</span>' +
       '</label>' +
-      '<p class="hint">Recommended. When off, Polaris accepts whatever host key is presented, so anything answering on the target\'s address can impersonate it &mdash; and on an agent install it is handed a script to run as root. On first connection Polaris pins the key it sees and refuses later connections if it changes; if a host is legitimately rebuilt or re-keyed, delete its pin under Integrations &rarr; Polaris Agent &rarr; Windows SSH Deployment.</p>' +
+      '<p class="hint">Recommended. When off, Polaris accepts whatever host key is presented, so anything answering on the target\'s address can impersonate it &mdash; and on an agent install it is handed a script to run as root. On first connection Polaris pins the key it sees and refuses later connections if it changes; if a host is legitimately rebuilt or re-keyed, delete its pin under Integrations &rarr; Polaris Agent &rarr; Windows SSH Deployment (Pinned server identities).</p>' +
     '</div>' +
     credAllowRebootHTML(cfg, "",
       "Lets this login run <code>execute reboot</code> on a FortiGate it is set on, restart the FortiSwitches and FortiAPs that FortiGate manages, or reboot a standalone FortiSwitch / FortiAP over its own CLI.")

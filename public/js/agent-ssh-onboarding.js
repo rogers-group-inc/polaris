@@ -417,13 +417,17 @@
   function hostKeysPaneHtml() {
     return (
       '<div style="padding-top:1rem;border-top:1px solid var(--color-border);margin-top:1rem">' +
-        '<h5 style="margin:0 0 0.5rem 0">Pinned SSH host keys</h5>' +
+        '<h5 style="margin:0 0 0.5rem 0">Pinned server identities</h5>' +
         '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin:0 0 0.75rem 0">' +
-          'When a credential has <em>Verify the server\'s host key</em> enabled, Polaris records the key each host ' +
-          'presents on first connection and refuses later connections if it changes. If a host was legitimately ' +
-          'rebuilt or re-keyed, delete its pin here &mdash; the next connection will trust and re-pin whatever answers.' +
+          'Polaris records the SSH host key, or the TLS certificate of a WinRM listener or a device it upgrades, the ' +
+          'first time it connects, and refuses to send a password or token if it later changes. If a host was ' +
+          'legitimately rebuilt, re-keyed or given a new certificate, delete its pin here &mdash; the next connection ' +
+          'will trust and re-pin whatever answers.' +
         '</p>' +
+        '<h6 style="margin:0 0 0.35rem 0">SSH host keys</h6>' +
         '<div id="wssh-hostkeys"><p class="empty-state" style="padding:0.5rem 0;margin:0">Loading&hellip;</p></div>' +
+        '<h6 style="margin:1rem 0 0.35rem 0">TLS certificates</h6>' +
+        '<div id="wssh-tlspins"><p class="empty-state" style="padding:0.5rem 0;margin:0">Loading&hellip;</p></div>' +
       '</div>'
     );
   }
@@ -433,7 +437,7 @@
     if (!host) return;
     if (!rows || !rows.length) {
       host.innerHTML = '<p class="empty-state" style="padding:0.5rem 0;margin:0">No host keys pinned yet. ' +
-        'Pins appear the first time Polaris connects to a host using a credential with host-key verification on.</p>';
+        'Pins appear the first time Polaris connects to a host over SSH.</p>';
       return;
     }
     var body = rows.map(function (r) {
@@ -475,7 +479,67 @@
     });
   }
 
+  function renderCertPins(rows) {
+    var host = el("wssh-tlspins");
+    if (!host) return;
+    if (!rows || !rows.length) {
+      host.innerHTML = '<p class="empty-state" style="padding:0.5rem 0;margin:0">No certificates pinned yet. ' +
+        'Pins appear the first time Polaris connects to a WinRM listener or a device it upgrades without verifying a CA.</p>';
+      return;
+    }
+    var body = rows.map(function (r) {
+      return '<tr>' +
+        '<td class="mono">' + escapeHtml(r.host) + ":" + escapeHtml(String(r.port)) + '</td>' +
+        '<td>' + escapeHtml(r.subject || "—") + '</td>' +
+        '<td class="mono" style="font-size:0.78rem;word-break:break-all">' + escapeHtml(r.fingerprint) + '</td>' +
+        '<td>' + escapeHtml(r.firstSeen ? new Date(r.firstSeen).toLocaleDateString() : "—") + '</td>' +
+        '<td style="text-align:right"><button class="btn btn-sm btn-secondary" data-wssh-delcert="' + escapeHtml(r.id) +
+          '" data-wssh-certhost="' + escapeHtml(r.host + ":" + r.port) + '">Delete</button></td>' +
+      '</tr>';
+    }).join("");
+    host.innerHTML =
+      '<table class="data-table"><thead><tr>' +
+        '<th>Host</th><th>Subject</th><th>SHA-256</th><th>First seen</th><th></th>' +
+      '</tr></thead><tbody>' + body + '</tbody></table>';
+
+    Array.prototype.forEach.call(host.querySelectorAll("[data-wssh-delcert]"), function (btn) {
+      btn.addEventListener("click", function () { onDeleteCertPin(btn); });
+    });
+  }
+
+  function onDeleteCertPin(btn) {
+    var id = btn.getAttribute("data-wssh-delcert");
+    var hostName = btn.getAttribute("data-wssh-certhost");
+    showConfirm(
+      "Delete the pinned TLS certificate for " + hostName + "?\n\n" +
+      "The next connection will trust and pin whatever certificate answers. Only do this if you know the certificate " +
+      "was legitimately re-issued — otherwise you would be sending a password or token to an impersonator."
+    ).then(function (ok) {
+      if (!ok) return;
+      btn.disabled = true;
+      api.serverSettings.tlsCertPinDelete(id)
+        .then(function () { showToast("Pin deleted", "success"); loadCertPins(); })
+        .catch(function (err) {
+          showToast((err && err.message) ? err.message : "Could not delete the pin", "error");
+          btn.disabled = false;
+        });
+    });
+  }
+
+  function loadCertPins() {
+    api.serverSettings.tlsCertPinsList()
+      .then(function (r) { renderCertPins(r && r.certPins); })
+      .catch(function (err) {
+        var host = el("wssh-tlspins");
+        if (host) {
+          host.innerHTML = '<p class="empty-state" style="padding:0.5rem 0;margin:0">Could not load pinned certificates: ' +
+            escapeHtml((err && err.message) || "unknown error") + "</p>";
+        }
+      });
+  }
+
   function loadHostKeys() {
+    loadCertPins();
     api.serverSettings.sshHostKeysList()
       .then(function (r) { renderHostKeys(r && r.hostKeys); })
       .catch(function (err) {

@@ -302,8 +302,10 @@ older than 24 hours is not evidence.
 #### Addresses and the primary address
 
 **Primary Address** is the address monitoring probes and the network card it
-is on (*on AA:BB:…*). Below it, **Addresses** lists every MAC the device has
-been seen with and, under each one, the IP addresses bound to it: a lease or
+is on (*on AA:BB:…*). Beside it on the right, **Addresses** lists the MACs the
+device has been seen with and, under each one, the IP addresses bound to it. A
+MAC with no address, and any past the first three, sits behind the **+N MACs**
+pill; hover it to see them (and remove one). The addresses come from a lease or
 reservation the device is holding, the address a FortiGate sees it using, ARP
 entries (a card's secondary addresses), the interface table of a monitored
 device, and anything typed by hand. Each address names where it came from, the

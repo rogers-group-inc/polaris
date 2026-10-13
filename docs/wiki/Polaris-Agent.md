@@ -314,8 +314,9 @@ Two vehicles, each opt-in per integration:
 
 ## SSH host-key verification
 
-Per credential (**on** by default when you create one), and it
-**fails closed** ([rule 21](Business-Rules#rule-21)).
+**On** for every credential unless its *Verify the server's host key* box is
+unticked, and it **fails closed** ([rule 21](Business-Rules#rule-21),
+[rule 113](Business-Rules#rule-113)).
 
 Trust-on-first-use:
 
@@ -326,7 +327,11 @@ Trust-on-first-use:
 | **key changed** | **refuses the connection** and stamps an event |
 | internal error | **refuses** — it never silently skips |
 
-Pins are per (host, port) in their own table, never on the credential.
+Pins are per (host, port) in their own table, never on the credential. WinRM
+over HTTPS gets the same treatment for its TLS certificate when *Verify TLS
+certificate* is off. Both kinds of pin are listed under **Windows SSH
+Deployment → Pinned server identities**; delete one to trust a host that was
+legitimately rebuilt, re-keyed or re-certified.
 
 ---
 

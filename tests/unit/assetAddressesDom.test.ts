@@ -113,7 +113,7 @@ describe("Addresses row", () => {
   it("lists every IP under its MAC and stars only the primary pair", () => {
     const el = render(g.addressesViewHTML(hmi()));
     expect(el.querySelector(".detail-label")!.textContent).toBe("Addresses (2 MACs, 4 IPs)");
-    // Spans both columns of the details grid (styles.css → .address-list-row).
+    // The right-hand column of the details grid's top block (styles.css → .asset-view-top).
     expect(el.querySelector(".detail-row")!.classList.contains("address-list-row")).toBe(true);
     const stars = el.querySelectorAll(".address-primary-badge");
     expect(stars).toHaveLength(1);
@@ -152,13 +152,40 @@ describe("Addresses row", () => {
     expect(el.textContent).toContain("Port MAC ranges");
   });
 
-  it("keeps a MAC with no address visible, and an address with no MAC", () => {
+  it("hides a MAC with no address behind the +N MACs hover, and keeps an address with no MAC", () => {
     const el = render(g.addressesViewHTML(hmi({
       associatedIps: [{ ip: "10.0.0.9", source: "manual", lastSeen: now }],
     })));
-    expect(el.textContent).toContain("no address reported");
+    // Neither card carries an address, so neither is drawn as a group…
+    const groupMacs = [...el.querySelectorAll(".address-group .address-mac-line code")].map((c) => c.textContent);
+    expect(groupMacs).toEqual([]);
+    // …both wait in the hover, still removable.
+    const trigger = [...el.querySelectorAll(".address-more .mac-hover-trigger")]
+      .find((t) => (t.querySelector(".mac-badge-count")!.textContent || "") === "+2 MACs")!;
+    expect(trigger).toBeTruthy();
+    const rows = [...trigger.querySelectorAll(".mac-tooltip-row")];
+    expect(rows.map((r) => r.querySelector(".mono")!.textContent).sort()).toEqual([ETH, WIFI].sort());
+    expect(rows[0]!.textContent).toContain("no address");
+    expect(rows[0]!.querySelector(".mac-tooltip-delete")).not.toBeNull();
     expect(el.textContent).toContain("No MAC");
     expect(el.textContent).toContain("10.0.0.9");
+  });
+
+  it("draws addressed MACs and hides only the bare one", () => {
+    const el = render(g.addressesViewHTML(hmi({
+      associatedIps: [{ ip: "172.23.25.235", mac: ETH, source: "device-inventory", lastSeen: now }],
+    })));
+    const groupMacs = [...el.querySelectorAll(".address-group .address-mac-line code")].map((c) => c.textContent);
+    expect(groupMacs).toEqual([ETH]);
+    expect(el.querySelector(".address-more")!.textContent).toContain("+1 MAC");
+    expect(el.querySelector(".detail-label")!.textContent).toBe("Addresses (2 MACs, 1 IP)");
+  });
+
+  it("says so when no MAC has an address", () => {
+    const el = render(g.addressesViewHTML(hmi({ associatedIps: [] })));
+    expect(el.querySelector(".address-group")).toBeNull();
+    expect(el.textContent).toContain("no address reported");
+    expect(el.textContent).toContain("+2 MACs");
   });
 
   it("groups an interface row under its MAC whatever the MAC's case or separator", () => {

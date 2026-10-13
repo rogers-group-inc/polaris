@@ -23,6 +23,7 @@
  * transitions emit one as well.
  */
 
+import { pinnedAgentFor } from "../utils/pinnedTlsAgent.js";
 import { chunkArray } from "../utils/chunk.js";
 import { normalizeMacOrNull } from "../utils/mac.js";
 import { performance } from "node:perf_hooks";
@@ -112,7 +113,7 @@ import {
   type FortiManagerConfig,
   type RosterDeviceStatus,
 } from "./fortimanagerService.js";
-import { logEvent, logEventsBatch, buildConnectionChangedEvent, buildFirmwareChangedEvent } from "./eventLogService.js";
+import { logEvent, logEventsBatch, buildConnectionChangedEvent, buildFirmwareChangedEvent, type LogEventInput } from "./eventLogService.js";
 import { projectAssetFromSources } from "../utils/assetProjection.js";
 import { lookupOuiOverride } from "./ouiService.js";
 import { resolveAssetTypeCached } from "../utils/assetTypeMatch.js";
@@ -198,6 +199,8 @@ import {
   nextFailureBucket,
   probeStillDue,
   runsHeavyCadences,
+  statusEventDecision,
+  statusEventPairs,
   type MonitorStatus,
 } from "../utils/monitorStatus.js";
 import {
@@ -4189,13 +4192,11 @@ async function probeWinRm(host: string, config: Record<string, unknown>, start: 
         "Content-Type":   "application/soap+xml;charset=UTF-8",
         "Content-Length": Buffer.byteLength(body).toString(),
       },
-      // WinRM Basic-auth sends credentials on the wire, so an unverified TLS
-      // session lets a MITM capture them (2026-06-03 review, H1). Verify only
-      // when the WinRM credential explicitly opts in (config.verifyTls === true);
-      // legacy credentials with no flag keep their prior no-verify behavior so
-      // existing self-signed-cert installs don't break. Operators flip it on per
-      // credential in Server Settings → Credentials.
+      // WinRM Basic-auth sends credentials on the wire. verifyTls: true checks
+      // the CA chain; otherwise the certificate is pinned on first use and
+      // checked before the Authorization header is written (business rule 113).
       rejectUnauthorized: config.verifyTls === true,
+      ...(useHttps && config.verifyTls !== true ? { agent: pinnedAgentFor(url.hostname, Number(url.port)) } : {}),
       timeout: timeoutMs,
     } as any, (res) => {
       // Drain the body so the socket can close cleanly.
@@ -4255,9 +4256,9 @@ async function probeSsh(host: string, config: Record<string, unknown>, start: nu
       } else {
         opts.password = password;
       }
-      // Same opt-in server authentication as remoteExec.withSshClient — these
-      // are the only two ssh2.connect sites and they must not drift apart on
-      // whether the host key is checked. No-op unless verifyHostKey is set.
+      // Same server authentication as remoteExec.withSshClient — these are the
+      // only two ssh2.connect sites and they must not drift apart on whether
+      // the host key is checked. On unless verifyHostKey is false (rule 113).
       const verifier = buildHostVerifier(host, port, config);
       if (verifier) opts.hostVerifier = verifier;
       client.connect(opts);
@@ -11937,9 +11938,8 @@ export async function recordProbeResult(
   // hook) all run synchronously on in-memory values so audit + latency-
   // optimization paths don't wait for the flush. Stamp monitorStatusChangedAt
   // on every state change (up↔warning↔recovering↔down, including
-  // unknown→anything). The Event log fires on transitions into up / warning /
-  // down (see below); this column is the source for the Dashboard Monitor
-  // Alerts duration.
+  // unknown→anything). The Event log fires on up ↔ down only (see below);
+  // this column is the source for the Dashboard Monitor Alerts duration.
   enqueueProbePatch(assetId, {
     monitorStatus: nextStatus,
     lastMonitorAt: observedAt,
@@ -12009,23 +12009,21 @@ export async function recordProbeResult(
   // Event from downDetectionService.
   const configEdge = isConfigStatusEdge(previousStatus, nextStatus);
 
-  // Edge-triggered audit events. We log on the transition INTO up / warning /
-  // down — never per-poll (up→up, warning→warning, etc. don't fire because
-  // previousStatus === nextStatus). This yields exactly: the first successful
-  // poll (→up, including the back-up-after-down recovery), the first warning
-  // (→warning), and the first down (→down). "recovering" and "unknown" are
-  // intermediate and never logged. The propagate / retry side-effects below
-  // stay gated to confirmed up/down only — a "warning" is not a confirmed
-  // up/down edge for dependency suppression or queued-push retry.
-  if (!configEdge && previousStatus !== nextStatus && (nextStatus === "up" || nextStatus === "warning" || nextStatus === "down")) {
-    logEvent({
+  // Edge-triggered audit events — up ↔ down only (statusEventDecision). A
+  // missed poll (→warning) and its recovery are NOT logged: one lost SNMP reply
+  // every few minutes used to fill the Events page with up/warning pairs that
+  // described no outage. The propagate / retry side-effects below are a
+  // separate guard and are unchanged.
+  const statusEvent = statusEventDecision(previousStatus, nextStatus);
+  if (statusEvent !== "skip") {
+    const statusEventInput: LogEventInput = {
       action: "monitor.status_changed",
       resourceType: "asset",
       resourceId: assetId,
       resourceName: asset.hostname || undefined,
       level: nextStatus === "up" ? "info" : "warning",
       message:
-        `Monitor: ${asset.hostname || assetId} ${previousStatus} → ${nextStatus}` +
+        `Monitor: ${asset.hostname || assetId} ${nextStatus === "up" ? "down" : previousStatus} → ${nextStatus}` +
         (result.error ? ` (${result.error})` : ""),
       details: {
         previousStatus,
@@ -12035,7 +12033,9 @@ export async function recordProbeResult(
         consecutiveFailures:  newCf,
         consecutiveSuccesses: newCs,
       },
-    });
+    };
+    if (statusEvent === "log") logEvent(statusEventInput);
+    else void logStatusEventIfPaired(assetId, nextStatus === "up" ? "up" : "down", statusEventInput);
   }
 
   if (!configEdge && previousStatus !== nextStatus && (nextStatus === "up" || nextStatus === "down")) {
@@ -12054,6 +12054,27 @@ export async function recordProbeResult(
     if (nextStatus === "up") {
       void triggerRetryAfterStatusChange(assetId);
     }
+  }
+}
+
+/**
+ * Write an up/down `monitor.status_changed` Event whose edge leaves recovering /
+ * warning only when it alternates with the asset's latest status Event
+ * (statusEventPairs): an up that ends an outage, a down that starts a new one.
+ * Runs only on those edges, so it is one indexed read (Event
+ * @@index([assetId, timestamp])) per edge, never per poll.
+ */
+export async function logStatusEventIfPaired(assetId: string, next: "up" | "down", input: LogEventInput): Promise<void> {
+  try {
+    const last = await prisma.event.findFirst({
+      where: { assetId, action: "monitor.status_changed" },
+      orderBy: { timestamp: "desc" },
+      select: { details: true },
+    });
+    const lastNext = (last?.details as { nextStatus?: unknown } | null)?.nextStatus;
+    if (statusEventPairs(lastNext, next)) await logEvent(input);
+  } catch (err) {
+    logger.warn({ err, assetId }, "monitor.status_changed recovery lookup failed");
   }
 }
 

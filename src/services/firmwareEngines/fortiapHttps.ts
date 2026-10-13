@@ -46,6 +46,7 @@ function client(ctx: FirmwareEngineContext): DeviceHttpClient {
   return new DeviceHttpClient({
     host: ctx.host,
     port: ctx.port,
+    expectedSerial: ctx.expectedSerial,
     scheme: ctx.scheme ?? "https",
     commandMs: ctx.timeouts.commandMs,
     uploadIdleMs: ctx.timeouts.uploadIdleMs,

@@ -850,6 +850,15 @@ input, select, textarea { font-family: inherit; }
   box-shadow: var(--shadow-card);
   margin: 6px 16px 12px;
 }
+/* The shell's persistent bar (app.js buildSearchbar). Search has no navbar
+   slot: tapping this bar opens #search over the page, and `.expanded` marks
+   that — the bar widens toward the screen edges while the scope shortcuts
+   below it unfold (.search-expand-in). */
+#m3-searchbar {
+  margin: 8px 16px 4px;
+  transition: margin .22s cubic-bezier(.2,0,0,1);
+}
+#m3-searchbar.expanded { margin: 8px 8px 4px; }
 .m3-searchbar .icon-btn { width: 40px; height: 40px; }
 .m3-searchbar .input {
   flex: 1 1 auto;
@@ -1001,7 +1010,11 @@ input, select, textarea { font-family: inherit; }
      declared per theme, so daylight themes get a warm cast, not black grime. */
   box-shadow: var(--shadow-sheet);
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  /* One equal column per item: the bar is four slots on most installs and
+     five when Chat has one (PolarisTabs.setChatInBar), and a fixed repeat(5)
+     left a dead fifth column on the right of the four. */
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   align-items: center;
   padding: 12px 0 16px;
   /* Above the asset detail sheet (901) and its scrim (900) so the bottom
@@ -1544,6 +1557,17 @@ input, select, textarea { font-family: inherit; }
 
 /* Scope-prefix shortcut hints shown in the Search tab empty state. */
 .search-hint-section { padding: 8px 16px 24px; }
+/* Opening search unfolds its explanations from under the bar rather than
+   swapping the page in one frame. */
+.search-expand-in { animation: search-expand-in .24s cubic-bezier(.2,0,0,1) both; transform-origin: top center; }
+@keyframes search-expand-in {
+  from { opacity: 0; transform: translateY(-12px) scaleY(.96); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #m3-searchbar { transition: none; }
+  .search-expand-in { animation: none; }
+}
 .search-hint-section-label {
   font-size: 11px;
   letter-spacing: 0.08em;
@@ -1647,12 +1671,50 @@ button, .list-item, .chip { touch-action: manipulation; }
   box-shadow: 0 2px 6px rgba(0,0,0,.6);
   letter-spacing: .5px;
 }
-.fg-marker.monitor-unmonitored { background: #757575; }
-.fg-marker.monitor-unknown     { background: #9e9e9e; }
-.fg-marker.monitor-up          { background: #2e7d32; }
-.fg-marker.monitor-degraded    { background: #f9a825; color: #222; }
-.fg-marker.monitor-down        { background: #c62828; }
-.fg-marker.monitor-maintenance { background: #9575cd; }
+.fg-marker.monitor-unmonitored,
+.map-legend i.monitor-unmonitored { background: #757575; }
+.fg-marker.monitor-unknown,
+.map-legend i.monitor-unknown     { background: #9e9e9e; }
+.fg-marker.monitor-up,
+.map-legend i.monitor-up          { background: #2e7d32; }
+.fg-marker.monitor-degraded,
+.map-legend i.monitor-degraded    { background: #f9a825; color: #222; }
+.fg-marker.monitor-down,
+.map-legend i.monitor-down        { background: #c62828; }
+.fg-marker.monitor-maintenance,
+.map-legend i.monitor-maintenance { background: #9575cd; }
+
+/* Status legend (Leaflet control, bottom-left; map-tab.js addStatusLegend).
+   Mirrors the desktop .map-legend in map.css (which mobile.html does not
+   load): the same dark chip in every theme, because it sits over tiles, not
+   the page surface. Swatch colours come from the palette above — never
+   restate one here. Two columns keep it short enough to leave the bottom of a
+   phone's map visible. */
+.map-screen .leaflet-bottom.leaflet-left .leaflet-control { margin: 0 0 16px 12px; }
+.map-legend {
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: 12px;
+  row-gap: 3px;
+  background: rgba(13,16,22,0.82);
+  border: 1px solid rgba(255,255,255,0.22);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 16px;
+  color: #f1f3f5;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+}
+.map-legend span { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.map-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: 0 0 auto;
+  background: #757575;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+}
 .fg-cluster {
   width: 40px; height: 40px;
   border-radius: 50%;
@@ -1750,6 +1812,71 @@ button, .list-item, .chip { touch-action: manipulation; }
   flex: 0 0 40px;
 }
 .asset-card .top .ico svg { width: 24px; height: 24px; fill: currentColor; }
+
+/* Favorite star on an asset card (assets-tab.js favStarHTML) — the desktop
+   list's .fav-star, starred in the same #f5c518. Shown only while a desktop
+   view tab is showing, since a favorite belongs to the tab. The 40px box is
+   the tap target; the glyph stays 20px. */
+.fav-star-m {
+  flex: 0 0 auto;
+  width: 40px; height: 40px;
+  margin: -8px -8px -8px 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  opacity: .55;
+  cursor: pointer;
+}
+.fav-star-m svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.fav-star-m.on { color: #f5c518; opacity: 1; }
+.fav-star-m.on svg { fill: currentColor; }
+
+/* The desktop Assets page's view tabs (assets-tab.js viewTabsHTML), as MD3
+   secondary tabs: a scrolling row of names with the showing one underlined in
+   the primary colour — deliberately not chips, so the row of views never
+   reads as another row of type filters. */
+.view-tabs {
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--md-outline-variant);
+}
+.view-tabs::-webkit-scrollbar { display: none; }
+.view-tabs[hidden] { display: none; }
+.view-tab {
+  flex: 0 0 auto;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 14px;
+  border: 0;
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: .1px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.view-tab.on { color: var(--md-primary); }
+.view-tab.on::after {
+  content: "";
+  position: absolute;
+  left: 10px; right: 10px; bottom: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--md-primary);
+}
+.view-tab-favs { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; color: var(--md-on-surface-variant); }
+.view-tab-favs svg { width: 14px; height: 14px; fill: #f5c518; }
 .asset-card .top .name {
   flex: 1 1 auto;
   font-size: 16px;

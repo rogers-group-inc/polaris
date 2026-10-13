@@ -16,10 +16,19 @@ phone — the link is one address for everyone, and Polaris picks the phone app
 or the desktop page when it is opened. Add `?desktop=1` to that link to force
 the desktop page.
 
-The tab bar is **Search · Alerts · Assets · Networks · More** — or, when your
-role includes the [AI Assistant](AI-Assistant) and an AI Assistant integration
-is enabled, **Search · Alerts · Assets · Chat · More**, with **Networks** moved
-to the top of More. **Chat** is the same assistant as the desktop's chat
+The tab bar is **Alerts · Assets · Networks · More** — or, when your role
+includes the [AI Assistant](AI-Assistant) and an AI Assistant integration is
+enabled, **Alerts · Assets · Networks · Chat · More**. The app opens on
+**Alerts**.
+
+**Search** is the box at the top of every screen. Tap it and search opens over
+the page with the scope shortcuts (`asset:` or `a:`, `network:` or `n:`, and the
+rest) and what each one narrows to; tap a shortcut to start a scoped search.
+Results appear as you type. The arrow at the left of the box (or **Esc** on a
+keyboard, once to clear and again to close) closes search and returns you to the
+page you were on.
+
+**Chat** is the same assistant as the desktop's chat
 button: the same saved conversations, lookups made with your own permissions,
 reports to download as CSV or Markdown, **History** and **New** in its top bar,
 and the same fresh chat after the integration's idle time (`/resume` goes back).
@@ -30,8 +39,9 @@ type, then scrolls inside. While the keyboard is open the navigation bar steps
 aside and the conversation scrolls in the space above the text box, so you can
 scroll up to read earlier answers while you write; if you were at the newest
 answer, it stays in view as the box grows.
-The More tab holds the rest, top to bottom: the **Device Map** (sites and topology) and
-**Blocks**; **Events** (the audit log, last 7 days); the **Notification
+The More tab holds the rest, top to bottom: the **Device Map** (sites and
+topology; a legend at the bottom left names each marker colour: Up, Warn, Down,
+Maint, Unmonitored, Unknown) and **Blocks**; **Events** (the audit log, last 7 days); the **Notification
 preference**; **Add to Home Screen** when the app is not installed yet; the
 **theme strip** (tap to move through the day, as the desktop's theme band
 does); your **Account**; **Desktop view**; and **Sign out**. Its **Account** row shows your name, your
@@ -85,6 +95,22 @@ again to drop it, or tap **Any** to clear them all.
 |---|---|---|---|
 | **Assets** | hostname, DNS name, IP, MAC, asset tag, assigned-to | Recently added, Name, IP address, Status, Type, Last seen | monitor **Status** (Down, Missed, Dep. Down, …), one or several — named on the sort chip while it applies |
 | **Networks** | name, network, purpose, VLAN, FortiGate, block, tags — every word must match | Name, Network (address order), Utilization, Reservations, VLAN | the **All / Available / Reserved / Deprecated** chips |
+
+**Your desktop Assets tabs are on the phone too.** If you have built tabs on the
+desktop [Assets](Assets) page, the Assets list shows them as a row of tabs at
+the top, and each one applies that tab's filters and sort. The phone opens on
+the tab that was last active on the desktop. After that it remembers its own
+choice, and changing tab on the phone does not change the desktop's. The filter
+field, type chips and *Sort & filter* sheet narrow the list further within the
+tab, and each replaces the tab's setting for the same field: a type chip
+replaces the tab's Type filter, a status pick its Status filter, and a sort its
+sort.
+
+**Favorites belong to the tab, as on the desktop.** The tab's starred assets come
+first in the list and show a filled star, and the tab names how many it holds.
+Tap a star to add or remove a favorite. The change is saved to that tab, so
+the desktop shows it as well. A tab holds up to 500 favorites. With no desktop
+tabs, the list has no tab row and no stars.
 
 **Tapping a network opens its addresses in a sheet over the list**, so your
 filter and scroll position are still there when you close it. A reserved address

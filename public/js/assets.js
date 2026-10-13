@@ -5767,24 +5767,31 @@ function _assetGeneralTabHTML(a, sources) {
     // status) come first.
     var dependencyTreeMountHTML = '<div data-shot-section="depTree" data-shot-label="Dependency Tree"><div id="asset-dep-tree-mount-' + escapeHtml(a.id) + '"></div></div>';
 
-    var generalHTML = '<div data-shot-section="details" data-shot-label="Details">' +
-      _managementAccessNoticeHTML(a) +
-      '<div class="asset-view-grid">' +
-      (a.ipAddress && !a.hostname
+    // Identity column (Hostname / Primary Address / DNS Name) with the
+    // Addresses list beside it on the right; the rest of the grid follows.
+    var hostnameRowHTML = a.ipAddress && !a.hostname
         ? '<div class="detail-row"><span class="detail-label">Hostname</span><span class="detail-value">- <button class="btn btn-sm btn-secondary" onclick="singleDnsLookup(' + jsArg(a.id) + ')" title="Reverse DNS lookup (PTR record)">PTR Lookup</button></span></div>'
         : (a.hostnameOverride
           ? '<div class="detail-row"><span class="detail-label">Hostname</span><span class="detail-value"><span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(a.hostname || "") + '">' + escapeHtml(a.hostname || "-") + '</span><span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#6b728018;color:#9ca3af;border:1px solid #6b728030;margin-left:6px" title="Hostname manually overridden — discovery will not change it. Clear the Hostname field in Edit to resume the discovered value.">overridden</span>' + hostnameOriginalLineHTML(a) + '</span></div>'
-          : viewRow("Hostname", a.hostname, false, false, true))) +
-      viewRow("DNS Name", a.dnsName, false, false, true) +
+          : viewRow("Hostname", a.hostname, false, false, true));
+    var identityHTML = hostnameRowHTML +
       ipViewRow(a) +
       // Firewall VIP / virtual-server rows — async-fetched (needs
       // reservations:read), and absent for the overwhelming majority of assets
       // that aren't published through one. Mounted directly under the address
       // they qualify: "this device answers on 203.0.113.10, via that gate".
       '<div id="asset-vip-mount-' + escapeHtml(a.id) + '" style="display:contents"></div>' +
-      // Every MAC with the IPs bound to it, the primary pair starred
-      // (business rule 102) — replaced the separate MAC Address / All MACs rows.
-      addressesViewHTML(a) +
+      viewRow("DNS Name", a.dnsName, false, false, true);
+    // Every MAC with the IPs bound to it, the primary pair starred
+    // (business rule 102) — replaced the separate MAC Address / All MACs rows.
+    var addressesHTML = addressesViewHTML(a);
+
+    var generalHTML = '<div data-shot-section="details" data-shot-label="Details">' +
+      _managementAccessNoticeHTML(a) +
+      '<div class="asset-view-grid">' +
+      (addressesHTML
+        ? '<div class="asset-view-top"><div class="asset-view-identity">' + identityHTML + '</div>' + addressesHTML + '</div>'
+        : identityHTML) +
       viewRow("Asset Tag", a.assetTag) +
       viewRow("Serial Number", a.serialNumber, false, false, true) +
       (a.macAddress && !a.manufacturer
@@ -19098,7 +19105,6 @@ function _addressGroupHTML(asset, m, ips, primaryIp, primaryMac) {
   var lines = ips.map(function (r) {
     return _addressIpLineHTML(asset, r, r.ip === primaryIp && (!primaryMac || _addressMacKey(r.mac) === _addressMacKey(primaryMac)));
   }).join('');
-  if (!ips.length) lines = '<div class="address-empty">no address reported</div>';
   return '<div class="address-group">' + head + lines + '</div>';
 }
 
@@ -19150,9 +19156,13 @@ function addressesViewHTML(asset) {
     return (Date.parse(b.m.lastSeen || 0) || 0) - (Date.parse(a.m.lastSeen || 0) || 0);
   });
 
-  var shown = groups.slice(0, _ADDRESS_GROUPS_VISIBLE);
-  var hidden = groups.slice(_ADDRESS_GROUPS_VISIBLE);
+  // Only MACs carrying an address are drawn; a MAC with none (a spare port, a
+  // radio that never associated) waits behind the "+N MACs" hover with the
+  // overflow. The sort above already puts every addressed group first.
+  var shown = groups.filter(function (g) { return g.ips.length; }).slice(0, _ADDRESS_GROUPS_VISIBLE);
+  var hidden = groups.slice(shown.length);
   var html = shown.map(function (g) { return _addressGroupHTML(asset, g.m, g.ips, primaryIp, primaryMac); }).join('');
+  if (!shown.length && !noMac.length) html = '<div class="address-empty" style="padding-left:0">no address reported</div>';
 
   if (noMac.length) {
     html += '<div class="address-group">' +
@@ -19198,7 +19208,8 @@ function addressesViewHTML(asset) {
 
   var ipCount = rows.length;
   var label = 'Addresses (' + groups.length + ' MAC' + (groups.length === 1 ? '' : 's') + (ipCount ? ', ' + ipCount + ' IP' + (ipCount === 1 ? '' : 's') : '') + ')';
-  // Stacked and spanning both grid columns (styles.css → .address-list-row).
+  // Stacked, in the right-hand column beside Hostname / Primary Address / DNS
+  // Name (styles.css → .asset-view-top).
   return '<div class="detail-row stacked address-list-row"><span class="detail-label">' + label + '</span>' +
     '<div class="detail-value">' + html + '</div></div>';
 }

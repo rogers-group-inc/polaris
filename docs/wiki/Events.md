@@ -121,7 +121,7 @@ beyond letters, digits, `.`, `_` and `-` (and a leading hyphen), and a port outs
 
 | Action | Means |
 |---|---|
-| `monitor.status_changed` | the pill moved. **Not written for entering or leaving `passive`** — that is a configuration edge, not a state change |
+| `monitor.status_changed` | the device went **Down**, or came back **Up** after being down. A missed poll (the pill reading *Missed*) and the answer after it are not events — they show on the response-time chart and count toward the down automation's missed-poll limit. One miss while a device climbs back out of an outage does not write a second *Down*. Not written for entering or leaving `passive` — that is a configuration edge, not a state change |
 | `monitor.dependency_suppressed` / `_resumed` | a subtree went behind a dark parent, or came back |
 | `monitor.down_detection_absent` | **one-shot** — the fleet has **no down automation at all**, so nothing is being judged |
 | `monitor.interface_up` | a **monitored** (pinned) interface came up. The message names the speed and duplex it negotiated — *Interface port5 (Uplink) on SW-1 came up — 1 Gbps, full duplex* — and says *unknown* for either one the source does not report. Filed on the asset, so its **Events** tab shows it |
@@ -181,9 +181,15 @@ device-down supersession (any metric or device-state alert on a device that went
 | `automation_script.deleted` | **warning** | |
 | `automation.script.run` | | one execution |
 | `ssh.host_key.mismatch` | | a host key **changed** and the connection was refused |
+| `tls.cert.mismatch` | **warning** | a WinRM or firmware server's TLS certificate **changed** and the connection was refused before any credential was sent ([rule 113](Business-Rules#rule-113)) |
+| `ssh.host_key.deleted` / `tls.cert.deleted` | **warning** | a pin was deleted, so the next connection trusts whatever answers |
+| `event_archive.export_failed` | **warning** | the archive export failed, so old events were **not** pruned that hour |
+| `event_archive.host_key_forgotten` | **warning** | the archive server's pinned host key was forgotten |
 | `agent.upgrade_skipped` | | a host the fan-out could not upgrade |
 | `agent.upgrade_deferred` | info | a host the fan-out did not try because monitoring shows it down; retried by the next fan-out |
 | `asset.pins.bulk_updated` | | one mass-pin apply |
+| `credential.used` | info | a person aimed a stored credential they own (or hold Credentials Full RW for) at an asset, a Discovery's targets, a path check, a firmware binding or a flash |
+| `credential.borrowed` | **warning** | the same, with a credential the person does **not** own and no Credentials Full RW — the row names the owner and the destination ([rule 112](Business-Rules#rule-112)) |
 
 The two password Events being **different actions at different levels** is
 deliberate: the self-service change proves knowledge of the current password and
