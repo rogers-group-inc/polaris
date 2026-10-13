@@ -483,7 +483,18 @@ export async function assertActionRefs(input: RuleActionCarrier): Promise<void> 
   // coherence rule.
   const notifyActions: { label: string; channelIds: string[]; broadcast: boolean }[] = [];
   const scriptRefs: { label: string; scriptId: string; runOn: string }[] = [];
-  for (const { action, label } of all) {
+  for (const { action, label, where } of all) {
+    if (action.type === "reboot") {
+      // Business rule 115(c): a recovery is no reason to reboot anything.
+      if (where === "reset" || where === "resolved") {
+        throw new AppError(400, `${label}: a reboot cannot run when the alert recovers — put it on the alert's own actions, a severity band or an escalation tier`);
+      }
+      for (const e of action.notifyEmails) {
+        const v = String(e ?? "").trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) throw new AppError(400, `${label}: "${e}" is not an email address`);
+      }
+      continue;
+    }
     if (action.type === "notify") {
       // channelId is the lossless single-channel mirror every pre-multi-channel
       // reader still uses, so the two views must agree. Refused rather than

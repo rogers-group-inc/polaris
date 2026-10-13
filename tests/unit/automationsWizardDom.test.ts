@@ -4446,3 +4446,78 @@ describe("event trigger: detail conditions", () => {
     expect((await save()).trigger.detailsMatch).toEqual({ direction: "escalated" });
   });
 });
+
+// Business rule 115(c): the Reboot action — a memory threshold that books a
+// reboot of the device. The wizard must round-trip it, never offer it on the
+// reset list, and never give it an escalation footer.
+describe("reboot action", () => {
+  const memRule = (actions: unknown[]) => ({
+    id: "r-mem",
+    name: "Memory over 90%",
+    description: null,
+    enabled: true,
+    severity: "warning",
+    trigger: { type: "asset_metric", metric: "memPct", aggregation: "avg", windowSec: 300, operator: ">", threshold: 90, forDurationSec: 900 },
+    scope: { allAssets: true },
+    reset: { mode: "auto" },
+    cooldownSec: null,
+    actions,
+    resetActions: null,
+  });
+  async function openStep5(rule: Record<string, unknown>): Promise<void> {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(rule);
+    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  const save = async (): Promise<Record<string, any>> => {
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    return savedPayloads[0] as Record<string, any>;
+  };
+  const rebootRow = () => Array.from(doc.querySelectorAll("#aw-actions > .aw-action"))
+    .find((r) => (r.querySelector(".aw-action-type") as HTMLSelectElement).value === "reboot")!;
+
+  it("round-trips a stored reboot action, edits included, into a payload the server accepts", async () => {
+    await openStep5(memRule([{ type: "event" }, { type: "reboot", when: "at", at: "03:15", notifyEmails: ["noc@example.invalid"], minGapHours: 48 }]));
+    const row = rebootRow();
+    expect(row).toBeTruthy();
+    expect(row.querySelector(".aw-esc-sec")).toBeNull();
+    expect((row.querySelector(".rb-at") as HTMLInputElement).value).toBe("03:15");
+    expect(row.querySelector(".aw-action-summary")!.textContent).toMatch(/03:15 server time/);
+    (row.querySelector(".rb-emails") as unknown as { value: string }).value = "noc@example.invalid, oncall@example.invalid";
+    const p = await save();
+    expect(toastErrors).toEqual([]);
+    const a = p.actions.find((x: { type: string }) => x.type === "reboot");
+    expect(a).toEqual({ type: "reboot", when: "at", at: "03:15", notifyEmails: ["noc@example.invalid", "oncall@example.invalid"], minGapHours: 48 });
+    expect(() => ruleInputSchema.parse(p)).not.toThrow();
+  });
+
+  it("'right away' saves when: now and disables the time field", async () => {
+    await openStep5(memRule([{ type: "reboot", when: "now", at: "02:00", notifyEmails: ["noc@example.invalid"], minGapHours: 24 }]));
+    const row = rebootRow();
+    expect((row.querySelector(".rb-at") as HTMLInputElement).disabled).toBe(true);
+    expect((await save()).actions.find((x: { type: string }) => x.type === "reboot").when).toBe("now");
+  });
+
+  it("refuses to save without a results recipient", async () => {
+    await openStep5(memRule([{ type: "reboot", when: "at", at: "02:00", notifyEmails: ["noc@example.invalid"], minGapHours: 24 }]));
+    (rebootRow().querySelector(".rb-emails") as unknown as { value: string }).value = "";
+    await save();
+    expect(savedPayloads).toHaveLength(0);
+    expect(toastErrors.join(" ")).toMatch(/email address for the reboot's result/);
+  });
+
+  it("is offered on the trigger's actions but never on the reset list", async () => {
+    await openStep5(memRule([{ type: "event" }]));
+    const fireOpts = Array.from(doc.querySelectorAll("#aw-actions > .aw-action .aw-action-type option")).map((o) => (o as HTMLOptionElement).value);
+    expect(fireOpts).toContain("reboot");
+    (doc.querySelector("#aw-reset-add") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+    const resetOpts = Array.from(doc.querySelectorAll("#aw-reset-actions > .aw-action .aw-action-type option")).map((o) => (o as HTMLOptionElement).value);
+    expect(resetOpts.length).toBeGreaterThan(0);
+    expect(resetOpts).not.toContain("reboot");
+  });
+});

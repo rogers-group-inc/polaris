@@ -111,6 +111,10 @@ export function selectTestActions(
   if (action.type === "api_call") {
     return { actions: [], skipped: [{ type: "api_call", reason: "an API call would act on a real system" }] };
   }
+  if (action.type === "reboot") {
+    // Business rule 115(c): a test never books a reboot.
+    return { actions: [], skipped: [{ type: "reboot", reason: "a test never reboots a device" }] };
+  }
   if (action.type !== "notify") {
     return { actions: [], skipped: [{ type: action.type, reason: "nothing to deliver" }] };
   }

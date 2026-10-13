@@ -243,6 +243,11 @@
       var host = action.url;
       try { host = new URL(action.url).host; } catch (_e) { /* keep the raw string */ }
       deps.add("apiEndpoint", host, label);
+    } else if (action.type === "reboot") {
+      // Stripped like every other acting action (business rule 115(c)): an
+      // imported automation never reboots anything until someone holding
+      // assets:write adds the action back. Named so the importer knows.
+      deps.add("rebootAction", action.when === "now" ? "reboot right away" : "reboot at " + (action.at || "02:00"), label);
     }
   }
 

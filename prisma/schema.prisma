@@ -5398,7 +5398,7 @@ model NotificationRule {
   // reset: { mode: "manual"|"auto"|"timed", clearThreshold?, sustainSec?,
   // afterSec? } — supersedes clearBehavior/clearAfterSec (auto gains
   // hysteresis + clear-sustain). actions: v2 unified outcome list —
-  // [{ type: "notify"|"api_call"|"script", ... }] — supersedes `targets`.
+  // [{ type: "notify"|"api_call"|"script"|"event"|"reboot", ... }] — supersedes `targets`.
   // NULL on pre-v2 rows: every reader goes through normalizeRuleToV2()
   // (notificationTypes.ts), and the migrateAutomationRuleShape one-shot
   // persists the converted shape. The legacy columns above are retained as a
@@ -5421,7 +5421,8 @@ model NotificationRule {
 
   // Actions that run when the alert ENDS: auto / timed / custom-condition
   // reset, or an operator clearing it by hand. Plain actions (notify |
-  // api_call | script | event) — never escalatable, because there is nothing
+  // api_call | script | event; a reboot is refused here, business rule
+  // 115(c)) — never escalatable, because there is nothing
   // to chase about a recovery. NULL = silent on reset, which is what every
   // pre-feature automation keeps until someone edits and saves it; the wizard
   // seeds this from the trigger's notify actions as they are created, so new
@@ -5736,7 +5737,7 @@ model AlertGroup {
   messageTemplate  String? @db.Text
   requireAckNote   Boolean @default(false)
   emailComposition Json?
-  /// escalatableActionSchema[] — notify | api_call | script | event.
+  /// escalatableActionSchema[] — notify | api_call | script | event | reboot.
   actions          Json?
   resetActions     Json?
   escalation       Json?

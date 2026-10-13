@@ -2167,11 +2167,32 @@ export const eventActionSchema = z
   })
   .strict();
 
+// Book a reboot of the TRIGGERING asset (business rule 115(c)). Never sends
+// one inline: it books through the reboot scheduler (rule 93's shape), so the
+// opt-in, the HA refusal, the maintenance hold and the results email are the
+// same as an operator's booking. `when: "now"` books for a minute from now;
+// "at" books the next occurrence of `at` (HH:MM, the server's local time).
+// Skipped — with an Event, not a failure — when a booking is already pending
+// (one per asset) or the device rebooted within `minGapHours`, which is what
+// stops a memory leak from rebooting a device in a loop. Refused on reset and
+// resolved lists (assertActionRefs): a recovery is no reason to reboot.
+export const REBOOT_WHEN = ["now", "at"] as const;
+export const rebootActionSchema = z
+  .object({
+    type: z.literal("reboot"),
+    when: z.enum(REBOOT_WHEN).default("at"),
+    at: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "at must be HH:MM").default("02:00"),
+    notifyEmails: z.array(z.string().max(254)).min(1, "name at least one email address for the results").max(20),
+    minGapHours: z.number().int().min(1).max(720).default(24),
+  })
+  .strict();
+
 export const actionSchema = z.discriminatedUnion("type", [
   notifyActionSchema,
   apiCallActionSchema,
   scriptActionSchema,
   eventActionSchema,
+  rebootActionSchema,
 ]);
 
 // Escalation v2: tiers of ACTIONS (any type), superseding the email-only tier
@@ -2309,6 +2330,8 @@ export const escalatableActionSchema = z.discriminatedUnion("type", [
   // No per-action escalation: an audit Event is instantaneous, so there is
   // nothing to chase if it goes "unhandled".
   eventActionSchema,
+  // Nor on a reboot booking: it is one-shot, and its outcome has its own email.
+  rebootActionSchema,
 ]);
 export type EscalatableAction = z.infer<typeof escalatableActionSchema>;
 
@@ -2368,6 +2391,7 @@ export type ResetConfig = z.infer<typeof resetSchema>;
 export type NotifyAction = z.infer<typeof notifyActionSchema>;
 export type ApiCallAction = z.infer<typeof apiCallActionSchema>;
 export type ScriptAction = z.infer<typeof scriptActionSchema>;
+export type RebootAction = z.infer<typeof rebootActionSchema>;
 export type AutomationAction = z.infer<typeof actionSchema>;
 export type EscalationTierV2 = z.infer<typeof escalationTierV2Schema>;
 export type EscalationV2Config = z.infer<typeof escalationV2Schema>;
@@ -3708,18 +3732,22 @@ export interface RuleActionRef {
   action: AutomationAction;
   /** Human label for save-time validation errors ("Action 2 escalation tier 1: …"). */
   label: string;
+  /** Where it runs: on a fire (rule or band actions), on an escalation tier,
+   *  on a severity band's all-clear, or on reset. A reboot is refused on the
+   *  last two (business rule 115(c)). */
+  where: "fire" | "tier" | "resolved" | "reset";
 }
 
 export function allRuleActionRefs(rule: RuleActionCarrier): RuleActionRef[] {
   const out: RuleActionRef[] = [];
   const addTiers = (esc: unknown, prefix: string) => {
     (normalizeEscalationToV2(esc)?.tiers ?? []).forEach((t, ti) => {
-      t.actions.forEach((a) => out.push({ action: a, label: `${prefix} escalation tier ${ti + 1}` }));
+      t.actions.forEach((a) => out.push({ action: a, label: `${prefix} escalation tier ${ti + 1}`, where: "tier" }));
     });
   };
   const addActions = (list: EscalatableAction[] | null | undefined, prefix: string) => {
     (list ?? []).forEach((a, i) => {
-      out.push({ action: a, label: `${prefix} ${i + 1}` });
+      out.push({ action: a, label: `${prefix} ${i + 1}`, where: "fire" });
       addTiers(actionEscalation(a), `${prefix} ${i + 1}`);
     });
   };
@@ -3729,8 +3757,8 @@ export function allRuleActionRefs(rule: RuleActionCarrier): RuleActionRef[] {
     addActions(b.actions, `${b.severity} band action`);
     addTiers(b.escalation, `${b.severity} band`);
   }
-  (rule.bandNotify?.resolvedActions ?? []).forEach((a, i) => out.push({ action: a, label: `Resolved action ${i + 1}` }));
-  (rule.resetActions ?? []).forEach((a, i) => out.push({ action: a, label: `Reset action ${i + 1}` }));
+  (rule.bandNotify?.resolvedActions ?? []).forEach((a, i) => out.push({ action: a, label: `Resolved action ${i + 1}`, where: "resolved" }));
+  (rule.resetActions ?? []).forEach((a, i) => out.push({ action: a, label: `Reset action ${i + 1}`, where: "reset" }));
   return out;
 }
 
@@ -5378,7 +5406,15 @@ export function buildSchemaCatalog() {
       { type: "api_call", label: "Call an API (HTTP request)", requires: null, permission: null },
       { type: "script", label: "Run a script", requires: "scripts", permission: "automationScripts" },
       { type: "event", label: "Create an Event", requires: null, permission: null },
+      { type: "reboot", label: "Reboot the device", requires: null, permission: "assets" },
     ],
+    rebootMeta: {
+      whenOptions: REBOOT_WHEN,
+      defaultAt: "02:00",
+      defaultMinGapHours: 24,
+      maxMinGapHours: 720,
+      help: "Books a reboot of the device that raised the alert, through the same scheduler and opt-ins as Reboot in the asset's Status row (credential, integration or agent must allow reboots; HA FortiGates are refused). Skipped when a reboot is already booked for the device or it rebooted within the minimum gap. Never runs on reset or from a Test button. A human must review any automation that reboots production equipment.",
+    },
     apiCallMeta: {
       allowedMethods: API_CALL_METHODS,
       urlSchemes: ["https", "http"],

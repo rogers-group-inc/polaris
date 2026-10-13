@@ -2491,7 +2491,7 @@ function ruleWantsAssetDetail(rule: DbRule): boolean {
         ? [a.bodyTemplate]
         : a.type === "script"
           ? [a.argsTemplate]
-          : []; // event — no templates of its own
+          : []; // event, reboot — no templates of its own
   const refs = allRuleActionRefs(rule);
   const actionTemplates = refs.flatMap((r) => templatesOf(r.action));
   // Any notify action can end up on an email channel, and the DEFAULT alert
