@@ -13,7 +13,8 @@ import { createSocket } from "node:dgram";
 import { createConnection, type Socket } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname, resolve } from "node:path";
+import { STATE_DIR } from "../utils/paths.js";
 import { tmpdir } from "node:os";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
@@ -48,14 +49,54 @@ function runCommand(
   });
 }
 
-function sshCommonOptions(keyPath?: string): string[] {
+/**
+ * Business rule 113(d): the archive server is authenticated by trust on
+ * first use. OpenSSH's own `accept-new` pins the key it sees on the first
+ * connection into a known_hosts file Polaris owns, and refuses a changed key
+ * from then on ("Host key verification failed") — so the event log is never
+ * handed to an impostor. It is a FILE under the state dir rather than a row in
+ * ssh_host_keys because the ssh / scp / sftp binaries read keys, not the
+ * fingerprints the table holds. On an HA install the file rides the periodic
+ * file sync to the standby (data/ is synced; see deploy/ha/ha-rsync-exclude).
+ * `forgetArchiveHostKey` is the recovery for a re-keyed archive server.
+ */
+export const ARCHIVE_KNOWN_HOSTS = resolve(STATE_DIR, "data", "archive_known_hosts");
+
+export function sshCommonOptions(keyPath?: string): string[] {
+  mkdirSync(dirname(ARCHIVE_KNOWN_HOSTS), { recursive: true });
   const opts = [
-    "-o", "StrictHostKeyChecking=no",
+    "-o", "StrictHostKeyChecking=accept-new",
+    "-o", `UserKnownHostsFile=${ARCHIVE_KNOWN_HOSTS}`,
     "-o", "ConnectTimeout=10",
     "-o", "BatchMode=yes",
   ];
   if (keyPath) opts.push("-i", keyPath);
   return opts;
+}
+
+/** True when ssh refused because the archive server's key no longer matches its pin. */
+export function isHostKeyRefusal(text: string): boolean {
+  return /Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(text);
+}
+
+export const ARCHIVE_HOST_KEY_CHANGED_MESSAGE =
+  "The archive server's SSH host key has changed since Polaris pinned it, so the connection was refused. " +
+  "If the server was legitimately rebuilt or re-keyed, use Forget host key and test again.";
+
+/** Forget the archive server's pinned key; the next connection pins whatever answers. Audited. */
+export async function forgetArchiveHostKey(actor: string): Promise<void> {
+  try { unlinkSync(ARCHIVE_KNOWN_HOSTS); } catch { /* nothing pinned yet */ }
+  // Dynamic: eventLogService imports this module (the retention cache), so a
+  // static import back would be a cycle.
+  const { logEvent } = await import("./eventLogService.js");
+  await logEvent({
+    action: "event_archive.host_key_forgotten",
+    resourceType: "setting",
+    resourceName: "eventArchive",
+    actor,
+    level: "warning",
+    message: "Forgot the event archive server's pinned SSH host key — the next export will trust and pin whatever answers",
+  });
 }
 
 // Guard sftp batch-file injection: sftp parses "put" args on whitespace and
@@ -196,8 +237,9 @@ export async function testConnection(
     }
     return { ok: true, message: `Connected to ${settings.host} via ${settings.protocol.toUpperCase()}` };
   } catch (err: any) {
-    const msg = err.stderr || err.message || "Connection failed";
-    return { ok: false, message: msg.toString().trim().split("\n")[0] };
+    const msg = String(err.stderr || err.message || "Connection failed");
+    if (isHostKeyRefusal(msg)) return { ok: false, message: ARCHIVE_HOST_KEY_CHANGED_MESSAGE };
+    return { ok: false, message: msg.trim().split("\n")[0] };
   }
 }
 
@@ -255,8 +297,9 @@ export async function archiveAndExport(cutoff: Date): Promise<number> {
 
     logger.info({ count: events.length, filename, host: settings.host }, "Event archive exported");
     return events.length;
-  } catch (err) {
+  } catch (err: any) {
     logger.error(err, "Failed to export event archive");
+    if (isHostKeyRefusal(String(err?.stderr ?? err?.message ?? ""))) throw new Error(ARCHIVE_HOST_KEY_CHANGED_MESSAGE, { cause: err });
     throw err;
   } finally {
     try { unlinkSync(localPath); } catch { /* ignore cleanup errors */ }

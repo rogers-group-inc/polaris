@@ -32,6 +32,7 @@ import { request as httpsRequest, RequestOptions as HttpsRequestOptions } from "
 import { request as httpRequest } from "node:http";
 import { randomUUID } from "node:crypto";
 import { sleep } from "./sleep.js";
+import { pinnedAgentFor } from "./pinnedTlsAgent.js";
 
 export interface WinRmConnection {
   host:     string;
@@ -262,11 +263,12 @@ function soapPost(conn: WinRmConnection, envelope: string): Promise<string> {
       "Content-Type": "application/soap+xml;charset=UTF-8",
       "Content-Length": Buffer.byteLength(envelope).toString(),
     },
-    // Verify only when the caller opts in (conn.verifyTls === true); omitted /
-    // false preserves the prior no-verify behavior for legacy WinRM credentials.
-    // Basic-auth creds ride this connection, so verification matters — see the
-    // 2026-06-03 security review (H1).
+    // verifyTls: true verifies the CA chain. Otherwise (the norm: WinRM
+    // listeners present self-signed certificates) the certificate is pinned on
+    // first use and checked before the Basic-auth header is written (business
+    // rule 113) — never sent to an unchecked server.
     rejectUnauthorized: conn.verifyTls === true,
+    ...(useHttps && conn.verifyTls !== true ? { agent: pinnedAgentFor(conn.host, port) } : {}),
     timeout: conn.timeoutMs ?? 60_000,
   };
   return new Promise<string>((resolve, reject) => {

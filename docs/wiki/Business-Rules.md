@@ -151,9 +151,11 @@ path is streamed end to end, restore is wrapped in TimescaleDB's pre/post-restor
 calls, and a failed pre-update backup **aborts the update** by default.
 
 ### Rule 21
-**SSH host-key verification is opt-in and fails closed.** No pin stores and
-accepts; a match accepts; a **changed key refuses the connection**. An internal
-error refuses rather than silently skipping.
+**SSH host-key verification is on unless a credential turns it off, and fails
+closed.** No pin stores and accepts; a match accepts; a **changed key refuses
+the connection**. An internal error refuses rather than silently skipping. See
+[rule 113](Business-Rules#rule-113) for the same check on WinRM and firmware
+certificates.
 
 ### Rule 22
 **The Sources column is `location || learnedLocation`, and the order is
@@ -2107,3 +2109,32 @@ not a spelling, a cookie that has outlived its owner, or a code already used.**
   Discovery records every credential it carries.
 - **Routine monitoring is not recorded**, only the moment a person chooses where
   a credential goes.
+
+### Rule 113
+
+**A server proves it is the one Polaris pinned before a password or token is
+sent to it.** Polaris remembers each server the first time it connects
+(trust on first use) and refuses to send a secret if the server later presents a
+different identity.
+
+- **SSH** — the host key is pinned for every credential unless its *Verify the
+  server's host key* box is unticked.
+- **WinRM over HTTPS and firmware upgrades** — when the connection does not
+  verify the certificate against a trusted CA (the usual case with self-signed
+  certificates), Polaris pins the certificate and checks it before sending the
+  password or token. Ticking *Verify TLS certificate* checks the CA chain
+  instead.
+- **Firmware upgrades of Fortinet devices** — a factory certificate that names a
+  different serial number than the asset's is refused before signing in.
+- **Event archive export** — the archive server's SSH host key is pinned on
+  first use. If an export fails, events are **not** pruned that hour, so nothing
+  is deleted without a copy.
+
+A server that is legitimately rebuilt, re-keyed or given a new certificate is
+refused until its pin is deleted: **Server Settings → Polaris Agent → Windows
+SSH Deployment → Pinned server identities** for SSH keys and certificates, and
+**Forget host key** in the event archive settings for the archive server. Pins
+belong to an address and port, so on DHCP space an address that moves to a
+different machine is refused until its pin is deleted. Trust on first use
+cannot detect a server that was already impersonated when Polaris first
+connected to it.

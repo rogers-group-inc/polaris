@@ -181,6 +181,10 @@ device-down supersession (any metric or device-state alert on a device that went
 | `automation_script.deleted` | **warning** | |
 | `automation.script.run` | | one execution |
 | `ssh.host_key.mismatch` | | a host key **changed** and the connection was refused |
+| `tls.cert.mismatch` | **warning** | a WinRM or firmware server's TLS certificate **changed** and the connection was refused before any credential was sent ([rule 113](Business-Rules#rule-113)) |
+| `ssh.host_key.deleted` / `tls.cert.deleted` | **warning** | a pin was deleted, so the next connection trusts whatever answers |
+| `event_archive.export_failed` | **warning** | the archive export failed, so old events were **not** pruned that hour |
+| `event_archive.host_key_forgotten` | **warning** | the archive server's pinned host key was forgotten |
 | `agent.upgrade_skipped` | | a host the fan-out could not upgrade |
 | `agent.upgrade_deferred` | info | a host the fan-out did not try because monitoring shows it down; retried by the next fan-out |
 | `asset.pins.bulk_updated` | | one mass-pin apply |

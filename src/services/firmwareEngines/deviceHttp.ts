@@ -29,6 +29,8 @@ import { constants as cryptoConstants } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { randomBytes } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
+import type { PeerCertificate } from "node:tls";
+import { pinnedAgentFor, type CertCheckVerdict } from "../../utils/pinnedTlsAgent.js";
 
 export interface DeviceHttpClientOptions {
   host: string;
@@ -41,10 +43,34 @@ export interface DeviceHttpClientOptions {
   /** Cap on a response body. */
   maxBodyBytes?: number;
   /**
-   * Verify the device's certificate. Default false (self-signed devices);
-   * true only when the integration a FortiGate token came from verifies.
+   * Verify the device's certificate chain. Default false (self-signed
+   * devices); true only when the integration a FortiGate token came from
+   * verifies. When false the certificate is pinned on first use and checked
+   * before any request is written (business rule 113).
    */
   verifyTls?: boolean;
+  /**
+   * The asset's serial. A Fortinet factory certificate names the device's
+   * serial; one naming a DIFFERENT serial is refused before the login is sent.
+   */
+  expectedSerial?: string | null;
+}
+
+/**
+ * Business rule 113(c): a Fortinet factory certificate (subject O "Fortinet",
+ * CN the device serial) that names a different serial than the asset's is the
+ * wrong device — refused before any login or token is sent. A certificate the
+ * operator installed (any other subject) is left to the pin. Pure.
+ */
+export function fortinetSerialPrecheck(expectedSerial: string | null | undefined, cert: Pick<PeerCertificate, "subject">): CertCheckVerdict {
+  const want = (expectedSerial ?? "").trim().toUpperCase();
+  if (!want) return { ok: true };
+  const subject = (cert.subject ?? {}) as unknown as Record<string, unknown>;
+  const org = Array.isArray(subject.O) ? subject.O.join(",") : String(subject.O ?? "");
+  const cn = (Array.isArray(subject.CN) ? subject.CN[0] : String(subject.CN ?? "")).trim().toUpperCase();
+  if (org !== "Fortinet" || !/^[A-Z0-9]{12,20}$/.test(cn)) return { ok: true };
+  if (cn === want) return { ok: true };
+  return { ok: false, reason: `The device's certificate names serial ${cn}, not this asset's ${want} — refused before signing in. Check the asset's address.` };
 }
 
 export interface DeviceHttpResponse {
@@ -207,8 +233,12 @@ export class DeviceHttpClient {
       headers: h,
       rejectUnauthorized: this.opts.verifyTls === true,
       // Never reuse a socket: the devices close them unpredictably and a
-      // stale keep-alive turns into an ECONNRESET on the next call.
-      agent: false,
+      // stale keep-alive turns into an ECONNRESET on the next call. An
+      // unverified HTTPS request gets a fresh pinning agent (no keep-alive
+      // either) that checks the certificate before the request is written.
+      agent: url.protocol === "https:" && this.opts.verifyTls !== true
+        ? pinnedAgentFor(url.hostname, Number(url.port) || 443, { precheck: (cert) => fortinetSerialPrecheck(this.opts.expectedSerial, cert) })
+        : false,
     };
     if (this.legacyTls) o.secureOptions = cryptoConstants.SSL_OP_LEGACY_SERVER_CONNECT;
     return o;

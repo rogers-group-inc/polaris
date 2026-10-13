@@ -1149,6 +1149,7 @@ const api = {
     resourceTypes: () => request("GET", "/events/resource-types"),
     getArchiveSettings: () => request("GET", "/events/archive-settings"),
     updateArchiveSettings: (body) => request("PUT", "/events/archive-settings", body),
+    forgetArchiveHostKey: () => request("POST", "/events/archive-forget-host-key"),
     testArchiveConnection: (body) => trackedRequest("Testing archive connection", "POST", "/events/archive-test", body),
     getSyslogSettings: () => request("GET", "/events/syslog-settings"),
     updateSyslogSettings: (body) => request("PUT", "/events/syslog-settings", body),
@@ -1416,6 +1417,8 @@ const api = {
     // Pinned SSH host keys (trust-on-first-use). Deleting one re-opens
     // first-use trust for that host — the recovery path after a rebuild.
     sshHostKeysList:          () => request("GET",    "/server-settings/agents/ssh-host-keys"),
+    tlsCertPinsList:          () => request("GET",    "/server-settings/agents/tls-cert-pins"),
+    tlsCertPinDelete:         (id) => request("DELETE", "/server-settings/agents/tls-cert-pins/" + encodeURIComponent(id)),
     sshHostKeyDelete:         (id) => request("DELETE", "/server-settings/agents/ssh-host-keys/" + encodeURIComponent(id)),
     // Agent code signing (internal-CA PKCS#12) — masked secret config + dry-run test.
     agentSigningGet:          ()    => request("GET",  "/server-settings/agents/signing"),
