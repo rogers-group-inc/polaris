@@ -2285,7 +2285,8 @@ function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
         dbInfoRow(
           "Steady-state at current settings",
           _capacityFormatBytes(work.steadyStateSizeBytes),
-          "Peak size the database grows to if nothing changes. Legitimately larger than " +
+          "Steady-state size is what the database grows to if monitoring settings stay as " +
+          "they are. Reduce retention or cadence to lower it.\n\nLegitimately larger than " +
           "the current size while sample tables are still filling. Retention is reclaimed a " +
           "whole TimescaleDB chunk at a time, so tables grow and drop in a weekly cycle; this is " +
           "the largest total they reach together, not each table's own peak added up.",
@@ -2328,7 +2329,6 @@ function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
               work.retention.systemInfoDays + "d system info")
           : "") +
       '</div>' +
-      '<p class="hint" style="margin-top:0.5rem">Steady-state size is what the database grows to if monitoring settings stay as they are. Reduce retention or cadence to lower it.</p>' +
     '</div>';
 
   var enginePoolHtml = renderEnginePoolStatHtml(dbInfo, capacity);
@@ -3412,7 +3412,7 @@ function formatFileSize(bytes) {
 function dbInfoRow(label, value, hint) {
   var titleAttr = hint ? ' title="' + escapeHtml(hint) + '"' : "";
   return '<div class="db-info-label"' + titleAttr + '>' + escapeHtml(label) + '</div>' +
-         '<div class="db-info-value">' + escapeHtml(String(value)) + '</div>';
+         '<div class="db-info-value"' + titleAttr + '>' + escapeHtml(String(value)) + '</div>';
 }
 
 function formatNumber(n) {
