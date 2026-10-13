@@ -154,6 +154,9 @@
   <!-- After dashboard.js: it reads window.PolarisSavedDashboards at bootstrap,
        which is published at parse time, so either order works — this one
        matches assets.html (assets-filters.js after assets.js). -->
+  <!-- One tab to / from a .dashboard.json file — the Export / Import entries
+       of the Dashboards menu. Signed-in page only: the wallboard has no tabs. -->
+  <script src="/js/dashboard-portability.js"></script>
   <script src="/js/dashboard-saved.js"></script>
 </body>
 </html>

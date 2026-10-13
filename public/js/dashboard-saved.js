@@ -18,7 +18,9 @@
  *   Dashboard page (index.html, signed in)
  *     Loading a dashboard adds it as a NEW TAB of your own layout — a COPY, so
  *     editing it never writes back to a row that may be someone else's (the
- *     UserTableTabs rule). Save / delete live here.
+ *     UserTableTabs rule). Save / delete live here, and so do Export this tab
+ *     / Import tab from file (a .dashboard.json; the format is in
+ *     dashboard-portability.js, offered only where that module is loaded).
  *
  *   Dash wallboard (dash.html, anonymous)
  *     The menu is "My layout (this browser)" plus every published dashboard.
@@ -50,6 +52,7 @@
   var _pollStamp = null;  // updatedAt of the published dashboard on screen
 
   function dash() { return window.PolarisDashboard || null; }
+  function portability() { return window.PolarisDashboardPortability || null; }
   function isWallboard() { return !!(window.POLARIS_DASH_LOCAL); }
 
   /** May this caller publish (or unpublish) a dashboard for everyone? */
@@ -120,8 +123,14 @@
         "</div>" +
         '<div class="dropdown-divider"></div>';
     } else {
-      html += '<button type="button" data-sd-act="save">Save this dashboard&hellip;</button>' +
-              '<div class="dropdown-divider"></div>';
+      html += '<button type="button" data-sd-act="save">Save this dashboard&hellip;</button>';
+      // File export/import of the tab on screen (dashboard-portability.js) —
+      // local to this browser, so no permission beyond being on the page.
+      if (portability()) {
+        html += '<button type="button" data-sd-act="export" title="Download this tab as a .dashboard.json file">Export this tab</button>' +
+                '<button type="button" data-sd-act="import" title="Add a tab from a .dashboard.json file">Import tab from file&hellip;</button>';
+      }
+      html += '<div class="dropdown-divider"></div>';
     }
 
     if (error) {
@@ -331,6 +340,68 @@
     });
   }
 
+  // ─── Signed-in page: export / import one tab as a file ───────────────────
+
+  function exportTab() {
+    var P = portability();
+    var snap = dash() ? dash().snapshot() : null;
+    if (!P || !snap) return;
+    if (!dash().widgetCount()) { showToast("This tab has no widgets to export", "error"); return; }
+    var blob = new Blob([P.exportText(snap)], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = P.filenameForExport(snap.name);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+    showToast('Exported "' + (snap.name || "Dashboard") + '"');
+  }
+
+  function pickImportFile() {
+    var input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json,application/json";
+    input.hidden = true;
+    input.addEventListener("change", function () {
+      var file = input.files && input.files[0];
+      input.remove();
+      if (file) importFile(file);
+    });
+    document.body.appendChild(input);
+    input.click();
+  }
+
+  async function importFile(file) {
+    var P = portability();
+    if (!P || !dash()) return;
+    // Refuse without reading: a tab is a few KB.
+    if (file.size > P.MAX_IMPORT_BYTES) { showToast("That file is too large to be a dashboard.", "error"); return; }
+    var parsed;
+    try {
+      var widgets = window.PolarisWidgets;
+      parsed = P.parseImportFile(await file.text(), file.name, widgets && widgets.getByType
+        ? function (type) { return widgets.getByType(type) != null; }
+        : null);
+    } catch (err) {
+      showToast((err && err.message) || "That file could not be read as a dashboard.", "error");
+      return;
+    }
+    var kept = parsed.layout.columns.reduce(function (n, c) { return n + c.widgets.length; }, 0);
+    if (!kept) {
+      showToast(parsed.skipped
+        ? "None of that file's widgets exist in this Polaris, so there is nothing to import."
+        : "That dashboard has no widgets.", "error");
+      return;
+    }
+    if (!dash().loadAsNewTab({ name: parsed.name, layout: parsed.layout })) return;
+    var note = [];
+    if (parsed.skipped) note.push(parsed.skipped === 1 ? "1 unknown widget skipped" : parsed.skipped + " unknown widgets skipped");
+    note = note.concat(parsed.problems);
+    showToast('Imported "' + parsed.name + '" as a new tab' + (note.length ? " (" + note.join("; ") + ")" : ""));
+  }
+
   // ─── Wiring ───────────────────────────────────────────────────────────────
 
   document.addEventListener("DOMContentLoaded", function () {
@@ -369,7 +440,10 @@
       var act = e.target.closest("[data-sd-act]");
       if (act) {
         menu.classList.remove("open");
-        if (act.getAttribute("data-sd-act") === "save") openSaveModal();
+        var which = act.getAttribute("data-sd-act");
+        if (which === "save") openSaveModal();
+        else if (which === "export") exportTab();
+        else if (which === "import") pickImportFile();
         else showLocal();
         return;
       }

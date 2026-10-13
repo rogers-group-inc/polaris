@@ -25,6 +25,7 @@ import { Window } from "happy-dom";
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 const SRC = readFileSync(resolve(__dirname, "../../public/js/dashboard-saved.js"), "utf8");
+const PORTABILITY_SRC = readFileSync(resolve(__dirname, "../../public/js/dashboard-portability.js"), "utf8");
 const g = globalThis as Record<string, unknown>;
 
 const HEADER_HTML =
@@ -59,7 +60,7 @@ interface Harness {
  * off window.POLARIS_DASH_LOCAL at call time, so the two surfaces are two
  * boots rather than a flag flipped mid-test.
  */
-function boot(opts: { wallboard?: boolean; canPublish?: boolean; canDeleteAny?: boolean; pinned?: string; rows?: unknown[] } = {}): Harness {
+function boot(opts: { wallboard?: boolean; canPublish?: boolean; canDeleteAny?: boolean; pinned?: string; rows?: unknown[]; portable?: boolean } = {}): Harness {
   const win = new Window();
   const doc = win.document;
   const created: Record<string, unknown>[] = [];
@@ -121,6 +122,10 @@ function boot(opts: { wallboard?: boolean; canPublish?: boolean; canDeleteAny?: 
   if (opts.pinned) store["polaris-dash-published"] = opts.pinned;
 
   doc.body.innerHTML = HEADER_HTML;
+  if (opts.portable) {
+    (win as unknown as Record<string, unknown>).PolarisWidgets = { getByType: (t: string) => (t === "statusSummary" ? {} : null) };
+    (0, eval)(PORTABILITY_SRC);
+  }
   (0, eval)(SRC);
   doc.dispatchEvent(new win.Event("DOMContentLoaded", { bubbles: true }));
 
@@ -264,5 +269,83 @@ describe("Dashboards menu — Dash wallboard", () => {
     const api = (h.win as unknown as Record<string, unknown>).PolarisSavedDashboards as { restorePinned: () => Promise<boolean> };
     expect(await api.restorePinned()).toBe(false);
     expect(h.viewed).toHaveLength(0);
+  });
+});
+
+describe("Dashboards menu — export / import a tab as a file", () => {
+  it("offers Export and Import only where dashboard-portability.js is loaded, and never on the wallboard", async () => {
+    const without = boot() as H;
+    await without.open();
+    expect(without.menu().querySelector('[data-sd-act="export"]')).toBeNull();
+
+    const h = boot({ portable: true }) as H;
+    await h.open();
+    expect(h.menu().querySelector('[data-sd-act="export"]')).toBeTruthy();
+    expect(h.menu().querySelector('[data-sd-act="import"]')).toBeTruthy();
+
+    const wall = boot({ wallboard: true, portable: true }) as H;
+    await wall.open();
+    expect(wall.menu().querySelector('[data-sd-act="export"]')).toBeNull();
+    expect(wall.menu().querySelector('[data-sd-act="import"]')).toBeNull();
+  });
+
+  it("downloads the tab on screen as <name>.dashboard.json", async () => {
+    const h = boot({ portable: true }) as H;
+    const blobs: Blob[] = [];
+    const create = vi.spyOn(URL, "createObjectURL").mockImplementation((b) => { blobs.push(b as Blob); return "blob:x"; });
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    let downloaded = "";
+    const proto = (h.win as unknown as { HTMLAnchorElement: { prototype: { click: () => void } } }).HTMLAnchorElement.prototype;
+    const click = vi.spyOn(proto, "click").mockImplementation(function (this: { download: string }) { downloaded = this.download; });
+    try {
+      await h.open();
+      h.click('[data-sd-act="export"]');
+      expect(downloaded).toBe("Dashboard 2.dashboard.json");
+      const body = JSON.parse(await blobs[0].text());
+      expect(body.polarisDashboard).toBe(1);
+      expect(body.columns[0].widgets[0]).toEqual({ type: "statusSummary", height: 1, config: {} });
+      expect(body.columns[0].id).toBeUndefined();
+    } finally {
+      create.mockRestore(); revoke.mockRestore(); click.mockRestore();
+    }
+  });
+
+  async function importText(h: H, text: string, name = "Core.dashboard.json") {
+    await h.open();
+    const proto = (h.win as unknown as { HTMLInputElement: { prototype: { click: () => void } } }).HTMLInputElement.prototype;
+    const click = vi.spyOn(proto, "click").mockImplementation(() => {});
+    try { h.click('[data-sd-act="import"]'); } finally { click.mockRestore(); }
+    const input = h.doc.querySelector('input[type="file"]')!;
+    Object.defineProperty(input, "files", { value: [{ name, size: text.length, text: async () => text }] });
+    input.dispatchEvent(new h.win.Event("change"));
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  it("imports a file as a new TAB, dropping and reporting widgets this install lacks", async () => {
+    const h = boot({ portable: true }) as H;
+    await importText(h, JSON.stringify({
+      polarisDashboard: 1,
+      name: "Core",
+      columns: [{ width: 6, widgets: [{ type: "statusSummary", height: 1, config: {} }, { type: "fromTheFuture" }] }],
+    }));
+    expect(h.tabbed).toHaveLength(1);
+    const row = h.tabbed[0] as { name: string; layout: typeof LAYOUT };
+    expect(row.name).toBe("Core");
+    expect(row.layout.columns[0].widgets.map((w) => w.type)).toEqual(["statusSummary"]);
+    expect(h.toasts.at(-1)).toContain("1 unknown widget skipped");
+  });
+
+  it("refuses a file with nothing this install can show, without adding a tab", async () => {
+    const h = boot({ portable: true }) as H;
+    await importText(h, JSON.stringify({ name: "X", columns: [{ widgets: [{ type: "fromTheFuture" }] }] }));
+    expect(h.tabbed).toHaveLength(0);
+    expect(h.toasts.at(-1)).toContain("None of that file's widgets");
+  });
+
+  it("refuses a file that isn't a dashboard", async () => {
+    const h = boot({ portable: true }) as H;
+    await importText(h, '{"trigger":{}}');
+    expect(h.tabbed).toHaveLength(0);
+    expect(h.toasts.at(-1)).toContain("no columns");
   });
 });
