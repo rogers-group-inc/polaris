@@ -1,10 +1,12 @@
 // interfaces.go — per-NIC counters + link state, one row per interface.
 //
-// Cross-platform via gopsutil/net. On Linux this reads /proc/net/dev
-// for counters + /sys/class/net/<ifname> for link state + speed; on
-// macOS it uses netstat-style ioctl; on Windows it uses the IP Helper
-// API (GetIfTable2). The IP/MAC association comes from net.Interfaces
-// (Go stdlib) since gopsutil's IOCounters list doesn't carry it.
+// Counters come from gopsutil/net (/proc/net/dev on Linux, the IP Helper
+// API on Windows). The IP/MAC association comes from net.Interfaces (Go
+// stdlib) since gopsutil's IOCounters list doesn't carry it. Link state,
+// negotiated speed and duplex come from readLinkInfo, which is per-OS:
+// /sys/class/net/<ifname> on Linux, GetIfEntry2Ex + MSFT_NetAdapter on
+// Windows (interfaces_linux.go / interfaces_windows.go). Elsewhere it
+// reports nothing and the admin-status heuristic below stands.
 //
 // Loopback + down-administratively interfaces are still emitted —
 // operators want to see them in the System tab table, and the
@@ -41,12 +43,15 @@ func InterfacesOnce() []*transport.InterfaceSample {
 		mac   string
 		ip    string
 		admin string
+		index int
 		flags net.Flags
 	}
 	meta := make(map[string]ifMeta)
+	var indexes []int
 	if ifaces, err := net.Interfaces(); err == nil {
 		for _, ifc := range ifaces {
-			m := ifMeta{flags: ifc.Flags}
+			m := ifMeta{flags: ifc.Flags, index: ifc.Index}
+			indexes = append(indexes, ifc.Index)
 			if hwa := ifc.HardwareAddr.String(); hwa != "" {
 				m.mac = hwa
 			}
@@ -80,6 +85,10 @@ func InterfacesOnce() []*transport.InterfaceSample {
 		}
 	}
 
+	// One batched read of link state for every NIC (Windows needs a single
+	// WMI query for duplex rather than one per interface).
+	links := readLinkInfo(indexes)
+
 	out := make([]*transport.InterfaceSample, 0, len(counters))
 	for _, c := range counters {
 		in := c.BytesRecv
@@ -105,12 +114,28 @@ func InterfacesOnce() []*transport.InterfaceSample {
 			}
 			admin := m.admin
 			s.AdminStatus = &admin
-			// operStatus heuristic: admin=up + any traffic counter
-			// nonzero ≈ operational. Conservative; gopsutil doesn't
-			// expose carrier state portably.
+			// operStatus fallback heuristic: admin=up ≈ operational, used
+			// where readLinkInfo has no carrier reading for this NIC.
 			oper := "down"
 			if admin == "up" {
 				oper = "up"
+			}
+			if li, ok := links.lookup(c.Name, m.index); ok {
+				if li.oper != "" {
+					oper = li.oper
+				}
+				// Speed and duplex only describe a link that is up: a
+				// disconnected NIC reports its last or maximum rate.
+				if oper == "up" {
+					if li.speedBps > 0 {
+						sp := li.speedBps
+						s.SpeedBps = &sp
+					}
+					if li.duplex == "full" || li.duplex == "half" {
+						d := li.duplex
+						s.Duplex = &d
+					}
+				}
 			}
 			s.OperStatus = &oper
 		}
@@ -119,6 +144,34 @@ func InterfacesOnce() []*transport.InterfaceSample {
 		out = append(out, s)
 	}
 	return out
+}
+
+// linkInfo is one NIC's OS-reported link state. Empty oper means "no
+// carrier reading" (keep the heuristic); zero speedBps and empty duplex
+// mean unknown.
+type linkInfo struct {
+	oper     string // IF-MIB vocabulary: "up" | "down" | "lowerLayerDown" | ...
+	speedBps uint64
+	duplex   string // "full" | "half" | ""
+}
+
+// linkTable holds readLinkInfo's answer, keyed whichever way the OS
+// identifies a NIC: Linux by name, Windows by interface index.
+type linkTable struct {
+	byName  map[string]linkInfo
+	byIndex map[int]linkInfo
+}
+
+func (t linkTable) lookup(name string, index int) (linkInfo, bool) {
+	if li, ok := t.byName[name]; ok {
+		return li, true
+	}
+	if index > 0 {
+		if li, ok := t.byIndex[index]; ok {
+			return li, true
+		}
+	}
+	return linkInfo{}, false
 }
 
 func classifyIfType(name string) string {
