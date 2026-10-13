@@ -448,6 +448,20 @@ async function openEventSettingsModal() {
   }
   updateSyslogTlsVisibility();
 
+  var forgetBtn = document.getElementById("btn-archive-forget-hostkey");
+  if (forgetBtn) {
+    forgetBtn.addEventListener("click", async function () {
+      var ok = await showConfirm("Forget the archive server's pinned SSH host key?\n\nThe next export will trust and pin whatever server answers on that address.");
+      if (!ok) return;
+      try {
+        await api.events.forgetArchiveHostKey();
+        showToast("Host key forgotten — the next connection will pin the key it sees", "success");
+      } catch (err) {
+        showToast((err && err.message) || "Could not forget the host key", "error");
+      }
+    });
+  }
+
   // Test Connection
   document.getElementById("btn-settings-test").addEventListener("click", async function () {
     var btn = this;
@@ -537,7 +551,11 @@ function archiveFormHTML(d) {
   '<hr style="border:none;border-top:1px solid var(--color-border);margin:1rem 0">' +
   '<p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1px;color:var(--color-text-tertiary);margin-bottom:0.75rem">Destination</p>' +
   '<div class="form-group"><label>Remote Path</label><input type="text" id="f-archive-remotepath" value="' + escapeHtml(d.remotePath) + '" placeholder="e.g. /var/archive/polaris"><p class="hint">Directory on the remote server where archive files will be stored.</p></div>' +
-  '<div id="archive-test-result" style="margin-top:0.5rem"></div>';
+  '<div id="archive-test-result" style="margin-top:0.5rem"></div>' +
+  '<div class="form-group" style="margin-top:0.75rem">' +
+    '<button type="button" class="btn btn-sm btn-secondary" id="btn-archive-forget-hostkey">Forget host key</button>' +
+    '<p class="hint">Polaris pins the archive server\'s SSH host key on the first connection and refuses to export to a server whose key has changed. Forget it only when the server was legitimately rebuilt or re-keyed.</p>' +
+  '</div>';
 }
 
 function getArchiveFormData() {

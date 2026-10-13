@@ -14,6 +14,7 @@ import {
   getArchiveSettings,
   updateArchiveSettings,
   testConnection,
+  forgetArchiveHostKey,
   getSyslogSettings,
   updateSyslogSettings,
   testSyslogConnection,
@@ -230,6 +231,17 @@ router.put("/archive-settings", requirePermission("events", "write"), async (req
     const safe = { ...updated };
     if (safe.password) safe.password = SECRET_MASK;
     res.json(safe);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/events/archive-forget-host-key — forget the archive server's
+// pinned SSH host key (business rule 113(d)); the next connection re-pins.
+router.post("/archive-forget-host-key", requirePermission("events", "write"), async (req, res, next) => {
+  try {
+    await forgetArchiveHostKey(req.session?.username ?? "unknown");
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

@@ -268,6 +268,21 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/tlsCertPinService.ts
+
+**What it owns:** Business rule 113 — trust-on-first-use pins of TLS server certificates (`TlsCertPin`), the HTTPS counterpart of `sshHostKeyService` and deliberately the same shape: `verifyOrPinCert(host, port, fingerprint256, subject)` (no pin → store + accept + `tls.cert.pinned`; match → accept, `lastSeen` at most hourly; change → refuse + warning `tls.cert.mismatch`), a per-process `pinCache` that never turns a deleted pin into a permanent refusal (a cached mismatch re-reads the DB), race-safe first pin on the unique index, `listCertPins` and an audited `deleteCertPin` (`tls.cert.deleted`).
+
+**Callers:** `utils/pinnedTlsAgent.pinnedAgentFor` (dynamic import), which `utils/winrm.soapPost`, `monitoringService.probeWinRm` and `firmwareEngines/deviceHttp` use whenever they do not verify a CA chain; `routes/serverSettings.ts` (`GET` / `DELETE /agents/tls-cert-pins`, the Pinned server identities card).
+
+**Invariants:**
+- The check happens after the TLS handshake and BEFORE the request is written — `PinnedTlsAgent.createConnection` holds the socket until the verdict. Never move it to `checkServerIdentity` (skipped for every self-signed chain, and synchronous).
+- Fails closed: a lookup error refuses the connection.
+- Pins are per dialed host:port, never per credential or asset.
+
+**When changing this:**
+- A new HTTPS transport that sends a secret without CA verification passes `agent: pinnedAgentFor(host, port)`.
+- Keep the shape in step with `sshHostKeyService` — the card lists both.
+
 ## services/sshOnboardingScript.ts
 
 **Input rule (business rule 107):** every value written into the generated scripts is one clean line. `assertValidServerIp` refuses control characters and line separators and relies on a strict `isValidCidr` (it used to pass trailing text because netmask parses its mask with `parseInt`); `psLiteral` doubles U+2018 / U+2019 / U+201A / U+201B as well as `'`, and `psLiteral` / `shLiteral` throw on control characters. Pinned by `tests/unit/sshOnboardingScript.test.ts` and `sshOnboardingLinuxInjection.test.ts`.

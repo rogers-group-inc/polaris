@@ -5,8 +5,8 @@
  *   - fingerprints match the `ssh-keygen -lf` form so operators can compare
  *   - first sight pins; a match accepts; a CHANGED key is refused
  *   - the cache never turns a deleted pin into a permanent rejection
- *   - the opt-in gate: no verifyHostKey flag => no verifier at all (the
- *     pre-2026-08 behavior every existing install depends on)
+ *   - the default (business rule 113): every credential is verified unless it
+ *     sets verifyHostKey: false
  *   - the verifier fails CLOSED on an internal error
  */
 
@@ -225,14 +225,14 @@ describe("listHostKeys", () => {
   });
 });
 
-describe("buildHostVerifier (the opt-in gate)", () => {
-  it("returns null when the credential has not opted in", () => {
-    // THE compatibility guarantee: an existing credential with no flag gets
-    // no hostVerifier, so ssh2 behaves exactly as it did before this feature.
-    expect(buildHostVerifier("h", 22, {})).toBeNull();
+describe("buildHostVerifier (default on, rule 113)", () => {
+  it("returns null only when the credential explicitly opts out", () => {
     expect(buildHostVerifier("h", 22, { verifyHostKey: false })).toBeNull();
-    // Truthy-but-not-true must not silently enable it either.
-    expect(buildHostVerifier("h", 22, { verifyHostKey: "yes" })).toBeNull();
+  });
+
+  it("verifies a credential with no flag — legacy rows, managed deployment keys, the AD bind fallback", () => {
+    expect(buildHostVerifier("h", 22, {})).toBeTypeOf("function");
+    expect(buildHostVerifier("h", 22, { verifyHostKey: "yes" })).toBeTypeOf("function");
   });
 
   it("returns a verifier that accepts a first-sight key", async () => {

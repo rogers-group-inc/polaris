@@ -23,6 +23,7 @@
  * transitions emit one as well.
  */
 
+import { pinnedAgentFor } from "../utils/pinnedTlsAgent.js";
 import { chunkArray } from "../utils/chunk.js";
 import { normalizeMacOrNull } from "../utils/mac.js";
 import { performance } from "node:perf_hooks";
@@ -4189,13 +4190,11 @@ async function probeWinRm(host: string, config: Record<string, unknown>, start: 
         "Content-Type":   "application/soap+xml;charset=UTF-8",
         "Content-Length": Buffer.byteLength(body).toString(),
       },
-      // WinRM Basic-auth sends credentials on the wire, so an unverified TLS
-      // session lets a MITM capture them (2026-06-03 review, H1). Verify only
-      // when the WinRM credential explicitly opts in (config.verifyTls === true);
-      // legacy credentials with no flag keep their prior no-verify behavior so
-      // existing self-signed-cert installs don't break. Operators flip it on per
-      // credential in Server Settings → Credentials.
+      // WinRM Basic-auth sends credentials on the wire. verifyTls: true checks
+      // the CA chain; otherwise the certificate is pinned on first use and
+      // checked before the Authorization header is written (business rule 113).
       rejectUnauthorized: config.verifyTls === true,
+      ...(useHttps && config.verifyTls !== true ? { agent: pinnedAgentFor(url.hostname, Number(url.port)) } : {}),
       timeout: timeoutMs,
     } as any, (res) => {
       // Drain the body so the socket can close cleanly.
@@ -4255,9 +4254,9 @@ async function probeSsh(host: string, config: Record<string, unknown>, start: nu
       } else {
         opts.password = password;
       }
-      // Same opt-in server authentication as remoteExec.withSshClient — these
-      // are the only two ssh2.connect sites and they must not drift apart on
-      // whether the host key is checked. No-op unless verifyHostKey is set.
+      // Same server authentication as remoteExec.withSshClient — these are the
+      // only two ssh2.connect sites and they must not drift apart on whether
+      // the host key is checked. On unless verifyHostKey is false (rule 113).
       const verifier = buildHostVerifier(host, port, config);
       if (verifier) opts.hostVerifier = verifier;
       client.connect(opts);

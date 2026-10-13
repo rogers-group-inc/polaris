@@ -304,7 +304,8 @@ Full or partial copies happen exactly three times:
 
 The **file** sync is the periodic part, and it covers only what PostgreSQL does
 not carry: the code tree, `.env`, the nginx certificate and key, the unit
-files, the built agent binaries, the signing keystore, the uploaded logo. Every
+files, the built agent binaries, the signing keystore, the uploaded logo, the
+event archive server's pinned SSH host key (`data/archive_known_hosts`). Every
 60 seconds, block-level deltas, from the primary's installed files. Never
 database data. `deploy/ha/ha-rsync-exclude` lists what is left out and why.
 

@@ -86,7 +86,8 @@ The integration's Monitoring tab additionally carries a **Discovery Defaults** s
 - `GET    /events/resource-types`               *(auth)* — distinct `resourceType` values across the retention window; feeds the full Resource-column filter option set on the Events page
 - `GET    /events/archive-settings`             *(admin)* — reveals SSH host/user/path even with password masked
 - `PUT    /events/archive-settings`             *(admin)* — body parsed by `ArchiveSettingsSchema`; host / username / port / protocol / key path are content-checked (`assertSafeArchiveSettings`, rule 107) and a refusal is a 400 that stores nothing
-- `POST   /events/archive-test`                 *(admin)* — the same checks; a refused value answers `{ ok: false, message }` and no process is spawned
+- `POST   /events/archive-test`                 *(admin)* — the same checks; a refused value answers `{ ok: false, message }` and no process is spawned The archive's ssh / scp / sftp pin the server's host key on first use (`StrictHostKeyChecking=accept-new`, `<state>/data/archive_known_hosts`, business rule 113(d)); a changed key returns a message that says so.
+- `POST   /events/archive-forget-host-key`      *(events write)* — Forget the archive server's pinned SSH host key (deletes `archive_known_hosts`; audited `event_archive.host_key_forgotten`, warning). The next connection pins whatever answers (business rule 113(d)).
 - `GET    /events/syslog-settings`              *(admin)* — reveals host/port/TLS paths
 - `PUT    /events/syslog-settings`              *(admin)*
 - `POST   /events/syslog-test`                  *(admin)*

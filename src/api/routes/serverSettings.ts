@@ -2264,6 +2264,24 @@ router.delete("/agents/ssh-host-keys/:id", requirePermission("serverSettingsSyst
   } catch (err) { next(err); }
 });
 
+// Pinned TLS certificates (business rule 113) — the WinRM and firmware HTTPS
+// counterpart of the SSH host keys above, listed on the same card with the
+// same recovery: delete a pin to trust a legitimately re-issued certificate.
+router.get("/agents/tls-cert-pins", requirePermission("serverSettingsSystem", "read"), async (_req, res, next) => {
+  try {
+    const { listCertPins } = await import("../../services/tlsCertPinService.js");
+    res.json({ certPins: await listCertPins() });
+  } catch (err) { next(err); }
+});
+
+router.delete("/agents/tls-cert-pins/:id", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
+  try {
+    const { deleteCertPin } = await import("../../services/tlsCertPinService.js");
+    await deleteCertPin(String(req.params.id), requestActor(req) || "unknown");
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 // ─── Polaris Agent build routes ──────────────────────────────────────
 //
 // Drives the "Build agent binaries" card on the Maintenance tab. Phase B
