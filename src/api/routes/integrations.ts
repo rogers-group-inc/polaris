@@ -25,6 +25,7 @@ import * as azureArc from "../../services/azureArcService.js";
 import { isValidIpAddress, ipInCidr, isPrivateIpv4 } from "../../utils/cidr.js";
 import { isFortinetIntegrationType } from "../../utils/pollingCompatibility.js";
 import { SECRET_MASK, isMaskedSecret } from "../../utils/secretMask.js";
+import { restoreStoredSecrets } from "../../utils/secretDestination.js";
 import { isBlockedOutboundHost, isBlockedLlmHost, isLoopbackHost } from "../../utils/netGuard.js";
 import * as llm from "../../services/llmService.js";
 import * as genericApi from "../../services/genericApiService.js";
@@ -1058,6 +1059,17 @@ function normalizeLlmProviderInput(raw: unknown): unknown {
   return cfg;
 }
 
+/**
+ * An llm config as the stored row spells it: an Azure form may send a pasted
+ * endpoint URL in `host`, which the schema splits into host / port / basePath.
+ * Rule 111 compares destinations in that split form, or every pasted endpoint
+ * would read as a moved host.
+ */
+function llmComparable(raw: unknown): Record<string, unknown> {
+  const out = normalizeLlmProviderInput(raw);
+  return out && typeof out === "object" ? (out as Record<string, unknown>) : {};
+}
+
 const LlmConfigSchema = z.preprocess(normalizeLlmProviderInput, z.object({
   provider:  z.enum(["openai", "azure"]).optional().default("openai"),
   host:      z.string().trim().min(1, "Host is required"),
@@ -1731,20 +1743,14 @@ router.put("/:id", async (req, res, next) => {
       // token, which then poisoned the stored value and broke every
       // subsequent FMG/FortiGate call with a "ByteString" error.
       const newConfig = { ...currentConfig, ...input.config };
-      if (!input.config.apiToken || isMaskedSecretSentinel(input.config.apiToken)) {
-        newConfig.apiToken = currentConfig.apiToken;
-      }
-      if (!input.config.fortigateApiToken || isMaskedSecretSentinel(input.config.fortigateApiToken)) {
-        newConfig.fortigateApiToken = currentConfig.fortigateApiToken;
-      }
-      if (!input.config.password || isMaskedSecretSentinel(input.config.password)) {
-        newConfig.password = currentConfig.password;
-      }
-      if (!input.config.clientSecret || isMaskedSecretSentinel(input.config.clientSecret)) {
-        newConfig.clientSecret = currentConfig.clientSecret;
-      }
-      if (!input.config.bindPassword || isMaskedSecretSentinel(input.config.bindPassword)) {
-        newConfig.bindPassword = currentConfig.bindPassword;
+      // A blank / masked secret keeps the stored one ONLY while the destination
+      // (host, port, token URL, transport) is unchanged; a moved destination
+      // needs the secret typed again (rule 111).
+      const sentConfig = input.config as Record<string, unknown>;
+      restoreStoredSecrets(newConfig, currentConfig, SECRET_CONFIG_KEYS, existing.type === "llm" ? llmComparable(sentConfig) : sentConfig);
+      for (const k of SECRET_CONFIG_KEYS) {
+        // Nothing stored and nothing typed: keep the key absent rather than "".
+        if (newConfig[k] === undefined || isMaskedSecretSentinel(newConfig[k])) newConfig[k] = currentConfig[k];
       }
       if (existing.type === "llm") {
         // The loose update schema skips LlmConfigSchema, so run the merged
@@ -2130,15 +2136,12 @@ router.post("/test/fortigate-sample", async (req, res, next) => {
     if (existingId) {
       const existing = await prisma.integration.findUnique({ where: { id: existingId } });
       if (existing) {
-        const stored = existing.config as Record<string, unknown>;
+        if (existing.type !== "fortimanager") throw new AppError(400, "Integration is not a FortiManager integration");
         // Same masked-sentinel guard as the PUT /:id and POST /test handlers
         // — the edit modal echoes "••••••••" back as the form value when
-        // the operator doesn't retype the token, and the prior falsy/typeof
-        // check let the bullets through as the literal token.
-        const needsRestore = (v: unknown): boolean =>
-          !v || typeof v !== "string" || isMaskedSecretSentinel(v);
-        if (needsRestore(cfg.apiToken)) cfg.apiToken = stored.apiToken;
-        if (needsRestore(cfg.fortigateApiToken)) cfg.fortigateApiToken = stored.fortigateApiToken;
+        // the operator doesn't retype the token. Restored only while the
+        // destination is unchanged (rule 111).
+        restoreStoredSecrets(cfg, existing.config as Record<string, unknown>, ["apiToken", "fortigateApiToken"], (req.body?.config ?? {}) as Record<string, unknown>);
       }
     }
 
@@ -2715,12 +2718,10 @@ router.post("/llm/probe-tools", async (req, res, next) => {
     const body = ProbeToolsSchema.parse(req.body);
     const raw: Record<string, unknown> = { ...body.config };
     for (const k of LLM_SERVER_KEYS) delete raw[k];
-    const blank = (v: unknown) => !v || isMaskedSecretSentinel(v);
-    if (body.id && (blank(raw.apiToken) || blank(raw.clientSecret))) {
+    if (body.id) {
       const stored = await prisma.integration.findFirst({ where: { id: body.id, type: "llm" }, select: { config: true } });
       const storedCfg = (stored?.config as Record<string, unknown> | undefined) ?? {};
-      if (blank(raw.apiToken)) raw.apiToken = storedCfg.apiToken ?? "";
-      if (blank(raw.clientSecret)) raw.clientSecret = storedCfg.clientSecret ?? "";
+      restoreStoredSecrets(raw, storedCfg, ["apiToken", "clientSecret"], llmComparable(body.config));
     }
     const parsed = LlmConfigSchema.safeParse(raw);
     if (!parsed.success) throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "));
@@ -2795,7 +2796,7 @@ router.post("/generic-api/preview", async (req, res, next) => {
     const cfg = body.config as Record<string, unknown>;
     if (body.id) {
       const stored = await prisma.integration.findFirst({ where: { id: body.id, type: GENERIC_API_TYPE }, select: { config: true } });
-      if (stored) restoreGenericApiSecrets(cfg, stored.config as Record<string, unknown>);
+      if (stored) restoreGenericApiSecrets(cfg, stored.config as Record<string, unknown>, (req.body?.config ?? {}) as Record<string, unknown>);
     }
     res.json(await genericApi.previewGenericApi(cfg as unknown as genericApi.GenericApiConfig, body.limit));
   } catch (err) {
@@ -2819,16 +2820,32 @@ async function applyGenericApiMonitorDefaults(cfg: Record<string, unknown>): Pro
   if (next) cfg.monitorSettings = next;
 }
 
+/** Every write-only secret an integration config can carry (the update path merges all of them). */
+const SECRET_CONFIG_KEYS = ["apiToken", "fortigateApiToken", "password", "clientSecret", "bindPassword"] as const;
+
+/** The secrets Test Connection may restore from the stored row, per integration type. */
+const TEST_SECRET_KEYS: Record<string, readonly string[]> = {
+  fortimanager: ["apiToken", "fortigateApiToken"],
+  fortigate: ["apiToken"],
+  windowsserver: ["password"],
+  entraid: ["clientSecret"],
+  activedirectory: ["bindPassword"],
+  vcenter: ["password"],
+  azurearc: ["clientSecret"],
+  unraid: ["apiToken"],
+  truenas: ["apiToken"],
+  proxmox: ["apiToken"],
+  llm: ["apiToken", "clientSecret"],
+  [GENERIC_API_TYPE]: ["apiToken", "password", "clientSecret"],
+};
+
 /**
  * A Generic API edit form leaves a stored secret blank ("leave blank to keep
  * the current one"); restore each from the stored config so a Test or a
  * Preview runs with the real credential. Only when one is stored.
  */
-function restoreGenericApiSecrets(cfg: Record<string, unknown>, stored: Record<string, unknown>): void {
-  for (const key of ["apiToken", "password", "clientSecret"] as const) {
-    const v = cfg[key];
-    if ((!v || typeof v !== "string" || isMaskedSecretSentinel(v)) && stored[key]) cfg[key] = stored[key];
-  }
+function restoreGenericApiSecrets(cfg: Record<string, unknown>, stored: Record<string, unknown>, incoming: Record<string, unknown>): void {
+  restoreStoredSecrets(cfg, stored, ["apiToken", "password", "clientSecret"], incoming);
 }
 
 // POST /api/v1/integrations/test — test without saving (for the create form)
@@ -2841,9 +2858,7 @@ router.post("/test", async (req, res, next) => {
       const stored = await prisma.integration.findFirst({ where: { id: req.body.id, type: "llm" }, select: { config: true } });
       const storedCfg = (stored?.config as Record<string, unknown> | undefined) ?? {};
       const cfg = req.body.config as Record<string, unknown>;
-      for (const k of ["apiToken", "clientSecret"] as const) {
-        if ((!cfg[k] || isMaskedSecretSentinel(cfg[k])) && storedCfg[k]) cfg[k] = storedCfg[k];
-      }
+      restoreStoredSecrets(cfg, storedCfg, ["apiToken", "clientSecret"], llmComparable(cfg));
     }
     const input = CreateIntegrationSchema.parse(req.body);
     let result: { ok: boolean; message: string; version?: string };
@@ -2854,45 +2869,19 @@ router.post("/test", async (req, res, next) => {
     if (existingId) {
       const existing = await prisma.integration.findUnique({ where: { id: existingId } });
       if (existing) {
+        // A stored secret is only ever used for the integration it belongs to: an
+        // id of another type must not lend its password to this host (rule 111).
+        if (existing.type !== input.type) {
+          throw new AppError(400, `Integration "${existing.name}" is a ${existing.type} integration, not ${input.type}`);
+        }
         const stored = existing.config as Record<string, unknown>;
         const cfg = input.config as Record<string, unknown>;
-        const needsRestore = (v: unknown): boolean =>
-          !v || typeof v !== "string" || isMaskedSecretSentinel(v);
-        if ((isFortinetIntegrationType(input.type)) && needsRestore(cfg.apiToken)) {
-          cfg.apiToken = stored.apiToken;
-        }
-        if (input.type === "fortimanager" && needsRestore(cfg.fortigateApiToken)) {
-          cfg.fortigateApiToken = stored.fortigateApiToken;
-        }
-        if (input.type === "windowsserver" && needsRestore(cfg.password)) {
-          cfg.password = stored.password;
-        }
-        if (input.type === "entraid" && needsRestore(cfg.clientSecret)) {
-          cfg.clientSecret = stored.clientSecret;
-        }
-        if (input.type === "activedirectory" && needsRestore(cfg.bindPassword)) {
-          cfg.bindPassword = stored.bindPassword;
-        }
-        if (input.type === "vcenter" && needsRestore(cfg.password)) {
-          cfg.password = stored.password;
-        }
-        if (input.type === "azurearc" && needsRestore(cfg.clientSecret)) {
-          cfg.clientSecret = stored.clientSecret;
-        }
-        if ((input.type === "unraid" || input.type === "truenas" || input.type === "proxmox") && needsRestore(cfg.apiToken)) {
-          cfg.apiToken = stored.apiToken;
-        }
-        // The llm API key is optional, so only restore when one is stored.
-        // The Azure Foundry service principal's secret (rule 95(j)) likewise.
-        if (input.type === "llm" && needsRestore(cfg.apiToken) && stored.apiToken) {
-          cfg.apiToken = stored.apiToken;
-        }
-        if (input.type === "llm" && needsRestore(cfg.clientSecret) && stored.clientSecret) {
-          cfg.clientSecret = stored.clientSecret;
-        }
-        if (input.type === GENERIC_API_TYPE && existing.type === GENERIC_API_TYPE) {
-          restoreGenericApiSecrets(cfg, stored);
-        }
+        // A blank / masked secret is restored only while the destination is
+        // unchanged; compared against what the form SENT, so a schema default
+        // never reads as a move.
+        const sentRaw = (req.body?.config ?? {}) as Record<string, unknown>;
+        const sent = input.type === "llm" ? llmComparable(sentRaw) : sentRaw;
+        restoreStoredSecrets(cfg, stored, TEST_SECRET_KEYS[input.type] ?? [], sent);
       }
     }
 

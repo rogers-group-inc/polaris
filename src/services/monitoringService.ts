@@ -2533,7 +2533,8 @@ const CONTROLLER_MGMT_IP_CACHE_TTL_MS = 5 * 60_000; // 5 minutes
 interface ControllerMgmtIpEntry { ip: string; cachedAt: number; }
 const controllerMgmtIpCache = new Map<string, ControllerMgmtIpEntry>();
 
-async function resolveControllerMgmtIp(
+/** Exported for tests (rule 111): where a managed switch's / AP's controller token is sent. */
+export async function resolveControllerMgmtIp(
   integrationId: string,
   deviceName: string,
   fmgConfig: FortiManagerConfig,
@@ -2549,10 +2550,12 @@ async function resolveControllerMgmtIp(
   // and stamped on the asset — no need to hit FMG again. Use case-insensitive
   // hostname matching because FortiOS device names can be stored in different
   // case than what ends up in the topology blob's controllerFortigate field.
-  // Try with the integration filter first for precision; fall back without it
-  // in case the FortiGate's discoveredByIntegrationId was cleared (integration
-  // delete+recreate) — hostname + assetType=firewall is specific enough.
-  let fgAsset = await prisma.asset.findFirst({
+  // Only a firewall THIS integration manages: the answer is where the
+  // integration's FortiGate token is sent, so a hand-made "firewall" asset
+  // with a matching name must never qualify (rule 111). A gate whose
+  // discoveredByIntegrationId was cleared (integration delete + recreate)
+  // falls through to the FMG CMDB lookup below instead.
+  const fgAsset = await prisma.asset.findFirst({
     where: {
       hostname: { equals: deviceName, mode: "insensitive" },
       assetType: "firewall",
@@ -2560,16 +2563,6 @@ async function resolveControllerMgmtIp(
     },
     select: { ipAddress: true },
   });
-  if (!fgAsset?.ipAddress) {
-    fgAsset = await prisma.asset.findFirst({
-      where: {
-        hostname: { equals: deviceName, mode: "insensitive" },
-        assetType: "firewall",
-        ipAddress: { not: null },
-      },
-      select: { ipAddress: true },
-    });
-  }
   if (fgAsset?.ipAddress) {
     controllerMgmtIpCache.set(cacheKey, { ip: fgAsset.ipAddress, cachedAt: Date.now() });
     return fgAsset.ipAddress;

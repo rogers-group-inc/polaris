@@ -4,7 +4,7 @@
  * POST / PUT / DELETE require assets admin role.
  */
 
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
@@ -4642,12 +4642,44 @@ async function applyAssetUpdateSideEffects(
   }
 }
 
+/**
+ * Polaris authenticates to a FortiGate with the integration's fleet-wide API
+ * token, at the ADDRESS the asset record holds. Typing a new address on such a
+ * device would send that token to whatever answers there, so it needs the
+ * right to manage the integration that owns the token (rule 111). Clearing the
+ * address, reverting to the discovered one or re-sending the current one sends
+ * nothing anywhere new and stays an Assets edit.
+ *
+ * Keyed on the managing integration, NOT on assetType: the collectors pick the
+ * token by discoveredByIntegration and the polling method, so a firewall
+ * retyped to "server" still receives it. A Fortinet integration stamps itself
+ * only on the gates, switches and APs it manages — never on DHCP clients — so
+ * endpoints stay an ordinary Assets edit.
+ */
+function assertIpChangeMayRetargetIntegrationToken(
+  req: Request,
+  existing: { ipAddress: string | null; discoveredByIntegration?: { type: string } | null },
+  nextIp: string | null | undefined,
+): void {
+  const t = existing.discoveredByIntegration?.type;
+  if (t !== "fortimanager" && t !== "fortigate") return;
+  if (nextIp === undefined || nextIp === null) return;
+  const next = nextIp.trim();
+  if (!next || next === (existing.ipAddress ?? "")) return;
+  if (hasPermission(req, "integrations", "write")) return;
+  throw new AppError(
+    403,
+    "Changing the address of a device that a FortiManager or FortiGate integration manages needs Integrations Read-Write: Polaris signs in to that address with the integration's API token.",
+  );
+}
+
 router.put("/:id", requirePermission("assets", "write"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const existing = await loadAssetForUpdate(id);
     if (!existing) throw new AppError(404, "Asset not found");
     const input = UpdateAssetSchema.parse(req.body);
+    assertIpChangeMayRetargetIntegrationToken(req, existing, input.ipAddress);
     await validateAssetUpdate(id, existing, input);
     const actor = requestActor(req);
     const { data, ipOverrideTouched, coordChanged } = await buildAssetUpdatePatch(id, existing, input, actor);
@@ -4961,7 +4993,10 @@ router.post("/:id/dns-lookup", requirePermission("assets", "write"), async (req,
 // POST /api/v1/assets/:id/forward-lookup — A/AAAA lookup from hostname/dnsName → fills ipAddress
 router.post("/:id/forward-lookup", requirePermission("assets", "write"), async (req, res, next) => {
   try {
-    const asset = await prisma.asset.findUnique({ where: { id: req.params.id as string } });
+    const asset = await prisma.asset.findUnique({
+      where: { id: req.params.id as string },
+      include: { discoveredByIntegration: { select: { type: true } } },
+    });
     if (!asset) throw new AppError(404, "Asset not found");
     if (asset.ipAddress) throw new AppError(400, "Asset already has an IP address");
     const lookupName = asset.dnsName || asset.hostname;
@@ -4977,6 +5012,8 @@ router.post("/:id/forward-lookup", requirePermission("assets", "write"), async (
     }
 
     const ip = records[0].address;
+    // A resolved name is a typed address by another route: the name is editable (rule 111).
+    assertIpChangeMayRetargetIntegrationToken(req, asset, ip);
     await prisma.asset.update({ where: { id: asset.id }, data: { ipAddress: ip, ipSource: "dns" } });
 
     logEvent({ action: "asset.dns.forward_resolved", resourceType: "asset", resourceId: asset.id, resourceName: asset.hostname || asset.dnsName || undefined, actor: requestActor(req), message: `Forward DNS: ${lookupName} → ${ip} in ${elapsed}ms` });
@@ -5161,7 +5198,9 @@ router.post("/import-pdf", requirePermission("assets", "write"), async (req, res
 
     for (const row of rows as any[]) {
       const serial = row.serialNumber ? String(row.serialNumber).trim() : null;
-      const existing = serial ? await prisma.asset.findFirst({ where: { serialNumber: serial } }) : null;
+      const existing = serial
+        ? await prisma.asset.findFirst({ where: { serialNumber: serial }, include: { discoveredByIntegration: { select: { type: true } } } })
+        : null;
 
       const updateData: Record<string, unknown> = {};
       const allowedFields = ["hostname", "ipAddress", "macAddress", "assetType", "status", "manufacturer", "model", "serialNumber", "location", "department", "assignedTo", "os", "notes", "assetTag"] as const;
@@ -5179,6 +5218,8 @@ router.post("/import-pdf", requirePermission("assets", "write"), async (req, res
       for (const [k, v] of Object.entries(updateData)) fields[k] = String(v);
 
       if (existing) {
+        // An invoice row that matches a managed firewall's serial may not move its address (rule 111).
+        assertIpChangeMayRetargetIntegrationToken(req, existing, updateData.ipAddress as string | undefined);
         preview.push({ action: "update", serialNumber: serial, hostname: row.hostname || null, existingHostname: existing.hostname, fields });
         if (!dryRun) {
           const importUpdateData: Record<string, unknown> = { ...updateData };

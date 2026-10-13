@@ -2066,3 +2066,24 @@ not a spelling, a cookie that has outlived its owner, or a code already used.**
   metadata address. Testing against an asset is unchanged.
 - **Web Push endpoints** must be `https` and may not point at this host or a
   metadata address.
+
+### Rule 111
+
+**A stored secret follows its destination.**
+
+- **Leaving a secret blank keeps it only while the destination is the same.**
+  Change an integration's host, port, token URL or connection type, a Proxmox
+  cluster's extra nodes, or an SMTP channel's server, port or security, and
+  Polaris asks for the secret again. A
+  saved secret is never sent to a new address.
+- **Test Connection uses only its own integration's secrets.** An integration of
+  another type cannot lend its password to a test.
+- **A Fortinet-managed device's address needs Integrations Read-Write to change.**
+  Polaris signs in to a FortiGate at the address on its asset record with the
+  integration's API token, so giving a new address to any device a FortiManager
+  or FortiGate integration manages — whatever its asset type — needs more than
+  Assets Read-Write. That covers editing the asset, filling the address from a
+  DNS lookup and importing an invoice PDF. Clearing the address or reverting to
+  the discovered one is still an Assets edit.
+- **A switch's or AP's controller is a firewall the same integration manages.**
+  An asset someone created by hand with the controller's name is never used.

@@ -19,6 +19,7 @@ import { CHANNEL_TYPE_META, CHANNEL_TRANSPORT, type ChannelType } from "./notifi
 import { generateVapidKeys, sendWebPush } from "./notificationChannels/webPushChannel.js";
 import { pushDeepLinkUrl } from "../utils/notificationTemplate.js";
 import { SECRET_MASK, isMaskedSecret } from "../utils/secretMask.js";
+import { restoreStoredSecrets } from "../utils/secretDestination.js";
 import { asObject } from "../utils/object.js";
 
 export const MASK = SECRET_MASK;
@@ -65,6 +66,10 @@ function mergeConfig(type: ChannelType, incoming: unknown, current: unknown): Re
   const inc = asObject(incoming);
   const cur = asObject(current);
   const out: Record<string, unknown> = { ...inc };
+  // A stored secret is reused only while the destination (host / port /
+  // security) is unchanged — an SMTP channel re-pointed at another server must
+  // have its password typed again (rule 111).
+  restoreStoredSecrets(out, cur, secretKeys(type), inc);
   for (const key of secretKeys(type)) {
     const v = inc[key];
     if (typeof v !== "string" || isMaskedSecret(v) || v.trim() === "") {
