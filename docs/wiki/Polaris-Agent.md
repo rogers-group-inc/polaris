@@ -12,8 +12,9 @@ asset slide-over.
 ## The posture
 
 **The agent is a satellite.** It never self-acts, and it **refuses unknown
-actions**. The only queued action it accepts is `run_script` — see
-[Automation scripts](Automation-Scripts#agent).
+actions**. It accepts two queued actions: `run_script` — see
+[Automation scripts](Automation-Scripts#agent) — and `reboot`, only on a host
+that opted in ([Reboots](#reboots)).
 
 | Platform | Runs as |
 |---|---|
@@ -59,6 +60,39 @@ installed-agents list renders the Privilege column three ways:
 
 So a reinstall visibly updates the column within one heartbeat.
 
+### Reboots
+
+Polaris can reboot a host through its agent from the asset's
+[Reboot…](Assets#reboot) button, now or on a schedule — but only a host that
+opted in ([rule 112](Business-Rules#rule-112)). Off by default. Turn it on
+with **Allow Polaris to reboot this host** in the install modal (or *these
+hosts* in the bulk Deploy Agent modal), or later with **Enable…** on the
+**Reboots** row of the agent card; **Disable** turns it off. Both need
+`assets:fullwrite`, and both sign in with the agent's stored install
+credential to change the host itself:
+
+| Platform | What the opt-in installs |
+|---|---|
+| **Linux** | a polkit rule letting the `polaris-agent` user (or the `polaris-agent` service) ask systemd-logind to reboot — the logind reboot actions and nothing else — written for both polkit rule formats, plus a root-owned marker file `/etc/polaris-agent-reboot.enabled`. The agent unit and its privilege tier are not changed, so nothing is reinstalled. The host needs systemd and polkit; without them the opt-in fails and says which is missing |
+| **Windows** | a marker file `reboot.enabled` in the agent's `%ProgramData%\Polaris\agent` folder, writable only by Administrators and SYSTEM. The service already runs as LocalSystem, so the marker is the opt-in rather than a new privilege |
+| **macOS** | a marker file `/etc/polaris-agent/reboot.enabled` |
+
+The agent refuses a reboot unless the marker is there, and reports on every
+heartbeat whether the host will let it reboot (on Linux: the marker is present
+and logind answers *yes* to the agent). The Reboot button is offered only when
+both Polaris and the host say yes, and the **Reboots** row reads *Enabled ✓*,
+*Enabled — waiting for the agent to confirm*, or *Enabled — the host refuses*
+(turn it off and on again to reinstall the permission). Disabling stops Polaris
+from sending reboots straight away, even when the host cannot be reached to
+remove the permission — the Event says so. Uninstalling the agent removes the
+marker and the polkit rule.
+
+Rebooting needs agent **0.26.0** or newer. The agent acknowledges the reboot
+first and restarts the host five seconds later; Windows closes open
+applications without asking. An agent that does not pick the reboot up within
+about two and a half minutes never runs it — Polaris withdraws it — so an
+offline host never reboots hours after it was asked.
+
 ---
 
 ## Installing
@@ -69,7 +103,7 @@ else's host over a stored credential and leaves a service behind.
 
 | Route | |
 |---|---|
-| **Per asset** | the asset slide-over's **System** tab carries a Polaris Agent card with an **Install Agent** button on every server and workstation that could take one — no need to pick "Polaris Agent" as a polling method first. Any other device type shows the card once an agent exists or a stream is set to the agent method. The edit modal's Monitoring tab has the same button. Neither appears on a FortiManager- or FortiGate-discovered asset or on an ESXi host: FortiOS and ESXi take no agent. On a Windows host the modal adds a **Transport** choice — **SSH** (preselected; needs OpenSSH Server running on the host) or **WinRM** — and shows the credential picker for whichever is chosen. Linux and macOS are SSH-only, and the row is hidden |
+| **Per asset** | the asset slide-over's **System** tab carries a Polaris Agent card with an **Install Agent** button on every server and workstation that could take one — no need to pick "Polaris Agent" as a polling method first. Any other device type shows the card once an agent exists or a stream is set to the agent method. The edit modal's Monitoring tab has the same button. Neither appears on a FortiManager- or FortiGate-discovered asset or on an ESXi host: FortiOS and ESXi take no agent. On a Windows host the modal adds a **Transport** choice — **SSH** (preselected; needs OpenSSH Server running on the host) or **WinRM** — and shows the credential picker for whichever is chosen. Linux and macOS are SSH-only, and the row is hidden. **Allow Polaris to reboot this host** installs the [reboot opt-in](#reboots) with the agent |
 | **Bulk** | the Assets bulk bar's **Deploy Agent** — one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried with the credentials you pick, and other ineligible assets come back as **skips with reasons** |
 | **Auto-deploy** | a per-class toggle on the AD / Entra / Arc workstation and server blocks and the vCenter Virtual Machines block, off by default — pushes to newly discovered agent-less devices during discovery, bounded and paced |
 

@@ -6747,6 +6747,8 @@ const BulkAgentInstallSchema = z.object({
   // CAP_SYS_PTRACE for Application Map connection attribution. Applies to every
   // Linux host in the selection. Full root is no longer selectable.
   privilegeTier:     z.enum(["unprivileged", "ptrace"]).optional(),
+  // Reboot opt-in for every host in the selection (business rule 112).
+  allowReboot:       z.boolean().optional(),
 }).refine((b) => b.sshCredentialId || b.winrmCredentialId, {
   message: "Provide at least one credential (SSH and/or WinRM)",
 });
@@ -6776,6 +6778,7 @@ router.post("/bulk-agent-install", requirePermission("assets", "fullwrite"), asy
       arch:              input.arch,
       scriptIds:         input.scriptIds,
       privilegeTier:     input.privilegeTier,
+      allowReboot:       input.allowReboot,
       actor,
     });
     res.json(result);
@@ -6809,6 +6812,10 @@ const AgentInstallSchema = z.object({
   // attribution without full root). Ignored on Windows (LocalSystem) / darwin
   // (LaunchDaemon runs as root). Full root is no longer selectable.
   privilegeTier: z.enum(["unprivileged", "ptrace"]).optional(),
+  // Reboot opt-in (business rule 112): install the host-side permission (the
+  // marker, and on Linux the polkit rule) so the asset's Reboot button can
+  // reboot this host. Default off; changeable later from the agent card.
+  allowReboot: z.boolean().optional(),
 });
 
 router.get("/:id/agent", requirePermission("assets", "read"), async (req, res, next) => {
@@ -6950,6 +6957,7 @@ router.post("/:id/agent/install", requirePermission("assets", "fullwrite"), asyn
         installScriptId:       body.scriptId ?? null,
         // Privilege tier is a Linux-only concept; other OSes stay "unprivileged".
         privilegeTier:         body.osPlatform === "linux" ? (body.privilegeTier ?? "unprivileged") : "unprivileged",
+        rebootEnabled:         body.allowReboot === true,
       },
     });
 
@@ -6959,8 +6967,8 @@ router.post("/:id/agent/install", requirePermission("assets", "fullwrite"), asyn
       resourceId:   assetId,
       actor,
       level:        "info",
-      message:      `Polaris Agent install kicked off (${body.osPlatform}/${body.arch}, ${transport})`,
-      details:      { managedAgentId: row.id, credentialId: body.credentialId, transport, scriptId: body.scriptId ?? null },
+      message:      `Polaris Agent install kicked off (${body.osPlatform}/${body.arch}, ${transport}${body.allowReboot ? ", reboots allowed" : ""})`,
+      details:      { managedAgentId: row.id, credentialId: body.credentialId, transport, scriptId: body.scriptId ?? null, allowReboot: body.allowReboot === true },
     });
 
     // Fire the async install. The service mints its own enrollment token,

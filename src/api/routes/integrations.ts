@@ -602,6 +602,13 @@ const FortiManagerConfigSchema = z.object({
   // Peer-inferred FortiLink rows (synthesized from topology) are unaffected.
   // FortiOS-only; default off. Mirrored on FortiGateConfigSchema for parity.
   excludeFortilinkLldp: z.boolean().optional().default(false),
+  // Allow reboots (business rule 112). When true, this integration's FortiOS
+  // API token (`fortigateApiToken`, through the proxy or direct per useProxy)
+  // may reboot the FortiGates it discovered — and their FortiLink switches and
+  // CAPWAP APs, through the controlling gate — from an asset's Reboot button.
+  // HA members are refused. Default off; requires a token whose admin profile
+  // has System read-write. Mirrored on FortiGateConfigSchema for parity.
+  allowReboot: z.boolean().optional().default(false),
   // When true, the next discovery cycle AND every monitor job published for
   // assets owned by this integration will emit step-by-step structured logs
   // to pino at info level (visible in `journalctl -u polaris`). High log
@@ -681,6 +688,9 @@ const FortiGateConfigSchema = z.object({
   // FortiManagerConfigSchema.excludeFortilinkLldp for shape + semantics.
   // FortiOS-only; default off.
   excludeFortilinkLldp: z.boolean().optional().default(false),
+  // Allow reboots with this integration's API token — see
+  // FortiManagerConfigSchema.allowReboot (business rule 112). Default off.
+  allowReboot: z.boolean().optional().default(false),
   // Per-integration verbose debug logging — see FortiManagerConfigSchema for
   // shape + semantics. Default false.
   verboseLogging: z.boolean().optional().default(false),
@@ -1950,7 +1960,17 @@ router.put("/:id", async (req, res, next) => {
       }
     }
 
-    logEvent({ action: "integration.updated", resourceType: "integration", resourceId: req.params.id, resourceName: updated.name, actor: req.session?.username, message: `Integration "${updated.name}" updated` });
+    // Granting or withdrawing the token's right to reboot devices (rule 112)
+    // is named in the record, not folded into a bare "updated".
+    const rebootBefore = (existing.config as Record<string, unknown> | null)?.allowReboot === true;
+    const rebootAfter = ((updated.config as Record<string, unknown>) || {}).allowReboot === true;
+    const rebootFlip = rebootBefore !== rebootAfter;
+    logEvent({
+      action: "integration.updated", resourceType: "integration", resourceId: req.params.id, resourceName: updated.name, actor: req.session?.username,
+      level: rebootFlip ? "warning" : "info",
+      message: `Integration "${updated.name}" updated${rebootFlip ? (rebootAfter ? " — its API token may now reboot devices" : " — its API token may no longer reboot devices") : ""}`,
+      ...(rebootFlip ? { details: { allowReboot: rebootAfter } } : {}),
+    });
 
     // Switching the directory sync off (or disabling the integration) removes
     // the contacts it created. Leaving them would be worse than either state:

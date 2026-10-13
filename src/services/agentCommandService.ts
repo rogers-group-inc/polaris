@@ -1,10 +1,11 @@
 /**
  * src/services/agentCommandService.ts — the agent command queue.
  *
- * Today the only queued action is `run_script` (automation script runs on the
- * agent — enqueued by automationScriptService.requestScriptRun). The agent polls
- * pending commands, executes, and reports the outcome via /command-result. The
- * agent never self-acts. Every result writes an audit Event.
+ * Two queued actions: `run_script` (automation script runs on the agent —
+ * enqueued by automationScriptService.requestScriptRun) and `reboot` (business
+ * rule 112 — enqueued by rebootService, which watches the row and writes the
+ * Events). The agent polls pending commands, executes, and reports the outcome
+ * via /command-result. The agent never self-acts. Every result is audited.
  *
  * NOTE: process/service start/stop/restart control was removed (Satellite-posture
  * change) — the agent no longer accepts control actions and the server no longer
@@ -108,8 +109,13 @@ export async function recordCommandResult(
     return;
   }
 
-  // No non-run_script actions are enqueued anymore (control was removed). A row
-  // reaching here is stale/foreign — record the result generically for audit.
+  // A reboot (business rule 112): the agent acknowledges BEFORE it takes the
+  // host down. The reboot run watching this row writes the Events — the ack
+  // is one step of that run, not an outcome of its own.
+  if (cmd.action === "reboot") return;
+
+  // Any other action is stale/foreign (process control was removed) — record
+  // the result generically for audit.
   await logEvent({
     action: `agent.command.${cmd.action}.result`,
     resourceType: "asset",

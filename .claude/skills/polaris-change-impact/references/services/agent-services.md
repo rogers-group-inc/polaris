@@ -1,6 +1,6 @@
-# Services — Polaris Agent install, build, channel, commands; the firmware repository
+# Services — Polaris Agent install, build, channel, commands; the firmware repository; reboots
 
-Per-service touches (What it owns / Public API / Cross-service deps / Used by / Invariants / When changing this), verbatim from TOUCHES.md. Code references are `path/file.ts → symbolName()` — grep the symbol. The three firmware services sit here because `firmwareUpgradeService` copies `agentInstallService.startUpgrade`'s shape — synchronous refusals, a row, a kickoff Event, a rule-80 hold, a `setImmediate` runner on the web process.
+Per-service touches (What it owns / Public API / Cross-service deps / Used by / Invariants / When changing this), verbatim from TOUCHES.md. Code references are `path/file.ts → symbolName()` — grep the symbol. The three firmware services sit here because `firmwareUpgradeService` copies `agentInstallService.startUpgrade`'s shape — synchronous refusals, a row, a kickoff Event, a rule-80 hold, a `setImmediate` runner on the web process. The five reboot services (business rule 112 — `rebootService`, `rebootTransports`, `rebootScheduleService`, `holdRecoveryWait`, `agentRebootPermissionService`) sit after them because they copy the firmware pair's shape.
 
 ## services/firmwareRepositoryService.ts
 
@@ -37,7 +37,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `getUpgradeAvailability`, `startFirmwareUpgrade`, `checkSchedulableUpgrade` (what a BOOKING takes when it is made — business rule 93: the image gates + a bound login, returning `{ approved, fromVersion, warnings }` where `warnings` are today's `healthBlockers`, NOT a refusal), `getRun`, `listRunsForAsset`, `failOrphanedFirmwareRuns`; `FirmwareRunConflictError` (the 409 subclass for a refusal that clears on its own — a live run on the device, on a connection-path ancestor/descendant or MCLAG peer, and the P2002 race; a click answers it like any 409, a booking waits on it); `UpgradeAvailability` / `UpgradeAvailabilityState` / `RunSummary` / `StartUpgradeInput` (`scheduleId?` — the booking this start fires). The private `approvedImageFor` (engine → HA → address → platform → candidates → the approved image) is the ONE copy of the image gates, shared by a start and by a booking; the private `haClusterOf` (a `firewall` whose `fortinetTopology` carries `haMode` / `haRole`) is why an HA member is `unsupported` on the card and a 400 at start AND at booking.
 
-**Cross-service deps:** `firmwareRepositoryService` (candidates, credential, image path); `firmwareEngines/index` (`engineFor`, `engineByKind`) and `firmwareEngines/types` (`DEFAULT_FIRMWARE_TIMEOUTS`); `maintenanceScheduleService.openMaintenanceHold` / `releaseMaintenanceHold` (kind `firmware-upgrade`, rule 80); `connectionPathService.resolveConnectionPath` + `prisma.assetMclagPeer` (the topology gate); `utils/assetInvariants.UNMONITORABLE_STATUSES` (rule 10); `eventLogService.logEvent`; a dynamic import of `discovery/assetDiscoveryScope.resolveDiscoveryScopeForAsset` + `discovery/discoveryEngine.triggerDiscovery` (the scoped rediscover on success); `node:fs/promises.stat`.
+**Cross-service deps:** `firmwareRepositoryService` (candidates, credential, image path); `firmwareEngines/index` (`engineFor`, `engineByKind`) and `firmwareEngines/types` (`DEFAULT_FIRMWARE_TIMEOUTS`); `maintenanceScheduleService.openMaintenanceHold` / `releaseMaintenanceHold` (kind `firmware-upgrade`, rule 80); `holdRecoveryWait.holdUntilMonitorAnswers` (the post-reboot recovery wait, shared with rebootService); `connectionPathService.resolveConnectionPath` + `prisma.assetMclagPeer` (the topology gate); `utils/assetInvariants.UNMONITORABLE_STATUSES` (rule 10); `eventLogService.logEvent`; a dynamic import of `discovery/assetDiscoveryScope.resolveDiscoveryScopeForAsset` + `discovery/discoveryEngine.triggerDiscovery` (the scoped rediscover on success); `node:fs/promises.stat`.
 
 **Used by:**
 - `src/api/routes/firmware.ts` — `firmwareAssetRouter` (`GET /`, `POST /`, `GET /runs`) and `GET /server-settings/firmware/runs/:id`.
@@ -49,7 +49,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **The gates are synchronous and ordered** (engine → not an HA member → address → platform → candidates → the REQUIRED approved `imageId` must be the offered primary or the eligible backup → health → login → one live run per asset, none on a connection-path ancestor/descendant or MCLAG peer → the image file exists), each an `AppError` answered to the click; the partial unique index on `(assetId) WHERE status IN (queued, running)` answers the race (P2002 → 409). `tests/unit/firmwareUpgradeGates.test.ts` pins the order. The three "a related flash is live" refusals (one live run, topology, P2002) are `FirmwareRunConflictError` and NOTHING else is — a booking retries on that class and settles `refused` on every other, so widening it turns a permanent refusal into a two-hour retry loop.
 - **A booked start is the same start** (rule 93): `scheduleId` changes the Event's wording ("Scheduled firmware upgrade started", `details.scheduleId`), links `FirmwareUpgradeSchedule.runId` BEFORE the runner is scheduled (so a crash between the two still lets the boot sweep find the booking), and after the runner settles — success or failure, after the terminal row and Event — the booking's recipients are emailed. It takes no gate a click does not.
 - **`maintenance` is allowed; unmonitored is allowed** (the hold no-ops, as it does for an agent upgrade). Down / warning / recovering / dependency-suppressed / unmonitorable are refused.
-- **The hold outlives the engine on a run that reached the reboot** (`holdUntilMonitorAnswers`): after an `upgraded` or `unverified` outcome the run sits in stage `recovering` and polls `assetMonitorSample.findFirst({success:true, timestamp > engine end})` every `recoveryPollMs` until one lands or `recoveryWaitMs` (10 min) passes, first pushing the hold's `expiresAt` past the cap. The engine proves the device over its WEB UI, which on a FortiAP answered minutes before the SNMP agent monitoring polls; releasing on "engine done" let the next polls miss outside the window. A `failed` run skips the wait (an incident); no hold row = unmonitored = nothing to wait for. The two timeouts live on `FirmwareEngineTimeouts` so tests shrink them through `overrides`, but no ENGINE reads them.
+- **The hold outlives the engine on a run that reached the reboot** (`holdUntilMonitorAnswers`, now in `services/holdRecoveryWait.ts`, shared with the reboot runner — business rule 112): after an `upgraded` or `unverified` outcome the run sits in stage `recovering` and polls `assetMonitorSample.findFirst({success:true, timestamp > engine end})` every `recoveryPollMs` until one lands or `recoveryWaitMs` (10 min) passes, first pushing the hold's `expiresAt` past the cap. The engine proves the device over its WEB UI, which on a FortiAP answered minutes before the SNMP agent monitoring polls; releasing on "engine done" let the next polls miss outside the window. A `failed` run skips the wait (an incident); no hold row = unmonitored = nothing to wait for. The two timeouts live on `FirmwareEngineTimeouts` so tests shrink them through `overrides`, but no ENGINE reads them.
 - **The hold is taken BEFORE the runner is scheduled** and released in the runner's `finally` BEFORE the terminal Event (the `failUpgrade` ordering, rule 80a), by `failOrphanedFirmwareRuns` at boot, and by the reconcile's 45-minute expiry as the backstop.
 - **Never writes `Asset.osVersion`.** Projection owns it (asset-source-projection); the run records `verifiedVersion` and requests a scoped rediscover, and `getUpgradeAvailability` reports `pending-discovery` until the record catches up so the button does not re-offer a flash that happened.
 - **The plaintext password — or a FortiGate's bearer token — exists only inside the runner's engine context** (`ctx.credential`, `ctx.bearerToken`, with the token's `verifyTls` / `port`) — never in a log line, the run `log`, or an Event's `details` (only `credentialId` / name / scope / `source`).
@@ -61,6 +61,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - A new blocker: add it to `healthBlockers` (so availability and start agree), to the gates test, and to the wiki's list.
 - A new engine: `firmwareEngines/index.ts` `engineFor` + `engineKindForType`, the run row's `engine` vocabulary (`fortiswitch-https` / `fortiap-https` / `fortigate-https`), the file map, and the docs' "Fortinet only" sentence. An engine that signs in differently (the FortiGate's bearer token) widens `FirmwareEngineContext` in `firmwareEngines/types.ts` and the `ctx` built in `runUpgrade`.
 - Lifting the HA refusal: `haClusterOf`, AND the engine's own `system/ha` preflight (`fortigateHttps.ts → gateHaMode`), AND rule 87's invariant + the wiki — the refusal lives in three places on purpose.
+- A state blocker shared with reboots: `rebootService` refuses while a firmware run is queued / running on the asset (state `blocked`); a new firmware run status that means "in flight" must be added to that read too.
 - A new terminal outcome: `finish`, the Event table (`firmware.upgrade_*`), the card's `_fwRunResultHTML`, and `dropHold` ordering — and `notifyScheduledRunFinished`'s status → outcome mapping plus `utils/firmwareResultEmailTemplate.ts` (a booked run's email).
 - A new image gate goes in `approvedImageFor`, so a booking takes it at booking AND at firing; a new device-STATE gate goes after it in `startFirmwareUpgrade` only (and, if it is a health blocker, `healthBlockers` so the booking modal warns about it).
 - If a queue ever replaces `setImmediate`, the image must travel with the job (it lives on the web host's disk) and the boot sweep's "this process was driving it" premise changes.
@@ -93,6 +94,110 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Changing the grace or the wait: the constants, the rule-93 invariant + narrative, the wiki, and `tests/unit/firmwareSchedule.test.ts`.
 - Running bookings anywhere but the web role breaks the `setImmediate` premise (the image is on that host's disk) — see firmwareUpgradeService's queue note.
 - Scale: one indexed query (`status, scheduledFor`) per minute; nothing per asset unless a booking is due.
+
+---
+
+## services/rebootService.ts
+
+**What it owns:** Reboot one asset, now (business rule 112) — the ORCHESTRATION half: what may reboot and through what (the plan), who may sign it (the authority), the synchronous gates, the `RebootRun` row, the `device-reboot` hold, the Events, and the proof the device really cycled. The protocol half is `rebootTransports.ts`. Copies `firmwareUpgradeService`'s shape (sync gates → run row → Event → hold → runner on `setImmediate`, no queue).
+
+**Public API:** `getRebootAvailability` (`state` ∈ unsupported / no-address / no-credential / ha / blocked / running / agent-not-active / agent-disabled / agent-incapable / agent-too-old / agent-offline / available — the server owns every word the slide-over draws), `checkSchedulableReboot` (what a BOOKING takes: the plan, with today's state blockers returned as `warnings`; an `agent-offline` host may be booked), `startReboot` (`StartRebootInput`, `scheduleId?`), `getRebootRunForAsset`, `listRebootRunsForAsset`, `failOrphanedRebootRuns`, `integrationRebootGrant` (does an integration's `config.allowReboot` cover this device), `haMembershipOf` (pure — `fortinetTopology` haMode / haRole), `RebootRunConflictError` (the 409 a booking waits on), `MIN_AGENT_REBOOT_VERSION` ("0.26.0"), `DEFAULT_REBOOT_TIMEOUTS` (`agentAckMs` 150 s, `downWaitMs` 5 min, `upWaitMs` 15 min, `recoveryWaitMs` 10 min), types `RebootMethod` / `RebootAvailability` / `RebootAvailabilityState` / `RebootRunSummary` / `RebootPlan` / `RebootTimeouts`.
+
+**Cross-service deps:** `rebootTransports` (`gateOps` through `_rebootTransportSeams`, `RebootSendError`); `credentialService.{getCredential, credentialAllowsReboot}`; `firmwareRepositoryService.resolveFirmwareCredential` (the gate's login binding, tried first); `reservationPushService.buildTransportForIntegration` (the integration token: FMG proxy / FMG direct / standalone); `utils/fortinetParentKey` (`parentAssetWhereOr`, `buildInfraParentIndex`, `resolveInfraParentAsset`, `readControllerStamp`, `readFirewallDeviceName`) to find the controlling gate; `utils/fortinetRestCredential.restApiCredentialAuth`; `maintenanceScheduleService.{openMaintenanceHold, releaseMaintenanceHold}` (kind `device-reboot`, rule 80); `holdRecoveryWait.holdUntilMonitorAnswers`; `agentCommandWake.publishCommandWake` (agent path); `utils/assetInvariants.UNMONITORABLE_STATUSES` (rule 10); `utils/version.versionAtLeast`; `eventLogService.logEvent`; `node:net` (the SSH-port down-then-up probe). Lazy import of `rebootScheduleService.notifyScheduledRebootFinished` (the schedule service imports this one).
+
+**Used by:**
+- `src/api/routes/reboot.ts` — `GET /`, `POST /`, `GET /runs`, `GET /runs/:runId`.
+- `src/services/rebootScheduleService.ts` — `checkSchedulableReboot` at booking, `startReboot({ scheduleId })` when a booking fires, `RebootRunConflictError` to tell "wait" from "refused".
+- `src/jobs/failOrphanedRebootRuns.ts` — the boot sweep.
+- `public/js/assets.js` — the slide-over's Reboot… button and agent card Reboots row, through the routes (`_startRebootPoll` polls the run).
+
+**Invariants:**
+- **The plan.** A FortiGate reboots itself — refused when it is an HA member (`haMembershipOf` at the click, the gate's own `system/ha` again in the run's preflight; rebooting one member fails the cluster over, which this does not orchestrate). A FortiSwitch / FortiAP with a controller stamp is restarted THROUGH the controlling gate (resolved via `utils/fortinetParentKey`, never by matching `controllerFortigate` against `Asset.hostname`; the restart API is addressed by the child's switch-id / wtp name, and the gate is addressed by its `controllerFortigate` device NAME through FMG); the gate's HA state does not matter. A switch / AP with no controller is rebooted over its own SSH CLI. An agent host gets `AgentCommand{action:"reboot"}`.
+- **The authority — nothing else reboots anything.** In order: (1) a stored credential with `config.allowReboot` — the firmware repository's login binding for the gate first, then the gate's own per-stream credential columns ranked restapi > http form > ssh — sent to the GATE's own address; (2) the discovering integration's API token when that integration's `config.allowReboot` is on (`integrationRebootGrant`); (3) for an agent host, `ManagedAgent.rebootEnabled` AND `rebootCapable === true` AND agent ≥ 0.26.0 AND seen within 10 min. The first that applies wins; `RebootRun.authority` / `credentialId` record it and every Event names it.
+- **Gates are synchronous**, answered to the click: plan (400 for `ha` / `unsupported`, else 409) → state blockers (rule-10 status, or a firmware run queued / running on the asset) → one active reboot per asset (`RebootRunConflictError`; the partial unique answers the race, P2002 → the same 409).
+- **The run** preflights (the device's serial must match `Asset.serialNumber`; a FortiGate must be standalone LIVE), reads the boot time (FortiOS `web-ui/state` `utc_last_reboot`; agent `bootTime`) into `bootTimeBefore`, sends, then watches for PROOF: boot time advanced / the controller showed the child drop and rejoin (or `join_time` advanced) / the SSH port went down then up / the agent reported a newer `bootTime` / `Asset.lastRebootAt` moved past the start → `succeeded`. Went down and never came back → `failed`. Never seen down and no proof → `unverified`, never `succeeded`.
+- **The agent command is withdrawn** (`pending` → `failed`) when the agent has not picked it up within `agentAckMs`, so a reboot cannot fire hours later when an agent returns. The agent acknowledges BEFORE it reboots; `agentCommandService.recordCommandResult` writes nothing for `reboot` — this run writes the Events.
+- **The hold**: `device-reboot` (20 min), taken in `startReboot` before the runner is scheduled — never at booking — best-effort; held after proof until monitoring answers (`holdUntilMonitorAnswers`); released BEFORE the terminal Event (rule 80a ordering), by `failOrphanedRebootRuns` at boot, by `agentChannelService.attach` on an agent's reattach, and by the reconcile's expiry as the backstop.
+- **Events:** `asset.reboot_started` (info), `asset.reboot_succeeded` (info), `asset.reboot_unverified` / `asset.reboot_failed` (warning). A secret exists only inside `linkFor` → the transport; never in the run `log` or Event `details` (only `credentialId` / `authority` / `viaAssetId`).
+- Runs execute on the web process (`setImmediate`); a restart mid-run orphans it and the boot sweep names it. Row writes throttled to one per 5 s; nothing here touches the monitor ticks. One asset per call — no fleet reads.
+
+**When changing this:**
+- A new device kind: the plan (`planFor`), the `method` vocabulary (run row comment + the domain model), a `GateOps` arm in `rebootTransports.ts`, its proof, the slide-over's state text, rule 112 and the wiki.
+- A new authority: the ordered list above, `RebootRun.authority` wording, the Event, and rule 112 — the opt-in is the security boundary.
+- Lifting the HA refusal: `haMembershipOf` AND the live `system/ha` preflight, together.
+- A new terminal status: the migration's status CHECK, the Event table, `notifyScheduledRebootFinished`'s mapping, `utils/rebootResultEmailTemplate.ts`, and the slide-over's run rendering.
+- Pinned by `tests/unit/rebootService.test.ts` and `tests/unit/rebootOptIn.test.ts`.
+
+## services/rebootTransports.ts
+
+**What it owns:** The PROTOCOL half of a reboot (business rule 112) — no Prisma, no Events, no holds. A `GateLink` in, one gate's operations out (`gateOps(link)` → `GateOps`): reboot the gate, restart a managed switch, restart a managed AP, read the gate's status / boot time and the managed switch / AP tables (`ManagedSwitchState` / `ManagedApState`).
+
+**Public API:** `gateOps`, `runFortiCli`, `assertCliToken`, `RebootSendError`, types `GateLink` / `GateOps` / `SendResult` / `ManagedSwitchState` / `ManagedApState`, constants `REBOOT_PATH` (`/api/v2/monitor/system/os/reboot`, body `{event_log_message}`), `SWITCH_RESTART_PATH` (`/api/v2/monitor/switch-controller/managed-switch/restart`, `{mkey: switch-id}`), `AP_RESTART_PATH` (`/api/v2/monitor/wifi/managed_ap/restart`, `{wtpname}`); `_rebootTransportSeams` (the test seam rebootService calls through).
+
+**Cross-service deps:** `fortigateService.fgRequest` (kind `token` — rule 96 pacing); `fortimanagerService.fmgProxyRest` (kind `fmg-proxy`); `firmwareEngines/deviceHttp.DeviceHttpClient` + `firmwareEngines/fortigateHttps.gateLogin` (kind `login`) and `firmwareEngines/types.DEFAULT_FIRMWARE_TIMEOUTS`; `utils/remoteExec.withSshClient` (kind `ssh`); `utils/fortiosEnvelope.readSystemStatus`.
+
+**Used by:** `src/services/rebootService.ts` only.
+
+**Invariants:**
+- **Four link kinds**: `token` (an integration's or a restapi credential's bearer), `login` (a device admin form login), `fmg-proxy` (through FortiManager), `ssh` (FortiOS CLI over an interactive shell: `execute reboot`, `execute switch-controller switch-action restart swtp <id>`, `execute wireless-controller reset-wtp <serial>`; `runFortiCli` answers the `(y/n)` prompt and pages `--More--`).
+- **A refusal and a dropped connection are different results**: `RebootSendError` = the device said no (the run fails, nothing was rebooted); `{ uncertain: true }` = the connection died mid-send, which a reboot routinely does — the run watches for proof instead of failing.
+- **Every CLI argument passes `assertCliToken`** (switch-id, serial) — an interactive shell has no argv boundary.
+- Lab-verified on FortiOS 7.6.7 and 8.0.1 (2026-10-13). A path or body change is checked against both.
+
+**When changing this:** a new endpoint goes in `GateOps` for EVERY link kind it can ride (or the plan must refuse that kind); keep it Prisma-free so tests drive it through the seam.
+
+## services/rebootScheduleService.ts
+
+**What it owns:** A reboot BOOKED for later (business rule 112, the rule-93 shape) and the email that says how it went: `RebootSchedule` create / update / cancel from the asset slide-over, firing due bookings (the job's tick), and the results email.
+
+**Public API:** `createRebootSchedule` (returns `warnings`), `updateRebootSchedule`, `cancelRebootSchedule`, `getPendingRebootSchedule`, `listRebootSchedulesForAsset`, `runDueRebootSchedules` (+ `DueRebootResult` `{ started, refused, missed, waiting }`), `notifyScheduledRebootFinished`; type `RebootScheduleSummary`.
+
+**Cross-service deps:** `rebootService.{checkSchedulableReboot, startReboot, RebootRunConflictError}`; `firmwareScheduleService.{normalizeRecipients, assertSchedulableTime, LATE_GRACE_MS, CONFLICT_WAIT_MS}` (one copy of the booking rules); `quietTimeSummaryService.resolveSummaryChannel`; `notificationDeliveryService.{applyBrandLetterhead, sendEmailThroughChannel}`; `userTimezoneService.{resolveTimeZone, serverTimeZone}`; `utils/rebootResultEmailTemplate.renderRebootResultEmail`; `eventLogService.logEvent`.
+
+**Used by:** `src/api/routes/reboot.ts` (`GET /schedules`, `GET /schedules/defaults`, `POST /schedules`, `PATCH` / `DELETE /schedules/:scheduleId`; `GET /` folds in the pending booking); `src/jobs/startScheduledReboots.ts` (`runDueRebootSchedules`, 60 s); `src/services/rebootService.ts` (lazy `notifyScheduledRebootFinished` from the runner's `.finally` and the boot sweep); `public/js/assets.js` (the reboot modal's schedule box).
+
+**Invariants:**
+- Every firmware-booking invariant holds here (see `firmwareScheduleService`): approved at booking, judged at firing (`startReboot` re-takes every gate); every transition out of `pending` conditional; one `pending` per asset and ≥ 1 recipient enforced by the DB; refused is final, a `RebootRunConflictError` waits up to `CONFLICT_WAIT_MS`; `LATE_GRACE_MS` late → `missed`; sequential inside a tick; `notifiedAt` claimed before sending, one message per recipient in that reader's zone.
+- **Booking takes no hold** — the `device-reboot` hold is taken only when the run starts.
+- Events: `asset.reboot_scheduled` / `reboot_rescheduled` / `reboot_schedule_cancelled` / `reboot_schedule_missed` / `reboot_schedule_refused` / `reboot_schedule_email_failed`.
+
+**When changing this:** a change to the shared booking rules is made in `firmwareScheduleService` and lands on both; a new terminal status needs the migration CHECK, the template's `RebootResultOutcome`, and the slide-over. Scale: one indexed `(status, scheduledFor)` query per minute.
+
+## services/holdRecoveryWait.ts
+
+**What it owns:** `holdUntilMonitorAnswers(assetId, kind, timeouts, run)` — keep a rule-80 maintenance hold open until the device answers Polaris's OWN monitoring again: the first successful `AssetMonitorSample` after the operation, polled every `recoveryPollMs`, capped at `recoveryWaitMs`, after first pushing the hold's `expiresAt` past the cap. Extracted from `firmwareUpgradeService` so both on-purpose reboots share it.
+
+**Public API:** `holdUntilMonitorAnswers` (true when monitoring answered within the cap; false on the cap or with no hold), type `HoldRecoveryRun` (`onWaiting`, `push`, `flush` — the caller's run-log hooks).
+
+**Cross-service deps:** `prisma` (`maintenanceHold`, `assetMonitorSample`); type `MaintenanceHoldKind` from `maintenanceScheduleService`.
+
+**Used by:** `src/services/firmwareUpgradeService.ts` (kind `firmware-upgrade`, rule 87), `src/services/rebootService.ts` (kind `device-reboot`, rule 112).
+
+**Invariants:**
+- **Reads the sample table rather than asking a collector** — on a split-role host the monitor role writes the samples, so this works from the web process.
+- **No hold row = unmonitored = nothing to wait for** (`openMaintenanceHold` declined); returns at once.
+- The operation's own proof (web UI, controller, agent) routinely answers minutes before SNMP / ICMP does — releasing on that proof let the next missed polls land outside the window (a FortiAP's HTTPS answered while its SNMP agent was still silent).
+- Scale: one indexed point query per poll per live run.
+
+**When changing this:** both callers' timeouts objects carry `recoveryWaitMs` / `recoveryPollMs`; a new on-purpose-reboot operation calls this rather than copying it.
+
+## services/agentRebootPermissionService.ts
+
+**What it owns:** Turning an agent host's reboot opt-in (business rule 112) on or off AFTER deployment: `ManagedAgent.rebootEnabled` and the host-side permission (the root-owned marker the agent requires, plus on Linux the polkit rule that lets the unprivileged agent ask logind to reboot) must agree.
+
+**Public API:** `setAgentRebootEnabled({ assetId, enabled, actor, testOverrides? })` → `AgentRebootToggleResult` `{ rebootEnabled, hostError }`.
+
+**Cross-service deps:** `agentInstallService.applyRebootPermissionOnHost` (the host script over the agent's stored install credential + transport, exactly as an upgrade reaches the host); `credentialService.getCredential`; `agentCommandWake.publishConfigRefresh`; `eventLogService.logEvent`; `prisma.managedAgent`.
+
+**Used by:** `src/api/routes/reboot.ts` — `PUT /agent` (`assets:fullwrite`); `public/js/assets.js` (`_toggleAgentReboot`).
+
+**Invariants:**
+- **Enable: host first, then flag.** The script must succeed before `rebootEnabled` is set; `rebootCapable` is reset to null and a refresh-config nudge asks the agent to report again — the button stays off until the HOST says it can.
+- **Disable: flag first.** `rebootEnabled` is cleared even when the host cannot be reached (Polaris stops sending reboots at once); `hostError` and the Event say the host may still carry the permission.
+- Only agents with something on the host to change (`active` / `enrolling` / `upgrade_failed`). Re-running either is safe (idempotent scripts) — "enable" again repairs a host that reports it cannot reboot.
+- Events: `agent.reboot_enabled` (warning — a new power over the host), `agent.reboot_disabled` (info; warning when the host was not changed), `agent.reboot_permission_failed` (warning — the enable script failed; also written by `agentInstallService.runInstall` when the post-install grant fails).
+
+**When changing this:** the scripts live in `utils/agentRebootPermission.ts`; the agent's marker check (`agent/internal/reboot`) must agree on paths in lockstep.
 
 ---
 
@@ -234,7 +339,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - **`agent.connected` / `agent.disconnected` must NAME the asset.** An `asset` Event with no `resourceName` gives an event automation an empty subject (`utils/alertSubject.eventSubjectLabel` returns "" for one), so every alert about an agent dropping rendered a widget row and an email that could not say WHICH host — the one fact those alerts carry. `attach` resolves `hostname || ipAddress` once and parks it on the Session so `detach` can name the device without a database read on a path that runs when the socket is already dead, and so both events agree on the label. Every other `agent.*` Event that names an asset does the same (`agentInstallService`'s runners pass the row they hold; its `fail*` helpers use `assetLabel`).
-- **A reattach is what ENDS an upgrade or reinstall hold** (business rule 80), not the installer returning: the WS teardown trails the service stop by up to a heartbeat interval, so a hold released when the script exited lets the lagging `agent.disconnected` through. `attach` releases `agent-upgrade` and `agent-reinstall` only — an `agent-uninstall` hold ends with the uninstall, since nothing is meant to come back from one. The release is best-effort: its failure must not break the attach, and the hold's expiry covers it.
+- **A reattach is what ENDS an upgrade or reinstall hold** (business rule 80), not the installer returning: the WS teardown trails the service stop by up to a heartbeat interval, so a hold released when the script exited lets the lagging `agent.disconnected` through. `attach` releases `agent-upgrade`, `agent-reinstall` and `device-reboot` (an agent host's reboot, business rule 112 — the agent is back) — an `agent-uninstall` hold ends with the uninstall, since nothing is meant to come back from one. The release is best-effort: its failure must not break the attach, and the hold's expiry covers it.
 - Attach replaces any existing session for the same agentId (idempotent).
 - **A socket's close / error / heartbeat detach is scoped to ITS session** (`detach(id, reason, session)`), never to the agent id alone. A replaced socket's close event lands after the closing handshake — after the replacement took the map slot — and an id-keyed detach from it tore down the live replacement and wrote a warning `agent.disconnected`, paging "Agent disconnected" for a connection that was fine. It fired after every in-app update: the restart's reconnect herd queues every agent's argon2 bearer verify, the agent's 10s handshake timeout runs out, it redials, and both dials complete. An unscoped `detach(id, reason)` (revoke, operator action) still ends whatever is attached.
 - **An upgrade the agent abandoned is never attached.** `agentsWs.ts` watches the raw socket for `close` / `end` while `verifyBearer` runs and drops the upgrade when `upgradeAbandoned` says the agent hung up; `attach` itself refuses a socket whose `readyState` is not OPEN, BEFORE it can displace the live session, and writes no event for it.
@@ -256,7 +361,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Fire-and-forget remote install / uninstall / upgrade of the Polaris Agent over SSH (Linux/macOS/Windows) or WinRM (Windows): resolves credentials, mints an enrollment token, uploads the binary + a rendered `agent.conf`, runs platform scripts, and drives the ManagedAgent lifecycle (pending → uploading → enrolling → active | failed).
 
-**Public API:** `startInstall`, `startUninstall`, `startUpgrade`, `upgradeAllOutdated`, `bulkInstallAgents`, `BulkInstallInput`, `BulkInstallResult`, `resolveUpgradeCredential`, `UPGRADEABLE_INSTALL_STATUSES`, `canUpgradeFromStatus`, `renderAgentConf`, `inferOwnServerUrl`, `inferOwnServerUrlSync`, `AGENT_SERVER_URL_SETTING_KEY`, `StartInstallInput`, `StartUninstallInput`, `StartUpgradeInput`, `ResolvedUpgradeCredential`, `UpgradeAllResult`
+**Public API:** `startInstall`, `startUninstall`, `startUpgrade`, `upgradeAllOutdated`, `bulkInstallAgents`, `applyRebootPermissionOnHost` (+ `RebootPermissionTarget` — business rule 112), `BulkInstallInput`, `BulkInstallResult`, `resolveUpgradeCredential`, `UPGRADEABLE_INSTALL_STATUSES`, `canUpgradeFromStatus`, `renderAgentConf`, `inferOwnServerUrl`, `inferOwnServerUrlSync`, `AGENT_SERVER_URL_SETTING_KEY`, `StartInstallInput`, `StartUninstallInput`, `StartUpgradeInput`, `ResolvedUpgradeCredential`, `UpgradeAllResult`
 
 **Cross-service deps:** `credentialService.getCredential`, `windowsSshOnboardingService.getOnboardingState` (the managed deployment credential the upgrade falls back to), `agentTokenService.mintEnrollmentToken`, `agentBuildService.getInventory`, `certInfo.getServerCertHostnames`, `maintenanceScheduleService` (`openMaintenanceHold` / `releaseMaintenanceHold` — business rule 80), `publicUrl` port helper, `utils/agentUnit` (`linuxServiceBlock`/`normalizePrivilegeTier`/`AgentPrivilegeTier` — the privilege-tier → systemd unit mapping; re-exported from here), `logEvent`, `prisma`, WinRM helper.
 
@@ -278,6 +383,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Concurrent upgrades are pool-bounded so a fleet upgrade doesn't overwhelm hosts; `testOverrides` allow fake SSH for unit tests.
 - A row `upgradeAllOutdated` cannot upgrade writes an `agent.upgrade_skipped` Event against the asset: `startUpgrade` throws before it touches `installStatus`, so such a row leaves no trace of its own and is re-skipped by every later fan-out. Never let that path go silent again.
 - **`upgradeAllOutdated` does not attempt a host that monitoring reads as DOWN** (2026-09-30): an eligible row whose asset is `monitored === true && monitorStatus === "down"` is left untouched (still `active` / `upgrade_failed`, still lagging, so the next fan-out or the per-asset Upgrade button — `startUpgrade`, deliberately NOT gated — picks it up), counted in `UpgradeAllResult.deferredDown`, and gets one info-level `agent.upgrade_deferred` Event (batched via `logEventsBatch`, best-effort). Its own action, never `agent.upgrade_skipped`: an automation keyed on "skipped" means a stranded host and must not page about a host that is merely off. An UNMONITORED asset is still attempted — its `monitorStatus` is stale. The reason is the pool: a dead host's SSH/WinRM connect sits out its timeout holding one of the 4 slots every reachable host queues behind. Applies to both callers (`POST /server-settings/agents/upgrade-all` and the `agent.autoUpgradeOnNewBuild` hook); the Server Settings toast reports the deferred count.
+- **Reboot opt-in (business rule 112).** `StartInstallInput.allowReboot` / `BulkInstallInput.allowReboot` (and `POST /assets/:id/agent/install`'s body) set `ManagedAgent.rebootEnabled`; after a SUCCESSFUL install `runInstall` applies the host-side permission (`applyRebootPermissionOnHost` → `utils/agentRebootPermission.ts` scripts over the same transport) when the row has `rebootEnabled` — best-effort: a failure writes `agent.reboot_permission_failed` and never fails the install. The Linux uninstaller appends `LINUX_REBOOT_PERMISSION_CLEANUP`. `agentRebootPermissionService` calls `applyRebootPermissionOnHost` for a later toggle.
 - The privilege-tier → unit mapping is pure in `utils/agentUnit.ts` (unit-tested) — edit systemd directives there, and remember `linuxServiceBlock` only ever emits unprivileged/ptrace (no root branch).
 
 ---
@@ -305,7 +411,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/agentCommandService.ts
 
-**What it owns:** The agent command queue — the `AgentCommand` table + its lifecycle. Today the only queued action is `run_script` (agent-side automation script runs). Process/service start/stop/restart control was REMOVED (Satellite-posture change) — this module keeps only the shared fetch/report plumbing.
+**What it owns:** The agent command queue — the `AgentCommand` table + its lifecycle. Two queued actions: `run_script` (agent-side automation script runs, enqueued by `automationScriptService.requestScriptRun`) and `reboot` (business rule 112, enqueued and watched by `rebootService`). Process/service start/stop/restart control was REMOVED (Satellite-posture change) — this module keeps only the shared fetch/report plumbing.
 
 **Public API:** `fetchPendingCommands(managedAgentId)` (agent poll; marks sent atomically + flips linked run_script `AutomationScriptRun`s pending→running); `recordCommandResult(managedAgentId, commandId, success, error, resultState, output?)` (agent report → completes the command + the linked run + audit); type `AgentCommandView`.
 
@@ -316,7 +422,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Invariants:**
 - `fetchPendingCommands` flips pending→sent atomically so a slow agent (or a WS-wake + poll racing) doesn't double-execute the same command.
 - `recordCommandResult` verifies the command belongs to the reporting agent (managedAgentId match).
-- The agent refuses any non-`run_script` action; the server enqueues only `run_script`. A stale/foreign non-run_script row reaching `recordCommandResult` is audited generically, never as control.
+- The agent refuses any action but `run_script` and `reboot`. **`recordCommandResult` returns silently for `reboot`** — the agent acknowledges BEFORE it takes the host down, and the reboot run watching the row writes the Events. Any other stale/foreign action reaching `recordCommandResult` is audited generically, never as control.
 
 **When changing this:**
 - Near-real-time dispatch is via a `commands-pending` WS frame (`agentCommandWake.publishCommandWake` → `agentChannelService.wakeCommands`); the ≤20s `/commands` poll remains the source of truth + guaranteed floor. Don't make the WS frame authoritative.
@@ -332,7 +438,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `prisma.$executeRaw` (pg_notify); `logger`. Deliberately lightweight (no WS/pg-Client imports) so the enqueue side (`automationScriptService`, which runs in the monitor/all role) can import it without pulling the WS server.
 
-**Used by:** `src/services/automationScriptService.ts` (`requestScriptRun` fires it after creating the agent `run_script` command). The LISTEN side is `agentChannelService.startCommandWakeListener` (web/all role) → `wakeCommands`.
+**Used by:** `src/services/automationScriptService.ts` (`requestScriptRun` fires it after creating the agent `run_script` command), `src/services/rebootService.ts` (after creating an agent `reboot` command), `src/services/agentRebootPermissionService.ts` (`publishConfigRefresh` after an opt-in toggle, so the agent re-reports `rebootCapable`). The LISTEN side is `agentChannelService.startCommandWakeListener` (web/all role) → `wakeCommands`.
 
 **Invariants:**
 - **Best-effort only** — a failed/missed NOTIFY just means the agent picks the command up on its next `/commands` poll (the guaranteed floor). Never let a wake failure block or fail the enqueue.

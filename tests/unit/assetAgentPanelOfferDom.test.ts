@@ -97,6 +97,7 @@ beforeEach(() => {
   (0, eval)(fnSrc("_assetHasAgentIntent"));
   (0, eval)(fnSrc("_agentStatusLabel"));
   (0, eval)(fnSrc("_agentStatusColor"));
+  (0, eval)(fnSrc("_agentRebootRowHTML"));
   (0, eval)(fnSrc("assetAgentSubpanelHTML"));
   expect(typeof g.assetAgentSubpanelHTML, "assets.js no longer declares assetAgentSubpanelHTML").toBe("function");
 });

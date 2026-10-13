@@ -1309,6 +1309,8 @@ model Asset {
   maintenanceHolds   MaintenanceHold[]
   firmwareUpgradeRuns FirmwareUpgradeRun[]
   firmwareUpgradeSchedules FirmwareUpgradeSchedule[]
+  rebootRuns         RebootRun[]
+  rebootSchedules    RebootSchedule[]
   topologyLayouts    TopologyLayout[]
   processConnections AssetProcessConnection[]
 
@@ -5153,6 +5155,19 @@ model ManagedAgent {
   // On Windows the agent always runs as LocalSystem, so this is not consulted.
   privilegeTier String @default("unprivileged")
 
+  // Reboots (business rule 112). `rebootEnabled` is the operator's opt-in —
+  // chosen at deploy, changed later from the agent card — and is what the
+  // install / toggle wrote onto the HOST (a root-owned marker file, plus a
+  // polkit rule on Linux that lets the polaris-agent user ask logind to
+  // reboot). `rebootCapable` is what the agent REPORTS on heartbeat: the
+  // marker is present and (Linux) logind answers CanReboot=yes for it. Null
+  // until an agent ≥0.26.0 has reported. A reboot is offered only when both
+  // are true. `bootTime` is the host's own boot time (heartbeat), which is
+  // how a reboot run proves the host actually went down.
+  rebootEnabled Boolean   @default(false)
+  rebootCapable Boolean?
+  bootTime      DateTime?
+
   installStatus String  @default("pending") // see lifecycle comment above
   installError  String? // captured stderr / exception message on failure
 
@@ -5200,17 +5215,18 @@ model ManagedAgent {
   @@map("managed_agents")
 }
 
-// Operator-issued process-control commands (Phase 4). One row per Stop/Start/
-// Restart request against a service-backed process on an agent host. The agent
-// fetches pending commands (GET /agents/commands), executes via the OS service
-// manager (Windows SCM / systemd), and reports the outcome (POST
-// /agents/command-result). Operator-initiated only — the agent never self-acts.
-// Every transition is audited (asset.process.<action>.requested / .result).
+// Operator-issued commands to an agent. The agent fetches pending commands
+// (GET /agents/commands), executes them, and reports the outcome (POST
+// /agents/command-result). Operator-initiated only — the agent never
+// self-acts. Two live actions: `run_script` (an Automation script) and
+// `reboot` (business rule 112 — refused by the agent unless the host carries
+// the reboot marker the opt-in installed). Process stop/start/restart was
+// removed; an agent refuses any action it does not know.
 model AgentCommand {
   id             String    @id @default(uuid())
   assetId        String
   managedAgentId String
-  action         String // "stop" | "start" | "restart" | "run_script"
+  action         String // "run_script" | "reboot"
   target         String // the resolved service/unit name to act on (script name for run_script)
   // run_script payload: { runId, interpreter, body, sha256, args, timeoutSec }.
   // Body ships inline (≤64KB, bounded by the registry) with a sha256 the
@@ -6095,7 +6111,8 @@ model MaintenanceHold {
   assetId   String
   // "agent-upgrade" | "agent-reinstall" | "agent-uninstall" |
   // "firmware-upgrade" (business rule 87) | "workload-restart" |
-  // "workload-update" (business rule 94). Part of the uniqueness so two
+  // "workload-update" (business rule 94) | "device-reboot" (business rule
+  // 112). Part of the uniqueness so two
   // different operations on one asset cannot lose each other's hold, and
   // re-running the same one extends rather than stacks.
   kind      String
@@ -6242,6 +6259,76 @@ model FirmwareUpgradeSchedule {
   @@index([status, scheduledFor])
   @@index([assetId, createdAt])
   @@map("firmware_upgrade_schedules")
+}
+
+// One reboot of one asset (business rule 112): a FortiGate, a FortiSwitch or
+// FortiAP (through its controlling FortiGate, or directly when it has none),
+// or a host running the Polaris Agent. Driven from the web process's memory
+// like a firmware run (services/rebootService.ts); at most one queued /
+// sending / rebooting row per asset (partial unique index in the migration).
+model RebootRun {
+  id             String          @id @default(uuid())
+  assetId        String
+  asset          Asset           @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  // How the reboot was sent: "fortigate-rest" | "fortigate-ssh" |
+  // "controller-switch" | "controller-ap" | "device-rest" | "device-ssh" |
+  // "agent". Fixed when the run is created.
+  method         String
+  // The FortiGate a managed switch / AP was rebooted THROUGH (asset id, when
+  // Polaris has the gate as an asset). Null for a direct reboot.
+  viaAssetId     String?
+  // The stored credential that authorized it, when one did — null for the
+  // integration's own token and for the agent. Kept as a plain id (no FK) so a
+  // deleted credential never erases who did what.
+  credentialId   String?
+  // What signed the reboot, as the operator saw it: a credential name,
+  // "Integration API token (<name>)" or "Polaris Agent".
+  authority      String
+  status         String          @default("queued") // queued | sending | rebooting | succeeded | failed | unverified
+  stage          String? // sending | down | up | verifying
+  log            Json            @default("[]")
+  error          String?         @db.Text
+  // The device's uptime / boot time read just before the reboot was sent,
+  // when it could be — what "it really rebooted" is compared against.
+  bootTimeBefore DateTime?
+  startedBy      String
+  startedAt      DateTime        @default(now())
+  heartbeatAt    DateTime?
+  finishedAt     DateTime?
+  schedule       RebootSchedule?
+
+  @@index([assetId, startedAt])
+  @@index([status])
+  @@map("reboot_runs")
+}
+
+// A reboot booked for later (business rule 112, the rule-93 shape): checked
+// when booked, every gate re-taken when it fires, on time or not at all, and
+// its recipients hear the outcome either way. One pending booking per asset
+// (partial unique index in the migration).
+model RebootSchedule {
+  id           String     @id @default(uuid())
+  assetId      String
+  asset        Asset      @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  scheduledFor DateTime
+  notifyEmails String[]
+  status       String     @default("pending") // pending | started | cancelled | refused | missed
+  runId        String?    @unique
+  run          RebootRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+  error        String?    @db.Text
+  createdBy    String
+  createdAt    DateTime   @default(now())
+  updatedBy    String?
+  updatedAt    DateTime   @updatedAt
+  cancelledBy  String?
+  cancelledAt  DateTime?
+  firedAt      DateTime?
+  notifiedAt   DateTime?
+  notifyError  String?    @db.Text
+
+  @@index([status, scheduledFor])
+  @@index([assetId, createdAt])
+  @@map("reboot_schedules")
 }
 
 // One realized maintenance window per (asset, holder), where a holder is a

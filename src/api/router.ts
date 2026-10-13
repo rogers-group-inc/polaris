@@ -32,6 +32,7 @@ import mibsRouter from "./routes/mibs.js";
 import manufacturerProfilesRouter from "./routes/manufacturerProfiles.js";
 import { firmwareRouter, firmwareAssetRouter } from "./routes/firmware.js";
 import { workloadAssetRouter } from "./routes/workloads.js";
+import { rebootAssetRouter } from "./routes/reboot.js";
 import deviceIconsRouter from "./routes/deviceIcons.js";
 import searchRouter from "./routes/search.js";
 import mapRouter from "./routes/map.js";
@@ -197,6 +198,10 @@ router.use("/assets/:id/firmware-upgrade", firmwareAssetRouter);
 // /assets for the same first-match reason. assets:read to read, assets:write
 // to act — gated per route.
 router.use("/assets/:id/workload", workloadAssetRouter);
+// Rebooting an asset now or later (business rule 112), mounted before /assets
+// for the same first-match reason. assets:read to read, assets:write to reboot
+// or book, assets:fullwrite to change an agent host's opt-in — gated per route.
+router.use("/assets/:id/reboot", rebootAssetRouter);
 router.use("/assets", assetsRouter);
 router.use("/log-flag-rules", logFlagRulesRouter);
 router.use("/events", eventsRouter);

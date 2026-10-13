@@ -41,6 +41,7 @@ import { UNMONITORABLE_STATUSES } from "../utils/assetInvariants.js";
 import { platformFromSerial, formatFirmwareVersion } from "../utils/firmwareVersion.js";
 import { logEvent } from "./eventLogService.js";
 import { openMaintenanceHold, releaseMaintenanceHold } from "./maintenanceScheduleService.js";
+import { holdUntilMonitorAnswers } from "./holdRecoveryWait.js";
 import { resolveConnectionPath } from "./connectionPathService.js";
 import { engineFor, engineByKind } from "./firmwareEngines/index.js";
 import { DEFAULT_FIRMWARE_TIMEOUTS, type FirmwareEngineContext, type FirmwareEngineTimeouts, type FirmwareProgress, type FirmwareRunStage } from "./firmwareEngines/types.js";
@@ -524,8 +525,8 @@ async function runUpgrade(
     // answers — bounded, so a device that never does is not silenced forever.
     // A FAILED run releases at once: a flash that went wrong is an incident.
     if (res.outcome === "upgraded" || res.outcome === "unverified") {
-      await holdUntilMonitorAnswers(a.id, ctx.timeouts, {
-        setStage: (s) => { stage = s; },
+      await holdUntilMonitorAnswers(a.id, HOLD_KIND, ctx.timeouts, {
+        onWaiting: () => { stage = "recovering"; },
         push,
         flush,
       });
@@ -599,60 +600,8 @@ async function runUpgrade(
   }
 }
 
-/**
- * Keep the firmware maintenance hold open until the device answers Polaris's
- * own monitoring again: the first SUCCESSFUL `AssetMonitorSample` recorded
- * after the engine finished. That is the signal the status machine and every
- * automation read, so it is the one that says the misses are over — and it is
- * written by whichever process polls the device (the monitor role on a
- * split-role host), which is why this reads the table rather than asking.
- *
- * No hold (an unmonitored device — openMaintenanceHold declined) means nothing
- * polls it, so there is nothing to wait for. The hold's own expiry is pushed
- * out to cover the wait, and the wait is capped by `recoveryWaitMs`: a device
- * that never answers ends the window at the cap and is judged normally.
- *
- * Scale: one indexed point query per `recoveryPollMs` (15 s), per live run.
- */
-async function holdUntilMonitorAnswers(
-  assetId: string,
-  timeouts: { recoveryWaitMs: number; recoveryPollMs: number },
-  run: { setStage: (s: FirmwareRunStage) => void; push: (level: "info" | "warn" | "error", msg: string) => void; flush: (force?: boolean) => Promise<void> },
-): Promise<void> {
-  const hold = await prisma.maintenanceHold.findUnique({
-    where: { assetId_kind: { assetId, kind: HOLD_KIND } },
-    select: { expiresAt: true },
-  }).catch(() => null);
-  if (!hold) return;
-
-  const since = new Date();
-  const deadline = since.getTime() + timeouts.recoveryWaitMs;
-  const mustLast = new Date(deadline + 60_000);
-  if (hold.expiresAt < mustLast) {
-    await prisma.maintenanceHold.update({
-      where: { assetId_kind: { assetId, kind: HOLD_KIND } },
-      data: { expiresAt: mustLast },
-    }).catch((err) => logger.warn({ err, assetId }, "firmware upgrade: could not extend the maintenance hold for the recovery wait"));
-  }
-  run.setStage("recovering");
-  run.push("info", `waiting for Polaris's own monitoring to answer before ending the maintenance window (up to ${Math.round(timeouts.recoveryWaitMs / 60_000)} min)`);
-  await run.flush(true);
-
-  while (Date.now() < deadline) {
-    const answered = await prisma.assetMonitorSample.findFirst({
-      where: { assetId, success: true, timestamp: { gt: since } },
-      orderBy: { timestamp: "asc" },
-      select: { timestamp: true },
-    }).catch(() => null);
-    if (answered) {
-      run.push("info", `monitoring answered ${Math.max(0, Math.round((answered.timestamp.getTime() - since.getTime()) / 1000))} s after the device came back; ending the maintenance window`);
-      return;
-    }
-    await new Promise((r) => setTimeout(r, Math.max(1, Math.min(timeouts.recoveryPollMs, deadline - Date.now()))));
-    await run.flush();
-  }
-  run.push("warn", `monitoring did not answer within ${Math.round(timeouts.recoveryWaitMs / 60_000)} min of the device coming back; ending the maintenance window anyway — check the device`);
-}
+// The recovery wait (keep the hold until Polaris's own monitoring answers) is
+// shared with the reboot runner — services/holdRecoveryWait.ts.
 
 async function dropHold(assetId: string): Promise<void> {
   try {

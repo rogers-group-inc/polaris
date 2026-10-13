@@ -424,10 +424,12 @@ Live telemetry and history: response time, CPU, memory, temperature,
 interfaces, storage. A FortiGate's IPsec tunnels are on the
 [IPsec](#ipsec-fortigate-firewalls) tab.
 
-At the top sits the **Status** row — the pill, **Discover Now**, and on a
+At the top sits the **Status** row — the pill, **Discover Now**, on a
 monitored firewall, switch or access point **Simulate Down…** for
 `assetMonitorSettings:fullwrite`
-([testing dependency suppression](Dependency-Suppression#testing-it)) — then
+([testing dependency suppression](Dependency-Suppression#testing-it)), and
+**Reboot…** on a FortiGate, FortiSwitch, FortiAP or Polaris Agent host
+([Reboot](#reboot)) — then
 the **Last 30 min** strip, one cell per probe coloured by the state it left
 the device in, and **Uptime** where the transport reports it.
 
@@ -533,7 +535,59 @@ the card is the deploy surface — an **Install Agent** button that pushes the
 agent over a stored SSH or WinRM credential
 ([Polaris Agent](Polaris-Agent#installing)). Deploying needs
 `assets:fullwrite`; at `assets:read` the card still shows what is installed,
-without the buttons.
+without the buttons. Its **Reboots** row says whether Polaris may reboot the
+host, with **Enable…** / **Disable** ([Polaris Agent](Polaris-Agent#reboots)).
+
+#### Reboot
+
+**Reboot…** on the Status row restarts the device, now or at a time you pick
+([rule 112](Business-Rules#rule-112)). It is there for a FortiGate, a
+FortiSwitch, a FortiAP and a host running the Polaris Agent, and pressing it
+needs **Read-Write on Assets**. Whether the device *can* be rebooted is decided
+elsewhere, by an opt-in at the place that holds the power to do it:
+
+| Device | Rebooted by | Allowed by |
+|---|---|---|
+| FortiGate | its own REST API or SSH command line | a stored credential on the asset — an SSH login, a REST API token, or a device admin login — with **Allow reboots** ticked ([Allow reboots](Server-Settings#allow-reboots)), or the FortiManager / FortiGate integration's **Allow reboots** ([Fortinet](Integration-Fortinet#allow-reboots)) |
+| FortiSwitch / FortiAP managed by a FortiGate | its FortiGate (*restart managed FortiSwitch / FortiAP*) | the same, on the **FortiGate** it is managed by |
+| FortiSwitch / FortiAP with no controlling FortiGate | its own SSH command line | an SSH credential on the asset with **Allow reboots** |
+| Server or workstation | the Polaris Agent | the host's own opt-in on the agent card ([Polaris Agent](Polaris-Agent#reboots)) |
+
+When a stored credential and the integration could both do it, the stored
+credential is used. When nothing allows it the button is greyed out and its
+tooltip says what is missing. A FortiGate in an **HA cluster** cannot be
+rebooted from Polaris — rebooting one member fails the cluster over — but the
+switches and access points it manages can.
+
+The dialog names the device, how the reboot will be sent, what signs it, and
+the last reboot; says what goes down with it; and needs **I understand this
+device will go down** ticked before **Reboot now**. Polaris holds the device's
+alerts while it reboots and records every reboot as an Event on the asset. Once
+the reboot is sent, Polaris watches for proof that the device restarted — its
+boot time changing, its FortiGate seeing it drop and reconnect, the agent
+reporting a new boot, or monitoring seeing its uptime reset. The run ends:
+
+- **succeeded** — the device went down and came back;
+- **unverified** — the device accepted the reboot but was never seen to go
+  down — check it;
+- **failed** — the device refused (the message says why, for example a token
+  without System read-write), it did not come back within 15 minutes, or an
+  agent did not pick the reboot up within about two and a half minutes (the
+  reboot is then withdrawn, so it never fires later).
+
+Before rebooting a FortiGate directly, Polaris checks that the device answering
+reports the asset's serial number and is not in an HA cluster, and refuses
+otherwise.
+
+**Scheduling a reboot.** Tick **Schedule for later** in the same dialog and give
+a time (your browser's time zone) and who gets the results email, exactly as for
+a [scheduled firmware upgrade](#firmware). While it waits, a **Reboot scheduled
+…** chip sits beside the button; click it to change the time or recipients, or
+to **Cancel scheduled reboot**. When the time comes every check is taken again;
+a reboot first reached more than 15 minutes late is not sent, and the recipients
+hear the outcome either way. A device that cannot be rebooted right now — an
+agent host that is offline, say — can still be booked: the dialog opens with
+**Schedule for later** already ticked.
 
 #### Firmware
 

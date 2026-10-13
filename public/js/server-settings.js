@@ -7430,12 +7430,13 @@ function credSummary(c) {
     var auth = hasKey ? "private key" : "password";
     if (hasKey && typeof cfg.passphrase === "string" && cfg.passphrase) auth += " (encrypted)";
     return escapeHtml(cfg.username || "") + " · " + auth +
-      (cfg.verifyHostKey === true ? " · host key verified" : "");
+      (cfg.verifyHostKey === true ? " · host key verified" : "") +
+      (cfg.allowReboot === true ? " · reboots allowed" : "");
   }
   if (c.type === "restapi") {
     var url = cfg.baseUrl || "";
     var verifyTls = cfg.verifyTls === true ? "verify TLS" : "skip TLS";
-    return escapeHtml(url) + " · " + verifyTls;
+    return escapeHtml(url) + " · " + verifyTls + (cfg.allowReboot === true ? " · reboots allowed" : "");
   }
   if (c.type === "http") {
     // Summarize the AUTH, which is all this credential is since the check moved
@@ -7447,7 +7448,7 @@ function credSummary(c) {
     if (mode === "bearer") return "bearer token";
     if (mode === "basic")  return escapeHtml(cfg.username || "") + " · basic";
     if (mode === "digest") return escapeHtml(cfg.username || "") + " · digest";
-    if (mode === "form")   return escapeHtml(cfg.username || "") + " · device login";
+    if (mode === "form")   return escapeHtml(cfg.username || "") + " · device login" + (cfg.allowReboot === true ? " · reboots allowed" : "");
     return "no authentication";
   }
   return "";
@@ -8416,8 +8417,28 @@ function credSshForm(cfg) {
         '<span>Verify the server\'s host key</span>' +
       '</label>' +
       '<p class="hint">Recommended. When off, Polaris accepts whatever host key is presented, so anything answering on the target\'s address can impersonate it &mdash; and on an agent install it is handed a script to run as root. On first connection Polaris pins the key it sees and refuses later connections if it changes; if a host is legitimately rebuilt or re-keyed, delete its pin under Integrations &rarr; Polaris Agent &rarr; Windows SSH Deployment.</p>' +
-    '</div>'
+    '</div>' +
+    credAllowRebootHTML(cfg, "",
+      "Lets this login run <code>execute reboot</code> on a FortiGate it is set on, restart the FortiSwitches and FortiAPs that FortiGate manages, or reboot a standalone FortiSwitch / FortiAP over its own CLI.")
   );
+}
+
+/**
+ * The "Allow reboots" opt-in (business rule 112) — one box shared by the three
+ * credential kinds that can reboot a FortiGate / FortiSwitch / FortiAP: SSH,
+ * REST API token, and a device admin login (`http` in form mode, so it rides
+ * `data-http-auth="form"`). Off by default; the server refuses it on any other
+ * kind and records every flip on the credential's Event.
+ */
+function credAllowRebootHTML(cfg, httpModes, what) {
+  return '<div class="form-group"' + (httpModes ? ' data-http-auth="' + httpModes + '"' : '') + '>' +
+    '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
+      '<input type="checkbox" id="f-cred-allowreboot"' + (cfg.allowReboot === true ? " checked" : "") + '>' +
+      '<span>Allow reboots</span>' +
+    '</label>' +
+    '<p class="hint">Off by default. ' + what + ' Anyone with Read-Write on Assets can then reboot those devices from the asset’s <strong>Reboot</strong> button, now or on a schedule; FortiGate HA members are always refused. ' +
+      'The admin behind the credential also needs System read-write on the device.</p>' +
+  '</div>';
 }
 
 function credRestApiForm(cfg) {
@@ -8436,7 +8457,9 @@ function credRestApiForm(cfg) {
         '<span>Verify TLS certificate</span>' +
       '</label>' +
       '<p class="hint">Off by default to match FortiOS REST behaviour where self-signed device certs are common. Turn on when targeting a host with a real certificate.</p>' +
-    '</div>'
+    '</div>' +
+    credAllowRebootHTML(cfg, "",
+      "Lets this token reboot a FortiGate it is set on (FortiOS <code>system/os/reboot</code>), and restart the FortiSwitches and FortiAPs that FortiGate manages.")
   );
 }
 
@@ -8515,7 +8538,9 @@ function credHttpForm(cfg) {
     '</div>' +
     '<div class="form-group" data-http-auth="basic digest form"><label>Password</label>' +
       '<input type="password" id="f-http-pass" value="' + escapeHtml(cfg.password || "") + '">' +
-    '</div>'
+    '</div>' +
+    credAllowRebootHTML(cfg, "form",
+      "Lets this admin login reboot a FortiGate it is set on or bound for in the Repository, and restart the FortiSwitches and FortiAPs that FortiGate manages.")
   );
 }
 
@@ -8566,6 +8591,18 @@ function wireHttpAuthModeToggle() {
 }
 
 function readCredentialForm(type) {
+  var cfg = _readCredentialFormFields(type);
+  // Allow reboots (business rule 112) rides the SSH, REST API and device admin
+  // login forms. Sent on those types every time — an unticked box must clear
+  // a stored `true`, since the server merges config onto the stored row.
+  var allowReboot = document.getElementById("f-cred-allowreboot");
+  if (allowReboot && (type === "ssh" || type === "restapi" || type === "http")) {
+    cfg.allowReboot = type === "http" && cfg.authMode !== "form" ? false : allowReboot.checked;
+  }
+  return cfg;
+}
+
+function _readCredentialFormFields(type) {
   function num(v) { v = (v || "").trim(); return v ? Number(v) : undefined; }
   if (type === "snmp") {
     var version = document.getElementById("f-snmp-version").value;
