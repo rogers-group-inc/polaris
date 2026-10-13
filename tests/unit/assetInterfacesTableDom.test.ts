@@ -467,6 +467,25 @@ describe("a member port belongs to its aggregate", () => {
     expect(rowFor("port23").querySelector(".asset-iface-toggle")).not.toBeNull();
   });
 
+  // A VLAN subinterface nests under its parent the same way, but it is its own
+  // segment with its own counters -- it is pinned on its own row.
+  it("gives a nested VLAN subinterface its own pin checkbox", () => {
+    renderSi({
+      lastSystemInfoAt: new Date().toISOString(),
+      monitoredInterfaces: [], monitoredIpsecTunnels: [], lldpNeighbors: [], ipsecTunnels: [],
+      interfaces: [
+        { ifName: "fortilink", ifType: "aggregate", adminStatus: "up", operStatus: "up" },
+        { ifName: "x2",        ifType: "physical", ifParent: "fortilink", adminStatus: "up", operStatus: "up" },
+        { ifName: "voice.fortilink", ifType: "vlan", vlanId: 30, ifParent: "fortilink", adminStatus: "up", operStatus: "up" },
+      ],
+    });
+    expect(rowFor("voice.fortilink").classList.contains("iface-child")).toBe(true);
+    expect(rowFor("voice.fortilink").querySelector(".asset-iface-toggle")).not.toBeNull();
+    expect(rowFor("x2").querySelector(".asset-iface-toggle")).toBeNull();
+    sortBy("ifname");
+    expect(rowFor("voice.fortilink").querySelector(".asset-iface-toggle")).not.toBeNull();
+  });
+
   // Flat mode has no row above to hang off, so the Member badge carries the
   // relationship -- but the pin still belongs to the aggregate.
   it("withholds the checkbox in flat (sorted) mode too", () => {
