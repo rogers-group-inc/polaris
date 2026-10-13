@@ -224,12 +224,7 @@
     var sheet = document.createElement("div");
     sheet.className = "sheet asset-sheet";
     sheet.id = "asset-sheet";
-    // The handle + header ride a sticky band (.asset-sheet-top) so the name
-    // (edit menu), screenshot, refresh and close stay reachable however far the
-    // body is scrolled — and a scrolled sheet minimized to peek still shows
-    // its header band rather than whatever was mid-scroll.
     sheet.innerHTML = ''
-      + '<div class="asset-sheet-top">'
       + '<div class="sheet-handle"></div>'
       + '<div class="asset-sheet-header">'
       + '  <span class="dot" id="asset-sheet-dot" style="display:none;"></span>'
@@ -244,17 +239,16 @@
       + '  <button class="icon-btn" id="asset-sheet-refresh" aria-label="Refresh"><svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>'
       + '  <button class="icon-btn" id="asset-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
       + '</div>'
-      + '</div>'
       + '<div id="asset-host"></div>';
 
     document.body.appendChild(scrim);
     document.body.appendChild(sheet);
 
-    // The band is see-through at rest and fills only once content scrolls
-    // under it (.scrolled), so an unscrolled sheet shows no slab.
-    sheet.addEventListener("scroll", function () {
-      sheet.classList.toggle("scrolled", sheet.scrollTop > 0);
-    }, { passive: true });
+    // The handle + header ride the pinned band (PolarisTabs.pinSheetHead) so
+    // the name (edit menu), screenshot, refresh and close stay reachable however
+    // far the body is scrolled — and a scrolled sheet minimized to peek still
+    // shows its header band rather than whatever was mid-scroll.
+    if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet);
 
     // Tapping the scrim (over the searchbar) minimizes rather than dismisses.
     scrim.addEventListener("click", minimize);
@@ -1437,6 +1431,8 @@
     document.body.appendChild(sheet);
 
     scrim.addEventListener("click", closeInterfaceSheet);
+    // Pinned header band (handle + title row) — reachable from the bottom of the sheet.
+    if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet);
     document.getElementById("iface-sheet-close").addEventListener("click", closeInterfaceSheet);
     PolarisTabs.attachSwipeToDismiss(sheet, closeInterfaceSheet);
     sheet.querySelectorAll(".iface-neighbor-pivot").forEach(function (b) {
@@ -1762,6 +1758,8 @@
     document.body.appendChild(sheet);
 
     scrim.addEventListener("click", closeSdwanSheet);
+    // Pinned header band (handle + title row) — reachable from the bottom of the sheet.
+    if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet);
     document.getElementById("sdwan-sheet-close").addEventListener("click", closeSdwanSheet);
     PolarisTabs.attachSwipeToDismiss(sheet, closeSdwanSheet);
 
@@ -2026,6 +2024,8 @@
     document.body.appendChild(sheet);
 
     scrim.addEventListener("click", closeTableSheet);
+    // Header + its controls row (the filter) stay put while the table scrolls.
+    if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet, { also: ["#table-sheet-controls"] });
     document.getElementById("table-sheet-close").addEventListener("click", closeTableSheet);
     document.getElementById("table-sheet-reload").addEventListener("click", onReload);
     PolarisTabs.attachSwipeToDismiss(sheet, closeTableSheet);

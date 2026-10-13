@@ -685,6 +685,44 @@
     sheetEl.addEventListener("touchcancel", onTouchEnd,   { passive: true });
   }
 
+  // ─── Pinned sheet header ───────────────────────────────────────────────
+  // Keeps a sheet's handle and its header row (title + close, and whatever
+  // buttons that row carries) at the top of the sheet while its body scrolls,
+  // so close / reload / the title's menu are reachable from the bottom of a
+  // long sheet. Wraps `.sheet-handle` + the element right after it in a
+  // `.sheet-pinned-head` band; `opts.also` names further direct children to
+  // pin with them, in order (a table sheet's filter row). The band is see-
+  // through at rest and fills once the body scrolls under it — the sheet gets
+  // `.scrolled` (mobile.css explains why it fills rather than blurs).
+  // Idempotent: a sheet that repaints its innerHTML calls it again after each
+  // paint; the scroll listener is attached once per sheet element.
+  function pinSheetHead(sheet, opts) {
+    if (!sheet) return;
+    var handle = null;
+    for (var i = 0; i < sheet.children.length; i++) {
+      if (sheet.children[i].classList.contains("sheet-handle")) { handle = sheet.children[i]; break; }
+    }
+    if (handle) {
+      var band = document.createElement("div");
+      band.className = "sheet-pinned-head";
+      sheet.insertBefore(band, handle);
+      var head = handle.nextElementSibling;
+      band.appendChild(handle);
+      if (head) band.appendChild(head);
+      ((opts && opts.also) || []).forEach(function (sel) {
+        var el = sheet.querySelector(sel);
+        if (el && el.parentNode === sheet) band.appendChild(el);
+      });
+    }
+    if (!sheet.__pinnedHeadWired) {
+      sheet.__pinnedHeadWired = true;
+      sheet.addEventListener("scroll", function () {
+        sheet.classList.toggle("scrolled", sheet.scrollTop > 0);
+      }, { passive: true });
+    }
+    sheet.classList.toggle("scrolled", sheet.scrollTop > 0);
+  }
+
   // ─── Pull-to-refresh ───────────────────────────────────────────────────
   // Touch-pull on a scrollable element (typically #app-body) to trigger an
   // async refresh. MD3-style: only the indicator puck moves; body content
@@ -835,6 +873,7 @@
     placeholder: placeholder,
     showSnackbar: showSnackbar,
     attachSwipeToDismiss: attachSwipeToDismiss,
+    pinSheetHead: pinSheetHead,
     installPullRefresh: installPullRefresh,
   };
 })();

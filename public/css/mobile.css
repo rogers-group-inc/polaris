@@ -1269,18 +1269,22 @@ input, select, textarea { font-family: inherit; }
 .asset-sheet.peek .asset-sheet-header { cursor: pointer; }
 .asset-sheet.peek #asset-sheet-refresh { display: none; }
 
-/* The handle + header band stays pinned at the top of the scrolling sheet
-   (asset-detail.js ensureSheet), so the name, screenshot, refresh and close
-   are reachable from the bottom of a long asset. Bled to the sheet's edges
-   (the sheet pads 24px) so content cannot show past its sides.
+/* Pinned sheet header (PolarisTabs.pinSheetHead in tabs.js): a sheet's
+   handle + header row (title, close, the row's own buttons; a table sheet's
+   filter row too) stay at the top of the scrolling sheet, so they are
+   reachable from the bottom of a long one. Every sheet with a header row
+   uses it: the asset sheet, the network address sheet, the interface, SD-WAN,
+   ARP/MAC table and per-asset alerts sheets, the edit menu and edit sheets,
+   the site sheet, Sort & filter and the chat history. Bled to the sheet's
+   edges (a sheet pads 24px) so content cannot show past its sides.
    Transparent at rest; once the body scrolls under it (.scrolled, set by the
-   sheet's scroll listener) it fills OPAQUE, like the edit sheets' sticky
+   helper's scroll listener) it fills OPAQUE, like the edit sheets' sticky
    .ae-footer: a backdrop blur here does nothing, because the sheet's own
    backdrop-filter makes the sheet the backdrop root, and the sheet's glass
    mix would let scrolled text read straight through the buttons. Above the
-   body's positioned content (z-index), below the stacked sheets (those are
-   separate fixed elements, so no conflict). */
-.asset-sheet-top {
+   body's positioned content (z-index), below any sheet stacked over this one
+   (those are separate fixed elements, so no conflict). */
+.sheet-pinned-head {
   position: sticky;
   top: 0;
   z-index: 4;
@@ -1290,7 +1294,7 @@ input, select, textarea { font-family: inherit; }
   background: transparent;
   transition: background-color .15s ease, box-shadow .15s ease;
 }
-.asset-sheet.scrolled .asset-sheet-top {
+.sheet.scrolled > .sheet-pinned-head {
   background: var(--md-surface);
   box-shadow: 0 1px 0 var(--md-outline-variant);
 }
@@ -2817,8 +2821,9 @@ html:active-view-transition-type(polaris-theme)::view-transition-new(polaris-the
   padding: 8px 16px 0;
 }
 
-/* A list's controls pinned above its scrolling rows (the Assets tab: view
-   tabs + filter/sort row + type chips) so they stay in reach at the bottom of
+/* A list's controls pinned above its scrolling rows (Assets: view tabs +
+   filter/sort row + type chips; Alerts: severity tiles + filter/sort row +
+   state chips; Networks: filter/sort row + status chips) so they stay in reach at the bottom of
    a long list. Sticky inside .app-body, which is the scroller. Treated like
    .m3-topbar directly above it: no fill, which would cut a band across the
    page glow, and a bare blur on ::before, invisible at rest, that smears the

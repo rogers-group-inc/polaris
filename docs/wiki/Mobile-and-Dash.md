@@ -97,8 +97,12 @@ again to drop it, or tap **Any** to clear them all.
 | **Assets** | hostname, DNS name, IP, MAC, asset tag, assigned-to | Recently added, Name, IP address, Status, Type, Last seen | monitor **Status** (Down, Missed, Dep. Down, …), one or several — named on the sort chip while it applies |
 | **Networks** | name, network, purpose, VLAN, FortiGate, block, tags — every word must match | Name, Network (address order), Utilization, Reservations, VLAN | the **All / Available / Reserved / Deprecated** chips |
 
-On **Assets**, the tab row, the filter field, the sort chip and the type chips
-stay at the top while the list scrolls under them.
+On **Alerts**, **Assets** and **Networks** the controls above the list (the
+severity counts, Assets' tab row, the filter field, the sort chip and the chips)
+stay at the top while the list scrolls under them. Every sheet that slides up
+does the same with its header: its title and its **close** button (and, on a
+device, the screenshot and refresh buttons) stay at the top however far down
+you scroll.
 
 **Your desktop Assets tabs are on the phone too.** If you have built tabs on the
 desktop [Assets](Assets) page, the Assets list shows them as a row of tabs at
@@ -126,7 +130,7 @@ takes any address and finds its network for you.
 
 **Tapping an asset opens its detail sheet.** Its header (the device name, which opens the
 edit menu, and the screenshot, refresh and close buttons) stays at the top of
-the sheet however far down you scroll. The refresh button in its header
+the sheet. The refresh button in its header
 (or pulling the sheet down) re-reads what Polaris has for the device and
 repaints the sheet, keeping the sections you opened; it does not poll the device.
 The sheet does not refresh on its own, so tap it to catch up with the latest

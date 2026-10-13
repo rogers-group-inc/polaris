@@ -155,7 +155,10 @@
     render: function (body, ctx) {
       _state.user = (ctx && ctx.user) || null;
       var p = prefs();
+      // Severity tiles, filter/sort row and state chips are one pinned block
+      // (.list-sticky-head) so they stay in reach while the alerts scroll.
       body.innerHTML = ''
+        + '<div class="list-sticky-head">'
         + '<div class="sev-summary hidden" id="alerts-summary" role="group" aria-label="Alerts by severity"></div>'
         + PolarisListControls.toolbarHTML({
             id: "alerts",
@@ -166,6 +169,7 @@
             active: sheetNarrows(),
           })
         + '<div class="chip-row" id="alerts-chips"></div>'
+        + '</div>'
         + '<div id="alerts-list-host"></div>';
 
       PolarisListControls.wireToolbar("alerts", {
