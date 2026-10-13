@@ -364,6 +364,8 @@
     closeInterfaceSheet();
     closeFirmwareConfirm(false);
     stopFirmwarePoll();
+    closeRebootConfirm(false);
+    stopRebootPoll();
     var s = document.getElementById("asset-sheet");
     var sc = document.getElementById("asset-sheet-scrim");
     if (s) s.remove();
@@ -540,6 +542,7 @@
       wireTableButtons(id, asset);
       loadAlerts(id, asset);
       loadFirmwareRow(id, asset);
+      loadRebootRow(id, asset);
     });
   }
 
@@ -880,6 +883,10 @@
     row("Manufacturer", asset.manufacturer);
     row("Model", asset.model);
     row("OS", osRowValue(asset));
+    // Uptime, and the Reboot verb (business rule 115) beside it. Always
+    // rendered so the reboot loader has a slot; it removes the row again when
+    // the device reports no uptime and Polaris cannot reboot it.
+    row("Uptime", uptimeRowValue(asset));
     row("Location", asset.location || asset.learnedLocation);
     row("Department", asset.department);
     row("Assigned to", asset.assignedTo);
@@ -2750,7 +2757,19 @@
   function osRowValue(asset) {
     var text = [asset.os, asset.osVersion].filter(Boolean).join(" ");
     if (!FW_ELIGIBLE[asset.assetType]) return text;
-    return '<span>' + escapeHtml(text || "—") + '</span><div id="asset-fw-slot" class="asset-fw-slot"></div>';
+    return '<span>' + escapeHtml(text || "—") + '</span><span id="asset-fw-badge"></span><div id="asset-fw-slot" class="asset-fw-slot"></div>';
+  }
+
+  /**
+   * "Up to date" beside the version: the Repository holds an active (primary)
+   * image for this device's platform and the device runs exactly that version
+   * (`vsPrimary === "current"`, the firmwareVsPrimary comparison). Nothing for
+   * a device past the active image or one the Repository cannot place. Pure.
+   */
+  function fwBadgeHtml(fw) {
+    if (!fw || fw.error || fw.state !== "up-to-date" || fw.vsPrimary !== "current") return "";
+    return ' <span class="fw-uptodate" style="margin-left:6px;font-size:12px;padding:1px 8px;color:var(--md-success);border:1px solid var(--md-success);border-radius:10px;white-space:nowrap;" title="'
+      + escapeHtml("Runs the Repository's active image" + (fw.primaryVersion ? " (" + fw.primaryVersion + ")" : "")) + '">✓ Up to date</span>';
   }
 
   /**
@@ -2844,6 +2863,8 @@
     var slot = document.getElementById("asset-fw-slot");
     if (!slot) return;
     slot.innerHTML = fwSlotHtml(fw);
+    var badge = document.getElementById("asset-fw-badge");
+    if (badge) badge.innerHTML = fwBadgeHtml(fw);
     var btn = document.getElementById("asset-fw-upgrade-btn");
     if (btn) btn.addEventListener("click", function () { startFirmwareFlow(asset, fw, btn, null); });
     var change = document.getElementById("asset-fw-sched-change");
@@ -3077,6 +3098,355 @@
     _fwPoll = null;
   }
 
+  // ─── Uptime + Reboot (business rule 115) ────────────────────────────────
+  // General's Uptime row carries the Reboot verb — the desktop Status row's
+  // Reboot… button, cut down to a phone: the server decides what may reboot
+  // the device (a credential's or integration's Allow reboots, an agent
+  // host's opt-in) and says why not; this row only shows it. Reboot now or
+  // "Schedule for later" in one stacked confirm sheet (never window.confirm —
+  // canon-mobile), a pending booking sits on the row with Change / Cancel, and
+  // a live run is polled until it ends. Pressing it is assets:write
+  // (canFlashFirmware — the same grant as a flash).
+  var RB_POLL_MS = 5000;
+  /** States a booking can still be made from — every gate is taken again when it fires. */
+  var RB_SCHEDULABLE = { available: true, blocked: true, "agent-offline": true };
+  var RB_ACTIVE = { queued: true, sending: true, rebooting: true };
+  var _rbPoll = null;   // { assetId, runId, timer } while a reboot is being watched
+
+  /** "12d 4h", "3h 20m", "<1m" — the desktop formatUptime. Pure. */
+  function formatUptimeShort(seconds) {
+    if (seconds == null || !isFinite(seconds) || seconds < 0) return "—";
+    var s = Math.floor(seconds);
+    if (s < 60) return "<1m";
+    var days = Math.floor(s / 86400);
+    var hours = Math.floor((s % 86400) / 3600);
+    var mins = Math.floor((s % 3600) / 60);
+    if (days > 0) return hours > 0 ? days + "d " + hours + "h" : days + "d";
+    if (hours > 0) return mins > 0 ? hours + "h " + mins + "m" : hours + "h";
+    return mins + "m";
+  }
+
+  /**
+   * The device's uptime NOW: the last reading plus the time since it was
+   * taken — frozen while the device is down, since a dead box's uptime does
+   * not climb (the desktop System tab's rule). null when no transport reports
+   * one. Pure.
+   */
+  function uptimeSecondsNow(asset, now) {
+    if (!asset || asset.lastUptimeSec == null || !asset.lastMonitorAt) return null;
+    var observed = Number(asset.lastUptimeSec);
+    var at = new Date(asset.lastMonitorAt).getTime();
+    if (!isFinite(observed) || !isFinite(at)) return null;
+    if (asset.monitorStatus === "down") return observed;
+    return observed + Math.max(0, Math.floor(((now == null ? Date.now() : now) - at) / 1000));
+  }
+
+  /** The Uptime row's value: the figure and "since", plus the slot the reboot loader fills. Pure. */
+  function uptimeRowValue(asset, now) {
+    var secs = uptimeSecondsNow(asset, now);
+    var text;
+    if (secs == null) {
+      text = '<span class="muted" id="asset-uptime-text" data-has-uptime="0">—</span>';
+    } else {
+      var at = new Date(asset.lastMonitorAt).getTime();
+      var sinceMs = asset.lastRebootAt ? new Date(asset.lastRebootAt).getTime() : (at - Number(asset.lastUptimeSec) * 1000);
+      var since = new Date(sinceMs).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      text = '<span id="asset-uptime-text" data-has-uptime="1">' + escapeHtml(formatUptimeShort(secs)) + '</span>'
+        + ' <span class="muted">· since ' + escapeHtml(since) + '</span>';
+    }
+    return text + '<div id="asset-reboot-slot" class="asset-fw-slot"></div>';
+  }
+
+  /** What the reboot slot shows for an availability answer. Pure, for the tests. */
+  function rbSlotHtml(rb) {
+    if (!rb || rb.error || rb.state === "unsupported") return "";
+    if (rb.activeRun) return rbRunningHtml(rb.activeRun);
+    var out = "";
+    var canAct = canFlashFirmware();
+    var schedulable = !!RB_SCHEDULABLE[rb.state];
+    if (!rb.schedule) {
+      if (!canAct) {
+        if (rb.available) out += '<div class="muted" style="font-size:12px;margin-top:4px;">Rebooting needs Read-Write on Assets</div>';
+      } else if (rb.available || schedulable) {
+        out += '<button class="btn btn-tonal" id="asset-reboot-btn" style="margin-top:6px;">' + (rb.available ? "Reboot…" : "Schedule reboot…") + '</button>';
+        if (!rb.available) out += '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(rb.reason || "Not right now.") + ' It can be scheduled for later.</div>';
+      } else {
+        out += '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(rb.reason || "This device cannot be rebooted from Polaris.") + '</div>';
+      }
+    } else {
+      if (canAct && rb.available) out += '<button class="btn btn-tonal" id="asset-reboot-btn" style="margin-top:6px;">Reboot now…</button>';
+      out += rbScheduleLineHtml(rb.schedule);
+    }
+    return out;
+  }
+
+  function rbScheduleLineHtml(sched) {
+    return '<div id="asset-reboot-schedule" style="margin-top:6px;font-size:13px;">'
+      + '<div><strong>Reboot scheduled:</strong> ' + escapeHtml(fwWhenText(sched.scheduledFor)) + '</div>'
+      + '<div class="muted" style="font-size:12px;">Results to ' + escapeHtml((sched.notifyEmails || []).join(", ")) + '</div>'
+      + (sched.error ? '<div style="font-size:12px;color:var(--md-warning);">Waiting: ' + escapeHtml(sched.error) + '</div>' : '')
+      + (canFlashFirmware()
+        ? '<div style="display:flex;gap:8px;margin-top:6px;">'
+          + '<button class="btn btn-outlined" id="asset-reboot-sched-change">Change</button>'
+          + '<button class="btn btn-outlined" id="asset-reboot-sched-cancel">Cancel</button></div>'
+        : '')
+      + '</div>';
+  }
+
+  function rbRunningHtml(run) {
+    var stage = run && (run.stage || run.status);
+    var label = stage === "down" ? "Rebooting — device is down"
+      : stage === "recovering" ? "Back up — waiting for monitoring to answer"
+      : stage === "sending" || stage === "queued" ? "Sending the reboot"
+      : "Rebooting";
+    return '<div id="asset-reboot-progress" style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;color:var(--md-warning);">'
+      + '<div class="spinner" style="width:14px;height:14px;border-width:2px;flex-shrink:0;"></div>'
+      + '<span id="asset-reboot-progress-text">' + escapeHtml(label) + '</span></div>';
+  }
+
+  function rbResultHtml(run) {
+    if (!run) return "";
+    if (run.status === "succeeded") return '<div style="font-size:13px;margin-top:6px;color:var(--md-success);">Rebooted</div>';
+    if (run.status === "unverified") return '<div style="font-size:13px;margin-top:6px;color:var(--md-warning);">Reboot sent, but Polaris could not confirm it happened — check the device</div>';
+    return '<div style="font-size:13px;margin-top:6px;color:var(--md-error);">Reboot failed' + (run.error ? ': ' + escapeHtml(run.error) : '') + '</div>';
+  }
+
+  function loadRebootRow(id, asset) {
+    if (!api.assets.reboot) return;
+    api.assets.reboot(id).then(function (rb) {
+      if (_openId !== id) return;
+      paintRebootSlot(asset, rb);
+    }).catch(function () { dropEmptyUptimeRow(); });
+  }
+
+  /** The row was rendered only to host the verb: with no uptime and nothing to reboot, it goes. */
+  function dropEmptyUptimeRow() {
+    var t = document.getElementById("asset-uptime-text");
+    if (!t || t.getAttribute("data-has-uptime") === "1") return;
+    var rowEl = t.closest(".kv-row");
+    if (rowEl) rowEl.remove();
+  }
+
+  function paintRebootSlot(asset, rb) {
+    var slot = document.getElementById("asset-reboot-slot");
+    if (!slot) return;
+    slot.innerHTML = rbSlotHtml(rb);
+    if (!slot.innerHTML) { dropEmptyUptimeRow(); return; }
+    var btn = document.getElementById("asset-reboot-btn");
+    if (btn) btn.addEventListener("click", function () { startRebootFlow(asset, rb, btn, null); });
+    var change = document.getElementById("asset-reboot-sched-change");
+    if (change && rb.schedule) change.addEventListener("click", function () { startRebootFlow(asset, rb, change, rb.schedule); });
+    var cancel = document.getElementById("asset-reboot-sched-cancel");
+    if (cancel && rb.schedule) cancel.addEventListener("click", function () { cancelRebootSchedule(asset, rb.schedule, cancel); });
+    if (rb.activeRun) watchRebootRun(asset.id, rb.activeRun.id);
+  }
+
+  function startRebootFlow(asset, rb, btn, existing) {
+    var mode = existing ? "change" : (!rb.available ? "schedule-only" : (rb.schedule ? "now-only" : "choose"));
+    var defaultsP = (mode === "choose" || mode === "schedule-only") && api.assets.rebootScheduleDefaults
+      ? api.assets.rebootScheduleDefaults(asset.id).catch(function () { return null; })
+      : Promise.resolve(null);
+    defaultsP.then(function (defaults) {
+      return confirmReboot(asset, rb, { mode: mode, existing: existing, defaults: defaults });
+    }).then(function (choice) {
+      if (!choice || _openId !== asset.id) return;
+      btn.disabled = true;
+      if (choice.schedule) {
+        var body = { scheduledFor: choice.schedule.scheduledFor, notifyEmails: choice.schedule.notifyEmails };
+        var call = existing ? api.assets.updateRebootSchedule(asset.id, existing.id, body) : api.assets.scheduleReboot(asset.id, body);
+        call.then(function () {
+          if (_openId !== asset.id) return;
+          PolarisTabs.showSnackbar(existing ? "Scheduled reboot changed" : "Reboot scheduled for " + new Date(body.scheduledFor).toLocaleString());
+          loadRebootRow(asset.id, asset);
+        }).catch(function (err) {
+          btn.disabled = false;
+          PolarisTabs.showSnackbar(err && err.message ? err.message : "Could not save the schedule", { error: true });
+        });
+        return;
+      }
+      api.assets.startReboot(asset.id).then(function (res) {
+        if (_openId !== asset.id) return;
+        PolarisTabs.showSnackbar("Reboot sent — Polaris is watching for the device to come back");
+        var slot = document.getElementById("asset-reboot-slot");
+        if (slot) slot.innerHTML = rbRunningHtml(res && res.run);
+        if (res && res.run) watchRebootRun(asset.id, res.run.id);
+      }).catch(function (err) {
+        btn.disabled = false;
+        PolarisTabs.showSnackbar(err && err.message ? err.message : "Could not start the reboot", { error: true });
+      });
+    });
+  }
+
+  function cancelRebootSchedule(asset, sched, btn) {
+    btn.disabled = true;
+    api.assets.cancelRebootSchedule(asset.id, sched.id).then(function () {
+      PolarisTabs.showSnackbar("Scheduled reboot cancelled");
+      if (_openId === asset.id) loadRebootRow(asset.id, asset);
+    }).catch(function (err) {
+      btn.disabled = false;
+      PolarisTabs.showSnackbar(err && err.message ? err.message : "Could not cancel the scheduled reboot", { error: true });
+    });
+  }
+
+  /**
+   * The sheet's body. Pure, for the tests. `opts.mode`: "choose" (reboot now,
+   * or tick "Schedule for later"), "schedule-only" (cannot reboot right now —
+   * the box is ticked and locked), "change" (a booking's time and
+   * recipients), "now-only" (a booking already exists).
+   */
+  function rbConfirmBodyHtml(asset, rb, opts) {
+    opts = opts || {};
+    var mode = opts.mode || "choose";
+    var existing = opts.existing || null;
+    function line(k, v) {
+      return '<div class="kv-row"><span class="k">' + escapeHtml(k) + '</span><span class="v">' + v + '</span></div>';
+    }
+    var how = {
+      "controller-switch": "Through its FortiGate " + ((rb.via && rb.via.label) || ""),
+      "controller-ap": "Through its FortiGate " + ((rb.via && rb.via.label) || ""),
+      "fortigate-rest": "The FortiGate's REST API",
+      "fortigate-ssh": "The FortiGate's SSH CLI",
+      "device-ssh": "The device's own SSH CLI",
+      agent: "The Polaris Agent",
+    }[rb.method] || "—";
+    var warning = rb.kind === "agent"
+      ? "The host restarts: its services stop and anyone signed in loses unsaved work."
+      : asset.assetType === "firewall"
+        ? "The FortiGate restarts and is unreachable for several minutes — everything behind it goes down with it."
+        : asset.assetType === "switch"
+          ? "The FortiSwitch restarts — everything connected through it drops for a few minutes."
+          : "The FortiAP restarts — its wireless clients disconnect for a few minutes.";
+    var when = existing ? new Date(existing.scheduledFor) : (function () { var d = new Date(Date.now() + 60 * 60000); d.setMinutes(0, 0, 0); return d; })();
+    var emails = existing ? (existing.notifyEmails || []) : ((opts.defaults && opts.defaults.notifyEmails) || []);
+    var fields = ''
+      + (mode === "schedule-only" && rb.reason ? '<p style="margin:0 0 8px;font-size:13px;color:var(--md-warning);">Right now: ' + escapeHtml(rb.reason) + ' That is checked again when it is due.</p>' : '')
+      + '<label style="display:block;font-size:13px;margin-bottom:4px;" for="rb-sched-when">Reboot at (your time)</label>'
+      + '<input type="datetime-local" id="rb-sched-when" class="input" style="width:100%;" min="' + escapeHtml(fwLocalInputValue(new Date(Date.now() + 2 * 60000))) + '" value="' + escapeHtml(fwLocalInputValue(when)) + '">'
+      + '<label style="display:block;font-size:13px;margin:10px 0 4px;" for="rb-sched-emails">Email the results to</label>'
+      + '<input type="email" id="rb-sched-emails" class="input" style="width:100%;" multiple placeholder="you@example.com" value="' + escapeHtml(emails.join(", ")) + '">'
+      + '<p style="margin:6px 0 0;font-size:12px;color:var(--md-on-surface-variant);">Not sent if Polaris only gets to it more than 15 minutes late.</p>';
+    var schedule;
+    if (mode === "change") {
+      schedule = '<div id="rb-sched-fields" style="margin-top:12px;">' + fields + '</div>';
+    } else if (mode === "now-only") {
+      schedule = '<p style="margin:12px 0 0;font-size:13px;color:var(--md-on-surface-variant);">A reboot is already scheduled — change or cancel it from the Uptime row.</p>';
+    } else {
+      var locked = mode === "schedule-only";
+      schedule = '<label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:14px;">'
+        + '<input type="checkbox" id="rb-confirm-schedule"' + (locked ? ' checked disabled' : '') + '> Schedule for later</label>'
+        + '<div id="rb-sched-fields" style="margin-top:8px;' + (locked ? '' : 'display:none;') + '">' + fields + '</div>';
+    }
+    var ack = mode === "change" ? '' : '<label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:14px;">'
+      + '<input type="checkbox" id="rb-confirm-ack"> I understand this device will go down</label>';
+    return ''
+      + '<div class="sheet-handle"></div>'
+      + '<h3 class="sheet-title" style="margin:0 0 8px;">' + (existing ? "Change scheduled reboot" : "Reboot device?") + '</h3>'
+      + line("Device", escapeHtml(asset.hostname || asset.ipAddress || asset.id))
+      + (asset.serialNumber ? line("Serial", '<span class="mono">' + escapeHtml(asset.serialNumber) + '</span>') : '')
+      + line("Sent by", escapeHtml(how))
+      + line("Signed by", escapeHtml(rb.authority || "—"))
+      + (mode === "change" ? '' : '<p style="margin:12px 0 0;color:var(--md-on-surface-variant);font-size:14px;line-height:20px;">' + escapeHtml(warning)
+        + ' Polaris holds its alerts while it reboots and records the reboot on its Events.</p>')
+      + ack
+      + schedule
+      + '<div style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">'
+      + '  <button id="rb-confirm-cancel" class="btn btn-outlined">Cancel</button>'
+      + '  <button id="rb-confirm-ok" class="btn btn-filled">' + (existing ? "Save" : (mode === "schedule-only" ? "Schedule" : "Reboot")) + '</button>'
+      + '</div>';
+  }
+
+  // A stacked .sheet at 1010/1011 — the firmware confirm's shape. Resolves
+  // { now: true }, { schedule: { scheduledFor, notifyEmails } }, or false.
+  var _rbConfirmResolve = null;
+  function confirmReboot(asset, rb, opts) {
+    closeRebootConfirm(false);
+    opts = opts || {};
+    return new Promise(function (resolve) {
+      _rbConfirmResolve = resolve;
+      var scrim = document.createElement("div");
+      scrim.className = "scrim";
+      scrim.id = "rb-confirm-scrim";
+      scrim.style.zIndex = "1010";
+      var sheet = document.createElement("div");
+      sheet.className = "sheet";
+      sheet.id = "rb-confirm-sheet";
+      sheet.style.zIndex = "1011";
+      sheet.innerHTML = rbConfirmBodyHtml(asset, rb, opts);
+      document.body.appendChild(scrim);
+      document.body.appendChild(sheet);
+      var later = sheet.querySelector("#rb-confirm-schedule");
+      var ack = sheet.querySelector("#rb-confirm-ack");
+      var fields = sheet.querySelector("#rb-sched-fields");
+      var ok = sheet.querySelector("#rb-confirm-ok");
+      var whenEl = sheet.querySelector("#rb-sched-when");
+      var emailsEl = sheet.querySelector("#rb-sched-emails");
+      function scheduling() { return opts.mode === "change" || !!(later && later.checked); }
+      function sync() {
+        if (later && fields) fields.style.display = later.checked ? "" : "none";
+        if (!opts.existing) ok.textContent = scheduling() ? "Schedule" : "Reboot";
+        var acked = !ack || ack.checked;
+        ok.disabled = !acked || (scheduling() && !(whenEl && whenEl.value && emailsEl && fwParseEmails(emailsEl.value).length > 0));
+      }
+      [later, ack].forEach(function (el) { if (el) el.addEventListener("change", sync); });
+      [whenEl, emailsEl].forEach(function (el) { if (el) el.addEventListener("input", sync); });
+      scrim.addEventListener("click", function () { closeRebootConfirm(false); });
+      sheet.querySelector("#rb-confirm-cancel").addEventListener("click", function () { closeRebootConfirm(false); });
+      ok.addEventListener("click", function () {
+        if (!scheduling()) { closeRebootConfirm({ now: true }); return; }
+        var when = new Date(whenEl.value);
+        if (isNaN(when.getTime())) { PolarisTabs.showSnackbar("Pick a date and time", { error: true }); return; }
+        closeRebootConfirm({ schedule: { scheduledFor: when.toISOString(), notifyEmails: fwParseEmails(emailsEl.value) } });
+      });
+      PolarisTabs.attachSwipeToDismiss(sheet, function () { closeRebootConfirm(false); });
+      sync();
+    });
+  }
+
+  function closeRebootConfirm(val) {
+    var s = document.getElementById("rb-confirm-sheet");
+    var sc = document.getElementById("rb-confirm-scrim");
+    if (s) s.remove();
+    if (sc) sc.remove();
+    var r = _rbConfirmResolve;
+    _rbConfirmResolve = null;
+    if (r) r(val);
+  }
+
+  // Poll one run until it ends, repainting the row; stops when the sheet is
+  // dismissed or swaps to another asset; a network hiccup backs off.
+  function watchRebootRun(assetId, runId) {
+    if (_rbPoll && _rbPoll.assetId === assetId && _rbPoll.runId === runId) return;
+    stopRebootPoll();
+    var me = { assetId: assetId, runId: runId, timer: null };
+    _rbPoll = me;
+    function tick() {
+      if (_rbPoll !== me || _openId !== assetId) return;
+      api.assets.rebootRun(assetId, runId).then(function (res) {
+        if (_rbPoll !== me || _openId !== assetId) return;
+        var run = res && res.run;
+        var slot = document.getElementById("asset-reboot-slot");
+        if (run && RB_ACTIVE[run.status]) {
+          if (slot) slot.innerHTML = rbRunningHtml(run);
+          me.timer = setTimeout(tick, RB_POLL_MS);
+          return;
+        }
+        _rbPoll = null;
+        if (slot) slot.innerHTML = rbResultHtml(run);
+        if (run && run.status === "succeeded") PolarisTabs.showSnackbar("Device rebooted");
+        else if (run) PolarisTabs.showSnackbar(run.status === "unverified" ? "Reboot sent, but not confirmed" : "Reboot failed", { error: true });
+      }).catch(function () {
+        if (_rbPoll !== me) return;
+        me.timer = setTimeout(tick, RB_POLL_MS * 2);
+      });
+    }
+    me.timer = setTimeout(tick, RB_POLL_MS);
+  }
+
+  function stopRebootPoll() {
+    if (_rbPoll && _rbPoll.timer) clearTimeout(_rbPoll.timer);
+    _rbPoll = null;
+  }
+
   // ─── helpers ───────────────────────────────────────────────────────────
   function monitorDotCls(asset) {
     if (!asset.monitored) return "";
@@ -3196,7 +3566,9 @@
   window.PolarisAssetDetail = {
     open: open,
     // Pure firmware-row pieces, for the tests.
-    _fw: { fwProgressText: fwProgressText, fwSlotHtml: fwSlotHtml, fwResultHtml: fwResultHtml },
+    _fw: { fwProgressText: fwProgressText, fwSlotHtml: fwSlotHtml, fwResultHtml: fwResultHtml, fwBadgeHtml: fwBadgeHtml },
+    // Pure uptime / reboot pieces, for the tests.
+    _rb: { uptimeSecondsNow: uptimeSecondsNow, formatUptime: formatUptimeShort, uptimeRowValue: uptimeRowValue, rbSlotHtml: rbSlotHtml, rbConfirmBodyHtml: rbConfirmBodyHtml },
     spec: {
       parentTab: "assets",
       // No topbar — the slide-up sheet carries its own header.

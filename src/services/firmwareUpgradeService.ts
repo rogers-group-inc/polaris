@@ -48,6 +48,10 @@ import { engineFor, engineByKind } from "./firmwareEngines/index.js";
 import { DEFAULT_FIRMWARE_TIMEOUTS, type FirmwareEngineContext, type FirmwareEngineTimeouts, type FirmwareProgress, type FirmwareRunStage } from "./firmwareEngines/types.js";
 import {
   findUpgradeCandidates,
+  firmwareVsPrimary,
+  loadPrimaryFirmwareImages,
+  primaryImageForAsset,
+  type FirmwareVsPrimary,
   resolveFirmwareCredential,
   resolveImagePath,
   getImage,
@@ -108,6 +112,16 @@ export interface UpgradeAvailability {
   blockers: string[];
   activeRun: RunSummary | null;
   lastRun: RunSummary | null;
+  /**
+   * On `up-to-date` only: how the running firmware stands against the
+   * Repository's primary image for this device's platform — `"current"` when
+   * it runs exactly the active image, `"newer"` when it is past it, null when
+   * no primary names its platform. The `firmwareVsPrimary` automation field's
+   * comparison, so the phone's "Up to date" and an automation agree.
+   */
+  vsPrimary: FirmwareVsPrimary | null;
+  /** The primary image's version label when `vsPrimary` is set. */
+  primaryVersion: string | null;
 }
 
 const ASSET_SELECT = {
@@ -230,12 +244,23 @@ export async function getUpgradeAvailability(assetId: string): Promise<UpgradeAv
     blockers: [],
     activeRun: active ? summarize(active) : null,
     lastRun: last ? summarize(last) : null,
+    vsPrimary: null,
+    primaryVersion: null,
   };
   if (active) return { ...base, state: "running", reason: "A firmware upgrade is running on this device." };
   const ha = haClusterOf(a);
   if (ha) return { ...base, state: "unsupported", reason: `${ha.charAt(0).toUpperCase()}${ha.slice(1)}.` };
   if (candidates.reason !== "ok") {
     const r = reasonFor(candidates, a);
+    if (r.state === "up-to-date") {
+      // Nothing newer is offered — say whether that is because the device runs
+      // the active image or is past it. One small read: primaries are at most
+      // one per model node.
+      const primaries = await loadPrimaryFirmwareImages();
+      const vsPrimary = firmwareVsPrimary(a, primaries);
+      const primary = vsPrimary ? primaryImageForAsset(a, primaries) : null;
+      return { ...base, state: r.state, reason: r.reason, vsPrimary, primaryVersion: primary?.versionLabel ?? null };
+    }
     return { ...base, state: r.state, reason: r.reason };
   }
   const primary = candidates.primary!;

@@ -172,7 +172,26 @@ needs **Read-Write on Assets**; below that the row says the version is
 available. The phone offers the model's **primary** image only: picking its
 backup, and the run history and its log, are on the desktop's Firmware card,
 and the Repository itself is desktop-only. See
-[Assets → Firmware](Assets#firmware).
+[Assets → Firmware](Assets#firmware). When the Repository holds an active
+image for the device's platform and the device runs exactly that version, the
+**OS** row says **✓ Up to date**; a device running something newer than the
+Repository's image, or one the Repository has no image for, shows no mark.
+
+**The Uptime row reboots the device.** Under *General*, **Uptime** shows how long
+the device has been up and when it last started (frozen while the device is
+down). On a FortiGate, FortiSwitch, FortiAP or Polaris Agent host that Polaris is
+allowed to reboot, the row carries **Reboot…** ([Assets → Reboot](Assets#reboot),
+[rule 115](Business-Rules#rule-115)). It opens a confirm sheet naming the device,
+how the reboot will be sent and what signs it, and says what goes down with it;
+**Reboot** stays greyed out until **I understand this device will go down** is
+ticked. The row then follows the reboot until the device is back, and ends on
+the result. The same sheet has **Schedule for later**, exactly as for a firmware
+upgrade, and a pending reboot shows in the row with **Change** and **Cancel**.
+When the device can't be rebooted right now but can be booked (an agent host
+that is offline, say), the row offers **Schedule reboot…** and says why. When
+nothing allows a reboot, the row says what is missing. Pressing it needs
+**Read-Write on Assets**. A device that reports no uptime and can't be rebooted
+from Polaris has no Uptime row.
 
 **Tapping the asset's name edits it.** The name at the top of the detail sheet
 opens a menu with the same three tabs as the desktop's *Edit Asset* dialog. Each
