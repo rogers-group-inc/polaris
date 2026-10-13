@@ -451,12 +451,48 @@ export function validateHttpCheckDefinition(config: Record<string, unknown>): vo
 }
 
 export function validateConfig(type: CredentialType, config: Record<string, unknown>): void {
-  if (type === "snmp")    return validateSnmpConfig(config);
-  if (type === "winrm")   return validateWinRmConfig(config);
-  if (type === "ssh")     return validateSshConfig(config);
-  if (type === "restapi") return validateRestApiConfig(config);
-  if (type === "http")    return validateHttpConfig(config);
-  throw new AppError(400, `Unknown credential type "${type}"`);
+  if (type === "snmp")    validateSnmpConfig(config);
+  else if (type === "winrm")   validateWinRmConfig(config);
+  else if (type === "ssh")     validateSshConfig(config);
+  else if (type === "restapi") validateRestApiConfig(config);
+  else if (type === "http")    validateHttpConfig(config);
+  else throw new AppError(400, `Unknown credential type "${type}"`);
+  validateAllowReboot(type, config);
+}
+
+/**
+ * The credential kinds that can reboot a FortiGate, FortiSwitch or FortiAP
+ * (business rule 115): an SSH login (`execute reboot`), a REST API token
+ * (FortiOS `system/os/reboot`), and a device admin login (`http` in `form`
+ * mode — the firmware repository's login, rule 87). Pure; shared by the
+ * validator, the reboot resolver and the form.
+ */
+export function credentialCanReboot(type: string, config: Record<string, unknown> | null | undefined): boolean {
+  if (type === "ssh" || type === "restapi") return true;
+  return type === "http" && (config ?? {}).authMode === "form";
+}
+
+/** `allowReboot` is on, on a kind that can carry it. Pure. */
+export function credentialAllowsReboot(type: string, config: Record<string, unknown> | null | undefined): boolean {
+  return credentialCanReboot(type, config) && (config ?? {}).allowReboot === true;
+}
+
+/**
+ * `allowReboot` (rule 115) is a boolean, and only on a kind that can reboot.
+ * Runs on the MERGED config after the per-type validator, so an http
+ * credential switched away from form login loses the flag with the login it
+ * belonged to instead of 400-ing; `true` sent on a kind that can never reboot
+ * (SNMP, WinRM) is refused so the operator does not believe it did something.
+ * A `false` is not stored — absence is the default.
+ */
+function validateAllowReboot(type: CredentialType, config: Record<string, unknown>): void {
+  const v = config.allowReboot;
+  if (v === undefined || v === null) { delete config.allowReboot; return; }
+  if (typeof v !== "boolean") throw new AppError(400, "allowReboot must be a boolean");
+  if (!v) { delete config.allowReboot; return; }
+  if (credentialCanReboot(type, config)) return;
+  if (type === "http") { delete config.allowReboot; return; }
+  throw new AppError(400, `A ${type} credential cannot reboot a device — Allow reboots applies to SSH, REST API and device admin login credentials`);
 }
 
 /**

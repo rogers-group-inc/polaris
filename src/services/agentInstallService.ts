@@ -40,6 +40,12 @@ import { logger } from "../utils/logger.js";
 import { mapWithConcurrency } from "../utils/concurrency.js";
 import { AGENT_BIN_DIR } from "../utils/paths.js";
 import { linuxServiceBlock, normalizePrivilegeTier, type AgentPrivilegeTier } from "../utils/agentUnit.js";
+import {
+  LINUX_REBOOT_PERMISSION_CLEANUP,
+  linuxRebootPermissionScript,
+  darwinRebootPermissionScript,
+  windowsRebootPermissionPs,
+} from "../utils/agentRebootPermission.js";
 import { getCredential } from "./credentialService.js";
 import { mintEnrollmentToken } from "./agentTokenService.js";
 import { logEvent, logEventsBatch } from "./eventLogService.js";
@@ -558,6 +564,8 @@ export interface BulkInstallInput {
    *  CAP_SYS_PTRACE for Application Map connection attribution. Default
    *  "unprivileged". */
   privilegeTier?:     AgentPrivilegeTier;
+  /** Reboot opt-in for every host in the batch (business rule 115). Default off. */
+  allowReboot?:       boolean;
   actor:              string;
 }
 
@@ -726,6 +734,7 @@ export async function bulkInstallAgents(input: BulkInstallInput): Promise<BulkIn
             installTransport:      target.transport,
             installScriptId:       input.scriptIds?.[osPlatform] ?? null,
             privilegeTier:         osPlatform === "linux" ? normalizePrivilegeTier(input.privilegeTier) : "unprivileged",
+            rebootEnabled:         input.allowReboot === true,
           },
         });
         queue.push({ managedAgentId: failedRow.id, credentialId: target.credentialId });
@@ -768,6 +777,7 @@ export async function bulkInstallAgents(input: BulkInstallInput): Promise<BulkIn
           installScriptId:       input.scriptIds?.[osPlatform] ?? null,
           // Privilege tier is Linux-only; Windows/darwin stay "unprivileged".
           privilegeTier:         osPlatform === "linux" ? normalizePrivilegeTier(input.privilegeTier) : "unprivileged",
+          rebootEnabled:         input.allowReboot === true,
         },
       });
       queue.push({ managedAgentId: row.id, credentialId: target.credentialId });
@@ -943,6 +953,29 @@ async function runInstall(input: StartInstallInput): Promise<void> {
     }
   } else {
     return failInstall(managedAgentId, row.assetId, `Unsupported osPlatform ${row.osPlatform}`);
+  }
+
+  // The reboot opt-in (business rule 115), when it was ticked at deploy — or
+  // re-applied on a reinstall of a host that had it. Best-effort: the agent is
+  // installed either way, and the card shows "enabled, host refuses" until
+  // the agent reports the permission, with an Event that says why.
+  if (row.rebootEnabled) {
+    try {
+      await applyRebootPermissionOnHost({
+        host, osPlatform: row.osPlatform, transport: row.installTransport,
+        cred: cred.config as Record<string, unknown>, enable: true, testOverrides,
+      });
+    } catch (err: any) {
+      await logEvent({
+        action:       "agent.reboot_permission_failed",
+        resourceType: "asset",
+        resourceId:   row.assetId,
+        resourceName: row.asset.hostname || row.asset.ipAddress || undefined,
+        level:        "warning",
+        message:      `The agent installed, but the reboot permission could not be installed on the host: ${err?.message ?? err}`,
+        details:      { managedAgentId },
+      });
+    }
   }
 
   await transition(managedAgentId, "enrolling");
@@ -1459,6 +1492,8 @@ rm -rf /var/lib/polaris-agent
 rm -rf /var/lib/private/polaris-agent
 rm -rf /etc/polaris-agent       # legacy pre-StateDirectory location
 rm -f  /usr/local/bin/polaris-agent
+# The reboot opt-in (business rule 115): its marker and polkit rules.
+${LINUX_REBOOT_PERMISSION_CLEANUP}
 
 echo "Polaris Agent removed"
 `;
@@ -1806,6 +1841,54 @@ async function sshWindowsUpgrade(p: SshWindowsUpgradeParams): Promise<void> {
     .replace(/__CERT_FINGERPRINT__/g, p.certFingerprint)
     .replace(/__BINARY_FILENAME__/g,  p.binaryFilename);
   await runPowerShellOverSsh(p.host, p.cred, ps, "polaris-agent-upgrade.ps1", 180_000);
+}
+
+// ─── Reboot permission (business rule 115) ────────────────────────────
+//
+// The host-side half of an agent host's reboot opt-in — the root-owned marker
+// and, on Linux, the polkit rule (utils/agentRebootPermission.ts). Run over
+// the same transport and credential as the install, as root / an elevated
+// admin, by the install runner (when the opt-in was ticked at deploy) and by
+// agentRebootPermissionService (when it is turned on or off later).
+
+export interface RebootPermissionTarget {
+  host: string;
+  osPlatform: string;
+  transport: string;
+  cred: Record<string, unknown>;
+  enable: boolean;
+  testOverrides?: TestOverrides;
+}
+
+export async function applyRebootPermissionOnHost(p: RebootPermissionTarget): Promise<void> {
+  if (p.testOverrides?.fakeSshSucceed) return;
+  if (p.testOverrides?.fakeSshFail) throw new AppError(502, p.testOverrides.fakeSshFail);
+  if (p.osPlatform === "linux" || p.osPlatform === "darwin") {
+    const script = p.osPlatform === "linux" ? linuxRebootPermissionScript(p.enable) : darwinRebootPermissionScript(p.enable);
+    await withSshClient(p.host, p.cred, async (client) => {
+      await sftpPut(client, "/tmp/polaris-agent-reboot.sh", Buffer.from(script, "utf8"), 0o700);
+      const out = await sshExec(client, "sudo -n bash /tmp/polaris-agent-reboot.sh; rc=$?; rm -f /tmp/polaris-agent-reboot.sh; exit $rc", 60_000);
+      if (out.exitCode !== 0) {
+        throw new AppError(502, `The reboot-permission script exited ${out.exitCode}: ${truncate(out.stderr || out.stdout, 400)}`);
+      }
+    });
+    return;
+  }
+  if (p.osPlatform === "windows") {
+    const ps = windowsRebootPermissionPs(p.enable);
+    if (p.transport === "ssh") {
+      await runPowerShellOverSsh(p.host, p.cred, ps, "polaris-agent-reboot.ps1", 60_000);
+      return;
+    }
+    const conn = winrmConnectionFromCred(p.host, p.cred);
+    const encoded = Buffer.from(ps, "utf16le").toString("base64");
+    const out = await winrmRunOne(conn, "powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded]);
+    if (out.exitCode !== 0) {
+      throw new AppError(502, `The reboot-permission script exited ${out.exitCode}: ${truncate(out.stderr || out.stdout, 400)}`);
+    }
+    return;
+  }
+  throw new AppError(400, `Reboots are not supported for a ${p.osPlatform} agent host`);
 }
 
 async function runPowerShellOverSsh(

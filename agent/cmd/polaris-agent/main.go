@@ -34,6 +34,7 @@ import (
 
 	"github.com/polaris/agent/internal/collectors"
 	"github.com/polaris/agent/internal/config"
+	"github.com/polaris/agent/internal/reboot"
 	"github.com/polaris/agent/internal/scriptexec"
 	"github.com/polaris/agent/internal/transport"
 )
@@ -467,6 +468,10 @@ func runAgent(ctx context.Context, confPath string) {
 	// grant less than the requested tier (the SYS_PTRACE-only regression).
 	// Read once: caps are fixed for the life of the process.
 	client.CapEff = collectors.SelfCapEff()
+	// Reboot capability + boot time ride every heartbeat (Polaris business
+	// rule 115): the server offers a reboot only to a host that reports it
+	// will perform one, and proves one happened by the boot time moving.
+	client.RebootInfo = func() (bool, uint64) { return reboot.Capable(), reboot.BootTime() }
 
 	// Latch verbose lifecycle logging from agent.conf. Diagnostic only —
 	// off by default; an operator sets `verbose = true` to trace the
@@ -1130,9 +1135,11 @@ func pollAndRunCommands(client *transport.Client) {
 		switch c.Action {
 		case "run_script":
 			runScriptCommand(client, c)
+		case "reboot":
+			rebootCommand(client, c)
 		default:
-			// The agent only accepts run_script. Process/service start/stop/
-			// restart control was removed (Satellite-posture change), so a
+			// The agent accepts run_script and reboot. Process/service start/
+			// stop/restart control was removed (Satellite-posture change), so a
 			// stop/start/restart action — or anything else a newer/stale server
 			// queued — is refused explicitly instead of silently dropped.
 			if rerr := client.ReportCommandResult(c.ID, false, "agent does not support action \""+c.Action+"\" (process/service control was removed)", ""); rerr != nil {
@@ -1141,6 +1148,38 @@ func pollAndRunCommands(client *transport.Client) {
 			log.Printf("unsupported command action %q refused (id=%s)", c.Action, c.ID)
 		}
 	}
+}
+
+// rebootDelay is how long the agent waits after acknowledging a reboot before
+// asking the OS for it — long enough for the result POST to land.
+const rebootDelay = 5 * time.Second
+
+// rebootCommand reboots the host (Polaris business rule 115). Refused unless
+// the host carries the opt-in marker that only root could have written. The
+// result is reported FIRST — once the OS takes the host down there is no one
+// left to say the command was taken — then the reboot is requested; if the
+// OS then refuses, a second report records why.
+func rebootCommand(client *transport.Client, c transport.Command) {
+	if !reboot.Allowed() {
+		if rerr := client.ReportCommandResult(c.ID, false, "reboots are not enabled on this host (the opt-in marker is missing — enable reboots from the Polaris Agent card)", "refused"); rerr != nil {
+			log.Printf("command result report failed (id=%s): %v", c.ID, rerr)
+		}
+		log.Printf("reboot command refused: not enabled on this host (id=%s)", c.ID)
+		return
+	}
+	if rerr := client.ReportCommandResult(c.ID, true, "", "rebooting"); rerr != nil {
+		// Not reported = not acknowledged: Polaris withdraws an unacknowledged
+		// reboot, so do not take the host down behind its back.
+		log.Printf("reboot command not acknowledged (id=%s): %v — not rebooting", c.ID, rerr)
+		return
+	}
+	log.Printf("reboot requested by Polaris (id=%s) — rebooting in %s", c.ID, rebootDelay)
+	go func() {
+		if err := reboot.Reboot(rebootDelay, "Polaris: reboot requested ("+c.ID+")"); err != nil {
+			log.Printf("reboot failed: %v", err)
+			_ = client.ReportCommandResult(c.ID, false, err.Error(), "failed")
+		}
+	}()
 }
 
 // runScriptCommand executes one server-pushed automation script via the
@@ -1234,9 +1273,12 @@ func wsLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
 			return nil
 		case "refresh-config":
 			// Server is telling us something changed (operator edited
-			// cadences, staged a cert pin, etc.). Best-effort refetch —
-			// failure here just means we'll see the change at the next
-			// normal poll.
+			// cadences, staged a cert pin, turned reboots on or off, etc.).
+			// Best-effort refetch — failure here just means we'll see the
+			// change at the next normal poll. The reboot answer is re-read
+			// and reported now, so the Reboot button follows the host.
+			reboot.Invalidate()
+			go func() { _, _ = client.Heartbeat() }()
 			resp, err := client.FetchConfig("")
 			if err != nil {
 				log.Printf("ws: refresh-config: fetch failed: %v", err)

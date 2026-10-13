@@ -1254,6 +1254,8 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // when it died can never finish — mark it failed and release its hold.
       // Web / all role only, which is where the runs execute. See its header.
       "./jobs/failOrphanedFirmwareRuns.js",
+      // Same for a reboot run (business rule 115) this process was watching.
+      "./jobs/failOrphanedRebootRuns.js",
     ]) await importJob(p);
   }
 
@@ -1286,6 +1288,9 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // Scheduled firmware upgrades (business rule 93): the flash runs on
       // this role with setImmediate, beside the image on disk.
       "./jobs/startScheduledFirmwareUpgrades.js",
+      // Scheduled reboots (business rule 115): the run is watched from this
+      // role with setImmediate, beside the orphan sweep above.
+      "./jobs/startScheduledReboots.js",
       "./jobs/runAutomationScripts.js",
       "./jobs/resolvePolarisPushedConflicts.js",
       "./jobs/resolveStaleReservationConflicts.js",

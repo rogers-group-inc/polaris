@@ -102,6 +102,11 @@ export const MAINTENANCE_HOLD_KINDS = {
   // workload itself goes dark for the length of the platform call.
   "workload-restart": "Workload restart",
   "workload-update":  "Workload update",
+  // An operator rebooting a FortiGate, FortiSwitch, FortiAP or agent host from
+  // Polaris (business rule 115): taken when the run starts, just before the reboot is sent (a booking takes
+  // nothing until it fires), released once the device's own monitoring answers
+  // again — or, for an agent host, when the agent reattaches.
+  "device-reboot":    "Reboot",
 } as const;
 
 export type MaintenanceHoldKind = keyof typeof MAINTENANCE_HOLD_KINDS;
@@ -129,6 +134,10 @@ const HOLD_TTL_MINUTES: Record<MaintenanceHoldKind, number> = {
   // App upgrade with its own migrations) can run to many minutes.
   "workload-restart": 10,
   "workload-update":  30,
+  // A FortiGate is back in 2–5 min, a Windows host applying updates on the way
+  // down can take much longer; the run's own wait extends the hold while it
+  // watches, so this is only the cap for a run nothing is watching any more.
+  "device-reboot":    20,
 };
 
 /** Exposed for the tests that pin each kind's cap. */

@@ -2529,7 +2529,8 @@ function openBulkAgentDeployModal() {
           '<input type="checkbox" id="bulk-agent-run-as-root"> Grant CAP_SYS_PTRACE + CAP_DAC_READ_SEARCH on Linux hosts (for Application Map connection mapping)' +
         '</label>' +
         '<p class="hint" style="color:var(--color-warning)">Leave unchecked to run the agent fully unprivileged (recommended). Checking this grants <strong>CAP_SYS_PTRACE + CAP_DAC_READ_SEARCH</strong> on every Linux host in this batch — the pair the agent needs to attribute network connections to processes, without full root. Note: these capabilities also let the agent read any process’s memory and any file on the host (a credential-theft risk). Windows hosts are unaffected.</p>' +
-      '</div>';
+      '</div>' +
+      _agentRebootOptInHTML("bulk-agent-allow-reboot", true);
 
     var footer =
       '<button class="btn btn-secondary" id="bulk-agent-cancel">Cancel</button>' +
@@ -2561,6 +2562,8 @@ function openBulkAgentDeployModal() {
       if (ssh)   payload.sshCredentialId = ssh;
       if (winrm) payload.winrmCredentialId = winrm;
       if (wantPtrace) payload.privilegeTier = "ptrace";
+      var bulkRebootCb = document.getElementById("bulk-agent-allow-reboot");
+      if (bulkRebootCb && bulkRebootCb.checked) payload.allowReboot = true;
       // Collect any per-OS install-method choices that were rendered.
       var scriptIds = {};
       Array.prototype.forEach.call(document.querySelectorAll("[id^='bulk-agent-script-']"), function (sel) {
@@ -5744,6 +5747,7 @@ async function openViewModal(id, opts) {
     if (a.monitored) _updateStreamSourceBadgesFromEffective(a.id, a, effSettings());
     _wireAssetMonitorActions(a);
     _wireAssetDiscoverNow(a);
+    _loadAssetRebootControl(a);
     _wireAssetChartRangeControls(a);
   } catch (err) {
     showToast(err.message, "error");
@@ -6499,6 +6503,7 @@ function assetAgentSubpanelHTML(a, agent) {
     }
     else { privLabel = "Unprivileged"; privColor = ""; }
     var privRow = '<div>Privileges: <strong' + (privColor ? ' style="color:' + privColor + '"' : '') + '>' + privLabel + '</strong></div>';
+    var rebootRow = _agentRebootRowHTML(agent);
 
     var errBlock = agent.installError
       ? '<div style="margin:0.5rem 0;padding:0.5rem 0.75rem;background:rgba(255,80,80,0.08);' +
@@ -6556,7 +6561,7 @@ function assetAgentSubpanelHTML(a, agent) {
     body =
       errBlock +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem 1.25rem;margin:0.5rem 0">' +
-        versionRow + platformRow + lastSeenRow + wsRow + privRow +
+        versionRow + platformRow + lastSeenRow + wsRow + privRow + rebootRow +
       '</div>' +
       (actions
         ? '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem">' + actions + '</div>'
@@ -6608,6 +6613,11 @@ function _wireAgentSubpanel(a, agent) {
     forceBtn.addEventListener("click", function () {
       _confirmUninstallAgent(a, /* force */ true);
     });
+  }
+
+  var rebootToggle = document.getElementById("btn-agent-reboot-toggle");
+  if (rebootToggle) {
+    rebootToggle.addEventListener("click", function () { _toggleAgentReboot(a, agent, rebootToggle); });
   }
 
   var upgradeBtn = document.getElementById("btn-agent-upgrade");
@@ -7303,6 +7313,7 @@ function _openInstallAgentModal(a) {
         '</label>' +
         '<p class="hint" style="color:var(--color-warning)">Leave unchecked to run the agent fully unprivileged (recommended). Checking this grants the agent the <strong>CAP_SYS_PTRACE + CAP_DAC_READ_SEARCH</strong> capability pair it needs to attribute network connections to processes for the Application Map — without full root. Note: these capabilities also let the agent read any process’s memory and any file on the host (a credential-theft risk), so enable them only on hosts where you want the service/connection map.</p>' +
       '</div>' +
+      _agentRebootOptInHTML("agent-install-allow-reboot", false) +
       '<div class="form-group" id="agent-install-transport-wrap" style="display:none">' +
         '<label>Transport</label>' +
         '<div style="display:flex;gap:1rem;align-items:center;padding:0.25rem 0">' +
@@ -7439,6 +7450,8 @@ function _openInstallAgentModal(a) {
       // catalog / hidden row → let the server apply the per-OS default).
       if (scriptSel && scriptSel.value) body.scriptId = scriptSel.value;
       if (wantPtrace) body.privilegeTier = "ptrace";
+      var rebootCb = document.getElementById("agent-install-allow-reboot");
+      if (rebootCb && rebootCb.checked) body.allowReboot = true;
       api.assets.installAgent(a.id, body).then(function (r) {
         showToast("Install started — watch progress on the System tab", "success");
         closeModal();
@@ -13646,6 +13659,306 @@ function _assetOverrideResetBtn(a) {
 // authority; this function only decides what to render. In particular it does
 // not try to prove a switch's controller is in Polaris — the route answers
 // that with a clear 400.
+// ─── Reboot (business rule 115) ──────────────────────────────────────────────
+// The Status row's Reboot… button. Rendered as an empty slot with the row and
+// filled once GET /assets/:id/reboot answers, so the panel never waits on it
+// (and the openViewModal fetch wave is untouched). The SERVER decides what may
+// reboot the asset — a credential's or integration's Allow reboots, an agent
+// host's opt-in — and says why not; the button only shows it. One dialog for
+// now and later, like the firmware approval dialog it is modelled on.
+
+/** States a booking can still be made from: the device cannot reboot NOW, but every gate is taken again when it fires. */
+var _REBOOT_SCHEDULABLE = { available: true, blocked: true, "agent-offline": true };
+
+function _assetRebootSlotHTML(a) {
+  if (!a || typeof permAtLeast !== "function" || !permAtLeast("assets", "read")) return "";
+  return '<span id="asset-reboot-wrap" data-asset-id="' + escapeHtml(a.id) + '" style="display:inline-flex;align-items:center;gap:6px;margin-left:6px"></span>';
+}
+
+/** "fortinet" path or "agent" path, as one sentence for the dialog. Pure. */
+function _rebootMethodText(rb) {
+  switch (rb && rb.method) {
+    case "controller-switch": return "Restarted through its FortiGate " + ((rb.via && rb.via.label) || "") + " (managed FortiSwitch restart)";
+    case "controller-ap":     return "Restarted through its FortiGate " + ((rb.via && rb.via.label) || "") + " (managed FortiAP restart)";
+    case "fortigate-rest":    return "The FortiGate's REST API";
+    case "fortigate-ssh":     return "The FortiGate's SSH CLI";
+    case "device-ssh":        return "The device's own SSH CLI";
+    case "agent":             return "The Polaris Agent on the host";
+    default:                  return "—";
+  }
+}
+
+/** The Status-row control for one availability answer. Pure, so the DOM test can render it. */
+function _rebootControlHTML(a, rb) {
+  if (!rb || rb.state === "unsupported") return "";
+  var canAct = typeof canManageAssets === "function" && canManageAssets();
+  var run = rb.activeRun;
+  var parts = [];
+  if (run) {
+    parts.push('<button type="button" class="btn btn-sm btn-secondary" id="btn-asset-reboot" disabled title="' +
+      escapeHtml("Reboot in progress (" + (run.stage || run.status) + ") — signed by " + (run.authority || "?")) + '">Rebooting…</button>');
+  } else {
+    var schedulable = !!_REBOOT_SCHEDULABLE[rb.state];
+    var disabledWhy = !canAct ? "Rebooting needs Read-Write on Assets." : (!rb.available && !schedulable ? (rb.reason || "Not available") : "");
+    var title = disabledWhy || (rb.available
+      ? "Reboot this device now or schedule it — signed by " + (rb.authority || "?")
+      : (rb.reason || "") + " It can still be scheduled.");
+    parts.push('<button type="button" class="btn btn-sm btn-secondary" id="btn-asset-reboot"' + (disabledWhy ? " disabled" : "") +
+      ' title="' + escapeHtml(title) + '">Reboot…</button>');
+  }
+  if (rb.schedule) {
+    parts.push('<button type="button" class="badge" id="btn-asset-reboot-scheduled" style="cursor:' + (canAct ? "pointer" : "default") +
+      ';border:1px solid var(--color-border);background:transparent;color:var(--color-text-secondary)" title="' +
+      escapeHtml("Results emailed to " + (rb.schedule.notifyEmails || []).join(", ") + " · booked by " + (rb.schedule.createdBy || "—") +
+        (rb.schedule.error ? " · waiting: " + rb.schedule.error : "") + (canAct ? " — click to change or cancel" : "")) + '">' +
+      'Reboot scheduled ' + escapeHtml(_fwWhenText(rb.schedule.scheduledFor)) + '</button>');
+  }
+  return parts.join("");
+}
+
+var _rebootPollKey = null;
+
+async function _loadAssetRebootControl(a) {
+  var wrap = document.getElementById("asset-reboot-wrap");
+  if (!wrap || wrap.getAttribute("data-asset-id") !== a.id) return;
+  var rb;
+  try { rb = await api.assets.reboot(a.id); } catch (e) { return; }
+  wrap = document.getElementById("asset-reboot-wrap");
+  if (!wrap || wrap.getAttribute("data-asset-id") !== a.id) return;
+  wrap.innerHTML = _rebootControlHTML(a, rb);
+  var btn = document.getElementById("btn-asset-reboot");
+  if (btn && !btn.disabled) btn.addEventListener("click", function () { _openRebootModal(a, rb, null); });
+  var chip = document.getElementById("btn-asset-reboot-scheduled");
+  if (chip && rb.schedule && typeof canManageAssets === "function" && canManageAssets()) {
+    chip.addEventListener("click", function () { _openRebootModal(a, rb, rb.schedule); });
+  }
+  if (rb.activeRun) _startRebootPoll(a, rb.activeRun.id);
+}
+
+/** The time + recipients half of the dialog (the firmware booking's fields, worded for a reboot). Pure. */
+function _rebootScheduleFieldsHTML(existing, defaults, warn) {
+  var when = existing ? new Date(existing.scheduledFor) : (function () { var d = new Date(Date.now() + 60 * 60000); d.setMinutes(0, 0, 0); return d; })();
+  var min = _fwLocalInputValue(new Date(Date.now() + 2 * 60000));
+  var emails = existing ? (existing.notifyEmails || []) : ((defaults && defaults.notifyEmails) || []);
+  var zone = _fwBrowserZone();
+  return (warn ? '<div class="hint" style="margin:0 0 0.6rem;color:var(--color-warning)">Right now: ' + escapeHtml(warn) + ' That is checked again when the reboot is due — if it still holds then, nothing is sent and the recipients are told why.</div>' : '') +
+    '<div class="form-group">' +
+      '<label for="rb-sched-when">Reboot at</label>' +
+      '<input type="datetime-local" id="rb-sched-when" min="' + escapeHtml(min) + '" value="' + escapeHtml(_fwLocalInputValue(when)) + '">' +
+      '<p class="hint" style="margin:0.25rem 0 0">Your time' + (zone ? ' (' + escapeHtml(zone) + ')' : '') + '. If Polaris is not running at that time and only gets to it more than 15 minutes late, the reboot is not sent.</p>' +
+    '</div>' +
+    '<div class="form-group">' +
+      '<label for="rb-sched-emails">Email the results to</label>' +
+      '<input type="text" id="rb-sched-emails" placeholder="you@example.com, team@example.com" value="' + escapeHtml(emails.join(", ")) + '">' +
+      '<p class="hint" style="margin:0.25rem 0 0">Comma-separated. Sent when the reboot finishes — succeeded or failed — or if it could not be started.</p>' +
+    '</div>';
+}
+
+/**
+ * The reboot dialog's body. Pure. `opts.mode`:
+ *   "choose"        — reboot now, or tick the box to schedule.
+ *   "schedule-only" — the device cannot reboot right now (blocked / agent offline); the box is ticked and locked.
+ *   "change"        — editing a pending booking: the schedule fields only.
+ */
+function _rebootModalHTML(a, rb, opts) {
+  opts = opts || {};
+  var mode = opts.mode || "choose";
+  var existing = opts.existing || null;
+  var t = a.assetType;
+  var warning = rb.kind === "agent"
+    ? "The host restarts: every service on it stops and anyone signed in loses unsaved work" + (/windows/i.test(a.os || "") ? " (open applications are closed without asking)" : "") + ". It is unreachable until it boots."
+    : t === "firewall"
+      ? "The FortiGate restarts and is unreachable for several minutes — every network, tunnel, VPN user and device behind it goes down with it."
+      : t === "switch"
+        ? "The FortiSwitch restarts — every port on it, and everything connected through it, drops for a few minutes."
+        : "The FortiAP restarts — its wireless clients disconnect for a few minutes.";
+  var last = rb.lastRun
+    ? '<dt>Last reboot</dt><dd>' + escapeHtml(rb.lastRun.status) + ' · ' + escapeHtml(timeAgo(rb.lastRun.startedAt)) + ' by ' + escapeHtml(rb.lastRun.startedBy) + '</dd>'
+    : '';
+  var device =
+    '<div class="fw-approve-block"><strong>Device</strong><dl>' +
+      '<dt>Host</dt><dd>' + escapeHtml(a.hostname || "—") + (a.ipAddress ? ' (' + escapeHtml(a.ipAddress) + ')' : '') + '</dd>' +
+      (a.serialNumber ? '<dt>Serial</dt><dd>' + escapeHtml(a.serialNumber) + '</dd>' : '') +
+      '<dt>Sent by</dt><dd>' + escapeHtml(_rebootMethodText(rb)) + '</dd>' +
+      '<dt>Signed by</dt><dd>' + escapeHtml(rb.authority || "—") + '</dd>' +
+      last +
+    '</dl></div>';
+  if (mode === "change") {
+    return device + '<div id="rb-sched-fields" style="margin-top:0.9rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' + _rebootScheduleFieldsHTML(existing, opts.defaults, null) + '</div>';
+  }
+  var warnBox =
+    '<div class="alert alert-warning" style="padding:0.6rem 0.75rem;border-radius:6px;background:rgba(214,137,16,0.12);border:1px solid var(--color-warning,#d68910);font-size:0.82rem;margin:0.5rem 0 0.75rem">' +
+      escapeHtml(warning) + ' Polaris holds its alerts for this device while it reboots and records the reboot on the device’s Events.' +
+    '</div>' +
+    '<label style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:pointer">' +
+      '<input type="checkbox" id="rb-ack"> I understand this device will go down' +
+    '</label>';
+  var schedulePart;
+  if (rb.schedule) {
+    schedulePart = '<p class="hint" style="margin:0.75rem 0 0">A reboot is already scheduled for ' + escapeHtml(_fwWhenText(rb.schedule.scheduledFor)) + ' — change or cancel it from the chip beside the button.</p>';
+  } else {
+    var locked = mode === "schedule-only";
+    schedulePart =
+      '<div style="margin-top:0.9rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
+        '<label style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:' + (locked ? "default" : "pointer") + '">' +
+          '<input type="checkbox" id="rb-schedule"' + (locked ? " checked disabled" : "") + '> Schedule for later' +
+        '</label>' +
+        '<div id="rb-sched-fields" style="margin-top:0.6rem' + (locked ? '' : ';display:none') + '">' + _rebootScheduleFieldsHTML(null, opts.defaults, locked ? rb.reason : null) + '</div>' +
+      '</div>';
+  }
+  return device + warnBox + schedulePart;
+}
+
+async function _openRebootModal(a, rb, existing) {
+  var mode = existing ? "change" : (rb.available ? "choose" : "schedule-only");
+  var defaults = null;
+  if (existing === null && !rb.schedule) {
+    try { defaults = await api.assets.rebootScheduleDefaults(a.id); } catch (e) { defaults = null; }
+  }
+  var name = a.hostname || a.ipAddress || "device";
+  var title = existing ? "Change scheduled reboot — " + name : "Reboot — " + name;
+  var footer =
+    (existing ? '<button class="btn btn-danger" id="btn-rb-cancel-booking" style="margin-right:auto">Cancel scheduled reboot</button>' : '') +
+    '<button class="btn btn-secondary" onclick="closeModal()">Close</button>' +
+    '<button class="btn btn-primary" id="btn-rb-go" disabled></button>';
+  openModal(title, _rebootModalHTML(a, rb, { mode: mode, existing: existing, defaults: defaults }), footer);
+
+  var ack = document.getElementById("rb-ack");
+  var later = document.getElementById("rb-schedule");
+  var fields = document.getElementById("rb-sched-fields");
+  var whenEl = document.getElementById("rb-sched-when");
+  var emailsEl = document.getElementById("rb-sched-emails");
+  var btn = document.getElementById("btn-rb-go");
+  function scheduling() { return mode === "change" || !!(later && later.checked); }
+  function sync() {
+    if (fields && later) fields.style.display = later.checked ? "" : "none";
+    var acked = mode === "change" || !!(ack && ack.checked);
+    if (scheduling()) {
+      btn.textContent = existing ? "Save changes" : "Schedule reboot";
+      btn.disabled = !(acked && whenEl && whenEl.value && emailsEl && _fwParseEmails(emailsEl.value).length > 0);
+    } else {
+      btn.textContent = "Reboot now";
+      btn.disabled = !acked || !rb.available;
+    }
+  }
+  [ack, later].forEach(function (el) { if (el) el.addEventListener("change", sync); });
+  [whenEl, emailsEl].forEach(function (el) { if (el) el.addEventListener("input", sync); });
+
+  var cancelBooking = document.getElementById("btn-rb-cancel-booking");
+  if (cancelBooking) {
+    cancelBooking.addEventListener("click", async function () {
+      var ok = await showConfirm("Cancel the reboot scheduled for " + _fwWhenText(existing.scheduledFor) + "?\nNothing is sent to the device and no email goes out.");
+      if (!ok) return;
+      try {
+        await api.assets.cancelRebootSchedule(a.id, existing.id);
+        closeModal();
+        showToast("Scheduled reboot cancelled", "success");
+      } catch (err) {
+        showToast((err && err.message) || "Could not cancel the scheduled reboot", "error");
+      }
+      _loadAssetRebootControl(a);
+    });
+  }
+
+  btn.addEventListener("click", function () {
+    var call, done;
+    if (scheduling()) {
+      var when = new Date(whenEl.value); // datetime-local parses as the browser's local time
+      if (isNaN(when.getTime())) { showToast("Pick a date and time", "error"); return; }
+      var body = { scheduledFor: when.toISOString(), notifyEmails: _fwParseEmails(emailsEl.value) };
+      call = existing ? api.assets.updateRebootSchedule(a.id, existing.id, body) : api.assets.scheduleReboot(a.id, body);
+      done = existing ? "Scheduled reboot changed" : "Reboot scheduled for " + when.toLocaleString();
+    } else {
+      call = api.assets.startReboot(a.id);
+      done = "Reboot sent — Polaris is watching for the device to come back";
+    }
+    btn.disabled = true;
+    call.then(function () {
+      closeModal();
+      showToast(done, "success");
+      _loadAssetRebootControl(a);
+    }).catch(function (err) {
+      btn.disabled = false;
+      showToast((err && err.message) || (scheduling() ? "Could not save the schedule" : "Could not start the reboot"), "error");
+    });
+  });
+  sync();
+}
+
+/** Watch a live reboot until it ends, then say how it went and redraw the control. One poll per (asset, run). */
+function _startRebootPoll(a, runId) {
+  var key = a.id + ":" + runId;
+  if (_rebootPollKey === key) return;
+  _rebootPollKey = key;
+  var tick = function () {
+    var wrap = document.getElementById("asset-reboot-wrap");
+    if (!wrap || wrap.getAttribute("data-asset-id") !== a.id || _rebootPollKey !== key) { if (_rebootPollKey === key) _rebootPollKey = null; return; }
+    api.assets.rebootRun(a.id, runId).then(function (res) {
+      var run = res && res.run;
+      if (_rebootPollKey !== key) return;
+      if (run && (run.status === "queued" || run.status === "sending" || run.status === "rebooting")) {
+        var b = document.getElementById("btn-asset-reboot");
+        if (b) b.title = "Reboot in progress (" + (run.stage || run.status) + ") — signed by " + (run.authority || "?");
+        setTimeout(tick, 5000);
+        return;
+      }
+      _rebootPollKey = null;
+      if (run) {
+        var kind = run.status === "succeeded" ? "success" : run.status === "unverified" ? "warning" : "error";
+        showToast("Reboot of " + (a.hostname || a.ipAddress || "the device") + " " + run.status + (run.error ? ": " + run.error : ""), kind);
+      }
+      _loadAssetRebootControl(a);
+    }).catch(function () { setTimeout(tick, 10000); });
+  };
+  setTimeout(tick, 3000);
+}
+
+/** The deploy dialogs' opt-in box (single + bulk). Pure. */
+function _agentRebootOptInHTML(id, bulk) {
+  return '<div class="form-group">' +
+    '<label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal;cursor:pointer">' +
+      '<input type="checkbox" id="' + id + '"> Allow Polaris to reboot ' + (bulk ? 'these hosts' : 'this host') +
+    '</label>' +
+    '<p class="hint">Off by default. Turning it on lets the asset’s <strong>Reboot</strong> button (and a scheduled reboot) restart ' + (bulk ? 'each host' : 'the host') +
+      ' through the agent. On Linux it installs a polkit rule that lets the unprivileged agent ask systemd-logind to reboot — nothing else about the agent’s privileges changes. It can be turned on or off later from the agent card.</p>' +
+  '</div>';
+}
+
+/** The agent card's "Reboots" row + its Enable / Disable control. Pure. */
+function _agentRebootRowHTML(agent) {
+  var label, color = "";
+  if (!agent.rebootEnabled) { label = "Disabled"; }
+  else if (agent.rebootCapable === true) { label = "Enabled ✓"; color = "var(--color-success)"; }
+  else if (agent.rebootCapable === false) { label = "Enabled — the host refuses (turn off and on again to repair)"; color = "var(--color-danger)"; }
+  else { label = "Enabled — waiting for the agent to confirm"; color = "var(--color-warning)"; }
+  var toggleable = agent.installStatus === "active" || agent.installStatus === "enrolling" || agent.installStatus === "upgrade_failed";
+  var btn = (toggleable && typeof canDeployAgent === "function" && canDeployAgent())
+    ? ' <button type="button" class="btn btn-sm btn-secondary" id="btn-agent-reboot-toggle" data-enable="' + (agent.rebootEnabled ? "0" : "1") + '" style="margin-left:0.4rem;padding:1px 8px">' +
+        (agent.rebootEnabled ? "Disable" : "Enable…") + '</button>'
+    : '';
+  return '<div>Reboots: <strong' + (color ? ' style="color:' + color + '"' : '') + '>' + escapeHtml(label) + '</strong>' + btn + '</div>';
+}
+
+async function _toggleAgentReboot(a, agent, btn) {
+  var enable = btn.getAttribute("data-enable") === "1";
+  var ok = await showConfirm(enable
+    ? "Allow Polaris to reboot this host?\n\nPolaris signs in with the agent's install credential and " +
+      (agent.osPlatform === "linux" ? "installs a polkit rule letting the unprivileged agent ask systemd-logind to reboot, plus a root-owned marker file." : "writes a marker file the agent requires before it will reboot the host.") +
+      " Anyone with Read-Write on Assets can then reboot it from the Reboot button."
+    : "Stop Polaris from rebooting this host?\n\nPolaris stops sending reboots at once, and removes the host-side permission over the agent's install credential.");
+  if (!ok) return;
+  btn.disabled = true;
+  btn.textContent = enable ? "Enabling…" : "Disabling…";
+  try {
+    var res = await api.assets.setAgentReboot(a.id, enable);
+    if (res && res.hostError) showToast("Reboots disabled — but the host-side permission could not be removed: " + res.hostError, "warning");
+    else showToast(enable ? "Reboots enabled — the agent confirms on its next heartbeat" : "Reboots disabled", "success");
+  } catch (err) {
+    showToast((err && err.message) || "Could not change reboots", "error");
+  }
+  openViewModal(a.id);
+}
+
 function _assetDiscoverNowBtnHTML(a) {
   if (typeof canManageAssets !== "function" || !canManageAssets()) return "";
   var topo = a && a.fortinetTopology;
@@ -13742,7 +14055,7 @@ function assetMonitoringViewHTML(a) {
     return '<div style="padding:1rem 0">' +
       pill + overridePill + ' &nbsp; ' +
       '<span style="color:var(--color-text-secondary)">' + unmonMsg + '</span>' +
-      overrideReset +
+      overrideReset + _assetRebootSlotHTML(a) +
     '</div>';
   }
   // "Managed by" label: the integration that OWNS this asset's monitoring
@@ -13831,7 +14144,7 @@ function assetMonitoringViewHTML(a) {
       // (a down→up flip would otherwise leave the pill stale). depTestBtn sits
       // outside the wrapper — a probe never changes the dependency-test state.
       '<div class="detail-row"><span class="detail-label">Status</span>' +
-        '<span class="detail-value">' + discoverBtn + '<span id="asset-status-pill-wrap">' + pill + overridePill + '</span>' + overrideReset + depTestBtn + '</span></div>' +
+        '<span class="detail-value">' + discoverBtn + '<span id="asset-status-pill-wrap">' + pill + overridePill + '</span>' + overrideReset + depTestBtn + _assetRebootSlotHTML(a) + '</span></div>' +
       // Last hour intermittency bar — one cell per probe sample, colored
       // by the resolved monitor state at that point. Sits in a single
       // grid column (half the panel); the value cell is flex:1 so the bar

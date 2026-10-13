@@ -1019,6 +1019,18 @@ const api = {
     scheduleFirmwareUpgrade:  (id, body)      => request("POST",   `/assets/${id}/firmware-upgrade/schedules`, body),
     updateFirmwareSchedule:   (id, sid, body) => request("PATCH",  `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`, body),
     cancelFirmwareSchedule:   (id, sid)       => request("DELETE", `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`),
+    // Reboots (business rule 115): what may reboot this asset and how (plus
+    // its pending booking, `schedule`), reboot now (assets:write), the run
+    // history, bookings, and an agent host's opt-in (assets:fullwrite).
+    reboot:                 (id)            => request("GET",    `/assets/${id}/reboot`),
+    startReboot:            (id)            => request("POST",   `/assets/${id}/reboot`),
+    rebootRuns:             (id)            => request("GET",    `/assets/${id}/reboot/runs`),
+    rebootRun:              (id, runId)     => request("GET",    `/assets/${id}/reboot/runs/${encodeURIComponent(runId)}`),
+    rebootScheduleDefaults: (id)            => request("GET",    `/assets/${id}/reboot/schedules/defaults`),
+    scheduleReboot:         (id, body)      => request("POST",   `/assets/${id}/reboot/schedules`, body),
+    updateRebootSchedule:   (id, sid, body) => request("PATCH",  `/assets/${id}/reboot/schedules/${encodeURIComponent(sid)}`, body),
+    cancelRebootSchedule:   (id, sid)       => request("DELETE", `/assets/${id}/reboot/schedules/${encodeURIComponent(sid)}`),
+    setAgentReboot:         (id, enabled)   => request("PUT",    `/assets/${id}/reboot/agent`, { enabled: !!enabled }),
     // Polaris Agent — operator-facing endpoints (see the polaris-agent skill "Polaris
     // Agent API surface"). `agent.get` returns 404 when no agent is
     // installed yet; the caller should treat that as "no install" rather

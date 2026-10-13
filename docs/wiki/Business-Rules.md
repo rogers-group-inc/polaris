@@ -2165,3 +2165,34 @@ granter.**
   permission that became stronger in the September 2026 update — are listed
   until an administrator saves them or marks them reviewed. Nothing is taken
   away automatically.
+
+### Rule 115
+
+**A device reboots only on an opt-in held where the authority lives, and a
+reboot Polaris sends is proved, not assumed.**
+
+- **Pressing Reboot needs Read-Write on Assets; being rebootable needs an
+  opt-in.** A FortiGate, FortiSwitch or FortiAP is rebootable only through a
+  stored credential with **Allow reboots** (SSH, REST API token or device admin
+  login), or through its FortiManager / FortiGate integration with **Allow
+  reboots**. An agent host is rebootable only once it opted in on the agent
+  card — which installs a polkit rule and a marker on the host — and the agent
+  reports the host will do it. A stored credential is used before the
+  integration's token.
+- **A managed FortiSwitch or FortiAP is restarted through its FortiGate.** The
+  FortiGate is asked to restart it by name, after confirming by serial number
+  that it manages the device.
+- **An HA FortiGate is never rebooted**, and a FortiGate that answers with
+  another serial number is never sent the reboot.
+- **A reboot is reported succeeded only on proof the device restarted** — its
+  boot time changed, its FortiGate saw it drop and reconnect, the agent reported
+  a new boot, or monitoring saw its uptime reset. A device that accepted the
+  reboot but was never seen to go down is *unverified*.
+- **Polaris holds the device's alerts while it reboots**
+  ([rule 80](#rule-80)), from the moment the reboot is sent until its
+  monitoring answers again.
+- **An agent that does not pick a reboot up within about two and a half
+  minutes never runs it.**
+- **A scheduled reboot** is checked when it is booked and again when it fires,
+  is not sent more than 15 minutes late, and its recipients hear the outcome
+  either way ([rule 93](#rule-93)).

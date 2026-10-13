@@ -89,10 +89,27 @@ secret.**
 An HTTP credential in **Device admin login (form)** mode is the username and
 password a switch, access point or FortiGate's *own* web UI takes. It is not an HTTP
 authentication scheme: an HTTP-check widget will not accept it, and nothing
-ever turns it into a header. Its one consumer is the [Repository](#repository),
-which posts it to the device's login page when it upgrades firmware. Test
+ever turns it into a header. The [Repository](#repository) posts it to the
+device's login page when it upgrades firmware, and a FortiGate reboot signs in
+with it when it has **Allow reboots** ticked ([below](#allow-reboots)). Test
 Connection on one of these says so instead of probing — the upgrade engine
 signing in is what proves it.
+
+### Allow reboots
+
+An **SSH**, **REST API** or **Device admin login** credential has an **Allow
+reboots** box, off by default ([rule 115](Business-Rules#rule-115)). Ticked, it
+lets the credential reboot the FortiGate it is set on — on any of the asset's
+monitoring streams, or bound for the device in the [Repository](#device-logins)
+— and restart the FortiSwitches and FortiAPs that FortiGate manages; an SSH
+credential on a standalone FortiSwitch or FortiAP reboots that device over its
+own command line. Anyone with Read-Write on Assets can then press
+[Reboot…](Assets#reboot) on those devices. The admin behind the credential needs
+System read-write on the device (and WiFi & Switch read-write for managed
+switches and access points). The box is not offered on SNMP, WinRM or other
+HTTP credentials, which cannot reboot anything. The credential list says
+*reboots allowed* beside a credential that has it, and turning it on or off
+writes a warning-level Event on the credential.
 
 ---
 
