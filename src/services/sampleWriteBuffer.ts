@@ -170,6 +170,7 @@ export interface InterfaceSampleRow {
   adminStatus: string | null;
   operStatus: string | null;
   speedBps: bigint | null;
+  duplex: string | null;
   ipAddress: string | null;
   macAddress: string | null;
   inOctets: bigint | null;

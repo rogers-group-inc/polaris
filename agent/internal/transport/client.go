@@ -173,6 +173,7 @@ type InterfaceSample struct {
 	AdminStatus *string `json:"adminStatus,omitempty"` // "up" | "down" | ...
 	OperStatus  *string `json:"operStatus,omitempty"`
 	SpeedBps    *uint64 `json:"speedBps,omitempty"`
+	Duplex      *string `json:"duplex,omitempty"` // "full" | "half"; omitted when unknown
 	IPAddress   *string `json:"ipAddress,omitempty"`
 	MACAddress  *string `json:"macAddress,omitempty"`
 	InOctets    *uint64 `json:"inOctets,omitempty"`

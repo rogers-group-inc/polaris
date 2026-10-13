@@ -85,6 +85,7 @@ export async function backfillInterfaceInventory(): Promise<void> {
             adminStatus:    s.adminStatus,
             operStatus:     s.operStatus,
             speedBps:       s.speedBps,
+            duplex:         s.duplex,
             ipAddress:      s.ipAddress,
             macAddress:     s.macAddress,
             inOctets:       s.inOctets,

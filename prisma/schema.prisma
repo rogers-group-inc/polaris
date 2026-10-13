@@ -1587,6 +1587,12 @@ model AssetInterfaceSample {
   // attached to a best-guess interface.
   poeStatus      String?
   poeClass       String?
+  // Negotiated duplex of a link that is up: "full" | "half"; null when the
+  // link is down or the source can't say. EtherLike-MIB dot3StatsDuplexStatus
+  // over SNMP, `duplex` in the FortiOS monitor interface payload, sysfs /
+  // MSFT_NetAdapter from the Polaris Agent, the pNIC link on vCenter hosts.
+  // Read by interfaceLinkEventService for the interface up event.
+  duplex         String?
   // Cadence discriminator for selection-aware retention. "fast" = this row came
   // from the response-time re-walk of an operator-pinned interface
   // (monitoredInterfaces); "slow" = the full system-info scrape. NULL = legacy
@@ -1634,6 +1640,8 @@ model AssetInterface {
   adminStatus String?
   operStatus  String?
   speedBps    BigInt?
+  // "full" | "half" | null — same semantics as AssetInterfaceSample.duplex.
+  duplex      String?
   ipAddress   String?
   macAddress  String?
 

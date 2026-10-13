@@ -335,6 +335,7 @@ downgrade to an older binary keeps working.
 |---|---|
 | responseTime | its own heartbeat |
 | cpuMemory, temperature, interfaces, storage | host telemetry |
+| — *interface link state* | agent **0.25.0+** reads each NIC's real link state, negotiated speed and duplex from the OS (sysfs on Linux, the network adapter on Windows). An older agent reports a NIC as up whenever it is enabled and sends no speed, so an unplugged cable reads *up* and an interface-down automation on that host never fires — upgrade the agent before relying on one |
 | — *per-core CPU and the memory breakdown* | the agent's own accounting — see below. [vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) reports both too, in its own vocabulary |
 | **processes** | **agent-default-ON** — an installed agent collects its process inventory automatically |
 | services | the unit / service inventory for the asset's [Services tab](Assets#services), with per-service CPU and memory (agent 0.22.0+ on Windows). Ticking a service's Monitor box also collects its log: the journal on Linux, its Event Log entries on Windows (0.22.0+) |

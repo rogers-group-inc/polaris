@@ -58,6 +58,7 @@ AssetInterfaceSample            -- PINNED-ONLY per-interface time-series (2026-0
   adminStatus   String?         -- "up" | "down" | "testing" | ...
   operStatus    String?         -- ditto
   speedBps      BigInt?         -- Bits per second; from ifHighSpeed*1e6 or ifSpeed
+  duplex        String?         -- Negotiated duplex of an UP link: "full" | "half"; NULL when the link is down or the source can't say. SNMP EtherLike-MIB dot3StatsDuplexStatus (indexed by ifIndex; walked on the heavy pass, its OWN multi-GET on the fast pass so an SNMPv1 noSuchName can't sink the counters), FortiOS monitor `duplex` (1 = full, 0 = half on an up link — `fortiMonitorDuplex`), the Polaris Agent (sysfs / MSFT_NetAdapter, agent ≥ 0.25.0), vCenter pNIC `linkSpeed`. Not rolled up — current state, not a trend. Read by `interfaceLinkEventService` for the `monitor.interface_up` Event.
   ipAddress     String?
   macAddress    String?
   inOctets      BigInt?         -- Cumulative counter; subtract consecutive samples for throughput
