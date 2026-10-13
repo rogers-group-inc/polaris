@@ -603,7 +603,7 @@ const FortiManagerConfigSchema = z.object({
   // Peer-inferred FortiLink rows (synthesized from topology) are unaffected.
   // FortiOS-only; default off. Mirrored on FortiGateConfigSchema for parity.
   excludeFortilinkLldp: z.boolean().optional().default(false),
-  // Allow reboots (business rule 114). When true, this integration's FortiOS
+  // Allow reboots (business rule 115). When true, this integration's FortiOS
   // API token (`fortigateApiToken`, through the proxy or direct per useProxy)
   // may reboot the FortiGates it discovered — and their FortiLink switches and
   // CAPWAP APs, through the controlling gate — from an asset's Reboot button.
@@ -690,7 +690,7 @@ const FortiGateConfigSchema = z.object({
   // FortiOS-only; default off.
   excludeFortilinkLldp: z.boolean().optional().default(false),
   // Allow reboots with this integration's API token — see
-  // FortiManagerConfigSchema.allowReboot (business rule 114). Default off.
+  // FortiManagerConfigSchema.allowReboot (business rule 115). Default off.
   allowReboot: z.boolean().optional().default(false),
   // Per-integration verbose debug logging — see FortiManagerConfigSchema for
   // shape + semantics. Default false.
@@ -1963,7 +1963,7 @@ router.put("/:id", async (req, res, next) => {
       }
     }
 
-    // Granting or withdrawing the token's right to reboot devices (rule 114)
+    // Granting or withdrawing the token's right to reboot devices (rule 115)
     // is named in the record, not folded into a bare "updated".
     const rebootBefore = (existing.config as Record<string, unknown> | null)?.allowReboot === true;
     const rebootAfter = ((updated.config as Record<string, unknown>) || {}).allowReboot === true;

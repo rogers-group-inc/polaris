@@ -1,6 +1,6 @@
 /**
  * src/api/routes/reboot.ts — rebooting an asset now or later (business rule
- * 114). Mounted at /assets/:id/reboot, BEFORE /assets so "reboot" is never
+ * 115). Mounted at /assets/:id/reboot, BEFORE /assets so "reboot" is never
  * read as an asset sub-resource.
  *
  * Reads are `assets:read` (whoever can open the asset sees the Reboot button
@@ -130,7 +130,7 @@ rebootAssetRouter.delete("/schedules/:scheduleId", requirePermission("assets", "
   res.json({ schedule: await cancelRebootSchedule(String(req.params.id), String(req.params.scheduleId), requestActor(req) ?? "unknown") });
 }));
 
-// An agent host's opt-in (rule 114): installs or removes the host-side
+// An agent host's opt-in (rule 115): installs or removes the host-side
 // permission over the agent's install credential, and answers once the host
 // has (seconds — one short script over SSH / WinRM).
 rebootAssetRouter.put("/agent", requirePermission("assets", "fullwrite"), handle(async (req, res) => {

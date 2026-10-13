@@ -1,7 +1,7 @@
 /**
  * src/utils/rebootResultEmailTemplate.ts
  *
- * The SCHEDULED reboot results email (business rule 114, the rule-93 shape):
+ * The SCHEDULED reboot results email (business rule 115, the rule-93 shape):
  * what happened to a reboot an operator booked for later, sent to the
  * booking's recipients once there is an outcome. Pure — takes the facts the
  * schedule service collected and renders text + HTML for ONE reader in ONE

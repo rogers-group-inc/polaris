@@ -1,5 +1,5 @@
 // Package reboot is the agent half of an operator-requested host reboot
-// (Polaris business rule 114).
+// (Polaris business rule 115).
 //
 // The agent reboots its host ONLY when the host carries the opt-in marker
 // that Polaris's install / "enable reboots" step wrote as root — a file the

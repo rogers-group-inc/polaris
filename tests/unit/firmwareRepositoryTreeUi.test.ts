@@ -402,7 +402,7 @@ describe("the credential form's device-login mode", () => {
     expect(text(box)).toMatch(/Server Settings → Repository/);
     expect(text(box)).toMatch(/HTTP-check widget will not accept it/);
     // The token carrier rides along empty; the server strips it for this mode.
-    // allowReboot (rule 114) is always sent on a device login, so an unticked box clears a stored true.
+    // allowReboot (rule 115) is always sent on a device login, so an unticked box clears a stored true.
     expect(sb.readCredentialForm("http")).toEqual({ authMode: "form", apiToken: "", username: "admin", password: "••••••••", allowReboot: false });
     host.remove();
   });

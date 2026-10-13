@@ -8424,7 +8424,7 @@ function credSshForm(cfg) {
 }
 
 /**
- * The "Allow reboots" opt-in (business rule 114) — one box shared by the three
+ * The "Allow reboots" opt-in (business rule 115) — one box shared by the three
  * credential kinds that can reboot a FortiGate / FortiSwitch / FortiAP: SSH,
  * REST API token, and a device admin login (`http` in form mode, so it rides
  * `data-http-auth="form"`). Off by default; the server refuses it on any other
@@ -8592,7 +8592,7 @@ function wireHttpAuthModeToggle() {
 
 function readCredentialForm(type) {
   var cfg = _readCredentialFormFields(type);
-  // Allow reboots (business rule 114) rides the SSH, REST API and device admin
+  // Allow reboots (business rule 115) rides the SSH, REST API and device admin
   // login forms. Sent on those types every time — an unticked box must clear
   // a stored `true`, since the server merges config onto the stored row.
   var allowReboot = document.getElementById("f-cred-allowreboot");

@@ -462,7 +462,7 @@ export function validateConfig(type: CredentialType, config: Record<string, unkn
 
 /**
  * The credential kinds that can reboot a FortiGate, FortiSwitch or FortiAP
- * (business rule 114): an SSH login (`execute reboot`), a REST API token
+ * (business rule 115): an SSH login (`execute reboot`), a REST API token
  * (FortiOS `system/os/reboot`), and a device admin login (`http` in `form`
  * mode — the firmware repository's login, rule 87). Pure; shared by the
  * validator, the reboot resolver and the form.
@@ -478,7 +478,7 @@ export function credentialAllowsReboot(type: string, config: Record<string, unkn
 }
 
 /**
- * `allowReboot` (rule 114) is a boolean, and only on a kind that can reboot.
+ * `allowReboot` (rule 115) is a boolean, and only on a kind that can reboot.
  * Runs on the MERGED config after the per-type validator, so an http
  * credential switched away from form login loses the flag with the login it
  * belonged to instead of 400-ing; `true` sent on a kind that can never reboot

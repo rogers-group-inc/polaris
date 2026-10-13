@@ -147,7 +147,7 @@ router.put("/:id", requireOwnership("credentials"), async (req, res, next) => {
       name: input.name,
       config: input.config,
     });
-    // Granting or withdrawing the right to reboot devices (rule 114) is named
+    // Granting or withdrawing the right to reboot devices (rule 115) is named
     // in the record, not folded into a bare "updated".
     const rebootBefore = credentialService.credentialAllowsReboot(existing.type, existing.config);
     const rebootAfter = credentialService.credentialAllowsReboot(saved.type, saved.config);

@@ -564,7 +564,7 @@ export interface BulkInstallInput {
    *  CAP_SYS_PTRACE for Application Map connection attribution. Default
    *  "unprivileged". */
   privilegeTier?:     AgentPrivilegeTier;
-  /** Reboot opt-in for every host in the batch (business rule 114). Default off. */
+  /** Reboot opt-in for every host in the batch (business rule 115). Default off. */
   allowReboot?:       boolean;
   actor:              string;
 }
@@ -955,7 +955,7 @@ async function runInstall(input: StartInstallInput): Promise<void> {
     return failInstall(managedAgentId, row.assetId, `Unsupported osPlatform ${row.osPlatform}`);
   }
 
-  // The reboot opt-in (business rule 114), when it was ticked at deploy — or
+  // The reboot opt-in (business rule 115), when it was ticked at deploy — or
   // re-applied on a reinstall of a host that had it. Best-effort: the agent is
   // installed either way, and the card shows "enabled, host refuses" until
   // the agent reports the permission, with an Event that says why.
@@ -1492,7 +1492,7 @@ rm -rf /var/lib/polaris-agent
 rm -rf /var/lib/private/polaris-agent
 rm -rf /etc/polaris-agent       # legacy pre-StateDirectory location
 rm -f  /usr/local/bin/polaris-agent
-# The reboot opt-in (business rule 114): its marker and polkit rules.
+# The reboot opt-in (business rule 115): its marker and polkit rules.
 ${LINUX_REBOOT_PERMISSION_CLEANUP}
 
 echo "Polaris Agent removed"
@@ -1843,7 +1843,7 @@ async function sshWindowsUpgrade(p: SshWindowsUpgradeParams): Promise<void> {
   await runPowerShellOverSsh(p.host, p.cred, ps, "polaris-agent-upgrade.ps1", 180_000);
 }
 
-// ─── Reboot permission (business rule 114) ────────────────────────────
+// ─── Reboot permission (business rule 115) ────────────────────────────
 //
 // The host-side half of an agent host's reboot opt-in — the root-owned marker
 // and, on Linux, the polkit rule (utils/agentRebootPermission.ts). Run over

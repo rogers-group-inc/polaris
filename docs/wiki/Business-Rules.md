@@ -2139,7 +2139,7 @@ different machine is refused until its pin is deleted. Trust on first use
 cannot detect a server that was already impersonated when Polaris first
 connected to it.
 
-### Rule 114
+### Rule 115
 
 **A device reboots only on an opt-in held where the authority lives, and a
 reboot Polaris sends is proved, not assumed.**

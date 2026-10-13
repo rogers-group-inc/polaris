@@ -1,7 +1,7 @@
 /**
  * src/jobs/failOrphanedRebootRuns.ts
  *
- * Startup sweep: a reboot run (business rule 114) is watched from the web
+ * Startup sweep: a reboot run (business rule 115) is watched from the web
  * process's memory, so one that was queued, sending or rebooting when the
  * process died can never finish. Mark each one failed, release its
  * maintenance hold, and say in the Event that the device needs checking.

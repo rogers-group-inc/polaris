@@ -13657,7 +13657,7 @@ function _assetOverrideResetBtn(a) {
 // authority; this function only decides what to render. In particular it does
 // not try to prove a switch's controller is in Polaris — the route answers
 // that with a clear 400.
-// ─── Reboot (business rule 114) ──────────────────────────────────────────────
+// ─── Reboot (business rule 115) ──────────────────────────────────────────────
 // The Status row's Reboot… button. Rendered as an empty slot with the row and
 // filled once GET /assets/:id/reboot answers, so the panel never waits on it
 // (and the openViewModal fetch wave is untouched). The SERVER decides what may

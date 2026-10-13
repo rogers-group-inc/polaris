@@ -1,6 +1,6 @@
 /**
  * src/services/rebootScheduleService.ts — a reboot booked for later (business
- * rule 114), and the email that says how it went. The rule-93 shape, shared
+ * rule 115), and the email that says how it went. The rule-93 shape, shared
  * with the firmware booking: approved when booked, judged when it fires, on
  * time or not at all, and its recipients hear the outcome either way.
  *

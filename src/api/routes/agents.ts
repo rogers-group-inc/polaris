@@ -1094,7 +1094,7 @@ const HeartbeatSchema = z.object({
   // DAC_READ_SEARCH) from the pre-fix SYS_PTRACE-only unit that collects no
   // Application Map connections.
   capEff: z.string().max(32).optional(),
-  // Reboots (business rule 114, agent ≥0.26.0): whether this host lets the
+  // Reboots (business rule 115, agent ≥0.26.0): whether this host lets the
   // agent reboot it (the opt-in marker is present and, on Linux, logind
   // answers CanReboot=yes for the agent), and when the host last booted —
   // how a reboot run proves the host really went down. Strings, because the

@@ -4407,7 +4407,7 @@ function readVerboseLoggingFromForm() {
   return el ? el.checked === true : false;
 }
 
-// "Allow reboots" (business rule 114) — on the General tab of the FortiManager
+// "Allow reboots" (business rule 115) — on the General tab of the FortiManager
 // and FortiGate dialogs, identical on both (the parity convention). Lets this
 // integration's FortiOS API token reboot the FortiGates it discovered and
 // restart their managed FortiSwitches / FortiAPs from an asset's Reboot

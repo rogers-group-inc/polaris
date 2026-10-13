@@ -1,6 +1,6 @@
 /**
  * src/services/rebootTransports.ts — how a reboot reaches a FortiGate
- * (business rule 114). The protocol half of the reboot runner: no Prisma, no
+ * (business rule 115). The protocol half of the reboot runner: no Prisma, no
  * Events, no holds — a link in, a few operations out.
  *
  * Four links, all answering to one `GateOps` surface:

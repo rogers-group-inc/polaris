@@ -543,7 +543,7 @@ host, with **Enable…** / **Disable** ([Polaris Agent](Polaris-Agent#reboots)).
 #### Reboot
 
 **Reboot…** on the Status row restarts the device, now or at a time you pick
-([rule 114](Business-Rules#rule-114)). It is there for a FortiGate, a
+([rule 115](Business-Rules#rule-115)). It is there for a FortiGate, a
 FortiSwitch, a FortiAP and a host running the Polaris Agent, and pressing it
 needs **Read-Write on Assets**. Whether the device *can* be rebooted is decided
 elsewhere, by an opt-in at the place that holds the power to do it:

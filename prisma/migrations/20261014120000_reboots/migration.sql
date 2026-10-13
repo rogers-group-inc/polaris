@@ -1,4 +1,4 @@
--- Reboots (business rule 114), 2026-10-13.
+-- Reboots (business rule 115), 2026-10-13.
 --
 --   reboot_runs       one reboot of one asset — a FortiGate, a FortiSwitch /
 --                     FortiAP (through its controlling FortiGate), or a host
