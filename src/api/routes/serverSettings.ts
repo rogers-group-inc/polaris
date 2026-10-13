@@ -2,6 +2,7 @@
  * src/api/routes/serverSettings.ts — NTP and certificate management endpoints
  */
 
+import { ensurePrivateDir } from "../../utils/privateFiles.js";
 import { chunkArray } from "../../utils/chunk.js";
 import { Router } from "express";
 import multer from "multer";
@@ -299,7 +300,7 @@ router.get("/database", async (_req, res, next) => {
 
 // ─── Database Backup ──────────────────────────────────────────────────────
 
-mkdirSync(BACKUP_DIR, { recursive: true });
+ensurePrivateDir(BACKUP_DIR);
 
 router.post("/database/backup", maintenanceLimiter, requirePermission("serverSettingsData", "write"), async (req, res, next) => {
   try {

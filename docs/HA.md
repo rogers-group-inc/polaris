@@ -485,6 +485,25 @@ Also exchange the sync keys now: each setup run prints the `authorized_keys`
 line to install in the **other** node's `/root/.ssh/authorized_keys`. Both
 directions, because the roles swap.
 
+Then **pin each peer's SSH host key** (business rule 117). The file sync
+pulls root-run files — unit files, sudoers, helpers — from the peer as root,
+so it connects only to a host key you pinned on purpose, never to whatever
+answers first. Setup prints this node's fingerprints. On each node, run:
+
+```bash
+polaris-ha-role pin-peer
+```
+
+It shows the keys the peer presents and asks for the SHA256 fingerprint. Read
+that fingerprint on the **peer** itself (`ssh-keygen -lf
+/etc/ssh/ssh_host_ed25519_key.pub`, or setup's output), never from the screen
+that asked. A node built from an enrollment bundle whose peer had already
+enrolled gets `sync/peer_host_fingerprints`. Copy it to
+`/etc/polaris/ha/peer_host_fingerprints` and `pin-peer` (and the sync itself,
+when nothing is pinned yet) matches against it without asking. Until a key is
+pinned the sync refuses, and `journalctl -t polaris-ha` says to run `pin-peer`.
+A peer whose host key changes later (a rebuilt node) needs `pin-peer` again.
+
 ### Phase 3 — adopt the running cluster (the maintenance window, ~15 min)
 
 ```bash
@@ -641,6 +660,43 @@ etcdctl ... member add witness2 --peer-urls=https://<new-addr>:2380
 patronictl -c /etc/patroni/patroni.yml reload <cluster>
 ```
 
+### Verify the replication certificate
+
+A cluster built by `setup-rhel-ha.sh` from rule 117 on serves each member's
+etcd certificate to PostgreSQL. That certificate is issued by the cluster's
+own CA, carries the node's cluster address, and allows server use. Patroni's
+replication and rewind connections then run with `sslmode=verify-full`, so a
+node streams the database only from the peer the CA vouches for. An older
+cluster serves a self-signed certificate and connects with `sslmode=require`:
+encrypted, but it does not check who answered. Setup also falls back to
+`require`, with a warning, when the peer still presents a self-signed
+certificate. To switch an existing cluster over, during a quiet period, on
+**each** node:
+
+```bash
+# 1. Serve the member's etcd certificate and keep the CA beside it.
+N=<member-name>     # this node's name, as in /etc/polaris/etcd-ca/<member-name>.crt
+install -o postgres -g postgres -m 0644 /etc/polaris/etcd-ca/$N.crt /etc/polaris/pg-tls/server.crt
+install -o postgres -g postgres -m 0600 /etc/polaris/etcd-ca/$N.key /etc/polaris/pg-tls/server.key
+install -o postgres -g postgres -m 0644 /etc/polaris/etcd-ca/ca.crt  /etc/polaris/pg-tls/ca.crt
+patronictl -c /etc/patroni/patroni.yml reload <cluster> --force   # PostgreSQL re-reads its certificate
+```
+
+Then confirm the peer presents the new certificate:
+
+```bash
+openssl s_client -starttls postgres -connect <peer-cluster-addr>:5432 \
+  -CAfile /etc/polaris/pg-tls/ca.crt -verify_ip <peer-cluster-addr> -verify_return_error </dev/null
+```
+
+It must end with `Verify return code: 0 (ok)`. Only then, on each node, set
+`sslmode: verify-full` and `sslrootcert: /etc/polaris/pg-tls/ca.crt` under
+**both** `postgresql.authentication.replication` and `.rewind` in
+`/etc/patroni/patroni.yml`, and `patronictl … reload <cluster> --force` again.
+Watch `patronictl -c /etc/patroni/patroni.yml list`: the replica's lag column
+must keep moving. If it stops, set `sslmode` back to `require` and reload; the
+connection details are in `journalctl -u patroni`.
+
 ### Backups
 
 Unchanged, and still necessary: replication protects against a host, not
@@ -661,7 +717,8 @@ polaris-ha-role is-primary || exit 0
 | `/etc/patroni/patroni.yml` | cluster config, 0600 postgres |
 | `/etc/etcd/etcd.conf` | etcd member config |
 | `/etc/polaris/etcd-ca/` | the etcd CA and this member's certificate |
-| `/etc/polaris/pg-tls/` | PostgreSQL's replication server certificate |
+| `/etc/polaris/pg-tls/` | PostgreSQL's replication server certificate (the member's etcd certificate on a new cluster) and `ca.crt` |
+| `/etc/polaris/ha/known_hosts` | the peer's pinned SSH host key (`polaris-ha-role pin-peer`) |
 | `/etc/polaris/ha.conf` | reconciler config (peer address, sync key) |
 | `/etc/polaris/ha-secrets.env` | Patroni credentials, identical on both nodes |
 | `/etc/polaris/ha-node` | the marker that puts the updaters in HA mode |
@@ -671,11 +728,15 @@ polaris-ha-role is-primary || exit 0
 | `/usr/local/sbin/polaris-ha-ssh-wrapper` | forced command for the peer's key |
 | `/etc/systemd/system/polaris-*.service.d/10-ha.conf` | Patroni dependency + primary guard |
 | `/etc/systemd/system/polaris-ha-role.{service,timer}` | the 60s reconcile |
-| `/etc/polkit-1/rules.d/49-polaris.rules` | lets the updater restart the group |
+| `/etc/polkit-1/rules.d/49-polaris.rules` | lets the updater start `polaris-update-sync.service` and restart the polaris units — nothing else |
+| `/usr/local/sbin/polaris-update-sync` + `polaris-update-sync.service` | the updater's fixed root step: validated unit/helper sync, then the group restart |
 | `/run/polaris-ha/` | role, last sync, hold file |
 
-The sync key is a root-to-root, read-only channel guarded by a forced command.
-It is **not** a privilege boundary between the nodes: read-only root rsync can
+The sync key is a root-to-root, read-only channel guarded by a forced command,
+which accepts `rsync --server --sender` with only the flags the sync itself
+sends (no `--remove-source-files`, `--log-file`, `--write-batch` or any other
+option that writes or deletes on the serving node). It is **not** a privilege
+boundary between the nodes: read-only root rsync can
 read anything, and the two nodes already share `.env` (the secrets-at-rest key,
 the session secret, the database password) and the nginx private key. They are
 one trust domain. Treat either node's sync key like a root password.
@@ -779,6 +840,7 @@ polaris-ha-role verify        # parity against the peer; the acceptance check
 polaris-ha-role reconcile     # what the timer and the callbacks run
 polaris-ha-role preflight     # could this host serve?
 polaris-ha-role sync          # pull file state now (replica)
+polaris-ha-role pin-peer      # pin the peer's SSH host key (confirm the fingerprint)
 polaris-ha-role notify-peer   # ask the peer to sync now
 polaris-ha-role hold "why"    # suspend reconcile;  release  resumes
 polaris-ha-role catch-up      # rebuild the code tree from git (emergency)

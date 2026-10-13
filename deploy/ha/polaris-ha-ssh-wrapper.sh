@@ -42,7 +42,36 @@ case "$CMD" in
     # --sender means "read from this host". A plain `rsync --server` (no
     # --sender) is the WRITE direction and is refused: nothing should ever be
     # pushed onto a node over this channel.
-    exec $CMD
+    #
+    # Business rule 117: the prefix alone let the peer append ANY flag to a
+    # root rsync — --remove-source-files deletes what it sends, --log-file /
+    # --write-batch write files here. Split without globbing, and allow only
+    # the flags the sync's own pull sends (polaris-ha-role.sh rsync_common):
+    # the server-mode protocol cluster, the delete / delay / partial / bwlimit
+    # options. Anything else is a logged rejection.
+    set -f
+    read -ra ARGS <<< "$CMD"
+    set +f
+    [[ "${ARGS[0]}" == rsync && "${ARGS[1]}" == --server && "${ARGS[2]}" == --sender ]] || reject
+    i=3
+    while (( i < ${#ARGS[@]} )); do
+      a="${ARGS[$i]}"
+      case "$a" in
+        -[A-Za-z0-9.]*)
+          # The short-option cluster (e.g. -logDtprHe.iLsfxCIvu) — protocol
+          # flags; none of rsync's file-writing or deleting options is short.
+          [[ "$a" =~ ^-[A-Za-z0-9.]+$ ]] || reject ;;
+        --delete|--delete-delay|--delete-after|--delete-during|--delay-updates|--numeric-ids|--server|--sender) ;;
+        --partial-dir=*|--bwlimit=*) ;;
+        --partial-dir|--bwlimit) i=$((i + 1)) ;;
+        --*) reject ;;
+        .) ;;
+        /*) ;;
+        *) reject ;;
+      esac
+      i=$((i + 1))
+    done
+    exec "${ARGS[@]}"
     ;;
   *)
     reject

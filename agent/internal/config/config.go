@@ -251,11 +251,18 @@ func equalLowerSlice(a, b []string) bool {
 // leave the agent with a corrupt config.
 func (c *Config) Save() error {
 	dir := filepath.Dir(c.path)
+	restrictConfigDir(dir)
 	tmp, err := os.CreateTemp(dir, "agent.conf.*.tmp")
 	if err != nil {
 		return fmt.Errorf("create tempfile: %w", err)
 	}
 	defer os.Remove(tmp.Name()) // no-op on success after rename
+	// Before a byte of the bearer is written: on Windows the tempfile
+	// inherits the folder's ACL, which on older installs lets Users read it.
+	if err := restrictConfigFile(tmp.Name()); err != nil {
+		tmp.Close()
+		return fmt.Errorf("restrict tempfile ACL: %w", err)
+	}
 
 	w := bufio.NewWriter(tmp)
 	fmt.Fprintln(w, "# Polaris Agent configuration. Managed by agentInstallService at install")

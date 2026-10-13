@@ -24,6 +24,7 @@
  * (services/discovery/workloadSync.ts); this file knows Unraid, nothing else.
  */
 
+import { isQueryOnlyGraphql } from "../utils/graphqlOperations.js";
 import { request as httpsRequest } from "node:https";
 import { request as httpRequest } from "node:http";
 import WebSocket from "ws";
@@ -913,10 +914,13 @@ export async function fetchUnraidSnapshot(config: UnraidConfig): Promise<Workloa
  */
 export async function proxyQuery(config: UnraidConfig, query: string, variables?: Record<string, unknown>): Promise<unknown> {
   requireConfig(config);
-  const q = String(query ?? "").replace(/#[^\n]*/g, "").trim();
-  if (!q) throw new AppError(400, "Query is required");
-  if (/^\s*(mutation|subscription)\b/i.test(q)) {
-    throw new AppError(400, "Only queries can be run here — mutations and subscriptions are refused");
+  const q = String(query ?? "");
+  if (!q.trim()) throw new AppError(400, "Query is required");
+  // Read the document as a GraphQL server does (business rule 117): a prefix
+  // check let `, mutation {…}` and a leading fragment carry a mutation through
+  // with the stored API key.
+  if (!isQueryOnlyGraphql(q)) {
+    throw new AppError(400, "Only queries can be run here — a document containing a mutation or subscription is refused");
   }
   const { data, errors } = await unraidGraphql<unknown>(config, q, variables);
   return errors.length > 0 ? { data, errors } : data;

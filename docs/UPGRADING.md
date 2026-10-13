@@ -28,15 +28,13 @@ Maintenance) says the component is past, or approaching, its end of life.
 
 **The in-app updater does not do this, by design.** No path through it calls a
 package manager — not `src/services/updateService.ts`, not
-`deploy/update-linux.sh`. Read that as a policy rather than a wall, because the
-updater is not as unprivileged as it looks: besides the nginx apply wrapper it
-reaches through sudo (`deploy/sudoers.d/polaris-nginx`), its final step runs a
-transient systemd unit **as root** under the `manage-units` polkit grant in
-`deploy/polkit/49-polaris.rules`, which is how it syncs unit files,
-`/etc/sudoers.d/polaris-nginx` and the nginx config before restarting the group.
-It *could* install a package. It deliberately never has: handing the web
-application a package manager to save a once-every-two-years operation is a poor
-trade. Node upgrades are an operator (or configuration-management) task.
+`deploy/update-linux.sh`, not the root helper the updater's last step starts
+(`/usr/local/sbin/polaris-update-sync`, run by `polaris-update-sync.service`).
+That helper's commands are fixed in a root-owned file and it only syncs unit
+files, the nginx helpers and the nginx config before restarting the group
+(business rule 117). Handing the web application a package manager to save a
+once-every-two-years operation is a poor trade. Node upgrades are an operator
+(or configuration-management) task.
 
 Order matters. Native modules are compiled against the Node headers present at
 install time, so **`node_modules` must be rebuilt after the runtime changes** —
@@ -62,7 +60,9 @@ sudo bash deploy/upgrade-node.sh
 Useful flags: `--target 22` (Node 22 LTS instead of 24), `--skip-backup` (no
 `pg_dump` first), `--pull` (fast-forward the checkout before rebuilding).
 `POLARIS_APP_DIR` and `POLARIS_APP_USER` override the `/opt/polaris` + `polaris`
-defaults, and `POLARIS_UPGRADE_BACKUP_DIR` moves the `pg_dump` off `/var/tmp`.
+defaults, and `POLARIS_UPGRADE_BACKUP_DIR` moves the `pg_dump` out of its default,
+root-only `/var/backups/polaris`. The dump is written 0600 and deleted once the
+upgrade succeeds; pass `--keep-backup` to keep it.
 All three are read from the invoking environment, not from `.env` — they are
 script arguments, not Polaris runtime settings.
 
@@ -614,23 +614,40 @@ than 9 monitor replicas or need to reach Prometheus from a different host
 (`POLARIS_METRICS_BIND=0.0.0.0`).
 
 **Updater group-restart grant.** The in-app updater (Server Settings →
-Maintenance) restarts the whole group via `systemd-run … systemctl restart
-polaris.target`, which needs a polkit grant for the `polaris` user.
-`deploy/setup-rhel.sh` and `deploy/ha/setup-rhel-ha.sh` install it from
-`deploy/polkit/49-polaris.rules`; an install that predates that gets it on the
-next run of either script, or you can drop the file in by hand. Without the
-grant the updater silently falls back to restarting only the web process, so
-the monitor and discovery roles keep running the previous release against the
-freshly migrated schema. What it grants (`/etc/polkit-1/rules.d/49-polaris.rules`):
+Maintenance) restarts the whole group by starting `polaris-update-sync.service`,
+a root oneshot that runs `/usr/local/sbin/polaris-update-sync`. That helper syncs
+the shipped files and restarts `polaris.target`. Every setup script installs
+the helper, its unit and `deploy/polkit/49-polaris.rules`, and every update
+refreshes them. The rule lets the `polaris` user **start that one unit** and
+start, stop or restart `polaris.target` and the five Polaris services — no
+other unit, no transient unit, no daemon-reload (business rule 117). Without
+the grant the updater silently falls back to restarting only the web process,
+so the monitor and discovery roles keep running the previous release against
+the freshly migrated schema.
 
-```javascript
-polkit.addRule(function(action, subject) {
-  if (action.id == "org.freedesktop.systemd1.manage-units" &&
-      subject.user == "polaris") {
-    return polkit.Result.YES;
-  }
-});
+An install set up before rule 117 carries the older rule, which granted
+`manage-units` for **every** unit — the same as root, since `systemd-run`
+alone runs any command. Its next in-app update installs the helper and the
+narrowed rule automatically, through that older grant, once. If the older
+rule was never installed (Ubuntu and `-nodb` installs before rule 117), run
+`sudo bash /opt/polaris/deploy/update-linux.sh` once, or install the three
+files by hand:
+
+```bash
+sudo install -o root -g root -m 0755 /opt/polaris/deploy/scripts/polaris-update-sync.sh /usr/local/sbin/polaris-update-sync
+sudo install -o root -g root -m 0644 /opt/polaris/deploy/polaris-update-sync.service /etc/systemd/system/polaris-update-sync.service
+sudo install -o root -g root -m 0644 /opt/polaris/deploy/polkit/49-polaris.rules /etc/polkit-1/rules.d/49-polaris.rules
+sudo systemctl daemon-reload
 ```
+
+The helper checks what it installs. A Polaris unit or HA drop-in must run as
+`polaris`, may not carry a `+` or `!` Exec prefix, may hold no capability
+but `CAP_NET_BIND_SERVICE`, may use only the directives the shipped units use
+(plus hardening directives), and may depend only on Polaris, network,
+database and nginx units. The sudoers entry must pass `visudo -c` and grant
+only the nginx helper. A file that fails is not installed; `journalctl -t
+polaris-updater` shows the `REFUSED:` line. A drop-in you add yourself under
+`<unit>.d/` is never touched or checked.
 
 **Auto-sync of unit files.** Before restarting `polaris.target` the updater
 also syncs `/opt/polaris/deploy/polaris-*.service` and `polaris.target` into
@@ -639,9 +656,9 @@ overwritten only when their content differs from what's currently installed,
 so this is a no-op on updates that don't touch unit files. **Customize via
 drop-ins, not direct edits**: put per-host changes in
 `/etc/systemd/system/polaris-monitor@.service.d/local.conf` (or the matching
-unit's `.d/` directory) so they survive every update. The transient unit
-that runs the sync runs as root via the polkit grant above; no extra sudo /
-NOPASSWD entry is required.
+unit's `.d/` directory) so they survive every update. The sync runs as root
+inside `polaris-update-sync.service`; no extra sudo / NOPASSWD entry is
+required.
 
 On a high-availability node — one carrying `/etc/polaris/ha-node`, so a
 primary or a standby, never the witness — the same step then refreshes the HA
@@ -771,3 +788,52 @@ it by hand and re-run the update:
 sudo -u polaris git -C /opt/polaris status --short    # expect only staged "M" rows
 sudo -u polaris git -C /opt/polaris reset --hard HEAD
 ```
+
+---
+
+## Rotate the database password
+
+Installs set up before business rule 117 created the database account with
+the same password on every host — `polaris`, which is in the public source.
+The capacity card shows a **warning** (`db_default_password`) on any
+production install still using it. Polaris never rotates it for you: a
+rotation interrupted halfway would lock the application out of its own
+database.
+
+The rotation takes one `ALTER USER`, one line in `.env` and a restart. Do it
+in a quiet minute; the application is down only for the restart.
+
+**Local PostgreSQL (RHEL / Ubuntu installs).** Work in a root shell
+(`sudo -i`) so the new password only ever travels through an environment
+variable and standard input, never a command line another account can read in
+`ps`:
+
+```bash
+NEW="$(openssl rand -hex 24)"; export NEW
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 <<EOF
+SET password_encryption = 'scram-sha-256';
+ALTER USER polaris WITH PASSWORD '$NEW';
+EOF
+perl -pi -e 's#^((?:DATABASE_URL|POLARIS_DB_DIRECT_URL)=postgresql://polaris:)polaris@#$1$ENV{NEW}@#' /opt/polaris/.env
+chown polaris:polaris /opt/polaris/.env && chmod 600 /opt/polaris/.env
+grep -c '^DATABASE_URL=postgresql://polaris:polaris@' /opt/polaris/.env   # expect 0
+systemctl restart polaris.target
+unset NEW
+```
+
+If the `grep` prints `1`, `.env` holds the URL in another form. Edit
+`DATABASE_URL` by hand before restarting: the database already has the new
+password, so the app cannot connect until `.env` matches.
+
+**External database.** Change the password with your provider's tooling, then
+update `DATABASE_URL` (and `POLARIS_DB_DIRECT_URL`, if set) in
+`/opt/polaris/.env` and restart `polaris.target`.
+
+**High availability.** Run the `ALTER USER` on the primary; it replicates.
+Then update `.env` on **both** nodes before restarting, because each node
+reads its own copy.
+
+**PgBouncer.** If `DATABASE_URL` points at a PgBouncer, update its
+`userlist.txt` (or `auth_query` source) as well.
+
+The warning clears on the next capacity snapshot after the restart.

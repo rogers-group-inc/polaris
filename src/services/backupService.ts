@@ -33,6 +33,7 @@
  *   encrypted:   "POLARIS\0" | salt(32) | iv(16) | authTag(16) | gzip(sql) ciphertext
  */
 
+import { ensurePrivateDir, PRIVATE_FILE_MODE } from "../utils/privateFiles.js";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createGzip, createGunzip } from "node:zlib";
@@ -46,7 +47,6 @@ import {
   createReadStream,
   createWriteStream,
   existsSync,
-  mkdirSync,
   openSync,
   readSync,
   closeSync,
@@ -392,7 +392,8 @@ export interface CreateBackupResult {
  */
 export async function createBackup(input: CreateBackupInput): Promise<CreateBackupResult> {
   const connUrl = getDirectDatabaseUrl();
-  mkdirSync(BACKUP_DIR, { recursive: true });
+  // 0700 directory, 0600 files (business rule 117): a backup is the whole database.
+  ensurePrivateDir(BACKUP_DIR);
 
   // Resolve and verify the client FIRST. When it cannot work, that specific
   // sentence is the error — not "see the server log", which is what hid a
@@ -431,11 +432,11 @@ export async function createBackup(input: CreateBackupInput): Promise<CreateBack
 
       try {
         await Promise.all([
-          pipeline(child.stdout!, createGzip(), cipher, createWriteStream(ciphertextFile)),
+          pipeline(child.stdout!, createGzip(), cipher, createWriteStream(ciphertextFile, { mode: PRIVATE_FILE_MODE })),
           done,
         ]);
         const header = Buffer.concat([BACKUP_MAGIC, salt, iv, cipher.getAuthTag()]);
-        const out = createWriteStream(backupFile);
+        const out = createWriteStream(backupFile, { mode: PRIVATE_FILE_MODE });
         await new Promise<void>((res, rej) => out.write(header, (err) => (err ? rej(err) : res())));
         await pipeline(createReadStream(ciphertextFile), out);
       } finally {
@@ -443,7 +444,7 @@ export async function createBackup(input: CreateBackupInput): Promise<CreateBack
       }
     } else {
       await Promise.all([
-        pipeline(child.stdout!, createGzip(), createWriteStream(backupFile)),
+        pipeline(child.stdout!, createGzip(), createWriteStream(backupFile, { mode: PRIVATE_FILE_MODE })),
         done,
       ]);
     }
@@ -569,12 +570,16 @@ export async function restoreBackup(input: RestoreBackupInput): Promise<void> {
     const decipher = createDecipheriv("aes-256-gcm", key, iv);
     decipher.setAuthTag(authTag);
 
+    // Staged to a private file, not streamed into psql: GCM authenticates only
+    // at the end, and psql would have committed unverified SQL by then. The
+    // file is 0600 in the 0700 backup directory (rule 117).
+    ensurePrivateDir(BACKUP_DIR);
     decryptedTempPath = join(BACKUP_DIR, `.restore-dec-${Date.now()}.gz`);
     try {
       await pipeline(
         createReadStream(input.filePath, { start: ENCRYPTED_HEADER_LEN }),
         decipher,
-        createWriteStream(decryptedTempPath),
+        createWriteStream(decryptedTempPath, { mode: PRIVATE_FILE_MODE }),
       );
     } catch {
       if (existsSync(decryptedTempPath)) { try { unlinkSync(decryptedTempPath); } catch { /* best effort */ } }

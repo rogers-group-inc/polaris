@@ -209,6 +209,17 @@ function readEnvInt(envName: string, fallback: number): number {
   return Number.isFinite(n) && n >= 1 ? n : fallback;
 }
 
+/** True when a postgres URL logs in as polaris / polaris — the old installer default (rule 117). Pure. */
+export function databaseUsesPublicDefaultPassword(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    return decodeURIComponent(u.username) === "polaris" && decodeURIComponent(u.password) === "polaris";
+  } catch {
+    return false;
+  }
+}
+
 export interface CapacityReason {
   severity: "watch" | "warning" | "critical";
   code: string;
@@ -1793,6 +1804,23 @@ function computeReasons(
         "Click Generate token to write HEALTH_TOKEN into .env (the gate takes effect " +
         "immediately — no restart). Then configure your monitoring system to send " +
         "`Authorization: Bearer <token>`.",
+    });
+  }
+
+  // Business rule 117: the installers used to give the database role the same
+  // fixed password on every install, and this repository is public. New
+  // installs get a random one; an install still on the old default is told to
+  // rotate it (not rotated automatically — a half-finished rotation locks the
+  // app out of its own database). Production only: the dev stack uses it on
+  // purpose.
+  if (process.env.NODE_ENV === "production" && databaseUsesPublicDefaultPassword(process.env.DATABASE_URL)) {
+    reasons.push({
+      severity: "warning",
+      code: "db_default_password",
+      message:
+        "The database account still uses the installer's old default password (\"polaris\"), which is published in the Polaris source.",
+      suggestion:
+        "Rotate it: see docs/UPGRADING.md → \"Rotate the database password\" (one ALTER USER, one line in .env, then restart polaris.target).",
     });
   }
 

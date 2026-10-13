@@ -73,8 +73,48 @@ die()   { error "$*"; exit 1; }
 mkdir -p "$RUN_DIR"
 chmod 0750 "$RUN_DIR"
 
+# Business rule 117: the peer is authenticated by a host key PINNED on purpose
+# (`polaris-ha-role pin-peer`), never by whatever answers first. This root job
+# pulls root-executed files from the peer, so trust-on-first-use is not enough.
 SSH_OPTS=(-i "$SYNC_KEY" -o BatchMode=yes -o ConnectTimeout=10
-          -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$KNOWN_HOSTS")
+          -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$KNOWN_HOSTS")
+PEER_FPRS_FILE="${PEER_FPRS_FILE:-/etc/polaris/ha/peer_host_fingerprints}"
+
+# Pin the peer's SSH host key into $KNOWN_HOSTS — only a key whose fingerprint
+# the operator confirms, or that the enrollment bundle recorded for the peer
+# ($PEER_FPRS_FILE, one SHA256:… per line). `auto` never prompts: it pins only
+# against the recorded fingerprints and otherwise does nothing.
+pin_peer() {
+  local mode="${1:-interactive}"
+  [[ -n "$PEER_HOST" ]] || die "pin-peer: no PEER_HOST configured"
+  local scanned
+  scanned=$(ssh-keyscan -T 10 "$PEER_HOST" 2>/dev/null | grep -v '^#' || true)
+  [[ -n "$scanned" ]] || { [[ "$mode" == auto ]] && return 1; die "pin-peer: could not read a host key from $PEER_HOST:22"; }
+  local expected=""
+  if [[ -s "$PEER_FPRS_FILE" ]]; then
+    expected=$(grep -Eo 'SHA256:[A-Za-z0-9+/=]+' "$PEER_FPRS_FILE" || true)
+  elif [[ "$mode" == auto ]]; then
+    return 1
+  else
+    echo "Host keys $PEER_HOST presents:"
+    printf '%s\n' "$scanned" | ssh-keygen -lf - 2>/dev/null | sed 's/^/  /'
+    echo "On the PEER, run: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub"
+    read -r -p "Type the SHA256:… fingerprint the peer shows: " expected
+  fi
+  local line fp out=""
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    fp=$(printf '%s\n' "$line" | ssh-keygen -lf - 2>/dev/null | awk '{print $2}')
+    if [[ -n "$fp" ]] && grep -qxF "$fp" <<< "$expected"; then out+="$line"$'\n'; fi
+  done <<< "$scanned"
+  if [[ -z "$out" ]]; then
+    [[ "$mode" == auto ]] && { warn "pin-peer: $PEER_HOST presented no host key matching the recorded fingerprints — NOT pinned"; return 1; }
+    die "pin-peer: no host key from $PEER_HOST matches — NOT pinned (wrong host, or a typo)"
+  fi
+  install -m 0600 /dev/null "$KNOWN_HOSTS"
+  printf '%s' "$out" > "$KNOWN_HOSTS"
+  info "pin-peer: pinned $(printf '%s' "$out" | grep -c .) host key(s) for $PEER_HOST"
+}
 
 # ─── Role ────────────────────────────────────────────────────────────────────
 # Patroni's REST API answers 200 on /primary only while this node holds the
@@ -183,6 +223,12 @@ JSON
 # a failover, instead of the whole copy.
 do_sync() {
   [[ -n "$PEER_HOST" ]] || { warn "sync: no PEER_HOST configured"; return 1; }
+  if [[ ! -s "$KNOWN_HOSTS" ]]; then
+    # Strict checking with nothing pinned refuses every connection. Pin from
+    # the recorded fingerprints when the bundle supplied them; otherwise say
+    # what to run, once per cycle, rather than trusting the first answer.
+    pin_peer auto || { warn "sync: the peer's SSH host key is not pinned — run 'polaris-ha-role pin-peer' on this node"; return 1; }
+  fi
 
   local status peer_role peer_update head_before head_after
   status=$(peer_status) || { info "sync: peer unreachable; will retry next cycle"; return 1; }
@@ -256,6 +302,7 @@ do_sync() {
     "root@$PEER_HOST:/etc/systemd/system/" /etc/systemd/system/ 2>/dev/null || true)
   local f
   for f in /etc/polkit-1/rules.d/49-polaris.rules /etc/sudoers.d/polaris-nginx \
+           /usr/local/sbin/polaris-update-sync \
            /etc/tmpfiles.d/polaris-nginx.conf /usr/local/sbin/polaris-nginx-apply; do
     rsync "${rsync_common[@]}" "root@$PEER_HOST:$f" "$f" 2>/dev/null || true
   done
@@ -394,6 +441,7 @@ case "${1:-}" in
   reconcile)   cmd_reconcile ;;
   preflight)   preflight && info "preflight: OK" ;;
   sync)        do_sync ;;
+  pin-peer)    pin_peer interactive ;;
   status)      cmd_status ;;
   verify)      cmd_verify ;;
   trigger)     systemctl start --no-block polaris-ha-role.service ;;

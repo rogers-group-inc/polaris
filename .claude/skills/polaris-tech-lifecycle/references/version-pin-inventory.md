@@ -108,7 +108,7 @@ could not see, because the unit files agreed with each other perfectly:
 - the PostgreSQL unit name is a **host** fact — `postgresql-17.service` on RHEL/PGDG,
   `postgresql.service` on Debian/Ubuntu, nothing at all for an external database, masked under
   Patroni — while the unit file is **overwritten verbatim by every update**, in-app (via the
-  transient systemd-run unit under the manage-units polkit grant) and by
+  root update helper `polaris-update-sync`, business rule 117) and by
   `deploy/update-linux.sh` alike;
 - so `setup-ubuntu.sh` rewriting the name in place at install time was undone by the very next
   update, which handed Debian hosts a `Requires=` for a unit that does not exist there;

@@ -2332,6 +2332,9 @@ router.post("/:id/query", async (req, res, next) => {
         variables: z.record(z.unknown()).optional(),
       }).parse(req.body);
       const result = await unraid.proxyQuery(integration.config as any, query, variables);
+      // Every ad-hoc call with the stored key is audited (rule 117), as the
+      // FortiGate write branch is.
+      logEvent({ action: "integration.query", resourceType: "integration", resourceId: integration.id, resourceName: integration.name, actor: req.session?.username, message: `Ad-hoc GraphQL query sent to Unraid`, details: { query: query.slice(0, 2000) } });
       sendProxyJson(res, result);
       return;
     }

@@ -191,6 +191,8 @@ render() {
       -e "s|{{SUPERUSER_PASSWORD}}|$SUPERUSER_PASSWORD|g" \
       -e "s|{{REPLICATOR_PASSWORD}}|$REPLICATOR_PASSWORD|g" \
       -e "s|{{REWIND_PASSWORD}}|$REWIND_PASSWORD|g" \
+      -e "s|{{PG_SSLMODE}}|${PG_SSLMODE:-require}|g" \
+      -e "s|{{PG_SSLROOTCERT}}|${PG_SSLROOTCERT:-$PG_TLS_DIR/ca.crt.not-verifying}|g" \
       -e "s|{{RESTAPI_PASSWORD}}|$RESTAPI_PASSWORD|g" \
       -e "s|{{MAX_CONNECTIONS}}|$MAX_CONNECTIONS|g" \
       -e "s|{{SHARED_BUFFERS}}|$SHARED_BUFFERS|g" \
@@ -422,16 +424,49 @@ REPO
 generate_pg_tls() {
   mkdir -p "$PG_TLS_DIR"
   if [[ ! -f "$PG_TLS_DIR/server.key" ]]; then
-    # Replication is hostssl; PGDG ships no server certificate, so make one.
-    # It authenticates the replication channel between two hosts we control,
-    # both of which also present client certificates to etcd.
-    openssl req -new -x509 -days 3650 -nodes -text \
-      -subj "/CN=$NODE_NAME" -addext "subjectAltName=DNS:$NODE_NAME,IP:$THIS_ADDR" \
-      -out "$PG_TLS_DIR/server.crt" -keyout "$PG_TLS_DIR/server.key" 2>/dev/null
+    # Replication is hostssl; PGDG ships no server certificate. Business rule
+    # 117: use this member's etcd certificate — issued by the cluster's own CA,
+    # serverAuth, SAN = this node's cluster address — so the peer can VERIFY
+    # who it streams the database from, not merely encrypt to whoever answers.
+    if [[ -f "$CA_DIR/ca.crt" && -f "$CA_DIR/$NODE_NAME.crt" && -f "$CA_DIR/$NODE_NAME.key" ]]; then
+      install -m 0644 "$CA_DIR/$NODE_NAME.crt" "$PG_TLS_DIR/server.crt"
+      install -m 0600 "$CA_DIR/$NODE_NAME.key" "$PG_TLS_DIR/server.key"
+      install -m 0644 "$CA_DIR/ca.crt" "$PG_TLS_DIR/ca.crt"
+    else
+      openssl req -new -x509 -days 3650 -nodes -text \
+        -subj "/CN=$NODE_NAME" -addext "subjectAltName=DNS:$NODE_NAME,IP:$THIS_ADDR" \
+        -out "$PG_TLS_DIR/server.crt" -keyout "$PG_TLS_DIR/server.key" 2>/dev/null
+      warn "no etcd member certificate for $NODE_NAME — PostgreSQL got a self-signed certificate, so replication is encrypted but NOT verified"
+    fi
   fi
   chmod 0600 "$PG_TLS_DIR/server.key"
   chown postgres:postgres "$PG_TLS_DIR/server.key" "$PG_TLS_DIR/server.crt"
-  info "PostgreSQL TLS material in $PG_TLS_DIR"
+  [[ -f "$PG_TLS_DIR/ca.crt" ]] && chown postgres:postgres "$PG_TLS_DIR/ca.crt"
+  pg_tls_client_mode
+  info "PostgreSQL TLS material in $PG_TLS_DIR (replication sslmode=$PG_SSLMODE)"
+}
+
+pg_tls_client_mode() {
+  # How Patroni's replication and rewind connections check the peer's server
+  # certificate. verify-full needs CA-issued certificates on BOTH nodes. This
+  # node's are known; the peer's are probed when it is already listening — an
+  # existing cluster whose primary still serves the old self-signed
+  # certificate keeps working (encrypted, unverified) until the operator opts
+  # in (docs/HA.md → "Verify the replication certificate").
+  PG_SSLMODE=require
+  # A path that does not exist: with sslmode=require libpq verifies against
+  # sslrootcert whenever that file exists, which would refuse a self-signed peer.
+  PG_SSLROOTCERT="$PG_TLS_DIR/ca.crt.not-verifying"
+  [[ -f "$PG_TLS_DIR/ca.crt" ]] || return 0
+  if [[ -n "${PEER_ADDR:-}" ]] && timeout 5 bash -c "</dev/tcp/$PEER_ADDR/5432" 2>/dev/null; then
+    if ! openssl s_client -starttls postgres -connect "$PEER_ADDR:5432" -CAfile "$PG_TLS_DIR/ca.crt" \
+         -verify_ip "$PEER_ADDR" -verify_return_error </dev/null >/dev/null 2>&1; then
+      warn "the peer at $PEER_ADDR:5432 does not present a certificate from this cluster's CA — replication stays encrypted but UNVERIFIED (docs/HA.md → \"Verify the replication certificate\")"
+      return 0
+    fi
+  fi
+  PG_SSLMODE=verify-full
+  PG_SSLROOTCERT="$PG_TLS_DIR/ca.crt"
 }
 
 pg_setting() {
@@ -623,12 +658,23 @@ EOF
     info "generated the sync key $HA_DIR/ha/id_ed25519"
   fi
   touch "$HA_DIR/ha/known_hosts"; chmod 0600 "$HA_DIR/ha/known_hosts"
+  # Business rule 117: the peer's host key is pinned on purpose, not on first
+  # use. Show THIS node's fingerprints so the operator can confirm them when
+  # running `polaris-ha-role pin-peer` on the peer.
+  info "This node's SSH host key fingerprints (confirm these on the peer with 'polaris-ha-role pin-peer'):"
+  for _hk in /etc/ssh/ssh_host_*_key.pub; do
+    [[ -f "$_hk" ]] && echo "    $(ssh-keygen -lf "$_hk" 2>/dev/null | awk '{print $2, $NF}')"
+  done
 
   # The polkit rule the in-app updater's group restart needs. Documented since
   # the split-role layout shipped and installed by no script until now.
+  # Business rule 117: it covers starting polaris-update-sync.service (the
+  # fixed root helper below) and restarting the polaris units — nothing else.
   mkdir -p /etc/polkit-1/rules.d
   install -o root -g root -m 0644 "$SRC_DIR/../polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules
-  info "installed the polkit rule for the in-app updater's group restart"
+  install -o root -g root -m 0755 "$SRC_DIR/../scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync
+  install -o root -g root -m 0644 "$SRC_DIR/../polaris-update-sync.service" /etc/systemd/system/polaris-update-sync.service
+  info "installed the polkit rule and the in-app updater's root helper"
 
   # Drop-ins: repoint the units at Patroni and add the primary guard.
   local d unit

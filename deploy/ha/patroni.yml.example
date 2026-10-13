@@ -150,12 +150,20 @@ postgresql:
     superuser:
       username: postgres
       password: {{SUPERUSER_PASSWORD}}
+    # Business rule 117: verify-full on a new cluster — the peer's PostgreSQL
+    # certificate is its etcd member certificate, checked against the cluster
+    # CA and the peer's address. setup-rhel-ha.sh renders `require` (encrypted,
+    # unverified) only while the peer still serves a self-signed certificate.
     replication:
       username: replicator
       password: {{REPLICATOR_PASSWORD}}
+      sslmode: {{PG_SSLMODE}}
+      sslrootcert: {{PG_SSLROOTCERT}}
     rewind:
       username: rewind_user
       password: {{REWIND_PASSWORD}}
+      sslmode: {{PG_SSLMODE}}
+      sslrootcert: {{PG_SSLROOTCERT}}
   # Patroni REGENERATES pg_hba.conf from this list. The polaris lines must be
   # here or the application loses database access at the next reload.
   pg_hba:

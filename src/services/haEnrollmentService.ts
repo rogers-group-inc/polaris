@@ -391,10 +391,26 @@ export async function buildNodeBundle(cfg: HaConfig, role: HaRole): Promise<Buff
       { name: "app/nginx-key.pem", data: readProxyKey(), mode: 0o600 },
       { name: "ha.conf", data: renderHaConf(cfg, role), mode: 0o600 },
     );
+    // Business rule 117: the peer's SSH host key fingerprints, as the peer
+    // reported them when IT enrolled. `polaris-ha-role pin-peer` pins only a
+    // key matching one of these, so the root file sync never trusts whatever
+    // answers first. Absent when the peer has not enrolled yet — the operator
+    // then confirms the fingerprint by hand.
+    const peerFprs = peerHostFingerprints(cfg, role);
+    if (peerFprs.length) {
+      entries.push({ name: "sync/peer_host_fingerprints", data: peerFprs.join("\n") + "\n", mode: 0o644 });
+    }
   }
 
   entries.push({ name: "INSTALL.txt", data: renderBundleReadme(cfg, role, { primary, standby, witness }), mode: 0o644 });
   return gzipSync(buildTar(entries));
+}
+
+/** The peer's recorded SSH host key fingerprints, keeping only well-formed SHA256 ones (rule 117). Pure. */
+export function peerHostFingerprints(cfg: Pick<HaConfig, "nodes">, role: HaRole): string[] {
+  if (role === "witness") return [];
+  const peer = cfg.nodes[role === "primary" ? "standby" : "primary"];
+  return (peer?.sshHostKeys ?? []).filter((f) => /^SHA256:[A-Za-z0-9+/=]+$/.test(f));
 }
 
 function buildManifest(cfg: HaConfig, role: HaRole): Record<string, unknown> {
@@ -593,12 +609,18 @@ function renderPatroniYml(cfg: HaConfig, role: HaRole): string {
     "    superuser:",
     "      username: postgres",
     `      password: '${c.superuser.password}'`,
+    "    # Rule 117: the peer's server certificate is its etcd member cert,",
+    "    # verified against the cluster CA and the peer's address.",
     "    replication:",
     "      username: replicator",
     `      password: '${c.replicator.password}'`,
+    "      sslmode: verify-full",
+    "      sslrootcert: /etc/polaris/pg-tls/ca.crt",
     "    rewind:",
     "      username: rewind_user",
     `      password: '${c.rewind.password}'`,
+    "      sslmode: verify-full",
+    "      sslrootcert: /etc/polaris/pg-tls/ca.crt",
     "  pg_hba:",
     "    - local   all             all                                     peer",
     "    - host    all             all             127.0.0.1/32            scram-sha-256",
@@ -698,6 +720,8 @@ function renderBundleReadme(
       "  patroni/patroni.yml                  this node's Patroni config",
       "  sync/id_ed25519{,.pub}               the file-sync keypair",
       "  sync/peer_authorized_keys            the line to add for the peer",
+      "  sync/peer_host_fingerprints          the peer's SSH host keys (copy to /etc/polaris/ha/,",
+      "                                       then run polaris-ha-role pin-peer)",
       "  app/.env                             the application environment",
       "  app/nginx-{cert,key}.pem             the certificate agents pin",
       "  ha.conf                              reconciler configuration",

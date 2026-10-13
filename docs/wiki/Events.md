@@ -189,6 +189,7 @@ device-down supersession (any metric or device-state alert on a device that went
 | `role.grant_reviewed` | info | an administrator confirmed a flagged role's grants are intended |
 | `regex.pattern_unusable` | **warning** | a stored pattern uses lookahead, lookbehind or a backreference, so it is skipped until rewritten ([rule 116](Business-Rules#rule-116)) |
 | `logflagrule.pattern_unusable` | **warning** | the same, for a log-flag rule |
+| `integration.query` | info | a query run from the Unraid Query API window; the event holds the query text ([rule 117](Business-Rules#rule-117)) |
 | `agent.upgrade_skipped` | | a host the fan-out could not upgrade |
 | `agent.upgrade_deferred` | info | a host the fan-out did not try because monitoring shows it down; retried by the next fan-out |
 | `asset.pins.bulk_updated` | | one mass-pin apply |

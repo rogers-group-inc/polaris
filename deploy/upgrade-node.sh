@@ -7,6 +7,7 @@
 #   sudo bash deploy/upgrade-node.sh --dry-run          # print the plan, change nothing
 #   sudo bash deploy/upgrade-node.sh --target 22        # Node 22 LTS instead
 #   sudo bash deploy/upgrade-node.sh --skip-backup      # no pre-migration pg_dump
+#   sudo bash deploy/upgrade-node.sh --keep-backup      # keep the root-only pre-migration dump after success
 #   sudo bash deploy/upgrade-node.sh --pull             # also fast-forward the checkout
 #
 # Why this exists: the in-app updater CANNOT do this. It runs as the
@@ -43,8 +44,12 @@ APP_USER="${POLARIS_APP_USER:-polaris}"
 ENV_FILE="$APP_DIR/.env"
 # Deliberately NOT $APP_DIR/data/backups: the Backups card lists that directory
 # and expects Polaris's own (optionally encrypted) format. A plain pg_dump left
-# there would show up as something it is not.
-BACKUP_DIR="${POLARIS_UPGRADE_BACKUP_DIR:-/var/tmp}"
+# there would show up as something it is not. Not /var/tmp either (business
+# rule 117): the dump is the whole database, so it lives in a root-only 0700
+# directory, is written 0600, and is removed once the upgrade succeeds unless
+# --keep-backup is given.
+BACKUP_DIR="${POLARIS_UPGRADE_BACKUP_DIR:-/var/backups/polaris}"
+KEEP_BACKUP=0
 # Hard floor from the dependency tree: pg-boss declares >=22.12.0 and
 # @prisma/streams-local declares >=22. Keep in step with package.json engines.
 MIN_MAJOR=22
@@ -68,6 +73,7 @@ while [[ $# -gt 0 ]]; do
     --target)      TARGET_MAJOR="$2"; shift 2;;
     --dry-run)     DRY_RUN=1; shift;;
     --skip-backup) SKIP_BACKUP=1; shift;;
+    --keep-backup) KEEP_BACKUP=1; shift ;;
     --pull)        DO_PULL=1; shift;;
     -h|--help)     sed -n '/^#/p' "$0" | sed -n '1,40p'; exit 0;;
     *) error "Unknown argument: $1"; exit 2;;
@@ -179,11 +185,18 @@ else
     warn "No DATABASE_URL in $ENV_FILE — skipping backup."
   else
     BACKUP_FILE="$BACKUP_DIR/polaris-pre-node${TARGET_MAJOR}-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
-    run "mkdir -p '$BACKUP_DIR'"
+    run "install -d -m 0700 -o root -g root '$BACKUP_DIR'"
     info "Writing $BACKUP_FILE"
     if [[ $DRY_RUN -eq 0 ]]; then
-      if DB_URL="$DB_URL" bash -c 'pg_dump "$DB_URL"' | gzip > "$BACKUP_FILE"; then
-        chown "$APP_USER":"$APP_USER" "$BACKUP_FILE" 2>/dev/null || true
+      # The password goes to pg_dump through PGPASSWORD, never its argv, and the
+      # file is created 0600 (umask 077) — rule 117.
+      DUMP_URL="$DB_URL"; DUMP_PW=""
+      if [[ "$DB_URL" =~ ^(postgres(ql)?://)([^:@/]+):([^@]*)@(.*)$ ]]; then
+        DUMP_URL="${BASH_REMATCH[1]}${BASH_REMATCH[3]}@${BASH_REMATCH[5]}"
+        _pw="${BASH_REMATCH[4]}"
+        DUMP_PW="$(printf '%b' "${_pw//%/\\x}")"
+      fi
+      if ( umask 077; PGPASSWORD="$DUMP_PW" pg_dump "$DUMP_URL" | gzip > "$BACKUP_FILE" ); then
         info "Backup written ($(du -h "$BACKUP_FILE" | cut -f1))"
       else
         rm -f "$BACKUP_FILE"
@@ -333,4 +346,12 @@ info "   - Server Settings → Maintenance: no EBADENGINE warnings on the next u
 info "   - Server Settings → Maintenance → Database → Monitor queue (pg-boss was"
 info "     the package demanding Node >=22.12; confirm it still comes up)"
 info "   - Sign in via Azure SAML once, to exercise the SSO path"
+if [[ -n "${BACKUP_FILE:-}" && -f "${BACKUP_FILE:-}" && $DRY_RUN -eq 0 ]]; then
+  if [[ $KEEP_BACKUP -eq 1 ]]; then
+    info "   - The pre-migration dump is kept at $BACKUP_FILE (root-only). Delete it when you are satisfied."
+  else
+    rm -f "$BACKUP_FILE"
+    info "   - Removed the pre-migration dump now that the upgrade succeeded (pass --keep-backup to keep it)."
+  fi
+fi
 echo
