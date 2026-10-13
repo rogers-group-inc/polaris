@@ -89,9 +89,29 @@
     ],
   };
 
+  // ─── View tabs + favorites ─────────────────────────────────────────────
+  // The desktop Assets page's tab strip (assets-tabs.js), read from the same
+  // server-persisted layout (GET /me/table-tabs?scope=assets), so the views an
+  // operator built at their desk — each with its own filters, sort and starred
+  // assets — are here too. The phone keeps its OWN pick of which tab is showing
+  // (localStorage): choosing one here never moves the desktop's active tab.
+  // Its filter field, type chips and Sort & filter sheet narrow ON TOP of the
+  // tab, overriding the tab's value for the same field (applyViewState →
+  // loadPage). A star toggled here writes that tab's favoriteIds back, the same
+  // whole-layout PUT the desktop makes.
+  var VIEW_KEY = "polaris-mobile-assets-view";
+  var TABS_SCOPE = "assets";
+  // tableTabsService MAX_TAB_FAVORITES — the server refuses a layout over it.
+  var MAX_FAVORITES = 500;
+  // The desktop's text-filter columns (assets.js _buildAssetsQuery).
+  var VIEW_TEXT_COLS = ["hostname", "ipAddress", "serialNumber", "assetTag", "manufacturer",
+    "model", "os", "macAddress", "assignedTo", "purchaseOrder", "dnsName", "description", "tags"];
+
   var _state = {
     filterKey: "all",
     search: "",      // filter-field text; not persisted (see list-controls.js)
+    views: null,     // the desktop tab layout { tabs, activeId }, or null when there is none
+    viewId: "",      // the tab this phone is showing
     prefs: null,
     assets: [],      // accumulated rows
     total: 0,
@@ -117,12 +137,13 @@
     render: function (body) {
       var p = prefs();
       body.innerHTML = ''
+        + '<div class="view-tabs" id="assets-views" role="tablist" aria-label="Asset views"' + (_state.views ? '' : ' hidden') + '>' + viewTabsHTML() + '</div>'
         + PolarisListControls.toolbarHTML({
             id: "assets",
             placeholder: "Filter assets",
             value: _state.search,
             sortLabel: sortLabel(),
-            dir: p.sortDir,
+            dir: sortDirShown(),
             active: p.monitor.length > 0,
           })
         + '<div class="chip-row" id="assets-chips"></div>'
@@ -139,22 +160,229 @@
       });
 
       renderChips();
+      wireViewTabs();
       // Reset list state on every fresh render — operators expect tapping
       // the Assets tab to give them a clean view, not the leftover scroll
       // from yesterday.
       _state.assets = [];
       _state.offset = 0;
       _state.total = 0;
-      loadPage(true);
+      return loadViewsThenPage();
     },
     onPullToRefresh: function () {
-      // Reset paging + re-fetch the first page under the current filter.
+      // Reset paging + re-fetch the tabs (they may have changed at the desk)
+      // and the first page under the current filter.
       _state.assets = [];
       _state.offset = 0;
       _state.total = 0;
-      return loadPage(true);
+      return loadViewsThenPage();
     },
   };
+
+  // The tab layout decides the query, so it is read before the first page.
+  // Re-read on every render: a tab added, renamed or re-filtered on the desktop
+  // shows the next time the operator opens the list.
+  function loadViewsThenPage() {
+    if (!(window.api && api.tableTabs && typeof api.tableTabs.get === "function")) return loadPage(true);
+    _state.loading = true;
+    renderList();
+    return api.tableTabs.get(TABS_SCOPE).then(function (layout) {
+      setViews(layout);
+    }, function () {
+      // Offline or refused — the plain list is still the right answer.
+    }).then(function () {
+      renderViewTabs();
+      return loadPage(true);
+    });
+  }
+
+  function setViews(layout) {
+    _state.views = (layout && Array.isArray(layout.tabs) && layout.tabs.length) ? layout : null;
+    if (!_state.views) { _state.viewId = ""; return; }
+    var tabs = _state.views.tabs;
+    var has = function (id) { return !!id && tabs.some(function (t) { return t.id === id; }); };
+    var want = _state.viewId || lsGet(VIEW_KEY);
+    _state.viewId = has(want) ? want : (has(_state.views.activeId) ? _state.views.activeId : tabs[0].id);
+  }
+
+  function activeView() {
+    if (!_state.views) return null;
+    for (var i = 0; i < _state.views.tabs.length; i++) {
+      if (_state.views.tabs[i].id === _state.viewId) return _state.views.tabs[i];
+    }
+    return null;
+  }
+
+  function viewFavorites() {
+    var t = activeView();
+    return (t && Array.isArray(t.favoriteIds)) ? t.favoriteIds : [];
+  }
+
+  function lsGet(key) { try { return localStorage.getItem(key); } catch (_) { return null; } }
+  function lsSet(key, v) { try { localStorage.setItem(key, v); } catch (_) { /* private mode */ } }
+
+  function viewTabsHTML() {
+    if (!_state.views) return "";
+    return _state.views.tabs.map(function (t) {
+      var on = t.id === _state.viewId;
+      var favs = Array.isArray(t.favoriteIds) ? t.favoriteIds.length : 0;
+      return ''
+        + '<button type="button" class="view-tab' + (on ? ' on' : '') + '" role="tab" aria-selected="' + on + '" data-view="' + escapeHtml(t.id) + '">'
+        + escapeHtml(t.name || "Tab")
+        + (favs ? '<span class="view-tab-favs" title="' + favs + (favs === 1 ? ' favorite' : ' favorites') + '"><svg viewBox="0 0 24 24"><use href="#i-star"/></svg>' + favs + '</span>' : '')
+        + '</button>';
+    }).join("");
+  }
+
+  function renderViewTabs() {
+    var strip = document.getElementById("assets-views");
+    if (!strip) return;
+    strip.hidden = !_state.views;
+    strip.innerHTML = viewTabsHTML();
+    var on = strip.querySelector(".view-tab.on");
+    if (on && on.scrollIntoView) { try { on.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (_) {} }
+    PolarisListControls.updateSortChip("assets", sortLabel(), sortDirShown(), prefs().monitor.length > 0);
+  }
+
+  function wireViewTabs() {
+    var strip = document.getElementById("assets-views");
+    if (!strip) return;
+    strip.addEventListener("click", function (ev) {
+      var btn = ev.target && ev.target.closest ? ev.target.closest(".view-tab") : null;
+      if (!btn) return;
+      var id = btn.getAttribute("data-view");
+      if (!id || id === _state.viewId) return;
+      _state.viewId = id;
+      lsSet(VIEW_KEY, id);
+      renderViewTabs();
+      reload();
+    });
+  }
+
+  /**
+   * One desktop tab's filter state onto the list route's query params.
+   * MIRRORS the filter half of _buildAssetsQuery + _pushAssetText in
+   * public/js/assets.js (the phone does not load that file);
+   * tests/unit/mobileAssetViews.test.ts runs both over the same states and
+   * fails when they disagree.
+   */
+  function applyViewState(params, state) {
+    var filters = (state && state.sfFilters) || {};
+    if (Array.isArray(filters.status) && filters.status.length) params.status = filters.status.join(",");
+    if (Array.isArray(filters.assetType) && filters.assetType.length) params.assetType = filters.assetType.join(",");
+    if (Array.isArray(filters._monitor) && filters._monitor.length) params.monitor = filters._monitor.join(",");
+    VIEW_TEXT_COLS.forEach(function (key) { pushViewText(params, key, filters[key]); });
+    pushViewText(params, "server", filters._server);
+    if (filters.lastSeen && filters.lastSeen.type === "date") {
+      if (filters.lastSeen.from) params.lastSeenFrom = filters.lastSeen.from;
+      if (filters.lastSeen.to)   params.lastSeenTo = filters.lastSeen.to;
+    }
+    return params;
+  }
+
+  function pushViewText(params, paramKey, raw) {
+    if (raw == null) return;
+    if (typeof raw === "string") {
+      var v = raw.trim();
+      if (!v) return;
+      if (v.charAt(0) === "!") {
+        var rest = v.slice(1).trim();
+        if (!rest) return;
+        params[paramKey] = rest;
+        params[paramKey + "Op"] = "not_contains";
+      } else {
+        params[paramKey] = v;
+      }
+    } else if (typeof raw === "object") {
+      if (raw.op === "empty") {
+        params[paramKey + "Op"] = "empty";
+      } else if (raw.op === "notempty") {
+        params[paramKey + "Op"] = "is_not_empty";
+      } else if (raw.op === "not-contains") {
+        var q = (raw.q || "").trim();
+        if (!q) return;
+        params[paramKey] = q;
+        params[paramKey + "Op"] = "not_contains";
+      } else if (raw.op === "in-networks") {
+        var terms = (raw.terms || []).map(function (t) { return String(t).trim(); }).filter(Boolean);
+        if (!terms.length) return;
+        params[paramKey] = terms.join(",");
+        params[paramKey + "Op"] = "in_networks";
+      }
+    }
+  }
+
+  // ─── Favorites ──────────────────────────────────────────────────────────
+  // A star belongs to the TAB showing, as on the desktop. Painted optimistic;
+  // the write re-reads the layout first so a tab edited at the desk since this
+  // list loaded is not overwritten with the copy held here.
+  function isFavorite(id) { return viewFavorites().indexOf(id) >= 0; }
+
+  function favStarHTML(a) {
+    if (!activeView()) return "";
+    var on = isFavorite(a.id);
+    return '<button type="button" class="fav-star-m' + (on ? ' on' : '') + '" aria-pressed="' + on + '"'
+      + ' aria-label="' + (on ? 'Unfavorite' : 'Favorite') + '" data-fav="' + escapeHtml(a.id) + '">'
+      + '<svg viewBox="0 0 24 24"><use href="#i-star"/></svg></button>';
+  }
+
+  function paintStars(assetId) {
+    var on = isFavorite(assetId);
+    document.querySelectorAll(".fav-star-m").forEach(function (b) {
+      if (b.getAttribute("data-fav") !== assetId) return;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", String(on));
+      b.setAttribute("aria-label", on ? "Unfavorite" : "Favorite");
+    });
+  }
+
+  function toggleFavorite(assetId) {
+    var view = activeView();
+    if (!view || !api.tableTabs || typeof api.tableTabs.save !== "function") return Promise.resolve();
+    var viewId = view.id;
+    var viewName = view.name || "this tab";
+    var wasOn = isFavorite(assetId);
+    if (!wasOn && viewFavorites().length >= MAX_FAVORITES) {
+      PolarisTabs.showSnackbar("A tab holds at most " + MAX_FAVORITES + " favorites — unstar one first", { error: true });
+      return Promise.resolve();
+    }
+    // Optimistic: flip the local copy and the star now.
+    var local = viewFavorites().slice();
+    if (wasOn) local.splice(local.indexOf(assetId), 1); else local.push(assetId);
+    view.favoriteIds = local;
+    paintStars(assetId);
+    renderViewTabs();
+
+    return api.tableTabs.get(TABS_SCOPE).then(function (layout) {
+      var tabs = layout && Array.isArray(layout.tabs) ? layout.tabs : [];
+      var tab = null;
+      tabs.forEach(function (t) { if (t.id === viewId) tab = t; });
+      if (!tab) throw new Error("“" + viewName + "” was closed on another device");
+      var ids = Array.isArray(tab.favoriteIds) ? tab.favoriteIds.slice() : [];
+      var at = ids.indexOf(assetId);
+      if (wasOn) { if (at >= 0) ids.splice(at, 1); }
+      else if (at < 0) ids.push(assetId);
+      if (ids.length > MAX_FAVORITES) throw new Error("A tab holds at most " + MAX_FAVORITES + " favorites");
+      tab.favoriteIds = ids;
+      return api.tableTabs.save(TABS_SCOPE, { tabs: tabs, activeId: layout.activeId });
+    }).then(function (saved) {
+      setViews(saved && Array.isArray(saved.tabs) ? saved : _state.views);
+      paintStars(assetId);
+      renderViewTabs();
+      PolarisTabs.showSnackbar((wasOn ? "Removed from favorites in " : "Added to favorites in ") + viewName);
+    }).catch(function (err) {
+      // Put the star back the way the server still has it.
+      var back = viewFavorites().slice();
+      var i = back.indexOf(assetId);
+      if (wasOn && i < 0) back.push(assetId);
+      if (!wasOn && i >= 0) back.splice(i, 1);
+      var v = activeView();
+      if (v) v.favoriteIds = back;
+      paintStars(assetId);
+      renderViewTabs();
+      PolarisTabs.showSnackbar((err && err.message) || "Couldn’t save the favorite", { error: true });
+    });
+  }
 
   function prefs() {
     if (!_state.prefs) _state.prefs = PolarisListControls.loadPrefs(PREFS_KEY, DEFAULTS);
@@ -171,10 +399,33 @@
     return p;
   }
 
+  // The tab's own sort, when the sheet has not picked one ("Recently added" is
+  // "no override" while a tab is showing). Null when neither sorts.
+  function viewSort() {
+    var t = activeView();
+    var st = t && t.state;
+    if (!st || !st.sortKey) return null;
+    return { key: st.sortKey, dir: st.sortDir === "asc" ? "asc" : "desc" };
+  }
+
+  function sortDirShown() {
+    var p = prefs();
+    if (p.sortKey) return p.sortDir;
+    var vs = viewSort();
+    return vs ? vs.dir : p.sortDir;
+  }
+
   function sortLabel() {
     var p = prefs();
     var s = SORTS.find(function (x) { return x.key === p.sortKey; });
     var label = s ? s.label : "Sort";
+    // No sheet sort while the tab sorts: name what is actually ordering the
+    // list — the sheet's label when it knows the column, the tab otherwise.
+    var vs = !p.sortKey ? viewSort() : null;
+    if (vs) {
+      var vsMatch = SORTS.find(function (x) { return x.key === vs.key; });
+      label = vsMatch ? vsMatch.label : "Tab’s sort";
+    }
     // The status filter lives in the sheet, so the chip names it — a list
     // narrowed by something the operator can't see reads as missing assets.
     // One pick is named; two are both named; more are counted, since the
@@ -212,7 +463,7 @@
         p.sortDir = choice.sortDir;
         p.monitor = monitor;
         PolarisListControls.savePrefs(PREFS_KEY, p);
-        PolarisListControls.updateSortChip("assets", sortLabel(), p.sortDir, p.monitor.length > 0);
+        PolarisListControls.updateSortChip("assets", sortLabel(), sortDirShown(), p.monitor.length > 0);
         reload();
       },
     });
@@ -254,11 +505,21 @@
     if (replace || !refreshFooter()) renderList();
 
     var params = { limit: PAGE_SIZE, offset: _state.offset };
+    // The desktop tab first; the phone's own controls then override the field
+    // they speak to (a type chip replaces the tab's Type filter, a status pick
+    // its Status filter, a sheet sort its sort).
+    var view = activeView();
+    if (view) applyViewState(params, view.state);
     if (filter.type) params.assetType = filter.type;
     var p = prefs();
     if (_state.search) params.search = _state.search;
     if (p.monitor.length) params.monitor = p.monitor.join(",");
+    var vs = viewSort();
     if (p.sortKey) { params.sortBy = p.sortKey; params.sortDir = p.sortDir; }
+    else if (vs) { params.sortBy = vs.key; params.sortDir = vs.dir; }
+    // The tab's starred assets float to the top of the whole result set.
+    var favs = viewFavorites();
+    if (favs.length) params.favoriteIds = favs.join(",");
 
     return api.assets.list(params).then(function (resp) {
       if (thisSeq !== _state.seq) return; // superseded by a later filter change
@@ -294,6 +555,8 @@
         + '  <div class="ttl">No assets</div>'
         + '  <div class="desc">' + (_state.search || prefs().monitor.length
           ? 'Nothing matches this filter. Clear it, or pick “Any” status in Sort &amp; filter.'
+          : activeView()
+          ? 'Nothing in “' + escapeHtml(activeView().name || "this tab") + '” matches. Try “All”, or another tab.'
           : 'Nothing matches this filter. Try “All” or run a discovery to populate the inventory.') + '</div>'
         + '</div>';
       return;
@@ -345,6 +608,12 @@
       var more = t.closest("#assets-load-more");
       if (more) {
         if (!more.disabled) loadPage(false);
+        return;
+      }
+      // The star lives inside the card too, so it is checked before the card.
+      var star = t.closest(".fav-star-m");
+      if (star) {
+        toggleFavorite(star.getAttribute("data-fav"));
         return;
       }
       // The alert flag is checked BEFORE the card: it lives inside the card,
@@ -426,6 +695,7 @@
       + '    <div class="ico ' + meta.cls + '"><svg viewBox="0 0 24 24"><use href="' + meta.icon + '"/></svg></div>'
       + '    <div class="name">' + escapeHtml(a.hostname || a.assetTag || "(unnamed)") + '</div>'
       + alertFlagHTML(a)
+      + favStarHTML(a)
       + (dotCls ? '    <span class="dot ' + dotCls + '" title="' + escapeHtml(monitorTitle(a)) + '"></span>' : '')
       + '  </div>'
       + '  <div class="meta">' + bits.join('<span class="muted">·</span>') + '</div>'
@@ -468,7 +738,7 @@
     holder.innerHTML = html;
     var flag = holder.firstChild;
     if (existing) top.replaceChild(flag, existing);
-    else top.insertBefore(flag, top.querySelector(".dot"));   // before the status dot, or last
+    else top.insertBefore(flag, top.querySelector(".fav-star-m") || top.querySelector(".dot"));   // before the star / status dot, or last
   }
 
   function openAlertsFor(assetId) {
@@ -516,5 +786,9 @@
 
   // escapeHtml is the canonical global from api.js (loaded first on every page).
 
-  window.PolarisAssetsTab = { spec: Assets };
+  window.PolarisAssetsTab = {
+    spec: Assets,
+    // For tests/unit/mobileAssetViews.test.ts — the desktop-parity mirror.
+    _applyViewState: applyViewState,
+  };
 })();

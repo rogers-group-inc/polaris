@@ -286,18 +286,31 @@ describe("alerts tab severity breakdown", () => {
 });
 
 describe("mobile navbar", () => {
-  it("is Search · Alerts · Assets · Networks · More, and the map lives under More", () => {
+  it("is Alerts · Assets · Networks · More, and the map lives under More", () => {
     g.PolarisAlertsTab = { spec: { title: "Alerts" } };
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function(TABS_SRC)();
-    expect(g.PolarisTabs.list.map((t: any) => t.id)).toEqual(["search", "alerts", "assets", "networks", "more"]);
+    expect(g.PolarisTabs.list.map((t: any) => t.id)).toEqual(["alerts", "assets", "networks", "more"]);
     // #map still resolves, and lights More.
     expect(g.PolarisTabs.byId("map")).toBeTruthy();
     expect(g.PolarisTabs.navTabFor("map")).toBe("more");
     expect(g.PolarisTabs.navTabFor("assets")).toBe("assets");
   });
 
-  it("Chat takes the Networks slot only when switched on, and Networks then lives under More", () => {
+  it("has no Search slot — #search is a route tab, reached from the search box, that lights nothing", () => {
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    new Function(TABS_SRC)();
+    expect(g.PolarisTabs.byId("search")).toBeTruthy();
+    expect(g.PolarisTabs.navTabFor("search")).toBe("");
+  });
+
+  it("opens to Alerts, and bounces an unknown route there", () => {
+    const APP_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "app.js"), "utf-8");
+    expect(APP_SRC).toMatch(/if \(!window\.location\.hash\) PolarisRouter\.go\("alerts"/);
+    expect(APP_SRC).not.toMatch(/PolarisRouter\.go\("search", \{ replace: true \}\)/);
+  });
+
+  it("Chat gets its own slot before More only when switched on — Networks keeps its slot", () => {
     g.PolarisAlertsTab = { spec: { title: "Alerts" } };
     g.PolarisChatTab = { spec: { title: "Chat" } };
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -308,12 +321,13 @@ describe("mobile navbar", () => {
     expect(T.byId("chat")).toBeTruthy();
     expect(T.navTabFor("chat")).toBe("");
     expect(T.setChatInBar(true)).toBe(true);
-    expect(T.list.map((t: any) => t.id)).toEqual(["search", "alerts", "assets", "chat", "more"]);
-    expect(T.byId("networks")).toBeTruthy();
-    expect(T.navTabFor("networks")).toBe("more");
+    expect(T.list.map((t: any) => t.id)).toEqual(["alerts", "assets", "networks", "chat", "more"]);
+    expect(T.navTabFor("networks")).toBe("networks");
+    expect(T.navTabFor("chat")).toBe("chat");
     expect(T.setChatInBar(true)).toBe(false);
     expect(T.setChatInBar(false)).toBe(true);
-    expect(T.list.map((t: any) => t.id)).toEqual(["search", "alerts", "assets", "networks", "more"]);
+    expect(T.list.map((t: any) => t.id)).toEqual(["alerts", "assets", "networks", "more"]);
     expect(T.navTabFor("networks")).toBe("networks");
+    expect(T.navTabFor("chat")).toBe("");
   });
 });

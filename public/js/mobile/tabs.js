@@ -181,16 +181,19 @@
         + '<div class="search-hint-label">' + escapeHtml(h.label) + '</div>'
         + '</button>';
     }).join("");
+    // Wrapped so the explanations unfold from under the bar as search opens.
     state.innerHTML = ''
+      + '<div class="search-expand-in">'
       + '<div class="empty-state" style="padding-top:32px;padding-bottom:8px;">'
       + '  <div class="icon"><svg viewBox="0 0 24 24"><use href="#i-search"/></svg></div>'
       + '  <div class="ttl">Search Polaris</div>'
-      + '  <div class="desc">Find IPs, assets, networks, FortiGate sites and reservations. Try typing an IP, hostname, MAC, or partial name.</div>'
+      + '  <div class="desc">Find IPs, assets, networks, FortiGate sites, reservations and IPsec tunnels. Try typing an IP, hostname, MAC, or partial name.</div>'
       + '</div>'
       + '<div class="search-hint-section">'
       + '  <div class="search-hint-section-label">Shortcuts — scope your search</div>'
       + '  <div class="search-hint-grid">' + chipHtml + '</div>'
       + '  <div class="search-hint-foot">Scoped searches return up to 200 results instead of the default top 8.</div>'
+      + '</div>'
       + '</div>';
     state.querySelectorAll(".search-hint-chip").forEach(function (chip) {
       chip.addEventListener("click", function () {
@@ -437,10 +440,11 @@
   };
 
   // ─── Tab registry ──────────────────────────────────────────────────────
-  // Order here drives the navbar layout. Keep at five — that's the MD3 spec
-  // limit and what fits comfortably on a phone width.
+  // Order here drives the navbar layout: Alerts (the home route), Assets,
+  // Networks, Chat, More. Five at most — the MD3 spec limit and what fits
+  // comfortably on a phone width. Chat is in the bar only when the assistant
+  // is usable here (setChatInBar below), so most installs show four.
   var TABS = [
-    { id: "search",   spec: Search },
     { id: "alerts",   spec: Alerts },
     { id: "assets",   spec: Assets },
     { id: "networks", spec: Networks },
@@ -449,20 +453,22 @@
 
   // Top-level routes with no navbar slot of their own. They render exactly
   // like a tab (their own topbar, no back chevron), but the navbar lights
-  // `navTab` — the slot the operator reached them from. The Device Map left
-  // the navbar for Alerts and opens from More; #map, #site/<id> and
-  // #topology/<id> links all still resolve.
+  // `navTab` — the slot the operator reached them from ("" lights none).
+  // The Device Map left the navbar for Alerts and opens from More; #map,
+  // #site/<id> and #topology/<id> links all still resolve. Search left the
+  // navbar too: the search box above every page IS its entry point, and
+  // focusing it opens #search with the scope shortcuts (app.js wireSearchbar).
   var ROUTE_TABS = [
-    { id: "map", spec: Map, navTab: "more" },
+    { id: "map",    spec: Map,    navTab: "more" },
+    { id: "search", spec: Search, navTab: "" },
   ];
 
   // ─── Chat (the AI assistant) ───────────────────────────────────────────
-  // Real spec lives in /js/mobile/chat-tab.js. Chat takes the Networks slot
-  // ONLY when this user can use the assistant (an enabled AI Assistant
-  // integration + `assistant` read) — most installs have none, and a dead tab
-  // must not push Networks out of the bar. While Chat holds the slot,
-  // Networks is a route tab under More (like the Device Map); otherwise
-  // #chat is a route tab with no slot, which explains why it is unavailable.
+  // Real spec lives in /js/mobile/chat-tab.js. Chat gets a slot (between
+  // Networks and More) ONLY when this user can use the assistant (an enabled
+  // AI Assistant integration + `assistant` read) — most installs have none,
+  // and a dead tab is worse than no tab. Otherwise #chat is a route tab with
+  // no slot, which explains why it is unavailable.
   var Chat = (window.PolarisChatTab && window.PolarisChatTab.spec) || {
     title: "Chat",
     icon: "#i-chat",
@@ -472,14 +478,20 @@
   var chatInBar = false;
   ROUTE_TABS.push({ id: "chat", spec: Chat, navTab: "" });
 
-  /** Put Chat in the Networks slot (true) or give the slot back (false). Returns whether anything changed. */
+  /** Give Chat its slot before More (true) or take it away (false). Returns whether anything changed. */
   function setChatInBar(on) {
     on = !!on;
     if (on === chatInBar) return false;
     chatInBar = on;
-    TABS[3] = on ? { id: "chat", spec: Chat } : { id: "networks", spec: Networks };
-    ROUTE_TABS = ROUTE_TABS.filter(function (r) { return r.id !== "chat" && r.id !== "networks"; });
-    ROUTE_TABS.push(on ? { id: "networks", spec: Networks, navTab: "more" } : { id: "chat", spec: Chat, navTab: "" });
+    // Mutated in place: PolarisTabs.list is this same array.
+    for (var i = TABS.length - 1; i >= 0; i--) if (TABS[i].id === "chat") TABS.splice(i, 1);
+    if (on) {
+      var moreAt = TABS.length;
+      for (var j = 0; j < TABS.length; j++) if (TABS[j].id === "more") moreAt = j;
+      TABS.splice(moreAt, 0, { id: "chat", spec: Chat });
+    }
+    ROUTE_TABS = ROUTE_TABS.filter(function (r) { return r.id !== "chat"; });
+    if (!on) ROUTE_TABS.push({ id: "chat", spec: Chat, navTab: "" });
     return true;
   }
 

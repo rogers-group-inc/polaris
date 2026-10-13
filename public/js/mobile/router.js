@@ -2,8 +2,9 @@
 //
 // Hash shape:
 //   #login                    → unauthenticated entry
-//   #search | #map | #assets  → primary tabs
-//   #alerts | #more
+//   #alerts | #assets         → primary tabs (alerts is home)
+//   #networks | #chat | #more
+//   #search | #map            → route tabs (no navbar slot)
 //   #more/<sub>               → sub-pages of the More tab (blocks, subnets, …)
 //   #asset/<id>               → asset detail
 //   #subnet/<id>              → subnet detail

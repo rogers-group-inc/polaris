@@ -49,7 +49,7 @@
       // intact. Fall back to the named tab when there's nothing to pop —
       // happens when the URL was opened directly.
       if (window.history.length > 1) window.history.back();
-      else PolarisRouter.go(fallbackTab || "search", { replace: true });
+      else PolarisRouter.go(fallbackTab || "alerts", { replace: true });
     });
   }
 
@@ -73,7 +73,7 @@
         "PolarisAssetDetail module is missing — check script order. Asset id: " + id,
         "/assets.html#view=asset:" + id
       );
-      wireBack("search");
+      wireBack("alerts");
     },
   };
 
@@ -89,7 +89,7 @@
         "PolarisSubnetDetail module is missing — check script order. Subnet id: " + id,
         "/subnets.html"
       );
-      wireBack("search");
+      wireBack("alerts");
     },
   };
 
@@ -106,7 +106,7 @@
         "IP block management is a low-frequency operation — open the desktop app to view block details and utilization.",
         "/blocks.html"
       );
-      wireBack("search");
+      wireBack("alerts");
     },
   };
 
