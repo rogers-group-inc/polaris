@@ -193,3 +193,16 @@ describe("_readResponseBody — JSON responses (existing behaviour)", () => {
     expect(err.message).not.toMatch(/Unexpected token/i);
   });
 });
+
+describe("api.js — every hand-rolled fetch reads through _readResponseBody", () => {
+  // The multipart uploads (MIB, device icon, logo, cert preflight, restore) and
+  // the blob downloads build their own fetch, so they bypassed request() and
+  // kept blind-parsing: an nginx 413 on a 3 MB PowerNet-MIB upload still read
+  // `Unexpected token '<'`. Uploads are exactly the requests a proxy's body
+  // limit rejects, so none of them may call res.json() directly.
+  it("has no direct res.json() call", () => {
+    const src = readFileSync(resolve(__dirname, "../../public/js/api.js"), "utf8");
+    const code = src.split("\n").filter((line) => !/^\s*\/\//.test(line)).join("\n");
+    expect(code).not.toMatch(/\bres\.json\(\)/);
+  });
+});

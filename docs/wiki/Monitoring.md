@@ -144,7 +144,9 @@ pieces have to be in place:
 1. **The vendor's MIB**, uploaded at Server Settings → Credentials → MIB
    Database. This supplies the OID *number* behind a symbol name. Keeping it as
    an upload rather than baking it in means a vendor adding or moving an object
-   is a MIB upload, not a wait for a Polaris release.
+   is a MIB upload, not a wait for a Polaris release. A MIB file can be up to
+   6 MiB, room for a vendor that ships one large module (APC / Schneider
+   Electric's PowerNet-MIB is about 3 MB).
 2. **A manufacturer profile**, at Server Settings → Credentials → Manufacturer
    Profiles. This says which symbol *is* the CPU, which pair *is* the memory,
    and so on.

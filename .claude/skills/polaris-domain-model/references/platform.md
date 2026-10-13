@@ -433,7 +433,7 @@ MibFile                         -- Admin-uploaded SNMP MIB modules used to resol
   moduleName    String           -- parsed from "<NAME> DEFINITIONS ::= BEGIN" (validated as a real SMI module on upload — non-MIB text or binaries are rejected)
   manufacturer  String?          -- null = generic/shared MIB (loaded for every probe). Normalized through the ManufacturerAlias map on every write via the Prisma extension in src/db.ts.
   model         String?          -- null = applies to all models from this manufacturer
-  contents      String           -- raw MIB text, stored inline (MIBs are normally <100 KB; cap = 1 MB)
+  contents      String           -- raw MIB text, stored inline (MIBs are normally <100 KB; cap = 6 MiB, MIB_MAX_BYTES — PowerNet-MIB is ~3 MB)
   imports       String[]         -- module names referenced via IMPORTS ... FROM (used to surface missing dependencies in the UI)
   size          Int              -- byte length of contents
   notes         String?

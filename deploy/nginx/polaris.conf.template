@@ -86,8 +86,8 @@ server {
   # own handlers accept and silently rejected them at the edge — a 413 whose
   # HTML error page the browser then failed to parse as JSON. The app is the
   # real enforcement layer (express.json is capped at 1mb; each multer route
-  # sets its own fileSize — 256k device icons, 1m MIBs/certs, 5m branding
-  # logo), so this is defense-in-depth sized just above the largest of them.
+  # sets its own fileSize — 256k device icons, 1m certs, 5m branding logo,
+  # 6m MIBs), so this is defense-in-depth sized just above the largest of them.
   # Raise only if a route's own limit is raised to match.
   client_max_body_size 8m;
 

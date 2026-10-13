@@ -195,6 +195,11 @@ Use the same address and port as your file's own `location /` block. A load
 balancer in front of nginx has its own request-body limit, which must allow
 300 MiB as well (100 MiB if you never upload FortiGate images).
 
+While you are in that file, check that the `server { }` block also carries
+`client_max_body_size 8m;` at its own level, above `location /`. Without it
+nginx applies its 1 MB default to every other upload, so a MIB, a logo or a
+certificate over 1 MB is refused at the edge with a 413 before Polaris sees it.
+
 ### Device logins
 
 **Set login…** on a manufacturer, a device type or a model binds an HTTP

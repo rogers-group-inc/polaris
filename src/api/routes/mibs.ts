@@ -12,7 +12,7 @@
  * `up(1)`) and 2D table grouping when the walk lands on a SMI table.
  */
 
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { prisma } from "../../db.js";
@@ -26,6 +26,7 @@ import {
   deleteMib,
   getMibFacets,
   parseMibStructured,
+  MIB_MAX_BYTES,
   type MibSymbol,
   type MibTable,
   type ParsedMibStructured,
@@ -41,7 +42,7 @@ import {
 import { logEvent } from "./events.js";
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MIB_MAX_BYTES } });
 
 // ─── List + facets + profile status ───────────────────────────────────────
 
@@ -201,7 +202,18 @@ router.get("/:id", requirePermission("mibDatabase", "read"), async (req, res, ne
 
 // ─── Upload + delete (admin only) ─────────────────────────────────────────
 
-router.post("/", requirePermission("mibDatabase", "write"), upload.single("file"), async (req, res, next) => {
+// multer answers an oversized file before the handler runs; name the limit
+// rather than letting the generic upload-error mapping speak for it.
+function uploadMibFile(req: Request, res: Response, next: NextFunction) {
+  upload.single("file")(req, res, (err: unknown) => {
+    if ((err as { code?: string } | undefined)?.code === "LIMIT_FILE_SIZE") {
+      return next(new AppError(413, `MIB files are limited to ${MIB_MAX_BYTES / 1_048_576} MiB`));
+    }
+    next(err);
+  });
+}
+
+router.post("/", requirePermission("mibDatabase", "write"), uploadMibFile, async (req, res, next) => {
   try {
     if (!req.file) throw new AppError(400, "No MIB file uploaded");
     const text = req.file.buffer.toString("utf-8");
