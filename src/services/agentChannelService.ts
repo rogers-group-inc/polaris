@@ -178,7 +178,7 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
     // again, and a hold dropped earlier lets the lagging disconnect through.
     // Not "agent-uninstall": that one ends with the uninstall, and an agent
     // reattaching during one has not finished being removed.
-    // A reboot's hold (rule 112) ends the same way: the agent is back.
+    // A reboot's hold (rule 114) ends the same way: the agent is back.
     for (const kind of ["agent-upgrade", "agent-reinstall", "device-reboot"] as const) {
       await releaseMaintenanceHold({ assetId, kind }).catch(() => { /* expiry covers it */ });
     }

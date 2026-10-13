@@ -1,6 +1,6 @@
 /**
  * src/services/agentRebootPermissionService.ts — turn an agent host's reboot
- * opt-in on or off after it was deployed (business rule 112).
+ * opt-in on or off after it was deployed (business rule 114).
  *
  * The opt-in has two halves that must agree: `ManagedAgent.rebootEnabled` (the
  * server will send a reboot command) and the host-side permission (the

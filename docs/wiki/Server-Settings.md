@@ -98,7 +98,7 @@ signing in is what proves it.
 ### Allow reboots
 
 An **SSH**, **REST API** or **Device admin login** credential has an **Allow
-reboots** box, off by default ([rule 112](Business-Rules#rule-112)). Ticked, it
+reboots** box, off by default ([rule 114](Business-Rules#rule-114)). Ticked, it
 lets the credential reboot the FortiGate it is set on — on any of the asset's
 monitoring streams, or bound for the device in the [Repository](#device-logins)
 — and restart the FortiSwitches and FortiAPs that FortiGate manages; an SSH

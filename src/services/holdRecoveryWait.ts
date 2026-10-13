@@ -4,7 +4,7 @@
  *
  * Shared by the two operations that reboot a device on purpose: a firmware
  * flash (business rule 87, kind `firmware-upgrade`) and a reboot (business
- * rule 112, kind `device-reboot`). Both prove the device back over a channel
+ * rule 114, kind `device-reboot`). Both prove the device back over a channel
  * of their own — its web UI, its controller, its agent — and that routinely
  * answers minutes before the SNMP / ICMP / REST collectors the status machine
  * and every automation read (a FortiAP's HTTPS answered while its SNMP agent

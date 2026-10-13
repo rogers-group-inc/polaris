@@ -6747,7 +6747,7 @@ const BulkAgentInstallSchema = z.object({
   // CAP_SYS_PTRACE for Application Map connection attribution. Applies to every
   // Linux host in the selection. Full root is no longer selectable.
   privilegeTier:     z.enum(["unprivileged", "ptrace"]).optional(),
-  // Reboot opt-in for every host in the selection (business rule 112).
+  // Reboot opt-in for every host in the selection (business rule 114).
   allowReboot:       z.boolean().optional(),
 }).refine((b) => b.sshCredentialId || b.winrmCredentialId, {
   message: "Provide at least one credential (SSH and/or WinRM)",
@@ -6812,7 +6812,7 @@ const AgentInstallSchema = z.object({
   // attribution without full root). Ignored on Windows (LocalSystem) / darwin
   // (LaunchDaemon runs as root). Full root is no longer selectable.
   privilegeTier: z.enum(["unprivileged", "ptrace"]).optional(),
-  // Reboot opt-in (business rule 112): install the host-side permission (the
+  // Reboot opt-in (business rule 114): install the host-side permission (the
   // marker, and on Linux the polkit rule) so the asset's Reboot button can
   // reboot this host. Default off; changeable later from the agent card.
   allowReboot: z.boolean().optional(),

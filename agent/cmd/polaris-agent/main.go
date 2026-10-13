@@ -469,7 +469,7 @@ func runAgent(ctx context.Context, confPath string) {
 	// Read once: caps are fixed for the life of the process.
 	client.CapEff = collectors.SelfCapEff()
 	// Reboot capability + boot time ride every heartbeat (Polaris business
-	// rule 112): the server offers a reboot only to a host that reports it
+	// rule 114): the server offers a reboot only to a host that reports it
 	// will perform one, and proves one happened by the boot time moving.
 	client.RebootInfo = func() (bool, uint64) { return reboot.Capable(), reboot.BootTime() }
 
@@ -1154,7 +1154,7 @@ func pollAndRunCommands(client *transport.Client) {
 // asking the OS for it — long enough for the result POST to land.
 const rebootDelay = 5 * time.Second
 
-// rebootCommand reboots the host (Polaris business rule 112). Refused unless
+// rebootCommand reboots the host (Polaris business rule 114). Refused unless
 // the host carries the opt-in marker that only root could have written. The
 // result is reported FIRST — once the OS takes the host down there is no one
 // left to say the command was taken — then the reboot is requested; if the

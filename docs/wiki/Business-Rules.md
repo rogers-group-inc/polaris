@@ -2088,7 +2088,7 @@ not a spelling, a cookie that has outlived its owner, or a code already used.**
 - **A switch's or AP's controller is a firewall the same integration manages.**
   An asset someone created by hand with the controller's name is never used.
 
-### Rule 112
+### Rule 114
 
 **A device reboots only on an opt-in held where the authority lives, and a
 reboot Polaris sends is proved, not assumed.**

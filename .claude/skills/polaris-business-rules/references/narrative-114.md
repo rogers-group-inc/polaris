@@ -1,15 +1,15 @@
-# Business rule 112 — full narrative
+# Business rule 114 — full narrative
 
 > Written 2026-10-13 as its own file (one file per rule from 78 on). Rule numbers are a
 > stable citation key — never renumber. 81 is a deliberate gap.
 
 Each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
-- [Rule 112](#rule-112) — A device reboots only on an opt-in held where the authority lives, and a reboot Polaris sends is proved, not assumed
+- [Rule 114](#rule-114) — A device reboots only on an opt-in held where the authority lives, and a reboot Polaris sends is proved, not assumed
 
-<a id="rule-112"></a>
+<a id="rule-114"></a>
 
-## Rule 112 — A device reboots only on an opt-in held where the authority lives, and a reboot Polaris sends is proved, not assumed
+## Rule 114 — A device reboots only on an opt-in held where the authority lives, and a reboot Polaris sends is proved, not assumed
 
 ### Where it came from
 

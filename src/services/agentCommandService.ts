@@ -3,7 +3,7 @@
  *
  * Two queued actions: `run_script` (automation script runs on the agent —
  * enqueued by automationScriptService.requestScriptRun) and `reboot` (business
- * rule 112 — enqueued by rebootService, which watches the row and writes the
+ * rule 114 — enqueued by rebootService, which watches the row and writes the
  * Events). The agent polls pending commands, executes, and reports the outcome
  * via /command-result. The agent never self-acts. Every result is audited.
  *
@@ -109,7 +109,7 @@ export async function recordCommandResult(
     return;
   }
 
-  // A reboot (business rule 112): the agent acknowledges BEFORE it takes the
+  // A reboot (business rule 114): the agent acknowledges BEFORE it takes the
   // host down. The reboot run watching this row writes the Events — the ack
   // is one step of that run, not an outcome of its own.
   if (cmd.action === "reboot") return;

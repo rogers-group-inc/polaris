@@ -103,7 +103,7 @@ export const MAINTENANCE_HOLD_KINDS = {
   "workload-restart": "Workload restart",
   "workload-update":  "Workload update",
   // An operator rebooting a FortiGate, FortiSwitch, FortiAP or agent host from
-  // Polaris (business rule 112): taken when the run starts, just before the reboot is sent (a booking takes
+  // Polaris (business rule 114): taken when the run starts, just before the reboot is sent (a booking takes
   // nothing until it fires), released once the device's own monitoring answers
   // again — or, for an agent host, when the agent reattaches.
   "device-reboot":    "Reboot",

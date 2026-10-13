@@ -64,7 +64,7 @@ So a reinstall visibly updates the column within one heartbeat.
 
 Polaris can reboot a host through its agent from the asset's
 [Reboot…](Assets#reboot) button, now or on a schedule — but only a host that
-opted in ([rule 112](Business-Rules#rule-112)). Off by default. Turn it on
+opted in ([rule 114](Business-Rules#rule-114)). Off by default. Turn it on
 with **Allow Polaris to reboot this host** in the install modal (or *these
 hosts* in the bulk Deploy Agent modal), or later with **Enable…** on the
 **Reboots** row of the agent card; **Disable** turns it off. Both need

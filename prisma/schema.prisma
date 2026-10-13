@@ -5155,7 +5155,7 @@ model ManagedAgent {
   // On Windows the agent always runs as LocalSystem, so this is not consulted.
   privilegeTier String @default("unprivileged")
 
-  // Reboots (business rule 112). `rebootEnabled` is the operator's opt-in —
+  // Reboots (business rule 114). `rebootEnabled` is the operator's opt-in —
   // chosen at deploy, changed later from the agent card — and is what the
   // install / toggle wrote onto the HOST (a root-owned marker file, plus a
   // polkit rule on Linux that lets the polaris-agent user ask logind to
@@ -5219,7 +5219,7 @@ model ManagedAgent {
 // (GET /agents/commands), executes them, and reports the outcome (POST
 // /agents/command-result). Operator-initiated only — the agent never
 // self-acts. Two live actions: `run_script` (an Automation script) and
-// `reboot` (business rule 112 — refused by the agent unless the host carries
+// `reboot` (business rule 114 — refused by the agent unless the host carries
 // the reboot marker the opt-in installed). Process stop/start/restart was
 // removed; an agent refuses any action it does not know.
 model AgentCommand {
@@ -6112,7 +6112,7 @@ model MaintenanceHold {
   // "agent-upgrade" | "agent-reinstall" | "agent-uninstall" |
   // "firmware-upgrade" (business rule 87) | "workload-restart" |
   // "workload-update" (business rule 94) | "device-reboot" (business rule
-  // 112). Part of the uniqueness so two
+  // 114). Part of the uniqueness so two
   // different operations on one asset cannot lose each other's hold, and
   // re-running the same one extends rather than stacks.
   kind      String
@@ -6261,7 +6261,7 @@ model FirmwareUpgradeSchedule {
   @@map("firmware_upgrade_schedules")
 }
 
-// One reboot of one asset (business rule 112): a FortiGate, a FortiSwitch or
+// One reboot of one asset (business rule 114): a FortiGate, a FortiSwitch or
 // FortiAP (through its controlling FortiGate, or directly when it has none),
 // or a host running the Polaris Agent. Driven from the web process's memory
 // like a firmware run (services/rebootService.ts); at most one queued /
@@ -6302,7 +6302,7 @@ model RebootRun {
   @@map("reboot_runs")
 }
 
-// A reboot booked for later (business rule 112, the rule-93 shape): checked
+// A reboot booked for later (business rule 114, the rule-93 shape): checked
 // when booked, every gate re-taken when it fires, on time or not at all, and
 // its recipients hear the outcome either way. One pending booking per asset
 // (partial unique index in the migration).

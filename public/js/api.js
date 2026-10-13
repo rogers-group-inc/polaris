@@ -1021,7 +1021,7 @@ const api = {
     scheduleFirmwareUpgrade:  (id, body)      => request("POST",   `/assets/${id}/firmware-upgrade/schedules`, body),
     updateFirmwareSchedule:   (id, sid, body) => request("PATCH",  `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`, body),
     cancelFirmwareSchedule:   (id, sid)       => request("DELETE", `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`),
-    // Reboots (business rule 112): what may reboot this asset and how (plus
+    // Reboots (business rule 114): what may reboot this asset and how (plus
     // its pending booking, `schedule`), reboot now (assets:write), the run
     // history, bookings, and an agent host's opt-in (assets:fullwrite).
     reboot:                 (id)            => request("GET",    `/assets/${id}/reboot`),

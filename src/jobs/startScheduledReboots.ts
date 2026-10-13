@@ -1,7 +1,7 @@
 /**
  * src/jobs/startScheduledReboots.ts
  *
- * Every 60 s: fire the reboots operators booked for now (business rule 112,
+ * Every 60 s: fire the reboots operators booked for now (business rule 114,
  * the rule-93 shape) — start them through `startReboot`, which re-takes every
  * gate, or record and email why not. Web/all role only (imported under
  * runsSchedulers): the reboot runner watches the device from this process

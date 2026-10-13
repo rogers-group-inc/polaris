@@ -1,6 +1,6 @@
 /**
  * tests/unit/rebootOptIn.test.ts — the three opt-ins behind a reboot
- * (business rule 112), as far as they are pure:
+ * (business rule 114), as far as they are pure:
  *
  *  - a stored credential's `allowReboot`: only on the kinds that can reboot
  *    (SSH, REST API token, device admin login), refused on the rest, dropped

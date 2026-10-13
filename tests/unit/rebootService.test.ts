@@ -1,6 +1,6 @@
 /**
  * tests/unit/rebootService.test.ts — who may reboot what, and what a reboot
- * run takes as proof (business rule 112).
+ * run takes as proof (business rule 114).
  *
  * The availability half pins the OPT-IN: nothing reboots a device unless a
  * stored credential with Allow reboots, the discovering integration with Allow

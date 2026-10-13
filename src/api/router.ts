@@ -198,7 +198,7 @@ router.use("/assets/:id/firmware-upgrade", firmwareAssetRouter);
 // /assets for the same first-match reason. assets:read to read, assets:write
 // to act — gated per route.
 router.use("/assets/:id/workload", workloadAssetRouter);
-// Rebooting an asset now or later (business rule 112), mounted before /assets
+// Rebooting an asset now or later (business rule 114), mounted before /assets
 // for the same first-match reason. assets:read to read, assets:write to reboot
 // or book, assets:fullwrite to change an agent host's opt-in — gated per route.
 router.use("/assets/:id/reboot", rebootAssetRouter);

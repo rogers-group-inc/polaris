@@ -1,5 +1,5 @@
 /**
- * src/services/rebootService.ts — reboot one asset, now (business rule 112).
+ * src/services/rebootService.ts — reboot one asset, now (business rule 114).
  * The orchestration half: what may reboot, how, the run row, the hold, the
  * Events, the proof. The protocol half is services/rebootTransports.ts.
  *
@@ -20,7 +20,7 @@
  *   An agent host an `AgentCommand{action:"reboot"}`; the agent refuses unless
  *                 the host carries the reboot marker its opt-in installed.
  *
- * Who may sign the reboot — the OPT-IN, at three places (rule 112):
+ * Who may sign the reboot — the OPT-IN, at three places (rule 114):
  *   1. a stored credential with `allowReboot` — the firmware repository's
  *      login binding for the gate, then the gate's own per-stream credentials
  *      (REST API token, device admin login, SSH) — sent to the GATE's address;

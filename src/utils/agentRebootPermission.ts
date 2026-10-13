@@ -1,6 +1,6 @@
 /**
  * src/utils/agentRebootPermission.ts — the host-side half of an agent host's
- * reboot opt-in (business rule 112). Pure: the paths and the scripts; the
+ * reboot opt-in (business rule 114). Pure: the paths and the scripts; the
  * remote run is agentRebootPermissionService's.
  *
  * Why a script at all. The Linux agent runs as the hardened DynamicUser
@@ -42,7 +42,7 @@ export const LOGIND_REBOOT_ACTIONS = [
 
 export function polkitJsRule(): string {
   const actions = LOGIND_REBOOT_ACTIONS.map((a) => `action.id == "${a}"`).join(" ||\n       ");
-  return `// Installed by Polaris (business rule 112) — lets the Polaris Agent ask
+  return `// Installed by Polaris (business rule 114) — lets the Polaris Agent ask
 // systemd-logind to reboot this host. Remove with the agent card's
 // "Disable reboots", or delete this file.
 polkit.addRule(function(action, subject) {
@@ -55,7 +55,7 @@ polkit.addRule(function(action, subject) {
 }
 
 export function polkitPkla(): string {
-  return `# Installed by Polaris (business rule 112) — lets the Polaris Agent ask
+  return `# Installed by Polaris (business rule 114) — lets the Polaris Agent ask
 # systemd-logind to reboot this host.
 [Polaris Agent reboot]
 Identity=unix-user:polaris-agent
@@ -70,7 +70,7 @@ ResultActive=yes
 export function linuxRebootPermissionScript(enable: boolean): string {
   if (!enable) {
     return `#!/usr/bin/env bash
-# Polaris Agent — withdraw reboot permission (business rule 112). Idempotent.
+# Polaris Agent — withdraw reboot permission (business rule 114). Idempotent.
 set -euo pipefail
 rm -f ${LINUX_REBOOT_MARKER} ${LINUX_POLKIT_RULE} ${LINUX_POLKIT_PKLA}
 echo "Polaris Agent reboot permission removed"
@@ -78,7 +78,7 @@ echo "Polaris Agent reboot permission removed"
   }
   // Heredocs are quoted ('EOF') so nothing inside them is expanded.
   return `#!/usr/bin/env bash
-# Polaris Agent — grant reboot permission (business rule 112). Idempotent.
+# Polaris Agent — grant reboot permission (business rule 114). Idempotent.
 set -euo pipefail
 if ! command -v busctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
   echo "systemd (logind) is required for the agent to reboot this host" >&2

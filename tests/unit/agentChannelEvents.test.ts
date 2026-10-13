@@ -124,7 +124,7 @@ describe("agent WS lifecycle events", () => {
     await settle();
 
     const kinds = h.releaseMaintenanceHold.mock.calls.map((c) => (c[0] as { kind: string }).kind);
-    // A reboot's hold (rule 112) ends the same way: the agent is back.
+    // A reboot's hold (rule 114) ends the same way: the agent is back.
     expect(kinds).toEqual(["agent-upgrade", "agent-reinstall", "device-reboot"]);
     expect(h.releaseMaintenanceHold).toHaveBeenCalledWith(
       expect.objectContaining({ assetId: "asset-5" }),

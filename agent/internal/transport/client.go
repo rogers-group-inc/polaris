@@ -44,7 +44,7 @@ type Client struct {
 	CapEff string
 
 	// RebootInfo, when set, is read on every /heartbeat: whether the host lets
-	// this agent reboot it (Polaris business rule 112) and the host's boot
+	// this agent reboot it (Polaris business rule 114) and the host's boot
 	// time in unix seconds (0 = unknown). Set by main.go.
 	RebootInfo func() (capable bool, bootTime uint64)
 }
@@ -453,7 +453,7 @@ func (c *Client) Heartbeat() (*HeartbeatResponse, error) {
 	if c.CapEff != "" {
 		body["capEff"] = c.CapEff
 	}
-	// Reboots (Polaris business rule 112): whether the host lets this agent
+	// Reboots (Polaris business rule 114): whether the host lets this agent
 	// reboot it, and when it last booted. Supplied by main via the hook so the
 	// transport stays free of OS probes.
 	if c.RebootInfo != nil {
