@@ -271,6 +271,28 @@ router.post("/test", credentialTestLimiter, requireOwnership("credentials"), asy
       return;
     }
 
+    // A restapi credential is aimed at its own baseUrl, not at the typed host or
+    // the asset — so the rule 110 guard above never saw where it goes. Same
+    // check on the baseUrl's host (re-scan F73). Answered as a RESULT.
+    if (input.type === "restapi" && typeof (config as Record<string, unknown>).baseUrl === "string") {
+      let baseHost = "";
+      try { baseHost = new URL(String((config as Record<string, unknown>).baseUrl)).hostname; } catch { baseHost = ""; }
+      if (baseHost) {
+        try {
+          await resolveAllowedHost(baseHost);
+        } catch (err: any) {
+          if (err?.code !== "BLOCKED_HOST") throw err;
+          res.json({
+            success: false,
+            responseTimeMs: 0,
+            error: `The base URL points at ${baseHost}, a loopback / link-local / metadata address. Use the API's routable address.`,
+            host,
+          });
+          return;
+        }
+      }
+    }
+
     // A device admin login (authMode "form") has no HTTP check to run: it is
     // the password a switch or AP's login page takes, and the only thing that
     // can prove it is the firmware engine logging in (business rule 87).

@@ -44,6 +44,12 @@ export const DESTINATION_KEYS = [
   "fallbackHosts",
   "verifySsl",
   "verifyTls",
+  // FortiManager's direct-to-FortiGate leg (business rule 111(a), re-scan
+  // F74/F80): whether fortigateApiToken is sent to the gates directly at all,
+  // to which of each gate's addresses, and whether that TLS is verified.
+  "fortigateVerifySsl",
+  "useProxy",
+  "mgmtInterface",
 ] as const;
 
 /**

@@ -23,6 +23,7 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { provisionExternalUser } from "./ssoProvisioning.js";
 import { SECRET_MASK, LEGACY_ASTERISK_MASK, isMaskedSecret } from "../utils/secretMask.js";
+import { movedDestinationKey } from "../utils/secretDestination.js";
 
 export interface OidcSettings {
   enabled: boolean;
@@ -92,15 +93,42 @@ export async function getOidcSettingsForUi(): Promise<OidcSettings & { redirectU
   return { ...s, clientSecret: s.clientSecret ? MASK : "", redirectUri };
 }
 
+/**
+ * The client secret to save. The discovery document names the token endpoint
+ * the secret is posted to, so an echoed mask keeps the stored secret only
+ * while the discovery URL and the client id are unchanged — business rule
+ * 111(a), re-scan F4. Anything else typed is saved as typed.
+ */
+export function keptOidcClientSecret(
+  cur: Pick<OidcSettings, "discoveryUrl" | "clientId" | "clientSecret">,
+  input: Record<string, any>,
+): string {
+  const echoed = isMaskedSecret(input.clientSecret) || input.clientSecret === LEGACY_ASTERISK_MASK;
+  if (!echoed) return String(input.clientSecret ?? "").trim();
+  if (!cur.clientSecret) return "";
+  const moved = movedDestinationKey(
+    { url: cur.discoveryUrl ?? "", endpoint: cur.clientId ?? "" },
+    {
+      url: input.discoveryUrl === undefined ? undefined : String(input.discoveryUrl).trim(),
+      endpoint: input.clientId === undefined ? undefined : String(input.clientId).trim(),
+    },
+  );
+  if (moved) {
+    throw new AppError(
+      400,
+      `The ${moved === "url" ? "discovery URL" : "client ID"} changed, so the stored client secret is not reused: a saved secret is never sent to a new destination. Enter the client secret again to save this change.`,
+    );
+  }
+  return cur.clientSecret;
+}
+
 export async function updateOidcSettings(input: Record<string, any>): Promise<OidcSettings> {
   const cur = await getOidcSettings();
   const value: OidcSettings = {
     enabled: !!input.enabled,
     discoveryUrl: (input.discoveryUrl ?? cur.discoveryUrl ?? "").trim(),
     clientId: (input.clientId ?? cur.clientId ?? "").trim(),
-    clientSecret: isMaskedSecret(input.clientSecret) || input.clientSecret === LEGACY_ASTERISK_MASK
-      ? cur.clientSecret
-      : (input.clientSecret ?? "").trim(),
+    clientSecret: keptOidcClientSecret(cur, input),
     scopes: (input.scopes ?? cur.scopes ?? OIDC_DEFAULTS.scopes).trim() || OIDC_DEFAULTS.scopes,
     groupsClaim: (input.groupsClaim ?? cur.groupsClaim ?? OIDC_DEFAULTS.groupsClaim).trim(),
     usernameClaim: (input.usernameClaim ?? cur.usernameClaim ?? OIDC_DEFAULTS.usernameClaim).trim(),

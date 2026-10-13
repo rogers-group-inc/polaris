@@ -95,6 +95,30 @@ async function uniqueTokenName(base: string): Promise<string> {
 }
 
 /**
+ * The llm config keys that decide WHERE every user's assistant traffic goes,
+ * or what every assistant is told (business rule 111(e)). The model is not
+ * one: a different model on the same server is the same destination.
+ */
+export const LLM_REPOINT_KEYS = ["provider", "host", "port", "basePath", "useHttps", "allowLoopback", "azureApiShape", "systemPromptExtra"] as const;
+
+/**
+ * Which of LLM_REPOINT_KEYS differ between the stored and the saved config.
+ * A key the stored row never had is compared against its known default when
+ * it has one (a row saved before the key existed means the default), and is
+ * otherwise skipped — the schema fills defaults on save, and an old row's first
+ * plain save must not read as a move. Pure.
+ */
+export function llmRepointKeys(stored: Record<string, unknown>, next: Record<string, unknown>): string[] {
+  const defaults: Record<string, unknown> = { provider: "openai", azureApiShape: "v1", allowLoopback: false, systemPromptExtra: "" };
+  const norm = (v: unknown) => (typeof v === "string" ? v.trim() : v);
+  return LLM_REPOINT_KEYS.filter((k) => {
+    const before = stored[k] ?? defaults[k];
+    if (before === undefined) return false;
+    return norm(next[k] ?? defaults[k]) !== norm(before);
+  });
+}
+
+/**
  * The caller must be able to do by hand what this does automatically: create
  * a role and mint a token. Checked BEFORE the integration row is written.
  */

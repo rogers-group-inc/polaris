@@ -163,6 +163,7 @@ import { pinPrimaryAddress, unpinPrimaryAddress, CLEAR_PRIMARY_ADDRESS_PIN } fro
 import { DISCOVERED_ADDRESS_SOURCES, reconcileAddressesWithIpam } from "../../services/assetAddressService.js";
 import { buildAddressConfidence, confidenceToJson, checkAddressConfidence } from "../../services/addressConfidenceService.js";
 import { assertIpChangeMayRetargetIntegrationToken as assertIpChangeMayRetargetIntegrationTokenUtil } from "../../utils/integrationTokenTarget.js";
+import { assertCredentialInAssetScope } from "../../services/assetCredentialScopeService.js";
 
 const router = Router();
 
@@ -2465,6 +2466,9 @@ router.post("/:id/snmp-walk", requirePermission("assetsProbe", "read"), async (r
     if (!asset) throw new AppError(404, "Asset not found");
     if (!asset.ipAddress) throw new AppError(400, "Asset has no IP address to walk");
 
+    // Rule 112(e): this route is read-level, so only a credential the asset
+    // already uses — anything else needs assets:write (re-scan F62).
+    await assertCredentialInAssetScope(asset.id, credentialId, hasPermission(req, "assets", "write"));
     const cred = await getCredential(credentialId, { revealSecrets: true });
     if (cred.type !== "snmp") {
       throw new AppError(400, `Credential "${cred.name}" is type "${cred.type}", expected "snmp"`);

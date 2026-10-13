@@ -31,6 +31,7 @@ import {
 } from "./ldapClient.js";
 import { provisionExternalUser } from "./ssoProvisioning.js";
 import { SECRET_MASK, LEGACY_ASTERISK_MASK, isMaskedSecret } from "../utils/secretMask.js";
+import { movedDestinationKey } from "../utils/secretDestination.js";
 
 export interface LdapSettings {
   enabled: boolean;
@@ -88,16 +89,43 @@ export async function getLdapSettingsMasked(): Promise<LdapSettings> {
   return { ...s, bindPassword: s.bindPassword ? MASK : "" };
 }
 
+/**
+ * The bind password to save. The UI echoes the mask back to mean "keep the
+ * stored one" — business rule 111(a): only while the server it goes to is
+ * unchanged (the URL: host, port, ldap vs ldaps; and certificate checking).
+ * A moved destination is a 400 asking for the password again (re-scan F3).
+ * Anything else typed is saved as typed (blank clears it).
+ */
+export function keptLdapBindPassword(
+  cur: Pick<LdapSettings, "url" | "tlsVerify" | "bindPassword">,
+  input: Record<string, any>,
+): string {
+  const echoed = isMaskedSecret(input.bindPassword) || input.bindPassword === LEGACY_ASTERISK_MASK;
+  if (!echoed) return String(input.bindPassword ?? "").trim();
+  if (!cur.bindPassword) return "";
+  const moved = movedDestinationKey(
+    { url: cur.url ?? "", verifyTls: cur.tlsVerify !== false },
+    {
+      url: input.url === undefined ? undefined : String(input.url).trim(),
+      verifyTls: input.tlsVerify === undefined ? undefined : input.tlsVerify !== false,
+    },
+  );
+  if (moved) {
+    throw new AppError(
+      400,
+      `The ${moved === "url" ? "LDAP server URL" : "certificate check"} changed, so the stored bind password is not reused: a saved secret is never sent to a new destination. Enter the bind password again to save this change.`,
+    );
+  }
+  return cur.bindPassword;
+}
+
 export async function updateLdapSettings(input: Record<string, any>): Promise<LdapSettings> {
   const cur = await getLdapSettings();
   const value: LdapSettings = {
     enabled: !!input.enabled,
     url: (input.url ?? cur.url ?? "").trim(),
     bindDn: (input.bindDn ?? cur.bindDn ?? "").trim(),
-    // Preserve the stored secret when the UI sends the mask back unchanged.
-    bindPassword: isMaskedSecret(input.bindPassword) || input.bindPassword === LEGACY_ASTERISK_MASK
-      ? cur.bindPassword
-      : (input.bindPassword ?? "").trim(),
+    bindPassword: keptLdapBindPassword(cur, input),
     searchBase: (input.searchBase ?? cur.searchBase ?? "").trim(),
     searchFilter: (input.searchFilter ?? cur.searchFilter ?? LDAP_DEFAULTS.searchFilter).trim(),
     tlsVerify: input.tlsVerify !== false,
