@@ -162,6 +162,7 @@ import { isRunActive } from "../../services/discoveryRunState.js";
 import { pinPrimaryAddress, unpinPrimaryAddress, CLEAR_PRIMARY_ADDRESS_PIN } from "../../services/primaryAddressService.js";
 import { DISCOVERED_ADDRESS_SOURCES, reconcileAddressesWithIpam } from "../../services/assetAddressService.js";
 import { buildAddressConfidence, confidenceToJson, checkAddressConfidence } from "../../services/addressConfidenceService.js";
+import { assertIpChangeMayRetargetIntegrationToken as assertIpChangeMayRetargetIntegrationTokenUtil } from "../../utils/integrationTokenTarget.js";
 
 const router = Router();
 
@@ -4673,35 +4674,13 @@ async function auditAssetCredentialUse(
   if (uses.length) await recordCredentialUse(credentialUseActor(req), via, uses);
 }
 
-/**
- * Polaris authenticates to a FortiGate with the integration's fleet-wide API
- * token, at the ADDRESS the asset record holds. Typing a new address on such a
- * device would send that token to whatever answers there, so it needs the
- * right to manage the integration that owns the token (rule 111). Clearing the
- * address, reverting to the discovered one or re-sending the current one sends
- * nothing anywhere new and stays an Assets edit.
- *
- * Keyed on the managing integration, NOT on assetType: the collectors pick the
- * token by discoveredByIntegration and the polling method, so a firewall
- * retyped to "server" still receives it. A Fortinet integration stamps itself
- * only on the gates, switches and APs it manages — never on DHCP clients — so
- * endpoints stay an ordinary Assets edit.
- */
+/** Rule 111(c) — see utils/integrationTokenTarget.ts. */
 function assertIpChangeMayRetargetIntegrationToken(
   req: Request,
   existing: { ipAddress: string | null; discoveredByIntegration?: { type: string } | null },
   nextIp: string | null | undefined,
 ): void {
-  const t = existing.discoveredByIntegration?.type;
-  if (t !== "fortimanager" && t !== "fortigate") return;
-  if (nextIp === undefined || nextIp === null) return;
-  const next = nextIp.trim();
-  if (!next || next === (existing.ipAddress ?? "")) return;
-  if (hasPermission(req, "integrations", "write")) return;
-  throw new AppError(
-    403,
-    "Changing the address of a device that a FortiManager or FortiGate integration manages needs Integrations Read-Write: Polaris signs in to that address with the integration's API token.",
-  );
+  assertIpChangeMayRetargetIntegrationTokenUtil(hasPermission(req, "integrations", "write"), existing, nextIp);
 }
 
 router.put("/:id", requirePermission("assets", "write"), async (req, res, next) => {
@@ -5387,6 +5366,11 @@ router.delete("/:id/macs/:mac", requirePermission("assets", "write"), async (req
 router.put("/:id/primary-address", requirePermission("assets", "write"), async (req, res, next) => {
   try {
     const input = PrimaryAddressSchema.parse(req.body);
+    const pinTarget = await prisma.asset.findUnique({
+      where: { id: req.params.id as string },
+      select: { ipAddress: true, discoveredByIntegration: { select: { type: true } } },
+    });
+    if (pinTarget) assertIpChangeMayRetargetIntegrationToken(req, pinTarget, input.ip);
     const result = await pinPrimaryAddress({
       assetId: req.params.id as string, mac: input.mac, ip: input.ip, actor: requestActor(req) ?? "unknown",
     });
@@ -5868,6 +5852,7 @@ router.post("/:id/merge", requirePermission("assets", "fullwrite"), async (req, 
       ghostId,
       fieldWinners: resolvedWinners,
       dependencyWinner: resolvedDependencyWinner,
+      canManageIntegrations: hasPermission(req, "integrations", "write"),
     });
 
     await logEvent({

@@ -70,7 +70,7 @@ import { DEVICE_OWNED_SOURCE_TYPES } from "./reservationService.js";
 import { integrationPushEnabled } from "./reservationPushService.js";
 import { chunkArray } from "../utils/chunk.js";
 import { getArchivedSubnet } from "./subnetArchiveService.js";
-import { mergeAssets } from "./assetMergeService.js";
+import { mergeAssets, assertMergeTokenSafe } from "./assetMergeService.js";
 
 export const CHASSIS_REPLACED_COLLISION_REASON = "chassis-replaced";
 
@@ -716,10 +716,19 @@ export interface AdoptSwapOutcome {
 export async function adoptChassisSwap(
   oldSerial: string,
   newSerial: string,
-  opts: { mergeOldAsset?: boolean; actor?: string } = {},
+  opts: { mergeOldAsset?: boolean; actor?: string; canManageIntegrations?: boolean } = {},
 ): Promise<AdoptSwapOutcome> {
   const { old, next, matches } = await loadPendingSwapConflicts(oldSerial, newSerial);
   if (matches.length === 0) throw new AppError(404, "No pending chassis conflicts for that serial pair");
+
+  // Rule 111(c), before the adoption writes anything: the asset carrying the
+  // new serial could be a hand-made record at a typed address.
+  if (opts.mergeOldAsset && opts.canManageIntegrations !== undefined) {
+    const pre = await findChassisAssets(old, next);
+    if (pre.oldAssetId && pre.newAssetId && pre.oldAssetId !== pre.newAssetId) {
+      await assertMergeTokenSafe({ canonicalId: pre.newAssetId, ghostId: pre.oldAssetId, canManageIntegrations: opts.canManageIntegrations });
+    }
+  }
 
   const subnetIds = matches.map((c) => c.subnetId).filter((id): id is string => !!id);
   const now = new Date();
@@ -755,7 +764,7 @@ export async function adoptChassisSwap(
     else if (oldAssetId === newAssetId) outcome.mergeSkipped = "same-asset";
     else {
       const oldMacRows = await prisma.assetMacAddress.findMany({ where: { assetId: oldAssetId }, select: { id: true } });
-      const result = await mergeAssets({ canonicalId: newAssetId, ghostId: oldAssetId });
+      const result = await mergeAssets({ canonicalId: newAssetId, ghostId: oldAssetId, canManageIntegrations: opts.canManageIntegrations });
       // Dead hardware's identity must not ride along on the survivor.
       const deadSources = await prisma.assetSource.findMany({
         where: { assetId: newAssetId, sourceKind: "fortigate-firewall" },

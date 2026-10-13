@@ -649,6 +649,27 @@ only the nginx helper. A file that fails is not installed; `journalctl -t
 polaris-updater` shows the `REFUSED:` line. A drop-in you add yourself under
 `<unit>.d/` is never touched or checked.
 
+**Root helpers wait for you.** A few files are run by root directly, so their
+content cannot be checked: `/usr/local/sbin/polaris-nginx-apply`,
+`/usr/local/sbin/polaris-update-sync`, `/etc/polkit-1/rules.d/49-polaris.rules`
+and, on an HA node, `/usr/local/sbin/polaris-ha-role`,
+`polaris-ha-role.{service,timer}`, `/usr/local/sbin/polaris-ha-ssh-wrapper` and
+`patroni.service.d/10-polaris.conf`. The in-app updater never installs a new
+version of them: the `polaris` account writes `/opt/polaris` and may start the
+update unit, so letting that unit install root code would let the account run
+anything as root (business rule 117(g)). When a release changes one, the update
+otherwise completes, the Maintenance tab shows **Root helper update pending**,
+and the held files are listed in `/var/lib/polaris-update-sync/pending`. Review
+and install them:
+
+```bash
+sudo polaris-update-sync --apply-helpers        # shows each diff, asks per file
+sudo polaris-update-sync --apply-helpers --yes  # installs all of them
+```
+
+`deploy/update-linux.sh` runs the `--yes` form itself. On an HA pair, apply on
+the primary; the standby copies the installed helpers from it.
+
 **Auto-sync of unit files.** Before restarting `polaris.target` the updater
 also syncs `/opt/polaris/deploy/polaris-*.service` and `polaris.target` into
 `/etc/systemd/system/`, then runs `systemctl daemon-reload`. Files are

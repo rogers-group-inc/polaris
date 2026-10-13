@@ -103,8 +103,9 @@ import { logEvent, buildChanges } from "./eventLogService.js";
 import { UNMONITORABLE_STATUSES } from "../utils/assetInvariants.js";
 import { isValidIpAddress } from "../utils/cidr.js";
 import { resolvePendingIpOverrideConflicts } from "./ipOverrideService.js";
-import { mergeAssets } from "./assetMergeService.js";
+import { mergeAssets, assertMergeTokenSafe } from "./assetMergeService.js";
 import { buildIpContexts } from "./subnetService.js";
+import { assertIpChangeMayRetargetIntegrationToken } from "../utils/integrationTokenTarget.js";
 
 export const DUPLICATE_IP_COLLISION_REASON = "duplicate-ip";
 
@@ -1013,13 +1014,16 @@ export interface ReassignOutcome {
  * (and discovery reporting the same address later releases the pin by itself).
  *
  * Refuses an address another network-present asset already holds — moving the
- * collision is not resolving it.
+ * collision is not resolving it. Refuses (403) a new address on a Fortinet-
+ * managed member unless `opts.canManageIntegrations` (business rule 111(c)):
+ * the integration's API token follows the address.
  */
 export async function reassignDuplicateIpAsset(
   conflict: { id: string; assetId: string | null; proposedAssetFields: unknown },
   assetId: string,
   rawIp: string,
   actor?: string,
+  opts: { canManageIntegrations: boolean } = { canManageIntegrations: false },
 ): Promise<ReassignOutcome> {
   const proposed = (conflict.proposedAssetFields || {}) as Record<string, unknown>;
   if (proposed.collisionReason !== DUPLICATE_IP_COLLISION_REASON) {
@@ -1042,9 +1046,13 @@ export async function reassignDuplicateIpAsset(
 
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
-    select: { id: true, hostname: true, ipAddress: true, ipOverride: true, ipSource: true },
+    select: {
+      id: true, hostname: true, ipAddress: true, ipOverride: true, ipSource: true,
+      discoveredByIntegration: { select: { type: true } },
+    },
   });
   if (!asset) throw new AppError(404, "Asset not found");
+  assertIpChangeMayRetargetIntegrationToken(opts.canManageIntegrations, asset, newIp);
 
   const holder = await prisma.asset.findFirst({
     where: {
@@ -1264,6 +1272,7 @@ export async function mergeDuplicateIpAssets(
   survivorAssetId: string,
   rawAbsorbIds: string[],
   actor?: string,
+  opts: { canManageIntegrations?: boolean } = {},
 ): Promise<MergeDuplicateIpOutcome> {
   const proposed = (conflict.proposedAssetFields || {}) as Record<string, unknown>;
   if (proposed.collisionReason !== DUPLICATE_IP_COLLISION_REASON) {
@@ -1279,6 +1288,13 @@ export async function mergeDuplicateIpAssets(
     members.find((m) => m.assetId === id)?.hostname || id;
   const survivorLabel = labelOf(survivorAssetId);
 
+  // Rule 111(c), every ghost, before any write.
+  if (opts.canManageIntegrations !== undefined) {
+    for (const ghostId of absorbIds) {
+      await assertMergeTokenSafe({ canonicalId: survivorAssetId, ghostId, canManageIntegrations: opts.canManageIntegrations });
+    }
+  }
+
   // Keep the conflict row alive across the deletes (see the header note).
   if (conflict.assetId !== survivorAssetId) {
     await prisma.conflict.update({
@@ -1291,7 +1307,7 @@ export async function mergeDuplicateIpAssets(
   const absorbed: string[] = [];
   for (const ghostId of absorbIds) {
     const ghostLabel = labelOf(ghostId);
-    const result = await mergeAssets({ canonicalId: survivorAssetId, ghostId });
+    const result = await mergeAssets({ canonicalId: survivorAssetId, ghostId, canManageIntegrations: opts.canManageIntegrations });
     movedSources += result.movedSources;
     absorbed.push(result.absorbedId);
     logEvent({

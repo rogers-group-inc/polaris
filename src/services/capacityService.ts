@@ -36,6 +36,7 @@
 import { totalmem, freemem, cpus, loadavg } from "node:os";
 import { PG_DATA_DIR_CANDIDATES, pickFirstExistingPath, statfsWithAncestorFallback } from "../utils/startupDiskCheck.js";
 import { dirname } from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import pg from "pg";
@@ -217,6 +218,38 @@ export function databaseUsesPublicDefaultPassword(url: string | undefined): bool
     return decodeURIComponent(u.username) === "polaris" && decodeURIComponent(u.password) === "polaris";
   } catch {
     return false;
+  }
+}
+
+/**
+ * Where the root update helper lists the root helpers it HELD rather than
+ * installed (business rule 117(g)): one "<installed path> <sha256 of the tree
+ * copy>" per line, `#` comments. Root-owned and world-readable; absent when
+ * nothing is held.
+ */
+export const ROOT_HELPERS_PENDING_FILE = "/var/lib/polaris-update-sync/pending";
+
+/** Parse the held-helpers list. Ignores comments, blanks and malformed lines. Pure. */
+export function parsePendingRootHelpers(text: string): Array<{ path: string; sha256: string }> {
+  const out: Array<{ path: string; sha256: string }> = [];
+  for (const raw of String(text ?? "").split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const sp = line.lastIndexOf(" ");
+    if (sp <= 0) continue;
+    const path = line.slice(0, sp).trim();
+    const sha256 = line.slice(sp + 1).trim().toLowerCase();
+    if (!path.startsWith("/") || sha256.length !== 64 || !/^[0-9a-f]+$/.test(sha256)) continue;
+    out.push({ path, sha256 });
+  }
+  return out;
+}
+
+function readPendingRootHelpers(): Array<{ path: string; sha256: string }> {
+  try {
+    return parsePendingRootHelpers(readFileSync(ROOT_HELPERS_PENDING_FILE, "utf8"));
+  } catch {
+    return [];
   }
 }
 
@@ -1821,6 +1854,23 @@ function computeReasons(
         "The database account still uses the installer's old default password (\"polaris\"), which is published in the Polaris source.",
       suggestion:
         "Rotate it: see docs/UPGRADING.md → \"Rotate the database password\" (one ALTER USER, one line in .env, then restart polaris.target).",
+    });
+  }
+
+  // Business rule 117(g): an update shipped a changed root helper (a file root
+  // executes, or the polkit rule), and the root update unit HELD it instead of
+  // installing it — the polaris account must never be able to swap root code.
+  // The rest of the update applied; this one waits for an administrator.
+  const heldHelpers = readPendingRootHelpers();
+  if (heldHelpers.length) {
+    reasons.push({
+      severity: "warning",
+      code: "root_helpers_pending",
+      message:
+        `${heldHelpers.length} root helper${heldHelpers.length === 1 ? "" : "s"} changed in this release and ${heldHelpers.length === 1 ? "is" : "are"} waiting for an administrator: ` +
+        heldHelpers.map((h) => h.path).join(", ") + ".",
+      suggestion:
+        "On the server, run `sudo polaris-update-sync --apply-helpers`. It shows each change against the installed copy and installs the ones you confirm. Until then the previous copies stay in use.",
     });
   }
 

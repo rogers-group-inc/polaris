@@ -165,6 +165,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Auto-close convention matches `resolveStaleReservationConflicts` / `ipOverrideService`: `status="rejected"`, `resolvedBy="system:auto-resolved"`.
 - Reconcile is idempotent — a fleet with no duplicates issues zero writes.
 
+- **Rule 111(c) (2026-10-13, re-scan F1).** `reassignDuplicateIpAsset(…, actor, { canManageIntegrations })` refuses a new address on a Fortinet-managed member without integrations:write — the default `false` fails closed for any new caller. `mergeDuplicateIpAssets(…, { canManageIntegrations })` pre-checks every ghost with `assertMergeTokenSafe`.
+
 **When changing this:**
 - The `proposedAssetFields` shape is read by `renderDuplicateIpConflictCard` (events.js), the `conflictQueue` widget subtitle, `reassignDuplicateIpAsset`'s member check and `resolveMergeTargets` — change all five together.
 - The card's three action wirings (`[data-dupip-apply]`, `[data-dupip-merge]` and `[data-dupip-review]`) are bound in `loadConflicts` in events.js, not in the renderer — a new action needs both halves. `[data-dupip-review]` opens the shared merge modal (`public/js/asset-merge-modal.js`) rather than calling a conflict endpoint, so it resolves the ASSETS and lets the next sweep auto-close the card.
@@ -489,6 +491,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **Migrating does not close the conflict.** An operator migrates in passes, so the diff has to stay reachable; `adopt: true` on the route runs the normal accept alongside.
 - **The dispatcher owns the conflict's status.** These handlers must NOT stamp `status`/`resolvedBy`/`resolvedAt` — `conflictResolutionService.acceptConflict`/`rejectConflict` do it after every handler returns, as for the reservation and asset variants.
 - Raise refuses equal or blank serials outright, so a caller cannot manufacture a self-conflict.
+
+- `adoptChassisSwap(…, { canManageIntegrations })`: with `mergeOldAsset`, the asset merge is checked under rule 111(c) BEFORE the subnet adoption transaction — the asset carrying the new serial could be a hand-made record at a typed address. A real RMA swap (the new gate's discovered address survives) passes.
 
 **When changing this:**
 - Adding a compared field to the diff? It goes in `COMPARED_FIELDS`, and `tests/unit/chassisDiff.test.ts` has a table-driven case per field — extend it.

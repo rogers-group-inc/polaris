@@ -58,7 +58,11 @@ seven steps, each shown with its own status:
    account may start. It checks every unit file and the sudoers entry before
    installing it ([rule 117](Business-Rules#rule-117)). A file that fails is
    not installed and the update carries on; `journalctl -t polaris-updater`
-   shows a `REFUSED:` line naming it.
+   shows a `REFUSED:` line naming it. **Root helpers** — files root runs
+   directly, such as the nginx helper and the update helper itself — are held
+   instead: the Maintenance tab shows *Root helper update pending*, and
+   `sudo polaris-update-sync --apply-helpers` on the server reviews and
+   installs them. Everything else in the update applies meanwhile.
 
 An nginx config that was hand-edited since Polaris last wrote it is **not**
 overwritten — the update logs it, and the Web Server tab shows the drift

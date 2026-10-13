@@ -595,7 +595,11 @@ notifies the peer at the end.
 Both paths also refresh the HA files that do not live in the tree once
 installed — `/usr/local/sbin/polaris-ha-role`, `polaris-ha-role.service` and
 `.timer`, `patroni.service.d/10-polaris.conf`, and the `10-ha.conf` drop-ins —
-so a fix to the reconciler arrives with the release that carries it. Only files
+so a fix to the reconciler arrives with the release that carries it. The
+in-app updater syncs the `10-ha.conf` drop-ins itself but HOLDS the rest,
+because root runs them: run `sudo polaris-update-sync --apply-helpers` on the
+primary to review and install them (`update-linux.sh` does it for you). The
+standby copies the primary's installed copies. Only files
 already present are refreshed, never created: this script decides which of them
 a node gets, so **if a release adds a new HA file, re-run `setup-rhel-ha.sh` on
 each node to install it.** Release notes will say so when it happens.
