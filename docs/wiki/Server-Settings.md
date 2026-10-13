@@ -490,7 +490,7 @@ conditions are called out in place rather than left to guess at:
   - **"N relation(s) that have never been analyzed hold about X"** (a
     warning) — more than 64 MB, or 1% of the database, is left out. Run the
     `vacuumdb` above and reload.
-  - **"N small relation(s), about X, are not yet analyzed"** (a plain note) —
+  - **"N small relation(s), about X, are not yet analyzed"** (a small footnote under the table list) —
     normal on any TimescaleDB install, since every chunk compression leaves a
     small one behind. Nothing to do.
   - **"N relations have never been vacuumed or analyzed — too many to size

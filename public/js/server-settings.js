@@ -2199,6 +2199,7 @@ function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
   // behind until vacuumdb runs).
   // Business rule 71: a degraded measurement degrades VISIBLY.
   var sizingWarnings = "";
+  var sizingFootnote = "";
   if (acct && acct.sizing === "parent-only") {
     sizingWarnings +=
       '<p class="hint" style="margin-top:0.5rem;color:var(--color-warning,#f59e0b)">' +
@@ -2233,8 +2234,9 @@ function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
         escapeHtml(_capacityFormatBytes(naMissing)) + ' that no size on this card includes. ' + naFix +
         '</p>';
     } else {
-      sizingWarnings +=
-        '<p class="hint" style="margin-top:0.5rem">' +
+      // Immaterial: a footnote at the foot of the table scroll, not a card-level hint.
+      sizingFootnote =
+        '<p class="hint" style="margin:0.4rem 0 0;font-size:0.7rem">' +
         naCount + ' small relation(s), about ' + escapeHtml(_capacityFormatBytes(naMissing)) +
         ', are not yet analyzed and are left out of the sizes above — normal for recently compressed ' +
         'TimescaleDB chunks, and too small to matter.' +
@@ -2299,8 +2301,9 @@ function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
               '<th style="text-align:right">Rows</th>' +
               '<th style="text-align:right">Size</th>' +
             '</tr></thead><tbody>' + tablesHtml + '</tbody></table>' +
+            sizingFootnote +
           '</div>'
-        : '') +
+        : sizingFootnote) +
       sizingWarnings +
     '</div>';
 
