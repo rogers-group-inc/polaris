@@ -58,6 +58,24 @@ Publishing is the escalated level on purpose: a public dashboard is visible on a
 NOC wallboard that has no session at all. See
 [Mobile and Dash](Mobile-and-Dash#dash-wallboard).
 
+## Exporting and importing a tab
+
+To move a tab to **another Polaris install** — lab to production, or into
+version control — use the **Dashboards ▾** menu:
+
+- **Export this tab** downloads the tab you are looking at as
+  `<tab name>.dashboard.json`: its name, columns, widget sizes and per-widget
+  settings. Nothing install-specific travels — no ids and no credentials.
+  Settings that name things (regions, FortiGates) carry the names, so on an
+  install without a region of that name the widget simply matches nothing.
+- **Import tab from file…** reads a `.dashboard.json` and adds it as a **new
+  tab** of your own layout, named from the file. Widgets the receiving Polaris
+  does not have are skipped, and the confirmation says how many.
+
+Export and import work one tab at a time, happen entirely in your browser, and
+need no permission beyond seeing the menu. Unlike a saved dashboard, an
+imported tab is not linked to anything: it is yours to change.
+
 ---
 
 ## The widget library
