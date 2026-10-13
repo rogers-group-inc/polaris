@@ -601,10 +601,7 @@ const api = {
         body: formData,
       }).then(function (res) {
         if (res.status === 401) { window.location.href = "/login.html"; return; }
-        return res.json().then(function (data) {
-          if (!res.ok) throw new Error(data?.error || "Icon upload failed");
-          return data;
-        });
+        return _readResponseBody(res, "Icon upload failed");
       });
     },
     delete: (id)      => request("DELETE", `/device-icons/${id}`),
@@ -1465,10 +1462,7 @@ const api = {
         body: formData,
       }).then(function (res) {
         if (res.status === 401) { window.location.href = "/login.html"; return; }
-        return res.json().then(function (d) {
-          if (!res.ok) throw new Error(d?.error || "Cert preflight failed");
-          return d;
-        });
+        return _readResponseBody(res, "Cert preflight failed");
       });
     },
     proxyCertRotate:      (body)  => request("POST", "/server-settings/proxy/cert/rotate", body),
@@ -1478,7 +1472,7 @@ const api = {
       if (password) opts.body = JSON.stringify({ password: password });
       return fetch(API_BASE + "/server-settings/database/backup", opts).then(function (res) {
         if (res.status === 401) { window.location.href = "/login.html"; return; }
-        if (!res.ok) return res.json().then(function (d) { throw new Error(d.error || "Backup failed"); });
+        if (!res.ok) return _readResponseBody(res, "Backup failed");
         var filename = "polaris-backup.gz";
         var cd = res.headers.get("Content-Disposition");
         if (cd) { var m = cd.match(/filename="?([^"]+)"?/); if (m) filename = m[1]; }
@@ -1491,7 +1485,7 @@ const api = {
       if (password) formData.append("password", password);
       return fetch(API_BASE + "/server-settings/database/restore", { method: "POST", headers: _csrfHeaders(), body: formData }).then(function (res) {
         if (res.status === 401) { window.location.href = "/login.html"; return; }
-        return res.json().then(function (data) { if (!res.ok) throw new Error(data.error || "Restore failed"); return data; });
+        return _readResponseBody(res, "Restore failed");
       });
     },
     listBackups: () => request("GET", "/server-settings/database/backups"),
@@ -1504,7 +1498,7 @@ const api = {
     downloadBackup: (id) => {
       return fetch(API_BASE + "/server-settings/database/backups/" + id + "/download").then(function (res) {
         if (res.status === 401) { window.location.href = "/login.html"; return; }
-        if (!res.ok) return res.json().then(function (d) { throw new Error(d.error || "Download failed"); });
+        if (!res.ok) return _readResponseBody(res, "Download failed");
         var filename = "backup.gz";
         var cd = res.headers.get("Content-Disposition");
         if (cd) { var m = cd.match(/filename="?([^"]+)"?/); if (m) filename = m[1]; }
@@ -1534,10 +1528,7 @@ const api = {
         body: formData,
       }).then(function (res) {
         if (res.status === 401) { window.location.href = "/login.html"; return; }
-        return res.json().then(function (data) {
-          if (!res.ok) throw new Error(data?.error || "Upload failed");
-          return data;
-        });
+        return _readResponseBody(res, "Upload failed");
       });
     },
     deleteLogo: () => request("DELETE", "/server-settings/branding/logo"),
@@ -1568,10 +1559,7 @@ const api = {
         body: formData,
       }).then(function (res) {
         if (res.status === 401) { window.location.href = "/login.html"; return; }
-        return res.json().then(function (data) {
-          if (!res.ok) throw new Error(data?.error || "MIB upload failed");
-          return data;
-        });
+        return _readResponseBody(res, "MIB upload failed");
       });
     },
     deleteMib: (id) => request("DELETE", `/server-settings/mibs/${id}`),

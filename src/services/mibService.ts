@@ -17,7 +17,11 @@ import { AppError } from "../utils/errors.js";
 import { refreshRegistry, resolveSymbolsForMib, missingRootsForMib, type MissingRoot } from "./oidRegistry.js";
 import { stripComments } from "./mibParserUtils.js";
 
-const MAX_BYTES = 1024 * 1024; // 1 MB — MIBs are normally <100 KB
+// Most MIBs are under 100 KB, but a vendor that ships one monolithic module
+// is not: APC/Schneider's PowerNet-MIB is ~3 MB and grows every release. The
+// route's multer limit is this same constant, and the shipped nginx
+// client_max_body_size (8m) sits above it — raise them together.
+export const MIB_MAX_BYTES = 6 * 1024 * 1024;
 
 export interface ParsedMib {
   moduleName: string;
@@ -34,8 +38,8 @@ export function parseMib(raw: string): ParsedMib {
   const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
 
   if (text.length === 0) throw new AppError(400, "MIB file is empty");
-  if (text.length > MAX_BYTES) {
-    throw new AppError(400, `MIB file exceeds ${MAX_BYTES} bytes`);
+  if (text.length > MIB_MAX_BYTES) {
+    throw new AppError(413, `MIB files are limited to ${MIB_MAX_BYTES / 1_048_576} MiB`);
   }
 
   // Reject anything containing NUL bytes or other non-text control chars.
