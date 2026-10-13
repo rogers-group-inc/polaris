@@ -102,16 +102,21 @@
     title: "Device Map",
     icon: "#i-map",
     renderTopbar: function () {
-      // No top app bar — the shell's persistent searchbar sits above the
-      // map. Empty topbar slot lets the map take the full body height.
-      return "";
+      // A plain titled bar. The shell adds the search magnifier to its
+      // trailing group (app.js addTopbarSearch) — the only way into search
+      // now that the bar is no longer shown above every page.
+      return ''
+        + '<div class="m3-topbar">'
+        + '  <div class="leading"></div>'
+        + '  <div class="title">Device Map</div>'
+        + '  <div class="trailing"></div>'
+        + '</div>';
     },
     render: function (body, ctx) {
       // Bare-minimum DOM the first time we render this tab. Subsequent
       // renders reuse it.
-      // No floating search pill — the shell's persistent searchbar
-      // (#search-slot) sits above the map on this tab and already routes
-      // to the Search tab, so a map-local search would be redundant.
+      // No floating search pill — the top bar's magnifier opens the app-wide
+      // search, so a map-local search would be redundant.
       body.innerHTML = ''
         + '<div class="map-screen">'
         + '  <div id="map-container"></div>'

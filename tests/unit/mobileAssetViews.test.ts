@@ -219,6 +219,20 @@ describe("mobile Assets view tabs", () => {
     expect(g.PolarisTabs.showSnackbar).toHaveBeenCalledWith("save refused", { error: true });
   });
 
+  it("pins the view tabs, filter/sort row and type chips in one sticky block above the cards", async () => {
+    mount();
+    await flush(); await flush();
+    const head = document.querySelector("#app-body > .list-sticky-head")!;
+    expect(head).toBeTruthy();
+    expect(head.querySelector("#assets-views")).toBeTruthy();
+    expect(head.querySelector("#assets-filter")).toBeTruthy();
+    expect(head.querySelector("#assets-sort")).toBeTruthy();
+    expect(head.querySelector("#assets-chips")).toBeTruthy();
+    // The cards scroll beneath it, not inside it.
+    expect(head.querySelector(".asset-card")).toBeNull();
+    expect(document.querySelector("#app-body > #assets-list-host .asset-card")).toBeTruthy();
+  });
+
   it("with no tabs, the plain list: no strip, no stars, no favorites param", async () => {
     mount({ tabs: false });
     await flush(); await flush();
