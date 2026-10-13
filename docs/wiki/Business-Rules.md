@@ -2065,7 +2065,8 @@ not a spelling, a cookie that has outlived its owner, or a code already used.**
   *Allow loopback* box and the SMTP channel (a mail relay on the Polaris host) lift
   the block for loopback and nothing else.
 - **Credential Test Connection** refuses a typed host that is this machine or a
-  metadata address. Testing against an asset is unchanged.
+  metadata address, and so does a REST API credential's base URL. Testing
+  against an asset is unchanged.
 - **Web Push endpoints** must be `https` and may not point at this host or a
   metadata address.
 
@@ -2078,6 +2079,17 @@ not a spelling, a cookie that has outlived its owner, or a code already used.**
   cluster's extra nodes, or an SMTP channel's server, port or security, and
   Polaris asks for the secret again. A
   saved secret is never sent to a new address.
+- **The same applies to sign-in settings.** Changing the LDAP server URL or
+  turning off its certificate check asks for the bind password again;
+  changing the OIDC discovery URL or client ID asks for the client secret again.
+- **FortiManager's direct FortiGate connection counts as a destination.**
+  Turning off its certificate check, switching from proxy mode to direct, or
+  changing the management interface asks for the FortiGate API token again.
+- **Repointing the AI Assistant needs more than Integrations Read-Write.**
+  Changing its model server, connection or extra system prompt needs the same
+  rights creating it does (Roles and API Tokens Read-Write), because every
+  user's conversations go there. The change is logged as a warning. Changing
+  only the model does not.
 - **Test Connection uses only its own integration's secrets.** An integration of
   another type cannot lend its password to a test.
 - **A Fortinet-managed device's address needs Integrations Read-Write to change.**
@@ -2116,6 +2128,10 @@ not a spelling, a cookie that has outlived its owner, or a code already used.**
   Discovery records every credential it carries.
 - **Routine monitoring is not recorded**, only the moment a person chooses where
   a credential goes.
+- **Read-only users walk with the asset's own credentials.** An SNMP walk —
+  from the asset's page or the MIB library — by someone without Assets
+  Read-Write may use only a credential the asset already uses. Any other needs
+  Assets Read-Write.
 
 ### Rule 113
 

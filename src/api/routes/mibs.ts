@@ -17,7 +17,7 @@ import multer from "multer";
 import { z } from "zod";
 import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
-import { requirePermission, credentialUseActor } from "../middleware/permissions.js";
+import { requirePermission, credentialUseActor, hasPermission } from "../middleware/permissions.js";
 import { recordCredentialUse, type CredentialUseActor } from "../../services/credentialUseAuditService.js";
 import {
   listMibs,
@@ -40,6 +40,7 @@ import {
   getStdMibStructure,
 } from "../../services/stdMibLibrary.js";
 import { logEvent } from "./events.js";
+import { assertCredentialInAssetScope } from "../../services/assetCredentialScopeService.js";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MIB_MAX_BYTES } });
@@ -110,6 +111,7 @@ router.post("/std/:key/walk", requirePermission("mibDatabase", "read"), async (r
         body: parsed.data,
         actor: req.session?.username,
         useActor: credentialUseActor(req),
+        mayUseAnyCredential: hasPermission(req, "assets", "write"),
       }),
     );
   } catch (err) {
@@ -370,6 +372,8 @@ async function runMibWalk(opts: {
   actor: string | undefined;
   /** Who is aiming the credential, for the rule 112 audit. */
   useActor: CredentialUseActor;
+  /** The caller's assets:write — may it walk with a credential the asset does not already use (rule 112(e))? */
+  mayUseAnyCredential: boolean;
 }) {
   const { structured, moduleName, mibId, unresolvedOidSuffix, actor } = opts;
   const { assetId, credentialId, objectName, maxRows } = opts.body;
@@ -389,6 +393,8 @@ async function runMibWalk(opts: {
   if (!asset) throw new AppError(404, "Asset not found");
   if (!asset.ipAddress) throw new AppError(400, "Asset has no IP address to walk");
 
+  // Rule 112(e): both walk routes are mibDatabase:read (re-scan F60).
+  await assertCredentialInAssetScope(asset.id, credentialId, opts.mayUseAnyCredential);
   const cred = await getCredential(credentialId, { revealSecrets: true });
   if (cred.type !== "snmp") {
     throw new AppError(400, `Credential "${cred.name}" is type "${cred.type}", expected "snmp"`);
@@ -545,6 +551,7 @@ router.post("/:id/walk", requirePermission("mibDatabase", "read"), async (req, r
         body: parsed.data,
         actor: req.session?.username,
         useActor: credentialUseActor(req),
+        mayUseAnyCredential: hasPermission(req, "assets", "write"),
       }),
     );
   } catch (err) {

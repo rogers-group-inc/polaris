@@ -33,6 +33,7 @@ import * as genericApi from "../../services/genericApiService.js";
 import { GENERIC_API_TYPE } from "../../utils/genericApiSource.js";
 import {
   assertCanProvision,
+  llmRepointKeys,
   provisionLlmAccess,
   deprovisionLlmAccess,
   regenerateLlmToken,
@@ -1742,6 +1743,7 @@ router.put("/:id", async (req, res, next) => {
 
     const input = UpdateIntegrationSchema.parse(req.body);
     const currentConfig = existing.config as Record<string, unknown>;
+    let llmRepointedKeys: string[] = [];
 
     const data: Record<string, unknown> = {};
     if (input.name !== undefined) data.name = input.name;
@@ -1784,6 +1786,14 @@ router.put("/:id", async (req, res, next) => {
         const moved = ["provider", "host", "port", "basePath", "useHttps", "model", "azureApiShape"]
           .some((k) => (newConfig[k] ?? asStored[k]) !== (currentConfig[k] ?? asStored[k]));
         if (moved) delete newConfig.toolCheck;
+        // Business rule 111(e), re-scan F59: every user's prompts, history,
+        // memory and tool results go wherever this integration points, and a
+        // local model server usually has no token — so 111(a)'s "type the
+        // secret again" never fires. Moving it (or rewriting the extra system
+        // prompt every user's assistant is given) takes the grants creating
+        // one does.
+        llmRepointedKeys = llmRepointKeys(currentConfig, newConfig);
+        if (llmRepointedKeys.length) assertCanProvision(req);
         data.autoDiscover = false;
       }
       if (existing.type === GENERIC_API_TYPE) {
@@ -1968,11 +1978,15 @@ router.put("/:id", async (req, res, next) => {
     const rebootBefore = (existing.config as Record<string, unknown> | null)?.allowReboot === true;
     const rebootAfter = ((updated.config as Record<string, unknown>) || {}).allowReboot === true;
     const rebootFlip = rebootBefore !== rebootAfter;
+    const llmMoved = llmRepointedKeys.length > 0;
     logEvent({
       action: "integration.updated", resourceType: "integration", resourceId: req.params.id, resourceName: updated.name, actor: req.session?.username,
-      level: rebootFlip ? "warning" : "info",
-      message: `Integration "${updated.name}" updated${rebootFlip ? (rebootAfter ? " — its API token may now reboot devices" : " — its API token may no longer reboot devices") : ""}`,
-      ...(rebootFlip ? { details: { allowReboot: rebootAfter } } : {}),
+      level: rebootFlip || llmMoved ? "warning" : "info",
+      message: `Integration "${updated.name}" updated${rebootFlip ? (rebootAfter ? " — its API token may now reboot devices" : " — its API token may no longer reboot devices") : ""}` +
+        (llmMoved ? ` — the AI Assistant now talks to a changed model server or prompt (${llmRepointedKeys.join(", ")}); every user's conversations go there` : ""),
+      ...(rebootFlip || llmMoved
+        ? { details: { ...(rebootFlip ? { allowReboot: rebootAfter } : {}), ...(llmMoved ? { llmChanged: llmRepointedKeys } : {}) } }
+        : {}),
     });
 
     // Switching the directory sync off (or disabling the integration) removes

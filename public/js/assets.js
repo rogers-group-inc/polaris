@@ -20917,9 +20917,15 @@ var _SNMP_STANDARD_MIBS = [
   { id: "std:ip",             label: "IP — addresses + neighbour cache (RFC 4293)", oid: "1.3.6.1.2.1.4" },
 ];
 
-function _snmpCredentialOptions(selectedId) {
-  var snmpCreds = (_credentialCache.list || []).filter(function (c) { return c.type === "snmp"; });
-  if (!snmpCreds.length) return '<option value="">(no SNMP credentials defined)</option>';
+function _snmpCredentialOptions(selectedId, onlyIds) {
+  var snmpCreds = (_credentialCache.list || []).filter(function (c) {
+    return c.type === "snmp" && (!onlyIds || onlyIds.indexOf(c.id) !== -1);
+  });
+  if (!snmpCreds.length) {
+    return onlyIds
+      ? '<option value="">(this asset has no SNMP credential of its own)</option>'
+      : '<option value="">(no SNMP credentials defined)</option>';
+  }
   var defaultId = selectedId || _snmpWalkLastCredId || snmpCreds[0].id;
   var opts = "";
   snmpCreds.forEach(function (c) {
@@ -20940,6 +20946,14 @@ function assetSnmpWalkViewHTML(a) {
   // the dropdown.
   var monCred = a.monitorCredential;
   var seedCredId = (monCred && monCred.type === "snmp") ? monCred.id : null;
+  // Business rule 112(e): without Assets Read-Write a walk may use only the
+  // credentials this asset already has; the server refuses any other.
+  var walkOnlyIds = null;
+  if (typeof canManageAssets === "function" && !canManageAssets()) {
+    walkOnlyIds = [a.monitorCredentialId, a.responseTimeCredentialId, a.cpuMemoryCredentialId,
+      a.temperatureCredentialId, a.interfacesCredentialId, a.lldpCredentialId,
+      monCred && monCred.id].filter(Boolean);
+  }
   // std and uploaded MIBs both use the object-name input + browse tree.
   // No MIB selected → numeric base-OID input + raw walk.
   var mibAware = !!_snmpWalkLastMibId;
@@ -20962,7 +20976,7 @@ function assetSnmpWalkViewHTML(a) {
         '</div>' +
         '<div>' +
           '<label class="form-label" for="snmp-walk-cred" style="font-size:0.8rem">Credential</label>' +
-          '<select class="form-control" id="snmp-walk-cred">' + _snmpCredentialOptions(seedCredId) + '</select>' +
+          '<select class="form-control" id="snmp-walk-cred">' + _snmpCredentialOptions(seedCredId, walkOnlyIds) + '</select>' +
         '</div>' +
         '<div>' +
           '<label class="form-label" for="snmp-walk-max" style="font-size:0.8rem">Max rows</label>' +
