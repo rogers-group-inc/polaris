@@ -47,6 +47,10 @@ conventional port in for you.
 The host may be on the Polaris machine itself (a local mail relay). Link-local and
 cloud-metadata addresses are refused ([rule 110](Business-Rules#rule-110)).
 
+The saved password is kept when you leave the field blank, but only while the host,
+port and security are unchanged; change one and enter the password again
+([rule 111](Business-Rules#rule-111)).
+
 ## Email — Microsoft 365 (OAuth)
 
 | Field | |

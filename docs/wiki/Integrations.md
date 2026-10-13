@@ -88,7 +88,10 @@ Every modal has one, and it records the result on the row. **Test before you
 save**, and again after changing a credential.
 
 The button knows which fields it needs per type, and on the **edit** path it
-drops blank secrets — so "leave blank to keep the current secret" works.
+drops blank secrets — so "leave blank to keep the current secret" works. That
+holds only while the host, port, token URL and connection type are unchanged:
+change one of them and the secret must be entered again, because a saved secret
+is never sent to a new address ([rule 111](Business-Rules#rule-111)).
 
 ---
 

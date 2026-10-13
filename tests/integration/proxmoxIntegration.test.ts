@@ -69,8 +69,21 @@ d("Proxmox integration routes", () => {
 
     // An edit that echoes the mask back keeps the real secret.
     const put = await agent.put(`/api/v1/integrations/${id}`).set("X-CSRF-Token", csrf)
-      .send({ config: { ...got.body.config, fallbackHosts: ["10.250.9.3"] } });
+      .send({ config: { ...got.body.config, port: 8006 } });
     expect(put.status, JSON.stringify(put.body)).toBe(200);
+    const kept = await prisma.integration.findUnique({ where: { id }, select: { config: true } });
+    expect((kept!.config as Record<string, unknown>).apiToken).toBe("0f3c0c3e-1111-2222-3333-444455556666");
+
+    // A new node is a new destination: the masked token is not sent there (rule 111)…
+    const moved = await agent.put(`/api/v1/integrations/${id}`).set("X-CSRF-Token", csrf)
+      .send({ config: { ...got.body.config, fallbackHosts: ["10.250.9.3"] } });
+    expect(moved.status).toBe(400);
+    expect(JSON.stringify(moved.body)).toMatch(/fallbackHosts/);
+
+    // …until the token is typed again.
+    const retyped = await agent.put(`/api/v1/integrations/${id}`).set("X-CSRF-Token", csrf)
+      .send({ config: { ...got.body.config, fallbackHosts: ["10.250.9.3"], apiToken: "0f3c0c3e-1111-2222-3333-444455556666" } });
+    expect(retyped.status, JSON.stringify(retyped.body)).toBe(200);
     const after = await prisma.integration.findUnique({ where: { id }, select: { config: true } });
     expect((after!.config as Record<string, unknown>).apiToken).toBe("0f3c0c3e-1111-2222-3333-444455556666");
     expect((after!.config as Record<string, unknown>).fallbackHosts).toEqual(["10.250.9.3"]);
