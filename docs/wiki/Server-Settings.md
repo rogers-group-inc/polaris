@@ -511,7 +511,8 @@ legitimately sits ABOVE the current size while sample tables are still filling.
 Old samples are removed a whole chunk (usually a week) at a time, so each table
 grows and drops in a regular cycle — and tables with different retention peak on
 different days. The figure is the largest size they reach *together*, which is
-what the disk actually has to hold.
+what the disk actually has to hold. Shorter retention or a slower cadence lowers
+it; hover the row for a reminder.
 
 ### Platform Lifecycle
 
