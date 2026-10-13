@@ -50,6 +50,11 @@ alerts, roles, credentials, integration configuration, settings.
 
 Two things to understand about that:
 
+- **Only the Polaris account can read a backup.** The backup directory is
+  0700 and every backup file 0600, including the temporary file a restore
+  decrypts into and the copy a schedule writes to another path
+  ([rule 117](Business-Rules#rule-117)). Keep the copy-to share as private as
+  that.
 - **Secrets are in there, sealed.** Their key is `POLARIS_SECRET_KEY` from
   `.env`, which is **not** in the database dump. **A backup without that key
   restores an install whose every stored secret is unreadable.** Back the key up

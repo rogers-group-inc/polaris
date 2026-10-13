@@ -118,6 +118,13 @@ Writes the binary, writes `agent.conf`, installs the service, starts it. The
 agent then enrols on first boot, receives a bearer token, and persists it back
 into `agent.conf`.
 
+`agent.conf` is readable only by the agent's service account and
+administrators. On Linux and macOS it is mode 0600. On Windows the installer
+makes Administrators the owner of `%ProgramData%\Polaris\agent`, and limits
+that folder to SYSTEM and Administrators, before it writes anything there. The
+agent (0.26.1+) protects each rewrite of the file the same way before the
+token goes into it ([rule 117](Business-Rules#rule-117)).
+
 > **One Linux trap worth knowing**, because its failure mode is silent from
 > Polaris's side: the installer must chown `agent.conf` to the **state
 > directory's owner**, never to root. systemd chowns the *StateDirectory* to the

@@ -83,9 +83,25 @@ what the load balancer monitors.
   `setup-rhel-ha.sh` re-run to appear the first time; only already-installed
   ones are kept current.
 - **The updater runs on the active node only.** It calls
-  `polaris-ha-role notify-peer` at the end (in the `systemd-run` script in
-  `restartService`), and `deploy/update-linux.sh` does the same — **lockstep,
-  two places**, like the unit-file sync. `update-linux.sh` additionally refuses
+  `polaris-ha-role notify-peer` at the end (in the root update helper
+  `deploy/scripts/polaris-update-sync.sh`), and `deploy/update-linux.sh` does
+  the same — **lockstep, two places**, like the unit-file sync.
+- **The peer is pinned, never trusted on first use (business rule 117).** The
+  sync runs `StrictHostKeyChecking=yes` against `/etc/polaris/ha/known_hosts`,
+  which only `polaris-ha-role pin-peer` writes: a key whose SHA256 fingerprint
+  the operator types, or one in `/etc/polaris/ha/peer_host_fingerprints`
+  (the bundle's `sync/peer_host_fingerprints`, from
+  `haEnrollmentService.peerHostFingerprints` — what the peer reported at
+  enrollment). Empty known_hosts → `do_sync` tries `pin_peer auto` and
+  otherwise refuses with the command to run. The forced-command wrapper
+  allow-lists the flags `rsync_common` sends; a new rsync pull with a new flag
+  must add it to `polaris-ha-ssh-wrapper.sh`. New clusters serve the member's
+  etcd cert to PostgreSQL and replicate `sslmode=verify-full` (setup probes the
+  peer with `openssl s_client -starttls postgres` and falls back to `require`);
+  existing clusters opt in via docs/HA.md → "Verify the replication
+  certificate". `setup-rhel-ha.sh` has no `--from-bundle` option even though
+  the generated node script prints that command — the bundle is installed by
+  hand from its INSTALL.txt. `update-linux.sh` additionally refuses
   to run on a replica and takes `/run/polaris-ha/hold` so the reconciler cannot
   restart the group mid-migration.
 - **`unknown` is a real role.** When Patroni REST is unreachable the reconciler

@@ -120,6 +120,17 @@ next to the Approve button, and the confirmation repeats them plus exactly what
 the bundle contains. A **witness gets a different sentence**, because its bundle
 holds no application secrets.
 
+**Those fingerprints are also how the nodes come to trust each other.** The
+file sync pulls root-run files from the peer as root, so it connects only to a
+host key pinned with `polaris-ha-role pin-peer`. That command pins a key only
+when its fingerprint matches one you confirm, or one the peer reported at
+enrollment (the bundle carries them as `sync/peer_host_fingerprints`). Until a
+key is pinned the sync refuses and says what to run. The peer's sync key can
+only read, using the flags the sync itself sends. On a new cluster, replication
+checks the peer's PostgreSQL certificate against the cluster's own CA
+([rule 117](Business-Rules#rule-117)). `HA.md` has the steps to turn that on
+for an existing cluster.
+
 Every rejection returns identical text, and a malformed request id 404s before
 any query runs.
 

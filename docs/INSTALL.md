@@ -621,6 +621,28 @@ Options:
   Default `127.0.0.1`. Update later with a drop-in if Prometheus is
   off-host.
 
+**The database password is generated per install** (`openssl rand -hex 24`)
+and written only into `.env`, unless you set `POLARIS_DB_PASSWORD` in the
+script's environment. It is set over psql's standard input as a SCRAM hash,
+never on a command line. If you created the role by hand in step 2, the script
+replaces the `change-me` password with the generated one on a fresh install
+(no `.env` yet); a re-run on a working install never changes it. Installs set
+up before business rule 117 used one shared default; the capacity card says
+so, and `docs/UPGRADING.md` → *Rotate the database password* has the steps.
+
+**External database (`deploy/setup-rhel-nodb.sh`, `deploy/setup-ubuntu-nodb.sh`).**
+Run the script without a URL and it asks for one at a hidden prompt:
+
+```bash
+sudo bash deploy/setup-rhel-nodb.sh --public-url https://polaris.example.com
+# DATABASE_URL (input hidden): postgresql://polaris:<password>@db.example.com:5432/polaris?sslmode=require
+```
+
+For an unattended install, export `POLARIS_DATABASE_URL` in a root shell (or
+from your configuration-management tool's secret store) before running the
+script. `--db-url` still works but puts the password in the process list for
+the whole install, so the script warns when you use it.
+
 Browse to `https://<your-hostname>/` to run the first-run setup wizard. It asks for a one-time **setup token**, printed in the journal (`journalctl -u polaris-web`) and saved as `.setup-token` in the state directory; `POLARIS_SETUP_TOKEN` pre-sets it.
 Self-signed cert in use; replace `/etc/polaris-nginx/{cert,key}.pem` with
 your real cert + `systemctl reload nginx` whenever you're ready.

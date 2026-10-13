@@ -63,6 +63,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Host memory in use = total − available (Unraid's `used` counts reclaimable cache). A disk temperature of 0 is a spun-down / absent disk → null, never charted as 0 °C.
 - SMBIOS "To Be Filled By O.E.M."-style system fields fall back to the baseboard; the projection's serial rule still refuses placeholders (rule 84).
 
+- **The Query API tool runs queries only (business rule 117).** `proxyQuery` refuses unless every top-level operation is a query (`utils/graphqlOperations.isQueryOnlyGraphql` — a lexer, so a leading comma, a comment or a fragment before `mutation` no longer slips past the old prefix regex); the Unraid branch of the integrations query route logs `integration.query` with the query text.
+
 **When changing this:**
 - Field shapes are from the published schema (`unraid/api` → `api/generated-schema.graphql`); verify on a real 7.2 box (Settings → Management Access → API → GraphQL sandbox) and refresh tests/unit/unraidService.test.ts fixtures.
 - A new projected field → the `workloadRule` entries in `src/utils/assetProjection.ts` + the shared observed builders in workloadSync — both platforms at once.

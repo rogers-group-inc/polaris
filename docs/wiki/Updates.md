@@ -53,7 +53,12 @@ seven steps, each shown with its own status:
    files that changed, then a daemon-reload) and, on an nginx-fronted install
    whose config Polaris manages, the **nginx config** (rendered, `nginx -t`,
    reload), then restarting the whole `polaris.target` group so no role keeps
-   running old code against the new schema.
+   running old code against the new schema. This step runs as the fixed root
+   unit `polaris-update-sync.service`, the one root action the `polaris`
+   account may start. It checks every unit file and the sudoers entry before
+   installing it ([rule 117](Business-Rules#rule-117)). A file that fails is
+   not installed and the update carries on; `journalctl -t polaris-updater`
+   shows a `REFUSED:` line naming it.
 
 An nginx config that was hand-edited since Polaris last wrote it is **not**
 overwritten — the update logs it, and the Web Server tab shows the drift
