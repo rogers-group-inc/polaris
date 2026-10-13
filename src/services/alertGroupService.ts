@@ -36,6 +36,8 @@ import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
+import { assertActionRefs } from "./notificationRuleService.js";
+import { restoreMaskedActionHeaders } from "../utils/actionHeaderMask.js";
 import { triggerCanJoinGroup, normalizeRuleToV2, type Trigger } from "./notificationTypes.js";
 
 export interface AlertGroupInput {
@@ -119,6 +121,9 @@ function reasonCannotJoin(trigger: Trigger | null | undefined): string {
 
 export async function createGroup(input: AlertGroupInput, actor?: string) {
   await assertMembership(input.ruleIds ?? [], undefined);
+  // The same save-time reference checks an automation's actions get (rule 114(a)).
+  restoreMaskedActionHeaders(input, null);
+  await assertActionRefs(input as never);
   const group = await prisma.alertGroup.create({
     data: {
       name: input.name,
@@ -153,6 +158,8 @@ export async function createGroup(input: AlertGroupInput, actor?: string) {
 export async function updateGroup(id: string, input: AlertGroupInput, actor?: string) {
   const existing = await getGroup(id);
   await assertMembership(input.ruleIds ?? [], id);
+  restoreMaskedActionHeaders(input, existing);
+  await assertActionRefs(input as never);
   const jsonOrClear = (v: unknown) => (v === undefined ? undefined : v === null ? Prisma.DbNull : (v as Prisma.InputJsonValue));
   const group = await prisma.alertGroup.update({
     where: { id },

@@ -596,7 +596,11 @@ export async function adoptDirectoryContact(
   return rowToContact(row);
 }
 
-export async function createContact(input: ContactInput, createdBy: string | null): Promise<ContactRow> {
+export async function createContact(
+  input: ContactInput,
+  createdBy: string | null,
+  opts: { mayAdoptDirectory?: boolean } = {},
+): Promise<ContactRow> {
   const email = normalizeContactEmail(input.email);
   const { condition: assetCondition, criteria: assetCriteria } = resolveWrittenFilter(input);
   const assetIds = normalizeAssetIds(input.assetIds);
@@ -615,6 +619,15 @@ export async function createContact(input: ContactInput, createdBy: string | nul
     // person's row is deleted on the next run (business rule 35); a row an
     // operator has claimed must survive that, and the way the reconcile knows
     // to leave it alone is that adoption drops its provenance.
+    // Adopting rewrites a row nobody owns, which edit / delete / adopt reserve
+    // for Contacts Full RW — creating over it is the same act, so it takes the
+    // same grant (business rule 114(c)).
+    if (!opts.mayAdoptDirectory) {
+      throw new AppError(
+        409,
+        `"${email}" is already in the address book from the directory sync${existing.name ? ` as "${existing.name}"` : ""} — ask an administrator with Contacts Full RW to adopt it`,
+      );
+    }
     return adoptDirectoryContact(existing.id, {
       input,
       actor: createdBy,

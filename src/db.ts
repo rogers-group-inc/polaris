@@ -72,6 +72,7 @@ import {
   transformSecretFields,
   containsSecretField,
   RESULT_WALK_DEPTH,
+  SECRET_ACTION_COLUMNS,
 } from "./utils/configSecretFields.js";
 
 // Lazy-resolved to break the import cycle (dnsResolvedReservationService imports
@@ -518,7 +519,7 @@ function fireIpOverrideFollowUp(outcome: OperatorOverrideOutcome, assetId: strin
 // unchanged, so an install mid-backfill (or with no key at all) works exactly as
 // before.
 
-function sealArgsData(data: unknown, jsonField: "config" | "value"): void {
+function sealArgsData(data: unknown, jsonField: string): void {
   if (!data || typeof data !== "object") return;
   // Array form: createMany({ data: [...] }).
   if (Array.isArray(data)) {
@@ -537,7 +538,7 @@ function sealArgsData(data: unknown, jsonField: "config" | "value"): void {
   d[jsonField] = transformSecretFields(blob, sealValue);
 }
 
-function openResultRows(result: unknown, jsonField: "config" | "value"): unknown {
+function openResultRows(result: unknown, jsonField: string): unknown {
   if (Array.isArray(result)) return result.map((r) => openResultRows(r, jsonField));
   if (!result || typeof result !== "object") return result;
   const row = result as Record<string, unknown>;
@@ -592,6 +593,30 @@ function openNestedSecrets<T>(result: T): T {
 type Hook = { args: any; query: (args: any) => Promise<any> };
 
 /** The seal-on-write / open-on-read hook set for one secret-bearing model. */
+/**
+ * Write-side sealing only, for the automation tables whose action JSON can
+ * carry an api_call's headers (SECRET_ACTION_COLUMNS, business rule 114(h)).
+ * No read hooks on purpose: the all-models open pass (_applySecretOpen) already
+ * opens any sealed value in a result behind its allocation-free pre-scan,
+ * while a per-model open would rebuild every row it returns — and
+ * notification_deliveries is read on every delivery tick.
+ */
+function sealOnlyHooks(fields: readonly string[]) {
+  const seal = (data: unknown) => { for (const f of fields) sealArgsData(data, f); };
+  return {
+    async create({ args, query }: Hook) { seal(args?.data); return query(args); },
+    async createMany({ args, query }: Hook) { seal(args?.data); return query(args); },
+    async createManyAndReturn({ args, query }: Hook) { seal(args?.data); return query(args); },
+    async update({ args, query }: Hook) { seal(args?.data); return query(args); },
+    async updateMany({ args, query }: Hook) { seal(args?.data); return query(args); },
+    async upsert({ args, query }: Hook) {
+      seal(args?.create);
+      seal(args?.update);
+      return query(args);
+    },
+  };
+}
+
 function secretHooks(jsonField: "config" | "value") {
   const seal = (data: unknown) => sealArgsData(data, jsonField);
   const open = (result: unknown) => openResultRows(result, jsonField);
@@ -647,6 +672,10 @@ function _buildClient(base: PrismaClient) {
       integration: secretHooks("config"),
       notificationChannel: secretHooks("config"),
       setting: secretHooks("value"),
+      // api_call headers inside automation actions (rule 114(h)).
+      notificationRule: sealOnlyHooks(SECRET_ACTION_COLUMNS.NotificationRule),
+      alertGroup: sealOnlyHooks(SECRET_ACTION_COLUMNS.AlertGroup),
+      notificationDelivery: sealOnlyHooks(SECRET_ACTION_COLUMNS.NotificationDelivery),
       asset: {
         async create({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
           normalizeManufacturerInData(args?.data);

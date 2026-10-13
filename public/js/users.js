@@ -1425,7 +1425,14 @@ function renderRolesBody() {
     // or click rather than gone.
     var nameCell = swatch + '<button type="button" class="row-menu-trigger role-menu" data-role-id="' + escapeHtml(r.id) + '"' +
       ' aria-haspopup="menu" aria-expanded="false" title="Actions for this role"' +
-      ' style="font-weight:600;vertical-align:middle">' + escapeHtml(r.name) + '</button>';
+      ' style="font-weight:600;vertical-align:middle">' + escapeHtml(r.name) + '</button>' +
+      // Business rule 114(i): a role the 2026-10 corrective migration flagged
+      // because a Read-Write it holds became a stronger grant in the
+      // September permission update. Cleared by saving the role or Mark reviewed.
+      (r.grantReviewNeeded
+        ? ' <span class="badge" style="background:var(--color-warning-bg,#fff4e0);color:var(--color-warning,#d98c00);font-size:0.75em;vertical-align:middle"' +
+          ' title="This role holds Read-Write on Server Settings (System or Data), Automation Scripts, Automations or Maintenance — a stronger grant since the September 2026 permission update. Check the access is intended, then save the role or choose Mark reviewed.">Review grants</span>'
+        : '');
     var descCell = '<span style="color:var(--color-text-secondary);font-size:0.88em">' + escapeHtml(r.description || "—") + '</span>';
     var usersCell = '<span class="badge" style="background:var(--color-bg-secondary);color:var(--color-text-primary)">' + r.userCount + '</span>';
     var builtInCell = r.isBuiltIn
@@ -1447,11 +1454,30 @@ function _roleMenuItems(r) {
   var blocked = r.isBuiltIn ? "Built-in roles cannot be deleted"
     : r.userCount > 0 ? "Reassign users first"
     : null;
-  return [
+  var items = [
     { label: "Edit…", onSelect: function () { openRoleSlideover(r.id); } },
+  ];
+  if (r.grantReviewNeeded) {
+    items.push({ label: "Mark reviewed", onSelect: function () { markRoleReviewed(r.id); } });
+  }
+  return items.concat([
     { separator: true },
     { label: "Delete", danger: !blocked, disabled: !!blocked, title: blocked || undefined, onSelect: function () { confirmDeleteRole(r.id); } },
-  ];
+  ]);
+}
+
+async function markRoleReviewed(id) {
+  var role = _rolesById[id];
+  if (!role) return;
+  var ok = await showConfirm('Confirm that every grant on role "' + role.name + '" is intended?\n\nIts Read-Write on Server Settings, Automation Scripts, Automations or Maintenance reaches more than it did before the September 2026 permission update.');
+  if (!ok) return;
+  try {
+    await api.roles.markReviewed(id);
+    showToast("Role marked reviewed");
+    loadRoles();
+  } catch (err) {
+    showToast(err.message, "error");
+  }
 }
 
 async function confirmDeleteRole(id) {

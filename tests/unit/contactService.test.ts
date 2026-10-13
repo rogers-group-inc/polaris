@@ -663,7 +663,7 @@ describe("adoption: an operator taking a synced row out of the sync's hands", ()
     prismaMock.$transaction.mockResolvedValue([{ count: 1 }, row]);
   };
 
-  it("creating over a synced address adopts the row instead of 409ing", async () => {
+  it("a Full RW caller creating over a synced address adopts the row instead of 409ing", async () => {
     // email is UNIQUE, so a synced row physically blocks hand-creating the same
     // person. Refusing would leave the operator no way to claim an address they
     // are looking straight at.
@@ -672,7 +672,7 @@ describe("adoption: an operator taking a synced row out of the sync's hands", ()
       .mockResolvedValueOnce({ id: "c1", email: "j@example.com", name: "J Martin", origin: "entra" });
     stubAdoptTx(contactRow({ id: "c1", email: "j@example.com", origin: "manual", createdBy: "jsmith" }));
 
-    const out = await createContact({ email: "j@example.com", name: "J Martin" }, "jsmith");
+    const out = await createContact({ email: "j@example.com", name: "J Martin" }, "jsmith", { mayAdoptDirectory: true });
     expect(out.origin).toBe("manual");
     expect(prismaMock.contact.create).not.toHaveBeenCalled();
     // Dropping the provenance is the whole mechanism: it is what makes the row
@@ -682,6 +682,14 @@ describe("adoption: an operator taking a synced row out of the sync's hands", ()
     const data = prismaMock.contact.update.mock.calls.at(-1)![0].data;
     expect(data.origin).toBe("manual");
     expect(data.createdBy).toBe("jsmith");
+  });
+
+  it("a write-level caller creating over a synced address gets a 409, not the row (rule 114(c))", async () => {
+    prismaMock.contact.findUnique.mockResolvedValueOnce({ id: "c1", name: "J Martin", origin: "entra" });
+    await expect(createContact({ email: "j@example.com", name: "Mine now" }, "jsmith"))
+      .rejects.toThrow(/directory sync.*Contacts Full RW/);
+    expect(prismaMock.contact.update).not.toHaveBeenCalled();
+    expect(prismaMock.directoryContactSource.deleteMany).not.toHaveBeenCalled();
   });
 
   it("creating over a MANUAL address still 409s — adoption is only for synced rows", async () => {

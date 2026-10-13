@@ -40,6 +40,8 @@ export interface RoleSummary {
   color: string | null;
   isBuiltIn: boolean;
   isProtected: boolean;
+  // Business rule 114(i): flagged for an administrator's grant review.
+  grantReviewNeeded: boolean;
   userCount: number;
   createdAt: Date;
   updatedAt: Date;
@@ -121,6 +123,7 @@ function summarize(role: {
   color: string | null;
   isBuiltIn: boolean;
   isProtected: boolean;
+  grantReviewNeeded?: boolean;
   createdAt: Date;
   updatedAt: Date;
   _count: { users: number };
@@ -135,6 +138,7 @@ function summarize(role: {
     color: role.color,
     isBuiltIn: role.isBuiltIn,
     isProtected: role.isProtected,
+    grantReviewNeeded: role.grantReviewNeeded === true,
     userCount: role._count.users,
     createdAt: role.createdAt,
     updatedAt: role.updatedAt,
@@ -225,6 +229,7 @@ export async function updateRole(id: string, input: UpdateRoleInput, actor?: str
     regionTags?: string[];
     otherTags?: string[];
     color?: string | null;
+    grantReviewNeeded?: boolean;
   } = {};
   const diff: Record<string, { from: unknown; to: unknown }> = {};
 
@@ -258,6 +263,13 @@ export async function updateRole(id: string, input: UpdateRoleInput, actor?: str
       data.permissions = next;
       diff.permissions = { from: prev, to: next };
       diff.permissionChanges = { from: null, to: changed };
+    }
+    // Saving the permission matrix — changed or not — is the review the
+    // rule-114(i) flag asks for: an administrator has looked at it and stood
+    // behind it.
+    if (before.grantReviewNeeded) {
+      data.grantReviewNeeded = false;
+      diff.grantReviewNeeded = { from: true, to: false };
     }
   }
   if (input.regionTags !== undefined) {
@@ -309,6 +321,36 @@ export async function updateRole(id: string, input: UpdateRoleInput, actor?: str
   });
 
   return summarize(updated);
+}
+
+/**
+ * Business rule 114(i): confirm a flagged role's grants are intended without
+ * editing it. Audited; a no-op on a role that is not flagged.
+ */
+export async function markRoleGrantReviewed(id: string, actor?: string): Promise<RoleSummary> {
+  const before = await prisma.role.findUnique({ where: { id } });
+  if (!before) throw new AppError(404, `Role ${id} not found`);
+  if (!before.grantReviewNeeded) return getRole(id);
+  const updated = await prisma.role.update({
+    where: { id },
+    data: { grantReviewNeeded: false },
+    include: { _count: { select: { users: true } } },
+  });
+  await logEvent({
+    action: "role.grant_reviewed",
+    resourceType: "role",
+    resourceId: updated.id,
+    resourceName: updated.name,
+    actor,
+    message: `Role "${updated.name}" was reviewed and its grants confirmed as intended`,
+  });
+  return summarize(updated);
+}
+
+/** The names of the roles still flagged for a grant review (rule 114(i)). */
+export async function listRolesNeedingGrantReview(): Promise<string[]> {
+  const rows = await prisma.role.findMany({ where: { grantReviewNeeded: true }, select: { name: true }, orderBy: { name: "asc" } });
+  return rows.map((r) => r.name);
 }
 
 export async function deleteRole(id: string, actor?: string): Promise<void> {

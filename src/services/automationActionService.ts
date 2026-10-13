@@ -17,9 +17,10 @@
  *              the action). meta carries {method, url, headers, body, timeoutSec}
  *              with the body rendered from the fire-time template context.
  *              The deliverNotifications drain dispatches it with retries.
- *              SECURITY: headers were typed by the operator and are stored
- *              unmasked — save-time docs/catalog warn against secrets; the
- *              URL was SSRF-checked at save and is re-checked at send.
+ *              SECURITY: headers are secrets — sealed at rest on the rule,
+ *              the group and this delivery row, masked in API responses
+ *              (business rule 114(h)); the URL was SSRF-checked at save and is
+ *              re-checked at send.
  *   script   → an AutomationScriptRun row via requestScriptRun — NEVER
  *              executed inline here: the runAutomationScripts job claims and
  *              executes server runs; agent runs ride the AgentCommand queue

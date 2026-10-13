@@ -581,6 +581,26 @@ export interface QuarantineTargetRecord {
   error?: string;
 }
 
+/**
+ * The asset's recorded quarantine targets after a push (business rule
+ * 114(d)). An unscoped caller pushed to every sighting, so its targets ARE the
+ * record. A bearer token scoped to some integrations pushed only to those: its
+ * targets replace the in-scope entries and every out-of-scope entry is kept —
+ * otherwise the token would erase the record of another site's quarantine,
+ * which release and verify then could not find. Pure.
+ */
+export function mergeQuarantineTargets(
+  existing: unknown,
+  fresh: QuarantineTargetRecord[],
+  tokenScope: string[] | undefined,
+): QuarantineTargetRecord[] {
+  if (!tokenScope) return fresh;
+  const inScope = new Set(tokenScope);
+  const kept = (Array.isArray(existing) ? (existing as QuarantineTargetRecord[]) : [])
+    .filter((t) => t && typeof t.integrationId === "string" && !inScope.has(t.integrationId));
+  return [...kept, ...fresh];
+}
+
 function macsForAsset(asset: { macAddress: string | null; macAddressRows?: Array<{ mac: string; macEnd?: string | null }> }): string[] {
   const set = new Set<string>();
   if (asset.macAddress) set.add(normalizeMac(asset.macAddress));
@@ -832,7 +852,7 @@ export async function quarantineAsset(
       quarantineReason: params.reason || asset.quarantineReason || null,
       quarantinedAt: asset.quarantinedAt ?? now,
       quarantinedBy: params.actor,
-      quarantineTargets: targets as any,
+      quarantineTargets: mergeQuarantineTargets(asset.quarantineTargets, targets, tokenScope) as any,
     },
   });
 

@@ -67,6 +67,34 @@ export const SECRET_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "webhookUrl",
 ]);
 
+/**
+ * JSON keys whose value is a MAP of secrets — every string value in it is
+ * sealed, whatever the inner key (business rule 114(h)). `headers` is an
+ * api_call action's custom request headers: the only way such an action
+ * authenticates, so in real use an API key or bearer token under a name the
+ * operator chose ("Authorization", "X-API-Key"). Only a plain object counts —
+ * the Generic API integration's `headers` is an ARRAY of {name, value} rows and
+ * is not touched by this rule.
+ */
+export const SECRET_MAP_KEYS: ReadonlySet<string> = new Set(["headers"]);
+
+function isSecretMap(key: string, value: unknown): value is Record<string, unknown> {
+  return SECRET_MAP_KEYS.has(key) && value !== null && typeof value === "object" && !Array.isArray(value)
+    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+}
+
+/**
+ * The automation tables whose action JSON can carry an api_call's headers
+ * (rule 114(h)), and the columns to walk. Separate from SECRET_BEARING_MODELS
+ * because those are single-`config`/`value` models; these hold actions in
+ * several columns.
+ */
+export const SECRET_ACTION_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  NotificationRule: ["actions", "escalation", "severityBands", "bandNotify", "resetActions", "reset"],
+  AlertGroup: ["actions", "resetActions", "escalation"],
+  NotificationDelivery: ["meta"],
+};
+
 /** Prisma model names whose JSON payload is walked for secret fields. */
 export const SECRET_BEARING_MODELS: ReadonlySet<string> = new Set([
   "Credential",
@@ -138,6 +166,10 @@ export function transformSecretFields(
   for (const [k, v] of Object.entries(src)) {
     if (typeof v === "string" && SECRET_CONFIG_KEYS.has(k)) {
       out[k] = transform(v);
+    } else if (isSecretMap(k, v)) {
+      const m: Record<string, unknown> = {};
+      for (const [mk, mv] of Object.entries(v)) m[mk] = typeof mv === "string" ? transform(mv) : mv;
+      out[k] = m;
     } else {
       out[k] = transformSecretFields(v, transform, depth + 1, maxDepth);
     }
@@ -176,6 +208,11 @@ export function containsSecretField(
     const v = src[k];
     if (typeof v === "string") {
       if (SECRET_CONFIG_KEYS.has(k) && predicate(v)) return true;
+    } else if (isSecretMap(k, v)) {
+      for (const mk in v) {
+        const mv = v[mk];
+        if (typeof mv === "string" && predicate(mv)) return true;
+      }
     } else if (containsSecretField(v, predicate, depth + 1, maxDepth)) {
       return true;
     }

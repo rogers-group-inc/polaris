@@ -8,6 +8,7 @@
  * so they can't drift.
  */
 
+import { restoreMaskedActionHeaders } from "../utils/actionHeaderMask.js";
 import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
@@ -27,6 +28,7 @@ import {
   normalizeRuleToV2,
   normalizeEscalationToV2,
   allRuleActionRefs,
+  type RuleActionCarrier,
   notifyChannelIds,
   evaluateScopeCondition,
   buildShadowIndex,
@@ -466,7 +468,9 @@ export async function isChangeActionSubscribed(action: string): Promise<boolean>
  * (The automationScripts=fullwrite gate on rules carrying script actions is
  * enforced at the route layer — permissions are not a service concern.)
  */
-async function assertActionRefs(input: RuleInput): Promise<void> {
+// Exported for the alert-group writers (business rule 114(a)): a group's
+// actions / reset actions / escalation run through the same save-time checks.
+export async function assertActionRefs(input: RuleActionCarrier): Promise<void> {
   // Canonical walk over EVERY place actions live — top-level (+ their
   // per-action escalation tiers), rule-level escalation tiers, severity-band
   // actions (+ their per-action tiers), band-level tiers, and the dedicated
@@ -595,6 +599,8 @@ export async function getRule(id: string) {
 }
 
 export async function createRule(input: RuleInput, actor?: string) {
+  // A masked api_call header on a create has nothing to restore from (rule 114(h)).
+  restoreMaskedActionHeaders(input, null);
   await assertActionRefs(input);
   const mirror = legacyMirrorOfV2(input.reset, input.actions);
   const rule = await prisma.notificationRule.create({
@@ -662,6 +668,9 @@ export function triggerIdentityOf(trigger: Trigger): string {
 
 export async function updateRule(id: string, input: RuleInput, actor?: string) {
   const existing = await getRule(id); // 404 if missing
+  // The edit form echoes masked api_call headers; put the stored values back
+  // (same url + header name only — rule 114(h)).
+  restoreMaskedActionHeaders(input, existing);
   await assertActionRefs(input);
   const identityChanged =
     triggerIdentityOf(existing.trigger as unknown as Trigger) !== triggerIdentityOf(input.trigger);

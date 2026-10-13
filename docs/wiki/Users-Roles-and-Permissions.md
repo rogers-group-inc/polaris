@@ -198,7 +198,15 @@ Nothing may leave Polaris with **zero** users holding `users:fullwrite` **and**
 
 ### No escalation
 
-**Nobody hands out authority they do not hold** ([rule 48](Business-Rules#rule-48)).
+**Nobody hands out authority they do not hold** ([rule 48](Business-Rules#rule-48),
+[rule 114](Business-Rules#rule-114)).
+
+Every place a grant is made — creating or editing a role, creating an account
+on a role, moving an account to a role, binding an API token to a role — is
+refused **403** if it would grant any permission above your own level, unless
+you are admin-equivalent. Editing a role is refused only for the permissions the
+edit **raises**, so you can still rename or adjust a role that holds something
+you do not. Beyond that, the admin-equivalent pair is guarded at these places:
 
 A caller whose own permissions are not admin-equivalent is refused **403** at
 the four places the grant could be minted:
@@ -231,6 +239,18 @@ all.
 
 A request with **no role snapshot resolved counts as not admin**. It fails
 closed.
+
+---
+
+### Roles flagged for review
+
+Read-Write on **Server Settings → System**, **Server Settings → Data**, **Automation
+Scripts**, **Automations** and **Maintenance** reaches more than it did before the
+September 2026 permission update. Custom roles that held Read-Write on any of
+them carry a **Review grants** badge in the Roles list, and the capacity card
+names them. Nothing was taken away. Check that the access is intended, then
+save the role or choose **Mark reviewed** from its menu
+([rule 114](Business-Rules#rule-114)).
 
 ---
 
