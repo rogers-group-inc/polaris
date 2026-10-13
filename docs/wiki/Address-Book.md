@@ -97,7 +97,9 @@ A synced row:
 - Offers **Adopt** in place of Edit / Delete. A delete would be undone on the
   next run, so the honest verb is the one that takes ownership. Adopt needs
   `contacts:fullwrite`, which falls out of the existing gate with no special
-  case, since synced rows are unowned.
+  case, since synced rows are unowned. Adding a contact with a synced entry's
+  email is the same act and needs the same grant; below it the add is refused
+  with a message to ask an administrator to adopt the entry.
 
 ### What sync guarantees
 

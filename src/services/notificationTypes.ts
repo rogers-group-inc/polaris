@@ -2116,9 +2116,10 @@ export function notifyChannelIds(a: { channelId: string; channelIds?: string[] |
   return Array.from(new Set(list.filter(Boolean)));
 }
 
-// SECURITY: headers are stored UNMASKED on the rule (and echoed onto delivery
-// rows) — the catalog + docs tell operators never to put credentials here.
-// The URL is static (no {token}s) so the SSRF host check at save time checks
+// SECURITY: headers are secrets (an api_call's only way to authenticate) —
+// sealed at rest on the rule, the group and the delivery row, masked in every
+// API response, and restored on save only for the same url (business rule
+// 114(h), utils/actionHeaderMask.ts). The URL is static (no {token}s) so the SSRF host check at save time checks
 // what actually gets fetched; only bodyTemplate takes template tokens.
 export const apiCallActionSchema = z
   .object({
@@ -5384,7 +5385,7 @@ export function buildSchemaCatalog() {
       maxBodyBytes: 10000,
       maxHeaders: 20,
       maxTimeoutSec: 60,
-      help: "Headers are stored unmasked on the automation — never paste API keys, tokens, or other credentials into them.",
+      help: "Header values are treated as secrets: encrypted at rest and shown masked. Saving keeps a masked value only while the URL is unchanged — change the URL and enter the header again.",
     },
     scriptMeta: {
       runOnOptions: SCRIPT_RUN_TARGETS,

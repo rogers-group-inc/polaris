@@ -17,7 +17,7 @@ import {
   FUNCTION_KEYS,
   ACCESS_LEVELS,
   requirePermission,
-  assertNoPrivilegeEscalation,
+  assertGrantWithinCaller,
 } from "../middleware/permissions.js";
 
 const router = Router();
@@ -75,8 +75,9 @@ router.get("/:id", requirePermission("roles", "read"), async (req, res, next) =>
 router.post("/", requirePermission("roles", "write"), async (req, res, next) => {
   try {
     const input = CreateRoleSchema.parse(req.body);
-    // Rule 48: roles:write must not be able to mint an admin-equivalent role.
-    assertNoPrivilegeEscalation(req, input.permissions, `the role "${input.name}"`);
+    // Rules 48 / 114(g): roles:write may only grant what the caller holds —
+    // never an admin-equivalent role, nor any single key above its own level.
+    assertGrantWithinCaller(req, input.permissions, `the role "${input.name}"`);
     const created = await roleService.createRole(
       {
         name:        input.name,
@@ -97,7 +98,10 @@ router.put("/:id", requirePermission("roles", "write"), async (req, res, next) =
     // Rule 48: nor to promote an existing role — including the caller's own —
     // into one. A partial update that leaves `permissions` alone is untouched.
     if (input.permissions !== undefined) {
-      assertNoPrivilegeEscalation(req, input.permissions, "this permission set");
+      // Only the keys this edit RAISES count — authority the role already had
+      // is not being granted by this caller (rule 114(g)).
+      const current = await roleService.getRole(req.params.id as string);
+      assertGrantWithinCaller(req, input.permissions, "this permission set", (current as { permissions?: unknown }).permissions);
     }
     const updated = await roleService.updateRole(
       req.params.id as string,
@@ -113,6 +117,17 @@ router.put("/:id", requirePermission("roles", "write"), async (req, res, next) =
       req.session?.username,
     );
     res.json(updated);
+  } catch (err) { next(err); }
+});
+
+// POST /roles/:id/grant-review — confirm a flagged role's grants are intended
+// (business rule 114(i)). The reviewer must be able to grant what the role
+// holds, or "reviewed" would mean nothing.
+router.post("/:id/grant-review", requirePermission("roles", "write"), async (req, res, next) => {
+  try {
+    const role = await roleService.getRole(req.params.id as string);
+    assertGrantWithinCaller(req, role.permissions, `the role "${role.name}"`);
+    res.json(await roleService.markRoleGrantReviewed(role.id, req.session?.username));
   } catch (err) { next(err); }
 });
 

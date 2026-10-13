@@ -105,7 +105,7 @@ Business rules 63–64. Local accounts only. Whether each half is live is the in
 
 ### Utilization — `ipBlocks read`
 Blanket-gated at the mount: the reports enumerate the IP space, so they carry the same read gate as the blocks they describe. Bearer tokens (no role snapshot) and `ipBlocks=none` roles get 403.
-- `GET    /utilization`
+- `GET    /utilization` `recentReservations` is stripped unless the caller holds `reservations:read` (business rule 114(f)), mirroring `/dashboard/summary`.
 - `GET    /utilization/blocks/:id`
 - `GET    /utilization/subnets/:id`
 
@@ -159,7 +159,8 @@ Named filter+sort presets for a list page (Assets → Filters ▾). There is no 
 - `GET    /roles/:id`                           *(read)*
 - `GET    /roles/functions`                     *(read)* — `{ accessLevels: ["none","read","write","fullwrite"], functions: FunctionKeyDef[] }` — the 25-key catalogue with `{ key, label, description, hasOwnershipDimension? }`. Single source of truth backing the permissions slide-over matrix.
 - `POST   /roles`                               *(write)* — `{ name, description?, permissions, regionTags?, color? }`. Name validated against `/^[A-Za-z0-9_-]{2,32}$/` + case-insensitive uniqueness against existing names + the reserved `admin` / `readonly`. `color` validated as `#rrggbb` (empty/null clears). Permissions normalized: unknown function keys dropped, missing keys defaulted to `"none"`. Refused with **403** when the submitted matrix is admin-equivalent (`users` AND `roles` both `fullwrite`) and the caller is not — business rule 48.
-- `PUT    /roles/:id`                           *(write)* — Body accepts any subset of `{ name?, description?, permissions?, regionTags?, color? }`. Refused with 403 when the role is `isProtected=true` (admin / readonly), and with **403** when the body carries a `permissions` matrix that is admin-equivalent while the caller is not (business rule 48 — this is what stopped a `roles=write` holder adding the two grants to the role they already hold; a partial update that omits `permissions` is unaffected). Bumps the role-version cache + writes one `role.updated` Event with per-field diff (including a per-functionKey `permissionChanges` map listing only the keys whose level changed).
+- `PUT    /roles/:id`                           *(write)* — Body accepts any subset of `{ name?, description?, permissions?, regionTags?, color? }`. Refused with 403 when the role is `isProtected=true` (admin / readonly), and with **403** when the body carries a `permissions` matrix that is admin-equivalent while the caller is not (business rule 48 — this is what stopped a `roles=write` holder adding the two grants to the role they already hold; a partial update that omits `permissions` is unaffected). Bumps the role-version cache + writes one `role.updated` Event with per-field diff (including a per-functionKey `permissionChanges` map listing only the keys whose level changed). `assertGrantWithinCaller` (business rule 114(g)) refuses any key the edit RAISES above the caller's own level; saving `permissions` (changed or not) clears `grantReviewNeeded` (114(i)).
+- `POST   /roles/:id/grant-review`     *(roles write)* — Business rule 114(i): confirm a role flagged `grantReviewNeeded` holds only intended access. The caller must be able to grant the role's permissions (`assertGrantWithinCaller`); audited `role.grant_reviewed`. A no-op on an unflagged role.
 - `DELETE /roles/:id`                           *(write)* — Refused with 409 when `isBuiltIn=true` OR when any user holds the role (admin must reassign first).
 
 ### Group Mappings — mounted at `/group-mappings`, gated `users:fullwrite`

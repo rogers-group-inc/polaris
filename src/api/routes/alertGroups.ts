@@ -18,6 +18,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requirePermission } from "../middleware/permissions.js";
+import { assertScriptActionPermission } from "./notificationRules.js";
+import { maskActionHeaders } from "../../utils/actionHeaderMask.js";
 import {
   listGroups,
   getGroup,
@@ -75,7 +77,7 @@ const groupInputSchema = z.object({
 
 alertGroupsRouter.get("/", requirePermission("automationManagement", "read"), async (_req, res, next) => {
   try {
-    res.json({ groups: await listGroups() });
+    res.json({ groups: maskActionHeaders(await listGroups()) });
   } catch (err) { next(err); }
 });
 
@@ -90,7 +92,7 @@ alertGroupsRouter.get("/joinable", requirePermission("automationManagement", "re
 
 alertGroupsRouter.get("/:id", requirePermission("automationManagement", "read"), async (req, res, next) => {
   try {
-    res.json(await getGroup(req.params.id as string));
+    res.json(maskActionHeaders(await getGroup(req.params.id as string)));
   } catch (err) { next(err); }
 });
 
@@ -105,14 +107,18 @@ alertGroupsRouter.get("/:id/removal-impact", requirePermission("automationManage
 alertGroupsRouter.post("/", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const input = groupInputSchema.parse(req.body);
-    res.status(201).json(await createGroup(input, req.session?.username));
+    // A group's actions are executed exactly like an automation's, so a script
+    // action needs Automation Scripts Read-Write here too (business rule 114(a)).
+    assertScriptActionPermission(req, input as never);
+    res.status(201).json(maskActionHeaders(await createGroup(input, req.session?.username)));
   } catch (err) { next(err); }
 });
 
 alertGroupsRouter.put("/:id", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const input = groupInputSchema.parse(req.body);
-    res.json(await updateGroup(req.params.id as string, input, req.session?.username));
+    assertScriptActionPermission(req, input as never);
+    res.json(maskActionHeaders(await updateGroup(req.params.id as string, input, req.session?.username)));
   } catch (err) { next(err); }
 });
 

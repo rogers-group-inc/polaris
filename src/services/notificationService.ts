@@ -882,7 +882,36 @@ export async function maintenanceHoldsByAsset(assetIds: string[]): Promise<Map<s
   return out;
 }
 
-export async function getAssetNotifications(assetId: string) {
+/**
+ * What an asset's Alerts tab may show of a matching automation to a caller
+ * WITHOUT Automations read (business rule 114(b)): enough to say what watches
+ * the device — name, trigger, severity ladder, scope — and nothing that
+ * delivers: no actions, recipients, escalation, email composition, API-call
+ * URLs or headers, scripts. Severity bands keep only their comparison fields.
+ * Pure.
+ */
+export function summarizeMatchingRule(rule: Record<string, unknown>): Record<string, unknown> {
+  const bands = Array.isArray(rule.severityBands)
+    ? (rule.severityBands as Array<Record<string, unknown>>).map((b) => ({
+        threshold: b.threshold,
+        severity: b.severity,
+        ...(b.operator !== undefined ? { operator: b.operator } : {}),
+        ...(b.forDurationSec !== undefined ? { forDurationSec: b.forDurationSec } : {}),
+      }))
+    : null;
+  return {
+    id: rule.id,
+    name: rule.name,
+    description: rule.description ?? null,
+    enabled: rule.enabled,
+    severity: rule.severity,
+    trigger: rule.trigger,
+    scope: rule.scope,
+    severityBands: bands,
+  };
+}
+
+export async function getAssetNotifications(assetId: string, opts: { fullRules?: boolean } = {}) {
   const [active, matchingRules, holds] = await Promise.all([
     prisma.notification.findMany({
       where: { assetId, cleared: false },
@@ -907,6 +936,10 @@ export async function getAssetNotifications(assetId: string) {
       groupName: row.alertGroup?.name ?? null,
       maintenanceHold,
     })),
-    matchingRules,
+    // Full rows only for a caller who may read automations; everyone else
+    // sees the summary (rule 114(b)).
+    matchingRules: opts.fullRules === false
+      ? (matchingRules as unknown as Array<Record<string, unknown>>).map(summarizeMatchingRule)
+      : matchingRules,
   };
 }

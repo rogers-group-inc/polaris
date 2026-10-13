@@ -17,12 +17,13 @@
  * notificationRuleService; preview/dry-run in notificationEngine.
  */
 
+import { maskActionHeaders } from "../../utils/actionHeaderMask.js";
 import { Router } from "express";
 import type { Request } from "express";
 import { z } from "zod";
 import { requirePermission, hasPermission } from "../middleware/permissions.js";
 import { AppError } from "../../utils/errors.js";
-import { ruleInputSchema, previewInputSchema, buildSchemaCatalog, allRuleActionRefs, scopeSchema, type RuleInput } from "../../services/notificationTypes.js";
+import { ruleInputSchema, previewInputSchema, buildSchemaCatalog, allRuleActionRefs, scopeSchema, type RuleActionCarrier } from "../../services/notificationTypes.js";
 import { listRules, createRule, updateRule, deleteRule, listScopeOptions } from "../../services/notificationRuleService.js";
 import { previewDownDetectionRemoval } from "../../services/downDetectionService.js";
 import { previewRule, previewAlertMessage } from "../../services/notificationEngine.js";
@@ -37,7 +38,8 @@ export const notificationRulesRouter = Router();
 
 notificationRulesRouter.get("/", requirePermission("automationManagement", "read"), async (_req, res, next) => {
   try {
-    res.json({ rules: await listRules() });
+    // api_call headers are secrets: masked in every response (rule 114(h)).
+    res.json({ rules: maskActionHeaders(await listRules()) });
   } catch (err) { next(err); }
 });
 
@@ -216,7 +218,7 @@ notificationRulesRouter.post("/poll-cadence", requirePermission("automationManag
  * protection is that automationScripts is granted to almost nobody, not
  * that its top rung is spelled differently from every other key's.
  */
-function assertScriptActionPermission(req: Request, input: RuleInput): void {
+export function assertScriptActionPermission(req: Request, input: RuleActionCarrier): void {
   // allRuleActionRefs is the canonical walk over every place actions live —
   // top-level (+ per-action escalation tiers), rule-level escalation tiers,
   // severity-band actions (+ their tiers), band-level tiers, resolved actions.
@@ -248,7 +250,7 @@ notificationRulesRouter.post("/", requirePermission("automationManagement", "wri
     const input = ruleInputSchema.parse(req.body);
     assertScriptActionPermission(req, input);
     const rule = await createRule(input, req.session?.username);
-    res.status(201).json({ rule });
+    res.status(201).json({ rule: maskActionHeaders(rule) });
   } catch (err) { next(err); }
 });
 
@@ -257,7 +259,7 @@ notificationRulesRouter.put("/:id", requirePermission("automationManagement", "w
     const input = ruleInputSchema.parse(req.body);
     assertScriptActionPermission(req, input);
     const rule = await updateRule(req.params.id as string, input, req.session?.username);
-    res.json({ rule });
+    res.json({ rule: maskActionHeaders(rule) });
   } catch (err) {
     if ((err as { code?: string })?.code === "P2025") return next(new AppError(404, "Notification rule not found"));
     next(err);

@@ -692,6 +692,7 @@ const api = {
     create:    (body)    => request("POST", "/roles", body),
     update:    (id, b)   => request("PUT",  `/roles/${id}`, b),
     delete:    (id)      => request("DELETE", `/roles/${id}`),
+    markReviewed: (id)   => request("POST", `/roles/${id}/grant-review`),
     functions: ()        => request("GET", "/roles/functions"),
   },
   groupMappings: {

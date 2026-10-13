@@ -4095,6 +4095,15 @@ model Role {
   otherTags   String[] @default([]) @map("other_tags")
   isBuiltIn   Boolean  @default(false) @map("is_built_in")
   isProtected Boolean  @default(false) @map("is_protected")
+  // Business rule 114(i): set by the 2026-10 corrective migration on a custom
+  // role that held `write` on one of the five keys the September RBAC
+  // migrations redefined (serverSettingsSystem, automationScripts,
+  // serverSettingsData, automationManagement, maintenanceManagement), where a
+  // stored `write` silently came to mean the key's full grant. Nothing was
+  // demoted — the migration cannot tell an accidental grant from a deliberate
+  // one — so the role is listed for review until an administrator saves its
+  // permissions or marks it reviewed.
+  grantReviewNeeded Boolean @default(false) @map("grant_review_needed")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

@@ -2138,3 +2138,30 @@ belong to an address and port, so on DHCP space an address that moves to a
 different machine is refused until its pin is deleted. Trust on first use
 cannot detect a server that was already impersonated when Polaris first
 connected to it.
+
+### Rule 114
+
+**A permission reaches only what it says, and a grant never exceeds the
+granter.**
+
+- **No grant above your own level.** Creating or editing a role, creating an
+  account on a role, moving an account to a role and binding an API token to a
+  role are refused if they would grant a permission you do not hold yourself.
+- **Script actions need Automation Scripts Read-Write** in alert groups as well
+  as automations.
+- **API call headers are secrets** — encrypted at rest, masked when shown, and
+  kept on save only while the call's URL is unchanged.
+- **An asset's Alerts tab** shows full automation details only to people who can
+  read automations; others see each automation's name, trigger, severity and
+  scope.
+- **Adding a contact over a directory-synced entry** needs Contacts Full RW, the
+  same as adopting it.
+- **Rows a subnet Refresh imports are unowned**, as discovery's are.
+- **Utilization** shows recent reservations only to people who can read
+  reservations.
+- **A scoped API token quarantining an asset** keeps other sites' quarantine
+  records.
+- **Roles flagged for review** — custom roles holding Read-Write on a
+  permission that became stronger in the September 2026 update — are listed
+  until an administrator saves them or marks them reviewed. Nothing is taken
+  away automatically.

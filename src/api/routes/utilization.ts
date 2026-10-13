@@ -3,14 +3,23 @@
  */
 
 import { Router } from "express";
+import { hasPermission } from "../middleware/permissions.js";
 import * as utilizationService from "../../services/utilizationService.js";
 
 const router = Router();
 
 // GET /utilization — global dashboard summary
-router.get("/", async (_req, res, next) => {
+router.get("/", async (req, res, next) => {
   try {
-    res.json(await utilizationService.getGlobalUtilization());
+    const summary = await utilizationService.getGlobalUtilization();
+    // The mount needs only ipBlocks:read; the recent-reservation rows are
+    // reservations data, split by key exactly as /dashboard/summary does
+    // (business rule 114(f)).
+    if (!hasPermission(req, "reservations", "read")) {
+      const { recentReservations: _omit, ...blocksOnly } = summary as typeof summary & { recentReservations?: unknown };
+      return res.json(blocksOnly);
+    }
+    res.json(summary);
   } catch (err) {
     next(err);
   }

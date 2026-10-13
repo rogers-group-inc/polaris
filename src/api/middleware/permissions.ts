@@ -382,6 +382,62 @@ export function assertNoPrivilegeEscalation(req: Request, targetPermissions: unk
   );
 }
 
+/**
+ * The grants in `target` the caller does not hold (business rule 114(g)): every
+ * function key whose target level the caller's own level does not meet. With
+ * `existing` (an edit), a key the row ALREADY held at that level is not a new
+ * grant and is not counted — editing a role must not be refused for authority
+ * someone else gave it. Pure.
+ */
+export function grantsBeyond(
+  callerPermissions: unknown,
+  targetPermissions: unknown,
+  existingPermissions?: unknown,
+): Array<{ key: string; level: AccessLevel }> {
+  const caller = normalizePermissions(callerPermissions);
+  const target = normalizePermissions(targetPermissions);
+  const existing = existingPermissions === undefined ? null : normalizePermissions(existingPermissions);
+  const out: Array<{ key: string; level: AccessLevel }> = [];
+  for (const def of FUNCTION_KEYS) {
+    const want = target[def.key] ?? "none";
+    if (want === "none") continue;
+    if (rankMeets(caller[def.key] ?? "none", want)) continue;
+    if (existing && rankMeets(existing[def.key] ?? "none", want)) continue;
+    out.push({ key: def.key, level: want });
+  }
+  return out;
+}
+
+/**
+ * Business rule 114(g) — a grant may not exceed the granter. Applied wherever
+ * authority is HANDED OUT: creating or editing a role, creating an account on
+ * a role or moving one onto it, binding an API token to a role, provisioning
+ * the AI Assistant's role. Rule 48's admin-equivalence check is the special
+ * case this generalises: `roles:write` could otherwise give a role (its own
+ * included) Automation Scripts or Server Settings → Data, both of which run
+ * code on the Polaris host, while holding neither.
+ *
+ * An admin-equivalent caller is unaffected (it can already grant itself
+ * anything). Pass `existingPermissions` for an edit so only raised keys count.
+ */
+export function assertGrantWithinCaller(
+  req: Request,
+  targetPermissions: unknown,
+  subject: string,
+  existingPermissions?: unknown,
+): void {
+  assertNoPrivilegeEscalation(req, targetPermissions, subject);
+  if (callerIsAdminEquivalent(req)) return;
+  const snap = req.roleSnapshot ?? req.session?.roleSnapshot;
+  const beyond = grantsBeyond(snap?.permissions ?? {}, targetPermissions, existingPermissions);
+  if (beyond.length === 0) return;
+  const list = beyond.slice(0, 6).map((b) => `${b.key}=${b.level}`).join(", ") + (beyond.length > 6 ? `, and ${beyond.length - 6} more` : "");
+  throw new AppError(
+    403,
+    `Forbidden — ${subject} grants access your own role does not hold (${list}). You can only grant up to your own level; ask an administrator to make this change.`,
+  );
+}
+
 /** Numeric privilege rank for a permissions matrix. Higher = more privilege. */
 export function rankRole(permissions: unknown): number {
   const perms = normalizePermissions(permissions);

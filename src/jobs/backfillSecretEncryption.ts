@@ -33,7 +33,7 @@ import { logger } from "../utils/logger.js";
 import { logEvent } from "../services/eventLogService.js";
 import { runInstrumentedJob } from "./_metrics.js";
 import { secretEncryptionEnabled, isSealed, sealValue } from "../utils/secretBox.js";
-import { SECRET_CONFIG_KEYS } from "../utils/configSecretFields.js";
+import { SECRET_CONFIG_KEYS, SECRET_MAP_KEYS, SECRET_ACTION_COLUMNS } from "../utils/configSecretFields.js";
 
 /**
  * Does this raw (un-opened) blob contain at least one secret-keyed string that
@@ -47,6 +47,9 @@ function hasPlaintextSecret(value: unknown, depth = 0): boolean {
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
     if (typeof v === "string" && SECRET_CONFIG_KEYS.has(k)) {
       if (v.length > 0 && !isSealed(v)) return true;
+    } else if (SECRET_MAP_KEYS.has(k) && v && typeof v === "object" && !Array.isArray(v)) {
+      // An api_call's headers map (rule 114(h)): every string value is a secret.
+      if (Object.values(v as Record<string, unknown>).some((x) => typeof x === "string" && x.length > 0 && !isSealed(x))) return true;
     } else if (hasPlaintextSecret(v, depth + 1)) {
       return true;
     }
@@ -124,6 +127,38 @@ async function backfillSecretEncryption(): Promise<void> {
       // enrolled before that. A TOTP secret is a password equivalent: anyone
       // holding it can mint the second factor forever, and it was landing in
       // every pg_dump in the clear.
+      // api_call headers inside automation actions (rule 114(h)). Re-writing
+      // the columns through the extended client seals them. Deliveries: only
+      // rows that carry headers, so a large delivery table is not read whole.
+      const ruleCols = SECRET_ACTION_COLUMNS.NotificationRule;
+      const rules = await sealTable(
+        "notification_rules",
+        async () => (await prismaBase.notificationRule.findMany({
+          select: { id: true, actions: true, escalation: true, severityBands: true, bandNotify: true, resetActions: true, reset: true },
+        })).map((r) => ({ id: r.id, blob: r as unknown })),
+        (id, blob) => prisma.notificationRule.update({
+          where: { id },
+          data: Object.fromEntries(ruleCols.map((c) => [c, (blob as Record<string, unknown>)[c] ?? undefined])) as never,
+        }),
+      );
+      const groupCols = SECRET_ACTION_COLUMNS.AlertGroup;
+      const groups = await sealTable(
+        "alert_groups",
+        async () => (await prismaBase.alertGroup.findMany({ select: { id: true, actions: true, resetActions: true, escalation: true } }))
+          .map((r) => ({ id: r.id, blob: r as unknown })),
+        (id, blob) => prisma.alertGroup.update({
+          where: { id },
+          data: Object.fromEntries(groupCols.map((c) => [c, (blob as Record<string, unknown>)[c] ?? undefined])) as never,
+        }),
+      );
+      const deliveryIds = await prismaBase.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "notification_deliveries" WHERE "meta" ? 'headers'`;
+      const deliveries = deliveryIds.length === 0 ? 0 : await sealTable(
+        "notification_deliveries",
+        async () => (await prismaBase.notificationDelivery.findMany({ where: { id: { in: deliveryIds.map((d) => d.id) } }, select: { id: true, meta: true } }))
+          .map((r) => ({ id: r.id, blob: r.meta })),
+        (id, blob) => prisma.notificationDelivery.update({ where: { id }, data: { meta: blob as never } }),
+      );
+
       const totpRows = await prismaBase.user.findMany({
         where: { totpSecret: { not: null } },
         select: { id: true, totpSecret: true },
@@ -139,11 +174,11 @@ async function backfillSecretEncryption(): Promise<void> {
         }
       }
 
-      const total = credentials + integrations + channels + settings + totpSecrets;
+      const total = credentials + integrations + channels + settings + totpSecrets + rules + groups + deliveries;
       if (total === 0) return;
 
       logger.info(
-        { credentials, integrations, channels, settings, totpSecrets },
+        { credentials, integrations, channels, settings, totpSecrets, rules, groups, deliveries },
         "backfillSecretEncryption: encrypted previously-plaintext secrets at rest",
       );
       await logEvent({
@@ -152,7 +187,7 @@ async function backfillSecretEncryption(): Promise<void> {
         resourceType: "setting",
         actor: "system:backfill-secret-encryption",
         message: `Encrypted ${total} previously-plaintext secret-bearing row(s) at rest (credentials: ${credentials}, integrations: ${integrations}, delivery channels: ${channels}, settings: ${settings}, TOTP secrets: ${totpSecrets})`,
-        details: { credentials, integrations, channels, settings, totpSecrets },
+        details: { credentials, integrations, channels, settings, totpSecrets, rules, groups, deliveries },
       });
     });
   } catch (err) {
