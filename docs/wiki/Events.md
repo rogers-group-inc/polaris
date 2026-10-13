@@ -184,6 +184,8 @@ device-down supersession (any metric or device-state alert on a device that went
 | `agent.upgrade_skipped` | | a host the fan-out could not upgrade |
 | `agent.upgrade_deferred` | info | a host the fan-out did not try because monitoring shows it down; retried by the next fan-out |
 | `asset.pins.bulk_updated` | | one mass-pin apply |
+| `credential.used` | info | a person aimed a stored credential they own (or hold Credentials Full RW for) at an asset, a Discovery's targets, a path check, a firmware binding or a flash |
+| `credential.borrowed` | **warning** | the same, with a credential the person does **not** own and no Credentials Full RW — the row names the owner and the destination ([rule 112](Business-Rules#rule-112)) |
 
 The two password Events being **different actions at different levels** is
 deliberate: the self-service change proves knowledge of the current password and

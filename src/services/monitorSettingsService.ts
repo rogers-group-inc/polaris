@@ -292,6 +292,11 @@ export async function createClassOverride(
   return created;
 }
 
+/** One class override as stored, or null. */
+export async function getClassOverride(id: string) {
+  return prisma.monitorClassOverride.findUnique({ where: { id } });
+}
+
 export async function updateClassOverride(
   id: string,
   rawInput: TierSettingsInput,

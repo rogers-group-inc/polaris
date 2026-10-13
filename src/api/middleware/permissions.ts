@@ -688,6 +688,23 @@ export function assertOwnership(req: Request, createdBy: string | null, action: 
   throw new AppError(403, `Forbidden — you can only ${action} you created`);
 }
 
+/**
+ * Who is aiming a stored credential, for the rule 112 audit
+ * (services/credentialUseAuditService.recordCredentialUse): the session
+ * username ownership is compared against, the actor written on the Event, and
+ * whether Credentials Full RW makes every credential theirs to use. A bearer
+ * token has no username, so every credential it aims is recorded as borrowed
+ * unless its role holds Full RW.
+ */
+export function credentialUseActor(req: Request): { username: string | null; actor: string | null; mayUseAny: boolean } {
+  const username = req.session?.username ?? null;
+  return {
+    username,
+    actor: username ?? (req.apiToken ? `api:${req.apiToken.name}` : null),
+    mayUseAny: hasPermission(req, "credentials", "fullwrite"),
+  };
+}
+
 // requireSessionOrTokenPermission retired in the api-tokens role cutover —
 // bearer tokens are bound to a Role and pass the plain requirePermission
 // gate; there is no parallel scope-string system anymore.

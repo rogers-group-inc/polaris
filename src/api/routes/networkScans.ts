@@ -60,7 +60,8 @@ import { Router } from "express";
 import { z } from "zod";
 import type { Request } from "express";
 import { AppError } from "../../utils/errors.js";
-import { hasPermission, requirePermission } from "../middleware/permissions.js";
+import { hasPermission, requirePermission, credentialUseActor } from "../middleware/permissions.js";
+import { recordCredentialUse, scanCredentialUses } from "../../services/credentialUseAuditService.js";
 import { requestActor } from "../middleware/auth.js";
 import {
   adoptHits,
@@ -208,7 +209,10 @@ router.post(
 router.post("/", requirePermission("networkScan", "write"), async (req, res, next) => {
   try {
     const body = saveSchema.parse(req.body ?? {}) as SaveScanInput;
-    res.status(201).json({ scan: await createScan(body, viewer(req)) });
+    const scan = await createScan(body, viewer(req));
+    // Rule 112: the Discovery now sends its credentials to the targets it names.
+    await recordCredentialUse(credentialUseActor(req), "network-scan.save", scanCredentialUses(null, scan));
+    res.status(201).json({ scan });
   } catch (err) { next(err); }
 });
 
@@ -225,7 +229,9 @@ router.put("/:id", requirePermission("networkScan", "write"), async (req, res, n
     const body = saveSchema.parse(req.body ?? {}) as SaveScanInput;
     const row = await getScanForWrite((req.params.id as string), viewer(req).id);
     assertMayEditScan(req, row, "editing");
-    res.json({ scan: await updateScan(row, body, viewer(req)) });
+    const scan = await updateScan(row, body, viewer(req));
+    await recordCredentialUse(credentialUseActor(req), "network-scan.save", scanCredentialUses(row, scan));
+    res.json({ scan });
   } catch (err) { next(err); }
 });
 
@@ -244,7 +250,12 @@ router.delete("/:id", requirePermission("networkScan", "write"), async (req, res
  */
 router.post("/:id/run", requirePermission("networkScan", "write"), async (req, res, next) => {
   try {
-    res.status(202).json({ run: await triggerScan((req.params.id as string), viewer(req)) });
+    const run = await triggerScan((req.params.id as string), viewer(req));
+    // A run sends every credential the Discovery carries to every target, and
+    // the person running it need not be the person who saved it.
+    const scan = await getScan((req.params.id as string), viewer(req).id);
+    await recordCredentialUse(credentialUseActor(req), "network-scan.run", scanCredentialUses(null, scan, true));
+    res.status(202).json({ run });
   } catch (err) { next(err); }
 });
 

@@ -9,7 +9,11 @@ import { z } from "zod";
 import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
 import { mapWithConcurrency } from "../../utils/concurrency.js";
-import { requirePermission, hasPermission } from "../middleware/permissions.js";
+import { requirePermission, hasPermission, credentialUseActor } from "../middleware/permissions.js";
+import {
+  recordCredentialUse, assetCredentialUses, assetCredentialDestination,
+  type AssetCredentialSlots, type CredentialUseVia,
+} from "../../services/credentialUseAuditService.js";
 import { logPathGlobProblem } from "../../utils/logPathGlob.js";
 import {
   checkIpForIncomingClaim,
@@ -1383,7 +1387,7 @@ router.post("/bulk-monitor", requirePermission("assets", "write"), async (req, r
     // can flag missing rows. One round-trip vs the previous N-asset loop.
     const found = await prisma.asset.findMany({
       where: { id: { in: body.ids } },
-      select: { id: true, status: true },
+      select: { id: true, status: true, hostname: true, dnsName: true, ipAddress: true, monitorCredentialId: true },
     });
     const foundSet = new Set(found.map((a) => a.id));
     const errors: Array<{ id: string; error: string }> = body.ids
@@ -1421,6 +1425,14 @@ router.post("/bulk-monitor", requirePermission("assets", "write"), async (req, r
       // per-class addAsMonitored. Assets without an integration link are
       // skipped by the WHERE clause and keep monitorOverride=false.
       await recomputeMonitorOverrideForAssets(prisma, [...foundSet]);
+      // Rule 112: the credential now goes to every touched asset's address.
+      if (body.monitorCredentialId) {
+        const credId = body.monitorCredentialId;
+        const uses = found
+          .filter((a) => foundSet.has(a.id) && a.monitorCredentialId !== credId)
+          .map((a) => ({ credentialId: credId, destination: assetCredentialDestination(a), assetId: a.id, assetName: a.hostname ?? a.ipAddress }));
+        if (uses.length) await recordCredentialUse(credentialUseActor(req), "asset.bulk-monitor", uses);
+      }
     }
 
     logEvent({
@@ -2454,6 +2466,10 @@ router.post("/:id/snmp-walk", requirePermission("assetsProbe", "read"), async (r
     if (cred.type !== "snmp") {
       throw new AppError(400, `Credential "${cred.name}" is type "${cred.type}", expected "snmp"`);
     }
+    // Rule 112: the walk sends this credential's community / keys to the asset.
+    await recordCredentialUse(credentialUseActor(req), "asset.snmp-walk", [
+      { credentialId: cred.id, destination: asset.ipAddress, assetId: asset.id, assetName: asset.hostname ?? asset.ipAddress },
+    ]);
 
     const label = asset.hostname || asset.ipAddress;
     try {
@@ -4135,6 +4151,7 @@ router.post("/", requirePermission("assets", "write"), async (req, res, next) =>
     data.createdBy = requestActor(req) ?? null;
     clampAcquiredToLastSeen(data);
     const asset = await prisma.asset.create({ data: data as any });
+    await auditAssetCredentialUse(req, "asset.create", null, asset as unknown as AssetCredentialSlots);
     logEvent({ action: "asset.created", resourceType: "asset", resourceId: asset.id, resourceName: input.hostname || input.ipAddress, actor: requestActor(req), message: `Asset "${input.hostname || input.ipAddress || "unknown"}" created` });
     // Apply any criteria-based auto-tags to the new asset (best-effort).
     reconcileTagsForAsset(asset.id).catch(() => {});
@@ -4643,6 +4660,17 @@ async function applyAssetUpdateSideEffects(
   }
 }
 
+/** Record (rule 112) the credentials an asset write pointed at a destination. Never throws. */
+async function auditAssetCredentialUse(
+  req: Request,
+  via: CredentialUseVia,
+  before: AssetCredentialSlots | null,
+  after: AssetCredentialSlots,
+): Promise<void> {
+  const uses = assetCredentialUses(before, after);
+  if (uses.length) await recordCredentialUse(credentialUseActor(req), via, uses);
+}
+
 /**
  * Polaris authenticates to a FortiGate with the integration's fleet-wide API
  * token, at the ADDRESS the asset record holds. Typing a new address on such a
@@ -4686,6 +4714,7 @@ router.put("/:id", requirePermission("assets", "write"), async (req, res, next) 
     const { data, ipOverrideTouched, coordChanged } = await buildAssetUpdatePatch(id, existing, input, actor);
     const asset = await prisma.asset.update({ where: { id }, data: data as any });
     await applyAssetUpdateSideEffects(id, existing, asset, input, actor, { ipOverrideTouched, coordChanged });
+    await auditAssetCredentialUse(req, "asset.update", existing as unknown as AssetCredentialSlots, asset as unknown as AssetCredentialSlots);
     // Business rule 40(i): when the edit MOVED the address, re-evaluate both
     // ends — the new address may now be a collision (raise it, tell the
     // operator), and the old one may have just stopped being one (close it,

@@ -2087,3 +2087,23 @@ not a spelling, a cookie that has outlived its owner, or a code already used.**
   the discovered one is still an Assets edit.
 - **A switch's or AP's controller is a firewall the same integration manages.**
   An asset someone created by hand with the controller's name is never used.
+
+### Rule 112
+
+**Aiming a stored credential is allowed, and recorded.**
+
+- **Operators are trusted with the credentials they aim.** Whoever may edit an
+  asset may give it any stored credential and change its address. Whoever may
+  save or run a Discovery may use any credential against its targets, and
+  whoever may build a path check may give it any HTTP credential.
+- **Every such act is written to the event log.** One Event per credential names
+  who did it, which credential, who owns it and where it now goes.
+  `credential.used` (info) means the person created the credential or holds
+  Credentials Full RW. `credential.borrowed` (warning) means they did not — filter
+  the Events page by it to review credentials used by someone other than their
+  owner.
+- **Only a change is recorded.** Saving an asset, a Discovery or a path check
+  without changing its credential or where it points records nothing. Running a
+  Discovery records every credential it carries.
+- **Routine monitoring is not recorded**, only the moment a person chooses where
+  a credential goes.

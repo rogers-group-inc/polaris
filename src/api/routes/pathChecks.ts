@@ -41,7 +41,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { requirePermission, hasPermission } from "../middleware/permissions.js";
+import { requirePermission, hasPermission, credentialUseActor } from "../middleware/permissions.js";
 import { requestActor } from "../middleware/auth.js";
 import {
   CHECK_KINDS,
@@ -127,7 +127,7 @@ function writeOpts(req: Parameters<typeof hasPermission>[0]) {
   const credentialAccess = hasPermission(req, "credentials", "fullwrite") ? "fullwrite" as const
     : hasPermission(req, "credentials", "write") ? "write" as const
     : hasPermission(req, "credentials", "read") ? "read" as const : "none" as const;
-  return { mayRunOnServer: hasPermission(req, "networkScan", "write"), credentialAccess };
+  return { mayRunOnServer: hasPermission(req, "networkScan", "write"), credentialAccess, useActor: credentialUseActor(req) };
 }
 
 export const pathChecksRouter = Router();
