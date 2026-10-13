@@ -60,7 +60,9 @@ const AP_STATUS_PATH = "/api/v2/monitor/wifi/managed_ap";
 
 export type GateLink =
   | { kind: "token"; host: string; port: number; token: string; verifyTls: boolean; vdom: string }
-  | { kind: "login"; host: string; port: number; username: string; password: string; verifyTls: boolean; vdom: string }
+  // `expectedSerial`: the gate's serial — a Fortinet factory certificate naming
+  // another is refused before the login is sent (business rule 113(c)).
+  | { kind: "login"; host: string; port: number; username: string; password: string; verifyTls: boolean; vdom: string; expectedSerial?: string | null }
   | { kind: "fmg-proxy"; fmgConfig: FortiManagerConfig; deviceName: string; integrationId: string; vdom: string }
   | { kind: "ssh"; host: string; config: Record<string, unknown> };
 
@@ -161,7 +163,11 @@ function tokenAdapter(l: Extract<GateLink, { kind: "token" }>): RestAdapter {
 }
 
 function loginAdapter(l: Extract<GateLink, { kind: "login" }>): RestAdapter {
-  const c = new DeviceHttpClient({ host: l.host, port: l.port, scheme: "https", commandMs: 15_000, uploadIdleMs: 15_000, verifyTls: l.verifyTls });
+  // The firmware engines' client: with verifyTls off it pins the device's
+  // certificate on first use and checks it before the login is written
+  // (business rule 113(b)), and refuses a Fortinet certificate naming another
+  // serial (113(c)).
+  const c = new DeviceHttpClient({ host: l.host, port: l.port, scheme: "https", commandMs: 15_000, uploadIdleMs: 15_000, verifyTls: l.verifyTls, expectedSerial: l.expectedSerial ?? null });
   // gateLogin reads only the login, the token switch and the command timeout.
   const ctx = { credential: { username: l.username, password: l.password }, timeouts: DEFAULT_FIRMWARE_TIMEOUTS } as unknown as FirmwareEngineContext;
   let signedIn = false;

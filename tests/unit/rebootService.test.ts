@@ -83,6 +83,8 @@ vi.mock("../../src/db.js", () => ({
 }));
 
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+const recordCredentialUse = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock("../../src/services/credentialUseAuditService.js", () => ({ recordCredentialUse }));
 vi.mock("../../src/services/maintenanceScheduleService.js", () => ({
   openMaintenanceHold: h.openMaintenanceHold,
   releaseMaintenanceHold: h.releaseMaintenanceHold,
@@ -109,7 +111,7 @@ vi.mock("../../src/services/rebootTransports.js", async (orig) => {
   return { ...real, _rebootTransportSeams: { gateOps: () => h.gate } };
 });
 
-import { getRebootAvailability, startReboot } from "../../src/services/rebootService.js";
+import { getRebootAvailability, startReboot, recordRebootCredentialUse } from "../../src/services/rebootService.js";
 import { RebootSendError } from "../../src/services/rebootTransports.js";
 
 const FAST = { overrides: { timeouts: { agentAckMs: 60, downWaitMs: 60, upWaitMs: 200, pollMs: 2, recoveryWaitMs: 1, recoveryPollMs: 1 } } };
@@ -232,6 +234,20 @@ describe("who may reboot what (availability)", () => {
       h.state.asset = agent();
       expect(await getRebootAvailability("asset-1")).toMatchObject({ state: "available", kind: "agent", method: "agent", authority: "Polaris Agent" });
     });
+  });
+});
+
+describe("the credential a reboot signs with is recorded (rule 112)", () => {
+  const actor = { username: "alice", actor: "alice", mayUseAny: false };
+  it("records a stored credential, aimed at the gate's address", async () => {
+    h.state.asset = fullAsset({ cpuMemoryCredentialId: "c-ssh" });
+    h.state.credentials = [{ id: "c-ssh", name: "lab ssh", type: "ssh", config: { username: "a", password: "p", allowReboot: true } }];
+    await recordRebootCredentialUse("asset-1", actor);
+    expect(recordCredentialUse).toHaveBeenCalledWith(actor, "device.reboot", [expect.objectContaining({ credentialId: "c-ssh", destination: "172.22.128.104", assetId: "asset-1" })]);
+  });
+  it("records nothing for the integration's own token", async () => {
+    await recordRebootCredentialUse("asset-1", actor);
+    expect(recordCredentialUse).not.toHaveBeenCalled();
   });
 });
 

@@ -23,7 +23,7 @@ Verbatim from ARCHITECTURE.md → API Endpoints. Gate notation: `key:level`.
   - `GET    /assets/:id/reboot/runs/:runId` (`assets:read`) — `{ run }` with its log, ONLY when the run belongs to this asset (404 otherwise). What the slide-over polls.
   - `GET    /assets/:id/reboot/schedules?limit` (`assets:read`) — `{ schedules }`, newest first, every status.
   - `GET    /assets/:id/reboot/schedules/defaults` (`assets:write`) — `{ notifyEmails, maxRecipients }` (the caller's profile email), as for firmware.
-  - `POST   /assets/:id/reboot/schedules` (`assets:write`) — `{ scheduledFor, notifyEmails[] }` (strict; ISO with an offset, ≥ 1 min and ≤ ~1 year ahead; 1–20 recipients). 201 `{ schedule }` with `warnings`. 409 when a booking is already pending.
+  - `POST   /assets/:id/reboot/schedules` (`assets:write`) — `{ scheduledFor, notifyEmails[] }` (strict; ISO with an offset, ≥ 1 min and ≤ ~1 year ahead; 1–20 recipients). 201 `{ schedule }` with `warnings`. 409 when a booking is already pending. Records the stored credential the reboot will sign with (`credential.used` / `credential.borrowed`, `via: device.reboot` — rule 112), as `POST /assets/:id/reboot` does when it starts one.
   - `PATCH  /assets/:id/reboot/schedules/:scheduleId` (`assets:write`) — any of `{ scheduledFor, notifyEmails }`; only while `pending`.
   - `DELETE /assets/:id/reboot/schedules/:scheduleId` (`assets:write`) — CANCEL (the row stays `cancelled`).
   - `PUT    /assets/:id/reboot/agent` (**`assets:fullwrite`** — the agent deploy-verb tier, rule 43) — `{ enabled }` (strict): `agentRebootPermissionService.setAgentRebootEnabled` installs or removes the host-side marker + polkit rule over the agent's install credential, then answers `{ rebootEnabled, hostError }`.

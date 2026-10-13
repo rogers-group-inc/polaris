@@ -63,6 +63,7 @@ import { logEvent } from "./eventLogService.js";
 import { openMaintenanceHold, releaseMaintenanceHold } from "./maintenanceScheduleService.js";
 import { holdUntilMonitorAnswers } from "./holdRecoveryWait.js";
 import { credentialAllowsReboot, getCredential } from "./credentialService.js";
+import { recordCredentialUse, type CredentialUseActor } from "./credentialUseAuditService.js";
 import { resolveFirmwareCredential } from "./firmwareRepositoryService.js";
 import { buildTransportForIntegration } from "./reservationPushService.js";
 import { publishCommandWake } from "./agentCommandWake.js";
@@ -287,7 +288,7 @@ export interface RebootPlan {
   /** fortinet: what to reboot through `gate`. */
   target?: { kind: "self" } | { kind: "switch" | "ap"; serial: string; nameHint: string | null };
   /** fortinet: how to build the link at run time. */
-  linkFrom?: { kind: "stored"; credentialId: string; type: StoredAuthority["type"]; host: string } | { kind: "integration"; integration: IntegrationRow; deviceName: string | null };
+  linkFrom?: { kind: "stored"; credentialId: string; type: StoredAuthority["type"]; host: string; serial: string | null } | { kind: "integration"; integration: IntegrationRow; deviceName: string | null };
   /** agent */
   managedAgentId?: string;
 }
@@ -312,7 +313,7 @@ async function planFortinet(a: AssetRow): Promise<PlanOrRefusal> {
       const s = stored[0];
       return { plan: {
         kind: "fortinet", method: s.type === "ssh" ? "fortigate-ssh" : "fortigate-rest", authority: s.credentialName, credentialId: s.credentialId, via: null,
-        target: { kind: "self" }, linkFrom: { kind: "stored", credentialId: s.credentialId, type: s.type, host },
+        target: { kind: "self" }, linkFrom: { kind: "stored", credentialId: s.credentialId, type: s.type, host, serial: a.serialNumber },
       } };
     }
     const deviceName = readFirewallDeviceName(a.fortinetTopology) ?? a.hostname;
@@ -339,7 +340,7 @@ async function planFortinet(a: AssetRow): Promise<PlanOrRefusal> {
     const stored = ctl.gate && gateHost ? await storedAuthoritiesFor(ctl.gate) : [];
     if (stored.length > 0 && gateHost) {
       const s = stored[0];
-      return { plan: { kind: "fortinet", method, authority: s.credentialName, credentialId: s.credentialId, via, target, linkFrom: { kind: "stored", credentialId: s.credentialId, type: s.type, host: gateHost } } };
+      return { plan: { kind: "fortinet", method, authority: s.credentialName, credentialId: s.credentialId, via, target, linkFrom: { kind: "stored", credentialId: s.credentialId, type: s.type, host: gateHost, serial: ctl.gate!.serialNumber } } };
     }
     // The child's own discovering integration is the gate's (one FortiManager
     // or one standalone gate discovers both); the gate asset's, when known, wins.
@@ -356,7 +357,7 @@ async function planFortinet(a: AssetRow): Promise<PlanOrRefusal> {
   if (!host) return { state: "no-address", reason: `The ${noun} has no controller FortiGate and no address to reach its own CLI at.` };
   const ssh = (await storedAuthoritiesFor(a)).find((s) => s.type === "ssh");
   if (!ssh) return { state: "no-credential", reason: `The ${noun} has no controller FortiGate, so it is rebooted over its own SSH CLI — and no SSH credential on it has Allow reboots on.` };
-  return { plan: { kind: "fortinet", method: "device-ssh", authority: ssh.credentialName, credentialId: ssh.credentialId, via: null, target: { kind: "self" }, linkFrom: { kind: "stored", credentialId: ssh.credentialId, type: "ssh", host } } };
+  return { plan: { kind: "fortinet", method: "device-ssh", authority: ssh.credentialName, credentialId: ssh.credentialId, via: null, target: { kind: "self" }, linkFrom: { kind: "stored", credentialId: ssh.credentialId, type: "ssh", host, serial: a.serialNumber } } };
 }
 
 function planAgent(a: AssetRow, now = Date.now()): PlanOrRefusal {
@@ -448,6 +449,32 @@ export async function checkSchedulableReboot(assetId: string): Promise<{ plan: R
   const warnings = "state" in res ? [res.reason] : [];
   const plan = "plan" in res ? res.plan : { kind: "agent" as const, method: "agent" as const, authority: "Polaris Agent", credentialId: null, via: null };
   return { plan, warnings: [...warnings, ...(await stateBlockers(a))] };
+}
+
+/**
+ * Business rule 112: record the stored credential a reboot of this asset signs
+ * with, aimed where the reboot sends it (the gate's address) — for a reboot
+ * started now or booked for later, by the person who did it. The firmware
+ * flash's `recordFirmwareCredentialUse` shape. Nothing is recorded for the
+ * integration's own token or the agent, which are not stored credentials.
+ * Never throws.
+ */
+export async function recordRebootCredentialUse(assetId: string, actor: CredentialUseActor): Promise<void> {
+  try {
+    const a = await loadAsset(assetId);
+    const res = await planFor(a);
+    if (!("plan" in res)) return;
+    const from = res.plan.linkFrom;
+    if (!res.plan.credentialId || from?.kind !== "stored") return;
+    await recordCredentialUse(actor, "device.reboot", [{
+      credentialId: res.plan.credentialId,
+      destination: from.host,
+      assetId: a.id,
+      assetName: assetLabel(a) ?? null,
+    }]);
+  } catch (err) {
+    logger.warn({ err, assetId }, "reboot: could not record the credential use (rule 112)");
+  }
 }
 
 // ─── Start ───────────────────────────────────────────────────────────────────
@@ -563,7 +590,7 @@ async function linkFor(plan: RebootPlan): Promise<GateLink> {
       return { kind: "token", host: from.host, port: auth.port ?? 443, token: auth.apiToken, verifyTls: auth.verifySsl, vdom: "root" };
     }
     if (typeof cfg.username !== "string" || typeof cfg.password !== "string" || !cfg.password) throw new RebootSendError(`the credential "${cred.name}" has no usable login`);
-    return { kind: "login", host: from.host, port: 443, username: cfg.username, password: cfg.password, verifyTls: false, vdom: "root" };
+    return { kind: "login", host: from.host, port: 443, username: cfg.username, password: cfg.password, verifyTls: false, vdom: "root", expectedSerial: from.serial };
   }
   const integ = from.integration;
   const fresh = await loadIntegration(integ.id);

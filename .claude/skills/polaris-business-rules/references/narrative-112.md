@@ -36,3 +36,7 @@ The Event is on the credential (`resourceType: "credential"`, `resourceId` = its
 - **Agent install is not part of it.** It is `assets:fullwrite` (deploy-class), it already writes an `agent.install` Event naming the credential, and the bulk route picks SSH or WinRM per asset inside the service, so the route cannot say which credential went where.
 - **Inherited credentials.** An asset with no credential of its own, polled with one from its integration's class block, sends that credential to its new address when the address moves; the asset write records only the slots on the asset row.
 - **Transport identity.** Whether the destination proves who it is — SSH host keys, WinRM and firmware TLS, the archive SFTP — is phase 5c.
+
+### 2026-10-13: a reboot records its credential too
+
+Rule 114 (reboots) landed the same day as this rule, on a branch opened before it merged. A reboot sends a stored credential to a device exactly as a flash does, so it records the same way: `rebootService.recordRebootCredentialUse` writes `credential.used` / `credential.borrowed` with `via: "device.reboot"` and the gate's address as the destination, from `POST /assets/:id/reboot` and when a reboot is booked (`POST /assets/:id/reboot/schedules`). The integration's own token and the agent are not stored credentials and record nothing.

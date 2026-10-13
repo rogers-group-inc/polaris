@@ -17,10 +17,10 @@
 
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
-import { requirePermission } from "../middleware/permissions.js";
+import { requirePermission, credentialUseActor } from "../middleware/permissions.js";
 import { requestActor } from "../middleware/auth.js";
 import { AppError } from "../../utils/errors.js";
-import { getRebootAvailability, startReboot, getRebootRunForAsset, listRebootRunsForAsset } from "../../services/rebootService.js";
+import { getRebootAvailability, startReboot, getRebootRunForAsset, listRebootRunsForAsset, recordRebootCredentialUse } from "../../services/rebootService.js";
 import {
   getPendingRebootSchedule,
   listRebootSchedulesForAsset,
@@ -72,6 +72,8 @@ rebootAssetRouter.get("/", requirePermission("assets", "read"), handle(async (re
 rebootAssetRouter.post("/", requirePermission("assets", "write"), handle(async (req, res) => {
   if (req.body && typeof req.body === "object" && Object.keys(req.body).length > 0) throw new AppError(400, "A reboot takes no options");
   const run = await startReboot({ assetId: String(req.params.id), actor: requestActor(req) ?? "unknown" });
+  // Rule 112: the stored credential this reboot signs with, aimed at the gate.
+  await recordRebootCredentialUse(String(req.params.id), credentialUseActor(req));
   res.status(202).json({ run });
 }));
 
@@ -106,6 +108,8 @@ rebootAssetRouter.post("/schedules", requirePermission("assets", "write"), handl
     notifyEmails: body.data.notifyEmails,
     actor: requestActor(req) ?? "unknown",
   });
+  // Rule 112: recorded when BOOKED, by the person who booked it (the flash precedent).
+  await recordRebootCredentialUse(String(req.params.id), credentialUseActor(req));
   res.status(201).json({ schedule });
 }));
 
