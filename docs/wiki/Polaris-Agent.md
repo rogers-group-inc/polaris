@@ -93,6 +93,12 @@ applications without asking. An agent that does not pick the reboot up within
 about two and a half minutes never runs it — Polaris withdraws it — so an
 offline host never reboots hours after it was asked.
 
+The host stays in [maintenance](Maintenance-Windows) through the reboot until
+monitoring has recorded it from the agent's first report of the new uptime —
+the agent reconnecting does not end the window, because it reconnects before
+that report. An automation's [reboot action](Automation-Actions#reboot) can
+book a reboot of an opted-in host too.
+
 ---
 
 ## Installing

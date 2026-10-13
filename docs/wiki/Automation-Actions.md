@@ -58,6 +58,7 @@ escalation emails" are blank on the first send.
 | **api_call** | HTTP request to a URL you supply |
 | **script** | run a [registry script](Automation-Scripts) on the server or on the triggering asset |
 | **event** | write the `notification.triggered` audit Event |
+| **reboot** | book a [reboot](Assets#reboot) of the device that raised the alert |
 
 ### `api_call`
 
@@ -88,6 +89,65 @@ escalation emails" are blank on the first send.
 Attaching one needs `automationScripts:write`. See
 [Automation scripts](Automation-Scripts) — it is an RCE-equivalent surface and
 the page says what that means.
+
+### `reboot`
+
+**Reboot the device** books a reboot of the device that raised the alert
+([rule 115](Business-Rules#rule-115)). It never sends one on the spot: it makes
+the same booking as **Schedule for later** in the asset's
+[Reboot…](Assets#reboot) dialog. Everything that governs a reboot from that
+dialog governs this one. Something must allow the device to be rebooted (a
+credential, the integration or the agent host's opt-in), an HA FortiGate is
+refused, and every check is taken again when the booking fires. Polaris holds
+the device's alerts while it reboots, proves the restart, and emails the
+outcome.
+
+| Field | |
+|---|---|
+| When | **at the next** HH:MM server time (default 02:00), or **right away** (about a minute after the alert) |
+| Email the result to | 1–20 addresses; they get the outcome email of the booked reboot |
+| Not again within | 1–720 hours (default 24) of the device's last reboot |
+
+**When it does nothing.** Each of these writes an
+`asset.reboot_automation_skipped` Event on the asset and is not counted as a
+failure:
+
+- A reboot is already booked for the device (one booking per device).
+- The device rebooted within the **Not again within** gap — through Polaris or
+  on its own. The gap keeps a device whose memory fills again after every boot
+  from being rebooted every time the alert fires.
+
+A device Polaris may not reboot (no opt-in, an HA FortiGate, a device type it
+cannot reboot), or an alert with no device, records an
+`automation.action_error` instead. The booking is made in the automation's name
+(`automation:<name>`), and the credential it will sign with is recorded as
+borrowed ([rule 112](Business-Rules#rule-112)).
+
+**Where it can go.** The automation's own actions, a severity level's actions,
+and an [escalation tier](Automation-Escalation) — "nobody acknowledged the
+memory alert in 30 minutes, reboot it". It cannot go on the **Reset Action**
+list or a severity level's all-clear: a recovery is no reason to reboot. It has
+no escalation chain of its own and no reminders.
+
+**Who can add it.** Saving an automation or alert group with a reboot action
+needs **Read-Write on Assets**, the permission behind the asset's own Reboot
+button. Without it the type is not offered and the save is refused.
+
+**Testing and export.** The Summary step's
+[test buttons](Automations#testing-an-automation) never run it — a test never
+reboots a device. [Export](Automations#export-import-and-view-code) strips it
+and names it in the file's dependencies, so an imported automation reboots
+nothing until someone adds the action back.
+
+> **Example — reboot on memory pressure.** Trigger: asset metric *Memory
+> utilization* above 90 %, sustained for 15 minutes, on the devices you choose.
+> Actions: a notify to the team, and **Reboot the device** at the next 02:00,
+> emailing the result to the same team, not again within 24 hours. The device
+> is rebooted overnight, the team gets the outcome, and if memory climbs again
+> within 24 hours of that reboot no second one is booked.
+
+> A human must review an automation that reboots production equipment —
+> the trigger, its threshold and the devices it covers — before enabling it.
 
 ---
 

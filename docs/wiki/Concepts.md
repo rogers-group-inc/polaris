@@ -136,8 +136,8 @@ combining several. See [Triggers](Automation-Triggers).
 climbs and eases in place rather than firing several. Severities must strictly
 increase. See [rule 19](Business-Rules#rule-19).
 
-**Action** — what happens when it fires: `notify`, `api_call`, `script` or
-`event`. The in-app alert card is **not** an action — it always happens,
+**Action** — what happens when it fires: `notify`, `api_call`, `script`,
+`event` or `reboot` (book a reboot of the device). The in-app alert card is **not** an action — it always happens,
 because everything else keys on its id.
 
 **Escalation** — a chain of further actions taken when nobody handles the

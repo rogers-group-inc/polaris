@@ -2190,12 +2190,44 @@ reboot Polaris sends is proved, not assumed.**
   reboot but was never seen to go down is *unverified*.
 - **Polaris holds the device's alerts while it reboots**
   ([rule 80](#rule-80)), from the moment the reboot is sent until its
-  monitoring answers again.
+  monitoring has recorded the reboot — see (a).
 - **An agent that does not pick a reboot up within about two and a half
   minutes never runs it.**
 - **A scheduled reboot** is checked when it is booked and again when it fires,
   is not sent more than 15 minutes late, and its recipients hear the outcome
   either way ([rule 93](#rule-93)).
+
+**(a) A reboot Polaris was asked to do does not set off the "Device recently
+rebooted" automation.** That automation fires on the `device.reboot` Event,
+which monitoring writes on the first poll that reads the device's uptime after
+the boot. The Event is always written — it feeds the Recent Reboots widget and
+the device's history. What keeps it quiet is the maintenance window: the device
+stays in maintenance until monitoring has recorded the reboot (or, when
+monitoring reads no uptime for the device and has answered again, at that
+point), at most 10 minutes after the device is back, so the Event lands inside
+the window and no alert is raised for it. An agent host's window is not ended by
+the agent reconnecting, which happens before its first report of the new uptime.
+
+**(b) One booked reboot per device, and any other reboot cancels it.** A
+booking exists to get the device rebooted. When it is rebooted first — a
+**Reboot now** that succeeds, or anything monitoring sees as an uptime reset (a
+crash, a power cut, a firmware upgrade, a reboot from its own console) — the
+pending booking is cancelled with an Event saying why, so the device is not
+taken down twice. A **Reboot now** that fails leaves the booking in place, and a
+booking that is already firing is not touched. No email is sent for the
+cancellation.
+
+**(c) An automation books a reboot; it never sends one.** The **reboot**
+action ([Automation actions](Automation-Actions#reboot)) books a reboot of the
+device that raised the alert — about a minute later, or at the next chosen time
+of day on the server's clock — through the same booking as the Reboot dialog,
+so every opt-in and check above applies, again when it fires. It does nothing,
+and says so in an Event, when a reboot is already booked or the device rebooted
+within the action's minimum gap (default 24 hours), which stops a device whose
+memory refills after every boot from being rebooted in a loop. It can sit on
+the alert's own actions, a severity level's or an escalation tier, never on a
+reset or all-clear list. A Test button never runs it, export strips it, and
+saving an automation that has one needs **Read-Write on Assets**.
 
 ### Rule 116
 

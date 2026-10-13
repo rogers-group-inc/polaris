@@ -50,6 +50,11 @@ A number, compared against a threshold.
 The path check metrics are not here — they have their own trigger type,
 [Path Monitor](#path-monitor).
 
+A metric automation can act on the device as well as tell people about it:
+*Memory utilization above 90 % for 15 minutes* with a
+[reboot action](Automation-Actions#reboot) books a reboot of the device for the
+night.
+
 ---
 
 ## Path Monitor

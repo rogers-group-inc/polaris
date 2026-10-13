@@ -103,7 +103,7 @@ setup rather than flashing defaults.
 | **2 — Devices** | which devices this automation covers |
 | **3 — Trigger** | severity, then what to watch |
 | **4 — Reset** | what has to become true again |
-| **5 — Actions** | the in-app alert, then notify / API call / script / event |
+| **5 — Actions** | the in-app alert, then notify / API call / script / event / reboot |
 | **6 — Quiet time** | Off (the global quiet times apply), **Ignore Global Quiet Time** or **Override Global Quiet Time** — see [Quiet time](Automation-Escalation#quiet-time) |
 | **7 — Summary** | review, export, view code, **test delivery**, and the impact preview |
 
@@ -277,7 +277,10 @@ That strip is also the security half. It carries no ids and **no secrets**:
 dropping `api_call` actions is what keeps an `api_call` bearer token — stored
 unmasked by design — out of a file operators email and commit. It also means an
 imported file **can never name a script action**, so the RCE surface is
-untouched and `automationScripts:write` is never involved.
+untouched and `automationScripts:write` is never involved. A
+[reboot action](Automation-Actions#reboot) is stripped the same way and named in
+`dependencies`, so an imported automation reboots nothing until someone with
+Read-Write on Assets adds the action back.
 
 **View code** is deliberately a *different* serialisation: full fidelity, ids and
 headers included, because an edit there must round-trip losslessly onto the same
@@ -324,7 +327,7 @@ escalation tiers, resolved and reset actions.
   anyone.
 - The block names the address and push-device count the test will land on.
 - `api_call` and `script` are **never offered** — the server refuses to run them
-  from a button.
+  from a button. Neither is `reboot`: a test never reboots a device.
 - Webhook kinds (Slack, Teams, Pushbullet) are **disabled here** with a pointer
   to the Delivery tab's per-channel Test button: one Slack post reaches the whole
   channel, so there is no private form of it.
