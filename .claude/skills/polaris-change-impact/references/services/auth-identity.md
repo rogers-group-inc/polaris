@@ -178,7 +178,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **The `http` type's `form` mode (2026-09, business rule 87)** is a DEVICE ADMIN LOGIN — a switch, access point or FortiGate's own web-UI username + password — held for the firmware repository and nothing else. (Since 2026-10-06 a FortiGate firmware binding may instead name a `restapi` Credential — read through `utils/fortinetRestCredential.ts → restApiCredentialAuth` — or the discovering integration's token; neither is a `form` login.) `validateHttpConfig` keeps both carriers for it (like basic / digest) and strips the token; it is NOT an HTTP auth scheme, so `manufacturerProfileService.httpFieldsForWrite` refuses it on an HTTP-check widget (400), `monitoringService.probeHttp` sends no header for it (guessing Basic would post the device's admin password to whatever answered), and `POST /credentials/test` answers as a result that it is verified by the upgrade engine signing in. `utils/httpCheck.ts → isDeviceLoginCredential` is the one predicate every consumer reads. The only reader of the secret is `firmwareRepositoryService.resolveFirmwareCredential({ revealSecrets: true })`.
 
-**Ownership (2026-09-04, business rule 43):** `credentials` is the fourth key to carry the ownership dimension. `write` = create + edit / delete / **test-with** own rows only; `fullwrite` = any row. `createdBy` is stamped by `POST /credentials` from the session username and `updateCredential` takes no `createdBy` at all, so an edit cannot adopt a row; `null` is UNOWNED (pre-column rows, and any bearer-token create — a token has no username) and reachable only at fullwrite. The route layer owns the check (`requireOwnership("credentials")` + `assertOwnership` on the loaded row) — the SERVICE is deliberately ownership-blind, because discovery-side and onboarding callers (`windowsSshOnboardingService` rotating the Polaris-managed deployment key) must keep reaching every row.
+**Ownership (2026-09-04, business rule 43):** `credentials` is the fourth key to carry the ownership dimension. `write` = create + edit / delete / **test-with** own rows only; `fullwrite` = any row. `createdBy` is stamped by `POST /credentials` from the session username and `updateCredential` takes no `createdBy` at all, so an edit cannot adopt a row; `null` is UNOWNED (pre-column rows, and any bearer-token create — a token has no username) and reachable only at fullwrite. The route layer owns the check (`requireOwnership("credentials")` + `assertOwnership` on the loaded row) — the SERVICE is deliberately ownership-blind, because discovery-side and onboarding callers (`windowsSshOnboardingService` rotating the Polaris-managed deployment key) must keep reaching every row. **Ownership governs the Credentials page, not where a credential may be AIMED** (business rule 112, 2026-10-13): an asset editor, a Discovery author and a path-check author may point any credential at their destination; each such act is recorded by `credentialUseAuditService` as `credential.used` or, for a credential the caller does not own without Full RW, `credential.borrowed`.
 
 **Public API:** CredentialType, SnmpV2cConfig, SnmpV3Config, SnmpConfig, WinRmConfig, SshConfig, RestApiConfig, HttpCheckConfig (re-exported from utils/httpCheck.ts), CredentialConfig, CredentialRecord, SaveCredentialInput, UpdateCredentialInput, CredentialUsage(+ CredentialUsageAsset / CredentialUsageClassGroup / CredentialUsageIntegrationGroup), stripSecrets, validateConfig, mergeConfigPreservingSecrets, listCredentials, getCredential, createCredential, updateCredential, deleteCredential, getCredentialUsageCounts, getCredentialUsage.
 
@@ -220,6 +220,23 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `SshConfig.publicKey` is NOT a secret and must stay out of `SECRET_FIELDS_BY_TYPE.ssh` — see services/windowsSshOnboardingService.ts.
 
 ---
+
+## services/credentialUseAuditService.ts
+
+**What it owns:** Business rule 112 — the audit trail for a stored credential aimed at a destination a person chose. `recordCredentialUse(actor, via, uses)` loads the named credentials in one `findMany` and writes one Event per (credential, destination, asset) in one `logEventsBatch`: `credential.used` (info) when `isBorrowed` is false, `credential.borrowed` (warning) when the caller neither created the credential nor holds Credentials Full RW. Pure helpers decide what counts as a use: `assetCredentialUses` (the six asset credential slots; a changed slot, or every slot when the address moved), `scanCredentialUses` + `summarizeTargets` (a Discovery's methods and targets), `credentialRefs` / `changedCredentialRefs` (any `…CredentialId` key at any depth of an integration config or class override), and `buildCredentialUseEvents` (the rows).
+
+**Writers:** none of its own beyond the Event rows. **Readers:** the Events page (filter `credential.borrowed`).
+
+**Callers:** `routes/assets.ts` (PUT, POST, bulk-monitor, snmp-walk), `routes/mibs.ts` (`runMibWalk`), `routes/integrations.ts` (`auditIntegrationCredentialRefs` on PUT / POST), `routes/monitorSettings.ts` (class overrides), `routes/firmware.ts` (binding upsert) + `firmwareUpgradeService.recordFirmwareCredentialUse` (flash + booking), `routes/networkScans.ts` (save / update / run), `pathCheckService` (create / update / test, through `CheckWriteOpts.useActor`). The actor comes from `middleware/permissions.credentialUseActor(req)`.
+
+**Invariants:**
+- Never throws and is awaited AFTER the write it describes — a refused write records nothing, and a failed audit write never fails the request.
+- A use is a change, not a save: the edit forms post every field back, so a re-save must record nothing.
+- No per-poll recording: the monitor's routine sends are not uses.
+
+**When changing this:**
+- A new route that lets a caller choose a stored credential and a destination calls `recordCredentialUse` with a new `CredentialUseVia` (add its label to `VIA_LABEL`).
+- Keep `ASSET_CREDENTIAL_SLOTS` in step with the asset's credential FK columns.
 
 ## services/sshHostKeyService.ts
 

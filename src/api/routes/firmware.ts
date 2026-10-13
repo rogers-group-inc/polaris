@@ -22,7 +22,8 @@ import multer from "multer";
 import { mkdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
-import { requirePermission } from "../middleware/permissions.js";
+import { requirePermission, credentialUseActor } from "../middleware/permissions.js";
+import { recordCredentialUse } from "../../services/credentialUseAuditService.js";
 import { requestActor } from "../middleware/auth.js";
 import { AppError } from "../../utils/errors.js";
 import { FIRMWARE_INCOMING_DIR } from "../../utils/paths.js";
@@ -47,6 +48,7 @@ import {
 import {
   getUpgradeAvailability,
   startFirmwareUpgrade,
+  recordFirmwareCredentialUse,
   getRun,
   getRunForAsset,
   listRunsForAsset,
@@ -246,6 +248,13 @@ firmwareRouter.put("/bindings", requirePermission("firmware", "write"), handle(a
   const body = BindingUpsertSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, firstIssue(body.error));
   const binding = await upsertBinding({ ...body.data, actor: requestActor(req) ?? null });
+  // Rule 112: the login is now sent to every device in the binding's scope.
+  if (body.data.credentialId) {
+    const scope = [body.data.manufacturer, body.data.assetType, body.data.model].filter(Boolean).join(" › ");
+    await recordCredentialUse(credentialUseActor(req), "firmware.binding", [
+      { credentialId: body.data.credentialId, destination: `every ${scope} device flashed from the Repository` },
+    ]);
+  }
   res.json({ binding });
 }));
 
@@ -285,6 +294,7 @@ firmwareAssetRouter.post("/", requirePermission("assets", "write"), handle(async
   const body = StartUpgradeSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, firstIssue(body.error));
   const run = await startFirmwareUpgrade({ assetId: String(req.params.id), imageId: body.data.imageId, actor: requestActor(req) ?? "unknown" });
+  await recordFirmwareCredentialUse(String(req.params.id), credentialUseActor(req));
   res.status(202).json({ run });
 }));
 
@@ -326,6 +336,7 @@ firmwareAssetRouter.post("/schedules", requirePermission("assets", "write"), han
     notifyEmails: body.data.notifyEmails,
     actor: requestActor(req) ?? "unknown",
   });
+  await recordFirmwareCredentialUse(String(req.params.id), credentialUseActor(req));
   res.status(201).json({ schedule });
 }));
 

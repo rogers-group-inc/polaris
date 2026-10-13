@@ -40,6 +40,7 @@ import { logger } from "../utils/logger.js";
 import { UNMONITORABLE_STATUSES } from "../utils/assetInvariants.js";
 import { platformFromSerial, formatFirmwareVersion } from "../utils/firmwareVersion.js";
 import { logEvent } from "./eventLogService.js";
+import { recordCredentialUse, type CredentialUseActor } from "./credentialUseAuditService.js";
 import { openMaintenanceHold, releaseMaintenanceHold } from "./maintenanceScheduleService.js";
 import { resolveConnectionPath } from "./connectionPathService.js";
 import { engineFor, engineByKind } from "./firmwareEngines/index.js";
@@ -350,6 +351,30 @@ export async function checkSchedulableUpgrade(assetId: string, imageId: string):
   const credential = await resolveFirmwareCredential(a, { revealSecrets: false });
   if (!credential) throw new AppError(400, `${capitalize(noLoginPhrase(a))} — bind one under Server Settings → Repository`);
   return { approved, fromVersion: a.osVersion, warnings: healthBlockers(a) };
+}
+
+/**
+ * Rule 112: record the device login a flash on this asset signs in with,
+ * aimed at the asset's address — for a flash started now ("firmware.flash")
+ * or booked for later (recorded when booked, by the person who booked it).
+ * Nothing is recorded for the integration-token binding, which is not a
+ * stored credential. Never throws.
+ */
+export async function recordFirmwareCredentialUse(assetId: string, actor: CredentialUseActor): Promise<void> {
+  try {
+    const a = await prisma.asset.findUnique({ where: { id: assetId }, select: ASSET_SELECT }) as AssetRow | null;
+    if (!a) return;
+    const cred = await resolveFirmwareCredential(a, { revealSecrets: false });
+    if (!cred?.credentialId) return;
+    await recordCredentialUse(actor, "firmware.flash", [{
+      credentialId: cred.credentialId,
+      destination: a.ipAddress || a.dnsName || a.hostname || "(no address)",
+      assetId: a.id,
+      assetName: assetLabel(a) ?? null,
+    }]);
+  } catch (err) {
+    logger.warn({ err, assetId }, "firmware upgrade: could not record the credential use (rule 112)");
+  }
 }
 
 export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<RunSummary> {

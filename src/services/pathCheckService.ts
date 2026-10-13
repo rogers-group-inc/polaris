@@ -54,6 +54,7 @@ import { isValidIpAddress } from "../utils/cidr.js";
 import { parseStatusSpec, agentRegexProblem, resolveHttpAuthMode, type HttpAuthConfig } from "../utils/httpCheck.js";
 import { versionAtLeast } from "../utils/version.js";
 import { logEvent } from "./eventLogService.js";
+import { recordCredentialUse, type CredentialUseActor, type CredentialUseVia } from "./credentialUseAuditService.js";
 import { publishConfigRefresh } from "./agentCommandWake.js";
 import { loadScopeAssetIds } from "./notificationEngine.js";
 import { scopeIsUnconstrained, type RuleScope } from "./notificationTypes.js";
@@ -628,6 +629,14 @@ export interface CheckWriteOpts {
   mayRunOnServer?: boolean;
   /** The caller's `credentials` level — any rung (read and up) may USE a stored secret. */
   credentialAccess?: "none" | "read" | "write" | "fullwrite";
+  /** Who is aiming a stored credential, for the rule 112 audit. Absent = not recorded. */
+  useActor?: CredentialUseActor;
+}
+
+/** Rule 112: record a stored credential aimed at a check's target. Never throws. */
+async function noteCredentialUse(credentialId: string, kind: string, target: string, via: CredentialUseVia, opts: CheckWriteOpts | undefined): Promise<void> {
+  if (!opts?.useActor) return;
+  await recordCredentialUse(opts.useActor, via, [{ credentialId, destination: `${kind} ${target}` }]);
 }
 
 export const CREDENTIAL_USE_MESSAGE =
@@ -700,6 +709,7 @@ export async function createCheck(input: PathCheckInput, actor?: string, opts?: 
     message: `Path check "${check.name}" created (${check.kind} ${check.target}, every ${check.intervalSec / 60} min)`,
     details: { kind: check.kind, target: check.target, intervalSec: check.intervalSec, runOnServer: check.runOnServer, credentialId: check.credentialId },
   });
+  if (check.credentialId) await noteCredentialUse(check.credentialId, check.kind, check.target, "path-check.save", opts);
   await reconcilePathCheckSources(check.id, { refreshAllMembers: true });
   return getCheck(check.id);
 }
@@ -724,9 +734,8 @@ export async function updateCheck(id: string, input: PathCheckInput, actor?: str
     assertMayRunOnServer(opts);
   }
   // A new credential, or the same one aimed somewhere new, is a new USE of it.
-  if (n.credentialId && (n.credentialId !== existing.credentialId || reAimed)) {
-    await assertMayUseCredential(n.credentialId, opts);
-  }
+  const newCredentialUse = !!n.credentialId && (n.credentialId !== existing.credentialId || reAimed);
+  if (newCredentialUse) await assertMayUseCredential(n.credentialId!, opts);
   const targetChanged = existing.target !== n.target || existing.kind !== n.kind;
   const check = await prisma.pathCheck.update({
     where: { id },
@@ -749,6 +758,7 @@ export async function updateCheck(id: string, input: PathCheckInput, actor?: str
       definitionSha256: sha,
     },
   });
+  if (newCredentialUse) await noteCredentialUse(n.credentialId!, check.kind, check.target, "path-check.save", opts);
   await logEvent({
     action: "path_check.updated",
     resourceType: "path-check",
@@ -1045,7 +1055,10 @@ export async function testCheck(input: PathCheckInput, actor?: string, opts?: Ch
     ...input, name: input.name?.trim() || "Test run", runOnServer: true,
     ...(input.credentialId ? { scope: {}, assetIds: [] } : {}),
   });
-  if (n.credentialId) await assertMayUseCredential(n.credentialId, opts);
+  if (n.credentialId) {
+    await assertMayUseCredential(n.credentialId, opts);
+    await noteCredentialUse(n.credentialId, n.kind, n.target, "path-check.test", opts);
+  }
   const def = toAgentCheckDef({
     id: "test", ...n,
     keepBodyExcerpt: true,

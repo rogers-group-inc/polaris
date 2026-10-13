@@ -17,7 +17,8 @@ import multer from "multer";
 import { z } from "zod";
 import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
-import { requirePermission } from "../middleware/permissions.js";
+import { requirePermission, credentialUseActor } from "../middleware/permissions.js";
+import { recordCredentialUse, type CredentialUseActor } from "../../services/credentialUseAuditService.js";
 import {
   listMibs,
   getMib,
@@ -107,6 +108,7 @@ router.post("/std/:key/walk", requirePermission("mibDatabase", "read"), async (r
         unresolvedOidSuffix: " at the standard scope",
         body: parsed.data,
         actor: req.session?.username,
+        useActor: credentialUseActor(req),
       }),
     );
   } catch (err) {
@@ -354,6 +356,8 @@ async function runMibWalk(opts: {
   unresolvedOidSuffix: string;
   body: z.infer<typeof WalkSchema>;
   actor: string | undefined;
+  /** Who is aiming the credential, for the rule 112 audit. */
+  useActor: CredentialUseActor;
 }) {
   const { structured, moduleName, mibId, unresolvedOidSuffix, actor } = opts;
   const { assetId, credentialId, objectName, maxRows } = opts.body;
@@ -377,6 +381,11 @@ async function runMibWalk(opts: {
   if (cred.type !== "snmp") {
     throw new AppError(400, `Credential "${cred.name}" is type "${cred.type}", expected "snmp"`);
   }
+
+  // Rule 112: the walk sends this credential's community / keys to the asset.
+  await recordCredentialUse(opts.useActor, "mib.walk", [
+    { credentialId: cred.id, destination: asset.ipAddress, assetId: asset.id, assetName: asset.hostname ?? asset.ipAddress },
+  ]);
 
   const baseOid = targetSymbol.fullOid;
   const label = asset.hostname || asset.ipAddress;
@@ -523,6 +532,7 @@ router.post("/:id/walk", requirePermission("mibDatabase", "read"), async (req, r
         unresolvedOidSuffix: " — likely a missing IMPORTS dependency",
         body: parsed.data,
         actor: req.session?.username,
+        useActor: credentialUseActor(req),
       }),
     );
   } catch (err) {

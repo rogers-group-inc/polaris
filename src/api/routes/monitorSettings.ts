@@ -18,9 +18,10 @@
  * invalidation) lives in src/services/monitorSettingsService.ts.
  */
 
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
-import { requirePermission } from "../middleware/permissions.js";
+import { requirePermission, credentialUseActor } from "../middleware/permissions.js";
+import { recordCredentialUse, changedCredentialRefs } from "../../services/credentialUseAuditService.js";
 import {
   getManualMonitorSettings,
   updateManualMonitorSettings,
@@ -29,6 +30,7 @@ import {
   listClassOverrides,
   createClassOverride,
   updateClassOverride,
+  getClassOverride,
   deleteClassOverride,
   listAssetOverrides,
 } from "../../services/monitorSettingsService.js";
@@ -228,6 +230,19 @@ router.put("/integration/:id", requirePermission("assetMonitorSettings", "write"
 
 // ─── Class overrides ────────────────────────────────────────────────────────
 
+/**
+ * Rule 112: a credential on a class override is sent to every asset of that
+ * class. Record each slot the write added or changed. Never throws.
+ */
+async function auditClassOverrideCredentials(req: Request, before: unknown, after: unknown): Promise<void> {
+  const assetType = (after as { assetType?: string } | null)?.assetType ?? "asset";
+  const uses = changedCredentialRefs(before, after).map((r) => ({
+    credentialId: r.credentialId,
+    destination: `every manually added ${assetType} (class override, ${r.path})`,
+  }));
+  if (uses.length) await recordCredentialUse(credentialUseActor(req), "monitor-settings.override", uses);
+}
+
 const ClassCreateSchema = z
   .object({
     integrationId: z.string().uuid().nullable(), // null = manual-tier override
@@ -252,6 +267,7 @@ router.post("/class-overrides", requirePermission("assetMonitorSettings", "write
   try {
     const input = ClassCreateSchema.parse(req.body);
     const created = await createClassOverride(input, req.session?.username);
+    await auditClassOverrideCredentials(req, null, created);
     res.status(201).json(created);
   } catch (err) { next(err); }
 });
@@ -259,7 +275,10 @@ router.post("/class-overrides", requirePermission("assetMonitorSettings", "write
 router.put("/class-overrides/:id", requirePermission("assetMonitorSettings", "write"), async (req, res, next) => {
   try {
     const input = ClassUpdateSchema.parse(req.body);
-    res.json(await updateClassOverride(req.params.id as string, input, req.session?.username));
+    const before = await getClassOverride(req.params.id as string);
+    const updated = await updateClassOverride(req.params.id as string, input, req.session?.username);
+    await auditClassOverrideCredentials(req, before, updated);
+    res.json(updated);
   } catch (err) { next(err); }
 });
 
