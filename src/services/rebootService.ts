@@ -62,6 +62,7 @@ import {
 import { logEvent } from "./eventLogService.js";
 import { openMaintenanceHold, releaseMaintenanceHold } from "./maintenanceScheduleService.js";
 import { holdUntilMonitorAnswers } from "./holdRecoveryWait.js";
+import { cancelPendingRebootAfterReboot } from "./rebootScheduleCancel.js";
 import { credentialAllowsReboot, getCredential } from "./credentialService.js";
 import { recordCredentialUse, type CredentialUseActor } from "./credentialUseAuditService.js";
 import { resolveFirmwareCredential } from "./firmwareRepositoryService.js";
@@ -557,7 +558,7 @@ export async function startReboot(input: StartRebootInput): Promise<RebootRunSum
 
   const timeouts = { ...DEFAULT_REBOOT_TIMEOUTS, ...(input.overrides?.timeouts ?? {}) };
   setImmediate(() => {
-    runReboot(run.id, a, plan, timeouts)
+    runReboot(run.id, a, plan, timeouts, input.scheduleId ? null : input.actor)
       .catch((err) => logger.error({ err, runId: run.id }, "Reboot runner crashed unexpectedly"))
       .finally(() => { if (input.scheduleId) void notifyScheduledRun(run.id); });
   });
@@ -658,7 +659,8 @@ function tcpUp(host: string, port: number, timeoutMs = 3_000): Promise<boolean> 
   });
 }
 
-async function runReboot(runId: string, a: AssetRow, plan: RebootPlan, t: RebootTimeouts): Promise<void> {
+/** `manualActor`: set for a reboot-now (not a booking firing) — its success withdraws a pending booking (rule 115(b)). */
+async function runReboot(runId: string, a: AssetRow, plan: RebootPlan, t: RebootTimeouts, manualActor: string | null = null): Promise<void> {
   const startedAt = new Date();
   const log: Array<{ t: string; level: string; msg: string }> = [];
   let status: "sending" | "rebooting" = "sending";
@@ -835,9 +837,15 @@ async function runReboot(runId: string, a: AssetRow, plan: RebootPlan, t: Reboot
     if (outcome.result === "proven") {
       stage = "recovering";
       push("info", outcome.note ? `rebooted: ${outcome.note}` : "rebooted");
-      await holdUntilMonitorAnswers(a.id, HOLD_KIND, t, { onWaiting: () => { stage = "recovering"; }, push, flush });
+      // Rule 115(a): hold until monitoring has RECORDED the reboot, so its
+      // device.reboot Event lands inside the window and the "Device recently
+      // rebooted" automation stays quiet for a reboot someone asked for.
+      await holdUntilMonitorAnswers(a.id, HOLD_KIND, t, { onWaiting: () => { stage = "recovering"; }, push, flush }, startedAt);
       await dropHold(a.id);
       await finish("succeeded", null);
+      // Rule 115(b): the device has just been rebooted, so a booking for it
+      // has nothing left to do.
+      if (manualActor) await cancelPendingRebootAfterReboot({ assetId: a.id, cause: "manual", actor: manualActor, resourceName: label, runId });
       const secs = Math.round((Date.now() - startedAt.getTime()) / 1000);
       await logEvent({
         action: "asset.reboot_succeeded", resourceType: "asset", resourceId: a.id, resourceName: label, actor: "system:reboot", level: "info",

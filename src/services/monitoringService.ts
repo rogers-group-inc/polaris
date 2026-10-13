@@ -11999,6 +11999,12 @@ export async function recordProbeResult(
       message: `Reboot detected: ${asset.hostname || assetId} uptime ${formatUptimeLong(prevUptimeSec)} → ${formatUptimeLong(uptimeSec)}`,
       details: { hostname: asset.hostname ?? null, previousUptimeSec: prevUptimeSec, uptimeSec },
     });
+    // Business rule 115(b): a device that has rebooted no longer needs the
+    // reboot booked for it. Lazy import — the probe path loads it only on a
+    // reboot. Fire-and-forget like the Event above; it never throws.
+    void import("./rebootScheduleCancel.js").then(({ cancelPendingRebootAfterReboot }) =>
+      cancelPendingRebootAfterReboot({ assetId, cause: "detected", actor: "system:monitor", resourceName: asset.hostname || undefined }),
+    ).catch(() => undefined);
   }
 
   // Entering or leaving "passive" is a CONFIGURATION edge, not a device edge:

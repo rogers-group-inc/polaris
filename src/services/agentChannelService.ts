@@ -178,8 +178,11 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
     // again, and a hold dropped earlier lets the lagging disconnect through.
     // Not "agent-uninstall": that one ends with the uninstall, and an agent
     // reattaching during one has not finished being removed.
-    // A reboot's hold (rule 115) ends the same way: the agent is back.
-    for (const kind of ["agent-upgrade", "agent-reinstall", "device-reboot"] as const) {
+    // Not "device-reboot" either (rule 115(a)): the reboot run owns that
+    // window and closes it only once monitoring has recorded the reboot — the
+    // agent reattaches BEFORE its first uptime-bearing sample, so a release
+    // here put the device.reboot Event just outside the window and alerted.
+    for (const kind of ["agent-upgrade", "agent-reinstall"] as const) {
       await releaseMaintenanceHold({ assetId, kind }).catch(() => { /* expiry covers it */ });
     }
   })();
