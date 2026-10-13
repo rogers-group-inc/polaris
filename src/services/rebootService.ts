@@ -44,7 +44,6 @@
  * never followed by any of those is `unverified`, not `succeeded`.
  */
 
-import { createConnection } from "node:net";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
@@ -648,17 +647,6 @@ async function watchReboot(
   }
 }
 
-/** TCP connect, short — "is anything listening". */
-function tcpUp(host: string, port: number, timeoutMs = 3_000): Promise<boolean> {
-  return new Promise((resolve) => {
-    const s = createConnection({ host, port });
-    const done = (ok: boolean) => { s.destroy(); resolve(ok); };
-    s.setTimeout(timeoutMs, () => done(false));
-    s.once("connect", () => done(true));
-    s.once("error", () => done(false));
-  });
-}
-
 /** `manualActor`: set for a reboot-now (not a booking firing) — its success withdraws a pending booking (rule 115(b)). */
 async function runReboot(runId: string, a: AssetRow, plan: RebootPlan, t: RebootTimeouts, manualActor: string | null = null): Promise<void> {
   const startedAt = new Date();
@@ -765,7 +753,7 @@ async function runReboot(runId: string, a: AssetRow, plan: RebootPlan, t: Reboot
         if (link.kind === "ssh") {
           let down = false;
           probe = async () => {
-            const up = await tcpUp(link.host, Number(link.config.port) || 22);
+            const up = await _rebootTransportSeams.tcpUp(link.host, Number(link.config.port) || 22);
             if (!up) down = true;
             return { up, proven: down && up, note: up ? (down ? "its SSH port closed and reopened" : undefined) : "SSH port closed" };
           };
@@ -781,7 +769,7 @@ async function runReboot(runId: string, a: AssetRow, plan: RebootPlan, t: Reboot
               // A gate that is rebooting does not answer; one whose proxy or
               // token failed for another reason would look the same — the
               // TCP port says which.
-              const reachable = host ? await tcpUp(host, link.kind === "token" || link.kind === "login" ? link.port : 443) : false;
+              const reachable = host ? await _rebootTransportSeams.tcpUp(host, link.kind === "token" || link.kind === "login" ? link.port : 443) : false;
               return { up: false, proven: false, unknown: reachable, note: err instanceof Error ? err.message : String(err) };
             }
           };
@@ -843,15 +831,16 @@ async function runReboot(runId: string, a: AssetRow, plan: RebootPlan, t: Reboot
       await holdUntilMonitorAnswers(a.id, HOLD_KIND, t, { onWaiting: () => { stage = "recovering"; }, push, flush }, startedAt);
       await dropHold(a.id);
       await finish("succeeded", null);
-      // Rule 115(b): the device has just been rebooted, so a booking for it
-      // has nothing left to do.
-      if (manualActor) await cancelPendingRebootAfterReboot({ assetId: a.id, cause: "manual", actor: manualActor, resourceName: label, runId });
       const secs = Math.round((Date.now() - startedAt.getTime()) / 1000);
       await logEvent({
         action: "asset.reboot_succeeded", resourceType: "asset", resourceId: a.id, resourceName: label, actor: "system:reboot", level: "info",
         message: `Reboot finished: ${outcome.note ?? "the device came back"} (${secs} s)`,
         details: { runId, method: plan.method, authority: plan.authority, durationMs: Date.now() - startedAt.getTime() },
       });
+      // Rule 115(b): the device has just been rebooted, so a booking for it
+      // has nothing left to do. After the run's own Event, so the log reads
+      // cause then consequence.
+      if (manualActor) await cancelPendingRebootAfterReboot({ assetId: a.id, cause: "manual", actor: manualActor, resourceName: label, runId });
       return;
     }
     // Sent, but never seen to go down and no boot-time proof.
