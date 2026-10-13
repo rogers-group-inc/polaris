@@ -473,6 +473,8 @@
     document.body.appendChild(scrim);
     document.body.appendChild(sheet);
     scrim.addEventListener("click", closeHistory);
+    // Pinned header band (handle + title row) — reachable from the bottom of the sheet.
+    if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet);
     document.getElementById("chat-history-sheet-close").addEventListener("click", closeHistory);
     if (window.PolarisTabs && PolarisTabs.attachSwipeToDismiss) PolarisTabs.attachSwipeToDismiss(sheet, closeHistory);
     api.assistant.listConversations().then(function (r) {

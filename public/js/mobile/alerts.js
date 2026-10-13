@@ -293,6 +293,8 @@
     document.body.appendChild(scrim);
     document.body.appendChild(sheet);
     scrim.addEventListener("click", close);
+    // Pinned header band (handle + title row) — reachable from the bottom of the sheet.
+    if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet);
     sheet.querySelector("#asset-alerts-close").addEventListener("click", close);
     if (window.PolarisTabs && PolarisTabs.attachSwipeToDismiss) PolarisTabs.attachSwipeToDismiss(sheet, close);
     wireBody(sheet, assetId);

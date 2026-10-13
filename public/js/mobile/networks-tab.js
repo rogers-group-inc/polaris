@@ -82,7 +82,10 @@
     render: function (body, ctx) {
       _state.user = (ctx && ctx.user) || null;
       var p = prefs();
+      // Filter/sort row and status chips are one pinned block
+      // (.list-sticky-head) so they stay in reach while the networks scroll.
       body.innerHTML = ''
+        + '<div class="list-sticky-head">'
         + PolarisListControls.toolbarHTML({
             id: "networks",
             placeholder: "Filter networks",
@@ -91,6 +94,7 @@
             dir: p.sortDir,
           })
         + '<div class="chip-row" id="networks-chips"></div>'
+        + '</div>'
         + '<div id="networks-list-host"></div>'
         + (canReserve(_state.user)
           ? '<button class="fab-ext" id="networks-fab" style="position:fixed;right:16px;bottom:calc(var(--navbar-h) + 16px);z-index:30;"><svg viewBox="0 0 24 24"><use href="#i-add"/></svg>Reserve</button>'

@@ -538,6 +538,8 @@
     document.body.appendChild(sheet);
 
     scrim.addEventListener("click", closeSiteSheet);
+    // Pinned header band (handle + title row) — reachable from the bottom of the sheet.
+    if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet);
     document.getElementById("map-sheet-close").addEventListener("click", closeSiteSheet);
     PolarisTabs.attachSwipeToDismiss(sheet, closeSiteSheet);
     document.getElementById("map-sheet-asset").addEventListener("click", function () {
