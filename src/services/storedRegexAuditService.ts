@@ -1,8 +1,8 @@
 /**
- * src/services/storedRegexAuditService.ts — business rule 115: find the
+ * src/services/storedRegexAuditService.ts — business rule 116: find the
  * operator regexes ALREADY STORED that the linear-time engine cannot run.
  *
- * From rule 115 every operator regex compiles on RE2, which has no lookaround
+ * From rule 116 every operator regex compiles on RE2, which has no lookaround
  * and no backreferences. Save-time validation refuses new ones; a pattern
  * saved before the change is skipped by its consumer (it matches nothing)
  * rather than run on the old engine. This is how an operator finds out: the

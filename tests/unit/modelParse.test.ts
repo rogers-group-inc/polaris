@@ -19,7 +19,7 @@ import { MAX_REGEX_SUBJECT } from "../../src/utils/regexSafety.js";
 // The FortiSwitch seed, exactly as the seed job stamps it.
 const FORTISWITCH = FORTISWITCH_MODEL_PARSE;
 
-describe("the FortiSwitch seed without lookahead (rule 115)", () => {
+describe("the FortiSwitch seed without lookahead (rule 116)", () => {
   it("parses exactly like the lookahead pattern it replaced", () => {
     // The old pattern on the JS engine is the oracle; the new one runs on RE2.
     const oracle = new RegExp(LEGACY_FORTISWITCH_MODEL_PATTERN, "i");
@@ -111,7 +111,7 @@ describe("validateModelParse", () => {
     expect(validateModelParse("([", null)).toMatch(/valid regex/);
   });
 
-  it("accepts a once-catastrophic pattern and runs it in linear time (rule 115)", () => {
+  it("accepts a once-catastrophic pattern and runs it in linear time (rule 116)", () => {
     // Per asset per poll against whatever the device returned — on RE2 no
     // pattern can hang the monitor, so nested repeats are no longer refused.
     expect(validateModelParse("^((.+)+)-v", "FortiSwitch $1")).toBeNull();

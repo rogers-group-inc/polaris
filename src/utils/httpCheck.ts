@@ -276,7 +276,7 @@ export function statusInRanges(code: number, ranges: readonly StatusRange[]): bo
  * Returns an error message, or null when the pattern is usable.
  */
 export function agentRegexProblem(pattern: string): string | null {
-  // The server runs body matches on RE2 too (business rule 115), so "does it
+  // The server runs body matches on RE2 too (business rule 116), so "does it
   // compile under RE2" is the one question for both ends.
   return safeRegexProblem(pattern);
 }
@@ -293,7 +293,7 @@ export function bodyMatches(body: string, config: HttpCheckConfig): boolean | nu
   if (!expect) return null;
   const caseSensitive = config.caseSensitive === true;
   if (config.matchMode === "regex") {
-    // RE2 (business rule 115): linear in the body whatever the pattern — the
+    // RE2 (business rule 116): linear in the body whatever the pattern — the
     // body is up to 64 KB from whatever server the check points at.
     return compileSafeRegex(expect, { ignoreCase: !caseSensitive }).test(body);
   }

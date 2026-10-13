@@ -3,7 +3,7 @@
  *
  * Asset-type match rules take an operator-typed regex, and the match-preview
  * endpoint runs it against a payload the caller supplies with only
- * `assets:read`. Since business rule 115 every such pattern runs on RE2
+ * `assets:read`. Since business rule 116 every such pattern runs on RE2
  * (utils/safeRegex.ts), so no shape can hang the process: the "catastrophic"
  * patterns are now accepted and still return at once, and what is refused is a
  * pattern RE2 cannot compile (lookaround, backreferences, syntax errors).

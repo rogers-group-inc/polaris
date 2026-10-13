@@ -78,7 +78,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/logFlagRuleService.ts
 
-**Rule 115:** `compileRule` runs a regex rule on RE2 (`tryCompileSafeRegex`) and a glob on `wildcard.compileGlob` — never a JS RegExp; create / update refuse a regex RE2 cannot compile; `listLogFlagRules` adds `patternProblem` for the editor, and `getCompiledRules` writes one `logflagrule.pattern_unusable` warning per unusable stored rule per process.
+**Rule 116:** `compileRule` runs a regex rule on RE2 (`tryCompileSafeRegex`) and a glob on `wildcard.compileGlob` — never a JS RegExp; create / update refuse a regex RE2 cannot compile; `listLogFlagRules` adds `patternProblem` for the editor, and `getCompiledRules` writes one `logflagrule.pattern_unusable` warning per unusable stored rule per process.
 
 **What it owns:** User-defined log-flag rules (Feature C) — operator rules that FLAG matching process-log lines. Owns the `LogFlagRule` table, the compiled-rule cache, the read-time evaluator, and CRUD.
 

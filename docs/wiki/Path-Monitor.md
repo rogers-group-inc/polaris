@@ -99,7 +99,7 @@ the dialog warns you.
   **NOT** contain / equal / match one: use a *NOT* option to fail the check
   when an error or maintenance page comes back. Checked in the first 64 KB. Regular expressions — on an agent or on
   the Polaris server — do not support lookahead, lookbehind or backreferences
-  ([rule 115](Business-Rules#rule-115)).
+  ([rule 116](Business-Rules#rule-116)).
 - **Verify the TLS certificate** — on by default. Off accepts any certificate;
   the check still reports the certificate's issuer and expiry.
 - **Keep a body excerpt on every run** — see *What is stored* below.

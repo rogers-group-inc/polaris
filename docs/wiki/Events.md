@@ -187,7 +187,7 @@ device-down supersession (any metric or device-state alert on a device that went
 | `event_archive.host_key_forgotten` | **warning** | the archive server's pinned host key was forgotten |
 | `role.grant_review_needed` | **warning** | a custom role holds Read-Write on a permission the September 2026 update made stronger; review it ([rule 114](Business-Rules#rule-114)) |
 | `role.grant_reviewed` | info | an administrator confirmed a flagged role's grants are intended |
-| `regex.pattern_unusable` | **warning** | a stored pattern uses lookahead, lookbehind or a backreference, so it is skipped until rewritten ([rule 115](Business-Rules#rule-115)) |
+| `regex.pattern_unusable` | **warning** | a stored pattern uses lookahead, lookbehind or a backreference, so it is skipped until rewritten ([rule 116](Business-Rules#rule-116)) |
 | `logflagrule.pattern_unusable` | **warning** | the same, for a log-flag rule |
 | `agent.upgrade_skipped` | | a host the fan-out could not upgrade |
 | `agent.upgrade_deferred` | info | a host the fan-out did not try because monitoring shows it down; retried by the next fan-out |

@@ -41,7 +41,7 @@ describe("compileWildcard", () => {
     expect(compileWildcard("port5*")).not.toBe(a);
   });
 
-  it("matches like the anchored glob it always was (rule 115: no regex underneath)", () => {
+  it("matches like the anchored glob it always was (rule 116: no regex underneath)", () => {
     const m = compileWildcard("port[1]?");
     expect(m.test("port[1]a")).toBe(true);
     expect(m.test("port1a")).toBe(false);

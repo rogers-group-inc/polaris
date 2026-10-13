@@ -1250,7 +1250,7 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // while collecting nothing. Not marker-guarded — the answer changes as
       // collectors land and as operators edit settings. See its header.
       "./jobs/auditPollingCapability.js",
-      // Business rule 115: one warning Event per stored operator regex the
+      // Business rule 116: one warning Event per stored operator regex the
       // RE2 engine cannot run (it is skipped until rewritten). Read-only
       // advisory sweep like the one above; not marker-guarded. See its header.
       "./jobs/auditStoredRegexes.js",
@@ -1258,6 +1258,8 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // when it died can never finish — mark it failed and release its hold.
       // Web / all role only, which is where the runs execute. See its header.
       "./jobs/failOrphanedFirmwareRuns.js",
+      // Same for a reboot run (business rule 115) this process was watching.
+      "./jobs/failOrphanedRebootRuns.js",
     ]) await importJob(p);
   }
 
@@ -1290,6 +1292,9 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // Scheduled firmware upgrades (business rule 93): the flash runs on
       // this role with setImmediate, beside the image on disk.
       "./jobs/startScheduledFirmwareUpgrades.js",
+      // Scheduled reboots (business rule 115): the run is watched from this
+      // role with setImmediate, beside the orphan sweep above.
+      "./jobs/startScheduledReboots.js",
       "./jobs/runAutomationScripts.js",
       "./jobs/resolvePolarisPushedConflicts.js",
       "./jobs/resolveStaleReservationConflicts.js",

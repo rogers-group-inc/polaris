@@ -1,7 +1,7 @@
 /**
  * tests/unit/linearRegex.test.ts
  *
- * Business rule 115: no regex Polaris runs can be made to take more than
+ * Business rule 116: no regex Polaris runs can be made to take more than
  * linear time. The RE2 wrapper (utils/safeRegex), the regex-free trailing trim
  * (utils/trimTrailing), the stored-pattern walker (storedRegexAuditService) and
  * the MIB parser on the inputs the scan used to hang it.

@@ -65,7 +65,7 @@ export function parseMib(raw: string): ParsedMib {
   // version segments (`SNMPv2-MIB`, `SNMPv2-SMI`, `SNMPv2-TC`), so the
   // body is mixed-case alphanumeric + hyphens — same tolerance the
   // IMPORTS-parser below uses.
-  // RE2 (business rule 115): an uploaded file of one long uppercase run made
+  // RE2 (business rule 116): an uploaded file of one long uppercase run made
   // this quadratic on the JS engine.
   const headMatch = MODULE_HEADER_RE.exec(stripped);
   if (!headMatch) {
@@ -318,7 +318,7 @@ interface RawObjectDecl {
 // Note: this deliberately does NOT match `OBJECT IDENTIFIER` shorthand
 // declarations like `cisco OBJECT IDENTIFIER ::= { enterprises 9 }` —
 // those are caught separately because they have no body clauses.
-// All whole-file scans run on RE2 (business rule 115): an uploaded MIB is up to
+// All whole-file scans run on RE2 (business rule 116): an uploaded MIB is up to
 // 1 MB, and on a backtracking engine the unanchored start plus the lazy
 // `[\s\S]*?` rescanned the rest of the file from every header.
 const OBJECT_DECL_RE = compileSafeRegex(

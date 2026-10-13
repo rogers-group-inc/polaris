@@ -1,5 +1,5 @@
 /**
- * src/utils/safeRegex.ts — business rule 115: every regex an OPERATOR supplies
+ * src/utils/safeRegex.ts — business rule 116: every regex an OPERATOR supplies
  * runs on a linear-time engine.
  *
  * A JavaScript RegExp backtracks, and a backtracking match cannot be

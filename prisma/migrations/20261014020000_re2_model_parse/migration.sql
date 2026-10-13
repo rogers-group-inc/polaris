@@ -1,4 +1,4 @@
--- Business rule 115: operator and seeded regexes run on RE2, which has no
+-- Business rule 116: operator and seeded regexes run on RE2, which has no
 -- lookaround. The shipped FortiSwitch model-parse rule (stamped into the
 -- Fortinet profile's FortiSwitch `model` override by the seed job) used a
 -- `(?!v\d)` lookahead, so without this every existing install's FortiSwitch

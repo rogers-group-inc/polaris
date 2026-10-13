@@ -1094,18 +1094,28 @@ const HeartbeatSchema = z.object({
   // DAC_READ_SEARCH) from the pre-fix SYS_PTRACE-only unit that collects no
   // Application Map connections.
   capEff: z.string().max(32).optional(),
+  // Reboots (business rule 115, agent ≥0.26.0): whether this host lets the
+  // agent reboot it (the opt-in marker is present and, on Linux, logind
+  // answers CanReboot=yes for the agent), and when the host last booted —
+  // how a reboot run proves the host really went down. Strings, because the
+  // agent's heartbeat body is a flat string map.
+  rebootCapable: z.enum(["true", "false"]).optional(),
+  bootTime: z.string().regex(/^\d{9,11}$/, "bootTime is unix seconds").optional(),
 });
 
 agentsRouter.post("/heartbeat", async (req, res, next) => {
   try {
     const body = HeartbeatSchema.parse(req.body ?? {});
     const managedAgentId = req.managedAgent!.managedAgentId;
-    if (body.agentVersion || body.capEff) {
+    const bootTime = body.bootTime ? new Date(Number(body.bootTime) * 1000) : null;
+    if (body.agentVersion || body.capEff || body.rebootCapable || bootTime) {
       await prisma.managedAgent.update({
         where: { id: managedAgentId },
         data: {
           ...(body.agentVersion ? { agentVersion: body.agentVersion } : {}),
           ...(body.capEff ? { reportedCapEff: body.capEff } : {}),
+          ...(body.rebootCapable ? { rebootCapable: body.rebootCapable === "true" } : {}),
+          ...(bootTime ? { bootTime } : {}),
         },
       });
     }

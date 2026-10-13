@@ -1,5 +1,5 @@
 /**
- * src/jobs/auditStoredRegexes.ts — business rule 115: say which STORED
+ * src/jobs/auditStoredRegexes.ts — business rule 116: say which STORED
  * operator regexes the linear-time engine cannot run.
  *
  * Runs once at boot. Every finding gets one warning `regex.pattern_unusable`
@@ -40,7 +40,7 @@ async function auditStoredRegexes(): Promise<void> {
         message: `${f.source}${f.name ? ` "${f.name}"` : ""} has a pattern Polaris now skips: ${f.problem}`,
         details: { source: f.source, rowId: f.id, pattern: f.pattern },
       })));
-      logger.warn({ count: fresh.length }, "Stored regex patterns the RE2 engine cannot run — they are skipped until rewritten (rule 115)");
+      logger.warn({ count: fresh.length }, "Stored regex patterns the RE2 engine cannot run — they are skipped until rewritten (rule 116)");
     });
   } catch (err) {
     logger.error(err, "auditStoredRegexes failed");

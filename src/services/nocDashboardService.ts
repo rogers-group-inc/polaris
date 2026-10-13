@@ -250,7 +250,7 @@ const eventRel = (...actions: string[]): AlertRelevance => ({ kind: "event", act
 
 /** Anchored glob (`*` only) for matching an event trigger's actionPattern
  *  against a concrete action the widget cares about — the linear matcher, not
- *  a regex (business rule 115). */
+ *  a regex (business rule 116). */
 function globToRegExp(pattern: string): PatternMatcher {
   return compileGlob(pattern, { questionMark: false });
 }

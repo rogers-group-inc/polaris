@@ -179,7 +179,7 @@ describe("the model identity query", () => {
     // A symbol with no parse would stamp raw firmware strings onto Asset.model.
     expect(metricSeed("Fortinet FortiSwitch (SNMP path)", "model")).toMatchObject({
       symbol: "fsSysVersion",
-      // Lookahead-free since business rule 115 (RE2 has no lookaround).
+      // Lookahead-free since business rule 116 (RE2 has no lookaround).
       parsePattern: String.raw`^([^v\n].*?|v|v[^\d\n].*?)[-\s]v\d`,
       parseTemplate: "FortiSwitch $1",
     });

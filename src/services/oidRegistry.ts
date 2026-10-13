@@ -114,7 +114,7 @@ interface ParsedAssignment {
   parts: string[]; // raw ::= { ... } body — mix of identifier names and integer literals
 }
 
-// RE2 (business rule 115): runs over every stored MIB (up to 1 MB each); the
+// RE2 (business rule 116): runs over every stored MIB (up to 1 MB each); the
 // unanchored start + lazy `[\s\S]*?` was quadratic on the JS engine.
 const ASSIGNMENT_RE = compileSafeRegex(
   String.raw`\b([a-z][\w-]*)\s+(?:OBJECT-TYPE|OBJECT\s+IDENTIFIER|MODULE-IDENTITY|OBJECT-IDENTITY|NOTIFICATION-TYPE|OBJECT-GROUP|NOTIFICATION-GROUP|MODULE-COMPLIANCE)\b[\s\S]*?::=\s*\{\s*([^{}]+?)\s*\}`,
@@ -309,7 +309,7 @@ async function loadInternal(): Promise<void> {
   pruneParsedCache(rows.map((r) => r.id));
   for (const row of rows) {
     try {
-      // Parse once per file content, not once per refresh (rule 115): the
+      // Parse once per file content, not once per refresh (rule 116): the
       // refresh runs on every MIB write and re-parsed every stored file.
       const parsed = parsedFor(row.id, row.contents);
       mibs.push({

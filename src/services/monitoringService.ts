@@ -12443,7 +12443,7 @@ async function collectManufacturerWidgetSamples(assetId: string, asset: NonNulla
   const modelStr = asset.model ?? "";
   const widgets = profile.widgets.filter((w) => {
     if (!w.modelPattern) return true;
-    // RE2 (business rule 115); a pattern RE2 cannot compile matches nothing.
+    // RE2 (business rule 116); a pattern RE2 cannot compile matches nothing.
     return tryCompileSafeRegex(w.modelPattern, { ignoreCase: true })?.test(modelStr) ?? false;
   });
   if (widgets.length === 0) return NO_WIDGET_SAMPLES;

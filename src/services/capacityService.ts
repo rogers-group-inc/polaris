@@ -2269,7 +2269,7 @@ async function grantReviewReasonsSafe(): Promise<CapacityReason[]> {
 }
 
 /**
- * Business rule 115: a watch-severity reason while any stored operator regex
+ * Business rule 116: a watch-severity reason while any stored operator regex
  * cannot run on RE2 (it is skipped). Never fails the snapshot.
  */
 async function unusableRegexReasonsSafe(): Promise<CapacityReason[]> {

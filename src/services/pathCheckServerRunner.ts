@@ -103,7 +103,7 @@ export function pathBodyMatches(body: string, exp: AgentCheckDef["expectBody"]):
   if (!exp || !exp.value) return true;
   switch (exp.mode) {
     case "regex":
-      // RE2, as on the Go agent (business rule 115): the body comes from the
+      // RE2, as on the Go agent (business rule 116): the body comes from the
       // operator-chosen target, so the match must be linear in it.
       return compileSafeRegex(exp.value, { ignoreCase: !exp.caseSensitive }).test(body);
     case "exact": {

@@ -74,7 +74,7 @@ export function fortiswitchModelFromFsSysVersion(raw: string | null | undefined)
  * "don't re-prefix FortiSwitchRugged".
  *
  * "A string that STARTS with the firmware marker has no model" used to be a
- * `(?!v\d)` lookahead, which RE2 does not support (business rule 115). The
+ * `(?!v\d)` lookahead, which RE2 does not support (business rule 116). The
  * three alternatives say the same thing without one: the token begins with
  * something other than `v`, OR is exactly `v` (the next character is then the
  * separator, never a digit), OR is `v` followed by a non-digit — bare `v`
@@ -86,5 +86,5 @@ export const FORTISWITCH_MODEL_PARSE: ModelParse = {
   template: "FortiSwitch $1",
 };
 
-/** The pre-rule-115 seed pattern, for the migration and its test. */
+/** The pre-rule-116 seed pattern, for the migration and its test. */
 export const LEGACY_FORTISWITCH_MODEL_PATTERN = String.raw`^(?!v\d)(.+?)[-\s]v\d`;

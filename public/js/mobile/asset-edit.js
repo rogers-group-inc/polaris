@@ -272,6 +272,8 @@
         '</button>';
       }).join("") +
       '</div>';
+    // Pinned header band (handle + title row) — reachable from the bottom of the sheet.
+    if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet);
     $("ae-menu-close").addEventListener("click", closeMenu);
     sheet.querySelectorAll(".ae-menu-item").forEach(function (b) {
       b.addEventListener("click", function () {
@@ -296,6 +298,8 @@
     sheet.innerHTML = sheetHeader(tab.label, _ctx.hostname, "ae-close") +
       '<div id="ae-error" class="ae-error" hidden></div>' +
       '<div id="ae-body"><div class="loading-screen" style="padding:32px 0;"><div class="spinner"></div></div></div>';
+    // Pinned header band (handle + title row) — reachable from the bottom of the sheet.
+    if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet);
     $("ae-close").addEventListener("click", closeEdit);
     var loader = key === "general" ? loadGeneral : key === "monitoring" ? loadMonitoring : loadMaintenance;
     loader(_ctx.assetId, token).catch(function (err) {

@@ -77,6 +77,8 @@
     document.body.appendChild(sheet);
 
     scrim.addEventListener("click", closeNetworkSheet);
+    // Pinned header band (handle + title row) — reachable from the bottom of the sheet.
+    if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet);
     document.getElementById("network-sheet-close").addEventListener("click", closeNetworkSheet);
     PolarisTabs.attachSwipeToDismiss(sheet, closeNetworkSheet);
     window.addEventListener("hashchange", closeNetworkSheet);

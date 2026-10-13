@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,6 +42,11 @@ type Client struct {
 	// rather than the tier requested at install time. Set once by main.go
 	// at startup — capabilities can't change for the life of the process.
 	CapEff string
+
+	// RebootInfo, when set, is read on every /heartbeat: whether the host lets
+	// this agent reboot it (Polaris business rule 115) and the host's boot
+	// time in unix seconds (0 = unknown). Set by main.go.
+	RebootInfo func() (capable bool, bootTime uint64)
 }
 
 // NewClient builds a Client that pins TLS to ANY fingerprint in certPins.
@@ -378,8 +384,8 @@ func (c *Client) PushSystemInfo(body *SystemInfoBody) error {
 // any other action is refused by the agent.
 type Command struct {
 	ID      string          `json:"id"`
-	Action  string          `json:"action"` // "run_script"
-	Target  string          `json:"target"` // script name
+	Action  string          `json:"action"` // "run_script" | "reboot"
+	Target  string          `json:"target"` // script name; "host" for a reboot
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
@@ -446,6 +452,16 @@ func (c *Client) Heartbeat() (*HeartbeatResponse, error) {
 	body := map[string]string{"agentVersion": c.AgentVersion}
 	if c.CapEff != "" {
 		body["capEff"] = c.CapEff
+	}
+	// Reboots (Polaris business rule 115): whether the host lets this agent
+	// reboot it, and when it last booted. Supplied by main via the hook so the
+	// transport stays free of OS probes.
+	if c.RebootInfo != nil {
+		capable, bootTime := c.RebootInfo()
+		body["rebootCapable"] = strconv.FormatBool(capable)
+		if bootTime > 0 {
+			body["bootTime"] = strconv.FormatUint(bootTime, 10)
+		}
 	}
 	var out HeartbeatResponse
 	if err := c.do("POST", "/api/v1/agents/heartbeat", body, &out, true); err != nil {

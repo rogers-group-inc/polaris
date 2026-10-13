@@ -1,5 +1,5 @@
 /**
- * src/utils/trimTrailing.ts — business rule 115: strip trailing characters
+ * src/utils/trimTrailing.ts — business rule 116: strip trailing characters
  * without a regex.
  *
  * `s.replace(/\/+$/, "")` looks linear and is not: the engine tries the run at

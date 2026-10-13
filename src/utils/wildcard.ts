@@ -27,7 +27,7 @@ export interface PatternMatcher {
  * (ifNames, mount paths, hostnames, unit names), so no legitimate pattern comes
  * near this — it exists to bound what a single stored value can cost.
  *
- * Matching cost no longer depends on it (business rule 115): a wildcard runs
+ * Matching cost no longer depends on it (business rule 116): a wildcard runs
  * on the linear glob matcher below and a raw regex on RE2 (utils/safeRegex.ts),
  * neither of which can backtrack. Some of these patterns are evaluated from a
  * READ-gated preview (the Application Map discovery preview) and against
@@ -40,7 +40,7 @@ function isLineTerminator(c: string): boolean {
 }
 
 /**
- * Anchored shell-style glob match, without a regex (business rule 115). `*`
+ * Anchored shell-style glob match, without a regex (business rule 116). `*`
  * matches any run of characters and `?` exactly one; neither matches a line
  * terminator (the regex `.` this replaces did not either); every other
  * character is literal. The greedy-star algorithm with one backtrack point:
@@ -134,7 +134,7 @@ export function compileGlob(pattern: string, opts: { ignoreCase?: boolean; quest
  * Compile an operator-supplied pattern, dispatching on the `regex` flag.
  * Wildcards are anchored (existing behavior). Regex is anchor-free — the
  * operator can include ^ and $ themselves if they want full-string match — and
- * runs on RE2 (business rule 115), so it cannot backtrack.
+ * runs on RE2 (business rule 116), so it cannot backtrack.
  */
 export function compilePattern(pattern: string, regex: boolean): PatternMatcher {
   if (typeof pattern !== "string" || pattern.length === 0) {

@@ -381,7 +381,7 @@ function assertValidModelPattern(pattern: string): void {
   }
   // Guards both fields that reach here — a per-model exception's
   // `modelPattern` and a profile's `matchPattern`. `profileResolver` runs them
-  // per asset per poll on RE2 (business rule 115), which cannot backtrack, so
+  // per asset per poll on RE2 (business rule 116), which cannot backtrack, so
   // the only thing to refuse is a pattern RE2 cannot compile (lookaround,
   // backreferences, a syntax error) — named in the 400.
   const problem = safeRegexProblem(pattern, { ignoreCase: true });

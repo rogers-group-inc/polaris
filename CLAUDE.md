@@ -20,7 +20,7 @@ invariants and "when changing this" checklists are what make a change land right
 | Skill | Load when | Invocation |
 |---|---|---|
 | `polaris-domain-model` | a task names a model, column, enum, `sourceType`, `monitorStatus`; edits `prisma/schema.prisma`; writes a migration | auto |
-| `polaris-business-rules` | **before changing any behavior** around subnets, reservations, leases, discovery writes, `lastSeen`, monitor status, dependency suppression, maintenance, alerts/automations, packet loss, secrets, backups, SSH, login gating, password complexity, passkeys, RBAC levels — or when anything cites "rule N" | auto (model only) |
+| `polaris-business-rules` | **before changing any behavior** around subnets, reservations, leases, discovery writes, `lastSeen`, monitor status, dependency suppression, maintenance, alerts/automations, packet loss, secrets, backups, SSH, login gating, password complexity, passkeys, RBAC levels, reboots — or when anything cites "rule N" | auto (model only) |
 | `polaris-api-rbac` | adding/changing an endpoint or gate, a permission key, a 401/403, tokens, login/SSO, anything in `src/api/` | auto |
 | `polaris-change-impact` | **before editing anything** in `src/services`, `src/jobs`, `src/utils` or a route; adding a service/job/integration/metric; "where does X live" / "what depends on X" | auto |
 | `polaris-ui-canon` | any change under `public/`; HTML/CSS/JS/theme/widget/chart/mobile/Dash work | auto |

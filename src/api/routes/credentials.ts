@@ -129,7 +129,8 @@ router.post("/", requireOwnership("credentials"), async (req, res, next) => {
       resourceId: saved.id,
       resourceName: saved.name,
       actor: req.session?.username,
-      message: `Credential "${saved.name}" (${saved.type}) created`,
+      message: `Credential "${saved.name}" (${saved.type}) created${credentialService.credentialAllowsReboot(saved.type, saved.config) ? " — reboots allowed" : ""}`,
+      ...(credentialService.credentialAllowsReboot(saved.type, saved.config) ? { details: { allowReboot: true } } : {}),
     });
     res.status(201).json(saved);
   } catch (err) { next(err); }
@@ -146,13 +147,20 @@ router.put("/:id", requireOwnership("credentials"), async (req, res, next) => {
       name: input.name,
       config: input.config,
     });
+    // Granting or withdrawing the right to reboot devices (rule 115) is named
+    // in the record, not folded into a bare "updated".
+    const rebootBefore = credentialService.credentialAllowsReboot(existing.type, existing.config);
+    const rebootAfter = credentialService.credentialAllowsReboot(saved.type, saved.config);
+    const rebootNote = rebootBefore === rebootAfter ? "" : rebootAfter ? " — reboots now allowed" : " — reboots no longer allowed";
     logEvent({
       action: "credential.updated",
       resourceType: "credential",
       resourceId: saved.id,
       resourceName: saved.name,
       actor: req.session?.username,
-      message: `Credential "${saved.name}" updated`,
+      level: rebootBefore !== rebootAfter ? "warning" : "info",
+      message: `Credential "${saved.name}" updated${rebootNote}`,
+      ...(rebootBefore !== rebootAfter ? { details: { allowReboot: rebootAfter } } : {}),
     });
     res.json(saved);
   } catch (err) { next(err); }

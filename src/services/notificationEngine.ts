@@ -5374,7 +5374,7 @@ async function handoffDependencyFlavour(
  * An event trigger's action pattern as an anchored, case-insensitive matcher —
  * `*` is the only wildcard. Linear (utils/wildcard.compileGlob), never a regex:
  * the old `*` → `.*` translation let a stored `****…x` backtrack
- * combinatorially on every Event.action in the tail (business rule 115). The
+ * combinatorially on every Event.action in the tail (business rule 116). The
  * name is kept for its callers; the result has `.test` like a RegExp.
  */
 export function globToRegExp(glob: string): PatternMatcher {

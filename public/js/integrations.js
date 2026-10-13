@@ -4407,6 +4407,33 @@ function readVerboseLoggingFromForm() {
   return el ? el.checked === true : false;
 }
 
+// "Allow reboots" (business rule 115) — on the General tab of the FortiManager
+// and FortiGate dialogs, identical on both (the parity convention). Lets this
+// integration's FortiOS API token reboot the FortiGates it discovered and
+// restart their managed FortiSwitches / FortiAPs from an asset's Reboot
+// button. Off by default; every flip is named on the integration's Event.
+function allowRebootFormHTML(defaults) {
+  var d = defaults || {};
+  return formDivider() +
+    sectionHeading("Device Actions") +
+    '<div style="display:flex;align-items:flex-start;gap:0.55rem">' +
+      '<input type="checkbox" id="f-allowReboot" ' + (d.allowReboot === true ? "checked" : "") + ' style="margin-top:3px">' +
+      '<label for="f-allowReboot" style="margin:0">' +
+        '<strong>Allow reboots</strong><br>' +
+        '<span style="font-size:0.8rem;color:var(--color-text-secondary)">' +
+        'Lets this integration’s API token reboot the FortiGates it discovered, and restart the FortiSwitches and FortiAPs those FortiGates manage, ' +
+        'from an asset’s <strong>Reboot</strong> button — now or on a schedule — by anyone with Read-Write on Assets. FortiGate HA members are always refused. ' +
+        'The token’s admin profile needs System read-write (and WiFi &amp; Switch read-write for switches and APs).' +
+        '</span>' +
+      '</label>' +
+    '</div>';
+}
+
+function readAllowRebootFromForm() {
+  var el = document.getElementById("f-allowReboot");
+  return el ? el.checked === true : false;
+}
+
 function fortiManagerGeneralHTML(defaults) {
   var d = defaults || {};
   return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. Production FortiManager"></div>' +
@@ -4427,6 +4454,7 @@ function fortiManagerGeneralHTML(defaults) {
     checkboxRow("f-enabled", "Enabled", d.enabled !== false) +
     checkboxRow("f-autoDiscover", "Enable auto-discovery", d.autoDiscover !== false) +
     '<div class="form-group"><label>Auto-Discovery Interval</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-pollInterval" value="' + (d.pollInterval || 12) + '" min="1" max="24" style="width:80px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">hours</span></div><p class="hint">How often to automatically query for DHCP updates (1–24 hours)</p></div>' +
+    allowRebootFormHTML(d) +
     verboseLoggingFormHTML(d);
 }
 
@@ -4538,6 +4566,7 @@ function getFormConfig() {
     fortigateApiUser: val("f-fortigateApiUser"),
     fortigateApiToken: val("f-fortigateApiToken"),
     fortigateVerifySsl: (function () { var el = document.getElementById("f-fortigateVerifySsl"); return el ? el.checked : false; })(),
+    allowReboot: readAllowRebootFromForm(),
     verboseLogging: readVerboseLoggingFromForm(),
   };
 }
@@ -4565,6 +4594,7 @@ function fortiGateGeneralHTML(defaults) {
     checkboxRow("f-enabled", "Enabled", d.enabled !== false) +
     checkboxRow("f-autoDiscover", "Enable auto-discovery", d.autoDiscover !== false) +
     '<div class="form-group"><label>Auto-Discovery Interval</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-pollInterval" value="' + (d.pollInterval || 12) + '" min="1" max="24" style="width:80px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">hours</span></div><p class="hint">How often to automatically query for DHCP updates (1–24 hours)</p></div>' +
+    allowRebootFormHTML(d) +
     verboseLoggingFormHTML(d);
 }
 
@@ -4648,6 +4678,7 @@ function getFgtFormConfig() {
     interfaceExclude: ifaceMode === "exclude" ? ifaceIfaces : [],
     inventoryExcludeInterfaces: invMode === "exclude" ? invIfaces : [],
     inventoryIncludeInterfaces: invMode === "include" ? invIfaces : [],
+    allowReboot: readAllowRebootFromForm(),
     verboseLogging: readVerboseLoggingFromForm(),
   };
 }
@@ -7841,6 +7872,7 @@ function _intgEditFormSpec(intg, config) {
         interfaceExclude: config.interfaceExclude || [],
         inventoryIncludeInterfaces: config.inventoryIncludeInterfaces || [],
         inventoryExcludeInterfaces: config.inventoryExcludeInterfaces || [],
+        allowReboot: config.allowReboot === true,
         verboseLogging: config.verboseLogging === true,
         verboseLoggingEnabledAt: config.verboseLoggingEnabledAt,
       };
@@ -7878,6 +7910,7 @@ function _intgEditFormSpec(intg, config) {
         fortigateApiToken: "",
         fortigateApiTokenPlaceholder: "Leave blank to keep current token",
         fortigateVerifySsl: config.fortigateVerifySsl === true,
+        allowReboot: config.allowReboot === true,
         verboseLogging: config.verboseLogging === true,
         verboseLoggingEnabledAt: config.verboseLoggingEnabledAt,
       };

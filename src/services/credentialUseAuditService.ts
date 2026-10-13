@@ -35,6 +35,7 @@ export type CredentialUseVia =
   | "integration.save"
   | "firmware.binding"
   | "firmware.flash"
+  | "device.reboot"
   | "network-scan.save"
   | "network-scan.run"
   | "path-check.save"
@@ -50,6 +51,7 @@ const VIA_LABEL: Record<CredentialUseVia, string> = {
   "integration.save":          "integration save",
   "firmware.binding":          "firmware device-login binding",
   "firmware.flash":            "firmware upgrade",
+  "device.reboot":             "reboot",
   "network-scan.save":         "Network Discovery save",
   "network-scan.run":          "Network Discovery run",
   "path-check.save":           "path check save",

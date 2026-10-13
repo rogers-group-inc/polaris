@@ -182,6 +182,8 @@
         html += '</div>';
       });
       sheet.innerHTML = html;
+      // Re-pinned after every paint — paint() replaces the sheet's innerHTML.
+      if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet);
       document.getElementById("list-sort-close").addEventListener("click", closeSortSheet);
     }
 

@@ -17,7 +17,7 @@ export interface ImportBinding {
   module: string;
 }
 
-/** The IMPORTS block and its `… FROM MODULE` segments, on RE2 (business rule 115). */
+/** The IMPORTS block and its `… FROM MODULE` segments, on RE2 (business rule 116). */
 export const IMPORTS_BLOCK_RE = compileSafeRegex(String.raw`\bIMPORTS\b([\s\S]*?);`);
 const IMPORT_SEGMENT_RE = compileSafeRegex(String.raw`([\s\S]*?)\bFROM\s+([A-Za-z][\w-]*)`);
 
@@ -39,7 +39,7 @@ const IMPORT_SEGMENT_RE = compileSafeRegex(String.raw`([\s\S]*?)\bFROM\s+([A-Za-
  */
 export function parseImportMap(text: string): ImportBinding[] {
   const stripped = stripComments(text);
-  // RE2 (business rule 115): uploaded text up to 1 MB, so the whole-file scans
+  // RE2 (business rule 116): uploaded text up to 1 MB, so the whole-file scans
   // must be linear; the lazy `[\s\S]*?` was quadratic on a backtracking engine.
   const block = IMPORTS_BLOCK_RE.exec(stripped);
   if (!block || block[1] === undefined) return [];

@@ -21,7 +21,7 @@
  * that worker forever. At 2000 assets the first symptom is a role that stops
  * reporting, with nothing in the log.
  *
- * What protects these patterns now is the ENGINE (business rule 115): every
+ * What protects these patterns now is the ENGINE (business rule 116): every
  * one compiles and runs on RE2 (utils/safeRegex.ts), whose matching time is
  * linear in the subject whatever the pattern, so no shape can hang a worker.
  * The heuristic that used to stand in for it (`findUnsafeRegexConstruct`,

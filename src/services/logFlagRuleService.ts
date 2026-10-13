@@ -47,7 +47,7 @@ const LEVEL_RANK: Record<string, number> = { info: 0, warning: 1, error: 2, crit
 /**
  * Convert a glob (`*` = any run, `?` = any char) to an anchored RegExp source.
  * Kept for reference / display only: matching uses utils/wildcard.compileGlob,
- * which does not backtrack (business rule 115).
+ * which does not backtrack (business rule 116).
  */
 export function globToRegExp(glob: string): string {
   let out = "^";
@@ -66,7 +66,7 @@ export function globToRegExp(glob: string): string {
  */
 export function compileRule(rule: LogFlagRuleRow): CompiledRule {
   const ignoreCase = !rule.caseSensitive;
-  // Regex on RE2 and glob on the linear matcher (business rule 115): every
+  // Regex on RE2 and glob on the linear matcher (business rule 116): every
   // stored rule runs against every log line on each read, so a pattern must
   // never be able to backtrack. A regex RE2 cannot compile never matches.
   let re: { test(s: string): boolean } | null = null;
@@ -126,7 +126,7 @@ async function getCompiledRules(): Promise<CompiledRule[]> {
   return cache;
 }
 
-/** Refuse a regex pattern RE2 cannot compile, at save time (rule 115). */
+/** Refuse a regex pattern RE2 cannot compile, at save time (rule 116). */
 function assertUsablePattern(matchType: string | undefined, pattern: string | undefined, caseSensitive: boolean | undefined): void {
   if (matchType !== "regex" || typeof pattern !== "string") return;
   compileSafeRegex(pattern, { ignoreCase: !caseSensitive });

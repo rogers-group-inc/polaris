@@ -260,7 +260,7 @@ export const MATCH_MAX_LEAVES = MAX_LEAVES;
  * turn one typo into a failed discovery for the whole fleet.
  */
 export function validateRegex(pattern: string): string | null {
-  // RE2 (business rule 115): linear whatever the pattern, so the only thing to
+  // RE2 (business rule 116): linear whatever the pattern, so the only thing to
   // refuse is one it cannot compile — also run by the match-preview endpoint,
   // which needs only `assets:read`.
   return safeRegexProblem(pattern, { ignoreCase: true });
@@ -495,7 +495,7 @@ export function clauseMatches(clause: MatchClause, facts: AssetTypeFacts): boole
       // catastrophic one, and the subject is device-supplied, so both ends are
       // bounded here too: an unsafe stored pattern is a no-match, and nothing
       // is run against more than MAX_REGEX_SUBJECT characters.
-      // On RE2 (business rule 115): a stored pattern it cannot compile is a
+      // On RE2 (business rule 116): a stored pattern it cannot compile is a
       // no-match, never a throw into the loop.
       hit = tryCompileSafeRegex(clause.value, { ignoreCase: true })?.test(clampRegexSubject(text)) ?? false;
       break;

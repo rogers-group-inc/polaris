@@ -173,6 +173,25 @@ appearing in the LLDP Neighbor column. **`switchManagementInterface`** — the
 interface name read for a managed switch's management access — has no field in
 the modal; it is set through the [API](API) on the integration's config.
 
+### Allow reboots
+
+**Allow reboots**, under *Device Actions* on the General tab (off by default),
+lets this integration's API token reboot the FortiGates it discovered, and
+restart the FortiSwitches and FortiAPs those FortiGates manage, from an asset's
+**Reboot…** button — now or on a schedule — for anyone with Read-Write on
+Assets ([Assets → Reboot](Assets#reboot), [rule 115](Business-Rules#rule-115)).
+The token is sent the same way as every other request this integration makes:
+through FortiManager's proxy, or straight to the gate in direct mode. A switch
+or access point is restarted by asking its FortiGate, so its own web UI does
+not need to be reachable. A FortiGate in an HA cluster is never rebooted.
+
+The token's admin profile needs **System** read-write to reboot a FortiGate,
+and **WiFi & Switch** read-write to restart a managed switch or access point —
+a read-only token is refused by the device, and the reboot fails with that
+reason. A stored credential on the FortiGate's asset with its own **Allow
+reboots** ticked is used before the integration's token. Turning the toggle on
+or off writes a warning-level Event on the integration.
+
 ---
 
 ## Configuring a standalone FortiGate
@@ -181,7 +200,8 @@ The same shape, minus FMG: **host · port · API user · API token · VDOM
 (`root`) · management interface · verify SSL** on General — the token comes from
 a **REST API Admin** created on the gate (System → Administrators) — the DHCP,
 interface and device-inventory filters (no device filter), the same push
-toggles, and the same per-class monitoring blocks.
+toggles, the same [Allow reboots](#allow-reboots) toggle, and the same
+per-class monitoring blocks.
 
 Feature parity with FMG is a standing rule for this project — if a feature
 exists on one and could sensibly exist on the other, it does.

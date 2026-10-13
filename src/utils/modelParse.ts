@@ -53,10 +53,10 @@ export function applyModelParse(raw: string | null | undefined, parse: ModelPars
   // Rule 2's "unrecognized, never a guess" also covers a scalar too long to be
   // a model string. The cap is what keeps an operator's pattern — which this
   // runs per asset per poll against whatever the DEVICE returned — from
-  // being matched over an unbounded subject; the pattern itself runs on RE2 (rule 115).
+  // being matched over an unbounded subject; the pattern itself runs on RE2 (rule 116).
   if (trimmed.length > MAX_REGEX_SUBJECT) return null;
 
-  // RE2 (business rule 115); a stored pattern it cannot compile yields nothing.
+  // RE2 (business rule 116); a stored pattern it cannot compile yields nothing.
   const re = tryCompileSafeRegex(parse.pattern, { ignoreCase: true });
   if (!re) return null;
   const m = re.exec(trimmed);
@@ -80,7 +80,7 @@ export function validateModelParse(pattern: string | null, template: string | nu
   if (!pattern || !pattern.trim()) return "parsePattern is required when a model symbol is set";
   if (pattern.length > 512) return "parsePattern is too long (max 512 characters)";
   // Compiling what the operator typed is the feature — a parse rule has to be a
-  // ROW to be editable. It runs on RE2 (business rule 115), linear whatever the
+  // ROW to be editable. It runs on RE2 (business rule 116), linear whatever the
   // pattern, so the only refusal is one RE2 cannot compile.
   const problem = safeRegexProblem(pattern, { ignoreCase: true });
   if (problem) return `parsePattern: ${problem}`;
