@@ -47,6 +47,14 @@
         </div>
       </div>
 
+      <!-- Events (the log) | Calendar (maintenance windows, reboots and firmware
+           upgrades — public/js/ops-calendar.js). #calendar opens the second. -->
+      <div class="page-tabs page-tabs-glass" id="ev-tabs">
+        <button type="button" class="page-tab active" data-tab="log">Events</button>
+        <button type="button" class="page-tab" data-tab="calendar">Calendar</button>
+      </div>
+
+      <div class="page-tab-panel active" id="ev-tab-log">
       <!-- One row: pagination centered (middle grid cell), page-size selector +
            Refresh right-aligned. See TEMPLATES.md → "Paginated list controls row". -->
       <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;padding:0.5rem 0 1rem">
@@ -88,6 +96,11 @@
       </div>
 
       <div class="pagination" id="pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:1rem 0">
+      </div>
+      </div>
+
+      <div class="page-tab-panel" id="ev-tab-calendar">
+        <div id="ops-calendar-host"><div class="empty-state">Loading…</div></div>
       </div>
     </main>
   </div>
@@ -164,6 +177,7 @@
   <span id="polaris-nav-ready" hidden></span>
   <script src="/js/table-sf.js"></script>
   <script src="/js/asset-merge-modal.js"></script>
+  <script src="/js/ops-calendar.js"></script>
   <script src="/js/events.js"></script>
 </body>
 </html>

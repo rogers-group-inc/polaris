@@ -574,7 +574,11 @@ switches and access points it manages can.
 The dialog names the device, how the reboot will be sent, what signs it, and
 the last reboot; says what goes down with it; and needs **I understand this
 device will go down** ticked before **Reboot now**. Polaris holds the device's
-alerts while it reboots and records every reboot as an Event on the asset. Once
+alerts while it reboots and records every reboot as an Event on the asset. The
+device stays in [maintenance](Maintenance-Windows) until monitoring has
+recorded the reboot (or, for a device whose monitoring reads no uptime, until
+monitoring answers again), at most 10 minutes after it is back — so a reboot
+you asked for does not set off the *Device recently rebooted* automation. Once
 the reboot is sent, Polaris watches for proof that the device restarted — its
 boot time changing, its FortiGate seeing it drop and reconnect, the agent
 reporting a new boot, or monitoring seeing its uptime reset. The run ends:
@@ -600,6 +604,22 @@ a reboot first reached more than 15 minutes late is not sent, and the recipients
 hear the outcome either way. A device that cannot be rebooted right now — an
 agent host that is offline, say — can still be booked: the dialog opens with
 **Schedule for later** already ticked.
+
+A device has **one** booked reboot at a time. A booking is also made by an
+automation's [reboot action](Automation-Actions#reboot); it shows in the same
+chip and can be changed or cancelled the same way. A booked reboot is
+**cancelled automatically** when the device is rebooted before it fires —
+by a **Reboot now** that succeeds, or by monitoring seeing the device's uptime
+reset (a crash, a power cut, a firmware upgrade, a reboot from its own
+console) — so the device is not taken down a second time for nothing. The
+cancellation is an `asset.reboot_schedule_cancelled` Event on the asset that
+says why; no email is sent for it. A **Reboot now** that fails leaves the
+booking in place.
+
+Every booked and past reboot, across the fleet, is on
+[Events → Calendar](Events#calendar), coloured by how it went; clicking one
+opens this device's **System** tab — a pending booking straight into the
+**Reboot…** dialog to change or cancel it, a reboot that ran into its log.
 
 #### Firmware
 

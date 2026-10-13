@@ -117,7 +117,7 @@ the only thing that justifies the rung existing.
 
 | Key | Top rung | |
 |---|---|---|
-| `events` | Read-Write | the audit log, its retention, and syslog / SFTP archival |
+| `events` | Read-Write | the audit log, its retention, and syslog / SFTP archival; the Events page's [Calendar](Events#calendar), which also shows maintenance windows only with `maintenanceManagement` Read and reboots and firmware upgrades only with `assets` Read |
 | `alerts` | Full RW | **Read** = view · **Read-Write** = acknowledge · **Full RW** = clear |
 | `automationManagement` | Read-Write | automations and delivery channels |
 | `automationScripts` | Read-Write | **RCE-equivalent** — see [Automation scripts](Automation-Scripts) |

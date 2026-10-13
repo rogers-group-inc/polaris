@@ -72,7 +72,8 @@ vi.mock("../../src/db.js", () => ({
       }),
       update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { h.state.runUpdates.push(data); return {}; }),
     },
-    rebootSchedule: { update: vi.fn(async () => ({})) },
+    // findMany: a reboot-now that succeeds looks for a booking to withdraw (rule 115(b)).
+    rebootSchedule: { update: vi.fn(async () => ({})), findMany: vi.fn(async () => []) },
     agentCommand: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { h.state.agentCmd = data; return { id: "cmd-1", ...data }; }),
       findUnique: vi.fn(async () => ({ status: h.state.agentCmdStatus, error: h.state.agentCmdStatus === "failed" ? "not enabled" : null })),
@@ -108,7 +109,7 @@ vi.mock("../../src/services/credentialService.js", async (orig) => {
 });
 vi.mock("../../src/services/rebootTransports.js", async (orig) => {
   const real = await orig<typeof import("../../src/services/rebootTransports.js")>();
-  return { ...real, _rebootTransportSeams: { gateOps: () => h.gate } };
+  return { ...real, _rebootTransportSeams: { gateOps: () => h.gate, tcpUp: async () => false } };
 });
 
 import { getRebootAvailability, startReboot, recordRebootCredentialUse } from "../../src/services/rebootService.js";

@@ -50,7 +50,7 @@ Vanilla JavaScript SPA served from `/public/`. **No build step** — plain ES mo
 | Device Map | `map.html` | `deviceMap:read` |
 | Application Map | `appmap.html` | `applicationMap:read` |
 | Path Monitor | `path-monitor.html` | `pathChecks:read` (path checks from agent hosts and/or the Polaris server; sidebar entry directly under Application Map; the wizard's "Run from this Polaris server" box also reads `networkScan:write`) |
-| Events | `events.html` | `events:read` |
+| Events | `events.html` | `events:read` (page tabs Events \| Calendar, `#calendar` deep link; each calendar kind also needs its own read key — `maintenanceManagement:read` / `assets:read` — and creating from an empty day `maintenanceManagement:write`) |
 | Users | `users.html` | `users:read` |
 | Server Settings | `server-settings.html` | `anyOf` `serverSettingsSystem:read` / `credentials:write` / `firmware:read` — each non-admin key opens exactly the tab it is about |
 | Server Settings → High Availability | `public/js/server-settings-ha.js` (own module) | `serverSettingsSystem:read` to see, `fullwrite` to act |
@@ -68,6 +68,7 @@ Vanilla JavaScript SPA served from `/public/`. **No build step** — plain ES mo
 |---|---|---|
 | `public/js/condition-builder.js` | `PolarisConditionBuilder` | the nested AND/OR device-filter builder (automations wizard, address book, mass pinning, tag auto-assign) |
 | `public/js/scope-vocabulary.js` | `PolarisScopeVocabulary` | the automations' device-selection field set + value suggestions, shared by the wizard's Devices step and the Alert Groups editor — use it, not a new `valueOptions` copy, for any surface that picks devices with the automation vocabulary |
+| `public/js/ops-calendar.js` | `PolarisOpsCalendar` | the ONE calendar — `mount(host, {onItem, onDay})` / `refresh()`; Month / Week / Day / List over maintenance windows, reboots and firmware upgrades (`GET /calendar`), server-local wall-clock strings never parsed as instants, kind = left-edge colour and status = fill, kind filters for the kinds the server returned. It only draws: the host decides what a click means, and omitting `onDay` makes empty days read-only. Mounted on the Events page's Calendar tab; any new calendar surface mounts this rather than drawing its own grid |
 | `public/js/alert-groups.js` | `PolarisAlertGroups` | the Automations page's Alert Groups tab (business rule 75) — list, editor, delete confirm |
 | `public/js/quiet-time-editor.js` | `PolarisQuietTimeEditor` | the ONE editor of a quiet-time POLICY (business rule 92): when, what goes quiet (the per-severity tree — Alerts / Escalation alerts, each with its own Reminders; exported so the global wizard's Alerts step draws the same tree; `meta.scope` limits it to the severities and sends a host can actually make — the automation wizard passes `quietScope()`, mirroring the engine's `tierForSeverity` / `escalationChainsForSeverity` fallback — and a hidden box keeps its value), how the summary goes out — rendered by the automation wizard's Quiet time step and the global quiet-time wizard's Schedule step |
 | `public/js/quiet-time-wizard.js` | `PolarisQuietTimeWizard` | the five-step builder for a GLOBAL quiet time (Name → Devices → Alerts → Schedule → Review); replaces the Settings modal and reopens it through `onDone` |

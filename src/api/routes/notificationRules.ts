@@ -226,6 +226,14 @@ export function assertScriptActionPermission(req: Request, input: RuleActionCarr
   if (hasScript && !hasPermission(req, "automationScripts", "write")) {
     throw new AppError(403, "Attaching script actions requires Read-Write on Automation Scripts (automationScripts)");
   }
+  // Business rule 115(c) + 48: a reboot action reboots devices on the saver's
+  // behalf later, so saving one needs the grant that reboots a device by hand
+  // (assets:write — the Status row's Reboot). Same shape as the script gate:
+  // removing one never needs it.
+  const hasReboot = allRuleActionRefs(input).some((r) => r.action.type === "reboot");
+  if (hasReboot && !hasPermission(req, "assets", "write")) {
+    throw new AppError(403, "Attaching a reboot action requires Read-Write on Assets (assets) — the permission that reboots a device");
+  }
 }
 
 // What removing this automation would do to down detection. Backs the

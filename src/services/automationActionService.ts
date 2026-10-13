@@ -316,6 +316,24 @@ export async function executeActions(
         // this action's presence is what gates it. Counting it as executed
         // would also mislead the escalation sweep, which reads `executed` to
         // decide whether a tier actually delivered anything.
+      } else if (action.type === "reboot") {
+        // Business rule 115(c): BOOK a reboot of the triggering asset through
+        // the reboot scheduler — never sent inline. A skip (already booked,
+        // rebooted within the gap) is an Event, not a failure, and does not
+        // count as executed; a refused gate throws into the catch below.
+        if (!exec.assetId) throw new Error("the alert has no device to reboot");
+        const { bookRebootFromAutomation } = await import("./rebootScheduleService.js");
+        const res = await bookRebootFromAutomation({
+          assetId: exec.assetId,
+          when: action.when,
+          at: action.at,
+          notifyEmails: action.notifyEmails,
+          minGapHours: action.minGapHours,
+          ruleId: exec.ruleId ?? null,
+          ruleName: exec.ruleName ?? null,
+          notificationId,
+        });
+        if (res.booked) executed++;
       } else {
         // script — enqueue an AutomationScriptRun; the runAutomationScripts
         // job (server) or the agent command queue (agent) executes it. Args

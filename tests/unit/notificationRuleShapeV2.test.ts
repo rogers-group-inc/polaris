@@ -429,7 +429,10 @@ describe("buildSchemaCatalog v2 additions", () => {
     expect(cat.stateFieldDimensions.ifOperStatus).toEqual(["ifNamePattern"]);
     expect(cat.stateFieldDimensions.monitorStatus).toBeUndefined();
     expect(cat.dimensionNouns.ifNamePattern).toBe("interface");
-    expect(cat.actionTypes.map((a: { type: string }) => a.type)).toEqual(["notify", "api_call", "script", "event"]);
+    expect(cat.actionTypes.map((a: { type: string }) => a.type)).toEqual(["notify", "api_call", "script", "event", "reboot"]);
+    // Business rule 115(c): the reboot action is gated on the reboot grant.
+    expect(cat.actionTypes.find((a: { type: string }) => a.type === "reboot")).toMatchObject({ permission: "assets" });
+    expect(cat.rebootMeta).toMatchObject({ whenOptions: ["now", "at"], defaultAt: "02:00", defaultMinGapHours: 24 });
     expect(cat.inverseComparators[">="]).toBe("<");
     expect(cat.comparatorPhrases[">="]).toBe("is at or above");
     expect(cat.escalationMeta.maxTiers).toBe(5);

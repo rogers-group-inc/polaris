@@ -520,6 +520,18 @@ function _pathRangeQs(opts, qs) {
   return qs.join("&");
 }
 
+/**
+ * A reboot or firmware booking / start succeeded: tell the page, so a surface
+ * drawing bookings it did not make (the Events page's Calendar tab) re-reads.
+ * Fired from here rather than from each dialog so a new caller cannot forget.
+ */
+function _bookingWrite(promise) {
+  return promise.then(function (res) {
+    try { window.dispatchEvent(new CustomEvent("polaris:bookings-changed")); } catch (e) { /* no listener is fine */ }
+    return res;
+  });
+}
+
 const api = {
   blocks: {
     list:   (params) => request("GET", "/blocks" + toQuery(params)),
@@ -1008,7 +1020,7 @@ const api = {
     // `imageId` is the image the operator approved by name), and the asset's
     // run history.
     firmwareUpgrade:      (id)       => request("GET",  `/assets/${id}/firmware-upgrade`),
-    startFirmwareUpgrade: (id, body) => request("POST", `/assets/${id}/firmware-upgrade`, body),
+    startFirmwareUpgrade: (id, body) => _bookingWrite(request("POST", `/assets/${id}/firmware-upgrade`, body)),
     firmwareUpgradeRuns:  (id)       => request("GET",  `/assets/${id}/firmware-upgrade/runs`),
     firmwareUpgradeRun:   (id, runId) => request("GET", `/assets/${id}/firmware-upgrade/runs/${encodeURIComponent(runId)}`),
     // Scheduled upgrades (business rule 93): book (`{ imageId, scheduledFor
@@ -1016,20 +1028,20 @@ const api = {
     // email for the modal to pre-fill.
     firmwareSchedules:        (id)            => request("GET",    `/assets/${id}/firmware-upgrade/schedules`),
     firmwareScheduleDefaults: (id)            => request("GET",    `/assets/${id}/firmware-upgrade/schedules/defaults`),
-    scheduleFirmwareUpgrade:  (id, body)      => request("POST",   `/assets/${id}/firmware-upgrade/schedules`, body),
-    updateFirmwareSchedule:   (id, sid, body) => request("PATCH",  `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`, body),
-    cancelFirmwareSchedule:   (id, sid)       => request("DELETE", `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`),
+    scheduleFirmwareUpgrade:  (id, body)      => _bookingWrite(request("POST",   `/assets/${id}/firmware-upgrade/schedules`, body)),
+    updateFirmwareSchedule:   (id, sid, body) => _bookingWrite(request("PATCH",  `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`, body)),
+    cancelFirmwareSchedule:   (id, sid)       => _bookingWrite(request("DELETE", `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`)),
     // Reboots (business rule 115): what may reboot this asset and how (plus
     // its pending booking, `schedule`), reboot now (assets:write), the run
     // history, bookings, and an agent host's opt-in (assets:fullwrite).
     reboot:                 (id)            => request("GET",    `/assets/${id}/reboot`),
-    startReboot:            (id)            => request("POST",   `/assets/${id}/reboot`),
+    startReboot:            (id)            => _bookingWrite(request("POST",   `/assets/${id}/reboot`)),
     rebootRuns:             (id)            => request("GET",    `/assets/${id}/reboot/runs`),
     rebootRun:              (id, runId)     => request("GET",    `/assets/${id}/reboot/runs/${encodeURIComponent(runId)}`),
     rebootScheduleDefaults: (id)            => request("GET",    `/assets/${id}/reboot/schedules/defaults`),
-    scheduleReboot:         (id, body)      => request("POST",   `/assets/${id}/reboot/schedules`, body),
-    updateRebootSchedule:   (id, sid, body) => request("PATCH",  `/assets/${id}/reboot/schedules/${encodeURIComponent(sid)}`, body),
-    cancelRebootSchedule:   (id, sid)       => request("DELETE", `/assets/${id}/reboot/schedules/${encodeURIComponent(sid)}`),
+    scheduleReboot:         (id, body)      => _bookingWrite(request("POST",   `/assets/${id}/reboot/schedules`, body)),
+    updateRebootSchedule:   (id, sid, body) => _bookingWrite(request("PATCH",  `/assets/${id}/reboot/schedules/${encodeURIComponent(sid)}`, body)),
+    cancelRebootSchedule:   (id, sid)       => _bookingWrite(request("DELETE", `/assets/${id}/reboot/schedules/${encodeURIComponent(sid)}`)),
     setAgentReboot:         (id, enabled)   => request("PUT",    `/assets/${id}/reboot/agent`, { enabled: !!enabled }),
     // Polaris Agent — operator-facing endpoints (see the polaris-agent skill "Polaris
     // Agent API surface"). `agent.get` returns 404 when no agent is
@@ -1188,6 +1200,12 @@ const api = {
     // to enroll (or un-enroll) itself without being told again.
     preference:     ()     => request("GET", "/me/notification-preference"),
     setPreference:  (preference) => request("PUT", "/me/notification-preference", { preference }),
+  },
+  // The Events page's Calendar tab (operationsCalendarService): maintenance
+  // windows, reboots and firmware upgrades over a LOCAL day range; every time
+  // comes back as a server-local wall-clock string, never an instant.
+  calendar: {
+    get: (from, to) => request("GET", `/calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
   },
   maintenanceSchedules: {
     list:    ()      => request("GET", "/maintenance-schedules"),

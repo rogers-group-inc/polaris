@@ -343,7 +343,7 @@ var _rulesPage = 1;
     (r.severityBands || []).forEach(function (b) { tally(b && b.actions); });
     if (r.bandNotify && r.bandNotify.resolvedMode === "dedicated") tally(r.bandNotify.resolvedActions);
 
-    var labels = { notify: "notification", api_call: "API call", script: "script run" };
+    var labels = { notify: "notification", api_call: "API call", script: "script run", reboot: "reboot booking" };
     var parts = ["in-app alert"];
     Object.keys(counts).forEach(function (type) {
       var n = counts[type];

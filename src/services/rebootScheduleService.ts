@@ -26,8 +26,8 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
-import { checkSchedulableReboot, startReboot, RebootRunConflictError } from "./rebootService.js";
-import { normalizeRecipients, assertSchedulableTime, LATE_GRACE_MS, CONFLICT_WAIT_MS } from "./firmwareScheduleService.js";
+import { checkSchedulableReboot, startReboot, RebootRunConflictError, recordRebootCredentialUse } from "./rebootService.js";
+import { normalizeRecipients, assertSchedulableTime, LATE_GRACE_MS, CONFLICT_WAIT_MS, MIN_LEAD_MS } from "./firmwareScheduleService.js";
 import { applyBrandLetterhead, sendEmailThroughChannel } from "./notificationDeliveryService.js";
 import { resolveSummaryChannel } from "./quietTimeSummaryService.js";
 import { resolveTimeZone, serverTimeZone } from "./userTimezoneService.js";
@@ -86,7 +86,7 @@ async function getOwn(assetId: string, scheduleId: string): Promise<Row> {
   return r;
 }
 
-export async function createRebootSchedule(input: { assetId: string; scheduledFor: Date; notifyEmails: string[]; actor: string; now?: Date }): Promise<RebootScheduleSummary & { warnings: string[] }> {
+export async function createRebootSchedule(input: { assetId: string; scheduledFor: Date; notifyEmails: string[]; actor: string; now?: Date; context?: Record<string, unknown> }): Promise<RebootScheduleSummary & { warnings: string[] }> {
   assertSchedulableTime(input.scheduledFor, input.now);
   const recipients = normalizeRecipients(input.notifyEmails);
   const { plan, warnings } = await checkSchedulableReboot(input.assetId);
@@ -103,7 +103,7 @@ export async function createRebootSchedule(input: { assetId: string; scheduledFo
   await logEvent({
     action: "asset.reboot_scheduled", resourceType: "asset", resourceId: input.assetId, resourceName: await assetName(input.assetId), actor: input.actor, level: "info",
     message: `Reboot scheduled for ${input.scheduledFor.toISOString()} (signed by "${plan.authority}"); results to ${recipients.join(", ")}`,
-    details: { scheduleId: row.id, scheduledFor: input.scheduledFor.toISOString(), notifyEmails: recipients, method: plan.method, authority: plan.authority, warnings },
+    details: { scheduleId: row.id, scheduledFor: input.scheduledFor.toISOString(), notifyEmails: recipients, method: plan.method, authority: plan.authority, warnings, ...(input.context ?? {}) },
   });
   return { ...summarize(row), warnings };
 }
@@ -142,6 +142,89 @@ export async function cancelRebootSchedule(assetId: string, scheduleId: string, 
     details: { scheduleId: current.id },
   });
   return summarize(await getOwn(assetId, scheduleId));
+}
+
+// ─── Booked by an automation (business rule 115(c)) ──────────────────────────
+
+export interface AutomationRebootInput {
+  assetId: string;
+  when: "now" | "at";
+  /** HH:MM, the server's local time; used when `when` is "at". */
+  at: string;
+  notifyEmails: string[];
+  minGapHours: number;
+  ruleId: string | null;
+  ruleName: string | null;
+  notificationId: string;
+  now?: Date;
+}
+
+export type AutomationRebootResult =
+  | { booked: true; scheduleId: string; scheduledFor: Date }
+  | { booked: false; reason: string };
+
+/**
+ * When an `at` booking fires: the next HH:MM on the server's clock that is at
+ * least MIN_LEAD_MS away. Calendar-day stepping (setDate), never +24 h, so a
+ * DST change night still lands on the wall-clock time asked for.
+ */
+export function nextAutomationRebootTime(when: "now" | "at", at: string, now: Date): Date {
+  if (when === "now") return new Date(now.getTime() + MIN_LEAD_MS + 30_000);
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(at);
+  if (!m) throw new AppError(400, `"${at}" is not a time of day (HH:MM)`);
+  const d = new Date(now.getTime());
+  d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+  if (d.getTime() < now.getTime() + MIN_LEAD_MS) d.setDate(d.getDate() + 1);
+  return d;
+}
+
+/**
+ * The reboot action's one entry point. Books — never sends — so every gate a
+ * booking takes applies, and is judged again when it fires. Two skips, each an
+ * info Event rather than a failure, because both mean the reboot is already
+ * handled: a booking is already pending for the device (one per asset), or it
+ * rebooted — on purpose or not — within `minGapHours`. The gap is what keeps a
+ * leak that refills memory after every boot from rebooting the device in a
+ * loop. A gate that refuses (no opt-in, an HA FortiGate, an asset Polaris
+ * cannot reboot) throws, and the caller records the failed action.
+ */
+export async function bookRebootFromAutomation(input: AutomationRebootInput): Promise<AutomationRebootResult> {
+  const now = input.now ?? new Date();
+  const actor = `automation:${input.ruleName ?? input.ruleId ?? "unknown"}`;
+  const ctx = { automation: true, ruleId: input.ruleId, ruleName: input.ruleName, notificationId: input.notificationId };
+  const skip = async (reason: string): Promise<AutomationRebootResult> => {
+    await logEvent({
+      action: "asset.reboot_automation_skipped", resourceType: "asset", resourceId: input.assetId, resourceName: await assetName(input.assetId), actor, level: "info",
+      message: `Automation "${input.ruleName ?? input.ruleId ?? "?"}" did not book a reboot: ${reason}`,
+      details: { ...ctx, reason },
+    });
+    return { booked: false, reason };
+  };
+
+  const pending = await prisma.rebootSchedule.findFirst({ where: { assetId: input.assetId, status: "pending" }, select: { scheduledFor: true } });
+  if (pending) return skip(`a reboot is already booked for ${pending.scheduledFor.toISOString()}`);
+
+  const since = new Date(now.getTime() - input.minGapHours * 3_600_000);
+  const [recentRun, asset] = await Promise.all([
+    prisma.rebootRun.findFirst({ where: { assetId: input.assetId, startedAt: { gte: since }, status: { not: "failed" } }, orderBy: { startedAt: "desc" }, select: { startedAt: true } }),
+    prisma.asset.findUnique({ where: { id: input.assetId }, select: { lastRebootAt: true } }),
+  ]);
+  const last = [recentRun?.startedAt, asset?.lastRebootAt].filter((d): d is Date => !!d && d >= since).sort((a, b) => b.getTime() - a.getTime())[0];
+  if (last) return skip(`the device rebooted at ${last.toISOString()}, within the ${input.minGapHours} h minimum gap`);
+
+  const scheduledFor = nextAutomationRebootTime(input.when, input.at, now);
+  let booked: RebootScheduleSummary;
+  try {
+    booked = await createRebootSchedule({ assetId: input.assetId, scheduledFor, notifyEmails: input.notifyEmails, actor, now, context: ctx });
+  } catch (err) {
+    // Lost a race with another booking: the reboot is handled.
+    if (err instanceof AppError && err.httpStatus === 409 && /already scheduled/.test(err.message)) return skip("a reboot is already booked for this device");
+    throw err;
+  }
+  // Rule 112: the booking signs with a stored credential nobody typed in —
+  // say whose, on the automation's name.
+  await recordRebootCredentialUse(input.assetId, { username: null, actor, mayUseAny: false });
+  return { booked: true, scheduleId: booked.id, scheduledFor };
 }
 
 // ─── Firing ──────────────────────────────────────────────────────────────────

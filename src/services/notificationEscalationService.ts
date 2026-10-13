@@ -136,10 +136,10 @@ function allEscalationsOf(rule: EscalationRule): EscalationV2Config[] {
     if (e && e.tiers.length > 0) out.push(e);
   };
   add(rule.escalation);
-  for (const a of rule.actions) if (a.type !== "event") add(a.escalation);
+  for (const a of rule.actions) if ("escalation" in a) add(a.escalation);
   for (const b of rule.severityBands ?? []) {
     add(b.escalation);
-    for (const a of b.actions ?? []) if (a.type !== "event") add(a.escalation);
+    for (const a of b.actions ?? []) if ("escalation" in a) add(a.escalation);
   }
   return out;
 }

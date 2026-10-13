@@ -2483,3 +2483,80 @@ function generateEventCsv(events) {
   downloadCsv(headers, rows, filename);
   showToast("Exported " + events.length + " events to " + filename);
 }
+
+// ─── Events | Calendar tabs ─────────────────────────────────────────────────
+//
+// The Calendar tab is the operations calendar (public/js/ops-calendar.js):
+// maintenance windows, reboots and firmware upgrades, booked and past. It is
+// mounted on first open, and #calendar opens on it (the Maintenance modal's
+// Schedules tab links here). A click opens the thing itself through the asset
+// panel bundle, loaded on demand: a maintenance window in the Maintenance
+// modal, a reboot or firmware item in its asset's own dialog. An empty day
+// schedules a maintenance window, for a caller who may write one.
+(function () {
+  var tabs = document.getElementById("ev-tabs");
+  if (!tabs) return;
+  var mounted = false;
+
+  function onItem(item) {
+    if (item.kind === "maintenance") {
+      PolarisPanels.ensure("asset").then(function () {
+        window.openMaintenanceModal({ scheduleId: item.raw.scheduleId });
+      }, function () { showToast("Could not open the Maintenance dialog", "error"); });
+      return;
+    }
+    var o = item.raw;
+    PolarisPanels.openAsset(o.assetId, {
+      openBooking: { kind: item.kind, scheduleId: o.scheduleId, runId: o.runId, status: o.status },
+    });
+  }
+
+  function onDay(day, hour) {
+    PolarisPanels.ensure("asset").then(function () {
+      window.openMaintenanceModal({ newOnDay: { day: day, hour: hour } });
+    }, function () { showToast("Could not open the Maintenance dialog", "error"); });
+  }
+
+  function show(key) {
+    tabs.querySelectorAll(".page-tab").forEach(function (b) { b.classList.toggle("active", b.getAttribute("data-tab") === key); });
+    ["log", "calendar"].forEach(function (k) {
+      var panel = document.getElementById("ev-tab-" + k);
+      if (panel) panel.classList.toggle("active", k === key);
+    });
+    // Export, Conflicts and Alerts are about the log.
+    var exp = document.getElementById("btn-export");
+    if (exp && exp.parentNode) exp.parentNode.style.display = key === "log" ? "" : "none";
+    if (key === "calendar") {
+      if (!mounted) {
+        mounted = true;
+        // The role is not known until the session read lands (a #calendar
+        // page load gets here first); creating from a day needs write.
+        userReady.then(function () {
+          window.PolarisOpsCalendar.mount(document.getElementById("ops-calendar-host"), {
+            onItem: onItem,
+            onDay: permAtLeast("maintenanceManagement", "write") ? onDay : null,
+          });
+        });
+      } else {
+        window.PolarisOpsCalendar.refresh();
+      }
+    }
+    var want = key === "calendar" ? "#calendar" : "";
+    if ((location.hash || "") !== want && history.replaceState) history.replaceState(null, "", location.pathname + location.search + want);
+  }
+
+  tabs.addEventListener("click", function (e) {
+    var b = e.target.closest ? e.target.closest(".page-tab") : null;
+    if (b) show(b.getAttribute("data-tab"));
+  });
+  // A booking changed anywhere on this page (the asset dialog a calendar
+  // click opened): re-read what the calendar shows.
+  window.addEventListener("polaris:bookings-changed", function () {
+    if (mounted) window.PolarisOpsCalendar.refresh();
+  });
+  if (location.hash === "#calendar") show("calendar");
+  // A link to #calendar from this same page is a hash change, not a load.
+  window.addEventListener("hashchange", function () {
+    show(location.hash === "#calendar" ? "calendar" : "log");
+  });
+})();

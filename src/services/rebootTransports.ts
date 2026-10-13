@@ -40,6 +40,7 @@
  * `{ uncertain }` and the runner decides by watching for the reboot.
  */
 
+import { createConnection } from "node:net";
 import { fgRequest, type FortiGateConfig } from "./fortigateService.js";
 import { fmgProxyRest, type FortiManagerConfig } from "./fortimanagerService.js";
 import { readSystemStatus } from "../utils/fortiosEnvelope.js";
@@ -410,5 +411,19 @@ export function gateOps(link: GateLink): GateOps {
   }
 }
 
-/** Test seam: the runner builds its ops through this, so a test can hand it a fake gate. */
-export const _rebootTransportSeams = { gateOps };
+/** TCP connect, short — "is anything listening". */
+function tcpUp(host: string, port: number, timeoutMs = 3_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const s = createConnection({ host, port });
+    const done = (ok: boolean) => { s.destroy(); resolve(ok); };
+    s.setTimeout(timeoutMs, () => done(false));
+    s.once("connect", () => done(true));
+    s.once("error", () => done(false));
+  });
+}
+
+/**
+ * Test seam: the runner builds its ops — and asks "is anything listening" —
+ * through this, so a test hands it a fake gate and never touches the network.
+ */
+export const _rebootTransportSeams = { gateOps, tcpUp };

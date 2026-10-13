@@ -2468,6 +2468,9 @@ async function openAutomationWizard(existing, opts) {
   function availableActionTypes() {
     return (s.actionTypes || [{ type: "notify", label: "Send a notification" }]).filter(function (t) {
       if (t.type === "script") return Array.isArray(_awScripts) && permAtLeast("automationScripts", "write");
+      // Business rule 115(c): saving a reboot action needs the grant that
+      // reboots a device by hand — the server's 403 is the authority.
+      if (t.type === "reboot") return permAtLeast("assets", "write");
       return true;
     });
   }
@@ -6164,6 +6167,11 @@ async function openAutomationWizard(existing, opts) {
       return "Run " + (sc ? sc.name : "…") + " on " + (a.runOn || "server");
     }
     if (a.type === "event") return "Write an audit Event";
+    if (a.type === "reboot") {
+      return a.when === "now"
+        ? "Reboot the device (a minute after the alert)"
+        : "Reboot the device at " + (a.at || "02:00") + " server time";
+    }
     return a.type;
   }
   function renderStep5() {
@@ -7604,7 +7612,13 @@ async function openAutomationWizard(existing, opts) {
 
   function addActionRow(host, action, escalatable, repeatable) {
     action = action || { type: "notify", channelId: channels.length ? channels[0].id : "" };
-    var types = availableActionTypes();
+    // A recovery is no reason to reboot anything (business rule 115(c)): the
+    // reset list never offers it — unless a stored row already holds one, so
+    // the operator can see it and remove it rather than have it vanish.
+    var inReset = !!(host && host.closest && host.closest("#aw-reset-actions"));
+    var types = availableActionTypes().filter(function (t) {
+      return !(inReset && t.type === "reboot" && action.type !== "reboot");
+    });
     var row = document.createElement("div");
     row.className = "aw-action";
     row.style.cssText = "border:1px solid var(--color-border);border-radius:6px;padding:0.6rem;margin-bottom:6px";
@@ -7623,7 +7637,7 @@ async function openAutomationWizard(existing, opts) {
       // An audit Event is instantaneous, so there is nothing to chase if it
       // goes "unhandled" — and the server schema gives `event` no escalation
       // key at all, so rendering the footer would produce an unsavable action.
-      (escalatable && action.type !== "event" ? escSectionHtml() : "");
+      (escalatable && action.type !== "event" && action.type !== "reboot" ? escSectionHtml() : "");
     // Whether this row's list FIRES, which is what decides if a notify action
     // may carry a reminder clock. Stashed rather than passed down because
     // renderActionFields is also the re-render path for a channel change.
@@ -7649,7 +7663,7 @@ async function openAutomationWizard(existing, opts) {
       var host2 = row.parentNode;
       var anchor = row.nextSibling;
       row.remove();
-      var rebuilt = addActionRow(host2, next === "event" ? { type: "event" } : { type: next, escalation: esc }, escalatable, repeatable);
+      var rebuilt = addActionRow(host2, next === "event" ? { type: "event" } : next === "reboot" ? { type: "reboot" } : { type: next, escalation: esc }, escalatable, repeatable);
       foldActionRow(rebuilt, false); // mid-edit: the operator just changed its type
       // addActionRow appends; move the rebuilt row back to where it was.
       if (anchor) host2.insertBefore(host2.lastChild, anchor);
@@ -7667,7 +7681,7 @@ async function openAutomationWizard(existing, opts) {
         action.repeat !== undefined ? action.repeat : (draft.repeat || null),
       );
     }
-    if (escalatable && action.type !== "event") wireEscSection(row.querySelector(":scope > .aw-esc-sec"), action.escalation || null);
+    if (escalatable && action.type !== "event" && action.type !== "reboot") wireEscSection(row.querySelector(":scope > .aw-esc-sec"), action.escalation || null);
     row.querySelector(":scope > div > .aw-collapse").addEventListener("click", function () {
       foldActionRow(row, !row._awFolded);
     });
@@ -8601,6 +8615,36 @@ async function openAutomationWizard(existing, opts) {
       };
       box.querySelector(".sa-script").addEventListener("change", syncScriptBits);
       syncScriptBits();
+    } else if (t === "reboot") {
+      // Business rule 115(c): books a reboot of the triggering device through
+      // the reboot scheduler — the same opt-ins, HA refusal, maintenance hold
+      // and results email as the Status row's Reboot.
+      var rm = s.rebootMeta || { defaultAt: "02:00", defaultMinGapHours: 24, maxMinGapHours: 720, help: "" };
+      var whenNow = action.when === "now";
+      var emails = Array.isArray(action.notifyEmails) ? action.notifyEmails.join(", ") : "";
+      var rbName = "rb-when-" + Math.random().toString(36).slice(2, 8);
+      box.innerHTML =
+        '<div class="form-group" style="margin-bottom:6px"><label style="font-size:0.8rem">When</label> ' +
+          '<label style="font-size:0.85rem;margin-right:6px"><input type="radio" class="rb-when" name="' + rbName + '" value="at"> at the next</label>' +
+          '<input type="time" class="rb-at" value="' + escapeHtml(action.at || rm.defaultAt || "02:00") + '" style="width:auto"> <span style="font-size:0.8rem;color:var(--color-text-tertiary)">server time</span>' +
+          '<label style="font-size:0.85rem;margin-left:14px"><input type="radio" class="rb-when" name="' + rbName + '" value="now"> right away</label>' +
+        '</div>' +
+        '<div class="form-group" style="margin-bottom:6px"><label style="font-size:0.8rem">Email the result to</label><input type="text" class="rb-emails" value="' + escapeHtml(emails) + '" placeholder="noc@example.com, oncall@example.com" style="width:100%"></div>' +
+        '<div class="form-group" style="margin-bottom:0"><label style="font-size:0.8rem">Not again within</label> <input type="number" class="rb-gap" min="1" max="' + (rm.maxMinGapHours || 720) + '" value="' + escapeHtml(String(action.minGapHours || rm.defaultMinGapHours || 24)) + '" style="width:80px"> hours of the device’s last reboot</div>' +
+        (rm.help ? '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:6px 0 0">' + escapeHtml(rm.help) + '</p>' : "") +
+        '<p style="font-size:0.78rem;color:var(--color-warning,#d97706);margin:6px 0 0">This reboots production equipment with nobody at the keyboard. A human must review the trigger and its threshold before enabling it.</p>';
+      // Set in JS, not via the `checked` attribute (the happy-dom trap the
+      // type <select> above documents).
+      box.querySelector('.rb-when[value="' + (whenNow ? "now" : "at") + '"]').checked = true;
+      var syncRebootBits = function () {
+        var nowEl = box.querySelector('.rb-when[value="now"]');
+        var atEl = box.querySelector(".rb-at");
+        atEl.disabled = !!nowEl.checked;
+        row.querySelector(".aw-action-summary").textContent = actionSummary({ type: "reboot", when: nowEl.checked ? "now" : "at", at: atEl.value });
+      };
+      box.addEventListener("change", syncRebootBits);
+      box.addEventListener("input", syncRebootBits);
+      syncRebootBits();
     } else if (t === "event") {
       // Nothing to configure — the severity, message and resource all come from
       // the fire. The note earns its place because the two trigger families
@@ -8754,6 +8798,18 @@ async function openAutomationWizard(existing, opts) {
     }
     // The audit Event carries no configuration — its presence IS the setting.
     if (t === "event") return { type: "event" };
+    if (t === "reboot") {
+      var nowR = box.querySelector('.rb-when[value="now"]');
+      if (!nowR) return null;
+      var gap = Number(box.querySelector(".rb-gap").value);
+      return {
+        type: "reboot",
+        when: nowR.checked ? "now" : "at",
+        at: box.querySelector(".rb-at").value || "02:00",
+        notifyEmails: box.querySelector(".rb-emails").value.split(/[,;\s]+/).map(function (e) { return e.trim(); }).filter(Boolean),
+        minGapHours: isNaN(gap) || gap < 1 ? 24 : Math.round(gap),
+      };
+    }
     return null;
   }
   function collectActionsFrom(host) {
@@ -9174,6 +9230,13 @@ async function openAutomationWizard(existing, opts) {
       if (!/^https?:\/\//i.test(a.url)) return label + ": the URL must start with http:// or https://.";
     } else if (a.type === "script") {
       if (!a.scriptId) return label + ": pick a script.";
+    } else if (a.type === "reboot") {
+      if (a.when !== "now" && !/^([01]\d|2[0-3]):[0-5]\d$/.test(a.at || "")) return label + ": pick the time of day to reboot at.";
+      if (!(a.notifyEmails || []).length) return label + ": name at least one email address for the reboot's result.";
+      for (var ei = 0; ei < a.notifyEmails.length; ei++) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.notifyEmails[ei])) return label + ': "' + a.notifyEmails[ei] + '" is not an email address.';
+      }
+      if (!(a.minGapHours >= 1)) return label + ": the minimum gap between reboots must be at least 1 hour.";
     }
     return null;
   }
