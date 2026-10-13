@@ -2165,3 +2165,22 @@ granter.**
   permission that became stronger in the September 2026 update — are listed
   until an administrator saves them or marks them reviewed. Nothing is taken
   away automatically.
+
+### Rule 115
+
+**No pattern can make Polaris hang.**
+
+- **Every regular expression you type runs on a linear-time engine** (RE2) —
+  log-flag rules, Application Map rules, interface and storage auto-monitor
+  patterns, manufacturer profiles and model parse rules, custom-widget model
+  patterns, asset-type match rules, HTTP checks and path checks. However the
+  pattern is written, matching takes time proportional to the text.
+- **Lookahead, lookbehind and backreferences are not supported.** Saving a
+  pattern that uses one is refused with a message saying so. A pattern saved
+  before this applied is **skipped** (it matches nothing) and listed: the Events
+  page shows a `regex.pattern_unusable` warning for each, and the capacity card
+  counts them until they are rewritten.
+- **Wildcards** (`*`, `?`) and automation event patterns match as they always
+  have, without a regular expression underneath.
+- **Uploaded MIB files** are parsed in linear time and only re-parsed when they
+  change.

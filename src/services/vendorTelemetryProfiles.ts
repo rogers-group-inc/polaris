@@ -115,7 +115,7 @@ export interface ModelQuery {
 
 export interface VendorTelemetryProfile {
   vendor: string;                       // human-readable label, used in logs
-  match: RegExp;                        // case-insensitive regex tested against `${manufacturer} ${os}`
+  match: Pick<RegExp, "test" | "source">;                        // case-insensitive regex tested against `${manufacturer} ${os}`
   cpu?: CpuQuery;
   memory?: MemoryQuery;
   /**

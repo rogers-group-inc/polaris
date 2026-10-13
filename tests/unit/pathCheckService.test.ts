@@ -180,10 +180,10 @@ describe("parseStatusSpec (server copy of the three-way mirror)", () => {
 describe("agentRegexProblem — the agent is RE2", () => {
   it("accepts a plain pattern", () => expect(agentRegexProblem("status\":\\s*\"ok")).toBeNull());
   it("refuses lookahead / lookbehind", () => {
-    expect(agentRegexProblem("foo(?=bar)")).toMatch(/Lookahead/);
-    expect(agentRegexProblem("(?<!x)y")).toMatch(/Lookahead/);
+    expect(agentRegexProblem("foo(?=bar)")).toMatch(/lookahead/i);
+    expect(agentRegexProblem("(?<!x)y")).toMatch(/lookahead/i);
   });
-  it("refuses backreferences", () => expect(agentRegexProblem("(a)\\1")).toMatch(/Backreference/));
+  it("refuses backreferences", () => expect(agentRegexProblem("(a)\\1")).toMatch(/backreference/i));
   it("refuses an invalid pattern", () => expect(agentRegexProblem("(")).toMatch(/Invalid/));
 });
 

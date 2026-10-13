@@ -1250,6 +1250,10 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // while collecting nothing. Not marker-guarded — the answer changes as
       // collectors land and as operators edit settings. See its header.
       "./jobs/auditPollingCapability.js",
+      // Business rule 115: one warning Event per stored operator regex the
+      // RE2 engine cannot run (it is skipped until rewritten). Read-only
+      // advisory sweep like the one above; not marker-guarded. See its header.
+      "./jobs/auditStoredRegexes.js",
       // Not marker-guarded: a firmware upgrade run this process was driving
       // when it died can never finish — mark it failed and release its hold.
       // Web / all role only, which is where the runs execute. See its header.

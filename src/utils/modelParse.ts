@@ -27,7 +27,8 @@
  *   5. Otherwise the template with `$1` replaced.
  */
 
-import { MAX_REGEX_SUBJECT, countCaptureGroups, findUnsafeRegexConstruct } from "./regexSafety.js";
+import { MAX_REGEX_SUBJECT, countCaptureGroups } from "./regexSafety.js";
+import { safeRegexProblem, tryCompileSafeRegex } from "./safeRegex.js";
 
 export interface ModelParse {
   /** Regex applied to the raw scalar (case-insensitive); group 1 is the model token. */
@@ -52,15 +53,12 @@ export function applyModelParse(raw: string | null | undefined, parse: ModelPars
   // Rule 2's "unrecognized, never a guess" also covers a scalar too long to be
   // a model string. The cap is what keeps an operator's pattern — which this
   // runs per asset per poll against whatever the DEVICE returned — from
-  // backtracking over an unbounded subject. See utils/regexSafety.ts.
+  // being matched over an unbounded subject; the pattern itself runs on RE2 (rule 115).
   if (trimmed.length > MAX_REGEX_SUBJECT) return null;
 
-  let re: RegExp;
-  try {
-    re = new RegExp(parse.pattern, "i");
-  } catch {
-    return null; // write-path validates; defensive only
-  }
+  // RE2 (business rule 115); a stored pattern it cannot compile yields nothing.
+  const re = tryCompileSafeRegex(parse.pattern, { ignoreCase: true });
+  if (!re) return null;
   const m = re.exec(trimmed);
   const token = m?.[1]?.trim();
   if (!token) return null;
@@ -81,24 +79,12 @@ export function applyModelParse(raw: string | null | undefined, parse: ModelPars
 export function validateModelParse(pattern: string | null, template: string | null): string | null {
   if (!pattern || !pattern.trim()) return "parsePattern is required when a model symbol is set";
   if (pattern.length > 512) return "parsePattern is too long (max 512 characters)";
-  let re: RegExp;
-  try {
-    // Compiling what the operator typed is the feature, not a lapse — a parse
-    // rule has to be a ROW to be editable, so it cannot be a literal or an
-    // escaped string. utils/regexSafety.ts carries the reasoning and the two
-    // guards that stand in for escaping (CodeQL js/regex-injection).
-    re = new RegExp(pattern, "i");
-  } catch {
-    return "parsePattern must be a valid regex";
-  }
-  if (countCaptureGroups(re.source) < 1) return "parsePattern needs a capture group for the model token";
-  // An operator types this and Polaris runs it on the monitor path, where a
-  // regex cannot be interrupted — so the nested-quantifier shape is refused at
-  // save time, while it is still in front of the person who can fix it.
-  const unsafe = findUnsafeRegexConstruct(re.source);
-  if (unsafe) {
-    return `parsePattern may never finish on some inputs: \`${unsafe}\` repeats a group that already repeats. Rewrite it so only one of the two repeats.`;
-  }
+  // Compiling what the operator typed is the feature — a parse rule has to be a
+  // ROW to be editable. It runs on RE2 (business rule 115), linear whatever the
+  // pattern, so the only refusal is one RE2 cannot compile.
+  const problem = safeRegexProblem(pattern, { ignoreCase: true });
+  if (problem) return `parsePattern: ${problem}`;
+  if (countCaptureGroups(pattern) < 1) return "parsePattern needs a capture group for the model token";
   if (template !== null && template !== undefined && template !== "" && !template.includes("$1")) {
     return "parseTemplate must contain $1";
   }

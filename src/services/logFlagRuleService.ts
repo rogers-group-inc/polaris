@@ -18,6 +18,8 @@
 
 import { prisma } from "../db.js";
 import { logEvent } from "./eventLogService.js";
+import { compileSafeRegex, tryCompileSafeRegex, safeRegexProblem } from "../utils/safeRegex.js";
+import { compileGlob } from "../utils/wildcard.js";
 
 export interface LogFlagRuleRow {
   id: string;
@@ -42,7 +44,11 @@ export interface CompiledRule {
 
 const LEVEL_RANK: Record<string, number> = { info: 0, warning: 1, error: 2, critical: 3 };
 
-/** Convert a glob (`*` = any run, `?` = any char) to an anchored RegExp source. */
+/**
+ * Convert a glob (`*` = any run, `?` = any char) to an anchored RegExp source.
+ * Kept for reference / display only: matching uses utils/wildcard.compileGlob,
+ * which does not backtrack (business rule 115).
+ */
 export function globToRegExp(glob: string): string {
   let out = "^";
   for (const ch of glob) {
@@ -59,17 +65,13 @@ export function globToRegExp(glob: string): string {
  * surface validity separately. Pure.
  */
 export function compileRule(rule: LogFlagRuleRow): CompiledRule {
-  const flags = rule.caseSensitive ? "" : "i";
-  let re: RegExp | null = null;
-  try {
-    if (rule.matchType === "regex") {
-      re = new RegExp(rule.pattern, flags);
-    } else if (rule.matchType === "glob") {
-      re = new RegExp(globToRegExp(rule.pattern), flags);
-    }
-  } catch {
-    re = null; // invalid regex → never matches
-  }
+  const ignoreCase = !rule.caseSensitive;
+  // Regex on RE2 and glob on the linear matcher (business rule 115): every
+  // stored rule runs against every log line on each read, so a pattern must
+  // never be able to backtrack. A regex RE2 cannot compile never matches.
+  let re: { test(s: string): boolean } | null = null;
+  if (rule.matchType === "regex") re = tryCompileSafeRegex(rule.pattern, { ignoreCase });
+  else if (rule.matchType === "glob") re = compileGlob(rule.pattern, { ignoreCase });
   const needle = rule.caseSensitive ? rule.pattern : rule.pattern.toLowerCase();
   const minRank = rule.minLevel ? (LEVEL_RANK[rule.minLevel] ?? 0) : null;
 
@@ -99,11 +101,35 @@ export function invalidateLogFlagRuleCache(): void {
   cache = null;
 }
 
+/** Rules already reported as unusable in this process, so the warning is written once. */
+const reportedUnusable = new Set<string>();
+
 async function getCompiledRules(): Promise<CompiledRule[]> {
   if (cache) return cache;
   const rows = await prisma.logFlagRule.findMany({ where: { enabled: true } });
   cache = rows.map((r) => compileRule(r as LogFlagRuleRow));
+  for (const r of rows as LogFlagRuleRow[]) {
+    if (r.matchType !== "regex" || reportedUnusable.has(r.id)) continue;
+    const problem = safeRegexProblem(r.pattern, { ignoreCase: !r.caseSensitive });
+    if (!problem) continue;
+    reportedUnusable.add(r.id);
+    void logEvent({
+      action: "logflagrule.pattern_unusable",
+      resourceType: "log_flag_rule",
+      resourceId: r.id,
+      resourceName: r.name,
+      actor: "system:regex",
+      level: "warning",
+      message: `Log-flag rule "${r.name}" is skipped: ${problem}`,
+    });
+  }
   return cache;
+}
+
+/** Refuse a regex pattern RE2 cannot compile, at save time (rule 115). */
+function assertUsablePattern(matchType: string | undefined, pattern: string | undefined, caseSensitive: boolean | undefined): void {
+  if (matchType !== "regex" || typeof pattern !== "string") return;
+  compileSafeRegex(pattern, { ignoreCase: !caseSensitive });
 }
 
 /** Filter compiled rules to those whose scope applies to (assetId, processName). Pure. */
@@ -164,11 +190,17 @@ export interface LogFlagRuleInput {
   color?: string | null;
 }
 
-export async function listLogFlagRules(): Promise<LogFlagRuleRow[]> {
-  return (await prisma.logFlagRule.findMany({ orderBy: [{ scope: "asc" }, { name: "asc" }] })) as LogFlagRuleRow[];
+export async function listLogFlagRules(): Promise<Array<LogFlagRuleRow & { patternProblem: string | null }>> {
+  const rows = (await prisma.logFlagRule.findMany({ orderBy: [{ scope: "asc" }, { name: "asc" }] })) as LogFlagRuleRow[];
+  // A stored regex RE2 cannot compile is skipped; say so where it is edited.
+  return rows.map((r) => ({
+    ...r,
+    patternProblem: r.matchType === "regex" ? safeRegexProblem(r.pattern, { ignoreCase: !r.caseSensitive }) : null,
+  }));
 }
 
 export async function createLogFlagRule(input: LogFlagRuleInput, actor?: string): Promise<LogFlagRuleRow> {
+  assertUsablePattern(input.matchType, input.pattern, input.caseSensitive);
   const row = await prisma.logFlagRule.create({
     data: {
       name: input.name,
@@ -191,6 +223,14 @@ export async function createLogFlagRule(input: LogFlagRuleInput, actor?: string)
 }
 
 export async function updateLogFlagRule(id: string, input: Partial<LogFlagRuleInput>, actor?: string): Promise<LogFlagRuleRow> {
+  if (input.matchType !== undefined || input.pattern !== undefined || input.caseSensitive !== undefined) {
+    const current = await prisma.logFlagRule.findUnique({ where: { id } });
+    assertUsablePattern(
+      input.matchType ?? current?.matchType,
+      input.pattern ?? current?.pattern,
+      input.caseSensitive ?? current?.caseSensitive,
+    );
+  }
   const data: Record<string, unknown> = {};
   for (const k of ["name", "enabled", "scope", "matchType", "pattern", "caseSensitive", "minLevel", "label", "color"] as const) {
     if (input[k] !== undefined) data[k] = input[k];

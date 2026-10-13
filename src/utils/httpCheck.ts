@@ -46,6 +46,8 @@
  * slowing one probe. `contains` is the default for the same reason.
  */
 
+import { compileSafeRegex, safeRegexProblem } from "./safeRegex.js";
+
 /** Hard ceiling on how much of the response body is read and matched against. */
 export const MAX_BODY_BYTES = 64 * 1024;
 
@@ -274,14 +276,9 @@ export function statusInRanges(code: number, ranges: readonly StatusRange[]): bo
  * Returns an error message, or null when the pattern is usable.
  */
 export function agentRegexProblem(pattern: string): string | null {
-  try {
-    new RegExp(pattern);
-  } catch (err) {
-    return `Invalid regular expression: ${(err as Error).message}`;
-  }
-  if (/\(\?<?[=!]/.test(pattern)) return "Lookahead / lookbehind is not supported (the agent uses RE2)";
-  if (/\\[1-9]/.test(pattern) || /\\k</.test(pattern)) return "Backreferences are not supported (the agent uses RE2)";
-  return null;
+  // The server runs body matches on RE2 too (business rule 115), so "does it
+  // compile under RE2" is the one question for both ends.
+  return safeRegexProblem(pattern);
 }
 
 /**
@@ -296,8 +293,9 @@ export function bodyMatches(body: string, config: HttpCheckConfig): boolean | nu
   if (!expect) return null;
   const caseSensitive = config.caseSensitive === true;
   if (config.matchMode === "regex") {
-    const re = new RegExp(expect, caseSensitive ? "" : "i");
-    return re.test(body);
+    // RE2 (business rule 115): linear in the body whatever the pattern — the
+    // body is up to 64 KB from whatever server the check points at.
+    return compileSafeRegex(expect, { ignoreCase: !caseSensitive }).test(body);
   }
   return caseSensitive
     ? body.includes(expect)

@@ -4,6 +4,7 @@
  * POST / PUT / DELETE require assets admin role.
  */
 
+import { tryCompileSafeRegex } from "../../utils/safeRegex.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { prisma } from "../../db.js";
@@ -3198,8 +3199,8 @@ router.get("/:id/custom-widgets", requirePermission("assets", "read"), async (re
     const modelStr = asset.model ?? "";
     const profileWidgets = (profile?.widgets ?? []).filter((w) => {
       if (!w.modelPattern) return true;
-      try { return new RegExp(w.modelPattern, "i").test(modelStr); }
-      catch { return false; }
+      // RE2 (business rule 115); a pattern RE2 cannot compile matches nothing.
+      return tryCompileSafeRegex(w.modelPattern, { ignoreCase: true })?.test(modelStr) ?? false;
     });
     // Widgets the asset's Generic API integrations define for it (rule
     // 100(i)) ride the same tab, after the manufacturer's, each carrying a

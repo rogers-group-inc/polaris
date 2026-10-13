@@ -24,6 +24,7 @@
  *   swap was safe; it goes when the constant does.
  */
 
+import { tryCompileSafeRegex, type SafeRegex } from "../utils/safeRegex.js";
 import {
   pickVendorProfile,
   fortinetClassHint,
@@ -120,9 +121,9 @@ export function resolveDbMetric(metric: MetricRow | undefined, model: string | n
     // A device-type default (assetType set, no pattern) is a Phase 4 row this
     // pre-swap resolver does not read; `pickDbProfile` does. Skip, don't match.
     if (!o.modelPattern) continue;
-    try {
-      if (new RegExp(o.modelPattern, "i").test(clampRegexSubject(modelStr))) return pickFromOverride(o);
-    } catch { /* malformed regex; skip — write-path validates so this is defensive only */ }
+    // RE2 (business rule 115); a stored pattern RE2 cannot compile is skipped.
+    const re = compiled(o.modelPattern);
+    if (re && re.test(clampRegexSubject(modelStr))) return pickFromOverride(o);
   }
   if (metric.defaultSymbol || metric.defaultSymbolB) return pickFromRowDefaults(metric);
   return null;
@@ -303,13 +304,13 @@ export interface ProfileSubject {
 // can never be read; the only cost of not invalidating on write is one dead
 // entry per edited pattern, which is why nothing calls the clear below in
 // production. (A service → resolver import for that would also be a cycle.)
-const regexCache = new Map<string, RegExp | null>();
+const regexCache = new Map<string, SafeRegex | null>();
 
-function compiled(pattern: string): RegExp | null {
+/** Case-insensitive, on RE2 (business rule 115) — linear whatever the pattern. */
+function compiled(pattern: string): SafeRegex | null {
   const hit = regexCache.get(pattern);
   if (hit !== undefined) return hit;
-  let re: RegExp | null = null;
-  try { re = new RegExp(pattern, "i"); } catch { re = null; }
+  const re = tryCompileSafeRegex(pattern, { ignoreCase: true });
   regexCache.set(pattern, re);
   return re;
 }
@@ -338,7 +339,7 @@ export function findDbProfile(
 
   // Device-supplied SNMP text, matched against an operator's regex once per
   // asset per poll — clamped so subject length can never be the thing that
-  // makes a pattern expensive. See utils/regexSafety.ts.
+  // makes a pattern expensive. Patterns run on RE2 (utils/safeRegex.ts, rule 115).
   const haystack = clampRegexSubject(
     [subject.manufacturer, subject.os, subject.mibModule].filter(Boolean).join(" ").trim(),
   );

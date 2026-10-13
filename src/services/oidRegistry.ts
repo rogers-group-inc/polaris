@@ -41,6 +41,8 @@
  * per-model override is layered on top.
  */
 
+import { createHash } from "node:crypto";
+import { compileSafeRegex } from "../utils/safeRegex.js";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -112,22 +114,44 @@ interface ParsedAssignment {
   parts: string[]; // raw ::= { ... } body — mix of identifier names and integer literals
 }
 
-const ASSIGNMENT_RE =
-  /\b([a-z][\w-]*)\s+(?:OBJECT-TYPE|OBJECT\s+IDENTIFIER|MODULE-IDENTITY|OBJECT-IDENTITY|NOTIFICATION-TYPE|OBJECT-GROUP|NOTIFICATION-GROUP|MODULE-COMPLIANCE)\b[\s\S]*?::=\s*\{\s*([^{}]+?)\s*\}/g;
+// RE2 (business rule 115): runs over every stored MIB (up to 1 MB each); the
+// unanchored start + lazy `[\s\S]*?` was quadratic on the JS engine.
+const ASSIGNMENT_RE = compileSafeRegex(
+  String.raw`\b([a-z][\w-]*)\s+(?:OBJECT-TYPE|OBJECT\s+IDENTIFIER|MODULE-IDENTITY|OBJECT-IDENTITY|NOTIFICATION-TYPE|OBJECT-GROUP|NOTIFICATION-GROUP|MODULE-COMPLIANCE)\b[\s\S]*?::=\s*\{\s*([^{}]+?)\s*\}`,
+);
 
 export function parseObjectAssignments(rawText: string): ParsedAssignment[] {
   const stripped = stripComments(rawText);
   const out: ParsedAssignment[] = [];
-  let m: RegExpExecArray | null;
-  ASSIGNMENT_RE.lastIndex = 0;
-  while ((m = ASSIGNMENT_RE.exec(stripped))) {
-    const name = m[1];
+  for (const m of ASSIGNMENT_RE.execAll(stripped)) {
+    const name = m[1] as string;
     if (/^[A-Z]/.test(name)) continue;
-    const parts = m[2].trim().split(/\s+/).filter(Boolean);
+    const parts = (m[2] ?? "").trim().split(/\s+/).filter(Boolean);
     if (parts.length === 0) continue;
     out.push({ name, parts });
   }
   return out;
+}
+
+/**
+ * Parsed assignments + imports per stored MIB, keyed by row id and the
+ * content's hash, so a registry refresh re-parses only what changed. Rows that
+ * disappear are dropped on the next refresh (see pruneParsedCache).
+ */
+const parsedCache = new Map<string, { hash: string; entries: ParsedAssignment[]; imports: ReturnType<typeof parseImportMap> }>();
+
+function parsedFor(id: string, contents: string): { entries: ParsedAssignment[]; imports: ReturnType<typeof parseImportMap> } {
+  const hash = createHash("sha1").update(contents).digest("hex");
+  const hit = parsedCache.get(id);
+  if (hit && hit.hash === hash) return hit;
+  const fresh = { hash, entries: parseObjectAssignments(contents), imports: parseImportMap(contents) };
+  parsedCache.set(id, fresh);
+  return fresh;
+}
+
+function pruneParsedCache(liveIds: Iterable<string>): void {
+  const live = new Set(liveIds);
+  for (const id of parsedCache.keys()) if (!live.has(id)) parsedCache.delete(id);
 }
 
 // ─── Loaded MIBs ───────────────────────────────────────────────────────────
@@ -188,7 +212,7 @@ interface StandardLayer {
 const STD_MIBS_DIR = join(dirname(fileURLToPath(import.meta.url)), "stdMibs");
 // The module header every SMI file opens with. Same shape mibService.parseMib
 // accepts; re-stated here because mibService imports this module.
-const MODULE_NAME_RE = /([A-Z][A-Za-z0-9-]*)\s+DEFINITIONS(?:\s+[A-Z-]+)*\s*::=\s*BEGIN/;
+const MODULE_NAME_RE = compileSafeRegex(String.raw`([A-Z][A-Za-z0-9-]*)\s+DEFINITIONS(?:\s+[A-Z-]+)*\s*::=\s*BEGIN`);
 
 let _standard: StandardLayer | null = null;
 
@@ -282,16 +306,19 @@ async function loadInternal(): Promise<void> {
   });
 
   const mibs: LoadedMib[] = [];
+  pruneParsedCache(rows.map((r) => r.id));
   for (const row of rows) {
     try {
-      const entries = parseObjectAssignments(row.contents);
+      // Parse once per file content, not once per refresh (rule 115): the
+      // refresh runs on every MIB write and re-parsed every stored file.
+      const parsed = parsedFor(row.id, row.contents);
       mibs.push({
         id: row.id,
         moduleName: row.moduleName,
         manufacturer: row.manufacturer,
         model: row.model,
-        entries,
-        imports: parseImportMap(row.contents),
+        entries: parsed.entries,
+        imports: parsed.imports,
       });
     } catch (err: any) {
       logger.warn({ mib: row.moduleName, err: err?.message }, "MIB parse failed during oidRegistry refresh");

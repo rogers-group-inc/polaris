@@ -18,6 +18,7 @@
  * all ask the same question. Business rule 107.
  */
 
+import { trimTrailing } from "./trimTrailing.js";
 import { AppError } from "./errors.js";
 
 const HOST_RE = /^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|\[[0-9A-Fa-f:.]{2,45}\])$/;
@@ -30,7 +31,7 @@ const URL_RE = /^(https?):\/\/([^/:?#@\s]+|\[[^\]\s]+\])(?::(\d{1,5}))?(\/[^?#\s
  */
 export function normalizeAgentServerUrl(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
-  const trimmed = raw.trim().replace(/\/+$/, "");
+  const trimmed = trimTrailing(raw.trim(), "/");
   if (!trimmed || trimmed.length > 512) return null;
   const m = URL_RE.exec(trimmed);
   if (!m) return null;

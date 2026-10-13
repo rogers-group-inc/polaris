@@ -53,6 +53,7 @@
  * build completes and ships unsigned binaries — never blocks agent rollout.
  */
 
+import { trimTrailing } from "../utils/trimTrailing.js";
 import { execFile, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import { stat, access, mkdir, writeFile, rename, unlink, chmod } from "node:fs/promises";
@@ -183,7 +184,7 @@ export function mergeSigningConfig(
     keystorePath: inc.keystorePath !== undefined ? str(inc.keystorePath) : current.keystorePath,
     keystorePassword: secret === "" || isMaskedSecret(secret) ? current.keystorePassword : secret,
     alias: inc.alias !== undefined ? str(inc.alias) : current.alias,
-    tsaUrl: tsa === "" ? DEFAULT_TSA_URL : tsa.replace(/\/+$/, ""),
+    tsaUrl: tsa === "" ? DEFAULT_TSA_URL : trimTrailing(tsa, "/"),
   };
 }
 

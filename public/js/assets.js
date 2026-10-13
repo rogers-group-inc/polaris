@@ -22889,7 +22889,11 @@ function openLogFlagRulesModal(asset, processName, onChange) {
             '<td>' + escapeHtml(r.name) + '</td>' +
             '<td>' + scopeLabel + '</td>' +
             '<td>' + escapeHtml(r.matchType) + '</td>' +
-            '<td class="mono">' + escapeHtml(r.pattern) + '</td>' +
+            '<td class="mono">' + escapeHtml(r.pattern) +
+              // Business rule 115: a stored regex the linear-time engine cannot
+              // compile is skipped until it is rewritten.
+              (r.patternProblem ? '<div style="color:var(--color-danger);font-family:inherit;margin-top:2px" title="' + escapeHtml(r.patternProblem) + '">Skipped — ' + escapeHtml(r.patternProblem) + '</div>' : '') +
+            '</td>' +
             '<td><button class="btn btn-sm btn-danger lfr-del" data-id="' + r.id + '">Delete</button></td>' +
           '</tr>';
         }).join("") + '</tbody></table>';

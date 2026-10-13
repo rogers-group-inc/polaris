@@ -28,6 +28,7 @@
  *   error  { message }
  */
 
+import { trimTrailing } from "../utils/trimTrailing.js";
 import type { Request } from "express";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
@@ -364,11 +365,10 @@ export function asksForReport(text: string): boolean {
 
 /** A report title from the question that asked for it. Exported for tests. */
 export function reportTitleFromQuestion(text: string): string {
-  const t = text
+  const t = trimTrailing(text
     .replace(/^\s*(create a downloadable report:\s*)/i, "")
     .replace(/^\s*(please\s+)?(can you\s+|could you\s+)?(give me|make|build|create|generate|export|download|show me)?\s*(me\s+)?(a\s+|an\s+|the\s+)?(downloadable\s+)?(report|export|spreadsheet|csv)?\s*(of|on|for|about|with)?\s*/i, "")
-    .replace(/^(the|a|an|all)\s+/i, "")
-    .replace(/[?.!]+$/, "")
+    .replace(/^(the|a|an|all)\s+/i, ""), "?.!")
     .trim();
   if (!t) return "Report";
   const title = t.charAt(0).toUpperCase() + t.slice(1);

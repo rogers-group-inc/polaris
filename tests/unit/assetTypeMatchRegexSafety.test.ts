@@ -3,9 +3,10 @@
  *
  * Asset-type match rules take an operator-typed regex, and the match-preview
  * endpoint runs it against a payload the caller supplies with only
- * `assets:read`. A JavaScript regex cannot be interrupted, so the exponential
- * shape is refused at write time and neither stored patterns nor subjects are
- * trusted at match time. See utils/regexSafety.ts.
+ * `assets:read`. Since business rule 115 every such pattern runs on RE2
+ * (utils/safeRegex.ts), so no shape can hang the process: the "catastrophic"
+ * patterns are now accepted and still return at once, and what is refused is a
+ * pattern RE2 cannot compile (lookaround, backreferences, syntax errors).
  */
 
 import { describe, it, expect } from "vitest";
@@ -24,33 +25,37 @@ describe("validateRegex", () => {
   });
 
   it("still reports a pattern that does not compile", () => {
-    expect(validateRegex("([unclosed")).toMatch(/Invalid regular expression/);
+    expect(validateRegex("([unclosed")).toMatch(/Invalid regex/);
   });
 
-  it.each(["(a+)+$", "(a*)*b", "(.*)+x", String.raw`(\w+|\d+)*z`])(
-    "refuses the catastrophic shape %s",
+  it.each(["(a+)+$", "(a*)*b", "(.*)+x", String.raw`(\w+|\d+)*z`, ".*.*.*.*x", "(a|aa)+b"])(
+    "accepts the once-catastrophic shape %s — RE2 runs it in linear time",
     (pattern) => {
-      expect(validateRegex(pattern)).toMatch(/may never finish/);
+      expect(validateRegex(pattern)).toBeNull();
     },
   );
+
+  it("refuses lookaround and backreferences, which RE2 cannot run", () => {
+    expect(validateRegex("(?=windows)win")).toMatch(/lookahead or lookbehind/);
+    expect(validateRegex(String.raw`(a)\1`)).toMatch(/backreference/);
+  });
 });
 
 describe("validateMatchRules", () => {
-  it("refuses a catastrophic regex clause, in the tree shape", () => {
-    const err = validateMatchRules({ op: "or", children: [{ field: "os", operator: "regex", value: "(a+)+$" }] });
-    expect(err).toMatch(/may never finish/);
+  it("accepts a once-catastrophic regex clause, in the tree shape", () => {
+    expect(validateMatchRules({ op: "or", children: [{ field: "os", operator: "regex", value: "(a+)+$" }] })).toBeNull();
   });
 
-  it("refuses it in the legacy flat shape too", () => {
-    const err = validateMatchRules({ clauses: [{ field: "os", op: "regex", value: "(a+)+$" }] });
-    expect(err).toMatch(/may never finish/);
+  it("refuses a lookahead clause in the legacy flat shape", () => {
+    const err = validateMatchRules({ clauses: [{ field: "os", op: "regex", value: "(?!x)a" }] });
+    expect(err).toMatch(/lookahead or lookbehind/);
   });
 });
 
-describe("clauseMatches with a catastrophic pattern that is already stored", () => {
-  it("treats it as no-match instead of running it", () => {
-    // 40 a's then a character the pattern cannot match: unguarded, this is
-    // 2^40 steps. The assertion is that it RETURNS, and returns false.
+describe("clauseMatches with a once-catastrophic pattern", () => {
+  it("runs it on RE2 and returns at once", () => {
+    // 40 a's then a character the pattern cannot match: on a backtracking
+    // engine this is 2^40 steps. The assertion is that it RETURNS, and false.
     const subject = "a".repeat(40) + "!";
     const started = Date.now();
     expect(clauseMatches({ field: "os", operator: "regex", value: "(a+)+$" }, facts(subject))).toBe(false);

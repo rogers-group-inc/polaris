@@ -17,6 +17,7 @@
  * "/" — so there is no open-redirect surface.
  */
 
+import { trimTrailing } from "../utils/trimTrailing.js";
 import * as client from "openid-client";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
@@ -72,7 +73,7 @@ export async function getOidcSettings(): Promise<OidcSettings> {
  * clear message rather than sending the IdP a bad redirect_uri.
  */
 export function getRedirectUri(): string {
-  const base = (process.env.POLARIS_PUBLIC_URL || "").trim().replace(/\/+$/, "");
+  const base = trimTrailing((process.env.POLARIS_PUBLIC_URL || "").trim(), "/");
   if (!base) {
     throw new AppError(400, "POLARIS_PUBLIC_URL must be set for OIDC login (it derives the redirect URI).");
   }

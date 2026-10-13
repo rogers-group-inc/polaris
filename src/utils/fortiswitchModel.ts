@@ -70,11 +70,21 @@ export function fortiswitchModelFromFsSysVersion(raw: string | null | undefined)
  * "<sep>v<digit>" firmware marker, where the separator is a hyphen OR
  * whitespace ("S548DF-v7.2.5…" vs "FortiSwitchRugged-112D-POE v7.4.8…");
  * non-greedy so a hyphenated token (112D-POE) stops at the first version-
- * looking segment. The `(?!v\d)` lookahead is the old "a string that STARTS
- * with the firmware marker has no model" guard; the template's prefix rule
- * in `applyModelParse` is the old "don't re-prefix FortiSwitchRugged".
+ * looking segment. The template's prefix rule in `applyModelParse` is the old
+ * "don't re-prefix FortiSwitchRugged".
+ *
+ * "A string that STARTS with the firmware marker has no model" used to be a
+ * `(?!v\d)` lookahead, which RE2 does not support (business rule 115). The
+ * three alternatives say the same thing without one: the token begins with
+ * something other than `v`, OR is exactly `v` (the next character is then the
+ * separator, never a digit), OR is `v` followed by a non-digit — bare `v`
+ * first so the shortest token still wins, as the lazy `(.+?)` did. Migration
+ * `20261014020000_re2_model_parse` rewrites rows still carrying the old seed.
  */
 export const FORTISWITCH_MODEL_PARSE: ModelParse = {
-  pattern:  String.raw`^(?!v\d)(.+?)[-\s]v\d`,
+  pattern:  String.raw`^([^v\n].*?|v|v[^\d\n].*?)[-\s]v\d`,
   template: "FortiSwitch $1",
 };
+
+/** The pre-rule-115 seed pattern, for the migration and its test. */
+export const LEGACY_FORTISWITCH_MODEL_PATTERN = String.raw`^(?!v\d)(.+?)[-\s]v\d`;
