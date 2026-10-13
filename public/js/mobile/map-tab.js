@@ -200,6 +200,40 @@
       iconCreateFunction: clusterIcon,
     });
     _map.addLayer(_markerCluster);
+    addStatusLegend();
+  }
+
+  // Status legend, bottom-left — the desktop Device Map's (map.js
+  // addStatusLegend), cut to the classes THIS file's monitorClass() can paint:
+  // a swatch with no marker behind it reads as a state the phone is hiding.
+  // Order mirrors the desktop's. Each swatch is styled by the same class its
+  // marker carries (.fg-marker / .map-legend i share one palette in
+  // mobile.css), so the key cannot drift from the dots.
+  var LEGEND_ENTRIES = [
+    ["monitor-up",          "Up"],
+    ["monitor-degraded",    "Warn"],
+    ["monitor-down",        "Down"],
+    ["monitor-maintenance", "Maint"],
+    ["monitor-unmonitored", "Unmonitored"],
+    ["monitor-unknown",     "Unknown"],
+  ];
+
+  function addStatusLegend() {
+    var L = window.L;
+    var ctl = L.control({ position: "bottomleft" });
+    ctl.onAdd = function () {
+      var div = L.DomUtil.create("div", "map-legend");
+      div.setAttribute("role", "list");
+      div.setAttribute("aria-label", "Marker colours");
+      div.innerHTML = LEGEND_ENTRIES.map(function (e) {
+        return '<span role="listitem"><i class="' + e[0] + '" aria-hidden="true"></i>' + escapeHtml(e[1]) + "</span>";
+      }).join("");
+      // A tap on the legend must not reach the map underneath (a pan start).
+      L.DomEvent.disableClickPropagation(div);
+      L.DomEvent.disableScrollPropagation(div);
+      return div;
+    };
+    ctl.addTo(_map);
   }
 
   // Theme-aware basemap. Mirrors desktop map.js's tile choice — OpenStreetMap

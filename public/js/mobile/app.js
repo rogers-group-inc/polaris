@@ -451,7 +451,8 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
     renderShell();
     refreshChatSlot(user);
     PolarisRouter.onChange(routeChanged);
-    if (!window.location.hash) PolarisRouter.go("search", { replace: true });
+    // Alerts is the home route — what an on-call phone opens to see.
+    if (!window.location.hash) PolarisRouter.go("alerts", { replace: true });
     initPushOnce();
   }
 
@@ -574,68 +575,104 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
     wireNavbar();
   }
 
-  // Persistent searchbar — visible at the top of every page. Typing
-  // routes the user to the Search tab (which renders results into
-  // #app-body) without losing the input value across navigation, since
-  // the input lives in this shell-owned slot and is never re-rendered.
+  // Persistent searchbar — visible at the top of every page, and the ONLY way
+  // into search (it has no navbar slot). Tapping it expands search over the
+  // page: #search opens with the scope shortcuts, the leading magnifier turns
+  // into a back arrow, and the results land in #app-body as the operator
+  // types. The input lives in this shell-owned slot and is never re-rendered,
+  // so its value survives navigation.
   function buildSearchbar() {
     var initials = (currentUser && currentUser.username || "?").slice(0, 2).toUpperCase();
     return ''
-      + '<div class="m3-searchbar" style="margin:8px 16px 4px;">'
-      + '  <button class="icon-btn" id="search-clear-btn" aria-label="Clear" type="button" style="display:none;"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
+      + '<div class="m3-searchbar" id="m3-searchbar">'
+      + '  <button class="icon-btn" id="search-back-btn" aria-label="Close search" type="button" style="display:none;"><svg viewBox="0 0 24 24"><use href="#i-back"/></svg></button>'
       + '  <button class="icon-btn" id="search-icon-btn" aria-label="Search" type="button"><svg viewBox="0 0 24 24"><use href="#i-search"/></svg></button>'
-      + '  <input class="input" type="search" id="search-input" placeholder="Search IPs, assets, networks…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">'
+      + '  <input class="input" type="search" id="search-input" placeholder="Search IPs, assets, networks…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">'
+      + '  <button class="icon-btn" id="search-clear-btn" aria-label="Clear" type="button" style="display:none;"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
       + '  <div class="avatar" id="search-avatar">' + PolarisTabs.escapeHtml(initials) + '</div>'
       + '</div>';
+  }
+
+  // Where closing search returns to. `pushed` = opening search added a history
+  // entry, so the browser's own back (and the arrow) can simply pop it.
+  var _searchReturn = { route: "", pushed: false };
+
+  /** The searchbar's chrome for the route showing: open (back arrow) or closed (magnifier). */
+  function syncSearchChrome() {
+    var input = document.getElementById("search-input");
+    var back  = document.getElementById("search-back-btn");
+    var icon  = document.getElementById("search-icon-btn");
+    var clear = document.getElementById("search-clear-btn");
+    var avatar = document.getElementById("search-avatar");
+    var bar   = document.getElementById("m3-searchbar");
+    if (!input) return;
+    var open = PolarisRouter.current().name === "search";
+    var hasText = !!input.value;
+    if (back)   back.style.display   = open ? "" : "none";
+    if (icon)   icon.style.display   = open ? "none" : "";
+    if (clear)  clear.style.display  = hasText ? "" : "none";
+    if (avatar) avatar.style.display = hasText ? "none" : "";
+    if (bar) bar.classList.toggle("expanded", open);
+  }
+
+  /** Open search over the current page (from a tap on the bar). */
+  function openSearch() {
+    var cur = PolarisRouter.current();
+    if (cur.name === "search") return;
+    _searchReturn = { route: cur.full || "", pushed: true };
+    PolarisRouter.go("search");
+  }
+
+  /** Close search: clear the box and go back to the page it was opened over. */
+  function closeSearch() {
+    var input = document.getElementById("search-input");
+    if (input) { input.value = ""; input.blur(); }
+    PolarisSearch.runSearch("");
+    var ret = _searchReturn;
+    _searchReturn = { route: "", pushed: false };
+    if (PolarisRouter.current().name !== "search") { syncSearchChrome(); return; }
+    if (ret.pushed && window.history.length > 1) window.history.back();
+    else PolarisRouter.go(ret.route || "alerts", { replace: true });
   }
 
   function wireSearchbar() {
     var input    = document.getElementById("search-input");
     var clearBtn = document.getElementById("search-clear-btn");
     var iconBtn  = document.getElementById("search-icon-btn");
+    var backBtn  = document.getElementById("search-back-btn");
     if (!input) return;
-
-    function setClearVisible(visible) {
-      if (!clearBtn || !iconBtn) return;
-      clearBtn.style.display = visible ? "" : "none";
-      iconBtn.style.display  = visible ? "none" : "";
-    }
 
     input.addEventListener("input", function () {
       var q = input.value.trim();
-      setClearVisible(!!input.value);
-      // Typing anywhere except the Search tab routes to /search so the
-      // results land in the body. Replace history so back doesn't have
-      // to walk through every keystroke's intermediate route.
-      var cur = PolarisRouter.current();
-      if (q.length > 0 && cur.name !== "search") {
-        PolarisRouter.go("search", { replace: true });
-      }
+      // Typing while search is closed (a paste, an autofill) opens it, so the
+      // results have somewhere to land.
+      if (q.length > 0 && PolarisRouter.current().name !== "search") openSearch();
+      syncSearchChrome();
       PolarisSearch.debounce(q);
     });
 
-    // Tapping the search input from any tab brings up the Search tab so
-    // the shortcut-hint chips are visible before the operator types. We
-    // only route on empty input so this doesn't fight an in-progress
-    // query (focus events fire on keyboard re-entry too).
-    input.addEventListener("focus", function () {
-      var cur = PolarisRouter.current();
-      if (!input.value.trim() && cur.name !== "search") {
-        PolarisRouter.go("search", { replace: true });
-      }
-    });
+    // Tapping the box opens search with the shortcut chips showing before a
+    // single character is typed. Focus also fires on keyboard re-entry; that
+    // is harmless, because openSearch does nothing while search is open.
+    input.addEventListener("focus", openSearch);
+    if (iconBtn) iconBtn.addEventListener("click", function () { input.focus(); });
+    if (backBtn) backBtn.addEventListener("click", closeSearch);
 
     input.addEventListener("keydown", function (e) {
-      if (e.key === "Escape") {
+      if (e.key !== "Escape") return;
+      // First Escape clears the query, a second one closes search.
+      if (input.value) {
         input.value = "";
-        setClearVisible(false);
+        syncSearchChrome();
         PolarisSearch.runSearch("");
+      } else {
+        closeSearch();
       }
     });
 
     if (clearBtn) clearBtn.addEventListener("click", function () {
       input.value = "";
-      setClearVisible(false);
+      syncSearchChrome();
       PolarisSearch.runSearch("");
       input.focus();
     });
@@ -773,6 +810,11 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
     if (route && route.name !== "search" && window.PolarisSearch && PolarisSearch.setOriginRoute) {
       PolarisSearch.setOriginRoute(route.name, route.parts);
     }
+    // Any route but search means search is closed: the history entry opening
+    // it pushed is no longer the one on top, so a later close must navigate
+    // rather than pop.
+    if (route && route.name !== "search") _searchReturn.pushed = false;
+    syncSearchChrome();
 
     // Top-level tab?
     var tabSpec = PolarisTabs.byId(route.name);
@@ -810,9 +852,9 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
       return;
     }
 
-    // Unknown route — bounce to search. Clear any installed PTR.
+    // Unknown route — bounce to the home route. Clear any installed PTR.
     if (_ptrRelease) { try { _ptrRelease(); } catch (_) {} _ptrRelease = null; }
-    PolarisRouter.go("search", { replace: true });
+    PolarisRouter.go("alerts", { replace: true });
   }
 
   // ─── Public surface ────────────────────────────────────────────────────
