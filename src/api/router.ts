@@ -20,6 +20,7 @@ import automationScriptsRouter from "./routes/automationScripts.js";
 import alertGroupsRouter from "./routes/alertGroups.js";
 import quietTimeSchedulesRouter from "./routes/quietTimeSchedules.js";
 import maintenanceSchedulesRouter from "./routes/maintenanceSchedules.js";
+import calendarRouter from "./routes/calendar.js";
 import pathChecksRouter from "./routes/pathChecks.js";
 import contactsRouter from "./routes/contacts.js";
 import networkScansRouter from "./routes/networkScans.js";
@@ -232,6 +233,9 @@ router.use("/notification-rules", deprecatedAlias("/api/v1/automations"), notifi
 // Maintenance schedules (Assets page → Maintenance modal); per-route gates
 // on the maintenanceManagement function key.
 router.use("/maintenance-schedules", maintenanceSchedulesRouter);
+// The Events page's Calendar tab: maintenance windows, reboots and firmware
+// upgrades, booked and past. events:read, each kind behind its own read key.
+router.use("/calendar", calendarRouter);
 // Agent-run path checks (Path Monitor page (/path-monitor.html)); per-route
 // gates on the pathChecks function key.
 router.use("/path-checks", pathChecksRouter);

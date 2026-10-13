@@ -7827,6 +7827,32 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   color: var(--color-text-tertiary);
   text-decoration: line-through;
 }
+/* Operations calendar (Events → Calendar, ops-calendar.js): reboots and
+   firmware upgrades beside the maintenance windows. The KIND is the left edge
+   (one hue each), the STATUS is the fill: a booking not yet run is an outline,
+   a success is green, a failure / miss / refusal red, an unverified result
+   amber, a cancellation struck through like a disabled window. Each rule
+   names its element so it outranks the base .maint-cal-chip / -block / -row
+   fill, and the hover keeps the status hue. */
+.maint-cal-chip-reboot, .maint-cal-key-reboot { border-left-color: var(--color-sev-informational); }
+.maint-cal-chip-firmware, .maint-cal-key-firmware { border-left-color: var(--color-sev-notice); }
+.maint-cal-key-reboot { background: color-mix(in srgb, var(--color-sev-informational) 22%, transparent); }
+.maint-cal-key-firmware { background: color-mix(in srgb, var(--color-sev-notice) 22%, transparent); }
+.maint-cal-key-bad { background: color-mix(in srgb, var(--color-danger) 22%, transparent); border-left-color: var(--color-danger); }
+:is(.maint-cal-chip, .maint-cal-block, .maint-cal-row).maint-cal-chip-reboot { background: color-mix(in srgb, var(--color-sev-informational) 20%, transparent); }
+:is(.maint-cal-chip, .maint-cal-block, .maint-cal-row).maint-cal-chip-firmware { background: color-mix(in srgb, var(--color-sev-notice) 20%, transparent); }
+:is(.maint-cal-chip, .maint-cal-block, .maint-cal-row).maint-cal-st-pending { background: transparent; outline: 1px dashed var(--color-border); outline-offset: -1px; }
+:is(.maint-cal-chip, .maint-cal-block, .maint-cal-row).maint-cal-st-ok { background: color-mix(in srgb, var(--color-success) 20%, transparent); }
+:is(.maint-cal-chip, .maint-cal-block, .maint-cal-row).maint-cal-st-bad { background: color-mix(in srgb, var(--color-danger) 20%, transparent); }
+:is(.maint-cal-chip, .maint-cal-block, .maint-cal-row).maint-cal-st-warn { background: color-mix(in srgb, var(--color-warning) 22%, transparent); }
+:is(.maint-cal-chip, .maint-cal-block, .maint-cal-row).maint-cal-st-off { background: var(--color-bg-tertiary); color: var(--color-text-tertiary); text-decoration: line-through; }
+:is(.maint-cal-chip, .maint-cal-block, .maint-cal-row):is(.maint-cal-chip-reboot, .maint-cal-chip-firmware):hover { filter: brightness(1.12); }
+/* A caller who cannot schedule a window: empty days are not a click target. */
+.maint-cal-day-ro, .maint-cal-day-ro .maint-cal-daynum { cursor: default; }
+.maint-cal-day-ro:not(.maint-cal-day-today):hover { border-color: var(--color-border); }
+.maint-cal-kinds { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 8px; font-size: 0.8rem; }
+.maint-cal-kinds:empty { display: none; }
+.maint-cal-kind { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; color: var(--color-text-secondary); }
 .maint-cal-more {
   background: transparent;
   color: var(--color-text-secondary);

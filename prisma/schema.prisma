@@ -6233,6 +6233,7 @@ model FirmwareUpgradeRun {
 
   @@index([assetId, startedAt])
   @@index([status])
+  @@index([startedAt]) // the Events Calendar tab (operationsCalendarService)
   @@map("firmware_upgrade_runs")
 }
 
@@ -6268,6 +6269,7 @@ model FirmwareUpgradeSchedule {
 
   @@index([status, scheduledFor])
   @@index([assetId, createdAt])
+  @@index([scheduledFor]) // the Events Calendar tab (operationsCalendarService)
   @@map("firmware_upgrade_schedules")
 }
 
@@ -6309,6 +6311,7 @@ model RebootRun {
 
   @@index([assetId, startedAt])
   @@index([status])
+  @@index([startedAt]) // the Events Calendar tab (operationsCalendarService)
   @@map("reboot_runs")
 }
 
@@ -6338,6 +6341,7 @@ model RebootSchedule {
 
   @@index([status, scheduledFor])
   @@index([assetId, createdAt])
+  @@index([scheduledFor]) // the Events Calendar tab (operationsCalendarService)
   @@map("reboot_schedules")
 }
 

@@ -5708,6 +5708,7 @@ async function openViewModal(id, opts) {
       var wantTab = document.querySelector('#asset-view-tabs .page-tab[data-tab="' + opts.tab + '"]');
       if (wantTab) wantTab.click();
     }
+    if (opts.openBooking) _openBookingFromCalendar(a, opts.openBooking);
     if (showSnmpWalkTab) _wireSnmpWalkTab(a);
     if (canQuarantineAssets()) _wireQuarantineTab(a);
     if (sdwanRules.length || sdwanLinks.length || sdwanMembers.length) _wireSdwanTab(a, sdwanRules, sdwanLinks, sdwanMembers);
@@ -7193,6 +7194,64 @@ async function _openFwRunLogModal(assetId, runId) {
       '<button class="btn btn-secondary" onclick="closeModal()">Close</button>');
   } catch (err) {
     showToast((err && err.message) || "Could not load the run", "error");
+  }
+}
+
+async function _openRebootRunLogModal(assetId, runId) {
+  try {
+    var res = await api.assets.rebootRun(assetId, runId);
+    var run = res.run;
+    var lines = (run.log || []).map(function (l) { return "[" + l.t + "] " + (l.level || "info").toUpperCase() + " " + l.msg; }).join("\n");
+    openModal("Reboot — " + (run.authority || run.method || ""),
+      '<p style="margin-bottom:0.5rem"><strong>' + escapeHtml(run.status) + '</strong>' + (run.error ? ' — ' + escapeHtml(run.error) : '') + '</p>' +
+      '<pre style="max-height:60vh;overflow:auto;font-size:0.76rem;white-space:pre-wrap">' + escapeHtml(lines || "(no log lines)") + '</pre>',
+      '<button class="btn btn-secondary" onclick="closeModal()">Close</button>');
+  } catch (err) {
+    showToast((err && err.message) || "Could not load the run", "error");
+  }
+}
+
+/**
+ * A reboot or firmware item clicked on the operations calendar (Events →
+ * Calendar, ops-calendar.js) opens THIS asset's own dialog for it: a booking
+ * still pending opens the Reboot… / firmware dialog in change mode (move it,
+ * change recipients, cancel), a run opens its log, and anything else — a
+ * cancelled, missed or refused booking — leaves the operator on the System
+ * tab, where the asset's reboot and firmware state is. `ob` is
+ * {kind: "reboot"|"firmware", scheduleId, runId, status}.
+ */
+async function _openBookingFromCalendar(a, ob) {
+  var sysTab = document.querySelector('#asset-view-tabs .page-tab[data-tab="system"]');
+  if (sysTab) sysTab.click();
+  var pending = ob.status === "pending" && ob.scheduleId;
+  try {
+    if (ob.kind === "reboot") {
+      if (pending) {
+        var rb = await api.assets.reboot(a.id);
+        if (rb.schedule && rb.schedule.id === ob.scheduleId) {
+          if (typeof canManageAssets === "function" && canManageAssets()) _openRebootModal(a, rb, rb.schedule);
+          return;
+        }
+        showToast("That reboot is no longer booked — it has started, been changed or been cancelled", "info");
+        return;
+      }
+      if (ob.runId) _openRebootRunLogModal(a.id, ob.runId);
+      return;
+    }
+    if (ob.kind === "firmware") {
+      if (pending) {
+        var fw = await api.assets.firmwareUpgrade(a.id);
+        if (fw.schedule && fw.schedule.id === ob.scheduleId) {
+          if (typeof canManageAssets === "function" && canManageAssets()) _openFirmwareApprovalModal(a, fw, fw.schedule);
+          return;
+        }
+        showToast("That upgrade is no longer booked — it has started, been changed or been cancelled", "info");
+        return;
+      }
+      if (ob.runId) _openFwRunLogModal(a.id, ob.runId);
+    }
+  } catch (err) {
+    showToast((err && err.message) || "Could not open the booking", "error");
   }
 }
 
