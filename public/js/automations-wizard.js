@@ -4660,6 +4660,110 @@ async function openAutomationWizard(existing, opts) {
       '<div style="margin:0.5rem 0"><button type="button" class="btn btn-sm btn-secondary" id="aw-trigger-test">Test against current data</button></div>' +
       '<div id="aw-trigger-preview"></div>';
   }
+  // ── Capacity alert hold (business rule 105) ──────────────────────────────
+  // capacityWatch writes capacity.severity_changed / _recovered only once a
+  // severity change has held for this long. It is ONE global setting — it
+  // decides when the Event exists at all, so every automation and the Events
+  // log see the same held event — shown on the event trigger step of any
+  // automation whose pattern reaches a capacity event.
+  var CAPACITY_HOLD_EVENTS = ["capacity.severity_changed", "capacity.severity_recovered"];
+  var CAPACITY_HOLD_CHOICES = [0, 10, 20, 30, 60, 120, 240];
+  var _capHold = null;        // last GET /automations/capacity-alert-hold
+  var _capHoldLoading = null; // in-flight promise
+  function capacityHoldLabel(min) {
+    if (min === 0) return "Alert on the first reading";
+    if (min >= 60 && min % 60 === 0) return (min / 60) + (min === 60 ? " hour" : " hours");
+    return min + " minutes";
+  }
+  function capacitySeverityLabel(s) {
+    if (s === "critical" || s === "red") return "Critical";
+    if (s === "warning" || s === "amber") return "Action recommended";
+    if (s === "watch") return "Watch";
+    return "Healthy";
+  }
+  // Does this action-pattern glob reach a capacity severity event?
+  function patternReachesCapacity(pattern) {
+    var p = String(pattern || "").trim();
+    if (!p) return false;
+    var re = new RegExp("^" + p.replace(/[.+^${}()|[\]\?]/g, "\$&").replace(/\*/g, ".*") + "$");
+    return CAPACITY_HOLD_EVENTS.some(function (a) { return re.test(a); });
+  }
+  function capacityHoldHtml(t) {
+    var choices = CAPACITY_HOLD_CHOICES.slice();
+    if (choices.indexOf(t.holdMinutes) === -1) {
+      choices.push(t.holdMinutes);
+      choices.sort(function (a, b) { return a - b; });
+    }
+    var options = choices.map(function (m) {
+      return '<option value="' + m + '">' + escapeHtml(capacityHoldLabel(m)) + '</option>';
+    }).join("");
+    var status = "";
+    if (t.pending) {
+      var sinceMs = new Date(t.pending.since).getTime();
+      var heldMin = Math.max(0, Math.round((Date.now() - sinceMs) / 60000));
+      var dueIso = new Date(sinceMs + t.holdMinutes * 60000).toISOString();
+      status = 'Waiting out a change to <strong>' + escapeHtml(capacitySeverityLabel(t.pending.severity)) +
+        '</strong>: seen for ' + heldMin + ' of ' + t.holdMinutes + ' min. It is recorded (and alerts) at the first check after ' +
+        escapeHtml(formatDate(dueIso)) + ' if every check until then still agrees; one check back at ' +
+        escapeHtml(capacitySeverityLabel(t.recorded ? t.recorded.severity : "ok")) + ' discards it.';
+    } else if (t.recorded) {
+      status = 'Alerting last recorded <strong>' + escapeHtml(capacitySeverityLabel(t.recorded.severity)) +
+        '</strong> at ' + escapeHtml(formatDate(t.recorded.recordedAt)) + '.';
+    }
+    return '<label for="tf-cap-hold-sel">Alert after a capacity change holds for</label>' +
+      '<select id="tf-cap-hold-sel" style="max-width:220px">' + options + '</select>' +
+      '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:4px 0 0">Capacity is checked every ' + (t.intervalMinutes || 10) +
+        ' minutes. A severity change — up or down — becomes a <code>capacity.severity_changed</code> / ' +
+        '<code>capacity.severity_recovered</code> event only after every check for this long agrees, so a short-lived spike never alerts. ' +
+        'This is one setting for the whole install: it applies to every capacity automation and to the Events log, and it saves as soon as you change it.</p>' +
+      (status ? '<p id="tf-cap-hold-status" style="font-size:0.78rem;color:var(--color-text-tertiary);margin:4px 0 0">' + status + '</p>' : '');
+  }
+  function paintCapacityHold(host) {
+    host.innerHTML = capacityHoldHtml(_capHold);
+    // Assigned, not markup `selected` — see pinTreeSelects.
+    host.querySelector("#tf-cap-hold-sel").value = String(_capHold.holdMinutes);
+    host.hidden = false;
+  }
+  function syncCapacityHold(panel) {
+    var host = panel.querySelector("#tf-cap-hold");
+    var act = panel.querySelector("#tf-action");
+    if (!host || !act) return;
+    if (!patternReachesCapacity(act.value)) { host.hidden = true; return; }
+    if (_capHold) {
+      if (!host.querySelector("#tf-cap-hold-sel")) paintCapacityHold(host);
+      host.hidden = false;
+      return;
+    }
+    if (!_capHoldLoading) {
+      _capHoldLoading = api.automations.capacityAlertHold().then(function (t) {
+        _capHold = t;
+      }).catch(function () {
+        // Leave the row hidden: the automation still saves without it.
+      }).then(function () { _capHoldLoading = null; });
+    }
+    _capHoldLoading.then(function () {
+      var h = panel.querySelector("#tf-cap-hold");
+      var a = panel.querySelector("#tf-action");
+      if (_capHold && h && a && patternReachesCapacity(a.value)) paintCapacityHold(h);
+    });
+  }
+  async function saveCapacityHold(sel) {
+    var prev = _capHold ? String(_capHold.holdMinutes) : sel.value;
+    var minutes = parseInt(sel.value, 10);
+    sel.disabled = true;
+    try {
+      _capHold = await api.automations.setCapacityAlertHold(minutes);
+      var host = sel.closest("#tf-cap-hold");
+      if (host) paintCapacityHold(host);
+      showToast(minutes === 0
+        ? "Capacity changes now alert on the first reading"
+        : "Capacity changes must now hold for " + capacityHoldLabel(minutes) + " before alerting", "success");
+    } catch (err) {
+      sel.value = prev;
+      sel.disabled = false;
+      showToast("Could not save the alert hold: " + (err && err.message ? err.message : "unknown error"), "error");
+    }
+  }
   function renderTriggerFields() {
     var panel = document.getElementById("aw-step-3");
     var cat = panel.querySelector("#aw-trigger-type").value;
@@ -4708,6 +4812,8 @@ async function openAutomationWizard(existing, opts) {
         '<button type="button" class="btn btn-sm btn-secondary tf-add-detail" style="margin-top:4px">+ Condition</button>' +
         '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:4px 0 0">Matches a field inside the event’s own details, so one action can be split into the cases worth alerting on — <code>direction</code> is <code>escalated</code> on <code>capacity.severity_changed</code> fires on the way up and stays quiet on the way back down. Every field is compared as text.</p>' +
         '</div>';
+      // Filled by syncCapacityHold once the pattern reaches a capacity event.
+      html += '<div id="tf-cap-hold" class="form-group" hidden></div>';
       html += '<p style="font-size:0.78rem;color:var(--color-text-tertiary)">Audit-event triggers aren’t tied to assets — the device filter from the previous step is ignored.</p>';
     } else if (cat === "change") {
       var ch = tr.type === "change" ? tr : {};
@@ -4746,6 +4852,7 @@ async function openAutomationWizard(existing, opts) {
         unitPick.setAttribute("data-touched", "1");
       }
     }
+    syncCapacityHold(panel);
     refreshTriggerSentence();
     refreshDimOptions(panel);
     syncDurationRequirement(panel);
@@ -4804,7 +4911,13 @@ async function openAutomationWizard(existing, opts) {
     // Delegated: any input/select change re-renders the sentence (the tree's
     // own change handler also calls it — a second render is harmless) and
     // re-syncs the severity mode (single dropdown vs multi tiers + accent).
-    panel.addEventListener("input", function () { refreshTriggerSentence(); syncSeverityMode(panel); syncDurationRequirement(panel); syncDownDetection(panel); });
+    panel.addEventListener("input", function () { refreshTriggerSentence(); syncSeverityMode(panel); syncDurationRequirement(panel); syncDownDetection(panel); syncCapacityHold(panel); });
+    // The capacity alert hold is a global setting, not part of the draft: a
+    // change saves at once (like it did on the Database card) and is never
+    // collected into the rule.
+    panel.addEventListener("change", function (e) {
+      if (e.target && e.target.id === "tf-cap-hold-sel") saveCapacityHold(e.target);
+    });
     // The unit picker on a SELECT: `change` as well as `input`, since the unit
     // switch re-denominates the number in the box and a browser that fires only
     // one of the two would leave the field reading the old unit's value.

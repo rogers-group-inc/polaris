@@ -61,10 +61,20 @@ A reading that agrees with the recorded severity discards the pending change. A
 reading that disagrees extends it, and once `since` is at least the hold
 (`capacity.alertHold`, default 30 minutes) in the past, the latest severity is
 recorded and the Event written, carrying `heldSec` and "(held N min)" in its
-message. The hold is set on the Database card or by `PUT
-/server-settings/capacity-alert-hold`, from 0 (the first reading, the behaviour
+message. The hold is set on the event trigger step of a capacity automation
+(the wizard shows it whenever the action pattern reaches
+`capacity.severity_changed` / `capacity.severity_recovered`) or by `PUT
+/automations/capacity-alert-hold`, from 0 (the first reading, the behaviour
 before this rule) to 1440 minutes, and changing it writes
-`capacity.alert_hold_updated`.
+`capacity.alert_hold_updated`. It is still ONE global setting, not a field of the
+rule: it decides when the Event exists at all, so every capacity automation and
+the Events log see the same held event, and the wizard saves it on change rather
+than with the draft. It moved there from the Database card on 2026-10-13 because
+an operator looks for "how long before this alerts" on the automation that
+alerts; the card keeps a read-only line naming the hold, linking to Automations,
+and showing what was last recorded or is being waited out. A per-automation hold
+was considered and rejected: the Event would have to be written on every
+change, which is the Events-log noise this rule removed.
 
 The choices inside that, and why:
 

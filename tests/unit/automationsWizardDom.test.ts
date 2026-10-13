@@ -34,6 +34,12 @@ const downloads: { obj: unknown; filename: string }[] = [];
  *  Devices step a carve-out picture without re-standing the whole harness. */
 const DEFAULT_PREVIEW: Record<string, unknown> = { supported: true, totalEvaluated: 3, meetsCount: 0, matches: [] };
 let previewResponse: Record<string, unknown> = DEFAULT_PREVIEW;
+/** The global capacity alert hold (rule 105) the event step reads and writes. */
+let capHold: Record<string, unknown> = {
+  holdMinutes: 30, intervalMinutes: 10, pending: null,
+  recorded: { severity: "warning", recordedAt: "2026-10-13T22:16:49Z" },
+};
+const capHoldPuts: number[] = [];
 
 beforeAll(() => {
   const win = new Window();
@@ -45,6 +51,7 @@ beforeAll(() => {
     String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   g.showToast = (msg: string, kind: string) => { if (kind === "error") toastErrors.push(msg); };
   g.showConfirm = async () => false;
+  g.formatDate = (s: string) => String(s);
   g.permAtLeast = () => true;
   g.closeModal = () => {};
   // Mirror production: openModal creates ONE #modal-overlay and REUSES it,
@@ -71,6 +78,12 @@ beforeAll(() => {
     automations: {
       update: async (_id: string, payload: unknown) => { savedPayloads.push(payload as Record<string, unknown>); return { rule: {} }; },
       create: async (payload: unknown) => { savedPayloads.push(payload as Record<string, unknown>); return { rule: {} }; },
+      capacityAlertHold: async () => ({ ...capHold }),
+      setCapacityAlertHold: async (minutes: number) => {
+        capHoldPuts.push(minutes);
+        capHold = { ...capHold, holdMinutes: minutes };
+        return { ...capHold };
+      },
       // Exactly what GET /automations/schema answers — dimensionPickers is
       // merged in at the route, not by buildSchemaCatalog, and without it every
       // dimension control falls back to a plain text box.
@@ -4444,6 +4457,75 @@ describe("event trigger: detail conditions", () => {
     expect(rows.length).toBe(2);
     (rows[1]!.querySelector(".tf-dval") as unknown as { value: string }).value = "orphan";
     expect((await save()).trigger.detailsMatch).toEqual({ direction: "escalated" });
+  });
+});
+
+/**
+ * The capacity alert hold (business rule 105) lives on the event trigger step:
+ * shown while the pattern reaches a capacity severity event, saved straight to
+ * the global setting on change, and never collected into the rule.
+ */
+describe("event trigger: capacity alert hold", () => {
+  const rule = (actionPattern: string) => ({
+    id: "r-cap-hold",
+    name: "Capacity severity escalated",
+    description: null,
+    enabled: true,
+    severity: "warning",
+    trigger: { type: "event", actionPattern, detailsMatch: { direction: "escalated" } },
+    scope: {},
+    reset: { mode: "event", resetEvent: { actionPattern: "capacity.severity_recovered", resourceType: null } },
+    cooldownSec: 600,
+    messageTemplate: "{value}",
+  });
+  async function openStep3(r: Record<string, unknown>): Promise<void> {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(r);
+    (doc.querySelector('.stepper-step[data-step="3"]') as unknown as { click: () => void }).click();
+    await new Promise((res) => setTimeout(res, 20));
+  }
+  const hostEl = () => doc.querySelector("#aw-step-3 #tf-cap-hold") as unknown as { hidden: boolean } | null;
+
+  it("shows the stored hold and the recorded severity on a capacity automation", async () => {
+    await openStep3(rule("capacity.severity_changed"));
+    expect(hostEl()!.hidden).toBe(false);
+    expect((doc.querySelector("#tf-cap-hold-sel") as unknown as { value: string }).value).toBe("30");
+    expect(doc.querySelector("#tf-cap-hold-status")!.textContent)
+      .toBe("Alerting last recorded Action recommended at 2026-10-13T22:16:49Z.");
+  });
+
+  it("matches a glob that reaches a capacity event, and hides on any other pattern", async () => {
+    await openStep3(rule("capacity.*"));
+    expect(hostEl()!.hidden).toBe(false);
+    await openStep3(rule("monitor.status_changed"));
+    expect(hostEl()!.hidden).toBe(true);
+    const win = g.window as InstanceType<typeof Window>;
+    const act = doc.querySelector("#tf-action") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    act.value = "capacity.severity_recovered";
+    act.dispatchEvent(new win.Event("input", { bubbles: true }));
+    await new Promise((res) => setTimeout(res, 10));
+    expect(hostEl()!.hidden).toBe(false);
+  });
+
+  it("saves a change at once to the global setting and leaves it out of the rule", async () => {
+    capHoldPuts.length = 0;
+    await openStep3(rule("capacity.severity_changed"));
+    const win = g.window as InstanceType<typeof Window>;
+    const sel = doc.querySelector("#tf-cap-hold-sel") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    sel.value = "60";
+    sel.dispatchEvent(new win.Event("change", { bubbles: true }));
+    await new Promise((res) => setTimeout(res, 10));
+    expect(capHoldPuts).toEqual([60]);
+    expect(toastErrors).toEqual([]);
+    expect((doc.querySelector("#tf-cap-hold-sel") as unknown as { value: string }).value).toBe("60");
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((res) => setTimeout(res, 30));
+    const p = savedPayloads[0] as Record<string, any>;
+    expect(JSON.stringify(p)).not.toContain("holdMinutes");
+    expect(p.trigger).toEqual({ type: "event", actionPattern: "capacity.severity_changed", detailsMatch: { direction: "escalated" } });
+    expect(() => ruleInputSchema.parse(p)).not.toThrow();
   });
 });
 

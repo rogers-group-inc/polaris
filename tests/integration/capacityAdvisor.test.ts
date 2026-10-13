@@ -156,17 +156,17 @@ d("capacity alert hold (business rule 105)", () => {
     await prisma.setting.delete({ where: { key: "capacity.lastSeverity" } });
   });
 
-  it("PUT /capacity-alert-hold validates, saves, and writes an audit Event", async () => {
+  it("PUT /automations/capacity-alert-hold validates, saves, and writes an audit Event", async () => {
     const { agent, csrf } = await authedAgent(app);
     for (const bad of [{}, { minutes: -1 }, { minutes: 1.5 }, { minutes: 1441 }, { minutes: 10, extra: 1 }]) {
       const res = await agent
-        .put("/api/v1/server-settings/capacity-alert-hold")
+        .put("/api/v1/automations/capacity-alert-hold")
         .set("X-CSRF-Token", csrf)
         .send(bad);
       expect(res.status).toBe(400);
     }
     const ok = await agent
-      .put("/api/v1/server-settings/capacity-alert-hold")
+      .put("/api/v1/automations/capacity-alert-hold")
       .set("X-CSRF-Token", csrf)
       .send({ minutes: 20 });
     expect(ok.status).toBe(200);

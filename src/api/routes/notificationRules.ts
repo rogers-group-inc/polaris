@@ -11,6 +11,9 @@
  *   POST /preview  automationManagement:fullwrite  (dry-run a draft)
  *   POST /message-example  automationManagement:write  (the In-app Alert
  *        card's example: the draft's message rendered for one of its devices)
+ *   GET / PUT /capacity-alert-hold  automationManagement:read / write  (the
+ *        global capacity alert hold, business rule 105 — set from the event
+ *        trigger step of a capacity.* automation)
  *   POST / PUT/:id / DELETE/:id   automationManagement:fullwrite  (CRUD)
  *
  * Validation via ruleInputSchema (notificationTypes); business logic in
@@ -33,6 +36,12 @@ import { listRecipientUsers } from "../../services/notificationRecipientService.
 import { listStateProbes } from "../../services/manufacturerProfileService.js";
 import { listCheckCatalog } from "../../services/pathCheckService.js";
 import { runTestDelivery } from "../../services/automationTestService.js";
+import {
+  getCapacityTransitionState,
+  setCapacityAlertHoldMinutes,
+  CAPACITY_ALERT_HOLD_MAX_MINUTES,
+} from "../../services/capacityService.js";
+import { logEvent } from "./events.js";
 
 export const notificationRulesRouter = Router();
 
@@ -79,6 +88,41 @@ notificationRulesRouter.get("/scope-options", requirePermission("automationManag
 notificationRulesRouter.get("/recipient-users", requirePermission("automationManagement", "read"), async (_req, res, next) => {
   try {
     res.json({ users: await listRecipientUsers() });
+  } catch (err) { next(err); }
+});
+
+// How long a capacity severity change must hold before the capacityWatch job
+// writes it as an Event (business rule 105). One global setting — it decides
+// when the capacity.* Event exists at all — but it is set from the wizard's
+// event trigger step, beside the automations that fire on it. GET carries the
+// recorded severity and any change being waited out, for the status line.
+const capacityAlertHoldSchema = z
+  .object({ minutes: z.number().int().min(0).max(CAPACITY_ALERT_HOLD_MAX_MINUTES) })
+  .strict();
+
+notificationRulesRouter.get("/capacity-alert-hold", requirePermission("automationManagement", "read"), async (_req, res, next) => {
+  try {
+    res.json(await getCapacityTransitionState());
+  } catch (err) { next(err); }
+});
+
+notificationRulesRouter.put("/capacity-alert-hold", requirePermission("automationManagement", "write"), async (req, res, next) => {
+  try {
+    const { minutes } = capacityAlertHoldSchema.parse(req.body ?? {});
+    const before = (await getCapacityTransitionState()).holdMinutes;
+    await setCapacityAlertHoldMinutes(minutes);
+    await logEvent({
+      level: "info",
+      action: "capacity.alert_hold_updated",
+      resourceType: "setting",
+      resourceName: "capacity.alertHold",
+      actor: req.session?.username,
+      message: minutes === 0
+        ? "Capacity severity changes now alert on the first reading"
+        : `Capacity severity changes must now hold for ${minutes} min before alerting`,
+      details: { from: before, to: minutes },
+    });
+    res.json(await getCapacityTransitionState());
   } catch (err) { next(err); }
 });
 

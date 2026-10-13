@@ -110,8 +110,6 @@ import { Prisma } from "../../generated/prisma/client.js";
 import {
   getCapacitySnapshot,
   getCapacityTransitionState,
-  setCapacityAlertHoldMinutes,
-  CAPACITY_ALERT_HOLD_MAX_MINUTES,
 } from "../../services/capacityService.js";
 import { computePgTuning, pgTuningToAdvisorShape } from "../../services/pgTuningService.js";
 import { getSampleRetention, updateSampleRetention } from "../../services/sampleRetentionService.js";
@@ -1637,33 +1635,8 @@ router.get("/capacity-advisor", async (_req, res, next) => {
   }
 });
 
-// How long a capacity severity change must hold before the capacityWatch job
-// writes it as an Event (business rule 105). 0 = on the first reading.
-const capacityAlertHoldSchema = z
-  .object({ minutes: z.number().int().min(0).max(CAPACITY_ALERT_HOLD_MAX_MINUTES) })
-  .strict();
-
-router.put("/capacity-alert-hold", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
-  try {
-    const { minutes } = capacityAlertHoldSchema.parse(req.body ?? {});
-    const before = (await getCapacityTransitionState()).holdMinutes;
-    await setCapacityAlertHoldMinutes(minutes);
-    await logEvent({
-      level: "info",
-      action: "capacity.alert_hold_updated",
-      resourceType: "setting",
-      resourceName: "capacity.alertHold",
-      actor: req.session?.username,
-      message: minutes === 0
-        ? "Capacity severity changes now alert on the first reading"
-        : `Capacity severity changes must now hold for ${minutes} min before alerting`,
-      details: { from: before, to: minutes },
-    });
-    res.json(await getCapacityTransitionState());
-  } catch (err) {
-    next(err);
-  }
-});
+// The capacity alert hold (business rule 105) is set from the automation
+// wizard's event trigger step: GET/PUT /automations/capacity-alert-hold.
 
 // ─── Platform lifecycle ───────────────────────────────────────────────────
 //
