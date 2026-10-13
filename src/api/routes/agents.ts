@@ -52,6 +52,7 @@ import {
   enqueueProcessLogSamples,
   enqueueServiceLogSamples,
 } from "../../services/sampleWriteBuffer.js";
+import { recordInterfaceLinkEvents } from "../../services/interfaceLinkEventService.js";
 import { persistAssetServices } from "../../services/serviceInventoryService.js";
 import { persistAssetSoftware } from "../../services/softwareInventoryService.js";
 import { persistInterfaceRows } from "../../services/interfaceInventoryService.js";
@@ -222,6 +223,9 @@ const InterfaceSampleSchema = z.object({
   adminStatus:   z.string().max(32).nullable().optional(),
   operStatus:    z.string().max(32).nullable().optional(),
   speedBps:      z.number().int().nullable().optional(),
+  // Free string, normalised on ingest: an unexpected value must cost only
+  // the duplex reading, never reject the whole push.
+  duplex:        z.string().max(16).nullable().optional(),
   ipAddress:     z.string().max(64).regex(/^[A-Za-z0-9._:%\[\]-]+$/, "ipAddress may contain only letters, digits and . _ : % [ ] -").nullable().optional(),
   macAddress:    z.string().max(64).nullable().optional(),
   inOctets:      z.number().int().nullable().optional(),
@@ -547,6 +551,7 @@ async function ingestInterfaces(assetId: string, samples: StreamSamples<"interfa
     adminStatus: s.adminStatus ?? null,
     operStatus:  s.operStatus ?? null,
     speedBps:    s.speedBps != null ? BigInt(Math.round(s.speedBps)) : null,
+    duplex:      s.duplex === "full" || s.duplex === "half" ? s.duplex : null,
     ipAddress:   s.ipAddress ?? null,
     macAddress:  s.macAddress ?? null,
     inOctets:    s.inOctets  != null ? BigInt(Math.round(s.inOctets))  : null,
@@ -577,7 +582,10 @@ async function ingestInterfaces(assetId: string, samples: StreamSamples<"interfa
   // table in the database for rows nothing read as history. Current state for
   // every interface is written just below.
   const pinnedRows = rows.filter((r) => pinnedIfaces.has(r.ifName));
-  if (pinnedRows.length > 0) enqueueInterfaceSamples(pinnedRows);
+  if (pinnedRows.length > 0) {
+    enqueueInterfaceSamples(pinnedRows);
+    void recordInterfaceLinkEvents(pinnedRows);
+  }
   // CURRENT-STATE interface inventory. The agent push IS the full NIC table for
   // an agent-monitored host, so it's a legitimate full-pass writer — unlike the
   // fast pinned re-walk, which must never touch this table. Reuses the rows

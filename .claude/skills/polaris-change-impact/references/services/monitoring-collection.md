@@ -133,8 +133,32 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **`repairInterfacePins` is reconciled against the inventory JUST WRITTEN, not the one the canonicalization read.** A pin minted while a scrape was naming ports by description names a port that doesn't exist, and only the fresh rows can say which port it described. Edge-triggered (no write unless a pin moves) and audited via `asset.interface_pin.canonicalized` — awaited, unlike the fire-and-forget `logEvent` calls on the scrape hot path, because a silent pin change with no audit row is the failure worth avoiding. **The Event and the collector's warn lines name the PORTS, never the labels**: a port description is operator free text and in the field it is often a person ("Tim Smith" on a desk port), while Events are readable by anyone with events access and shipped off-host by the syslog / SFTP archivers — the reasoning business rule 35(e) applies to directory PII. The label is on the port's own row in-app, so the audit loses nothing actionable. A pin naming something the asset doesn't report AT ALL is LEFT ALONE: an interface can be absent from one scrape (module pulled, stack member rebooting) and stripping the pin would silently unmonitor it.
 
 **When changing this:**
-- Adding a column: Prisma model + migration → `toRow` (which mirrors `persistInterfaceSampleStream`'s mapping — keep the two in step or the sample and current-state views of an interface drift) → the agent's row map in `agents.ts` → the backfill job's projection → the `GET /assets/:id/system-info` interface projection → `public/js/assets.js` `_buildInterfacesTableDOM`.
+- Adding a column (most recent: `duplex`, 2026-10): Prisma model + migration → `toRow` (which mirrors `persistInterfaceSampleStream`'s mapping — keep the two in step or the sample and current-state views of an interface drift) → the agent's row map in `agents.ts` → the backfill job's projection → the `GET /assets/:id/system-info` interface projection → `public/js/assets.js` `_buildInterfacesTableDOM`.
 - Never add a second write cadence without re-reading the single-writer invariant above.
+
+---
+
+## services/interfaceLinkEventService.ts
+
+**What it owns:** The `monitor.interface_up` / `monitor.interface_down` Events — one per link edge on an operator-PINNED interface. The up event carries the negotiated speed and duplex ("Interface port5 (Uplink) on SW-1 came up — 1 Gbps, full duplex"); a down event is `warning`, or `info` with "(administratively down)" when `adminStatus` is down.
+
+**Public API:** `recordInterfaceLinkEvents` (fire-and-forget, never throws), plus the pure halves exported for tests: `detectInterfaceLinkTransitions`, `linkStateOf`, `formatLinkSpeed`, `interfaceLinkEvent`, `_resetInterfaceLinkState`.
+
+**Cross-service deps:** `prisma.asset` (hostname lookup, only when an edge fired), `eventLogService.logEventsBatch`, `logger`.
+
+**Used by:**
+- `src/services/monitoringService.ts` — `persistInterfaceSampleStream` (full system-info pass) and `recordFastFilteredResult` (fast pinned re-walk), each right after `enqueueInterfaceSamples` with the same rows.
+- `src/api/routes/agents.ts` — `ingestInterfaces`, beside its pinned-row enqueue.
+
+**Invariants:**
+- **State is in-memory, per process, keyed `(assetId, ifName)`.** The FIRST reading after a start only seeds it, so a restart never writes a burst of "came up" events; the price is that an edge while the process was down is not reported. One asset's interface stream has one producer (SNMP / REST on the monitor role, the agent push on the web role), so per-role maps never disagree. Entries unseen for 24h are pruned hourly.
+- **Only `up` and the definite downs (`down`, `lowerLayerDown`, `notPresent`) move the state.** `unknown` / `dormant` / `testing` / NULL — a synthesized FortiOS row, an agent with no carrier reading — leave it alone, so up → unknown → up is silent.
+- Only pinned rows reach it (every caller passes exactly what it enqueued), so "monitored interface" needs no second filter. These are audit Events, not alerts: written during maintenance too, and they DO feed the event tail, so an event automation can match `monitor.interface_*`.
+- Scale: the steady path is a Map lookup per pinned row — no DB work; the asset lookup and one `createMany` happen only for the batch that carried an edge.
+
+**When changing this:**
+- A new producer of pinned interface samples must call `recordInterfaceLinkEvents` beside its `enqueueInterfaceSamples`, or its links never raise events.
+- Duplex is only meaningful on an UP link; every collector gates it on oper-up, and so does `detectInterfaceLinkTransitions`.
 
 ---
 

@@ -124,6 +124,8 @@ beyond letters, digits, `.`, `_` and `-` (and a leading hyphen), and a port outs
 | `monitor.status_changed` | the pill moved. **Not written for entering or leaving `passive`** — that is a configuration edge, not a state change |
 | `monitor.dependency_suppressed` / `_resumed` | a subtree went behind a dark parent, or came back |
 | `monitor.down_detection_absent` | **one-shot** — the fleet has **no down automation at all**, so nothing is being judged |
+| `monitor.interface_up` | a **monitored** (pinned) interface came up. The message names the speed and duplex it negotiated — *Interface port5 (Uplink) on SW-1 came up — 1 Gbps, full duplex* — and says *unknown* for either one the source does not report. Filed on the asset, so its **Events** tab shows it |
+| `monitor.interface_down` | a monitored interface went down: `warning`, or `info` with *(administratively down)* when the port was shut. Only a port that was seen up first produces one — the first reading after Polaris starts records where each link is and writes nothing |
 
 ### Asset change
 

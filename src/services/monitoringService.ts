@@ -166,6 +166,7 @@ import {
   enqueueIpsecTunnelSamples,
   enqueuePerfSlaSamples,
   enqueueProcessSamples,
+  type InterfaceSampleRow,
 } from "./sampleWriteBuffer.js";
 import {
   classifyHardwareSensor,
@@ -178,7 +179,8 @@ import {
 } from "../utils/hardwareSensors.js";
 import { poeClassLabel, poeIfNameByIndex, poeStatusLabel, poeWalkOutcome } from "../utils/poePorts.js";
 import { entityPhysicalClassLabel, entityPhysicalIsInventory } from "../utils/hardwareSensors.js";
-import { ifStatusLabel, snmpIfTypeLabel } from "../utils/ifMib.js";
+import { dot3DuplexLabel, ifStatusLabel, snmpIfTypeLabel } from "../utils/ifMib.js";
+import { recordInterfaceLinkEvents } from "./interfaceLinkEventService.js";
 import { basePortToIfName, fdbStatusIsUsable, fdbStatusLabel, resolveFdbIdentity, type FdbEntry } from "../utils/macForwarding.js";
 import { buildArpNeighbors, arpNeighborsFromFortiosRest, type ArpNeighborEntry } from "../utils/arpNeighbors.js";
 import { persistAssetArpNeighbors } from "./arpTableService.js";
@@ -3290,6 +3292,9 @@ export function buildVcenterSystemInfo(reading: VcenterReading): SystemInfoSampl
         ifName:     pnic.device,
         operStatus: up ? "up" : "down",
         speedBps:   pnic.speedMb !== null ? pnic.speedMb * 1_000_000 : null,
+        // linkSpeed carries speed and duplex together, so both are absent on a
+        // down link and duplex needs no separate gate.
+        duplex:     up && pnic.duplex !== null ? (pnic.duplex ? "full" : "half") : null,
         macAddress: pnic.macAddress,
         ifType:     "physical",
         ifParent:   uplinkParent.get(pnic.device) ?? null,
@@ -4648,6 +4653,8 @@ export interface InterfaceSample {
   adminStatus?: string | null;
   operStatus?:  string | null;
   speedBps?:    number | null;
+  /** Negotiated duplex of an UP link, "full" | "half"; null when down or unknown. EtherLike-MIB dot3StatsDuplexStatus (SNMP), FortiOS monitor `duplex`, the Polaris Agent, vCenter pNIC links. */
+  duplex?:      string | null;
   ipAddress?:   string | null;
   macAddress?:  string | null;
   inOctets?:    number | null;
@@ -5370,37 +5377,38 @@ export async function recordFastFilteredResult(assetId: string, result: Collecti
     }
   }
   if (d.interfaces.length > 0) {
-    enqueueInterfaceSamples(
-      d.interfaces.map((i) => ({
-        assetId,
-        timestamp: now,
-        cadence:     "fast" as const,
-        ifName:      i.ifName,
-        adminStatus: i.adminStatus ?? null,
-        operStatus:  i.operStatus ?? null,
-        speedBps:    i.speedBps != null ? BigInt(Math.round(i.speedBps)) : null,
-        ipAddress:   i.ipAddress ?? null,
-        macAddress:  i.macAddress ?? null,
-        inOctets:    i.inOctets  != null ? BigInt(Math.round(i.inOctets))  : null,
-        outOctets:   i.outOctets != null ? BigInt(Math.round(i.outOctets)) : null,
-        inErrors:    i.inErrors  != null ? BigInt(Math.round(i.inErrors))  : null,
-        outErrors:   i.outErrors != null ? BigInt(Math.round(i.outErrors)) : null,
-        ifType:      null,
-        ifParent:    null,
-        vlanId:      null,
-        nativeVlan:  i.nativeVlan ?? null,
-        taggedVlans: i.taggedVlans ?? [],
-        trunksAllVlans: i.trunksAllVlans === true,
-        alias:       i.alias       ?? null,
-        description: i.description ?? null,
-        addressingMode: null,
-        // Passed through, NOT nulled: the fast SNMP path collects PoE so a
-        // port fault is alertable on the per-minute cadence rather than
-        // waiting for the next heavy scrape.
-        poeStatus:   i.poeStatus ?? null,
-        poeClass:    i.poeClass  ?? null,
-      })),
-    );
+    const ifaceRows: InterfaceSampleRow[] = d.interfaces.map((i) => ({
+      assetId,
+      timestamp: now,
+      cadence:     "fast" as const,
+      ifName:      i.ifName,
+      adminStatus: i.adminStatus ?? null,
+      operStatus:  i.operStatus ?? null,
+      speedBps:    i.speedBps != null ? BigInt(Math.round(i.speedBps)) : null,
+      duplex:      i.duplex ?? null,
+      ipAddress:   i.ipAddress ?? null,
+      macAddress:  i.macAddress ?? null,
+      inOctets:    i.inOctets  != null ? BigInt(Math.round(i.inOctets))  : null,
+      outOctets:   i.outOctets != null ? BigInt(Math.round(i.outOctets)) : null,
+      inErrors:    i.inErrors  != null ? BigInt(Math.round(i.inErrors))  : null,
+      outErrors:   i.outErrors != null ? BigInt(Math.round(i.outErrors)) : null,
+      ifType:      null,
+      ifParent:    null,
+      vlanId:      null,
+      nativeVlan:  i.nativeVlan ?? null,
+      taggedVlans: i.taggedVlans ?? [],
+      trunksAllVlans: i.trunksAllVlans === true,
+      alias:       i.alias       ?? null,
+      description: i.description ?? null,
+      addressingMode: null,
+      // Passed through, NOT nulled: the fast SNMP path collects PoE so a
+      // port fault is alertable on the per-minute cadence rather than
+      // waiting for the next heavy scrape.
+      poeStatus:   i.poeStatus ?? null,
+      poeClass:    i.poeClass  ?? null,
+    }));
+    enqueueInterfaceSamples(ifaceRows);
+    void recordInterfaceLinkEvents(ifaceRows);
   }
   if (d.storage.length > 0) {
     enqueueStorageSamples(
@@ -6162,6 +6170,7 @@ export function buildFortiInterfaceSamples(
         ?? (i.status === "down" ? "down" : i.status === "up" ? "up" : (i.status ?? null)),
       operStatus:  i.link === false ? "down" : i.link === true ? "up" : null,
       speedBps:    speedMbps != null ? Math.round(speedMbps * 1_000_000) : null,
+      duplex:      fortiMonitorDuplex(i.link, i.duplex),
       ipAddress:   ip,
       macAddress:  typeof i.mac === "string" ? i.mac.toUpperCase() : null,
       inOctets:    pickFiniteNumber(i.rx_bytes),
@@ -6177,6 +6186,19 @@ export function buildFortiInterfaceSamples(
     });
   }
   return interfaces;
+}
+
+/**
+ * FortiOS monitor `duplex` → "full" | "half" | null. The field is numeric:
+ * 1 on a full-duplex link that is up, 0 on a link that is down (confirmed on
+ * FortiOS 7.6.7 and 8.0.1 against the lab gates). 0 on a link that IS up can
+ * only be half duplex. A down link has no duplex at all, so `link` gates it.
+ */
+export function fortiMonitorDuplex(link: unknown, duplex: unknown): string | null {
+  if (link !== true || typeof duplex !== "number") return null;
+  if (duplex === 1) return "full";
+  if (duplex === 0) return "half";
+  return null;
 }
 
 /**
@@ -7024,6 +7046,9 @@ const OID = {
   ifHighSpeed:    "1.3.6.1.2.1.31.1.1.1.15",
   ifAlias:        "1.3.6.1.2.1.31.1.1.1.18",
   ipAdEntIfIndex: "1.3.6.1.2.1.4.20.1.2",
+  // EtherLike-MIB (RFC 3635). Indexed by dot3StatsIndex, which the MIB
+  // defines as the interface's ifIndex — so it joins IF-MIB rows directly.
+  dot3StatsDuplexStatus: "1.3.6.1.2.1.10.7.2.1.19",
   // ENTITY-MIB / ENTITY-SENSOR-MIB (RFC 4133 / 3433). For temperature
   // sensors, entPhySensorType=8 (celsius). entPhySensorScale + Precision tell
   // us how to scale entPhySensorValue back to a real number; entPhysicalDescr
@@ -8678,7 +8703,7 @@ async function collectSystemInfoSnmp(
     try {
       const [
         names, descrs, admin, oper, speeds, hiSpeeds, mac,
-        in32, out32, inHC, outHC, ipMap, inErr, outErr, ifTypes, aliases,
+        in32, out32, inHC, outHC, ipMap, inErr, outErr, ifTypes, aliases, duplexes,
       ] = await Promise.all([
         snmpWalk(session, OID.ifName).catch(() => new Map()),
         snmpWalk(session, OID.ifDescr).catch(() => new Map()),
@@ -8696,6 +8721,9 @@ async function collectSystemInfoSnmp(
         snmpWalk(session, OID.ifOutErrors).catch(() => new Map()),
         snmpWalk(session, OID.ifType).catch(() => new Map()),
         snmpWalk(session, OID.ifAlias).catch(() => new Map()),
+        // Ethernet-only table; a device without EtherLike-MIB answers an
+        // empty walk and every interface's duplex stays null.
+        snmpWalk(session, OID.dot3StatsDuplexStatus).catch(() => new Map()),
       ]);
 
       // Build ifIndex → first IP map by inverting ipAdEntIfIndex (suffix is the IP itself).
@@ -8726,11 +8754,15 @@ async function collectSystemInfoSnmp(
         const outHi = snmpVbToNumber(outHC.get(idx));
         const aliasRaw = snmpVbToString(aliases.get(idx));
         const alias = aliasRaw && aliasRaw.trim() ? aliasRaw.trim() : null;
+        const operStatus = ifStatusLabel(snmpVbToNumber(oper.get(idx)));
         interfaces.push({
           ifName:      name,
           adminStatus: ifStatusLabel(snmpVbToNumber(admin.get(idx))),
-          operStatus:  ifStatusLabel(snmpVbToNumber(oper.get(idx))),
+          operStatus,
           speedBps,
+          // Duplex only describes a link that is up; some agents keep
+          // reporting the last negotiated value after the cable is pulled.
+          duplex:      operStatus === "up" ? dot3DuplexLabel(snmpVbToNumber(duplexes.get(idx))) : null,
           ipAddress:   ipByIfIndex.get(idx) || null,
           macAddress:  snmpMacFromBuffer(mac.get(idx)),
           inOctets:    inHi != null  ? inHi  : snmpVbToNumber(in32.get(idx)),
@@ -9068,6 +9100,16 @@ async function collectFastFilteredSnmp(
       ? await collectPoePortsSnmp(session, host, indexToNameAll)
       : new Map<string, { poeStatus: string | null; poeClass: string | null }>();
 
+    // Duplex for the pinned ports, in its OWN multi-GET rather than in the
+    // one above: dot3StatsDuplexStatus exists only on Ethernet interfaces,
+    // and an SNMPv1 agent answers a GET naming one missing instance with
+    // noSuchName for the WHOLE PDU — which would cost the pass every
+    // counter it just read. Here a failure only loses duplex.
+    const duplexByIdx = ifIndexByName.size > 0
+      ? await snmpMultiGet(session, [...ifIndexByName.values()].map((idx) => `${OID.dot3StatsDuplexStatus}.${idx}`))
+          .catch(() => new Map<string, unknown>())
+      : new Map<string, unknown>();
+
     const interfaces: InterfaceSample[] = [];
     for (const [pinnedName, idx] of ifIndexByName.entries()) {
       const name = snmpVbToString(vbByOid.get(`${OID.ifName}.${idx}`)) || pinnedName;
@@ -9080,11 +9122,13 @@ async function collectFastFilteredSnmp(
       const outHi = snmpVbToNumber(vbByOid.get(`${OID.ifHCOutOctets}.${idx}`));
       const aliasRaw = snmpVbToString(vbByOid.get(`${OID.ifAlias}.${idx}`));
       const alias = aliasRaw && aliasRaw.trim() ? aliasRaw.trim() : null;
+      const operStatus = ifStatusLabel(snmpVbToNumber(vbByOid.get(`${OID.ifOperStatus}.${idx}`)));
       interfaces.push({
         ifName:      name,
         adminStatus: ifStatusLabel(snmpVbToNumber(vbByOid.get(`${OID.ifAdminStatus}.${idx}`))),
-        operStatus:  ifStatusLabel(snmpVbToNumber(vbByOid.get(`${OID.ifOperStatus}.${idx}`))),
+        operStatus,
         speedBps,
+        duplex:      operStatus === "up" ? dot3DuplexLabel(snmpVbToNumber(duplexByIdx.get(`${OID.dot3StatsDuplexStatus}.${idx}`))) : null,
         ipAddress:   ipByIfIndex.get(idx) || null,
         macAddress:  snmpMacFromBuffer(vbByOid.get(`${OID.ifPhysAddress}.${idx}`)),
         inOctets:    inHi != null  ? inHi  : snmpVbToNumber(vbByOid.get(`${OID.ifInOctets}.${idx}`)),
@@ -9701,34 +9745,37 @@ async function persistInterfaceSampleStream(
   // split, the rollup + prune paths are shared, and legacy slow rows age out
   // through the existing 24h prune rather than needing a migration.
   const pinnedOnly = interfaces.filter((i) => pinnedIfaces.has(i.ifName));
-  if (pinnedOnly.length > 0) enqueueInterfaceSamples(
-    pinnedOnly.map((i) => ({
-      assetId,
-      timestamp: now,
-      cadence:     "fast" as const,
-      ifName:      i.ifName,
-      adminStatus: i.adminStatus ?? null,
-      operStatus:  i.operStatus ?? null,
-      speedBps:    i.speedBps != null ? BigInt(Math.round(i.speedBps)) : null,
-      ipAddress:   i.ipAddress ?? null,
-      macAddress:  i.macAddress ?? null,
-      inOctets:    i.inOctets  != null ? BigInt(Math.round(i.inOctets))  : null,
-      outOctets:   i.outOctets != null ? BigInt(Math.round(i.outOctets)) : null,
-      inErrors:    i.inErrors  != null ? BigInt(Math.round(i.inErrors))  : null,
-      outErrors:   i.outErrors != null ? BigInt(Math.round(i.outErrors)) : null,
-      ifType:      i.ifType   ?? null,
-      ifParent:    i.ifParent ?? null,
-      vlanId:      i.vlanId   ?? null,
-      nativeVlan:  i.nativeVlan ?? null,
-      taggedVlans: i.taggedVlans ?? [],
-      trunksAllVlans: i.trunksAllVlans === true,
-      alias:       i.alias       ?? null,
-      description: i.description ?? null,
-      addressingMode: i.addressingMode ?? null,
-      poeStatus:   i.poeStatus ?? null,
-      poeClass:    i.poeClass  ?? null,
-    })),
-  );
+  const pinnedRows: InterfaceSampleRow[] = pinnedOnly.map((i) => ({
+    assetId,
+    timestamp: now,
+    cadence:     "fast" as const,
+    ifName:      i.ifName,
+    adminStatus: i.adminStatus ?? null,
+    operStatus:  i.operStatus ?? null,
+    speedBps:    i.speedBps != null ? BigInt(Math.round(i.speedBps)) : null,
+    duplex:      i.duplex ?? null,
+    ipAddress:   i.ipAddress ?? null,
+    macAddress:  i.macAddress ?? null,
+    inOctets:    i.inOctets  != null ? BigInt(Math.round(i.inOctets))  : null,
+    outOctets:   i.outOctets != null ? BigInt(Math.round(i.outOctets)) : null,
+    inErrors:    i.inErrors  != null ? BigInt(Math.round(i.inErrors))  : null,
+    outErrors:   i.outErrors != null ? BigInt(Math.round(i.outErrors)) : null,
+    ifType:      i.ifType   ?? null,
+    ifParent:    i.ifParent ?? null,
+    vlanId:      i.vlanId   ?? null,
+    nativeVlan:  i.nativeVlan ?? null,
+    taggedVlans: i.taggedVlans ?? [],
+    trunksAllVlans: i.trunksAllVlans === true,
+    alias:       i.alias       ?? null,
+    description: i.description ?? null,
+    addressingMode: i.addressingMode ?? null,
+    poeStatus:   i.poeStatus ?? null,
+    poeClass:    i.poeClass  ?? null,
+  }));
+  if (pinnedRows.length > 0) {
+    enqueueInterfaceSamples(pinnedRows);
+    void recordInterfaceLinkEvents(pinnedRows);
+  }
   // Fold EVERY scraped interface MAC (monitored or not) into the asset's
   // Associated MACs list (AssetMacAddress), coalescing contiguous MACs
   // into range rows so a 48-port switch costs one row instead of 48.

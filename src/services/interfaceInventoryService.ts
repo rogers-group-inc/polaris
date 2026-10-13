@@ -74,6 +74,7 @@ function toRow(i: InterfaceSample): InterfaceInventoryRow {
     adminStatus: i.adminStatus ?? null,
     operStatus:  i.operStatus ?? null,
     speedBps:    i.speedBps != null ? BigInt(Math.round(i.speedBps)) : null,
+    duplex:      i.duplex ?? null,
     ipAddress:   i.ipAddress ?? null,
     macAddress:  i.macAddress ?? null,
     inOctets:    i.inOctets  != null ? BigInt(Math.round(i.inOctets))  : null,

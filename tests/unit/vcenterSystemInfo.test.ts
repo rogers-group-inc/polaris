@@ -192,3 +192,18 @@ describe("buildVcenterSystemInfo — VM rows", () => {
     expect(out.storage).toEqual([{ mountPath: "/var", totalBytes: 50, usedBytes: null }]);
   });
 });
+
+describe("buildVcenterSystemInfo — pNIC duplex", () => {
+  it("maps the linkSpeed duplex flag onto full / half, and a down pNIC to null", () => {
+    const rows = byName(buildVcenterSystemInfo(hostReading({
+      pnics: [
+        { device: "vmnic0", macAddress: "aa:00", speedMb: 10000, duplex: true,  driver: "x" },
+        { device: "vmnic1", macAddress: "aa:01", speedMb: 100,   duplex: false, driver: "x" },
+        { device: "vmnic2", macAddress: "aa:02", speedMb: null,  duplex: null,  driver: "x" },
+      ],
+    })).interfaces);
+    expect(rows["vmnic0"].duplex).toBe("full");
+    expect(rows["vmnic1"].duplex).toBe("half");
+    expect(rows["vmnic2"].duplex).toBeNull();
+  });
+});

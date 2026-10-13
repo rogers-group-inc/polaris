@@ -15,7 +15,7 @@
  * onto "physical" would put a virtual interface into a byTypes pin set.
  */
 
-/** IF-MIB ifAdminStatus / ifOperStatus (1.3.6.1.2.1.2.2.1.{7,8}). */
+/** IF-MIB ifAdminStatus / ifOperStatus (1.3.6.1.2.1.2.2.1.{7,8}). The agent's Windows and Linux readers emit the same strings. */
 export function ifStatusLabel(n: number | null | undefined): string | null {
   switch (n) {
     case 1: return "up";
@@ -25,6 +25,20 @@ export function ifStatusLabel(n: number | null | undefined): string | null {
     case 5: return "dormant";
     case 6: return "notPresent";
     case 7: return "lowerLayerDown";
+    default: return null;
+  }
+}
+
+/**
+ * EtherLike-MIB dot3StatsDuplexStatus (1.3.6.1.2.1.10.7.2.1.19, RFC 3635),
+ * whose index dot3StatsIndex is the interface's ifIndex. 1 = unknown (also
+ * what an agent reports for a link that is down), 2 = halfDuplex,
+ * 3 = fullDuplex.
+ */
+export function dot3DuplexLabel(n: number | null | undefined): string | null {
+  switch (n) {
+    case 2:  return "half";
+    case 3:  return "full";
     default: return null;
   }
 }

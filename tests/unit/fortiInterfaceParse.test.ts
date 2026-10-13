@@ -13,6 +13,7 @@ import {
   buildFortiInterfaceSamples,
   backfillFortiAggregateMembers,
   backfillFortiCmdbOnlyTunnels,
+  fortiMonitorDuplex,
 } from "../../src/services/monitoringService.js";
 
 describe("parseFortiCmdbInterfaceTable", () => {
@@ -237,5 +238,32 @@ describe("backfillFortiCmdbOnlyTunnels", () => {
     backfillFortiCmdbOnlyTunnels(interfaces, cmdb);
     expect(interfaces).toHaveLength(1);
     expect(interfaces[0]).toMatchObject({ ifName: "vpn1", ipAddress: "10.9.9.1", operStatus: "up" });
+  });
+});
+
+describe("fortiMonitorDuplex / buildFortiInterfaceSamples duplex", () => {
+  // Shape confirmed on FortiOS 7.6.7 and 8.0.1 (lab gates): `duplex` is 1 on a
+  // full-duplex link that is up and 0 on every link that is down.
+  it("reads 1 as full and 0 as half, but only on a link that is up", () => {
+    expect(fortiMonitorDuplex(true, 1)).toBe("full");
+    expect(fortiMonitorDuplex(true, 0)).toBe("half");
+    expect(fortiMonitorDuplex(false, 0)).toBeNull();
+    expect(fortiMonitorDuplex(false, 1)).toBeNull();
+    expect(fortiMonitorDuplex(undefined, 1)).toBeNull();
+    expect(fortiMonitorDuplex(true, undefined)).toBeNull();
+    expect(fortiMonitorDuplex(true, -1)).toBeNull();
+  });
+
+  it("carries duplex onto the interface sample", () => {
+    const rows = buildFortiInterfaceSamples(
+      {
+        wan1: { name: "wan1", link: true, speed: 1000, duplex: 1 },
+        dmz:  { name: "dmz",  link: false, speed: 0, duplex: 0 },
+      },
+      new Map(),
+    );
+    const by = Object.fromEntries(rows.map((r) => [r.ifName, r]));
+    expect(by.wan1).toMatchObject({ operStatus: "up", speedBps: 1_000_000_000, duplex: "full" });
+    expect(by.dmz).toMatchObject({ operStatus: "down", duplex: null });
   });
 });
