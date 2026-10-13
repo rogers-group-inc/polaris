@@ -575,12 +575,13 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
     wireNavbar();
   }
 
-  // Persistent searchbar — visible at the top of every page, and the ONLY way
-  // into search (it has no navbar slot). Tapping it expands search over the
-  // page: #search opens with the scope shortcuts, the leading magnifier turns
-  // into a back arrow, and the results land in #app-body as the operator
-  // types. The input lives in this shell-owned slot and is never re-rendered,
-  // so its value survives navigation.
+  // The searchbar. Hidden until search is opened: every page's top bar carries
+  // a magnifier (addTopbarSearch), placed between its title and its own
+  // buttons, and tapping it reveals this bar across the top (`.app.searching`)
+  // over #search, which shows the scope shortcuts and then the results as the
+  // operator types. Search has no navbar slot. The back arrow closes it. The
+  // input lives in this shell-owned slot and is never re-rendered, so its
+  // value survives navigation.
   function buildSearchbar() {
     var initials = (currentUser && currentUser.username || "?").slice(0, 2).toUpperCase();
     return ''
@@ -613,14 +614,48 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
     if (clear)  clear.style.display  = hasText ? "" : "none";
     if (avatar) avatar.style.display = hasText ? "none" : "";
     if (bar) bar.classList.toggle("expanded", open);
+    app.classList.toggle("searching", open);
   }
 
-  /** Open search over the current page (from a tap on the bar). */
+  /** Open search over the current page. */
   function openSearch() {
     var cur = PolarisRouter.current();
     if (cur.name === "search") return;
     _searchReturn = { route: cur.full || "", pushed: true };
     PolarisRouter.go("search");
+  }
+
+  /**
+   * The top-bar magnifier. Reveals the bar and focuses the input in the SAME
+   * tap, before the route change lands: iOS only raises the keyboard for a
+   * focus() made inside the user's gesture, and the input is display:none
+   * until `.searching` is on.
+   */
+  function openSearchFromButton() {
+    app.classList.add("searching");
+    var input = document.getElementById("search-input");
+    if (input) input.focus();
+    openSearch();
+  }
+
+  /**
+   * Put the magnifier into the page's top bar, first in its trailing group —
+   * between the title on the left and the page's own buttons (refresh…) on
+   * the right. Done here once for every page rather than in each
+   * renderTopbar, so a new page cannot ship without search. A page with no
+   * .m3-topbar (the topology graph, which has its own site search) gets none.
+   */
+  function addTopbarSearch(topbar) {
+    if (!topbar) return;
+    var trailing = topbar.querySelector(".m3-topbar .trailing");
+    if (!trailing || trailing.querySelector(".topbar-search-btn")) return;
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "icon-btn topbar-search-btn";
+    btn.setAttribute("aria-label", "Search");
+    btn.innerHTML = '<svg viewBox="0 0 24 24"><use href="#i-search"/></svg>';
+    btn.addEventListener("click", openSearchFromButton);
+    trailing.insertBefore(btn, trailing.firstChild);
   }
 
   /** Close search: clear the box and go back to the page it was opened over. */
@@ -823,6 +858,7 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
       var tabCtx = { user: currentUser, route: route };
       topbar.innerHTML = tabSpec.renderTopbar
         ? tabSpec.renderTopbar(tabCtx) : '';
+      addTopbarSearch(topbar);
       tabSpec.render(body, tabCtx);
       body.scrollTop = 0;
       installPtrForSpec(tabSpec, tabCtx);
@@ -846,6 +882,7 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
       var detailCtx = { user: currentUser, route: route };
       topbar.innerHTML = detailSpec.renderTopbar
         ? detailSpec.renderTopbar(detailCtx) : '';
+      addTopbarSearch(topbar);
       detailSpec.render(body, detailCtx);
       body.scrollTop = 0;
       installPtrForSpec(detailSpec, detailCtx);

@@ -224,7 +224,12 @@
     var sheet = document.createElement("div");
     sheet.className = "sheet asset-sheet";
     sheet.id = "asset-sheet";
+    // The handle + header ride a sticky band (.asset-sheet-top) so the name
+    // (edit menu), screenshot, refresh and close stay reachable however far the
+    // body is scrolled — and a scrolled sheet minimized to peek still shows
+    // its header band rather than whatever was mid-scroll.
     sheet.innerHTML = ''
+      + '<div class="asset-sheet-top">'
       + '<div class="sheet-handle"></div>'
       + '<div class="asset-sheet-header">'
       + '  <span class="dot" id="asset-sheet-dot" style="display:none;"></span>'
@@ -239,10 +244,17 @@
       + '  <button class="icon-btn" id="asset-sheet-refresh" aria-label="Refresh"><svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>'
       + '  <button class="icon-btn" id="asset-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
       + '</div>'
+      + '</div>'
       + '<div id="asset-host"></div>';
 
     document.body.appendChild(scrim);
     document.body.appendChild(sheet);
+
+    // The band is see-through at rest and fills only once content scrolls
+    // under it (.scrolled), so an unscrolled sheet shows no slab.
+    sheet.addEventListener("scroll", function () {
+      sheet.classList.toggle("scrolled", sheet.scrollTop > 0);
+    }, { passive: true });
 
     // Tapping the scrim (over the searchbar) minimizes rather than dismisses.
     scrim.addEventListener("click", minimize);
