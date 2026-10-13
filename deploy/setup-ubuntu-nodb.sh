@@ -23,7 +23,9 @@ APP_DIR="/opt/polaris"
 APP_USER="polaris"
 APP_GROUP="polaris"
 REPO_URL="https://github.com/rogers-group-inc/polaris.git"
-DATABASE_URL=""
+# POLARIS_DATABASE_URL (environment) is the safe way in; --db-url still works but
+# puts the password in argv for the whole install (rule 117).
+DATABASE_URL="${POLARIS_DATABASE_URL:-}"
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -38,17 +40,18 @@ PROMETHEUS_IP="127.0.0.1"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --db-url)            DATABASE_URL="$2"; shift 2 ;;
+    --db-url)            DATABASE_URL="$2"; DB_URL_FROM_ARGV=1; shift 2 ;;
     --app-dir)           APP_DIR="$2"; shift 2 ;;
     --repo-url)          REPO_URL="$2"; shift 2 ;;
     --public-url)        PUBLIC_URL="$2"; shift 2 ;;
     --monitor-replicas)  MONITOR_REPLICAS="$2"; shift 2 ;;
     --prometheus-ip)     PROMETHEUS_IP="$2"; shift 2 ;;
     --help|-h)
-      echo "Usage: bash setup-ubuntu-nodb.sh --db-url \"postgresql://user:pass@host:5432/polaris\" [--public-url https://polaris.example.com]"
+      echo "Usage: POLARIS_DATABASE_URL='postgresql://user:pass@host:5432/polaris' bash setup-ubuntu-nodb.sh [--public-url https://polaris.example.com]"
+      echo "       (or run with no URL and type it at the hidden prompt)"
       echo ""
       echo "Options:"
-      echo "  --db-url            PostgreSQL connection URL (required)"
+      echo "  --db-url            PostgreSQL connection URL — visible in ps while this runs; prefer POLARIS_DATABASE_URL"
       echo "  --app-dir           Installation directory (default: /opt/polaris)"
       echo "  --repo-url          Git repository URL"
       echo "  --public-url        https://<hostname>[:<port>]   (default: https://\$(hostname -f))"
@@ -69,7 +72,8 @@ if [[ -z "$DATABASE_URL" ]]; then
   echo -e "${YELLOW}No --db-url provided. Please enter the PostgreSQL connection URL.${NC}"
   echo -e "Format: postgresql://user:password@host:5432/database"
   echo ""
-  read -rp "DATABASE_URL: " DATABASE_URL
+  read -rsp "DATABASE_URL (input hidden): " DATABASE_URL
+  echo ""
   if [[ -z "$DATABASE_URL" ]]; then
     error "DATABASE_URL is required. Use --db-url or enter it when prompted."
   fi
@@ -78,6 +82,22 @@ fi
 # Validate URL format
 if [[ ! "$DATABASE_URL" =~ ^postgres(ql)?:// ]]; then
   error "Invalid DATABASE_URL — must start with postgresql:// or postgres://"
+fi
+
+# Business rule 117: the database password never rides argv, where ps and
+# /proc/<pid>/cmdline show it to every local account. psql gets a password-free
+# URL and the password through PGPASSWORD (percent-decoded).
+DB_URL_NOPASS="$DATABASE_URL"
+DB_URL_PASSWORD=""
+if [[ "$DATABASE_URL" =~ ^(postgres(ql)?://)([^:@/]+):([^@]*)@(.*)$ ]]; then
+  DB_URL_NOPASS="${BASH_REMATCH[1]}${BASH_REMATCH[3]}@${BASH_REMATCH[5]}"
+  _pw="${BASH_REMATCH[4]}"
+  DB_URL_PASSWORD="$(printf '%b' "${_pw//%/\\x}")"
+fi
+pg_psql() { PGPASSWORD="$DB_URL_PASSWORD" psql "$DB_URL_NOPASS" "$@"; }
+
+if [[ "${DB_URL_FROM_ARGV:-0}" == 1 ]]; then
+  warn "--db-url puts the database password in the process list for this install; next time use POLARIS_DATABASE_URL."
 fi
 
 info "Starting Polaris deployment on $(hostname) (remote database mode)"
@@ -268,13 +288,13 @@ fi
 # ─── 5. Test database connectivity ──────────────────────────────────────────
 info "Testing database connectivity..."
 if command -v psql &>/dev/null; then
-  if psql "$DATABASE_URL" -c "SELECT 1" &>/dev/null; then
+  if pg_psql -c "SELECT 1" &>/dev/null; then
     info "Database connection successful"
     # pg_dump must be at least the server's major — it refuses a newer server.
     # The distro's postgresql-client is whatever the release ships; a remote
     # server on a newer major than that fails every backup while `command -v`
     # reports success (the RHEL variant of this bit prod on 2026-09-09).
-    _srv_major=$(psql "$DATABASE_URL" -tAX -c "SHOW server_version_num" 2>/dev/null | tr -d '[:space:]' | sed -E 's/^([0-9]{2})[0-9]{4}$/\1/')
+    _srv_major=$(pg_psql -tAX -c "SHOW server_version_num" 2>/dev/null | tr -d '[:space:]' | sed -E 's/^([0-9]{2})[0-9]{4}$/\1/')
     _dump_major=$(pg_dump --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
     if [[ -n "$_srv_major" && -n "$_dump_major" && "$_dump_major" -lt "$_srv_major" ]]; then
       warn "pg_dump on PATH is PostgreSQL ${_dump_major} but the server is PostgreSQL ${_srv_major} — pg_dump refuses a newer server, so BACKUPS WILL FAIL."
@@ -287,8 +307,8 @@ if command -v psql &>/dev/null; then
     # and say plainly what a failure costs. Not fatal here for the same reason:
     # refusing to finish would leave the operator with a half-installed app and
     # no way to fix the database from this host anyway.
-    if psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" &>/dev/null; then
-      info "TimescaleDB extension present ($(psql "$DATABASE_URL" -tAX -c "SELECT extversion FROM pg_extension WHERE extname='timescaledb'" 2>/dev/null | tr -d '[:space:]' || echo 'version unknown'))"
+    if pg_psql -v ON_ERROR_STOP=1 -X -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" &>/dev/null; then
+      info "TimescaleDB extension present ($(pg_psql -tAX -c "SELECT extversion FROM pg_extension WHERE extname='timescaledb'" 2>/dev/null | tr -d '[:space:]' || echo 'version unknown'))"
     else
       warn "TimescaleDB is NOT enabled on this database, and Polaris requires it."
       warn "  Without it the 28 sample + rollup tables stay plain tables: retention prunes row"
@@ -301,7 +321,7 @@ if command -v psql &>/dev/null; then
     # pg-boss (queue runtime for monitor cadences at scale) lives in its own
     # `pgboss` schema. Try to create it as the connecting role; if the role
     # doesn't have CREATE on the database, surface what the DBA needs to run.
-    if psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X <<'SQL' &>/dev/null
+    if pg_psql -v ON_ERROR_STOP=1 -X <<'SQL' &>/dev/null
 CREATE SCHEMA IF NOT EXISTS pgboss;
 SQL
     then
@@ -546,6 +566,16 @@ install -o root -g root -m 0755 "$APP_DIR/deploy/scripts/polaris-nginx-apply.sh"
 install -o root -g root -m 0440 "$APP_DIR/deploy/sudoers.d/polaris-nginx"        /etc/sudoers.d/polaris-nginx
 install -o root -g root -m 0644 "$APP_DIR/deploy/tmpfiles.d/polaris-nginx.conf"  /etc/tmpfiles.d/polaris-nginx.conf
 systemd-tmpfiles --create /etc/tmpfiles.d/polaris-nginx.conf >/dev/null 2>&1 || true
+# The in-app updater's group restart (business rule 117): a fixed root
+# oneshot, polaris-update-sync.service, that syncs the shipped units and
+# helpers and restarts polaris.target — and a polkit rule letting $APP_USER
+# start THAT unit and restart the polaris units, nothing else.
+install -o root -g root -m 0755 "$APP_DIR/deploy/scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync
+install -o root -g root -m 0644 "$APP_DIR/deploy/polaris-update-sync.service"   /etc/systemd/system/polaris-update-sync.service
+mkdir -p /etc/polkit-1/rules.d
+install -o root -g root -m 0644 "$APP_DIR/deploy/polkit/49-polaris.rules"       /etc/polkit-1/rules.d/49-polaris.rules
+systemctl daemon-reload
+info "Installed the in-app updater's root helper and its polkit rule"
 NGINX_GROUP=$(stat -c '%G' /etc/polaris-nginx/cert.pem 2>/dev/null || true)
 if [[ -n "$NGINX_GROUP" ]] && ! id -nG "$APP_USER" 2>/dev/null | grep -qw "$NGINX_GROUP"; then
   usermod -aG "$NGINX_GROUP" "$APP_USER"

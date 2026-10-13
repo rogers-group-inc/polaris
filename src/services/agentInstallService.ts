@@ -2087,6 +2087,21 @@ $confPath   = Join-Path $confDir    'agent.conf'
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 New-Item -ItemType Directory -Force -Path $confDir    | Out-Null
 
+# Business rule 117: lock the config directory BEFORE anything secret lands in
+# it. %ProgramData% lets every local user create folders and files, so a
+# pre-created Polaris\\agent (owned by that user) or a window between writing
+# agent.conf and fixing its ACL would hand them the bearer. Take ownership for
+# Administrators, drop inherited and existing entries, and grant only SYSTEM
+# and Administrators — on the parent too, so the folder cannot be swapped.
+# SIDs, not names: the names are localized.
+foreach ($d in @((Split-Path -Parent $confDir), $confDir)) {
+  & icacls.exe $d /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+  & icacls.exe $d /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /Q | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "could not restrict the ACL on $d" }
+  # Whatever was already inside now inherits only that.
+  & icacls.exe (Join-Path $d '*') /reset /T /C /Q 2>$null | Out-Null
+}
+
 # Stop + remove any existing install so reinstall is idempotent.
 $svc = Get-Service -Name 'polaris-agent' -ErrorAction SilentlyContinue
 if ($svc) {
@@ -2102,6 +2117,7 @@ Invoke-PolarisPinnedDownload -Url $downloadUrl -OutFile $binaryPath -ExpectedPin
 # Write agent.conf from the embedded base64. Atomic-ish via .tmp + Move-Item.
 $confBytes = [Convert]::FromBase64String($confB64)
 $tmpConf   = "$confPath.tmp"
+Remove-Item -Force -LiteralPath $tmpConf -ErrorAction SilentlyContinue
 [IO.File]::WriteAllBytes($tmpConf, $confBytes)
 Move-Item -Force -LiteralPath $tmpConf -Destination $confPath
 

@@ -33,6 +33,7 @@
  * about asset windows, and a backup cadence needs none of it.
  */
 
+import { makeFilePrivate } from "../utils/privateFiles.js";
 import { copyFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -230,5 +231,8 @@ export async function copyBackupOffHost(sourcePath: string, filename: string, co
   await mkdir(copyToDir, { recursive: true });
   const dest = join(copyToDir, filename);
   await copyFile(sourcePath, dest);
+  // Private where the share supports modes (rule 117); a share that does not
+  // is the operator's mount options to set.
+  makeFilePrivate(dest);
   return dest;
 }

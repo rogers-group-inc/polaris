@@ -67,7 +67,7 @@ vi.mock("../../src/db.js", () => ({
   prismaBase: {},
 }));
 
-const { renderNodeScript, renderTeardownScript, buildNodeBundle, TOKEN_TTL_MS, APPROVAL_WINDOW_MS } =
+const { renderNodeScript, renderTeardownScript, buildNodeBundle, peerHostFingerprints, TOKEN_TTL_MS, APPROVAL_WINDOW_MS } =
   await import("../../src/services/haEnrollmentService.js");
 const { listTar, readTarEntry } = await import("../../src/utils/tarWriter.js");
 const { gunzipSync } = await import("node:zlib");
@@ -238,5 +238,20 @@ describe("buildNodeBundle", () => {
     expect(manifest.expect.nodeMajor).toBe("v20.11.0");
     expect(manifest.expect.tsdbVersion).toBe("2.17.2");
     expect(manifest.expect.polarisUid).toBe(987);
+  });
+});
+
+describe("peerHostFingerprints (rule 117)", () => {
+  const nodes = {
+    primary: { sshHostKeys: ["SHA256:primaryKEY1+/=", "garbage; rm -rf /"] },
+    standby: { sshHostKeys: ["SHA256:standbyKEY2"] },
+  } as any;
+  it("hands each node the OTHER node's well-formed SHA256 fingerprints", () => {
+    expect(peerHostFingerprints({ nodes }, "standby")).toEqual(["SHA256:primaryKEY1+/="]);
+    expect(peerHostFingerprints({ nodes }, "primary")).toEqual(["SHA256:standbyKEY2"]);
+  });
+  it("is empty for the witness and for a peer that has not enrolled", () => {
+    expect(peerHostFingerprints({ nodes }, "witness")).toEqual([]);
+    expect(peerHostFingerprints({ nodes: { primary: nodes.primary } } as any, "primary")).toEqual([]);
   });
 });

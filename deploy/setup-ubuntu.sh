@@ -33,7 +33,11 @@ APP_USER="polaris"
 APP_GROUP="polaris"
 DB_NAME="polaris"
 DB_USER="polaris"
-DB_PASS="polaris"
+# Business rule 117: a random database password per install, never a constant
+# (this repository is public, so a fixed default is everyone's password). It is
+# written only into the mode-600 .env. An install whose .env already exists
+# keeps the password it has; see docs/UPGRADING.md to rotate an old default.
+DB_PASS="${POLARIS_DB_PASSWORD:-$(openssl rand -hex 24)}"
 REPO_URL="https://github.com/rogers-group-inc/polaris.git"
 CERT_DIR="/etc/polaris-nginx"
 NGINX_CONF_DEST="/etc/nginx/conf.d/polaris.conf"
@@ -350,8 +354,23 @@ fi
 
 # ─── 4. Create database and role ─────────────────────────────────────────────
 info "Setting up PostgreSQL database..."
-sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1 || \
-  sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';"
+# The password goes to psql on STDIN, never argv (ps / /proc show argv to
+# every local account), and is stored as SCRAM.
+if sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1; then
+  # The role exists. Its password only changes when this run is also writing
+  # a fresh .env — otherwise the .env already holds the password that works.
+  if [[ ! -f "$APP_DIR/.env" ]]; then
+    sudo -u postgres psql -v ON_ERROR_STOP=1 >/dev/null <<SQL
+SET password_encryption = 'scram-sha-256';
+ALTER USER $DB_USER WITH PASSWORD '$DB_PASS';
+SQL
+  fi
+else
+  sudo -u postgres psql -v ON_ERROR_STOP=1 >/dev/null <<SQL
+SET password_encryption = 'scram-sha-256';
+CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';
+SQL
+fi
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" | grep -q 1 || \
   sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
@@ -387,8 +406,8 @@ info "Database '$DB_NAME' ready"
 # Ensure pg_hba.conf allows password auth for the polaris user
 PG_HBA=$(sudo -u postgres psql -tc "SHOW hba_file;" | tr -d ' ')
 if ! grep -q "$DB_USER" "$PG_HBA" 2>/dev/null; then
-  warn "Adding md5 auth entry for '$DB_USER' to pg_hba.conf"
-  sed -i "/^# TYPE/a local   $DB_NAME   $DB_USER   md5\nhost    $DB_NAME   $DB_USER   127.0.0.1/32   md5\nhost    $DB_NAME   $DB_USER   ::1/128        md5" "$PG_HBA"
+  warn "Adding scram-sha-256 auth entry for '$DB_USER' to pg_hba.conf"
+  sed -i "/^# TYPE/a local   $DB_NAME   $DB_USER   scram-sha-256\nhost    $DB_NAME   $DB_USER   127.0.0.1/32   scram-sha-256\nhost    $DB_NAME   $DB_USER   ::1/128        scram-sha-256" "$PG_HBA"
   systemctl reload postgresql
 fi
 
@@ -587,6 +606,16 @@ install -o root -g root -m 0755 "$APP_DIR/deploy/scripts/polaris-nginx-apply.sh"
 install -o root -g root -m 0440 "$APP_DIR/deploy/sudoers.d/polaris-nginx"        /etc/sudoers.d/polaris-nginx
 install -o root -g root -m 0644 "$APP_DIR/deploy/tmpfiles.d/polaris-nginx.conf"  /etc/tmpfiles.d/polaris-nginx.conf
 systemd-tmpfiles --create /etc/tmpfiles.d/polaris-nginx.conf >/dev/null 2>&1 || true
+# The in-app updater's group restart (business rule 117): a fixed root
+# oneshot, polaris-update-sync.service, that syncs the shipped units and
+# helpers and restarts polaris.target — and a polkit rule letting $APP_USER
+# start THAT unit and restart the polaris units, nothing else.
+install -o root -g root -m 0755 "$APP_DIR/deploy/scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync
+install -o root -g root -m 0644 "$APP_DIR/deploy/polaris-update-sync.service"   /etc/systemd/system/polaris-update-sync.service
+mkdir -p /etc/polkit-1/rules.d
+install -o root -g root -m 0644 "$APP_DIR/deploy/polkit/49-polaris.rules"       /etc/polkit-1/rules.d/49-polaris.rules
+systemctl daemon-reload
+info "Installed the in-app updater's root helper and its polkit rule"
 # Ubuntu's nginx package uses the `www-data` group (not `nginx`). Detect
 # whichever group owns /etc/polaris-nginx/cert.pem at install time and add
 # polaris to it.

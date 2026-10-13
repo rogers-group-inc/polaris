@@ -295,7 +295,8 @@ sync_unit_files() {
 # (no /etc/polaris/ha-node marker) must not grow HA units at all. The cost: a
 # genuinely NEW HA artifact in a future release needs setup-rhel-ha.sh re-run
 # to land the first time.
-# Lockstep: the same block is built into src/services/updateService.ts.
+# Lockstep: deploy/scripts/polaris-update-sync.sh (the in-app updater's root
+# helper) refreshes the same set.
 sync_ha_artifacts() {
   [[ -f /etc/polaris/ha-node ]] || return 1
   local synced=0
@@ -308,6 +309,7 @@ sync_ha_artifacts() {
     synced=$((synced + 1))
   }
   sync_one "$APP_DIR/deploy/ha/polaris-ha-role.sh"  /usr/local/sbin/polaris-ha-role 0755
+  sync_one "$APP_DIR/deploy/ha/polaris-ha-ssh-wrapper.sh" /usr/local/sbin/polaris-ha-ssh-wrapper 0755
   sync_one "$APP_DIR/deploy/ha/polaris-ha-role.service" /etc/systemd/system/polaris-ha-role.service 0644
   sync_one "$APP_DIR/deploy/ha/polaris-ha-role.timer"   /etc/systemd/system/polaris-ha-role.timer 0644
   sync_one "$APP_DIR/deploy/ha/patroni.service.d/10-polaris.conf" \
@@ -322,6 +324,26 @@ sync_ha_artifacts() {
     systemctl daemon-reload
     return 0
   fi
+  return 1
+}
+
+# The in-app updater's root helper, its unit and the scoped polkit rule
+# (business rule 117). Install-if-missing as well as refresh: this is how a
+# host set up before rule 117 gets them when the operator updates from a shell
+# — and with them the narrowed grant that replaces the all-units one.
+sync_update_helper() {
+  local synced=0
+  install_one() {
+    [[ -f "$1" ]] || return 0
+    cmp -s "$1" "$2" 2>/dev/null && return 0
+    install -o root -g root -m "$3" "$1" "$2"
+    info "Synced $2"
+    synced=$((synced + 1))
+  }
+  install_one "$APP_DIR/deploy/scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync 0755
+  install_one "$APP_DIR/deploy/polaris-update-sync.service" /etc/systemd/system/polaris-update-sync.service 0644
+  [[ -d /etc/polkit-1/rules.d ]] && install_one "$APP_DIR/deploy/polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules 0644
+  if [[ $synced -gt 0 ]]; then systemctl daemon-reload; return 0; fi
   return 1
 }
 
@@ -691,6 +713,7 @@ step "8/9  Syncing systemd unit files..."
 
 sync_unit_files || info "No unit file changes to sync"
 sync_ha_artifacts || info "No HA artifact changes to sync (or not an HA node)"
+sync_update_helper || info "In-app updater helper already current"
 
 # Sync the shipped nginx config in proxy mode. Runs BEFORE the polaris.target
 # restart so any new location blocks / proxy_set_header changes are live in

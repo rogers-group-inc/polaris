@@ -1,0 +1,17 @@
+[Unit]
+Description=Polaris — apply an in-app update (sync units and helpers, restart polaris.target)
+Documentation=https://github.com/rogers-group-inc/polaris
+# Started by the in-app updater (the polaris user) through the scoped polkit
+# grant in /etc/polkit-1/rules.d/49-polaris.rules — the only root unit that
+# user may start. Business rule 117: the commands are fixed in the root-owned
+# script; the updater supplies nothing but the tree it already checked out.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/polaris-update-sync
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=polaris-updater
+
+# No [Install] section: never enabled, only started on demand.
