@@ -64,7 +64,7 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
-import { mergeAssets } from "./assetMergeService.js";
+import { mergeAssets, assertMergeTokenSafe } from "./assetMergeService.js";
 import { reconcileDuplicateIpForAddresses, repointDuplicateIpConflicts } from "./duplicateIpConflictService.js";
 import { isUsableSerial } from "../utils/serialNumber.js";
 import {
@@ -1037,6 +1037,7 @@ export async function mergeDuplicateSerialAssets(
   survivorAssetId: string,
   rawAbsorbIds: string[],
   actor?: string,
+  opts: { canManageIntegrations?: boolean } = {},
 ): Promise<MergeDuplicateSerialOutcome> {
   const proposed = conflictProposed(conflict);
   if (proposed.collisionReason !== DUPLICATE_SERIAL_COLLISION_REASON) {
@@ -1050,6 +1051,14 @@ export async function mergeDuplicateSerialAssets(
   const labelOf = (id: string) => members.find((m) => m.assetId === id)?.hostname || id;
   const survivorLabel = labelOf(survivorAssetId);
 
+  // Rule 111(c), every ghost, before any write: a hand-made record carrying
+  // a firewall's serial must not absorb it and keep its own typed address.
+  if (opts.canManageIntegrations !== undefined) {
+    for (const ghostId of absorbIds) {
+      await assertMergeTokenSafe({ canonicalId: survivorAssetId, ghostId, canManageIntegrations: opts.canManageIntegrations });
+    }
+  }
+
   if (conflict.assetId !== survivorAssetId) {
     await prisma.conflict.update({
       where: { id: conflict.id },
@@ -1061,7 +1070,7 @@ export async function mergeDuplicateSerialAssets(
   const absorbed: string[] = [];
   for (const ghostId of absorbIds) {
     const ghostLabel = labelOf(ghostId);
-    const merged = await mergeAssets({ canonicalId: survivorAssetId, ghostId });
+    const merged = await mergeAssets({ canonicalId: survivorAssetId, ghostId, canManageIntegrations: opts.canManageIntegrations });
     movedSources += merged.movedSources;
     absorbed.push(merged.absorbedId);
     logEvent({

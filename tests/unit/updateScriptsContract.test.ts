@@ -99,9 +99,9 @@ describe("update-linux.sh resolves pg_dump / psql by the server's major", () => 
 // One backup directory — the app's (<state>/data/backups). Two directories with
 // two retention rules cost real time on 2026-09-09.
 describe("the script writes pre-update backups beside the app's own", () => {
-  it("data/backups, created owned by the app user", () => {
+  it("data/backups, created owned by the app user and private (rule 117(c))", () => {
     expect(linux).toMatch(/^BACKUP_DIR="\/opt\/polaris\/data\/backups"/m);
-    expect(linux).toMatch(/install -d -o "\$APP_USER" -g "\$APP_USER" "\$BACKUP_DIR"/);
+    expect(linux).toMatch(/install -d -m 0700 -o "\$APP_USER" -g "\$APP_USER" "\$BACKUP_DIR"/);
   });
 });
 

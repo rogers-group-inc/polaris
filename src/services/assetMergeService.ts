@@ -70,6 +70,7 @@ import { AppError } from "../utils/errors.js";
 import { clampAcquiredToLastSeen } from "../utils/assetInvariants.js";
 import { isGenericAssetType } from "../utils/assetTypes.js";
 import { recomputeMonitorOverrideForAssets } from "./monitorOverrideService.js";
+import { assertMergeMayRetargetIntegrationToken } from "../utils/integrationTokenTarget.js";
 
 // Scalar fields the comparison UI diffs and the operator can pick a winner
 // for. Kept in sync with the COMPARE_FIELDS list in public/js/assets.js so the
@@ -625,6 +626,34 @@ export function resolveMonitoringCarry(
 }
 
 /**
+ * Business rule 111(c) for a merge, checkable BEFORE a caller writes anything
+ * of its own (a conflict resolution, a chassis adoption): would merging
+ * `ghostId` into `canonicalId` leave a Fortinet-managed member's API token
+ * following an address no managed member holds? Uses mergeAssets' own
+ * ipAddress rule (an explicit winner, else blank-fill). 403 without
+ * `canManageIntegrations`; a no-op with it.
+ */
+export async function assertMergeTokenSafe(opts: {
+  canonicalId: string;
+  ghostId: string;
+  ipWinner?: FieldWinner;
+  canManageIntegrations: boolean;
+}): Promise<void> {
+  if (opts.canManageIntegrations) return;
+  const tokenSelect = { ipAddress: true, discoveredByIntegration: { select: { type: true } } } as const;
+  const [c, g] = await Promise.all([
+    prisma.asset.findUnique({ where: { id: opts.canonicalId }, select: tokenSelect }),
+    prisma.asset.findUnique({ where: { id: opts.ghostId }, select: tokenSelect }),
+  ]);
+  if (!c || !g) return; // mergeAssets reports the missing row
+  const cIp = (c.ipAddress ?? "").trim();
+  const gIp = (g.ipAddress ?? "").trim();
+  const winner: FieldWinner = opts.ipWinner ?? (!cIp && gIp ? "ghost" : "canonical");
+  const resultingIp = winner === "ghost" && gIp ? gIp : cIp;
+  assertMergeMayRetargetIntegrationToken(false, c, g, resultingIp || null);
+}
+
+/**
  * Merge `ghostId` into `canonicalId`. The canonical survives; the ghost is
  * deleted. `fieldWinners` maps a MERGEABLE_FIELDS key to which side wins; any
  * field not present defaults to blank-fill (keep canonical, fill from ghost
@@ -637,6 +666,13 @@ export async function mergeAssets(opts: {
   ghostId: string;
   fieldWinners?: Partial<Record<MergeableField, FieldWinner>>;
   dependencyWinner?: DependencyParentWinner;
+  /**
+   * Whether the caller holds integrations:write. Set by an operator-driven
+   * merge (the route); left undefined by system merges. When set, a merge that
+   * would leave a Fortinet-managed member's API token following a different
+   * address is refused without it (business rule 111(c), either side).
+   */
+  canManageIntegrations?: boolean;
 }): Promise<MergeAssetsResult> {
   const { canonicalId, ghostId } = opts;
   const fieldWinners = opts.fieldWinners ?? {};
@@ -674,6 +710,14 @@ export async function mergeAssets(opts: {
       update[field] = gVal;
       appliedFields.push(field);
     }
+  }
+
+  // Rule 111(c), before anything is written: the merged record's address must
+  // not move a Fortinet integration's token without integrations:write.
+  if (opts.canManageIntegrations !== undefined) {
+    await assertMergeTokenSafe({
+      canonicalId, ghostId, ipWinner: fieldWinners.ipAddress, canManageIntegrations: opts.canManageIntegrations,
+    });
   }
 
   // notes — both rows' text, labeled by origin. See combineAssetNotes for why

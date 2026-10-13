@@ -24,11 +24,16 @@
 #     refusal is logged (journal + syslog tag polaris-updater), and the rest of
 #     the update carries on.
 #
-# What it does not change — the residual trust, stated in docs/wiki: the root
-# helpers this installs (polaris-nginx-apply, polaris-ha-role, this script)
-# come from the same tree the polaris user writes. Code that can write
-# /opt/polaris as polaris can still get a root helper replaced at the next
-# update. What it can no longer do is run anything as root on demand.
+#   - root HELPERS — files root executes, or that decide who may (the nginx
+#     apply wrapper polaris may sudo, this script, the polkit rule, the HA
+#     reconciler and its root unit, the SSH forced command, Patroni's drop-in)
+#     — are never installed by this unit. Their content cannot be checked, and
+#     the polaris user both writes the tree and may start this unit whenever
+#     it likes, so installing them here would be root on demand (rule 117(g),
+#     found by the 2026-10-13 re-scan). A changed helper is HELD: listed in
+#     /var/lib/polaris-update-sync/pending for the Maintenance tab, and
+#     installed only by an administrator running
+#     `sudo polaris-update-sync --apply-helpers`, which shows the diff first.
 #
 # Lockstep: deploy/update-linux.sh does the same sync when an operator updates
 # from a shell.
@@ -165,18 +170,6 @@ self_unit_ok() {
   return 0
 }
 
-# Tests source this file for the validators alone (tests/unit/updateSyncScript.test.ts).
-# shellcheck disable=SC2317
-[[ "${POLARIS_UPDATE_SYNC_LIB:-0}" == 1 ]] && return 0
-
-# Every input comes from a tree the polaris user can write, so it is first
-# copied — never following a symlink — into a root-only working directory,
-# and everything after (the comparison, the validation, the install) reads
-# that copy. A symlink to /etc/shadow, or a file swapped between the check and
-# the copy, gets nowhere: what is validated is exactly what is installed.
-WORK="$(mktemp -d /run/polaris-update-sync.XXXXXX)"
-chmod 0700 "$WORK"
-trap 'rm -rf "$WORK"' EXIT
 snap_n=0
 
 # take <src> — prints the snapshot's path; fails for a missing, non-regular or
@@ -193,7 +186,8 @@ take() {
 }
 
 # install_if_changed <src> <dest> <mode> [validator [arg]]
-# Returns 0 only when it installed something.
+# For files whose CONTENT is checked (units, sudoers, tmpfiles). Returns 0
+# only when it installed something.
 install_if_changed() {
   local snap
   snap="$(take "$1")" || return 1
@@ -206,9 +200,139 @@ install_if_changed() {
   return 0
 }
 
+# ─── Root helpers: held for an administrator (business rule 117(g)) ──────────
+#
+# A root helper is a file root EXECUTES (or a rule that decides who may) whose
+# content cannot be checked the way a unit file can: polaris-nginx-apply
+# (polaris may sudo it), this script, the polkit rule, and on an HA node the
+# reconciler, its root unit + timer, the SSH forced command and Patroni's
+# drop-in. They come from /opt/polaris, which the polaris user writes, and
+# polaris may start this unit at any moment — so installing them here would
+# be root on demand. Instead a changed helper is recorded in $PENDING_FILE
+# (the Maintenance tab reads it) and waits for `--apply-helpers`, run by an
+# administrator as root, which shows the diff first. The copy of THIS script
+# doing that is the installed one under /usr/local/sbin — never the tree's.
+PENDING_DIR=/var/lib/polaris-update-sync
+PENDING_FILE="$PENDING_DIR/pending"
+PENDING=()
+APPLIED_UNIT=0
+
+root_helper() {   # root_helper <src> <dest> <mode> [validator [arg]]
+  local snap sum
+  snap="$(take "$1")" || return 0
+  cmp -s "$snap" "$2" 2>/dev/null && return 0
+  sum="$(sha256sum "$snap" | cut -d' ' -f1)"
+  if [[ -n "${4:-}" ]] && ! "$4" "$snap" "${5:-}"; then
+    refuse "$1 not offered (validation failed; see above)"; return 0
+  fi
+  if [[ "$MODE" == sync ]]; then
+    PENDING+=("$2 $sum")
+    logger -t polaris-updater -p daemon.warning -- "HELD root helper $2 (sha256 $sum): run 'sudo polaris-update-sync --apply-helpers' to review and install it" 2>/dev/null || true
+    echo "HELD: $2 changed; run 'sudo polaris-update-sync --apply-helpers'"
+    return 0
+  fi
+  echo
+  echo "=== $2"
+  if [[ -f "$2" ]]; then diff -u "$2" "$snap" | head -n 400; else echo "(not installed yet)"; head -n 200 "$snap"; fi
+  local yes=$ASSUME_YES ans=""
+  if [[ $yes -eq 0 ]]; then
+    read -r -p "Install $2? [y/N] " ans </dev/tty || ans=""
+    [[ "$ans" == [yY]* ]] && yes=1
+  fi
+  if [[ $yes -eq 1 ]]; then
+    install -o root -g root -m "$3" "$snap" "$2"
+    log "Installed root helper $2 (sha256 $sum), approved by root"
+    [[ "$2" == "$UNIT_DIR"/* ]] && APPLIED_UNIT=1
+  else
+    PENDING+=("$2 $sum")
+    echo "Left $2 as it is."
+  fi
+}
+
+root_helpers() {
+  root_helper "$SRC/scripts/polaris-nginx-apply.sh" /usr/local/sbin/polaris-nginx-apply 0755
+  root_helper "$SRC/scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync 0755
+  [[ -d /etc/polkit-1/rules.d ]] && root_helper "$SRC/polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules 0644
+  if [[ -f /etc/polaris/ha-node ]]; then
+    # Refresh-only-if-present: setup-rhel-ha.sh decides which a node gets.
+    local pair src dst
+    for pair in \
+      "ha/polaris-ha-role.sh|/usr/local/sbin/polaris-ha-role|0755" \
+      "ha/polaris-ha-ssh-wrapper.sh|/usr/local/sbin/polaris-ha-ssh-wrapper|0755" \
+      "ha/polaris-ha-role.service|$UNIT_DIR/polaris-ha-role.service|0644" \
+      "ha/polaris-ha-role.timer|$UNIT_DIR/polaris-ha-role.timer|0644" \
+      "ha/patroni.service.d/10-polaris.conf|$UNIT_DIR/patroni.service.d/10-polaris.conf|0644"; do
+      IFS='|' read -r src dst mode <<< "$pair"
+      [[ -f "$dst" ]] && root_helper "$SRC/$src" "$dst" "$mode"
+    done
+  fi
+}
+
+write_pending() {
+  install -d -o root -g root -m 0755 "$PENDING_DIR"
+  if [[ ${#PENDING[@]} -eq 0 ]]; then
+    rm -f "$PENDING_FILE"
+    return 0
+  fi
+  local tmp="$PENDING_DIR/.pending.$$"
+  { echo "# Root helpers changed in /opt/polaris and NOT installed (business rule 117(g))."
+    echo "# Review and install: sudo polaris-update-sync --apply-helpers"
+    printf '%s\n' "${PENDING[@]}"
+  } > "$tmp"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$PENDING_FILE"
+}
+
+# Tests source this file for the validators alone (tests/unit/securityPhase8.test.ts).
+# shellcheck disable=SC2317
+[[ "${POLARIS_UPDATE_SYNC_LIB:-0}" == 1 ]] && return 0
+
+# ─── Mode ────────────────────────────────────────────────────────────────────
+#
+#   (no arguments)        what polaris-update-sync.service runs: the in-app
+#                         updater's sync + group restart. Root helpers that
+#                         changed are HELD, never installed (rule 117(g)).
+#   --apply-helpers       run by an administrator, as root, from a shell: show
+#                         each held helper's diff against the installed copy
+#                         and install the ones confirmed. Nothing restarts.
+#   --apply-helpers --yes the same without asking — for deploy/update-linux.sh
+#                         and configuration management, which are already an
+#                         administrator acting as root.
+MODE=sync
+ASSUME_YES=0
+for a in "$@"; do
+  case "$a" in
+    --apply-helpers) MODE=apply ;;
+    --yes) ASSUME_YES=1 ;;
+    *) echo "usage: polaris-update-sync [--apply-helpers [--yes]]" >&2; exit 2 ;;
+  esac
+done
+if [[ "$MODE" == apply && "$(id -u)" -ne 0 ]]; then
+  echo "polaris-update-sync --apply-helpers must run as root (sudo)." >&2; exit 1
+fi
+
+# Every input comes from a tree the polaris user can write, so it is first
+# copied — never following a symlink — into a root-only working directory,
+# and everything after (the comparison, the validation, the install) reads
+# that copy. A symlink to /etc/shadow, or a file swapped between the check and
+# the copy, gets nowhere: what is validated is exactly what is installed.
+WORK="$(mktemp -d /run/polaris-update-sync.XXXXXX)"
+chmod 0700 "$WORK"
+trap 'rm -rf "$WORK"' EXIT
+if [[ "$MODE" == apply ]]; then
+  root_helpers
+  write_pending
+  [[ $APPLIED_UNIT -eq 1 ]] && systemctl daemon-reload
+  if [[ ${#PENDING[@]} -eq 0 ]]; then
+    echo "All root helpers match /opt/polaris."
+  else
+    echo "${#PENDING[@]} root helper(s) still held; re-run to review them."
+  fi
+  exit 0
+fi
+
 # ─── 1. nginx GUI helpers ────────────────────────────────────────────────────
 
-install_if_changed "$SRC/scripts/polaris-nginx-apply.sh" /usr/local/sbin/polaris-nginx-apply 0755 || true
 install_if_changed "$SRC/sudoers.d/polaris-nginx" /etc/sudoers.d/polaris-nginx 0440 sudoers_ok || true
 if install_if_changed "$SRC/tmpfiles.d/polaris-nginx.conf" /etc/tmpfiles.d/polaris-nginx.conf 0644 tmpfiles_ok; then
   systemd-tmpfiles --create /etc/tmpfiles.d/polaris-nginx.conf >/dev/null 2>&1 || true
@@ -262,19 +386,19 @@ for name in polaris-web.service polaris-monitor@.service polaris-discovery.servi
   log "Synced unit file: $name (edits to the main unit file are clobbered; use $name.d/*.conf drop-ins)"
 done
 
-# ─── 4. HA artifacts — refresh-only-if-present (docs/HA.md) ──────────────────
-
+# The app units' HA drop-ins run as polaris and are content-checked, so they
+# still sync; the root-run HA files are root helpers (above).
 if [[ -f /etc/polaris/ha-node ]]; then
-  sync_ha() { [[ -f "$2" ]] || return 0; install_if_changed "$@" || true; }
-  sync_ha "$SRC/ha/polaris-ha-role.sh"                 /usr/local/sbin/polaris-ha-role 0755
-  sync_ha "$SRC/ha/polaris-ha-ssh-wrapper.sh"          /usr/local/sbin/polaris-ha-ssh-wrapper 0755
-  sync_ha "$SRC/ha/polaris-ha-role.service"            "$UNIT_DIR/polaris-ha-role.service" 0644
-  sync_ha "$SRC/ha/polaris-ha-role.timer"              "$UNIT_DIR/polaris-ha-role.timer" 0644
-  sync_ha "$SRC/ha/patroni.service.d/10-polaris.conf"  "$UNIT_DIR/patroni.service.d/10-polaris.conf" 0644
   for u in polaris-web polaris-monitor@ polaris-discovery polaris-dash polaris-migrate; do
-    sync_ha "$SRC/ha/dropins/$u.service.d/10-ha.conf" "$UNIT_DIR/$u.service.d/10-ha.conf" 0644 unit_ok dropin
+    [[ -f "$UNIT_DIR/$u.service.d/10-ha.conf" ]] || continue
+    install_if_changed "$SRC/ha/dropins/$u.service.d/10-ha.conf" "$UNIT_DIR/$u.service.d/10-ha.conf" 0644 unit_ok dropin || true
   done
 fi
+
+# ─── 4. Root helpers — held, not installed ───────────────────────────────────
+
+root_helpers
+write_pending
 
 # ─── 5. Restart the group ────────────────────────────────────────────────────
 
@@ -287,15 +411,9 @@ if [[ -f /etc/polaris/ha-node && -x /usr/local/sbin/polaris-ha-role ]]; then
   /usr/local/sbin/polaris-ha-role notify-peer || log "HA: notify-peer failed; the standby will sync on its own timer"
 fi
 
-# ─── 6. This mechanism itself, for the NEXT update ───────────────────────────
+# ─── 6. This unit itself, for the NEXT update ────────────────────────────────
 
-# Last, so a change to it never alters the run in progress. The polkit rule is
-# not validated (it is JavaScript); the residual trust above covers it.
-install_if_changed "$SRC/scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync 0755 || true
-reload=0
-install_if_changed "$SRC/polaris-update-sync.service" "$UNIT_DIR/polaris-update-sync.service" 0644 self_unit_ok && reload=1
-if [[ -d /etc/polkit-1/rules.d ]]; then
-  install_if_changed "$SRC/polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules 0644 || true
-fi
-[[ $reload -eq 1 ]] && systemctl daemon-reload
+# Its content is fully checked (the fixed ExecStart and inert metadata only),
+# so unlike the helpers it may sync here. Last, so it never alters this run.
+install_if_changed "$SRC/polaris-update-sync.service" "$UNIT_DIR/polaris-update-sync.service" 0644 self_unit_ok && systemctl daemon-reload
 exit 0

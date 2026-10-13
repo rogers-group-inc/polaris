@@ -215,6 +215,7 @@ router.post("/chassis-swap/adopt", async (req, res, next) => {
     const outcome = await adoptChassisSwap(oldSerial, newSerial, {
       mergeOldAsset: mergeOldAsset === true,
       actor: requestActor(req),
+      canManageIntegrations: hasPermission(req, "integrations", "write"),
     });
     res.json({ ok: true, ...outcome });
   } catch (err) {
@@ -304,6 +305,7 @@ router.post("/:id/merge", async (req, res, next) => {
         survivorAssetId,
         absorbAssetIds,
         requestActor(req),
+        { canManageIntegrations: hasPermission(req, "integrations", "write") },
       );
 
       res.json({ ok: true, ...outcome });
@@ -329,6 +331,7 @@ router.post("/:id/merge", async (req, res, next) => {
         survivorAssetId,
         absorbAssetIds,
         requestActor(req),
+        { canManageIntegrations: hasPermission(req, "integrations", "write") },
       );
 
       res.json({ ok: true, ...outcome });
@@ -375,6 +378,7 @@ router.post("/:id/reassign-ip", async (req, res, next) => {
       assetId,
       ipAddress,
       requestActor(req),
+      { canManageIntegrations: hasPermission(req, "integrations", "write") },
     );
 
     res.json({ ok: true, ...outcome });

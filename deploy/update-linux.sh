@@ -437,7 +437,9 @@ step "2/9  Creating pre-update database backup..."
 
 # install -d, not mkdir -p: this runs as root, and a root-owned data/backups
 # would stop the app (running as $APP_USER) writing its own backups there.
-install -d -o "$APP_USER" -g "$APP_USER" "$BACKUP_DIR"
+# -m 0700 (business rule 117(c)): without it `install -d` resets an existing
+# directory to 0755, and the dump below is the whole database.
+install -d -m 0700 -o "$APP_USER" -g "$APP_USER" "$BACKUP_DIR"
 BACKUP_FILE="${BACKUP_DIR}/polaris-pre-update-${OLD_VERSION}-$(date +%Y%m%d-%H%M%S).sql.gz"
 
 backup_unavailable() {
@@ -465,7 +467,10 @@ elif [[ -n "$PG_SERVER_MAJOR" && -n "$PG_DUMP_MAJOR" && "$PG_DUMP_MAJOR" -lt "$P
   backup_unavailable "pg_dump is PostgreSQL ${PG_DUMP_MAJOR} (${PG_DUMP}) but the server is PostgreSQL ${PG_SERVER_MAJOR}, and pg_dump refuses a newer server. Install postgresql${PG_SERVER_MAJOR} (PGDG) and check that $(command -v "$PG_DUMP") is not RHEL's AppStream package (rpm -qf) — docs/INSTALL.md → 'pg_dump: server version mismatch'"
 else
   info "Using $PG_DUMP (PostgreSQL ${PG_DUMP_MAJOR:-?}) against server PostgreSQL ${PG_SERVER_MAJOR:-?}"
-  if sudo -u postgres "$PG_DUMP" --clean --if-exists "$DB_NAME" | gzip > "$BACKUP_FILE"; then
+  # Written 0600 (umask 077) and handed to the app user, so the app's own
+  # backup pruning and listing can manage it — rule 117(c), as upgrade-node.sh.
+  if ( umask 077; sudo -u postgres "$PG_DUMP" --clean --if-exists "$DB_NAME" | gzip > "$BACKUP_FILE" ); then
+    chown "$APP_USER:$APP_USER" "$BACKUP_FILE" 2>/dev/null || true
     BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
     info "Backup created: $BACKUP_FILE ($BACKUP_SIZE)"
   else
@@ -714,6 +719,12 @@ step "8/9  Syncing systemd unit files..."
 sync_unit_files || info "No unit file changes to sync"
 sync_ha_artifacts || info "No HA artifact changes to sync (or not an HA node)"
 sync_update_helper || info "In-app updater helper already current"
+# Root helpers the in-app updater HOLDS for an administrator (rule 117(g)):
+# running this script as root is that administrator, so install them all —
+# including any an earlier in-app update left waiting.
+if [[ -x /usr/local/sbin/polaris-update-sync ]]; then
+  /usr/local/sbin/polaris-update-sync --apply-helpers --yes || warn "polaris-update-sync --apply-helpers failed; run it by hand"
+fi
 
 # Sync the shipped nginx config in proxy mode. Runs BEFORE the polaris.target
 # restart so any new location blocks / proxy_set_header changes are live in
