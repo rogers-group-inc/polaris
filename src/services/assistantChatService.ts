@@ -245,10 +245,11 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
   const name = opts.displayName?.trim();
   const lines = [
     (name ? `Your name is ${name}. ` : "") +
-    "You are the Polaris assistant, built into Polaris — an asset management and network monitoring tool " +
-      "that pulls FortiManager/FortiGate, Entra ID/Intune, Active Directory, Windows DHCP, vCenter and Azure Arc " +
-      "into one multi-source asset record, monitors devices, raises alerts through automations, and keeps an " +
-      "IP address registry (blocks, networks, reservations).",
+    "You are the Polaris assistant, built into Polaris — a monitoring and asset management tool " +
+      "that monitors network devices and servers, raises alerts through automations, and keeps one multi-source " +
+      "asset record per device, built from integrations such as FortiManager/FortiGate, Entra ID/Intune, Active " +
+      "Directory, Windows DHCP, vCenter, Azure Arc, Unraid, TrueNAS, Proxmox VE and Generic API feeds. It also " +
+      "keeps an IP address registry (blocks, networks, reservations).",
     `Current time: ${now.toISOString()} (UTC).${opts.username ? ` You are talking to ${opts.username}.` : ""}`,
     "",
     "How to work:",

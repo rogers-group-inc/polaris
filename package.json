@@ -1,7 +1,7 @@
 {
   "name": "polaris",
   "version": "0.9.0",
-  "description": "Polaris — asset management and network monitoring",
+  "description": "Polaris — network and device monitoring with a multi-source asset inventory",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
