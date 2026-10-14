@@ -835,24 +835,60 @@ in a quiet minute; the application is down only for the restart.
 **Local PostgreSQL (RHEL / Ubuntu installs).** Work in a root shell
 (`sudo -i`) so the new password only ever travels through an environment
 variable and standard input, never a command line another account can read in
-`ps`:
+`ps`. Paste the steps one block at a time and check each block's output
+before the next: an interactive shell carries on past a failed command, so a
+failed `ALTER USER` followed by the `.env` rewrite would lock the application
+out at the restart.
+
+**1. Check that `.env` is in the form the rewrite expects.**
+
+```bash
+grep -cE '^(DATABASE_URL|POLARIS_DB_DIRECT_URL)=postgresql://polaris:polaris@' /opt/polaris/.env
+```
+
+Expect `1`, or `2` when `POLARIS_DB_DIRECT_URL` is set. Note the number. If it
+prints `0`, stop: the URL is quoted, uses another password already, or is
+written another way, and step 3 would leave it untouched. Edit `.env` by hand
+instead of using steps 3–4.
+
+**2. Change the password in PostgreSQL.**
 
 ```bash
 NEW="$(openssl rand -hex 24)"; export NEW
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 <<EOF
+SET log_statement = 'none';
 SET password_encryption = 'scram-sha-256';
 ALTER USER polaris WITH PASSWORD '$NEW';
 EOF
-perl -pi -e 's#^((?:DATABASE_URL|POLARIS_DB_DIRECT_URL)=postgresql://polaris:)polaris@#$1$ENV{NEW}@#' /opt/polaris/.env
-chown polaris:polaris /opt/polaris/.env && chmod 600 /opt/polaris/.env
-grep -c '^DATABASE_URL=postgresql://polaris:polaris@' /opt/polaris/.env   # expect 0
-systemctl restart polaris.target
-unset NEW
 ```
 
-If the `grep` prints `1`, `.env` holds the URL in another form. Edit
-`DATABASE_URL` by hand before restarting: the database already has the new
-password, so the app cannot connect until `.env` matches.
+Expect `SET`, `SET`, `ALTER ROLE`. Anything else — an error, or no
+`ALTER ROLE` — means the password did not change: stop here and leave `.env`
+alone. (`SET log_statement = 'none'` keeps the statement, password included,
+out of the PostgreSQL log on a server that logs DDL.)
+
+**3. Rewrite `.env` and confirm the new password is in it.**
+
+```bash
+perl -pi -e 's#^((?:DATABASE_URL|POLARIS_DB_DIRECT_URL)=postgresql://polaris:)polaris@#$1$ENV{NEW}@#' /opt/polaris/.env
+chown polaris:polaris /opt/polaris/.env && chmod 600 /opt/polaris/.env
+perl -ne '$n++ if m{^(?:DATABASE_URL|POLARIS_DB_DIRECT_URL)=postgresql://polaris:\Q$ENV{NEW}\E@}; END { print $n+0, "\n" }' /opt/polaris/.env
+```
+
+The last line must print the same number step 1 did. If it is lower, the
+database already has the new password but `.env` does not: edit the URL by
+hand (`echo "$NEW"` shows the password) before restarting.
+
+**4. Restart and verify.**
+
+```bash
+systemctl restart polaris.target
+unset NEW
+sleep 30; journalctl -u 'polaris*' --since '-2 min' | grep -iE 'password authentication failed|P1000'
+```
+
+The `grep` should print nothing. A match means a process is still connecting
+with the old password — check `.env` again, and the other copies below.
 
 **External database.** Change the password with your provider's tooling, then
 update `DATABASE_URL` (and `POLARIS_DB_DIRECT_URL`, if set) in
