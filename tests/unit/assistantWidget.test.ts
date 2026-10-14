@@ -171,6 +171,11 @@ describe("report downloads", () => {
     expect(md).toContain("| A |");
     expect(md).toContain("| x\\|y |");
   });
+
+  it("escapes backslashes before pipes, so an escaped pipe can't open a column", () => {
+    const md = A._reportToMarkdown({ title: "T", columns: [{ key: "a", label: "A" }], rows: [{ a: "C:\\temp\\|x" }], rowCount: 1, truncated: false });
+    expect(md).toContain("| C:\\\\temp\\\\\\|x |");
+  });
 });
 
 describe("Efficiency Advisor lines (rule 95(h))", () => {

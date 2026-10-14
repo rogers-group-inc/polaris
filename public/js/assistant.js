@@ -1421,8 +1421,10 @@
     return /^[=+\-@\t\r]/.test(s) ? "'" + s : s;
   }
 
+  // Backslashes first: in a value like `a\|b` the escaped pipe would otherwise
+  // become `\\|` — a literal backslash and a real column break.
   function mdCell(v) {
-    return String(v == null ? "" : v).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+    return String(v == null ? "" : v).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
   }
 
   function reportToMarkdown(r) {
