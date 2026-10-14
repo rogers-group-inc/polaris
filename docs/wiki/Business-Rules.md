@@ -2212,10 +2212,12 @@ different identity.
   first use. If an export fails, events are **not** pruned that hour, so nothing
   is deleted without a copy.
 
-A server that presents a different certificate is listed first under **Server
-Settings → Web Server → Pinned server identities** (and on the Windows SSH
-Deployment card), with the pinned and the new SHA-256 side by side; the
-capacity card names it too. Compare the new one with the server and choose
+A server that presents a different certificate is listed first when you click
+**View pinned certificates** under **Server Settings → Web Server → Pinned
+server identities** (or on the Windows SSH Deployment card). The slide-over
+shows each certificate with the asset at that address (click it to open the
+asset) and the integration that uses it, and a changed one with the pinned and
+the new SHA-256 side by side; the capacity card names it too. Compare the new one with the server and choose
 **Trust new certificate**, which pins exactly that certificate. Each
 FortiGate's **Sources** tab shows the certificates pinned for the connections
 its discovering integration makes — the FortiManager, and in proxy-bypass mode

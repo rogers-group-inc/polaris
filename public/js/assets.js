@@ -24695,7 +24695,7 @@ function _loadAssetTlsPins(rootEl) {
         state = '<span class="badge badge-maintenance" title="Polaris has not connected to this endpoint with SSL verification off since pinning began, or it verifies a CA chain instead">Not pinned</span>';
         detail = '<span style="color:var(--color-text-secondary)">—</span>';
       } else if (p.pendingFingerprint) {
-        state = '<span class="badge badge-danger" title="This server now presents a different certificate, so Polaris is not sending it the token">Certificate changed</span>';
+        state = '<span class="badge badge-conflict" title="This server now presents a different certificate, so Polaris is not sending it the token">Certificate changed</span>';
         detail =
           '<div><span style="color:var(--color-text-secondary)">Pinned</span> <code class="mono" style="font-size:0.75rem;word-break:break-all">' + escapeHtml(_formatCertFingerprint(p.fingerprint)) + '</code></div>' +
           '<div><span style="color:var(--color-text-secondary)">Now presents</span> <code class="mono" style="font-size:0.75rem;word-break:break-all">' + escapeHtml(_formatCertFingerprint(p.pendingFingerprint)) + '</code>' +

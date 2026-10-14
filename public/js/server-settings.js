@@ -941,10 +941,10 @@ function renderCertsTab(container) {
   // SSL verification off — with the changed ones first and "Trust new
   // certificate". Lives here, where certificate problems get looked for.
   var pinnedCardHtml =
-    '<div class="settings-card" id="pinned-tls-card" style="grid-column:1/-1">' +
+    '<div class="settings-card" id="pinned-tls-card">' +
       '<h3>Pinned server identities</h3>' +
       '<p class="hint" style="margin:0 0 0.75rem 0">Polaris pins the TLS certificate of a server the first time it sends it a password or token ' +
-        'without verifying a CA, and refuses to send anything if the certificate later changes. A changed certificate is listed first: ' +
+        'without verifying a CA, and refuses to send anything if the certificate later changes. In the list a changed certificate comes first: ' +
         'compare it with the server and choose Trust new certificate. After a firmware upgrade Polaris runs itself, the device\'s new ' +
         'certificate is re-pinned automatically.</p>' +
       '<div id="pinned-tls-body"><p class="empty-state" style="padding:0.5rem 0;margin:0">Loading&hellip;</p></div>' +
