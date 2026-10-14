@@ -63,8 +63,11 @@ describe("polaris-update-sync.sh — the in-app sync installs no root helper", (
     }
     expect(code).toMatch(/root_helpers\s*\n\s*write_pending/);
   });
-  it("update-linux.sh (an administrator, as root) applies held helpers", () => {
-    expect(read("deploy/update-linux.sh")).toMatch(/polaris-update-sync --apply-helpers --yes/);
+  it("update-linux.sh routes root files through the installed helper's --install, asking unless the admin passed --yes (rule 117(k))", () => {
+    const src = read("deploy/update-linux.sh");
+    expect(src).toMatch(/"\$SYNC_HELPER" --install "\$\{yes\[@\]\}"/);
+    expect(src).toMatch(/\[\[ \$ASSUME_YES -eq 1 \]\] && yes=\(--yes\)/);
+    expect(src).not.toMatch(/--apply-helpers --yes/);
   });
 });
 

@@ -283,6 +283,57 @@ write_pending() {
   mv -f "$tmp" "$PENDING_FILE"
 }
 
+# ─── Content-checked files (shared by the sync and --install modes) ──────────
+
+# nginx GUI helpers' sudoers + tmpfiles entries (content-checked).
+sync_nginx_gui_files() {
+  install_if_changed "$SRC/sudoers.d/polaris-nginx" /etc/sudoers.d/polaris-nginx 0440 sudoers_ok || true
+  if install_if_changed "$SRC/tmpfiles.d/polaris-nginx.conf" /etc/tmpfiles.d/polaris-nginx.conf 0644 tmpfiles_ok; then
+    systemd-tmpfiles --create /etc/tmpfiles.d/polaris-nginx.conf >/dev/null 2>&1 || true
+  fi
+  if getent group nginx >/dev/null 2>&1 && ! id -nG polaris 2>/dev/null | grep -qw nginx; then
+    usermod -aG nginx polaris && log "Added polaris user to nginx group (cert file readability)"
+  fi
+}
+
+# The app units and their HA drop-ins (content-checked).
+sync_unit_files() {
+  local name snap target kind pgunit u
+  # install-if-missing, not just overwrite-on-change: a unit that ships for the
+  # first time in an update must land on upgraded hosts too.
+  for name in polaris-web.service polaris-monitor@.service polaris-discovery.service \
+              polaris-dash.service polaris-migrate.service polaris.target; do
+    snap="$(take "$SRC/$name")" || continue
+    target="$UNIT_DIR/$name"
+    if [[ -f "$target" ]] && cmp -s "$snap" "$target"; then continue; fi
+    kind=unit; [[ "$name" == *.target ]] && kind=target
+    unit_ok "$snap" "$kind" || { refuse "$SRC/$name not installed (validation failed; see above)"; continue; }
+    # Carry an installed unit's local-PostgreSQL dependency into a drop-in
+    # before overwriting it (units shipped before 2026-09-09 named it inline).
+    # Never on an HA node: 10-ha.conf resets After=/Requires= to patroni.
+    # Lockstep: deploy/update-linux.sh preserve_postgres_dependency().
+    if [[ -f "$target" && ! -f "$UNIT_DIR/$name.d/20-postgres.conf" && ! -f /etc/polaris/ha-node && ! -f "$UNIT_DIR/$name.d/10-ha.conf" ]]; then
+      pgunit="$(sed -nE 's/^Requires=.*\b(postgresql[^[:space:]]*)\.service.*/\1/p' "$target" | head -1)"
+      if [[ -n "$pgunit" && "$pgunit" =~ ^postgresql[A-Za-z0-9@._-]*$ ]]; then
+        mkdir -p "$UNIT_DIR/$name.d"
+        printf '[Unit]\nAfter=%s.service\nRequires=%s.service\n' "$pgunit" "$pgunit" > "$UNIT_DIR/$name.d/20-postgres.conf"
+        log "Preserved $name's PostgreSQL dependency ($pgunit.service) as a drop-in"
+      fi
+    fi
+    install -o root -g root -m 0644 "$snap" "$target"
+    log "Synced unit file: $name (edits to the main unit file are clobbered; use $name.d/*.conf drop-ins)"
+  done
+
+  # The app units' HA drop-ins run as polaris and are content-checked, so they
+  # still sync; the root-run HA files are root helpers (above).
+  if [[ -f /etc/polaris/ha-node ]]; then
+    for u in polaris-web polaris-monitor@ polaris-discovery polaris-dash polaris-migrate; do
+      [[ -f "$UNIT_DIR/$u.service.d/10-ha.conf" ]] || continue
+      install_if_changed "$SRC/ha/dropins/$u.service.d/10-ha.conf" "$UNIT_DIR/$u.service.d/10-ha.conf" 0644 unit_ok dropin || true
+    done
+  fi
+}
+
 # Tests source this file for the validators alone (tests/unit/securityPhase8.test.ts).
 # shellcheck disable=SC2317
 [[ "${POLARIS_UPDATE_SYNC_LIB:-0}" == 1 ]] && return 0
@@ -295,20 +346,30 @@ write_pending() {
 #   --apply-helpers       run by an administrator, as root, from a shell: show
 #                         each held helper's diff against the installed copy
 #                         and install the ones confirmed. Nothing restarts.
-#   --apply-helpers --yes the same without asking — for deploy/update-linux.sh
-#                         and configuration management, which are already an
-#                         administrator acting as root.
+#   --apply-helpers --yes the same without asking — for configuration
+#                         management, or an administrator who passed --yes to
+#                         deploy/update-linux.sh (which otherwise asks).
+#   --install [--yes]     run by the installers (deploy/setup-*.sh) when they
+#                         re-run on an EXISTING install (business rule 117(k)):
+#                         the content-checked files (units, their drop-ins,
+#                         sudoers, tmpfiles, this unit) sync with validation,
+#                         then every root helper is shown and asked about as
+#                         --apply-helpers does. Nothing restarts. The tree an
+#                         installer just `git pull`ed as polaris is the same
+#                         polaris-writable tree the updater reads, so it gets
+#                         the same review rather than a root `cp`.
 MODE=sync
 ASSUME_YES=0
 for a in "$@"; do
   case "$a" in
     --apply-helpers) MODE=apply ;;
+    --install) MODE=install ;;
     --yes) ASSUME_YES=1 ;;
-    *) echo "usage: polaris-update-sync [--apply-helpers [--yes]]" >&2; exit 2 ;;
+    *) echo "usage: polaris-update-sync [--apply-helpers [--yes] | --install [--yes]]" >&2; exit 2 ;;
   esac
 done
-if [[ "$MODE" == apply && "$(id -u)" -ne 0 ]]; then
-  echo "polaris-update-sync --apply-helpers must run as root (sudo)." >&2; exit 1
+if [[ "$MODE" != sync && "$(id -u)" -ne 0 ]]; then
+  echo "polaris-update-sync --$MODE must run as root (sudo)." >&2; exit 1
 fi
 
 # Every input comes from a tree the polaris user can write, so it is first
@@ -319,6 +380,25 @@ fi
 WORK="$(mktemp -d /run/polaris-update-sync.XXXXXX)"
 chmod 0700 "$WORK"
 trap 'rm -rf "$WORK"' EXIT
+if [[ "$MODE" == install ]]; then
+  # An installer re-run on an existing install (business rule 117(k)).
+  sync_nginx_gui_files
+  sync_unit_files
+  # polaris-web's Wants=nginx drop-in, which only the installers lay down.
+  install -d -o root -g root -m 0755 "$UNIT_DIR/polaris-web.service.d"
+  install_if_changed "$SRC/nginx/polaris-nginx-dependency.conf" "$UNIT_DIR/polaris-web.service.d/nginx-dependency.conf" 0644 unit_ok dropin || true
+  install_if_changed "$SRC/polaris-update-sync.service" "$UNIT_DIR/polaris-update-sync.service" 0644 self_unit_ok || true
+  install -d -o root -g root -m 0755 /etc/polkit-1/rules.d
+  root_helpers
+  write_pending
+  systemctl daemon-reload
+  if [[ ${#PENDING[@]} -eq 0 ]]; then
+    echo "All root helpers match /opt/polaris."
+  else
+    echo "${#PENDING[@]} root helper(s) left as they are; review them later with: sudo polaris-update-sync --apply-helpers"
+  fi
+  exit 0
+fi
 if [[ "$MODE" == apply ]]; then
   root_helpers
   write_pending
@@ -333,18 +413,19 @@ fi
 
 # ─── 1. nginx GUI helpers ────────────────────────────────────────────────────
 
-install_if_changed "$SRC/sudoers.d/polaris-nginx" /etc/sudoers.d/polaris-nginx 0440 sudoers_ok || true
-if install_if_changed "$SRC/tmpfiles.d/polaris-nginx.conf" /etc/tmpfiles.d/polaris-nginx.conf 0644 tmpfiles_ok; then
-  systemd-tmpfiles --create /etc/tmpfiles.d/polaris-nginx.conf >/dev/null 2>&1 || true
-fi
-if getent group nginx >/dev/null 2>&1 && ! id -nG polaris 2>/dev/null | grep -qw nginx; then
-  usermod -aG nginx polaris && log "Added polaris user to nginx group (cert file readability)"
-fi
+sync_nginx_gui_files
 
 # ─── 2. The rendered nginx config (proxy mode, staged by the updater) ────────
 
 if [[ -e "$STAGED_NGINX" || -L "$STAGED_NGINX" ]]; then
-  if staged="$(take "$STAGED_NGINX")"; then
+  # The content check (business rule 117(m)) lives in the INSTALLED nginx
+  # helper; sourced, never the tree's copy. An installed helper too old to
+  # have it means the config waits until the held helpers are applied.
+  if staged="$(take "$STAGED_NGINX")" && ! (POLARIS_NGINX_APPLY_LIB=1 . /usr/local/sbin/polaris-nginx-apply && declare -F nginx_conf_ok >/dev/null && nginx_conf_ok "$staged"); then
+    refuse "$STAGED_NGINX not installed (content check failed, or the installed polaris-nginx-apply predates it: run sudo polaris-update-sync --apply-helpers)"
+    staged=""
+  fi
+  if [[ -n "${staged:-}" ]]; then
     cp -p /etc/nginx/conf.d/polaris.conf "/etc/nginx/conf.d/polaris.conf.bak.$(date +%s)" 2>/dev/null || true
     install -o root -g root -m 0644 "$staged" /etc/nginx/conf.d/polaris.conf.new
     mv -f /etc/nginx/conf.d/polaris.conf.new /etc/nginx/conf.d/polaris.conf
@@ -361,39 +442,7 @@ fi
 
 # ─── 3. Unit files ───────────────────────────────────────────────────────────
 
-# install-if-missing, not just overwrite-on-change: a unit that ships for the
-# first time in an update must land on upgraded hosts too.
-for name in polaris-web.service polaris-monitor@.service polaris-discovery.service \
-            polaris-dash.service polaris-migrate.service polaris.target; do
-  snap="$(take "$SRC/$name")" || continue
-  target="$UNIT_DIR/$name"
-  if [[ -f "$target" ]] && cmp -s "$snap" "$target"; then continue; fi
-  kind=unit; [[ "$name" == *.target ]] && kind=target
-  unit_ok "$snap" "$kind" || { refuse "$SRC/$name not installed (validation failed; see above)"; continue; }
-  # Carry an installed unit's local-PostgreSQL dependency into a drop-in
-  # before overwriting it (units shipped before 2026-09-09 named it inline).
-  # Never on an HA node: 10-ha.conf resets After=/Requires= to patroni.
-  # Lockstep: deploy/update-linux.sh preserve_postgres_dependency().
-  if [[ -f "$target" && ! -f "$UNIT_DIR/$name.d/20-postgres.conf" && ! -f /etc/polaris/ha-node && ! -f "$UNIT_DIR/$name.d/10-ha.conf" ]]; then
-    pgunit="$(sed -nE 's/^Requires=.*\b(postgresql[^[:space:]]*)\.service.*/\1/p' "$target" | head -1)"
-    if [[ -n "$pgunit" && "$pgunit" =~ ^postgresql[A-Za-z0-9@._-]*$ ]]; then
-      mkdir -p "$UNIT_DIR/$name.d"
-      printf '[Unit]\nAfter=%s.service\nRequires=%s.service\n' "$pgunit" "$pgunit" > "$UNIT_DIR/$name.d/20-postgres.conf"
-      log "Preserved $name's PostgreSQL dependency ($pgunit.service) as a drop-in"
-    fi
-  fi
-  install -o root -g root -m 0644 "$snap" "$target"
-  log "Synced unit file: $name (edits to the main unit file are clobbered; use $name.d/*.conf drop-ins)"
-done
-
-# The app units' HA drop-ins run as polaris and are content-checked, so they
-# still sync; the root-run HA files are root helpers (above).
-if [[ -f /etc/polaris/ha-node ]]; then
-  for u in polaris-web polaris-monitor@ polaris-discovery polaris-dash polaris-migrate; do
-    [[ -f "$UNIT_DIR/$u.service.d/10-ha.conf" ]] || continue
-    install_if_changed "$SRC/ha/dropins/$u.service.d/10-ha.conf" "$UNIT_DIR/$u.service.d/10-ha.conf" 0644 unit_ok dropin || true
-  done
-fi
+sync_unit_files
 
 # ─── 4. Root helpers — held, not installed ───────────────────────────────────
 

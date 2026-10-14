@@ -54,6 +54,96 @@ info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
+# ─── Root-owned files on a re-run (business rule 117(k)/(l)) ─────────────────
+#
+# On a fresh install root itself clones the tree moments before using it. On a
+# re-run against an EXISTING install the tree is /opt/polaris, which the
+# polaris account writes (every polaris unit lists it in ReadWritePaths) and
+# which this script has just `git pull`ed as that account. So on a re-run
+# nothing root runs or obeys — units, their drop-ins, the sudoers and tmpfiles
+# entries, the polkit rule, the root helpers — is root-copied out of it.
+# Instead the INSTALLED, root-owned polaris-update-sync validates the
+# content-checked files and shows each root helper's diff and asks
+# (`--install`), exactly as the in-app updater's held helpers are reviewed.
+# POLARIS_YES=1 answers every such question with yes (configuration
+# management); without a terminal and without it, changed helpers are left
+# as they are and listed on the Maintenance tab.
+FRESH_TREE=0
+ROOT_FILES=copy          # copy | sync | skip — decided after the tree is in place
+SYNC_HELPER=/usr/local/sbin/polaris-update-sync
+
+# The installed helper is trusted only when root owns it and nobody else may
+# write it; --install is the interface this script needs.
+trusted_sync_helper() {
+  [[ -f "$SYNC_HELPER" && ! -L "$SYNC_HELPER" ]] || return 1
+  [[ "$(stat -c '%u' "$SYNC_HELPER")" == 0 ]] || return 1
+  (( (8#$(stat -c '%a' "$SYNC_HELPER") & 8#022) == 0 )) || return 1
+  grep -q -- '--install' "$SYNC_HELPER"
+}
+
+# An installed helper that predates --install: show the tree's copy against
+# it and ask before replacing it — the one root file a re-run cannot avoid
+# reading from the tree, so it is the one an administrator sees first.
+bootstrap_sync_helper() {
+  local snap ans=""
+  snap="$(mktemp /run/polaris-sync-helper.XXXXXX)" || return 1
+  if ! cp -P -- "$APP_DIR/deploy/scripts/polaris-update-sync.sh" "$snap" 2>/dev/null || [[ -L "$snap" || ! -s "$snap" ]]; then
+    rm -f "$snap"; return 1
+  fi
+  echo
+  echo "=== $SYNC_HELPER (installed copy predates the reviewed installer path)"
+  diff -u "$SYNC_HELPER" "$snap" | head -n 400 || true
+  if [[ "${POLARIS_YES:-0}" == 1 ]]; then
+    ans=y
+  else
+    read -r -p "Install the new $SYNC_HELPER? [y/N] " ans </dev/tty || ans=""
+  fi
+  if [[ "$ans" == [yY]* ]]; then
+    install -o root -g root -m 0755 "$snap" "$SYNC_HELPER"
+    rm -f "$snap"
+    return 0
+  fi
+  rm -f "$snap"
+  return 1
+}
+
+decide_root_files() {
+  if [[ $FRESH_TREE -eq 1 ]]; then
+    ROOT_FILES=copy
+  elif trusted_sync_helper || { [[ -f "$SYNC_HELPER" ]] && bootstrap_sync_helper && trusted_sync_helper; }; then
+    ROOT_FILES=sync
+  elif [[ -e "$SYNC_HELPER" ]]; then
+    ROOT_FILES=skip
+    warn "Leaving units, sudoers, polkit and root helpers as they are: $SYNC_HELPER is not a trusted root-owned copy with --install, or its update was declined. Review later with: sudo polaris-update-sync --apply-helpers"
+  else
+    # An install from before the in-app updater's root helper existed has
+    # nothing installed to review with; the tree is all there is.
+    ROOT_FILES=copy
+    warn "No $SYNC_HELPER on this host — installing units, sudoers, polkit and root helpers from $APP_DIR/deploy WITHOUT review. Check that tree is what you expect."
+  fi
+}
+
+# root_copy <mode> <src> <dest> — install a root-owned file only when this run
+# copies (fresh install, or a host with no review helper); otherwise the
+# `--install` run in section 8 has already validated or offered it.
+root_copy() {
+  [[ "$ROOT_FILES" == copy ]] || return 0
+  install -o root -g root -m "$1" "$2" "$3"
+}
+
+# The shipped nginx config is checked before it replaces the live one on a
+# re-run (business rule 117(m)), with the INSTALLED nginx helper's check.
+nginx_conf_checked() {
+  ( POLARIS_NGINX_APPLY_LIB=1 . /usr/local/sbin/polaris-nginx-apply && declare -F nginx_conf_ok >/dev/null && nginx_conf_ok "$1" )
+}
+
+# .env is the polaris account's file, so it is written AS that account
+# (business rule 117(l)): root never opens a path in /opt/polaris that polaris
+# could have swapped for a link, and umask 077 means the secrets are never
+# readable by anyone else — not even between the file's creation and a chmod.
+env_write()  { sudo -u "$APP_USER" sh -c 'umask 077; cat >  "$1"' _ "$APP_DIR/.env"; }
+env_append() { sudo -u "$APP_USER" sh -c 'umask 077; cat >> "$1"' _ "$APP_DIR/.env"; }
+
 # ─── Args ────────────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -421,7 +511,9 @@ else
   rm -rf "$APP_DIR"
   git clone "$REPO_URL" "$APP_DIR"
   chown -R "$APP_USER:$APP_GROUP" "$APP_DIR"
+  FRESH_TREE=1
 fi
+decide_root_files
 
 cd "$APP_DIR"
 
@@ -461,7 +553,7 @@ if [[ ! -f "$APP_DIR/.env" ]]; then
   info "Creating .env from template..."
   SESSION_SECRET=$(openssl rand -base64 32)
   POLARIS_SECRET_KEY=$(openssl rand -hex 32)
-  cat > "$APP_DIR/.env" <<ENVFILE
+  env_write <<ENVFILE
 # Database
 DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@localhost:5432/${DB_NAME}
 
@@ -498,8 +590,7 @@ POLARIS_MONITOR_REPLICAS=${MONITOR_REPLICAS}
 # up from here — this points at the bundle, it does not import anything itself.
 NODE_EXTRA_CA_CERTS=${NODE_CA_BUNDLE}
 ENVFILE
-  chown "$APP_USER:$APP_GROUP" "$APP_DIR/.env"
-  chmod 600 "$APP_DIR/.env"
+  sudo -u "$APP_USER" chmod 600 "$APP_DIR/.env"
   info ".env created with generated SESSION_SECRET + POLARIS_SECRET_KEY + proxy-mode env vars"
 else
   info ".env already exists — appending proxy-mode + replica + secret-key env vars if missing"
@@ -509,14 +600,14 @@ else
       echo "# Added by setup-ubuntu.sh — reverse-proxy front-end"
       echo "POLARIS_PROXY_CERT_PATH=${CERT_DIR}/cert.pem"
       echo "POLARIS_PUBLIC_URL=${PUBLIC_URL}"
-    } >> "$APP_DIR/.env"
+    } | env_append
   fi
   if ! grep -q '^POLARIS_MONITOR_REPLICAS=' "$APP_DIR/.env"; then
     {
       echo ""
       echo "# Added by setup-ubuntu.sh — split-role replica count (Capacity Advisor input)"
       echo "POLARIS_MONITOR_REPLICAS=${MONITOR_REPLICAS}"
-    } >> "$APP_DIR/.env"
+    } | env_append
   fi
   # Installs that predate secrets-at-rest have no key, so device + integration
   # credentials sit in the clear in Postgres (and in every pg_dump). Mint one
@@ -531,7 +622,7 @@ else
       echo "# without this key, and a backup restored onto a host with a different key"
       echo "# needs its device + integration secrets re-entered."
       echo "POLARIS_SECRET_KEY=$(openssl rand -hex 32)"
-    } >> "$APP_DIR/.env"
+    } | env_append
     warn "Generated POLARIS_SECRET_KEY — back it up somewhere other than this host before the next backup"
   fi
 fi
@@ -562,12 +653,16 @@ fi
 
 # ─── 8. Install split-role systemd units ────────────────────────────────────
 info "Installing split-role systemd units (polaris-migrate, polaris-web, polaris-monitor@, polaris-discovery, polaris-dash, polaris.target)..."
-cp "$APP_DIR/deploy/polaris-migrate.service"    /etc/systemd/system/polaris-migrate.service
-cp "$APP_DIR/deploy/polaris-web.service"        /etc/systemd/system/polaris-web.service
-cp "$APP_DIR/deploy/polaris-monitor@.service"   /etc/systemd/system/polaris-monitor@.service
-cp "$APP_DIR/deploy/polaris-discovery.service"  /etc/systemd/system/polaris-discovery.service
-cp "$APP_DIR/deploy/polaris-dash.service"       /etc/systemd/system/polaris-dash.service
-cp "$APP_DIR/deploy/polaris.target"             /etc/systemd/system/polaris.target
+if [[ "$ROOT_FILES" == sync ]]; then
+  info "Re-run on an existing install: units, sudoers, polkit and root helpers go through $SYNC_HELPER --install (business rule 117(k))"
+  "$SYNC_HELPER" --install ${POLARIS_YES:+--yes} || warn "$SYNC_HELPER --install reported a problem; see above"
+fi
+root_copy 0644 "$APP_DIR/deploy/polaris-migrate.service" /etc/systemd/system/polaris-migrate.service
+root_copy 0644 "$APP_DIR/deploy/polaris-web.service" /etc/systemd/system/polaris-web.service
+root_copy 0644 "$APP_DIR/deploy/polaris-monitor@.service" /etc/systemd/system/polaris-monitor@.service
+root_copy 0644 "$APP_DIR/deploy/polaris-discovery.service" /etc/systemd/system/polaris-discovery.service
+root_copy 0644 "$APP_DIR/deploy/polaris-dash.service" /etc/systemd/system/polaris-dash.service
+root_copy 0644 "$APP_DIR/deploy/polaris.target" /etc/systemd/system/polaris.target
 
 # Ubuntu/Debian's PostgreSQL service is just `postgresql` (the wrapper over
 # postgresql@<major>-main), not the versioned unit RHEL/PGDG uses. The shipped
@@ -590,30 +685,41 @@ done
 
 info "Installing polaris-web's Wants=nginx drop-in..."
 mkdir -p "$NGINX_DROPIN_DIR"
-cp "$APP_DIR/deploy/nginx/polaris-nginx-dependency.conf" "$NGINX_DROPIN_DIR/nginx-dependency.conf"
+root_copy 0644 "$APP_DIR/deploy/nginx/polaris-nginx-dependency.conf" "$NGINX_DROPIN_DIR/nginx-dependency.conf"
 
 systemctl daemon-reload
 
 # ─── 9. Configure nginx ─────────────────────────────────────────────────────
 info "Installing nginx config (server_name=$HOSTNAME_FROM_URL, prometheus_ip=$PROMETHEUS_IP)..."
-sed "s|polaris\\.example\\.com|$HOSTNAME_FROM_URL|g; s|<PROMETHEUS_IP>|$PROMETHEUS_IP|g" \
-  "$APP_DIR/deploy/nginx/polaris.conf" > "$NGINX_CONF_DEST"
+# Read as the polaris account (the tree is its), written to a root-only
+# temp file, and on a re-run checked before it replaces the live config
+# (business rule 117(m)).
+# The temp name does not end in .conf, so nginx never includes it.
+NGINX_CONF_NEW="$(mktemp "$(dirname "$NGINX_CONF_DEST")/.polaris.conf.XXXXXX")"
+sudo -u "$APP_USER" cat "$APP_DIR/deploy/nginx/polaris.conf" | sed "s|polaris\\.example\\.com|$HOSTNAME_FROM_URL|g; s|<PROMETHEUS_IP>|$PROMETHEUS_IP|g" > "$NGINX_CONF_NEW"
+if [[ $FRESH_TREE -eq 0 ]] && ! nginx_conf_checked "$NGINX_CONF_NEW"; then
+  rm -f "$NGINX_CONF_NEW"
+  warn "Kept the existing nginx config: the shipped one did not pass the content check (or the installed polaris-nginx-apply predates it — run: sudo polaris-update-sync --apply-helpers)"
+else
+  chmod 0644 "$NGINX_CONF_NEW"
+  mv -f "$NGINX_CONF_NEW" "$NGINX_CONF_DEST"
+fi
 nginx -t
 
 # ─── 9b. Install in-app nginx GUI helpers ───────────────────────────────────
 info "Installing in-app nginx GUI helpers (idempotent)..."
-install -o root -g root -m 0755 "$APP_DIR/deploy/scripts/polaris-nginx-apply.sh" /usr/local/sbin/polaris-nginx-apply
-install -o root -g root -m 0440 "$APP_DIR/deploy/sudoers.d/polaris-nginx"        /etc/sudoers.d/polaris-nginx
-install -o root -g root -m 0644 "$APP_DIR/deploy/tmpfiles.d/polaris-nginx.conf"  /etc/tmpfiles.d/polaris-nginx.conf
+root_copy 0755 "$APP_DIR/deploy/scripts/polaris-nginx-apply.sh" /usr/local/sbin/polaris-nginx-apply
+root_copy 0440 "$APP_DIR/deploy/sudoers.d/polaris-nginx" /etc/sudoers.d/polaris-nginx
+root_copy 0644 "$APP_DIR/deploy/tmpfiles.d/polaris-nginx.conf" /etc/tmpfiles.d/polaris-nginx.conf
 systemd-tmpfiles --create /etc/tmpfiles.d/polaris-nginx.conf >/dev/null 2>&1 || true
 # The in-app updater's group restart (business rule 117): a fixed root
 # oneshot, polaris-update-sync.service, that syncs the shipped units and
 # helpers and restarts polaris.target — and a polkit rule letting $APP_USER
 # start THAT unit and restart the polaris units, nothing else.
-install -o root -g root -m 0755 "$APP_DIR/deploy/scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync
-install -o root -g root -m 0644 "$APP_DIR/deploy/polaris-update-sync.service"   /etc/systemd/system/polaris-update-sync.service
+root_copy 0755 "$APP_DIR/deploy/scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync
+root_copy 0644 "$APP_DIR/deploy/polaris-update-sync.service" /etc/systemd/system/polaris-update-sync.service
 mkdir -p /etc/polkit-1/rules.d
-install -o root -g root -m 0644 "$APP_DIR/deploy/polkit/49-polaris.rules"       /etc/polkit-1/rules.d/49-polaris.rules
+root_copy 0644 "$APP_DIR/deploy/polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules
 systemctl daemon-reload
 info "Installed the in-app updater's root helper and its polkit rule"
 # Ubuntu's nginx package uses the `www-data` group (not `nginx`). Detect

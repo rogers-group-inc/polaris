@@ -42,6 +42,41 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC
 info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+# ─── Root-owned files (business rule 117(k)/(l)/(m)) ──────────────────────────
+#
+# This script always runs against an existing install, whose tree
+# (/opt/polaris) the polaris account writes. So the root helpers, sudoers and
+# tmpfiles entries and the polaris-web drop-in go through the INSTALLED,
+# root-owned polaris-update-sync --install (validated, each helper's diff
+# shown and asked about; POLARIS_YES=1 answers yes), the shipped nginx config
+# is read as polaris and checked by the installed polaris-nginx-apply before
+# it goes live, and .env is written as polaris. Lockstep: deploy/setup-*.sh
+# and deploy/update-linux.sh carry the same helpers.
+SYNC_HELPER=/usr/local/sbin/polaris-update-sync
+trusted_sync_helper() {
+  [[ -f "$SYNC_HELPER" && ! -L "$SYNC_HELPER" ]] || return 1
+  [[ "$(stat -c '%u' "$SYNC_HELPER")" == 0 ]] || return 1
+  (( (8#$(stat -c '%a' "$SYNC_HELPER") & 8#022) == 0 )) || return 1
+  grep -q -- '--install' "$SYNC_HELPER"
+}
+bootstrap_sync_helper() {
+  local snap ans=""
+  snap="$(mktemp /run/polaris-sync-helper.XXXXXX)" || return 1
+  if ! cp -P -- "$APP_DIR/deploy/scripts/polaris-update-sync.sh" "$snap" 2>/dev/null || [[ -L "$snap" || ! -s "$snap" ]]; then
+    rm -f "$snap"; return 1
+  fi
+  echo
+  echo "=== $SYNC_HELPER (installed copy predates the reviewed install path)"
+  diff -u "$SYNC_HELPER" "$snap" | head -n 400 || true
+  if [[ "${POLARIS_YES:-0}" == 1 ]]; then ans=y; else read -r -p "Install the new $SYNC_HELPER? [y/N] " ans </dev/tty || ans=""; fi
+  if [[ "$ans" == [yY]* ]]; then install -o root -g root -m 0755 "$snap" "$SYNC_HELPER"; rm -f "$snap"; return 0; fi
+  rm -f "$snap"; return 1
+}
+nginx_conf_checked() {
+  ( POLARIS_NGINX_APPLY_LIB=1 . /usr/local/sbin/polaris-nginx-apply && declare -F nginx_conf_ok >/dev/null && nginx_conf_ok "$1" )
+}
+env_append() { sudo -u polaris sh -c 'umask 077; cat >> "$1"' _ "$ENV_FILE"; }
 step()  { echo -e "${CYAN}[STEP]${NC}  $*"; }
 
 # ─── Args ─────────────────────────────────────────────────────────────────
@@ -237,7 +272,8 @@ if [[ $EXTRACT_RC -ne 0 ]]; then
 fi
 
 step "Stage: building nginx config with PROMETHEUS_IP=$PROMETHEUS_IP"
-sed "s|<PROMETHEUS_IP>|$PROMETHEUS_IP|g" "$SHIPPED_NGINX_CONF" > "$TMP/polaris.conf"
+# Read as polaris: the tree is its, and a link it planted reaches only what it can read.
+sudo -u polaris cat "$SHIPPED_NGINX_CONF" | sed "s|<PROMETHEUS_IP>|$PROMETHEUS_IP|g" > "$TMP/polaris.conf"
 
 # Sanity-check the staged config standalone (just our server block — nginx -t
 # wants a full config; do the full validation post-install).
@@ -249,7 +285,7 @@ fi
 # ─── Commit: backup .env, install files, update env, firewall, reload ────
 step "Commit: backing up .env"
 BACKUP_TS=$(date +%Y%m%d-%H%M%S)
-cp -p "$ENV_FILE" "$ENV_FILE.pre-nginx.$BACKUP_TS"
+sudo -u polaris sh -c 'umask 077; cp -p -- "$1" "$2"' _ "$ENV_FILE" "$ENV_FILE.pre-nginx.$BACKUP_TS"
 info "Backed up $ENV_FILE → $ENV_FILE.pre-nginx.$BACKUP_TS"
 
 step "Commit: installing cert+key to $NGINX_CERT_DIR"
@@ -266,28 +302,35 @@ else
   warn "semanage not available — skipping SELinux context. If nginx 403s, install policycoreutils-python-utils and re-run."
 fi
 
-step "Commit: installing nginx config to $NGINX_CONF_DEST"
-install -o root -g root -m 0644 "$TMP/polaris.conf" "$NGINX_CONF_DEST.new"
-mv -f "$NGINX_CONF_DEST.new" "$NGINX_CONF_DEST"
-
-step "Commit: installing systemd drop-in for polaris-web (waits on nginx)"
+step "Commit: installing the nginx GUI helpers, sudoers and the polaris-web drop-in"
 mkdir -p "$NGINX_DROPIN_DIR"
-install -o root -g root -m 0644 "$SHIPPED_DROPIN" "$NGINX_DROPIN_FILE"
-systemctl daemon-reload
-
-step "Commit: installing in-app nginx GUI helpers"
-# /usr/local/sbin/polaris-nginx-apply + narrow sudoers grant + tmpfiles
-# staging dir back the Server Settings → Certificates nginx GUI. nginx is
-# guaranteed installed at this point (preflight installed it), so the
-# usermod is unconditional.
-install -o root -g root -m 0755 "$APP_DIR/deploy/scripts/polaris-nginx-apply.sh" /usr/local/sbin/polaris-nginx-apply
-install -o root -g root -m 0440 "$APP_DIR/deploy/sudoers.d/polaris-nginx"        /etc/sudoers.d/polaris-nginx
-install -o root -g root -m 0644 "$APP_DIR/deploy/tmpfiles.d/polaris-nginx.conf"  /etc/tmpfiles.d/polaris-nginx.conf
+if trusted_sync_helper || { [[ -f "$SYNC_HELPER" ]] && bootstrap_sync_helper && trusted_sync_helper; }; then
+  "$SYNC_HELPER" --install ${POLARIS_YES:+--yes} || warn "$SYNC_HELPER --install reported a problem; see above"
+elif [[ ! -e "$SYNC_HELPER" ]]; then
+  warn "No $SYNC_HELPER on this host — installing the nginx helpers from $APP_DIR/deploy WITHOUT review."
+  install -o root -g root -m 0755 "$APP_DIR/deploy/scripts/polaris-nginx-apply.sh" /usr/local/sbin/polaris-nginx-apply
+  install -o root -g root -m 0440 "$APP_DIR/deploy/sudoers.d/polaris-nginx"        /etc/sudoers.d/polaris-nginx
+  install -o root -g root -m 0644 "$APP_DIR/deploy/tmpfiles.d/polaris-nginx.conf"  /etc/tmpfiles.d/polaris-nginx.conf
+  install -o root -g root -m 0644 "$SHIPPED_DROPIN" "$NGINX_DROPIN_FILE"
+  systemctl daemon-reload
+else
+  error "$SYNC_HELPER is not a trusted root-owned copy with --install, or its update was declined. nginx is not switched over yet; fix that and re-run this script."
+  exit 1
+fi
 systemd-tmpfiles --create /etc/tmpfiles.d/polaris-nginx.conf >/dev/null 2>&1 || true
 if ! id -nG polaris 2>/dev/null | grep -qw nginx; then
   usermod -aG nginx polaris
   info "Added polaris user to the nginx group (cert file readability)"
 fi
+
+step "Commit: installing nginx config to $NGINX_CONF_DEST"
+if ! nginx_conf_checked "$TMP/polaris.conf"; then
+  error "The staged nginx config did not pass the content check, or polaris-nginx-apply is not installed (approve it above, or run: sudo polaris-update-sync --apply-helpers). nginx is not switched over yet; re-run this script afterwards."
+  exit 1
+fi
+install -o root -g root -m 0644 "$TMP/polaris.conf" "$NGINX_CONF_DEST.new"
+mv -f "$NGINX_CONF_DEST.new" "$NGINX_CONF_DEST"
+
 
 step "Commit: appending POLARIS_PROXY_CERT_PATH and POLARIS_PUBLIC_URL to $ENV_FILE"
 # Idempotent: skip the append on re-run if the keys are already present
@@ -299,7 +342,7 @@ if ! grep -q '^POLARIS_PROXY_CERT_PATH=' "$ENV_FILE" 2>/dev/null; then
     echo "# Added by deploy/migrate-to-nginx.sh on $BACKUP_TS"
     echo "POLARIS_PROXY_CERT_PATH=$NGINX_CERT_DIR/cert.pem"
     echo "POLARIS_PUBLIC_URL=$PUBLIC_URL"
-  } >> "$ENV_FILE"
+  } | env_append
 else
   info "POLARIS_PROXY_CERT_PATH already in $ENV_FILE — skipping append"
 fi
