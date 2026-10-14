@@ -44,10 +44,10 @@ function cand(over: Partial<MonitorPassCandidate> & { id?: string } = {}): Monit
     consecutiveSuccesses: 3,
     lastMonitorAt: null,
     monitorIntervalSec: null,
-    lastTelemetryAt: null,
+    lastTelemetryAttemptAt: null,
     cpuMemoryIntervalSec: null,
     temperatureIntervalSec: null,
-    lastSystemInfoAt: null,
+    lastSystemInfoAttemptAt: null,
     systemInfoIntervalSec: null,
     probeTimeoutMs: null,
     responseTimePolling: null,
@@ -180,17 +180,31 @@ dbDescribe("computeDueWork", () => {
       interfacesPolling: "snmp" as const,
       monitoredInterfaces: ["port1"],
       lastMonitorAt: null,          // probe due
-      lastSystemInfoAt: now,        // systemInfo NOT due
+      lastSystemInfoAttemptAt: now, // systemInfo NOT due
     };
     const rides = await computeDueWork([cand(base)], ALL, now);
     expect(rides.fastFiltereds).toHaveLength(1);
 
     // When the full pass is also due, the pinned scrape is skipped.
     const yields = await computeDueWork(
-      [cand({ ...base, lastSystemInfoAt: ago(sysInfoSec * 2) })], ALL, now,
+      [cand({ ...base, lastSystemInfoAttemptAt: ago(sysInfoSec * 2) })], ALL, now,
     );
     expect(yields.fastFiltereds).toEqual([]);
     expect(yields.systemInfos).toHaveLength(1);
+  });
+
+  it("schedules the heavy streams off the last ATTEMPT, not the last success (rule 118)", async () => {
+    // A device whose pulls have failed for an hour: success stamps stale, the
+    // last attempt a moment ago. It waits a cadence like a healthy device —
+    // system info used to be re-walked every heavy tick here, because its due
+    // anchor only advanced on success.
+    const failing = await computeDueWork([cand({
+      cpuMemoryPolling: "rest_api", interfacesPolling: "rest_api", assetType: "firewall",
+      lastTelemetryAt: ago(3600), lastSystemInfoAt: ago(3600),
+      lastTelemetryAttemptAt: now, lastSystemInfoAttemptAt: now,
+    } as Partial<MonitorPassCandidate>)], ALL, now);
+    expect(failing.telemetries).toEqual([]);
+    expect(failing.systemInfos).toEqual([]);
   });
 
   it("agentless processes dispatch only for ssh/winrm, with the pinned sub-pass path", async () => {
@@ -424,7 +438,7 @@ dbDescribe("SD-WAN due-set", () => {
   it("queues a never-polled SD-WAN gate, independent of the system-info cadence", async () => {
     // System-info was polled a moment ago — under the old ride-along the gate
     // would wait its full interface interval for the next SLA reading.
-    const due = await computeDueWork([gate(onId, { lastSystemInfoAt: now })], ALL, now);
+    const due = await computeDueWork([gate(onId, { lastSystemInfoAttemptAt: now })], ALL, now);
     expect(due.sdwanWork.map((w) => w.id)).toEqual(["cand-1"]);
     expect(due.systemInfos).toEqual([]);
   });

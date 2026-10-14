@@ -150,8 +150,9 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
       lastMonitorAt: true, monitorIntervalSec: true,
       // ICMP loss-sampler inputs — mirrors loadMonitorPassCandidates.
       lastLossSampleAt: true, ipAddress: true, dnsName: true, hostname: true, status: true,
-      lastTelemetryAt: true, cpuMemoryIntervalSec: true, temperatureIntervalSec: true,
-      lastSystemInfoAt: true, systemInfoIntervalSec: true,
+      // Attempt stamps, not success stamps — business rule 118.
+      lastTelemetryAttemptAt: true, cpuMemoryIntervalSec: true, temperatureIntervalSec: true,
+      lastSystemInfoAttemptAt: true, systemInfoIntervalSec: true,
       // Phase 2 carve-out: LLDP + Storage each have their own cadence + queue.
       lastLldpAt:    true, lldpIntervalSec:    true,
       lastStorageAt: true, storageIntervalSec: true,
@@ -264,8 +265,10 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
     // telemetry tick; collectTelemetry covers temperature in the same
     // session. A follow-up commit will split the dispatcher loop so
     // temperature gets its own independent cadence.
-    const telemetry  = isDue(a.lastTelemetryAt,  eff.cpuMemoryIntervalSeconds);
-    const systemInfo = isDue(a.lastSystemInfoAt, eff.systemInfoIntervalSeconds);
+    // Due off the ATTEMPT stamps (business rule 118) — lockstep with
+    // monitoringService.computeDueWork.
+    const telemetry  = isDue(a.lastTelemetryAttemptAt,  eff.cpuMemoryIntervalSeconds);
+    const systemInfo = isDue(a.lastSystemInfoAttemptAt, eff.systemInfoIntervalSeconds);
     // Phase 2 carve-out: LLDP + Storage run on independent cadences. The
     // legacy systemInfo path still walks both as side effects on a shared
     // SNMP session — persistLldpNeighbors + enqueueStorageSamples are

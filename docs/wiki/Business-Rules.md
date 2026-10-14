@@ -2354,3 +2354,31 @@ the HA peer.**
 - **The Unraid Query API window runs queries only.** A document that contains
   a mutation or a subscription anywhere is refused, and every query run is
   recorded as an `integration.query` event.
+
+### Rule 118
+
+**A poll that failed is stamped as an attempt, never as an update — and how
+long a stream has been failing is something an automation can alert on.**
+
+- **"Updated X ago" means the last poll that returned data.** On the System
+  tab, the CPU & Memory and Interfaces headers show when the stream last
+  answered with data. A poll that failed never moves that time.
+- **A failing stream says so.** While a stream's polls are failing, its header
+  reads **⚠ last poll failed X ago** in amber; hover it for when the failures
+  started, the last successful poll, and the error the device returned. Once
+  the data is older than three polling intervals, the amber banner above the
+  chart or table adds the same error — and a stream that has never succeeded
+  shows the banner with the error straight away.
+- **A failing device is retried once per polling interval**, the same as a
+  healthy one. A failure does not make Polaris ask again sooner.
+- **Two automation conditions measure it**: *CPU & memory polls failing
+  (minutes)* and *Interface polls failing (minutes)*. Each reads how many
+  minutes the stream's polls have been failing, counted from the first failed
+  poll to the latest one; 0 means the stream is healthy. A device whose stream
+  was never polled (no collector for its method, or the stream switched off)
+  has no reading, so a fleet-wide condition never fires on it.
+- **They are independent of response time.** A device that answers ping or
+  SNMP but whose REST pull is refused reads **Up** and is still caught. If the
+  device goes **Down**, the alert is handed to the device-down alert — one
+  outage, one alert — and the reading stops advancing while the heavy streams
+  are paused.

@@ -126,6 +126,10 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   // Firmware vs the Repository primary (business rule 87): osVersion is refreshed by
   // discovery and the system-info pass, never by the probe tick.
   firmwareVsPrimary: "systemInfo",
+  // Business rule 118 — each reads its own stream's attempt stamp, so a hold
+  // counted in polls counts that stream's attempts.
+  telemetryFailingMinutes: "cpuMemory",
+  systemInfoFailingMinutes: "systemInfo",
 };
 
 /**

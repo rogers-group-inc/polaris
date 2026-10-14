@@ -360,6 +360,12 @@ interface ScopeAssetRow extends ScopeAsset {
   // Poll anchors for the current-state readings (see SCOPE_SELECT).
   lastMonitorAt?: Date | null;
   lastSystemInfoAt?: Date | null;
+  // The two stream-failing fields (business rule 118): each stream's last
+  // attempt (the reading anchor) and the start of its open failure run.
+  lastTelemetryAttemptAt?: Date | null;
+  telemetryFailingSince?: Date | null;
+  lastSystemInfoAttemptAt?: Date | null;
+  systemInfoFailingSince?: Date | null;
   // Read ONLY by the builder's device-list preview (optional so the pseudo-host
   // row can omit it). The engine never filters on it — see SCOPE_SELECT.
   monitored?: boolean;
@@ -461,6 +467,10 @@ const SCOPE_SELECT = {
   // readings anchor on the rule rows' own updatedAt instead (see the
   // sdwanRuleStatus case), which is written only by a successful SD-WAN read.
   lastMonitorAt: true, lastSystemInfoAt: true,
+  // Business rule 118 — four timestamp columns, read off the scope row like
+  // fortilinkStatus so the stream-failing fields cost no query of their own.
+  lastTelemetryAttemptAt: true, telemetryFailingSince: true,
+  lastSystemInfoAttemptAt: true, systemInfoFailingSince: true,
   // The gate every trigger path applies (assetCanTrigger): an automation only
   // ever fires about a device Polaris is actually polling. Kept in the select
   // as well as the WHERE because the event tail and the builder's device
@@ -1938,6 +1948,20 @@ async function unpinnedPoeFaultReadings(
   return out;
 }
 
+/**
+ * Business rule 118 — the reading of a stream-failing field: whole minutes from
+ * the first failed attempt of the open run to the LATEST attempt. Measured to
+ * the attempt, not to now, so a stream that stops being attempted (the device
+ * went down and the heavy cadences paused, the method was switched off) freezes
+ * where it was instead of climbing into an alert about polls nobody sent.
+ * 0 when the stream is healthy; null — no reading — when it was never attempted.
+ */
+export function streamFailingMinutes(lastAttemptAt: Date | null, failingSince: Date | null): number | null {
+  if (!lastAttemptAt) return null;
+  if (!failingSince) return 0;
+  return Math.max(0, Math.floor((lastAttemptAt.getTime() - failingSince.getTime()) / 60_000));
+}
+
 async function resolveAssetStateReadings(
   trigger: Extract<Trigger, { type: "asset_state" }>,
   assets: ScopeAssetRow[],
@@ -2038,6 +2062,16 @@ async function resolveAssetStateReadings(
       }
       return out;
     }
+    case "telemetryFailingMinutes":
+      return assets.flatMap((a) => {
+        const v = streamFailingMinutes(a.lastTelemetryAttemptAt ?? null, a.telemetryFailingSince ?? null);
+        return v === null ? [] : [{ ...mk(a, "", "", v), readingAt: a.lastTelemetryAttemptAt ?? null }];
+      });
+    case "systemInfoFailingMinutes":
+      return assets.flatMap((a) => {
+        const v = streamFailingMinutes(a.lastSystemInfoAttemptAt ?? null, a.systemInfoFailingSince ?? null);
+        return v === null ? [] : [{ ...mk(a, "", "", v), readingAt: a.lastSystemInfoAttemptAt ?? null }];
+      });
     case "ifOperStatus": case "ifAdminStatus": case "ifIpAddress": case "poeStatus": {
       const col = INTERFACE_STATE_COLUMN[trigger.field];
       const since = new Date(Date.now() - lookbackMsFor(trigger));

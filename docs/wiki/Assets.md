@@ -437,6 +437,18 @@ monitored firewall, switch or access point **Simulate Down…** for
 the **Last 30 min** strip, one cell per probe coloured by the state it left
 the device in, and **Uptime** where the transport reports it.
 
+**Each section header says how fresh its data is.** Beside the polling-method
+badge, **updated X ago** is the last poll that returned data — a failed poll
+never moves it ([rule 118](Business-Rules#rule-118)). When the CPU & Memory or
+Interfaces stream is failing, its header reads **⚠ last poll failed X ago**
+in amber instead; hover it for when the failures started, the last successful
+poll and the error the device returned. Once the data is older than three
+polling intervals, an amber banner above the chart or table says *Last
+successful update X ago* and adds that error; a stream that has never
+succeeded shows *No successful poll yet* with the error straight away. To be
+told about it, alert on *CPU & memory polls failing (minutes)* or *Interface
+polls failing (minutes)* ([Automation triggers](Automation-Triggers#telemetryfailingminutes--systeminfofailingminutes--a-stream-that-stopped-answering)).
+
 **The Response time chart also draws packet loss.** A dashed purple line reads
 against a second axis on the right. That axis tops out at the worst loss in
 the window (4 %, 8 %, 12 %, 20 %, 40 %, 60 %, 80 % or 100 %), so small loss

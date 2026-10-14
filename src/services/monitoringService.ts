@@ -9610,47 +9610,91 @@ function bytesOrNull(v: number | null | undefined): bigint | null {
   return v != null && Number.isFinite(v) ? BigInt(Math.max(0, Math.round(v))) : null;
 }
 
+// ─── Attempt vs success stamps (business rule 118) ──────────────────────────
+//
+// Each heavy stream keeps the last ATTEMPT (the scheduler's due anchor) apart
+// from the last SUCCESS (what "updated X ago", the stale banner and the system
+// info anchor read). One stamp used to do both jobs, and the two streams had
+// settled the conflict in opposite directions: telemetry stamped every attempt,
+// so a device whose REST pull failed forever read "updated 1m ago" over an
+// empty chart; system info stamped only successes, so the UI was honest but a
+// failing device was re-walked on every heavy tick.
+
+/** Cap on a stored failure message — a collector error is one line, but a
+ *  thrown HTML body or a stack must not land in an Asset column whole. */
+export const POLL_ERROR_MAX_LEN = 500;
+
+/** The message a failed collection leaves behind: its own error, or a plain
+ *  statement that the device answered with nothing usable. */
+export function pollFailureText(error: string | null | undefined, fallback: string): string {
+  const text = (error ?? "").trim() || fallback;
+  return text.length > POLL_ERROR_MAX_LEN ? text.slice(0, POLL_ERROR_MAX_LEN - 1) + "…" : text;
+}
+
+/** The columns a SUCCESSFUL poll of a stream writes: success and attempt
+ *  together, and the failure run closed. Every success writer spreads this —
+ *  the agent push routes included — because a success that left the attempt
+ *  stamp behind would leave the stream due on every tick. */
+export function telemetrySuccessStamps(at: Date) {
+  return { lastTelemetryAt: at, lastTelemetryAttemptAt: at, telemetryFailingSince: null, telemetryLastError: null };
+}
+export function systemInfoSuccessStamps(at: Date) {
+  return { lastSystemInfoAt: at, lastSystemInfoAttemptAt: at, systemInfoFailingSince: null, systemInfoLastError: null };
+}
+
+/** A FAILED poll: stamp the attempt, open the failure run if none is open
+ *  (COALESCE — the run starts at its FIRST failure, which a read-then-write
+ *  would race), record the message. The success stamp is untouched. One
+ *  statement, and only on the failure path. */
+async function recordStreamFailure(stream: "telemetry" | "systemInfo", assetId: string, at: Date, message: string): Promise<void> {
+  if (stream === "telemetry") {
+    await prisma.$executeRaw`UPDATE assets SET "lastTelemetryAttemptAt" = ${at}, "telemetryFailingSince" = COALESCE("telemetryFailingSince", ${at}), "telemetryLastError" = ${message} WHERE id = ${assetId}`;
+  } else {
+    await prisma.$executeRaw`UPDATE assets SET "lastSystemInfoAttemptAt" = ${at}, "systemInfoFailingSince" = COALESCE("systemInfoFailingSince", ${at}), "systemInfoLastError" = ${message} WHERE id = ${assetId}`;
+  }
+}
+
 export async function recordTelemetryResult(assetId: string, result: CollectionResult<TelemetrySample>): Promise<void> {
   if (!result.supported) return;
   const now = new Date();
-  if (result.data) {
-    const d = result.data;
-    enqueueTelemetrySample({
-      assetId,
-      timestamp: now,
-      cpuPct:        d.cpuPct ?? null,
-      memPct:        d.memPct ?? null,
-      memUsedBytes:  d.memUsedBytes  != null ? BigInt(Math.round(d.memUsedBytes))  : null,
-      memTotalBytes: d.memTotalBytes != null ? BigInt(Math.round(d.memTotalBytes)) : null,
-      // Per-core CPU reaches this function from the vCenter collector and the
-      // Unraid / TrueNAS host snapshot (workloadMonitorService);
-      // the agent's copy arrives on its own push path (routes/agents.ts),
-      // which writes this buffer directly. FortiOS REST, SNMP, WinRM and SSH
-      // expose no per-core figure at all and leave it null.
-      cpuCorePcts:     d.cpuCorePcts ?? null,
-      // The agent's band set (used + buffers + cached + free = total). One
-      // server-side collector fills it — a TrueNAS host, whose ZFS ARC is the
-      // `cached` band (workloadMonitorService) and which reconciles the sum
-      // itself. Everything else leaves it null.
-      memBuffersBytes: bytesOrNull(d.memBuffersBytes),
-      memCachedBytes:  bytesOrNull(d.memCachedBytes),
-      memFreeBytes:    bytesOrNull(d.memFreeBytes),
-      swapUsedBytes:   null,
-      swapTotalBytes:  null,
-      // The vCenter band set, disjoint from the one above. Null everywhere
-      // else, and the two are never populated on the same row.
-      memPrivateBytes:    bytesOrNull(d.memPrivateBytes),
-      memSharedBytes:     bytesOrNull(d.memSharedBytes),
-      memBalloonedBytes:  bytesOrNull(d.memBalloonedBytes),
-      memSwappedBytes:    bytesOrNull(d.memSwappedBytes),
-      memCompressedBytes: bytesOrNull(d.memCompressedBytes),
-      memConsumedBytes:   bytesOrNull(d.memConsumedBytes),
-      sessionCount:  d.sessionCount ?? null,
-    });
+  if (!result.data) {
+    await recordStreamFailure("telemetry", assetId, now, pollFailureText(result.error, "The device returned no CPU / memory data"));
+    return;
   }
-  // Always advance the cadence stamp so a transient failure doesn't make us
-  // hammer the device every 5 s.
-  await prisma.asset.update({ where: { id: assetId }, data: { lastTelemetryAt: now } });
+  const d = result.data;
+  enqueueTelemetrySample({
+    assetId,
+    timestamp: now,
+    cpuPct:        d.cpuPct ?? null,
+    memPct:        d.memPct ?? null,
+    memUsedBytes:  d.memUsedBytes  != null ? BigInt(Math.round(d.memUsedBytes))  : null,
+    memTotalBytes: d.memTotalBytes != null ? BigInt(Math.round(d.memTotalBytes)) : null,
+    // Per-core CPU reaches this function from the vCenter collector and the
+    // Unraid / TrueNAS host snapshot (workloadMonitorService);
+    // the agent's copy arrives on its own push path (routes/agents.ts),
+    // which writes this buffer directly. FortiOS REST, SNMP, WinRM and SSH
+    // expose no per-core figure at all and leave it null.
+    cpuCorePcts:     d.cpuCorePcts ?? null,
+    // The agent's band set (used + buffers + cached + free = total). One
+    // server-side collector fills it — a TrueNAS host, whose ZFS ARC is the
+    // `cached` band (workloadMonitorService) and which reconciles the sum
+    // itself. Everything else leaves it null.
+    memBuffersBytes: bytesOrNull(d.memBuffersBytes),
+    memCachedBytes:  bytesOrNull(d.memCachedBytes),
+    memFreeBytes:    bytesOrNull(d.memFreeBytes),
+    swapUsedBytes:   null,
+    swapTotalBytes:  null,
+    // The vCenter band set, disjoint from the one above. Null everywhere
+    // else, and the two are never populated on the same row.
+    memPrivateBytes:    bytesOrNull(d.memPrivateBytes),
+    memSharedBytes:     bytesOrNull(d.memSharedBytes),
+    memBalloonedBytes:  bytesOrNull(d.memBalloonedBytes),
+    memSwappedBytes:    bytesOrNull(d.memSwappedBytes),
+    memCompressedBytes: bytesOrNull(d.memCompressedBytes),
+    memConsumedBytes:   bytesOrNull(d.memConsumedBytes),
+    sessionCount:  d.sessionCount ?? null,
+  });
+  await prisma.asset.update({ where: { id: assetId }, data: telemetrySuccessStamps(now) });
 }
 
 /**
@@ -10222,7 +10266,10 @@ async function applyDescrIdentity(
 export async function recordSystemInfoResult(assetId: string, result: CollectionResult<SystemInfoSample>): Promise<void> {
   if (!result.supported) return;
   const now = new Date();
-  if (!result.data) return;
+  if (!result.data) {
+    await recordStreamFailure("systemInfo", assetId, now, pollFailureText(result.error, "The device returned no interface data"));
+    return;
+  }
   const d = result.data;
   // One indexed PK read per scrape on the slow (~10 min) cadence — the pins
   // drive the fast/slow cadence stamps, the identity bits feed the assoc-IP
@@ -10393,8 +10440,12 @@ export async function recordSystemInfoResult(assetId: string, result: Collection
   // The other streams (storage / ipsec / temperatures / lldp) read their
   // own latest-row timestamp and are written above unconditionally, so they
   // still refresh on every successful pull.
+  //
+  // An empty interface list is therefore a FAILED poll for the stream's own
+  // accounting too (business rule 118): the attempt is stamped so the device
+  // waits a cadence before the next walk, and the failure run says why.
+  const endUpdate = startPhase("systeminfo.persist.update_asset");
   if (d.interfaces.length > 0) {
-    const endUpdate = startPhase("systeminfo.persist.update_asset");
     await prisma.asset.update({
       where: { id: assetId },
       // This pass read sysDescr in its own multi-GET, so the identity read is
@@ -10402,10 +10453,12 @@ export async function recordSystemInfoResult(assetId: string, result: Collection
       // already makes rather than costing a write of its own. It is what
       // keeps the response-time probe from carrying a redundant sysDescr
       // varbind for every asset that also has a heavy stream enabled.
-      data: { lastSystemInfoAt: now, ...(d.sysDescr ? { lastDescrAt: now } : {}) },
+      data: { ...systemInfoSuccessStamps(now), ...(d.sysDescr ? { lastDescrAt: now } : {}) },
     });
-    endUpdate();
+  } else {
+    await recordStreamFailure("systemInfo", assetId, now, pollFailureText(result.error, "The device answered but returned no interfaces"));
   }
+  endUpdate();
 }
 
 /**
@@ -13666,8 +13719,10 @@ export async function loadMonitorPassCandidates() {
       // `status` is belt-and-braces: MONITOR_CANDIDATE_WHERE already excludes
       // maintenance, and the sampler predicate re-checks it anyway.
       lastLossSampleAt: true, ipAddress: true, dnsName: true, hostname: true, status: true,
-      lastTelemetryAt: true, cpuMemoryIntervalSec: true, temperatureIntervalSec: true,
-      lastSystemInfoAt: true, systemInfoIntervalSec: true,
+      // The heavy streams are due off their last ATTEMPT, not their last
+      // success (business rule 118) — a failing device waits a cadence.
+      lastTelemetryAttemptAt: true, cpuMemoryIntervalSec: true, temperatureIntervalSec: true,
+      lastSystemInfoAttemptAt: true, systemInfoIntervalSec: true,
       probeTimeoutMs: true,
       responseTimePolling: true,
       cpuMemoryPolling:    true,
@@ -13818,16 +13873,19 @@ export async function computeDueWork(
     // shorter temperature cadence get the per-stream column today but the
     // independent timer lands in a follow-up commit when the collector
     // loop splits.
-    const telemetry  = isDue(a.lastTelemetryAt,  eff.cpuMemoryIntervalSeconds);
-    const systemInfo = isDue(a.lastSystemInfoAt, eff.systemInfoIntervalSeconds);
+    //
+    // Due off the ATTEMPT stamps (business rule 118): a failure waits one
+    // cadence like a success does. The success stamps are the UI's.
+    const telemetry  = isDue(a.lastTelemetryAttemptAt,  eff.cpuMemoryIntervalSeconds);
+    const systemInfo = isDue(a.lastSystemInfoAttemptAt, eff.systemInfoIntervalSeconds);
     const hasFastPin =
       (Array.isArray(a.monitoredInterfaces)   && a.monitoredInterfaces.length   > 0) ||
       (Array.isArray(a.monitoredStorage)      && a.monitoredStorage.length      > 0) ||
       (Array.isArray(a.monitoredIpsecTunnels) && a.monitoredIpsecTunnels.length > 0);
 
     // Pre-queue eligibility. collectTelemetry / collectSystemInfo return
-    // {supported:false} immediately for these cases, which means
-    // lastTelemetryAt / lastSystemInfoAt never advance and the asset sits in
+    // {supported:false} immediately for these cases, which means neither
+    // attempt stamp ever advances and the asset sits in
     // the work queue on EVERY heavy tick — permanently inflating pass duration
     // and degrading the effective cadence for assets that DO produce data.
     //
@@ -13926,8 +13984,8 @@ export async function computeDueWork(
     // whether THIS pass is going to handle systemInfo, so the gating works
     // correctly even when light + heavy passes run on different ticking
     // loops: when systemInfo is due, fast-filtered is skipped on this and
-    // every following light tick until systemInfo runs successfully and
-    // bumps lastSystemInfoAt.
+    // every following light tick until systemInfo runs and stamps its attempt
+    // (success or failure — rule 118).
     if (probe && hasFastPin && canSystemInfo && !systemInfo && isUp && enabled.has("fastFiltered")) {
       fastFiltereds.push({ id: a.id, kind: "fastFiltered" });
     }

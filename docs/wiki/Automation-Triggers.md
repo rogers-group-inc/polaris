@@ -197,7 +197,9 @@ whole outage and mail "resolved" the moment the device returned.
 
 This does **not** apply to:
 
-- the asset-down alert itself (`monitorStatus`, `consecutiveFailures`);
+- the asset-down alert itself (`monitorStatus`, `consecutiveFailures`) — the
+  stream-failing fields (`telemetryFailingMinutes`, `systemInfoFailingMinutes`)
+  are not part of it, so they are handed off like CPU;
 - facts about the device that an outage does not change (`status`,
   `quarantined`, `firmwareVsPrimary`, `tag`, `dependencySuppressed`);
 - path checks, which are measured *from* the device rather than *about* it;
@@ -222,7 +224,7 @@ A field rather than a number.
 
 **Device-wide fields:** `monitorStatus` · `status` · `consecutiveFailures` ·
 `dependencySuppressed` · `quarantined` · `fortilinkStatus` · `firmwareVsPrimary` ·
-`tag`.
+`telemetryFailingMinutes` · `systemInfoFailingMinutes` · `tag`.
 
 `tag` is **Asset tag**: pick a tag from the list (every tag on a device plus every
 tag in the registry, so you can build a rule for a tag no device carries yet) and
@@ -327,6 +329,36 @@ differ, never of every printer and VM the Repository knows nothing about.
 The reading is refreshed by the system-info pass and by discovery, which are
 what update a device's firmware version — a `Sustained for (polls)` hold counts
 those, not the 60-second probe.
+
+### `telemetryFailingMinutes` / `systemInfoFailingMinutes` — a stream that stopped answering
+
+**CPU & memory polls failing (minutes)** and **Interface polls failing
+(minutes)** read how long that stream's polls have been failing, in whole
+minutes, counted from the first failed poll to the latest one
+([rule 118](Business-Rules#rule-118)). A stream that is working reads `0`.
+
+The usual rule is **CPU & memory polls failing (minutes) ≥ 60**: tell me when a
+device's CPU and memory have not been collected for an hour. These fields are
+separate from response time, and that is their point. A FortiGate that answers
+ping or SNMP while its REST pull is refused reads `monitorStatus = up`, so the
+down-detection automation never sees it. This one does.
+
+- **No double alert for an outage.** If the device goes **down**, an open alert
+  on either field is handed to the asset-down alert, like CPU or an interface
+  (see [A device that goes down takes its other alerts with
+  it](#a-device-that-goes-down-takes-its-other-alerts-with-it)). Adding
+  `monitorStatus == up` to the same automation is still allowed if you want it
+  written down.
+- **The reading stops advancing when polling stops.** It measures to the latest
+  poll, not to the current time, so a device whose heavy streams are paused
+  (missed probes, a down parent) does not climb toward the threshold.
+- **No reading for a stream that is never polled** — no collector for its
+  method, or the stream switched off — so a fleet-wide condition does not fire
+  on devices that have no CPU or interface stream at all.
+- **A `Sustained for (polls)` hold counts that stream's polls** (its own
+  cadence), not the 60-second probe.
+- The alert email for the CPU & memory field draws the CPU chart, where the
+  samples stop.
 
 ### `ifIpAddress` — a gate, not an alarm
 

@@ -102,6 +102,7 @@ function installStubs() {
   g._assetMonitorStreamSource = () => ({ polling: "agent", source: "Agent" });
   g._notAvailableViaPollingHTML = (what: string, how: string) => `<div>NA:${what}:${how}</div>`;
   g._staleBannerHTML = () => "";
+  g._streamFailureError = () => null;
   g._resolvedStreamPolling = () => "agent";
   // Lives next to assetSystemViewHTML, outside this region — the gate
   // deciding whether the section splits at all, which the CPU legend

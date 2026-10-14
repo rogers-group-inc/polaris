@@ -77,6 +77,7 @@ beforeEach(() => {
     String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   g.currentUsername = "wireless-tester";
   g._staleBannerHTML = () => "";
+  g._streamFailureError = () => null;
   g.applyTableLayout = vi.fn();
   g._assetTableTypeKey = () => "asset-wireless";
   g._screenshotTableEl = vi.fn();

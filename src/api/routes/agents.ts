@@ -41,6 +41,8 @@ import {
   invalidateMonitorSettingsCache,
   persistAssetProcesses,
   persistProcessConnections,
+  telemetrySuccessStamps,
+  systemInfoSuccessStamps,
 } from "../../services/monitoringService.js";
 import {
   enqueueMonitorSample,
@@ -511,8 +513,9 @@ async function ingestTelemetry(assetId: string, samples: StreamSamples<"telemetr
     }
     accepted++;
   }
-  // Bump lastTelemetryAt so the System tab reflects freshness.
-  await prisma.asset.update({ where: { id: assetId }, data: { lastTelemetryAt: now } });
+  // A push is a successful poll (business rule 118): success AND attempt, so
+  // the System tab reads fresh and the scheduler doesn't see the stream due.
+  await prisma.asset.update({ where: { id: assetId }, data: telemetrySuccessStamps(now) });
   if (sampleLog) {
     logger.info(
       { assetId, enqueued: accepted },
@@ -612,7 +615,7 @@ async function ingestInterfaces(assetId: string, samples: StreamSamples<"interfa
   if (ifaceMacs.length > 0) {
     await reconcileInterfaceMacs(assetId, ifaceMacs, sampleTs);
   }
-  await prisma.asset.update({ where: { id: assetId }, data: { lastSystemInfoAt: sampleTs } });
+  await prisma.asset.update({ where: { id: assetId }, data: systemInfoSuccessStamps(sampleTs) });
   return rows.length;
 }
 
@@ -794,7 +797,7 @@ async function ingestStorage(assetId: string, samples: StreamSamples<"storage">,
     usedBytes:  s.usedBytes  != null ? BigInt(Math.round(s.usedBytes))  : null,
   }));
   enqueueStorageSamples(rows);
-  await prisma.asset.update({ where: { id: assetId }, data: { lastSystemInfoAt: now } });
+  await prisma.asset.update({ where: { id: assetId }, data: systemInfoSuccessStamps(now) });
   return rows.length;
 }
 

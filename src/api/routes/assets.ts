@@ -2613,6 +2613,10 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
       select: {
         id: true, monitored: true,
         lastTelemetryAt: true, lastSystemInfoAt: true,
+        // Business rule 118 — the open failure run, so the section headers
+        // can say a poll failed and why instead of only how old the data is.
+        lastTelemetryAttemptAt: true, telemetryFailingSince: true, telemetryLastError: true,
+        lastSystemInfoAttemptAt: true, systemInfoFailingSince: true, systemInfoLastError: true,
         monitoredInterfaces: true,
         monitoredStorage: true,
         monitoredIpsecTunnels: true,
@@ -2719,8 +2723,14 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
     res.json({
       monitored: asset.monitored,
       lastTelemetryAt: asset.lastTelemetryAt,
+      lastTelemetryAttemptAt: asset.lastTelemetryAttemptAt,
+      telemetryFailingSince: asset.telemetryFailingSince,
+      telemetryLastError: asset.telemetryLastError,
       lastTemperatureAt: latestHwMeta?.timestamp ?? null,
       lastSystemInfoAt: asset.lastSystemInfoAt,
+      lastSystemInfoAttemptAt: asset.lastSystemInfoAttemptAt,
+      systemInfoFailingSince: asset.systemInfoFailingSince,
+      systemInfoLastError: asset.systemInfoLastError,
       telemetry: latestTelemetry ? {
         timestamp:     latestTelemetry.timestamp,
         cpuPct:        latestTelemetry.cpuPct,

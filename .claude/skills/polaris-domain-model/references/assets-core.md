@@ -215,8 +215,18 @@ Asset
   lldpIntervalSec        Int?
   storageIntervalSec     Int?
   customWidgetIntervalSec Int?           -- Custom-widget (Slice 7) cadence; rides the telemetry tick. null = inherit.
-  lastTelemetryAt       DateTime?
-  lastSystemInfoAt      DateTime?
+  -- Business rule 118: four columns per heavy stream, never one stamp doing two jobs.
+  lastTelemetryAt          DateTime?     -- last CPU/memory poll that RETURNED DATA (UI "updated X ago", stale banner). Never moved by a failure.
+  lastTelemetryAttemptAt   DateTime?     -- every attempt, success or failure: the ONLY telemetry due anchor (computeDueWork / publishDueWork).
+  telemetryFailingSince    DateTime?     -- first failed attempt of the open run (COALESCE in recordStreamFailure); null while healthy.
+  telemetryLastError       String?       -- the run's latest failure message, ≤ 500 chars (pollFailureText).
+  lastSystemInfoAt         DateTime?     -- last system-info pull that returned INTERFACES — also the /system-info interface anchor.
+  lastSystemInfoAttemptAt  DateTime?     -- the system-info due anchor (an empty interface list counts as a failed attempt).
+  systemInfoFailingSince   DateTime?
+  systemInfoLastError      String?
+  -- Success writers spread monitoringService.telemetrySuccessStamps / systemInfoSuccessStamps
+  -- (the agent /samples routes too), which stamp the attempt as well — a success that skipped
+  -- it would leave the stream due on every tick.
   lastLldpAt            DateTime?
   lastStorageAt         DateTime?
   lastSdwanAt           DateTime?        -- SD-WAN cadence anchor (2026-09-23, migration 20260923120000_sdwan_cadence_anchor): monitoringService.runSdwanFor stamps it BEFORE collecting, even on failure (the lastEventLogAt pattern), so an unreachable gate is asked once per Integration.config.sdwanIntervalSeconds (default 60s) rather than every 5s light tick. No per-asset interval column — the interval is per integration. Never dates the SD-WAN rows themselves (the tab reads the samples' own timestamps).
