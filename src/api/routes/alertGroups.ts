@@ -20,7 +20,7 @@ import { z } from "zod";
 import { requirePermission } from "../middleware/permissions.js";
 import { assertScriptActionPermission } from "./notificationRules.js";
 import { maskActionHeaders } from "../../utils/actionHeaderMask.js";
-import {
+import { deliveryAfterChange,
   listGroups,
   getGroup,
   createGroup,
@@ -110,6 +110,8 @@ alertGroupsRouter.post("/", requirePermission("automationManagement", "write"), 
     // A group's actions are executed exactly like an automation's, so a script
     // action needs Automation Scripts Read-Write here too (business rule 114(a)).
     assertScriptActionPermission(req, input as never);
+    // ...including actions it would seed from its members (re-scan F56).
+    assertScriptActionPermission(req, (await deliveryAfterChange(null, input)) as never);
     res.status(201).json(maskActionHeaders(await createGroup(input, req.session?.username)));
   } catch (err) { next(err); }
 });
@@ -118,6 +120,12 @@ alertGroupsRouter.put("/:id", requirePermission("automationManagement", "write")
   try {
     const input = groupInputSchema.parse(req.body);
     assertScriptActionPermission(req, input as never);
+    // Re-scan F56: changing WHO a group's stored (or seeded) script runs for —
+    // its members or its scope — needs the script grant too, even when the
+    // request leaves the actions themselves alone.
+    if (input.ruleIds !== undefined || input.scope !== undefined) {
+      assertScriptActionPermission(req, (await deliveryAfterChange(req.params.id as string, input)) as never);
+    }
     res.json(maskActionHeaders(await updateGroup(req.params.id as string, input, req.session?.username)));
   } catch (err) { next(err); }
 });

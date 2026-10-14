@@ -177,11 +177,20 @@ export async function provisionLlmAccess(
 export async function regenerateLlmToken(
   integration: { id: string; name: string; config: Record<string, unknown> },
   actor: string,
+  req?: Request,
 ): Promise<{ tokenId: string; tokenName: string; rawToken: string; roleName: string }> {
   const roleId = typeof integration.config.roleId === "string" ? integration.config.roleId : null;
-  const role = roleId ? await prisma.role.findUnique({ where: { id: roleId }, select: { id: true, name: true } }) : null;
+  const role = roleId ? await prisma.role.findUnique({ where: { id: roleId }, select: { id: true, name: true, permissions: true } }) : null;
   if (!role) {
     throw new AppError(409, "This integration's role no longer exists — delete and re-create the integration to provision a new one");
+  }
+  // Business rule 114(g), re-scan F9: the caller walks away holding a raw
+  // bearer on this role, so it is a grant like minting a token by hand — the
+  // provisioning grants, and the role AS STORED (an operator may have widened
+  // it) within the caller's own access. Checked before the old token dies.
+  if (req) {
+    assertCanProvision(req);
+    assertGrantWithinCaller(req, role.permissions, `the AI Assistant integration's role "${role.name}"`);
   }
   const oldTokenId = typeof integration.config.tokenId === "string" ? integration.config.tokenId : null;
   if (oldTokenId) await deleteToken(oldTokenId).catch(() => {});

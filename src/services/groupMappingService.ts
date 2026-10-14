@@ -308,6 +308,17 @@ export async function createGroupMapping(input: CreateGroupMappingInput, actor?:
   return summarize(created);
 }
 
+/** The role a mapping (or a role id) would grant: its name and matrix, for the rule 114(g) check. Null when none. */
+export async function roleGrantFor(roleId: string | null | undefined): Promise<{ name: string; permissions: unknown } | null> {
+  if (!roleId) return null;
+  return prisma.role.findUnique({ where: { id: roleId }, select: { name: true, permissions: true } });
+}
+
+/** What a stored mapping grants and to whom, before an edit (rule 114(g)). Null for an unknown id. */
+export async function mappingGrantState(id: string): Promise<{ roleId: string | null; groupKey: string; groupLabel: string | null; enabled: boolean } | null> {
+  return prisma.groupMapping.findUnique({ where: { id }, select: { roleId: true, groupKey: true, groupLabel: true, enabled: true } });
+}
+
 export async function updateGroupMapping(id: string, input: UpdateGroupMappingInput, actor?: string): Promise<GroupMappingSummary> {
   const before = await prisma.groupMapping.findUnique({ where: { id } });
   if (!before) throw new AppError(404, `Group mapping ${id} not found`);

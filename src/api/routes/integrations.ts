@@ -1720,7 +1720,7 @@ router.post("/", async (req, res, next) => {
     // Literal comparison kept (not isFortinetIntegrationType): it's the
     // discriminant TS uses to narrow `input.config` to the Fortinet shapes.
     if ((input.type === "fortimanager" || input.type === "fortigate") && input.config.host) {
-      const registration = await registerFortinetHost(input.type, input.config.host, input.name, false);
+      const registration = await registerFortinetHost(input.type, input.config.host, input.name, false, [], req);
       if (registration?.conflicts?.length) {
         response.conflicts = registration.conflicts;
       }
@@ -2017,7 +2017,7 @@ router.put("/:id", async (req, res, next) => {
 
     // Auto-register FortiManager/FortiGate IP as asset/reservation
     if ((isFortinetIntegrationType(existing.type)) && finalConfig.host && typeof finalConfig.host === "string") {
-      const registration = await registerFortinetHost(existing.type, finalConfig.host, updated.name, false);
+      const registration = await registerFortinetHost(existing.type, finalConfig.host, updated.name, false, [], req);
       if (registration?.conflicts?.length) {
         response.conflicts = registration.conflicts;
       }
@@ -2735,7 +2735,7 @@ router.post("/:id/register", async (req, res, next) => {
 
     // fields: which proposed fields to apply to the existing reservation
     const fields: string[] = Array.isArray(req.body?.fields) ? req.body.fields : [];
-    const result = await registerFortinetHost(integration.type, config.host as string, integration.name, true, fields);
+    const result = await registerFortinetHost(integration.type, config.host as string, integration.name, true, fields, req);
     res.json(result);
   } catch (err) {
     next(err);
@@ -2797,6 +2797,7 @@ router.post("/:id/llm/regenerate-token", requirePermission("apiTokens", "write")
     const out = await regenerateLlmToken(
       { id: integration.id, name: integration.name, config },
       req.session?.username ?? "unknown",
+      req,
     );
     await prisma.integration.update({
       where: { id: integration.id },
@@ -2996,7 +2997,7 @@ interface ConflictEntry {
  * If force=false, returns conflicts instead of overwriting.
  * If force=true, overwrites selected fields on the existing reservation.
  */
-async function registerFortinetHost(integrationType: string, host: string, integrationName: string, force: boolean, fields: string[] = []) {
+async function registerFortinetHost(integrationType: string, host: string, integrationName: string, force: boolean, fields: string[] = [], req?: Request) {
   if (!isValidIpAddress(host)) return { conflicts: [], created: [] };
 
   const subnets = await prisma.subnet.findMany();
@@ -3037,6 +3038,20 @@ async function registerFortinetHost(integrationType: string, host: string, integ
 
     if (existingRes) {
       if (force) {
+        // Re-scan F79: overwriting a reservation is a reservations edit, and
+        // the reservations key's own rule applies — Full RW for any row,
+        // Read-Write for the caller's own. Integrations Read-Write alone
+        // never let anyone rewrite someone else's reservation.
+        if (req) {
+          const own = !!existingRes.createdBy && existingRes.createdBy === req.session?.username;
+          const may = hasPermission(req, "reservations", "fullwrite") || (own && hasPermission(req, "reservations", "write"));
+          if (!may) {
+            throw new AppError(
+              403,
+              `Overwriting the reservation for ${host} needs Full Read-Write on Reservations${own ? "" : ` (it belongs to ${existingRes.createdBy || "another user"})`}, or Read-Write when it is your own.`,
+            );
+          }
+        }
         // Only overwrite the fields the admin selected
         const updateData: Record<string, unknown> = {};
         const allowedFields = ["hostname", "owner", "projectRef", "notes", "status"];
@@ -3068,10 +3083,12 @@ async function registerFortinetHost(integrationType: string, host: string, integ
           proposed: { ...proposedReservation, subnetCidr: matchingSubnet.cidr },
         });
       }
-    } else {
+    } else if (!req || hasPermission(req, "reservations", "write")) {
+      // Auto-creating the reservation is a reservations write too (F79); a
+      // caller without it saves the integration but gets no reservation.
       await releaseDnsResolvedAt(matchingSubnet.id, host);
       await prisma.reservation.create({
-        data: { subnetId: matchingSubnet.id, ...proposedReservation },
+        data: { subnetId: matchingSubnet.id, ...proposedReservation, ...(req?.session?.username ? { createdBy: req.session.username } : {}) },
       });
       created.push("reservation");
     }

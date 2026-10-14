@@ -589,6 +589,28 @@ async function resolveTokenSnapshot(roleId: string): Promise<SessionRoleSnapshot
  * Persists session writes via session.save() so the refresh is durable
  * across the response cycle.
  */
+// One in-flight version read per role on a cold cache (see resolveSessionSnapshot).
+const pendingRoleVersion = new Map<string, Promise<string | null>>();
+
+/** The role's current version (updatedAt ISO), warming roleVersionMap. Null when the role no longer exists. */
+function currentRoleVersion(roleId: string): Promise<string | null> {
+  const warm = roleVersionMap.get(roleId);
+  if (warm) return Promise.resolve(warm);
+  let p = pendingRoleVersion.get(roleId);
+  if (!p) {
+    p = prisma.role
+      .findUnique({ where: { id: roleId }, select: { updatedAt: true } })
+      .then((r) => {
+        const iso = r ? r.updatedAt.toISOString() : null;
+        if (iso && !roleVersionMap.has(roleId)) roleVersionMap.set(roleId, iso);
+        return iso;
+      })
+      .finally(() => pendingRoleVersion.delete(roleId));
+    pendingRoleVersion.set(roleId, p);
+  }
+  return p;
+}
+
 async function resolveSessionSnapshot(req: Request): Promise<SessionRoleSnapshot | null> {
   if (!req.session?.userId) return null;
   // Old-session self-heal: a session issued before the dynamic-roles
@@ -622,11 +644,15 @@ async function resolveSessionSnapshot(req: Request): Promise<SessionRoleSnapshot
       return snap;
     }
     if (!cached) {
-      // Cold cache + we have a snapshot: trust the snapshot and warm the cache.
-      // Avoids a stampede right after process start where every concurrent
-      // request would otherwise issue its own findUnique.
-      roleVersionMap.set(snap.id, snap.updatedAt);
-      return snap;
+      // Cold cache (a fresh process) + a persisted snapshot. The snapshot may
+      // predate a permission cut made before the restart, so it is NOT trusted
+      // blindly (re-scan F75): read the role's current version ONCE per role —
+      // single-flight, so every session waking up after a restart shares one
+      // query instead of stampeding — and use the snapshot only if it is still
+      // current.
+      const current = await currentRoleVersion(snap.id);
+      if (current !== null && current === snap.updatedAt) return snap;
+      // Changed (or the role is gone): fall through to refetch / fail.
     }
     // Cached version is newer (an admin edited the role). Fall through to refetch.
   }

@@ -337,6 +337,51 @@ async function setMembership(groupId: string, ruleIds: string[]): Promise<void> 
  * through `normalizeRuleToV2`, so a pre-v2 automation's legacy targets seed
  * the same actions the engine would have sent for it.
  */
+/**
+ * Business rule 114(a), re-scan F56: the delivery a group will RUN after a
+ * create / update — the request's actions, escalation and reset actions where
+ * it sends them, the stored ones where it omits them, and the member actions
+ * `seedDeliveryFromMembers` would copy in when the group has none. The route
+ * runs the script / reboot gate over this, not just over the request body:
+ * otherwise adding your automation to a group that already runs a script (or
+ * seeding one from a member) attaches that script to alerts you control.
+ */
+export async function deliveryAfterChange(
+  groupId: string | null,
+  input: Pick<AlertGroupInput, "actions" | "escalation" | "resetActions" | "ruleIds">,
+): Promise<{ actions: unknown; escalation: unknown; resetActions: unknown }> {
+  const stored = groupId
+    ? await prisma.alertGroup.findUnique({ where: { id: groupId }, select: { actions: true, escalation: true, resetActions: true } })
+    : null;
+  const pick = (sent: unknown, have: unknown) => (sent === undefined ? have ?? null : sent);
+  let actions = pick(input.actions, stored?.actions);
+  let escalation = pick(input.escalation, stored?.escalation);
+  let resetActions = pick(input.resetActions, stored?.resetActions);
+  const empty = !Array.isArray(actions) || actions.length === 0;
+  if (input.ruleIds?.length && input.actions === undefined && empty) {
+    const rows = await prisma.notificationRule.findMany({
+      where: { id: { in: input.ruleIds } },
+      select: {
+        id: true, name: true, trigger: true, clearBehavior: true, clearAfterSec: true, targets: true,
+        emailComposition: true, escalation: true, reset: true, actions: true, severityBands: true,
+        bandNotify: true, resetActions: true, repeat: true,
+      },
+    });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    for (const rid of input.ruleIds) {
+      const r = byId.get(rid);
+      if (!r) continue;
+      const v2 = normalizeRuleToV2(r);
+      if (!v2.actions.length) continue;
+      actions = v2.actions;
+      if (escalation == null && v2.escalation) escalation = v2.escalation;
+      if (resetActions == null && v2.resetActions?.length) resetActions = v2.resetActions;
+      break;
+    }
+  }
+  return { actions, escalation, resetActions };
+}
+
 async function seedDeliveryFromMembers(groupId: string, ruleIds: string[], actor?: string): Promise<void> {
   if (!ruleIds.length) return;
   const group = await prisma.alertGroup.findUnique({
