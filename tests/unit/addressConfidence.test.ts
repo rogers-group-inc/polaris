@@ -13,6 +13,7 @@ import {
   pollingRunStart,
   pollingHoursFor,
   pinReleaseVerdict,
+  agentSourceCounts,
   EVIDENCE_KINDS,
   CONFIDENCE_WARN_BELOW,
   ALIVE_ELSEWHERE_FACTOR,
@@ -230,5 +231,44 @@ describe("pollingHoursFor", () => {
     expect(pollingHoursFor("10.0.0.6", asset, NOW)).toBe(0);
     expect(pollingHoursFor("10.0.0.5", { ...asset, monitorStatus: "down" }, NOW)).toBe(0);
     expect(pollingHoursFor("10.0.0.5", { ...asset, monitored: false }, NOW)).toBe(0);
+  });
+});
+
+// Rule 103(e): the asset's own agent.
+describe("agentSourceCounts", () => {
+  const none = new Set<string>();
+  it("counts the private address the agent connects from, mapped form included", () => {
+    expect(agentSourceCounts("10.1.2.3", "10.1.2.3", none)).toBe(true);
+    expect(agentSourceCounts("10.1.2.3", "::ffff:10.1.2.3", none)).toBe(true);
+  });
+  it("never for another address, a loopback (a proxy) or a public one (a NAT gateway)", () => {
+    expect(agentSourceCounts("10.1.2.3", "10.1.2.4", none)).toBe(false);
+    expect(agentSourceCounts("127.0.0.1", "127.0.0.1", none)).toBe(false);
+    expect(agentSourceCounts("203.0.113.5", "203.0.113.5", none)).toBe(false);
+    expect(agentSourceCounts("10.1.2.3", null, none)).toBe(false);
+  });
+  it("not when the agent's own interface report leaves the source address out (translated)", () => {
+    expect(agentSourceCounts("10.1.2.3", "10.1.2.3", new Set(["192.168.5.5"]))).toBe(false);
+    expect(agentSourceCounts("10.1.2.3", "10.1.2.3", new Set(["10.1.2.3", "192.168.5.5"]))).toBe(true);
+  });
+});
+
+describe("agent evidence (rule 103(e))", () => {
+  it("the agent's report outranks a scrape, and the two agent signals together are high", () => {
+    expect(EVIDENCE_KINDS["agent-interface"].weight).toBeGreaterThan(EVIDENCE_KINDS.interface.weight);
+    const r = scoreAddress([
+      { kind: "agent-interface", seenAt: ago(0) },
+      { kind: "agent-source", seenAt: ago(0) },
+    ], [], NOW);
+    expect(r.score).toBe(100);
+    expect(r.band).toBe("high");
+    // Neither is polling nor operator: both back a pin on their own (103(a)).
+    expect(r.discoveryScore).toBe(100);
+  });
+  it("the connect-from address fades within hours once the agent goes quiet", () => {
+    const fresh = scoreAddress([{ kind: "agent-source", seenAt: ago(0) }], [], NOW);
+    const quiet = scoreAddress([{ kind: "agent-source", seenAt: ago(4 * H) }], [], NOW);
+    expect(fresh.score).toBe(85);
+    expect(quiet.score).toBeLessThan(CONFIDENCE_WARN_BELOW / 5);
   });
 });

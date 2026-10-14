@@ -371,7 +371,7 @@ AssetAssociatedIp               -- Additional ("secondary") IPs an asset holds b
   id            UUID PK
   assetId       UUID FK → Asset (cascade delete)
   ip            String
-  source        String          -- "manual" | "monitor-system-info" | "dhcp-lease" | "dhcp-reservation" | "device-inventory" | "arp" (discovered, business rule 102) | various legacy values from the JSON backfill
+  source        String          -- "manual" | "monitor-system-info" | "agent-interface" (the asset's own agent, rule 103(e)) | "dhcp-lease" | "dhcp-reservation" | "device-inventory" | "arp" (discovered, business rule 102) | various legacy values from the JSON backfill
   interfaceName String?
   mac           String?         -- per-IP MAC; one MAC may carry several IPs (one row each). May differ from Asset.macAddress.
   device        String?         -- discovered rows only: the FortiGate whose DHCP / detected-device / ARP read reported the binding (indexed — the per-gate prune reads by it)

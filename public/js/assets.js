@@ -19138,6 +19138,7 @@ function formatAddressSource(source) {
     case "dhcp-reservation":    return "DHCP reservation";
     case "arp":                 return "ARP";
     case "monitor-system-info": return "Interface";
+    case "agent-interface":     return "Agent";
     case "manual":              return "Manual";
     default: return source || "";
   }

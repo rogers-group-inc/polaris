@@ -43,6 +43,7 @@ import {
   persistProcessConnections,
   telemetrySuccessStamps,
   systemInfoSuccessStamps,
+  persistAgentAddressRows,
 } from "../../services/monitoringService.js";
 import {
   enqueueMonitorSample,
@@ -615,6 +616,10 @@ async function ingestInterfaces(assetId: string, samples: StreamSamples<"interfa
   if (ifaceMacs.length > 0) {
     await reconcileInterfaceMacs(assetId, ifaceMacs, sampleTs);
   }
+  // The interface addresses into the address list, as `agent-interface` —
+  // the asset's own agent naming its addresses is confidence evidence
+  // (business rule 103(e)). Skipped on a push with no addresses.
+  await persistAgentAddressRows(assetId, samples, sampleTs);
   await prisma.asset.update({ where: { id: assetId }, data: systemInfoSuccessStamps(sampleTs) });
   return rows.length;
 }

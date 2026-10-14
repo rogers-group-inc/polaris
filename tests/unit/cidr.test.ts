@@ -29,6 +29,7 @@ import {
   buildCidrMatcher,
   bareInterfaceIp,
   interfaceIpIsUnaddressed,
+  unwrapMappedIpv4,
 } from "../../src/utils/cidr.js";
 
 describe("normalizeCidr", () => {
@@ -538,5 +539,15 @@ describe("bareInterfaceIp / interfaceIpIsUnaddressed", () => {
     expect(interfaceIpIsUnaddressed("")).toBe(true);
     expect(interfaceIpIsUnaddressed("10.4.1.1")).toBe(false);
     expect(interfaceIpIsUnaddressed("10.4.1.1 255.255.255.0")).toBe(false);
+  });
+});
+
+describe("unwrapMappedIpv4", () => {
+  it("unwraps a dual-stack mapped IPv4 peer and leaves everything else as it is", () => {
+    expect(unwrapMappedIpv4("::ffff:10.1.2.3")).toBe("10.1.2.3");
+    expect(unwrapMappedIpv4("::FFFF:192.168.1.9")).toBe("192.168.1.9");
+    expect(unwrapMappedIpv4(" 10.1.2.3 ")).toBe("10.1.2.3");
+    expect(unwrapMappedIpv4("fe80::1")).toBe("fe80::1");
+    expect(unwrapMappedIpv4("::ffff:abcd")).toBe("::ffff:abcd");
   });
 });

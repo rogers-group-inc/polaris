@@ -17,6 +17,9 @@
  *   - vCenter guest IP, Azure Arc network profile, a Generic API feed (the
  *     AssetSource blobs that carry an address);
  *   - polling: the current primary's continuous answers (Asset.ipConfirmed*);
+ *   - the asset's own agent (rule 103(e)): its interface report (an
+ *     `agent-interface` row) and the private address it last connected from
+ *     (ManagedAgent.lastSeenIp, aged from lastSeenAt — agentSourceCounts);
  *   - operator: the pinned primary, or a typed address (ipOverride).
  * Penalties:
  *   - alive-elsewhere: the primary is DOWN while a gate reports the asset
@@ -34,6 +37,7 @@ import { UNMONITORABLE_STATUSES } from "../utils/assetInvariants.js";
 import {
   scoreAddress,
   pollingHoursFor,
+  agentSourceCounts,
   CONFIDENCE_WARN_BELOW,
   ALIVE_ELSEWHERE_FACTOR,
   CLAIMED_ELSEWHERE_FACTOR,
@@ -46,6 +50,7 @@ import {
 
 const ROW_SOURCE_KIND: Record<string, EvidenceKind> = {
   "monitor-system-info": "interface",
+  "agent-interface": "agent-interface",
   "device-inventory": "detected-online",
   "dhcp-reservation": "reservation-held",
   "dhcp-lease": "lease-held",
@@ -150,7 +155,7 @@ export async function buildAddressConfidence(
     for (const m of macs) allMacs.add(m);
   }
 
-  const [reservations, sources, otherClaims, arpEntries] = await Promise.all([
+  const [reservations, sources, otherClaims, arpEntries, agents] = await Promise.all([
     prisma.reservation.findMany({
       where: { ipAddress: { in: ipList }, status: "active", sourceType: "dhcp_reservation" },
       select: { ipAddress: true, macAddress: true, lastSeenLeased: true, subnet: { select: { fortigateDevice: true } } },
@@ -178,7 +183,14 @@ export async function buildAddressConfidence(
           select: { ipAddress: true, macAddress: true, lastSeen: true, asset: { select: { hostname: true } } },
         })
       : Promise.resolve([] as Array<{ ipAddress: string; macAddress: string; lastSeen: Date; asset: { hostname: string | null } }>),
+    // The asset's own agent, while its bearer stands: where it last connected
+    // from. One row per asset (ManagedAgent.assetId is unique).
+    prisma.managedAgent.findMany({
+      where: { assetId: { in: [...assetIds] }, bearerRevokedAt: null, lastSeenIp: { not: null }, lastSeenAt: { not: null } },
+      select: { assetId: true, lastSeenIp: true, lastSeenAt: true },
+    }),
   ]);
+  const agentByAsset = new Map(agents.map((g) => [g.assetId, g]));
 
   const arpByMac = new Map<string, typeof arpEntries>();
   for (const e of arpEntries) {
@@ -212,6 +224,8 @@ export async function buildAddressConfidence(
 
   for (const a of assets) {
     const macs = macsByAsset.get(a.id) ?? new Set<string>();
+    const agent = agentByAsset.get(a.id);
+    const agentReportedIps = new Set(a.associatedIpRows.filter((r) => r.source === "agent-interface").map((r) => r.ip));
     const arpForAsset = [...macs].flatMap((m) => (arpByMac.get(m) ?? []).map((e) => ({ ...e, mac: m })));
 
     // A gate seeing this asset online at some address right now.
@@ -241,6 +255,9 @@ export async function buildAddressConfidence(
       }
       for (const e of arpForAsset) {
         if (e.ipAddress === ip) evidence.push({ kind: "arp", seenAt: e.lastSeen, device: e.asset?.hostname ?? null });
+      }
+      if (agent && agentSourceCounts(ip, agent.lastSeenIp, agentReportedIps)) {
+        evidence.push({ kind: "agent-source", seenAt: agent.lastSeenAt });
       }
       const hours = pollingHoursFor(ip, a, nowMs);
       if (hours > 0) evidence.push({ kind: "polling", hours });

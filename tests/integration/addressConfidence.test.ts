@@ -404,3 +404,45 @@ d("the polling run the probe path keeps (business rule 103)", () => {
     expect(moved.ipConfirmedFor).toBe(IP_LEASE);
   });
 });
+
+d("the asset's own agent as evidence (business rule 103(e))", () => {
+  async function addAgent(data: { lastSeenIp: string | null; lastSeenAt?: Date; bearerRevokedAt?: Date | null }) {
+    await prisma.managedAgent.create({
+      data: {
+        assetId, osPlatform: "linux", arch: "amd64", installStatus: "active", installedBy: "test",
+        serverCertFingerprint: "sha256:" + "e".repeat(64), additionalServerCertFingerprints: [],
+        lastSeenAt: data.lastSeenAt ?? new Date(), lastSeenIp: data.lastSeenIp, bearerRevokedAt: data.bearerRevokedAt ?? null,
+      },
+    });
+  }
+  const kinds = (r: { parts: Array<{ kind: string }> } | undefined) => (r?.parts ?? []).map((p) => p.kind);
+
+  it("an agent-interface row is the agent's report, and the private address it connects from corroborates it", async () => {
+    await prisma.assetAssociatedIp.updateMany({ where: { assetId, ip: IP_LEASE }, data: { source: "agent-interface", lastSeen: new Date() } });
+    await addAgent({ lastSeenIp: "::ffff:" + IP_LEASE });
+    const r = (await scores()).get(IP_LEASE)!;
+    expect(kinds(r)).toEqual(expect.arrayContaining(["agent-interface", "agent-source"]));
+    expect(r.discoveryScore).toBeGreaterThanOrEqual(99);
+  });
+
+  it("not from an address the agent's own report leaves out (behind a translation)", async () => {
+    const now = new Date();
+    await prisma.assetAssociatedIp.create({ data: { assetId, ip: "192.168.77.4", source: "agent-interface", lastSeen: now, firstSeen: now } });
+    await addAgent({ lastSeenIp: IP_LEASE });
+    expect(kinds((await scores()).get(IP_LEASE))).not.toContain("agent-source");
+  });
+
+  it("not once the bearer is revoked, and not from loopback (an unresolved proxy hop)", async () => {
+    await addAgent({ lastSeenIp: IP_ARP, bearerRevokedAt: new Date() });
+    expect(kinds((await scores()).get(IP_ARP))).not.toContain("agent-source");
+    await prisma.managedAgent.deleteMany({ where: { assetId } });
+    await addAgent({ lastSeenIp: "127.0.0.1" });
+    for (const r of (await scores()).values()) expect(kinds(r)).not.toContain("agent-source");
+  });
+
+  it("the connect-from address alone backs an address and ages from the agent's last call", async () => {
+    await addAgent({ lastSeenIp: IP_ARP, lastSeenAt: new Date(Date.now() - 2 * 3_600_000) });
+    const part = (await scores()).get(IP_ARP)!.parts.find((p) => p.kind === "agent-source")!;
+    expect(part.value).toBeCloseTo(0.85 * 0.25, 1);
+  });
+});

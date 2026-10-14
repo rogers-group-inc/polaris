@@ -310,7 +310,8 @@ other address can be set as primary, and from the MACs list a MAC can be
 removed (**×**). The addresses come from a lease or
 reservation the device is holding, the address a FortiGate sees it using, ARP
 entries (a card's secondary addresses), the interface table of a monitored
-device, and anything typed by hand. Each address names where it came from, the
+device, the interfaces the device's own Polaris Agent reports (source *Agent*),
+and anything typed by hand. Each address names where it came from, the
 gate that reported it, wired or wireless when known, and when it was last seen.
 A FortiGate's addresses for a card leave the list once that gate stops
 reporting them ([rule 102](Business-Rules#rule-102)). Opening the details also
