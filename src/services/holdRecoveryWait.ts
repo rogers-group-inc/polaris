@@ -11,13 +11,24 @@
  * was still silent, and the misses landed just outside the window).
  *
  * So the wait is for the first SUCCESSFUL `AssetMonitorSample` recorded after
- * `since` — written by whichever process polls the device (the monitor role
- * on a split-role host), which is why this reads the table rather than
- * asking. No hold (an unmonitored device — openMaintenanceHold declined)
- * means nothing polls it, so there is nothing to wait for. The hold's own
- * expiry is pushed out to cover the wait, and the wait is capped by
- * `recoveryWaitMs`: a device that never answers ends the window at the cap
- * and is judged normally.
+ * `since`. NOTHING SCHEDULED WRITES ONE while the wait runs: the hold itself
+ * parks the asset at status "maintenance", and MONITOR_CANDIDATE_WHERE drops
+ * that status from every server-driven poll. Waiting on the scheduler alone
+ * therefore sat out the full cap on every agentless device and then warned
+ * that monitoring "did not answer" — it had never been asked. So each poll of
+ * the wait runs the device's own response-time probe here (`probeAsset`, the
+ * one Poll Now runs, through the same four-tier polling method) and records a
+ * SUCCESS through `recordProbeResult` — the same sample, status-machine and
+ * uptime/reboot path the scheduled pass uses. A failed probe is not recorded:
+ * the device is mid-recovery, inside the window that exists so it is not
+ * judged yet, and at the cap normal polling resumes and judges it. The table
+ * is still the signal, not the probe's return value: an agent-polled host's
+ * probe is a synthetic no-op (its real samples arrive by push), and the
+ * sample buffer flushes a recorded success a few seconds later. No hold (an
+ * unmonitored device — openMaintenanceHold declined) means nothing polls it,
+ * so there is nothing to wait for. The hold's own expiry is pushed out to
+ * cover the wait, and the wait is capped by `recoveryWaitMs`: a device that
+ * never answers ends the window at the cap and is judged normally.
  *
  * `rebootSince` (business rule 115(a)): a reboot Polaris asked for must not
  * raise the "Device recently rebooted" alert, and that alert is driven by the
@@ -30,12 +41,30 @@
  * uptime for this device at all (`lastUptimeSec` null: no Event can come).
  * Still capped by `recoveryWaitMs`.
  *
- * Scale: one or two indexed point queries per `recoveryPollMs`, per live run.
+ * Scale: one probe plus one or two indexed point queries per `recoveryPollMs`
+ * (15 s), per live run — a handful of devices at a time, not the fleet.
  */
 
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import type { MaintenanceHoldKind } from "./maintenanceScheduleService.js";
+import { probeAsset, recordProbeResult } from "./monitoringService.js";
+
+/**
+ * Ask the device the way scheduled monitoring would, and record the reading
+ * only when it answered. Never throws: a probe that cannot run leaves the wait
+ * reading the table, exactly as before.
+ */
+async function probeWhileHeld(assetId: string): Promise<void> {
+  try {
+    const out: NonNullable<Parameters<typeof probeAsset>[1]> = {};
+    const result = await probeAsset(assetId, out);
+    if (!result.success || result.skipped || result.duplicate) return;
+    await recordProbeResult(assetId, result, out.snapshot, { timeoutMs: out.timeoutMs });
+  } catch (err) {
+    logger.warn({ err, assetId }, "recovery-wait probe failed");
+  }
+}
 
 export interface HoldRecoveryRun {
   /** Called once, when the wait actually starts (a hold exists). */
@@ -85,6 +114,10 @@ export async function holdUntilMonitorAnswers(
         return true;
       }
     }
+    // The hold keeps the scheduler off this asset, so this is the only poll it
+    // gets until the window ends. Its sample (and, for a reboot, its uptime
+    // reading) is buffered, so the checks below may only see it next time.
+    await probeWhileHeld(assetId);
     if (!answeredAt) {
       const answered = await prisma.assetMonitorSample.findFirst({
         where: { assetId, success: true, timestamp: { gt: since } },
@@ -108,6 +141,6 @@ export async function holdUntilMonitorAnswers(
     run.push("warn", `monitoring answered but did not record the reboot within ${Math.round(timeouts.recoveryWaitMs / 60_000)} min; ending the maintenance window — a "Device recently rebooted" alert may follow`);
     return true;
   }
-  run.push("warn", `monitoring did not answer within ${Math.round(timeouts.recoveryWaitMs / 60_000)} min of the device coming back; ending the maintenance window anyway — check the device`);
+  run.push("warn", `the device did not answer its monitoring probe within ${Math.round(timeouts.recoveryWaitMs / 60_000)} min of coming back; ending the maintenance window anyway — check the device`);
   return false;
 }

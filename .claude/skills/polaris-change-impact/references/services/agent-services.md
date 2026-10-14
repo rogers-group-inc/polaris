@@ -171,22 +171,23 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/holdRecoveryWait.ts
 
-**What it owns:** `holdUntilMonitorAnswers(assetId, kind, timeouts, run, rebootSince?)` — keep a rule-80 maintenance hold open until the device answers Polaris's OWN monitoring again: the first successful `AssetMonitorSample` after the operation, polled every `recoveryPollMs`, capped at `recoveryWaitMs`, after first pushing the hold's `expiresAt` past the cap. With `rebootSince` (rule 115(a)) the first answer is not enough: the hold stays open until monitoring has RECORDED the reboot — `Asset.lastRebootAt` > `rebootSince` (stamped in the same tick as the `device.reboot` Event and flushed after it) — or, once monitoring has answered, until `lastUptimeSec` is null (monitoring reads no uptime here, so no Event can come); still capped. Extracted from `firmwareUpgradeService` so both on-purpose reboots share it.
+**What it owns:** `holdUntilMonitorAnswers(assetId, kind, timeouts, run, rebootSince?)` — keep a rule-80 maintenance hold open until the device answers Polaris's OWN monitoring again: the first successful `AssetMonitorSample` after the operation, polled every `recoveryPollMs`, capped at `recoveryWaitMs`, after first pushing the hold's `expiresAt` past the cap. With `rebootSince` (rule 115(a)) the first answer is not enough: the hold stays open until monitoring has RECORDED the reboot — `Asset.lastRebootAt` > `rebootSince` (stamped in the same tick as the `device.reboot` Event and flushed after it) — or, once monitoring has answered, until `lastUptimeSec` is null (monitoring reads no uptime here, so no Event can come); still capped. **Each poll also probes the device itself** (`monitoringService → probeAsset`, the Poll Now probe, through the four-tier polling method) and records a SUCCESS through `recordProbeResult` — the hold parks the asset at status `maintenance`, which `MONITOR_CANDIDATE_WHERE` drops from every scheduled poll, so nothing else would ask it. Extracted from `firmwareUpgradeService` so both on-purpose reboots share it.
 
 **Public API:** `holdUntilMonitorAnswers` (true when monitoring answered within the cap; false on the cap or with no hold), type `HoldRecoveryRun` (`onWaiting`, `push`, `flush` — the caller's run-log hooks).
 
-**Cross-service deps:** `prisma` (`maintenanceHold`, `assetMonitorSample`, `asset` — `lastRebootAt` / `lastUptimeSec` when `rebootSince` is given); type `MaintenanceHoldKind` from `maintenanceScheduleService`.
+**Cross-service deps:** `prisma` (`maintenanceHold`, `assetMonitorSample`, `asset` — `lastRebootAt` / `lastUptimeSec` when `rebootSince` is given); `monitoringService` (`probeAsset`, `recordProbeResult`); type `MaintenanceHoldKind` from `maintenanceScheduleService`.
 
 **Used by:** `src/services/firmwareUpgradeService.ts` (kind `firmware-upgrade`, rule 87 — no `rebootSince`, ends at the first answer), `src/services/rebootService.ts` (kind `device-reboot`, rule 115 — `rebootSince` = the run's start).
 
 **Invariants:**
-- **Reads the sample table rather than asking a collector** — on a split-role host the monitor role writes the samples, so this works from the web process.
+- **The wait must probe; it cannot only read.** Until 2026-10-13 it only read the sample table, waiting for the scheduler — but the hold it is waiting under is what took the asset off the scheduler, so on every agentless device (a FortiSwitch flash, the case that surfaced it) it sat out the full 10-minute cap and then warned that monitoring "did not answer". A failed probe is NOT recorded (the device is mid-recovery, inside the window that exists so it is not judged yet; at the cap normal polling resumes); skipped / duplicate results are not recorded either. A probe that throws is logged and the wait carries on.
+- **The sample table is still the release signal, not the probe's return** — an agent-polled host's `probeAsset` is a synthetic success that writes nothing (its real samples arrive by push, which maintenance does not stop), and a recorded success reaches the table on the sample buffer's next flush, so the release can trail the answer by one poll.
 - **No hold row = unmonitored = nothing to wait for** (`openMaintenanceHold` declined); returns at once.
 - The operation's own proof (web UI, controller, agent) routinely answers minutes before SNMP / ICMP does — releasing on that proof let the next missed polls land outside the window (a FortiAP's HTTPS answered while its SNMP agent was still silent).
 - The `device.reboot` Event that drives the "Device recently rebooted" automation is written on the first probe that READS uptime, which can be later than the first probe that answers (and an agent reattaches before its first uptime-bearing sample) — hence `rebootSince`. When the cap ends a wait in which monitoring answered but never recorded the reboot, the run log says an alert may follow.
-- Scale: one or two indexed point queries per poll per live run.
+- Scale: one probe plus one or two indexed point queries per poll (15 s) per live run — a handful of devices at a time, never the fleet.
 
-**When changing this:** both callers' timeouts objects carry `recoveryWaitMs` / `recoveryPollMs`; a new on-purpose-reboot operation calls this rather than copying it, passing `rebootSince` when its downtime is a reboot monitoring will detect.
+**When changing this:** never make the release depend on the scheduler again while the hold parks the status; both callers' timeouts objects carry `recoveryWaitMs` / `recoveryPollMs`; a new on-purpose-reboot operation calls this rather than copying it, passing `rebootSince` when its downtime is a reboot monitoring will detect.
 
 ## services/rebootScheduleCancel.ts
 
