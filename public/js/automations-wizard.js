@@ -3539,14 +3539,14 @@ async function openAutomationWizard(existing, opts) {
       var units = BYTE_UNITS.map(function (u) { return u[0]; });
       if (opts && opts.lockFamily) units = isBytes ? units : ["%"];
       else units = ["%"].concat(units);
-      valueControl = '<input type="number" step="any" class="tgl-threshold" value="' + (hasThr ? (isBytes ? bytesIn(leaf.threshold, bu) : leaf.threshold) : "") + '" placeholder="value" style="width:110px">' +
+      valueControl = '<input type="number" step="any" class="tgl-threshold" value="' + escapeHtml(hasThr ? String(isBytes ? bytesIn(leaf.threshold, bu) : leaf.threshold) : "") + '" placeholder="value" style="width:110px">' +
         (units.length > 1
           ? '<select class="tgl-bunit" style="flex:0 0 64px;width:64px" title="Percent of the filesystem, or an amount of space used">' +
-              units.map(function (u) { return '<option value="' + u + '"' + (u === bu ? " selected" : "") + '>' + u + '</option>'; }).join("") +
+              units.map(function (u) { return '<option value="' + escapeHtml(u) + '"' + (u === bu ? " selected" : "") + '>' + escapeHtml(u) + '</option>'; }).join("") +
             '</select>'
           : '<span class="tgl-unit" style="font-size:0.8rem;color:var(--color-text-tertiary);white-space:nowrap">%</span>');
     } else {
-      valueControl = '<input type="number" step="any" class="tgl-threshold" value="' + (leaf.threshold != null && !isNaN(leaf.threshold) ? leaf.threshold : "") + '" placeholder="value" style="width:110px">' +
+      valueControl = '<input type="number" step="any" class="tgl-threshold" value="' + escapeHtml(leaf.threshold != null && !isNaN(leaf.threshold) ? String(leaf.threshold) : "") + '" placeholder="value" style="width:110px">' +
         (unit ? '<span class="tgl-unit" style="font-size:0.8rem;color:var(--color-text-tertiary);white-space:nowrap">' + escapeHtml(unit) + '</span>' : "");
     }
     // The missed-poll count USED to ride this row ("after N missed poll(s)").
@@ -4792,11 +4792,12 @@ async function openAutomationWizard(existing, opts) {
     if (s === "watch") return "Watch";
     return "Healthy";
   }
-  // Does this action-pattern glob reach a capacity severity event?
+  // Does this action-pattern glob reach a capacity severity event? Mirrors the
+  // engine's event-pattern compile: only `*` is a wildcard, case ignored.
   function patternReachesCapacity(pattern) {
     var p = String(pattern || "").trim();
     if (!p) return false;
-    var re = new RegExp("^" + p.replace(/[.+^${}()|[\]\?]/g, "\$&").replace(/\*/g, ".*") + "$");
+    var re = new RegExp("^" + p.replace(/[.+^${}()|[\]\\?]/g, "\\$&").replace(/\*+/g, ".*") + "$", "i");
     return CAPACITY_HOLD_EVENTS.some(function (a) { return re.test(a); });
   }
   function capacityHoldHtml(t) {

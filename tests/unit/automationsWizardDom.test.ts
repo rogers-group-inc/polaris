@@ -4697,6 +4697,17 @@ describe("event trigger: capacity alert hold", () => {
     expect(hostEl()!.hidden).toBe(false);
   });
 
+  it("reads the glob as the engine does: only * is a wildcard, case ignored", async () => {
+    // A dot is literal: as a regex `.` this second dot would match the `_` of
+    // capacity.severity_changed.
+    await openStep3(rule("capacity.severity.changed"));
+    expect(hostEl()!.hidden).toBe(true);
+    await openStep3(rule("capacity?severity_changed"));
+    expect(hostEl()!.hidden).toBe(true);
+    await openStep3(rule("CAPACITY.*"));
+    expect(hostEl()!.hidden).toBe(false);
+  });
+
   it("saves a change at once to the global setting and leaves it out of the rule", async () => {
     capHoldPuts.length = 0;
     await openStep3(rule("capacity.severity_changed"));
