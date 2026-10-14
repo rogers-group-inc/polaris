@@ -121,6 +121,7 @@ operator-set → a default in `deploy/setup-*.sh` if the install scripts write `
 - Operator unit customization lives in `<unit>.d/*.conf` drop-ins — direct edits to the synced unit files or `/etc/nginx/conf.d/polaris.conf` are clobbered on the next update.
 - The wizard is unauthenticated; `.setup-complete` stops it from re-running on a host whose `.env` vanished.
 - Disk severity tiers: watch 20–30 % free, amber 10–20 %, red < 10 % (sidebar banner).
+- A command an operator is told to run under `sudo` names its full path (`sudo /usr/local/sbin/polaris-update-sync --apply-helpers`). RHEL's sudo `secure_path` leaves out `/usr/local/sbin`, so the bare name is "command not found" there, even on a fresh install. `tests/unit/rootHelperHintsFullPath.test.ts` fails on any `sudo polaris-…` in `deploy/`, `docs/`, `src/`, `public/`.
 
 Related: `polaris-agent` (cert-pin rotation rides a cert swap), `polaris-monitoring-discovery` →
 `process-roles-runtime.md` and `observability.md`, `polaris-business-rules` rule 20c (backup you cannot restore),
