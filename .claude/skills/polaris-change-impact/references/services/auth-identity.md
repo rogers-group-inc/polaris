@@ -304,7 +304,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **When changing this:**
 - A new HTTPS transport that sends a secret without CA verification passes `agent: pinnedAgentFor(host, port)` (node https) or uses `tlsFetch` / `pinnedTlsDispatcher` (undici). Never resume TLS sessions on a pinned connection — a resumed session presents no certificate.
 - A new integration whose devices are dialed directly belongs in `tlsEndpointsForAsset`, or its Sources card shows no pins.
-- The UI table is `public/js/pinned-tls-certs.js` (Server Settings → Web Server and the agent SSH card); the Sources tab rows are `assets.js` `_loadAssetTlsPins`. Tests: `tests/integration/tlsPinnedDispatcher.test.ts` (real HTTPS, two certificates), `tests/integration/tlsCertPin.test.ts`, `tests/unit/tlsEndpointsForAsset.test.ts`.
+- The UI is `public/js/pinned-tls-certs.js` (a summary + button on Server Settings → Web Server and the agent SSH card, opening a slide-over); the list route serves `listCertPinsWithUsers` — each pin plus the assets whose `ipAddress` / `hostname` is its host and the integrations whose `config.host` is (a lookup, not a relation: two bounded queries, never an integration's config returned). The Sources tab rows are `assets.js` `_loadAssetTlsPins`. Tests: `tests/integration/tlsPinnedDispatcher.test.ts` (real HTTPS, two certificates), `tests/integration/tlsCertPin.test.ts`, `tests/unit/tlsEndpointsForAsset.test.ts`.
 - Keep the shape in step with `sshHostKeyService` — the card lists both.
 
 ## services/sshOnboardingScript.ts
