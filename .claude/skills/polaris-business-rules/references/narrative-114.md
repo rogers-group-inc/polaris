@@ -43,3 +43,15 @@ The sixth phase of the follow-up to the 2026-10-11 whole-repository security sca
 - **Nothing is demoted.** A role that gained access by accident keeps it until an administrator lowers it; the flag makes it visible, it does not remove it.
 - **Account actions keep rule 48's bar**, as (g) explains.
 - **The wizard's code view shows the mask.** It used to show headers in full; saving the code view echoes the mask and is restored as any save is.
+
+### 114(j)-(n) and the extensions to (a) and (i) — the 2026-10-13 re-scan, phase 11
+
+The re-scan after phase 8 found the places a grant was still handed out, or a protected act still reached, without the check every other path makes:
+
+- **Group mappings (F5/F65).** A mapping gives its role to every member of an IdP group at their next SSO / OIDC / LDAP / App Proxy login, and only a warning Event was written when that role was admin-equivalent — so a `users:fullwrite` holder could make any group an administrator. A mapping is now a grant like a role assignment. Changing its group or switching it back on counts too, since either changes who receives the role; withdrawing a mapping the caller could not have created needs the same rank.
+- **The AI Assistant's token (F9).** Regenerating it handed the caller a raw bearer on the bot role with no check at all. It now takes the creation grants and the role as stored.
+- **Alert-group scripts (F56).** The script gate read only the request body, and `actions` is optional on update — so adding your automation to a group that already runs a script, or creating a group whose seeding copies one from a member, attached that script to alerts you control. The gate now reads the delivery the group will run.
+- **Editable built-ins (F71).** The September review flag skipped every built-in role; the three editable ones are now flagged where a five-key cell is `write` and differs from what they ship with — owner decision 2026-10-13, keeping "report, don't demote".
+- **Tag preview (F78).** Device names and addresses went to Server Settings read alone; owner decision: counts for everyone, the sample only with Assets read.
+- **Integration register (F79).** A forced register overwrote any reservation; it now follows the reservations key's ownership rule.
+- **Quarantined status (F61).** Import and create could set it, and discovery's auto-quarantine pass then pushed a real quarantine to the FortiGate.
