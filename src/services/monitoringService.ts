@@ -9945,10 +9945,11 @@ function persistPerfSlaSampleStream(
 async function persistAssocIpMirror(
   assetId: string,
   interfaces: InterfaceSample[],
-  pinned: SystemInfoPins,
+  pinned: { ipAddress: string | null } | null,
   now: Date,
+  source: InterfaceAddressSource = "monitor-system-info",
 ): Promise<void> {
-  const monitorAssocEntries = buildMonitorAssocIpEntries(interfaces, now);
+  const monitorAssocEntries = buildMonitorAssocIpEntries(interfaces, now, source);
   if (monitorAssocEntries.length === 0) return;
   const stopWrite = startSampleWriteTimer("asset_associated_ips");
   const endAssoc = startPhase("systeminfo.persist.assoc_ips_txn");
@@ -9994,6 +9995,29 @@ async function persistAssocIpMirror(
     monitorAssocEntries.map((e) => ({ ip: e.ip, source: e.source })),
     pinned?.ipAddress ?? null,
   );
+}
+
+/**
+ * Who read an interface table's addresses. `agent-interface` is the asset's
+ * own Polaris Agent: its bearer is bound to this asset, so the report cannot
+ * have come from another device answering at the address (business rule
+ * 103(e)); an SNMP / REST / WinRM scrape proves only that something answered.
+ */
+export type InterfaceAddressSource = "monitor-system-info" | "agent-interface";
+
+/**
+ * The agent's interface push, mirrored into the address list the same way
+ * recordSystemInfoResult mirrors a scrape (one replace, manual and discovered
+ * rows kept, empty push skipped). For an agent-monitored host this push IS
+ * the interface table.
+ */
+export async function persistAgentAddressRows(
+  assetId: string,
+  interfaces: ReadonlyArray<Pick<InterfaceSample, "ifName" | "ipAddress" | "macAddress">>,
+  now: Date,
+): Promise<void> {
+  const asset = await prisma.asset.findUnique({ where: { id: assetId }, select: { ipAddress: true } });
+  await persistAssocIpMirror(assetId, interfaces as InterfaceSample[], { ipAddress: asset?.ipAddress ?? null }, now, "agent-interface");
 }
 
 /**
@@ -11718,6 +11742,7 @@ async function buildLldpAssetMatchIndex(): Promise<LldpMatchIndex> {
 function buildMonitorAssocIpEntries(
   interfaces: InterfaceSample[],
   now: Date,
+  source: InterfaceAddressSource = "monitor-system-info",
 ): Array<{
   ip: string;
   source: string;
@@ -11737,7 +11762,7 @@ function buildMonitorAssocIpEntries(
     seenIps.add(i.ipAddress);
     out.push({
       ip:            i.ipAddress,
-      source:        "monitor-system-info",
+      source,
       interfaceName: i.ifName,
       // Colon-uppercase like every other address/MAC row: the asset panel
       // groups addresses under the MAC list by exact string, and REST / agent

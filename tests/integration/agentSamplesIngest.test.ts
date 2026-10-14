@@ -129,6 +129,38 @@ d("POST /agents/samples", () => {
     expect(macRows[0].macEnd).toBe("AA:BB:CC:00:00:02");
   });
 
+  it("interfaces: the agent's addresses land in the address list as agent-interface (rule 103(e))", async () => {
+    const now = new Date();
+    await prisma.assetAssociatedIp.createMany({
+      data: [
+        { assetId, ip: "10.98.0.77", source: "manual", lastSeen: now, firstSeen: now },
+        { assetId, ip: "10.98.0.88", source: "device-inventory", device: "GW", lastSeen: now, firstSeen: now },
+        { assetId, ip: "10.98.0.99", source: "monitor-system-info", lastSeen: now, firstSeen: now },
+      ],
+    });
+    const resp = await post({
+      stream: "interfaces",
+      samples: [
+        { ifName: "eth0", operStatus: "up", ipAddress: "10.98.0.10", macAddress: "aa-bb-cc-00-00-01" },
+        { ifName: "eth1", operStatus: "up", ipAddress: "192.168.40.5" },
+        { ifName: "lo", operStatus: "up" },
+      ],
+    });
+    expect(resp.status).toBe(200);
+    const rows = await prisma.assetAssociatedIp.findMany({ where: { assetId }, select: { ip: true, source: true, mac: true, interfaceName: true } });
+    const by = new Map(rows.map((r) => [r.ip, r]));
+    expect(by.get("10.98.0.10")).toMatchObject({ source: "agent-interface", mac: "AA:BB:CC:00:00:01", interfaceName: "eth0" });
+    expect(by.get("192.168.40.5")?.source).toBe("agent-interface");
+    // The operator's and discovery's rows stay; the agent's push replaces a scrape's.
+    expect(by.get("10.98.0.77")?.source).toBe("manual");
+    expect(by.get("10.98.0.88")?.source).toBe("device-inventory");
+    expect(by.has("10.98.0.99")).toBe(false);
+
+    // A push with no addresses keeps the list as it was.
+    await post({ stream: "interfaces", samples: [{ ifName: "eth0", operStatus: "up" }] });
+    expect(await prisma.assetAssociatedIp.count({ where: { assetId, source: "agent-interface" } })).toBe(2);
+  });
+
   it("storage: classifies pinned mounts fast and stamps lastSystemInfoAt", async () => {
     await prisma.asset.update({ where: { id: assetId }, data: { monitoredStorage: ["/data"] } });
     const resp = await post({

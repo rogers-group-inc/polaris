@@ -1865,11 +1865,13 @@ seen, and independent sources that agree add up without ever passing 100:
 
 | Evidence | Weight | Fades by half every |
 |---|---|---|
-| The device's own interface table | 0.95 | day |
+| The device's own Polaris Agent reports it on an interface | 0.97 | day |
+| The device's own interface table (SNMP, REST, WinRM) | 0.95 | day |
 | Polaris has polled it successfully as the primary | up to 0.95 | grows with time |
 | A DHCP reservation the device is holding | 0.90 | 12 hours |
 | The FortiManager / FortiGate record for a FortiGate, FortiSwitch or FortiAP names it as the management IP | 0.90 | day |
 | vCenter's guest IP | 0.85 | 6 hours |
+| The device's own Polaris Agent connects to Polaris from it | 0.85 | hour |
 | You pinned or typed it | 0.80 | never |
 | A Proxmox, Unraid or TrueNAS record for the host, VM or container | 0.80 | 6 hours |
 | A FortiGate (or FortiManager) sees the device online at it | 0.70 | 6 hours |
@@ -1886,6 +1888,16 @@ A reservation outweighs what a FortiGate detects because a person chose it: a
 detected-device entry is the gate's inference from traffic. A FortiGate's ARP
 table counts for any address it resolves to one of the device's MACs, whichever
 source reported the address.
+
+**The device's own Polaris Agent** counts twice. When an agent is deployed, it
+gets a key that belongs to that one asset, so the addresses it reports on its
+interfaces come from the device itself; they appear on the Addresses list
+with the source *Agent*. The address the agent connects to Polaris from also
+counts, but only when it is already one of the asset's addresses, is a private
+(RFC 1918) address, and is among the addresses the agent reports. A loopback,
+a public address or one the agent's own interfaces don't hold means the
+connection passed through a proxy or NAT, so it is not counted. It fades
+quickly once the agent stops checking in.
 
 Polling counts only for the address being monitored, and only while the device
 is not down: about 0.6 after a day of clean polling, over 0.9 after three. The

@@ -27,8 +27,12 @@
  * (pinReleaseVerdict, run by jobs/releaseConfirmedPins.ts).
  */
 
+import { isPrivateIpv4, unwrapMappedIpv4 } from "./cidr.js";
+
 export type EvidenceKind =
   | "interface"          // the device's own interface table (system-info scrape)
+  | "agent-interface"    // the asset's own agent's interface report (rule 103(e))
+  | "agent-source"       // the private address the asset's agent connects from (rule 103(e))
   | "detected-online"    // FortiGate detected device, online, local
   | "controller"         // a FortiGate / FortiSwitch / FortiAP record's management IP
   | "hypervisor"         // a Proxmox / Unraid / TrueNAS host, VM or container address
@@ -58,6 +62,15 @@ const H = 60 * 60 * 1000;
 /** The weight table. Tuned by reasoning, not by data — revisit with real drift. */
 export const EVIDENCE_KINDS: Record<EvidenceKind, KindSpec> = {
   "interface":          { weight: 0.95, halfLifeMs: 24 * H, label: "Device's own interface table" },
+  // The agent's bearer is bound to ONE asset at deploy, so its report is this
+  // device speaking — an SNMP reply only proves something answered there.
+  "agent-interface":    { weight: 0.97, halfLifeMs: 24 * H, label: "Reported by the asset's agent" },
+  // Packets this asset's agent sent came from the address. Short half-life:
+  // the stamp is refreshed on every agent call, so an old one means the agent
+  // has gone quiet. Counted only for a private address the agent's own report
+  // does not contradict (addressConfidenceService), because behind NAT it is
+  // the gateway's.
+  "agent-source":       { weight: 0.85, halfLifeMs: 1 * H,  label: "Asset's agent connects from it" },
   // Half-lives of the two FortiGate observations are sized to discovery, not
   // to the protocol: their rows are refreshed only when the gate is read and
   // deleted when it stops reporting them, so a short half-life measured the
@@ -87,6 +100,25 @@ export const EVIDENCE_KINDS: Record<EvidenceKind, KindSpec> = {
   "polling":            { weight: 0.95, halfLifeMs: null,   label: "Polled OK as primary" },
   "operator":           { weight: 0.80, halfLifeMs: null,   label: "Chosen by an operator" },
 };
+
+/**
+ * Does the address the asset's agent last connected from count as evidence
+ * for `ip`? (Business rule 103(e).) Only when it IS `ip`, is RFC 1918 (a
+ * loopback or public source is a proxy's or a NAT gateway's), and — when the
+ * agent has reported its interface addresses — is one of them: an agent whose
+ * own table lacks its source address is behind a translation that happens to
+ * land on an address the asset is listed with.
+ */
+export function agentSourceCounts(
+  ip: string,
+  agentSourceIp: string | null | undefined,
+  agentReportedIps: ReadonlySet<string>,
+): boolean {
+  if (!agentSourceIp) return false;
+  const src = unwrapMappedIpv4(agentSourceIp);
+  if (src !== ip || !isPrivateIpv4(src)) return false;
+  return agentReportedIps.size === 0 || agentReportedIps.has(src);
+}
 
 /** The operator's choice, as evidence. */
 export const OPERATOR_WEIGHT = EVIDENCE_KINDS.operator.weight;

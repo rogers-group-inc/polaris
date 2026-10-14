@@ -9,6 +9,7 @@ Each rule records the decision *and the incident or constraint that forced it*. 
 - [Rule 103(a)](#rule-103a) — a pin the network comes to back is released
 - [Rule 103(b)](#rule-103b) — unpinning moves to the best-backed listed address
 - [Rule 103(a) amended, (c), (d)](#rule-103c) — the contested pin, ARP as evidence, evidence that does not age while polling answers
+- [Rule 103(e)](#rule-103e) — the asset's own agent is evidence: its interface report, and the private address it connects from
 
 <a id="rule-103"></a>
 
@@ -43,7 +44,7 @@ A reservation is counted twice on purpose: once as configured (0.2, never decays
 
 ### Polling, and why the column is never cleared
 
-The polling credit is the strongest single piece and the only one that grows with time, so its bookkeeping matters. `Asset.ipConfirmedFor` / `ipConfirmedSince` record the address Polaris's own probes have been answering on and since when. `recordProbeResult` starts a new run (`pollingRunStart`) on a successful probe when the address differs from the run's, when there is no run, or when the device is coming back from down / unknown. An agent-reported sample never touches it: the agent answering proves the host is alive, not that the address is right.
+The polling credit is the strongest single piece and the only one that grows with time, so its bookkeeping matters. `Asset.ipConfirmedFor` / `ipConfirmedSince` record the address Polaris's own probes have been answering on and since when. `recordProbeResult` starts a new run (`pollingRunStart`) on a successful probe when the address differs from the run's, when there is no run, or when the device is coming back from down / unknown. An agent-reported sample never touches it: the agent answering proves the host is alive, not that the address is right. (What the agent reports ABOUT its addresses, and where its packets come from, is different evidence — 103(e).)
 
 The probe write path is a batched patch whose flush keeps the old value for anything a patch leaves undefined, so clearing a column there would need a new mechanism. It doesn't need one: the run restarts on recovery, and the score simply gives no polling credit while the asset is down or when the run's address is not the current primary. Only the current primary ever earns polling credit — which is what monitoring actually exercises.
 
@@ -123,3 +124,19 @@ So the release now needs both. Whenever a write tries to move a pinned asset to 
 **103(d) — evidence does not age while polling answers.** The owner: "freshness shouldn't halve as long as polling works." If Polaris's own probes are answering on an address, the device is demonstrably there, and the age of a gate's last report says nothing against it; a half-life there was measuring the time since the last discovery run. So an address with a live polling run has its evidence held at full weight (`sustained`) in `score` and `evidenceScore`. `discoveryScore` keeps ordinary decay: it is the number addresses are compared on for the pin release, only the primary is ever polled, and sustaining it there would hold the pinned address at full strength while every rival faded — the self-confirming pin again.
 
 The two FortiGate half-lives were also lengthened (detection 2 h → 6 h, ARP 1 h → 4 h). Their rows are refreshed only when a gate is read and deleted when it stops reporting them, so a short half-life had been punishing a long discovery interval rather than a stale observation.
+
+<a id="rule-103e"></a>
+
+### 103(e) — the asset's own agent is evidence (2026-10-14)
+
+The owner: "if an agent is checking into Polaris then the private IP it connects from is a good confidence booster. Also, the agent at deployment takes an asset in Polaris and generates a specific key for agent communications, so if the agent pulls the IPs of the asset and reports them back, then that's confidence."
+
+Both were already on hand and unread. Every bearer-gated agent call stamps `ManagedAgent.lastSeenIp` / `lastSeenAt` (`agentTokenService.verifyBearer`). The agent's interface push carried an address per interface, but the ingest stored only the interface rows and the MACs. An agent-only host never reached the address list, so it got none of the interface-table credit a host monitored over SNMP gets.
+
+**The interface report: `agent-interface`, 0.97, 24 h.** The agent's interface push now mirrors its addresses into the address list (`monitoringService.persistAgentAddressRows`). It is the same replace the scrape uses (`persistAssocIpMirror`): manual and discovered rows are kept, and an empty push is skipped. The rows carry their own source, so the score can tell them apart. The weight sits above the scrape's 0.95 because the bearer is bound to one asset at deploy. An SNMP reply proves only that something at the address answered; the agent's report is this device speaking.
+
+**The connect-from address: `agent-source`, 0.85, 1 h.** It counts only when `agentSourceCounts` agrees. The address the agent last connected from must be the address being scored, so it never adds an address the asset does not already list. It must be RFC 1918: loopback is an unresolved proxy hop, and a public address is a NAT gateway's. When the agent has reported interface addresses, it must also be one of them, because an agent whose own table lacks its source address is behind a translation, and the translated address only happens to be one the asset lists. A revoked bearer counts for nothing. The half-life is short because the stamp refreshes on every call, so an old stamp means the agent has gone quiet.
+
+**The WebSocket path had to learn the client address.** Behind nginx the upgrade's socket peer is loopback, and the handler read it raw. HTTP calls (through Express's `req.ip`) and the WebSocket therefore wrote different values into `lastSeenIp`. `utils/trustProxy.resolveClientIp` walks `X-Forwarded-For` with Express's own compiled predicate (`app.get("trust proxy fn")`). Without `trust proxy` it ignores the header, so a direct install cannot be fed a spoofed address.
+
+Both kinds are network evidence. They count in `discoveryScore`, so an agent backing a pinned address can release the pin under 103(a), subject to the contest window as always. IPv6 agent sources are not counted (RFC 1918 only), and a host behind NAT gets the interface credit but not the source credit. That gap is deliberate, not a missing case.

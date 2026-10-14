@@ -25,6 +25,7 @@ import { WebSocketServer } from "ws";
 import { verifyBearer } from "../../services/agentTokenService.js";
 import { attach } from "../../services/agentChannelService.js";
 import { logger } from "../../utils/logger.js";
+import { resolveClientIp, type TrustProxyFn } from "../../utils/trustProxy.js";
 
 const SUBPROTOCOL_PREFIX = "polaris-agent.v1.bearer.";
 const PATH = "/api/v1/agents/ws";
@@ -33,7 +34,7 @@ const PATH = "/api/v1/agents/ws";
 // means we drive the upgrade handshake ourselves (so we can do bearer auth
 // before handing off). Each instance is small — a few hundred bytes of
 // state — so creating one per attach is fine.
-export function attachAgentWsUpgradeHandler(httpServer: HttpServer): void {
+export function attachAgentWsUpgradeHandler(httpServer: HttpServer, trustProxyFn?: TrustProxyFn | null): void {
   const wss = new WebSocketServer({ noServer: true });
 
   httpServer.on("upgrade", async (req: IncomingMessage, socket: Socket, head: Buffer) => {
@@ -57,7 +58,9 @@ export function attachAgentWsUpgradeHandler(httpServer: HttpServer): void {
         return;
       }
       const rawBearer = tokenProto.slice(SUBPROTOCOL_PREFIX.length);
-      const callerIp = req.socket.remoteAddress ?? null;
+      // Resolved as Express resolves req.ip: behind nginx the socket peer is
+      // loopback, and lastSeenIp is confidence evidence (rule 103(e)).
+      const callerIp = resolveClientIp(req.socket.remoteAddress, req.headers["x-forwarded-for"], trustProxyFn);
 
       // The verify is an argon2 check on the libuv pool, and after a server
       // restart every agent's WS and REST calls queue on it at once — long

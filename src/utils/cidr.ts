@@ -95,6 +95,16 @@ export function isPrivateIpv4(ip: string): boolean {
 }
 
 /**
+ * `::ffff:10.0.0.1` → `10.0.0.1`. Node reports an IPv4 peer on a dual-stack
+ * socket in the mapped form; anything else is returned trimmed, unchanged.
+ */
+export function unwrapMappedIpv4(ip: string): string {
+  const candidate = ip.trim();
+  if (candidate.toLowerCase().startsWith("::ffff:") && candidate.includes(".")) return candidate.slice(7);
+  return candidate;
+}
+
+/**
  * Loopback check for source-IP gating: IPv4 127.0.0.0/8, IPv6 ::1, and the
  * IPv6-mapped IPv4 forms (`::ffff:127.0.0.1`) Node hands out for v4
  * connections on dual-stack sockets.
