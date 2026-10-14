@@ -230,6 +230,18 @@ node scripts/capture-screenshots.mjs --base http://127.0.0.1:3000 \
      --out docs/img/screenshots --themes noon,nightfall
 ```
 
+`--only <slug,…>` shoots just the named images and leaves the rest alone. The
+README's `asset-monitoring` shot needs it. `mock:demo` pins that image's asset
+(`edge-rtr-01`) to SNMP and stamps it freshly polled, but the next live poll of
+its invented address fails within a minute and puts "last poll failed" banners on
+the charts. So run the pair back to back:
+
+```bash
+podman exec polaris-<slug>_app_1 sh -c 'cd /app && npm run mock:demo'
+node scripts/capture-screenshots.mjs --base http://127.0.0.1:3000 \
+     --out docs/img/screenshots --themes noon,nightfall --only asset-monitoring
+```
+
 It uses the locally installed Chrome, so `playwright install` is not needed. Start the
 app with `-e POLARIS_BUILD_COMMIT_COUNT=$(git rev-list --count HEAD)` for a shooting run:
 a worktree's `.git` is meaningless inside the container, so otherwise the sidebar's version
