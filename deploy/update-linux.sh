@@ -49,15 +49,23 @@ ALLOW_WITHOUT_BACKUP=0
 # it the "already up to date" check below sees a no-op pull and stops, leaving
 # node_modules, dist/ and the schema at the OLD commit under NEW source.
 FORCE=0
+# Install changed root helpers without showing each diff and asking (business
+# rule 117(k)). OFF by default: /opt/polaris is the polaris account's tree, so
+# a helper that changed in it is shown to the administrator running this
+# script before root installs it. Without a terminal and without --yes,
+# changed helpers are left as they are and listed on the Maintenance tab.
+ASSUME_YES=0
 for arg in "$@"; do
   case "$arg" in
     --allow-without-backup) ALLOW_WITHOUT_BACKUP=1 ;;
     --force) FORCE=1 ;;
+    --yes) ASSUME_YES=1 ;;
     -h|--help)
-      echo "Usage: $0 [--allow-without-backup] [--force]"
+      echo "Usage: $0 [--allow-without-backup] [--force] [--yes]"
       echo "  --allow-without-backup  Continue when pg_dump is unavailable or the backup fails."
       echo "  --force                 Run install/build/migrate even when the code is already at the latest commit"
       echo "                          (finishes an update that was interrupted after its code pull)."
+      echo "  --yes                   Install changed root helpers without showing each diff and asking."
       exit 0
       ;;
     *) echo "[ERROR] Unknown argument: $arg" >&2; exit 1 ;;
@@ -252,7 +260,74 @@ DROPIN
   info "Preserved ${name}'s PostgreSQL dependency (${pgunit}.service) as a drop-in"
 }
 
-sync_unit_files() {
+# ─── Root-owned files (business rule 117(k)) ──────────────────────────────────
+#
+# Everything below that root installs — units, drop-ins, the sudoers / polkit
+# entries, root helpers, the nginx config — comes from /opt/polaris, which the
+# polaris account writes. So it goes through the INSTALLED, root-owned
+# polaris-update-sync --install: unit files and sudoers are validated, and
+# each root helper is shown against the installed copy and asked about. The
+# legacy_* copies further down run only on a host so old it has no
+# polaris-update-sync to review with.
+SYNC_HELPER=/usr/local/sbin/polaris-update-sync
+
+trusted_sync_helper() {
+  [[ -f "$SYNC_HELPER" && ! -L "$SYNC_HELPER" ]] || return 1
+  [[ "$(stat -c '%u' "$SYNC_HELPER")" == 0 ]] || return 1
+  (( (8#$(stat -c '%a' "$SYNC_HELPER") & 8#022) == 0 )) || return 1
+  grep -q -- '--install' "$SYNC_HELPER"
+}
+
+# An installed helper that predates --install: show the tree's copy against it
+# and ask before replacing it.
+bootstrap_sync_helper() {
+  local snap ans=""
+  snap="$(mktemp /run/polaris-sync-helper.XXXXXX)" || return 1
+  if ! cp -P -- "$APP_DIR/deploy/scripts/polaris-update-sync.sh" "$snap" 2>/dev/null || [[ -L "$snap" || ! -s "$snap" ]]; then
+    rm -f "$snap"; return 1
+  fi
+  echo
+  echo "=== $SYNC_HELPER (installed copy predates the reviewed update path)"
+  diff -u "$SYNC_HELPER" "$snap" | head -n 400 || true
+  if [[ $ASSUME_YES -eq 1 ]]; then
+    ans=y
+  else
+    read -r -p "Install the new $SYNC_HELPER? [y/N] " ans </dev/tty || ans=""
+  fi
+  if [[ "$ans" == [yY]* ]]; then
+    install -o root -g root -m 0755 "$snap" "$SYNC_HELPER"
+    rm -f "$snap"
+    return 0
+  fi
+  rm -f "$snap"
+  return 1
+}
+
+sync_root_files() {
+  if trusted_sync_helper || { [[ -f "$SYNC_HELPER" ]] && bootstrap_sync_helper && trusted_sync_helper; }; then
+    local yes=()
+    [[ $ASSUME_YES -eq 1 ]] && yes=(--yes)
+    "$SYNC_HELPER" --install "${yes[@]}" || warn "$SYNC_HELPER --install reported a problem; see above"
+    return 0
+  fi
+  if [[ -e "$SYNC_HELPER" ]]; then
+    warn "Leaving units, sudoers, polkit and root helpers as they are: $SYNC_HELPER is not a trusted root-owned copy with --install, or its update was declined. Review later with: sudo polaris-update-sync --apply-helpers"
+    return 1
+  fi
+  warn "No $SYNC_HELPER on this host — syncing units and helpers from $APP_DIR/deploy WITHOUT review (an install from before the in-app updater's root helper)."
+  legacy_sync_unit_files || true
+  legacy_sync_ha_artifacts || true
+  legacy_sync_update_helper || true
+  return 0
+}
+
+# The shipped nginx config is checked before it goes live (business rule
+# 117(m)), with the INSTALLED nginx helper's check.
+nginx_conf_checked() {
+  ( POLARIS_NGINX_APPLY_LIB=1 . /usr/local/sbin/polaris-nginx-apply && declare -F nginx_conf_ok >/dev/null && nginx_conf_ok "$1" )
+}
+
+legacy_sync_unit_files() {
   local synced=0
   local units=(
     "$APP_DIR/deploy/polaris-web.service"
@@ -297,7 +372,7 @@ sync_unit_files() {
 # to land the first time.
 # Lockstep: deploy/scripts/polaris-update-sync.sh (the in-app updater's root
 # helper) refreshes the same set.
-sync_ha_artifacts() {
+legacy_sync_ha_artifacts() {
   [[ -f /etc/polaris/ha-node ]] || return 1
   local synced=0
   sync_one() {
@@ -331,7 +406,7 @@ sync_ha_artifacts() {
 # (business rule 117). Install-if-missing as well as refresh: this is how a
 # host set up before rule 117 gets them when the operator updates from a shell
 # — and with them the narrowed grant that replaces the all-units one.
-sync_update_helper() {
+legacy_sync_update_helper() {
   local synced=0
   install_one() {
     [[ -f "$1" ]] || return 0
@@ -380,7 +455,14 @@ sync_nginx_config() {
   # this staged file, then atomically rename into place. If validation fails,
   # leave the running nginx config untouched.
   local stage="$target.new"
-  cp -f "$src" "$stage"
+  # Read as the polaris account (the tree is its), into root's staging file,
+  # and checked before it replaces the live config (business rule 117(m)).
+  sudo -u "$APP_USER" cat "$src" > "$stage"
+  if ! nginx_conf_checked "$stage"; then
+    rm -f "$stage"
+    warn "Kept the existing nginx config: the shipped one did not pass the content check (or the installed polaris-nginx-apply predates it — run: sudo polaris-update-sync --apply-helpers)"
+    return 1
+  fi
   # Temporarily swap the target with the stage to run `nginx -t` against the
   # candidate. We can't have both files in /etc/nginx/conf.d at once (would
   # double-bind 443). Backup the current, install the candidate, validate,
@@ -637,8 +719,7 @@ rollback() {
   # we'd synced new unit files mid-update they may still be live in
   # /etc/systemd/system/ — sync the now-rolled-back deploy/ files back into
   # place so systemd reflects the rolled-back code/units pair.
-  sync_unit_files || true
-  sync_ha_artifacts || true
+  sync_root_files || true
   sync_nginx_config || true
 
   systemctl restart "$SYSTEMD_UNIT" 2>/dev/null
@@ -716,15 +797,10 @@ info "Migrations complete"
 # in-app paths produce the same end state.
 step "8/9  Syncing systemd unit files..."
 
-sync_unit_files || info "No unit file changes to sync"
-sync_ha_artifacts || info "No HA artifact changes to sync (or not an HA node)"
-sync_update_helper || info "In-app updater helper already current"
-# Root helpers the in-app updater HOLDS for an administrator (rule 117(g)):
-# running this script as root is that administrator, so install them all —
-# including any an earlier in-app update left waiting.
-if [[ -x /usr/local/sbin/polaris-update-sync ]]; then
-  /usr/local/sbin/polaris-update-sync --apply-helpers --yes || warn "polaris-update-sync --apply-helpers failed; run it by hand"
-fi
+# Units, drop-ins, sudoers / polkit and the root helpers — including any an
+# earlier in-app update left held (rule 117(g)) — through the installed,
+# root-owned polaris-update-sync, which validates and asks (rule 117(k)).
+sync_root_files || true
 
 # Sync the shipped nginx config in proxy mode. Runs BEFORE the polaris.target
 # restart so any new location blocks / proxy_set_header changes are live in

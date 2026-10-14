@@ -166,3 +166,12 @@ carry neither, and AD-`cn`-vs-Entra-full-name is the case truncation matching ex
 refusing on any type difference (workstation vs server is an operator retype, not two devices);
 deleting stale cards (marking them rejected by `system`, with a `conflict.rejected` Event naming
 the reason, leaves the history explaining why the card went away).
+
+### 91(b) — a DHCP hostname is the client's word (2026-10-14, scoped scan F2)
+
+Rule 91(a) stopped a shared name from MERGING two records; it did not stop a lease from moving one. In `syncDhcpSubnets` a lease or detected-device row whose MAC no asset knows falls back to `byHostname`, and the hostname on a lease is whatever the client put in DHCP option 12. A device on any segment a discovered FortiGate serves (a guest SSID is enough) could send a monitored server's name: Phase 6 added its MAC — usually as primary, because the newest non-hardware MAC wins — and, a static-IP server holding no competing lease, its address won the run's claim and became the asset's `ipAddress`. From then on the MAC match kept the asset tied to it, and the monitor sent that asset's SNMP community, WinRM / SSH password or REST token to the claimant. Host-key and certificate pins are per host:port, so the new address was trusted on first use.
+
+Owner decision 2026-10-14 (option a; b was a review Conflict for every such match): a hostname-only match against a monitored or credentialed asset records the sighting and moves nothing. Three things beyond the literal decision were needed for it to hold, and were kept: the recorded MAC carries its own source (`hostname-unverified`) and is never indexed as identity, or the NEXT run would match by MAC and move the address after all (and Phase 7.5 ARP / switch rows would re-address it through `findByMac`); `selectPrimaryMac` passes over that source while anything else is usable; and the device-inventory path's fingerprint, assetType, switch / AP and user writes are skipped too, since they describe the claimant, and an assetType change can alter monitoring. Option b was rejected because a docked laptop or a phone's randomised MAC on a monitored device would raise a Conflict every run.
+
+The cost: a monitored device's genuinely new NIC stays `hostname-unverified` until something with real evidence (system info, the agent, a MAC match) records it. The warning event names it. Not covered: readers outside discovery that build their own MAC index (monitoringService's LLDP / FDB `byMac`, the quarantine target list) still see the row; none of them moves an address.
+

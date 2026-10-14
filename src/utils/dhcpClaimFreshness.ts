@@ -187,11 +187,19 @@ export interface DhcpClaimState {
    * which pathway or gate carried it.
    */
   bestGateClaimMsByAsset: Map<string, number>;
+  /**
+   * `assetId|mac` pairs a hostname-only adoption was already refused for this
+   * run (business rule 91(b)) — one warning Event per pair per run, even when
+   * several gates of an FMG run, or both the lease and the detected-device
+   * pass, carry the same claim.
+   */
+  hostnameAdoptRefused: Set<string>;
 }
 
 export function createDhcpClaimState(): DhcpClaimState {
   return {
     bestAddressClaimByAsset: new Map(),
     bestGateClaimMsByAsset: new Map(),
+    hostnameAdoptRefused: new Set(),
   };
 }

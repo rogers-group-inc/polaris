@@ -203,6 +203,7 @@ beyond letters, digits, `.`, `_` and `-` (and a leading hyphen), and a port outs
 | `integration.discover.error` | error | the run failed |
 | `integration.discover.devices_unread` | **warning** | devices the run **could not read** — named individually ([rule 53](Business-Rules#rule-53)) |
 | `discover.device.complete` | info | retracts an earlier error for that device |
+| `discovery.hostname_adopt_refused` | **warning** | a DHCP lease or detected device used the hostname of a monitored asset (or one with stored credentials) from a MAC that asset does not have. Polaris recorded the MAC as unverified and did **not** move the asset's address — otherwise it would have polled the newcomer with the asset's credentials ([rule 91](Business-Rules#rule-91)) |
 | `integration.coords.push_failed` | warning | coordinate write-back failed; the asset writes still landed |
 | `asset.location.geocode_failed` | warning | a firewall's SNMP location (or address metavariable) could not be turned into map coordinates — no geocoder recognised it, a geocoder was unreachable, or geocoding is off — so the pin kept its other coordinates. Filed on the asset, so its **Events** tab shows it; repeated at most once a week for the same address and reason |
 

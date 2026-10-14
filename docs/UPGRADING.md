@@ -668,8 +668,13 @@ sudo polaris-update-sync --apply-helpers        # shows each diff, asks per file
 sudo polaris-update-sync --apply-helpers --yes  # installs all of them
 ```
 
-`deploy/update-linux.sh` runs the `--yes` form itself. On an HA pair, apply on
-the primary; the standby copies the installed helpers from it.
+`deploy/update-linux.sh`, re-running an installer (`deploy/setup-*.sh`) on an
+existing install, and `deploy/migrate-to-nginx.sh` all do the same review:
+they hand the units, sudoers and root helpers to the installed
+`polaris-update-sync --install`, which shows each changed root helper and asks
+(business rule 117(k)). Pass `--yes` to `update-linux.sh`, or set
+`POLARIS_YES=1` for the installers, to install without asking. On an HA pair,
+apply on the primary; the standby copies the installed helpers from it.
 
 **Auto-sync of unit files.** Before restarting `polaris.target` the updater
 also syncs `/opt/polaris/deploy/polaris-*.service` and `polaris.target` into

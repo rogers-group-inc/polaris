@@ -81,6 +81,22 @@ export function isHardwareMacSource(source: string | null | undefined): boolean 
 }
 
 /**
+ * Source stamped on a MAC that discovery recorded on a PROTECTED asset (one
+ * that is monitored, or carries a credential) from a DHCP lease / detected-
+ * device row that matched the asset by HOSTNAME ALONE — business rule 91(b)
+ * (re-scan F2). A DHCP client picks its own hostname (option 12), so the MAC
+ * is kept as a sighting the operator can see, but it is NOT identity evidence:
+ * discovery's AssetIndex keeps it out of the MAC index (so a later run, ARP or
+ * switch-table row cannot match the asset through it), and selectPrimaryMac
+ * never picks it while any other usable entry exists.
+ */
+export const UNVERIFIED_HOSTNAME_MAC_SOURCE = "hostname-unverified";
+
+export function isUnverifiedMacSource(source: string | null | undefined): boolean {
+  return source === UNVERIFIED_HOSTNAME_MAC_SOURCE;
+}
+
+/**
  * Pick the asset's PRIMARY MAC from its entry list.
  *
  * When the list carries at least one hardware-truth entry (see
@@ -100,8 +116,12 @@ export function selectPrimaryMac(
   macs: ReadonlyArray<Pick<MacJsonEntry, "mac" | "lastSeen" | "source" | "macEnd">> | null | undefined,
 ): string | null {
   if (!Array.isArray(macs) || macs.length === 0) return null;
-  const singles = macs.filter((m) => m && m.mac && !m.macEnd && !isAllZeroMac(m.mac));
-  if (singles.length === 0) return null;
+  const allSingles = macs.filter((m) => m && m.mac && !m.macEnd && !isAllZeroMac(m.mac));
+  if (allSingles.length === 0) return null;
+  // An unverified hostname-only sighting (business rule 91(b)) is primary
+  // only when the asset has nothing else.
+  const verified = allSingles.filter((m) => !isUnverifiedMacSource(m.source));
+  const singles = verified.length > 0 ? verified : allSingles;
   const hardware = singles.filter((m) => isHardwareMacSource(m.source));
   const candidates = hardware.length > 0 ? hardware : singles;
   let best = candidates[0];
