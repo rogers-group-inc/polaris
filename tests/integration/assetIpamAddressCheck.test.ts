@@ -86,8 +86,13 @@ beforeEach(async () => {
   subnetId = (await prisma.subnet.create({
     data: { blockId: block.id, cidr: CIDR, name: PFX, fortigateDevice: GATE },
   })).id;
+  // No ipAddress: an asset whose primary IP sits in a known subnet gets a
+  // dns_resolved reservation from rule 11, fire-and-forget off this write, and
+  // it raced the first test's own reserve("10.93.6.10") for the
+  // (subnet, ip, status) slot — CI lost it on 2026-10-14. The check under test
+  // reads the associated-IP rows, never the asset's own address.
   assetId = (await prisma.asset.create({
-    data: { hostname: PFX + "-hmi", macAddress: ETH, assetType: "workstation", status: "active", ipAddress: "10.93.6.10" },
+    data: { hostname: PFX + "-hmi", macAddress: ETH, assetType: "workstation", status: "active" },
   })).id;
 });
 
