@@ -80,7 +80,7 @@ what the load balancer monitors.
   those files when the marker is present, **refresh-only-if-present** so a
   witness never grows `polaris-*` drop-ins and a non-HA host never grows HA
   units. Consequence to remember: a brand-new HA artifact needs
-  `sudo polaris-ha-setup` (the reviewed installed copy of `setup-rhel-ha.sh`)
+  `sudo /usr/local/sbin/polaris-ha-setup` (the reviewed installed copy of `setup-rhel-ha.sh`)
   re-run to appear the first time; only already-installed ones are kept
   current. Run from the polaris-owned tree, the setup script routes every HA
   root file through `polaris-update-sync --install --ha` (business rule

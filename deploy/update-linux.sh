@@ -25,7 +25,7 @@
 #
 # On failure, offers to rollback to the previous version.
 #
-# Run the installed copy: sudo polaris-update-linux (business rule 117(n)).
+# Run the installed copy: sudo /usr/local/sbin/polaris-update-linux (business rule 117(n)).
 
 set -euo pipefail
 
@@ -51,7 +51,7 @@ if [[ "$_SELF" != "$_INSTALLED_SELF" && "${POLARIS_UPDATE_FROM_TREE:-0}" != 1 ]]
   case "$_SELF" in
     /opt/polaris/*)
       echo "[WARN]  update-linux.sh is running from $_SELF — a directory the polaris account can write." >&2
-      echo "[WARN]  Install the reviewed copy (sudo polaris-update-sync --apply-helpers) and run /usr/local/sbin/polaris-update-linux from now on." >&2
+      echo "[WARN]  Install the reviewed copy (sudo /usr/local/sbin/polaris-update-sync --apply-helpers) and run /usr/local/sbin/polaris-update-linux from now on." >&2
       ;;
   esac
 fi
@@ -340,7 +340,7 @@ sync_root_files() {
     return 0
   fi
   if [[ -e "$SYNC_HELPER" ]]; then
-    warn "Leaving units, sudoers, polkit and root helpers as they are: $SYNC_HELPER is not a trusted root-owned copy with --install, or its update was declined. Review later with: sudo polaris-update-sync --apply-helpers"
+    warn "Leaving units, sudoers, polkit and root helpers as they are: $SYNC_HELPER is not a trusted root-owned copy with --install, or its update was declined. Review later with: sudo /usr/local/sbin/polaris-update-sync --apply-helpers"
     return 1
   fi
   warn "No $SYNC_HELPER on this host — syncing units and helpers from $APP_DIR/deploy WITHOUT review (an install from before the in-app updater's root helper)."
@@ -489,7 +489,7 @@ sync_nginx_config() {
   sudo -u "$APP_USER" cat "$src" > "$stage"
   if ! nginx_conf_checked "$stage"; then
     rm -f "$stage"
-    warn "Kept the existing nginx config: the shipped one did not pass the content check (or the installed polaris-nginx-apply predates it — run: sudo polaris-update-sync --apply-helpers)"
+    warn "Kept the existing nginx config: the shipped one did not pass the content check (or the installed polaris-nginx-apply predates it — run: sudo /usr/local/sbin/polaris-update-sync --apply-helpers)"
     return 1
   fi
   # Temporarily swap the target with the stage to run `nginx -t` against the

@@ -325,7 +325,7 @@ fi
 
 step "Commit: installing nginx config to $NGINX_CONF_DEST"
 if ! nginx_conf_checked "$TMP/polaris.conf"; then
-  error "The staged nginx config did not pass the content check, or polaris-nginx-apply is not installed (approve it above, or run: sudo polaris-update-sync --apply-helpers). nginx is not switched over yet; re-run this script afterwards."
+  error "The staged nginx config did not pass the content check, or polaris-nginx-apply is not installed (approve it above, or run: sudo /usr/local/sbin/polaris-update-sync --apply-helpers). nginx is not switched over yet; re-run this script afterwards."
   exit 1
 fi
 install -o root -g root -m 0644 "$TMP/polaris.conf" "$NGINX_CONF_DEST.new"

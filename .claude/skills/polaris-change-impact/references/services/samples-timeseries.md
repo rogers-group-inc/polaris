@@ -112,7 +112,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 - **`db_default_password` (warning, production only, business rule 117).** `databaseUsesPublicDefaultPassword(DATABASE_URL)` — user AND password `polaris`, the pre-rule-117 installer default — points the operator at docs/UPGRADING.md → "Rotate the database password". Never rotated automatically.
 
-- **`root_helpers_pending` (warning, business rule 117(g)).** Read from `ROOT_HELPERS_PENDING_FILE` (`/var/lib/polaris-update-sync/pending`, written by the root update helper) via `parsePendingRootHelpers` — one `<installed path> <sha256>` per line. Present while a release's root helper waits for `sudo polaris-update-sync --apply-helpers`.
+- **`root_helpers_pending` (warning, business rule 117(g)).** Read from `ROOT_HELPERS_PENDING_FILE` (`/var/lib/polaris-update-sync/pending`, written by the root update helper) via `parsePendingRootHelpers` — one `<installed path> <sha256>` per line. Present while a release's root helper waits for `sudo /usr/local/sbin/polaris-update-sync --apply-helpers`.
 
 **When changing this:**
 - Test volume dedup on multi-LV layouts (separate /var/lib/pgsql and /app).

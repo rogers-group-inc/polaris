@@ -70,7 +70,7 @@ if [[ "$_SELF" != "$_INSTALLED_SELF" && "${POLARIS_HA_SETUP_FROM_TREE:-0}" != 1 
   case "$_SELF" in
     /opt/polaris/*)
       echo "[WARN]  setup-rhel-ha.sh is running from $_SELF — a directory the polaris account can write." >&2
-      echo "[WARN]  Install the reviewed copy (sudo polaris-update-sync --apply-helpers) and run /usr/local/sbin/polaris-ha-setup from now on." >&2
+      echo "[WARN]  Install the reviewed copy (sudo /usr/local/sbin/polaris-update-sync --apply-helpers) and run /usr/local/sbin/polaris-ha-setup from now on." >&2
       ;;
   esac
 fi
@@ -255,7 +255,7 @@ ha_review_root_files() {
     || error "$SRC_DIR is writable by the $APP_USER account and is not $APP_DIR/deploy/ha. Run this script from a root-owned clone (docs/HA.md)."
   if ! { [[ -f "$SYNC_HELPER" && ! -L "$SYNC_HELPER" && "$(stat -c '%u' "$SYNC_HELPER")" == 0 ]] \
          && (( (8#$(stat -c '%a' "$SYNC_HELPER") & 8#022) == 0 )) && grep -q -- '--ha' "$SYNC_HELPER"; }; then
-    error "Running from $SRC_DIR (the $APP_USER account's tree) needs the installed, reviewed $SYNC_HELPER with --install --ha, and this host has none. Run this script from a root-owned clone instead (docs/HA.md), or apply the held helpers first: sudo polaris-update-sync --apply-helpers"
+    error "Running from $SRC_DIR (the $APP_USER account's tree) needs the installed, reviewed $SYNC_HELPER with --install --ha, and this host has none. Run this script from a root-owned clone instead (docs/HA.md), or apply the held helpers first: sudo /usr/local/sbin/polaris-update-sync --apply-helpers"
   fi
   info "HA files come from $APP_DIR (the $APP_USER account's tree): reviewing them through $SYNC_HELPER --install --ha (business rule 117(n))"
   "$SYNC_HELPER" --install --ha ${POLARIS_YES:+--yes} || warn "$SYNC_HELPER --install --ha reported a problem; see above"

@@ -1870,7 +1870,7 @@ function computeReasons(
         `${heldHelpers.length} root helper${heldHelpers.length === 1 ? "" : "s"} changed in this release and ${heldHelpers.length === 1 ? "is" : "are"} waiting for an administrator: ` +
         heldHelpers.map((h) => h.path).join(", ") + ".",
       suggestion:
-        "On the server, run `sudo polaris-update-sync --apply-helpers`. It shows each change against the installed copy and installs the ones you confirm. Until then the previous copies stay in use.",
+        "On the server, run `sudo /usr/local/sbin/polaris-update-sync --apply-helpers`. It shows each change against the installed copy and installs the ones you confirm. Until then the previous copies stay in use.",
     });
   }
 
