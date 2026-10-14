@@ -4,8 +4,20 @@
  * that carry a secret without verifying a CA chain.
  *
  * WHO USES IT. WinRM over HTTPS (Basic auth with a Windows password, and the
- * agent enrollment token the installer embeds) and the firmware engines
- * (FortiGate / FortiSwitch / FortiAP device logins and FortiOS API tokens).
+ * agent enrollment token the installer embeds), the firmware engines
+ * (FortiGate / FortiSwitch / FortiAP device logins and FortiOS API tokens),
+ * and since 2026-10-14 (rule 113(e), re-scan F6/F7/F10/F66) every FortiOS and
+ * FortiManager request with `verifySsl` off (`utils/tlsDispatcher`), the
+ * per-asset REST API credential and HTTP-check credentials.
+ *
+ * RE-TRUST (rule 113(f)/(g)). A refused certificate is remembered on the pin
+ * (`pendingFingerprint` / `pendingSubject` / `pendingSeenAt`) so an
+ * administrator can compare it and trust exactly that certificate
+ * (`trustPendingCert`) instead of deleting the pin and trusting whatever
+ * answers next. The mismatch Event is written once per NEW certificate, not on
+ * every refused poll. Polaris opens a short `repinUntil` window itself after
+ * it completes a firmware upgrade of the device (`allowRepin`), since an
+ * upgrade may regenerate the certificate.
  * Their servers almost always present self-signed certificates, so CA
  * verification (`verifyTls: true`) is the exception; before this rule the
  * default was to accept ANY certificate and send the secret to whoever
@@ -41,6 +53,10 @@ export interface TlsCertPinRecord {
   subject: string;
   firstSeen: Date;
   lastSeen: Date;
+  pendingFingerprint: string | null;
+  pendingSubject: string | null;
+  pendingSeenAt: Date | null;
+  repinUntil: Date | null;
 }
 
 export type CertPinVerdict =
@@ -112,10 +128,47 @@ export async function verifyOrPinCert(host: string, port: number, fingerprint256
     return { ok: true, outcome: "pinned" };
   }
 
-  pinCache.set(ck, row.fingerprint);
   if (row.fingerprint !== actual) {
-    await reportMismatch(host, port, row.fingerprint, actual, subject);
+    // Rule 113(g): Polaris just upgraded this device's firmware, which may
+    // have regenerated its certificate — the first changed certificate inside
+    // the window is the device's new one.
+    if (row.repinUntil && row.repinUntil.getTime() > Date.now()) {
+      await prisma.tlsCertPin.update({
+        where: { id: row.id },
+        data: {
+          fingerprint: actual, subject: subject.slice(0, 500), lastSeen: new Date(),
+          pendingFingerprint: null, pendingSubject: null, pendingSeenAt: null, repinUntil: null,
+        },
+      });
+      pinCache.set(ck, actual);
+      await logEvent({
+        action: "tls.cert.repinned",
+        resourceType: "tls-cert-pin",
+        resourceId: row.id,
+        resourceName: ck,
+        actor: "system:tls",
+        level: "info",
+        message: `Re-pinned the TLS certificate of ${ck} after the firmware upgrade Polaris ran on it${subject ? ` (${subject})` : ""}`,
+        details: { host, port, previousFingerprint: row.fingerprint, fingerprint: actual, subject },
+      });
+      return { ok: true, outcome: "pinned" };
+    }
+    pinCache.set(ck, row.fingerprint);
+    // Rule 113(f): remember what was presented, and report it ONCE per new
+    // certificate — a refused gate is polled every few seconds.
+    if (row.pendingFingerprint !== actual) {
+      await prisma.tlsCertPin.update({
+        where: { id: row.id },
+        data: { pendingFingerprint: actual, pendingSubject: subject.slice(0, 500), pendingSeenAt: new Date() },
+      }).catch((err) => logger.debug({ err, host, port }, "tls cert pin pending write failed"));
+      await reportMismatch(host, port, row.fingerprint, actual, subject);
+    }
     return { ok: false, outcome: "mismatch", expected: row.fingerprint, actual };
+  }
+  pinCache.set(ck, row.fingerprint);
+  if (row.pendingFingerprint) {
+    // The pinned certificate is back; the other one is no longer pending.
+    await prisma.tlsCertPin.update({ where: { id: row.id }, data: { pendingFingerprint: null, pendingSubject: null, pendingSeenAt: null } }).catch(() => {});
   }
   void touchLastSeen(host, port, ck);
   return { ok: true, outcome: "matched" };
@@ -130,7 +183,7 @@ async function reportMismatch(host: string, port: number, expected: string, actu
     level: "warning",
     message:
       `The TLS certificate of ${endpointKey(host, port)} does not match the pinned certificate — refused the connection before sending any credential. ` +
-      `If the certificate was legitimately re-issued, delete its pin to trust the new one.`,
+      `If the certificate was legitimately re-issued, compare the fingerprints under Server Settings → Web Server → Pinned server identities and choose "Trust new certificate".`,
     details: { host, port, expectedFingerprint: expected, actualFingerprint: actual, subject },
   }).catch(() => {});
 }
@@ -147,7 +200,83 @@ async function touchLastSeen(host: string, port: number, ck: string): Promise<vo
 }
 
 export async function listCertPins(): Promise<TlsCertPinRecord[]> {
-  return prisma.tlsCertPin.findMany({ orderBy: [{ host: "asc" }, { port: "asc" }] });
+  // Changed certificates first: they are what an administrator came here for.
+  const rows = await prisma.tlsCertPin.findMany({ orderBy: [{ host: "asc" }, { port: "asc" }] });
+  return [...rows.filter((r) => r.pendingFingerprint), ...rows.filter((r) => !r.pendingFingerprint)];
+}
+
+/** The pins for specific endpoints (an asset's Sources tab). Missing endpoints are simply absent. */
+export async function pinsForEndpoints(endpoints: Array<{ host: string; port: number }>): Promise<TlsCertPinRecord[]> {
+  if (!endpoints.length) return [];
+  return prisma.tlsCertPin.findMany({ where: { OR: endpoints.map((e) => ({ host: e.host, port: e.port })) } });
+}
+
+/** Endpoints whose server currently presents a certificate other than the pinned one (capacity card). */
+export async function changedCertPins(): Promise<Array<{ host: string; port: number; pendingSeenAt: Date | null }>> {
+  return prisma.tlsCertPin.findMany({
+    where: { pendingFingerprint: { not: null } },
+    select: { host: true, port: true, pendingSeenAt: true },
+    orderBy: { pendingSeenAt: "asc" },
+  });
+}
+
+/**
+ * Rule 113(f): trust EXACTLY the certificate the administrator inspected. The
+ * caller passes the pending fingerprint it showed them; if the server has
+ * since presented yet another one, nothing is trusted (409) — the page is
+ * stale and must be looked at again.
+ */
+export async function trustPendingCert(id: string, fingerprint: string, actor: string): Promise<TlsCertPinRecord> {
+  const row = await prisma.tlsCertPin.findUnique({ where: { id } });
+  if (!row) throw new AppError(404, "TLS certificate pin not found");
+  if (!row.pendingFingerprint) throw new AppError(409, "This server has not presented a changed certificate");
+  if (normalizeFingerprint(fingerprint) !== normalizeFingerprint(row.pendingFingerprint)) {
+    throw new AppError(409, "The server has presented a different certificate since this page loaded — reload and compare again");
+  }
+  const updated = await prisma.tlsCertPin.update({
+    where: { id },
+    data: {
+      fingerprint: row.pendingFingerprint, subject: row.pendingSubject ?? "", lastSeen: new Date(),
+      pendingFingerprint: null, pendingSubject: null, pendingSeenAt: null, repinUntil: null,
+    },
+  });
+  const ck = endpointKey(row.host, row.port);
+  pinCache.set(ck, row.pendingFingerprint);
+  await logEvent({
+    action: "tls.cert.trusted",
+    resourceType: "tls-cert-pin",
+    resourceId: id,
+    resourceName: ck,
+    actor,
+    level: "warning",
+    message: `Trusted the new TLS certificate of ${ck}${row.pendingSubject ? ` (${row.pendingSubject})` : ""} in place of the pinned one`,
+    details: { host: row.host, port: row.port, previousFingerprint: row.fingerprint, fingerprint: row.pendingFingerprint, subject: row.pendingSubject },
+  });
+  return updated;
+}
+
+/**
+ * Rule 113(g): after Polaris completes a firmware upgrade of a device, accept
+ * the first changed certificate it presents within `minutes`. Only existing
+ * pins are touched (a never-pinned endpoint pins on first use anyway).
+ */
+export async function allowRepin(host: string, ports: number[], minutes: number, actor: string): Promise<number> {
+  if (!host || !ports.length) return 0;
+  const until = new Date(Date.now() + minutes * 60_000);
+  const res = await prisma.tlsCertPin.updateMany({ where: { host, port: { in: ports } }, data: { repinUntil: until } });
+  if (res.count) {
+    for (const port of ports) pinCache.delete(endpointKey(host, port));
+    await logEvent({
+      action: "tls.cert.repin_window",
+      resourceType: "tls-cert-pin",
+      resourceName: host,
+      actor,
+      level: "info",
+      message: `A firmware upgrade finished on ${host}; its next changed TLS certificate within ${minutes} minutes will be re-pinned automatically`,
+      details: { host, ports, until: until.toISOString() },
+    }).catch(() => {});
+  }
+  return res.count;
 }
 
 /**
@@ -171,4 +300,54 @@ export async function deleteCertPin(id: string, actor: string): Promise<void> {
     message: `Deleted the pinned TLS certificate for ${ck} — the next connection will trust and pin whatever answers`,
     details: { host: row.host, port: row.port, fingerprint: row.fingerprint, subject: row.subject },
   });
+}
+
+export interface AssetTlsEndpoint {
+  /** What this connection is, for the Sources tab ("FortiManager", "This FortiGate (direct)"...). */
+  label: string;
+  host: string;
+  port: number;
+  pin: TlsCertPinRecord | null;
+}
+
+/**
+ * Which TLS endpoints Polaris dials with a token on behalf of this asset's
+ * discovering integration (rule 113(e)), for the Sources tab. Pure.
+ *  - FortiManager: the FortiManager itself; in direct mode (`useProxy: false`)
+ *    a FortiGate is also dialed on its own management address, port 443.
+ *  - FortiGate (standalone): the integration's gate; a managed device whose
+ *    address differs is reached through it, a firewall at another address is
+ *    dialed itself.
+ */
+export function tlsEndpointsForAsset(
+  asset: { assetType: string; ipAddress: string | null },
+  integration: { type: string; name: string; config: Record<string, unknown> } | null,
+): Array<Omit<AssetTlsEndpoint, "pin">> {
+  if (!integration) return [];
+  const cfg = integration.config || {};
+  const host = typeof cfg.host === "string" ? cfg.host.trim() : "";
+  const port = Number(cfg.port) || 443;
+  const out: Array<Omit<AssetTlsEndpoint, "pin">> = [];
+  if (integration.type === "fortimanager") {
+    if (host) out.push({ label: `FortiManager "${integration.name}"`, host, port });
+    if (cfg.useProxy === false && asset.assetType === "firewall" && asset.ipAddress) {
+      out.push({ label: "This FortiGate, direct (FortiManager proxy bypass)", host: asset.ipAddress, port: 443 });
+    }
+  } else if (integration.type === "fortigate") {
+    if (host) out.push({ label: `FortiGate "${integration.name}"`, host, port });
+    if (asset.assetType === "firewall" && asset.ipAddress && asset.ipAddress !== host) {
+      out.push({ label: "This FortiGate", host: asset.ipAddress, port: 443 });
+    }
+  }
+  return out;
+}
+
+/** The asset's endpoints with their pins (null = not contacted since pinning began, or CA-verified). */
+export async function assetTlsEndpoints(
+  asset: { assetType: string; ipAddress: string | null },
+  integration: { type: string; name: string; config: Record<string, unknown> } | null,
+): Promise<AssetTlsEndpoint[]> {
+  const eps = tlsEndpointsForAsset(asset, integration);
+  const pins = await pinsForEndpoints(eps);
+  return eps.map((e) => ({ ...e, pin: pins.find((p) => p.host === e.host && p.port === e.port) ?? null }));
 }

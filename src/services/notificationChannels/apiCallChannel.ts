@@ -20,6 +20,7 @@
 
 import { AppError } from "../../utils/errors.js";
 import { assertOutboundHostAllowed, resolveAllowedHost } from "../../utils/netGuard.js";
+import { guardedFetch } from "../../utils/guardedFetch.js";
 
 export interface ApiCallSpec {
   method: string; // GET | POST | PUT | PATCH | DELETE (validated at save)
@@ -54,7 +55,9 @@ export async function sendApiCall(spec: ApiCallSpec): Promise<{ status: number }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(spec.url, {
+    // guardedFetch: the address is checked again on the connection itself
+    // (rule 110, re-scan F82) — the lookup above is only the early, readable refusal.
+    const res = await guardedFetch(spec.url, {
       method,
       headers,
       ...(hasBody ? { body: spec.body } : {}),

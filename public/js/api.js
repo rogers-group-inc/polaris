@@ -844,6 +844,8 @@ const api = {
     resetMonitorOverride: (id)  => request("POST", `/assets/${id}/monitor-override/reset`),
     effectiveMonitorSettings: (id) => request("GET", `/assets/${id}/effective-monitor-settings`),
     snmpWalk:             (id, body, signal) => request("POST", `/assets/${id}/snmp-walk`, body, signal),
+    // Rule 113(e): the TLS endpoints this asset's discovering integration dials, with their pins.
+    tlsPins:              (id) => request("GET", `/assets/${id}/tls-pins`),
     quarantineAvailability: ()  => request("GET", "/assets/quarantine-availability"),
     quarantine:           (id, reason) => request("POST", `/assets/${id}/quarantine`, reason !== undefined ? { reason } : {}),
     unquarantine:         (id)  => request("DELETE", `/assets/${id}/quarantine`),
@@ -1452,6 +1454,8 @@ const api = {
     sshHostKeysList:          () => request("GET",    "/server-settings/agents/ssh-host-keys"),
     tlsCertPinsList:          () => request("GET",    "/server-settings/agents/tls-cert-pins"),
     tlsCertPinDelete:         (id) => request("DELETE", "/server-settings/agents/tls-cert-pins/" + encodeURIComponent(id)),
+    // Rule 113(f): trust exactly the changed certificate the operator compared.
+    tlsCertPinTrust:          (id, fingerprint) => request("POST", "/server-settings/agents/tls-cert-pins/" + encodeURIComponent(id) + "/trust", { fingerprint: fingerprint }),
     sshHostKeyDelete:         (id) => request("DELETE", "/server-settings/agents/ssh-host-keys/" + encodeURIComponent(id)),
     // Agent code signing (internal-CA PKCS#12) — masked secret config + dry-run test.
     agentSigningGet:          ()    => request("GET",  "/server-settings/agents/signing"),

@@ -57,6 +57,13 @@ import { executeActions } from "../../src/services/automationActionService.js";
 import { sendApiCall } from "../../src/services/notificationChannels/apiCallChannel.js";
 import { drainPendingDeliveries, emailSentEventsFor, type DeliveryRow } from "../../src/services/notificationDeliveryService.js";
 import { eventFeedsAutomations, type AutomationAction } from "../../src/services/notificationTypes.js";
+// The channels send through utils/guardedFetch (undici + a connect-time netGuard
+// lookup, rule 110). These tests stub the global fetch, so route it there; the
+// connect-time guard itself is pinned in tests/unit/guardedFetch.test.ts.
+vi.mock("../../src/utils/guardedFetch.js", () => ({
+  guardedFetch: (url: string, init: unknown) => (globalThis.fetch as unknown as (u: string, i: unknown) => Promise<Response>)(url, init),
+  guardedDispatcher: () => null,
+}));
 
 beforeEach(() => {
   created.length = 0;

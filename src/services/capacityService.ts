@@ -2304,7 +2304,7 @@ export async function getCapacitySnapshot(opts: {
     },
   };
 
-  snap.reasons = computeReasons(snap, opts.pgTuningNeeded, opts.advisor, [...await lifecycleReasonsSafe(), ...await grantReviewReasonsSafe(), ...await unusableRegexReasonsSafe()]);
+  snap.reasons = computeReasons(snap, opts.pgTuningNeeded, opts.advisor, [...await lifecycleReasonsSafe(), ...await grantReviewReasonsSafe(), ...await unusableRegexReasonsSafe(), ...await changedCertReasonsSafe(), ...await cleartextWinrmReasonsSafe()]);
   snap.severity = deriveSeverity(snap.reasons);
   return snap;
 }
@@ -2325,6 +2325,51 @@ export async function getCapacitySnapshot(opts: {
  * Business rule 114(i): a watch-severity reason while any role is flagged for
  * a grant review (the 2026-10 corrective migration). Never fails the snapshot.
  */
+/**
+ * Rule 113(f): servers presenting a TLS certificate other than the pinned one
+ * — every request carrying their token is refused until someone looks, so a
+ * gate here has stopped polling. Never fails the snapshot.
+ */
+async function changedCertReasonsSafe(): Promise<CapacityReason[]> {
+  try {
+    const { changedCertPins } = await import("./tlsCertPinService.js");
+    const changed = await changedCertPins();
+    if (!changed.length) return [];
+    const names = changed.slice(0, 5).map((c) => `${c.host}:${c.port}`).join(", ") + (changed.length > 5 ? ` and ${changed.length - 5} more` : "");
+    return [{
+      severity: "warning",
+      code: "tls_cert_changed",
+      message: `${changed.length} server${changed.length === 1 ? "" : "s"} presented a TLS certificate other than the pinned one, so Polaris is not sending ${changed.length === 1 ? "it" : "them"} its credentials: ${names}.`,
+      suggestion:
+        "Compare the old and new fingerprints under Server Settings → Web Server → Pinned server identities and choose Trust new certificate if the change was expected (a re-issued certificate, a firmware upgrade done outside Polaris).",
+    }];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Re-scan F81: a Windows Server DHCP integration still on WinRM over HTTP
+ * sends its account password as Basic auth in clear text on every discovery.
+ * New ones default to HTTPS; existing ones are named here. Never fails the
+ * snapshot.
+ */
+async function cleartextWinrmReasonsSafe(): Promise<CapacityReason[]> {
+  try {
+    const rows = await prisma.integration.findMany({ where: { type: "windowsserver", enabled: true }, select: { name: true, config: true } });
+    const http = rows.filter((r) => (r.config as Record<string, unknown> | null)?.useSsl !== true).map((r) => r.name);
+    if (!http.length) return [];
+    return [{
+      severity: "warning",
+      code: "winrm_cleartext_password",
+      message: `${http.length} Windows Server integration${http.length === 1 ? "" : "s"} (${http.slice(0, 5).map((n) => `"${n}"`).join(", ")}${http.length > 5 ? ` and ${http.length - 5} more` : ""}) connect${http.length === 1 ? "s" : ""} over WinRM HTTP, which sends the account password in clear text.`,
+      suggestion: "Enable the WinRM HTTPS listener (port 5986) on the server, then edit the integration and turn on Use SSL.",
+    }];
+  } catch {
+    return [];
+  }
+}
+
 async function grantReviewReasonsSafe(): Promise<CapacityReason[]> {
   try {
     const { listRolesNeedingGrantReview } = await import("./roleService.js");
@@ -2430,7 +2475,7 @@ export async function getCapacitySnapshotWithAdvisor(
   // so the advisor-driven reasons fire without doing a second snapshot pass.
   // The lifecycle result is memoized, so re-fetching it for this second pass
   // costs nothing and keeps the two passes' reason lists identical.
-  snapshot.reasons = computeReasons(snapshot, opts.pgTuningNeeded, gapsForReasons, [...await lifecycleReasonsSafe(), ...await grantReviewReasonsSafe(), ...await unusableRegexReasonsSafe()]);
+  snapshot.reasons = computeReasons(snapshot, opts.pgTuningNeeded, gapsForReasons, [...await lifecycleReasonsSafe(), ...await grantReviewReasonsSafe(), ...await unusableRegexReasonsSafe(), ...await changedCertReasonsSafe(), ...await cleartextWinrmReasonsSafe()]);
   snapshot.severity = deriveSeverity(snapshot.reasons);
   return { snapshot, advisor };
 }

@@ -4293,6 +4293,7 @@ async function probeRestApiCredential(config: Record<string, unknown>, start: nu
   catch { return finish(start, false, "REST API baseUrl is not a valid URL"); }
   const isHttps = url.protocol === "https:";
   const reqFn = isHttps ? httpsRequest : httpRequest;
+  const restPort = url.port ? Number(url.port) : (isHttps ? 443 : 80);
   return await new Promise<ProbeResult>((resolve) => {
     let resolved = false;
     const finishOnce = (r: ProbeResult) => {
@@ -4302,11 +4303,14 @@ async function probeRestApiCredential(config: Record<string, unknown>, start: nu
     };
     const req = reqFn({
       hostname: url.hostname,
-      port:     url.port ? Number(url.port) : (isHttps ? 443 : 80),
+      port:     restPort,
       path:     url.pathname + (url.search || ""),
       method:   "GET",
       headers:  { "Authorization": "Bearer " + apiToken, "Accept": "application/json,*/*" },
       rejectUnauthorized: !!verifyTls,
+      // Rule 113(e), re-scan F6: without a CA check the bearer goes only to
+      // the certificate pinned for this host:port.
+      ...(isHttps && !verifyTls ? { agent: pinnedAgentFor(url.hostname, restPort) } : {}),
       timeout:  timeoutMs,
     } as any, (res) => {
       // Drain so the socket releases.
@@ -4371,12 +4375,20 @@ export async function probeHttp(
   // login on a credential, so one login can serve many checks and vice versa.
   // Absent = unauthenticated, which is a widget with no credential selected.
   auth?: Record<string, unknown> | null,
+  // Rule 110, re-scan F58: the credential test passes netGuard's
+  // guardedLookup so the typed host is judged by what it resolves to WHEN
+  // the socket connects, not by an earlier separate lookup.
+  lookup?: import("node:net").LookupFunction,
 ): Promise<ProbeResult> {
   const cfg = config as HttpCheckConfig;
   const authCfg = (auth || {}) as HttpAuthConfig;
   const target = resolveHttpTarget(cfg, pathOverride);
   const reqFn = target.useHttps ? httpsRequest : httpRequest;
   const authMode = resolveHttpAuthMode(authCfg);
+  // Rule 113(e), re-scan F7: a check that sends a password or token over TLS
+  // without a CA check sends it only to the pinned certificate. An
+  // unauthenticated check sends nothing secret and is left alone.
+  const pinned = target.useHttps && cfg.verifyTls !== true && authMode !== "none";
 
   /**
    * Issue exactly one GET and resolve with the exchange, or with an error
@@ -4404,6 +4416,8 @@ export async function probeHttp(
         method:   "GET",
         headers,
         rejectUnauthorized: cfg.verifyTls === true,
+        ...(pinned ? { agent: pinnedAgentFor(host, target.port) } : {}),
+        ...(lookup ? { lookup } : {}),
         timeout:  perRequestTimeoutMs,
       } as any, (res) => {
         const chunks: Buffer[] = [];
@@ -4578,6 +4592,9 @@ export async function probeCredentialAgainstHost(
   // straight from its form — which is also what lets a check be dialled in
   // against a real device BEFORE it is saved onto a manufacturer widget.
   check?: Record<string, unknown> | null,
+  // The operator-typed-host test path (rule 110, re-scan F58): `http` connects
+  // through this lookup, so the address is judged when the socket connects.
+  lookup?: import("node:net").LookupFunction,
 ): Promise<ProbeResult> {
   const start = performance.now();
   // restapi uses config.baseUrl directly, so a missing host on the asset
@@ -4600,7 +4617,7 @@ export async function probeCredentialAgainstHost(
     // handed, and the asset it may have borrowed a host from is just a routable
     // target — honouring that asset's httpCheckPath would test a different path
     // and report the result as if it were this one.
-    if (type === "http")    return await probeHttp(host, check || {}, start, timeoutMs, null, out, config);
+    if (type === "http")    return await probeHttp(host, check || {}, start, timeoutMs, null, out, config, lookup);
     return finish(start, false, `Unsupported credential type "${type}"`);
   } catch (err: any) {
     return finish(start, false, err?.message || "Probe failed");

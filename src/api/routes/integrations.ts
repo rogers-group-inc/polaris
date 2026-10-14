@@ -733,12 +733,15 @@ const WorkstationServerClassMonitorSchema = z.object({
   streams:               ClassStreamsSchema.optional(),
 }).optional().default({ enabled: true, addAsMonitored: false, autoMonitorInterfaces: null, autoMonitorStorage: null, agentDeploy: null });
 
+// Re-scan F81: WinRM over HTTP sends the account password as Basic auth in
+// clear text, so a NEW integration defaults to HTTPS on 5986. An existing one
+// stored with useSsl:false keeps working and is named on the capacity card.
 const WindowsServerConfigSchema = z.object({
   host:      z.string().optional().default(""),
-  port:      z.number().int().min(1).max(65535).optional().default(5985),
+  port:      z.number().int().min(1).max(65535).optional().default(5986),
   username:  z.string().optional().default(""),
   password:  z.string().optional().default(""),
-  useSsl:    z.boolean().optional().default(false),
+  useSsl:    z.boolean().optional().default(true),
   domain:    z.string().optional().default(""),
   dhcpInclude: z.array(z.string()).optional().default([]),
   dhcpExclude: z.array(z.string()).optional().default([]),

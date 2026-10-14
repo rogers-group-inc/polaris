@@ -98,6 +98,6 @@ export function pinnedAgentFor(
     const verdict = await verifyOrPinCert(host, port, cert.fingerprint256, subject);
     return verdict.ok
       ? { ok: true }
-      : { ok: false, reason: `The TLS certificate of ${host}:${port} changed since it was pinned — refused before sending any credential. Delete its pin under Pinned server identities if the certificate was re-issued.` };
+      : { ok: false, reason: `The TLS certificate of ${host}:${port} changed since it was pinned — refused before sending any credential. Compare and trust the new certificate under Server Settings → Web Server → Pinned server identities if it was re-issued.` };
   }, opts.agentOptions);
 }

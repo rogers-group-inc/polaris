@@ -498,6 +498,9 @@ async function notifyScheduledRun(runId: string): Promise<void> {
   }
 }
 
+/** How long after a Polaris-run upgrade reboots a device its changed certificate is re-pinned automatically (rule 113(g)). */
+const FIRMWARE_REPIN_WINDOW_MIN = 45;
+
 async function runUpgrade(
   runId: string,
   a: AssetRow,
@@ -561,7 +564,26 @@ async function runUpgrade(
       image: { platform: image.platform ?? "", versionLabel: image.versionLabel, version: image.version ?? { major: 0 } },
       expectedSerial: a.serialNumber,
       timeouts: { ...DEFAULT_FIRMWARE_TIMEOUTS, ...(overrides?.timeouts ?? {}) },
-      onStage: (s) => { stage = s; push("info", `stage: ${s}`); },
+      onStage: (s) => {
+        stage = s;
+        push("info", `stage: ${s}`);
+        // Rule 113(g): a firmware upgrade may regenerate the device's
+        // certificate. From the reboot on, the first changed certificate it
+        // presents — to this engine's own verification, or to the monitoring
+        // and REST polls after — is the device's new one, so its pins (the
+        // web UI port and FortiOS REST on 443) accept it once. Only Polaris's
+        // own upgrade opens this window; any other certificate change still
+        // needs a person.
+        if (s === "rebooting") {
+          const host = a.ipAddress || a.dnsName;
+          if (host) {
+            const ports = [...new Set([Number(overrides?.port ?? cred.port) || 443, 443])];
+            void import("./tlsCertPinService.js")
+              .then(({ allowRepin }) => allowRepin(host, ports, FIRMWARE_REPIN_WINDOW_MIN, "system:firmware-upgrade"))
+              .catch((err) => logger.warn({ err, runId }, "could not open the TLS re-pin window for the upgraded device"));
+          }
+        }
+      },
       onProgress: (p) => { progress = p; dirty = true; },
       onLog: push,
     };

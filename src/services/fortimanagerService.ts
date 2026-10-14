@@ -551,6 +551,9 @@ async function rpcAttempt(
     } catch (err: any) {
       // Intentional external abort (integration re-saved) — propagate as-is, never retry.
       if (externalSignal?.aborted && !timedOut) throw err;
+      // Rule 113(e): a refused certificate is permanent until someone re-trusts
+      // it — retrying would only repeat the refusal.
+      if (err?.cause?.code === "CERT_PIN_REFUSED") throw new AppError(502, `FortiManager connection refused — ${err.cause.message}`);
       // Timeout or transient connection fault — retryable.
       const detail = timedOut ? "timed out after 10s" : (err?.cause?.code || err?.message || "fetch failed");
       throw markRetryable(new AppError(502, `FortiManager connection error — ${detail}`));

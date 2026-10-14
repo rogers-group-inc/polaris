@@ -6444,6 +6444,18 @@ model TlsCertPin {
   subject     String   @default("") // the certificate's subject CN, for display
   firstSeen   DateTime @default(now())
   lastSeen    DateTime @default(now())
+  /// Business rule 113(f): the certificate a server presented INSTEAD of the
+  /// pinned one, kept so an administrator can inspect it and trust exactly
+  /// that certificate ("Trust new certificate"), rather than deleting the pin
+  /// and trusting whatever answers next. Cleared when trusted, or when the
+  /// pinned certificate comes back.
+  pendingFingerprint String?   @map("pending_fingerprint")
+  pendingSubject     String?   @map("pending_subject")
+  pendingSeenAt      DateTime? @map("pending_seen_at")
+  /// Until when the NEXT changed certificate is accepted and re-pinned
+  /// without a person — set by Polaris itself after it completes a firmware
+  /// upgrade of the device (which may regenerate its certificate). Rule 113(g).
+  repinUntil         DateTime? @map("repin_until")
 
   @@unique([host, port])
   @@map("tls_cert_pins")
