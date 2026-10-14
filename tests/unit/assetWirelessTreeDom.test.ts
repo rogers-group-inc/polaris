@@ -55,9 +55,13 @@ const FN_NAMES = [
   "_wirelessStationRow",
   "_wirelessRadioRow",
   "_wirelessVapRow",
+  "_wirelessHaystackHas",
+  "_wirelessStationMatches",
+  "_filterWirelessTree",
   "_renderWirelessTree",
   "_wirelessBandLabel",
   "_renderWirelessStationsCard",
+  "_renderWirelessFlatTable",
   // The cadence · freshness · Refresh strip every branch of the tab renders.
   "_formatPollingInterval",
   "_cadenceChipHTML",
@@ -88,6 +92,9 @@ beforeEach(() => {
   };
   g.canProbeAssets = () => true;
   g._wireCurrentStateRefresh = vi.fn();
+  g._assetWirelessFilter = {};
+  // Synchronous here so a typed filter re-renders before the assertion.
+  g.debounce = (fn: (...a: any[]) => void) => fn;
   try { globalThis.localStorage.clear(); } catch { /* happy-dom always has one */ }
 
   // eslint-disable-next-line no-eval
@@ -274,6 +281,79 @@ describe("_renderWirelessStationsCard dispatch", () => {
     const text = container.textContent || "";
     expect(text).toContain("discovery run");
     expect(text).toContain("fapStationTable");
+  });
+});
+
+// ─── Filter box ────────────────────────────────────────────────────────────
+//
+// The ARP Table tab's box, on the Wireless tab. Pinned: a filter applies to
+// the tree built from EVERY client (so a client is still filed under the SSID
+// it joined), an SSID that matches keeps its whole subtree, a match under a
+// collapsed radio is shown, and typing re-renders the table without
+// rebuilding the box.
+
+describe("Wireless filter box", () => {
+  const STATIONS = [
+    { staMacAddr: "11:11:11:11:11:11", bssid: "AA:BB:CC:00:00:11", ssid: "CORP", radioId: 2, staIpAddr: "10.0.0.5" },
+    { staMacAddr: "22:22:22:22:22:22", bssid: "AA:BB:CC:00:00:12", ssid: "GUEST", radioId: 2, staIpAddr: "10.0.9.7",
+      matchedAsset: { id: "laptop-1", hostname: "LAPTOP-JD" } },
+  ];
+  const type = (value: string) => {
+    const box = container.querySelector("#asset-wireless-filter") as HTMLInputElement;
+    box.value = value;
+    box.dispatchEvent(new Event("input"));
+    return box;
+  };
+
+  it("narrows the tree to a matching client and keeps its radio and SSID rows", () => {
+    g._renderWirelessStationsCard(container, { apRadios: makeRadios(), wirelessStations: STATIONS }, ASSET);
+    type("laptop-jd");
+    const text = container.textContent || "";
+    expect(text).toContain("22:22:22:22:22:22");
+    expect(text).not.toContain("11:11:11:11:11:11");
+    expect(text).toContain("Radio 2");
+    expect(text).toContain("GUEST");
+    expect(text).not.toContain("Radio 1");
+    expect(text).toContain("1 of 2 clients match");
+  });
+
+  it("keeps an SSID's whole subtree when the SSID itself matches", () => {
+    g._renderWirelessStationsCard(container, { apRadios: makeRadios(), wirelessStations: STATIONS }, ASSET);
+    type("corp");
+    const text = container.textContent || "";
+    // CORP is broadcast on both radios; the 5 GHz one carries client 11.
+    expect(text).toContain("Radio 1");
+    expect(text).toContain("11:11:11:11:11:11");
+    expect(text).not.toContain("22:22:22:22:22:22");
+  });
+
+  it("shows a match under a collapsed radio", () => {
+    g._setCollapsedIfaces("ap-1", new Set(["radio-2"]), "wireless");
+    g._renderWirelessStationsCard(container, { apRadios: makeRadios(), wirelessStations: STATIONS }, ASSET);
+    type("10.0.9.7");
+    const row = Array.from(container.querySelectorAll(".wireless-child"))
+      .find((r) => (r.textContent || "").includes("22:22:22:22:22:22")) as HTMLElement;
+    expect(row.style.display).not.toBe("none");
+  });
+
+  it("re-renders the table without rebuilding the box, and remembers the filter per asset", () => {
+    g._renderWirelessStationsCard(container, { apRadios: makeRadios(), wirelessStations: STATIONS }, ASSET);
+    const box = type("nothing-here");
+    expect(container.querySelector("#asset-wireless-filter")).toBe(box);
+    expect(container.textContent).toContain("No radios, SSIDs or clients match that filter.");
+    // A Refresh re-renders the card: the filter comes back with it.
+    g._renderWirelessStationsCard(container, { apRadios: makeRadios(), wirelessStations: STATIONS }, ASSET);
+    expect((container.querySelector("#asset-wireless-filter") as HTMLInputElement).value).toBe("nothing-here");
+  });
+
+  it("filters the flat fallback table too", () => {
+    g._renderWirelessStationsCard(container, { apRadios: [], wirelessStations: STATIONS }, ASSET);
+    type("10.0.0.5");
+    const text = container.textContent || "";
+    expect(text).toContain("11:11:11:11:11:11");
+    expect(text).not.toContain("22:22:22:22:22:22");
+    type("zzz");
+    expect(container.textContent).toContain("No clients match that filter.");
   });
 });
 

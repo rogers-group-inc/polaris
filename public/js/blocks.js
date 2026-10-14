@@ -111,7 +111,10 @@ function renderBlocksPage() {
   var sfData = _blocksSF ? _blocksSF.apply(_blocksData) : _blocksData;
   if (sfData.length === 0) {
     tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No results match the current filters.</td></tr>';
-    clearPageControls("pagination");
+    // Keep the controls row: Clear Filters is the way back from exactly this
+    // state (the Assets list's rule — see _renderAssetsPageControls).
+    _blocksPage = 1;
+    _renderBlocksPageControls(0);
     return;
   }
   sfData = sortFavoritesFirst(sfData, "blocks");
@@ -133,7 +136,13 @@ function renderBlocksPage() {
       '<td>' + formatDate(b.createdAt) + '</td>' +
       '</tr>';
   }).join("");
-  renderPageControls("pagination", sfData.length, _blocksPageSize, _blocksPage, function (p) {
+  _renderBlocksPageControls(sfData.length);
+}
+
+// The list-controls row: pagination, Show N, and the Clear Filters button the
+// Assets list carries. Rendered on a zero-match filter too.
+function _renderBlocksPageControls(total) {
+  renderPageControls("pagination", total, _blocksPageSize, _blocksPage, function (p) {
     _blocksPage = p;
     renderBlocksPage();
   }, function (size) {
@@ -141,6 +150,18 @@ function renderBlocksPage() {
     _blocksPage = 1;
     renderBlocksPage();
     _saveBlocksPrefs();
+  }, {
+    actionButtons: [{
+      label: "Clear Filters",
+      title: "Clear every column filter on this list",
+      onClick: function () {
+        if (!_blocksSF) return;
+        _blocksSF.clearFilters();
+        _blocksPage = 1;
+        renderBlocksPage();
+        _saveBlocksPrefs();
+      },
+    }],
   });
 }
 

@@ -231,7 +231,10 @@ function renderSubnetsPage() {
   var sfData = _subnetsSF ? _subnetsSF.apply(_subnetsData) : _subnetsData;
   if (sfData.length === 0) {
     tbody.innerHTML = '<tr><td colspan="13" class="empty-state">No results match the current filters.</td></tr>';
-    clearPageControls("pagination");
+    // Keep the controls row: Clear Filters is the way back from exactly this
+    // state (the Assets list's rule — see _renderAssetsPageControls).
+    _subnetsPage = 1;
+    _renderSubnetsPageControls(0);
     return;
   }
   sfData = sortFavoritesFirst(sfData, "subnets");
@@ -267,7 +270,13 @@ function renderSubnetsPage() {
       '<td>' + subnetUtilCellHTML(s.utilizationPercent, resvCount, s.usableHosts) + '</td>' +
       '</tr>';
   }).join("");
-  renderPageControls("pagination", sfData.length, _subnetsPageSize, _subnetsPage, function (p) {
+  _renderSubnetsPageControls(sfData.length);
+}
+
+// The list-controls row: pagination, Show N, and the Clear Filters button the
+// Assets list carries. Rendered on a zero-match filter too.
+function _renderSubnetsPageControls(total) {
+  renderPageControls("pagination", total, _subnetsPageSize, _subnetsPage, function (p) {
     _subnetsPage = p;
     renderSubnetsPage();
   }, function (size) {
@@ -275,6 +284,18 @@ function renderSubnetsPage() {
     _subnetsPage = 1;
     renderSubnetsPage();
     _saveSubnetsPrefs();
+  }, {
+    actionButtons: [{
+      label: "Clear Filters",
+      title: "Clear every column filter on this list",
+      onClick: function () {
+        if (!_subnetsSF) return;
+        _subnetsSF.clearFilters();
+        _subnetsPage = 1;
+        renderSubnetsPage();
+        _saveSubnetsPrefs();
+      },
+    }],
   });
 }
 

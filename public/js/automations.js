@@ -632,6 +632,35 @@ var _rulesPage = 1;
   }
   window._quietMode = quietMode;
 
+  // The list-controls row: pagination, Show N, and the Clear Filters button
+  // the Assets list carries.
+  function renderRulesPageControls(total) {
+    renderPageControls("rules-pagination", total, _rulesPageSize, _rulesPage,
+      function (p) {
+        _rulesPage = p;
+        renderRules();
+      },
+      function (size) {
+        _rulesPageSize = size;
+        _rulesPage = 1;
+        renderRules();
+        _saveRulesPrefs();
+      },
+      {
+        actionButtons: [{
+          label: "Clear Filters",
+          title: "Clear every column filter on this list",
+          onClick: function () {
+            if (!_rulesSF) return;
+            _rulesSF.clearFilters();
+            _rulesPage = 1;
+            renderRules();
+            _saveRulesPrefs();
+          },
+        }],
+      });
+  }
+
   function renderRules() {
     var tbody = document.getElementById("rules-tbody");
     var data = _rules.map(function (r) {
@@ -657,8 +686,17 @@ var _rulesPage = 1;
     });
     if (_rulesSF) data = _rulesSF.apply(data);
     if (!data.length) {
-      tbody.innerHTML = '<tr><td colspan="11" class="empty-state">No automations yet' + (canEditRules ? ' — click "+ New automation" to create one.' : "") + '</td></tr>';
-      clearPageControls("rules-pagination");
+      if (_rules.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="11" class="empty-state">No automations yet' + (canEditRules ? ' — click "+ New automation" to create one.' : "") + '</td></tr>';
+        clearPageControls("rules-pagination");
+        return;
+      }
+      // Automations exist but the filters hide them all. Keep the controls
+      // row: Clear Filters is the way back from exactly this state (the Assets
+      // list's rule — see _renderAssetsPageControls).
+      tbody.innerHTML = '<tr><td colspan="11" class="empty-state">No automations match the current filters.</td></tr>';
+      _rulesPage = 1;
+      renderRulesPageControls(0);
       return;
     }
 
@@ -669,17 +707,7 @@ var _rulesPage = 1;
     var pageStart = (_rulesPage - 1) * _rulesPageSize;
     var pageRows = data.slice(pageStart, pageStart + _rulesPageSize);
 
-    renderPageControls("rules-pagination", data.length, _rulesPageSize, _rulesPage,
-      function (p) {
-        _rulesPage = p;
-        renderRules();
-      },
-      function (size) {
-        _rulesPageSize = size;
-        _rulesPage = 1;
-        renderRules();
-        _saveRulesPrefs();
-      });
+    renderRulesPageControls(data.length);
 
     var prose = function (text) {
       var t = String(text == null ? "" : text);

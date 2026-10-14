@@ -315,6 +315,16 @@ var _eventsSF = null;
 
   document.getElementById("btn-refresh").addEventListener("click", function () { loadEvents(); });
 
+  // Clear Filters — the Assets list's button. clearFilters() only resets the
+  // header inputs, so the fetch + prefs save is the onChange path's, by hand.
+  var clearFiltersBtn = document.getElementById("btn-clear-filters");
+  if (clearFiltersBtn) clearFiltersBtn.addEventListener("click", function () {
+    _eventsSF.clearFilters();
+    currentOffset = 0;
+    loadEvents();
+    _saveEventsPrefs();
+  });
+
   // Detail button delegation
   document.getElementById("events-tbody").addEventListener("click", function (e) {
     var btn = e.target.closest(".btn-event-detail");
