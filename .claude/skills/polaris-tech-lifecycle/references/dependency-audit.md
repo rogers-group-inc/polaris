@@ -45,6 +45,14 @@ Three things that cost time if you don't know them:
   `textContent` after the markup lands, or build the element. It is the idiom the analyzer
   recognizes, and it drops the dependence on every caller remembering `esc()`. The 2026-09-28
   sweep cleared the firmware tab that way (`renderAssetList` in `server-settings-firmware.js`).
+- **The alert API carries no code flows; the SARIF does.** A `js/xss-through-dom` alert names
+  only its sink (`box.innerHTML = html`) and the UI shows one path of several. Fetch the
+  analysis: `gh api repos/:owner/:repo/code-scanning/analyses?ref=refs/heads/main` for the
+  `javascript-typescript` id, then `gh api -H "Accept: application/sarif+json"
+  repos/:owner/:repo/code-scanning/analyses/<id>` and walk `runs[0].results[].codeFlows`.
+  On 2026-10-14 (#76) all four flows, from four different form fields, met at one unescaped
+  `value="' + leaf.threshold + '"`. The sources were a red herring; the step where the flow
+  first enters a string literal is the defect.
 - **Check whether the "incomplete" sanitizer is reachable at all.** The 2026-09-28
   `js/incomplete-sanitization` on the firmware tab escaped `"` but not `\` in a selector built
   from a node key, but `nodeKey()` URI-encodes every part, so neither character can occur. The
