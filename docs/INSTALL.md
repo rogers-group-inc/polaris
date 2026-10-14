@@ -643,6 +643,16 @@ from your configuration-management tool's secret store) before running the
 script. `--db-url` still works but puts the password in the process list for
 the whole install, so the script warns when you use it.
 
+**Re-running a setup script on an existing install** updates it, but the
+script does not copy the unit files, sudoers and polkit entries or the root
+helpers straight out of `/opt/polaris` — that tree is the `polaris` account's.
+It hands them to the installed `polaris-update-sync --install`, which checks
+the unit files and shows each changed root helper against the installed copy
+and asks before installing it (business rule 117). Set `POLARIS_YES=1` to
+answer yes without asking (configuration management); without a terminal and
+without it, changed helpers are left as they are and listed on the
+Maintenance tab.
+
 Browse to `https://<your-hostname>/` to run the first-run setup wizard. It asks for a one-time **setup token**, printed in the journal (`journalctl -u polaris-web`) and saved as `.setup-token` in the state directory; `POLARIS_SETUP_TOKEN` pre-sets it.
 Self-signed cert in use; replace `/etc/polaris-nginx/{cert,key}.pem` with
 your real cert + `systemctl reload nginx` whenever you're ready.
