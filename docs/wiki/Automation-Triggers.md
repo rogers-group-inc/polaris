@@ -38,7 +38,7 @@ A number, compared against a threshold.
 | `probeLossPct` — Packet loss (probe) | % | — (windowed ratio — see below) |
 | `hwSensorValue` — Hardware sensor value | sensor's own | sensor class, sensor name |
 | `hwSensorAlarm` — **Hardware sensor alarm** | 0/1 | sensor class, sensor name |
-| `storageUsedPct` / `storageUsedBytes` | % / bytes | mount path |
+| `storageUsedPct` / `storageUsedBytes` — **Storage used** | % / KB, MB, GB, TB | mount path (one condition in the builder — see below) |
 | `storageDaysUntilFull` | days | mount path |
 | `ifInErrorRate` / `ifOutErrorRate` | errors/s | interface name |
 | `ifInBps` / `ifOutBps` | bps | interface name |
@@ -49,6 +49,20 @@ A number, compared against a threshold.
 
 The path check metrics are not here — they have their own trigger type,
 [Path Monitor](#path-monitor).
+
+**Storage used** is one condition in the builder, with a unit select beside
+the value: **%** of the filesystem, or an amount used in **KB**, **MB**,
+**GB** or **TB** (1024-based, the same figures the asset's storage table
+shows). Percent is stored as `storageUsedPct`; a size is stored as
+`storageUsedBytes` in bytes, and reads back in the largest unit that keeps the
+value at 1 or more. Severity levels share the condition's choice between
+percent and size, but each can state its size in its own unit. The clear
+threshold on the reset step is in the fire threshold's unit.
+
+Changing a condition to a metric measured in a different unit (percent to
+days, percent to a size) empties the severity levels' values and the clear
+threshold, because a number written for one unit means nothing in the other.
+Switching between metrics in the same unit keeps them.
 
 A metric automation can act on the device as well as tell people about it:
 *Memory utilization above 90 % for 15 minutes* with a
