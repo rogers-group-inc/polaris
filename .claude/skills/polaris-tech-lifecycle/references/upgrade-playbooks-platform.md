@@ -65,7 +65,7 @@ version-sensitive hooks.
    Windows the service name and the bin-path probe list move instead.
 7. `PG_MAJOR` in `setup-rhel.sh`, `setup-ubuntu.sh` and `deploy/ha/setup-rhel-ha.sh`;
    `PG_CLIENT_MAJOR` in both `-nodb` variants; the installer pin on Windows; the image tags in
-   `compose.dev.yml` and the CI service container; **and `postgresql-client-<major>` in
+   `compose.dev.yml` and all three mirrors in the CI "Start PostgreSQL" step; **and `postgresql-client-<major>` in
    `Dockerfile` / `Dockerfile.dev`**. Every one of those is checked now — the client was
    unversioned until 2026-09-09, so it silently WAS whatever the base image shipped and agreed
    with the pin only by luck of Debian's release. The image base must actually carry the target

@@ -276,8 +276,10 @@ const FAMILIES = [
         re: /^PG_MAJOR=(\d+)/gm, pick: (m) => m[1] },
       { file: "compose.dev.yml", label: "dev image tag", kind: "pin",
         re: /timescaledb:latest-pg(\d+)/g, pick: (m) => m[1] },
-      { files: WORKFLOWS, label: "CI service image", kind: "pin",
-        re: /image:\s*(?:public\.ecr\.aws\/docker\/library\/)?postgres:(\d+)-/g, pick: (m) => m[1] },
+      // Every mirror in the integration job's pull fallback list (one image,
+      // three registries), so the mirrors also have to agree with each other.
+      { files: WORKFLOWS, label: "CI database image", kind: "pin",
+        re: /\/library\/postgres:(\d+)-/g, pick: (m) => m[1] },
       // The CI client, beside the CI service image above. Both live in the
       // same file and they MUST agree: the integration job dumps the service
       // container, and pg_dump refuses a server newer than itself (rule 47).

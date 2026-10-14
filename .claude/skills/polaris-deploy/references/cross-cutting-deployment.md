@@ -145,20 +145,26 @@ Four properties are load-bearing rather than incidental, all added 2026-09:
   the token must not be left in `.git/config` — which is also why the tag check uses the API
   instead of a local `git fetch`: there is deliberately nothing to authenticate one with.
 - **The `integration` job installs `postgresql-client-17` itself, and that major must track the
-  `postgres:17-alpine` service container beside it.** The runner image carries its own client —
+  `postgres:17-alpine` container the job starts beside it.** The runner image carries its own client —
   16 on ubuntu-24.04 — and `pg_dump` refuses to dump a server newer than itself (rule 47), so
   the moment the service image moved to 17 every backup test began failing on a guard that was
   doing its job. `pgToolCandidates` probes `/usr/lib/postgresql/<major>/bin` FIRST, so installing
   the versioned package is the whole fix: no `$GITHUB_PATH` edit, no env override, and CI then
   exercises the same `source: "versioned-dir"` resolution production does. Both numbers are
   registered as `postgres-major` sites, so `check:versions` fails if they ever drift apart.
-- **The `integration` job pulls its service image through `public.ecr.aws/docker/library/`,
-  never from Docker Hub directly.** It is the same official `postgres` image served by AWS's
-  mirror of Docker Hub's library. Hosted runners share egress IPs, so an anonymous Docker Hub
-  pull hits `toomanyrequests` often enough to fail the job — and, because `build` needs it, to
-  publish no image — and a rerun lands on the same exhausted quota (2026-10-09). The
-  `check:versions` regex for the CI service image accepts that prefix; any new service
-  container goes through the same mirror.
+- **The `integration` job starts PostgreSQL itself, not as a `services:` container, and pulls
+  it from a fallback list of mirrors.** A service container takes one image reference, and the
+  job dies at "Initialize containers" when that registry refuses — which every anonymous
+  registry does sooner or later, because hosted runners share egress IPs. Docker Hub's rate
+  limit did it first (2026-10-09, so the job moved to `public.ecr.aws/docker/library/`); then
+  AWS's mirror answered `toomanyrequests: Data limit exceeded` (2026-10-14). Both times
+  `build` needs the job, so no image was published. The "Start PostgreSQL" step now tries
+  `public.ecr.aws` → `mirror.gcr.io` → `docker.io` (all three serve the same official
+  `library/postgres` image), "Wait for PostgreSQL" stands in for the service health check, and a
+  `failure()` step prints the server log a service container used to print at teardown. The
+  `check:versions` "CI database image" site matches `/library/postgres:<major>-`, so every
+  mirror in the list must name the same major. Add a mirror to the list; never go back to a
+  single `image:`.
 
 The Dependabot side of this (grouping, what is ignored, how to resolve a new pin) lives in
 `polaris-tech-lifecycle` → dependency-audit.md. `npm run check:versions` scans these files by
