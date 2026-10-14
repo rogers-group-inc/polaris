@@ -1974,9 +1974,8 @@ not a setting of that automation: it decides when the event is written at all,
 so every capacity automation and the Events log see the same held event, and it
 saves as soon as you change it. You need write access to automations.
 
-The **Database** card names the hold and, because it shows the live grade, also
-shows what the alerting side last recorded and any change it is currently
-waiting out.
+Because the **Database** card shows the live grade, it also shows what the
+alerting side last recorded and any change it is currently waiting out.
 
 ### Rule 106
 

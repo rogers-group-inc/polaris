@@ -7,7 +7,7 @@
  * held. The row must say what the alerting side last recorded and any change
  * it is waiting out, so an alert beside a card reading Healthy is explained on
  * the same screen. The hold itself is set on the event trigger step of a
- * capacity automation (automationsWizardDom.test.ts), so here it is only named.
+ * capacity automation (automationsWizardDom.test.ts); the card does not restate it.
  *
  * Functions are sliced out of the browser script by name and eval'd with the
  * app-shell globals stubbed — the approach of capacityAdvisorRestartDom.test.ts.
@@ -30,7 +30,7 @@ function fnSrc(name: string): string {
   return lines.slice(start, end + 1).join("\n");
 }
 
-const FN_NAMES = ["_capacitySeverityLabel", "_capacityHoldLabel", "renderCapacityAlertHoldHtml"];
+const FN_NAMES = ["_capacitySeverityLabel", "renderCapacityAlertHoldHtml"];
 
 let render: (t: any) => string;
 
@@ -52,24 +52,18 @@ describe("capacity alert-hold row", () => {
     expect(render(null)).toBe("");
   });
 
-  it("names the hold, points at Automations, and names the recorded severity", () => {
+  it("renders nothing when there is neither a recorded nor a pending state", () => {
+    expect(render({ ...base, recorded: null })).toBe("");
+  });
+
+  it("names the recorded severity and does not restate the hold", () => {
     document.body.innerHTML = render(base);
     // Read-only here: the control lives on the automation's trigger step.
     expect(document.querySelector("select")).toBeNull();
-    const rule = document.getElementById("capacity-alert-hold-rule")!;
-    expect(rule.textContent).toContain("Capacity alerts fire after a change holds for 30 minutes.");
-    expect(rule.querySelector("a")!.getAttribute("href")).toBe("/automations.html");
+    expect(document.body.textContent).not.toContain("Capacity alerts fire");
+    expect(document.querySelector("a")).toBeNull();
     expect(document.getElementById("capacity-alert-hold-status")!.textContent)
       .toBe("Alerting last recorded Healthy at 2026-10-12T10:00:00Z.");
-  });
-
-  it("words a zero hold and an hour-multiple hold naturally", () => {
-    document.body.innerHTML = render({ ...base, holdMinutes: 0 });
-    expect(document.getElementById("capacity-alert-hold-rule")!.textContent)
-      .toContain("Capacity alerts fire on the first reading.");
-    document.body.innerHTML = render({ ...base, holdMinutes: 120 });
-    expect(document.getElementById("capacity-alert-hold-rule")!.textContent)
-      .toContain("after a change holds for 2 hours.");
   });
 
   it("explains a pending change: what it is, how long it has held, and what discards it", () => {
