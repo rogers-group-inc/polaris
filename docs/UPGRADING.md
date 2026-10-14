@@ -18,6 +18,7 @@ underneath the app rather than the app itself.
 | put nginx in front of a pre-nginx install | *Migrating an existing install to the nginx front end* |
 | restart an update that died on a TLS-intercepting network | *Recovering an install whose update already failed on TLS interception* |
 | put an existing HA cluster's Patroni REST API on TLS | *Patroni REST API over TLS* |
+| run `update-linux.sh` / `setup-rhel-ha.sh` safely | *Run the manual updater's reviewed copy* |
 
 Each one stops the service, so each one wants a maintenance window. None of them
 is on a schedule — do them when the Platform Lifecycle card (Server Settings →
@@ -631,8 +632,9 @@ An install set up before rule 117 carries the older rule, which granted
 alone runs any command. Its next in-app update installs the helper and the
 narrowed rule automatically, through that older grant, once. If the older
 rule was never installed (Ubuntu and `-nodb` installs before rule 117), run
-`sudo bash /opt/polaris/deploy/update-linux.sh` once, or install the three
-files by hand:
+`deploy/update-linux.sh` once from a root-owned clone (see *Run the manual
+updater's reviewed copy* below), or install the three files by hand after
+reading them:
 
 ```bash
 sudo install -o root -g root -m 0755 /opt/polaris/deploy/scripts/polaris-update-sync.sh /usr/local/sbin/polaris-update-sync
@@ -782,7 +784,7 @@ restart or a reboot until an install succeeds.** Treat it as urgent, and do not 
 first to "see if it's fine".
 
 Apply the fix from that section, then re-run the update (Server Settings → Maintenance → Updates, or
-`sudo bash deploy/update-linux.sh`). If the in-app updater already pulled the new code before
+`sudo polaris-update-linux`). If the in-app updater already pulled the new code before
 it failed, the checkout is ahead of the process that is still serving. The in-app card measures
 against the **running** build, so Check for Updates still offers Apply Update — with a note that
 the code is already on disk — and Apply finishes the install, build, migration and restart. The
@@ -917,3 +919,37 @@ no failover is needed.
    The capacity card's warning clears within ten minutes.
 
 **To undo:** remove the three lines and reload Patroni on both nodes.
+
+---
+
+## Run the manual updater's reviewed copy
+
+`deploy/update-linux.sh` and `deploy/ha/setup-rhel-ha.sh` run as root, and
+the copies under `/opt/polaris` sit in the `polaris` account's own tree. Root
+running those copies runs whatever that account last put in them, and no
+check inside them can help, because the check would be in the same file
+(business rule 117). So both are also root helpers, installed root-owned and
+reviewed like every other one:
+
+| Script in the tree | The copy to run |
+|---|---|
+| `deploy/update-linux.sh` | `sudo polaris-update-linux` |
+| `deploy/ha/setup-rhel-ha.sh` | `sudo polaris-ha-setup` (HA nodes) |
+
+They arrive the way root helpers do: the in-app updater holds them and the
+Maintenance tab shows **Root helper update pending**, and
+`sudo polaris-update-sync --apply-helpers` shows each one against the
+installed copy and installs it when you confirm. A tree copy run directly
+hands over to the installed copy when there is one, and otherwise warns.
+
+On a host that has neither yet, run the script once from a root-owned clone
+instead of from `/opt/polaris`:
+
+```bash
+sudo git clone --depth 1 --branch <release-tag> https://github.com/rogers-group-inc/polaris /root/polaris-setup
+sudo bash /root/polaris-setup/deploy/update-linux.sh
+```
+
+It offers to install `polaris-update-linux` on the way. Set
+`POLARIS_UPDATE_FROM_TREE=1` (or `POLARIS_HA_SETUP_FROM_TREE=1`) to run a
+tree copy you have read yourself instead of handing over.

@@ -80,8 +80,11 @@ what the load balancer monitors.
   those files when the marker is present, **refresh-only-if-present** so a
   witness never grows `polaris-*` drop-ins and a non-HA host never grows HA
   units. Consequence to remember: a brand-new HA artifact needs
-  `setup-rhel-ha.sh` re-run to appear the first time; only already-installed
-  ones are kept current.
+  `sudo polaris-ha-setup` (the reviewed installed copy of `setup-rhel-ha.sh`)
+  re-run to appear the first time; only already-installed ones are kept
+  current. Run from the polaris-owned tree, the setup script routes every HA
+  root file through `polaris-update-sync --install --ha` (business rule
+  117(n)); only a root-owned source copies directly.
 - **The updater runs on the active node only.** It calls
   `polaris-ha-role notify-peer` at the end (in the root update helper
   `deploy/scripts/polaris-update-sync.sh`), and `deploy/update-linux.sh` does
@@ -131,7 +134,7 @@ what the load balancer monitors.
 |---|---|
 | a package/user/directory in `deploy/setup-rhel.sh` | `prepare_standby_host` in `deploy/ha/setup-rhel-ha.sh` |
 | the notify-peer hook | both `updateService.ts` `restartService` and `deploy/update-linux.sh` |
-| an artifact `setup-rhel-ha.sh` installs outside the tree | the refresh list in BOTH `updateService.ts` `restartService` and `deploy/update-linux.sh → sync_ha_artifacts()`, or updates never reach it |
+| an artifact `setup-rhel-ha.sh` installs outside the tree | the HA list in `deploy/scripts/polaris-update-sync.sh → root_helpers` (which `update-linux.sh` and `setup-rhel-ha.sh --install --ha` both reach; `legacy_sync_ha_artifacts` only for a host with no update helper), and an `ha_root_file` call in `setup-rhel-ha.sh`, or updates never reach it |
 | a new shipped systemd unit | a matching `deploy/ha/dropins/<unit>.service.d/10-ha.conf` |
 | what lives under `/opt/polaris` at runtime | `deploy/ha/ha-rsync-exclude` (default is SYNCED) |
 | the heartbeat window or interval | `haHeartbeatService.test.ts` assertions + docs/HA.md §5 |

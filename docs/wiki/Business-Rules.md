@@ -2371,6 +2371,12 @@ the HA peer.**
   --apply-helpers`. That shows each change against the installed copy and
   installs the ones you confirm. Nothing the `polaris` account can write is
   ever run as root without an administrator.
+- **Root runs the reviewed copies of the manual scripts.** `update-linux.sh`
+  and the HA setup script are installed as `polaris-update-linux` and
+  `polaris-ha-setup`, reviewed like every root helper, and a copy run from
+  `/opt/polaris` hands over to them. The HA setup script copies its root files
+  only from a source the Polaris account cannot write; otherwise it hands them
+  to the update helper, which shows each one and asks.
 - **Re-running an installer, `update-linux.sh` or `migrate-to-nginx.sh` asks
   too.** On an existing install they hand the unit files, sudoers and root
   helpers to the installed update helper, which checks the unit files and

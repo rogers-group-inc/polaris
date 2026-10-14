@@ -82,3 +82,11 @@ The `.env` writes (F3, F5) were a umask window — secrets written, then chmod 6
 
 Not covered: `deploy/ha/setup-rhel-ha.sh` still installs its root files from the tree; it builds a node and is not re-run as an update, but a re-run would have the same property. Never run on a real host; the installers cannot run in the test suite (root, systemd, a package manager), so their contract is pinned structurally and the update helper's option parsing for real.
 
+### 117(n) — the copy root runs (2026-10-14)
+
+Fixing `setup-rhel-ha.sh` the 117(k) way showed the flaw in 117(k) itself. The HA script installs root files from its own directory, and on the primary — and on any re-run — that directory is /opt/polaris/deploy/ha, in the polaris account's tree, with the script itself beside the files it copies. A review written into the script protects nothing when the attacker can edit the script. `update-linux.sh` was the same: the docs said `bash deploy/update-linux.sh` from /opt/polaris, so phase 14's review inside it could be deleted along with it. The installers were safe only because they are normally run from a fresh download or clone.
+
+So the fix is the copy, not the contents. Both scripts became root helpers (`polaris-update-linux`, `polaris-ha-setup`), reviewed and installed exactly as the nginx helper and the update helper are, and the docs point administrators at them (or at a root-owned clone for a host that has none yet). A tree copy hands over to the installed one; that cannot stop an edited tree copy — nothing can, which is why the docs say to run the installed copy — but it does stop an untouched tree copy from installing tampered siblings, and it moves operators onto the right command. The trust test for the HA script's source is ownership, not location: a new standby's /opt/polaris is a fresh root clone until the reconciler hands it to polaris, and refusing it would have broken the enrollment bootstrap.
+
+Not covered: templates rendered into Patroni / etcd configuration from an untrusted source are read as polaris (no planted-link reads) but their CONTENT is still the tree's; a tampered template is an escalation from polaris to the postgres / etcd accounts, not to root. Never run on a real host.
+

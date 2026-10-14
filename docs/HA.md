@@ -447,9 +447,24 @@ is in no Polaris backup.
 Witness first, then primary, then standby. Every member advertises all three by
 the same names.
 
+**Run the setup script from a root-owned clone, never from `/opt/polaris`.**
+Root runs it, and `/opt/polaris` is the `polaris` account's own tree, so root
+running the copy there runs whatever that account last put in it (business
+rule 117). Clone the release as root on each node first:
+
+```bash
+sudo git clone --depth 1 --branch <release-tag> https://github.com/rogers-group-inc/polaris /root/polaris-setup
+```
+
+and use `/root/polaris-setup/deploy/ha/setup-rhel-ha.sh` below. After the
+first run a node also has the reviewed copy, `sudo polaris-ha-setup`, which
+the tree copy hands over to. Run from the tree anyway, the script still
+refuses to copy root files out of it: it hands them to the installed
+`polaris-update-sync --install --ha`, which shows each one and asks.
+
 ```bash
 # on the witness
-bash /path/to/deploy/ha/setup-rhel-ha.sh --role witness \
+bash /root/polaris-setup/deploy/ha/setup-rhel-ha.sh --role witness \
   --node-name witness   --this-addr 198.51.100.7 \
   --peer-name polaris-a --peer-addr 10.10.1.5 \
   --standby-name polaris-b --standby-addr 10.20.1.5 \
@@ -457,7 +472,7 @@ bash /path/to/deploy/ha/setup-rhel-ha.sh --role witness \
 systemctl start etcd
 
 # on the primary (etcd only for now — PostgreSQL and Polaris are untouched)
-bash /opt/polaris/deploy/ha/setup-rhel-ha.sh --role primary \
+bash /root/polaris-setup/deploy/ha/setup-rhel-ha.sh --role primary \
   --node-name polaris-a --this-addr 10.10.1.5 \
   --peer-name polaris-b --peer-addr 10.20.1.5 \
   --witness-name witness --witness-addr 198.51.100.7
@@ -467,7 +482,7 @@ systemctl start etcd
 Then the standby host, which also installs its packages, user and directories:
 
 ```bash
-bash /path/to/deploy/ha/setup-rhel-ha.sh --role standby \
+bash /root/polaris-setup/deploy/ha/setup-rhel-ha.sh --role standby \
   --node-name polaris-b --this-addr 10.20.1.5 \
   --peer-name polaris-a --peer-addr 10.10.1.5 \
   --witness-name witness --witness-addr 198.51.100.7 \
@@ -511,7 +526,7 @@ A peer whose host key changes later (a rebuilt node) needs `pin-peer` again.
 ### Phase 3 — adopt the running cluster (the maintenance window, ~15 min)
 
 ```bash
-bash /opt/polaris/deploy/ha/setup-rhel-ha.sh --role primary --adopt \
+sudo polaris-ha-setup --role primary --adopt \
   --node-name polaris-a --this-addr 10.10.1.5 \
   --peer-name polaris-b --peer-addr 10.20.1.5 \
   --witness-name witness --witness-addr 198.51.100.7
@@ -592,9 +607,10 @@ Update on the **active** node, through the in-app updater as always. The
 standby is not updated directly: the updater calls `polaris-ha-role
 notify-peer`, and the standby pulls the new tree within seconds.
 
-`deploy/update-linux.sh` also works, and on an HA node it refuses to run unless
-this host is the primary, holds off the reconciler for the duration, and
-notifies the peer at the end.
+`sudo polaris-update-linux` (the reviewed copy of `deploy/update-linux.sh`)
+also works, and on an HA node it refuses to run unless this host is the
+primary, holds off the reconciler for the duration, and notifies the peer at
+the end.
 
 Both paths also refresh the HA files that do not live in the tree once
 installed — `/usr/local/sbin/polaris-ha-role`, `polaris-ha-role.service` and
@@ -602,11 +618,12 @@ installed — `/usr/local/sbin/polaris-ha-role`, `polaris-ha-role.service` and
 so a fix to the reconciler arrives with the release that carries it. The
 in-app updater syncs the `10-ha.conf` drop-ins itself but HOLDS the rest,
 because root runs them: run `sudo polaris-update-sync --apply-helpers` on the
-primary to review and install them (`update-linux.sh` does it for you). The
-standby copies the primary's installed copies. Only files
+primary to review and install them (`polaris-update-linux` shows them and asks
+too). The standby copies the primary's installed copies. Only files
 already present are refreshed, never created: this script decides which of them
-a node gets, so **if a release adds a new HA file, re-run `setup-rhel-ha.sh` on
-each node to install it.** Release notes will say so when it happens.
+a node gets, so **if a release adds a new HA file, re-run `sudo
+polaris-ha-setup` on each node to install it.** Release notes will say so when
+it happens.
 
 **The one window to know about.** Between an update finishing and the standby
 syncing (seconds normally, up to 60 if the notification cannot get through) the
