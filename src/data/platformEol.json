@@ -359,7 +359,7 @@
         "Re-run the timescaledb extension update and confirm every hypertable and chunk survived.",
         "Rewrite the per-host drop-in /etc/systemd/system/<unit>.d/20-postgres.conf with the new unit name - the SHIPPED units name no PostgreSQL unit and must not be edited.",
         "Bump PG_MAJOR / PG_CLIENT_MAJOR in every setup script (RHEL, Ubuntu and both -nodb variants). All four are checked by check:versions.",
-        "Bump the image tags in compose.dev.yml and the CI service container, and postgresql-client-<major> in BOTH Dockerfiles - the image base must actually ship that major, or add the PGDG apt repo to the image.",
+        "Bump the image tags in compose.dev.yml and every mirror in the CI database step, and postgresql-client-<major> in BOTH Dockerfiles - the image base must actually ship that major, or add the PGDG apt repo to the image.",
         "Smoke-test the backup and restore path end to end - it is the only code that calls timescaledb_pre_restore and post_restore."
       ],
       "files": [

@@ -254,7 +254,7 @@ export async function releaseConfirmedPins(now: Date = new Date()): Promise<{ ch
       });
       if (res.count === 0) continue;
       released++;
-      logEvent({
+      await logEvent({
         action: "asset.primary_address.released",
         resourceType: "asset",
         resourceId: a.id,

@@ -143,7 +143,7 @@ export async function updateManualMonitorSettings(
     create: { key: MANUAL_SETTING_KEY, value: input as any },
   });
   invalidateMonitorSettingsCache({ integrationId: null });
-  logEvent({
+  await logEvent({
     action: "monitor_settings.manual.updated",
     resourceType: "monitor_settings",
     resourceName: "Manual tier",
@@ -202,7 +202,7 @@ export async function updateIntegrationMonitorSettings(
     data:  { config: cfg as any },
   });
   invalidateMonitorSettingsCache({ integrationId });
-  logEvent({
+  await logEvent({
     action: "monitor_settings.integration.updated",
     resourceType: "integration",
     resourceId: integrationId,
@@ -280,7 +280,7 @@ export async function createClassOverride(
     include: { integration: { select: { id: true, name: true, type: true } } },
   });
   invalidateMonitorSettingsCache({ integrationId, assetType });
-  logEvent({
+  await logEvent({
     action: "monitor_settings.class_override.created",
     resourceType: "monitor_class_override",
     resourceId: created.id,
@@ -332,7 +332,7 @@ export async function updateClassOverride(
     integrationId: existing.integrationId,
     assetType:     existing.assetType,
   });
-  logEvent({
+  await logEvent({
     action: "monitor_settings.class_override.updated",
     resourceType: "monitor_class_override",
     resourceId: updated.id,
@@ -358,7 +358,7 @@ export async function deleteClassOverride(
     integrationId: existing.integrationId,
     assetType:     existing.assetType,
   });
-  logEvent({
+  await logEvent({
     action: "monitor_settings.class_override.deleted",
     resourceType: "monitor_class_override",
     resourceId: id,

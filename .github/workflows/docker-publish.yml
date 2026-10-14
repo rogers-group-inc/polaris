@@ -54,29 +54,47 @@ jobs:
 
   integration:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        # The official Docker Hub image, pulled through AWS's public mirror of
-        # Docker Hub's library. Hosted runners share egress IPs, so an
-        # unauthenticated Docker Hub pull hits its rate limit often enough to
-        # fail this job (and skip the image build) for hours at a time.
-        image: public.ecr.aws/docker/library/postgres:17-alpine
-        env:
-          POSTGRES_USER: polaris
-          POSTGRES_PASSWORD: polaris
-          POSTGRES_DB: polaris_test
-        ports:
-          - 5432:5432
-        # Wait until Postgres answers before the steps run.
-        options: >-
-          --health-cmd "pg_isready -U polaris -d polaris_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
     env:
       DATABASE_URL: postgresql://polaris:polaris@localhost:5432/polaris_test
       SESSION_SECRET: ci-integration-secret
     steps:
+      # PostgreSQL is started by hand rather than as a `services:` container,
+      # because a service container takes exactly one image reference and the
+      # job dies at "Initialize containers" if that one registry refuses. Every
+      # anonymous registry does, sooner or later: hosted runners share egress
+      # IPs, so Docker Hub's pull rate limit failed this job for hours at a time
+      # (we moved to AWS's mirror for that), and on 2026-10-14 AWS's mirror
+      # answered `toomanyrequests: Data limit exceeded` and skipped the image
+      # build in turn. All three references below are the same official
+      # Docker Hub `postgres` image, served by three independent mirrors; the
+      # first one that answers wins. Started before `npm ci` so the database
+      # boots while dependencies install; "Wait for PostgreSQL" gates on it.
+      - name: Start PostgreSQL 17
+        run: |
+          set -uo pipefail
+          image=""
+          for ref in \
+            public.ecr.aws/docker/library/postgres:17-alpine \
+            mirror.gcr.io/library/postgres:17-alpine \
+            docker.io/library/postgres:17-alpine; do
+            for attempt in 1 2; do
+              if docker pull -q "$ref"; then image="$ref"; break 2; fi
+              echo "::warning::pull of $ref failed (attempt $attempt)"
+              sleep 5
+            done
+          done
+          if [ -z "$image" ]; then
+            echo "::error::PostgreSQL image could not be pulled from any mirror"
+            exit 1
+          fi
+          echo "Using $image"
+          docker run -d --name postgres \
+            -e POSTGRES_USER=polaris \
+            -e POSTGRES_PASSWORD=polaris \
+            -e POSTGRES_DB=polaris_test \
+            -p 5432:5432 \
+            "$image"
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -91,7 +109,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # The service container above is PostgreSQL 17; ubuntu-latest's own
+      # The container started above is PostgreSQL 17; ubuntu-latest's own
       # pg_dump is 16, and pg_dump refuses to dump a server newer than itself.
       # Without this step backupRestore.test.ts fails on the rule-47 guard in
       # pgClientTools — which is exactly what it is there to do, and what broke
@@ -125,6 +143,24 @@ jobs:
           # reappears as an unexplained backup refusal three jobs later.
           /usr/lib/postgresql/17/bin/pg_dump --version
 
+      # The entrypoint runs a temporary server for initdb before the real one,
+      # so pg_isready can answer once and then drop; require it inside the
+      # container AND a real query over TCP, as the service health check did.
+      - name: Wait for PostgreSQL
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 60); do
+            if docker exec postgres pg_isready -h 127.0.0.1 -U polaris -d polaris_test > /dev/null 2>&1 \
+              && PGPASSWORD=polaris psql -h localhost -U polaris -d polaris_test -tAc 'select 1' > /dev/null 2>&1; then
+              echo "PostgreSQL ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::PostgreSQL did not become ready within 60s"
+          docker logs postgres
+          exit 1
+
       - name: Apply migrations
         run: npx prisma migrate deploy
 
@@ -132,6 +168,13 @@ jobs:
       # so they MUST run serially — parallel files stomp each other's rows.
       - name: Run integration tests
         run: npx vitest run tests/integration --no-file-parallelism
+
+      # A service container printed the server log at teardown for free; a
+      # hand-started one does not, and that log is where a constraint violation
+      # behind a failing test shows up.
+      - name: PostgreSQL server log
+        if: failure()
+        run: docker logs postgres 2>&1 | tail -n 300
 
   build:
     needs: [test, integration]
