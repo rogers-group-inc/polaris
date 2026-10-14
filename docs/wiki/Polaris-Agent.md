@@ -344,7 +344,9 @@ Pins are per (host, port) in their own table, never on the credential. WinRM
 over HTTPS gets the same treatment for its TLS certificate when *Verify TLS
 certificate* is off. Both kinds of pin are listed under **Windows SSH
 Deployment → Pinned server identities**; delete one to trust a host that was
-legitimately rebuilt, re-keyed or re-certified.
+legitimately rebuilt, re-keyed or re-certified. TLS certificates are also on
+**Server Settings → Web Server**, where a changed certificate shows both
+fingerprints and **Trust new certificate** pins exactly the one shown.
 
 ---
 

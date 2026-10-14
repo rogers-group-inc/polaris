@@ -39,3 +39,7 @@ The fourth phase of the follow-up to the 2026-10-11 whole-repository security sc
 ### The restapi test's base URL (2026-10-13, re-scan F73)
 
 A restapi credential is aimed at its own `baseUrl`, so the typed-host guard in `POST /credentials/test` never saw where the test went. The route now runs `resolveAllowedHost` on the base URL's host as well, answering a refusal as a test result. The live REST probe used by monitoring is unchanged — it serves assets an editor attached it to — and the connect-time pin is phase 12's (the same class as F58).
+
+### The connection is what is judged, everywhere (2026-10-14, re-scan F58, F82)
+
+Two callers still checked a name and then let something else resolve it again: the credential test (whose `http` type returns the response body) and the webhook / api_call delivery channels. Between the two lookups a name could rebind to loopback or the metadata address. The credential test now refuses an unresolvable typed host, dials the checked address for SSH and SNMP and connects `http` through `guardedLookup`; the channels send through `utils/guardedFetch`, an undici agent whose connect lookup is `guardedLookup`. WinRM keeps the name for its certificate check and is pinned (rule 113).

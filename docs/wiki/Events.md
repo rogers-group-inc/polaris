@@ -270,7 +270,9 @@ device-down supersession (any metric or device-state alert on a device that went
 | `automation_script.deleted` | **warning** | |
 | `automation.script.run` | | one execution |
 | `ssh.host_key.mismatch` | | a host key **changed** and the connection was refused |
-| `tls.cert.mismatch` | **warning** | a WinRM or firmware server's TLS certificate **changed** and the connection was refused before any credential was sent ([rule 113](Business-Rules#rule-113)) |
+| `tls.cert.mismatch` | **warning** | a server's TLS certificate **changed** and the connection was refused before any credential was sent — written once per new certificate ([rule 113](Business-Rules#rule-113)) |
+| `tls.cert.trusted` | **warning** | an administrator trusted a server's new certificate in place of the pinned one |
+| `tls.cert.repinned` | info | a device's new certificate was pinned automatically after a firmware upgrade Polaris ran |
 | `ssh.host_key.deleted` / `tls.cert.deleted` | **warning** | a pin was deleted, so the next connection trusts whatever answers |
 | `event_archive.export_failed` | **warning** | the archive export failed, so old events were **not** pruned that hour |
 | `event_archive.host_key_forgotten` | **warning** | the archive server's pinned host key was forgotten |
