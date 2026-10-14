@@ -194,6 +194,9 @@ cannot.
 
 `deploy/update-linux.sh` exists for a host where the in-app updater cannot run.
 It carries the same client-resolution logic, and it dumps as the local
-`postgres` user over a unix socket.
+`postgres` user over a unix socket. Like the updater, it does not install a
+changed root helper unseen: it shows each one against the installed copy and
+asks (pass `--yes` to install them all), and it checks the nginx config before
+putting it live ([rule 117](Business-Rules#rule-117)).
 
 Use it when the app will not start. Otherwise use the in-app updater.
