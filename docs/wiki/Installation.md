@@ -61,7 +61,7 @@ approaching end of life.
 | **Ubuntu / Debian** | same, Debian family | *Ubuntu / Debian* |
 | **`-nodb` variants** | PostgreSQL is elsewhere (managed service, separate host) | both platform sections |
 | **Docker / podman compose** | containerised | *The split-role deployment → Docker* |
-| **Unraid** | a homelab NAS — a single container that runs the setup wizard, beside a `timescale/timescaledb:latest-pg17` container | the README's *Docker / Unraid* section |
+| **Unraid** | a homelab NAS — a single container that runs the setup wizard, beside a `timescale/timescaledb:latest-pg17` container | *The split-role deployment → Single container (Unraid)* |
 
 The Linux paths do the same five things: provision PostgreSQL 17 + TimescaleDB,
 create the `polaris` database and user, install Node 24, clone Polaris, and run
