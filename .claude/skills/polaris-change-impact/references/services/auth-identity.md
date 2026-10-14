@@ -102,6 +102,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:** `src/api/routes/auth.ts` (LDAP login via `POST /auth/login`, LDAP test + settings endpoints).
 
 **Invariants:**
+- **Login cost does not depend on whether the directory knows the name (business rule 108(j), re-scan F77).** A search that finds no entry is followed by `dummyUserBind` — a bind as `cn=polaris-no-such-user-<uuid>,<searchBase>` with a random password, so no real account's failure counter moves — and the login route runs the dummy argon2 verify before any LDAP attempt. Never bind the service account or the typed password in the dummy.
 - Empty password is rejected BEFORE any bind (unauthenticated-bind trap); username is RFC-4515-escaped before filter substitution.
 - Two-phase: service-account bind locates the user, then a rebind AS the user verifies credentials; optional reverse group search catches groups missing from `memberOf`.
 - Stable user id is objectGUID (hex) or entryUUID, falling back to DN; settings cache has a short TTL and preserves the bindPassword mask on write unless changed.

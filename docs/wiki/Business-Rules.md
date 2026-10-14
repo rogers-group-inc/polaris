@@ -1,7 +1,7 @@
 # Business rules
 
-Polaris carries **105 rule numbers**, 1 to 105: 102 rules in force plus rule 80a,
-with 81, 88 and 104 not in use. Each one records a decision *and* the reasoning
+Polaris carries **119 rule numbers**, 1 to 119: 117 rules in force plus rules
+78a and 80a, with 81 and 88 not in use. Each one records a decision *and* the reasoning
 behind it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
 where the reasons live.
@@ -2033,7 +2033,15 @@ not a spelling, a cookie that has outlived its owner, or a code already used.**
   is printed where Polaris started (the journal, or `docker logs`), saved in the
   state directory as `.setup-token`, and deleted when setup finishes.
 - **Login and API-docs source restrictions** hold however the path is spelled, and
-  `/metrics` answers only its exact lowercase spelling.
+  `/metrics` answers only its exact lowercase spelling. A page address written
+  with percent-encoding, a doubled slash or a `.` / `..` segment (`/%61pi.html`,
+  `//login.html`) is answered **404** before any of these checks.
+- **After you sign in, Polaris sends you back only to a page on this
+  server.** A remembered destination that would leave the site, or that
+  carries a hidden tab or line break, sends you to the dashboard instead.
+- **With LDAP on, a failed sign-in takes the same work** whether the name is a
+  local account, a directory account or neither, so response times do not
+  reveal which names exist.
 - **Wrong second-factor codes keep counting** when the password is typed again.
 - **A TOTP code works once.** Using it again within its window is refused.
 - **Deleting a user, changing their role, or resetting their password, two-factor
@@ -2317,6 +2325,8 @@ saving an automation that has one needs **Read-Write on Assets**.
   have, without a regular expression underneath.
 - **Uploaded MIB files** are parsed in linear time and only re-parsed when they
   change.
+- **WinRM replies** from a Windows host are read in linear time, and a reply
+  larger than 4 MB is refused.
 
 ### Rule 117
 
@@ -2370,7 +2380,18 @@ the HA peer.**
   readable by SYSTEM and Administrators only, from the moment it is written.
 - **The Unraid Query API window runs queries only.** A document that contains
   a mutation or a subscription anywhere is refused, and every query run is
-  recorded as an `integration.query` event.
+  recorded as an `integration.query` event. Block strings (`"""…"""`) are
+  refused too; use an ordinary `"string"` or a variable.
+- **An HA node's bundle is collected once, by the node that asked for it.**
+  The handle the bootstrap script polls with is stored only as a hash. The
+  download must come from the address that registered, within 10 minutes of
+  your approval, and a registration older than 30 minutes can no longer be
+  approved — generate a new script instead.
+- **A new HA cluster's Patroni REST API uses TLS**, with each node's cluster
+  certificate, so its write credentials never cross the link between the
+  database nodes in clear text. An existing cluster keeps plain HTTP until you
+  switch it over (see *Patroni REST API over TLS* in `docs/UPGRADING.md`); the
+  capacity card shows a warning until then.
 
 ### Rule 118
 
@@ -2399,3 +2420,22 @@ long a stream has been failing is something an automation can alert on.**
   device goes **Down**, the alert is handed to the device-down alert — one
   outage, one alert — and the reading stops advancing while the heavy streams
   are paused.
+
+### Rule 119
+
+**Nothing another account on a monitored host can do redirects what Polaris
+writes there or reads from it — and the host cannot take Polaris down.**
+
+- **Agent installs, upgrades, uninstalls and reboot-permission changes stage
+  their files in a private folder made for that run** — a fresh `mktemp`
+  folder only the SSH account can open on Linux and macOS, and a new folder in
+  the SSH account's own temp folder on Windows (never `C:\Windows\Temp`). The
+  folder is deleted afterwards. The installer checks the agent binary's
+  SHA-256 before installing it.
+- **The agent never follows a link when it reads a log file** (agent 0.27.0).
+  A file in a watched log folder that is a symbolic link, a junction or a hard
+  link is skipped, and the agent's own log says which file and why. A link in
+  the part of the path you typed yourself is followed. A log that is rotated
+  is read from the start of the new file, as before.
+- **A malformed message from an agent closes that agent's connection only.**
+  It cannot stop Polaris.

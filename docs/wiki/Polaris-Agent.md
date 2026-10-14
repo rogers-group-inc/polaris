@@ -124,6 +124,15 @@ Writes the binary, writes `agent.conf`, installs the service, starts it. The
 agent then enrols on first boot, receives a bearer token, and persists it back
 into `agent.conf`.
 
+Over SSH, everything is first uploaded into a folder created for that one run,
+which no other account on the host can open: a fresh `mktemp` folder on Linux
+and macOS, a new folder in the SSH account's own temp folder on Windows. The
+installer checks the binary's SHA-256 before installing it, and the folder is
+deleted afterwards, whether the install worked or not. Upgrades, uninstalls and
+reboot-permission changes work the same way
+([rule 119](Business-Rules#rule-119)). The SSH account's temp folder must not
+be `C:\Windows\Temp`; Polaris refuses to stage there.
+
 `agent.conf` is readable only by the agent's service account and
 administrators. On Linux and macOS it is mode 0600. On Windows the installer
 makes Administrators the owner of `%ProgramData%\Polaris\agent`, and limits

@@ -39,3 +39,7 @@ The seventh phase of the follow-up to the 2026-10-11 whole-repository security s
 - **The Application Map preview stays `applicationMap:read`.** With linear matching there is nothing left to gate.
 - **RE2 `\s` and `.` differ at the margins** from JavaScript's (no `\v` or Unicode spaces in `\s`; `.` excludes only `\n`). Operator patterns over device names and log text do not rely on either.
 - **Browser-side regexes** (the `public/` previews) are not covered; they run in the operator's own tab.
+
+### WinRM responses (2026-10-14, re-scan F84)
+
+The WinRM SOAP parser was the last place a remote host's text met a backtracking regex: the fault-reason pattern nested two lazy `[\s\S]*?` scans and the Stream pattern ran three adjacent `[^>]*`, and the body had no size limit. A host answering 500 with `<Reason>` and a megabyte of unclosed `<Text>` would hold the event loop that runs every agentless collector. The extraction is now indexOf-based (`xmlElement` moves forward only and a missing close tag ends the search rather than retrying from the next opener), and a body over 4 MiB aborts the request. `tests/unit/winrm.test.ts` parses four hostile bodies of ~1 MB each inside a 2-second budget alongside real Receive / fault responses.

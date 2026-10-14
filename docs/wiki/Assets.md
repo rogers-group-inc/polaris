@@ -859,6 +859,13 @@ path (no network share, device path or `..`), and **setting** one needs
 privileges. Read-Write can still change the log source or clear the path
 ([rule 107](Business-Rules#rule-107)).
 
+From agent 0.27.0 a matching file that is a **symbolic link, a junction or a
+hard link** is skipped, and so is a link in a folder the wildcard matched, so
+nobody who can write the log folder can point the agent at a file they could
+not read themselves. A link in the part of the path you typed is followed.
+The agent's own log names each skipped file. A rotated log is read from the
+start of the new file ([rule 119](Business-Rules#rule-119)).
+
 Click a service's name to open its detail panel. It shows the display name,
 the **description** (Windows), state, **startup type** in the Services
 console's wording (*Automatic (Delayed Start)*, *Manual*, …; the enablement

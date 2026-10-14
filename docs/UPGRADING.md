@@ -17,6 +17,7 @@ underneath the app rather than the app itself.
 | leave the pre-Phase-3 single `polaris.service` for the split-role units | *Upgrading a legacy single-process install* |
 | put nginx in front of a pre-nginx install | *Migrating an existing install to the nginx front end* |
 | restart an update that died on a TLS-intercepting network | *Recovering an install whose update already failed on TLS interception* |
+| put an existing HA cluster's Patroni REST API on TLS | *Patroni REST API over TLS* |
 
 Each one stops the service, so each one wants a maintenance window. None of them
 is on a schedule — do them when the Platform Lifecycle card (Server Settings →
@@ -858,3 +859,56 @@ reads its own copy.
 `userlist.txt` (or `auth_query` source) as well.
 
 The warning clears on the next capacity snapshot after the restart.
+
+---
+
+## Patroni REST API over TLS
+
+HA clusters built from 2026-10-14 serve Patroni's REST API (port 8008) over
+TLS. Earlier clusters serve it over plain HTTP, and Patroni sends the REST
+write credentials (`restapi.authentication`) on its calls to the peer — across
+the link between the database nodes (business rule 117). The capacity card
+shows **ha_patroni_rest_cleartext** on such a node. Polaris does not switch
+an existing cluster for you: a Patroni that cannot read its new key would stop
+answering, and the loopback guards would then hold the application down.
+
+Nothing else needs to change first. The shipped systemd guards, the
+reconciler (`polaris-ha-role`), `update-linux.sh` and the HA card already try
+HTTPS and then HTTP on loopback, so they work before, during and after the
+switch.
+
+**Before you start:** have someone who knows this cluster review the steps, and
+do it on a non-production pair first if you have one. Work in a quiet window;
+no failover is needed.
+
+1. **On each database node**, as root, add the certificate lines to the
+   `restapi:` block of `/etc/patroni/patroni.yml` (the node's own etcd member
+   certificate, which Patroni already reads for etcd and which names the
+   node's cluster address), and add a top-level `ctl:` block:
+
+   ```yaml
+   restapi:
+     # ...existing listen / connect_address / authentication...
+     certfile: /etc/polaris/etcd-ca/<this-node-name>.crt
+     keyfile: /etc/polaris/etcd-ca/<this-node-name>.key
+
+   ctl:
+     cacert: /etc/polaris/etcd-ca/ca.crt
+   ```
+
+2. **Reload Patroni on the standby, then on the primary:**
+   `systemctl reload patroni`. Patroni re-reads its REST settings on reload.
+   Between the two reloads the nodes' REST calls to each other may fail; that
+   affects only failsafe mode and `patronictl` against the peer, not
+   replication or the leader lease.
+
+3. **Check each node:**
+
+   ```bash
+   curl -sk https://127.0.0.1:8008/cluster | head -c 200; echo
+   patronictl -c /etc/patroni/patroni.yml list     # both members, no errors
+   ```
+
+   The capacity card's warning clears within ten minutes.
+
+**To undo:** remove the three lines and reload Patroni on both nodes.
