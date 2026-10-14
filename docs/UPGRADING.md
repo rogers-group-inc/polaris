@@ -666,8 +666,8 @@ and the held files are listed in `/var/lib/polaris-update-sync/pending`. Review
 and install them:
 
 ```bash
-sudo polaris-update-sync --apply-helpers        # shows each diff, asks per file
-sudo polaris-update-sync --apply-helpers --yes  # installs all of them
+sudo /usr/local/sbin/polaris-update-sync --apply-helpers        # shows each diff, asks per file
+sudo /usr/local/sbin/polaris-update-sync --apply-helpers --yes  # installs all of them
 ```
 
 `deploy/update-linux.sh`, re-running an installer (`deploy/setup-*.sh`) on an
@@ -784,7 +784,7 @@ restart or a reboot until an install succeeds.** Treat it as urgent, and do not 
 first to "see if it's fine".
 
 Apply the fix from that section, then re-run the update (Server Settings → Maintenance → Updates, or
-`sudo polaris-update-linux`). If the in-app updater already pulled the new code before
+`sudo /usr/local/sbin/polaris-update-linux`). If the in-app updater already pulled the new code before
 it failed, the checkout is ahead of the process that is still serving. The in-app card measures
 against the **running** build, so Check for Updates still offers Apply Update — with a note that
 the code is already on disk — and Apply finishes the install, build, migration and restart. The
@@ -969,12 +969,12 @@ reviewed like every other one:
 
 | Script in the tree | The copy to run |
 |---|---|
-| `deploy/update-linux.sh` | `sudo polaris-update-linux` |
-| `deploy/ha/setup-rhel-ha.sh` | `sudo polaris-ha-setup` (HA nodes) |
+| `deploy/update-linux.sh` | `sudo /usr/local/sbin/polaris-update-linux` |
+| `deploy/ha/setup-rhel-ha.sh` | `sudo /usr/local/sbin/polaris-ha-setup` (HA nodes) |
 
 They arrive the way root helpers do: the in-app updater holds them and the
 Maintenance tab shows **Root helper update pending**, and
-`sudo polaris-update-sync --apply-helpers` shows each one against the
+`sudo /usr/local/sbin/polaris-update-sync --apply-helpers` shows each one against the
 installed copy and installs it when you confirm. A tree copy run directly
 hands over to the installed copy when there is one, and otherwise warns.
 

@@ -61,7 +61,7 @@ seven steps, each shown with its own status:
    shows a `REFUSED:` line naming it. **Root helpers** — files root runs
    directly, such as the nginx helper and the update helper itself — are held
    instead: the Maintenance tab shows *Root helper update pending*, and
-   `sudo polaris-update-sync --apply-helpers` on the server reviews and
+   `sudo /usr/local/sbin/polaris-update-sync --apply-helpers` on the server reviews and
    installs them. Everything else in the update applies meanwhile.
 
 An nginx config that was hand-edited since Polaris last wrote it is **not**
@@ -192,7 +192,7 @@ cannot.
 
 ## The fallback script
 
-`sudo polaris-update-linux` — the reviewed, installed copy of
+`sudo /usr/local/sbin/polaris-update-linux` — the reviewed, installed copy of
 `deploy/update-linux.sh` — exists for a host where the in-app updater cannot
 run. Run that, not the copy under `/opt/polaris`: root runs the script, and
 the tree copy sits where the Polaris account can change it. A tree copy run

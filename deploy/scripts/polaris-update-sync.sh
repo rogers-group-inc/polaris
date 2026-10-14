@@ -33,7 +33,7 @@
 #     found by the 2026-10-13 re-scan). A changed helper is HELD: listed in
 #     /var/lib/polaris-update-sync/pending for the Maintenance tab, and
 #     installed only by an administrator running
-#     `sudo polaris-update-sync --apply-helpers`, which shows the diff first.
+#     `sudo /usr/local/sbin/polaris-update-sync --apply-helpers`, which shows the diff first.
 #
 # Lockstep: deploy/update-linux.sh does the same sync when an operator updates
 # from a shell.
@@ -228,8 +228,8 @@ root_helper() {   # root_helper <src> <dest> <mode> [validator [arg]]
   fi
   if [[ "$MODE" == sync ]]; then
     PENDING+=("$2 $sum")
-    logger -t polaris-updater -p daemon.warning -- "HELD root helper $2 (sha256 $sum): run 'sudo polaris-update-sync --apply-helpers' to review and install it" 2>/dev/null || true
-    echo "HELD: $2 changed; run 'sudo polaris-update-sync --apply-helpers'"
+    logger -t polaris-updater -p daemon.warning -- "HELD root helper $2 (sha256 $sum): run 'sudo /usr/local/sbin/polaris-update-sync --apply-helpers' to review and install it" 2>/dev/null || true
+    echo "HELD: $2 changed; run 'sudo /usr/local/sbin/polaris-update-sync --apply-helpers'"
     return 0
   fi
   echo
@@ -298,7 +298,7 @@ write_pending() {
   fi
   local tmp="$PENDING_DIR/.pending.$$"
   { echo "# Root helpers changed in /opt/polaris and NOT installed (business rule 117(g))."
-    echo "# Review and install: sudo polaris-update-sync --apply-helpers"
+    echo "# Review and install: sudo /usr/local/sbin/polaris-update-sync --apply-helpers"
     printf '%s\n' "${PENDING[@]}"
   } > "$tmp"
   chmod 0644 "$tmp"
@@ -433,7 +433,7 @@ if [[ "$MODE" == install ]]; then
   if [[ ${#PENDING[@]} -eq 0 ]]; then
     echo "All root helpers match /opt/polaris."
   else
-    echo "${#PENDING[@]} root helper(s) left as they are; review them later with: sudo polaris-update-sync --apply-helpers"
+    echo "${#PENDING[@]} root helper(s) left as they are; review them later with: sudo /usr/local/sbin/polaris-update-sync --apply-helpers"
   fi
   exit 0
 fi
@@ -460,7 +460,7 @@ if [[ -e "$STAGED_NGINX" || -L "$STAGED_NGINX" ]]; then
   # helper; sourced, never the tree's copy. An installed helper too old to
   # have it means the config waits until the held helpers are applied.
   if staged="$(take "$STAGED_NGINX")" && ! (POLARIS_NGINX_APPLY_LIB=1 . /usr/local/sbin/polaris-nginx-apply && declare -F nginx_conf_ok >/dev/null && nginx_conf_ok "$staged"); then
-    refuse "$STAGED_NGINX not installed (content check failed, or the installed polaris-nginx-apply predates it: run sudo polaris-update-sync --apply-helpers)"
+    refuse "$STAGED_NGINX not installed (content check failed, or the installed polaris-nginx-apply predates it: run sudo /usr/local/sbin/polaris-update-sync --apply-helpers)"
     staged=""
   fi
   if [[ -n "${staged:-}" ]]; then

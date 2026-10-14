@@ -2381,7 +2381,7 @@ the HA peer.**
   node the reconciler, its unit and timer, the SSH command and Patroni's
   drop-in. An update never installs a new version of these. It holds them, the
   rest of the update applies, and the Maintenance tab shows **Root helper
-  update pending** with the command to run: `sudo polaris-update-sync
+  update pending** with the command to run: `sudo /usr/local/sbin/polaris-update-sync
   --apply-helpers`. That shows each change against the installed copy and
   installs the ones you confirm. Nothing the `polaris` account can write is
   ever run as root without an administrator.

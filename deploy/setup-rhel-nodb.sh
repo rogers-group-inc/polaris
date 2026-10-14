@@ -97,7 +97,7 @@ decide_root_files() {
     ROOT_FILES=sync
   elif [[ -e "$SYNC_HELPER" ]]; then
     ROOT_FILES=skip
-    warn "Leaving units, sudoers, polkit and root helpers as they are: $SYNC_HELPER is not a trusted root-owned copy with --install, or its update was declined. Review later with: sudo polaris-update-sync --apply-helpers"
+    warn "Leaving units, sudoers, polkit and root helpers as they are: $SYNC_HELPER is not a trusted root-owned copy with --install, or its update was declined. Review later with: sudo /usr/local/sbin/polaris-update-sync --apply-helpers"
   else
     # An install from before the in-app updater's root helper existed has
     # nothing installed to review with; the tree is all there is.
@@ -656,7 +656,7 @@ NGINX_CONF_NEW="$(mktemp "$(dirname "$NGINX_CONF_DEST")/.polaris.conf.XXXXXX")"
 sudo -u "$APP_USER" cat "$APP_DIR/deploy/nginx/polaris.conf" | sed "s|polaris\\.example\\.com|$HOSTNAME_FROM_URL|g; s|<PROMETHEUS_IP>|$PROMETHEUS_IP|g" > "$NGINX_CONF_NEW"
 if [[ $FRESH_TREE -eq 0 ]] && ! nginx_conf_checked "$NGINX_CONF_NEW"; then
   rm -f "$NGINX_CONF_NEW"
-  warn "Kept the existing nginx config: the shipped one did not pass the content check (or the installed polaris-nginx-apply predates it — run: sudo polaris-update-sync --apply-helpers)"
+  warn "Kept the existing nginx config: the shipped one did not pass the content check (or the installed polaris-nginx-apply predates it — run: sudo /usr/local/sbin/polaris-update-sync --apply-helpers)"
 else
   chmod 0644 "$NGINX_CONF_NEW"
   mv -f "$NGINX_CONF_NEW" "$NGINX_CONF_DEST"

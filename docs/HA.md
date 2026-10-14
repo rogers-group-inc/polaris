@@ -457,7 +457,7 @@ sudo git clone --depth 1 --branch <release-tag> https://github.com/rogers-group-
 ```
 
 and use `/root/polaris-setup/deploy/ha/setup-rhel-ha.sh` below. After the
-first run a node also has the reviewed copy, `sudo polaris-ha-setup`, which
+first run a node also has the reviewed copy, `sudo /usr/local/sbin/polaris-ha-setup`, which
 the tree copy hands over to. Run from the tree anyway, the script still
 refuses to copy root files out of it: it hands them to the installed
 `polaris-update-sync --install --ha`, which shows each one and asks.
@@ -526,7 +526,7 @@ A peer whose host key changes later (a rebuilt node) needs `pin-peer` again.
 ### Phase 3 — adopt the running cluster (the maintenance window, ~15 min)
 
 ```bash
-sudo polaris-ha-setup --role primary --adopt \
+sudo /usr/local/sbin/polaris-ha-setup --role primary --adopt \
   --node-name polaris-a --this-addr 10.10.1.5 \
   --peer-name polaris-b --peer-addr 10.20.1.5 \
   --witness-name witness --witness-addr 198.51.100.7
@@ -607,7 +607,7 @@ Update on the **active** node, through the in-app updater as always. The
 standby is not updated directly: the updater calls `polaris-ha-role
 notify-peer`, and the standby pulls the new tree within seconds.
 
-`sudo polaris-update-linux` (the reviewed copy of `deploy/update-linux.sh`)
+`sudo /usr/local/sbin/polaris-update-linux` (the reviewed copy of `deploy/update-linux.sh`)
 also works, and on an HA node it refuses to run unless this host is the
 primary, holds off the reconciler for the duration, and notifies the peer at
 the end.
@@ -617,7 +617,7 @@ installed — `/usr/local/sbin/polaris-ha-role`, `polaris-ha-role.service` and
 `.timer`, `patroni.service.d/10-polaris.conf`, and the `10-ha.conf` drop-ins —
 so a fix to the reconciler arrives with the release that carries it. The
 in-app updater syncs the `10-ha.conf` drop-ins itself but HOLDS the rest,
-because root runs them: run `sudo polaris-update-sync --apply-helpers` on the
+because root runs them: run `sudo /usr/local/sbin/polaris-update-sync --apply-helpers` on the
 primary to review and install them (`polaris-update-linux` shows them and asks
 too). The standby copies the primary's installed copies. Only files
 already present are refreshed, never created: this script decides which of them
