@@ -44,11 +44,13 @@ function stripCode(markdown, { keepInline = false } = {}) {
 
 /** GitHub's heading slug: rendered text, lowercased, punctuation dropped (hyphens and underscores kept), spaces → hyphens. */
 export function githubSlug(headingText) {
-  const rendered = headingText
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1") // [text](url) → text
-    .replace(/<[^>]+>/g, "") // inline HTML
-    .replace(/`/g, "")
-    .replace(/\*+/g, "");
+  let rendered = headingText.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1"); // [text](url) → text
+  // Inline HTML, stripped until stable so a nested `<<b>b>` leaves no tag behind.
+  for (let prev = null; prev !== rendered; ) {
+    prev = rendered;
+    rendered = rendered.replace(/<[^>]+>/g, "");
+  }
+  rendered = rendered.replace(/`/g, "").replace(/\*+/g, "");
   return rendered
     .trim()
     .toLowerCase()
