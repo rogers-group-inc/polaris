@@ -139,8 +139,11 @@ import {
   buildMacRowsForCreate,
   selectPrimaryMac,
   isHardwareMacSource,
+  isUnverifiedMacSource,
+  UNVERIFIED_HOSTNAME_MAC_SOURCE,
   type MacJsonEntry,
 } from "../../utils/macAddresses.js";
+import { isHostnameAdoptProtected } from "../../utils/hostnameAdoptGuard.js";
 import {
   buildArpMacDeviceIndex,
   buildArpIpsByMacDevice,
@@ -1931,10 +1934,20 @@ export class AssetIndex {
 
   add(a: any) {
     this.byId.set(a.id, a);
-    if (a.macAddress) this.byMac.set(a.macAddress.toUpperCase(), a);
+    // A MAC recorded from a hostname-only match on a protected asset is a
+    // sighting, not identity (business rule 91(b), re-scan F2): it stays out
+    // of byMac, so no later lease, detected-device, ARP or switch-table row
+    // can resolve to this asset through it.
+    const unverified = new Set<string>();
     if (Array.isArray(a.macAddresses)) {
       for (const m of a.macAddresses as any[]) {
-        if (m.mac) this.byMac.set(m.mac.toUpperCase(), a);
+        if (m?.mac && isUnverifiedMacSource(m.source)) unverified.add(String(m.mac).toUpperCase());
+      }
+    }
+    if (a.macAddress && !unverified.has(a.macAddress.toUpperCase())) this.byMac.set(a.macAddress.toUpperCase(), a);
+    if (Array.isArray(a.macAddresses)) {
+      for (const m of a.macAddresses as any[]) {
+        if (m.mac && !unverified.has(m.mac.toUpperCase())) this.byMac.set(m.mac.toUpperCase(), a);
       }
     }
     // Serial is normalized on the way in exactly as MAC and hostname are.
@@ -1987,19 +2000,31 @@ export class AssetIndex {
    * where IP recycling would otherwise staple a new MAC onto an unrelated asset.
    */
   findByEntry(mac?: string, hostname?: string, ip?: string, opts: { allowIpFallback?: boolean } = {}): any | undefined {
+    return this.findByEntryWithRung(mac, hostname, ip, opts)?.asset;
+  }
+
+  /**
+   * findByEntry, also reporting WHICH rung matched. "hostname" means the
+   * entry's MAC (if any) did not resolve — the match rests on a name the
+   * client chose itself, which business rule 91(b) refuses to let re-address
+   * a protected asset.
+   */
+  findByEntryWithRung(
+    mac?: string, hostname?: string, ip?: string, opts: { allowIpFallback?: boolean } = {},
+  ): { asset: any; rung: "mac" | "hostname" | "ip" } | undefined {
     const { allowIpFallback = true } = opts;
     if (mac) {
       const norm = mac.toUpperCase().replace(/-/g, ":");
       const hit = this.byMac.get(norm);
-      if (hit) return hit;
+      if (hit) return { asset: hit, rung: "mac" };
     }
     if (hostname) {
       const hit = this.byHostname.get(hostname.toLowerCase());
-      if (hit) return hit;
+      if (hit) return { asset: hit, rung: "hostname" };
     }
     if (ip && allowIpFallback) {
       const hit = this.byIp.get(ip);
-      if (hit) return hit;
+      if (hit) return { asset: hit, rung: "ip" };
     }
     return undefined;
   }
@@ -5942,6 +5967,40 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   //           (in-memory lookups, batched writes)
   // ══════════════════════════════════════════════════════════════════════════════
 
+  // Business rule 91(b) (re-scan F2): a lease / detected-device row that
+  // matched a PROTECTED asset (monitored, or carrying a credential) by
+  // hostname alone — its MAC is not one the asset is known by — records the
+  // MAC as an unverified sighting and nothing else address-shaped. The
+  // warnings are collected across Phases 6 and 7 and written in one batch
+  // after Phase 7; `claims.hostnameAdoptRefused` keeps it to one per
+  // (asset, MAC) per run.
+  const hostnameAdoptRefusedEvents: LogEventInput[] = [];
+  const hostnameAdoptRefused = (
+    asset: any, rung: "mac" | "hostname" | "ip" | undefined,
+  ): boolean => rung === "hostname" && isHostnameAdoptProtected(asset);
+  const noteHostnameAdoptRefused = (
+    asset: any, mac: string, ip: string | null | undefined, hostname: string | null | undefined,
+    source: "dhcp-lease" | "device-inventory", device: string | null | undefined,
+  ): void => {
+    const key = `${asset.id}|${mac}`;
+    if (claims.hostnameAdoptRefused.has(key)) return;
+    claims.hostnameAdoptRefused.add(key);
+    hostnameAdoptRefusedEvents.push({
+      action: "discovery.hostname_adopt_refused",
+      resourceType: "asset",
+      resourceId: asset.id,
+      resourceName: asset.hostname || asset.ipAddress || asset.id,
+      actor,
+      level: "warning",
+      message:
+        `[${integrationName}] Refused to re-address protected asset "${asset.hostname || asset.id}": `
+        + `a ${source === "dhcp-lease" ? "DHCP lease" : "detected-device row"}${device ? ` on ${device}` : ""} `
+        + `claims hostname "${hostname ?? ""}" from unknown MAC ${mac} at ${ip || "no IP"}. `
+        + `The MAC was recorded as an unverified sighting; the asset's address and primary MAC are unchanged.`,
+      details: { mac, ip: ip ?? null, hostname: hostname ?? null, source, device: device ?? null, integrationId },
+    });
+  };
+
   if (result.dhcpEntries && result.dhcpEntries.length > 0) {
     // Collect all updates, then batch-execute
     // `macs` (when present) is reconciled to asset_mac_addresses after the
@@ -6017,8 +6076,18 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
 
       // DHCP IPs recycle across devices, so IP-only matches would staple
       // a new device's MAC onto the previous lease-holder's asset.
-      const asset = assetIdx.findByEntry(entry.macAddress, entry.hostname, entry.ipAddress, { allowIpFallback: false });
-      if (!asset) continue;
+      const match = assetIdx.findByEntryWithRung(entry.macAddress, entry.hostname, entry.ipAddress, { allowIpFallback: false });
+      if (!match) continue;
+      const asset = match.asset;
+      // Business rule 91(b) (re-scan F2): the lease's hostname is the client's
+      // own choice. On a protected asset a hostname-only match keeps the MAC
+      // as an unverified sighting (presence as before) but never moves
+      // ipAddress / ipSource / learnedLocation, never makes this MAC the
+      // primary, stakes no address claim, names no endpoint gate, and adds no
+      // fortigate-endpoint source — any of those would let the claimant's
+      // address inherit the asset's monitor and its stored credentials.
+      const adoptRefused = hostnameAdoptRefused(asset, match.rung);
+      if (adoptRefused) noteHostnameAdoptRefused(asset, normalized, entry.ipAddress, entry.hostname, "dhcp-lease", entry.device);
 
       // Infrastructure assets (firewall/switch/AP) get their ipAddress,
       // ipSource, and learnedLocation from the dedicated FortiGate /
@@ -6064,17 +6133,19 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       // A binding the gate confirms is held right now goes on the asset's
       // address list under this MAC (business rule 102). Configuration nobody
       // holds is not an address the device has.
-      if (entry.seenLeased && entry.device && !isInfraAsset) {
+      if (entry.seenLeased && entry.device && !isInfraAsset && !adoptRefused) {
         addressSightings.push({
           assetId: asset.id, mac: normalized, ip: entry.ipAddress, source: entry.type,
           device: entry.device, medium: entryMedium, seenAt: new Date(now),
         });
       }
       const incumbentScore = bestAddressClaimByAsset.get(asset.id);
-      const winsIpClaim = !incumbentScore || claimBeats(claimScore, incumbentScore);
+      const winsIpClaim = !adoptRefused && (!incumbentScore || claimBeats(claimScore, incumbentScore));
       if (winsIpClaim) bestAddressClaimByAsset.set(asset.id, claimScore);
 
-      if (entry.device) {
+      // A refused hostname-only match does not place the asset behind this
+      // gate either (the sighting row feeds the gateway-firewall attribution).
+      if (entry.device && !adoptRefused) {
         sightingRows.push({
           assetId: asset.id,
           fortigateDevice: entry.device,
@@ -6088,7 +6159,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         // Stamp this asset as a fortigate-endpoint source target — every
         // DHCP sighting counts even if the asset wasn't created via
         // device-inventory. End-of-sync flush below upserts the row.
-        if (!isInfraAsset) {
+        if (!isInfraAsset && !adoptRefused) {
           fortigateEndpointAssetIds.add(asset.id);
           if (winsIpClaim && entry.device) {
             noteEndpointGate(asset.id, entry.device);
@@ -6115,8 +6186,12 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         // A sighting must not relabel a hardware-truth entry (intune-*/agent/
         // vcenter-vnic): the source is what keeps the entry eligible as the
         // PRIMARY MAC (selectPrimaryMac), and the device's real NIC showing up
-        // in a lease table doesn't stop it being the real NIC.
-        if (!isHardwareMacSource((existingMac as any).source)) existingMac.source = entry.type;
+        // in a lease table doesn't stop it being the real NIC. Nor may a
+        // refused hostname-only sighting launder an unverified entry into an
+        // ordinary one (business rule 91(b)).
+        // (Under a refusal the entry can only be that unverified one — any
+        // other MAC on the list is in the index and would have matched.)
+        if (!adoptRefused && !isHardwareMacSource((existingMac as any).source)) existingMac.source = entry.type;
         if (matchingSubnet) {
           existingMac.subnetCidr = matchingSubnet.cidr;
           existingMac.subnetName = matchingSubnet.name;
@@ -6125,7 +6200,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         macList.push({
           mac: normalized,
           lastSeen: now,
-          source: entry.type,
+          source: adoptRefused ? UNVERIFIED_HOSTNAME_MAC_SOURCE : entry.type,
           ...(matchingSubnet ? { subnetCidr: matchingSubnet.cidr, subnetName: matchingSubnet.name } : {}),
         });
       }
@@ -6143,7 +6218,12 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       // reconcile call inside batchSettled, not as a JSON column write.
       // Primary MAC: hardware-truth entries (Intune/agent/vCenter NICs) win
       // over sightings — see selectPrimaryMac.
-      const dhcpPrimaryMac = selectPrimaryMac(macList) ?? macList[0].mac;
+      // A refused hostname-only sighting keeps the asset's current primary;
+      // selectPrimaryMac passes over unverified entries, so the claimant's MAC
+      // is primary only on an asset that had no MAC at all (rule 91(b)).
+      const dhcpPrimaryMac = (adoptRefused && asset.macAddress)
+        ? asset.macAddress
+        : selectPrimaryMac(macList) ?? macList[0].mac;
       const updateData: Record<string, unknown> = {
         macAddress: dhcpPrimaryMac,
         // A live lease must not pull a maintenance-window asset back to
@@ -6200,7 +6280,10 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           if (asset.hostname && res.hostname !== asset.hostname) {
             resUpdate.hostname = asset.hostname;
           }
-          if (asset.assignedTo && res.owner !== asset.assignedTo && macChanged) {
+          // Not on a refused hostname-only sighting (rule 91(b)): the lease's
+          // holder is not shown to be the asset's device, so it must not be
+          // stamped with the asset's owner.
+          if (asset.assignedTo && res.owner !== asset.assignedTo && macChanged && !adoptRefused) {
             resUpdate.owner = asset.assignedTo;
           }
           // A row Polaris pushed to a gate is NOT ours to rewrite here: this is
@@ -6405,9 +6488,22 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
 
       // In-memory asset lookup. Inventory IPs are the device's last-seen DHCP
       // IP, so they recycle just like lease IPs — skip the IP fallback.
-      const existingAsset = normalizedMac
-        ? assetIdx.findByEntry(inv.macAddress, inv.hostname, inv.ipAddress, { allowIpFallback: false })
-        : assetIdx.findByEntry(undefined, inv.hostname, inv.ipAddress, { allowIpFallback: false });
+      const invMatch = normalizedMac
+        ? assetIdx.findByEntryWithRung(inv.macAddress, inv.hostname, inv.ipAddress, { allowIpFallback: false })
+        : assetIdx.findByEntryWithRung(undefined, inv.hostname, inv.ipAddress, { allowIpFallback: false });
+      const existingAsset = invMatch?.asset;
+      // Business rule 91(b) (re-scan F2) — the same guard as the Phase 6 lease
+      // path: the row's hostname is the client's own claim, so on a protected
+      // asset a hostname-only match records the MAC as an unverified sighting
+      // and keeps presence, but writes nothing location- or identity-shaped:
+      // no ipAddress / ipSource / learnedLocation, no address claim or address
+      // list row, no primary MAC, no switch/AP attribution or endpoint gate,
+      // no fortigate-endpoint source, and no OS / vendor / type / user
+      // fingerprint taken from the claimant.
+      const invAdoptRefused = !!existingAsset && hostnameAdoptRefused(existingAsset, invMatch?.rung);
+      if (invAdoptRefused) {
+        noteHostnameAdoptRefused(existingAsset, normalizedMac, inv.ipAddress, inv.hostname, "device-inventory", inv.device);
+      }
 
       const switchConn = inv.switchName
         ? (inv.switchPort ? `${inv.switchName}/port${inv.switchPort}` : inv.switchName)
@@ -6430,7 +6526,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       // attribution on the row, or an ARP binding on the same gate this run.
       // Non-local rows still contribute what they truly know: presence,
       // OS/vendor fingerprints, the user sighting.
-      const invIsLocal = inventorySightingIsLocal(inv, arpMacDeviceIndex);
+      // A refused hostname-only match (rule 91(b), above) locates nothing.
+      const invIsLocal = inventorySightingIsLocal(inv, arpMacDeviceIndex) && !invAdoptRefused;
 
       if (existingAsset) {
         const invIsFortinetInfra = existingAsset.assetType === "firewall"
@@ -6532,16 +6629,20 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         // (`invIsFortinetInfra` is defined above the lastSeen bump — this
         // os-write skip deliberately keys on assetType alone, unlike the
         // topology-qualified presence guard.)
-        if (inv.os && !existingAsset.os && !invIsFortinetInfra) updateData.os = inv.os;
-        if (inv.os && (existingAsset as any).assetType === "other") {
-          const inferred = inferAssetTypeFromOs(inv.os);
-          if (inferred !== "other") updateData.assetType = inferred;
+        // A refused hostname-only match (rule 91(b)) fingerprints nothing: the
+        // OS / vendor / type / switch-port / AP describe the claimant.
+        if (!invAdoptRefused) {
+          if (inv.os && !existingAsset.os && !invIsFortinetInfra) updateData.os = inv.os;
+          if (inv.os && (existingAsset as any).assetType === "other") {
+            const inferred = inferAssetTypeFromOs(inv.os);
+            if (inferred !== "other") updateData.assetType = inferred;
+          }
+          if (inv.osVersion && !invIsFortinetInfra) updateData.osVersion = inv.osVersion;
+          if (inv.hardwareVendor && !existingAsset.manufacturer) updateData.manufacturer = inv.hardwareVendor;
+          if (inv.device && !existingAsset.learnedLocation && invIsLocal) updateData.learnedLocation = inv.device;
+          if (switchConn) updateData.lastSeenSwitch = switchConn;
+          if (apConn) updateData.lastSeenAp = apConn;
         }
-        if (inv.osVersion && !invIsFortinetInfra) updateData.osVersion = inv.osVersion;
-        if (inv.hardwareVendor && !existingAsset.manufacturer) updateData.manufacturer = inv.hardwareVendor;
-        if (inv.device && !existingAsset.learnedLocation && invIsLocal) updateData.learnedLocation = inv.device;
-        if (switchConn) updateData.lastSeenSwitch = switchConn;
-        if (apConn) updateData.lastSeenAp = apConn;
         // Baseline BEFORE the Object.assign below mutates existingAsset. The
         // os/osVersion half is skipped for Fortinet infra — those never reach
         // this branch's staged writes (guarded above) and their firmware event
@@ -6555,7 +6656,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           if (touched.length) noteChangeBaseline(existingAsset, touched);
         }
 
-        if (inv.user) {
+        if (inv.user && !invAdoptRefused) {
           const userList: Array<{user: string; domain?: string; lastSeen: string; source: string}> = Array.isArray(existingAsset.associatedUsers) ? [...(existingAsset.associatedUsers as any)] : [];
           const parts = inv.user.includes("\\") ? inv.user.split("\\") : [null, inv.user];
           const domain = parts[0] || undefined;
@@ -6586,19 +6687,23 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
               existingMac.lastSeen = invSeenAt.toISOString();
             }
             // A sighting must not relabel a hardware-truth entry — the source
-            // keeps the entry eligible as primary (selectPrimaryMac).
-            if (!isHardwareMacSource(existingMac.source)) existingMac.source = "device-inventory";
+            // keeps the entry eligible as primary (selectPrimaryMac) — and a
+            // refused one must not launder an unverified entry (rule 91(b)).
+            if (!invAdoptRefused && !isHardwareMacSource(existingMac.source)) existingMac.source = "device-inventory";
             if (inv.device && invIsLocal) existingMac.device = inv.device;
           } else {
             macList.push({
               mac: normalizedMac,
               lastSeen: invSeenValid ? invSeenAt.toISOString() : now,
-              source: "device-inventory",
+              source: invAdoptRefused ? UNVERIFIED_HOSTNAME_MAC_SOURCE : "device-inventory",
               ...(inv.device && invIsLocal ? { device: inv.device } : {}),
             });
           }
           macList.sort((a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime());
-          updateData.macAddress = selectPrimaryMac(macList) ?? macList[0].mac;
+          // Rule 91(b): a refused sighting keeps the current primary.
+          updateData.macAddress = (invAdoptRefused && existingAsset.macAddress)
+            ? existingAsset.macAddress
+            : selectPrimaryMac(macList) ?? macList[0].mac;
           // Update in-memory `existingAsset.macAddresses` for downstream sync
           // phases that read it before the next pre-load. Side-table reconcile
           // happens after the asset.update lands.
@@ -6644,7 +6749,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
               // sighting (it is two queries each).
               pendingInvMacs.set(existingAsset.id, macListForReconcile);
             }
-            if (existingAsset.assetType !== "firewall" && existingAsset.assetType !== "switch" && existingAsset.assetType !== "access_point") {
+            if (!invAdoptRefused && existingAsset.assetType !== "firewall" && existingAsset.assetType !== "switch" && existingAsset.assetType !== "access_point") {
               fortigateEndpointAssetIds.add(existingAsset.id);
               // Name the endpoint gate only from a LOCAL sighting, and only
               // when it's strictly fresher than whatever named the gate so far
@@ -6758,6 +6863,11 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     if (pendingInvMacs.size > 0) {
       await batchSettled([...pendingInvMacs], ([assetId, macs]) => reconcileMacAddresses(assetId, macs));
     }
+  }
+
+  // Business rule 91(b): the warnings Phases 6 and 7 collected, in one write.
+  if (hostnameAdoptRefusedEvents.length > 0) {
+    await logEventsBatch(hostnameAdoptRefusedEvents);
   }
 
   // ══════════════════════════════════════════════════════════════════════════════

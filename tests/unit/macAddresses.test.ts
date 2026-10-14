@@ -13,6 +13,8 @@ import {
   buildMacRowsForCreate,
   isHardwareMacSource,
   HARDWARE_MAC_SOURCES,
+  UNVERIFIED_HOSTNAME_MAC_SOURCE,
+  isUnverifiedMacSource,
 } from "../../src/utils/macAddresses.js";
 
 const entry = (mac: string, source: string, lastSeen: string, macEnd?: string) => ({
@@ -96,6 +98,26 @@ describe("selectPrimaryMac", () => {
       entry("AA:AA:AA:AA:AA:01", "dhcp-lease", "2026-08-01T00:00:00.000Z"),
     ])).toBe("AA:AA:AA:AA:AA:01");
     expect(selectPrimaryMac([entry("00-00-00-00-00-00", "dhcp-lease", "2026-08-22T00:00:00.000Z")])).toBeNull();
+  });
+
+  it("an unverified hostname-only sighting is never primary while anything else is usable (rule 91(b))", () => {
+    expect(selectPrimaryMac([
+      entry("EE:EE:EE:EE:EE:01", UNVERIFIED_HOSTNAME_MAC_SOURCE, "2026-10-14T00:00:00.000Z"),
+      entry("AA:AA:AA:AA:AA:01", "dhcp-lease", "2026-08-01T00:00:00.000Z"),
+    ])).toBe("AA:AA:AA:AA:AA:01");
+    // ...but an asset with no other MAC still gets one.
+    expect(selectPrimaryMac([
+      entry("EE:EE:EE:EE:EE:01", UNVERIFIED_HOSTNAME_MAC_SOURCE, "2026-10-14T00:00:00.000Z"),
+    ])).toBe("EE:EE:EE:EE:EE:01");
+  });
+});
+
+describe("isUnverifiedMacSource", () => {
+  it("matches only the rule 91(b) marker", () => {
+    expect(isUnverifiedMacSource(UNVERIFIED_HOSTNAME_MAC_SOURCE)).toBe(true);
+    for (const s of ["dhcp-lease", "device-inventory", "intune-wifi", "", null, undefined]) {
+      expect(isUnverifiedMacSource(s as any)).toBe(false);
+    }
   });
 });
 
