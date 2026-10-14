@@ -17,11 +17,11 @@ The modal has two tabs, **General** and **Monitoring**.
 | Field | Default | |
 |---|---|---|
 | Host | — | the DHCP server |
-| Port | **5985** | 5986 when Use SSL is on |
+| Port | **5986** | 5985 when Use SSL is off |
 | Username | — | |
 | Password | — | secret |
 | Domain | — | optional; sent as `DOMAIN\username`. Leave empty for a local account |
-| **Use SSL** | off | HTTPS on 5986 |
+| **Use SSL** | **on** | HTTPS on 5986. Integrations created before 2026-10-14 keep plain HTTP until you change them |
 | Enabled | on | |
 | Auto-Discovery Interval | **4 hours** | 1–24 |
 | Include / Exclude Scopes | — | scope filters, one per line |
@@ -42,8 +42,10 @@ have nothing to act on.
 
 - **WinRM** must be enabled and reachable, and must accept **Basic
   authentication** — that is how Polaris authenticates. Over plain HTTP (5985)
-  that also means allowing unencrypted traffic, which is the reason to prefer
-  **Use SSL**.
+  that also means allowing unencrypted traffic and sending the password in
+  the clear, which is why new integrations default to **Use SSL** and the
+  capacity card warns (`winrm_cleartext_password`) about any enabled one
+  without it.
 - With Use SSL on, the server's certificate must be **trusted by the Polaris
   host**; there is no skip-verification option on this type.
 - The account must be able to run `Get-DhcpServerv4Scope` remotely — typically
