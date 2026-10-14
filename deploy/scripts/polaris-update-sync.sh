@@ -216,6 +216,7 @@ PENDING_DIR=/var/lib/polaris-update-sync
 PENDING_FILE="$PENDING_DIR/pending"
 PENDING=()
 APPLIED_UNIT=0
+HA_INSTALL=0
 
 root_helper() {   # root_helper <src> <dest> <mode> [validator [arg]]
   local snap sum
@@ -249,21 +250,42 @@ root_helper() {   # root_helper <src> <dest> <mode> [validator [arg]]
   fi
 }
 
+# The polaris-ha sudoers entry: whatever visudo accepts, shown and asked about
+# like any root helper (its grant is reviewed by the administrator, not here).
+visudo_ok() {
+  visudo -cqf "$1" >/dev/null 2>&1 || { refuse "$1: visudo -c failed"; return 1; }
+}
+
 root_helpers() {
   root_helper "$SRC/scripts/polaris-nginx-apply.sh" /usr/local/sbin/polaris-nginx-apply 0755
   root_helper "$SRC/scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync 0755
+  # The manual updater runs as root, so the copy an administrator runs is a
+  # root helper too (business rule 117(n)): deploy/update-linux.sh in the tree
+  # hands over to this reviewed copy. Offered on every host.
+  root_helper "$SRC/update-linux.sh" /usr/local/sbin/polaris-update-linux 0755
   [[ -d /etc/polkit-1/rules.d ]] && root_helper "$SRC/polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules 0644
-  if [[ -f /etc/polaris/ha-node ]]; then
-    # Refresh-only-if-present: setup-rhel-ha.sh decides which a node gets.
-    local pair src dst
+  if [[ -f /etc/polaris/ha-node || $HA_INSTALL -eq 1 ]]; then
+    # Refresh-only-if-present on an HA node's sync / --apply-helpers:
+    # setup-rhel-ha.sh decides which a node gets. Under `--install --ha` —
+    # run BY setup-rhel-ha.sh on a database node — each is offered even when
+    # missing. polaris-ha-setup (the reviewed copy of setup-rhel-ha.sh) is
+    # offered on every HA node.
+    local pair src dst mode check
     for pair in \
-      "ha/polaris-ha-role.sh|/usr/local/sbin/polaris-ha-role|0755" \
-      "ha/polaris-ha-ssh-wrapper.sh|/usr/local/sbin/polaris-ha-ssh-wrapper|0755" \
-      "ha/polaris-ha-role.service|$UNIT_DIR/polaris-ha-role.service|0644" \
-      "ha/polaris-ha-role.timer|$UNIT_DIR/polaris-ha-role.timer|0644" \
-      "ha/patroni.service.d/10-polaris.conf|$UNIT_DIR/patroni.service.d/10-polaris.conf|0644"; do
-      IFS='|' read -r src dst mode <<< "$pair"
-      [[ -f "$dst" ]] && root_helper "$SRC/$src" "$dst" "$mode"
+      "ha/polaris-ha-role.sh|/usr/local/sbin/polaris-ha-role|0755|" \
+      "ha/polaris-ha-ssh-wrapper.sh|/usr/local/sbin/polaris-ha-ssh-wrapper|0755|" \
+      "ha/polaris-ha-role.service|$UNIT_DIR/polaris-ha-role.service|0644|" \
+      "ha/polaris-ha-role.timer|$UNIT_DIR/polaris-ha-role.timer|0644|" \
+      "ha/patroni.service.d/10-polaris.conf|$UNIT_DIR/patroni.service.d/10-polaris.conf|0644|" \
+      "ha/patroni-callback.sh|/usr/local/sbin/polaris-patroni-callback|0755|" \
+      "ha/sudoers.d/polaris-ha|/etc/sudoers.d/polaris-ha|0440|visudo_ok" \
+      "ha/ha-rsync-exclude|/etc/polaris/ha-rsync-exclude|0644|" \
+      "ha/setup-rhel-ha.sh|/usr/local/sbin/polaris-ha-setup|0755|"; do
+      IFS='|' read -r src dst mode check <<< "$pair"
+      if [[ $HA_INSTALL -eq 1 || -f "$dst" || "$dst" == /usr/local/sbin/polaris-ha-setup ]]; then
+        [[ $HA_INSTALL -eq 1 ]] && install -d -o root -g root -m 0755 "$(dirname "$dst")"
+        if [[ -n "$check" ]]; then root_helper "$SRC/$src" "$dst" "$mode" "$check"; else root_helper "$SRC/$src" "$dst" "$mode"; fi
+      fi
     done
   fi
 }
@@ -360,14 +382,24 @@ sync_unit_files() {
 #                         the same review rather than a root `cp`.
 MODE=sync
 ASSUME_YES=0
+HA_INSTALL=0
 for a in "$@"; do
   case "$a" in
     --apply-helpers) MODE=apply ;;
     --install) MODE=install ;;
+    --ha) HA_INSTALL=1 ;;
     --yes) ASSUME_YES=1 ;;
-    *) echo "usage: polaris-update-sync [--apply-helpers [--yes] | --install [--yes]]" >&2; exit 2 ;;
+    *) echo "usage: polaris-update-sync [--apply-helpers [--yes] | --install [--ha] [--yes]]" >&2; exit 2 ;;
   esac
 done
+#   --install --ha        run by deploy/ha/setup-rhel-ha.sh on a database node
+#                         whose tree it cannot trust (business rule 117(n)):
+#                         also offers every HA root file even where it is not
+#                         installed yet, and lays down the app units' HA
+#                         drop-ins (content-checked).
+if [[ $HA_INSTALL -eq 1 && "$MODE" != install ]]; then
+  echo "polaris-update-sync: --ha goes with --install" >&2; exit 2
+fi
 if [[ "$MODE" != sync && "$(id -u)" -ne 0 ]]; then
   echo "polaris-update-sync --$MODE must run as root (sudo)." >&2; exit 1
 fi
@@ -388,6 +420,12 @@ if [[ "$MODE" == install ]]; then
   install -d -o root -g root -m 0755 "$UNIT_DIR/polaris-web.service.d"
   install_if_changed "$SRC/nginx/polaris-nginx-dependency.conf" "$UNIT_DIR/polaris-web.service.d/nginx-dependency.conf" 0644 unit_ok dropin || true
   install_if_changed "$SRC/polaris-update-sync.service" "$UNIT_DIR/polaris-update-sync.service" 0644 self_unit_ok || true
+  if [[ $HA_INSTALL -eq 1 ]]; then
+    for u in polaris-web polaris-monitor@ polaris-discovery polaris-dash polaris-migrate; do
+      install -d -o root -g root -m 0755 "$UNIT_DIR/$u.service.d"
+      install_if_changed "$SRC/ha/dropins/$u.service.d/10-ha.conf" "$UNIT_DIR/$u.service.d/10-ha.conf" 0644 unit_ok dropin || true
+    done
+  fi
   install -d -o root -g root -m 0755 /etc/polkit-1/rules.d
   root_helpers
   write_pending
