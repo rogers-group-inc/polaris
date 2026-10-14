@@ -970,6 +970,12 @@ Clients Polaris could not file under any broadcast SSID are listed at the bottom
 under *Not matched to a broadcast SSID* rather than dropped — usually radios and
 stations scraped a cycle apart.
 
+A **filter box** above the tree matches a client's MAC, IP, SSID, BSSID or
+matched hostname. A radio or SSID that matches by name keeps everything under
+it; otherwise only the clients that match are shown, under their own radio and
+SSID, with every radio the filter kept opened even if you had collapsed it. The
+filter stays put across **Refresh**.
+
 An AP whose radio inventory has not arrived yet falls back to a flat client
 table, so the tab never reads as empty while discovery fills it in. Radios and
 their SSIDs come from the discovery run against the controlling FortiGate;
@@ -995,6 +1001,12 @@ Entries on ports Polaris could not resolve to an interface are **hidden behind a
 count and a Show link**, not dropped. On a FortiSwitch these are the trunk/LAG
 pseudo-ports, which publish no port-to-interface mapping, so every address
 behind a trunk lands there unattributable and would swamp the real per-port rows.
+
+A **filter box**, like the ARP Table's, matches a MAC, interface name, VLAN,
+status or matched hostname, and the count in the heading becomes *N of M
+entries*. It filters whatever is shown, so the unresolved-port entries are only
+searched once you have clicked **Show**. The filter stays put across
+**Refresh**.
 
 This is collected over SNMP on the system-info cadence. **A switch polled
 through its parent FortiGate reports none** — the empty state says so, and tells

@@ -9963,20 +9963,73 @@ function _wirelessVapRow(vn, key, hidden, isLast) {
   '</tr>';
 }
 
+// Per-asset filter text, keyed by asset id like the ARP Table tab's, so a
+// Refresh (or the panel history landing back on this AP) keeps the filter.
+var _assetWirelessFilter = {};
+
+function _wirelessHaystackHas(parts, filter) {
+  return parts.join(" ").toLowerCase().indexOf(filter) !== -1;
+}
+
+/** Substring match across every identifying field of one client. */
+function _wirelessStationMatches(s, filter) {
+  if (!filter) return true;
+  var m = s.matchedAsset || {};
+  return _wirelessHaystackHas([
+    s.staMacAddr, s.staIpAddr, s.bssid, s.ssid, m.hostname, m.ipAddress,
+  ], filter);
+}
+
+/**
+ * Narrow a built tree to `filter`. A radio or SSID that matches in its own
+ * right keeps everything under it (filtering on an SSID name means "show me
+ * that SSID", not "show me the clients whose own fields spell it"); otherwise
+ * it survives only when a client beneath it matches, carrying just those.
+ */
+function _filterWirelessTree(tree, filter) {
+  var radios = tree.radios.map(function (rn) {
+    var r = rn.radio;
+    if (_wirelessHaystackHas(["radio " + r.radioIndex, r.baseBssid], filter)) return rn;
+    var vaps = rn.vaps.map(function (vn) {
+      var v = vn.vap;
+      if (_wirelessHaystackHas([v.ssid, v.vapName, v.bssid,
+          v.vlanId != null ? "vlan " + v.vlanId : ""], filter)) return vn;
+      var hits = vn.stations.filter(function (s) { return _wirelessStationMatches(s, filter); });
+      return hits.length ? { vap: v, stations: hits } : null;
+    }).filter(Boolean);
+    return vaps.length ? { radio: r, vaps: vaps } : null;
+  }).filter(Boolean);
+  return {
+    radios: radios,
+    unplaced: tree.unplaced.filter(function (s) { return _wirelessStationMatches(s, filter); }),
+  };
+}
+
 /**
  * Render the radio → SSID → client tree. Expand/collapse mirrors the System
  * tab's interface tree — a ▼/▶ toggle on the parent row, children carrying
  * data-parent — and the collapsed set persists per user per asset through the
  * same helper under its own "wireless" scope.
  */
-function _renderWirelessTree(container, radios, stations, asset, si) {
+function _renderWirelessTree(container, radios, stations, asset, filter) {
   var tree = _buildWirelessTree(radios, stations);
+  // Filtered AFTER the tree is built, so a client is still filed under the
+  // SSID it joined — filtering first would leave BSSID matching unchanged but
+  // make the counts on the radio and SSID rows describe the filtered list.
+  if (filter) tree = _filterWirelessTree(tree, filter);
   var collapsed = _getCollapsedIfaces(asset && asset.id, "wireless");
   var rows = "";
 
+  if (filter && tree.radios.length === 0 && tree.unplaced.length === 0) {
+    container.innerHTML = '<div class="empty-state">No radios, SSIDs or clients match that filter.</div>';
+    return;
+  }
+
   tree.radios.forEach(function (rn) {
     var key = "radio-" + rn.radio.radioIndex;
-    var isCollapsed = collapsed.has(key);
+    // A filter opens every radio it kept: a match hidden under a collapsed
+    // radio reads as no match at all.
+    var isCollapsed = !filter && collapsed.has(key);
     var hidden = isCollapsed ? ' style="display:none"' : "";
     rows += _wirelessRadioRow(rn, key, isCollapsed);
     if (rn.vaps.length === 0) {
@@ -10010,8 +10063,7 @@ function _renderWirelessTree(container, radios, stations, asset, si) {
     });
   }
 
-  var staleBanner = _staleBannerHTML(asset && asset.id, asset, "systemInfo", si && si.lastSystemInfoAt);
-  container.innerHTML = _wirelessStripHTML(asset, si) + staleBanner +
+  container.innerHTML =
     '<div class="table-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
       '<th>Radio / SSID / Client</th>' +
       '<th>BSSID</th>' +
@@ -10119,16 +10171,7 @@ function _renderWirelessStationsCard(container, si, asset) {
       return _reloadWirelessStations(assetId, asset);
     });
   }
-  // With radio inventory, the clients hang off the SSID they joined on the
-  // radio broadcasting it. Without it — discovery has not run since the
-  // feature shipped, or this AP is not controller-managed — fall back to the
-  // flat list below so the tab never regresses to empty while it fills in.
-  if (radios.length > 0) {
-    _renderWirelessTree(container, radios, stations, asset, si);
-    wireStrip();
-    return;
-  }
-  if (stations.length === 0) {
+  if (radios.length === 0 && stations.length === 0) {
     var pollingLabel = _assetMonitorStreamSource(asset, "interfaces").polling || "the configured transport";
     container.innerHTML = _wirelessStripHTML(asset, si) +
       '<p class="empty-state" style="padding:1rem 0">' +
@@ -10140,6 +10183,54 @@ function _renderWirelessStationsCard(container, si, asset) {
     wireStrip();
     return;
   }
+  // The shell (strip + stale banner + filter box) renders ONCE and only the
+  // table below it re-renders as the operator types — the ARP Table tab's
+  // arrangement, for the same reason: rebuilding the input being typed into
+  // loses the caret.
+  var filter = _assetWirelessFilter[assetId] || "";
+  var staleBanner = _staleBannerHTML(assetId, asset, "systemInfo", si && si.lastSystemInfoAt);
+  container.innerHTML = _wirelessStripHTML(asset, si) + staleBanner +
+    '<div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin:0 0 0.5rem">' +
+      '<input type="text" id="asset-wireless-filter" class="form-input" ' +
+        'placeholder="Filter by MAC, IP, SSID, BSSID or hostname" ' +
+        'style="max-width:22rem;font-size:0.82rem;flex:1 1 14rem" value="' + escapeHtml(filter) + '">' +
+      '<span id="asset-wireless-counts" style="font-size:0.82rem;color:var(--color-text-secondary)"></span>' +
+    '</div>' +
+    '<div id="asset-wireless-body"></div>';
+  var bodyEl = container.querySelector("#asset-wireless-body");
+  var countsEl = container.querySelector("#asset-wireless-counts");
+
+  function renderBody() {
+    if (countsEl) {
+      var shown = filter ? stations.filter(function (s) { return _wirelessStationMatches(s, filter); }).length : 0;
+      countsEl.textContent = filter
+        ? shown + " of " + stations.length + " client" + (stations.length === 1 ? "" : "s") + " match"
+        : "";
+    }
+    // With radio inventory, the clients hang off the SSID they joined on the
+    // radio broadcasting it. Without it — discovery has not run since the
+    // feature shipped, or this AP is not controller-managed — fall back to the
+    // flat list so the tab never regresses to empty while it fills in.
+    if (radios.length > 0) _renderWirelessTree(bodyEl, radios, stations, asset, filter);
+    else _renderWirelessFlatTable(bodyEl, stations, asset, filter);
+  }
+
+  var box = container.querySelector("#asset-wireless-filter");
+  if (box) {
+    // Debounced like the ARP box: a busy AP's client list re-renders whole.
+    box.addEventListener("input", debounce(function () {
+      filter = box.value.trim().toLowerCase();
+      _assetWirelessFilter[assetId] = filter;
+      renderBody();
+    }, 150));
+  }
+  renderBody();
+  wireStrip();
+}
+
+// The flat client list — the Wireless tab's fallback when the AP has no radio
+// inventory yet. `filter` is already lower-cased.
+function _renderWirelessFlatTable(container, stations, asset, filter) {
   // Stable sort: SSID → MAC. Same order the backend returns, but
   // re-establishing here lets the function stand on its own.
   stations.sort(function (a, b) {
@@ -10147,7 +10238,12 @@ function _renderWirelessStationsCard(container, si, asset) {
     if (sa !== sb) return sa.localeCompare(sb);
     return String(a.staMacAddr).localeCompare(String(b.staMacAddr));
   });
-  var rows = stations.map(function (s) {
+  var shown = stations.filter(function (s) { return _wirelessStationMatches(s, filter); });
+  if (shown.length === 0) {
+    container.innerHTML = '<div class="empty-state">No clients match that filter.</div>';
+    return;
+  }
+  var rows = shown.map(function (s) {
     var endpointHtml;
     if (s.matchedAsset && s.matchedAsset.id) {
       endpointHtml = '<a href="#" class="asset-station-link" data-asset-id="' + escapeHtml(s.matchedAsset.id) +
@@ -10168,8 +10264,7 @@ function _renderWirelessStationsCard(container, si, asset) {
       '<td style="text-align:right">' + escapeHtml(signalLabel) + '</td>' +
     '</tr>';
   }).join("");
-  var staleBanner = _staleBannerHTML(asset && asset.id, asset, "systemInfo", si && si.lastSystemInfoAt);
-  container.innerHTML = _wirelessStripHTML(asset, si) + staleBanner +
+  container.innerHTML =
     '<div class="table-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
       '<th data-col-id="ssid">SSID</th>' +
       '<th data-col-id="mac" data-col-required="true">MAC</th>' +
@@ -10193,7 +10288,6 @@ function _renderWirelessStationsCard(container, si, asset) {
       if (linkedId) openViewModal(linkedId);
     });
   });
-  wireStrip();
 }
 
 // ─── Custom MIB tab (Slice 7) ────────────────────────────────────────────
@@ -25542,6 +25636,10 @@ async function bulkSetMonitoring(monitored) {
 // per-port MAC counts (which distinguish an access port from an uplink at a
 // glance) and the entry list itself.
 
+// Per-asset filter text, keyed by asset id like the ARP Table tab's, so the
+// strip's Refresh (a full re-fetch) keeps the operator's filter.
+var _assetMacFilter = {};
+
 function _assetMacTableTabHTML(assetId) {
   return '<div id="asset-mactable-mount-' + escapeHtml(assetId) + '">' +
     '<span class="empty-state">Loading…</span></div>';
@@ -25641,28 +25739,79 @@ async function _loadAssetMacTable(assetId) {
     var attributed   = entries.filter(function (e) { return !!e.ifName; });
     var unattributed = entries.filter(function (e) { return !e.ifName; });
     var showUnattributed = false;
+    var filter = _assetMacFilter[assetId] || "";
+    var countsId = "mactable-counts-" + assetId;
+    var noteId   = "mactable-note-" + assetId;
+    var bodyId   = "mactable-body-" + assetId;
+
+    // Substring match across every identifying field — the ARP Table box's
+    // rule, so "where is that MAC", "what is on port 32" and "which port is
+    // PRINTER-4 on" are all one box. The interface name is the group key for
+    // an unresolved row too, so "base port 32768" finds the trunk's entries.
+    function matches(e) {
+      if (!filter) return true;
+      var hay = [
+        e.macAddress, e.ifName || ("base port " + (e.basePort != null ? e.basePort : "?")),
+        e.vlanId != null ? "vlan " + e.vlanId : "", e.status || "",
+        e.matchedAsset ? (e.matchedAsset.hostname || "") : "",
+        e.matchedAsset ? (e.matchedAsset.ipAddress || "") : "",
+      ].join(" ").toLowerCase();
+      return hay.indexOf(filter) !== -1;
+    }
+
+    // The shell (strip + filter box) renders ONCE and only the counts, the
+    // unresolved-port note and the table re-render as the operator types —
+    // the ARP Table tab's arrangement; rebuilding the box loses the caret.
+    function render() {
+      mount.innerHTML =
+        stripHTML('<span id="' + countsId + '" style="font-weight:400;color:var(--color-text-secondary)"></span>') +
+        '<div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin:0 0 0.5rem">' +
+          '<input type="text" id="mactable-filter-' + escapeHtml(assetId) + '" class="form-input" ' +
+            'placeholder="Filter by MAC, interface, VLAN or hostname" ' +
+            'style="max-width:22rem;font-size:0.82rem;flex:1 1 14rem" value="' + escapeHtml(filter) + '">' +
+        '</div>' +
+        '<div id="' + noteId + '"></div>' +
+        '<div id="' + bodyId + '"></div>';
+      wireStrip();
+      var box = document.getElementById("mactable-filter-" + assetId);
+      if (box) {
+        // Debounced like the ARP box: a core switch's table runs to thousands.
+        box.addEventListener("input", debounce(function () {
+          filter = box.value.trim().toLowerCase();
+          _assetMacFilter[assetId] = filter;
+          renderTable();
+        }, 150));
+      }
+      renderTable();
+    }
 
     function renderTable() {
-      var shown  = showUnattributed ? attributed.concat(unattributed) : attributed;
+      var pool   = showUnattributed ? attributed.concat(unattributed) : attributed;
+      var shown  = pool.filter(matches);
       var groups = groupsFrom(shown);
-      var note = unattributed.length === 0 ? "" :
-        '<div style="margin:0 0 0.5rem;font-size:0.82rem;color:var(--color-text-secondary)">' +
-          unattributed.length + ' entr' + (unattributed.length === 1 ? "y" : "ies") +
-          ' on ports Polaris could not resolve (trunk / LAG pseudo-ports). ' +
-          '<button type="button" class="mactable-toggle-link" id="mactable-toggle-' + assetId + '">' +
-            (showUnattributed ? "Hide" : "Show") +
-          '</button>' +
-        '</div>';
-      var body = groups.length === 0
-        ? '<div class="empty-state">No entries on a resolved port.</div>'
+      var counts = document.getElementById(countsId);
+      if (counts) {
+        counts.textContent = '(' + shown.length + (filter ? " of " + pool.length : "") +
+          ' entries on ' + groups.length + ' interface' + (groups.length === 1 ? "" : "s") + ')';
+      }
+      var noteEl = document.getElementById(noteId);
+      if (noteEl) {
+        noteEl.innerHTML = unattributed.length === 0 ? "" :
+          '<div style="margin:0 0 0.5rem;font-size:0.82rem;color:var(--color-text-secondary)">' +
+            unattributed.length + ' entr' + (unattributed.length === 1 ? "y" : "ies") +
+            ' on ports Polaris could not resolve (trunk / LAG pseudo-ports). ' +
+            '<button type="button" class="mactable-toggle-link" id="mactable-toggle-' + assetId + '">' +
+              (showUnattributed ? "Hide" : "Show") +
+            '</button>' +
+          '</div>';
+      }
+      var bodyEl = document.getElementById(bodyId);
+      if (!bodyEl) return;
+      bodyEl.innerHTML = groups.length === 0
+        ? '<div class="empty-state">' + (filter ? "No entries match that filter." : "No entries on a resolved port.") + '</div>'
         : '<div class="table-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
             '<th>Interface / MAC</th><th>VLAN</th><th>Status</th><th>Device</th>' +
           '</tr></thead><tbody>' + groups.map(groupHtml).join("") + '</tbody></table></div>';
-      mount.innerHTML =
-        stripHTML('<span style="font-weight:400;color:var(--color-text-secondary)">(' + shown.length +
-          ' entries on ' + groups.length + ' interface' + (groups.length === 1 ? "" : "s") + ')</span>') +
-        note + body;
-      wireStrip();
       var toggle = document.getElementById("mactable-toggle-" + assetId);
       if (toggle) toggle.addEventListener("click", function () {
         showUnattributed = !showUnattributed;
@@ -25672,7 +25821,7 @@ async function _loadAssetMacTable(assetId) {
       // The Device column's links had no listener anywhere until the ARP Table
       // tab arrived needing the same pivot — they rendered as anchors and did
       // nothing when clicked.
-      _wireAssetPivotLinks(mount);
+      _wireAssetPivotLinks(bodyEl);
     }
 
     function groupHtml(g) {
@@ -25730,7 +25879,7 @@ async function _loadAssetMacTable(assetId) {
       });
     }
 
-    renderTable();
+    render();
   } catch (err) {
     mount.innerHTML = '<span class="empty-state">Error: ' + escapeHtml(err.message || "failed to load") + '</span>';
   }
