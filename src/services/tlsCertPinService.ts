@@ -205,6 +205,48 @@ export async function listCertPins(): Promise<TlsCertPinRecord[]> {
   return [...rows.filter((r) => r.pendingFingerprint), ...rows.filter((r) => !r.pendingFingerprint)];
 }
 
+export interface CertPinUser {
+  assets: Array<{ id: string; hostname: string | null; ipAddress: string | null }>;
+  integrations: Array<{ id: string; name: string; type: string }>;
+}
+
+/**
+ * Every pin with what it belongs to (the Pinned server identities slide-over):
+ * the assets whose address or hostname is the pinned host, and the
+ * integrations whose configured host it is. A pin records the host:port Polaris
+ * DIALED, not an asset, so this is a lookup, not a relation — a FortiManager
+ * with no asset of its own lists only its integration, and a host nobody
+ * models lists nothing. Bounded: two indexed queries whatever the fleet size,
+ * and only id / name / address columns (never an integration's config secrets).
+ */
+export async function listCertPinsWithUsers(): Promise<Array<TlsCertPinRecord & CertPinUser>> {
+  const pins = await listCertPins();
+  if (!pins.length) return [];
+  const hosts = [...new Set(pins.map((p) => p.host))];
+  const [assets, integrations] = await Promise.all([
+    prisma.asset.findMany({
+      where: { OR: [{ ipAddress: { in: hosts } }, { hostname: { in: hosts, mode: "insensitive" } }] },
+      select: { id: true, hostname: true, ipAddress: true },
+      orderBy: { hostname: "asc" },
+      take: 500,
+    }),
+    prisma.integration.findMany({ select: { id: true, name: true, type: true, config: true } }),
+  ]);
+  return pins.map((p) => {
+    const host = p.host.toLowerCase();
+    return {
+      ...p,
+      assets: assets.filter((a) => a.ipAddress === p.host || (a.hostname ?? "").toLowerCase() === host),
+      integrations: integrations
+        .filter((i) => {
+          const cfgHost = (i.config as Record<string, unknown> | null)?.host;
+          return typeof cfgHost === "string" && cfgHost.trim().toLowerCase() === host;
+        })
+        .map((i) => ({ id: i.id, name: i.name, type: i.type })),
+    };
+  });
+}
+
 /** The pins for specific endpoints (an asset's Sources tab). Missing endpoints are simply absent. */
 export async function pinsForEndpoints(endpoints: Array<{ host: string; port: number }>): Promise<TlsCertPinRecord[]> {
   if (!endpoints.length) return [];

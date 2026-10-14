@@ -2250,8 +2250,8 @@ router.delete("/agents/ssh-host-keys/:id", requirePermission("serverSettingsSyst
 // same recovery: delete a pin to trust a legitimately re-issued certificate.
 router.get("/agents/tls-cert-pins", requirePermission("serverSettingsSystem", "read"), async (_req, res, next) => {
   try {
-    const { listCertPins } = await import("../../services/tlsCertPinService.js");
-    res.json({ certPins: await listCertPins() });
+    const { listCertPinsWithUsers } = await import("../../services/tlsCertPinService.js");
+    res.json({ certPins: await listCertPinsWithUsers() });
   } catch (err) { next(err); }
 });
 
