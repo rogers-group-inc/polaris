@@ -31,7 +31,7 @@ function varLine(name: string): string {
 
 const FNS = [
   "_assetAddressRows", "_addressMacKey", "primaryAddressMac", "_assetAddressPinnable", "primaryAddressPinHTML",
-  "formatAddressSource", "formatMacSource", "_addressIpLineHTML", "_addressGroupHTML", "addressesViewHTML",
+  "formatAddressSource", "formatMacSource", "_addressIpLineHTML", "_addressIpLinesHTML", "_addressGroupHTML", "addressesViewHTML",
   "macDeleteButtonHTML", "macEntryText", "macEntryCount", "macEntriesTotal", "ipViewRow", "ipCellHTML",
   "_confAge", "_confHours", "_addressConfidence", "_confidenceBreakdownHTML", "addressConfidenceChipHTML",
 ];
@@ -45,7 +45,7 @@ beforeAll(() => {
   g.assetHaInfo = () => null;
   // eslint-disable-next-line no-eval
   (0, eval)(
-    [varLine("_ADDRESS_GROUPS_VISIBLE"), varLine("_PIN_STALE_MS"), varLine("_CONF_BAND_LABEL"), ...FNS.map(fnSrc)].join("\n") +
+    [varLine("_ADDRESS_GROUPS_VISIBLE"), varLine("_ADDRESS_IPS_VISIBLE"), varLine("_PIN_STALE_MS"), varLine("_CONF_BAND_LABEL"), ...FNS.map(fnSrc)].join("\n") +
       "\n" + FNS.map((n) => `globalThis.${n} = ${n};`).join("\n"),
   );
 });
@@ -211,6 +211,42 @@ describe("Addresses row", () => {
     const group = [...el.querySelectorAll(".address-group")].find((gr) => (gr.textContent || "").includes(LOOSE))!;
     expect(group.textContent).toContain("Not on MAC list");
     expect(group.querySelector(".mac-tooltip-delete")).toBeNull();
+  });
+
+  it("draws three IPs per MAC and puts the rest behind a +N IPs hover that can still pin", () => {
+    const ips = Array.from({ length: 6 }, (_, i) => ({
+      ip: "10.1." + i + ".1", mac: ETH, source: "monitor-system-info", interfaceName: "port" + i,
+      lastSeen: new Date(Date.now() - i * 60_000).toISOString(),
+    }));
+    const el = render(g.addressesViewHTML(hmi({ ipAddress: "10.1.5.1", associatedIps: ips })));
+    const group = el.querySelector(".address-group")!;
+    const lines = [...group.querySelectorAll(":scope > .address-ip-line")];
+    expect(lines).toHaveLength(3);
+    // The primary leads even though it is the stalest row.
+    expect(lines[0]!.textContent).toContain("10.1.5.1");
+    expect(lines[0]!.querySelector(".address-primary-badge")).not.toBeNull();
+    const more = group.querySelector(".address-ip-more .mac-hover-trigger")!;
+    expect(more.querySelector(".mac-badge-count")!.textContent).toBe("+3 IPs");
+    const rows = [...more.querySelectorAll(".mac-tooltip-row")];
+    expect(rows.map((r) => r.querySelector(".mono")!.textContent)).toEqual(["10.1.2.1", "10.1.3.1", "10.1.4.1"]);
+    expect(rows[0]!.textContent).toContain("port2");
+    expect(rows[0]!.querySelector(".primary-address-set")!.getAttribute("data-ip")).toBe("10.1.2.1");
+    // The header still counts every IP.
+    expect(el.querySelector(".detail-label")!.textContent).toBe("Addresses (2 MACs, 6 IPs)");
+  });
+
+  it("caps the No MAC group the same way, primary first", () => {
+    const ips = Array.from({ length: 5 }, (_, i) => ({ ip: "10.2.0." + (i + 1), source: "manual", lastSeen: now }));
+    const el = render(g.addressesViewHTML(hmi({ ipAddress: "10.2.0.5", associatedIps: ips })));
+    const group = [...el.querySelectorAll(".address-group")].find((gr) => (gr.textContent || "").includes("No MAC"))!;
+    const lines = [...group.querySelectorAll(":scope > .address-ip-line")];
+    expect(lines).toHaveLength(3);
+    expect(lines[0]!.textContent).toContain("10.2.0.5");
+    expect(group.querySelector(".address-ip-more .mac-badge-count")!.textContent).toBe("+2 IPs");
+  });
+
+  it("draws no IP hover when a MAC has three or fewer", () => {
+    expect(render(g.addressesViewHTML(hmi())).querySelector(".address-ip-more")).toBeNull();
   });
 
   it("renders nothing for an asset with no MACs and no addresses", () => {

@@ -4486,6 +4486,8 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   white-space: nowrap;
 }
 .address-more { padding-top: 4px; display: flex; gap: 8px; flex-wrap: wrap; }
+.address-ip-more { padding: 2px 0 1px 16px; }
+.mac-tooltip-row .primary-address-set { padding: 0 6px; font-size: 0.68rem; white-space: nowrap; }
 .address-ip-cell { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 
 /* ─── Address confidence chip (business rule 103) ───────────────────────────
