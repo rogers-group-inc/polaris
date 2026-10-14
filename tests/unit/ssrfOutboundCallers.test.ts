@@ -14,6 +14,13 @@ import { sendWebhook } from "../../src/services/notificationChannels/webhookChan
 import { sendApiCall } from "../../src/services/notificationChannels/apiCallChannel.js";
 import { sendWebPush, generateVapidKeys } from "../../src/services/notificationChannels/webPushChannel.js";
 import { measureRtt } from "../../src/services/haService.js";
+// The channels send through utils/guardedFetch (undici + a connect-time netGuard
+// lookup, rule 110). These tests stub the global fetch, so route it there; the
+// connect-time guard itself is pinned in tests/unit/guardedFetch.test.ts.
+vi.mock("../../src/utils/guardedFetch.js", () => ({
+  guardedFetch: (url: string, init: unknown) => (globalThis.fetch as unknown as (u: string, i: unknown) => Promise<Response>)(url, init),
+  guardedDispatcher: () => null,
+}));
 
 function resolveTo(map: Record<string, string>): void {
   _setResolverForTests({

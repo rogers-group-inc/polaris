@@ -34,7 +34,7 @@ import { AppError } from "../../utils/errors.js";
 import { probeCredentialAgainstHost } from "../../services/monitoringService.js";
 import { isDeviceLoginCredential, type HttpAuthConfig, type HttpProbeDiagnostics } from "../../utils/httpCheck.js";
 import { normalizeProbeTarget } from "../../utils/probeTarget.js";
-import { resolveAllowedHost } from "../../utils/netGuard.js";
+import { resolveAllowedHost, guardedLookup } from "../../utils/netGuard.js";
 
 const router = Router();
 
@@ -190,6 +190,7 @@ router.post("/test", credentialTestLimiter, requireOwnership("credentials"), asy
     let asset: Awaited<ReturnType<typeof credentialService.getTestAssetTarget>> | null = null;
     let host: string | null | undefined;
     let hostSource: "asset" | "manual";
+    let typedHostLookup: import("node:net").LookupFunction | undefined;
 
     if (input.assetId) {
       hostSource = "asset";
@@ -219,7 +220,20 @@ router.post("/test", credentialTestLimiter, requireOwnership("credentials"), asy
       // refusal above.
       if (host) {
         try {
-          await resolveAllowedHost(host);
+          // Re-scan F58: the check must be what the probe connects to. A name
+          // that does not resolve now is refused (it used to be waved through
+          // and resolved again, unguarded, by the probe). SSH / SNMP / ICMP
+          // then dial the checked ADDRESS; `http` (which hands the response
+          // back) connects through guardedLookup, keeping the name for the
+          // Host header and TLS. WinRM keeps the name for its certificate
+          // check and is pinned (rule 113).
+          const checked = await resolveAllowedHost(host);
+          if (!checked) {
+            res.json({ success: false, responseTimeMs: 0, error: `${host} does not resolve. Check the name, or test against its address.`, host: null });
+            return;
+          }
+          if (input.type === "ssh" || input.type === "snmp") host = checked;
+          typedHostLookup = guardedLookup();
         } catch (err: any) {
           if (err?.code !== "BLOCKED_HOST") throw err;
           res.json({
@@ -312,7 +326,7 @@ router.post("/test", credentialTestLimiter, requireOwnership("credentials"), asy
     // a string the operator has to pick OUT of the response, and pass/fail
     // alone gives them nothing to pick from. Nothing else fills this.
     const probeOut: { diag?: HttpProbeDiagnostics } = {};
-    const result = await probeCredentialAgainstHost(host || "", input.type, config, probeOut, check);
+    const result = await probeCredentialAgainstHost(host || "", input.type, config, probeOut, check, typedHostLookup);
     // A typed target has no asset to name, so the host IS the label. Keeping the
     // asset's own label when there is one means the audit trail reads the same
     // as it always has for the inventory path.

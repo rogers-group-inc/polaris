@@ -13,6 +13,7 @@
 
 import { AppError } from "../../utils/errors.js";
 import { assertOutboundHostAllowed, resolveAllowedHost } from "../../utils/netGuard.js";
+import { guardedFetch } from "../../utils/guardedFetch.js";
 import { severityHex } from "../../utils/severityStyle.js";
 
 export type WebhookKind = "generic" | "slack" | "teams";
@@ -96,7 +97,9 @@ export async function sendWebhook(rawUrl: string, kind: WebhookKind, payload: We
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
-    const res = await fetch(rawUrl, {
+    // guardedFetch: the address is checked again on the connection itself
+    // (rule 110, re-scan F82) — the lookup above is only the early, readable refusal.
+    const res = await guardedFetch(rawUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(formatBody(kind, payload)),

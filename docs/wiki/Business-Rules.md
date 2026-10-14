@@ -2080,8 +2080,11 @@ not a spelling, a cookie that has outlived its owner, or a code already used.**
   *Allow loopback* box and the SMTP channel (a mail relay on the Polaris host) lift
   the block for loopback and nothing else.
 - **Credential Test Connection** refuses a typed host that is this machine or a
-  metadata address, and so does a REST API credential's base URL. Testing
-  against an asset is unchanged.
+  metadata address, and so does a REST API credential's base URL. A typed name
+  that does not resolve is refused, and the address is checked again when the
+  test connects. Testing against an asset is unchanged.
+- **Webhooks and API calls** are checked on the connection itself, so a name
+  that changes what it resolves to between the check and the send is refused.
 - **Web Push endpoints** must be `https` and may not point at this host or a
   metadata address.
 
@@ -2164,14 +2167,28 @@ different identity.
   instead.
 - **Firmware upgrades of Fortinet devices** — a factory certificate that names a
   different serial number than the asset's is refused before signing in.
+- **FortiGate and FortiManager** — with *Verify SSL* off, every request carrying
+  the API token (discovery, monitoring, pushes, and a FortiManager's direct
+  connections to each gate in proxy-bypass mode) goes only to the pinned
+  certificate. So do the REST API credential and HTTP checks that send a
+  password or token. A gate whose certificate changes stops being polled until
+  someone looks.
+- **After a firmware upgrade Polaris runs itself**, the device's new
+  certificate is pinned automatically. Any other certificate change needs a
+  person.
 - **Event archive export** — the archive server's SSH host key is pinned on
   first use. If an export fails, events are **not** pruned that hour, so nothing
   is deleted without a copy.
 
-A server that is legitimately rebuilt, re-keyed or given a new certificate is
-refused until its pin is deleted: **Server Settings → Polaris Agent → Windows
-SSH Deployment → Pinned server identities** for SSH keys and certificates, and
-**Forget host key** in the event archive settings for the archive server. Pins
+A server that presents a different certificate is listed first under **Server
+Settings → Web Server → Pinned server identities** (and on the Windows SSH
+Deployment card), with the pinned and the new SHA-256 side by side; the
+capacity card names it too. Compare the new one with the server and choose
+**Trust new certificate**, which pins exactly that certificate. Each
+FortiGate's **Sources** tab shows the certificates pinned for the connections
+its discovering integration makes — the FortiManager, and in proxy-bypass mode
+the gate itself. A host that was rebuilt can still have its pin deleted, and
+the archive server has **Forget host key** in the event archive settings. Pins
 belong to an address and port, so on DHCP space an address that moves to a
 different machine is refused until its pin is deleted. Trust on first use
 cannot detect a server that was already impersonated when Polaris first

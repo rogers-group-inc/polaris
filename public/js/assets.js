@@ -5636,9 +5636,10 @@ async function openViewModal(id, opts) {
     }
     // Sources tab — moved to the end so the operational tabs (Processes /
     // Quarantine / Events) come first; discovery-source provenance lives last.
-    tabs.push({ key: "sources", label: "Sources", html: _assetSourcesTabHTML(sources, a.id, sightings, ipHistory) });
+    tabs.push({ key: "sources", label: "Sources", html: _assetSourcesTabHTML(sources, a.id, sightings, ipHistory, a.discoveredByIntegrationId) });
     var tabsHTML = tabbedBodyHTML("asset-view", tabs);
     bodyEl.innerHTML = '<div class="asset-panel-content">' + tabsHTML + '</div>';
+    _loadAssetTlsPins(bodyEl);
     // Lift the strip into the header slot so it doesn't scroll away with the
     // tab content. tabbedBodyHTML stamps an inline margin-bottom meant for a
     // strip sitting above its panels; in the header the header's own border
@@ -24527,7 +24528,7 @@ function _showAssetEventDetail(ev) {
   openModal(title, body, '<button class="btn btn-secondary" onclick="closeModal()">Close</button>');
 }
 
-function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory) {
+function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory, discoveringIntegrationId) {
   sources = Array.isArray(sources) ? sources : [];
   sightings = Array.isArray(sightings) ? sightings : [];
   ipHistory = Array.isArray(ipHistory) ? ipHistory : [];
@@ -24566,6 +24567,7 @@ function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory) {
   // source on the asset (the backend rejects splitting the only source).
   // Manual sources can never be split (backend also rejects those).
   var canSplit = isAdmin() && sources.length > 1;
+  var tlsPinsPlaced = false;
   var sourceCards = sources.map(function (s) {
     var label = _assetSourceLabels[s.sourceKind] || s.sourceKind;
     var badges = [];
@@ -24611,6 +24613,17 @@ function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory) {
         '</table>'
       : '<em style="color:var(--color-text-secondary)">No observed fields recorded.</em>';
 
+    // Rule 113(e): the discovering FortiManager / FortiGate integration's
+    // card shows the certificate pinned for each endpoint Polaris sends its
+    // token to — FortiManager itself, and in proxy-bypass mode this gate too.
+    // Filled after render by _loadAssetTlsPins (one request, off first paint).
+    var isDiscovering = s.integration && discoveringIntegrationId && s.integration.id === discoveringIntegrationId &&
+      (s.integration.type === "fortimanager" || s.integration.type === "fortigate");
+    var tlsPinsHTML = isDiscovering && !tlsPinsPlaced
+      ? '<div class="asset-tls-pins" data-asset-id="' + escapeHtml(assetId) + '" style="margin-top:0.6rem"><em style="color:var(--color-text-secondary);font-size:0.82rem">Loading pinned certificates…</em></div>'
+      : '';
+    if (tlsPinsHTML) tlsPinsPlaced = true;
+
     return (
       '<div class="section-block" style="margin-bottom:1rem">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;gap:0.6rem;margin-bottom:0.25rem">' +
@@ -24619,12 +24632,86 @@ function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory) {
         '</div>' +
         (meta.length ? '<div style="font-size:0.78rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' + meta.join(" · ") + '</div>' : '') +
         observedTable +
+        tlsPinsHTML +
       '</div>'
     );
   }).join("");
   return '<div data-shot-section="sources" data-shot-label="Discovery Sources">' +
     mergeToolbar + _assetSourceStateSummaryHTML(sources) + sourceCards +
   '</div>' + historyHTML;
+}
+
+// Fingerprints are stored as bare upper-case hex; show them the way FortiOS and
+// openssl print them (colon-separated pairs) so they can be compared by eye.
+function _formatCertFingerprint(fp) {
+  var hex = String(fp || "").replace(/[^0-9a-f]/gi, "").toUpperCase();
+  return hex.replace(/(..)(?=.)/g, "$1:");
+}
+
+/**
+ * Fill the Sources tab's pinned-certificate block (rule 113(e)/(f)): one row
+ * per TLS endpoint the discovering integration dials with a token, its pinned
+ * SHA-256, and — when the server now presents a different certificate — both
+ * fingerprints and a Trust new certificate button for whoever may manage pins.
+ */
+function _loadAssetTlsPins(rootEl) {
+  var slot = rootEl && rootEl.querySelector(".asset-tls-pins");
+  if (!slot) return;
+  var assetId = slot.getAttribute("data-asset-id");
+  api.assets.tlsPins(assetId).then(function (r) {
+    var eps = (r && r.endpoints) || [];
+    if (!eps.length) { slot.innerHTML = ""; return; }
+    var canTrust = typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "write");
+    var rows = eps.map(function (e) {
+      var p = e.pin;
+      var state, detail;
+      if (!p) {
+        state = '<span class="badge badge-maintenance" title="Polaris has not connected to this endpoint with SSL verification off since pinning began, or it verifies a CA chain instead">Not pinned</span>';
+        detail = '<span style="color:var(--color-text-secondary)">—</span>';
+      } else if (p.pendingFingerprint) {
+        state = '<span class="badge badge-danger" title="This server now presents a different certificate, so Polaris is not sending it the token">Certificate changed</span>';
+        detail =
+          '<div><span style="color:var(--color-text-secondary)">Pinned</span> <code class="mono" style="font-size:0.75rem;word-break:break-all">' + escapeHtml(_formatCertFingerprint(p.fingerprint)) + '</code></div>' +
+          '<div><span style="color:var(--color-text-secondary)">Now presents</span> <code class="mono" style="font-size:0.75rem;word-break:break-all">' + escapeHtml(_formatCertFingerprint(p.pendingFingerprint)) + '</code>' +
+            (p.pendingSubject ? ' <span style="color:var(--color-text-secondary)">(' + escapeHtml(p.pendingSubject) + ')</span>' : '') +
+            (p.pendingSeenAt ? ' <span style="color:var(--color-text-secondary)">since ' + escapeHtml(formatDate(p.pendingSeenAt)) + '</span>' : '') + '</div>' +
+          (canTrust ? '<div style="margin-top:0.35rem"><button class="btn btn-sm btn-secondary" data-tls-trust="' + escapeHtml(p.id) + '" data-tls-fp="' + escapeHtml(p.pendingFingerprint) + '" data-tls-host="' + escapeHtml(e.host + ":" + e.port) + '">Trust new certificate</button></div>' : '');
+      } else {
+        state = '<span class="badge badge-active">Pinned</span>';
+        detail = '<code class="mono" style="font-size:0.75rem;word-break:break-all">' + escapeHtml(_formatCertFingerprint(p.fingerprint)) + '</code>' +
+          (p.subject ? ' <span style="color:var(--color-text-secondary)">(' + escapeHtml(p.subject) + ')</span>' : '') +
+          '<div style="color:var(--color-text-secondary);font-size:0.75rem">First seen ' + escapeHtml(formatDate(p.firstSeen)) + ' · last seen ' + escapeHtml(formatDate(p.lastSeen)) + '</div>';
+      }
+      return '<tr>' +
+        '<th style="text-align:left;padding:0.3rem 0.6rem 0.3rem 0;color:var(--color-text-secondary);font-weight:500;vertical-align:top">' + escapeHtml(e.label) +
+          '<div class="mono" style="font-size:0.75rem;font-weight:400">' + escapeHtml(e.host + ":" + e.port) + '</div></th>' +
+        '<td style="padding:0.3rem 0.6rem 0.3rem 0;vertical-align:top;white-space:nowrap">' + state + '</td>' +
+        '<td style="padding:0.3rem 0;vertical-align:top">' + detail + '</td>' +
+      '</tr>';
+    }).join("");
+    slot.innerHTML =
+      '<div class="section-label" style="margin:0.25rem 0 0.25rem 0;font-size:0.8rem">TLS certificates (SHA-256)</div>' +
+      '<table style="width:100%;font-size:0.82rem;border-collapse:collapse;table-layout:fixed"><colgroup><col style="width:220px"><col style="width:150px"><col></colgroup>' + rows + '</table>';
+    Array.prototype.forEach.call(slot.querySelectorAll("[data-tls-trust]"), function (btn) {
+      btn.addEventListener("click", function () {
+        var hostPort = btn.getAttribute("data-tls-host");
+        var fp = btn.getAttribute("data-tls-fp");
+        var ok = window.confirm("Trust the new certificate of " + hostPort + "?\n\nSHA-256 " + _formatCertFingerprint(fp) +
+          "\n\nCheck it against the device first (FortiOS: System → Certificates, or openssl s_client). From now on Polaris sends the token only to this certificate.");
+        if (!ok) return;
+        btn.disabled = true;
+        api.serverSettings.tlsCertPinTrust(btn.getAttribute("data-tls-trust"), fp).then(function () {
+          showToast("Trusted the new certificate of " + hostPort);
+          _loadAssetTlsPins(rootEl);
+        }).catch(function (err) {
+          btn.disabled = false;
+          showToast((err && err.message) || "Could not trust the certificate", "error");
+        });
+      });
+    });
+  }).catch(function () {
+    slot.innerHTML = '<em style="color:var(--color-text-secondary);font-size:0.82rem">Pinned certificates unavailable.</em>';
+  });
 }
 
 // ─── Quarantine tab ─────────────────────────────────────────────────────────

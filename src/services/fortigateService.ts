@@ -406,6 +406,8 @@ export function describeFgTransportError(err: unknown): string | null {
   if (e?.name === "AbortError" || e?.name === "TimeoutError") return "request timed out";
   if (err instanceof SyntaxError) return "the response was not JSON (something other than FortiOS answered on this address)";
   const code = e?.cause?.code;
+  // Rule 113(e): the gate's certificate no longer matches its pin — nothing was sent.
+  if (code === "CERT_PIN_REFUSED") return e?.cause?.message || "the TLS certificate changed since it was pinned";
   switch (code) {
     case "ECONNREFUSED": return "connection refused (ECONNREFUSED) — nothing is listening on this port, or HTTPS admin access is not allowed on this interface";
     case "ENOTFOUND": return "host not found (ENOTFOUND)";

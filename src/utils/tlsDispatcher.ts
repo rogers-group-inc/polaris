@@ -48,11 +48,28 @@
  *
  * The insecure agent is a lazily-created singleton so opted-in hosts still
  * get connection pooling/keep-alive across requests.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `verifySsl: false` IS NOT "TRUST ANYTHING" (business rule 113(e), 2026-10-14,
+ * re-scan F10/F66). Every FortiOS and FortiManager request carries a bearer
+ * token — for a FortiManager in direct mode, the FLEET-WIDE FortiGate token —
+ * and with verification off it used to go to whatever answered. `tlsFetch`
+ * now dispatches those requests through `pinnedTlsDispatcher`: its connector
+ * completes the TLS handshake without a CA check, hands the leaf certificate
+ * to the trust-on-first-use pin (`services/tlsCertPinService.verifyOrPinCert`,
+ * keyed on the dialed host:port) and gives undici the socket only when the pin
+ * agrees — so a refused certificate fails the request before a header is
+ * written. Pooled sockets were checked when they connected, so keep-alive
+ * still works; each NEW connection is checked. `insecureTlsDispatcher` stays
+ * for tests only.
  */
 
-import { Agent, fetch as undiciFetch, type Dispatcher, type RequestInit, type Response } from "undici";
+import { Agent, buildConnector, fetch as undiciFetch, type Dispatcher, type RequestInit, type Response } from "undici";
+import type { TLSSocket } from "node:tls";
+import { CertPinRefusedError } from "./pinnedTlsAgent.js";
 
 let insecureAgent: Agent | null = null;
+let pinnedAgent: Agent | null = null;
 
 /**
  * Dispatcher that skips TLS certificate verification.
@@ -67,13 +84,70 @@ export function insecureTlsDispatcher(): Dispatcher {
   return insecureAgent;
 }
 
+/** The leaf certificate's subject CN, for the pin's display. */
+function subjectOf(cert: { subject?: Record<string, unknown> } | null | undefined): string {
+  const cn = cert?.subject?.CN;
+  return typeof cn === "string" ? cn : Array.isArray(cn) ? cn.join(",") : "";
+}
+
+/**
+ * Dispatcher that skips CA verification but PINS the certificate (rule
+ * 113(e)): trust on first use per host:port, refuse a changed certificate
+ * before anything is sent. Same undici copy as `tlsFetch` (see the header).
+ */
+export function pinnedTlsDispatcher(): Dispatcher {
+  if (!pinnedAgent) {
+    // No TLS session resumption: a resumed session presents no certificate to
+    // check (getPeerCertificate is empty), the same reason PinnedTlsAgent sets
+    // maxCachedSessions: 0. Every NEW connection is a full handshake.
+    const raw = buildConnector({ rejectUnauthorized: false, maxCachedSessions: 0 });
+    pinnedAgent = new Agent({
+      connect: (opts, callback) => {
+        raw(opts, (err, socket) => {
+          if (err || !socket) { callback(err ?? new Error("TLS connection failed"), null); return; }
+          // A plain-http URL has no certificate to pin (and no CA check was
+          // skipped); only an https connection is the pin's business.
+          if (opts.protocol !== "https:") { callback(null, socket); return; }
+          const tlsSocket = socket as unknown as TLSSocket;
+          const cert = typeof tlsSocket.getPeerCertificate === "function" ? tlsSocket.getPeerCertificate(false) : null;
+          if (!cert || !cert.fingerprint256) {
+            socket.destroy();
+            callback(new CertPinRefusedError("The server presented no certificate"), null);
+            return;
+          }
+          const host = String(opts.hostname ?? "");
+          const port = Number(opts.port) || 443;
+          import("../services/tlsCertPinService.js")
+            .then(({ verifyOrPinCert }) => verifyOrPinCert(host, port, cert.fingerprint256, subjectOf(cert as never)))
+            .then(
+              (v) => {
+                if (v.ok) { callback(null, socket); return; }
+                socket.destroy();
+                callback(new CertPinRefusedError(
+                  `The TLS certificate of ${host}:${port} changed since it was pinned — refused before sending the API token. Compare and trust the new certificate under Server Settings → Web Server → Pinned server identities if it was re-issued.`,
+                ), null);
+              },
+              (e: unknown) => {
+                // Fail closed: an internal error never yields an unchecked connection.
+                socket.destroy();
+                callback(new CertPinRefusedError(`Could not check the server certificate: ${e instanceof Error ? e.message : String(e)}`), null);
+              },
+            );
+        });
+      },
+    });
+  }
+  return pinnedAgent;
+}
+
 /**
  * `fetch` for device transports that may need TLS verification relaxed.
  *
  * Always undici's own `fetch`, so the dispatcher below is guaranteed to come
- * from the same undici that will dispatch it. `verifySsl === false` opts this
- * ONE connection out of certificate verification; anything else (true or
- * undefined) verifies normally on undici's default global dispatcher.
+ * from the same undici that will dispatch it. `verifySsl === false` replaces
+ * CA verification with the certificate PIN for this connection (rule 113(e));
+ * anything else (true or undefined) verifies the CA chain normally on undici's
+ * default global dispatcher.
  */
 export function tlsFetch(
   url: string,
@@ -82,6 +156,6 @@ export function tlsFetch(
 ): Promise<Response> {
   return undiciFetch(url, {
     ...init,
-    ...(verifySsl === false ? { dispatcher: insecureTlsDispatcher() } : {}),
+    ...(verifySsl === false ? { dispatcher: pinnedTlsDispatcher() } : {}),
   });
 }

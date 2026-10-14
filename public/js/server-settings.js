@@ -936,10 +936,25 @@ function renderCertsTab(container) {
       '</p>' +
     '</div>';
 
+  // Rule 113(e)/(f): every certificate Polaris pinned instead of verifying a
+  // CA — WinRM listeners, devices it upgrades, FortiGates / FortiManagers with
+  // SSL verification off — with the changed ones first and "Trust new
+  // certificate". Lives here, where certificate problems get looked for.
+  var pinnedCardHtml =
+    '<div class="settings-card" id="pinned-tls-card" style="grid-column:1/-1">' +
+      '<h3>Pinned server identities</h3>' +
+      '<p class="hint" style="margin:0 0 0.75rem 0">Polaris pins the TLS certificate of a server the first time it sends it a password or token ' +
+        'without verifying a CA, and refuses to send anything if the certificate later changes. A changed certificate is listed first: ' +
+        'compare it with the server and choose Trust new certificate. After a firmware upgrade Polaris runs itself, the device\'s new ' +
+        'certificate is re-pinned automatically.</p>' +
+      '<div id="pinned-tls-body"><p class="empty-state" style="padding:0.5rem 0;margin:0">Loading&hellip;</p></div>' +
+    '</div>';
+
   container.innerHTML = bannerHtml +
     '<div class="settings-cards-flow">' +
-      certCardHtml + proxyCardHtml + dashCardHtml + loginCardHtml + caCardHtml +
+      certCardHtml + proxyCardHtml + dashCardHtml + loginCardHtml + caCardHtml + pinnedCardHtml +
     '</div>';
+  if (window.PolarisPinnedTlsCerts) window.PolarisPinnedTlsCerts.mount(document.getElementById("pinned-tls-body"));
 
   var adoptBtn = document.getElementById("proxy-adopt-btn");
   if (adoptBtn) adoptBtn.addEventListener("click", handleProxyAdopt);
@@ -8344,7 +8359,7 @@ function credWinrmForm(cfg) {
         '<input type="checkbox" id="f-winrm-verifytls"' + (cfg.verifyTls === true ? " checked" : "") + '>' +
         '<span>Verify TLS certificate</span>' +
       '</label>' +
-      '<p class="hint">Applies when Use HTTPS is on. WinRM sends the username and password as Basic auth. When checked, the certificate must chain to a trusted CA. When unchecked (a self-signed listener), Polaris pins the certificate it sees on the first connection and refuses to send the password if it ever changes; delete the pin under Pinned server identities when a certificate is legitimately re-issued.</p>' +
+      '<p class="hint">Applies when Use HTTPS is on. WinRM sends the username and password as Basic auth. When checked, the certificate must chain to a trusted CA. When unchecked (a self-signed listener), Polaris pins the certificate it sees on the first connection and refuses to send the password if it ever changes; when a certificate is legitimately re-issued, compare it and choose Trust new certificate under Web Server → Pinned server identities.</p>' +
     '</div>'
   );
 }

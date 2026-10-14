@@ -353,7 +353,7 @@ async function loadIntegrations() {
       }
       var defaultPort =
         (intg.type === "unraid" || intg.type === "truenas") && config.useTls === false ? 80 :
-        intg.type === "windowsserver" ? 5985 :
+        intg.type === "windowsserver" ? (config.useSsl === false ? 5985 : 5986) :
         intg.type === "activedirectory" ? (config.useLdaps === false ? 389 : 636) :
         intg.type === "proxmox" ? 8006 :
         443;
@@ -4685,7 +4685,9 @@ function getFgtFormConfig() {
 
 function windowsServerFormHTML(defaults) {
   var d = defaults || {};
-  var sslChecked = d.useSsl ? "checked" : "";
+  // A new integration defaults to HTTPS (re-scan F81); an existing one keeps
+  // what it was saved with.
+  var sslChecked = d.useSsl !== false ? "checked" : "";
   var enabledChecked = d.enabled !== false ? "checked" : "";
   return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. DC1 DHCP Server"></div>' +
     infoBox('Connects to <strong style="color:var(--color-text-primary)">Windows Server DHCP</strong> via WinRM (PowerShell remoting). Requires WinRM enabled on the target server (port <strong style="color:var(--color-text-primary)">5985</strong> HTTP or <strong style="color:var(--color-text-primary)">5986</strong> HTTPS).') +
@@ -4693,7 +4695,7 @@ function windowsServerFormHTML(defaults) {
     sectionHeading("Connection Settings") +
     '<div style="display:grid;grid-template-columns:1fr auto;gap:8px">' +
       '<div class="form-group"><label>Host / IP *</label><input type="text" id="f-host" value="' + escapeHtml(d.host || "") + '" placeholder="e.g. dhcp-server.example.com"></div>' +
-      '<div class="form-group"><label>Port</label><input type="number" id="f-port" value="' + (d.port || 5985) + '" min="1" max="65535" style="width:90px"></div>' +
+      '<div class="form-group"><label>Port</label><input type="number" id="f-port" value="' + (d.port || (d.useSsl === false ? 5985 : 5986)) + '" min="1" max="65535" style="width:90px"></div>' +
     '</div>' +
     '<div class="form-group"><label>Username *</label><input type="text" id="f-username" value="' + escapeHtml(d.username || "") + '" placeholder="e.g. Administrator"></div>' +
     '<div class="form-group"><label>Password *</label><input type="password" id="f-password" value="' + (d.passwordPlaceholder ? "" : escapeHtml(d.password || "")) + '" placeholder="' + (d.passwordPlaceholder || "Password") + '"></div>' +
@@ -4701,6 +4703,7 @@ function windowsServerFormHTML(defaults) {
     '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
       '<input type="checkbox" id="f-useSsl" ' + sslChecked + ' style="width:auto">' +
       '<label for="f-useSsl" style="margin:0">Use SSL (HTTPS / port 5986)</label>' +
+      '<p class="hint" style="margin:4px 0 0 0">Recommended. Over HTTP (port 5985) WinRM sends this account\'s password as Basic auth in clear text on every discovery.</p>' +
     '</div>' +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
       '<input type="checkbox" id="f-enabled" ' + enabledChecked + ' style="width:auto">' +

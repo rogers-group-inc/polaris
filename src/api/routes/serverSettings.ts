@@ -2255,6 +2255,18 @@ router.get("/agents/tls-cert-pins", requirePermission("serverSettingsSystem", "r
   } catch (err) { next(err); }
 });
 
+// Rule 113(f): trust EXACTLY the changed certificate the administrator
+// compared — the body names the pending fingerprint they saw; a different one
+// presented since is a 409, not a silent trust.
+router.post("/agents/tls-cert-pins/:id/trust", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
+  try {
+    const fingerprint = typeof req.body?.fingerprint === "string" ? req.body.fingerprint : "";
+    if (!fingerprint) throw new AppError(400, "fingerprint is required — the new certificate's SHA-256 as shown");
+    const { trustPendingCert } = await import("../../services/tlsCertPinService.js");
+    res.json(await trustPendingCert(String(req.params.id), fingerprint, requestActor(req) || "unknown"));
+  } catch (err) { next(err); }
+});
+
 router.delete("/agents/tls-cert-pins/:id", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
   try {
     const { deleteCertPin } = await import("../../services/tlsCertPinService.js");

@@ -5384,6 +5384,26 @@ router.delete("/:id/macs/:mac", requirePermission("assets", "write"), async (req
   }
 });
 
+// GET /api/v1/assets/:id/tls-pins — the TLS endpoints this asset's discovering
+// integration dials with a token, and the certificate pinned for each (rule
+// 113(e)) — FortiManager itself, and in proxy-bypass mode the gate too. Shown
+// on the Sources tab. Read-level: fingerprints are public facts about a
+// server, and no secret leaves.
+router.get("/:id/tls-pins", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    const asset = await prisma.asset.findUnique({
+      where: { id: req.params.id as string },
+      select: { assetType: true, ipAddress: true, discoveredByIntegration: { select: { type: true, name: true, config: true } } },
+    });
+    if (!asset) throw new AppError(404, "Asset not found");
+    const { assetTlsEndpoints } = await import("../../services/tlsCertPinService.js");
+    const integration = asset.discoveredByIntegration
+      ? { ...asset.discoveredByIntegration, config: (asset.discoveredByIntegration.config ?? {}) as Record<string, unknown> }
+      : null;
+    res.json({ endpoints: await assetTlsEndpoints({ assetType: asset.assetType, ipAddress: asset.ipAddress }, integration) });
+  } catch (err) { next(err); }
+});
+
 // PUT /api/v1/assets/:id/primary-address — pin the (MAC, IP) pair the asset is
 // monitored on, chosen from its address list (business rule 102). Replaces the
 // typed IP override and the blank pin if either is set. assets:write, the same
