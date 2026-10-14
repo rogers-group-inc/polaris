@@ -34,6 +34,8 @@ import {
   alertOwnerOf,
   classifyGroupChanges,
   describeGroupChanges,
+  memberMatches,
+  subnetFoldTarget,
 } from "../../src/services/notificationTypes.js";
 
 const RULE = "11111111-1111-4111-8111-111111111111";
@@ -527,5 +529,75 @@ describe("describeGroupChanges", () => {
   it("caps the sentence's list at GROUP_LABEL_CAP", () => {
     const many = Array.from({ length: GROUP_LABEL_CAP + 2 }, (_, i) => ({ label: `p${i}`, kind: "joined" as const }));
     expect(describeGroupChanges(many)?.sentence).toMatch(/and 2 more joined this alert\.$/);
+  });
+});
+
+describe("subnet folding (an AlertGroup with foldBy = subnet)", () => {
+  const down = { type: "asset_state", field: "monitorStatus", operator: "==", value: "down" } as never;
+  const respMs = { type: "asset_metric", metric: "responseTimeMs", operator: ">=", threshold: 500 } as never;
+
+  it("admits whole-device triggers to a SUBNET group, and still refuses them in a device group", () => {
+    expect(triggerCanJoinGroup(down)).toBe(false);
+    expect(triggerCanJoinGroup(down, "device")).toBe(false);
+    expect(triggerCanJoinGroup(down, "subnet")).toBe(true);
+    expect(triggerCanJoinGroup(respMs, "subnet")).toBe(true);
+  });
+
+  it("refuses in a subnet group what it refuses everywhere", () => {
+    expect(triggerCanJoinGroup({ type: "host_metric", metric: "cpuPct", operator: ">=", threshold: 90 } as never, "subnet")).toBe(false);
+    expect(triggerCanJoinGroup({ type: "event", actionPattern: "agent.*" } as never, "subnet")).toBe(false);
+    expect(triggerCanJoinGroup({ type: "composite", kind: "host", op: "and", children: [] } as never, "subnet")).toBe(false);
+  });
+
+  it("makes ruleGroupsByAsset follow the group's fold", () => {
+    expect(ruleGroupsByAsset({ alertGroupId: "g1", alertGroupFoldBy: "subnet", trigger: down })).toBe(true);
+    expect(ruleGroupsByAsset({ alertGroupId: "g1", alertGroupFoldBy: "device", trigger: down })).toBe(false);
+    // The fold axis means nothing without a group.
+    expect(ruleGroupsByAsset({ alertGroupId: null, alertGroupFoldBy: "subnet", trigger: down })).toBe(false);
+  });
+
+  it("keys a subnet alert apart from any device in the same group", () => {
+    expect(groupKeyOf("grp", "g1", subnetFoldTarget("s1"))).toBe("grp:g1|subnet:s1");
+    expect(groupKeyOf("grp", "g1", subnetFoldTarget("s1"))).not.toBe(groupKeyOf("grp", "g1", "s1"));
+  });
+
+  it("keeps two DEVICES with the same (rule, key) as two members", () => {
+    // Both hosts are "down" at dimensionKey "": without the device in the
+    // identity, the second would overwrite the first.
+    const members = mergeMembers(
+      [],
+      [member("", { label: "plc-01", assetId: "a1", subnet: "Plant (10.1.0.0/24)" }),
+       member("", { label: "plc-02", assetId: "a2", subnet: "Plant (10.1.0.0/24)" })],
+      T0,
+    );
+    expect(members).toHaveLength(2);
+    expect(activeMembers(members)).toHaveLength(2);
+  });
+
+  it("stamps only the device that recovered", () => {
+    const members = mergeMembers(
+      [],
+      [member("", { label: "plc-01", assetId: "a1" }), member("", { label: "plc-02", assetId: "a2" })],
+      T0,
+    );
+    const out = markMemberLeft(members, RULE, "", T1, "a2");
+    expect(out[0]!.leftAt).toBeUndefined();
+    expect(out[1]!.leftAt).toBe(T1.toISOString());
+    expect(renderMemberList(out)).toBe("plc-01");
+  });
+
+  it("matches a member without a device on (rule, key) alone, as before", () => {
+    expect(memberMatches(member("port12"), RULE, "port12", "any-asset")).toBe(true);
+    expect(memberMatches(member("port12", { assetId: "a1" }), RULE, "port12", "a2")).toBe(false);
+    expect(memberMatches(member("port12", { assetId: "a1" }), RULE, "port12", "a1")).toBe(true);
+    expect(memberMatches(member("port12"), RULE_B, "port12", null)).toBe(false);
+  });
+
+  it("re-merges a returning device in place rather than appending it", () => {
+    const first = mergeMembers([], [member("", { label: "plc-01", assetId: "a1" })], T0);
+    const left = markMemberLeft(first, RULE, "", T1, "a1");
+    const back = mergeMembers(left, [member("", { label: "plc-01", assetId: "a1" })], T2);
+    expect(back).toHaveLength(1);
+    expect(back[0]!.leftAt).toBeUndefined();
   });
 });

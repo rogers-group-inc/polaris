@@ -4715,6 +4715,13 @@ export interface AlertMember {
   /** ISO. Set when the contribution recovered or left; the row is KEPT, because
    *  what this alert covered is the history the snapshot exists to carry. */
   leftAt?: string;
+  /** Set ONLY on a subnet-folded alert, where contributions come from several
+   *  devices: the device this one is about. It joins the identity, because two
+   *  hosts both "down" are two findings with the same (rule, key). */
+  assetId?: string;
+  /** Set only on a subnet-folded alert: the subnet it is about, as a human
+   *  reads it — "Plant A (10.1.0.0/24)". What {asset} renders as there. */
+  subnet?: string;
 }
 
 /** A 48-port switch plus its SFPs. Past this an alert has stopped being about
@@ -4735,8 +4742,9 @@ export const GROUP_LABEL_CAP = 6;
  *  alert groups land) a group keys on the group. A rule joining or leaving a
  *  group therefore changes its key, which is what keeps the old episode's row
  *  and the new one from fighting over it. */
-export function groupKeyOf(scope: "rule" | "grp", id: string, assetId: string): string {
-  return `${scope}:${id}|${assetId}`;
+export function groupKeyOf(scope: "rule" | "grp", id: string, target: string): string {
+  // `target` is the asset id, or `subnetFoldTarget(...)` on a subnet group.
+  return `${scope}:${id}|${target}`;
 }
 
 /** Does this trigger report one reading PER COMPONENT (rather than one per
@@ -4767,10 +4775,30 @@ export function ruleGroupsByAsset(rule: {
    *  in a group and still got eight alerts per switch would reasonably call
    *  that broken. */
   alertGroupId?: string | null;
+  /** The group's fold axis. A SUBNET group also takes whole-device triggers
+   *  (monitor status is down), so membership alone no longer settles it. */
+  alertGroupFoldBy?: string | null;
   trigger: Trigger;
 }): boolean {
-  if (rule.alertGroupId) return triggerCanJoinGroup(rule.trigger);
+  if (rule.alertGroupId) return triggerCanJoinGroup(rule.trigger, rule.alertGroupFoldBy);
   return rule.groupByAsset === true && triggerIsPerDimension(rule.trigger);
+}
+
+/** What an AlertGroup folds its members' alerts by.
+ *
+ *  `device` — one alert per device, its components and automations folded in
+ *  (the original shape). `subnet` — one alert per registry SUBNET: every
+ *  device the group governs whose primary IP falls in the same subnet (the
+ *  most specific non-deprecated Subnet row containing it) shares one alert, so
+ *  a switch dropping twelve hosts behind it is one page, not twelve. A device
+ *  in no registry subnet still alerts, on its own. */
+export const ALERT_GROUP_FOLD_BY = ["device", "subnet"] as const;
+export type AlertGroupFoldBy = (typeof ALERT_GROUP_FOLD_BY)[number];
+
+/** The `groupKey` target of a subnet-folded alert. Prefixed so it can never be
+ *  mistaken for an asset id in the same group's key space. */
+export function subnetFoldTarget(subnetId: string): string {
+  return `subnet:${subnetId}`;
 }
 
 /**
@@ -4788,9 +4816,16 @@ export function ruleGroupsByAsset(rule: {
  * that the last contribution?" count to see, and the alert could never learn
  * that the event's part in it had ended. Revisit only with a state row for them.
  */
-export function triggerCanJoinGroup(trigger: Trigger | null | undefined): boolean {
+export function triggerCanJoinGroup(
+  trigger: Trigger | null | undefined,
+  /** A SUBNET group folds DEVICES, so a whole-device trigger — "monitor status
+   *  is down" above all — has something to fold there, where a device group
+   *  would only ever hold one contribution per alert. */
+  foldBy?: string | null,
+): boolean {
   if (!trigger) return false;
   if (trigger.type === "composite") return trigger.kind !== "host";
+  if (foldBy === "subnet") return trigger.type === "asset_metric" || trigger.type === "asset_state";
   return triggerIsPerDimension(trigger);
 }
 
@@ -4877,10 +4912,11 @@ export function markMemberLeft(
   ruleId: string,
   key: string,
   now: Date,
+  /** The contribution's device — consulted only for a member that carries one. */
+  assetId?: string | null,
 ): AlertMember[] {
-  const id = memberIdentityOf(ruleId, key);
   return (members ?? []).map((m) =>
-    memberIdentity(m) === id && !m.leftAt ? { ...m, leftAt: now.toISOString() } : m,
+    memberMatches(m, ruleId, key, assetId) && !m.leftAt ? { ...m, leftAt: now.toISOString() } : m,
   );
 }
 
@@ -4976,7 +5012,14 @@ function listLabels(labels: string[]): string {
 /** A contribution is identified by (automation, component), not by component
  *  alone — two automations may both be about port12 and they are two findings. */
 function memberIdentity(m: AlertMember): string {
-  return memberIdentityOf(m.ruleId, m.key);
+  return memberIdentityOf(m.ruleId, m.key, m.assetId);
+}
+
+/** Does this stored member stand for THIS contribution? The device is compared
+ *  only when the member carries one (a subnet-folded alert), so every member
+ *  stored before subnet folding existed matches exactly as it did. */
+export function memberMatches(m: AlertMember, ruleId: string, key: string, assetId?: string | null): boolean {
+  return m.ruleId === ruleId && m.key === key && (!m.assetId || m.assetId === assetId);
 }
 
 /** The identity pair, flattened.
@@ -4985,8 +5028,10 @@ function memberIdentity(m: AlertMember): string {
  *  SD-WAN keys are "<healthCheck>|<link>"): a rule id is a UUID, so the FIRST
  *  separator is always the boundary and nothing in the left half can imitate
  *  it. Splitting is never needed anyway — this string is only ever compared. */
-function memberIdentityOf(ruleId: string, key: string): string {
-  return `${ruleId}|${key}`;
+function memberIdentityOf(ruleId: string, key: string, assetId?: string): string {
+  // The device only on a subnet-folded alert's members, so every member stored
+  // before that existed keeps exactly the identity it had.
+  return assetId ? `${ruleId}|@${assetId}|${key}` : `${ruleId}|${key}`;
 }
 
 /** Hold the snapshot to MAX_GROUP_MEMBERS, shedding DEPARTED entries oldest

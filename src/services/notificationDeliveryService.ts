@@ -105,6 +105,9 @@ export interface DeliveryRow {
  */
 function groupedDimensionsOf(n: DeliveryRow["notification"]): string[] | null {
   if (!Array.isArray(n.members) || n.members.length === 0) return null;
+  // A subnet fold's members are DEVICES: their keys belong to other hosts, and
+  // charting them against the alert's leading device would draw the wrong one.
+  if ((n.members as { assetId?: unknown }[]).some((m) => m.assetId)) return null;
   const active = (n.members as { key?: unknown; leftAt?: unknown }[])
     .filter((m) => !m.leftAt && typeof m.key === "string" && m.key)
     .map((m) => m.key as string);

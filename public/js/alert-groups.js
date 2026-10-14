@@ -87,6 +87,7 @@
       : '<span style="color:var(--color-text-tertiary)">none yet — this group folds nothing</span>';
     return "<tr>" +
       "<td><strong>" + escapeHtml(g.name) + "</strong>" +
+        (g.foldBy === "subnet" ? ' <span class="badge">per subnet</span>' : "") +
         (g.description ? '<div style="font-size:0.8rem;color:var(--color-text-tertiary)">' + escapeHtml(g.description) + "</div>" : "") +
       "</td>" +
       "<td>" + memberText + "</td>" +
@@ -182,6 +183,26 @@
       scopeHost.style.display = allBox.checked ? "none" : "";
     });
 
+    // What may join depends on the fold: a "monitor status is down" automation
+    // has nothing to fold per device but plenty per subnet. Re-ask the server
+    // for the mode on screen, keeping whatever is ticked.
+    ov.overlay.querySelectorAll('input[name="ag-fold-by"]').forEach(function (radio) {
+      radio.addEventListener("change", async function () {
+        var membersEl = ov.overlay.querySelector("#ag-members");
+        var ticked = new Set(Array.prototype.slice.call(membersEl.querySelectorAll(".ag-member:checked")).map(function (el) { return el.value; }));
+        try {
+          var jr2 = await api.alertGroups.joinable(id || undefined, radio.value);
+          joinable = (jr2 && jr2.rules) || [];
+        } catch (err) {
+          showToast((err && err.message) || "Failed to load the automations", "error");
+          return;
+        }
+        membersEl.innerHTML = joinable.length
+          ? joinable.map(function (r) { return memberRowHtml(r, ticked); }).join("")
+          : '<p class="empty-state">No automations yet.</p>';
+      });
+    });
+
     ov.overlay.querySelector("#ag-cancel").addEventListener("click", function () { ov.close(); });
     var saveBtn = ov.overlay.querySelector("#ag-save");
     saveBtn.addEventListener("click", async function () {
@@ -220,9 +241,22 @@
       '<div id="ag-scope-builder"' + (scopeIsAll(g.scope) ? ' style="display:none"' : "") + "></div>" +
 
       "<hr style=\"border:0;border-top:1px solid var(--color-border);margin:1rem 0\">" +
+      '<h4 style="margin:0 0 0.25rem;font-size:0.95rem">One alert per</h4>' +
+      '<label style="display:block;font-weight:400;margin:0 0 0.2rem">' +
+        '<input type="radio" name="ag-fold-by" value="device"' + (g.foldBy !== "subnet" ? " checked" : "") + "> Device — everything wrong with one device is one alert" +
+      "</label>" +
+      '<label style="display:block;font-weight:400;margin:0 0 0.2rem">' +
+        '<input type="radio" name="ag-fold-by" value="subnet"' + (g.foldBy === "subnet" ? " checked" : "") + "> Subnet — every device in the same subnet shares one alert" +
+      "</label>" +
+      '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 1.4rem">' +
+        "By subnet, a switch taking twelve hosts down with it is one page listing the twelve, not twelve pages. A device belongs to the most specific subnet in the registry that holds its IP; one in no subnet alerts on its own. " +
+        "Put a <em>monitor status is down</em> automation here — with <em>Also alert when the device is dependency-down</em> on, so the hosts behind a failed switch report at all. Changing this retires the group's open alerts; the next check raises them again the new way." +
+      "</p>" +
+
+      "<hr style=\"border:0;border-top:1px solid var(--color-border);margin:1rem 0\">" +
       '<h4 style="margin:0 0 0.25rem;font-size:0.95rem">Automations in this group</h4>' +
       '<p style="font-size:0.8rem;color:var(--color-text-tertiary);margin:0 0 0.5rem">' +
-        "Whatever these raise about one device becomes one alert. Each automation keeps deciding what to watch for; the group decides who hears about it." +
+        "Whatever these raise about one device (or one subnet) becomes one alert. Each automation keeps deciding what to watch for; the group decides who hears about it." +
       "</p>" +
       '<div id="ag-members" style="max-height:260px;overflow:auto;border:1px solid var(--color-border);border-radius:6px;padding:0.5rem">' +
         (joinable.length ? joinable.map(function (r) { return memberRowHtml(r, selected); }).join("") : '<p class="empty-state">No automations yet.</p>') +
@@ -292,8 +326,10 @@
       scope = { condition: tree };
     }
 
+    var foldEl = root.querySelector('input[name="ag-fold-by"]:checked');
     var body = {
       scope: scope,
+      foldBy: foldEl && foldEl.value === "subnet" ? "subnet" : "device",
       name: name.trim(),
       description: ((root.querySelector("#ag-desc") || {}).value || "").trim() || null,
       enabled: !!(root.querySelector("#ag-enabled") || {}).checked,

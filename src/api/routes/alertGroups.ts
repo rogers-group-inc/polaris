@@ -37,6 +37,7 @@ import {
   escalationSchema,
   repeatConfigSchema,
   scopeSchema,
+  ALERT_GROUP_FOLD_BY,
 } from "../../services/notificationTypes.js";
 
 const alertGroupsRouter = Router();
@@ -65,6 +66,9 @@ const groupInputSchema = z.object({
   // the same shape and evaluated by the same `evaluateScopeCondition`, so a
   // field added to the vocabulary works here with no change at all.
   scope: scopeSchema.optional().nullable(),
+  // What one alert is per: a device (default), or a registry subnet — every
+  // governed device in it folds into one alert (business rule 75).
+  foldBy: z.enum(ALERT_GROUP_FOLD_BY).optional(),
   messageTemplate: z.string().max(2000).optional().nullable(),
   requireAckNote: z.boolean().optional(),
   emailComposition: emailCompositionSchema.optional().nullable(),
@@ -86,7 +90,9 @@ alertGroupsRouter.get("/", requirePermission("automationManagement", "read"), as
 alertGroupsRouter.get("/joinable", requirePermission("automationManagement", "read"), async (req, res, next) => {
   try {
     const forGroupId = typeof req.query.groupId === "string" ? req.query.groupId : undefined;
-    res.json({ rules: await listJoinableRules(forGroupId) });
+    // The mode the editor is SHOWING, which may not be saved yet.
+    const foldBy = z.enum(ALERT_GROUP_FOLD_BY).optional().parse(req.query.foldBy || undefined);
+    res.json({ rules: await listJoinableRules(forGroupId, foldBy) });
   } catch (err) { next(err); }
 });
 

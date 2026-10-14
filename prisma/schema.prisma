@@ -5755,6 +5755,13 @@ model AlertGroup {
   /// keeps.
   scope Json?
 
+  /// What the fold is keyed on — `ALERT_GROUP_FOLD_BY` in notificationTypes.
+  /// "device" (default): one alert per device. "subnet": one alert per
+  /// registry subnet, each down host a member — the most specific
+  /// non-deprecated Subnet containing the device's primary IP. A device in no
+  /// subnet alerts on its own. Changing it retires the group's live alerts.
+  foldBy String @default("device")
+
   /// The delivery half, lifted from NotificationRule. Seeded from the first
   /// member on create, so joining a group is not a re-authoring exercise.
   messageTemplate  String? @db.Text
