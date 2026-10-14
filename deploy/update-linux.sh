@@ -24,8 +24,37 @@
 # the same end state.
 #
 # On failure, offers to rollback to the previous version.
+#
+# Run the installed copy: sudo polaris-update-linux (business rule 117(n)).
 
 set -euo pipefail
+
+# ─── Run the reviewed, installed copy (business rule 117(n)) ─────────────────
+#
+# Root runs this file. Its copy under /opt/polaris lives in the polaris
+# account's tree, so root running THAT copy runs whatever the account last put
+# in it — no check written inside it can help, because the check is in the
+# same file. The copy an administrator should run is /usr/local/sbin/polaris-update-linux,
+# root-owned and installed only through `polaris-update-sync --apply-helpers`
+# (or --install), which shows its diff first like every root helper. A copy
+# found anywhere else hands over to it when it is present and trusted;
+# otherwise it warns. POLARIS_UPDATE_FROM_TREE=1 skips the hand-over (for example to
+# run a newer tree copy you have read yourself).
+_SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+_INSTALLED_SELF=/usr/local/sbin/polaris-update-linux
+if [[ "$_SELF" != "$_INSTALLED_SELF" && "${POLARIS_UPDATE_FROM_TREE:-0}" != 1 ]]; then
+  if [[ -f "$_INSTALLED_SELF" && ! -L "$_INSTALLED_SELF" && "$(stat -c '%u' "$_INSTALLED_SELF" 2>/dev/null)" == 0 ]] \
+     && (( (8#$(stat -c '%a' "$_INSTALLED_SELF") & 8#022) == 0 )); then
+    echo "[INFO]  Running the reviewed, installed copy: $_INSTALLED_SELF"
+    exec "$_INSTALLED_SELF" "$@"
+  fi
+  case "$_SELF" in
+    /opt/polaris/*)
+      echo "[WARN]  update-linux.sh is running from $_SELF — a directory the polaris account can write." >&2
+      echo "[WARN]  Install the reviewed copy (sudo polaris-update-sync --apply-helpers) and run /usr/local/sbin/polaris-update-linux from now on." >&2
+      ;;
+  esac
+fi
 
 APP_DIR="/opt/polaris"
 APP_USER="polaris"

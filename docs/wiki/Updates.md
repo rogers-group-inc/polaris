@@ -192,7 +192,11 @@ cannot.
 
 ## The fallback script
 
-`deploy/update-linux.sh` exists for a host where the in-app updater cannot run.
+`sudo polaris-update-linux` — the reviewed, installed copy of
+`deploy/update-linux.sh` — exists for a host where the in-app updater cannot
+run. Run that, not the copy under `/opt/polaris`: root runs the script, and
+the tree copy sits where the Polaris account can change it. A tree copy run
+anyway hands over to the installed one when it exists.
 It carries the same client-resolution logic, and it dumps as the local
 `postgres` user over a unix socket. Like the updater, it does not install a
 changed root helper unseen: it shows each one against the installed copy and

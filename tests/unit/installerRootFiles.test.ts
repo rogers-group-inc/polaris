@@ -100,6 +100,6 @@ describe.skipIf(!haveBash)("polaris-update-sync options", () => {
   it("rejects an unknown option with the usage line", () => {
     const r = spawnSync("bash", [script, "--bogus"], { encoding: "utf8" });
     expect(r.status).toBe(2);
-    expect(r.stderr).toMatch(/--install \[--yes\]/);
+    expect(r.stderr).toMatch(/--install \[--ha\] \[--yes\]/);
   });
 });

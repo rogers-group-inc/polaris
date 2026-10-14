@@ -48,6 +48,33 @@
 
 set -euo pipefail
 
+# ─── Run the reviewed, installed copy (business rule 117(n)) ─────────────────
+#
+# Root runs this file. Its copy under /opt/polaris lives in the polaris
+# account's tree, so root running THAT copy runs whatever the account last put
+# in it — no check written inside it can help, because the check is in the
+# same file. The copy an administrator should run is /usr/local/sbin/polaris-ha-setup,
+# root-owned and installed only through `polaris-update-sync --apply-helpers`
+# (or --install), which shows its diff first like every root helper. A copy
+# found anywhere else hands over to it when it is present and trusted;
+# otherwise it warns. POLARIS_HA_SETUP_FROM_TREE=1 skips the hand-over (for example to
+# run a newer tree copy you have read yourself).
+_SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+_INSTALLED_SELF=/usr/local/sbin/polaris-ha-setup
+if [[ "$_SELF" != "$_INSTALLED_SELF" && "${POLARIS_HA_SETUP_FROM_TREE:-0}" != 1 ]]; then
+  if [[ -f "$_INSTALLED_SELF" && ! -L "$_INSTALLED_SELF" && "$(stat -c '%u' "$_INSTALLED_SELF" 2>/dev/null)" == 0 ]] \
+     && (( (8#$(stat -c '%a' "$_INSTALLED_SELF") & 8#022) == 0 )); then
+    echo "[INFO]  Running the reviewed, installed copy: $_INSTALLED_SELF"
+    exec "$_INSTALLED_SELF" "$@"
+  fi
+  case "$_SELF" in
+    /opt/polaris/*)
+      echo "[WARN]  setup-rhel-ha.sh is running from $_SELF — a directory the polaris account can write." >&2
+      echo "[WARN]  Install the reviewed copy (sudo polaris-update-sync --apply-helpers) and run /usr/local/sbin/polaris-ha-setup from now on." >&2
+      ;;
+  esac
+fi
+
 ROLE=""
 NODE_NAME="$(hostname -s 2>/dev/null || hostname)"
 THIS_ADDR=""
@@ -76,6 +103,44 @@ HA_DIR="/etc/polaris"
 CA_DIR="/etc/polaris/etcd-ca"
 PG_TLS_DIR="/etc/polaris/pg-tls"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The installed copy (/usr/local/sbin/polaris-ha-setup) reads its templates
+# and HA files from the tree.
+[[ "$SRC_DIR" == /usr/local/sbin ]] && SRC_DIR="$APP_DIR/deploy/ha"
+
+# ─── Where the HA files come from (business rule 117(n)) ─────────────────────
+#
+# Root installs what this script ships beside it. That is safe from a copy the
+# polaris account cannot write — a fresh root clone on a new standby or
+# witness, even at /opt/polaris before the account owns it — and not from the
+# account's own tree, which is where this script lives on the primary and on
+# any re-run. "Untrusted" therefore means: the polaris account owns the
+# source directory, its parent, or the install directory it sits in. From an untrusted source the
+# root files (reconciler, SSH wrapper, Patroni callback and drop-in, the
+# polaris-ha sudoers entry, the rsync exclude list, polkit, the update helper,
+# the app units' HA drop-ins) go through the INSTALLED polaris-update-sync
+# `--install --ha` — validated, each one's diff shown and asked about
+# (POLARIS_YES=1 answers yes) — and the templates are read as polaris. Only
+# the review happens here: a tree copy of THIS script could have been edited
+# itself, which is why the copy to run is the installed polaris-ha-setup, or
+# one from a root-owned clone (docs/HA.md).
+src_untrusted() {
+  local real app polaris_uid d
+  polaris_uid="$(id -u "$APP_USER" 2>/dev/null || true)"
+  [[ -n "$polaris_uid" ]] || return 1   # no polaris account yet: nothing it could have written
+  real="$(readlink -f "$SRC_DIR")"
+  app="$(readlink -f "$APP_DIR" 2>/dev/null || echo "$APP_DIR")"
+  for d in "$real" "$(dirname "$real")"; do
+    [[ "$(stat -c '%u' "$d" 2>/dev/null)" == "$polaris_uid" ]] && return 0
+  done
+  if [[ "$real" == "$app"/* && "$(stat -c '%u' "$app" 2>/dev/null)" == "$polaris_uid" ]]; then
+    return 0
+  fi
+  return 1
+}
+SRC_TRUSTED=1
+src_untrusted && SRC_TRUSTED=0
+HA_REVIEWED=0
+SYNC_HELPER=/usr/local/sbin/polaris-update-sync
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
@@ -173,11 +238,38 @@ require_certs() {
   fi
 }
 
+# ha_root_file <mode> <src> <dest> — install a root-owned HA file. From an
+# untrusted source it is NOT copied here: ha_review_root_files has already
+# offered it through the installed update helper (rule 117(n)).
+ha_root_file() {
+  [[ $SRC_TRUSTED -eq 1 ]] || return 0
+  install -o root -g root -m "$1" "$2" "$3"
+}
+
+# On a database node whose source is untrusted, hand every HA root file to the
+# installed polaris-update-sync --install --ha, once, before anything needs
+# them. It reads /opt/polaris/deploy, so an untrusted copy elsewhere is refused.
+ha_review_root_files() {
+  [[ $SRC_TRUSTED -eq 1 || $HA_REVIEWED -eq 1 ]] && return 0
+  [[ "$(readlink -f "$SRC_DIR")" == "$(readlink -f "$APP_DIR")/deploy/ha" ]] \
+    || error "$SRC_DIR is writable by the $APP_USER account and is not $APP_DIR/deploy/ha. Run this script from a root-owned clone (docs/HA.md)."
+  if ! { [[ -f "$SYNC_HELPER" && ! -L "$SYNC_HELPER" && "$(stat -c '%u' "$SYNC_HELPER")" == 0 ]] \
+         && (( (8#$(stat -c '%a' "$SYNC_HELPER") & 8#022) == 0 )) && grep -q -- '--ha' "$SYNC_HELPER"; }; then
+    error "Running from $SRC_DIR (the $APP_USER account's tree) needs the installed, reviewed $SYNC_HELPER with --install --ha, and this host has none. Run this script from a root-owned clone instead (docs/HA.md), or apply the held helpers first: sudo polaris-update-sync --apply-helpers"
+  fi
+  info "HA files come from $APP_DIR (the $APP_USER account's tree): reviewing them through $SYNC_HELPER --install --ha (business rule 117(n))"
+  "$SYNC_HELPER" --install --ha ${POLARIS_YES:+--yes} || warn "$SYNC_HELPER --install --ha reported a problem; see above"
+  HA_REVIEWED=1
+}
+
 render() {
   # render <src> <dest> — substitute the {{PLACEHOLDER}} set. Deliberately
   # sed and not envsubst: no extra package, and unreplaced placeholders stay
-  # visible in the output instead of silently becoming empty strings.
+  # visible in the output instead of silently becoming empty strings. A
+  # template in an untrusted source is read as the polaris account, so a link
+  # planted there reaches only what that account can read (rule 117(n)).
   local src="$1" dest="$2"
+  if [[ $SRC_TRUSTED -eq 1 ]]; then cat -- "$src"; else sudo -u "$APP_USER" cat -- "$src"; fi | \
   sed -e "s|{{NODE_NAME}}|$NODE_NAME|g" \
       -e "s|{{THIS_ADDR}}|$THIS_ADDR|g" \
       -e "s|{{PEER_ADDR}}|$PEER_ADDR|g" \
@@ -201,7 +293,7 @@ render() {
       -e "s|{{MAINTENANCE_WORK_MEM}}|$MAINTENANCE_WORK_MEM|g" \
       -e "s|{{MAX_WORKER_PROCESSES}}|$MAX_WORKER_PROCESSES|g" \
       -e "s|{{MAX_LOCKS_PER_TRANSACTION}}|$MAX_LOCKS_PER_TRANSACTION|g" \
-      "$src" > "$dest"
+      > "$dest"
   if grep -q '{{' "$dest"; then
     warn "unreplaced placeholders remain in $dest:"
     grep -o '{{[A-Z_]*}}' "$dest" | sort -u | sed 's/^/    /'
@@ -517,6 +609,7 @@ read_primary_settings() {
 }
 
 install_patroni() {
+  ha_review_root_files
   step "Patroni"
   if ! command -v patroni >/dev/null 2>&1; then
     dnf install -y patroni patroni-etcd || error "could not install patroni / patroni-etcd from PGDG"
@@ -587,11 +680,13 @@ EOF
   chmod 0600 /etc/patroni/patroni.yml
   info "wrote /etc/patroni/patroni.yml"
 
-  install -o root -g root -m 0755 "$SRC_DIR/patroni-callback.sh" /usr/local/sbin/polaris-patroni-callback
-  install -o root -g root -m 0440 "$SRC_DIR/sudoers.d/polaris-ha" /etc/sudoers.d/polaris-ha
-  visudo -cf /etc/sudoers.d/polaris-ha >/dev/null || error "the polaris-ha sudoers file did not validate"
+  ha_root_file 0755 "$SRC_DIR/patroni-callback.sh" /usr/local/sbin/polaris-patroni-callback
+  ha_root_file 0440 "$SRC_DIR/sudoers.d/polaris-ha" /etc/sudoers.d/polaris-ha
+  if [[ $SRC_TRUSTED -eq 1 ]]; then
+    visudo -cf /etc/sudoers.d/polaris-ha >/dev/null || error "the polaris-ha sudoers file did not validate"
+  fi
   mkdir -p /etc/systemd/system/patroni.service.d
-  install -o root -g root -m 0644 "$SRC_DIR/patroni.service.d/10-polaris.conf" /etc/systemd/system/patroni.service.d/10-polaris.conf
+  ha_root_file 0644 "$SRC_DIR/patroni.service.d/10-polaris.conf" /etc/systemd/system/patroni.service.d/10-polaris.conf
 
   # Watchdog: the only real fencing in a two-node cluster.
   echo softdog > /etc/modules-load.d/softdog.conf
@@ -622,11 +717,13 @@ install_ha_watcher() {
   step "HA reconciler"
   mkdir -p "$HA_DIR/ha"; chmod 0700 "$HA_DIR/ha"
 
-  install -o root -g root -m 0755 "$SRC_DIR/polaris-ha-role.sh" /usr/local/sbin/polaris-ha-role
-  install -o root -g root -m 0755 "$SRC_DIR/polaris-ha-ssh-wrapper.sh" /usr/local/sbin/polaris-ha-ssh-wrapper
-  install -o root -g root -m 0644 "$SRC_DIR/ha-rsync-exclude" "$HA_DIR/ha-rsync-exclude"
-  install -o root -g root -m 0644 "$SRC_DIR/polaris-ha-role.service" /etc/systemd/system/polaris-ha-role.service
-  install -o root -g root -m 0644 "$SRC_DIR/polaris-ha-role.timer" /etc/systemd/system/polaris-ha-role.timer
+  ha_root_file 0755 "$SRC_DIR/polaris-ha-role.sh" /usr/local/sbin/polaris-ha-role
+  ha_root_file 0755 "$SRC_DIR/polaris-ha-ssh-wrapper.sh" /usr/local/sbin/polaris-ha-ssh-wrapper
+  ha_root_file 0644 "$SRC_DIR/ha-rsync-exclude" "$HA_DIR/ha-rsync-exclude"
+  ha_root_file 0644 "$SRC_DIR/polaris-ha-role.service" /etc/systemd/system/polaris-ha-role.service
+  ha_root_file 0644 "$SRC_DIR/polaris-ha-role.timer" /etc/systemd/system/polaris-ha-role.timer
+  # The reviewed copy of this script, for every later run (rule 117(n)).
+  ha_root_file 0755 "$SRC_DIR/setup-rhel-ha.sh" /usr/local/sbin/polaris-ha-setup
 
   cat > "$HA_DIR/ha.conf" <<EOF
 # Polaris HA reconciler configuration. See docs/HA.md.
@@ -671,9 +768,9 @@ EOF
   # Business rule 117: it covers starting polaris-update-sync.service (the
   # fixed root helper below) and restarting the polaris units — nothing else.
   mkdir -p /etc/polkit-1/rules.d
-  install -o root -g root -m 0644 "$SRC_DIR/../polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules
-  install -o root -g root -m 0755 "$SRC_DIR/../scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync
-  install -o root -g root -m 0644 "$SRC_DIR/../polaris-update-sync.service" /etc/systemd/system/polaris-update-sync.service
+  ha_root_file 0644 "$SRC_DIR/../polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules
+  ha_root_file 0755 "$SRC_DIR/../scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync
+  ha_root_file 0644 "$SRC_DIR/../polaris-update-sync.service" /etc/systemd/system/polaris-update-sync.service
   info "installed the polkit rule and the in-app updater's root helper"
 
   # Drop-ins: repoint the units at Patroni and add the primary guard.
@@ -682,7 +779,7 @@ EOF
     [[ -d "$d" ]] || continue
     unit="$(basename "$d")"
     mkdir -p "/etc/systemd/system/$unit"
-    install -o root -g root -m 0644 "$d/10-ha.conf" "/etc/systemd/system/$unit/10-ha.conf"
+    ha_root_file 0644 "$d/10-ha.conf" "/etc/systemd/system/$unit/10-ha.conf"
     # A stock (non-HA) install writes 20-postgres.conf with the local
     # PostgreSQL unit in it. Drop-ins apply in LEXICAL order, so that file
     # would re-add the dependency after 10-ha.conf's reset cleared it — the
