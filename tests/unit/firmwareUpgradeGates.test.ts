@@ -99,6 +99,12 @@ vi.mock("../../src/services/maintenanceScheduleService.js", () => ({
   releaseMaintenanceHold: h.releaseMaintenanceHold,
 }));
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+// The recovery wait probes the held device itself; here it never answers, so
+// the sample table (answerOnPoll) stays the only signal these cases steer.
+vi.mock("../../src/services/monitoringService.js", () => ({
+  probeAsset: vi.fn(async () => ({ success: false, responseTimeMs: 0 })),
+  recordProbeResult: vi.fn(async () => undefined),
+}));
 vi.mock("../../src/services/connectionPathService.js", () => ({ resolveConnectionPath: h.resolveConnectionPath }));
 vi.mock("../../src/services/firmwareEngines/index.js", () => ({
   engineFor: (m: string | null, t: string, s: string | null) => (m === "Fortinet" && t === "switch" && /^S/.test(s ?? "") ? { kind: "fortiswitch-https", label: "FortiSwitch (HTTPS)", run: h.engineRun } : null),
@@ -337,7 +343,7 @@ describe("the runner keeps the maintenance window open until monitoring answers"
     expect(Date.now() - t0).toBeGreaterThanOrEqual(400);
     expect(h.state.monitorPolls).toBeGreaterThan(3);
     const log = (vi.mocked(prisma.firmwareUpgradeRun.update).mock.calls.at(-1)![0] as { data: { log: Array<{ msg: string }> } }).data.log.map((l) => l.msg);
-    expect(log.some((m) => /did not answer within .* ending the maintenance window anyway/.test(m))).toBe(true);
+    expect(log.some((m) => /did not answer its monitoring probe within .* ending the maintenance window anyway/.test(m))).toBe(true);
     // Still a success: the device reported the new version to the engine.
     expect(h.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_succeeded");
   });

@@ -181,6 +181,26 @@ releases at once: a flash that went wrong is an incident. An unmonitored device 
 so nothing is waited for. Pinned by the "keeps the maintenance window open" block in
 `tests/unit/firmwareUpgradeGates.test.ts`.
 
+### Follow-on (2026-10-13): the wait asks the device; the scheduler never will
+
+An operator flashing a FortiSwitch watched the run sit in "Waiting for monitoring to
+answer" while the switch already answered their pings. Two things were true. A managed
+FortiSwitch's response-time probe asks the parent FortiGate's switch-controller and counts
+only `Connected`, so ICMP answering is not monitoring answering. And the bigger one: nothing
+was asking at all. The hold parks the asset at status `maintenance`, and
+`MONITOR_CANDIDATE_WHERE` drops that status from every scheduled poll, so the wait above
+read a table that no scheduled pass could write to. On every agentless device it sat out the full
+10-minute cap and then logged that monitoring "did not answer" (it had never been asked).
+Only an agent's pushes or an operator's Poll Now could end it early. `holdRecoveryWait.ts →
+probeWhileHeld` now runs `probeAsset` (the Poll Now probe, through the four-tier polling
+method) on every poll of the wait and records a success through `recordProbeResult`, the
+same sample, status machine and uptime/reboot path the scheduler uses. A failed probe is
+not recorded: the device is inside the window that exists so it is not judged yet. The
+sample table stays the release signal, because an agent-polled host's probe is a synthetic no-op.
+The cap-warning now reads "the device did not answer its monitoring probe". Rule 115's reboot
+wait shares the code and the fix. Pinned by the probe cases in
+`tests/unit/holdRecoveryWait.test.ts`.
+
 ### Follow-on (2026-09-25): a switch login is judged by the session, never the redirect
 
 The first prod FortiSwitch run failed at sign-in with "the switch rejected the username or

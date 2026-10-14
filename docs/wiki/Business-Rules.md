@@ -1366,7 +1366,11 @@ is fine — that is when you flash. The flash opens a
 run ends it at once. A run that got as far as the reboot keeps it open until
 **Polaris's own monitoring** answers the device again, for up to 10 more
 minutes: a device's web interface, which the upgrade talks to, often comes
-back minutes before the SNMP agent that monitoring polls. If monitoring still
+back minutes before the SNMP agent that monitoring polls. The window keeps
+scheduled polling off the device, so during this wait the upgrade runs the
+device's monitoring probe itself every 15 seconds. It uses the same polling
+method, so a managed FortiSwitch or FortiAP counts as back when its FortiGate
+reports it connected, not when it answers a ping. If the probe still
 has not answered by then, the window ends anyway and the device is judged
 normally.
 
