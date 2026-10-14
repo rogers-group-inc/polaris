@@ -4758,6 +4758,12 @@ describe("reboot action", () => {
     await new Promise((r) => setTimeout(r, 30));
     return savedPayloads[0] as Record<string, any>;
   };
+  const typeRecipient = (box: Element, text: string): void => {
+    const win = g.window as InstanceType<typeof Window>;
+    const input = box.querySelector(".na-recip-input") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    input.value = text;
+    input.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  };
   const rebootRow = () => Array.from(doc.querySelectorAll("#aw-actions > .aw-action"))
     .find((r) => (r.querySelector(".aw-action-type") as HTMLSelectElement).value === "reboot")!;
 
@@ -4768,12 +4774,32 @@ describe("reboot action", () => {
     expect(row.querySelector(".aw-esc-sec")).toBeNull();
     expect((row.querySelector(".rb-at") as HTMLInputElement).value).toBe("03:15");
     expect(row.querySelector(".aw-action-summary")!.textContent).toMatch(/03:15 server time/);
-    (row.querySelector(".rb-emails") as unknown as { value: string }).value = "noc@example.invalid, oncall@example.invalid";
+    // The pre-picker notifyEmails loads as an address pill in To and is
+    // written back as `addresses`, never as notifyEmails.
+    const to = row.querySelector('.rb-recips .na-recip-box[data-field="to"]')!;
+    expect(to.querySelector('.tag-chip[data-kind="address"]')!.getAttribute("data-value")).toBe("noc@example.invalid");
+    typeRecipient(to, "oncall@example.invalid");
+    typeRecipient(row.querySelector('.rb-recips .na-recip-box[data-field="cc"]')!, "boss@example.invalid");
     const p = await save();
     expect(toastErrors).toEqual([]);
     const a = p.actions.find((x: { type: string }) => x.type === "reboot");
-    expect(a).toEqual({ type: "reboot", when: "at", at: "03:15", notifyEmails: ["noc@example.invalid", "oncall@example.invalid"], minGapHours: 48 });
+    expect(a).toEqual({
+      type: "reboot", when: "at", at: "03:15", minGapHours: 48,
+      addresses: ["noc@example.invalid", "oncall@example.invalid"], cc: { addresses: ["boss@example.invalid"] },
+    });
     expect(() => ruleInputSchema.parse(p)).not.toThrow();
+  });
+
+  it("round-trips the Asset's L1 Region Users pill, with an address book on To", async () => {
+    await openStep5(memRule([{ type: "reboot", when: "at", at: "02:00", recipientDeviceRegionLevels: [1], bcc: { recipientUserIds: ["u1"] }, minGapHours: 24 }]));
+    const row = rebootRow();
+    const to = row.querySelector('.rb-recips .na-recip-box[data-field="to"]')!;
+    expect(to.querySelector('.tag-chip[data-kind="deviceRegionLevel"]')!.getAttribute("data-label")).toBe("Asset’s L1 Region Users");
+    expect(row.querySelector('.rb-recips .na-recip-box[data-field="bcc"] .tag-chip[data-kind="user"]')).toBeTruthy();
+    expect(row.querySelectorAll(".rb-recips .na-book")).toHaveLength(1);
+    const a = (await save()).actions.find((x: { type: string }) => x.type === "reboot");
+    expect(a).toMatchObject({ recipientDeviceRegionLevels: [1], bcc: { recipientUserIds: ["u1"] } });
+    expect(a.notifyEmails).toBeUndefined();
   });
 
   it("'right away' saves when: now and disables the time field", async () => {
@@ -4785,10 +4811,13 @@ describe("reboot action", () => {
 
   it("refuses to save without a results recipient", async () => {
     await openStep5(memRule([{ type: "reboot", when: "at", at: "02:00", notifyEmails: ["noc@example.invalid"], minGapHours: 24 }]));
-    (rebootRow().querySelector(".rb-emails") as unknown as { value: string }).value = "";
+    // Moved to Cc: a Cc-only list has no To to send the result to.
+    const row = rebootRow();
+    row.querySelector('.rb-recips .na-recip-box[data-field="to"] .tag-chip')!.remove();
+    typeRecipient(row.querySelector('.rb-recips .na-recip-box[data-field="cc"]')!, "noc@example.invalid");
     await save();
     expect(savedPayloads).toHaveLength(0);
-    expect(toastErrors.join(" ")).toMatch(/email address for the reboot's result/);
+    expect(toastErrors.join(" ")).toMatch(/add a To recipient for the reboot's result/);
   });
 
   it("is offered on the trigger's actions but never on the reset list", async () => {

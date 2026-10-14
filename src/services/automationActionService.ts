@@ -40,6 +40,7 @@ import { renderNotificationTemplate, templateIsJson,
 } from "../utils/notificationTemplate.js";
 import {
   expandDeliveries,
+  resolveRebootActionRecipients,
   buildComposedEmail,
   type ComposedEmail,
 } from "./notificationRecipientService.js";
@@ -322,12 +323,25 @@ export async function executeActions(
         // rebooted within the gap) is an Event, not a failure, and does not
         // count as executed; a refused gate throws into the catch below.
         if (!exec.assetId) throw new Error("the alert has no device to reboot");
+        // The results recipients resolve NOW, against the triggering device —
+        // "Asset's L1 Region Users" means the people who own THIS box — and
+        // the booking stores plain addresses, like an operator's booking.
+        const recips = await resolveRebootActionRecipients(action, {
+          assetRegionTags: exec.assetRegionTags,
+          ...(action.recipientAssetContacts ? { assetContactEmails: await assetContactEmails() } : {}),
+          logCtx: { notificationId, assetId: exec.assetId, action: "reboot" },
+        });
+        // The booking's invariant is that someone always hears the outcome; a
+        // To that resolved to nobody is a failed action, not a silent reboot.
+        if (recips.to.length === 0) throw new Error("the reboot's To recipients resolved to no email address — nothing was booked");
         const { bookRebootFromAutomation } = await import("./rebootScheduleService.js");
         const res = await bookRebootFromAutomation({
           assetId: exec.assetId,
           when: action.when,
           at: action.at,
-          notifyEmails: action.notifyEmails,
+          notifyEmails: recips.to,
+          notifyCc: recips.cc,
+          notifyBcc: recips.bcc,
           minGapHours: action.minGapHours,
           ruleId: exec.ruleId ?? null,
           ruleName: exec.ruleName ?? null,

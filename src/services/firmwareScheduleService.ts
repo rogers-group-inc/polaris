@@ -55,6 +55,8 @@ export const MIN_LEAD_MS = 60_000;
 /** The furthest ahead a booking may be made. */
 export const MAX_LEAD_MS = 366 * 24 * 60 * 60_000;
 export const MAX_RECIPIENTS = 20;
+/** The cap on each list an automation's reboot action resolves (To, Cc, Bcc). */
+export const AUTOMATION_MAX_RECIPIENTS = 200;
 const DUE_BATCH = 50;
 const LOG_TAIL = 15;
 
@@ -95,8 +97,11 @@ function summarize(r: ScheduleRow): ScheduleSummary {
 /**
  * Lower-cased, trimmed, de-duplicated, each a plausible address. Pure.
  * Throws 400 naming the first bad address, or when the list is empty or long.
+ * `allowEmpty` is for a Cc/Bcc list; `max` widens the cap for a list an
+ * automation RESOLVED (a region's users), which nobody typed one by one.
  */
-export function normalizeRecipients(list: readonly string[]): string[] {
+export function normalizeRecipients(list: readonly string[], opts: { max?: number; allowEmpty?: boolean } = {}): string[] {
+  const max = opts.max ?? MAX_RECIPIENTS;
   const out: string[] = [];
   for (const raw of list) {
     const e = String(raw ?? "").trim().toLowerCase();
@@ -104,8 +109,8 @@ export function normalizeRecipients(list: readonly string[]): string[] {
     if (!EMAIL_RE.test(e) || e.length > 254) throw new AppError(400, `"${raw}" is not an email address`);
     if (!out.includes(e)) out.push(e);
   }
-  if (out.length === 0) throw new AppError(400, "Name at least one email address to send the results to");
-  if (out.length > MAX_RECIPIENTS) throw new AppError(400, `At most ${MAX_RECIPIENTS} recipients`);
+  if (out.length === 0 && !opts.allowEmpty) throw new AppError(400, "Name at least one email address to send the results to");
+  if (out.length > max) throw new AppError(400, `At most ${max} recipients`);
   return out;
 }
 
