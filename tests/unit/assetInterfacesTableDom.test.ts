@@ -123,6 +123,7 @@ function setup(): void {
   g.showToast = () => {};
   g.canManageAssets = () => true;
   g._staleBannerHTML = () => "";
+  g._streamFailureError = () => null;
   g._fmtSpeed = (b: number) => `${b}bps`;
   g._fmtBytes = (b: number) => `${b}B`;
   g._screenshotTableEl = () => {};

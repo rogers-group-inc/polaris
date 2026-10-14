@@ -76,6 +76,12 @@ export function chartTokenForMetric(metric: string | null | undefined): ChartTok
     case "monitorStatus":
     case "consecutiveFailures":
       return "chart.responseTime";
+    // Business rule 118, by the same reasoning: a CPU / memory pull that has
+    // been failing is explained by the CPU chart going quiet where the samples
+    // stop. Its interface twin keeps the default — there is no one device-level
+    // interface graph, and which port matters is not the alert's to guess.
+    case "telemetryFailingMinutes":
+      return "chart.cpu";
     case "sdwanLatencyMs":
       return "chart.sdwanLatency";
     case "sdwanJitterMs":

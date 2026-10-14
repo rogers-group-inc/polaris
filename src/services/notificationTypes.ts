@@ -664,6 +664,15 @@ export const ASSET_STATE_FIELDS = [
   // version, no primary for its platform. Resolved from one findMany over the
   // image table per evaluation, never one query per asset.
   "firmwareVsPrimary",
+  // How long a heavy stream's polls have been FAILING, in whole minutes —
+  // business rule 118. Measured from the first failed attempt of the current
+  // run to the latest attempt, so the reading freezes if attempts stop rather
+  // than climbing on a device nobody is asking. 0 while the stream is healthy;
+  // NO READING for a stream never attempted (unsupported, disabled, or a
+  // method with no collector). Not the response-time probe's business: a
+  // device that answers ping/SNMP but whose REST pull fails reads up on
+  // monitorStatus and >0 here, which is exactly the case these exist for.
+  "telemetryFailingMinutes", "systemInfoFailingMinutes",
   // Whether the asset carries ONE named tag. The tag is the rule's `value`; the
   // operator says which way: `== prod` is "is tagged prod", `!= prod` is "is
   // not tagged prod". A fact Polaris holds about the device (Asset.tags), so it
@@ -4332,6 +4341,10 @@ export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" |
   // The operator's usual rule is `!= current`; `== newer` names the fleet
   // that is AHEAD of the image someone selected as primary.
   firmwareVsPrimary: { label: "Firmware vs Repository primary", kind: "enum", values: ["current", "older", "newer"] },
+  // Business rule 118. Whole minutes the stream's polls have been failing; the
+  // label carries the unit because FIELD_META has no unit slot.
+  telemetryFailingMinutes:  { label: "CPU & memory polls failing (minutes)", kind: "number", placeholder: "e.g. 60" },
+  systemInfoFailingMinutes: { label: "Interface polls failing (minutes)", kind: "number", placeholder: "e.g. 60" },
   // Free text (tags are operator-typed), matched whole and case-insensitively
   // like the scope condition's `tag` field. Equality only: "is tagged" / "is
   // not tagged" are the only questions a tag can answer.

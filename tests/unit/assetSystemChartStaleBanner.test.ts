@@ -58,6 +58,7 @@ const FN_NAMES = [
   "_staleBannerBoxHTML",
   "_staleBannerInnerHTML",
   "_staleBannerHTML",
+  "_streamFailureError",
   "_isRestApiManagedNetworkDevice",
   "_renderCpuChart",
 ];
@@ -67,10 +68,10 @@ const SRC = FN_NAMES.map(fnSrc).join("\n") + "\n" +
 const ASSET = { id: "A1", assetType: "firewall", cpuMemoryIntervalSec: 120 };
 
 /** Render the CPU chart (the banner's host) into a fresh container. */
-function render(lastTelemetryAt: string | null, asset: any = ASSET) {
+function render(lastTelemetryAt: string | null, asset: any = ASSET, si: Record<string, unknown> = {}) {
   document.body.innerHTML = '<div id="chart"></div>';
   const el = document.getElementById("chart")!;
-  g._renderCpuChart(el, { samples: [] }, asset, { lastTelemetryAt });
+  g._renderCpuChart(el, { samples: [] }, asset, { lastTelemetryAt, ...si });
   return el;
 }
 
@@ -166,5 +167,42 @@ describe("CPU & Memory chart — empty window", () => {
     const el = render(agoIso(7 * 60), { id: "A2", assetType: "access_point" });
     expect(el.querySelector("div.na")).not.toBeNull();
     expect(el.textContent).not.toContain("Last successful update");
+  });
+});
+
+// Business rule 118: lastTelemetryAt is the last SUCCESS now, and an open
+// failure run carries its message. The prod case: a FortiGate whose REST pull
+// was refused on every poll read "updated 1m ago" over an empty chart, because
+// the stamp used to advance on failures too.
+describe("CPU & Memory chart — an open failure run", () => {
+  const failing = { telemetryFailingSince: agoIso(7 * 60), telemetryLastError: "connection refused (ECONNREFUSED)" };
+
+  it("names the failure beside the age once the data is stale", () => {
+    const el = render(agoIso(7 * 60), ASSET, failing);
+    expect(el.textContent).toContain("Last successful update 7h ago — the latest poll failed: connection refused (ECONNREFUSED)");
+  });
+
+  it("raises a banner for a stream that has never succeeded", () => {
+    // No success to age: before rule 118 this rendered nothing at all.
+    const el = render(null, ASSET, failing);
+    expect(el.textContent).toContain("No successful poll yet — the latest poll failed: connection refused (ECONNREFUSED)");
+  });
+
+  it("stays quiet inside 3x the cadence even while a run is open", () => {
+    // One late or failed poll is not yet a stale stream; the header stamp
+    // already turns amber for it.
+    expect(render(agoIso(3), ASSET, failing).textContent).not.toContain("the latest poll failed");
+  });
+
+  it("carries the message on the slot for the effective-settings rewrite", () => {
+    const slot = render(agoIso(3), ASSET, failing).querySelector(".asset-stale-banner-slot") as HTMLElement;
+    expect(slot.getAttribute("data-failure")).toBe("connection refused (ECONNREFUSED)");
+  });
+
+  it("ignores a stale message once the run has closed", () => {
+    // A success clears failingSince; a lingering message must not resurface.
+    const el = render(agoIso(7 * 60), ASSET, { telemetryFailingSince: null, telemetryLastError: "old" });
+    expect(el.textContent).toContain("Last successful update 7h ago");
+    expect(el.textContent).not.toContain("the latest poll failed");
   });
 });

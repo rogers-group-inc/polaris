@@ -47,6 +47,12 @@ const CMP_PHRASE: Record<string, string> = {
   "!=": "is not",
 };
 
+/** The stream each failing-minutes state field names (business rule 118). */
+const STREAM_FAILING_SUBJECT: Record<string, string> = {
+  telemetryFailingMinutes: "CPU & memory",
+  systemInfoFailingMinutes: "Interface",
+};
+
 const AGG_PHRASE: Record<string, string> = {
   latest: "",
   avg: "avg over",
@@ -182,6 +188,15 @@ export function triggerSummary(parts: TriggerSummaryParts): string {
     if (trigger.field === "tag") {
       const name = formatValue(trigger.value ?? null) ?? "";
       return `Asset ${formatValue(parts.value) ? "has" : "does not have"} the tag "${name}"`;
+    }
+    // Business rule 118: a duration, so "… is 62" would drop the unit the label
+    // carries in brackets. The reading is whole minutes of failed polls.
+    const failingStream = STREAM_FAILING_SUBJECT[trigger.field ?? ""];
+    if (failingStream) {
+      const mins = formatValue(parts.value) ?? formatValue(trigger.value ?? null);
+      return mins === null || mins === "0"
+        ? `${failingStream} polls are succeeding`
+        : `${failingStream} polls have been failing for ${mins} min`;
     }
     // The READING when we have one; the configured value otherwise (a test on
     // a device with nothing reported still reads as a sentence).

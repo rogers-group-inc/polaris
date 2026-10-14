@@ -7606,6 +7606,22 @@ function _telemetrySplitsCpuMemory(a) {
     !!(a && a.virtualization && a.virtualization.role === "host");
 }
 
+// A heavy stream's header stamp (business rule 118). Healthy: "updated X ago"
+// off the last SUCCESS. Failing: amber "⚠ last poll failed X ago", the message
+// and the last success in the tooltip — the stamp used to read the last
+// ATTEMPT, so a device whose REST pull failed every time looked current.
+function _streamPollStampHTML(okAt, attemptAt, failingSince, lastError) {
+  if (failingSince && attemptAt) {
+    var tip = "Failing since " + new Date(failingSince).toLocaleString() +
+      "\nLast successful poll: " + (okAt ? new Date(okAt).toLocaleString() : "never") +
+      (lastError ? "\nError: " + lastError : "");
+    return '<span style="font-size:0.72rem;color:var(--color-warning);font-weight:600" title="' + escapeHtml(tip) + '">' +
+      '&#9888; last poll failed ' + timeAgo(attemptAt) + '</span>';
+  }
+  if (!okAt) return "";
+  return '<span style="font-size:0.72rem;color:var(--color-text-tertiary)" title="' + escapeHtml(new Date(okAt).toLocaleString()) + '">updated ' + timeAgo(okAt) + '</span>';
+}
+
 function assetSystemViewHTML(a) {
   if (!a) return '<p class="empty-state">No data.</p>';
   if (!a.monitored) {
@@ -7650,12 +7666,14 @@ function assetSystemViewHTML(a) {
   var telUpdatedAt = a.lastTelemetryAt
     ? ('<span style="font-size:0.72rem;color:var(--color-text-tertiary)" title="' + escapeHtml(new Date(a.lastTelemetryAt).toLocaleString()) + '">updated ' + timeAgo(a.lastTelemetryAt) + '</span>')
     : '';
-  var sysInfoUpdatedAt = a.lastSystemInfoAt
-    ? ('<span style="font-size:0.72rem;color:var(--color-text-tertiary)" title="' + escapeHtml(new Date(a.lastSystemInfoAt).toLocaleString()) + '">updated ' + timeAgo(a.lastSystemInfoAt) + '</span>')
-    : '';
-  var telemetryBadgeFull  = telemetryBadge  + (telemetryBadge  && telUpdatedAt     ? " " : "") + telUpdatedAt;
-  var interfacesBadgeFull = interfacesBadge + (interfacesBadge && sysInfoUpdatedAt ? " " : "") + sysInfoUpdatedAt;
-  var lldpBadgeFull       = lldpBadge       + (lldpBadge       && sysInfoUpdatedAt ? " " : "") + sysInfoUpdatedAt;
+  // CPU & Memory and Interfaces say a FAILED poll out loud (business rule 118)
+  // — "updated X ago" is the last success, and a failing stream reads as the
+  // failure instead. Temperatures keeps the plain stamp: it tracks no run.
+  var telPollStamp     = _streamPollStampHTML(a.lastTelemetryAt,  a.lastTelemetryAttemptAt,  a.telemetryFailingSince,  a.telemetryLastError);
+  var sysInfoPollStamp = _streamPollStampHTML(a.lastSystemInfoAt, a.lastSystemInfoAttemptAt, a.systemInfoFailingSince, a.systemInfoLastError);
+  var telemetryBadgeFull  = telemetryBadge  + (telemetryBadge  && telPollStamp     ? " " : "") + telPollStamp;
+  var interfacesBadgeFull = interfacesBadge + (interfacesBadge && sysInfoPollStamp ? " " : "") + sysInfoPollStamp;
+  var lldpBadgeFull       = lldpBadge       + (lldpBadge       && sysInfoPollStamp ? " " : "") + sysInfoPollStamp;
   // Temperatures uses its own table-specific timestamp (si.lastTemperatureAt)
   // which can diverge from lastTelemetryAt when the CPU/memory pull succeeds
   // but the sensor pull fails. The header's updated stamp lives in an id'd
@@ -8219,25 +8237,42 @@ function _staleBannerBoxHTML(text) {
   return "<div style=\"margin-bottom:0.75rem;padding:0.5rem 0.75rem;background:rgba(245,127,23,0.08);border:1px solid rgba(245,127,23,0.3);border-radius:6px;font-size:0.8rem;color:var(--color-warning)\">&#9888; " + escapeHtml(text) + "</div>";
 }
 
-function _staleBannerInnerHTML(lastAt, resolvedSec) {
-  if (!lastAt) return "";
+// `lastAt` is the stream's last SUCCESS (business rule 118 — for CPU / memory
+// it used to be the last attempt, which is why this banner never fired over an
+// empty chart). `failureError` is the open failure run's message, or null: it
+// is appended to an aged banner, and it is what raises one for a stream that
+// has never succeeded at all (no `lastAt` to age).
+function _staleBannerInnerHTML(lastAt, resolvedSec, failureError) {
+  var why = failureError ? " — the latest poll failed: " + failureError : "";
+  if (!lastAt) return failureError ? _staleBannerBoxHTML("No successful poll yet" + why) : "";
   var ageMs = Date.now() - new Date(lastAt).getTime();
   var thresholdMs = resolvedSec * 3 * 1000;
   if (ageMs <= thresholdMs) return "";
-  return _staleBannerBoxHTML("Last successful update " + timeAgo(lastAt));
+  return _staleBannerBoxHTML("Last successful update " + timeAgo(lastAt) + why);
+}
+
+// The open failure run's message for a stream, off a /system-info response
+// (business rule 118). Only the two streams that track a run carry one.
+function _streamFailureError(si, streamKey) {
+  if (!si) return null;
+  if (streamKey === "telemetry")  return si.telemetryFailingSince  ? (si.telemetryLastError  || "no data returned") : null;
+  if (streamKey === "systemInfo") return si.systemInfoFailingSince ? (si.systemInfoLastError || "no data returned") : null;
+  return null;
 }
 
 // Amber stale-data banner. Emits a slot wrapper carrying the assetId, stream
-// key, and lastAt timestamp so _updateStaleBannersFromEffective can rewrite
-// the inner content once /effective-monitor-settings lands (covers cases
-// where the resolved cadence comes from a class override the sync render
-// can't see). Banner appears only when `lastAt` is older than 3× the
-// resolved polling interval. `streamKey` is one of: "telemetry"
-// (CPU/memory/temps) or "systemInfo" (interfaces/storage/IPsec/LLDP).
-function _staleBannerHTML(assetId, asset, streamKey, lastAt) {
+// key, lastAt timestamp and failure message so _updateStaleBannersFromEffective
+// can rewrite the inner content once /effective-monitor-settings lands (covers
+// cases where the resolved cadence comes from a class override the sync render
+// can't see). Banner appears when `lastAt` is older than 3× the resolved
+// polling interval, or when there is no `lastAt` and a failure is open.
+// `streamKey` is one of: "telemetry" (CPU/memory/temps) or "systemInfo"
+// (interfaces/storage/IPsec/LLDP). `failureError` is optional — the
+// Temperatures and response-time banners pass none (they track no run).
+function _staleBannerHTML(assetId, asset, streamKey, lastAt, failureError) {
   var resolvedSec = _resolveStaleStreamSec(assetId, asset, streamKey);
-  var inner = _staleBannerInnerHTML(lastAt, resolvedSec);
-  return '<div class="asset-stale-banner-slot" data-asset-id="' + escapeHtml(assetId || "") + '" data-stream="' + escapeHtml(streamKey) + '" data-last-at="' + escapeHtml(lastAt || "") + '">' + inner + '</div>';
+  var inner = _staleBannerInnerHTML(lastAt, resolvedSec, failureError || null);
+  return '<div class="asset-stale-banner-slot" data-asset-id="' + escapeHtml(assetId || "") + '" data-stream="' + escapeHtml(streamKey) + '" data-last-at="' + escapeHtml(lastAt || "") + '" data-failure="' + escapeHtml(failureError || "") + '">' + inner + '</div>';
 }
 
 // Re-evaluates every stale-banner slot for an asset using the now-cached
@@ -8252,9 +8287,10 @@ function _updateStaleBannersFromEffective(assetId, asset) {
   slots.forEach(function (slot) {
     var streamKey = slot.getAttribute("data-stream");
     var lastAt = slot.getAttribute("data-last-at") || null;
+    var failureError = slot.getAttribute("data-failure") || null;
     if (!streamKey) return;
     var resolvedSec = _resolveStaleStreamSec(assetId, asset, streamKey);
-    slot.innerHTML = _staleBannerInnerHTML(lastAt, resolvedSec);
+    slot.innerHTML = _staleBannerInnerHTML(lastAt, resolvedSec, failureError);
   });
   // The Temperatures section's "not available via REST API" empty state is
   // decided from the resolved temperature polling method, which the sync
@@ -8476,7 +8512,7 @@ function _wireIpsecTabPointer(container) {
 // inactive-row count (drives the show-inactive toggle label).
 function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   var lldpAll = (si && si.lldpNeighbors) || [];
-  var staleBanner = _staleBannerHTML(asset && asset.id, asset, "systemInfo", si && si.lastSystemInfoAt);
+  var staleBanner = _staleBannerHTML(asset && asset.id, asset, "systemInfo", si && si.lastSystemInfoAt, _streamFailureError(si, "systemInfo"));
   var monitored        = new Set(((si && si.monitoredInterfaces)   || (asset && asset.monitoredInterfaces)   || []));
   var canEdit = canManageAssets();
   // VLAN columns appear only when at least one row in this table actually
@@ -9751,7 +9787,7 @@ function _renderLldpNeighborsCard(container, si, asset) {
       '<td style="font-size:0.78rem;color:var(--color-text-secondary)">' + escapeHtml(caps) + '</td>' +
     '</tr>';
   }).join("");
-  var lldpStaleBanner = _staleBannerHTML(asset && asset.id, asset, "systemInfo", si && si.lastSystemInfoAt);
+  var lldpStaleBanner = _staleBannerHTML(asset && asset.id, asset, "systemInfo", si && si.lastSystemInfoAt, _streamFailureError(si, "systemInfo"));
   container.innerHTML = lldpStaleBanner +
     '<div class="table-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
       '<th data-col-id="localPort" data-col-required="true">Local Port</th>' +
@@ -10189,7 +10225,7 @@ function _renderWirelessStationsCard(container, si, asset) {
   // arrangement, for the same reason: rebuilding the input being typed into
   // loses the caret.
   var filter = _assetWirelessFilter[assetId] || "";
-  var staleBanner = _staleBannerHTML(assetId, asset, "systemInfo", si && si.lastSystemInfoAt);
+  var staleBanner = _staleBannerHTML(assetId, asset, "systemInfo", si && si.lastSystemInfoAt, _streamFailureError(si, "systemInfo"));
   container.innerHTML = _wirelessStripHTML(asset, si) + staleBanner +
     '<div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin:0 0 0.5rem">' +
       '<input type="text" id="asset-wireless-filter" class="form-input" ' +
@@ -12216,7 +12252,7 @@ function _renderSystemChart(container, data, asset, si) {
       // it — CPU & Memory stayed silent while every other section on the tab
       // flagged the same stalled collection.
       container.innerHTML =
-        _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt) +
+        _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt, _streamFailureError(si, "telemetry")) +
         '<div style="text-align:center">No telemetry samples in this range yet.</div>';
       container.style.flexDirection = "column";
       container.style.alignItems = "stretch";
@@ -12332,7 +12368,7 @@ function _renderSystemChart(container, data, asset, si) {
       '<text x="' + (padL + 74) + '" y="11">Memory</text>' +
     '</g>';
 
-  var chartStaleBanner = _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt);
+  var chartStaleBanner = _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt, _streamFailureError(si, "telemetry"));
   var clipId = _chartClipId("system");
   var cpuLine = _failureAwareSeriesSVG(failAwarePts(cpuValues), cpuColor, clipId + "-cpu");
   var memLine = _failureAwareSeriesSVG(failAwarePts(memValues), memColor, clipId + "-mem");
@@ -12448,7 +12484,7 @@ function _renderCpuChart(container, data, asset, si) {
       // chart has nothing to say, so "last successful update 7h ago" is the
       // only thing that explains the gap.
       container.innerHTML =
-        _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt) +
+        _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt, _streamFailureError(si, "telemetry")) +
         '<div style="text-align:center">No telemetry samples in this range yet.</div>';
       container.style.flexDirection = "column";
       container.style.alignItems = "stretch";
@@ -12566,7 +12602,7 @@ function _renderCpuChart(container, data, asset, si) {
     }
   }
 
-  var chartStaleBanner = _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt);
+  var chartStaleBanner = _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt, _streamFailureError(si, "telemetry"));
   container.innerHTML =
     chartStaleBanner +
     _cpuLegendHTML(coreCount, hidden, data, asset) +

@@ -1093,8 +1093,28 @@ model Asset {
   // matches on (utils/assetTypeMatch.ts MATCH_FIELDS), which is what lets one
   // rule type a camera fleet instead of a regex over the whole sysDescr.
   productType             String?
+  // Business rule 118 — each of the two heavy streams carries FOUR facts, not
+  // one stamp doing two jobs:
+  //   last<Stream>At        — the last poll that RETURNED DATA. What the UI's
+  //                           "updated X ago" and stale banner read, and (for
+  //                           system info) the anchor the interface table is
+  //                           read at. Never advanced by a failure.
+  //   last<Stream>AttemptAt — the last poll ATTEMPTED, success or failure. The
+  //                           scheduler's due anchor, so a failing device is
+  //                           retried once per cadence, never every tick.
+  //   <stream>FailingSince  — the first failed attempt of the current failure
+  //                           run; null while the stream is healthy.
+  //   <stream>LastError     — what that run's latest failure said.
+  // Written only by recordTelemetryResult / recordSystemInfoResult and the
+  // agent push routes, which stamp the attempt on every success too.
   lastTelemetryAt         DateTime?
+  lastTelemetryAttemptAt  DateTime?
+  telemetryFailingSince   DateTime?
+  telemetryLastError      String?
   lastSystemInfoAt        DateTime?
+  lastSystemInfoAttemptAt DateTime?
+  systemInfoFailingSince  DateTime?
+  systemInfoLastError     String?
   // Cadence anchor for the sysDescr identity read (the `snmp-sysdescr`
   // AssetSource). Stamped by BOTH readers — the SNMP response-time probe,
   // which carries sysDescr as one extra varbind when this says the reading is
