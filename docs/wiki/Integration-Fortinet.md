@@ -320,8 +320,9 @@ out-of-range); a half-valid tier falls through rather than mixing values.
 **When the lookup fails.** Polaris asks OpenStreetMap first and the US Census
 geocoder second. Rural roads are often in neither, and then the pin keeps
 tier 2 or 3 — which may be an old pair from before the gate moved. Two things
-say so: the asset's **Coordinates** row reads *⚠ lookup failed — address not
-recognised* (or *geocoder unreachable*), with the address in its tooltip, and
+say so: the row holding the address that was looked up (**SNMP Location**, or
+**Address** for the address metavariable) reads *⚠ lookup failed — address not
+recognised* (or *geocoder unreachable*) beside the address, and
 an `asset.location.geocode_failed` warning lands on the asset's **Events** tab.
 A no-match is remembered for 90 days, so the same text is not retried; change
 the text (a city, state and ZIP usually resolves), or set the coordinates

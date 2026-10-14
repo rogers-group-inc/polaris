@@ -5807,8 +5807,8 @@ function _assetGeneralTabHTML(a, sources) {
       apProfileRowHTML(a) +
       viewRow("Location", a.location || a.learnedLocation) +
       coordinatesRowHTML(a, sources) +
-      (a.learnedAddress ? viewRow("Address", a.learnedAddress) : "") +
-      (a.snmpLocation ? viewRow("SNMP Location", a.snmpLocation) : "") +
+      geocodedAddressRowHTML(a, sources, "address-metavar") +
+      geocodedAddressRowHTML(a, sources, "snmp") +
       viewRow("Department", a.department) +
       viewRow("Assigned To", a.assignedTo) +
       // Same os + osVersion join the table column uses (and the mobile sheet).
@@ -20002,42 +20002,67 @@ function viewRow(label, value, mono, alignRight, copy) {
     '<span class="detail-value' + (mono ? ' mono' : '') + '"' + style + '>' + inner + '</span></div>';
 }
 
-// Render the Coordinates row on the asset details General tab. When this
-// cycle's location lookup failed (the fortigate-firewall source's
-// observed.geocodeFailure, rewritten every discovery run), say so beside the
-// pair: the pin then comes from a lower-priority source — often a stale pair
-// the FortiGate still carries — and nothing else on the tab would tell you the
-// SNMP location below it is not what placed it. A manual pin is exempt; the
-// lookup never moves it. The row also renders with no coordinates at all when
-// a lookup failed, so the failure is not hidden by the absence it caused.
+// A failed location lookup on the asset details General tab. The
+// fortigate-firewall source's observed.geocodeFailure is rewritten every
+// discovery run, so a later hit clears it. The flag sits on the row that holds
+// the address that was looked up (SNMP Location for an sysLocation lookup,
+// Address for the FortiManager address metavariable): the pin then comes from a
+// lower-priority source, often a stale pair the FortiGate still carries, and
+// nothing else on the tab says that address is not what placed it. A manual pin
+// is exempt, because the lookup never moves it.
 var GEOCODE_FAILURE_TEXT = {
   no_match: "lookup failed — address not recognised",
   unreachable: "lookup failed — geocoder unreachable",
   disabled: "lookup off on this server",
 };
+function geocodeFailureFor(asset, sources) {
+  if (!asset || asset.coordSource === "manual") return null;
+  var fail = null;
+  (sources || []).forEach(function (s) {
+    var g = s && s.sourceKind === "fortigate-firewall" && s.observed && s.observed.geocodeFailure;
+    if (g && typeof g.query === "string" && GEOCODE_FAILURE_TEXT[g.reason]) fail = g;
+  });
+  return fail;
+}
+// The value of the row the failed lookup read: Address for the metavariable,
+// SNMP Location otherwise. Empty when that row is not on the tab.
+function _geocodeFailureRowValue(asset, fail) {
+  return fail.source === "address-metavar" ? asset.learnedAddress : asset.snmpLocation;
+}
+function geocodeFailureFlagHTML(asset, fail) {
+  var has = asset.latitude != null && asset.longitude != null;
+  var what = fail.source === "address-metavar" ? "address metavariable" : "SNMP location";
+  var tip = "The " + what + " \"" + fail.query + "\" could not be placed on the map, so " +
+    (has ? "the coordinates come from the FortiGate's other settings (Latitude/Longitude metavariables or its GUI coordinates)."
+         : "this asset has no coordinates.") +
+    " The asset's Events tab has the details.";
+  return ' <span class="geocode-failure" style="color:var(--color-warning);font-family:var(--font-sans, inherit)" title="' +
+    escapeHtml(tip) + '">⚠ ' + escapeHtml(GEOCODE_FAILURE_TEXT[fail.reason]) + '</span>';
+}
+// Render the SNMP Location or Address row, carrying the failure flag when the
+// failed lookup read this row's address.
+function geocodedAddressRowHTML(asset, sources, source) {
+  var value = source === "address-metavar" ? asset.learnedAddress : asset.snmpLocation;
+  if (!value) return "";
+  var label = source === "address-metavar" ? "Address" : "SNMP Location";
+  var fail = geocodeFailureFor(asset, sources);
+  var flag = fail && fail.source === source ? geocodeFailureFlagHTML(asset, fail) : "";
+  return '<div class="detail-row"><span class="detail-label">' + label + '</span>' +
+    '<span class="detail-value">' + escapeHtml(value) + flag + '</span></div>';
+}
+// Render the Coordinates row. The failure flag lives on the address row; it
+// falls back here only when that row is not on the tab. The row also renders
+// with no coordinates at all when a lookup failed, so the failure is not hidden
+// by the absence it caused.
 function coordinatesRowHTML(asset, sources) {
   var has = asset.latitude != null && asset.longitude != null;
   var manual = asset.coordSource === "manual";
-  var fail = null;
-  if (!manual) {
-    (sources || []).forEach(function (s) {
-      var g = s && s.sourceKind === "fortigate-firewall" && s.observed && s.observed.geocodeFailure;
-      if (g && typeof g.query === "string" && GEOCODE_FAILURE_TEXT[g.reason]) fail = g;
-    });
-  }
+  var fail = geocodeFailureFor(asset, sources);
   if (!has && !fail) return "";
   var value = has
     ? escapeHtml(asset.latitude.toFixed(4) + ", " + asset.longitude.toFixed(4) + (manual ? " (manual)" : ""))
     : "-";
-  if (fail) {
-    var what = fail.source === "address-metavar" ? "address metavariable" : "SNMP location";
-    var tip = "The " + what + " \"" + fail.query + "\" could not be placed on the map, so " +
-      (has ? "these coordinates come from the FortiGate's other settings (Latitude/Longitude metavariables or its GUI coordinates)."
-           : "this asset has no coordinates.") +
-      " The asset's Events tab has the details.";
-    value += ' <span class="geocode-failure" style="color:var(--color-warning);font-family:var(--font-sans, inherit)" title="' +
-      escapeHtml(tip) + '">⚠ ' + escapeHtml(GEOCODE_FAILURE_TEXT[fail.reason]) + '</span>';
-  }
+  if (fail && !_geocodeFailureRowValue(asset, fail)) value += geocodeFailureFlagHTML(asset, fail);
   return '<div class="detail-row"><span class="detail-label">Coordinates</span>' +
     '<span class="detail-value mono">' + value + '</span></div>';
 }
