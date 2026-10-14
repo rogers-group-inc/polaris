@@ -62,9 +62,16 @@ describe("the reboot action schema", () => {
     const a = actionSchema.parse({ type: "reboot", notifyEmails: ["a@b.co"] }) as { when: string; at: string; minGapHours: number };
     expect(a).toMatchObject({ when: "at", at: "02:00", minGapHours: 24 });
   });
-  it("needs a results recipient and a real time of day", () => {
-    expect(() => actionSchema.parse({ type: "reboot", notifyEmails: [] })).toThrow();
+  it("needs a real time of day", () => {
     expect(() => actionSchema.parse({ type: "reboot", at: "24:00", notifyEmails: ["a@b.co"] })).toThrow();
+  });
+  it("takes the notify action's To / Cc / Bcc vocabulary", () => {
+    const a = actionSchema.parse({
+      type: "reboot", recipientDeviceRegionLevels: [1], recipientUserIds: ["u1"], addresses: ["noc@example.com"],
+      cc: { addresses: ["boss@example.com"] }, bcc: { recipientRoles: ["role-1"] },
+    }) as Record<string, unknown>;
+    expect(a).toMatchObject({ recipientDeviceRegionLevels: [1], cc: { addresses: ["boss@example.com"] }, bcc: { recipientRoles: ["role-1"] } });
+    expect(() => actionSchema.parse({ type: "reboot", recipientAllUsers: true })).toThrow();
   });
   it("carries no per-action escalation", () => {
     expect(() => escalatableActionSchema.parse({ type: "reboot", notifyEmails: ["a@b.co"], escalation: { tiers: [] } })).toThrow();
@@ -93,6 +100,25 @@ describe("executeActions — reboot", () => {
     expect(h.events[0].message).toMatch(/\(reboot\) failed: the FortiGate is in an HA cluster/);
   });
 
+  it("resolves To / Cc / Bcc at fire time and books them as addresses", async () => {
+    const a = actionSchema.parse({
+      type: "reboot", notifyEmails: ["Legacy@Example.com"], addresses: ["noc@example.com"],
+      cc: { addresses: ["boss@example.com", "noc@example.com"] }, bcc: { addresses: ["audit@example.com", "boss@example.com"] },
+    }) as AutomationAction;
+    expect(await executeActions("n1", [a], {}, { assetId: "a1" })).toEqual({ executed: 1, failed: 0 });
+    // To wins over Cc, and Bcc never repeats an address already visible.
+    expect(h.bookings[0]).toMatchObject({ notifyEmails: ["legacy@example.com", "noc@example.com"], notifyCc: ["boss@example.com"], notifyBcc: ["audit@example.com"] });
+  });
+
+  it("a To that resolves to nobody fails the action and books nothing", async () => {
+    // The device carries no region tag, so "Asset's L1 Region Users" is empty.
+    const a = actionSchema.parse({ type: "reboot", recipientDeviceRegionLevels: [1], cc: { addresses: ["boss@example.com"] } }) as AutomationAction;
+    const out = await executeActions("n1", [a], {}, { assetId: "a1", assetRegionTags: [] });
+    expect(out).toEqual({ executed: 0, failed: 1 });
+    expect(h.bookings).toHaveLength(0);
+    expect(h.events[0].message).toMatch(/resolved to no email address/);
+  });
+
   it("an alert with no device fails the action instead of guessing one", async () => {
     const out = await executeActions("n1", [reboot], {}, { assetId: null });
     expect(out.failed).toBe(1);
@@ -104,6 +130,12 @@ describe("assertActionRefs — where a reboot may live", () => {
   it("allows it on the alert's own actions and on an escalation tier", async () => {
     await expect(assertActionRefs({ actions: [reboot] } as never)).resolves.toBeUndefined();
     await expect(assertActionRefs({ actions: [], escalation: { stopOn: "acknowledge", tiers: [{ afterMin: 30, actions: [reboot] }] } } as never)).resolves.toBeUndefined();
+  });
+  it("refuses one with no To recipient — a Cc-only list has nobody to send to", async () => {
+    const noTo = actionSchema.parse({ type: "reboot", cc: { addresses: ["boss@example.com"] } });
+    await expect(assertActionRefs({ actions: [noTo] } as never)).rejects.toThrow(/at least one To recipient/);
+    const dyn = actionSchema.parse({ type: "reboot", recipientDeviceRegionLevels: [1] });
+    await expect(assertActionRefs({ actions: [dyn] } as never)).resolves.toBeUndefined();
   });
   it("refuses it on the reset list", async () => {
     await expect(assertActionRefs({ actions: [], resetActions: [reboot] } as never)).rejects.toThrow(/cannot run when the alert recovers/);

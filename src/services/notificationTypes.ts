@@ -2185,16 +2185,45 @@ export const eventActionSchema = z
 // (one per asset) or the device rebooted within `minGapHours`, which is what
 // stops a memory leak from rebooting a device in a loop. Refused on reset and
 // resolved lists (assertActionRefs): a recovery is no reason to reboot.
+//
+// WHO hears the result uses the notify action's recipient vocabulary — the To
+// fields below plus `cc` / `bcc` — resolved to addresses when the automation
+// fires (resolveRebootActionRecipients), so "Asset's L1 Region Users" books
+// the result to the people who own the device that tripped. `notifyEmails` is
+// the pre-picker shape (typed addresses only): still accepted and folded into
+// To, never written by the builder. At least one To source is required —
+// enforced in assertActionRefs, since a refinement here would take this
+// schema out of the discriminated union.
 export const REBOOT_WHEN = ["now", "at"] as const;
 export const rebootActionSchema = z
   .object({
     type: z.literal("reboot"),
     when: z.enum(REBOOT_WHEN).default("at"),
     at: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "at must be HH:MM").default("02:00"),
-    notifyEmails: z.array(z.string().max(254)).min(1, "name at least one email address for the results").max(20),
+    notifyEmails: z.array(z.string().max(254)).max(20).optional(),
+    recipientUserIds: z.array(z.string().max(100)).max(500).optional(),
+    addresses: z.array(z.string().email().max(320)).max(100).optional(),
+    recipientRoles: z.array(z.string().max(100)).max(50).optional(),
+    recipientRegions: z.array(z.string().max(100)).max(200).optional(),
+    recipientTags: z.array(z.string().max(100)).max(200).optional(),
+    recipientDeviceRegion: z.boolean().optional(),
+    recipientDeviceRegionLevels: z
+      .array(z.number().int().min(1).max(MAX_DEVICE_REGION_LEVELS))
+      .max(MAX_DEVICE_REGION_LEVELS)
+      .optional(),
+    recipientAssetContacts: z.boolean().optional(),
+    cc: emailRecipientsSchema.optional().nullable(),
+    bcc: emailRecipientsSchema.optional().nullable(),
     minGapHours: z.number().int().min(1).max(720).default(24),
   })
   .strict();
+
+/** Does a reboot action name anyone in To? Mirrors the wizard's check. */
+export function rebootActionHasTo(a: z.infer<typeof rebootActionSchema>): boolean {
+  return !!(a.notifyEmails?.length || a.recipientUserIds?.length || a.addresses?.length ||
+    a.recipientRoles?.length || a.recipientRegions?.length || a.recipientTags?.length ||
+    a.recipientDeviceRegion || a.recipientDeviceRegionLevels?.length || a.recipientAssetContacts);
+}
 
 export const actionSchema = z.discriminatedUnion("type", [
   notifyActionSchema,

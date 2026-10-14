@@ -416,6 +416,104 @@ export function dedupeEmailRecipients(to: string[], cc: string[], bcc: string[])
 }
 
 /**
+ * Asset-RELATIVE level routing: the users tagged with the region(s) `levels`
+ * steps out from the device's own innermost region (1 = that region, 2 = the
+ * division containing it, walked outward along regionHierarchyService's
+ * containment edges). Matches region tags only (resolveUsersByRegions) rather
+ * than the flattened scope recipientDeviceRegion uses, because these names
+ * come from the region catalogue by construction — the same reasoning
+ * recipientRegions carries. The asymmetry with recipientDeviceRegion is
+ * deliberate and documented in polaris-change-impact
+ * (services/alerting-delivery.md); do NOT "unify" them, that changes who
+ * existing rules deliver to.
+ *
+ * Every one of the three ways this reaches nobody is SILENT — the rule stays
+ * enabled and the alert still reaches its other recipients — so each gets its
+ * own warn line, because the fix differs: rotate a stale tag, redraw a region,
+ * or tag a person. Shared by the notify expander and the reboot action's
+ * results recipients, so the two cannot disagree about who "L1" is.
+ */
+export async function usersAtDeviceRegionLevels(
+  assetRegionTags: string[],
+  levels: number[],
+  index: RegionLevelIndex,
+  logCtx: Record<string, unknown>,
+): Promise<RecipientUser[]> {
+  const orphaned = orphanedRegionTags(assetRegionTags, index);
+  if (orphaned.length > 0) {
+    // Business rule 58. Named at warn because the pre-58 behaviour was to
+    // page whatever was left — usually the containing division — and nothing
+    // said so.
+    logger.warn(
+      { ...logCtx, levels, orphaned, assetRegionTags },
+      "region-level routing abstained: the asset carries region tag(s) naming no map region, so its innermost region cannot be determined — rotate the stale tag or redraw the region",
+    );
+    return [];
+  }
+  const names = deviceRegionsAtLevels(assetRegionTags, levels, index);
+  if (names.length === 0) {
+    logger.warn(
+      { ...logCtx, levels, assetRegionTags },
+      "region-level routing resolved no regions at the requested level(s) — the asset's nesting is shallower than the level asked for",
+    );
+    return [];
+  }
+  const levelUsers = await resolveUsersByRegions(names);
+  if (levelUsers.length === 0) {
+    logger.warn(
+      { ...logCtx, levels, regions: names },
+      "region-level routing matched regions but no users carry them — nobody is scoped to these regions",
+    );
+  }
+  return levelUsers;
+}
+
+/** The recipient half of a reboot action (notificationTypes' rebootActionSchema). */
+export interface RebootActionRecipients extends EmailRecipients {
+  notifyEmails?: string[];
+  recipientDeviceRegion?: boolean;
+  recipientDeviceRegionLevels?: number[];
+  recipientAssetContacts?: boolean;
+  cc?: EmailRecipients | null;
+  bcc?: EmailRecipients | null;
+}
+
+/**
+ * A reboot action's To / Cc / Bcc → the addresses its results email goes to,
+ * resolved when the automation FIRES (business rule 115(c)) against the
+ * triggering device, so the booking stores plain addresses like an operator's.
+ *
+ * To resolves the same sources a notify action's email half does
+ * (usersForTarget minus the push-only broadcasts and the legacy scope region)
+ * plus the legacy `notifyEmails`; Cc/Bcc through resolveEmailRecipients, then
+ * deduped across the three lists (To wins, Bcc never repeats a visible
+ * address). A user with no email address simply contributes none. Contacts
+ * arrive pre-resolved for the same import-cycle reason expandDeliveries takes
+ * them as an option.
+ */
+export async function resolveRebootActionRecipients(
+  a: RebootActionRecipients,
+  opts: { assetRegionTags?: string[]; assetContactEmails?: string[]; logCtx?: Record<string, unknown> } = {},
+): Promise<{ to: string[]; cc: string[]; bcc: string[] }> {
+  const users = new Map<string, RecipientUser>();
+  const addUsers = (us: RecipientUser[]) => us.forEach((u) => users.set(u.id, u));
+  const tags = opts.assetRegionTags ?? [];
+  if (a.recipientRegions?.length) addUsers(await resolveUsersByRegions(a.recipientRegions));
+  if (a.recipientRoles?.length) addUsers(await resolveUsersByRoles(a.recipientRoles));
+  if (a.recipientUserIds?.length) addUsers(await resolveRecipientUsersByIds(a.recipientUserIds));
+  if (a.recipientDeviceRegion && tags.length) addUsers(await resolveRecipientUsers(tags));
+  if (a.recipientDeviceRegionLevels?.length && tags.length) {
+    addUsers(await usersAtDeviceRegionLevels(tags, a.recipientDeviceRegionLevels, await regionLevelIndex(), opts.logCtx ?? {}));
+  }
+  if (a.recipientTags?.length) addUsers(await resolveRecipientUsers(a.recipientTags));
+  const typed = [...(a.notifyEmails ?? []), ...(a.addresses ?? [])];
+  const contacts = a.recipientAssetContacts ? opts.assetContactEmails ?? [] : [];
+  const to = Array.from(buildAddressOwnerMap(Array.from(users.values()), typed, contacts).keys());
+  const { cc, bcc } = dedupeEmailRecipients(to, await resolveEmailRecipients(a.cc), await resolveEmailRecipients(a.bcc));
+  return { to, cc, bcc };
+}
+
+/**
  * Expand a fired notification's rule targets into concrete delivery rows. Each
  * target references a configured NotificationChannel by id; the channel's type
  * decides the transport + how the target fans out:
@@ -763,48 +861,11 @@ export async function expandDeliveries(
     if (t.recipientRoles?.length) addUsers(await resolveUsersByRoles(t.recipientRoles));
     if (t.recipientUserIds?.length) addUsers(await resolveRecipientUsersByIds(t.recipientUserIds));
     if (t.recipientDeviceRegion && assetRegionTags?.length) addUsers(await resolveRecipientUsers(assetRegionTags));
-    // Asset-RELATIVE level routing: level 1 = the device's own innermost
-    // region, 2 = the division containing it, walked outward along the
-    // containment edges (regionHierarchyService). Matches `regionSet`
-    // (region tags only) via resolveUsersByRegions rather than the flattened
-    // `matchSet` recipientDeviceRegion uses, because these names come from the
-    // region catalogue by construction — the same reasoning recipientRegions
-    // already carries. The asymmetry with recipientDeviceRegion is deliberate
-    // and documented in polaris-change-impact (services/alerting-delivery.md); do NOT "unify" them, that changes who
-    // existing rules deliver to.
+    // Asset-RELATIVE level routing (usersAtDeviceRegionLevels says why it
+    // matches region tags only, unlike recipientDeviceRegion above).
     if (t.recipientDeviceRegionLevels?.length && assetRegionTags?.length) {
-      const index = await regionLevels();
-      // Every one of the three ways this arm can reach nobody is SILENT — the
-      // rule stays enabled, the alert still delivers to its other recipients,
-      // and only the tier is missing. Each gets its own line, because the fix
-      // differs: rotate a stale tag, redraw a region, or tag a person.
-      const orphaned = orphanedRegionTags(assetRegionTags, index);
-      if (orphaned.length > 0) {
-        // Business rule 58. Named at warn because the pre-58 behaviour was to
-        // page whatever was left — usually the containing division — and
-        // nothing said so.
-        logger.warn(
-          { notificationId, channelId: t.channelId, levels: t.recipientDeviceRegionLevels, orphaned, assetRegionTags },
-          "region-level routing abstained: the asset carries region tag(s) naming no map region, so its innermost region cannot be determined — rotate the stale tag or redraw the region",
-        );
-      } else {
-        const names = deviceRegionsAtLevels(assetRegionTags, t.recipientDeviceRegionLevels, index);
-        if (names.length === 0) {
-          logger.warn(
-            { notificationId, channelId: t.channelId, levels: t.recipientDeviceRegionLevels, assetRegionTags },
-            "region-level routing resolved no regions at the requested level(s) — the asset's nesting is shallower than the level asked for",
-          );
-        } else {
-          const levelUsers = await resolveUsersByRegions(names);
-          if (levelUsers.length === 0) {
-            logger.warn(
-              { notificationId, channelId: t.channelId, levels: t.recipientDeviceRegionLevels, regions: names },
-              "region-level routing matched regions but no users carry them — nobody is scoped to these regions",
-            );
-          }
-          addUsers(levelUsers);
-        }
-      }
+      addUsers(await usersAtDeviceRegionLevels(assetRegionTags, t.recipientDeviceRegionLevels, await regionLevels(),
+        { notificationId, channelId: t.channelId }));
     }
     if (t.recipientScopeRegion && scopeRegionTags?.length) addUsers(await resolveRecipientUsers(scopeRegionTags));
     // Registry tags. Matches the FLATTENED region-plus-other scope, not

@@ -8894,7 +8894,26 @@ async function openAutomationWizard(existing, opts) {
       // and results email as the Status row's Reboot.
       var rm = s.rebootMeta || { defaultAt: "02:00", defaultMinGapHours: 24, maxMinGapHours: 720, help: "" };
       var whenNow = action.when === "now";
-      var emails = Array.isArray(action.notifyEmails) ? action.notifyEmails.join(", ") : "";
+      // The results recipients are the notify action's To / Cc / Bcc token
+      // fields — same pills, typeahead, address book and "Asset's L<n> Region
+      // Users" entries — resolved to addresses when the automation fires. The
+      // pre-picker `notifyEmails` (typed addresses only) loads as address
+      // pills in To and is never written back.
+      var rbTo = Object.assign({}, action, {
+        addresses: (action.addresses || []).concat(Array.isArray(action.notifyEmails) ? action.notifyEmails : []),
+      });
+      // A NEW action starts addressed to the people who own the device — its
+      // L1 (innermost) region's users — on an install that has map regions.
+      // A stored action always carries a To (save refuses one without), so
+      // "no To at all" is exactly "just added".
+      var rbHasAnyTo = rbTo.addresses.length || (action.recipientUserIds || []).length || (action.recipientRoles || []).length ||
+        (action.recipientRegions || []).length || (action.recipientTags || []).length || action.recipientDeviceRegion ||
+        (action.recipientDeviceRegionLevels || []).length || action.recipientAssetContacts;
+      if (!rbHasAnyTo && ((_awScopeOptions && _awScopeOptions.regions) || []).length) rbTo.recipientDeviceRegionLevels = [1];
+      var rbRecips =
+        recipBoxHtml("to", "To", recipientsToPills(rbTo, _ruleRecipientUsers, awRoles(), awRegionMaxLevel()), canReadContacts(), "email") +
+        recipBoxHtml("cc", "Cc", recipientsToPills(action.cc, _ruleRecipientUsers, awRoles()), false) +
+        recipBoxHtml("bcc", "Bcc", recipientsToPills(action.bcc, _ruleRecipientUsers, awRoles()), false);
       var rbName = "rb-when-" + Math.random().toString(36).slice(2, 8);
       box.innerHTML =
         '<div class="form-group" style="margin-bottom:6px"><label style="font-size:0.8rem">When</label> ' +
@@ -8902,7 +8921,10 @@ async function openAutomationWizard(existing, opts) {
           '<input type="time" class="rb-at" value="' + escapeHtml(action.at || rm.defaultAt || "02:00") + '" style="width:auto"> <span style="font-size:0.8rem;color:var(--color-text-tertiary)">server time</span>' +
           '<label style="font-size:0.85rem;margin-left:14px"><input type="radio" class="rb-when" name="' + rbName + '" value="now"> right away</label>' +
         '</div>' +
-        '<div class="form-group" style="margin-bottom:6px"><label style="font-size:0.8rem">Email the result to</label><input type="text" class="rb-emails" value="' + escapeHtml(emails) + '" placeholder="noc@example.com, oncall@example.com" style="width:100%"></div>' +
+        '<div class="form-group" style="margin-bottom:6px"><label style="font-size:0.8rem;display:block;margin-bottom:2px">Email the result to</label>' +
+          '<div class="na-recips rb-recips">' + rbRecips + '</div>' +
+          '<p class="hint" style="margin:0 0 6px">Resolved against the device that tripped the alert. Anything in Cc or Bcc sends <strong>one</strong> message with the full To list visible, instead of a separate email per recipient.</p>' +
+        '</div>' +
         '<div class="form-group" style="margin-bottom:0"><label style="font-size:0.8rem">Not again within</label> <input type="number" class="rb-gap" min="1" max="' + (rm.maxMinGapHours || 720) + '" value="' + escapeHtml(String(action.minGapHours || rm.defaultMinGapHours || 24)) + '" style="width:80px"> hours of the device’s last reboot</div>' +
         (rm.help ? '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:6px 0 0">' + escapeHtml(rm.help) + '</p>' : "") +
         '<p style="font-size:0.78rem;color:var(--color-warning,#d97706);margin:6px 0 0">This reboots production equipment with nobody at the keyboard. A human must review the trigger and its threshold before enabling it.</p>';
@@ -8917,6 +8939,7 @@ async function openAutomationWizard(existing, opts) {
       };
       box.addEventListener("change", syncRebootBits);
       box.addEventListener("input", syncRebootBits);
+      wireRecipBoxes(box.querySelector(".rb-recips"), function () { /* collected on save; the summary names no one */ });
       syncRebootBits();
     } else if (t === "event") {
       // Nothing to configure — the severity, message and resource all come from
@@ -9075,13 +9098,20 @@ async function openAutomationWizard(existing, opts) {
       var nowR = box.querySelector('.rb-when[value="now"]');
       if (!nowR) return null;
       var gap = Number(box.querySelector(".rb-gap").value);
-      return {
-        type: "reboot",
-        when: nowR.checked ? "now" : "at",
-        at: box.querySelector(".rb-at").value || "02:00",
-        notifyEmails: box.querySelector(".rb-emails").value.split(/[,;\s]+/).map(function (e) { return e.trim(); }).filter(Boolean),
-        minGapHours: isNaN(gap) || gap < 1 ? 24 : Math.round(gap),
-      };
+      var rbBox = function (f) { return box.querySelector('.rb-recips .na-recip-box[data-field="' + f + '"]'); };
+      var rbCc = pillsToRecipients(pillsOf(rbBox("cc")));
+      var rbBcc = pillsToRecipients(pillsOf(rbBox("bcc")));
+      return Object.assign(
+        {
+          type: "reboot",
+          when: nowR.checked ? "now" : "at",
+          at: box.querySelector(".rb-at").value || "02:00",
+          minGapHours: isNaN(gap) || gap < 1 ? 24 : Math.round(gap),
+        },
+        pillsToRecipients(pillsOf(rbBox("to"))),
+        Object.keys(rbCc).length ? { cc: rbCc } : {},
+        Object.keys(rbBcc).length ? { bcc: rbBcc } : {}
+      );
     }
     return null;
   }
@@ -9505,10 +9535,13 @@ async function openAutomationWizard(existing, opts) {
       if (!a.scriptId) return label + ": pick a script.";
     } else if (a.type === "reboot") {
       if (a.when !== "now" && !/^([01]\d|2[0-3]):[0-5]\d$/.test(a.at || "")) return label + ": pick the time of day to reboot at.";
-      if (!(a.notifyEmails || []).length) return label + ": name at least one email address for the reboot's result.";
-      for (var ei = 0; ei < a.notifyEmails.length; ei++) {
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.notifyEmails[ei])) return label + ': "' + a.notifyEmails[ei] + '" is not an email address.';
-      }
+      // Mirrors rebootActionHasTo on the server: someone always hears the
+      // outcome, and a Cc/Bcc-only list has no To to send it to.
+      var rbHasTo = (a.notifyEmails && a.notifyEmails.length) || (a.recipientUserIds && a.recipientUserIds.length) ||
+        (a.addresses && a.addresses.length) || (a.recipientRoles && a.recipientRoles.length) ||
+        (a.recipientRegions && a.recipientRegions.length) || (a.recipientTags && a.recipientTags.length) ||
+        a.recipientDeviceRegion || (a.recipientDeviceRegionLevels && a.recipientDeviceRegionLevels.length) || a.recipientAssetContacts;
+      if (!rbHasTo) return label + ": add a To recipient for the reboot's result.";
       if (!(a.minGapHours >= 1)) return label + ": the minimum gap between reboots must be at least 1 hour.";
     }
     return null;

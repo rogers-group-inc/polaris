@@ -2305,7 +2305,11 @@ within the action's minimum gap (default 24 hours), which stops a device whose
 memory refills after every boot from being rebooted in a loop. It can sit on
 the alert's own actions, a severity level's or an escalation tier, never on a
 reset or all-clear list. A Test button never runs it, export strips it, and
-saving an automation that has one needs **Read-Write on Assets**.
+saving an automation that has one needs **Read-Write on Assets**. Its results
+go to To, Cc and Bcc recipients chosen like a notify action's — including
+**Asset's L1 Region Users** — worked out for the alerting device when the
+automation fires. If To works out to nobody, nothing is booked and the action
+is recorded as failed.
 
 ### Rule 116
 

@@ -30,6 +30,7 @@ import {
   allRuleActionRefs,
   type RuleActionCarrier,
   notifyChannelIds,
+  rebootActionHasTo,
   evaluateScopeCondition,
   buildShadowIndex,
   isAssetShadowed,
@@ -489,10 +490,13 @@ export async function assertActionRefs(input: RuleActionCarrier): Promise<void> 
       if (where === "reset" || where === "resolved") {
         throw new AppError(400, `${label}: a reboot cannot run when the alert recovers — put it on the alert's own actions, a severity band or an escalation tier`);
       }
-      for (const e of action.notifyEmails) {
+      for (const e of action.notifyEmails ?? []) {
         const v = String(e ?? "").trim();
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) throw new AppError(400, `${label}: "${e}" is not an email address`);
       }
+      // Someone always hears the outcome (the booking's own invariant), and a
+      // Cc/Bcc-only list has no To to send it to.
+      if (!rebootActionHasTo(action)) throw new AppError(400, `${label}: name at least one To recipient for the reboot's result`);
       continue;
     }
     if (action.type === "notify") {

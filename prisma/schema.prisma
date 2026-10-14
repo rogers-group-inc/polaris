@@ -6348,6 +6348,11 @@ model RebootSchedule {
   asset        Asset      @relation(fields: [assetId], references: [id], onDelete: Cascade)
   scheduledFor DateTime
   notifyEmails String[]
+  // Cc / Bcc of the results email, resolved from an automation's reboot action
+  // (business rule 115(c)); empty on an operator's booking. Either one set
+  // turns the per-recipient fan-out into ONE message to the whole To line.
+  notifyCc     String[]   @default([])
+  notifyBcc    String[]   @default([])
   status       String     @default("pending") // pending | started | cancelled | refused | missed
   runId        String?    @unique
   run          RebootRun? @relation(fields: [runId], references: [id], onDelete: SetNull)

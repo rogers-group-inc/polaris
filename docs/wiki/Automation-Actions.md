@@ -113,8 +113,16 @@ outcome.
 | Field | |
 |---|---|
 | When | **at the next** HH:MM server time (default 02:00), or **right away** (about a minute after the alert) |
-| Email the result to | 1–20 addresses; they get the outcome email of the booked reboot |
+| Email the result to | **To**, **Cc** and **Bcc** fields that work like a notify action's: type a name, address, role, region or tag, or open the **Address book**. To also takes the "Asset's …" entries, such as **Asset's L1 Region Users**, which a new reboot action starts with when you have map regions |
 | Not again within | 1–720 hours (default 24) of the device's last reboot |
+
+**Who gets the result.** The recipients are worked out when the automation
+fires, for the device that raised the alert. **Asset's L1 Region Users** means
+the users tagged with that device's own region. If To works out to nobody (for
+example, the device has no region tag and To holds only the region entry), the
+action fails with an `automation.action_error` and no reboot is booked.
+Without Cc or Bcc, each To recipient gets their own results email. With Cc or
+Bcc, one email goes to the whole To list, with the Cc and Bcc copies.
 
 **When it does nothing.** Each of these writes an
 `asset.reboot_automation_skipped` Event on the asset and is not counted as a
